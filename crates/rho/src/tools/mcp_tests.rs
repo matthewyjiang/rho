@@ -5,7 +5,8 @@ use pretty_assertions::assert_eq;
 use super::{
     call_remote_tool,
     config::{McpConfig, McpServerConfig, McpToolFilter, McpTransport},
-    namespaced_tool_name, validate_remote_url, McpBundle, MCP_RUNTIME_CONSTRUCTIONS,
+    namespaced_tool_name, validate_remote_url, McpBundle, McpServerStatus,
+    MCP_RUNTIME_CONSTRUCTIONS,
 };
 use crate::tools::sdk_registry::ToolBundle;
 use rho_sdk::{tool::ToolErrorKind, CancellationToken};
@@ -19,9 +20,45 @@ async fn zero_server_path_is_inert() {
     let _guard = MCP_CONNECT_TEST_LOCK.lock().await;
     let before = MCP_RUNTIME_CONSTRUCTIONS.load(std::sync::atomic::Ordering::Relaxed);
 
-    let bundle = McpBundle::connect(&McpConfig::default()).await;
+    let outcome = McpBundle::connect(&McpConfig::default()).await;
 
-    assert!(bundle.is_none());
+    assert!(outcome.bundle.is_none());
+    assert!(outcome.report.servers.is_empty());
+    assert_eq!(
+        MCP_RUNTIME_CONSTRUCTIONS.load(std::sync::atomic::Ordering::Relaxed),
+        before
+    );
+}
+
+// Covers: disabled servers appear in inventory without starting a runtime.
+// Owner: MCP runtime initialization boundary.
+#[tokio::test]
+async fn disabled_servers_are_reported_without_runtime() {
+    let _guard = MCP_CONNECT_TEST_LOCK.lock().await;
+    let before = MCP_RUNTIME_CONSTRUCTIONS.load(std::sync::atomic::Ordering::Relaxed);
+    let config = McpConfig {
+        servers: BTreeMap::from([(
+            "off".into(),
+            McpServerConfig {
+                enabled: false,
+                tools: McpToolFilter::default(),
+                transport: McpTransport::Stdio {
+                    command: "false".into(),
+                    args: Vec::new(),
+                    cwd: None,
+                    env: BTreeMap::new(),
+                    env_from_env: BTreeMap::new(),
+                },
+            },
+        )]),
+        invalid_servers: Vec::new(),
+    };
+
+    let outcome = McpBundle::connect(&config).await;
+
+    assert!(outcome.bundle.is_none());
+    assert_eq!(outcome.report.servers.len(), 1);
+    assert_eq!(outcome.report.servers[0].status, McpServerStatus::Disabled);
     assert_eq!(
         MCP_RUNTIME_CONSTRUCTIONS.load(std::sync::atomic::Ordering::Relaxed),
         before
@@ -49,6 +86,10 @@ fn malformed_servers_are_isolated() {
         [servers.cleartext]
         transport = "streamable_http"
         url = "http://example.com/mcp"
+
+        [servers."bad id"]
+        transport = "stdio"
+        command = "server"
         "#,
     )
     .unwrap();
@@ -66,6 +107,7 @@ fn malformed_servers_are_isolated() {
             vec!["good".to_string()],
             vec![
                 "bad".to_string(),
+                "bad id".to_string(),
                 "blank".to_string(),
                 "cleartext".to_string(),
             ],
@@ -218,9 +260,13 @@ async fn streamable_http_discovery() {
         )]),
         invalid_servers: Vec::new(),
     };
-
-    let bundle = McpBundle::connect(&config).await.unwrap();
+    let outcome = McpBundle::connect(&config).await;
+    let bundle = outcome.bundle.unwrap();
     assert_eq!(bundle.tools()[0].spec().name, "mcp__remote__remote_echo");
+    assert_eq!(
+        outcome.report.servers[0].status,
+        McpServerStatus::Connected
+    );
     bundle.shutdown().await;
     server.await.unwrap();
 }
@@ -291,8 +337,8 @@ open(sys.argv[1], "w").close()
         servers: BTreeMap::from([("failed".into(), failed), ("test".into(), healthy)]),
         invalid_servers: Vec::new(),
     };
-
-    let bundle = McpBundle::connect(&config).await.unwrap();
+    let outcome = McpBundle::connect(&config).await;
+    let bundle = outcome.bundle.unwrap();
     assert_eq!(
         bundle
             .tools()
@@ -300,6 +346,19 @@ open(sys.argv[1], "w").close()
             .map(|tool| tool.spec().name)
             .collect::<Vec<_>>(),
         vec!["mcp__test__echo_value"]
+    );
+    let statuses = outcome
+        .report
+        .servers
+        .iter()
+        .map(|server| (server.identity.as_str(), server.status))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        statuses,
+        vec![
+            ("failed", McpServerStatus::Failed),
+            ("test", McpServerStatus::Connected),
+        ]
     );
 
     let peer = bundle.sessions.lock().await[0].peer().clone();

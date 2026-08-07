@@ -94,6 +94,7 @@ impl App {
             pending_subagent_attaches: Vec::new(),
             last_mouse_position: None,
             screen_selection: None,
+            mcp_report: crate::tools::mcp::McpSessionReport::default(),
         };
         if let Some(status) = initial_status {
             app.set_status(status);

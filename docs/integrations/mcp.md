@@ -78,6 +78,15 @@ Characters outside ASCII letters, digits, and `_` become `_`. If two remote name
 
 MCP tool calls use Rho's native tool registry, capability approval, cancellation, and shutdown path. Results preserve the MCP result, including structured content and non-text content, as JSON in the native tool result. MCP error results and transport failures become tool failures without stopping sibling servers.
 
+## Inspect status
+
+There is no marketplace in Rho. Configure servers in the selected config file, then inspect what this process loaded:
+
+- **Interactive:** `/mcp` lists configured servers, transport, status, errors, and exported tool names for the current session. `/doctor` includes an MCP health row.
+- **CLI:** `rho mcp list` connects using the selected config and prints status. `rho mcp show <id>` prints one server, including exported tools. Both accept `--json`.
+
+Use `/mcp` when you already have a session open. Use `rho mcp list` from a shell to verify config before starting the TUI.
+
 ## Runtime differences
 
-Native Rho agents receive these tools. Claude CLI agents do not: Rho does not pass its MCP configuration to Claude, inherit Claude's MCP configuration, or treat Claude's opaque `mcp__...` names as native support. This prevents one configured server from loading through both runtimes.
+Native Rho agents receive these tools. Claude CLI agents do not: Rho does not pass its MCP configuration to Claude, inherit Claude's MCP configuration, or treat Claude's opaque `mcp__...` names as native support. This prevents one configured server from loading through both runtimes. For a Claude CLI agent session, `/mcp` still shows configured entries as not loaded.

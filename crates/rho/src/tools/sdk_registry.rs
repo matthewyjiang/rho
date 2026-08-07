@@ -142,6 +142,7 @@ pub struct AppToolSet {
     workflow_tracker: super::workflow_tracker::WorkflowRunTracker,
     checkpoint_tracker: Arc<crate::session::workspace_checkpoint::WorkspaceCheckpointTracker>,
     web_access: super::web::WebAccessStore,
+    mcp_report: super::mcp::McpSessionReport,
 }
 
 impl AppToolSet {
@@ -156,6 +157,7 @@ impl AppToolSet {
                 crate::session::workspace_checkpoint::WorkspaceCheckpointTracker::new(false),
             ),
             web_access: super::web::WebAccessStore::new(),
+            mcp_report: super::mcp::McpSessionReport::default(),
         }
     }
 
@@ -258,8 +260,15 @@ impl AppToolSet {
         self.tools.extend(bundle.tools().iter().cloned());
         self.bundles.push(Box::new(bundle));
     }
-    pub(crate) fn add_mcp_bundle(&mut self, bundle: super::mcp::McpBundle) {
-        self.add_bundle(bundle);
+    pub(crate) fn install_mcp(&mut self, outcome: super::mcp::McpConnectOutcome) {
+        self.mcp_report = outcome.report;
+        if let Some(bundle) = outcome.bundle {
+            self.add_bundle(bundle);
+        }
+    }
+
+    pub(crate) fn mcp_report(&self) -> &super::mcp::McpSessionReport {
+        &self.mcp_report
     }
 
     pub fn tools(&self) -> &[Arc<dyn Tool>] {

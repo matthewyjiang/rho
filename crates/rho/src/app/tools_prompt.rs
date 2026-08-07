@@ -86,7 +86,7 @@ pub(crate) async fn assemble_tools_and_prompt(
     let launch_delegation_enabled = capabilities.contains(&ToolCapability::Agent);
     let delegation_enabled =
         launch_delegation_enabled || capabilities.contains(&ToolCapability::Agents);
-    let tools = if options.no_tools {
+    let mut tools = if options.no_tools {
         AppToolSet::disabled()
     } else {
         let mut tool_options = ToolSetOptions::new(capabilities);
@@ -109,18 +109,20 @@ pub(crate) async fn assemble_tools_and_prompt(
         {
             tool_options = tool_options.workflow(super::workflow_cli::workflow_tool_service(
                 options.cwd.to_path_buf(),
-                Some(options.config_path),
+                Some(options.config_path.clone()),
                 workflow_tracker,
             ));
         }
-        let mut tools = AppToolSet::new(options.config, options.diagnostics.clone(), tool_options);
-        if native_runtime {
-            if let Some(bundle) = crate::tools::mcp::McpBundle::connect(&options.config.mcp).await {
-                tools.add_mcp_bundle(bundle);
-            }
-        }
-        tools
+        AppToolSet::new(options.config, options.diagnostics.clone(), tool_options)
     };
+    tools.install_mcp(
+        crate::tools::mcp::McpLoad::for_session(
+            &options.config.mcp,
+            native_runtime,
+            !options.no_tools,
+        )
+        .await,
+    );
     let specs = tools.specs();
     let system_prompt = if options.no_system_prompt {
         options.diagnostics.update_prompt_sources(Vec::new());

@@ -844,6 +844,10 @@ impl InteractiveRuntime {
         self.tools.contains(name)
     }
 
+    pub(crate) fn mcp_report(&self) -> &crate::tools::mcp::McpSessionReport {
+        self.tools.mcp_report()
+    }
+
     /// Returns the tool ceiling for workflow agents started by this session.
     pub(crate) fn workflow_host_capabilities(&self) -> crate::agent::AgentCapabilities {
         crate::agent::AgentCapabilities::new(

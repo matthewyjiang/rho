@@ -145,6 +145,11 @@ pub enum Command {
         #[command(subcommand)]
         command: SessionsCommand,
     },
+    /// Inspect configured Model Context Protocol servers.
+    Mcp {
+        #[command(subcommand)]
+        command: McpCommand,
+    },
     /// Validate, plan, run, and inspect deterministic workflows.
     Workflow {
         #[command(subcommand)]
@@ -294,6 +299,25 @@ pub enum SessionsCommand {
         /// New session title. Multiple words are joined with spaces.
         #[arg(value_name = "TITLE", required = true, num_args = 1.., trailing_var_arg = true)]
         title: Vec<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum McpCommand {
+    /// List configured MCP servers and their connection status.
+    List {
+        /// Print one JSON document instead of text rows.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show one MCP server by identity.
+    Show {
+        /// Server table key from `[mcp.servers.<id>]`.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// Print one JSON document instead of text.
+        #[arg(long)]
+        json: bool,
     },
 }
 

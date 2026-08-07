@@ -158,6 +158,7 @@ pub(super) fn prompt_for_command(command: &Option<Command>) -> anyhow::Result<Op
             | Command::Login { .. }
             | Command::CredentialStore { .. }
             | Command::Sessions { .. }
+            | Command::Mcp { .. }
             | Command::Workflow { .. }
             | Command::WorkflowPlannerWorker
             | Command::Update,

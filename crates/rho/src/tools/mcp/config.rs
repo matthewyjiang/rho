@@ -34,6 +34,13 @@ impl<'de> Deserialize<'de> for McpConfig {
         let raw = RawConfig::deserialize(deserializer)?;
         let mut config = McpConfig::default();
         for (identity, value) in raw.servers {
+            if let Err(error) = super::validate_identity(&identity) {
+                config.invalid_servers.push(InvalidMcpServer {
+                    identity,
+                    error: error.to_string(),
+                });
+                continue;
+            }
             match value.try_into::<McpServerConfig>() {
                 Ok(server) => {
                     config.servers.insert(identity, server);

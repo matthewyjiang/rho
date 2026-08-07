@@ -8,12 +8,12 @@ Rho ships host and shell integrations in the binary. You do not install a plugin
 | RTK | Rewrites agent shell commands when the `rtk` binary is on `PATH` | [RTK](/integrations/rtk) |
 | MCP | Native stdio and Streamable HTTP tools | [Model Context Protocol](/integrations/mcp) |
 
-Both stay optional. Outside Herdr, Rho skips host reporting. Without RTK, shell tools run commands unchanged.
+All stay optional. Outside Herdr, Rho skips host reporting. Without RTK, shell tools run commands unchanged. MCP stays inert until you add an enabled server under `[mcp.servers]`.
 
 ## Choose a page
 
 - [Herdr](/integrations/herdr) - detection env, state reporting, subagent panes, graphics
 - [RTK](/integrations/rtk) - install, rewrite flow, config, analytics
-- [Model Context Protocol](/integrations/mcp) - server config, transports, permissions, and lifecycle
+- [Model Context Protocol](/integrations/mcp) - server config, transports, permissions, lifecycle, `/mcp`, and `rho mcp`
 
-Check either from the interactive TUI with `/doctor`.
+Check setup from the interactive TUI with `/doctor`. Inspect MCP with `/mcp` or `rho mcp list`.

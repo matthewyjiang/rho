@@ -73,6 +73,8 @@ mod login;
 mod login_secret_input;
 mod markdown;
 mod markdown_image;
+mod mcp_actions;
+mod mcp_picker;
 mod message_history;
 mod message_render;
 mod model_actions;
@@ -367,6 +369,7 @@ pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::
         match injected {
             Ok(()) => {
                 let mut app = App::new(info, herdr_graphics);
+                app.mcp_report = agent.mcp_report().clone();
                 app.terminal_session = Some(TerminalSession::acquire());
                 if let Some(manager) = agent.subagents() {
                     app.subagent_host_input = Some(manager.bind_host_input());
@@ -442,6 +445,8 @@ struct App {
     last_mouse_position: Option<(u16, u16)>,
     /// Screen-space drag selection for text outside the history area.
     screen_selection: Option<TextSelection>,
+    /// MCP inventory captured at session start for `/mcp` and `/doctor`.
+    mcp_report: crate::tools::mcp::McpSessionReport,
 }
 
 struct PendingSubagentQuestionnaire {
