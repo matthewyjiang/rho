@@ -253,33 +253,23 @@ set a Claude model name or alias (for example opus), not '{model}'"
         ));
     }
     if let Some(auth_value) = auth.as_deref() {
-        let Some((auth_provider, mode)) = rho_providers::provider::resolve_auth_mode(auth_value)
-        else {
+        if rho_providers::provider::resolve_auth_mode(auth_value).is_none() {
             return Err(AgentCatalogError::at_field(
                 path.to_path_buf(),
                 "auth",
                 format!("unknown auth profile '{auth_value}'"),
             ));
-        };
+        }
         if let Some(provider_value) = provider.as_deref() {
-            let profile = rho_providers::provider::resolve_profile(provider_value, auth_value)
-                .map_err(|error| {
+            rho_providers::provider::resolve_profile_exact(provider_value, auth_value).map_err(
+                |error| {
                     AgentCatalogError::at_field(
                         path.to_path_buf(),
                         "auth",
                         format!("is not valid for provider '{provider_value}': {error}"),
                     )
-                })?;
-            if profile.auth_id() != mode.id {
-                return Err(AgentCatalogError::at_field(
-                    path.to_path_buf(),
-                    "auth",
-                    format!(
-                        "'{auth_value}' is not valid for provider '{provider_value}' (belongs to {})",
-                        auth_provider.name
-                    ),
-                ));
-            }
+                },
+            )?;
         }
     }
     let selection = ModelSelection {

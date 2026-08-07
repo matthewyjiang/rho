@@ -79,6 +79,24 @@ fn xai_legacy_provider_alias_selects_oauth_mode() {
     assert_eq!(resolved.auth_id(), "xai-oauth");
 }
 
+// Covers: exact profile resolution rejects cross-provider auth instead of soft fallback
+// Owner: provider registry
+#[test]
+fn resolve_profile_exact_rejects_incompatible_auth() {
+    let err = super::resolve_profile_exact("xai", "anthropic-api-key").unwrap_err();
+    assert!(matches!(
+        err,
+        super::ProfileResolutionError::AuthNotValidForProvider { .. }
+    ));
+    assert!(!super::provider_accepts_auth("xai", "anthropic-api-key"));
+    assert!(super::provider_accepts_auth("xai", "xai-oauth"));
+
+    // Soft resolve still falls back to the provider default.
+    let soft = super::resolve_profile("xai", "anthropic-api-key").unwrap();
+    assert_eq!(soft.provider_name(), "xai");
+    assert_eq!(soft.auth_id(), "xai-api-key");
+}
+
 // Covers: qwen-token-plan must resolve as OpenAI-compatible with api-key auth
 // Owner: provider registry
 #[test]

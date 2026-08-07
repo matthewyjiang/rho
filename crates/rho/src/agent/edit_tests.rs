@@ -267,3 +267,39 @@ fn set_auth_selection_pins_profile_and_provider() {
     assert_eq!(draft.auth_text(), "");
     assert_eq!(draft.provider_text(), "xai");
 }
+
+// Covers: provider change drops auth pins that no longer fit
+// Owner: agent edit
+#[test]
+fn set_provider_text_clears_incompatible_auth() {
+    let mut draft = rho_draft();
+    draft.set_model_text("grok-4.5".into());
+    assert!(draft.set_auth_selection(Some("xai-oauth".into())));
+    draft.set_provider_text("openai".into());
+    assert_eq!(draft.provider_text(), "openai");
+    assert_eq!(draft.auth_text(), "");
+}
+
+// Covers: set_model_selection keeps compatible auth and clears incompatible
+// Owner: agent edit
+#[test]
+fn set_model_selection_preserves_compatible_auth_only() {
+    let mut draft = rho_draft();
+    draft.set_model_selection(Some(ModelSelection {
+        provider: Some("xai".into()),
+        model: "grok-4.5".into(),
+        auth: Some("xai-oauth".into()),
+    }));
+    assert_eq!(draft.auth_text(), "xai-oauth");
+
+    let mut next = draft.current_selection();
+    next.provider = Some("openai".into());
+    next.model = "gpt-5.5".into();
+    next.auth = next.auth.filter(|auth| {
+        rho_providers::provider::provider_accepts_auth(next.provider.as_deref().unwrap(), auth)
+    });
+    draft.set_model_selection(Some(next));
+    assert_eq!(draft.provider_text(), "openai");
+    assert_eq!(draft.model_text(), "gpt-5.5");
+    assert_eq!(draft.auth_text(), "");
+}

@@ -127,7 +127,7 @@ fn edit_session_restores_inactive_runtime_settings() {
 // Owner: tui agent editor
 #[test]
 fn model_policy_choice_for_claude_offers_inherit_and_select_only() {
-    let picker = agent_choice_picker(AgentChoiceField::ModelPolicy, &claude_draft(), &[]);
+    let picker = agent_choice_picker(AgentChoiceField::ModelPolicy, &claude_draft());
     let labels: Vec<&str> = picker
         .items
         .iter()
@@ -135,7 +135,7 @@ fn model_policy_choice_for_claude_offers_inherit_and_select_only() {
         .collect();
     assert_eq!(labels, ["inherit", "select"]);
 
-    let rho_picker = agent_choice_picker(AgentChoiceField::ModelPolicy, &rho_draft(), &[]);
+    let rho_picker = agent_choice_picker(AgentChoiceField::ModelPolicy, &rho_draft());
     let rho_labels: Vec<&str> = rho_picker
         .items
         .iter()
@@ -148,7 +148,7 @@ fn model_policy_choice_for_claude_offers_inherit_and_select_only() {
 // Owner: tui agent editor
 #[test]
 fn claude_reasoning_picker_omits_off_and_minimal() {
-    let reasoning_picker = agent_choice_picker(AgentChoiceField::Reasoning, &claude_draft(), &[]);
+    let reasoning_picker = agent_choice_picker(AgentChoiceField::Reasoning, &claude_draft());
     let labels: Vec<&str> = reasoning_picker
         .items
         .iter()
@@ -200,7 +200,7 @@ fn reasoning_picker_follows_pinned_catalog_capabilities() {
             *reasoning = Some(ReasoningLevel::Max);
         }
 
-        let picker = agent_choice_picker(AgentChoiceField::Reasoning, &draft, &[]);
+        let picker = agent_choice_picker(AgentChoiceField::Reasoning, &draft);
         let labels: Vec<&str> = picker
             .items
             .iter()
@@ -265,13 +265,13 @@ fn auth_choice_lists_only_available_modes_for_provider() {
         });
     }
     let available = vec!["xai-oauth".into(), "anthropic-api-key".into()];
-    let picker = agent_choice_picker(AgentChoiceField::Auth, &draft, &available);
+    let picker = auth_choice_picker(&draft, &available);
     let values: Vec<&str> = picker
         .items
         .iter()
         .map(|item| item.value.as_str())
         .collect();
-    assert!(values.contains(&"agent_choice:auth:host"));
+    assert!(values.contains(&"agent_choice:auth:"));
     assert!(values.contains(&"agent_choice:auth:xai-oauth"));
     assert!(!values.iter().any(|value| value.contains("anthropic")));
 }

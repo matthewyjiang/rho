@@ -397,11 +397,11 @@ fn prompt_body_preview(draft: &AgentDefinition) -> String {
     }
 }
 
-fn agent_choice_picker(
-    field: AgentChoiceField,
-    draft: &AgentDefinition,
-    available_auths: &[String],
-) -> UiPicker {
+fn agent_choice_picker(field: AgentChoiceField, draft: &AgentDefinition) -> UiPicker {
+    debug_assert!(
+        !matches!(field, AgentChoiceField::Auth),
+        "use auth_choice_picker for auth"
+    );
     let prefix = field.choice_prefix();
     let (title, items) = match field {
         AgentChoiceField::PromptPolicy => {
@@ -456,58 +456,7 @@ fn agent_choice_picker(
             };
             ("model policy", choice_items(options, &current, prefix))
         }
-        AgentChoiceField::Auth => {
-            let current = draft.auth_text();
-            let provider = draft.provider_text();
-            let mut items = vec![PickerItem {
-                section: None,
-                label: "host".into(),
-                detail: Some(
-                    "Do not pin auth. Keep the conversation login when it fits the provider."
-                        .into(),
-                ),
-                preview: None,
-                badge: current.is_empty().then(|| badge("selected")),
-                value: format!("{prefix}host"),
-                selection_verb: None,
-            }];
-            let mut modes: Vec<(String, String)> = available_auths
-                .iter()
-                .filter_map(|auth| {
-                    let (_descriptor, mode) = rho_providers::provider::resolve_auth_mode(auth)?;
-                    if !provider.is_empty() {
-                        let fits = rho_providers::provider::resolve_profile(&provider, mode.id)
-                            .ok()
-                            .is_some_and(|profile| profile.auth_id() == mode.id);
-                        if !fits {
-                            return None;
-                        }
-                    }
-                    Some((mode.id.to_string(), mode.login_label.to_string()))
-                })
-                .collect();
-            // Keep a configured but unavailable auth visible so it can be cleared.
-            if !current.is_empty() && !modes.iter().any(|(id, _)| id == &current) {
-                let label = rho_providers::provider::resolve_auth_mode(&current)
-                    .map(|(_, mode)| mode.login_label.to_string())
-                    .unwrap_or_else(|| current.clone());
-                modes.push((current.clone(), format!("{label} (not available)")));
-            }
-            modes.sort_by(|left, right| left.1.cmp(&right.1));
-            items.extend(modes.into_iter().map(|(id, label)| {
-                let selected = id == current;
-                PickerItem {
-                    section: None,
-                    label,
-                    detail: Some(format!("Pin auth profile {id}.")),
-                    preview: None,
-                    badge: selected.then(|| badge("selected")),
-                    value: format!("{prefix}{id}"),
-                    selection_verb: None,
-                }
-            }));
-            ("auth", items)
-        }
+        AgentChoiceField::Auth => unreachable!("use auth_choice_picker"),
         AgentChoiceField::Reasoning => {
             let is_claude = draft.runtime.runtime() == AgentRuntime::ClaudeCli;
             let current = draft.reasoning();
@@ -563,6 +512,57 @@ fn agent_choice_picker(
     UiPicker::new(title, items, PickerAction::EditAgent).with_confirm_verb("set")
 }
 
+fn auth_choice_picker(draft: &AgentDefinition, available_auths: &[String]) -> UiPicker {
+    let prefix = AgentChoiceField::Auth.choice_prefix();
+    let current = draft.auth_text();
+    let provider = draft.provider_text();
+    let mut items = vec![PickerItem {
+        section: None,
+        label: "host".into(),
+        detail: Some(
+            "Do not pin auth. Keep the conversation login when it fits the provider.".into(),
+        ),
+        preview: None,
+        badge: current.is_empty().then(|| badge("selected")),
+        // Empty id means unset pin (display label remains "host").
+        value: prefix.to_string(),
+        selection_verb: None,
+    }];
+    let mut modes: Vec<(String, String)> = available_auths
+        .iter()
+        .filter_map(|auth| {
+            let (_descriptor, mode) = rho_providers::provider::resolve_auth_mode(auth)?;
+            if !provider.is_empty()
+                && !rho_providers::provider::provider_accepts_auth(&provider, mode.id)
+            {
+                return None;
+            }
+            Some((mode.id.to_string(), mode.login_label.to_string()))
+        })
+        .collect();
+    // Keep a configured but unavailable auth visible so it can be cleared.
+    if !current.is_empty() && !modes.iter().any(|(id, _)| id == &current) {
+        let label = rho_providers::provider::resolve_auth_mode(&current)
+            .map(|(_, mode)| mode.login_label.to_string())
+            .unwrap_or_else(|| current.clone());
+        modes.push((current.clone(), format!("{label} (not available)")));
+    }
+    modes.sort_by(|left, right| left.1.cmp(&right.1));
+    items.extend(modes.into_iter().map(|(id, label)| {
+        let selected = id == current;
+        PickerItem {
+            section: None,
+            label,
+            detail: Some(format!("Pin auth profile {id}.")),
+            preview: None,
+            badge: selected.then(|| badge("selected")),
+            value: format!("{prefix}{id}"),
+            selection_verb: None,
+        }
+    }));
+    UiPicker::new("auth", items, PickerAction::EditAgent).with_confirm_verb("set")
+}
+
 fn choice_items(options: &[(&str, &str)], current: &str, value_prefix: &str) -> Vec<PickerItem> {
     options
         .iter()
@@ -613,11 +613,8 @@ const CLAUDE_EFFORT_LEVELS: &[ReasoningLevel] = &[
 
 fn draft_model_reasoning_capabilities(draft: &AgentDefinition) -> ReasoningCapabilities {
     let model_policy = draft.model_policy();
-    let selection = match model_policy.as_ref() {
-        ModelPolicy::Prefer(selection)
-        | ModelPolicy::Require(selection)
-        | ModelPolicy::Select(selection) => selection,
-        ModelPolicy::Inherit => return ReasoningCapabilities::Unknown,
+    let Some(selection) = model_policy.selection() else {
+        return ReasoningCapabilities::Unknown;
     };
     if selection.model.is_empty() {
         return ReasoningCapabilities::Unknown;

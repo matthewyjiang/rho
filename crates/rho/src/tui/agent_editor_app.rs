@@ -184,10 +184,12 @@ impl App {
         if let Some(session) = &mut self.agent_editor_session {
             session.set_phase(AgentEditPhase::Choosing(field));
         }
-        if matches!(field, AgentChoiceField::Auth) {
+        let picker = if matches!(field, AgentChoiceField::Auth) {
             self.refresh_available_auths();
-        }
-        let picker = agent_choice_picker(field, draft, &self.available_auths);
+            auth_choice_picker(draft, &self.available_auths)
+        } else {
+            agent_choice_picker(field, draft)
+        };
         self.open_child_picker(picker);
         self.set_status(match field {
             AgentChoiceField::PromptPolicy => "prompt policy",
@@ -217,7 +219,7 @@ impl App {
                         AgentChoiceField::PromptPolicy => draft.set_prompt_policy_kind(rest),
                         AgentChoiceField::ModelPolicy => draft.set_model_policy_kind(rest),
                         AgentChoiceField::Auth => {
-                            if rest == "host" {
+                            if rest.is_empty() {
                                 draft.set_auth_selection(None)
                             } else {
                                 draft.set_auth_selection(Some(rest.to_string()))
@@ -259,12 +261,16 @@ impl App {
         let current_auth = self.info.runtime.auth.clone();
         match self.resolve_model_selection(value, current_provider, &current_auth) {
             Ok(resolved) => {
-                let selection = &resolved.selection;
-                draft.set_model_selection(
-                    Some(selection.provider.clone()),
-                    Some(selection.model.clone()),
-                    Some(selection.auth.clone()),
-                );
+                let catalog = &resolved.selection;
+                let mut selection = current;
+                selection.provider = Some(catalog.provider.clone());
+                selection.model = catalog.model.clone();
+                // Model picker resolves runtime auth; only keep an existing agent
+                // pin when it still belongs on the chosen provider.
+                selection.auth = selection.auth.filter(|auth| {
+                    rho_providers::provider::provider_accepts_auth(&catalog.provider, auth)
+                });
+                draft.set_model_selection(Some(selection));
             }
             Err(err) => {
                 self.insert_entry(&Entry::Error(err.to_string()));

@@ -504,7 +504,9 @@ fn apply_bound_provider_auth(
     provider: Option<&str>,
     auth: Option<&str>,
 ) -> anyhow::Result<()> {
-    use rho_providers::provider::{resolve_auth_mode, resolve_profile, resolve_provider_reference};
+    use rho_providers::provider::{
+        resolve_auth_mode, resolve_profile_exact, resolve_provider_reference,
+    };
 
     match (provider, auth) {
         (None, None) => Ok(()),
@@ -517,14 +519,12 @@ fn apply_bound_provider_auth(
             Ok(())
         }
         (Some(provider), None) => {
-            // Keep host auth when resolve_profile preserves it for this provider.
+            // Keep host auth when it is a valid mode for this provider.
             if let Some((_, host_mode)) = resolve_auth_mode(&config.auth) {
-                if let Ok(profile) = resolve_profile(provider, host_mode.id) {
-                    if profile.auth_id() == host_mode.id {
-                        config.provider = profile.provider_name().to_string();
-                        config.auth = profile.auth_id().to_string();
-                        return Ok(());
-                    }
+                if let Ok(profile) = resolve_profile_exact(provider, host_mode.id) {
+                    config.provider = profile.provider_name().to_string();
+                    config.auth = profile.auth_id().to_string();
+                    return Ok(());
                 }
             }
             let profile = resolve_provider_reference(provider)
@@ -534,16 +534,8 @@ fn apply_bound_provider_auth(
             Ok(())
         }
         (Some(provider), Some(auth)) => {
-            let (_, mode) = resolve_auth_mode(auth).ok_or_else(|| {
-                anyhow::anyhow!("agent '{agent_id}': unknown auth profile '{auth}'")
-            })?;
-            let profile = resolve_profile(provider, auth)
+            let profile = resolve_profile_exact(provider, auth)
                 .map_err(|error| bind_profile_error(agent_id, provider, Some(auth), error))?;
-            if profile.auth_id() != mode.id {
-                anyhow::bail!(
-                    "agent '{agent_id}': auth '{auth}' is not valid for provider '{provider}'"
-                );
-            }
             config.provider = profile.provider_name().to_string();
             config.auth = profile.auth_id().to_string();
             Ok(())

@@ -193,6 +193,28 @@ pub enum ModelPolicy {
     Select(ModelSelection),
 }
 
+impl ModelPolicy {
+    /// Embedded selection for prefer/require/select policies.
+    pub fn selection(&self) -> Option<&ModelSelection> {
+        match self {
+            Self::Prefer(selection) | Self::Require(selection) | Self::Select(selection) => {
+                Some(selection)
+            }
+            Self::Inherit => None,
+        }
+    }
+
+    /// Maps the embedded selection. Returns `None` for [`Self::Inherit`].
+    pub fn map_selection(self, f: impl FnOnce(ModelSelection) -> ModelSelection) -> Option<Self> {
+        match self {
+            Self::Prefer(selection) => Some(Self::Prefer(f(selection))),
+            Self::Require(selection) => Some(Self::Require(f(selection))),
+            Self::Select(selection) => Some(Self::Select(f(selection))),
+            Self::Inherit => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolPolicy {
     All,
