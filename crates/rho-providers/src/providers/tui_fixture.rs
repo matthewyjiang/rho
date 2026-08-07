@@ -7,6 +7,7 @@ use std::{
 };
 
 mod advisor;
+mod docs_demo;
 mod edit;
 
 use rho_sdk::{
@@ -91,6 +92,9 @@ async fn fixture_stream(
     events: ProviderEventSender,
 ) -> Result<ModelResponse, ProviderError> {
     let prompt = last_user_text(&request).unwrap_or_default();
+    if let Some(response) = docs_demo::intercept(&prompt, &request, &events).await {
+        return response;
+    }
     if is_goal_retry_prompt(&prompt) {
         if GOAL_RETRY_ATTEMPTS.fetch_add(1, Ordering::SeqCst) == 0 {
             return Err(ProviderError::new(

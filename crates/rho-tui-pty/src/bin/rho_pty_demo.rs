@@ -24,15 +24,30 @@ use rho_tui_pty::{
 };
 
 /// Default terminal size for the docs proof plate.
-/// Tall enough to keep the session header with both tool cards in frame.
+/// Tall enough to keep header, tool cards, and the final answer in frame.
 const DEMO_SIZE: PtySize = PtySize {
-    rows: 34,
+    rows: 40,
     cols: 100,
 };
 
+const DEMO_MODEL: &str = "gpt-5.6-sol";
+const DEMO_PROMPT: &str = "Add request IDs to API logs and update the tests.";
+
 const STARTUP: WaitTimeout = WaitTimeout::secs(20, "startup");
-const STREAM: WaitTimeout = WaitTimeout::secs(20, "stream response");
+const STREAM: WaitTimeout = WaitTimeout::secs(30, "stream response");
 const SETTLE: WaitTimeout = WaitTimeout::secs(10, "ui settle");
+
+const DEMO_CONFIG: &str = r#"provider = "openai"
+model = "gpt-5.6-sol"
+auth = "api-key"
+check_for_updates = false
+web_search_provider = "disabled"
+
+[behavior]
+# Keep matrix runs on the isolated file store so /login never prompts and
+# never touches the developer OS keyring.
+credential_store = "file"
+"#;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -48,7 +63,7 @@ struct Args {
     #[arg(long = "output", required = true)]
     outputs: Vec<PathBuf>,
 
-    /// Compare against the first output path and exit non-zero on drift.
+    /// Compare against existing outputs and exit non-zero on drift.
     #[arg(long)]
     check: bool,
 
@@ -141,49 +156,84 @@ fn capture_demo(binary: &Path) -> Result<DemoCapture> {
     let workspace = home.home.join("rho");
     fs::create_dir_all(&workspace)
         .with_context(|| format!("failed to create demo workspace {}", workspace.display()))?;
+    // Demo-only model label for the statusline; leave shared PTY defaults alone.
+    fs::write(&home.config_path, DEMO_CONFIG)
+        .with_context(|| format!("failed to write demo config {}", home.config_path.display()))?;
 
     let mut plan = RhoLaunchPlan::matrix(binary, &home, DEMO_SIZE);
     plan.cwd = workspace;
+    // Set the model in config only. A CLI `--model` flag forces a credentialed
+    // catalog refresh and exits before matrix fixture mode can attach.
 
     let mut harness = PtyHarness::spawn_named(&plan, "docs_ui_demo")?;
     harness.set_phase("startup");
     harness.wait_for_text("rho", STARTUP)?;
-    harness.wait_for_text("gpt-5.5", STARTUP)?;
+    harness.wait_for_text(DEMO_MODEL, STARTUP)?;
 
-    // Two real matrix turns: write tool card, then edit diff card. Avoid fixtures
-    // that emit wall-clock "Thought for …" labels so the SVG stays load-stable.
-    harness.set_phase("fixture_tool");
-    harness.submit_text("fixture tool")?;
-    harness.wait_for_text("tool lifecycle complete with one result", STREAM)?;
-    harness.wait_for_quiet(Duration::from_millis(200), SETTLE)?;
-
-    harness.set_phase("fixture_edit");
-    harness.submit_text("fixture edit")?;
-    harness.wait_for_text("edit lifecycle complete with one result", STREAM)?;
-    harness.wait_for_quiet(Duration::from_millis(250), SETTLE)?;
+    // One natural user turn drives read -> edit -> bash -> final answer.
+    harness.set_phase("docs_demo_turn");
+    harness.submit_text(DEMO_PROMPT)?;
+    harness.wait_for_text(
+        "Focused tests cover both generated and forwarded IDs.",
+        STREAM,
+    )?;
+    harness.wait_for_quiet(Duration::from_millis(300), SETTLE)?;
 
     let screen = harness.screen();
-    if !screen.contains_text("write(") {
-        bail!("demo frame missing write card:\n{}", screen.debug_dump());
+    for needle in [
+        DEMO_PROMPT,
+        "read_file(",
+        "edit(",
+        "check-request-id.sh",
+        "request_id",
+        DEMO_MODEL,
+        "~/rho",
+    ] {
+        if !screen.contains_text(needle) {
+            bail!("demo frame missing {needle:?}:\n{}", screen.debug_dump());
+        }
     }
-    if !screen.contains_text("edit(") {
-        bail!("demo frame missing edit card:\n{}", screen.debug_dump());
-    }
-    if !screen.contains_text("~/rho") {
+    if screen.contains_text("fixture ") {
         bail!(
-            "demo frame missing stable cwd marker ~/rho:\n{}",
+            "demo frame still shows fixture-test wording:\n{}",
             screen.debug_dump()
         );
     }
 
     let options = SvgOptions {
-        description: "Rho interactive TUI captured from the deterministic PTY harness after fixture tool and edit turns.".into(),
+        description: "Rho interactive TUI captured from the deterministic PTY harness after a request-ID middleware turn.".into(),
         ..SvgOptions::default()
     };
-    let svg = render_screen_svg(screen, &options);
+    let svg = stabilize_demo_svg(&render_screen_svg(screen, &options));
     let screen_text = screen.debug_dump();
 
     // Leave cleanly so the child does not linger under the generator.
     let _ = harness.quit_with_exit_command();
     Ok(DemoCapture { svg, screen_text })
+}
+
+/// Pin wall-clock tool durations so the SVG stays load-stable.
+fn stabilize_demo_svg(svg: &str) -> String {
+    let marker = "exit 0 · ";
+    let mut out = String::with_capacity(svg.len());
+    let mut rest = svg;
+    while let Some(idx) = rest.find(marker) {
+        out.push_str(&rest[..idx]);
+        out.push_str(marker);
+        out.push_str("0.1s");
+        rest = &rest[idx + marker.len()..];
+        if let Some(end) = rest.find('s') {
+            let token = &rest[..=end];
+            if token
+                .chars()
+                .all(|ch| ch.is_ascii_digit() || ch == '.' || ch == 's')
+            {
+                rest = &rest[end + 1..];
+                continue;
+            }
+        }
+        break;
+    }
+    out.push_str(rest);
+    out
 }

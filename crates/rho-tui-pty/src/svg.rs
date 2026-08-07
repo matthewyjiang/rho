@@ -62,8 +62,10 @@ impl Default for SvgOptions {
             cell_height: 20.0,
             font_size: 16.0,
             padding: 24.0,
-            outer_radius: 18.0,
-            inner_radius: 12.0,
+            // Square well matches the docs "hard ink border" proof plate and keeps
+            // full-width cell backgrounds from fighting rounded corner clipping.
+            outer_radius: 0.0,
+            inner_radius: 0.0,
             default_fg: DEFAULT_FG,
             default_bg: DEFAULT_BG,
             frame_bg: FRAME_BG,

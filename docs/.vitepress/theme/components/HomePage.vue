@@ -84,8 +84,8 @@ const paths = [
               class="rho-home__proof-img"
               :src="withBase('/assets/rho-ui-demo.svg')"
               width="1008"
-              height="728"
-              alt="Rho terminal UI showing write and edit tool cards from a live PTY capture"
+              height="848"
+              alt="Rho terminal UI showing a request-ID middleware edit with read, edit, and test tool cards"
             />
           </a>
           <figcaption class="rho-home__proof-cap">
