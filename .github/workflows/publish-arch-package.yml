@@ -19,6 +19,10 @@ on:
       artifact-name:
         description: Exact artifact name uploaded by the build job
         value: ${{ jobs.build.outputs.artifact-name }}
+    secrets:
+      MJIANG_EXTRAS_PUSH_TOKEN:
+        description: Token with push access to matthewyjiang/mjiang-extras
+        required: false
   workflow_dispatch:
     inputs:
       app-tag:
@@ -32,7 +36,6 @@ on:
         default: true
 
 permissions:
-  actions: write
   contents: read
 
 jobs:
@@ -85,7 +88,6 @@ jobs:
           name: ${{ steps.artifact.outputs.name }}
           path: ./*.pkg.tar.zst
           if-no-files-found: error
-          retention-days: 7
 
   publish:
     needs: build
@@ -93,6 +95,16 @@ jobs:
     runs-on: ubuntu-latest
     container: archlinux:latest
     steps:
+      - name: Require extras push token
+        env:
+          TOKEN: ${{ secrets.MJIANG_EXTRAS_PUSH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${TOKEN}" ]]; then
+            echo "MJIANG_EXTRAS_PUSH_TOKEN is required when publish=true" >&2
+            exit 1
+          fi
+
       - name: Install publish tools
         run: |
           pacman -Sy --noconfirm base-devel git pacman-contrib
