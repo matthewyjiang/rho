@@ -1,41 +1,138 @@
 name: publish-arch-package
 
+# Build is safe as soon as the app tag exists. Public push to mjiang-extras is a
+# separate job gated by the publish input so release-please can start makepkg
+# beside binaries and only open the pacman channel after crates.io succeeds.
 on:
-  push:
-    tags:
-      - "rho-coding-agent-v*"
+  workflow_call:
+    inputs:
+      app-tag:
+        description: rho-coding-agent tag to package
+        required: true
+        type: string
+      publish:
+        description: Push the built package to mjiang-extras
+        required: false
+        type: boolean
+        default: false
+    outputs:
+      artifact-name:
+        description: Exact artifact name uploaded by the build job
+        value: ${{ jobs.build.outputs.artifact-name }}
+    secrets:
+      MJIANG_EXTRAS_PUSH_TOKEN:
+        description: Token with push access to matthewyjiang/mjiang-extras
+        required: false
   workflow_dispatch:
+    inputs:
+      app-tag:
+        description: rho-coding-agent tag to package
+        required: true
+        type: string
+      publish:
+        description: Push the built package to mjiang-extras
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
 jobs:
-  build-and-publish:
+  build:
     runs-on: ubuntu-latest
+    # Arch is rolling; pin would freeze a stale base while pacman -Sy still
+    # pulls current packages and eventually breaks keyrings/mirrors.
     container: archlinux:latest
-
+    permissions:
+      actions: write
+      contents: read
+    outputs:
+      artifact-name: ${{ steps.artifact.outputs.name }}
     steps:
       - name: Install build tools
         run: |
           pacman -Sy --noconfirm base-devel git pacman-contrib rust sqlite
 
-      - name: Checkout package repo
+      - name: Validate app tag
+        id: artifact
+        env:
+          APP_TAG: ${{ inputs.app-tag }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$APP_TAG" =~ ^rho-coding-agent-v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+            echo "app-tag must be rho-coding-agent-vMAJOR.MINOR.PATCH with optional prerelease, got: $APP_TAG" >&2
+            exit 1
+          fi
+          # Artifact names may contain dots and hyphens; keep the tag verbatim.
+          echo "name=arch-package-${APP_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout release tag
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.app-tag }}
+          persist-credentials: false
 
       - name: Build package
+        env:
+          APP_TAG: ${{ inputs.app-tag }}
         run: |
           set -euo pipefail
 
-          if [[ "$GITHUB_REF_NAME" == rho-coding-agent-v* ]]; then
-            version="${GITHUB_REF_NAME#rho-coding-agent-v}"
-            sed -i "s/^pkgver=.*/pkgver=$version # x-release-please-version/" PKGBUILD
-          fi
+          version="${APP_TAG#rho-coding-agent-v}"
+          sed -i "s/^pkgver=.*/pkgver=$version # x-release-please-version/" PKGBUILD
 
           useradd --create-home builder
           chown -R builder:builder "$GITHUB_WORKSPACE"
           # CI already ran the full test suite. Skip makepkg check() so packaging
           # does not recompile the workspace under the test profile.
           runuser -u builder -- bash -lc "cd '$GITHUB_WORKSPACE' && makepkg -s --noconfirm --nocheck"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: ./*.pkg.tar.zst
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: ${{ inputs.publish }}
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Require extras push token
+        env:
+          TOKEN: ${{ secrets.MJIANG_EXTRAS_PUSH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${TOKEN}" ]]; then
+            echo "MJIANG_EXTRAS_PUSH_TOKEN is required when publish=true" >&2
+            exit 1
+          fi
+
+      - name: Install publish tools
+        run: |
+          pacman -Sy --noconfirm base-devel git pacman-contrib
+
+      - name: Checkout publish helper
+        uses: actions/checkout@v4
+        with:
+          # Use the workflow revision, not the package tag, so recovery keeps the
+          # latest publish helper even when packaging an older tag.
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/publish_arch_to_extras.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Download package artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact-name }}
+          path: packages
 
       - name: Checkout mjiang-extras
         uses: actions/checkout@v4
@@ -45,15 +142,17 @@ jobs:
           path: mjiang-extras
 
       - name: Publish package files
+        env:
+          SOURCE_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-
-          chmod +x mjiang-extras/scripts/publish-packages.sh
-          mjiang-extras/scripts/publish-packages.sh --repo-dir mjiang-extras ./*.pkg.tar.zst
-
-          cd mjiang-extras
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add x86_64/
-          git commit -m "Update packages from ${{ github.repository }}" || exit 0
-          git push
+          chmod +x scripts/publish_arch_to_extras.sh
+          mapfile -t packages < <(find packages -maxdepth 1 -type f -name '*.pkg.tar.zst' | sort)
+          if [[ ${#packages[@]} -eq 0 ]]; then
+            echo "No Arch packages found in the artifact" >&2
+            exit 1
+          fi
+          ./scripts/publish_arch_to_extras.sh \
+            --extras-dir mjiang-extras \
+            --source-repo "$SOURCE_REPO" \
+            "${packages[@]}"
