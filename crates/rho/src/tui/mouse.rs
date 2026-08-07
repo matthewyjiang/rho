@@ -38,6 +38,9 @@ impl App {
         let now = Instant::now();
         match kind {
             MouseEventKind::ScrollUp => {
+                if self.scroll_picker_on_wheel(-1, column, row, size.width, size.height) {
+                    return Ok(());
+                }
                 self.screen_selection = None;
                 self.history.set_hovered_code_block_copy(None);
                 self.subagent_panel.clear_pointer_state();
@@ -51,6 +54,9 @@ impl App {
                 );
             }
             MouseEventKind::ScrollDown => {
+                if self.scroll_picker_on_wheel(1, column, row, size.width, size.height) {
+                    return Ok(());
+                }
                 self.screen_selection = None;
                 self.history.set_hovered_code_block_copy(None);
                 self.subagent_panel.clear_pointer_state();

@@ -64,6 +64,8 @@ pub(super) struct UiPicker {
     pub(super) badge_placement: PickerBadgePlacement,
     /// Top visible detail line for overlay pickers.
     pub(super) detail_scroll: usize,
+    /// Pane that keyboard scrolling targets in overlay pickers.
+    pub(super) overlay_focus: OverlayFocus,
     pub(super) confirm_verb: Option<String>,
     /// When set, overrides [`PickerAction::uses_regex_filter`] for this picker.
     pub(super) force_fuzzy_filter: bool,
@@ -105,6 +107,17 @@ pub(super) enum PickerBadgeTone {
 pub(super) enum PickerBadgePlacement {
     #[default]
     Navigation,
+    Detail,
+}
+
+/// Which overlay pane keyboard scrolling acts on.
+///
+/// Only meaningful while an overlay picker shows a detail pane; nav-only
+/// overlays and list pickers always scroll the nav list.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum OverlayFocus {
+    #[default]
+    Nav,
     Detail,
 }
 
@@ -217,6 +230,7 @@ impl UiPicker {
             layout: PickerLayout::List,
             badge_placement: PickerBadgePlacement::Navigation,
             detail_scroll: 0,
+            overlay_focus: OverlayFocus::default(),
             confirm_verb: None,
             force_fuzzy_filter: false,
             overlay_chrome: None,
@@ -269,6 +283,15 @@ impl UiPicker {
 
     pub(super) fn has_scrollable_detail(&self) -> bool {
         self.is_overlay() && self.has_item_details()
+    }
+
+    pub(super) fn focus_overlay_pane(&mut self, focus: OverlayFocus) {
+        self.overlay_focus = focus;
+    }
+
+    /// Whether keyboard scrolling currently targets the detail pane.
+    pub(super) fn detail_pane_focused(&self) -> bool {
+        self.has_scrollable_detail() && self.overlay_focus == OverlayFocus::Detail
     }
 
     /// Content hints the overlay uses to size its outer box.

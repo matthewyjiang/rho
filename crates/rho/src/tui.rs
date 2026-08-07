@@ -180,8 +180,8 @@ use login::PendingInteractiveLogin;
 use login::SecretInput;
 use paste_burst::PasteBurstEnter;
 use picker::{
-    sort_items_by_ascii_label, PickerAction, PickerBadge, PickerBadgePlacement, PickerBadgeTone,
-    PickerItem, PickerKeyHints, PickerLayout, UiPicker,
+    sort_items_by_ascii_label, OverlayFocus, PickerAction, PickerBadge, PickerBadgePlacement,
+    PickerBadgeTone, PickerItem, PickerKeyHints, PickerLayout, UiPicker,
 };
 use prompt_turn::FailedTurn;
 #[cfg(test)]

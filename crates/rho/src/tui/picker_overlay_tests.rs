@@ -230,3 +230,51 @@ fn overlay_height_follows_item_count() {
     assert_eq!(large.outer.height, 34);
     assert!(large.outer.y > area.y);
 }
+
+// Covers: wheel routing must hit the pane under the pointer for both
+// orientations and ignore chrome rows, or the wrong pane scrolls.
+// Owner: tui picker_overlay geometry
+#[test]
+fn pane_at_maps_positions_to_panes() {
+    let area = Rect::new(0, 0, 120, 40);
+    let sizing = OverlaySizing {
+        has_details: true,
+        nav_rows: 30,
+    };
+    let side_by_side = picker_overlay_layout(area, sizing);
+    let outer = side_by_side.outer;
+    let OverlayPanes::NavAndDetail { nav_width, .. } = side_by_side.panes else {
+        panic!("expected nav+detail");
+    };
+    let body_row = outer.y + 4;
+    assert_eq!(
+        side_by_side.pane_at(outer.x + 2, body_row),
+        Some(OverlayPane::Nav)
+    );
+    assert_eq!(
+        side_by_side.pane_at(outer.x + 2 + nav_width as u16 + 3, body_row),
+        Some(OverlayPane::Detail)
+    );
+    // Chrome rows (title, filter) and space outside the overlay hit nothing.
+    assert_eq!(side_by_side.pane_at(outer.x + 2, outer.y + 1), None);
+    assert_eq!(side_by_side.pane_at(0, 0), None);
+
+    // Narrow terminals stack detail above nav.
+    let stacked = picker_overlay_layout(Rect::new(0, 0, 40, 40), sizing);
+    let outer = stacked.outer;
+    let OverlayPanes::NavAndDetail {
+        detail_viewport_rows,
+        ..
+    } = stacked.panes
+    else {
+        panic!("expected nav+detail");
+    };
+    assert_eq!(
+        stacked.pane_at(outer.x + 2, outer.y + 4),
+        Some(OverlayPane::Detail)
+    );
+    assert_eq!(
+        stacked.pane_at(outer.x + 2, outer.y + 4 + detail_viewport_rows as u16 + 1),
+        Some(OverlayPane::Nav)
+    );
+}

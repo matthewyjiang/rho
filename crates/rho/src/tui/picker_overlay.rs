@@ -81,21 +81,58 @@ impl OverlayLayout {
         }
     }
 
-    pub(super) fn page_target(self) -> OverlayPageTarget {
+    pub(super) fn scroll_targets(self) -> OverlayScrollTargets {
+        OverlayScrollTargets {
+            nav_rows: self.nav_viewport_rows().max(1),
+            detail: self.detail_viewport(),
+        }
+    }
+
+    /// Overlay pane under a screen position, for wheel routing. `None` when
+    /// the position sits outside the body rows (chrome, or off the overlay).
+    pub(super) fn pane_at(self, column: u16, row: u16) -> Option<OverlayPane> {
+        let outer = self.outer;
+        if !outer.contains(Position { x: column, y: row }) {
+            return None;
+        }
+        // Rows above the body: border, filter, rule, pane header.
+        let body_top = outer.y.saturating_add(4);
+        let body_bottom = body_top.saturating_add(self.body_rows.min(u16::MAX as usize) as u16);
+        if row < body_top || row >= body_bottom {
+            return None;
+        }
         match self.panes {
-            OverlayPanes::NavOnly {
-                nav_viewport_rows, ..
-            } => OverlayPageTarget::Nav {
-                rows: nav_viewport_rows.max(1),
-            },
+            OverlayPanes::NavOnly { .. } => Some(OverlayPane::Nav),
             OverlayPanes::NavAndDetail {
-                detail_width,
+                orientation: OverlayOrientation::SideBySide,
+                nav_width,
+                ..
+            } => {
+                // Left border plus nav pane plus the separator's leading half.
+                let nav_end = outer
+                    .x
+                    .saturating_add(1)
+                    .saturating_add(nav_width.min(u16::MAX as usize) as u16)
+                    .saturating_add(1);
+                Some(if column < nav_end {
+                    OverlayPane::Nav
+                } else {
+                    OverlayPane::Detail
+                })
+            }
+            OverlayPanes::NavAndDetail {
+                orientation: OverlayOrientation::Stacked,
                 detail_viewport_rows,
                 ..
-            } => OverlayPageTarget::Detail(DetailViewport {
-                width: detail_width,
-                rows: detail_viewport_rows,
-            }),
+            } => {
+                let detail_bottom =
+                    body_top.saturating_add(detail_viewport_rows.min(u16::MAX as usize) as u16);
+                Some(if row < detail_bottom {
+                    OverlayPane::Detail
+                } else {
+                    OverlayPane::Nav
+                })
+            }
         }
     }
 
@@ -118,11 +155,19 @@ impl OverlayLayout {
     }
 }
 
-/// Where Page/Home/End keys act for an open overlay.
+/// Scroll geometry for an open overlay: nav viewport rows plus the detail
+/// viewport when a detail pane exists.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum OverlayPageTarget {
-    Detail(DetailViewport),
-    Nav { rows: usize },
+pub(super) struct OverlayScrollTargets {
+    pub(super) nav_rows: usize,
+    pub(super) detail: Option<DetailViewport>,
+}
+
+/// One of the two overlay panes, for focus and wheel routing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum OverlayPane {
+    Nav,
+    Detail,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -155,6 +200,7 @@ struct OverlayContent<'a> {
     detail: &'a [String],
     detail_badge: Option<&'a PickerBadge>,
     show_nav_badges: bool,
+    detail_focused: bool,
     detail_scroll: usize,
     footer: &'a str,
     empty_match_message: &'a str,
@@ -210,6 +256,7 @@ pub(super) fn render_picker_overlay(picker: &UiPicker, area: Rect) -> OverlayFra
         detail,
         detail_badge: picker.selected_detail_badge(),
         show_nav_badges: picker.badge_placement == PickerBadgePlacement::Navigation,
+        detail_focused: picker.detail_pane_focused(),
         detail_scroll: picker.detail_scroll,
         footer: &footer,
         empty_match_message,
@@ -383,7 +430,7 @@ fn overlay_lines(layout: OverlayLayout, content: OverlayContent<'_>) -> Vec<Line
     ));
     lines.push(content_row(
         layout.inner_width,
-        pane_header_line(layout, &content.chrome),
+        pane_header_line(layout, &content.chrome, content.detail_focused),
     ));
 
     let body_sections = match layout.panes {
@@ -652,12 +699,22 @@ fn footer_line(layout: OverlayLayout, content: &OverlayContent<'_>) -> Line<'sta
             content.match_count
         )
     };
+    let pane_hint = match layout.panes {
+        OverlayPanes::NavOnly { .. } => None,
+        OverlayPanes::NavAndDetail { .. } => Some("←/→ pane"),
+    };
     let essential = [
         content.chrome.nav_keys_hint,
+        pane_hint.unwrap_or_default(),
         "PgUp/PgDn",
         content.footer,
         position.as_str(),
     ];
+    let essential = essential
+        .iter()
+        .copied()
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
     let detail = match layout.panes {
         OverlayPanes::NavOnly { .. } => None,
         OverlayPanes::NavAndDetail {
@@ -780,7 +837,11 @@ fn join_footer_segments<'a>(segments: impl IntoIterator<Item = &'a str>) -> Stri
     format!(" {}", super::composer_chrome::join_footer_parts(segments))
 }
 
-fn pane_header_line(layout: OverlayLayout, chrome: &OverlayChromeView<'_>) -> Line<'static> {
+fn pane_header_line(
+    layout: OverlayLayout,
+    chrome: &OverlayChromeView<'_>,
+    detail_focused: bool,
+) -> Line<'static> {
     match layout.panes {
         OverlayPanes::NavAndDetail {
             orientation: OverlayOrientation::SideBySide,
@@ -788,12 +849,18 @@ fn pane_header_line(layout: OverlayLayout, chrome: &OverlayChromeView<'_>) -> Li
             detail_width,
             ..
         } => {
+            // The focused pane keeps the strong label so ←/→ has visible effect.
+            let (nav_style, detail_style) = if detail_focused {
+                (Theme::dim(), Theme::text_strong())
+            } else {
+                (Theme::text_strong(), Theme::dim())
+            };
             let left = pad_text(chrome.nav_label, nav_width);
             let right = pad_text(chrome.detail_label, detail_width);
             Line::from(vec![
-                Span::styled(left, Theme::text_strong()),
+                Span::styled(left, nav_style),
                 Span::styled(SEPARATOR, Theme::dim()),
-                Span::styled(right, Theme::text_strong()),
+                Span::styled(right, detail_style),
             ])
         }
         OverlayPanes::NavAndDetail {

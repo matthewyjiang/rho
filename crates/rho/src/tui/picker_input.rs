@@ -2,9 +2,12 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{layout::Rect, DefaultTerminal};
 
 use super::{
-    picker_overlay::{picker_overlay_layout, OverlayPageTarget},
-    App, InteractiveRuntime, UiPicker,
+    picker_overlay::{picker_overlay_layout, OverlayPane, OverlayScrollTargets},
+    App, ComposerMode, InteractiveRuntime, OverlayFocus, UiPicker,
 };
+
+/// Detail lines one wheel event scrolls, matching history wheel speed.
+const DETAIL_WHEEL_LINES: isize = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PickerKeyEffect {
@@ -16,7 +19,10 @@ enum PickerKeyEffect {
     DeleteRow,
 }
 
-fn overlay_page_target(picker: &UiPicker, terminal: &DefaultTerminal) -> Option<OverlayPageTarget> {
+fn overlay_scroll_targets(
+    picker: &UiPicker,
+    terminal: &DefaultTerminal,
+) -> Option<OverlayScrollTargets> {
     if !picker.is_overlay() {
         return None;
     }
@@ -26,76 +32,98 @@ fn overlay_page_target(picker: &UiPicker, terminal: &DefaultTerminal) -> Option<
             Rect::new(0, 0, size.width, size.height),
             picker.overlay_sizing(),
         )
-        .page_target(),
+        .scroll_targets(),
     )
 }
 
-fn apply_page_key(picker: &mut UiPicker, target: OverlayPageTarget, direction: isize) {
-    match target {
-        OverlayPageTarget::Detail(viewport) => {
-            picker.scroll_detail_page(direction, viewport);
-        }
-        OverlayPageTarget::Nav { rows } => {
-            picker.select_by_offset(direction.saturating_mul(rows as isize));
-        }
+/// Detail viewport when keyboard scrolling targets the detail pane.
+fn focused_detail_viewport(
+    picker: &UiPicker,
+    targets: Option<OverlayScrollTargets>,
+) -> Option<super::picker_overlay::DetailViewport> {
+    if !picker.detail_pane_focused() {
+        return None;
     }
+    targets.and_then(|targets| targets.detail)
 }
 
-fn apply_home_end_key(picker: &mut UiPicker, target: OverlayPageTarget, home: bool) {
-    match target {
-        OverlayPageTarget::Detail(viewport) => {
-            if home {
-                picker.scroll_detail_home();
-            } else {
-                picker.scroll_detail_end(viewport);
-            }
+fn apply_page_key(picker: &mut UiPicker, targets: Option<OverlayScrollTargets>, direction: isize) {
+    if let Some(viewport) = focused_detail_viewport(picker, targets) {
+        picker.scroll_detail_page(direction, viewport);
+        return;
+    }
+    let rows = targets.map_or(1, |targets| targets.nav_rows);
+    picker.select_by_offset(direction.saturating_mul(rows as isize));
+}
+
+fn apply_home_end_key(picker: &mut UiPicker, targets: Option<OverlayScrollTargets>, home: bool) {
+    if let Some(viewport) = focused_detail_viewport(picker, targets) {
+        if home {
+            picker.scroll_detail_home();
+        } else {
+            picker.scroll_detail_end(viewport);
         }
-        OverlayPageTarget::Nav { .. } => {
-            if home {
-                picker.select_first_match();
-            } else {
-                picker.select_last_match();
-            }
-        }
+        return;
+    }
+    if home {
+        picker.select_first_match();
+    } else {
+        picker.select_last_match();
     }
 }
 
 fn apply_picker_key(
     picker: &mut UiPicker,
     key: KeyEvent,
-    page_target: Option<OverlayPageTarget>,
+    targets: Option<OverlayScrollTargets>,
     space_confirms: bool,
 ) -> PickerKeyEffect {
     match (key.modifiers, key.code) {
         (KeyModifiers::NONE, KeyCode::Up) => {
-            picker.select_previous();
+            if let Some(viewport) = focused_detail_viewport(picker, targets) {
+                picker.scroll_detail_by(-1, viewport);
+            } else {
+                picker.select_previous();
+            }
             PickerKeyEffect::Handled
         }
         (KeyModifiers::NONE, KeyCode::Down) => {
-            picker.select_next();
+            if let Some(viewport) = focused_detail_viewport(picker, targets) {
+                picker.scroll_detail_by(1, viewport);
+            } else {
+                picker.select_next();
+            }
+            PickerKeyEffect::Handled
+        }
+        (KeyModifiers::NONE, KeyCode::Left) if picker.has_scrollable_detail() => {
+            picker.focus_overlay_pane(OverlayFocus::Nav);
+            PickerKeyEffect::Handled
+        }
+        (KeyModifiers::NONE, KeyCode::Right) if picker.has_scrollable_detail() => {
+            picker.focus_overlay_pane(OverlayFocus::Detail);
             PickerKeyEffect::Handled
         }
         (KeyModifiers::NONE, KeyCode::PageUp) => {
-            if let Some(target) = page_target {
-                apply_page_key(picker, target, -1);
+            if targets.is_some() {
+                apply_page_key(picker, targets, -1);
             }
             PickerKeyEffect::Handled
         }
         (KeyModifiers::NONE, KeyCode::PageDown) => {
-            if let Some(target) = page_target {
-                apply_page_key(picker, target, 1);
+            if targets.is_some() {
+                apply_page_key(picker, targets, 1);
             }
             PickerKeyEffect::Handled
         }
         (KeyModifiers::NONE, KeyCode::Home) => {
-            if let Some(target) = page_target {
-                apply_home_end_key(picker, target, /*home*/ true);
+            if targets.is_some() {
+                apply_home_end_key(picker, targets, /*home*/ true);
             }
             PickerKeyEffect::Handled
         }
         (KeyModifiers::NONE, KeyCode::End) => {
-            if let Some(target) = page_target {
-                apply_home_end_key(picker, target, /*home*/ false);
+            if targets.is_some() {
+                apply_home_end_key(picker, targets, /*home*/ false);
             }
             PickerKeyEffect::Handled
         }
@@ -127,6 +155,41 @@ fn apply_picker_key(
 }
 
 impl App {
+    /// Wheel scroll routed to an open picker. Returns true when a picker
+    /// consumed the event; open pickers swallow the wheel even outside their
+    /// box so the history behind a popup never scrolls by accident.
+    pub(super) fn scroll_picker_on_wheel(
+        &mut self,
+        delta: isize,
+        column: u16,
+        row: u16,
+        width: u16,
+        height: u16,
+    ) -> bool {
+        let ComposerMode::Picker(picker) = self.input_ui.composer_mut() else {
+            return false;
+        };
+        if !picker.is_overlay() {
+            picker.select_by_offset(delta);
+            return true;
+        }
+        let layout = picker_overlay_layout(Rect::new(0, 0, width, height), picker.overlay_sizing());
+        let fallback = if picker.detail_pane_focused() {
+            OverlayPane::Detail
+        } else {
+            OverlayPane::Nav
+        };
+        match layout.pane_at(column, row).unwrap_or(fallback) {
+            OverlayPane::Nav => picker.select_by_offset(delta),
+            OverlayPane::Detail => {
+                if let Some(viewport) = layout.detail_viewport() {
+                    picker.scroll_detail_by(delta.saturating_mul(DETAIL_WHEEL_LINES), viewport);
+                }
+            }
+        }
+        true
+    }
+
     pub(super) async fn handle_picker_key(
         &mut self,
         key: KeyEvent,
@@ -148,8 +211,8 @@ impl App {
             let super::ComposerMode::Picker(picker) = self.input_ui.composer_mut() else {
                 return Ok(false);
             };
-            let page_target = overlay_page_target(picker, terminal);
-            apply_picker_key(picker, key, page_target, space_confirms)
+            let targets = overlay_scroll_targets(picker, terminal);
+            apply_picker_key(picker, key, targets, space_confirms)
         };
 
         match effect {
@@ -208,8 +271,8 @@ impl App {
             let super::ComposerMode::Picker(picker) = self.input_ui.composer_mut() else {
                 return Ok(false);
             };
-            let page_target = overlay_page_target(picker, terminal);
-            apply_picker_key(picker, key, page_target, space_confirms)
+            let targets = overlay_scroll_targets(picker, terminal);
+            apply_picker_key(picker, key, targets, space_confirms)
         };
 
         match effect {
