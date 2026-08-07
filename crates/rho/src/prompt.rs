@@ -30,12 +30,26 @@ pub struct SystemPrompt {
     pub sources: Vec<PromptSource>,
 }
 
-pub fn system_prompt(tools: &[ToolSpec], cwd: &Path) -> SystemPrompt {
-    let home = crate::paths::home_dir();
-    system_prompt_with_home(tools, cwd, home.as_deref())
+#[cfg(test)]
+fn system_prompt_with_home(tools: &[ToolSpec], cwd: &Path, home: Option<&Path>) -> SystemPrompt {
+    system_prompt_with_home_and_plugin_skills(tools, cwd, home, None)
 }
 
-fn system_prompt_with_home(tools: &[ToolSpec], cwd: &Path, home: Option<&Path>) -> SystemPrompt {
+pub(crate) fn system_prompt_with_plugin_skills(
+    tools: &[ToolSpec],
+    cwd: &Path,
+    plugin_skills: Vec<skills::Skill>,
+) -> SystemPrompt {
+    let home = crate::paths::home_dir();
+    system_prompt_with_home_and_plugin_skills(tools, cwd, home.as_deref(), Some(plugin_skills))
+}
+
+fn system_prompt_with_home_and_plugin_skills(
+    tools: &[ToolSpec],
+    cwd: &Path,
+    home: Option<&Path>,
+    plugin_skills: Option<Vec<skills::Skill>>,
+) -> SystemPrompt {
     let mut text = BASE_SYSTEM_PROMPT.to_string();
     text.push_str(
         r#"
@@ -104,10 +118,13 @@ Do not delegate simple questions, routine codebase inspection, or small/local ch
     }
 
     let skills = if tools.iter().any(|tool| tool.name == "skill") {
-        skills::discover_with_home(cwd, home)
-            .into_iter()
-            .filter(|skill| !skill.disable_model_invocation)
-            .collect()
+        match plugin_skills {
+            Some(plugin_skills) => skills::discover_with_plugin_skills(cwd, home, plugin_skills),
+            None => skills::discover_with_home(cwd, home),
+        }
+        .into_iter()
+        .filter(|skill| !skill.disable_model_invocation)
+        .collect()
     } else {
         Vec::new()
     };

@@ -7,19 +7,18 @@ use crate::tools::mcp::report::McpToolReport;
 fn show_missing_identity_lists_known_servers() {
     let report = McpSessionReport {
         mode: McpLoadMode::Native,
-        servers: vec![McpServerReport {
-            identity: "filesystem".into(),
-            enabled: true,
-            transport: None,
-            status: McpServerStatus::Connected,
-            error: None,
-            tools: vec![McpToolReport {
+        servers: vec![McpServerReport::connected(
+            "filesystem",
+            McpTransportSummary::StreamableHttp {
+                url: "https://example.com/mcp".into(),
+            },
+            vec![McpToolReport {
                 remote_name: "read".into(),
                 exported_name: "mcp__filesystem__read".into(),
             }],
-            filtered_out_count: 0,
-            collision_skipped_count: 0,
-        }],
+            0,
+            0,
+        )],
     };
     // Behavior: unknown id fails closed; a known id succeeds.
     assert!(print_show(&report, "missing", false).is_err());

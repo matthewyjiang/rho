@@ -29,15 +29,54 @@ pub(super) fn picker(context: McpPickerContext<'_>) -> UiPicker {
 }
 
 fn mode_item(report: &McpSessionReport, config_path: &std::path::Path) -> PickerItem {
-    let presentation = report.picker_session_presentation(config_path);
+    use crate::tools::mcp::McpLoadMode;
+
+    let config = crate::paths::display(config_path);
+    let summary = report.summary();
+    let (status, healthy, detail) = if !summary.configured {
+        (
+            "not configured".into(),
+            true,
+            format!("No MCP servers in {config}. Add entries under [mcp.servers]."),
+        )
+    } else {
+        match summary.mode {
+            McpLoadMode::Native => (
+                format!("{} connected", summary.connected),
+                summary.problems == 0,
+                format!(
+                    "{} enabled, {} exported tool{}, {} problem{}. Config: {config}.",
+                    summary.enabled,
+                    summary.exported_tools,
+                    plural_suffix(summary.exported_tools),
+                    summary.problems,
+                    plural_suffix(summary.problems),
+                ),
+            ),
+            McpLoadMode::UnsupportedAgent => (
+                "unsupported agent".into(),
+                summary.enabled == 0 && summary.problems == 0,
+                format!(
+                    "Native MCP loads only for Rho agents. The active agent does not host MCP tools. Config: {config}."
+                ),
+            ),
+            McpLoadMode::ToolsDisabled => (
+                "tools disabled".into(),
+                true,
+                format!(
+                    "This session started with tools disabled, so MCP was not connected. Config: {config}."
+                ),
+            ),
+        }
+    };
     PickerItem {
         section: Some("STATUS".into()),
         label: "Session".into(),
-        detail: Some(presentation.detail),
+        detail: Some(detail),
         preview: None,
         badge: Some(PickerBadge {
-            text: presentation.status,
-            tone: if presentation.healthy {
+            text: status,
+            tone: if healthy {
                 PickerBadgeTone::Healthy
             } else {
                 PickerBadgeTone::Warning
@@ -48,6 +87,14 @@ fn mode_item(report: &McpSessionReport, config_path: &std::path::Path) -> Picker
     }
 }
 
+fn plural_suffix(count: usize) -> &'static str {
+    if count == 1 {
+        ""
+    } else {
+        "s"
+    }
+}
+
 fn server_item(server: &McpServerReport) -> PickerItem {
     PickerItem {
         section: Some("SERVERS".into()),
@@ -55,9 +102,9 @@ fn server_item(server: &McpServerReport) -> PickerItem {
         detail: Some(server.detail_text()),
         preview: None,
         badge: Some(PickerBadge {
-            text: server.status.as_str().into(),
-            tone: if server.status.is_healthy() {
-                if server.status == McpServerStatus::Connected {
+            text: server.status().as_str().into(),
+            tone: if server.status().is_healthy() {
+                if server.status() == McpServerStatus::Connected {
                     PickerBadgeTone::Healthy
                 } else {
                     PickerBadgeTone::Internal

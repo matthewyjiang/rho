@@ -17,6 +17,17 @@ impl McpConfig {
     pub(crate) fn is_empty(&self) -> bool {
         self.servers.is_empty()
     }
+
+    /// Merge source-scoped identities, preserving the existing `other`-wins
+    /// behavior. Native and plugin identities use disjoint namespaces.
+    pub(crate) fn merge(&mut self, other: Self) {
+        for (identity, server) in other.servers {
+            if self.servers.insert(identity.clone(), server).is_some() {
+                tracing::warn!(server = %identity, "MCP server definition replaced during merge");
+            }
+        }
+        self.invalid_servers.extend(other.invalid_servers);
+    }
 }
 
 impl<'de> Deserialize<'de> for McpConfig {
@@ -61,12 +72,25 @@ pub(crate) struct InvalidMcpServer {
     pub(crate) error: String,
 }
 
+/// Filesystem constraints attached to a package-provided MCP server.
+#[derive(Clone, Debug)]
+pub(crate) struct McpFilesystemPolicy {
+    /// Canonical directory that owns `directory_relative_to_root`.
+    pub(crate) directory_root: PathBuf,
+    /// Directory to create before launch, relative to `directory_root`.
+    pub(crate) directory_relative_to_root: PathBuf,
+    /// Filesystem roots that absolute commands and working directories may use.
+    pub(crate) allowed_roots: Vec<PathBuf>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct McpServerConfig {
     pub(crate) enabled: bool,
     pub(crate) tools: McpToolFilter,
     #[serde(flatten)]
     pub(crate) transport: McpTransport,
+    #[serde(skip)]
+    pub(crate) filesystem: Option<McpFilesystemPolicy>,
 }
 
 impl<'de> Deserialize<'de> for McpServerConfig {
@@ -75,76 +99,87 @@ impl<'de> Deserialize<'de> for McpServerConfig {
         D: Deserializer<'de>,
     {
         #[derive(Deserialize)]
-        #[serde(rename_all = "snake_case")]
-        enum TransportKind {
-            Stdio,
-            StreamableHttp,
+        #[serde(tag = "transport", rename_all = "snake_case", deny_unknown_fields)]
+        enum RawServer {
+            Stdio {
+                #[serde(default = "enabled_by_default")]
+                enabled: bool,
+                #[serde(default)]
+                tools: McpToolFilter,
+                command: String,
+                #[serde(default)]
+                args: Vec<String>,
+                cwd: Option<PathBuf>,
+                #[serde(default)]
+                env: BTreeMap<String, String>,
+                #[serde(default)]
+                env_from_env: BTreeMap<String, String>,
+            },
+            StreamableHttp {
+                #[serde(default = "enabled_by_default")]
+                enabled: bool,
+                #[serde(default)]
+                tools: McpToolFilter,
+                url: String,
+                #[serde(default)]
+                headers: BTreeMap<String, String>,
+                #[serde(default)]
+                headers_from_env: BTreeMap<String, String>,
+            },
         }
 
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct RawServer {
-            #[serde(default = "enabled_by_default")]
-            enabled: bool,
-            #[serde(default)]
-            tools: McpToolFilter,
-            transport: TransportKind,
-            command: Option<String>,
-            args: Option<Vec<String>>,
-            cwd: Option<PathBuf>,
-            env: Option<BTreeMap<String, String>>,
-            env_from_env: Option<BTreeMap<String, String>>,
-            url: Option<String>,
-            headers_from_env: Option<BTreeMap<String, String>>,
-        }
-
-        let raw = RawServer::deserialize(deserializer)?;
-        let transport = match raw.transport {
-            TransportKind::Stdio => {
-                if raw.url.is_some() || raw.headers_from_env.is_some() {
-                    return Err(serde::de::Error::custom(
-                        "stdio server cannot set HTTP fields",
-                    ));
-                }
-                let command = raw
-                    .command
-                    .ok_or_else(|| serde::de::Error::missing_field("command"))?;
+        let (enabled, tools, transport) = match RawServer::deserialize(deserializer)? {
+            RawServer::Stdio {
+                enabled,
+                tools,
+                command,
+                args,
+                cwd,
+                env,
+                env_from_env,
+            } => {
                 if command.trim().is_empty() {
                     return Err(serde::de::Error::custom("stdio command must not be empty"));
                 }
-                McpTransport::Stdio {
-                    command,
-                    args: raw.args.unwrap_or_default(),
-                    cwd: raw.cwd,
-                    env: raw.env.unwrap_or_default(),
-                    env_from_env: raw.env_from_env.unwrap_or_default(),
-                }
+                (
+                    enabled,
+                    tools,
+                    McpTransport::Stdio {
+                        command,
+                        args,
+                        cwd,
+                        env,
+                        env_from_env,
+                    },
+                )
             }
-            TransportKind::StreamableHttp => {
-                if raw.command.is_some()
-                    || raw.args.is_some()
-                    || raw.cwd.is_some()
-                    || raw.env.is_some()
-                    || raw.env_from_env.is_some()
-                {
-                    return Err(serde::de::Error::custom(
-                        "Streamable HTTP server cannot set stdio fields",
-                    ));
-                }
-                let url = raw
-                    .url
-                    .ok_or_else(|| serde::de::Error::missing_field("url"))?;
-                super::validate_remote_url(&url).map_err(serde::de::Error::custom)?;
-                McpTransport::StreamableHttp {
-                    url,
-                    headers_from_env: raw.headers_from_env.unwrap_or_default(),
-                }
+            RawServer::StreamableHttp {
+                enabled,
+                tools,
+                url,
+                headers,
+                headers_from_env,
+            } => {
+                super::parse_remote_url(&url).map_err(serde::de::Error::custom)?;
+                super::validate_literal_headers(&headers).map_err(serde::de::Error::custom)?;
+                super::validate_environment_header_names(&headers_from_env)
+                    .map_err(serde::de::Error::custom)?;
+                (
+                    enabled,
+                    tools,
+                    McpTransport::StreamableHttp {
+                        url,
+                        headers,
+                        headers_from_env,
+                    },
+                )
             }
         };
         Ok(Self {
-            enabled: raw.enabled,
-            tools: raw.tools,
+            enabled,
+            tools,
             transport,
+            filesystem: None,
         })
     }
 }
@@ -166,6 +201,10 @@ pub(crate) enum McpTransport {
     },
     StreamableHttp {
         url: String,
+        /// Literal header values supplied with the configuration. Agent
+        /// Plugins packages use these; plain config should prefer
+        /// `headers_from_env` so secrets stay out of the file.
+        headers: BTreeMap<String, String>,
         /// Header names mapped to environment variable names. Values never live in config.
         headers_from_env: BTreeMap<String, String>,
     },

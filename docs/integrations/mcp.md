@@ -10,7 +10,7 @@ Add servers under `[mcp.servers]` in Rho's config file. Rho reads `~/.rho/config
 rho --config .rho/config.toml
 ```
 
-An explicit `--config` file replaces the default user config. Rho does not merge the two files. The selected file is the only MCP configuration source for that run. Agent Plugin MCP entries are not loaded by this runtime yet.
+An explicit `--config` file replaces the default user config. Rho does not merge the two files. The selected file is the only ordinary MCP configuration source for that run. Plugin packages contribute servers separately through [Agent Plugins](/integrations/plugins); they merge with the servers below at session start.
 
 Each table key is the server's stable identity. Identities may contain ASCII letters, digits, `-`, and `_`. Set `enabled = false` to keep an entry without starting it.
 
@@ -55,12 +55,14 @@ Use `streamable_http` for current MCP Streamable HTTP. This is not the legacy HT
 transport = "streamable_http"
 url = "https://mcp.example.com/mcp"
 headers_from_env = { Authorization = "MCP_AUTHORIZATION" }
+headers = { X-Tenant = "public-tenant" }
 
 [mcp.servers.remote.tools]
 deny = ["delete_account"]
 ```
 
 `headers_from_env` maps HTTP header names to ambient variable names. Put the complete header value in the environment, such as `Bearer ...`. Rho does not store it in config or diagnostics. Automatic HTTP redirects are disabled, so configured headers cannot be replayed to another origin.
+`headers` supplies literal header values with the configuration. Prefer `headers_from_env` for anything secret. On a name collision, environment-derived headers override literal ones.
 
 Rho asks for the normal network capability when a remote MCP tool runs. Authentication discovery and OAuth are not implemented; supply server-issued credentials through environment-backed headers.
 
@@ -74,7 +76,7 @@ Rho exports discovered tools as:
 mcp__<server_identity>__<tool_name>
 ```
 
-Characters outside ASCII letters, digits, and `_` become `_`. If two remote names collapse to the same exported name, Rho keeps the first name in server discovery order and logs an actionable collision warning. Descriptions include the owning server identity for diagnostics. `allow` is an optional allowlist; `deny` always wins.
+Components containing only ASCII letters, digits, and `_` remain unchanged. Rho encodes every other component, and components beginning with the reserved `_rho_` prefix, as `_rho_` followed by the lowercase hexadecimal UTF-8 bytes. This encoding keeps distinct server and remote tool names distinct. Descriptions include the owning server identity for diagnostics. `allow` is an optional allowlist; `deny` always wins.
 
 MCP tool calls use Rho's native tool registry, capability approval, cancellation, and shutdown path. Results preserve the MCP result, including structured content and non-text content, as JSON in the native tool result. MCP error results and transport failures become tool failures without stopping sibling servers.
 
@@ -90,3 +92,13 @@ Use `/mcp` when you already have a session open. Use `rho mcp list` from a shell
 ## Runtime differences
 
 Native Rho agents receive these tools. Claude CLI agents do not: Rho does not pass its MCP configuration to Claude, inherit Claude's MCP configuration, or treat Claude's opaque `mcp__...` names as native support. This prevents one configured server from loading through both runtimes. For a Claude CLI agent session, `/mcp` still shows configured entries as not loaded.
+
+## Plugin-provided servers
+
+[Agent Plugins](/integrations/plugins) packages can declare MCP servers in a
+`mcp.json` file. Rho translates valid entries into the same configuration
+model above, so transports, startup budgets, tool namespacing, permissions,
+failure isolation, and shutdown behave identically. Plugin servers appear in
+inventories as `<plugin-name>/<server-name>` and expand the `${PLUGIN_ROOT}`
+and `${PLUGIN_DATA}` placeholders. Discovery does not create `${PLUGIN_DATA}`.
+Rho creates it immediately before it starts each enabled stdio server. If directory preparation fails, Rho disables only that server. A plugin with no valid MCP servers adds no MCP startup work, and the zero-server fast path above still applies.

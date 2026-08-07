@@ -11,11 +11,176 @@ use rho_sdk::{
     SessionOptions,
 };
 
+use super::{InteractiveRuntime, InteractiveRuntimeOptions};
 use crate::{
-    credential_store::AppCredentialStore, permission::PermissionMode,
+    app::{
+        interactive_run_controller::InteractiveRunController,
+        interactive_session_controller::InteractiveSessionController,
+        policy::AppPolicy,
+        provider_controller::ProviderController,
+        runtime_builder::{build_runtime, configured_context_window, RuntimeBuildOptions},
+        tools_prompt::{assemble_tools_and_prompt, ToolsAndPrompt, ToolsAndPromptOptions},
+    },
+    credential_store::AppCredentialStore,
+    permission::PermissionMode,
     session::Session as StoredSession,
+    tools::{agent::BackgroundSubagents, sdk_registry::AppToolSet},
 };
 use rho_providers::providers::{build_sdk_provider_with_source, UnavailableProvider};
+
+pub(super) async fn initialize(
+    options: InteractiveRuntimeOptions<'_>,
+) -> anyhow::Result<InteractiveRuntime> {
+    let InteractiveRuntimeOptions {
+        config,
+        config_path,
+        cwd,
+        no_system_prompt,
+        no_tools,
+        no_subagents,
+        questionnaire_enabled,
+        history,
+        session_id,
+        storage,
+        diagnostics,
+        agent,
+        unavailable_error,
+    } = options;
+    let agent_id = agent.id().to_string();
+    let agent_fingerprint = agent.fingerprint().to_string();
+    let sdk_options = crate::app::sdk_config::SdkBootstrapOptions::from_config(config, &cwd)?;
+    let provider = resolve_provider(unavailable_error, &sdk_options)?;
+    let workspace = sdk_options.workspace.build_workspace()?;
+    let ToolsAndPrompt {
+        tools,
+        system_prompt,
+        inventory,
+    } = assemble_tools_and_prompt(ToolsAndPromptOptions {
+        config,
+        config_path,
+        cwd: &cwd,
+        no_system_prompt,
+        no_tools,
+        no_subagents,
+        questionnaire_enabled,
+        background_subagents: BackgroundSubagents::Enabled,
+        diagnostics: &diagnostics,
+        agent: &agent,
+    })
+    .await?;
+    let mcp_report = inventory.mcp;
+    let plugins_report = inventory.plugins;
+    let context_window = configured_context_window(config);
+    let compaction = sdk_options.runtime.compaction.clone();
+    let permission_mode = config.permission_mode;
+    let (approval_handler, approval_receiver) = approval_channel_for(permission_mode);
+    diagnostics.update_compaction_config(&compaction);
+    let usage_recording = crate::usage::default_recording().await;
+    let hooks = crate::hooks::start_for_cwd(&cwd);
+    if let Some(hooks) = hooks.as_ref() {
+        diagnostics.attach_hooks(hooks);
+    }
+    let startup_result: anyhow::Result<_> = async {
+        let runtime = build_runtime(RuntimeBuildOptions {
+            provider: Arc::clone(&provider),
+            tools: tools.tools(),
+            workspace: workspace.clone(),
+            workspace_policy: AppPolicy::for_mode(permission_mode),
+            approval_session: approval_handler
+                .clone()
+                .map(rho_sdk::ApprovalSession::from_shared),
+            system_prompt: system_prompt.for_advisor_mode(tools.advisor_registered()),
+            reasoning: sdk_options.runtime.reasoning,
+            service_tier: sdk_options.runtime.service_tier,
+            compaction: compaction.clone(),
+            context_window,
+            usage_purpose: "agent",
+            usage_parent_session_id: None,
+            usage_recording: usage_recording.clone(),
+            hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
+            hooks: hooks.as_ref(),
+        })?;
+        let session_options = match resolve_session_options(
+            &provider,
+            history,
+            session_id.as_deref(),
+            storage.as_ref(),
+        ) {
+            Ok(options) => options,
+            Err(error) => {
+                runtime.shutdown();
+                return Err(error);
+            }
+        };
+        let session = match runtime.session(session_options).await {
+            Ok(session) => session,
+            Err(error) => {
+                runtime.shutdown();
+                return Err(error.into());
+            }
+        };
+        anyhow::Ok((runtime, session))
+    }
+    .await;
+    let (runtime, session) = match startup_result {
+        Ok(startup) => startup,
+        Err(error) => {
+            if let Some(hooks) = hooks {
+                hooks.shutdown(crate::hooks::DRAIN_GRACE).await;
+            }
+            tools.shutdown().await;
+            return Err(error);
+        }
+    };
+    bind_subagent_parent(&tools, session.id(), storage.as_ref());
+    Ok(InteractiveRuntime {
+        runtime,
+        hooks,
+        runs: InteractiveRunController::default(),
+        sessions: InteractiveSessionController::new(
+            session,
+            storage,
+            tools.web_access().clone(),
+            tools.advisor().cloned(),
+        ),
+        provider: ProviderController::new(provider, sdk_options.runtime.reasoning),
+        tools,
+        mcp_report,
+        plugins_report,
+        workspace,
+        system_prompt,
+        compaction,
+        context_window,
+        usage_recording,
+        permission_mode,
+        experimental_workspace_rewind: config.experimental_workspace_rewind,
+        approval_handler,
+        approval_receiver,
+        agent,
+        agent_id,
+        agent_fingerprint,
+        pending_persistence_error: None,
+        pending_persistence_checkpoint: None,
+        live_context_warm: false,
+        completed_runs: 0,
+    })
+}
+
+pub(super) fn bind_subagent_parent(
+    tools: &AppToolSet,
+    session_id: &SessionId,
+    storage: Option<&StoredSession>,
+) {
+    if let Some(manager) = tools.subagents() {
+        manager.bind_parent_session(crate::subagent::RunPlacement::for_parent_session(
+            session_id.to_string(),
+            storage.and_then(StoredSession::subagents_dir),
+        ));
+    }
+    tools
+        .workflow_tracker()
+        .bind_parent_session(session_id.to_string());
+}
 
 pub(super) fn resolve_provider(
     unavailable_error: Option<rho_providers::model::ModelError>,
