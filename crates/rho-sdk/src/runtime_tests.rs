@@ -501,7 +501,8 @@ async fn stream_usage_events_merge_within_a_turn() {
     assert_eq!(metrics.output_tokens, Some(5));
     assert!(metrics.time_to_first_token.is_some());
     assert!(metrics.generation_time.is_some());
-    assert!(metrics.output_tokens_per_second().is_some());
+    assert!(metrics.generation_tokens_per_second().is_some());
+    assert!(metrics.response_tokens_per_second().is_some());
 }
 
 #[derive(Debug)]
@@ -544,7 +545,8 @@ async fn synthesized_stream_output_does_not_claim_provider_generation_timing() {
     let metrics = metrics.expect("model call metrics event");
     assert_eq!(metrics.time_to_first_token, None);
     assert_eq!(metrics.generation_time, None);
-    assert_eq!(metrics.output_tokens_per_second(), None);
+    assert_eq!(metrics.generation_tokens_per_second(), None);
+    assert_eq!(metrics.response_tokens_per_second(), None);
 }
 
 #[tokio::test]

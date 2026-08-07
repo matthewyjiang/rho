@@ -226,14 +226,55 @@ pub struct ModelCallMetrics {
 }
 
 impl ModelCallMetrics {
+    /// Provider-reported output tokens divided by generation time.
+    ///
+    /// Generation time runs from the first generated event to stream end, so
+    /// this matches common throughput definitions that exclude time to first
+    /// token. Returns `None` when the call never streamed generated output.
+    ///
+    /// The numerator is still the provider's full `output_tokens` total. When a
+    /// provider charges hidden pre-stream work (for example reasoning kept off
+    /// the wire until the first visible event) into that total, those tokens
+    /// are counted here even though their wall time sits in
+    /// [`Self::time_to_first_token`]. Prefer
+    /// [`Self::response_tokens_per_second`] when that pre-stream work should
+    /// stay in the denominator.
+    pub fn generation_tokens_per_second(self) -> Option<f64> {
+        Self::rate(self.output_tokens, self.generation_time?)
+    }
+
     /// Provider-reported output tokens divided by total attempt latency.
     ///
-    /// Total latency rather than generation time keeps the time boundary
-    /// aligned with providers that count hidden reasoning in `output_tokens`
-    /// before emitting their first event.
+    /// Total latency includes time to first token, so this is the end-to-end
+    /// *response* rate rather than decode/throughput. Prefer
+    /// [`Self::generation_tokens_per_second`] for generation-window rates.
+    /// This form stays useful when hidden pre-stream work is charged in
+    /// `output_tokens` before any event is emitted.
+    ///
+    /// Host surfaces (statusline average, primary `/info` rate) use generation
+    /// throughput; keep this helper for last-call response comparison.
+    pub fn response_tokens_per_second(self) -> Option<f64> {
+        Self::rate(self.output_tokens, self.total_latency)
+    }
+
+    /// End-to-end response rate over total attempt latency.
+    ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-sdk): remove ModelCallMetrics::output_tokens_per_second;
+    /// callers should use response_tokens_per_second (e2e) or
+    /// generation_tokens_per_second (decode window).
+    ///
+    /// Kept as a minor-compatible alias after generation throughput became the
+    /// preferred primary rate. Prefer [`Self::response_tokens_per_second`].
+    #[deprecated(since = "1.18.0", note = "use response_tokens_per_second")]
     pub fn output_tokens_per_second(self) -> Option<f64> {
-        let tokens = self.output_tokens?;
-        let seconds = self.total_latency.as_secs_f64();
+        self.response_tokens_per_second()
+    }
+
+    fn rate(tokens: Option<u64>, window: Duration) -> Option<f64> {
+        let tokens = tokens?;
+        let seconds = window.as_secs_f64();
         (seconds > 0.0).then(|| tokens as f64 / seconds)
     }
 }

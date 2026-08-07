@@ -47,7 +47,7 @@ pub(super) struct StatusLineState {
     model_metadata: Option<ModelMetadata>,
     /// Non-main session cost (subagents + advisor) folded into one total.
     extra_cost_usd_micros: u64,
-    average_output_rate: Option<u64>,
+    average_generation_rate: Option<u64>,
     /// The active provider resolved to usable credentials. When false the row
     /// names the gap instead of a model the session cannot reach.
     signed_in: bool,
@@ -91,7 +91,7 @@ impl Default for StatusLineState {
             advisor: AdvisorStatus::Off,
             model_metadata: None,
             extra_cost_usd_micros: 0,
-            average_output_rate: None,
+            average_generation_rate: None,
             signed_in: true,
         }
     }
@@ -113,7 +113,7 @@ impl StatusLineState {
             advisor: AdvisorStatus::from_runtime(info),
             model_metadata: None,
             extra_cost_usd_micros: 0,
-            average_output_rate: None,
+            average_generation_rate: None,
             signed_in: true,
         }
     }
@@ -182,9 +182,9 @@ impl StatusLine {
         }
     }
 
-    pub(super) fn update_average_output_rate(&mut self, average_output_rate: Option<u64>) {
-        if self.state.average_output_rate != average_output_rate {
-            self.state.average_output_rate = average_output_rate;
+    pub(super) fn update_average_generation_rate(&mut self, average_generation_rate: Option<u64>) {
+        if self.state.average_generation_rate != average_generation_rate {
+            self.state.average_generation_rate = average_generation_rate;
             self.invalidate();
         }
     }
@@ -376,7 +376,7 @@ fn statusline_lines(
 ///
 /// Drop order when width is scarce (first dropped first):
 /// 1. reasoning
-/// 2. output rate
+/// 2. generation rate
 /// 3. provider label
 /// 4. session cost
 /// 5. context usage
@@ -417,7 +417,7 @@ fn bottom_fields(state: &StatusLineState) -> Vec<StatusField> {
             Theme::dim(),
         ));
     }
-    if let Some(rate) = state.average_output_rate {
+    if let Some(rate) = state.average_generation_rate {
         fields.push(field(
             FieldKey::Rate,
             Side::Left,

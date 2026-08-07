@@ -30,7 +30,7 @@ fn fully_populated_statusline() -> StatusLine {
         Some(&ContextUsage::estimated(1_000, Some(10_000))),
         12_500,
     );
-    statusline.update_average_output_rate(Some(42));
+    statusline.update_average_generation_rate(Some(42));
     statusline
 }
 
