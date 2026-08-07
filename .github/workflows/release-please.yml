@@ -252,9 +252,11 @@ jobs:
           PROVIDERS_TAG: ${{ needs.release.outputs.providers_tag_name }}
         run: gh release edit "$PROVIDERS_TAG" --draft=false
 
+  # Binary assets upload to the draft app release. They do not need crates.io.
+  # Start beside publish-crates; publish-app-release still waits on both.
   release-binaries:
-    needs: [release, publish-crates]
-    if: ${{ needs.release.outputs.release_created == 'true' && needs.publish-crates.result == 'success' }}
+    needs: release
+    if: ${{ needs.release.outputs.release_created == 'true' }}
     name: release binary ${{ matrix.target }}
     permissions:
       contents: write

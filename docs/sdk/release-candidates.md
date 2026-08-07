@@ -192,9 +192,11 @@ than transactionally atomic across registries:
 3. `scripts/publish_workspace_crates.sh` publishes crates in dependency order
    and waits for crates.io indexing before continuing
 4. only after crates succeed are draft GitHub crate releases published
-5. binary assets and Arch packaging start in parallel after crates succeed
-6. the app GitHub release is undrafted only after every binary asset uploads;
-   Arch publication stays asynchronous and does not block that flip
+5. binary assets start after the app draft tag exists, beside crate publication
+6. Arch packaging starts after crates succeed and overlaps the binary matrix
+7. the app GitHub release is undrafted only after crates succeed and every
+   binary asset uploads; Arch publication stays asynchronous and does not
+   block that flip
 
 If an RC or final candidate is defective:
 
