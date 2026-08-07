@@ -33,7 +33,9 @@ jobs:
 
           useradd --create-home builder
           chown -R builder:builder "$GITHUB_WORKSPACE"
-          runuser -u builder -- bash -lc "cd '$GITHUB_WORKSPACE' && makepkg -s --noconfirm"
+          # CI already ran the full test suite. Skip makepkg check() so packaging
+          # does not recompile the workspace under the test profile.
+          runuser -u builder -- bash -lc "cd '$GITHUB_WORKSPACE' && makepkg -s --noconfirm --nocheck"
 
       - name: Checkout mjiang-extras
         uses: actions/checkout@v4

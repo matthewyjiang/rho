@@ -191,8 +191,10 @@ than transactionally atomic across registries:
 2. release evidence jobs validate that same SHA
 3. `scripts/publish_workspace_crates.sh` publishes crates in dependency order
    and waits for crates.io indexing before continuing
-4. only after crates succeed are draft GitHub releases published
-5. binary assets and Arch packaging run after the public release flip
+4. only after crates succeed are draft GitHub crate releases published
+5. binary assets and Arch packaging start in parallel after crates succeed
+6. the app GitHub release is undrafted only after every binary asset uploads;
+   Arch publication stays asynchronous and does not block that flip
 
 If an RC or final candidate is defective:
 
