@@ -132,6 +132,10 @@ def full_plan() -> tuple[Step, ...]:
             "Check downstream SDK fixtures",
             ("python3", "scripts/check_sdk_compatibility.py", "--test-downstream"),
         ),
+        Step(
+            "Check docs TUI proof plate",
+            ("bash", "scripts/check_docs_ui_demo.sh", "--check"),
+        ),
     )
 
 

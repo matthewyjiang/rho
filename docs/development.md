@@ -45,7 +45,7 @@ Run the full workflow before opening or updating a pull request:
 python3 scripts/validate.py full
 ```
 
-The full mode runs policy and script checks, Clippy for all targets and features, normal workspace tests, documentation tests, and the SDK feature and downstream checks. It stops at the first failure. Both modes cap Cargo at 12 jobs. A lower `CARGO_BUILD_JOBS` value remains in effect.
+The full mode runs policy and script checks, Clippy for all targets and features, normal workspace tests, documentation tests, SDK feature and downstream checks, and the docs TUI proof-plate PTY check. It stops at the first failure. Both modes cap Cargo at 12 jobs. A lower `CARGO_BUILD_JOBS` value remains in effect.
 
 Development and test profiles use reduced debug information to keep artifacts and link times smaller while retaining line-number backtraces. Set `CARGO_PROFILE_DEV_DEBUG=2` or `CARGO_PROFILE_TEST_DEBUG=2` when a debugging session needs full symbols.
 
@@ -166,6 +166,22 @@ cargo run -p rho-tui-pty --bin rho-pty-scenario -- --bin target/debug/rho --timi
 ```
 
 Failure artifacts default to a temp directory (or `--artifacts <dir>`). Successful runs do not retain artifacts.
+
+### Regenerate the docs TUI proof plate
+
+`docs/assets/rho-ui-demo.svg` and `docs/public/assets/rho-ui-demo.svg` are captured from a real matrix-mode PTY session (not hand-drawn). After TUI layout or chrome changes, regenerate both paths:
+
+```bash
+bash scripts/check_docs_ui_demo.sh --write
+```
+
+Detect drift without writing:
+
+```bash
+bash scripts/check_docs_ui_demo.sh --check
+```
+
+The CI quality job and `python3 scripts/validate.py full` run the check. The generator needs a Unix PTY and a debug build because `RHO_TUI_TEST_MODE=matrix` is debug-only.
 
 ### Environment isolation
 

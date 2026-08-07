@@ -23,3 +23,7 @@ pretty_assertions = "1"
 [[bin]]
 name = "rho-pty-scenario"
 path = "src/bin/rho_pty_scenario.rs"
+
+[[bin]]
+name = "rho-pty-demo"
+path = "src/bin/rho_pty_demo.rs"

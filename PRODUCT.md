@@ -43,7 +43,7 @@ Rho is small on purpose: a native Rust binary with coding tools, RTK, and Herdr 
 
 ## Evidence on Hand
 
-- `docs/assets/rho-ui-demo.svg` - terminal UI session demo
+- `docs/assets/rho-ui-demo.svg` - terminal UI proof plate (regenerated from the PTY harness)
 - `docs/assets/cli-overhead.svg` - CLI startup/memory comparison chart
 - `docs/assets/subagent-panel.png` - subagent panel screenshot
 - README and full guide corpus under `docs/`
