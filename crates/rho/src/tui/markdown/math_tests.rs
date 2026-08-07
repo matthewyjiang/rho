@@ -178,6 +178,24 @@ fn falls_back_for_blank_invalid_and_oversized_input() {
     );
 }
 
+// Covers: absolute rendered-width cap must not be reported as a narrow pane
+// Owner: pure unit (markdown math output width limit)
+#[test]
+fn falls_back_for_output_exceeding_max_rendered_width() {
+    // Long single-token source renders wider than MAX_RENDERED_WIDTH even in a
+    // huge pane; that absolute cap must not look like a narrow-pane failure.
+    let source = "a".repeat(MAX_RENDERED_WIDTH.saturating_add(32));
+    assert_eq!(
+        render_math(&source, MAX_RENDERED_WIDTH.saturating_mul(4)),
+        MathRender::Fallback(MathFallback::OutputWidth)
+    );
+    assert_eq!(MathFallback::OutputWidth.panel_title(), "MATH · TOO WIDE");
+    assert_eq!(
+        MathFallback::TooWide.panel_title(),
+        "MATH · PANE TOO NARROW"
+    );
+}
+
 // Covers: closed fence helper must keep latex source for copy / fallback panels
 // Owner: pure unit (markdown math fence)
 #[test]

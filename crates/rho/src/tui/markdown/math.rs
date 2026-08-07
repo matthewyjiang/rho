@@ -26,6 +26,7 @@ pub(super) enum MathFallback {
     Parse,
     Panic,
     TooWide,
+    OutputWidth,
     OutputLines,
     EmptyOutput,
 }
@@ -34,6 +35,7 @@ impl MathFallback {
     fn panel_title(self) -> &'static str {
         match self {
             Self::TooWide => "MATH · PANE TOO NARROW",
+            Self::OutputWidth => "MATH · TOO WIDE",
             Self::Blank
             | Self::SourceBytes
             | Self::SourceLines
@@ -162,7 +164,10 @@ fn render_inner(source: &str, inner_width: usize) -> MathRender {
     if size.height as usize > MAX_RENDERED_LINES {
         return MathRender::Fallback(MathFallback::OutputLines);
     }
-    if size.width as usize > MAX_RENDERED_WIDTH || size.width as usize > inner_width {
+    if size.width as usize > MAX_RENDERED_WIDTH {
+        return MathRender::Fallback(MathFallback::OutputWidth);
+    }
+    if size.width as usize > inner_width {
         return MathRender::Fallback(MathFallback::TooWide);
     }
 
