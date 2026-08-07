@@ -440,11 +440,15 @@ impl PtyHarness {
 
     pub fn quit_with_exit_command(&mut self) -> Result<u32> {
         self.set_phase("quit_with_/exit");
-        // Ensure the composer is idle before inserting the exit command. Use an
-        // explicit paste event so runner load cannot collapse delayed plain-key
-        // input into a paste burst and absorb Enter as a newline.
+        // Dismiss overlays/composers, then wait until the UI is quiet. Bracketed
+        // paste starts with ESC (`\x1b[200~`); if that ESC is still treated as a
+        // cancel key, the child sees literal `[200~/exit` and never quits.
         self.inject_key(&Key::Esc)?;
-        self.settle_input();
+        self.wait_for_quiet(
+            Duration::from_millis(200),
+            WaitTimeout::secs(10, "idle before /exit"),
+        )?;
+        // Paste keeps Enter from being absorbed as a newline under runner load.
         self.paste("/exit")?;
         self.settle_input();
         self.inject_key(&Key::Enter)?;
