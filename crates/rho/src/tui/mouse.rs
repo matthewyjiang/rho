@@ -5,6 +5,7 @@ use ratatui::{backend::Backend, layout::Rect, Terminal};
 
 use super::{
     copy_interaction::{code_block_copy_target_at, selection_position, selection_position_clamped},
+    picker_input::PickerMouseEvent,
     render::tool_entry_lines,
     text_selection::{screen_lines, CopyNotice, TextSelection},
     tool_output_ui::{expandable_tool_entry, tool_output_toggleable},
@@ -38,7 +39,13 @@ impl App {
         let now = Instant::now();
         match kind {
             MouseEventKind::ScrollUp => {
-                if self.scroll_picker_on_wheel(-1, column, row, size.width, size.height) {
+                if self.route_picker_mouse(
+                    PickerMouseEvent::Wheel(-1),
+                    column,
+                    row,
+                    size.width,
+                    size.height,
+                ) {
                     return Ok(());
                 }
                 self.screen_selection = None;
@@ -54,7 +61,13 @@ impl App {
                 );
             }
             MouseEventKind::ScrollDown => {
-                if self.scroll_picker_on_wheel(1, column, row, size.width, size.height) {
+                if self.route_picker_mouse(
+                    PickerMouseEvent::Wheel(1),
+                    column,
+                    row,
+                    size.width,
+                    size.height,
+                ) {
                     return Ok(());
                 }
                 self.screen_selection = None;
@@ -70,7 +83,13 @@ impl App {
                 );
             }
             MouseEventKind::Down(MouseButton::Left) => {
-                if self.click_picker(column, row, size.width, size.height) {
+                if self.route_picker_mouse(
+                    PickerMouseEvent::Click,
+                    column,
+                    row,
+                    size.width,
+                    size.height,
+                ) {
                     return Ok(());
                 }
                 self.screen_selection = None;
@@ -242,7 +261,13 @@ impl App {
             MouseEventKind::Moved if self.last_mouse_position == Some((column, row)) => {}
             MouseEventKind::Moved => {
                 self.last_mouse_position = Some((column, row));
-                if self.hover_picker(column, row, size.width, size.height) {
+                if self.route_picker_mouse(
+                    PickerMouseEvent::Move,
+                    column,
+                    row,
+                    size.width,
+                    size.height,
+                ) {
                     return Ok(());
                 }
                 let layout = self.screen_layout(screen, now);

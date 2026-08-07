@@ -107,7 +107,7 @@ pub(super) fn render_picker_overlay(picker: &UiPicker, area: Rect) -> OverlayFra
         detail_focused: picker.detail_pane_focused(),
         detail_scroll: picker.detail_scroll,
         nav_window_start: picker.nav_window_start(layout.nav_viewport_rows()),
-        hovered_nav_row: picker.hovered_nav_row,
+        hovered_nav_row: picker.hovered_nav_row(),
         footer: &footer,
         empty_match_message,
         chrome,

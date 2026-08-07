@@ -73,7 +73,7 @@ pub(super) struct UiPicker {
     /// a manual wheel-scrolled offset.
     nav_follows_selection: bool,
     /// Nav row under the mouse pointer, in row space.
-    pub(super) hovered_nav_row: Option<usize>,
+    hovered_nav_row: Option<usize>,
     pub(super) confirm_verb: Option<String>,
     /// When set, overrides [`PickerAction::uses_regex_filter`] for this picker.
     pub(super) force_fuzzy_filter: bool,
@@ -342,6 +342,16 @@ impl UiPicker {
         };
         self.nav_scroll = current.saturating_add_signed(delta).min(max_start);
         self.nav_follows_selection = false;
+    }
+
+    /// Nav row under the mouse pointer, in row space.
+    pub(super) fn hovered_nav_row(&self) -> Option<usize> {
+        self.hovered_nav_row
+    }
+
+    /// Record the nav row under the mouse pointer, or `None` off the rows.
+    pub(super) fn set_hovered_nav_row(&mut self, row_index: Option<usize>) {
+        self.hovered_nav_row = row_index;
     }
 
     /// Item index shown at a row-space nav row, skipping section headers.
