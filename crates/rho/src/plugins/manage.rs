@@ -83,12 +83,10 @@ pub(crate) fn install(
     ensure_path_is_managed_child(&destination, &root)?;
 
     let staging = unique_sibling_path(&root, &source.manifest.name, "staging")?;
-    let staged = (|| -> anyhow::Result<()> {
-        match mode {
-            InstallMode::Copy => copy_package_tree(&source.path, &staging),
-            InstallMode::Link => create_package_link(&source.path, &staging),
-        }
-    })();
+    let staged = match mode {
+        InstallMode::Copy => copy_package_tree(&source.path, &staging),
+        InstallMode::Link => create_package_link(&source.path, &staging),
+    };
     if let Err(error) = staged {
         let _ = remove_path(&staging);
         return Err(error);

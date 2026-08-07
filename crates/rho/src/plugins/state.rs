@@ -267,6 +267,7 @@ fn lock_scope_state(path: &Path) -> anyhow::Result<rho_providers::file_lock::Fil
     let lock_path = scope_lock_path(path);
     let file = std::fs::OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(&lock_path)
