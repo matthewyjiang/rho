@@ -1,0 +1,15 @@
+[package]
+name = "boundary-consumer"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Fixture consumer that needs the unreleased dependency export"
+publish = false
+
+# Keep this fixture outside the monorepo workspace.
+[workspace]
+
+[dependencies]
+# Exact pin avoids floating to a newer crates.io release if this name is ever
+# published for real.
+boundary-dep = "=0.1.0"

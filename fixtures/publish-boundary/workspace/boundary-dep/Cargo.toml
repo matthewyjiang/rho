@@ -1,0 +1,10 @@
+[package]
+name = "boundary-dep"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Fixture dependency with the unreleased workspace API surface"
+publish = false
+
+[lib]
+path = "src/lib.rs"

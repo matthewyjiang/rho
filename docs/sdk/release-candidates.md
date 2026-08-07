@@ -82,6 +82,9 @@ A checklist entry is not evidence. Link CI runs, local command logs, reports, or
 4. Make the application depend on the exact compatible SDK RC version plus the workspace path.
 5. Run the complete gate against the frozen commit.
 6. Run package and publish dry-runs for each crate and inspect included files.
+   Use `scripts/check_crate_publish_prep.sh` so internal deps already on
+   crates.io are verified against the registry rather than path-patched from
+   the workspace.
 7. Prepare separate coordinated release notes using the template below.
 8. Publish `rho-sdk` RC first.
 9. Wait for registry indexing, then create a clean external fixture that installs the exact registry package and runs completion, streaming, tool, cancellation, and snapshot scenarios.

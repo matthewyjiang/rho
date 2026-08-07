@@ -31,12 +31,12 @@ jobs:
         run: python3 scripts/audit_sdk_redaction_tests.py
       - name: Test shell installer release parsing
         run: sh scripts/install_tests.sh
-      - name: Test validation scripts
-        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Cargo registry
         uses: swatinem/rust-cache@v2
+      - name: Test validation scripts
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Run Clippy
@@ -151,6 +151,8 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           shared-key: package
+      - name: Test crate publish prep fixture
+        run: python3 scripts/crate_publish_prep.py --self-test
       - name: Verify crate publish preparation
         run: ./scripts/check_crate_publish_prep.sh
       - name: Check package file lists
