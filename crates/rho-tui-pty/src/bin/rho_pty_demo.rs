@@ -5,7 +5,9 @@
 //!   cargo run -p rho-tui-pty --bin rho-pty-demo -- \
 //!     --bin target/debug/rho \
 //!     --output docs/assets/rho-ui-demo.svg \
-//!     --output docs/public/assets/rho-ui-demo.svg
+//!     --output docs/public/assets/rho-ui-demo.svg \
+//!     --light-output docs/assets/rho-ui-demo-light.svg \
+//!     --light-output docs/public/assets/rho-ui-demo-light.svg
 
 use std::{
     fs,
@@ -20,7 +22,7 @@ use rho_tui_pty::{
     env::{resolve_rho_binary, IsolatedHome, RhoLaunchPlan},
     harness::{PtyHarness, WaitTimeout},
     pty::PtySize,
-    svg::{render_screen_svg, SvgOptions},
+    svg::{render_screen_svg, SvgColorScheme, SvgOptions},
 };
 
 /// Default terminal size for the docs proof plate.
@@ -59,9 +61,13 @@ struct Args {
     #[arg(long)]
     bin: Option<PathBuf>,
 
-    /// Write the SVG to this path. Repeat to mirror into docs/public.
+    /// Write the dark SVG to this path. Repeat to mirror into docs/public.
     #[arg(long = "output", required = true)]
     outputs: Vec<PathBuf>,
+
+    /// Write the light SVG to this path. Repeat to mirror into docs/public.
+    #[arg(long = "light-output")]
+    light_outputs: Vec<PathBuf>,
 
     /// Compare against existing outputs and exit non-zero on drift.
     #[arg(long)]
@@ -98,33 +104,15 @@ fn run() -> Result<()> {
     let capture = capture_demo(&binary)?;
 
     if let Some(path) = &args.screen_text {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create {}", parent.display()))?;
-        }
-        fs::write(path, &capture.screen_text)
-            .with_context(|| format!("failed to write {}", path.display()))?;
+        write_text(path, &capture.screen_text)?;
         println!("wrote {}", path.display());
     }
 
     if args.check {
         let mut failed = false;
-        for expected_path in &args.outputs {
-            let expected = fs::read_to_string(expected_path).with_context(|| {
-                format!(
-                    "failed to read existing SVG for --check: {}",
-                    expected_path.display()
-                )
-            })?;
-            if expected != capture.svg {
-                failed = true;
-                eprintln!(
-                    "SVG drift at {}\nregenerate with:\n  cargo run -p rho-tui-pty --bin rho-pty-demo -- --bin target/debug/rho --output docs/assets/rho-ui-demo.svg --output docs/public/assets/rho-ui-demo.svg",
-                    expected_path.display()
-                );
-            } else {
-                println!("OK {}", expected_path.display());
-            }
+        failed |= check_outputs(&args.outputs, &capture.dark_svg, "dark")?;
+        if !args.light_outputs.is_empty() {
+            failed |= check_outputs(&args.light_outputs, &capture.light_svg, "light")?;
         }
         if failed {
             bail!("one or more SVG outputs drifted from the live PTY capture");
@@ -132,21 +120,52 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
-    for path in &args.outputs {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create {}", parent.display()))?;
-        }
-        fs::write(path, &capture.svg)
-            .with_context(|| format!("failed to write {}", path.display()))?;
-        println!("wrote {}", path.display());
-    }
-
+    write_outputs(&args.outputs, &capture.dark_svg)?;
+    write_outputs(&args.light_outputs, &capture.light_svg)?;
     Ok(())
 }
 
+fn check_outputs(paths: &[PathBuf], expected_svg: &str, label: &str) -> Result<bool> {
+    let mut failed = false;
+    for expected_path in paths {
+        let expected = fs::read_to_string(expected_path).with_context(|| {
+            format!(
+                "failed to read existing {label} SVG for --check: {}",
+                expected_path.display()
+            )
+        })?;
+        if expected != expected_svg {
+            failed = true;
+            eprintln!(
+                "SVG drift at {}\nregenerate with:\n  bash scripts/check_docs_ui_demo.sh --write",
+                expected_path.display()
+            );
+        } else {
+            println!("OK {}", expected_path.display());
+        }
+    }
+    Ok(failed)
+}
+
+fn write_outputs(paths: &[PathBuf], svg: &str) -> Result<()> {
+    for path in paths {
+        write_text(path, svg)?;
+        println!("wrote {}", path.display());
+    }
+    Ok(())
+}
+
+fn write_text(path: &Path, contents: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    fs::write(path, contents).with_context(|| format!("failed to write {}", path.display()))
+}
+
 struct DemoCapture {
-    svg: String,
+    dark_svg: String,
+    light_svg: String,
     screen_text: String,
 }
 
@@ -200,25 +219,40 @@ fn capture_demo(binary: &Path) -> Result<DemoCapture> {
         );
     }
 
-    let options = SvgOptions {
-        description: "Rho interactive TUI captured from the deterministic PTY harness after a request-ID middleware turn.".into(),
-        ..SvgOptions::default()
+    let description: String =
+        "Rho interactive TUI captured from the deterministic PTY harness after a request-ID middleware turn."
+            .into();
+    let dark_options = SvgOptions {
+        description: description.clone(),
+        ..SvgOptions::for_scheme(SvgColorScheme::Dark)
     };
-    let svg = stabilize_demo_svg(&render_screen_svg(screen, &options));
+    let light_options = SvgOptions {
+        description,
+        ..SvgOptions::for_scheme(SvgColorScheme::Light)
+    };
+    let dark_svg = stabilize_demo_svg(&render_screen_svg(screen, &dark_options));
+    let light_svg = stabilize_demo_svg(&render_screen_svg(screen, &light_options));
     let screen_text = screen.debug_dump();
 
     // Leave cleanly so the child does not linger under the generator.
     let _ = harness.quit_with_exit_command();
-    Ok(DemoCapture { svg, screen_text })
+    Ok(DemoCapture {
+        dark_svg,
+        light_svg,
+        screen_text,
+    })
 }
 
 /// Pin load-volatile status and duration fragments so CI matches local captures.
 ///
-/// Tool durations and statusline usage are split across styled SVG text runs, so
-/// stabilize by rewriting those fragments rather than whole-row matches.
+/// Tool durations, statusline usage, and the package version are split across
+/// styled SVG text runs, so stabilize by rewriting those fragments rather than
+/// whole-row matches. Version must stay pinned: automated releases change
+/// `CARGO_PKG_VERSION` and would otherwise force proof-plate regen on every cut.
 fn stabilize_demo_svg(svg: &str) -> String {
     let mut out = pin_tool_durations(svg);
     out = pin_statusline_usage(&out);
+    out = pin_header_version(&out);
     out
 }
 
@@ -329,4 +363,93 @@ fn match_usage_run(rest: &str) -> Option<(usize, &str)> {
         return None;
     }
     Some((i, &rest[space_start..i]))
+}
+
+/// Demo plate header version. Not the live package version - release bumps must
+/// not force SVG regen.
+const PINNED_HEADER_VERSION: &str = "0.0.0";
+
+fn pin_header_version(svg: &str) -> String {
+    // Header paints `CARGO_PKG_VERSION` as its own text run (`>1.32.2</text>`).
+    let mut out = String::with_capacity(svg.len());
+    let mut rest = svg;
+    let mut replaced = false;
+    while let Some(gt) = rest.find('>') {
+        out.push_str(&rest[..=gt]);
+        rest = &rest[gt + 1..];
+        if replaced {
+            continue;
+        }
+        let Some(end) = rest.find("</text>") else {
+            continue;
+        };
+        let content = &rest[..end];
+        if is_semver_token(content) {
+            out.push_str(PINNED_HEADER_VERSION);
+            rest = &rest[end..];
+            replaced = true;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn is_semver_token(token: &str) -> bool {
+    let mut parts = token.split('.');
+    let Some(major) = parts.next() else {
+        return false;
+    };
+    let Some(minor) = parts.next() else {
+        return false;
+    };
+    let Some(patch) = parts.next() else {
+        return false;
+    };
+    if parts.next().is_some() {
+        return false;
+    }
+    is_digit_run(major) && is_digit_run(minor) && is_digit_run(patch)
+}
+
+fn is_digit_run(token: &str) -> bool {
+    !token.is_empty() && token.bytes().all(|b| b.is_ascii_digit())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_semver_token, pin_header_version, PINNED_HEADER_VERSION};
+
+    // Covers: release package version in the header text run must pin so SVG
+    // drift checks do not fail on automated version bumps.
+    // Owner: pty demo stabilizer
+    #[test]
+    fn pins_first_semver_text_run_only() {
+        let svg = concat!(
+            r#"<text>rho</text>"#,
+            r#"<text font-weight="700">1.32.2</text>"#,
+            r#"<text>note 2.0.0 stays</text>"#,
+        );
+        let pinned = pin_header_version(svg);
+        assert!(pinned.contains(&format!(">{PINNED_HEADER_VERSION}</text>")));
+        assert!(!pinned.contains(">1.32.2</text>"));
+        // Only the pure semver text run is rewritten; prose keeps other numbers.
+        assert!(pinned.contains(">note 2.0.0 stays</text>"));
+    }
+
+    // Covers: only bare X.Y.Z header runs count as pin targets.
+    // Owner: pty demo stabilizer
+    #[test]
+    fn semver_token_requires_three_numeric_parts() {
+        let cases = [
+            ("1.32.2", true),
+            ("0.0.0", true),
+            ("1.32", false),
+            ("1.32.2-rc.1", false),
+            ("v1.32.2", false),
+            ("", false),
+        ];
+        for (token, expected) in cases {
+            assert_eq!(is_semver_token(token), expected, "token={token:?}");
+        }
+    }
 }

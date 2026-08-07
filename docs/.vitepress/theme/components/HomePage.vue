@@ -1,6 +1,14 @@
 <script setup lang="ts">
-import { withBase } from 'vitepress'
+import { computed } from 'vue'
+import { useData, withBase } from 'vitepress'
 import RhoWordmark from './RhoWordmark.vue'
+
+const { isDark } = useData()
+
+/** Theme-matched terminal capture; README keeps the dark asset. */
+const proofSrc = computed(() =>
+  withBase(isDark.value ? '/assets/rho-ui-demo.svg' : '/assets/rho-ui-demo-light.svg'),
+)
 
 /** One-line install command shown in a native VitePress code plate. */
 const installCommand =
@@ -87,7 +95,7 @@ const paths = [
           <a :href="withBase('/interactive-tui')" class="rho-home__proof-link">
             <img
               class="rho-home__proof-img"
-              :src="withBase('/assets/rho-ui-demo.svg')"
+              :src="proofSrc"
               width="1008"
               height="848"
               alt="Rho terminal UI showing a request-ID middleware edit with read, edit, and test tool cards"
@@ -319,8 +327,13 @@ const paths = [
 .rho-home__proof-link {
   display: block;
   border: 1px solid var(--vp-c-text-1);
-  background: #0d1117;
+  /* Match the active SVG well so letterbox edges do not flash the other theme. */
+  background: #ffffff;
   text-decoration: none !important;
+}
+
+:global(.dark) .rho-home__proof-link {
+  background: #0d1117;
 }
 
 .rho-home__proof-img {

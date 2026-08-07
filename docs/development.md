@@ -169,7 +169,13 @@ Failure artifacts default to a temp directory (or `--artifacts <dir>`). Successf
 
 ### Regenerate the docs TUI proof plate
 
-`docs/assets/rho-ui-demo.svg` and `docs/public/assets/rho-ui-demo.svg` are captured from a real matrix-mode PTY session (not hand-drawn). After TUI layout or chrome changes, regenerate both paths:
+Dark and light proof plates are captured from one matrix-mode PTY session (not
+hand-drawn), then rendered with two SVG color schemes:
+
+- dark: `docs/assets/rho-ui-demo.svg` and `docs/public/assets/rho-ui-demo.svg`
+- light: `docs/assets/rho-ui-demo-light.svg` and `docs/public/assets/rho-ui-demo-light.svg`
+
+After TUI layout or chrome changes, regenerate all four paths:
 
 ```bash
 bash scripts/check_docs_ui_demo.sh --write
@@ -181,7 +187,7 @@ Detect drift without writing:
 bash scripts/check_docs_ui_demo.sh --check
 ```
 
-The CI quality job and `python3 scripts/validate.py full` run the check. The generator needs a Unix PTY and a debug build because `RHO_TUI_TEST_MODE=matrix` is debug-only.
+The CI quality job and `python3 scripts/validate.py full` run the check. The generator needs a Unix PTY and a debug build because `RHO_TUI_TEST_MODE=matrix` is debug-only. Load-volatile fragments (tool durations, statusline usage, and the header package version) are pinned in the SVG so release version bumps do not force a regen.
 
 ### Environment isolation
 

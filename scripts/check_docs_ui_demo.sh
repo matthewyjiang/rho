@@ -2,7 +2,8 @@
 # Check or regenerate the Interactive TUI docs proof plate.
 #
 # Default mode compares a live matrix-mode PTY capture to the checked-in SVGs.
-# Pass --write to overwrite both asset paths after a layout or chrome change.
+# Pass --write to overwrite both dark and light asset paths after a layout or
+# chrome change.
 #
 # Requires a Unix PTY and a debug rho build (RHO_TUI_TEST_MODE=matrix).
 
@@ -14,9 +15,13 @@ cd "$root"
 mode="check"
 jobs="${CARGO_BUILD_JOBS:-12}"
 bin_path=""
-assets=(
+dark_assets=(
   "docs/assets/rho-ui-demo.svg"
   "docs/public/assets/rho-ui-demo.svg"
+)
+light_assets=(
+  "docs/assets/rho-ui-demo-light.svg"
+  "docs/public/assets/rho-ui-demo-light.svg"
 )
 
 usage() {
@@ -24,7 +29,7 @@ usage() {
 Usage: scripts/check_docs_ui_demo.sh [--check|--write] [--bin PATH] [--jobs N]
 
   --check   Fail when checked-in SVGs drift from a live PTY capture (default).
-  --write   Regenerate both docs asset paths from a live PTY capture.
+  --write   Regenerate dark and light docs asset paths from a live PTY capture.
   --bin     Path to a debug rho binary (default: build target/debug/rho).
   --jobs    Cargo job cap (default: CARGO_BUILD_JOBS or 12).
 EOF
@@ -96,8 +101,11 @@ else
   echo "==> Write docs TUI proof plate from live PTY capture"
 fi
 
-for asset in "${assets[@]}"; do
+for asset in "${dark_assets[@]}"; do
   args+=(--output "$asset")
+done
+for asset in "${light_assets[@]}"; do
+  args+=(--light-output "$asset")
 done
 
 cargo "${args[@]}"
