@@ -17,6 +17,8 @@ pub(crate) const PLUGIN_MANIFEST_SCHEMA_1_0_0: &str =
 #[derive(Clone, Debug)]
 pub(crate) struct PluginManifest {
     pub(crate) name: String,
+    pub(crate) version: Option<String>,
+    pub(crate) description: Option<String>,
     /// Non-fatal schema violations that were reported and ignored.
     pub(crate) warnings: Vec<String>,
 }
@@ -84,11 +86,9 @@ pub(crate) fn parse_manifest(text: &str) -> Result<PluginManifest, String> {
         warnings.push("non-object `extensions` field ignored".to_string());
     }
 
-    // These values are intentionally not retained. Their typed fields make
-    // Serde enforce the manifest contract without a second manual validator.
+    // Author/homepage/repository/license/keywords are validated by typed
+    // fields above and intentionally not retained beyond name/version/description.
     let _ = (
-        raw.version,
-        raw.description,
         raw.author
             .map(|author| (author.name, author.email, author.url)),
         raw.homepage,
@@ -99,6 +99,8 @@ pub(crate) fn parse_manifest(text: &str) -> Result<PluginManifest, String> {
 
     Ok(PluginManifest {
         name: raw.name,
+        version: raw.version,
+        description: raw.description,
         warnings,
     })
 }

@@ -215,6 +215,13 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | `rho credential-store probe [os|file]` | Test a credential backend with a temporary secret. Defaults to `os`. |
 | `rho credential-store set <BACKEND>` | Save `os` or `file` as the credential backend in config (`behavior.credential_store`). |
 | `rho credential-store status` | Print the saved credential backend policy: `unset`, `os`, or `file`. |
+| `rho plugins list [--json]` | List discovered Agent Plugin packages (no package code execution). |
+| `rho plugins inspect <NAME> [--json]` | Show one plugin package, components, and diagnostics. |
+| `rho plugins install <PATH> [--scope user\|project] [--force]` | Copy a local plugin package into a managed root after validation. |
+| `rho plugins link <PATH> [--scope user\|project] [--force]` | Symlink a local plugin package into a managed root after validation. |
+| `rho plugins enable <NAME>` | Enable a plugin for new sessions. |
+| `rho plugins disable <NAME>` | Disable a plugin without deleting package files. |
+| `rho plugins remove <NAME> [--yes]` | Remove a package from a managed root; keeps plugin data. |
 | `rho update` | Update Rho using the detected installation method. |
 | `rho help [COMMAND]` | Show help for Rho or a subcommand. |
 

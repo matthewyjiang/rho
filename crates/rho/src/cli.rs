@@ -150,6 +150,11 @@ pub enum Command {
         #[command(subcommand)]
         command: McpCommand,
     },
+    /// List, inspect, install, and activate local Agent Plugin packages.
+    Plugins {
+        #[command(subcommand)]
+        command: PluginsCommand,
+    },
     /// Validate, plan, run, and inspect deterministic workflows.
     Workflow {
         #[command(subcommand)]
@@ -318,6 +323,80 @@ pub enum McpCommand {
         /// Print one JSON document instead of text.
         #[arg(long)]
         json: bool,
+    },
+}
+
+/// Target scope for plugin install and link.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum PluginsScope {
+    /// User root: `~/.agents/plugins`.
+    #[default]
+    User,
+    /// Project root: `<repository>/.agents/plugins`.
+    Project,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum PluginsCommand {
+    /// List discovered Agent Plugin packages.
+    List {
+        /// Print one JSON document instead of text rows.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect one plugin by package name without executing package code.
+    Inspect {
+        /// Plugin package name from `plugin.json`.
+        #[arg(value_name = "NAME")]
+        name: String,
+        /// Print one JSON document instead of text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Copy a local plugin package into a managed plugins root.
+    Install {
+        /// Path to a directory that contains `plugin.json`.
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+        /// Install under the user or project plugins root.
+        #[arg(long, value_enum, default_value_t = PluginsScope::User)]
+        scope: PluginsScope,
+        /// Replace an existing package at the destination.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Symlink a local plugin package into a managed plugins root.
+    Link {
+        /// Path to a directory that contains `plugin.json`.
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+        /// Link under the user or project plugins root.
+        #[arg(long, value_enum, default_value_t = PluginsScope::User)]
+        scope: PluginsScope,
+        /// Replace an existing package at the destination.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Enable a discovered plugin for new sessions.
+    Enable {
+        /// Plugin package name from `plugin.json`.
+        #[arg(value_name = "NAME")]
+        name: String,
+    },
+    /// Disable a discovered plugin without deleting package files.
+    Disable {
+        /// Plugin package name from `plugin.json`.
+        #[arg(value_name = "NAME")]
+        name: String,
+    },
+    /// Remove an installed or linked package from a managed plugins root.
+    Remove {
+        /// Plugin package name from `plugin.json`.
+        #[arg(value_name = "NAME")]
+        name: String,
+        /// Skip the confirmation prompt.
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
 }
 

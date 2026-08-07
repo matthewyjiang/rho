@@ -19,7 +19,7 @@ use super::{
     agent_binding::{AgentBinder, AgentInvocation, AgentRole},
     automation, automation_protocol, cli_config,
     config_repository::ConfigRepository,
-    interactive, login, mcp_cli,
+    interactive, login, mcp_cli, plugins_cli,
     sdk_config::SdkBootstrapOptions,
     sessions_cli, workflow_cli,
 };
@@ -142,6 +142,9 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
     }
     if let Some(Command::Mcp { command }) = &cli.command {
         return Ok(EarlyDispatch::Handled(mcp_cli::run(command, cli).await));
+    }
+    if let Some(Command::Plugins { command }) = &cli.command {
+        return Ok(EarlyDispatch::Handled(plugins_cli::run(command, cli)));
     }
     if let Some(Command::Attach { id }) = &cli.command {
         return Ok(EarlyDispatch::Handled(

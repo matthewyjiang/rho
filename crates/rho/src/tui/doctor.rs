@@ -447,12 +447,14 @@ fn plugins_check(report: &crate::plugins::PluginLoadReport) -> DoctorCheck {
     let healthy = summary.rejected == 0 && summary.problems == 0;
     let status = if !summary.discovered {
         "none discovered".into()
-    } else if healthy {
+    } else if healthy && summary.disabled == 0 {
         format!("{} loaded", summary.loaded)
+    } else if healthy {
+        format!("{} loaded, {} disabled", summary.loaded, summary.disabled)
     } else {
         format!(
-            "{} loaded, {} rejected, {} problem(s)",
-            summary.loaded, summary.rejected, summary.problems
+            "{} loaded, {} disabled, {} rejected, {} problem(s)",
+            summary.loaded, summary.disabled, summary.rejected, summary.problems
         )
     };
     let detail = if summary.discovered {

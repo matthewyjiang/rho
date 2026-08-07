@@ -13,6 +13,10 @@
 //! translated into the generic native MCP configuration and share its
 //! transport, lifecycle, permission, and tool-registration path.
 //!
+//! Enable and disable state is Rho policy stored outside package directories
+//! (`plugins.toml` under the Rho data root and the project `.rho` directory).
+//! Install and link place packages into the explicit roots above.
+//!
 //! Version handling stays isolated behind `$schema` recognition because the
 //! 1.0.0 specification is a Working Draft.
 //!
@@ -20,10 +24,14 @@
 
 #[path = "plugins/contain.rs"]
 mod contain;
+#[path = "plugins/manage.rs"]
+pub(crate) mod manage;
 #[path = "plugins/manifest.rs"]
 mod manifest;
 #[path = "plugins/mcp_adapter.rs"]
 mod mcp_adapter;
+#[path = "plugins/state.rs"]
+pub(crate) mod state;
 
 #[cfg(test)]
 #[path = "plugins_tests.rs"]
@@ -38,19 +46,16 @@ use std::path::{Path, PathBuf};
 use crate::skills::{Skill, SkillSource};
 use crate::tools::mcp::config::{InvalidMcpServer, McpConfig, McpServerConfig};
 
+pub(crate) use state::{PluginOrigin, PluginScope, PluginStateStore};
+
 pub(crate) const SUPPORTED_COMPONENTS: &str =
     "skills, mcp (stdio, streamable-http; sse unsupported)";
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PluginScope {
-    Project,
-    User,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PluginStatus {
     Loaded,
+    Disabled,
     Rejected,
     Shadowed,
 }
@@ -58,12 +63,21 @@ pub(crate) enum PluginStatus {
 #[derive(Clone, Debug, serde::Serialize)]
 pub(crate) struct PluginReportEntry {
     pub(crate) name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) description: Option<String>,
     pub(crate) root: String,
+    pub(crate) scope: PluginScope,
+    pub(crate) origin: PluginOrigin,
+    pub(crate) enabled: bool,
     pub(crate) status: PluginStatus,
     /// Manifest warnings plus component-level problems; empty when clean.
     pub(crate) problems: Vec<String>,
     pub(crate) skill_count: usize,
     pub(crate) mcp_server_count: usize,
+    pub(crate) skill_names: Vec<String>,
+    pub(crate) mcp_server_names: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize)]
@@ -75,6 +89,7 @@ pub(crate) struct PluginLoadReport {
 pub(crate) struct PluginLoadSummary {
     pub(crate) discovered: bool,
     pub(crate) loaded: usize,
+    pub(crate) disabled: usize,
     pub(crate) rejected: usize,
     pub(crate) problems: usize,
     pub(crate) skills: usize,
@@ -86,6 +101,7 @@ pub(crate) struct PluginDiscovery {
     pub(crate) mcp: McpConfig,
     pub(crate) report: PluginLoadReport,
 }
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ComponentSelection {
     All,
@@ -105,22 +121,34 @@ impl ComponentSelection {
 
 /// Plugin-owned skills in precedence order for ordinary skill discovery.
 pub(crate) fn skills_by_precedence(cwd: &Path, home: Option<&Path>) -> Vec<Skill> {
-    discover_components(cwd, home, ComponentSelection::SkillsOnly).skills
+    discover_components(cwd, home, None, ComponentSelection::SkillsOnly).skills
 }
 
 /// Discover and load plugin packages from the explicit roots.
 pub(crate) fn discover(cwd: &Path, home: Option<&Path>) -> PluginDiscovery {
-    discover_components(cwd, home, ComponentSelection::All)
+    let rho_home = crate::paths::rho_dir().ok();
+    discover_components(cwd, home, rho_home.as_deref(), ComponentSelection::All)
 }
 
 /// Discover only plugin MCP configuration for the `rho mcp` inventory path.
 pub(crate) fn discover_mcp(cwd: &Path, home: Option<&Path>) -> PluginDiscovery {
-    discover_components(cwd, home, ComponentSelection::McpOnly)
+    let rho_home = crate::paths::rho_dir().ok();
+    discover_components(cwd, home, rho_home.as_deref(), ComponentSelection::McpOnly)
+}
+
+/// Discover with an explicit Rho data root (tests and management commands).
+pub(crate) fn discover_with_rho_home(
+    cwd: &Path,
+    home: Option<&Path>,
+    rho_home: Option<&Path>,
+) -> PluginDiscovery {
+    discover_components(cwd, home, rho_home, ComponentSelection::All)
 }
 
 fn discover_components(
     cwd: &Path,
     home: Option<&Path>,
+    rho_home: Option<&Path>,
     components: ComponentSelection,
 ) -> PluginDiscovery {
     let mut discovery = PluginDiscovery {
@@ -128,6 +156,7 @@ fn discover_components(
         mcp: McpConfig::default(),
         report: PluginLoadReport::default(),
     };
+    let state = PluginStateStore::load(cwd, rho_home).unwrap_or_default();
 
     for root in plugin_roots(cwd, home) {
         let Some(candidates) = plugin_candidates(&root.path) else {
@@ -140,6 +169,7 @@ fn discover_components(
                 &candidate,
                 root.scope,
                 components,
+                &state,
             );
         }
     }
@@ -177,7 +207,19 @@ fn plugin_candidates(plugins_root: &Path) -> Option<Vec<PathBuf>> {
     let mut candidates: Vec<PathBuf> = entries
         .filter_map(Result::ok)
         .map(|entry| entry.path())
-        .filter(|path| path.is_dir() && path.join("plugin.json").exists())
+        .filter(|path| {
+            let manifest = path.join("plugin.json");
+            if manifest.exists() {
+                return true;
+            }
+            // Linked packages are symlinks to directories that hold plugin.json.
+            std::fs::symlink_metadata(path)
+                .map(|metadata| metadata.file_type().is_symlink())
+                .unwrap_or(false)
+                && std::fs::canonicalize(path)
+                    .map(|resolved| resolved.join("plugin.json").is_file())
+                    .unwrap_or(false)
+        })
         .collect();
     candidates.sort();
     Some(candidates)
@@ -189,6 +231,7 @@ fn load_candidate(
     candidate: &Path,
     scope: PluginScope,
     components: ComponentSelection,
+    state: &PluginStateStore,
 ) {
     let directory_name = candidate
         .file_name()
@@ -198,11 +241,18 @@ fn load_candidate(
     let reject = |discovery: &mut PluginDiscovery, reason: String| {
         discovery.report.plugins.push(PluginReportEntry {
             name: directory_name.clone(),
+            version: None,
+            description: None,
             root: crate::paths::display(candidate),
+            scope,
+            origin: state.origin(scope, &directory_name, candidate),
+            enabled: true,
             status: PluginStatus::Rejected,
             problems: vec![reason],
             skill_count: 0,
             mcp_server_count: 0,
+            skill_names: Vec::new(),
+            mcp_server_names: Vec::new(),
         });
     };
 
@@ -228,27 +278,37 @@ fn load_candidate(
         Err(error) => return reject(discovery, format!("invalid manifest: {error}")),
     };
 
-    if discovery
-        .report
-        .plugins
-        .iter()
-        .any(|entry| entry.status == PluginStatus::Loaded && entry.name == manifest.name)
-    {
+    if discovery.report.plugins.iter().any(|entry| {
+        matches!(entry.status, PluginStatus::Loaded | PluginStatus::Disabled)
+            && entry.name == manifest.name
+    }) {
         discovery.report.plugins.push(PluginReportEntry {
             name: manifest.name.clone(),
+            version: manifest.version.clone(),
+            description: manifest.description.clone(),
             root: crate::paths::display(candidate),
+            scope,
+            origin: state.origin(scope, &manifest.name, candidate),
+            enabled: state.is_enabled(scope, &manifest.name),
             status: PluginStatus::Shadowed,
             problems: vec![format!(
-                "shadowed by a higher-precedence plugin root ({scope:?} root skipped)"
+                "shadowed by a higher-precedence plugin root ({} root skipped)",
+                scope.as_str()
             )],
             skill_count: 0,
             mcp_server_count: 0,
+            skill_names: Vec::new(),
+            mcp_server_names: Vec::new(),
         });
         return;
     }
 
     let mut problems: Vec<String> = manifest.warnings.clone();
+    let enabled = state.is_enabled(scope, &manifest.name);
+    let origin = state.origin(scope, &manifest.name, candidate);
 
+    // Always inventory components so list/inspect stay useful while disabled.
+    // Only enabled packages contribute skills and MCP servers to the session.
     let skills = if components.loads_skills() {
         discover_plugin_skills(&manifest.name, &root, &mut problems)
     } else {
@@ -269,22 +329,47 @@ fn load_candidate(
         problems.push("plugin has no usable components".to_string());
     }
 
+    let skill_names = skills.iter().map(|skill| skill.name.clone()).collect();
+    let mcp_server_names = mcp_servers
+        .iter()
+        .map(|(name, _)| name.clone())
+        .collect::<Vec<_>>();
     let skill_count = skills.len();
     let mcp_server_count = mcp_servers.len();
-    discovery.skills.extend(skills);
-    discovery.mcp.servers.extend(
-        mcp_servers
-            .into_iter()
-            .map(|(name, server)| (format!("{}/{name}", manifest.name), server)),
-    );
-    discovery.mcp.invalid_servers.extend(invalid_mcp_servers);
+
+    if enabled {
+        discovery.skills.extend(skills);
+        discovery.mcp.servers.extend(
+            mcp_servers
+                .into_iter()
+                .map(|(name, server)| (format!("{}/{name}", manifest.name), server)),
+        );
+        discovery.mcp.invalid_servers.extend(invalid_mcp_servers);
+    } else {
+        problems.insert(
+            0,
+            "disabled in plugins.toml; components are not active in new sessions".to_string(),
+        );
+    }
+
     discovery.report.plugins.push(PluginReportEntry {
         name: manifest.name,
+        version: manifest.version,
+        description: manifest.description,
         root: crate::paths::display(candidate),
-        status: PluginStatus::Loaded,
+        scope,
+        origin,
+        enabled,
+        status: if enabled {
+            PluginStatus::Loaded
+        } else {
+            PluginStatus::Disabled
+        },
         problems,
         skill_count,
         mcp_server_count,
+        skill_names,
+        mcp_server_names,
     });
 }
 
@@ -443,6 +528,13 @@ pub(crate) fn log(report: &PluginLoadReport) {
                     "Agent Plugin shadowed by a higher-precedence plugin root"
                 );
             }
+            PluginStatus::Disabled => {
+                tracing::info!(
+                    plugin = %entry.name,
+                    root = %entry.root,
+                    "Agent Plugin disabled; components inactive for new sessions"
+                );
+            }
             PluginStatus::Loaded => {
                 for problem in &entry.problems {
                     tracing::warn!(
@@ -476,6 +568,11 @@ impl PluginLoadReport {
                     summary.loaded += 1;
                     summary.problems += entry.problems.len();
                 }
+                PluginStatus::Disabled => {
+                    summary.disabled += 1;
+                    // The leading disable notice is policy, not a package problem.
+                    summary.problems += entry.problems.len().saturating_sub(1);
+                }
                 PluginStatus::Rejected => summary.rejected += 1,
                 PluginStatus::Shadowed => {}
             }
@@ -483,5 +580,9 @@ impl PluginLoadReport {
             summary.mcp_servers += entry.mcp_server_count;
         }
         summary
+    }
+
+    pub(crate) fn find(&self, name: &str) -> Option<&PluginReportEntry> {
+        self.plugins.iter().find(|entry| entry.name == name)
     }
 }
