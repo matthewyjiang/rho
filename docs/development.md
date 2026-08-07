@@ -49,6 +49,42 @@ The full mode runs policy and script checks, Clippy for all targets and features
 
 Development and test profiles use reduced debug information to keep artifacts and link times smaller while retaining line-number backtraces. Set `CARGO_PROFILE_DEV_DEBUG=2` or `CARGO_PROFILE_TEST_DEBUG=2` when a debugging session needs full symbols.
 
+## Crate publish preparation
+
+CI runs `scripts/check_crate_publish_prep.sh` before release packaging. That
+script calls `scripts/crate_publish_prep.py`, which dry-runs `cargo publish` for
+each independently released crate.
+
+Internal path dependencies use this registry-boundary rule:
+
+- If the dependency's exact workspace version already exists on crates.io
+  (including yanked releases), verify against the registry. Do not path-patch
+  that dependency.
+- If that version is not on crates.io yet, keep a path patch so a coordinated
+  same-PR version cut can still package before the dependency is published.
+- crates.io transport or HTTP failures fail the check. A timeout or 500 is not
+  treated as "unpublished".
+
+This catches the failure mode where a `refactor` moves public symbols into a
+dependency without cutting that dependency's version: local workspace builds
+still pass, but `cargo publish` verification against crates.io does not.
+
+`scripts/publish_workspace_crates.sh --dry-run` uses the same patch selector.
+Real publishes never path-patch; they wait for each dependency version to index
+on crates.io first.
+
+Local checks:
+
+```bash
+python3 scripts/crate_publish_prep.py --self-test
+./scripts/check_crate_publish_prep.sh
+```
+
+The self-test uses `fixtures/publish-boundary`, where a consumer imports a
+symbol that exists only on the workspace copy of a dependency. Without a
+workspace path patch, verification fails the same way a real crates.io publish
+would.
+
 ## Thermo-nuclear review workflow
 
 The repository includes `.rho/workflows/thermo-nuclear-review/` for a deep

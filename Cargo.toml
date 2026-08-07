@@ -1,6 +1,6 @@
 [workspace]
 members = ["crates/rho", "crates/rho-providers", "crates/rho-sdk", "crates/rho-tools", "crates/rho-tui-pty"]
-exclude = ["fixtures/downstream"]
+exclude = ["fixtures/downstream", "fixtures/publish-boundary"]
 resolver = "2"
 
 [profile.dev]

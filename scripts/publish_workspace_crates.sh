@@ -5,7 +5,12 @@
 # it never continues past the first failed package and never mutates GitHub
 # releases. Callers should only publish draft GitHub releases after this
 # script succeeds for the same candidate SHA.
+#
+# Dry-run validation uses scripts/crate_publish_prep.py so path patches apply
+# only for internal deps whose exact workspace version is not on crates.io yet.
 set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 usage() {
   cat <<'EOF'
@@ -184,10 +189,28 @@ publish_crate() {
   wait_for_crate "$name" "$version"
 }
 
+load_dry_run_validation_flags() {
+  # Populate dry_run_validation_flags with selective cargo --config tokens.
+  local package="$1"
+  local out
+  out="$(
+    python3 "$root/scripts/crate_publish_prep.py" --print-cargo-config "$package"
+  )" || return 1
+  dry_run_validation_flags=()
+  if [[ -z "$out" ]]; then
+    return 0
+  fi
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    dry_run_validation_flags+=("$line")
+  done <<<"$out"
+}
+
 if [[ "$publish_tools" == true ]]; then
   tools_validation_flags=()
   if [[ "$dry_run" == true ]]; then
-    tools_validation_flags+=(--config 'patch.crates-io.rho-sdk.path="crates/rho-sdk"')
+    load_dry_run_validation_flags rho-agent-tools
+    tools_validation_flags=("${dry_run_validation_flags[@]}")
   elif [[ "$publish_sdk" != true ]]; then
     wait_for_crate rho-sdk "$sdk_version"
   fi
@@ -197,10 +220,8 @@ fi
 if [[ "$publish_providers" == true ]]; then
   providers_validation_flags=()
   if [[ "$dry_run" == true ]]; then
-    providers_validation_flags+=(
-      --config 'patch.crates-io.rho-sdk.path="crates/rho-sdk"'
-      --config 'patch.crates-io.rho-agent-tools.path="crates/rho-tools"'
-    )
+    load_dry_run_validation_flags rho-providers
+    providers_validation_flags=("${dry_run_validation_flags[@]}")
   else
     if [[ "$publish_sdk" != true ]]; then
       wait_for_crate rho-sdk "$sdk_version"
@@ -215,11 +236,8 @@ fi
 if [[ "$publish_app" == true ]]; then
   app_validation_flags=()
   if [[ "$dry_run" == true ]]; then
-    app_validation_flags+=(
-      --config 'patch.crates-io.rho-sdk.path="crates/rho-sdk"'
-      --config 'patch.crates-io.rho-providers.path="crates/rho-providers"'
-      --config 'patch.crates-io.rho-agent-tools.path="crates/rho-tools"'
-    )
+    load_dry_run_validation_flags rho-coding-agent
+    app_validation_flags=("${dry_run_validation_flags[@]}")
   elif [[ "$publish_sdk" != true ]]; then
     wait_for_crate rho-sdk "$sdk_version"
   fi
