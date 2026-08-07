@@ -524,19 +524,64 @@ jobs:
             exit 1
           fi
 
-  # Arch builds from the release tag tarball and does not need binary assets.
-  # Dispatch beside release-binaries so pacman packaging overlaps the matrix.
-  dispatch-arch-package:
-    needs: [release, publish-crates]
-    if: ${{ needs.release.outputs.release_created == 'true' && needs.publish-crates.result == 'success' }}
+  # Arch builds from the release tag tarball. Start makepkg beside binaries; keep
+  # the public mjiang-extras push gated on crates.io success (no draft channel).
+  build-arch-package:
+    needs: release
+    if: ${{ needs.release.outputs.release_created == 'true' }}
+    uses: ./.github/workflows/publish-arch-package.yml
+    with:
+      app-tag: ${{ needs.release.outputs.tag_name }}
+      publish: false
+
+  publish-arch-package:
+    needs: [release, publish-crates, build-arch-package]
+    if: ${{ needs.release.outputs.release_created == 'true' && needs.publish-crates.result == 'success' && needs.build-arch-package.result == 'success' }}
     runs-on: ubuntu-latest
+    container: archlinux:latest
+    permissions:
+      actions: read
+      contents: read
     steps:
-      - name: Dispatch Arch package workflow
+      - name: Install publish tools
+        run: |
+          pacman -Sy --noconfirm base-devel git pacman-contrib
+
+      - name: Checkout publish helper
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            scripts/publish_arch_to_extras.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Download package artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build-arch-package.outputs.artifact-name }}
+          path: packages
+
+      - name: Checkout mjiang-extras
+        uses: actions/checkout@v4
+        with:
+          repository: matthewyjiang/mjiang-extras
+          token: ${{ secrets.MJIANG_EXTRAS_PUSH_TOKEN }}
+          path: mjiang-extras
+
+      - name: Publish package files
         env:
-          GH_REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.release.outputs.tag_name }}
-        run: gh workflow run publish-arch-package.yml --ref "$TAG"
+          SOURCE_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          chmod +x scripts/publish_arch_to_extras.sh
+          mapfile -t packages < <(find packages -maxdepth 1 -type f -name '*.pkg.tar.zst' | sort)
+          if [[ ${#packages[@]} -eq 0 ]]; then
+            echo "No Arch packages found in the artifact" >&2
+            exit 1
+          fi
+          ./scripts/publish_arch_to_extras.sh \
+            --extras-dir mjiang-extras \
+            --source-repo "$SOURCE_REPO" \
+            "${packages[@]}"
 
   publish-app-release:
     needs: [release, publish-crates, release-binaries]
