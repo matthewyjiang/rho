@@ -1,3 +1,4 @@
+use rho_sdk::{floor_char_boundary, TRUNCATION_MARKER};
 use rho_tools::tool::truncate;
 
 use {super::agent::SubagentSnapshot, crate::subagent::RunState};
@@ -158,7 +159,7 @@ pub(crate) fn merge_notification_context(existing: Option<&str>, newer: &str) ->
     let Some(prefix_bytes) = MODEL_NOTIFICATION_BYTES.checked_sub(reserved) else {
         return newer.to_string();
     };
-    let boundary = previous_char_boundary(existing, prefix_bytes);
+    let boundary = floor_char_boundary(existing, prefix_bytes);
     format!(
         "{}{EARLIER_NOTIFICATIONS_TRUNCATED}{NEWER_NOTIFICATIONS_SEPARATOR}{newer}",
         &existing[..boundary]
@@ -208,26 +209,17 @@ fn push_claude_metadata(lines: &mut Vec<String>, snapshot: &SubagentSnapshot) {
     }
 }
 
-fn previous_char_boundary(value: &str, max_bytes: usize) -> usize {
-    let mut boundary = max_bytes.min(value.len());
-    while boundary > 0 && !value.is_char_boundary(boundary) {
-        boundary -= 1;
-    }
-    boundary
-}
-
 fn push_excerpt(output: &mut String, result: &str, max_bytes: usize) {
     if result.len() <= max_bytes {
         output.push_str(result);
         return;
     }
 
-    const TRUNCATED: &str = "\n[truncated]";
-    let prefix_bytes = max_bytes.saturating_sub(TRUNCATED.len());
-    let boundary = previous_char_boundary(result, prefix_bytes);
+    let prefix_bytes = max_bytes.saturating_sub(TRUNCATION_MARKER.len());
+    let boundary = floor_char_boundary(result, prefix_bytes);
     output.push_str(&result[..boundary]);
-    if max_bytes >= TRUNCATED.len() {
-        output.push_str(TRUNCATED);
+    if max_bytes >= TRUNCATION_MARKER.len() {
+        output.push_str(TRUNCATION_MARKER);
     }
 }
 

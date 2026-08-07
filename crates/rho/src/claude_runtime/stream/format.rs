@@ -4,7 +4,11 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-use rho_sdk::model::{ContextUsage, ModelUsage};
+use rho_sdk::{
+    ceil_char_boundary,
+    model::{ContextUsage, ModelUsage},
+    ELLIPSIS,
+};
 
 use super::types::{MAX_RESULT_CHARS, MAX_TEXT_DELTA_CHARS, MAX_TOOL_PAYLOAD_CHARS};
 
@@ -180,7 +184,7 @@ pub(super) fn bound_text(text: &str, max_chars: usize, label: &str) -> String {
         return text.to_string();
     }
     let mut out = text.chars().take(max_chars).collect::<String>();
-    out.push_str(&format!("… [truncated {label}]"));
+    out.push_str(&format!("{ELLIPSIS} [truncated {label}]"));
     out
 }
 
@@ -190,7 +194,7 @@ pub(super) fn truncate_payload_lines(text: &str, max_lines: usize) -> Vec<String
     if lines.len() > max_lines {
         let omitted = lines.len() - max_lines;
         lines.truncate(max_lines);
-        lines.push(format!("… {omitted} more line(s)"));
+        lines.push(format!("{ELLIPSIS} {omitted} more line(s)"));
     }
     lines
 }
@@ -207,9 +211,7 @@ pub(super) fn append_tail(buffer: &mut String, text: &str, max: usize) {
     buffer.push_str(text);
     if buffer.len() > max {
         let cut = buffer.len() - max;
-        let boundary = (cut..buffer.len())
-            .find(|index| buffer.is_char_boundary(*index))
-            .unwrap_or(buffer.len());
+        let boundary = ceil_char_boundary(buffer, cut);
         *buffer = buffer[boundary..].to_string();
     }
 }

@@ -8,6 +8,7 @@ use std::{
 };
 
 use crate::{
+    floor_char_boundary,
     model::{ModelIdentity, ModelUsage},
     ProviderErrorKind, RunId, SessionId,
 };
@@ -325,11 +326,7 @@ fn truncate(mut value: String, max_bytes: usize) -> String {
     if value.len() <= max_bytes {
         return value;
     }
-    let mut boundary = max_bytes;
-    while !value.is_char_boundary(boundary) {
-        boundary -= 1;
-    }
-    value.truncate(boundary);
+    value.truncate(floor_char_boundary(&value, max_bytes));
     value
 }
 

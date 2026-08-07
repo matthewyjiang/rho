@@ -338,21 +338,10 @@ fn push_excerpt(body: &mut String, text: &str, budget: usize) {
         body.push_str(text);
         return;
     }
-    let keep = budget.saturating_sub(3);
-    let boundary = previous_char_boundary(text, keep);
+    let keep = budget.saturating_sub(rho_sdk::ASCII_ELLIPSIS.len());
+    let boundary = rho_sdk::floor_char_boundary(text, keep);
     body.push_str(&text[..boundary]);
-    body.push_str("...");
-}
-
-fn previous_char_boundary(text: &str, index: usize) -> usize {
-    if index >= text.len() {
-        return text.len();
-    }
-    let mut boundary = index;
-    while boundary > 0 && !text.is_char_boundary(boundary) {
-        boundary -= 1;
-    }
-    boundary
+    body.push_str(rho_sdk::ASCII_ELLIPSIS);
 }
 
 #[cfg(test)]

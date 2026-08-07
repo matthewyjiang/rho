@@ -2,6 +2,7 @@ pub(super) use crate::config::default_inline_shell as default_shell;
 
 use std::{path::Path, process::Stdio};
 
+use rho_sdk::TRUNCATION_MARKER;
 use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
 use tokio::{
     io::{AsyncRead, AsyncReadExt},
@@ -205,8 +206,8 @@ async fn execute_streaming(
     })
 }
 
-/// Marker appended when output is cut short, matching `rho_tools::tool::truncate`.
-const TRUNCATION_NOTICE: &str = "\n[truncated]";
+/// Marker appended when output is cut short.
+const TRUNCATION_NOTICE: &str = TRUNCATION_MARKER;
 
 /// Length of the trailing bytes that begin a UTF-8 sequence the read did not finish.
 ///

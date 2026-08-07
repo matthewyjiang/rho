@@ -1,3 +1,4 @@
+use rho_sdk::{floor_char_boundary, ELLIPSIS};
 use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolHeader, ToolStatus};
 
 use super::{format::draft_card, ToolView};
@@ -263,17 +264,14 @@ fn truncate_preview(text: &str) -> String {
     if text.len() <= TASK_PREVIEW_BYTES {
         return text.to_string();
     }
-    let mut boundary = TASK_PREVIEW_BYTES;
-    while boundary > 0 && !text.is_char_boundary(boundary) {
-        boundary -= 1;
-    }
+    let boundary = floor_char_boundary(text, TASK_PREVIEW_BYTES);
     let prefix = &text[..boundary];
     let boundary = prefix
         .char_indices()
         .rev()
         .find_map(|(index, character)| character.is_whitespace().then_some(index))
         .unwrap_or(boundary);
-    format!("{}…", text[..boundary].trim_end())
+    format!("{}{ELLIPSIS}", text[..boundary].trim_end())
 }
 
 fn agent_list_lines(content: &str) -> Vec<String> {

@@ -146,6 +146,7 @@ mod run;
 mod secret;
 mod session;
 mod steering;
+pub mod text;
 pub mod tool;
 mod tool_host;
 mod usage;
@@ -186,6 +187,10 @@ pub use run::Run;
 pub use secret::SecretString;
 pub use session::{Session, SessionState, UserInput};
 pub use steering::SteeringRetraction;
+pub use text::{
+    ceil_char_boundary, floor_char_boundary, ASCII_ELLIPSIS, DIAGNOSTIC_TRUNCATION_MARKER,
+    ELLIPSIS, TRUNCATION_MARKER,
+};
 pub use tool_host::{
     PendingToolHostInput, ToolHost, ToolHostBuilder, ToolHostCall, ToolHostEvent, ToolHostFuture,
     ToolHostRun,

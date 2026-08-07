@@ -132,7 +132,7 @@ fn push_clipped(out: &mut String, text: &str, max_bytes: usize) {
         out.push_str(text);
         return;
     }
-    let end = floor_boundary(text, max_bytes);
+    let end = rho_sdk::floor_char_boundary(text, max_bytes);
     out.push_str(&text[..end]);
     out.push_str(&format!("\n[... {} bytes clipped ...]", text.len() - end));
 }
@@ -162,25 +162,9 @@ fn elide_middle(body: String, max_bytes: usize) -> String {
     elided
 }
 
-fn floor_boundary(text: &str, index: usize) -> usize {
-    let mut index = index.min(text.len());
-    while index > 0 && !text.is_char_boundary(index) {
-        index -= 1;
-    }
-    index
-}
-
-fn ceil_boundary(text: &str, index: usize) -> usize {
-    let mut index = index.min(text.len());
-    while index < text.len() && !text.is_char_boundary(index) {
-        index += 1;
-    }
-    index
-}
-
 /// Last line start at or before `index`, so a head cut lands between lines.
 fn line_floor(text: &str, index: usize) -> usize {
-    let index = floor_boundary(text, index);
+    let index = rho_sdk::floor_char_boundary(text, index);
     text[..index]
         .rfind('\n')
         .map(|position| position + 1)
@@ -189,7 +173,7 @@ fn line_floor(text: &str, index: usize) -> usize {
 
 /// First line start at or after `index`, so a tail cut lands between lines.
 fn line_ceil(text: &str, index: usize) -> usize {
-    let index = ceil_boundary(text, index);
+    let index = rho_sdk::ceil_char_boundary(text, index);
     text[index..]
         .find('\n')
         .map(|position| index + position + 1)

@@ -16,6 +16,7 @@ use rho_sdk::{
     model::{ModelEvent, ModelResponse},
     provider::{ProviderEventSender, ProviderRequestEvent},
     CancellationToken, ProviderError, ProviderErrorKind, Retryability,
+    DIAGNOSTIC_TRUNCATION_MARKER,
 };
 use tokio::sync::Notify;
 
@@ -175,7 +176,7 @@ fn sanitize_diagnostic(value: &str) -> String {
         diagnostic.push_str(&escaped);
     }
     if truncated {
-        diagnostic.push_str("\n[diagnostic truncated]");
+        diagnostic.push_str(DIAGNOSTIC_TRUNCATION_MARKER);
     }
     diagnostic
 }

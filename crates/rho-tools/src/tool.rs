@@ -122,24 +122,16 @@ fn normalize_path(path: &Path) -> PathBuf {
 ///
 /// Callers that must keep a hard byte budget subtract this before choosing the
 /// `max` they pass, so the marker cannot push the result past their limit.
-pub const TRUNCATION_MARKER: &str = "\n[truncated]";
+pub use rho_sdk::TRUNCATION_MARKER;
 
 pub fn truncate(mut s: String, max: usize) -> String {
     if s.len() <= max {
         return s;
     }
-    let boundary = previous_char_boundary(&s, max);
+    let boundary = rho_sdk::floor_char_boundary(&s, max);
     s.truncate(boundary);
     s.push_str(TRUNCATION_MARKER);
     s
-}
-
-fn previous_char_boundary(s: &str, index: usize) -> usize {
-    let mut index = index.min(s.len());
-    while index > 0 && !s.is_char_boundary(index) {
-        index -= 1;
-    }
-    index
 }
 
 #[cfg(test)]

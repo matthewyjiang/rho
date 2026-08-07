@@ -147,10 +147,7 @@ impl WorkflowAgentExecutor {
                 request.node
             ))
         })?;
-        let mut retained = answer.len().min(max_output_bytes);
-        while !answer.is_char_boundary(retained) {
-            retained -= 1;
-        }
+        let retained = rho_sdk::floor_char_boundary(&answer, max_output_bytes);
         let answer_truncated = retained < answer.len();
         let answer_artifact = write_artifact_with_observation(
             run_directory,

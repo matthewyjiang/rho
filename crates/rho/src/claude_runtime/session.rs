@@ -644,10 +644,8 @@ async fn read_log_tail(path: &std::path::Path) -> String {
         return trimmed.to_string();
     }
     let cut = trimmed.len() - 400;
-    let boundary = (cut..trimmed.len())
-        .find(|index| trimmed.is_char_boundary(*index))
-        .unwrap_or(cut);
-    format!("…{}", &trimmed[boundary..])
+    let boundary = rho_sdk::ceil_char_boundary(trimmed, cut);
+    format!("{}{}", rho_sdk::ELLIPSIS, &trimmed[boundary..])
 }
 
 #[cfg(test)]
