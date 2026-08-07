@@ -44,6 +44,9 @@ type McpSession = RunningService<RoleClient, ClientInfo>;
 // The local end-to-end fixture initializes in about 40 ms. Two minutes leaves
 // a 3,000x margin for cold package runners while still bounding broken servers.
 const MCP_SERVER_STARTUP_BUDGET: std::time::Duration = std::time::Duration::from_secs(120);
+// Graceful MCP session teardown should be quick; bound it so one hung server
+// cannot stall process or CLI shutdown.
+const MCP_SESSION_CLOSE_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
 
 const SAFE_CHILD_ENVIRONMENT: &[&str] = &[
     "APPDATA",
@@ -77,18 +80,6 @@ pub(crate) enum McpSessionPlan {
     Connect,
     /// Emit config inventory without starting transports.
     Inventory(McpLoadMode),
-}
-
-impl McpSessionPlan {
-    pub(crate) fn for_session(native_runtime: bool, tools_enabled: bool) -> Self {
-        if !native_runtime {
-            Self::Inventory(McpLoadMode::UnsupportedAgent)
-        } else if !tools_enabled {
-            Self::Inventory(McpLoadMode::ToolsDisabled)
-        } else {
-            Self::Connect
-        }
-    }
 }
 
 pub(crate) struct McpConnectOutcome {
@@ -234,11 +225,21 @@ impl McpBundle {
             let mut guard = self.sessions.lock().await;
             std::mem::take(&mut *guard)
         };
-        for mut session in sessions {
-            if let Err(error) = session.close().await {
-                tracing::warn!(error = %error, "MCP session shutdown failed");
+        let close_jobs = sessions.into_iter().map(|mut session| async move {
+            match tokio::time::timeout(MCP_SESSION_CLOSE_BUDGET, session.close()).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => {
+                    tracing::warn!(error = %error, "MCP session shutdown failed");
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        limit_seconds = MCP_SESSION_CLOSE_BUDGET.as_secs(),
+                        "MCP session shutdown exceeded its close budget"
+                    );
+                }
             }
-        }
+        });
+        futures_util::future::join_all(close_jobs).await;
     }
 }
 

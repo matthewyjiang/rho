@@ -145,34 +145,5 @@ fn print_show(report: &McpSessionReport, id: &str, json: bool) -> anyhow::Result
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::tools::mcp::report::McpToolReport;
-
-    // Covers: show must fail closed when the identity is missing.
-    // Owner: pure unit
-    #[test]
-    fn show_missing_identity_lists_known_servers() {
-        let report = McpSessionReport {
-            mode: McpLoadMode::Native,
-            servers: vec![McpServerReport {
-                identity: "filesystem".into(),
-                enabled: true,
-                transport: None,
-                status: McpServerStatus::Connected,
-                error: None,
-                tools: vec![McpToolReport {
-                    remote_name: "read".into(),
-                    exported_name: "mcp__filesystem__read".into(),
-                }],
-                filtered_out_count: 0,
-                collision_skipped_count: 0,
-            }],
-        };
-        let error = print_show(&report, "missing", false)
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains("missing"));
-        assert!(error.contains("filesystem"));
-    }
-}
+#[path = "mcp_cli_tests.rs"]
+mod tests;

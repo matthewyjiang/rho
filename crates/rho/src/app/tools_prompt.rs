@@ -86,11 +86,16 @@ pub(crate) async fn assemble_tools_and_prompt(
     let launch_delegation_enabled = capabilities.contains(&ToolCapability::Agent);
     let delegation_enabled =
         launch_delegation_enabled || capabilities.contains(&ToolCapability::Agents);
-    let mcp = crate::tools::mcp::McpConnectOutcome::run(
-        crate::tools::mcp::McpSessionPlan::for_session(native_runtime, !options.no_tools),
-        &options.config.mcp,
-    )
-    .await;
+    let mcp_plan = if !native_runtime {
+        crate::tools::mcp::McpSessionPlan::Inventory(
+            crate::tools::mcp::McpLoadMode::UnsupportedAgent,
+        )
+    } else if options.no_tools {
+        crate::tools::mcp::McpSessionPlan::Inventory(crate::tools::mcp::McpLoadMode::ToolsDisabled)
+    } else {
+        crate::tools::mcp::McpSessionPlan::Connect
+    };
+    let mcp = crate::tools::mcp::McpConnectOutcome::run(mcp_plan, &options.config.mcp).await;
     let tools = if options.no_tools {
         AppToolSet::disabled_with_mcp(mcp)
     } else {

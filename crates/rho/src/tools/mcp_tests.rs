@@ -270,6 +270,7 @@ async fn streamable_http_discovery() {
 
 // Covers: stdio handshake, discovery, calls, cancellation, and shutdown must
 // work end to end, and a failed sibling must not suppress a healthy server.
+// Prerequisite: `python3` must be available on PATH (Unix-gated test).
 // Owner: MCP stdio process lifecycle.
 #[cfg(unix)]
 #[tokio::test]
@@ -384,24 +385,4 @@ open(sys.argv[1], "w").close()
 
     bundle.shutdown().await;
     assert!(closed.exists());
-}
-
-// Covers: session plan maps runtime/tool flags onto connect vs inventory modes.
-// Owner: MCP session load boundary.
-#[test]
-fn session_plan_selects_inventory_modes() {
-    use super::{McpLoadMode, McpSessionPlan};
-
-    assert_eq!(
-        McpSessionPlan::for_session(true, true),
-        McpSessionPlan::Connect
-    );
-    assert_eq!(
-        McpSessionPlan::for_session(false, true),
-        McpSessionPlan::Inventory(McpLoadMode::UnsupportedAgent)
-    );
-    assert_eq!(
-        McpSessionPlan::for_session(true, false),
-        McpSessionPlan::Inventory(McpLoadMode::ToolsDisabled)
-    );
 }
