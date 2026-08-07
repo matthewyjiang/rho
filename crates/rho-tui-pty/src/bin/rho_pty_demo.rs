@@ -201,7 +201,12 @@ fn capture_demo(binary: &Path) -> Result<DemoCapture> {
         "Focused tests cover both generated and forwarded IDs.",
         STREAM,
     )?;
-    harness.wait_for_quiet(Duration::from_millis(300), SETTLE)?;
+    // Title and context usage lag the final assistant text under CI load. The
+    // checked-in plate includes both, and pin_statusline_usage only rewrites a
+    // present `K (…%)` run - so wait until they paint before settling.
+    harness.wait_for_text("session titled: Request ID middleware", STREAM)?;
+    harness.wait_for_text("K (", STREAM)?;
+    harness.wait_for_quiet(Duration::from_millis(500), SETTLE)?;
 
     let screen = harness.screen();
     for needle in [
@@ -213,6 +218,8 @@ fn capture_demo(binary: &Path) -> Result<DemoCapture> {
         DEMO_MODEL,
         "~/rho",
         DEMO_DISPLAY_VERSION,
+        "session titled: Request ID middleware",
+        "K (",
     ] {
         if !screen.contains_text(needle) {
             bail!("demo frame missing {needle:?}:\n{}", screen.debug_dump());
