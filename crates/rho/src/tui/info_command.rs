@@ -179,7 +179,7 @@ pub(super) fn runtime_info_lines(info: &RuntimeInfo, width: usize) -> Vec<Line<'
         if let Some(rate) = metrics.generation_tokens_per_second() {
             block.push_field("Generation rate", &format!("{rate:.1} tok/s"));
         }
-        if let Some(rate) = metrics.output_tokens_per_second() {
+        if let Some(rate) = metrics.response_tokens_per_second() {
             block.push_field("Response rate", &format!("{rate:.1} tok/s"));
         }
         block.push_field("Total latency", &format_duration(metrics.total_latency));

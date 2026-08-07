@@ -4,10 +4,10 @@ use pretty_assertions::assert_eq;
 
 use super::ModelCallMetrics;
 
-// Covers: end-to-end rate keeps pre-stream time in the denominator.
+// Covers: end-to-end response rate keeps pre-stream time in the denominator.
 // Owner: SDK model-call metrics
 #[test]
-fn output_rate_divides_tokens_by_total_latency() {
+fn response_rate_divides_tokens_by_total_latency() {
     let cases = [
         (
             "reasoning before the first event is charged to the rate",
@@ -52,7 +52,15 @@ fn output_rate_divides_tokens_by_total_latency() {
     ];
 
     for (name, metrics, expected) in cases {
-        assert_eq!(metrics.output_tokens_per_second(), expected, "{name}");
+        assert_eq!(metrics.response_tokens_per_second(), expected, "{name}");
+        #[allow(deprecated)]
+        {
+            assert_eq!(
+                metrics.output_tokens_per_second(),
+                metrics.response_tokens_per_second(),
+                "{name}: deprecated alias matches response rate"
+            );
+        }
     }
 }
 
