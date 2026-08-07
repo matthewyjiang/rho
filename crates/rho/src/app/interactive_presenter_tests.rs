@@ -115,7 +115,10 @@ fn advisor_cards_use_status_first_headers() {
     assert_eq!(start.status, ToolStatus::Running);
     assert_eq!(
         start.header,
-        ToolHeader::status_first("advisor", "waiting for provider")
+        ToolHeader::status_first(
+            "advisor",
+            crate::agent::OneShotPhase::WaitingForProvider.label()
+        )
     );
 
     let progress = progress_card(
@@ -130,6 +133,25 @@ fn advisor_cards_use_status_first_headers() {
     assert_eq!(
         progress.body,
         ToolBody::Lines(vec!["try the simpler path".into()])
+    );
+
+    let progress_fallback = progress_card(
+        Some((&view, dir.path())),
+        &rho_sdk::tool::ToolProgress::message(""),
+    );
+    assert_eq!(
+        progress_fallback.header,
+        ToolHeader::status_first(
+            "advisor",
+            crate::agent::OneShotPhase::WaitingForProvider.label()
+        )
+    );
+
+    let interrupted = interrupted_card(&view, "", dir.path());
+    assert_eq!(interrupted.status, ToolStatus::Interrupted);
+    assert_eq!(
+        interrupted.header,
+        ToolHeader::status_first("advisor", "interrupted")
     );
 
     let finished = finished_card(&view, "final guidance", true, dir.path());

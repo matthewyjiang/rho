@@ -324,15 +324,11 @@ async fn consult_advisor_with_provider(
     let usage_recording = crate::usage::default_recording().await;
     let (updates_tx, updates_rx) =
         watch::channel(OneShotUpdate::new(OneShotPhase::WaitingForProvider, ""));
-    let identity = provider.identity();
     let started = run_one_shot_with_provider(
         provider,
         OneShotAgentRequest {
             definition: internal_definition(ADVISOR_AGENT_ID),
             usage_purpose: USAGE_PURPOSE,
-            provider_name: &identity.provider,
-            model: &identity.model,
-            auth: "unused",
             reasoning: Some(reasoning),
             input: transcript,
             cancellation,

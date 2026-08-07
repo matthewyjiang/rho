@@ -3,7 +3,7 @@ use std::{future::Future, path::Path, sync::Arc};
 use anyhow::bail;
 use rho_sdk::{
     model::{ContentBlock, Message, ModelEvent, ModelRequest, ModelResponse, ModelUsage},
-    provider::{ModelProvider, ProviderStreamEvent},
+    provider::{ModelProvider, ProviderRequestEvent, ProviderStreamEvent},
     CancellationToken, ProviderRequestUsageContext, ProviderRequestUsageRecording, SessionId,
 };
 use tokio::sync::watch;
@@ -15,9 +15,6 @@ use super::{AgentDefinition, AgentRuntimeSpec, ModelPolicy, PromptPolicy, ToolPo
 pub(crate) struct OneShotAgentRequest<'a> {
     pub definition: &'a AgentDefinition,
     pub usage_purpose: &'static str,
-    pub provider_name: &'a str,
-    pub model: &'a str,
-    pub auth: &'a str,
     /// When set, overrides the definition's reasoning level.
     pub reasoning: Option<rho_providers::reasoning::ReasoningLevel>,
     pub input: String,
@@ -76,19 +73,23 @@ pub(crate) struct OneShotAgentResult {
 }
 
 /// Builds the provider before returning so callers can time only the model request.
-pub(crate) fn run_one_shot_agent(
-    request: OneShotAgentRequest<'_>,
+pub(crate) fn run_one_shot_agent<'a>(
+    request: OneShotAgentRequest<'a>,
+    provider_name: &str,
+    model: &str,
+    auth: &str,
     usage_recording: ProviderRequestUsageRecording,
-) -> anyhow::Result<impl Future<Output = anyhow::Result<OneShotAgentResult>> + '_> {
+) -> anyhow::Result<impl Future<Output = anyhow::Result<OneShotAgentResult>> + 'a> {
     let reasoning = resolve_reasoning(request.definition, request.reasoning)?;
-    let provider = build_provider(
-        request.provider_name,
-        request.model,
-        reasoning,
-        request.auth,
-    )?;
+    let provider = build_provider(provider_name, model, reasoning, auth)?;
     Ok(async move {
-        run_one_shot_with_provider(provider.as_ref(), request, usage_recording, None).await
+        run_one_shot_with_provider(
+            provider.as_ref(),
+            request,
+            usage_recording,
+            /*updates*/ None,
+        )
+        .await
     })
 }
 
@@ -184,13 +185,12 @@ impl OneShotStream {
                     self.try_publish();
                 }
             }
-            ProviderStreamEvent::Request(_) => {
-                // A failed physical attempt abandons its partial output. Clear
-                // text so the next attempt cannot append onto a stale body.
+            ProviderStreamEvent::Request(ProviderRequestEvent::RequestAttemptFailed { .. }) => {
+                // A failed physical attempt abandons its partial output. Stay on
+                // retrying until the next stream event so latest-wins consumers
+                // can observe the phase.
                 self.text.clear();
                 self.phase = OneShotPhase::RetryingProvider;
-                self.try_publish();
-                self.phase = OneShotPhase::WaitingForProvider;
                 self.try_publish();
             }
             ProviderStreamEvent::Model(

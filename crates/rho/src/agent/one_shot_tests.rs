@@ -48,9 +48,6 @@ fn request<'a>(
     OneShotAgentRequest {
         definition,
         usage_purpose: "test-purpose",
-        provider_name: "test-provider",
-        model: "test-model",
-        auth: "api-key",
         reasoning: None,
         input: "user input".into(),
         cancellation: CancellationToken::new(),
@@ -141,7 +138,7 @@ async fn assembles_messages_extracts_text_and_records_usage_purpose() {
         &provider,
         request(&definition, &session_id, Path::new("/test/workspace")),
         ProviderRequestUsageRecording::new(recorder.clone()),
-        None,
+        /*updates*/ None,
     )
     .await
     .unwrap();
@@ -196,7 +193,7 @@ async fn forwards_cancellation_to_the_provider_request() {
         &provider,
         request,
         ProviderRequestUsageRecording::default(),
-        None,
+        /*updates*/ None,
     )
     .await
     .unwrap_err();
@@ -321,7 +318,7 @@ fn observe_advances_phase_without_leaking_reasoning() {
             usage: ModelUsage::default(),
         },
     ));
-    assert_eq!(rx.borrow().phase, OneShotPhase::WaitingForProvider);
+    assert_eq!(rx.borrow().phase, OneShotPhase::RetryingProvider);
     assert_eq!(rx.borrow().text.as_ref(), "");
 
     stream.observe(&ProviderStreamEvent::Model(

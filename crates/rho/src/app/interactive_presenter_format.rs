@@ -91,7 +91,10 @@ pub(super) fn preview_card(
         ToolKind::Advisor => kind_card(
             status,
             kind,
-            ToolHeader::status_first("advisor", "waiting for provider"),
+            ToolHeader::status_first(
+                "advisor",
+                crate::agent::OneShotPhase::WaitingForProvider.label(),
+            ),
         ),
         ToolKind::Agent => agent_format::agent_start_card(arguments),
         ToolKind::Agents => agent_format::agents_start_card(arguments),
@@ -420,7 +423,7 @@ fn advisor_progress_card(progress: &ToolProgress) -> ToolCard {
     let phase = progress
         .presentation()
         .command_summary_text()
-        .unwrap_or("waiting for provider");
+        .unwrap_or(crate::agent::OneShotPhase::WaitingForProvider.label());
     let mut card = advisor_card(ToolStatus::Running, phase);
     if !progress.text().trim().is_empty() {
         card.body = ToolBody::Lines(split_body_lines(progress.text()));
