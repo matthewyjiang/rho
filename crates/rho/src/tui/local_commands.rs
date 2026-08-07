@@ -155,6 +155,7 @@ impl App {
             provider_health,
             claude,
             mcp_report: &self.mcp_report,
+            plugins_report: &self.plugins_report,
         });
         self.input_ui
             .set_composer(super::ComposerMode::Picker(picker));

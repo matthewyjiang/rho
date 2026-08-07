@@ -86,6 +86,13 @@ pub(crate) async fn assemble_tools_and_prompt(
     let launch_delegation_enabled = capabilities.contains(&ToolCapability::Agent);
     let delegation_enabled =
         launch_delegation_enabled || capabilities.contains(&ToolCapability::Agents);
+    // Agent Plugins contribute skills through ordinary skill discovery and
+    // MCP servers through the generic native MCP configuration.
+    let plugin_discovery =
+        crate::plugins::discover(options.cwd, crate::paths::home_dir().as_deref());
+    crate::plugins::log(&plugin_discovery.report);
+    let mut mcp_config = options.config.mcp.clone();
+    plugin_discovery.merge_mcp_into(&mut mcp_config);
     let mcp_plan = if !native_runtime {
         crate::tools::mcp::McpSessionPlan::Inventory(
             crate::tools::mcp::McpLoadMode::UnsupportedAgent,
@@ -95,8 +102,8 @@ pub(crate) async fn assemble_tools_and_prompt(
     } else {
         crate::tools::mcp::McpSessionPlan::Connect
     };
-    let mcp = crate::tools::mcp::McpConnectOutcome::run(mcp_plan, &options.config.mcp).await;
-    let tools = if options.no_tools {
+    let mcp = crate::tools::mcp::McpConnectOutcome::run(mcp_plan, &mcp_config).await;
+    let mut tools = if options.no_tools {
         AppToolSet::disabled_with_mcp(mcp)
     } else {
         let mut tool_options = ToolSetOptions::new(capabilities);
@@ -130,7 +137,7 @@ pub(crate) async fn assemble_tools_and_prompt(
             mcp,
         )
     };
-
+    tools.install_plugins_report(plugin_discovery.report);
     let specs = tools.specs();
     let system_prompt = if options.no_system_prompt {
         options.diagnostics.update_prompt_sources(Vec::new());
@@ -147,7 +154,11 @@ pub(crate) async fn assemble_tools_and_prompt(
                 let mut advisor_text = built.text.clone();
                 prompt::append_advisor_instruction(&mut advisor_text);
                 if !extra.is_empty() {
-                    let instructions = format!("\n\n# Agent instructions\n\n{extra}");
+                    let instructions = format!("
+
+# Agent instructions
+
+{extra}");
                     built.text.push_str(&instructions);
                     advisor_text.push_str(&instructions);
                 }

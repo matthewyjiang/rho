@@ -95,13 +95,14 @@ impl<'de> Deserialize<'de> for McpServerConfig {
             env: Option<BTreeMap<String, String>>,
             env_from_env: Option<BTreeMap<String, String>>,
             url: Option<String>,
+            headers: Option<BTreeMap<String, String>>,
             headers_from_env: Option<BTreeMap<String, String>>,
         }
 
         let raw = RawServer::deserialize(deserializer)?;
         let transport = match raw.transport {
             TransportKind::Stdio => {
-                if raw.url.is_some() || raw.headers_from_env.is_some() {
+                if raw.url.is_some() || raw.headers.is_some() || raw.headers_from_env.is_some() {
                     return Err(serde::de::Error::custom(
                         "stdio server cannot set HTTP fields",
                     ));
@@ -137,6 +138,7 @@ impl<'de> Deserialize<'de> for McpServerConfig {
                 super::validate_remote_url(&url).map_err(serde::de::Error::custom)?;
                 McpTransport::StreamableHttp {
                     url,
+                    headers: raw.headers.unwrap_or_default(),
                     headers_from_env: raw.headers_from_env.unwrap_or_default(),
                 }
             }
@@ -166,6 +168,10 @@ pub(crate) enum McpTransport {
     },
     StreamableHttp {
         url: String,
+        /// Literal header values supplied with the configuration. Agent
+        /// Plugins packages use these; plain config should prefer
+        /// `headers_from_env` so secrets stay out of the file.
+        headers: BTreeMap<String, String>,
         /// Header names mapped to environment variable names. Values never live in config.
         headers_from_env: BTreeMap<String, String>,
     },

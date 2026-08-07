@@ -341,10 +341,21 @@ async fn connect_server(
         }
         McpTransport::StreamableHttp {
             url,
+            headers: literal_headers,
             headers_from_env,
         } => {
             validate_remote_url(url)?;
             let mut headers = HashMap::new();
+            // Literal headers apply first; environment-derived headers
+            // override them on a name collision.
+            for (name, value) in literal_headers {
+                headers.insert(
+                    HeaderName::try_from(name)
+                        .with_context(|| format!("invalid header `{name}`"))?,
+                    HeaderValue::try_from(value)
+                        .with_context(|| format!("invalid value for MCP header `{name}`"))?,
+                );
+            }
             for (name, variable) in headers_from_env {
                 let value = std::env::var(variable).with_context(|| {
                     format!("environment variable `{variable}` for MCP header `{name}` is not set")
@@ -356,8 +367,9 @@ async fn connect_server(
                         .with_context(|| format!("invalid value for MCP header `{name}`"))?,
                 );
             }
-            // rmcp's reqwest transport disables redirects. This prevents custom
-            // authorization headers from crossing origins.
+            // rmcp's reqwest transport disables redirects, so configured
+            // headers never cross origins through a redirect. This satisfies
+            // the Agent Plugins header-forwarding rule.
             let transport = StreamableHttpClientTransport::from_config(
                 StreamableHttpClientTransportConfig::with_uri(url.clone()).custom_headers(headers),
             );
@@ -423,7 +435,7 @@ pub(super) fn validate_identity(identity: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(super) fn validate_remote_url(value: &str) -> anyhow::Result<()> {
+pub(crate) fn validate_remote_url(value: &str) -> anyhow::Result<()> {
     let url = url::Url::parse(value).context("invalid Streamable HTTP URL")?;
     let loopback = match url.host() {
         Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),

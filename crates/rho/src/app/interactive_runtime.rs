@@ -848,6 +848,10 @@ impl InteractiveRuntime {
         self.tools.mcp_report()
     }
 
+    pub(crate) fn plugins_report(&self) -> &crate::plugins::PluginLoadReport {
+        self.tools.plugins_report()
+    }
+
     /// Returns the tool ceiling for workflow agents started by this session.
     pub(crate) fn workflow_host_capabilities(&self) -> crate::agent::AgentCapabilities {
         crate::agent::AgentCapabilities::new(

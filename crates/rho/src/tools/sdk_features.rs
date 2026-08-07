@@ -1,6 +1,9 @@
 //! SDK implementations for app-owned skill and host-input features.
 
-use std::sync::Arc;
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use rho_sdk::{
     tool::{
@@ -28,6 +31,59 @@ pub(super) fn questionnaire_bundle() -> super::sdk_registry::StaticToolBundle {
 impl SdkSkillTool {
     pub(super) fn new(max_output_bytes: usize) -> Self {
         Self { max_output_bytes }
+    }
+
+    /// Shared preparation for filesystem-backed skills: loose `File` skills
+    /// and plugin skills. The workspace grants only the skill directory, so
+    /// resource access stays inside the skill's permitted root.
+    fn prepare_fs_skill(
+        &self,
+        name: &str,
+        source_display: String,
+        requested: PathBuf,
+        skill_directory: &Path,
+        context: &ToolPreparationContext,
+    ) -> Result<PreparedToolInvocation<'_>, SdkToolError> {
+        let workspace = preparation_workspace(context)?;
+        let skill_workspace = workspace
+            .clone()
+            .with_granted_root(skill_directory)
+            .map_err(|error| SdkToolError::new(ToolErrorKind::Execution, error.to_string()))?;
+        let resolved = skill_workspace
+            .resolve_for_read(&requested)
+            .map_err(|error| SdkToolError::new(ToolErrorKind::Execution, error.to_string()))?;
+        let capability = CapabilityRequest::skill(
+            name,
+            Some(resolved.path().to_path_buf()),
+            CapabilitySource::built_in_tool("skill"),
+        );
+        let access = ToolResourceAccess::shared(ToolResource::workspace_path(resolved.path()));
+        let directory_display = crate::paths::display(skill_directory);
+        let max_output_bytes = self.max_output_bytes;
+        let name = name.to_string();
+        let metadata = ToolMetadata::new().operation(OperationKind::Read);
+        Ok(PreparedToolInvocation::resource_aware(
+            [access],
+            [capability],
+            metadata,
+            move |_context| {
+                Box::pin(async move {
+                    skill_workspace.revalidate(&resolved).map_err(|error| {
+                        SdkToolError::new(ToolErrorKind::PolicyDenied, error.to_string())
+                    })?;
+                    let contents =
+                        tokio::fs::read_to_string(resolved.path())
+                            .await
+                            .map_err(|error| {
+                                SdkToolError::new(ToolErrorKind::Execution, error.to_string())
+                            })?;
+                    let content = format!(
+                        "Loaded skill: {name}\nSource: {source_display}\nReferences are relative to {directory_display}.\n\n{contents}"
+                    );
+                    Ok(ToolOutput::text(truncate(content, max_output_bytes)))
+                })
+            },
+        ))
     }
 }
 
@@ -108,65 +164,34 @@ impl SdkTool for SdkSkillTool {
                     ))
                 }
                 crate::skills::SkillSource::File(requested) => {
-                    let workspace = preparation_workspace(&context)?;
-                    let skill_directory = requested.parent().ok_or_else(|| {
-                        SdkToolError::new(
-                            ToolErrorKind::Execution,
-                            format!(
-                                "skill path '{}' has no parent directory",
-                                requested.display()
-                            ),
-                        )
-                    })?;
-                    let skill_workspace = workspace
-                        .clone()
-                        .with_granted_root(skill_directory)
-                        .map_err(|error| {
-                            SdkToolError::new(ToolErrorKind::Execution, error.to_string())
-                        })?;
-                    let resolved =
-                        skill_workspace
-                            .resolve_for_read(&requested)
-                            .map_err(|error| {
-                                SdkToolError::new(ToolErrorKind::Execution, error.to_string())
-                            })?;
-                    let capability = CapabilityRequest::skill(
+                    let source_display = crate::paths::display(&requested);
+                    let skill_directory = requested
+                        .parent()
+                        .ok_or_else(|| {
+                            SdkToolError::new(
+                                ToolErrorKind::Execution,
+                                format!(
+                                    "skill path '{}' has no parent directory",
+                                    requested.display()
+                                ),
+                            )
+                        })?
+                        .to_path_buf();
+                    self.prepare_fs_skill(
                         &name,
-                        Some(resolved.path().to_path_buf()),
-                        CapabilitySource::built_in_tool("skill"),
-                    );
-                    let access =
-                        ToolResourceAccess::shared(ToolResource::workspace_path(resolved.path()));
-                    let requested_display = crate::paths::display(&requested);
-                    let directory_display = crate::paths::display(skill_directory);
-                    let max_output_bytes = self.max_output_bytes;
-                    Ok(PreparedToolInvocation::resource_aware(
-                        [access],
-                        [capability],
-                        metadata,
-                        move |_context| {
-                            Box::pin(async move {
-                                skill_workspace.revalidate(&resolved).map_err(|error| {
-                                    SdkToolError::new(
-                                        ToolErrorKind::PolicyDenied,
-                                        error.to_string(),
-                                    )
-                                })?;
-                                let contents = tokio::fs::read_to_string(resolved.path())
-                                    .await
-                                    .map_err(|error| {
-                                        SdkToolError::new(
-                                            ToolErrorKind::Execution,
-                                            error.to_string(),
-                                        )
-                                    })?;
-                                let content = format!(
-                                    "Loaded skill: {name}\nSource: {requested_display}\nReferences are relative to {directory_display}.\n\n{contents}"
-                                );
-                                Ok(ToolOutput::text(truncate(content, max_output_bytes)))
-                            })
-                        },
-                    ))
+                        source_display,
+                        requested,
+                        &skill_directory,
+                        &context,
+                    )
+                }
+                crate::skills::SkillSource::Plugin {
+                    plugin, skill_root, ..
+                } => {
+                    let source_display =
+                        format!("plugin {plugin} ({})", crate::paths::display(&skill_root));
+                    let requested = skill_root.join("SKILL.md");
+                    self.prepare_fs_skill(&name, source_display, requested, &skill_root, &context)
                 }
             }
         })

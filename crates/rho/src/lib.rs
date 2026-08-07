@@ -18,6 +18,7 @@ mod keybindings;
 mod model_aliases;
 mod paths;
 mod permission;
+mod plugins;
 mod prompt;
 mod prompt_templates;
 mod questionnaire;

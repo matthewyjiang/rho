@@ -254,6 +254,7 @@ async fn streamable_http_discovery() {
                 tools: McpToolFilter::default(),
                 transport: McpTransport::StreamableHttp {
                     url: format!("http://{address}/mcp"),
+                    headers: BTreeMap::new(),
                     headers_from_env: BTreeMap::new(),
                 },
             },

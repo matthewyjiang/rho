@@ -38,7 +38,7 @@ features:
 | Install and complete a first run | [Getting started](/getting-started) → [Installation](/installation) → [Authentication and models](/authentication-and-models) |
 | Work in the terminal UI | [Interactive TUI](/interactive-tui), [inline shell](/inline-shell), [sessions](/sessions) |
 | Script one-shot prompts or CI | [Automation and CLI](/automation-cli), [workflows](/workflows) |
-| Integrations | [Integrations](/integrations) ([Herdr](/integrations/herdr), [RTK](/integrations/rtk)) |
+| Integrations | [Integrations](/integrations) ([Herdr](/integrations/herdr), [RTK](/integrations/rtk), [MCP](/integrations/mcp), [Agent Plugins](/integrations/plugins)) |
 | Configure or extend behavior | [Configuration](/configuration), [tools and workspace](/tools-workspace), [skills](/skills), [hooks](/hooks), [subagents](/subagents) |
 | Embed Rho in a Rust host | [Rust SDK](/sdk/) |
 | Contribute to Rho | [Development](/development) |

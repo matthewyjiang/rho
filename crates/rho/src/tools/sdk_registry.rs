@@ -143,6 +143,7 @@ pub struct AppToolSet {
     checkpoint_tracker: Arc<crate::session::workspace_checkpoint::WorkspaceCheckpointTracker>,
     web_access: super::web::WebAccessStore,
     mcp_report: super::mcp::McpSessionReport,
+    plugins_report: crate::plugins::PluginLoadReport,
 }
 
 impl AppToolSet {
@@ -158,6 +159,7 @@ impl AppToolSet {
             ),
             web_access: super::web::WebAccessStore::new(),
             mcp_report: super::mcp::McpSessionReport::default(),
+            plugins_report: crate::plugins::PluginLoadReport::default(),
         }
     }
 
@@ -279,6 +281,14 @@ impl AppToolSet {
     fn add_bundle(&mut self, bundle: impl ToolBundle + 'static) {
         self.tools.extend(bundle.tools().iter().cloned());
         self.bundles.push(Box::new(bundle));
+    }
+
+    pub(crate) fn install_plugins_report(&mut self, report: crate::plugins::PluginLoadReport) {
+        self.plugins_report = report;
+    }
+
+    pub(crate) fn plugins_report(&self) -> &crate::plugins::PluginLoadReport {
+        &self.plugins_report
     }
 
     pub(crate) fn mcp_report(&self) -> &super::mcp::McpSessionReport {

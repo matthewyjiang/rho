@@ -27,6 +27,7 @@ pub(super) struct DoctorContext<'a> {
     /// Claude Code binary and auth probe. Not a Rho credential.
     pub(super) claude: &'a ClaudeProbeSnapshot,
     pub(super) mcp_report: &'a crate::tools::mcp::McpSessionReport,
+    pub(super) plugins_report: &'a crate::plugins::PluginLoadReport,
 }
 
 #[derive(Clone, Copy)]
@@ -222,6 +223,7 @@ fn misc_checks(context: &DoctorContext<'_>) -> Vec<DoctorCheck> {
         context.herdr_socket_reachable,
     ));
     checks.push(mcp_check(context.mcp_report));
+    checks.push(plugins_check(context.plugins_report));
     checks
 }
 
@@ -387,6 +389,17 @@ fn mcp_check(report: &crate::tools::mcp::McpSessionReport) -> DoctorCheck {
     DoctorCheck {
         section: DoctorSection::Misc,
         label: "MCP".into(),
+        status: presentation.status,
+        healthy: presentation.healthy,
+        detail: presentation.detail,
+    }
+}
+
+fn plugins_check(report: &crate::plugins::PluginLoadReport) -> DoctorCheck {
+    let presentation = report.doctor_presentation();
+    DoctorCheck {
+        section: DoctorSection::Misc,
+        label: "Agent Plugins".into(),
         status: presentation.status,
         healthy: presentation.healthy,
         detail: presentation.detail,
