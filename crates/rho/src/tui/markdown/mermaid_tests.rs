@@ -1,4 +1,5 @@
 use super::*;
+use crate::tui::terminal_graph::{MAX_LINES, WRAP_WIDTH};
 use pretty_assertions::assert_eq;
 
 fn rendered(source: &str, width: usize) -> Vec<String> {
@@ -99,7 +100,7 @@ fn applies_source_model_and_canvas_limits_before_or_after_painting() {
     );
     // A grouped label may fit the lossless model gate at the normal wrap but
     // exceed the line budget at narrower wraps. Fall back instead of truncating.
-    let compaction_label = "x".repeat(super::painter::WRAP_WIDTH * (super::painter::MAX_LINES - 1));
+    let compaction_label = "x".repeat(WRAP_WIDTH * (MAX_LINES - 1));
     let compacted_group = format!("flowchart TD\nsubgraph Group\nA[{compaction_label}]\nend");
     assert_eq!(
         render_mermaid(&compacted_group, 20),
@@ -144,7 +145,7 @@ fn rejects_blank_malformed_unsafe_and_link_bearing_sources() {
 
 #[test]
 fn raw_falls_back_when_terminal_painter_cannot_preserve_semantics() {
-    let long_label = "x".repeat(super::painter::WRAP_WIDTH * super::painter::MAX_LINES + 1);
+    let long_label = "x".repeat(WRAP_WIDTH * MAX_LINES + 1);
     let fixtures = [
         "stateDiagram-v2\n[*] --> Ready\nReady --> [*]".to_owned(),
         "stateDiagram-v2\nReady --> Waiting\nnote right of Ready: queued".to_owned(),

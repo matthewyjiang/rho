@@ -1,13 +1,17 @@
-use crate::tui::markdown::mermaid::{
-    model::{ClassInfo, Graph},
-    painter::{MermaidArt, MermaidStyles, Oversize, WRAP_WIDTH},
+use crate::tui::{
+    markdown::mermaid::{
+        model::{ClassInfo, Graph},
+        MermaidArt,
+    },
+    terminal_graph::{
+        self, Compartment, GraphStyles, NodeExtra, Oversize, TextAlignment, WRAP_WIDTH,
+    },
 };
-use crate::tui::terminal_graph::{self, NodeExtra};
 
 pub(super) fn render_class(
     graph: &Graph,
     infos: &[ClassInfo],
-    styles: &MermaidStyles,
+    styles: &GraphStyles,
     max_width: Option<usize>,
 ) -> Result<MermaidArt, Oversize> {
     let extras: Vec<NodeExtra> = graph
@@ -20,7 +24,20 @@ pub(super) fn render_class(
                 title.push(format!("«{annotation}»"));
             }
             title.push(node.label.clone());
-            NodeExtra::Compartments(vec![title, info.attrs.clone(), info.methods.clone()])
+            NodeExtra::Compartments(vec![
+                Compartment {
+                    lines: title,
+                    alignment: TextAlignment::Center,
+                },
+                Compartment {
+                    lines: info.attrs.clone(),
+                    alignment: TextAlignment::Left,
+                },
+                Compartment {
+                    lines: info.methods.clone(),
+                    alignment: TextAlignment::Left,
+                },
+            ])
         })
         .collect();
     let graph = graph.layout_graph();

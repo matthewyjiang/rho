@@ -14,7 +14,7 @@ use super::{
         GraphArt, GraphStyles, Oversize, MAX_CANVAS_CELLS, MAX_LABEL, MAX_LINES, PAD, WRAP_WIDTH,
     },
     placement::{place_lr, place_td},
-    Direction, EdgeLine, Graph,
+    Compartment, Direction, EdgeLine, Graph, RankOrdering,
 };
 
 const MIN_FLOW_WRAP_WIDTH: usize = 12;
@@ -23,6 +23,12 @@ const FLOW_WRAP_STEP: usize = 4;
 // Keep the established width required by the self-loop's two endpoint cells
 // and route padding.
 const MIN_SELF_LOOP_WIDTH: usize = 7;
+
+pub(in crate::tui) fn flow_wrap_widths() -> impl Iterator<Item = usize> {
+    (MIN_FLOW_WRAP_WIDTH..=WRAP_WIDTH)
+        .rev()
+        .step_by(FLOW_WRAP_STEP)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::tui) struct Placed {
@@ -35,13 +41,13 @@ pub(in crate::tui) struct Placed {
     pub(in crate::tui) rank: usize,
 }
 
-pub(in crate::tui) struct NodeSizes {
-    pub(in crate::tui) box_w: Vec<usize>,
-    pub(in crate::tui) box_h: Vec<usize>,
-    pub(in crate::tui) lay_w: Vec<usize>,
-    pub(in crate::tui) lay_h: Vec<usize>,
-    pub(in crate::tui) extra_h: Vec<usize>,
-    pub(in crate::tui) self_label_w: Vec<usize>,
+pub(super) struct NodeSizes {
+    pub(super) box_w: Vec<usize>,
+    pub(super) box_h: Vec<usize>,
+    pub(super) lay_w: Vec<usize>,
+    pub(super) lay_h: Vec<usize>,
+    pub(super) extra_h: Vec<usize>,
+    pub(super) self_label_w: Vec<usize>,
 }
 
 /// Intermediate layout output. The canvas is full-size and the placement
@@ -58,17 +64,14 @@ pub(in crate::tui) fn layout_flow(
     styles: &GraphStyles,
     max_width: Option<usize>,
 ) -> Result<GraphArt, Oversize> {
-    for wrap_width in (MIN_FLOW_WRAP_WIDTH..=WRAP_WIDTH)
-        .rev()
-        .step_by(FLOW_WRAP_STEP)
-    {
+    for wrap_width in flow_wrap_widths() {
         if !flow_labels_fit(graph, wrap_width) {
             continue;
         }
         match layout_plain_flow(graph, styles, max_width, wrap_width) {
             Ok(art) => return Ok(art),
             Err(Oversize::Width) => continue,
-            Err(error) => return Err(error),
+            Err(Oversize::Cells) => return Err(Oversize::Cells),
         }
     }
     Err(Oversize::Width)
@@ -97,7 +100,7 @@ pub(in crate::tui) fn flow_labels_fit(graph: &Graph, wrap_width: usize) -> bool 
 pub(in crate::tui) enum NodeExtra {
     Plain,
     Frame(Canvas),
-    Compartments(Vec<Vec<String>>),
+    Compartments(Vec<Compartment>),
 }
 
 pub(in crate::tui) fn layout_canvas(
@@ -107,8 +110,16 @@ pub(in crate::tui) fn layout_canvas(
     wrap_width: usize,
 ) -> Result<LayoutCanvas, Oversize> {
     let n = graph.nodes.len();
-    if n == 0 || extras.len() != n {
-        return Err(Oversize::Cells);
+    assert_eq!(
+        extras.len(),
+        n,
+        "node extras must match the validated graph node count"
+    );
+    if n == 0 {
+        return Ok(LayoutCanvas {
+            canvas: Canvas::new(0, 0),
+            placed: Vec::new(),
+        });
     }
 
     let ranks = compute_ranks(graph);
@@ -118,7 +129,10 @@ pub(in crate::tui) fn layout_canvas(
     for (idx, &r) in ranks.iter().enumerate() {
         by_rank[r].push(idx);
     }
-    order_ranks(&mut by_rank, &graph.edges, &ranks);
+    match graph.rank_ordering {
+        RankOrdering::PreserveInput => {}
+        RankOrdering::MinimizeCrossings => order_ranks(&mut by_rank, &graph.edges, &ranks),
+    }
 
     let wrapped: Vec<Vec<String>> = graph
         .nodes
@@ -131,10 +145,10 @@ pub(in crate::tui) fn layout_canvas(
                 let title_w = super::fit_label(&graph.nodes[i].label, wrap_width).width();
                 (sub.w + 2).max(title_w + 4)
             }
-            NodeExtra::Compartments(sections) => {
-                sections
+            NodeExtra::Compartments(compartments) => {
+                compartments
                     .iter()
-                    .flatten()
+                    .flat_map(|compartment| &compartment.lines)
                     .map(|line| line.width())
                     .max()
                     .unwrap_or(1)
@@ -157,12 +171,17 @@ pub(in crate::tui) fn layout_canvas(
     let box_h: Vec<usize> = (0..n)
         .map(|i| match &extras[i] {
             NodeExtra::Frame(sub) => sub.h + 2,
-            NodeExtra::Compartments(sections) => {
-                let filled = sections
+            NodeExtra::Compartments(compartments) => {
+                let filled = compartments
                     .iter()
-                    .filter(|section| !section.is_empty())
+                    .filter(|compartment| !compartment.lines.is_empty())
                     .count();
-                sections.iter().map(Vec::len).sum::<usize>() + filled.saturating_sub(1) + 2
+                compartments
+                    .iter()
+                    .map(|compartment| compartment.lines.len())
+                    .sum::<usize>()
+                    + filled.saturating_sub(1)
+                    + 2
             }
             NodeExtra::Plain => wrapped[i].len() + 2,
         })

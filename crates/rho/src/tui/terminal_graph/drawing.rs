@@ -8,7 +8,8 @@ use super::{
     canvas::{Canvas, Cls, D, L, R, U},
     flow::Placed,
     painter::{LABEL_BREAK_CHARS, MAX_LABEL, PAD},
-    Direction, Edge, EdgeHead as Head, EdgeLine as LineKind, Graph, NodeRect, NodeShape as Shape,
+    Compartment, Direction, Edge, EdgeHead as Head, EdgeLine as LineKind, Graph, NodeRect,
+    NodeShape as Shape, TextAlignment,
 };
 pub(in crate::tui) fn wrap_label(label: &str, width: usize, max_lines: usize) -> Vec<String> {
     let width = width.max(1);
@@ -446,7 +447,7 @@ pub(in crate::tui) fn draw_seq_text(canvas: &mut Canvas, text: &str, x: usize, y
 pub(in crate::tui) fn draw_compartment_box(
     canvas: &mut Canvas,
     placed: &Placed,
-    sections: &[Vec<String>],
+    compartments: &[Compartment],
     node_index: Option<usize>,
 ) {
     draw_box(canvas, placed, &[], Shape::Rect, node_index);
@@ -455,8 +456,8 @@ pub(in crate::tui) fn draw_compartment_box(
     let text_class = node_index.map(Cls::NodeText).unwrap_or(Cls::Text);
     let mut row = placed.y + 1;
     let mut first = true;
-    for section in sections {
-        if section.is_empty() {
+    for compartment in compartments {
+        if compartment.lines.is_empty() {
             continue;
         }
         if !first {
@@ -468,12 +469,13 @@ pub(in crate::tui) fn draw_compartment_box(
             row += 1;
         }
         first = false;
-        for line in section {
+        for line in &compartment.lines {
             let text = fit_label(line, inner);
-            let x = if std::ptr::eq(section, &sections[0]) {
-                placed.x + 1 + PAD + inner.saturating_sub(text.width()) / 2
-            } else {
-                placed.x + 1 + PAD
+            let x = match compartment.alignment {
+                TextAlignment::Left => placed.x + 1 + PAD,
+                TextAlignment::Center => {
+                    placed.x + 1 + PAD + inner.saturating_sub(text.width()) / 2
+                }
             };
             draw_seq_text(canvas, &text, x, row, text_class);
             row += 1;

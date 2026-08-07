@@ -10,7 +10,9 @@ use ratatui::{
 use crate::{
     tui::{
         render::truncate_one_line,
-        terminal_graph::{Edge, Graph, GraphArt, Node, NodeRect, NodeStyle},
+        terminal_graph::{
+            Edge, Graph, GraphArt, Node, NodeRect, NodeStyle, Oversize, RankOrdering,
+        },
         theme::Theme,
     },
     workflow::{NodeId, NodeState, NodeTerminalState},
@@ -73,7 +75,9 @@ pub(super) fn render_dag(
     let graph = workflow_graph(nodes, selected, live_activity);
     match graph.render(Theme::dim()) {
         Ok(art) => DagRender::from_art(art),
-        Err(_) => DagRender::message("graph exceeds the terminal render budget"),
+        Err(Oversize::Width | Oversize::Cells) => {
+            DagRender::message("graph exceeds the terminal render budget")
+        }
     }
 }
 
@@ -124,7 +128,7 @@ fn workflow_graph(
         })
         .collect();
 
-    Graph::top_down(graph_nodes, edges)
+    Graph::top_down(graph_nodes, edges, RankOrdering::PreserveInput)
         .expect("workflow graph maps dependency ids to valid node indices")
 }
 

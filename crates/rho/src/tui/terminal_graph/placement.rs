@@ -95,7 +95,7 @@ fn lane_spans(
         .collect()
 }
 
-pub(in crate::tui) fn place_td(
+pub(super) fn place_td(
     ranks: &[usize],
     max_rank: usize,
     by_rank: &[Vec<usize>],
@@ -197,7 +197,7 @@ pub(in crate::tui) fn place_td(
     }
 }
 
-pub(in crate::tui) fn place_lr(
+pub(super) fn place_lr(
     ranks: &[usize],
     max_rank: usize,
     by_rank: &[Vec<usize>],
@@ -294,13 +294,13 @@ pub(in crate::tui) fn place_lr(
     }
 }
 
-pub(in crate::tui) struct RoutePlan {
-    pub(in crate::tui) canvas: (usize, usize),
-    pub(in crate::tui) band_end: Vec<usize>,
-    pub(in crate::tui) edge_bus: Vec<usize>,
-    pub(in crate::tui) source_anchors: Vec<usize>,
-    pub(in crate::tui) lane_base: usize,
-    pub(in crate::tui) edge_lane: Vec<usize>,
+pub(super) struct RoutePlan {
+    pub(super) canvas: (usize, usize),
+    pub(super) band_end: Vec<usize>,
+    pub(super) edge_bus: Vec<usize>,
+    pub(super) source_anchors: Vec<usize>,
+    pub(super) lane_base: usize,
+    pub(super) edge_lane: Vec<usize>,
 }
 
 fn assign_tracks(spans: &[(usize, usize, usize, usize, usize)]) -> (Vec<(usize, usize)>, usize) {

@@ -16,7 +16,8 @@ mod placement;
 pub(in crate::tui) use canvas::{Canvas, Cls as CellClass, D, L, R, U};
 pub(in crate::tui) use drawing::{draw_box, draw_seq_text, fit_label, wrap_label};
 pub(in crate::tui) use flow::{
-    art_from_layout, flow_labels_fit, layout_canvas, layout_flow, NodeExtra, Placed,
+    art_from_layout, flow_labels_fit, flow_wrap_widths, layout_canvas, layout_flow, NodeExtra,
+    Placed,
 };
 pub(in crate::tui) use painter::{
     GraphArt, GraphStyles, Oversize, MAX_CANVAS_CELLS, MAX_LABEL, MAX_LINES, PAD, WRAP_WIDTH,
@@ -60,6 +61,17 @@ pub(in crate::tui) enum Direction {
     RightLeft,
 }
 
+/// How nodes within a rank are ordered before placement.
+///
+/// Crossing minimization improves small diagrams but performs pairwise edge
+/// scans. Stable input order avoids that work for large, frequently redrawn
+/// graphs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::tui) enum RankOrdering {
+    PreserveInput,
+    MinimizeCrossings,
+}
+
 /// Endpoint decorations used by Mermaid and preserved by the shared router.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::tui) enum EdgeHead {
@@ -79,6 +91,20 @@ pub(in crate::tui) enum EdgeLine {
     Solid,
     Dotted,
     Thick,
+}
+
+/// Horizontal alignment for lines in a compartmented node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::tui) enum TextAlignment {
+    Left,
+    Center,
+}
+
+/// Explicit content and alignment for one compartment in a node.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::tui) struct Compartment {
+    pub(in crate::tui) lines: Vec<String>,
+    pub(in crate::tui) alignment: TextAlignment,
 }
 
 /// An ordered graph node. The vector order is retained by layout and by the
@@ -136,19 +162,25 @@ pub(in crate::tui) struct Graph {
     pub(in crate::tui) nodes: Vec<Node>,
     pub(in crate::tui) edges: Vec<Edge>,
     pub(in crate::tui) direction: Direction,
+    pub(in crate::tui) rank_ordering: RankOrdering,
 }
 
 impl Graph {
-    /// Build the workflow-facing top-down graph.
-    pub(in crate::tui) fn top_down(nodes: Vec<Node>, edges: Vec<Edge>) -> Result<Self, GraphError> {
-        Self::from_parts(nodes, edges, Direction::TopDown)
+    /// Build a top-down graph with explicit rank-ordering policy.
+    pub(in crate::tui) fn top_down(
+        nodes: Vec<Node>,
+        edges: Vec<Edge>,
+        rank_ordering: RankOrdering,
+    ) -> Result<Self, GraphError> {
+        Self::from_parts(nodes, edges, Direction::TopDown, rank_ordering)
     }
 
-    /// Build a graph for an existing terminal diagram adapter.
+    /// Build a graph with explicit direction and rank-ordering policy.
     pub(in crate::tui) fn from_parts(
         nodes: Vec<Node>,
         edges: Vec<Edge>,
         direction: Direction,
+        rank_ordering: RankOrdering,
     ) -> Result<Self, GraphError> {
         if edges
             .iter()
@@ -160,6 +192,7 @@ impl Graph {
             nodes,
             edges,
             direction,
+            rank_ordering,
         })
     }
 

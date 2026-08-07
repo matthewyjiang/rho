@@ -5,7 +5,7 @@ use super::Edge;
 
 /// Reorder nodes within each rank to minimize edge crossings (Sugiyama-style
 /// barycenter sweeps), while keeping the source order as the stable tie-breaker.
-pub(in crate::tui) fn order_ranks(by_rank: &mut [Vec<usize>], edges: &[Edge], ranks: &[usize]) {
+pub(super) fn order_ranks(by_rank: &mut [Vec<usize>], edges: &[Edge], ranks: &[usize]) {
     let n = ranks.len();
     if by_rank.len() < 2 || n < 3 {
         return;
@@ -111,7 +111,7 @@ fn count_crossings(edges: &[Edge], ranks: &[usize], pos: &[usize]) -> usize {
 
 /// Assign a center coordinate to every node along the cross-axis. Rank order
 /// and a minimum separation remain fixed while barycenters straighten chains.
-pub(in crate::tui) fn assign_positions(
+pub(super) fn assign_positions(
     by_rank: &[Vec<usize>],
     size: &[usize],
     sep: usize,

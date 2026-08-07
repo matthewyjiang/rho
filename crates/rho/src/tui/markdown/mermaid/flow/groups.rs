@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 
-use crate::tui::markdown::mermaid::{
-    model::{Dir, Edge, Graph as ModelGraph, Node, Shape},
-    painter::{MermaidArt, MermaidStyles, Oversize},
+use crate::tui::{
+    markdown::mermaid::{model::Graph as ModelGraph, MermaidArt},
+    terminal_graph::{
+        self, Canvas, Direction, Edge, GraphStyles, Node, NodeExtra, NodeShape, NodeStyle,
+        Oversize, RankOrdering,
+    },
 };
-use crate::tui::terminal_graph::{self, Canvas, NodeExtra, NodeStyle};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Item {
@@ -14,7 +16,7 @@ enum Item {
 
 pub(super) fn render_grouped(
     graph: &ModelGraph,
-    styles: &MermaidStyles,
+    styles: &GraphStyles,
     max_width: Option<usize>,
     wrap_width: usize,
 ) -> Result<MermaidArt, Oversize> {
@@ -101,9 +103,9 @@ pub(super) fn render_grouped(
         wrap_width,
     )?;
     match graph.dir {
-        Dir::BottomUp => canvas.flip_vertical(),
-        Dir::RightLeft => canvas.flip_horizontal(),
-        Dir::TopDown | Dir::LeftRight => {}
+        Direction::BottomUp => canvas.flip_vertical(),
+        Direction::RightLeft => canvas.flip_horizontal(),
+        Direction::TopDown | Direction::LeftRight => {}
     }
     let (styled_lines, plain_lines) = canvas.to_lines(styles);
     Ok(MermaidArt {
@@ -160,7 +162,7 @@ fn build_scope(
                 )?;
                 nodes.push(Node {
                     label: graph.groups[*group].label.clone(),
-                    shape: Shape::Rect,
+                    shape: NodeShape::Rect,
                     style: NodeStyle::default(),
                 });
                 extras.push(NodeExtra::Frame(sub));
@@ -185,10 +187,9 @@ fn build_scope(
             });
         }
     }
-
-    let direction = graph.dir;
     let synth =
-        terminal_graph::Graph::from_parts(nodes, edges, direction).map_err(|_| Oversize::Cells)?;
+        terminal_graph::Graph::from_parts(nodes, edges, graph.dir, RankOrdering::MinimizeCrossings)
+            .expect("group graph endpoints come from the local item index");
     let layout = terminal_graph::layout_canvas(&synth, &extras, max_width, wrap_width)?;
     Ok(layout.canvas)
 }

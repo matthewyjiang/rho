@@ -1,8 +1,8 @@
-use super::{render_dag, state_label, state_style, workflow_graph, MAX_GRAPH_ACTIVITY_WIDTH};
+use super::{render_dag, state_label, state_style, workflow_graph};
 use crate::workflow::AttemptNumber;
 use crate::{
     tui::{
-        terminal_graph::NodeStyle,
+        terminal_graph::{NodeStyle, RankOrdering},
         workflow::event_adapter::{ExecutionMetadata, WorkflowNodeSnapshot},
     },
     workflow::{AgentRuntime, NodeId, NodeState, NodeTerminalState, WorkspaceAccess},
@@ -53,6 +53,7 @@ fn dependencies_render_as_edges_below_their_parents() {
             .collect::<Vec<_>>(),
         vec![(1, 0), (2, 0)]
     );
+    assert_eq!(graph.rank_ordering, RankOrdering::PreserveInput);
 
     let rendered = render_dag(&nodes, 0, &activities);
     assert!(rendered.node_rects[1].y < rendered.node_rects[0].y);
@@ -84,7 +85,8 @@ fn viewport_follows_the_selected_node() {
 #[test]
 fn progress_activity_keeps_the_graph_compact() {
     let nodes = vec![node("inspect", "Inspect", &[], NodeState::Pending)];
-    let activities = vec![Some("still checking ".repeat(MAX_GRAPH_ACTIVITY_WIDTH * 2))];
+    // Keep the fixture far beyond the 28-column activity contract.
+    let activities = vec![Some("still checking ".repeat(100))];
     let graph = workflow_graph(&nodes, 0, &activities);
     let activity = graph.nodes[0]
         .label
@@ -92,10 +94,7 @@ fn progress_activity_keeps_the_graph_compact() {
         .expect("activity is present")
         .1;
 
-    assert_eq!(
-        unicode_width::UnicodeWidthStr::width(activity),
-        MAX_GRAPH_ACTIVITY_WIDTH
-    );
+    assert_eq!(unicode_width::UnicodeWidthStr::width(activity), 28);
     assert!(activity.ends_with('…'));
     assert_eq!(render_dag(&nodes, 0, &activities).node_rects.len(), 1);
 }

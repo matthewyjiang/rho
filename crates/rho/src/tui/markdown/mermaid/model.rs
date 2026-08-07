@@ -7,23 +7,14 @@ use mermaid_rs_renderer::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::tui::terminal_graph::{
-    Direction, Edge as TerminalEdge, EdgeHead as TerminalHead, EdgeLine as TerminalLine,
-    Node as TerminalNode, NodeShape, NodeStyle,
+    wrap_label, Direction, Edge, EdgeHead, EdgeLine, Node, NodeShape, NodeStyle, RankOrdering,
+    MAX_LABEL, MAX_LINES, WRAP_WIDTH,
 };
 
 use super::{
-    drawing::wrap_label,
-    painter::{MAX_LABEL, MAX_LINES, WRAP_WIDTH},
     policy::{diagram_policy, DiagramPolicy},
     sequence::{NoteAnchor, SeqHead, SeqItem, Sequence},
 };
-
-pub(super) type Shape = NodeShape;
-pub(super) type Node = TerminalNode;
-pub(super) type Head = TerminalHead;
-pub(super) type LineKind = TerminalLine;
-pub(super) type Edge = TerminalEdge;
-pub(super) type Dir = Direction;
 
 pub(super) struct Group {
     pub(super) id: String,
@@ -37,7 +28,7 @@ pub(super) struct Graph {
     pub(super) index: HashMap<String, usize>,
     pub(super) groups: Vec<Group>,
     pub(super) node_group: Vec<Option<usize>>,
-    pub(super) dir: Dir,
+    pub(super) dir: Direction,
 }
 
 impl Graph {
@@ -46,6 +37,7 @@ impl Graph {
             self.nodes.clone(),
             self.edges.clone(),
             self.dir,
+            RankOrdering::MinimizeCrossings,
         )
         .expect("Mermaid model validates edge endpoints before layout")
     }
@@ -145,9 +137,9 @@ pub(super) fn from_ir(ir: &mermaid_rs_renderer::Graph) -> Option<TerminalModel> 
                     edge.start_decoration,
                 ),
                 line: match edge.style {
-                    EdgeStyle::Solid => LineKind::Solid,
-                    EdgeStyle::Dotted => LineKind::Dotted,
-                    EdgeStyle::Thick => LineKind::Thick,
+                    EdgeStyle::Solid => EdgeLine::Solid,
+                    EdgeStyle::Dotted => EdgeLine::Dotted,
+                    EdgeStyle::Thick => EdgeLine::Thick,
                 },
             })
         })
@@ -171,14 +163,14 @@ pub(super) fn from_ir(ir: &mermaid_rs_renderer::Graph) -> Option<TerminalModel> 
     })
 }
 
-fn shape(shape: MermaidNodeShape) -> Shape {
+fn shape(shape: MermaidNodeShape) -> NodeShape {
     match shape {
-        MermaidNodeShape::Diamond | MermaidNodeShape::Hexagon => Shape::Diamond,
+        MermaidNodeShape::Diamond | MermaidNodeShape::Hexagon => NodeShape::Diamond,
         MermaidNodeShape::RoundRect
         | MermaidNodeShape::Stadium
         | MermaidNodeShape::Circle
         | MermaidNodeShape::DoubleCircle
-        | MermaidNodeShape::ActorBox => Shape::Round,
+        | MermaidNodeShape::ActorBox => NodeShape::Round,
         MermaidNodeShape::Rectangle
         | MermaidNodeShape::ForkJoin
         | MermaidNodeShape::Subroutine
@@ -189,16 +181,16 @@ fn shape(shape: MermaidNodeShape) -> Shape {
         | MermaidNodeShape::TrapezoidAlt
         | MermaidNodeShape::Asymmetric
         | MermaidNodeShape::MindmapDefault
-        | MermaidNodeShape::Text => Shape::Rect,
+        | MermaidNodeShape::Text => NodeShape::Rect,
     }
 }
 
-fn direction(direction: MermaidDirection) -> Dir {
+fn direction(direction: MermaidDirection) -> Direction {
     match direction {
-        MermaidDirection::TopDown => Dir::TopDown,
-        MermaidDirection::BottomTop => Dir::BottomUp,
-        MermaidDirection::LeftRight => Dir::LeftRight,
-        MermaidDirection::RightLeft => Dir::RightLeft,
+        MermaidDirection::TopDown => Direction::TopDown,
+        MermaidDirection::BottomTop => Direction::BottomUp,
+        MermaidDirection::LeftRight => Direction::LeftRight,
+        MermaidDirection::RightLeft => Direction::RightLeft,
     }
 }
 
@@ -206,20 +198,24 @@ fn edge_head(
     arrow: bool,
     arrowhead: Option<EdgeArrowhead>,
     decoration: Option<EdgeDecoration>,
-) -> Head {
+) -> EdgeHead {
     match decoration {
-        Some(EdgeDecoration::Circle) => Head::Circle,
-        Some(EdgeDecoration::Cross) => Head::Cross,
-        Some(EdgeDecoration::Diamond) => Head::DiamondOpen,
-        Some(EdgeDecoration::DiamondFilled) => Head::DiamondFill,
+        Some(EdgeDecoration::Circle) => EdgeHead::Circle,
+        Some(EdgeDecoration::Cross) => EdgeHead::Cross,
+        Some(EdgeDecoration::Diamond) => EdgeHead::DiamondOpen,
+        Some(EdgeDecoration::DiamondFilled) => EdgeHead::DiamondFill,
         // Grok's compact painter uses textual cardinality labels for these.
         // The public IR keeps the relationship semantics, and the closest
         // unambiguous terminal endpoint is an open circle or plain line.
-        Some(EdgeDecoration::CrowsFootZeroOne | EdgeDecoration::CrowsFootZeroMany) => Head::Circle,
-        Some(EdgeDecoration::CrowsFootOne | EdgeDecoration::CrowsFootMany) => Head::None,
-        None if matches!(arrowhead, Some(EdgeArrowhead::OpenTriangle)) => Head::Triangle,
-        None if arrow || matches!(arrowhead, Some(EdgeArrowhead::ClassDependency)) => Head::Arrow,
-        None => Head::None,
+        Some(EdgeDecoration::CrowsFootZeroOne | EdgeDecoration::CrowsFootZeroMany) => {
+            EdgeHead::Circle
+        }
+        Some(EdgeDecoration::CrowsFootOne | EdgeDecoration::CrowsFootMany) => EdgeHead::None,
+        None if matches!(arrowhead, Some(EdgeArrowhead::OpenTriangle)) => EdgeHead::Triangle,
+        None if arrow || matches!(arrowhead, Some(EdgeArrowhead::ClassDependency)) => {
+            EdgeHead::Arrow
+        }
+        None => EdgeHead::None,
     }
 }
 

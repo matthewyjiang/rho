@@ -1,7 +1,9 @@
-use crate::tui::markdown::mermaid::model::Graph;
-use crate::tui::markdown::mermaid::painter::{MermaidArt, MermaidStyles, Oversize};
-use crate::tui::terminal_graph;
 use unicode_width::UnicodeWidthStr;
+
+use crate::tui::{
+    markdown::mermaid::{model::Graph, MermaidArt},
+    terminal_graph::{self, GraphStyles, Oversize},
+};
 
 mod class;
 mod groups;
@@ -9,18 +11,15 @@ mod groups;
 pub(super) fn render_class(
     graph: &Graph,
     infos: &[super::model::ClassInfo],
-    styles: &MermaidStyles,
+    styles: &GraphStyles,
     max_width: Option<usize>,
 ) -> Result<MermaidArt, Oversize> {
     class::render_class(graph, infos, styles, max_width)
 }
 
-const MIN_FLOW_WRAP_WIDTH: usize = 12;
-const FLOW_WRAP_STEP: usize = 4;
-
 pub(super) fn layout_flow(
     graph: &Graph,
-    styles: &MermaidStyles,
+    styles: &GraphStyles,
     max_width: Option<usize>,
 ) -> Result<MermaidArt, Oversize> {
     if graph.groups.is_empty() {
@@ -33,10 +32,7 @@ pub(super) fn layout_flow(
 
     let layout_graph = graph.layout_graph();
 
-    for wrap_width in (MIN_FLOW_WRAP_WIDTH..=terminal_graph::WRAP_WIDTH)
-        .rev()
-        .step_by(FLOW_WRAP_STEP)
-    {
+    for wrap_width in terminal_graph::flow_wrap_widths() {
         if !terminal_graph::flow_labels_fit(&layout_graph, wrap_width)
             || graph
                 .groups
@@ -48,10 +44,8 @@ pub(super) fn layout_flow(
         match groups::render_grouped(graph, styles, max_width, wrap_width) {
             Ok(art) => return Ok(art),
             Err(Oversize::Width) => continue,
-            Err(error) => return Err(error),
+            Err(Oversize::Cells) => return Err(Oversize::Cells),
         }
     }
     Err(Oversize::Width)
 }
-
-pub(super) use terminal_graph::Placed;
