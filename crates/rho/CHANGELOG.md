@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.32.0...rho-coding-agent-v1.32.1) (2026-08-07)
+
+
+### Bug Fixes
+
+* **advisor:** stream guidance into the tool card ([#796](https://github.com/matthewyjiang/rho/issues/796)) ([465c3ed](https://github.com/matthewyjiang/rho/commit/465c3eded483699a2a0fc397af5eec75b8720a72))
+
 ## [1.32.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.31.0...rho-coding-agent-v1.32.0) (2026-08-07)
 
 
