@@ -30,7 +30,7 @@ Usage: scripts/check_docs_ui_demo.sh [--check|--write] [--bin PATH] [--jobs N]
 
   --check   Fail when checked-in SVGs drift from a live PTY capture (default).
   --write   Regenerate dark and light docs asset paths from a live PTY capture.
-  --bin     Path to a debug rho binary (default: build target/debug/rho).
+  --bin     Path to a debug rho binary (skips the default rebuild of target/debug/rho).
   --jobs    Cargo job cap (default: CARGO_BUILD_JOBS or 12).
 EOF
 }
@@ -74,14 +74,11 @@ case "$(uname -s)" in
 esac
 
 if [[ -z "$bin_path" ]]; then
-  if [[ -f "$root/target/debug/rho" ]]; then
-    bin_path="$root/target/debug/rho"
-    echo "==> Reuse existing debug rho at $bin_path"
-  else
-    echo "==> Build debug rho for matrix mode"
-    cargo build -j "$jobs" -p rho-coding-agent --locked
-    bin_path="$root/target/debug/rho"
-  fi
+  # Always rebuild so rust-cache / earlier cargo steps cannot leave a stale
+  # target/debug/rho that captures a different screen than the checked-out source.
+  echo "==> Build debug rho for matrix mode"
+  cargo build -j "$jobs" -p rho-coding-agent --bin rho --locked
+  bin_path="$root/target/debug/rho"
 fi
 
 if [[ ! -x "$bin_path" && ! -f "$bin_path" ]]; then
