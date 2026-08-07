@@ -1,5 +1,7 @@
 # Agents and delegation
 
+Orchestrate agents across providers from one Rho parent session. Each agent can bind its own provider and model on the Rho runtime, or hand a delegated child to the [Claude Code runtime](/subagents/claude-cli) so it can use your Claude subscription while Rho keeps fan-out, attach, cancel, and the session tree.
+
 Rho uses one agent definition model for interactive sessions, `rho run`, and delegated work. The built-in catalog contains:
 
 - `default` - standard root coding-agent behavior

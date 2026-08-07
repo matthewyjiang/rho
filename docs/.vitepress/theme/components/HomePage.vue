@@ -49,6 +49,11 @@ const paths = [
             <RhoWordmark size="xl" />
           </h1>
           <p class="rho-home__text">A lightweight agent harness inspired by Pi. Built in Rust.</p>
+          <p class="rho-home__pitch">
+            Orchestrate agents across providers, including
+            <a :href="withBase('/subagents/claude-cli')">Claude Code agents on your Claude subscription</a>.
+            <a class="rho-home__pitch-more" :href="withBase('/subagents')">Set up agents</a>
+          </p>
 
           <!--
             Match VitePress markdown fence markup so useCopyCode handles the button.
@@ -181,6 +186,30 @@ const paths = [
   line-height: 1.18;
   letter-spacing: -0.025em;
   text-wrap: balance;
+}
+
+/* Supporting claim under the job line; body weight so the lede stays primary. */
+.rho-home__pitch {
+  margin: 0.85rem 0 0;
+  max-width: 36em;
+  font-size: 1.02rem;
+  line-height: 1.5;
+  color: var(--vp-c-text-2);
+  text-wrap: pretty;
+}
+
+.rho-home__pitch a {
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+.rho-home__pitch-more {
+  white-space: nowrap;
+}
+
+.rho-home__pitch-more::after {
+  content: ' →';
 }
 
 .rho-home__install {
