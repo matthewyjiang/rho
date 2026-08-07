@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.32.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.31.0...rho-coding-agent-v1.32.0) (2026-08-07)
+
+
+### Features
+
+* add native MCP client and Agent Plugins ([#776](https://github.com/matthewyjiang/rho/issues/776)) ([c148fa4](https://github.com/matthewyjiang/rho/commit/c148fa4319d37190e1c084977b573d6e4fef9ce6))
+* **agents:** allow pinning auth profiles on rho agents ([#781](https://github.com/matthewyjiang/rho/issues/781)) ([3e1f691](https://github.com/matthewyjiang/rho/commit/3e1f691e693dd93bf888cb5c3eb3093a7169525a))
+* **tui:** render workflow dependencies as a graph ([#779](https://github.com/matthewyjiang/rho/issues/779)) ([fc8bdd9](https://github.com/matthewyjiang/rho/commit/fc8bdd9bcfc3541fca183fc14951a03ebb1a5fe5))
+
+
+### Bug Fixes
+
+* **plugins:** silence clippy failures on main ([#790](https://github.com/matthewyjiang/rho/issues/790)) ([b44151d](https://github.com/matthewyjiang/rho/commit/b44151d0d40dfbfda4bf23b49feb88d6bb0bdff3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 0.17.1 to 0.18.0
+
 ## [1.31.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.30.1...rho-coding-agent-v1.31.0) (2026-08-07)
 
 
