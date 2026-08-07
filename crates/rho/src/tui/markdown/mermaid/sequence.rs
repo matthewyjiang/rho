@@ -3,13 +3,12 @@
 // Copyright 2023-2026 SpaceXAI. Licensed under Apache-2.0.
 use unicode_width::UnicodeWidthStr;
 
-use super::{
-    canvas::{Canvas, Cls, D, L, R, U},
-    drawing::{draw_box, draw_seq_text, fit_label},
-    flow::Placed,
-    model::Shape,
-    painter::{MermaidArt, MermaidStyles, Oversize, MAX_CANVAS_CELLS, PAD, WRAP_WIDTH},
+use crate::tui::terminal_graph::{
+    draw_box, draw_seq_text, fit_label, Canvas, CellClass as Cls, GraphStyles, NodeShape, Oversize,
+    Placed, D, L, MAX_CANVAS_CELLS, PAD, R, U, WRAP_WIDTH,
 };
+
+use super::MermaidArt;
 const SEQ_GAP: usize = 5;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -63,7 +62,7 @@ fn note_geometry(xs: &[usize], anchor: &NoteAnchor, text_w: usize) -> (usize, us
 
 pub(super) fn layout_sequence(
     seq: &Sequence,
-    styles: &MermaidStyles,
+    styles: &GraphStyles,
     max_width: Option<usize>,
 ) -> Result<MermaidArt, Oversize> {
     let n = seq.labels.len();
@@ -192,7 +191,8 @@ pub(super) fn layout_sequence(
                 &mut canvas,
                 &p,
                 std::slice::from_ref(&labels[i]),
-                Shape::Rect,
+                NodeShape::Rect,
+                /*node_index*/ None,
             );
         }
     }
@@ -208,7 +208,13 @@ pub(super) fn layout_sequence(
                 cy: r + 1,
                 rank: 0,
             };
-            draw_box(&mut canvas, &p, std::slice::from_ref(text), Shape::Rect);
+            draw_box(
+                &mut canvas,
+                &p,
+                std::slice::from_ref(text),
+                NodeShape::Rect,
+                /*node_index*/ None,
+            );
         }
     }
     for &x in &xs {

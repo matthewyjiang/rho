@@ -3,41 +3,43 @@
 // Copyright 2023-2026 SpaceXAI. Licensed under Apache-2.0.
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use unicode_width::UnicodeWidthChar;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use super::painter::{MermaidStyles, CONT};
-pub(super) const U: u8 = 1;
-pub(super) const D: u8 = 2;
-pub(super) const L: u8 = 4;
-pub(super) const R: u8 = 8;
+use super::painter::{GraphStyles, CONT};
+pub(in crate::tui) const U: u8 = 1;
+pub(in crate::tui) const D: u8 = 2;
+pub(in crate::tui) const L: u8 = 4;
+pub(in crate::tui) const R: u8 = 8;
 
-#[derive(Clone, Copy, PartialEq)]
-pub(super) enum Cls {
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(in crate::tui) enum Cls {
     Empty,
     Border,
     Text,
     Edge,
     EdgeLabel,
+    NodeBorder(usize),
+    NodeText(usize),
 }
 
-pub(super) const STY_DOT: u8 = 1;
-pub(super) const STY_THICK: u8 = 2;
-pub(super) const STY_SOLID: u8 = 4;
+pub(in crate::tui) const STY_DOT: u8 = 1;
+pub(in crate::tui) const STY_THICK: u8 = 2;
+pub(in crate::tui) const STY_SOLID: u8 = 4;
 
-pub(super) struct Canvas {
-    pub(super) w: usize,
-    pub(super) h: usize,
-    pub(super) ch: Vec<char>,
+pub(in crate::tui) struct Canvas {
+    pub(in crate::tui) w: usize,
+    pub(in crate::tui) h: usize,
+    pub(in crate::tui) ch: Vec<char>,
     suffix: Vec<String>,
-    pub(super) cls: Vec<Cls>,
-    pub(super) mask: Vec<u8>,
-    pub(super) style: Vec<u8>,
-    pub(super) occupied: Vec<bool>,
-    pub(super) cur_style: u8,
+    pub(in crate::tui) cls: Vec<Cls>,
+    pub(in crate::tui) mask: Vec<u8>,
+    pub(in crate::tui) style: Vec<u8>,
+    pub(in crate::tui) occupied: Vec<bool>,
+    pub(in crate::tui) cur_style: u8,
 }
 
 impl Canvas {
-    pub(super) fn new(w: usize, h: usize) -> Self {
+    pub(in crate::tui) fn new(w: usize, h: usize) -> Self {
         let n = w * h;
         Self {
             w,
@@ -52,15 +54,18 @@ impl Canvas {
         }
     }
 
-    pub(super) fn idx(&self, x: usize, y: usize) -> usize {
+    pub(in crate::tui) fn idx(&self, x: usize, y: usize) -> usize {
         y * self.w + x
     }
 
-    pub(super) fn set(&mut self, x: usize, y: usize, c: char, cls: Cls) {
+    pub(in crate::tui) fn set(&mut self, x: usize, y: usize, c: char, cls: Cls) {
         if x >= self.w || y >= self.h {
             return;
         }
-        if c != CONT && c.width().unwrap_or(0) == 0 && matches!(cls, Cls::Text | Cls::EdgeLabel) {
+        if c != CONT
+            && c.width().unwrap_or(0) == 0
+            && matches!(cls, Cls::Text | Cls::EdgeLabel | Cls::NodeText(_))
+        {
             let mut previous = x.checked_sub(1);
             while let Some(px) = previous {
                 let i = self.idx(px, y);
@@ -78,7 +83,42 @@ impl Canvas {
         self.cls[i] = cls;
     }
 
-    pub(super) fn add_bits(&mut self, x: usize, y: usize, bits: u8) {
+    pub(in crate::tui) fn set_grapheme(
+        &mut self,
+        x: usize,
+        y: usize,
+        grapheme: &str,
+        cls: Cls,
+    ) -> usize {
+        let width = grapheme.width();
+        if width == 0 {
+            for character in grapheme.chars() {
+                self.set(x, y, character, cls);
+            }
+            return 0;
+        }
+        let Some(first) = grapheme.chars().next() else {
+            return 0;
+        };
+        if x >= self.w || y >= self.h || width > self.w - x {
+            return width;
+        }
+        let index = self.idx(x, y);
+        self.ch[index] = first;
+        self.suffix[index].clear();
+        self.suffix[index].push_str(&grapheme[first.len_utf8()..]);
+        self.cls[index] = cls;
+        for offset in 1..width {
+            self.set(x + offset, y, CONT, cls);
+        }
+        width
+    }
+
+    pub(in crate::tui) fn add_bits(&mut self, x: usize, y: usize, bits: u8) {
+        self.add_bits_with_class(x, y, bits, Cls::Edge);
+    }
+
+    pub(in crate::tui) fn add_bits_with_class(&mut self, x: usize, y: usize, bits: u8, class: Cls) {
         if x >= self.w || y >= self.h {
             return;
         }
@@ -88,12 +128,12 @@ impl Canvas {
         }
         self.mask[i] |= bits;
         self.style[i] |= self.cur_style;
-        if self.cls[i] != Cls::Border {
-            self.cls[i] = Cls::Edge;
+        if !is_border_class(self.cls[i]) {
+            self.cls[i] = class;
         }
     }
 
-    pub(super) fn blit(&mut self, sub: &Canvas, ox: usize, oy: usize) {
+    pub(in crate::tui) fn blit(&mut self, sub: &Canvas, ox: usize, oy: usize) {
         for sy in 0..sub.h {
             for sx in 0..sub.w {
                 let (x, y) = (ox + sx, oy + sy);
@@ -105,24 +145,26 @@ impl Canvas {
                 self.ch[di] = sub.ch[si];
                 self.suffix[di].clone_from(&sub.suffix[si]);
                 self.cls[di] = sub.cls[si];
+                self.mask[di] = sub.mask[si];
                 self.style[di] = sub.style[si];
                 self.occupied[di] = true;
             }
         }
     }
 
-    pub(super) fn junction(&mut self, x: usize, y: usize, bits: u8) {
+    pub(in crate::tui) fn junction(&mut self, x: usize, y: usize, bits: u8) {
         if x >= self.w || y >= self.h {
             return;
         }
         let i = self.idx(x, y);
         self.mask[i] |= bits;
-        if self.cls[i] != Cls::Border {
+        self.style[i] |= self.cur_style;
+        if !is_border_class(self.cls[i]) {
             self.cls[i] = Cls::Edge;
         }
     }
 
-    pub(super) fn seg_v(&mut self, x: usize, y0: usize, y1: usize) {
+    pub(in crate::tui) fn seg_v(&mut self, x: usize, y0: usize, y1: usize) {
         let (a, b) = (y0.min(y1), y0.max(y1));
         for y in a..=b {
             let mut bits = 0;
@@ -136,7 +178,7 @@ impl Canvas {
         }
     }
 
-    pub(super) fn seg_h(&mut self, y: usize, x0: usize, x1: usize) {
+    pub(in crate::tui) fn seg_h(&mut self, y: usize, x0: usize, x1: usize) {
         let (a, b) = (x0.min(x1), x0.max(x1));
         for x in a..=b {
             let mut bits = 0;
@@ -150,7 +192,7 @@ impl Canvas {
         }
     }
 
-    pub(super) fn finalize_mask(&mut self) {
+    pub(in crate::tui) fn finalize_mask(&mut self) {
         for i in 0..self.ch.len() {
             if self.mask[i] != 0 && self.ch[i] == ' ' {
                 let c = mask_char(self.mask[i]);
@@ -162,10 +204,9 @@ impl Canvas {
             }
         }
     }
-
     /// Mirror top-to-bottom for `BT` (rows reorder; within-row text is
     /// unaffected, so labels stay readable). Box-drawing glyphs flip too.
-    pub(super) fn flip_vertical(&mut self) {
+    pub(in crate::tui) fn flip_vertical(&mut self) {
         for y in 0..self.h / 2 {
             let y2 = self.h - 1 - y;
             for x in 0..self.w {
@@ -173,6 +214,9 @@ impl Canvas {
                 self.ch.swap(i, j);
                 self.suffix.swap(i, j);
                 self.cls.swap(i, j);
+                self.mask.swap(i, j);
+                self.style.swap(i, j);
+                self.occupied.swap(i, j);
             }
         }
         for c in self.ch.iter_mut() {
@@ -183,13 +227,13 @@ impl Canvas {
     /// Mirror left-to-right for `RL` while moving each text run as one unit.
     /// Cell order within a run is never reversed, so grapheme components and
     /// multi-codepoint emoji remain byte-for-byte in reading order.
-    pub(super) fn flip_horizontal(&mut self) {
+    pub(in crate::tui) fn flip_horizontal(&mut self) {
         let mut text_runs = Vec::new();
         for y in 0..self.h {
             let mut x = 0;
             while x < self.w {
                 let cls = self.cls[self.idx(x, y)];
-                if matches!(cls, Cls::Text | Cls::EdgeLabel) {
+                if matches!(cls, Cls::Text | Cls::EdgeLabel | Cls::NodeText(_)) {
                     let start = x;
                     while x < self.w && self.cls[self.idx(x, y)] == cls {
                         x += 1;
@@ -220,6 +264,9 @@ impl Canvas {
                 self.ch.swap(i, j);
                 self.suffix.swap(i, j);
                 self.cls.swap(i, j);
+                self.mask.swap(i, j);
+                self.style.swap(i, j);
+                self.occupied.swap(i, j);
             }
         }
         for c in self.ch.iter_mut() {
@@ -236,7 +283,10 @@ impl Canvas {
         }
     }
 
-    pub(super) fn to_lines(&self, styles: &MermaidStyles) -> (Vec<Line<'static>>, Vec<String>) {
+    pub(in crate::tui) fn to_lines(
+        &self,
+        styles: &GraphStyles,
+    ) -> (Vec<Line<'static>>, Vec<String>) {
         let mut styled = Vec::with_capacity(self.h);
         let mut plain = Vec::with_capacity(self.h);
         for y in 0..self.h {
@@ -281,14 +331,20 @@ impl Canvas {
     }
 }
 
-fn style_for(cls: Cls, styles: &MermaidStyles) -> Style {
+fn style_for(cls: Cls, styles: &GraphStyles) -> Style {
     match cls {
         Cls::Empty => Style::default(),
         Cls::Border => styles.border,
         Cls::Text => styles.node_text,
         Cls::Edge => styles.edge,
         Cls::EdgeLabel => styles.edge_label,
+        Cls::NodeBorder(index) => styles.node_style(index).border,
+        Cls::NodeText(index) => styles.node_style(index).text,
     }
+}
+
+fn is_border_class(cls: Cls) -> bool {
+    matches!(cls, Cls::Border | Cls::NodeBorder(_))
 }
 
 fn mask_char(mask: u8) -> char {

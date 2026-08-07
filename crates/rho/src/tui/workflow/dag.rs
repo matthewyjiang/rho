@@ -1,201 +1,198 @@
-//! Compact layered DAG layout for the workflow run screen.
+//! Workflow policy for the shared terminal graph renderer.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use ratatui::{
     style::{Modifier, Style},
-    text::{Line, Span},
+    text::Line,
 };
-use unicode_width::UnicodeWidthStr;
 
-use crate::workflow::{NodeId, NodeState, NodeTerminalState};
+use crate::{
+    tui::{
+        render::truncate_one_line,
+        terminal_graph::{
+            Edge, Graph, GraphArt, Node, NodeRect, NodeStyle, Oversize, RankOrdering,
+        },
+        theme::Theme,
+    },
+    workflow::{NodeId, NodeState, NodeTerminalState},
+};
 
-use super::super::theme::Theme;
 use super::event_adapter::WorkflowNodeSnapshot;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct DagLine {
-    pub(super) spans: Vec<Span<'static>>,
-    /// Node this line selects when the cursor is on it.
-    pub(super) node_index: Option<usize>,
+// Preserve the former chip's activity budget so untrusted progress text cannot
+// force the whole graph past the renderer's line limit.
+const MAX_GRAPH_ACTIVITY_WIDTH: usize = 28;
+
+#[derive(Clone, Copy)]
+pub(super) enum HorizontalDirection {
+    Left,
+    Right,
 }
 
-/// Build top-to-bottom layered DAG lines with selection highlight.
+pub(super) struct DagRender {
+    pub(super) lines: Vec<Line<'static>>,
+    canvas_width: usize,
+    canvas_height: usize,
+    node_rects: Vec<NodeRect>,
+}
+
+impl DagRender {
+    fn from_art(art: GraphArt) -> Self {
+        Self {
+            lines: art.lines,
+            canvas_width: art.width,
+            canvas_height: art.height,
+            node_rects: art.node_rects,
+        }
+    }
+
+    fn message(message: impl Into<String>) -> Self {
+        let message = message.into();
+        Self {
+            canvas_width: unicode_width::UnicodeWidthStr::width(message.as_str()),
+            canvas_height: 1,
+            lines: vec![Line::from(message)],
+            node_rects: Vec::new(),
+        }
+    }
+
+    pub(super) fn viewport_offset(&self, selected: usize, width: u16, height: u16) -> (u16, u16) {
+        let Some(rect) = self.node_rects.get(selected).copied() else {
+            return (0, 0);
+        };
+        let x = follow_axis(rect.x, rect.width, self.canvas_width, usize::from(width));
+        let y = follow_axis(rect.y, rect.height, self.canvas_height, usize::from(height));
+        (to_u16(y), to_u16(x))
+    }
+}
+
+pub(super) fn node_ranks(nodes: &[WorkflowNodeSnapshot]) -> Vec<usize> {
+    workflow_graph(nodes, /*selected*/ 0, &[]).ranks()
+}
+
+pub(super) fn horizontal_neighbor(
+    ranks: &[usize],
+    selected: usize,
+    direction: HorizontalDirection,
+) -> Option<usize> {
+    let selected_rank = *ranks.get(selected)?;
+    match direction {
+        HorizontalDirection::Left => (0..selected)
+            .rev()
+            .find(|&index| ranks[index] == selected_rank),
+        HorizontalDirection::Right => {
+            ((selected + 1)..ranks.len()).find(|&index| ranks[index] == selected_rank)
+        }
+    }
+}
+
+/// Render the complete workflow DAG. The view clips this canvas and follows
+/// the selected node instead of asking the graph layout to discard topology.
 pub(super) fn render_dag(
     nodes: &[WorkflowNodeSnapshot],
     selected: usize,
-    width: u16,
     live_activity: &[Option<String>],
-) -> Vec<DagLine> {
+) -> DagRender {
     if nodes.is_empty() {
-        return vec![DagLine {
-            spans: vec![Span::raw("no steps")],
-            node_index: None,
-        }];
+        return DagRender::message("no steps");
     }
 
-    let width = width.max(12) as usize;
+    let graph = workflow_graph(nodes, selected, live_activity);
+    match graph.render(Theme::dim()) {
+        Ok(art) => DagRender::from_art(art),
+        Err(Oversize::Width | Oversize::Cells) => {
+            DagRender::message("graph exceeds the terminal render budget")
+        }
+    }
+}
+
+fn workflow_graph(
+    nodes: &[WorkflowNodeSnapshot],
+    selected: usize,
+    live_activity: &[Option<String>],
+) -> Graph {
     let index_by_id = nodes
         .iter()
         .enumerate()
         .map(|(index, node)| (node.id.clone(), index))
-        .collect::<BTreeMap<_, _>>();
-
-    let layers = topological_layers(nodes, &index_by_id);
-    let mut lines = Vec::new();
-
-    for (layer_idx, layer) in layers.iter().enumerate() {
-        if layer_idx > 0 {
-            lines.push(connector_line(layer, nodes, width));
-        }
-        lines.extend(layer_lines(layer, nodes, selected, width, live_activity));
-    }
-    lines
-}
-
-fn topological_layers(
-    nodes: &[WorkflowNodeSnapshot],
-    index_by_id: &BTreeMap<NodeId, usize>,
-) -> Vec<Vec<usize>> {
-    let mut depth = vec![0usize; nodes.len()];
-    // Longest-path depth so dependents sit below every parent.
-    let mut changed = true;
-    let mut guard = 0;
-    while changed && guard < nodes.len() + 2 {
-        changed = false;
-        guard += 1;
-        for (index, node) in nodes.iter().enumerate() {
-            let parent_depth = node
-                .dependencies
-                .iter()
-                .filter_map(|dep| index_by_id.get(dep).copied())
-                .map(|parent| depth[parent])
-                .max()
-                .map(|value| value + 1)
-                .unwrap_or(0);
-            if parent_depth > depth[index] {
-                depth[index] = parent_depth;
-                changed = true;
-            }
-        }
-    }
-
-    let max_depth = depth.iter().copied().max().unwrap_or(0);
-    let mut layers = vec![Vec::new(); max_depth + 1];
-    let mut order = (0..nodes.len()).collect::<Vec<_>>();
-    // Stable left-to-right: original snapshot order within a layer.
-    order.sort_by_key(|&index| (depth[index], index));
-    for index in order {
-        layers[depth[index]].push(index);
-    }
-    layers
-}
-
-fn layer_lines(
-    layer: &[usize],
-    nodes: &[WorkflowNodeSnapshot],
-    selected: usize,
-    width: usize,
-    live_activity: &[Option<String>],
-) -> Vec<DagLine> {
-    // Prefer one row when labels fit; otherwise stack nodes in the layer.
-    let labels = layer
+        .collect::<BTreeMap<NodeId, usize>>();
+    let graph_nodes = nodes
         .iter()
-        .map(|&index| node_chip(nodes, index, index == selected, live_activity))
-        .collect::<Vec<_>>();
-    let joined_width = labels.iter().map(|chip| chip.display_width).sum::<usize>()
-        + labels.len().saturating_sub(1) * 3;
-
-    if joined_width <= width && labels.len() > 1 {
-        let mut spans = Vec::new();
-        for (offset, chip) in labels.into_iter().enumerate() {
-            if offset > 0 {
-                spans.push(Span::raw("   "));
-            }
-            spans.extend(chip.spans);
-        }
-        // Multi-node row: keep selection on the selected node if present.
-        let node_index = layer.iter().copied().find(|&index| index == selected);
-        return vec![DagLine { spans, node_index }];
-    }
-
-    layer
-        .iter()
-        .map(|&index| {
-            let chip = node_chip(nodes, index, index == selected, live_activity);
-            DagLine {
-                spans: chip.spans,
-                node_index: Some(index),
-            }
+        .enumerate()
+        .map(|(index, node)| {
+            let activity = live_activity
+                .get(index)
+                .and_then(|value| value.as_deref())
+                .or_else(|| running_activity(node));
+            let label = match activity {
+                Some(activity) => {
+                    let activity = truncate_one_line(activity, MAX_GRAPH_ACTIVITY_WIDTH);
+                    format!(
+                        "{} {} · {activity}",
+                        state_glyph(&node.state),
+                        node.display_name
+                    )
+                }
+                None => format!("{} {}", state_glyph(&node.state), node.display_name),
+            };
+            Node::rectangular(label, node_style(&node.state, index == selected))
         })
-        .collect()
-}
-
-fn connector_line(layer: &[usize], nodes: &[WorkflowNodeSnapshot], width: usize) -> DagLine {
-    // Show which parents feed this layer, without repeating full topology noise.
-    let parents = layer
+        .collect();
+    let edges = nodes
         .iter()
-        .flat_map(|&index| nodes[index].dependencies.iter())
-        .collect::<BTreeSet<_>>();
-    let label = if parents.len() <= 1 {
-        "│".into()
+        .enumerate()
+        .flat_map(|(to, node)| {
+            let index_by_id = &index_by_id;
+            node.dependencies.iter().map(move |dependency| {
+                let from = index_by_id
+                    .get(dependency)
+                    .copied()
+                    .expect("workflow snapshot dependencies refer to frozen nodes");
+                Edge::directed(from, to)
+            })
+        })
+        .collect();
+
+    Graph::top_down(graph_nodes, edges, RankOrdering::PreserveInput)
+        .expect("workflow graph maps dependency ids to valid node indices")
+}
+
+fn node_style(state: &NodeState, selected: bool) -> NodeStyle {
+    let state = state_style(state);
+    if selected {
+        NodeStyle::new(
+            state.add_modifier(Modifier::BOLD),
+            state.add_modifier(Modifier::BOLD | Modifier::REVERSED),
+        )
     } else {
-        format!("│  ({} inputs)", parents.len())
-    };
-    let truncated = truncate(&label, width);
-    DagLine {
-        spans: vec![Span::styled(truncated, Theme::dim())],
-        node_index: None,
+        NodeStyle::uniform(state)
     }
 }
 
-struct Chip {
-    spans: Vec<Span<'static>>,
-    display_width: usize,
+fn running_activity(node: &WorkflowNodeSnapshot) -> Option<&str> {
+    matches!(node.state, NodeState::Running { .. }).then_some(if node.work.is_empty() {
+        "working"
+    } else {
+        node.work.as_str()
+    })
 }
 
-fn node_chip(
-    nodes: &[WorkflowNodeSnapshot],
-    index: usize,
-    selected: bool,
-    live_activity: &[Option<String>],
-) -> Chip {
-    let node = &nodes[index];
-    let glyph = state_glyph(&node.state);
-    let name = truncate(&node.display_name, 22);
-    let marker = if selected { "▶ " } else { "  " };
-    let activity = live_activity
-        .get(index)
-        .and_then(|value| value.as_deref())
-        .map(|value| truncate(value, 28))
-        .or_else(|| running_activity(node));
-    let body = if let Some(activity) = activity {
-        format!("{marker}{glyph} {name} · {activity}")
-    } else {
-        format!("{marker}{glyph} {name}")
-    };
-    let style = if selected {
-        state_style(&node.state).add_modifier(Modifier::BOLD | Modifier::REVERSED)
-    } else {
-        state_style(&node.state)
-    };
-    let display_width = UnicodeWidthStr::width(body.as_str());
-    Chip {
-        spans: vec![Span::styled(body, style)],
-        display_width,
+fn follow_axis(start: usize, length: usize, canvas: usize, viewport: usize) -> usize {
+    if viewport == 0 || canvas <= viewport {
+        return 0;
     }
+    if length > viewport {
+        return start.min(canvas.saturating_sub(viewport));
+    }
+    let node_center = start.saturating_add(length / 2);
+    node_center
+        .saturating_sub(viewport / 2)
+        .min(canvas.saturating_sub(viewport))
 }
 
-fn running_activity(node: &WorkflowNodeSnapshot) -> Option<String> {
-    if !matches!(node.state, NodeState::Running { .. }) {
-        return None;
-    }
-    let text = if node.work.is_empty() {
-        "working".into()
-    } else {
-        truncate(&node.work, 28)
-    };
-    Some(text)
+fn to_u16(value: usize) -> u16 {
+    u16::try_from(value).unwrap_or(u16::MAX)
 }
 
 pub(super) fn state_glyph(state: &NodeState) -> &'static str {
@@ -216,8 +213,6 @@ pub(super) fn state_glyph(state: &NodeState) -> &'static str {
 
 pub(super) fn state_style(state: &NodeState) -> Style {
     match state {
-        // Waiting stays muted; ready uses body text so it reads as actionable
-        // without pulling ANSI white/gray (index 7) into chrome.
         NodeState::Pending => Theme::dim(),
         NodeState::Ready => Theme::text(),
         NodeState::Running { .. } => Theme::accent(),
@@ -246,49 +241,6 @@ pub(super) fn state_label(state: &NodeState) -> String {
             NodeTerminalState::Blocked => "blocked".into(),
         },
     }
-}
-
-fn truncate(text: &str, max_width: usize) -> String {
-    if max_width == 0 {
-        return String::new();
-    }
-    if UnicodeWidthStr::width(text) <= max_width {
-        return text.to_owned();
-    }
-    if max_width <= 1 {
-        return "…".into();
-    }
-    let mut out = String::new();
-    let mut width = 0;
-    for ch in text.chars() {
-        let ch_width = UnicodeWidthStr::width(ch.encode_utf8(&mut [0; 4]));
-        if width + ch_width > max_width.saturating_sub(1) {
-            break;
-        }
-        out.push(ch);
-        width += ch_width;
-    }
-    out.push('…');
-    out
-}
-
-/// Ensure layered depths place dependents below dependencies.
-#[cfg(test)]
-pub(super) fn layer_index_of(nodes: &[WorkflowNodeSnapshot], node_index: usize) -> Option<usize> {
-    let index_by_id = nodes
-        .iter()
-        .enumerate()
-        .map(|(index, node)| (node.id.clone(), index))
-        .collect::<BTreeMap<_, _>>();
-    let layers = topological_layers(nodes, &index_by_id);
-    layers.iter().position(|layer| layer.contains(&node_index))
-}
-
-pub(super) fn to_paragraph_lines(lines: Vec<DagLine>) -> Vec<Line<'static>> {
-    lines
-        .into_iter()
-        .map(|line| Line::from(line.spans))
-        .collect()
 }
 
 #[cfg(test)]

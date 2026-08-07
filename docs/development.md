@@ -49,6 +49,26 @@ The full mode runs policy and script checks, Clippy for all targets and features
 
 Development and test profiles use reduced debug information to keep artifacts and link times smaller while retaining line-number backtraces. Set `CARGO_PROFILE_DEV_DEBUG=2` or `CARGO_PROFILE_TEST_DEBUG=2` when a debugging session needs full symbols.
 
+## Thermo-nuclear review workflow
+
+The repository includes `.rho/workflows/thermo-nuclear-review/` for a deep
+review of the current branch. It collects one bounded Git context pack, runs
+three read-only review lanes in parallel, then sends their structured findings
+to one worker that applies safe fixes. If the selected scope has no changes,
+the workflow takes a no-op path instead of starting review agents.
+
+```bash
+rho workflow validate .rho/workflows/thermo-nuclear-review/workflow.star
+rho workflow plan .rho/workflows/thermo-nuclear-review/workflow.star \
+  --input 'base="main"' \
+  --input 'scope="all"'
+```
+
+`base` must resolve exactly; an invalid explicit ref does not fall back to a
+different branch. `scope` accepts `all`, `committed`, or `uncommitted`. See
+`.rho/workflows/thermo-nuclear-review/README.md` for its graph, inputs, run
+commands, and context collector test.
+
 ## Test selection
 
 Before adding, expanding, reviewing, or deleting tests, follow the project skill

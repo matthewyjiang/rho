@@ -4,15 +4,18 @@ use ratatui::text::Line;
 
 use super::super::{render::display_width, theme::Theme};
 use super::panel::ClosedPanel;
+use crate::tui::terminal_graph::{GraphStyles, Oversize};
 
-mod canvas;
-mod drawing;
 mod flow;
 mod model;
-mod painter;
 mod policy;
 mod security;
 mod sequence;
+
+pub(super) struct MermaidArt {
+    pub(super) styled_lines: Vec<Line<'static>>,
+    pub(super) plain_lines: Vec<String>,
+}
 
 const MAX_SOURCE_BYTES: usize = 64 * 1024;
 const MAX_SOURCE_LINES: usize = 2_048;
@@ -129,11 +132,12 @@ fn render_inner(source: &str, inner_width: usize) -> MermaidRender {
         return MermaidRender::Fallback(MermaidFallback::Unsupported);
     };
     let style = Theme::markdown_code_block();
-    let styles = painter::MermaidStyles {
+    let styles = GraphStyles {
         border: style,
         node_text: style,
         edge: style,
         edge_label: style,
+        node_styles: Vec::new(),
     };
     let result = match diagram_policy {
         policy::DiagramPolicy::PaintSequence => sequence::layout_sequence(
@@ -160,10 +164,10 @@ fn render_inner(source: &str, inner_width: usize) -> MermaidRender {
     };
     let art = match result {
         Ok(art) => art,
-        Err(painter::Oversize::Width) => {
+        Err(Oversize::Width) => {
             return MermaidRender::Fallback(MermaidFallback::TooWide);
         }
-        Err(painter::Oversize::Cells) => {
+        Err(Oversize::Cells) => {
             return MermaidRender::Fallback(MermaidFallback::OutputCells);
         }
     };

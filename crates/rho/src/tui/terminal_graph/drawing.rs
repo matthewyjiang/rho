@@ -1,17 +1,18 @@
 // Adapted from Grok Build's terminal Mermaid renderer:
 // https://github.com/xai-org/grok-build/blob/b189869b7755d2b482969acf6c92da3ecfeffd36/crates/codegen/xai-grok-markdown/src/mermaid.rs
 // Copyright 2023-2026 SpaceXAI. Licensed under Apache-2.0.
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use super::{
     canvas::{Canvas, Cls, D, L, R, U},
     flow::Placed,
-    model::{Edge, Graph, Head, LineKind, Shape},
-    painter::{char_width, CONT, LABEL_BREAK_CHARS, MAX_LABEL, PAD},
+    painter::{LABEL_BREAK_CHARS, MAX_LABEL, PAD},
+    Compartment, Direction, Edge, EdgeHead as Head, EdgeLine as LineKind, Graph, NodeRect,
+    NodeShape as Shape, TextAlignment,
 };
-pub(super) fn wrap_label(label: &str, width: usize, max_lines: usize) -> Vec<String> {
+pub(in crate::tui) fn wrap_label(label: &str, width: usize, max_lines: usize) -> Vec<String> {
     let width = width.max(1);
-    let char_w = char_width;
     let mut lines: Vec<String> = Vec::new();
     let mut cur = String::new();
     let mut cur_w = 0usize;
@@ -23,21 +24,21 @@ pub(super) fn wrap_label(label: &str, width: usize, max_lines: usize) -> Vec<Str
             }
             let mut chunk = String::new();
             let mut chunk_w = 0usize;
-            for ch in word.chars() {
-                let cw = char_w(ch);
-                if chunk_w + cw > width && !chunk.is_empty() {
+            for grapheme in word.graphemes(true) {
+                let grapheme_width = grapheme.width();
+                if chunk_w + grapheme_width > width && !chunk.is_empty() {
                     // Prefer breaking after the last identifier boundary so a long
-                    // token is not sliced mid-segment; fall back to a per-char break.
+                    // token is not sliced mid-segment; fall back to a grapheme break.
                     let carry = match chunk.rfind(LABEL_BREAK_CHARS) {
-                        Some(p) => chunk.split_off(p + 1),
+                        Some(position) => chunk.split_off(position + 1),
                         None => String::new(),
                     };
                     lines.push(std::mem::take(&mut chunk));
-                    chunk_w = carry.chars().map(char_w).sum();
+                    chunk_w = carry.graphemes(true).map(UnicodeWidthStr::width).sum();
                     chunk = carry;
                 }
-                chunk.push(ch);
-                chunk_w += cw;
+                chunk.push_str(grapheme);
+                chunk_w += grapheme_width;
             }
             cur = chunk;
             cur_w = chunk_w;
@@ -66,13 +67,13 @@ pub(super) fn wrap_label(label: &str, width: usize, max_lines: usize) -> Vec<Str
             let target = width.saturating_sub(1).max(1);
             let mut s = String::new();
             let mut sw = 0usize;
-            for ch in last.chars() {
-                let cw = char_w(ch);
-                if sw + cw > target {
+            for grapheme in last.graphemes(true) {
+                let grapheme_width = grapheme.width();
+                if sw + grapheme_width > target {
                     break;
                 }
-                s.push(ch);
-                sw += cw;
+                s.push_str(grapheme);
+                sw += grapheme_width;
             }
             s.push('…');
             *last = s;
@@ -81,28 +82,36 @@ pub(super) fn wrap_label(label: &str, width: usize, max_lines: usize) -> Vec<Str
     lines
 }
 
-pub(super) fn fit_label(label: &str, inner: usize) -> String {
+pub(in crate::tui) fn fit_label(label: &str, inner: usize) -> String {
     if label.width() <= inner {
         return label.to_string();
     }
     let mut out = String::new();
     let mut used = 0usize;
-    for c in label.chars() {
-        let cw = char_width(c);
-        if used + cw + 1 > inner {
+    for grapheme in label.graphemes(true) {
+        let grapheme_width = grapheme.width();
+        if used + grapheme_width + 1 > inner {
             break;
         }
-        out.push(c);
-        used += cw;
+        out.push_str(grapheme);
+        used += grapheme_width;
     }
     out.push('…');
     out
 }
 
-pub(super) fn draw_box(canvas: &mut Canvas, p: &Placed, lines: &[String], shape: Shape) {
+pub(in crate::tui) fn draw_box(
+    canvas: &mut Canvas,
+    p: &Placed,
+    lines: &[String],
+    shape: Shape,
+    node_index: Option<usize>,
+) {
     let (x, y, w, h) = (p.x, p.y, p.w, p.h);
     let right = x + w - 1;
     let bottom = y + h - 1;
+    let border = node_index.map(Cls::NodeBorder).unwrap_or(Cls::Border);
+    let text_class = node_index.map(Cls::NodeText).unwrap_or(Cls::Text);
 
     let (tl, tr, bl, br) = match shape {
         Shape::Round => ('╭', '╮', '╰', '╯'),
@@ -111,18 +120,18 @@ pub(super) fn draw_box(canvas: &mut Canvas, p: &Placed, lines: &[String], shape:
         Shape::Diamond => ('◇', '◇', '◇', '◇'),
         Shape::Rect => ('┌', '┐', '└', '┘'),
     };
-    canvas.set(x, y, tl, Cls::Border);
-    canvas.set(right, y, tr, Cls::Border);
-    canvas.set(x, bottom, bl, Cls::Border);
-    canvas.set(right, bottom, br, Cls::Border);
+    canvas.set(x, y, tl, border);
+    canvas.set(right, y, tr, border);
+    canvas.set(x, bottom, bl, border);
+    canvas.set(right, bottom, br, border);
 
     for cx in (x + 1)..right {
-        canvas.add_bits(cx, y, L | R);
-        canvas.add_bits(cx, bottom, L | R);
+        canvas.add_bits_with_class(cx, y, L | R, border);
+        canvas.add_bits_with_class(cx, bottom, L | R, border);
     }
     for cy in (y + 1)..bottom {
-        canvas.add_bits(x, cy, U | D);
-        canvas.add_bits(right, cy, U | D);
+        canvas.add_bits_with_class(x, cy, U | D, border);
+        canvas.add_bits_with_class(right, cy, U | D, border);
     }
 
     for cy in y..=bottom {
@@ -139,20 +148,13 @@ pub(super) fn draw_box(canvas: &mut Canvas, p: &Placed, lines: &[String], shape:
         let tw = text.width();
         let text_x = x + 1 + PAD + inner.saturating_sub(tw) / 2;
         let mut cur = text_x;
-        for c in text.chars() {
-            let cw = char_width(c);
-            canvas.set(cur, row, c, Cls::Text);
-            // Wide glyphs (CJK, emoji) own a second column; mark it as a
-            // continuation so the line builder doesn't emit a stray space.
-            for k in 1..cw {
-                canvas.set(cur + k, row, CONT, Cls::Text);
-            }
-            cur += cw;
+        for grapheme in text.graphemes(true) {
+            cur += canvas.set_grapheme(cur, row, grapheme, text_class);
         }
     }
 }
 
-pub(super) fn route_forward(
+pub(in crate::tui) fn route_forward(
     canvas: &mut Canvas,
     from: &Placed,
     to: &Placed,
@@ -202,11 +204,11 @@ fn head_glyph(head: Head, arrow: char) -> char {
             '▶' => '▷',
             other => other,
         },
-        _ => arrow,
+        Head::None | Head::Arrow => arrow,
     }
 }
 
-pub(super) fn route_self(canvas: &mut Canvas, p: &Placed, edge: &Edge) {
+pub(in crate::tui) fn route_self(canvas: &mut Canvas, p: &Placed, edge: &Edge) {
     let bottom = p.y + p.h - 1;
     let exit_x = p.cx + 1;
     let ret_x = p.x + p.w - 2;
@@ -225,13 +227,20 @@ pub(super) fn route_self(canvas: &mut Canvas, p: &Placed, edge: &Edge) {
         canvas.set(x, bottom + 2, h, Cls::Edge);
     }
     canvas.set(ret_x, bottom + 2, br, Cls::Edge);
-    canvas.set(ret_x, bottom + 1, head_glyph(edge.head_to, '▲'), Cls::Edge);
+    if edge.head_to == Head::None {
+        canvas.set(ret_x, bottom + 1, v, Cls::Edge);
+    } else {
+        canvas.set(ret_x, bottom + 1, head_glyph(edge.head_to, '▲'), Cls::Edge);
+    }
+    if edge.head_from != Head::None {
+        canvas.set(exit_x, bottom, head_glyph(edge.head_from, '▲'), Cls::Edge);
+    }
     if let Some(label) = &edge.label {
         place_label(canvas, label, bottom + 1, p.x + p.w + 1);
     }
 }
 
-pub(super) fn route_back(
+pub(in crate::tui) fn route_back(
     canvas: &mut Canvas,
     from: &Placed,
     to: &Placed,
@@ -267,7 +276,7 @@ pub(super) fn route_back(
     }
 }
 
-pub(super) fn route_forward_lr(
+pub(in crate::tui) fn route_forward_lr(
     canvas: &mut Canvas,
     from: &Placed,
     to: &Placed,
@@ -303,7 +312,7 @@ pub(super) fn route_forward_lr(
     }
 }
 
-pub(super) fn route_back_lr(
+pub(in crate::tui) fn route_back_lr(
     canvas: &mut Canvas,
     from: &Placed,
     to: &Placed,
@@ -340,31 +349,28 @@ fn place_label(canvas: &mut Canvas, label: &str, row: usize, start_x: usize) {
     }
     let text = fit_label(label, MAX_LABEL);
     let mut x = start_x;
-    for c in text.chars() {
-        let cw = char_width(c);
-        if cw == 0 {
-            canvas.set(x, row, c, Cls::EdgeLabel);
+    for grapheme in text.graphemes(true) {
+        let grapheme_width = grapheme.width();
+        if grapheme_width == 0 {
+            canvas.set_grapheme(x, row, grapheme, Cls::EdgeLabel);
             continue;
         }
-        if x + cw > canvas.w {
+        if x + grapheme_width > canvas.w {
             break;
         }
-        let blocked = (0..cw).any(|k| {
-            let i = canvas.idx(x + k, row);
-            canvas.ch[i] != ' ' || canvas.mask[i] != 0 || canvas.occupied[i]
+        let blocked = (0..grapheme_width).any(|offset| {
+            let index = canvas.idx(x + offset, row);
+            canvas.ch[index] != ' ' || canvas.mask[index] != 0 || canvas.occupied[index]
         });
         if blocked {
             break;
         }
-        canvas.set(x, row, c, Cls::EdgeLabel);
-        for k in 1..cw {
-            canvas.set(x + k, row, CONT, Cls::EdgeLabel);
-        }
-        x += cw;
+        canvas.set_grapheme(x, row, grapheme, Cls::EdgeLabel);
+        x += grapheme_width;
     }
 }
 
-pub(super) fn compute_ranks(graph: &Graph) -> Vec<usize> {
+pub(in crate::tui) fn compute_ranks(graph: &Graph) -> Vec<usize> {
     let n = graph.nodes.len();
     let mut children: Vec<Vec<usize>> = vec![Vec::new(); n];
     let mut indeg = vec![0usize; n];
@@ -425,21 +431,95 @@ fn dfs_dag(
     }
 }
 
-pub(super) fn draw_seq_text(canvas: &mut Canvas, text: &str, x: usize, y: usize, cls: Cls) {
-    let mut cur = x;
-    for c in text.chars() {
-        let cw = char_width(c);
-        if cw == 0 {
-            canvas.set(cur, y, c, cls);
+pub(in crate::tui) fn draw_seq_text(canvas: &mut Canvas, text: &str, x: usize, y: usize, cls: Cls) {
+    let mut current = x;
+    for grapheme in text.graphemes(true) {
+        let grapheme_width = grapheme.width();
+        for offset in 0..grapheme_width {
+            if current + offset < canvas.w && y < canvas.h {
+                let index = canvas.idx(current + offset, y);
+                canvas.mask[index] = 0;
+            }
+        }
+        current += canvas.set_grapheme(current, y, grapheme, cls);
+    }
+}
+pub(in crate::tui) fn draw_compartment_box(
+    canvas: &mut Canvas,
+    placed: &Placed,
+    compartments: &[Compartment],
+    node_index: Option<usize>,
+) {
+    draw_box(canvas, placed, &[], Shape::Rect, node_index);
+    let inner = placed.w.saturating_sub(2 * PAD + 2).max(1);
+    let border = node_index.map(Cls::NodeBorder).unwrap_or(Cls::Border);
+    let text_class = node_index.map(Cls::NodeText).unwrap_or(Cls::Text);
+    let mut row = placed.y + 1;
+    let mut first = true;
+    for compartment in compartments {
+        if compartment.lines.is_empty() {
             continue;
         }
-        for k in 0..cw {
-            if cur + k < canvas.w && y < canvas.h {
-                let i = canvas.idx(cur + k, y);
-                canvas.mask[i] = 0;
+        if !first {
+            canvas.set(placed.x, row, '├', border);
+            for x in (placed.x + 1)..(placed.x + placed.w - 1) {
+                canvas.set(x, row, '─', border);
             }
-            canvas.set(cur + k, y, if k == 0 { c } else { CONT }, cls);
+            canvas.set(placed.x + placed.w - 1, row, '┤', border);
+            row += 1;
         }
-        cur += cw;
+        first = false;
+        for line in &compartment.lines {
+            let text = fit_label(line, inner);
+            let x = match compartment.alignment {
+                TextAlignment::Left => placed.x + 1 + PAD,
+                TextAlignment::Center => {
+                    placed.x + 1 + PAD + inner.saturating_sub(text.width()) / 2
+                }
+            };
+            draw_seq_text(canvas, &text, x, row, text_class);
+            row += 1;
+        }
+    }
+}
+
+pub(in crate::tui) fn draw_frame(
+    canvas: &mut Canvas,
+    placed: &Placed,
+    title: &str,
+    sub: &Canvas,
+    node_index: Option<usize>,
+) {
+    draw_box(canvas, placed, &[], Shape::Rect, node_index);
+    let text_class = node_index.map(Cls::NodeText).unwrap_or(Cls::Text);
+    let title = fit_label(title, placed.w.saturating_sub(4));
+    draw_seq_text(
+        canvas,
+        &format!(" {title} "),
+        placed.x + 1,
+        placed.y,
+        text_class,
+    );
+    let ox = placed.x + 1 + (placed.w - 2 - sub.w) / 2;
+    let oy = placed.y + 1 + (placed.h - 2 - sub.h) / 2;
+    canvas.blit(sub, ox, oy);
+}
+
+pub(in crate::tui) fn art_node_rect(
+    placed: Placed,
+    canvas_w: usize,
+    canvas_h: usize,
+    direction: Direction,
+) -> NodeRect {
+    let (x, y) = match direction {
+        Direction::BottomUp => (placed.x, canvas_h.saturating_sub(placed.y + placed.h)),
+        Direction::RightLeft => (canvas_w.saturating_sub(placed.x + placed.w), placed.y),
+        Direction::TopDown | Direction::LeftRight => (placed.x, placed.y),
+    };
+    NodeRect {
+        x,
+        y,
+        width: placed.w,
+        height: placed.h,
     }
 }

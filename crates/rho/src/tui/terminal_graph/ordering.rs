@@ -1,12 +1,10 @@
 // Adapted from Grok Build's terminal Mermaid renderer:
 // https://github.com/xai-org/grok-build/blob/b189869b7755d2b482969acf6c92da3ecfeffd36/crates/codegen/xai-grok-markdown/src/mermaid.rs
 // Copyright 2023-2026 SpaceXAI. Licensed under Apache-2.0.
-use crate::tui::markdown::mermaid::model::Edge;
+use super::Edge;
 
 /// Reorder nodes within each rank to minimize edge crossings (Sugiyama-style
-/// barycenter sweeps): alternate down/up passes sort each rank by the mean
-/// position of its forward neighbours, keeping the ordering with the fewest
-/// crossings between adjacent ranks.
+/// barycenter sweeps), while keeping the source order as the stable tie-breaker.
 pub(super) fn order_ranks(by_rank: &mut [Vec<usize>], edges: &[Edge], ranks: &[usize]) {
     let n = ranks.len();
     if by_rank.len() < 2 || n < 3 {
@@ -14,10 +12,10 @@ pub(super) fn order_ranks(by_rank: &mut [Vec<usize>], edges: &[Edge], ranks: &[u
     }
     let mut parents: Vec<Vec<usize>> = vec![Vec::new(); n];
     let mut children: Vec<Vec<usize>> = vec![Vec::new(); n];
-    for e in edges {
-        if e.from != e.to && ranks[e.to] > ranks[e.from] {
-            parents[e.to].push(e.from);
-            children[e.from].push(e.to);
+    for edge in edges {
+        if edge.from != edge.to && ranks[edge.to] > ranks[edge.from] {
+            parents[edge.to].push(edge.from);
+            children[edge.from].push(edge.to);
         }
     }
 
@@ -37,8 +35,8 @@ pub(super) fn order_ranks(by_rank: &mut [Vec<usize>], edges: &[Edge], ranks: &[u
         return;
     }
 
-    for it in 0..8 {
-        if it % 2 == 0 {
+    for iteration in 0..8 {
+        if iteration % 2 == 0 {
             for row in by_rank.iter_mut().skip(1) {
                 sort_by_barycenter(row, &parents, &pos);
                 for (i, &v) in row.iter().enumerate() {
@@ -64,39 +62,46 @@ pub(super) fn order_ranks(by_rank: &mut [Vec<usize>], edges: &[Edge], ranks: &[u
         }
     }
 
-    for (row, b) in by_rank.iter_mut().zip(best) {
-        *row = b;
+    for (row, best_row) in by_rank.iter_mut().zip(best) {
+        *row = best_row;
     }
 }
 
-fn sort_by_barycenter(row: &mut [usize], neigh: &[Vec<usize>], pos: &[usize]) {
+fn sort_by_barycenter(row: &mut [usize], neighbours: &[Vec<usize>], pos: &[usize]) {
     let mut keyed: Vec<(f64, usize)> = row
         .iter()
-        .map(|&v| {
-            let key = if neigh[v].is_empty() {
-                pos[v] as f64
+        .map(|&node| {
+            let key = if neighbours[node].is_empty() {
+                pos[node] as f64
             } else {
-                neigh[v].iter().map(|&u| pos[u] as f64).sum::<f64>() / neigh[v].len() as f64
+                neighbours[node]
+                    .iter()
+                    .map(|&neighbour| pos[neighbour] as f64)
+                    .sum::<f64>()
+                    / neighbours[node].len() as f64
             };
-            (key, v)
+            (key, node)
         })
         .collect();
     keyed.sort_by(|a, b| a.0.total_cmp(&b.0));
-    for (slot, (_, v)) in row.iter_mut().zip(keyed) {
-        *slot = v;
+    for (slot, (_, node)) in row.iter_mut().zip(keyed) {
+        *slot = node;
     }
 }
 
 fn count_crossings(edges: &[Edge], ranks: &[usize], pos: &[usize]) -> usize {
     let adjacent: Vec<(usize, usize, usize)> = edges
         .iter()
-        .filter(|e| e.from != e.to && ranks[e.to] == ranks[e.from] + 1)
-        .map(|e| (ranks[e.from], pos[e.from], pos[e.to]))
+        .filter(|edge| edge.from != edge.to && ranks[edge.to] == ranks[edge.from] + 1)
+        .map(|edge| (ranks[edge.from], pos[edge.from], pos[edge.to]))
         .collect();
     let mut crossings = 0;
-    for (i, a) in adjacent.iter().enumerate() {
-        for b in &adjacent[i + 1..] {
-            if a.0 == b.0 && ((a.1 < b.1 && a.2 > b.2) || (a.1 > b.1 && a.2 < b.2)) {
+    for (index, first) in adjacent.iter().enumerate() {
+        for second in &adjacent[index + 1..] {
+            if first.0 == second.0
+                && ((first.1 < second.1 && first.2 > second.2)
+                    || (first.1 > second.1 && first.2 < second.2))
+            {
                 crossings += 1;
             }
         }
@@ -104,10 +109,8 @@ fn count_crossings(edges: &[Edge], ranks: &[usize], pos: &[usize]) -> usize {
     crossings
 }
 
-/// Assign a center coordinate (along the cross-axis) to every node so nodes line
-/// up under their neighbours. Iterative barycenter relaxation: each node drifts
-/// toward the average of its forward neighbours while ranks keep order and a
-/// minimum `sep` between boxes, which straightens chains and centers branches.
+/// Assign a center coordinate to every node along the cross-axis. Rank order
+/// and a minimum separation remain fixed while barycenters straighten chains.
 pub(super) fn assign_positions(
     by_rank: &[Vec<usize>],
     size: &[usize],
@@ -118,27 +121,27 @@ pub(super) fn assign_positions(
     let n = size.len();
     let mut parents: Vec<Vec<usize>> = vec![Vec::new(); n];
     let mut children: Vec<Vec<usize>> = vec![Vec::new(); n];
-    for e in edges {
-        if e.from != e.to && ranks[e.to] > ranks[e.from] {
-            parents[e.to].push(e.from);
-            children[e.from].push(e.to);
+    for edge in edges {
+        if edge.from != edge.to && ranks[edge.to] > ranks[edge.from] {
+            parents[edge.to].push(edge.from);
+            children[edge.from].push(edge.to);
         }
     }
 
     let mut pos = vec![0f64; n];
     for row in by_rank {
-        let mut x = 0f64;
-        for &v in row {
-            let half = size[v] as f64 / 2.0;
-            x += half;
-            pos[v] = x;
-            x += half + sep as f64;
+        let mut coordinate = 0f64;
+        for &node in row {
+            let half = size[node] as f64 / 2.0;
+            coordinate += half;
+            pos[node] = coordinate;
+            coordinate += half + sep as f64;
         }
     }
 
-    for it in 0..10 {
-        if it % 2 == 0 {
-            for row in by_rank.iter() {
+    for iteration in 0..10 {
+        if iteration % 2 == 0 {
+            for row in by_rank {
                 relax_rank(row, &parents, &mut pos, size, sep);
             }
         } else {
@@ -149,54 +152,64 @@ pub(super) fn assign_positions(
     }
 
     let min_left = (0..n)
-        .map(|v| pos[v] - size[v] as f64 / 2.0)
+        .map(|node| pos[node] - size[node] as f64 / 2.0)
         .fold(f64::INFINITY, f64::min);
     let min_left = if min_left.is_finite() { min_left } else { 0.0 };
     (0..n)
-        .map(|v| (pos[v] - min_left).round().max(0.0) as usize)
+        .map(|node| (pos[node] - min_left).round().max(0.0) as usize)
         .collect()
 }
 
-fn relax_rank(nodes: &[usize], neigh: &[Vec<usize>], pos: &mut [f64], size: &[usize], sep: usize) {
+fn relax_rank(
+    nodes: &[usize],
+    neighbours: &[Vec<usize>],
+    pos: &mut [f64],
+    size: &[usize],
+    sep: usize,
+) {
     let n = nodes.len();
     if n == 0 {
         return;
     }
     let desired: Vec<f64> = nodes
         .iter()
-        .map(|&v| {
-            if neigh[v].is_empty() {
-                pos[v]
+        .map(|&node| {
+            if neighbours[node].is_empty() {
+                pos[node]
             } else {
-                neigh[v].iter().map(|&u| pos[u]).sum::<f64>() / neigh[v].len() as f64
+                neighbours[node]
+                    .iter()
+                    .map(|&neighbour| pos[neighbour])
+                    .sum::<f64>()
+                    / neighbours[node].len() as f64
             }
         })
         .collect();
 
-    let half = |i: usize| size[nodes[i]] as f64 / 2.0;
+    let half = |index: usize| size[nodes[index]] as f64 / 2.0;
     let mut left = vec![0f64; n];
     let mut right = vec![0f64; n];
-    for i in 0..n {
-        left[i] = if i == 0 {
-            desired[i]
+    for index in 0..n {
+        left[index] = if index == 0 {
+            desired[index]
         } else {
-            desired[i].max(left[i - 1] + half(i - 1) + sep as f64 + half(i))
+            desired[index].max(left[index - 1] + half(index - 1) + sep as f64 + half(index))
         };
     }
-    for i in (0..n).rev() {
-        right[i] = if i == n - 1 {
-            desired[i]
+    for index in (0..n).rev() {
+        right[index] = if index == n - 1 {
+            desired[index]
         } else {
-            desired[i].min(right[i + 1] - half(i + 1) - sep as f64 - half(i))
+            desired[index].min(right[index + 1] - half(index + 1) - sep as f64 - half(index))
         };
     }
-    for i in 0..n {
-        pos[nodes[i]] = (left[i] + right[i]) / 2.0;
+    for index in 0..n {
+        pos[nodes[index]] = (left[index] + right[index]) / 2.0;
     }
-    for i in 1..n {
-        let min_p = pos[nodes[i - 1]] + half(i - 1) + sep as f64 + half(i);
-        if pos[nodes[i]] < min_p {
-            pos[nodes[i]] = min_p;
+    for index in 1..n {
+        let minimum = pos[nodes[index - 1]] + half(index - 1) + sep as f64 + half(index);
+        if pos[nodes[index]] < minimum {
+            pos[nodes[index]] = minimum;
         }
     }
 }

@@ -3,17 +3,21 @@
 // Copyright 2023-2026 SpaceXAI. Licensed under Apache-2.0.
 use unicode_width::UnicodeWidthStr;
 
+use super::flow::{NodeSizes, Placed};
 use super::ordering::assign_positions;
-use super::{NodeSizes, Placed};
-use crate::tui::markdown::mermaid::{
-    model::Graph,
-    painter::{GAP_X, GAP_Y, MAX_LABEL},
-};
+use super::Graph;
+use crate::tui::terminal_graph::painter::{GAP_X, GAP_Y, MAX_LABEL};
 
 #[derive(Clone, Copy)]
 enum CrossAxisAlignment {
     Exact,
     Near,
+}
+
+#[derive(Clone, Copy)]
+enum LaneAxis {
+    Vertical,
+    Horizontal,
 }
 
 impl CrossAxisAlignment {
@@ -73,7 +77,7 @@ fn lane_spans(
     graph: &Graph,
     ranks: &[usize],
     placed: &[Placed],
-    vertical: bool,
+    axis: LaneAxis,
 ) -> Vec<(usize, usize, usize, usize, usize)> {
     graph
         .edges
@@ -82,10 +86,9 @@ fn lane_spans(
         .filter(|(_, e)| e.from != e.to && ranks[e.to] != ranks[e.from] + 1)
         .map(|(i, e)| {
             let (pf, pt) = (&placed[e.from], &placed[e.to]);
-            let (a, b) = if vertical {
-                (pf.cy.min(pt.cy), pf.cy.max(pt.cy))
-            } else {
-                (pf.cx.min(pt.cx), pf.cx.max(pt.cx))
+            let (a, b) = match axis {
+                LaneAxis::Vertical => (pf.cy.min(pt.cy), pf.cy.max(pt.cy)),
+                LaneAxis::Horizontal => (pf.cx.min(pt.cx), pf.cx.max(pt.cx)),
             };
             (a, b, e.from, e.to, i)
         })
@@ -173,7 +176,7 @@ pub(super) fn place_td(
     }
 
     let mut edge_lane = vec![0usize; graph.edges.len()];
-    let lanes = lane_spans(graph, ranks, placed, true);
+    let lanes = lane_spans(graph, ranks, placed, LaneAxis::Vertical);
     let (canvas_w, lane_base) = if lanes.is_empty() {
         (content_w, 0)
     } else {
@@ -270,7 +273,7 @@ pub(super) fn place_lr(
     let source_anchors = placed.iter().map(|node| node.cy).collect();
 
     let mut edge_lane = vec![0usize; graph.edges.len()];
-    let lanes = lane_spans(graph, ranks, placed, false);
+    let lanes = lane_spans(graph, ranks, placed, LaneAxis::Horizontal);
     let (canvas_h, lane_base) = if lanes.is_empty() {
         (diagram_h, 0)
     } else {

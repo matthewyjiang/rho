@@ -2,7 +2,10 @@ use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use super::{control::ConfirmKind, event_adapter::WorkflowAction, state::WorkflowUiState};
+use super::{
+    control::ConfirmKind, dag::HorizontalDirection, event_adapter::WorkflowAction,
+    state::WorkflowUiState,
+};
 
 #[derive(Debug)]
 pub(super) enum InputResult {
@@ -27,6 +30,14 @@ pub(super) fn handle_key(state: &mut WorkflowUiState, key: KeyEvent) -> InputRes
         }
         KeyCode::Down | KeyCode::Char('j') if !ctrl => {
             state.select_next();
+            InputResult::Redraw
+        }
+        KeyCode::Left | KeyCode::Char('h') if !ctrl => {
+            state.select_horizontal(HorizontalDirection::Left);
+            InputResult::Redraw
+        }
+        KeyCode::Right | KeyCode::Char('l') if !ctrl => {
+            state.select_horizontal(HorizontalDirection::Right);
             InputResult::Redraw
         }
         KeyCode::PageUp => scroll_details(state, ScrollCommand::PageUp),

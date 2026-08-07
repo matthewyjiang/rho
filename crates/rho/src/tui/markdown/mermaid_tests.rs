@@ -1,4 +1,5 @@
 use super::*;
+use crate::tui::terminal_graph::{MAX_LINES, WRAP_WIDTH};
 use pretty_assertions::assert_eq;
 
 fn rendered(source: &str, width: usize) -> Vec<String> {
@@ -97,6 +98,21 @@ fn applies_source_model_and_canvas_limits_before_or_after_painting() {
         render_mermaid("flowchart LR\nA[a label that cannot fit]", 4),
         MermaidRender::Fallback(MermaidFallback::TooWide)
     );
+    // A grouped label may fit the lossless model gate at the normal wrap but
+    // exceed the line budget at narrower wraps. Fall back instead of truncating.
+    let compaction_label = "x".repeat(WRAP_WIDTH * (MAX_LINES - 1));
+    let compacted_group = format!("flowchart TD\nsubgraph Group\nA[{compaction_label}]\nend");
+    assert_eq!(
+        render_mermaid(&compacted_group, 20),
+        MermaidRender::Fallback(MermaidFallback::TooWide)
+    );
+    assert_eq!(
+        render_mermaid(
+            "flowchart TD\nsubgraph abcdefghijklmnopqrst\nA[ok]\nend",
+            16,
+        ),
+        MermaidRender::Fallback(MermaidFallback::TooWide)
+    );
 }
 
 #[test]
@@ -129,7 +145,7 @@ fn rejects_blank_malformed_unsafe_and_link_bearing_sources() {
 
 #[test]
 fn raw_falls_back_when_terminal_painter_cannot_preserve_semantics() {
-    let long_label = "x".repeat(super::painter::WRAP_WIDTH * super::painter::MAX_LINES + 1);
+    let long_label = "x".repeat(WRAP_WIDTH * MAX_LINES + 1);
     let fixtures = [
         "stateDiagram-v2\n[*] --> Ready\nReady --> [*]".to_owned(),
         "stateDiagram-v2\nReady --> Waiting\nnote right of Ready: queued".to_owned(),
@@ -160,12 +176,15 @@ fn raw_falls_back_when_terminal_painter_cannot_preserve_semantics() {
 fn renders_unicode_labels_without_mismeasuring_or_reordering_cells() {
     for direction in ["LR", "RL", "TD", "BT"] {
         let lines = rendered(
-            &format!("flowchart {direction}\nA[你好] --> B[e\u{301}🙂]"),
+            &format!("flowchart {direction}\nA[你好] --> B[e\u{301}🙂👩\u{200d}💻]"),
             80,
         );
         let art = lines.join("\n");
         assert!(art.contains("你好"), "{direction}:\n{art}");
-        assert!(art.contains("e\u{301}🙂"), "{direction}:\n{art}");
+        assert!(
+            art.contains("e\u{301}🙂👩\u{200d}💻"),
+            "{direction}:\n{art}"
+        );
         assert!(lines.iter().all(|line| display_width(line) <= 80));
     }
 }
