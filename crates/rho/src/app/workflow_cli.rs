@@ -463,7 +463,7 @@ fn run_status(prefix: &str, output: WorkflowDocumentFormat) -> anyhow::Result<()
             println!("run id: {}", run.manifest.run_id);
             println!("plan id: {}", run.manifest.plan_id);
             println!("digest: {}", run.manifest.graph_digest.0);
-            println!("lifecycle: {:?}", run.state.state.lifecycle);
+            println!("lifecycle: {}", run.state.state.lifecycle.as_str());
             println!("revision: {}", run.state.state.revision);
             println!(
                 "cancellation requested: {}",
@@ -488,7 +488,7 @@ fn run_status(prefix: &str, output: WorkflowDocumentFormat) -> anyhow::Result<()
                 }
             }
             if let Some(outcome) = document.outcome {
-                println!("outcome: {:?}", outcome);
+                println!("outcome: {}", outcome.as_str());
             }
             Ok(())
         }

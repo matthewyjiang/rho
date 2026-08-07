@@ -283,7 +283,8 @@ bounded diagnostics, IDs, run and node state, and indented node and artifact
 references. They do not return full source files or logs.
 
 Run, status, and resume return the same run summary. State words match the
-durable and CLI vocabulary, so a node reads as `success` or `needs_recovery` in
+durable and CLI vocabulary. A run lifecycle reads as `running`, `completed`, or
+`needs_recovery`, and a node terminal state reads as `success` or `skipped`, on
 every surface. An artifact line names the artifact, its path, its retained
 bytes, and its digest, and adds a shortfall note only when the retained bytes
 are not the whole artifact.

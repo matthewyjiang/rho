@@ -50,9 +50,10 @@ fn public_tokens_match_the_serialized_form() {
         NodeTerminalState::Blocked,
     ] {
         assert_eq!(terminal.as_str(), serialized(&terminal), "{terminal:?}");
+        let state = NodeState::Terminal { outcome: terminal };
         assert_eq!(
-            NodeState::Terminal { outcome: terminal }.as_str(),
-            terminal.as_str(),
+            state.as_str(),
+            serialized(&terminal),
             "{terminal:?} flattened through NodeState"
         );
     }
