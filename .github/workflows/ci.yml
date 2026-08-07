@@ -151,15 +151,8 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           shared-key: docs-ui-demo
-      - name: Build debug rho for matrix mode
-        run: cargo build -j 12 -p rho-coding-agent --locked
-      - name: Check docs TUI SVG against a live PTY capture
-        run: |
-          cargo run -j 12 -p rho-tui-pty --bin rho-pty-demo --locked -- \
-            --bin target/debug/rho \
-            --check \
-            --output docs/assets/rho-ui-demo.svg \
-            --output docs/public/assets/rho-ui-demo.svg
+      - name: Build debug rho and check docs TUI proof plate
+        run: bash scripts/check_docs_ui_demo.sh --check
 
   package:
     name: release package checks

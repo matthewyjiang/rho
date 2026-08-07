@@ -114,11 +114,21 @@ VALIDATION_LOG=$(mktemp /tmp/rho-validation-full.XXXXXX.log)
 python3 scripts/validate.py full >"$VALIDATION_LOG" 2>&1
 ```
 
-Full mode runs policy and script checks, Clippy for all workspace targets and features, normal workspace tests, documentation tests, and SDK feature and downstream checks. Do not precede it with a separate workspace `cargo check`; Clippy and tests already provide that compile coverage. Do not add `--all-targets` to the normal workspace test command; Clippy, platform CI, and the dedicated benchmark job cover examples and benchmarks.
+Full mode runs policy and script checks, Clippy for all workspace targets and features, normal workspace tests, documentation tests, SDK feature and downstream checks, and the docs TUI proof-plate PTY check. Do not precede it with a separate workspace `cargo check`; Clippy and tests already provide that compile coverage. Do not add `--all-targets` to the normal workspace test command; Clippy, platform CI, and the dedicated benchmark job cover examples and benchmarks.
 
 Do not raise architecture line budgets merely to pass. Extract cohesive modules instead. Full mode includes the architecture self-test, so run that self-test separately only when changing the checker and not running full mode.
 
 For interactive TUI behavior, load and follow `rho-tui-pty-testing` first. Run the PTY smoke suite or a named scenario when the change touches interactive flows. Fall back to `rho-tui-herdr-testing` only for exploratory validation or when a PTY scenario cannot cover the behavior yet. Record the path used and its result here.
+
+When the change affects Interactive TUI layout, chrome, tool cards, statusline, version display, the docs proof-plate fixture, or `rho-pty-demo`, also run:
+
+```bash
+bash scripts/check_docs_ui_demo.sh --check
+# on drift:
+bash scripts/check_docs_ui_demo.sh --write
+```
+
+Commit both `docs/assets/rho-ui-demo.svg` and `docs/public/assets/rho-ui-demo.svg` after `--write`. CI job `docs TUI proof plate` enforces the check on every PR.
 
 ## 4. Handle failures
 

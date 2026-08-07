@@ -63,6 +63,10 @@ class FullPlanTests(unittest.TestCase):
         )
         self.assertIn("Test SDK feature modes", commands)
         self.assertIn("Check downstream SDK fixtures", commands)
+        self.assertEqual(
+            commands["Check docs TUI proof plate"],
+            ("bash", "scripts/check_docs_ui_demo.sh", "--check"),
+        )
 
 
 class CargoJobsTests(unittest.TestCase):

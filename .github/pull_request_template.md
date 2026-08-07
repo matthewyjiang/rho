@@ -9,6 +9,13 @@
 ```text
 ```
 
+### Docs TUI proof plate
+
+<!-- Required when this PR changes Interactive TUI layout/chrome, tool cards, statusline, version display, the docs demo fixture, or rho-pty-demo. Delete this section if the diff does not touch those surfaces. -->
+
+- [ ] Ran `bash scripts/check_docs_ui_demo.sh --check` (or `--write` and committed both SVG paths)
+
+
 ## Test gate
 
 <!-- Required when this PR adds or materially expands tests. Delete this section only if the diff adds no tests. Full rules: rho-test-selection skill. -->

@@ -45,7 +45,7 @@ Run the full workflow before opening or updating a pull request:
 python3 scripts/validate.py full
 ```
 
-The full mode runs policy and script checks, Clippy for all targets and features, normal workspace tests, documentation tests, and the SDK feature and downstream checks. It stops at the first failure. Both modes cap Cargo at 12 jobs. A lower `CARGO_BUILD_JOBS` value remains in effect.
+The full mode runs policy and script checks, Clippy for all targets and features, normal workspace tests, documentation tests, SDK feature and downstream checks, and the docs TUI proof-plate PTY check. It stops at the first failure. Both modes cap Cargo at 12 jobs. A lower `CARGO_BUILD_JOBS` value remains in effect.
 
 Development and test profiles use reduced debug information to keep artifacts and link times smaller while retaining line-number backtraces. Set `CARGO_PROFILE_DEV_DEBUG=2` or `CARGO_PROFILE_TEST_DEBUG=2` when a debugging session needs full symbols.
 
@@ -169,17 +169,19 @@ Failure artifacts default to a temp directory (or `--artifacts <dir>`). Successf
 
 ### Regenerate the docs TUI proof plate
 
-`docs/assets/rho-ui-demo.svg` and `docs/public/assets/rho-ui-demo.svg` are captured from a real matrix-mode PTY session (not hand-drawn). After TUI layout or chrome changes, rebuild a debug `rho` and rewrite both paths:
+`docs/assets/rho-ui-demo.svg` and `docs/public/assets/rho-ui-demo.svg` are captured from a real matrix-mode PTY session (not hand-drawn). After TUI layout or chrome changes, regenerate both paths:
 
 ```bash
-cargo build -p rho-coding-agent
-cargo run -p rho-tui-pty --bin rho-pty-demo -- \
-  --bin target/debug/rho \
-  --output docs/assets/rho-ui-demo.svg \
-  --output docs/public/assets/rho-ui-demo.svg
+bash scripts/check_docs_ui_demo.sh --write
 ```
 
-Use `--check` against existing paths to detect drift without writing. CI job `docs TUI proof plate` runs that check on every pull request and push to `main`. The generator needs a debug build because `RHO_TUI_TEST_MODE=matrix` is debug-only.
+Detect drift without writing:
+
+```bash
+bash scripts/check_docs_ui_demo.sh --check
+```
+
+CI job `docs TUI proof plate` and `python3 scripts/validate.py full` run the check. The generator needs a Unix PTY and a debug build because `RHO_TUI_TEST_MODE=matrix` is debug-only.
 
 ### Environment isolation
 

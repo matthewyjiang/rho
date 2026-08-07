@@ -65,15 +65,17 @@ Useful flags:
 
 ## Regenerate the docs TUI proof plate
 
+CI job `docs TUI proof plate` and `python3 scripts/validate.py full` both run this check. Before opening or updating a PR that changes Interactive TUI layout/chrome or the proof-plate fixture, run it locally:
+
 ```bash
-cargo build -p rho-coding-agent
-cargo run -p rho-tui-pty --bin rho-pty-demo -- \
-  --bin target/debug/rho \
-  --output docs/assets/rho-ui-demo.svg \
-  --output docs/public/assets/rho-ui-demo.svg
+# fail on drift
+bash scripts/check_docs_ui_demo.sh --check
+
+# rewrite both asset paths after a layout or chrome change
+bash scripts/check_docs_ui_demo.sh --write
 ```
 
-Needs a debug build (`RHO_TUI_TEST_MODE=matrix`). Use `--check` to compare without writing. CI job `docs TUI proof plate` runs the dual-path check on pull requests and `main`.
+Needs a Unix PTY and a debug build (`RHO_TUI_TEST_MODE=matrix`). Commit both `docs/assets/rho-ui-demo.svg` and `docs/public/assets/rho-ui-demo.svg` after `--write`.
 
 ## Fixture matrix prompts
 
