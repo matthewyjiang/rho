@@ -4,7 +4,7 @@
 
 Rho is a lightweight agent harness inspired by Pi, built in Rust.
 
-[![Rho terminal UI showing a code inspection, Rust edit, and focused test run](docs/assets/rho-ui-demo.svg)](https://matthewyjiang.github.io/rho/interactive-tui)
+[![Rho terminal UI showing write and edit tool cards from a live PTY capture](docs/assets/rho-ui-demo.svg)](https://matthewyjiang.github.io/rho/interactive-tui)
 
 ## Why Rho
 

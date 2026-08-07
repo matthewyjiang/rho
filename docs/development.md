@@ -167,6 +167,20 @@ cargo run -p rho-tui-pty --bin rho-pty-scenario -- --bin target/debug/rho --timi
 
 Failure artifacts default to a temp directory (or `--artifacts <dir>`). Successful runs do not retain artifacts.
 
+### Regenerate the docs TUI proof plate
+
+`docs/assets/rho-ui-demo.svg` and `docs/public/assets/rho-ui-demo.svg` are captured from a real matrix-mode PTY session (not hand-drawn). After TUI layout or chrome changes, rebuild a debug `rho` and rewrite both paths:
+
+```bash
+cargo build -p rho-coding-agent
+cargo run -p rho-tui-pty --bin rho-pty-demo -- \
+  --bin target/debug/rho \
+  --output docs/assets/rho-ui-demo.svg \
+  --output docs/public/assets/rho-ui-demo.svg
+```
+
+Use `--check` against an existing path to detect drift without writing. The generator needs a debug build because `RHO_TUI_TEST_MODE=matrix` is debug-only.
+
 ### Environment isolation
 
 Scenarios launch Rho with:

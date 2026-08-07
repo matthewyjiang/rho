@@ -3,6 +3,7 @@
 //! Layers:
 //! - [`pty`]: spawn a binary in a pseudo-terminal, inject input, resize, drain
 //! - [`screen`]: reconstruct the visible terminal via a VT parser
+//! - [`svg`]: render a reconstructed screen to a static SVG proof plate
 //! - [`harness`]: high-level waits, assertions, and failure artifacts
 //! - [`scenario`]: named scripted flows over the fixture matrix
 //!
@@ -19,6 +20,7 @@ pub mod pty;
 pub mod scenario;
 pub mod scenarios;
 pub mod screen;
+pub mod svg;
 pub mod timing;
 
 pub use artifacts::{ArtifactBundle, ArtifactWriter};
@@ -29,4 +31,5 @@ pub use pty::{PtyController, PtySize};
 pub use scenario::{Scenario, ScenarioOutcome, ScenarioRunner, Step};
 pub use scenarios::{all_scenarios, run_named, smoke_scenario_ids};
 pub use screen::ScreenModel;
+pub use svg::{render_screen_svg, SvgOptions};
 pub use timing::{TimingSample, TimingSummary};

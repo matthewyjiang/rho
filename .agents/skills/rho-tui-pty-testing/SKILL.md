@@ -63,6 +63,18 @@ Useful flags:
 - `--artifacts <dir>` writes failure bundles
 - `--bin <path>` selects the Rho binary
 
+## Regenerate the docs TUI proof plate
+
+```bash
+cargo build -p rho-coding-agent
+cargo run -p rho-tui-pty --bin rho-pty-demo -- \
+  --bin target/debug/rho \
+  --output docs/assets/rho-ui-demo.svg \
+  --output docs/public/assets/rho-ui-demo.svg
+```
+
+Needs a debug build (`RHO_TUI_TEST_MODE=matrix`). Use `--check` to compare without writing.
+
 ## Fixture matrix prompts
 
 Scenarios use `RHO_TUI_TEST_MODE=matrix` automatically. Exact prompts:

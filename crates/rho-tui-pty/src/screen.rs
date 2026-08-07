@@ -7,6 +7,29 @@ pub struct ScreenModel {
     parser: Parser,
 }
 
+/// Terminal color as recovered from the VT stream.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CellColor {
+    Default,
+    Indexed(u8),
+    Rgb(u8, u8, u8),
+}
+
+/// One reconstructed cell, owned and free of the `vt100` type surface.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ScreenCell {
+    pub contents: String,
+    pub wide: bool,
+    pub wide_continuation: bool,
+    pub fg: CellColor,
+    pub bg: CellColor,
+    pub bold: bool,
+    pub dim: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub inverse: bool,
+}
+
 impl ScreenModel {
     pub fn new(rows: u16, cols: u16) -> Self {
         Self {
@@ -50,15 +73,27 @@ impl ScreenModel {
         self.parser.screen().cursor_position()
     }
 
+    /// Cell at `(row, col)`, if the coordinates fall inside the screen.
+    pub(crate) fn cell(&self, row: u16, col: u16) -> Option<ScreenCell> {
+        let cell = self.parser.screen().cell(row, col)?;
+        Some(ScreenCell {
+            contents: cell.contents().to_string(),
+            wide: cell.is_wide(),
+            wide_continuation: cell.is_wide_continuation(),
+            fg: map_color(cell.fgcolor()),
+            bg: map_color(cell.bgcolor()),
+            bold: cell.bold(),
+            dim: cell.dim(),
+            italic: cell.italic(),
+            underline: cell.underline(),
+            inverse: cell.inverse(),
+        })
+    }
+
     /// Columns in `row` rendered with the inverse (reverse-video) attribute.
     pub fn inverse_columns(&self, row: u16) -> Vec<u16> {
         (0..self.cols())
-            .filter(|&col| {
-                self.parser
-                    .screen()
-                    .cell(row, col)
-                    .is_some_and(vt100::Cell::inverse)
-            })
+            .filter(|&col| self.cell(row, col).is_some_and(|cell| cell.inverse))
             .collect()
     }
 
@@ -76,6 +111,14 @@ impl ScreenModel {
             return "<empty screen>".into();
         }
         lines.join("\n")
+    }
+}
+
+fn map_color(color: vt100::Color) -> CellColor {
+    match color {
+        vt100::Color::Default => CellColor::Default,
+        vt100::Color::Idx(index) => CellColor::Indexed(index),
+        vt100::Color::Rgb(r, g, b) => CellColor::Rgb(r, g, b),
     }
 }
 
