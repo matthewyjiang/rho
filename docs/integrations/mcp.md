@@ -32,7 +32,7 @@ allow = ["read_file", "list_directory"]
 deny = []
 ```
 
-Rho starts the child with a small environment for paths, the user home, locale, temporary files, and OS data directories. It does not copy credentials or other variables by default. `env` adds literal values. Use `env_from_env` for secrets so they do not enter the config file. Its keys are child variable names and its values are ambient variable names:
+Rho starts the child with the same sanitized base environment hooks use (paths, home, locale, and on Windows the loader/interpreter variables). It does not copy credentials or other variables by default. `env` adds literal values. Use `env_from_env` for secrets so they do not enter the config file. Its keys are child variable names and its values are ambient variable names:
 
 ```toml
 [mcp.servers.github]
@@ -42,7 +42,7 @@ args = ["stdio"]
 env_from_env = { GITHUB_PERSONAL_ACCESS_TOKEN = "GITHUB_TOKEN" }
 ```
 
-The explicit overlay is applied after sanitization, so it may intentionally restore a variable under the name a server expects. Rho asks for the normal process capability when an stdio MCP tool runs. Configuration is explicit permission to start the server for discovery; the process is not an operating-system sandbox and runs with the current user's rights.
+The explicit overlay is applied after sanitization, so it may intentionally restore a variable under the name a server expects. **Configuration is the trust boundary:** enabling a server is permission to start it for discovery and to expose its tools. Tool calls are RPCs on that already-running session; they do not re-request process or network capabilities and are not blocked by plan mode. The process is not an operating-system sandbox and runs with the current user's rights.
 
 Rho closes MCP sessions during normal session shutdown. The stdio transport closes the child's input, waits for clean exit, and kills the child if it does not exit through the transport's cleanup path. Initialization failures also drop and clean up the child.
 
@@ -64,11 +64,11 @@ deny = ["delete_account"]
 `headers_from_env` maps HTTP header names to ambient variable names. Put the complete header value in the environment, such as `Bearer ...`. Rho does not store it in config or diagnostics. Automatic HTTP redirects are disabled, so configured headers cannot be replayed to another origin.
 `headers` supplies literal header values with the configuration. Prefer `headers_from_env` for anything secret. On a name collision, environment-derived headers override literal ones.
 
-Rho asks for the normal network capability when a remote MCP tool runs. Authentication discovery and OAuth are not implemented; supply server-issued credentials through environment-backed headers.
+Authentication discovery and OAuth are not implemented; supply server-issued credentials through environment-backed headers. As with stdio, configuration is the trust boundary for the remote session; tool calls do not re-request network capability.
 
 ## Discovery and tool calls
 
-Enabled servers initialize independently at session startup because Rho needs `tools/list` before the first model request. Each server has a two-minute startup budget for connection, handshake, and discovery. A timeout logs the server identity and limit. Rho does not retry during startup. A malformed entry, failed executable, failed connection, authentication error, handshake error, or `tools/list` error disables only that server. Other MCP servers and built-in tools continue to load.
+Enabled servers initialize independently at session startup because Rho needs `tools/list` before the first model request. Each server has a two-minute startup budget for connection, handshake, and discovery. A timeout logs the server identity and limit. Rho does not retry during startup. A malformed entry, failed executable, failed connection, authentication error, handshake error, or `tools/list` error disables only that server. Other MCP servers and built-in tools continue to load. After a session is established, discovery failures and timeouts attempt a bounded close instead of relying only on Drop.
 
 Rho exports discovered tools as:
 
@@ -78,16 +78,16 @@ mcp__<server_identity>__<tool_name>
 
 Components containing only ASCII letters, digits, and `_` remain unchanged. Rho encodes every other component, and components beginning with the reserved `_rho_` prefix, as `_rho_` followed by the lowercase hexadecimal UTF-8 bytes. This encoding keeps distinct server and remote tool names distinct. Descriptions include the owning server identity for diagnostics. `allow` is an optional allowlist; `deny` always wins.
 
-MCP tool calls use Rho's native tool registry, capability approval, cancellation, and shutdown path. Results preserve the MCP result, including structured content and non-text content, as JSON in the native tool result. MCP error results and transport failures become tool failures without stopping sibling servers.
+MCP tool calls use Rho's native tool registry, cancellation, and shutdown path. Results preserve the MCP result, including structured content and non-text content, as JSON in the native tool result. MCP error results and transport failures become tool failures without stopping sibling servers.
 
 ## Inspect status
 
-There is no marketplace in Rho. Configure servers in the selected config file, then inspect what this process loaded:
+There is no marketplace in Rho. Configure servers in the selected config file, then inspect config or live load status:
 
 - **Interactive:** `/mcp` lists configured servers, transport, status, errors, and exported tool names for the current session. `/doctor` includes an MCP health row.
-- **CLI:** `rho mcp list` connects using the selected config and prints status. `rho mcp show <id>` prints one server, including exported tools. Both accept `--json`.
+- **CLI:** `rho mcp list` prints configured servers from the selected config and plugins without starting them. `rho mcp show <id>` prints one server. Pass `--connect` on either command to start enabled servers and report live status and discovered tools. Both accept `--json`.
 
-Use `/mcp` when you already have a session open. Use `rho mcp list` from a shell to verify config before starting the TUI.
+Use `/mcp` when you already have a session open. Use `rho mcp list` from a shell to verify config before starting the TUI, and `rho mcp list --connect` when you need a live probe.
 
 ## Runtime differences
 

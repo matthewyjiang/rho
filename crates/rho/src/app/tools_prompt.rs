@@ -119,7 +119,7 @@ pub(crate) async fn assemble_tools_and_prompt(
     };
     let mcp = crate::tools::mcp::McpConnectOutcome::run(mcp_plan, &mcp_config).await;
     let tools = if options.no_tools {
-        AppToolSet::disabled_with_mcp(mcp)
+        AppToolSet::disabled().with_mcp(mcp)
     } else {
         let mut tool_options = ToolSetOptions::new(capabilities);
         let workflow_tracker = crate::tools::workflow_tracker::WorkflowRunTracker::new();
@@ -145,12 +145,7 @@ pub(crate) async fn assemble_tools_and_prompt(
                 workflow_tracker,
             ));
         }
-        AppToolSet::new(
-            options.config,
-            options.diagnostics.clone(),
-            tool_options,
-            mcp,
-        )
+        AppToolSet::new(options.config, options.diagnostics.clone(), tool_options).with_mcp(mcp)
     };
     let mcp_report = tools.mcp_report().clone();
     let specs = tools.specs();

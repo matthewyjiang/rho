@@ -309,11 +309,14 @@ pub enum SessionsCommand {
 
 #[derive(Subcommand, Debug)]
 pub enum McpCommand {
-    /// List configured MCP servers and their connection status.
+    /// List configured MCP servers from the selected config and plugins.
     List {
         /// Print one JSON document instead of text rows.
         #[arg(long)]
         json: bool,
+        /// Start enabled servers and report live connection status.
+        #[arg(long)]
+        connect: bool,
     },
     /// Show one MCP server by identity.
     Show {
@@ -323,6 +326,9 @@ pub enum McpCommand {
         /// Print one JSON document instead of text.
         #[arg(long)]
         json: bool,
+        /// Start enabled servers and report live connection status.
+        #[arg(long)]
+        connect: bool,
     },
 }
 

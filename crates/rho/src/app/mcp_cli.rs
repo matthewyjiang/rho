@@ -5,8 +5,8 @@ use serde::Serialize;
 use crate::{
     cli::{Cli, McpCommand},
     tools::mcp::{
-        McpBundle, McpLoadMode, McpServerReport, McpServerStatus, McpSessionReport,
-        McpTransportSummary,
+        McpConnectOutcome, McpLoadMode, McpServerReport, McpServerStatus, McpSessionPlan,
+        McpSessionReport, McpTransportSummary,
     },
 };
 
@@ -21,10 +21,18 @@ pub(super) async fn run(command: &McpCommand, cli: &Cli) -> anyhow::Result<()> {
     crate::plugins::log(&plugin_discovery.report);
     let mut mcp_config = config.mcp.clone();
     mcp_config.merge(plugin_discovery.mcp);
-    let outcome = McpBundle::connect(&mcp_config).await;
+    let connect = match command {
+        McpCommand::List { connect, .. } | McpCommand::Show { connect, .. } => *connect,
+    };
+    let plan = if connect {
+        McpSessionPlan::Connect
+    } else {
+        McpSessionPlan::Inventory(McpLoadMode::Native)
+    };
+    let outcome = McpConnectOutcome::run(plan, &mcp_config).await;
     let result = match command {
-        McpCommand::List { json } => print_list(&outcome.report, *json),
-        McpCommand::Show { id, json } => print_show(&outcome.report, id, *json),
+        McpCommand::List { json, .. } => print_list(&outcome.report, *json),
+        McpCommand::Show { id, json, .. } => print_show(&outcome.report, id, *json),
     };
     if let Some(bundle) = outcome.bundle {
         bundle.close().await;

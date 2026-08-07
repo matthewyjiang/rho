@@ -269,7 +269,6 @@ async fn permission_mode_runtime() -> InteractiveRuntime {
             std::path::PathBuf::new(),
             BackgroundSubagents::Disabled,
         )),
-        crate::tools::mcp::McpConnectOutcome::empty(),
     );
     interactive
 }
@@ -625,7 +624,6 @@ async fn advisor_test_runtime() -> InteractiveRuntime {
             [ToolCapability::Advisor].into_iter().collect(),
         ))
         .advisor(crate::tools::advisor::AdvisorSessionStore::new()),
-        crate::tools::mcp::McpConnectOutcome::empty(),
     );
     interactive
 }

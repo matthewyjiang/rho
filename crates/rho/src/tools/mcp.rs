@@ -2,7 +2,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     future::Future,
     net::IpAddr,
-    path::{Path, PathBuf},
+    path::Path,
     pin::Pin,
     sync::Arc,
 };
@@ -15,8 +15,7 @@ use rho_sdk::{
         OperationKind, PreparedToolInvocation, Tool, ToolError, ToolErrorKind, ToolInvocation,
         ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture, ToolSecurity,
     },
-    CapabilityKind, CapabilityRequest, CapabilitySource, NetworkTarget, ProcessEnvironment,
-    ProcessExecution, ProcessInvocation, ProcessOutputLimits, Workspace,
+    Workspace,
 };
 use rmcp::{
     model::{CallToolRequestParams, ClientInfo},
@@ -44,31 +43,9 @@ type McpSession = RunningService<RoleClient, ClientInfo>;
 // The local end-to-end fixture initializes in about 40 ms. Two minutes leaves
 // a 3,000x margin for cold package runners while still bounding broken servers.
 const MCP_SERVER_STARTUP_BUDGET: std::time::Duration = std::time::Duration::from_secs(120);
-
-const SAFE_CHILD_ENVIRONMENT: &[&str] = &[
-    "APPDATA",
-    "HOME",
-    "LANG",
-    "LANGUAGE",
-    "LC_ALL",
-    "LC_CTYPE",
-    "LOCALAPPDATA",
-    "LOGNAME",
-    "PATH",
-    "PATHEXT",
-    "SHELL",
-    "SYSTEMROOT",
-    "TEMP",
-    "TERM",
-    "TMP",
-    "TMPDIR",
-    "USER",
-    "USERPROFILE",
-    "WINDIR",
-    "XDG_CACHE_HOME",
-    "XDG_CONFIG_HOME",
-    "XDG_DATA_HOME",
-];
+// Graceful MCP session teardown should be quick; bound it so one hung server
+// cannot stall process or CLI shutdown.
+const MCP_SESSION_CLOSE_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Whether this session should connect MCP servers or only inventory config.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -85,14 +62,6 @@ pub(crate) struct McpConnectOutcome {
 }
 
 impl McpConnectOutcome {
-    #[cfg(test)]
-    pub(crate) fn empty() -> Self {
-        Self {
-            report: McpSessionReport::default(),
-            bundle: None,
-        }
-    }
-
     /// Run the session plan against config: connect or inventory-only.
     pub(crate) async fn run(plan: McpSessionPlan, config: &McpConfig) -> Self {
         match plan {
@@ -107,6 +76,7 @@ impl McpConnectOutcome {
 
 pub(crate) struct McpBundle {
     tools: Vec<Arc<dyn Tool>>,
+    /// Taken once during shutdown; tools hold independent peer handles.
     sessions: tokio::sync::Mutex<Vec<McpSession>>,
 }
 
@@ -158,11 +128,7 @@ impl McpBundle {
                 let server = server.clone();
                 async move {
                     let transport = McpTransportSummary::from_server(&server);
-                    let result = tokio::time::timeout(
-                        MCP_SERVER_STARTUP_BUDGET,
-                        connect_server(&identity, &server),
-                    )
-                    .await;
+                    let result = connect_server_bounded(&identity, &server).await;
                     (identity, server, transport, result)
                 }
             });
@@ -174,8 +140,11 @@ impl McpBundle {
         let mut registered_names = HashSet::new();
         for (identity, server, transport, result) in connect_results {
             let connected = match result {
-                Ok(Ok(connected)) => connected,
-                Ok(Err(error)) => {
+                ConnectResult::Ready {
+                    session,
+                    discovered,
+                } => (session, discovered),
+                ConnectResult::Failed { error } => {
                     tracing::warn!(server = %identity, error = %error, "MCP server failed to initialize");
                     servers.push(McpServerReport::failed(
                         identity,
@@ -184,7 +153,7 @@ impl McpBundle {
                     ));
                     continue;
                 }
-                Err(_) => {
+                ConnectResult::TimedOut => {
                     tracing::warn!(
                         server = %identity,
                         limit_seconds = MCP_SERVER_STARTUP_BUDGET.as_secs(),
@@ -199,7 +168,7 @@ impl McpBundle {
                 }
             };
             let (session, discovered) = connected;
-            let permission = PermissionTarget::from_server(&server);
+            let metadata = tool_metadata(&server);
             let mut exported = Vec::new();
             let mut filtered_out_count = 0usize;
             let mut collision_skipped_count = 0usize;
@@ -227,7 +196,7 @@ impl McpBundle {
                     },
                     remote_name: remote_name.clone(),
                     peer: session.peer().clone(),
-                    permission: permission.clone(),
+                    metadata: metadata.clone(),
                 };
                 tools.push(Arc::new(tool));
                 exported.push(McpToolReport {
@@ -265,12 +234,12 @@ impl McpBundle {
 
     /// Close live MCP sessions. Used by CLI inspect after printing inventory.
     pub(crate) async fn close(&self) {
-        let mut sessions = self.sessions.lock().await;
-        for session in sessions.iter_mut() {
-            if let Err(error) = session.close().await {
-                tracing::warn!(error = %error, "MCP session shutdown failed");
-            }
-        }
+        let sessions = {
+            let mut guard = self.sessions.lock().await;
+            std::mem::take(&mut *guard)
+        };
+        let close_jobs = sessions.into_iter().map(close_session);
+        futures_util::future::join_all(close_jobs).await;
     }
 }
 
@@ -284,12 +253,51 @@ impl ToolBundle for McpBundle {
     }
 }
 
-async fn connect_server(
-    identity: &str,
-    server: &McpServerConfig,
-) -> anyhow::Result<(McpSession, Vec<rmcp::model::Tool>)> {
+enum ConnectResult {
+    Ready {
+        session: McpSession,
+        discovered: Vec<rmcp::model::Tool>,
+    },
+    Failed {
+        error: anyhow::Error,
+    },
+    TimedOut,
+}
+
+/// Establish and discover under one startup budget. After the session exists,
+/// failures and timeouts always attempt a bounded close instead of relying on
+/// Drop alone.
+async fn connect_server_bounded(identity: &str, server: &McpServerConfig) -> ConnectResult {
+    let deadline = tokio::time::Instant::now() + MCP_SERVER_STARTUP_BUDGET;
+    let session = match tokio::time::timeout_at(deadline, establish_session(identity, server)).await
+    {
+        Ok(Ok(session)) => session,
+        Ok(Err(error)) => return ConnectResult::Failed { error },
+        Err(_) => return ConnectResult::TimedOut,
+    };
+
+    match tokio::time::timeout_at(deadline, session.list_all_tools()).await {
+        Ok(Ok(discovered)) => ConnectResult::Ready {
+            session,
+            discovered,
+        },
+        Ok(Err(error)) => {
+            close_session(session).await;
+            ConnectResult::Failed {
+                error: anyhow::anyhow!(error)
+                    .context(format!("MCP server `{identity}` failed tools/list")),
+            }
+        }
+        Err(_) => {
+            close_session(session).await;
+            ConnectResult::TimedOut
+        }
+    }
+}
+
+async fn establish_session(identity: &str, server: &McpServerConfig) -> anyhow::Result<McpSession> {
     prepare_server_filesystem(server)?;
-    let mut session = match &server.transport {
+    match &server.transport {
         McpTransport::Stdio {
             command,
             args,
@@ -306,12 +314,12 @@ async fn connect_server(
             if let Some(cwd) = cwd {
                 command.current_dir(cwd);
             }
-            // Start from a small non-secret environment. Servers opt into all
-            // other inherited variables through `env_from_env`.
+            // Start from the shared sanitized base. Servers opt into all other
+            // inherited variables through `env_from_env`.
             apply_stdio_environment(&mut command, env, env_from_env)?;
             let transport = TokioChildProcess::new(command)
                 .with_context(|| format!("failed to spawn MCP server `{identity}`"))?;
-            ClientInfo::default().serve(transport).await?
+            Ok(ClientInfo::default().serve(transport).await?)
         }
         McpTransport::StreamableHttp {
             url,
@@ -349,18 +357,24 @@ async fn connect_server(
             let transport = StreamableHttpClientTransport::from_config(
                 StreamableHttpClientTransportConfig::with_uri(url.clone()).custom_headers(headers),
             );
-            ClientInfo::default().serve(transport).await?
+            Ok(ClientInfo::default().serve(transport).await?)
         }
-    };
-    let tools = match session.list_all_tools().await {
-        Ok(tools) => tools,
-        Err(error) => {
-            let _ = session.close().await;
-            return Err(error)
-                .with_context(|| format!("MCP server `{identity}` failed tools/list"));
+    }
+}
+
+async fn close_session(mut session: McpSession) {
+    match tokio::time::timeout(MCP_SESSION_CLOSE_BUDGET, session.close()).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(error)) => {
+            tracing::warn!(error = %error, "MCP session shutdown failed");
         }
-    };
-    Ok((session, tools))
+        Err(_) => {
+            tracing::warn!(
+                limit_seconds = MCP_SESSION_CLOSE_BUDGET.as_secs(),
+                "MCP session shutdown exceeded its close budget"
+            );
+        }
+    }
 }
 
 fn apply_stdio_environment(
@@ -368,12 +382,7 @@ fn apply_stdio_environment(
     env: &BTreeMap<String, String>,
     env_from_env: &BTreeMap<String, String>,
 ) -> anyhow::Result<()> {
-    command.env_clear();
-    for variable in SAFE_CHILD_ENVIRONMENT {
-        if let Some(value) = std::env::var_os(variable) {
-            command.env(variable, value);
-        }
-    }
+    crate::child_env::apply_base(command);
     command.envs(env);
     for (name, variable) in env_from_env {
         let value = std::env::var(variable).with_context(|| {
@@ -382,22 +391,6 @@ fn apply_stdio_environment(
         command.env(name, value);
     }
     Ok(())
-}
-
-/// Child environment names the stdio transport actually installs.
-fn stdio_process_environment(
-    env: &BTreeMap<String, String>,
-    env_from_env: &BTreeMap<String, String>,
-) -> ProcessEnvironment {
-    let mut variable_names: Vec<String> = SAFE_CHILD_ENVIRONMENT
-        .iter()
-        .map(|name| (*name).to_string())
-        .collect();
-    variable_names.extend(env.keys().cloned());
-    variable_names.extend(env_from_env.keys().cloned());
-    variable_names.sort_unstable();
-    variable_names.dedup();
-    ProcessEnvironment::InheritListed { variable_names }
 }
 
 fn prepare_server_filesystem(server: &McpServerConfig) -> anyhow::Result<()> {
@@ -520,6 +513,7 @@ fn validate_header_names<'a>(names: impl IntoIterator<Item = &'a String>) -> any
     }
     Ok(())
 }
+
 fn namespaced_tool_name(server: &str, tool: &str) -> String {
     fn component(value: &str) -> String {
         const ESCAPE_PREFIX: &str = "_rho_";
@@ -542,86 +536,16 @@ fn namespaced_tool_name(server: &str, tool: &str) -> String {
     format!("mcp__{}__{}", component(server), component(tool))
 }
 
-#[derive(Clone)]
-enum PermissionTarget {
-    Process {
-        command: String,
-        args: Vec<String>,
-        cwd: Option<PathBuf>,
-        environment: ProcessEnvironment,
-    },
-    Network {
-        url: String,
-    },
-}
-
-impl PermissionTarget {
-    fn from_server(server: &McpServerConfig) -> Self {
-        match &server.transport {
-            McpTransport::Stdio {
-                command,
-                args,
-                cwd,
-                env,
-                env_from_env,
-            } => Self::Process {
-                command: command.clone(),
-                args: args.clone(),
-                cwd: cwd.clone(),
-                environment: stdio_process_environment(env, env_from_env),
-            },
-            McpTransport::StreamableHttp { url, .. } => Self::Network { url: url.clone() },
-        }
-    }
-
-    fn kind(&self) -> CapabilityKind {
-        match self {
-            Self::Process { .. } => CapabilityKind::Process,
-            Self::Network { .. } => CapabilityKind::Network,
-        }
-    }
-
-    fn request(
-        &self,
-        tool_name: &str,
-        workspace_root: Option<&std::path::Path>,
-    ) -> CapabilityRequest {
-        let source = CapabilitySource::built_in_tool(tool_name);
-        match self {
-            Self::Process {
-                command,
-                args,
-                cwd,
-                environment,
-            } => {
-                let invocation = ProcessInvocation::executable_from_path(command, args.clone());
-                let execution = ProcessExecution::new(
-                    cwd.clone()
-                        .or_else(|| workspace_root.map(std::path::Path::to_path_buf))
-                        .unwrap_or_default(),
-                    invocation,
-                    environment.clone(),
-                    // This object describes an already-running configured MCP
-                    // server to the approval layer; it does not impose a runtime budget.
-                    ProcessOutputLimits::new(usize::MAX, None),
-                );
-                CapabilityRequest::process(execution, source)
-            }
-            Self::Network { url } => {
-                CapabilityRequest::network(NetworkTarget::Url(url.clone()), source)
-            }
-        }
-    }
-
-    fn metadata(&self) -> ToolMetadata {
-        match self {
-            Self::Process { command, args, .. } => ToolMetadata::new()
-                .operation(OperationKind::Execute)
-                .command_summary(format!("{command} ({} arguments)", args.len())),
-            Self::Network { url } => ToolMetadata::new()
-                .operation(OperationKind::Network)
-                .url(url.clone()),
-        }
+/// Presentation-only facts for tool cards. Config is the trust boundary for
+/// starting a server; tool calls do not re-synthesize process/network grants.
+fn tool_metadata(server: &McpServerConfig) -> ToolMetadata {
+    match &server.transport {
+        McpTransport::Stdio { command, args, .. } => ToolMetadata::new()
+            .operation(OperationKind::Execute)
+            .command_summary(format!("{command} ({} arguments)", args.len())),
+        McpTransport::StreamableHttp { url, .. } => ToolMetadata::new()
+            .operation(OperationKind::Network)
+            .url(url.clone()),
     }
 }
 
@@ -649,7 +573,7 @@ struct McpTool {
     spec: ToolSpec,
     remote_name: String,
     peer: rmcp::Peer<RoleClient>,
-    permission: PermissionTarget,
+    metadata: ToolMetadata,
 }
 
 impl Tool for McpTool {
@@ -658,16 +582,18 @@ impl Tool for McpTool {
     }
 
     fn security(&self) -> ToolSecurity {
-        ToolSecurity::built_in([self.permission.kind()])
+        // Config is the trust boundary: enabling a server starts it at session
+        // load. Tool calls are RPCs on that already-running host-owned session
+        // and must not pretend to spawn a process or open a fresh network grant.
+        ToolSecurity::built_in([])
     }
 
     fn prepare<'a>(
         &'a self,
         invocation: ToolInvocation,
-        context: ToolPreparationContext,
+        _context: ToolPreparationContext,
     ) -> ToolPrepareFuture<'a> {
         let arguments = invocation.into_arguments();
-        let workspace_root = context.workspace_root().map(std::path::Path::to_path_buf);
         Box::pin(async move {
             let Some(arguments) = arguments.as_object().cloned() else {
                 return Err(ToolError::new(
@@ -675,13 +601,10 @@ impl Tool for McpTool {
                     "MCP tool arguments must be a JSON object",
                 ));
             };
-            let capability = self
-                .permission
-                .request(&self.spec.name, workspace_root.as_deref());
-            let metadata = self.permission.metadata();
+            let metadata = self.metadata.clone();
             Ok(PreparedToolInvocation::resource_aware(
                 [],
-                [capability],
+                [],
                 metadata.clone(),
                 move |context| {
                     Box::pin(async move {

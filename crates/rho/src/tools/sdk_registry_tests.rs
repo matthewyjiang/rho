@@ -79,12 +79,7 @@ fn canonical_tool_names_match_the_unfiltered_registry() {
             BackgroundSubagents::Enabled,
         ))
         .workflow(Arc::new(RegistryWorkflowService));
-    let mut tools = AppToolSet::new(
-        &config,
-        RuntimeDiagnostics::new(&config),
-        options,
-        crate::tools::mcp::McpConnectOutcome::empty(),
-    );
+    let mut tools = AppToolSet::new(&config, RuntimeDiagnostics::new(&config), options);
     // Advisor mode is off by default; the registry still owns the name.
     tools.set_advisor_registered(true);
 
@@ -186,7 +181,6 @@ async fn ambiguous_shell_input_reaches_approval_as_structured_process_facts() {
         &config,
         RuntimeDiagnostics::new(&config),
         ToolSetOptions::default(),
-        crate::tools::mcp::McpConnectOutcome::empty(),
     );
     let bash = tool_set
         .tools()
@@ -357,7 +351,6 @@ async fn sdk_skill_tool_loads_discovered_skill_outside_workspace_root() {
         &config,
         RuntimeDiagnostics::new(&config),
         ToolSetOptions::default(),
-        crate::tools::mcp::McpConnectOutcome::empty(),
     );
     let skill = tool_set
         .tools()
@@ -428,7 +421,6 @@ async fn sdk_skill_tool_rejects_model_invocation_of_user_only_skill() {
         &config,
         RuntimeDiagnostics::new(&config),
         ToolSetOptions::default(),
-        crate::tools::mcp::McpConnectOutcome::empty(),
     );
     let skill = tool_set
         .tools()
@@ -478,7 +470,6 @@ async fn sdk_skill_tool_loads_embedded_agent_creator_without_workspace() {
         &config,
         RuntimeDiagnostics::new(&config),
         ToolSetOptions::default(),
-        crate::tools::mcp::McpConnectOutcome::empty(),
     );
     let skill = tool_set
         .tools()
@@ -527,7 +518,6 @@ fn security_declarations_distinguish_network_builtins_from_host_tools() {
         &config,
         RuntimeDiagnostics::new(&config),
         ToolSetOptions::new(capabilities(&["web_search", "rho"])),
-        crate::tools::mcp::McpConnectOutcome::empty(),
     );
     let security = |name: &str| {
         tool_set
@@ -557,7 +547,6 @@ fn advisor_registration_toggles_without_rebuilding_the_tool_set() {
         &config,
         RuntimeDiagnostics::new(&config),
         ToolSetOptions::new(capabilities(&["advisor", "read_file"])).advisor(store),
-        crate::tools::mcp::McpConnectOutcome::empty(),
     );
     let without_advisor = tools.unfiltered_names().collect::<Vec<_>>();
 

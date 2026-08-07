@@ -161,12 +161,7 @@ impl AppToolSet {
         }
     }
 
-    pub fn new(
-        config: &Config,
-        diagnostics: RuntimeDiagnostics,
-        options: ToolSetOptions,
-        mcp: super::mcp::McpConnectOutcome,
-    ) -> Self {
+    pub fn new(config: &Config, diagnostics: RuntimeDiagnostics, options: ToolSetOptions) -> Self {
         let ToolSetOptions {
             capabilities,
             advisor,
@@ -258,22 +253,16 @@ impl AppToolSet {
             tool_set.add_bundle(bundle);
         }
 
-        tool_set.apply_mcp(mcp);
         tool_set
     }
 
-    /// Empty tool set that still carries MCP inventory (for example `--no-tools`).
-    pub(crate) fn disabled_with_mcp(mcp: super::mcp::McpConnectOutcome) -> Self {
-        let mut tool_set = Self::disabled();
-        tool_set.apply_mcp(mcp);
-        tool_set
-    }
-
-    fn apply_mcp(&mut self, outcome: super::mcp::McpConnectOutcome) {
+    /// Attach MCP inventory and any live tool bundle from session assembly.
+    pub(crate) fn with_mcp(mut self, outcome: super::mcp::McpConnectOutcome) -> Self {
         self.mcp_report = outcome.report;
         if let Some(bundle) = outcome.bundle {
             self.add_bundle(bundle);
         }
+        self
     }
 
     fn add_bundle(&mut self, bundle: impl ToolBundle + 'static) {
