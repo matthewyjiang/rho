@@ -248,10 +248,44 @@ pub(super) enum HistoryScrollbarDrag {
     },
 }
 
+/// Thumb geometry for a one-column scrollbar track.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Thumb {
+pub(super) struct ScrollbarThumb {
     top: usize,
     height: usize,
+}
+
+impl ScrollbarThumb {
+    pub(super) fn contains(self, row: usize) -> bool {
+        (self.top..self.top + self.height).contains(&row)
+    }
+}
+
+/// Thumb geometry for a `track_height` row scrollbar, or `None` when the
+/// content fits the viewport and no bar should render.
+pub(super) fn scrollbar_thumb(
+    content_len: usize,
+    viewport_len: usize,
+    top_line: usize,
+    track_height: usize,
+) -> Option<ScrollbarThumb> {
+    if track_height == 0 || !should_show(content_len, viewport_len) {
+        return None;
+    }
+    let height = rounding_divide(viewport_len.saturating_mul(track_height), content_len)
+        .clamp(1, track_height);
+    let max_thumb_top = track_height.saturating_sub(height);
+    let max_top_line = content_len.saturating_sub(viewport_len);
+    let top = if max_thumb_top == 0 || max_top_line == 0 {
+        0
+    } else {
+        rounding_divide(
+            top_line.min(max_top_line).saturating_mul(max_thumb_top),
+            max_top_line,
+        )
+        .min(max_thumb_top)
+    };
+    Some(ScrollbarThumb { top, height })
 }
 
 impl HistoryScrollbar {
@@ -281,7 +315,7 @@ impl HistoryScrollbar {
     pub(super) fn begin_drag(&self, row: u16) -> HistoryScrollbarDrag {
         let row = self.clamped_track_row(row);
         let thumb = self.thumb();
-        if (thumb.top..thumb.top + thumb.height).contains(&row) {
+        if thumb.contains(row) {
             HistoryScrollbarDrag::Thumb {
                 thumb_grab_offset: row.saturating_sub(thumb.top),
                 start_row: row,
@@ -342,7 +376,7 @@ impl HistoryScrollbar {
 
         for row in 0..self.rect.height {
             let row_index = row as usize;
-            let is_thumb = (thumb.top..thumb.top + thumb.height).contains(&row_index);
+            let is_thumb = thumb.contains(row_index);
             let symbol = if is_thumb { "█" } else { "│" };
             let style = if is_thumb { thumb_style } else { track_style };
             buffer[(self.rect.x, self.rect.y.saturating_add(row))]
@@ -351,26 +385,20 @@ impl HistoryScrollbar {
         }
     }
 
-    fn thumb(&self) -> Thumb {
+    fn thumb(&self) -> ScrollbarThumb {
         let track_height = self.rect.height as usize;
-        let height = rounding_divide(
-            self.viewport_len.saturating_mul(track_height),
+        // Construction already guarantees overflow; a full-track thumb is the
+        // safe fallback if that invariant ever breaks.
+        scrollbar_thumb(
             self.content_len,
+            self.viewport_len,
+            self.top_line,
+            track_height,
         )
-        .clamp(1, track_height);
-        let max_thumb_top = track_height.saturating_sub(height);
-        let top = if max_thumb_top == 0 {
-            0
-        } else {
-            rounding_divide(
-                self.top_line
-                    .min(self.max_top_line())
-                    .saturating_mul(max_thumb_top),
-                self.max_top_line(),
-            )
-            .min(max_thumb_top)
-        };
-        Thumb { top, height }
+        .unwrap_or(ScrollbarThumb {
+            top: 0,
+            height: track_height.max(1),
+        })
     }
 
     fn clamped_track_row(&self, row: u16) -> usize {

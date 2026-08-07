@@ -22,6 +22,9 @@ const MAX_NAV_WIDTH: usize = 28;
 const SEPARATOR: &str = " │ ";
 /// Rows consumed inside the border: search, divider, pane header, status divider, footer.
 const INNER_CHROME_ROWS: usize = 5;
+/// Column reserved beside the detail text for its scrollbar, so wrapped text
+/// never re-flows when the bar appears.
+const DETAIL_SCROLLBAR_GUTTER: usize = 1;
 const FILTER_PREFIX: &str = " Search  > ";
 const DEFAULT_NAV_LABEL: &str = " NAV";
 const DEFAULT_DETAIL_LABEL: &str = " DETAILS";
@@ -363,7 +366,9 @@ fn layout_for_outer(outer: Rect, has_details: bool) -> OverlayLayout {
         OverlayPanes::NavAndDetail {
             orientation: OverlayOrientation::Stacked,
             nav_width: inner_width,
-            detail_width: inner_width,
+            // One column stays reserved for the detail scrollbar gutter so the
+            // wrapped text never re-flows when the bar appears.
+            detail_width: inner_width.saturating_sub(DETAIL_SCROLLBAR_GUTTER).max(1),
             detail_viewport_rows,
             nav_viewport_rows,
         }
@@ -373,6 +378,7 @@ fn layout_for_outer(outer: Rect, has_details: bool) -> OverlayLayout {
         let detail_width = inner_width
             .saturating_sub(nav_width)
             .saturating_sub(separator_width)
+            .saturating_sub(DETAIL_SCROLLBAR_GUTTER)
             .max(1);
         OverlayPanes::NavAndDetail {
             orientation: OverlayOrientation::SideBySide,
@@ -585,12 +591,15 @@ fn nav_item_rows(
         return rows;
     }
 
+    let total_rows = super::picker_rows::picker_row_count(items, matching);
+    let show_scrollbar = width > MIN_SCROLLBAR_PANE_WIDTH && total_rows > viewport_rows;
+    let content_width = width.saturating_sub(usize::from(show_scrollbar));
     let rows = super::picker_rows::picker_item_rows(
         items,
         matching,
         selected,
         super::picker_rows::RowLayout {
-            width,
+            width: content_width,
             width_mode: super::picker_rows::RowWidthMode::FillPane,
             show_badges,
             show_preview: false,
@@ -604,8 +613,39 @@ fn nav_item_rows(
         .skip(start)
         .take(viewport_rows)
         .collect::<Vec<_>>();
-    visible.resize_with(viewport_rows, || padded_plain("", width));
+    visible.resize_with(viewport_rows, || padded_plain("", content_width));
+    if show_scrollbar {
+        append_scrollbar_column(&mut visible, total_rows, viewport_rows, start);
+    }
     visible
+}
+
+/// Narrowest pane that still spends a column on a scrollbar.
+const MIN_SCROLLBAR_PANE_WIDTH: usize = 4;
+
+/// Add a one-column track and thumb to the right edge of pane rows.
+fn append_scrollbar_column(
+    rows: &mut [Line<'static>],
+    content_len: usize,
+    viewport_rows: usize,
+    top_line: usize,
+) {
+    let Some(thumb) =
+        super::scrollbar::scrollbar_thumb(content_len, viewport_rows, top_line, viewport_rows)
+    else {
+        return;
+    };
+    for (row, line) in rows.iter_mut().enumerate() {
+        let span = if thumb.contains(row) {
+            Span::styled("█", Theme::accent())
+        } else {
+            Span::styled(
+                "│",
+                Theme::dim().add_modifier(ratatui::style::Modifier::DIM),
+            )
+        };
+        line.spans.push(span);
+    }
 }
 
 const DETAIL_BADGE_ROWS: usize = 2;
@@ -667,6 +707,16 @@ fn detail_viewport_rows(
     rows.resize_with(viewport_rows, || {
         Line::from(Span::styled(" ".repeat(width.max(1)), Theme::dim()))
     });
+    // Fill the reserved gutter: a track when the detail overflows, blank space
+    // otherwise, so the text width never changes.
+    if super::scrollbar::scrollbar_thumb(line_count, viewport_rows, scroll, viewport_rows).is_some()
+    {
+        append_scrollbar_column(&mut rows, line_count, viewport_rows, scroll);
+    } else {
+        for line in &mut rows {
+            line.spans.push(Span::raw(" "));
+        }
+    }
     rows
 }
 

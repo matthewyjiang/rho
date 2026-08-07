@@ -77,6 +77,23 @@ pub(super) fn label_column_width(items: &[PickerItem], width: usize) -> usize {
         .clamp(min_label_width, max_label_width)
 }
 
+/// Rows [`picker_item_rows`] will emit: matching items plus section headers.
+pub(super) fn picker_row_count(items: &[PickerItem], matching: &[usize]) -> usize {
+    let mut count = 0;
+    let mut current_section: Option<&str> = None;
+    for index in matching.iter().copied() {
+        let Some(item) = items.get(index) else {
+            continue;
+        };
+        if item.section.as_deref() != current_section {
+            current_section = item.section.as_deref();
+            count += usize::from(current_section.is_some());
+        }
+        count += 1;
+    }
+    count
+}
+
 /// Build the rows for the matching items, inserting a header row whenever the
 /// section changes.
 pub(super) fn picker_item_rows(

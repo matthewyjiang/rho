@@ -278,3 +278,49 @@ fn pane_at_maps_positions_to_panes() {
         Some(OverlayPane::Nav)
     );
 }
+
+// Covers: overflowing panes must render a scrollbar so overflow is visible;
+// panes that fit stay bar-free.
+// Owner: tui picker_overlay geometry
+#[test]
+fn overflowing_panes_render_scrollbars() {
+    let items = (0..50)
+        .map(|index| PickerItem {
+            section: None,
+            label: format!("agent-{index:02}"),
+            detail: Some(long_detail()),
+            preview: None,
+            badge: None,
+            value: format!("agent-{index:02}"),
+            selection_verb: None,
+        })
+        .collect();
+    let picker =
+        UiPicker::new("agents", items, PickerAction::ViewAgent).with_layout(PickerLayout::Overlay);
+    let frame = render_picker_overlay(&picker, Rect::new(0, 0, 100, 24));
+    let body_line = frame
+        .lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .find(|text| text.contains('█'))
+        .expect("expected a scrollbar thumb in an overflowing overlay");
+    // Both panes overflow, so the thumb row carries one thumb per pane.
+    assert_eq!(body_line.matches('█').count(), 2, "nav and detail thumbs");
+
+    let short = sample_picker("fits", "also fits");
+    let frame = render_picker_overlay(&short, Rect::new(0, 0, 100, 24));
+    let text = frame
+        .lines
+        .iter()
+        .flat_map(|line| line.spans.iter().map(|span| span.content.as_ref()))
+        .collect::<String>();
+    assert!(
+        !text.contains('█'),
+        "fitting panes must not render a scrollbar"
+    );
+}
