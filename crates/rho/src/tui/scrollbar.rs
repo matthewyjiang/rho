@@ -1,7 +1,12 @@
 use std::time::{Duration, Instant};
 
 use crossterm::event::{MouseButton, MouseEventKind};
-use ratatui::{layout::Rect, style::Modifier, Frame};
+use ratatui::{
+    layout::Rect,
+    style::{Modifier, Style},
+    text::Span,
+    Frame,
+};
 
 use super::{theme::Theme, HistoryScroll};
 
@@ -261,6 +266,32 @@ impl ScrollbarThumb {
     }
 }
 
+const THUMB_GLYPH: &str = "█";
+const TRACK_GLYPH: &str = "│";
+
+/// Glyph and style for one row of a one-column scrollbar track.
+///
+/// The thumb style stays a caller argument because the history bar brightens
+/// its thumb while dragging; the track and the glyphs are shared so every
+/// scrollbar in the UI looks the same by construction.
+pub(super) fn track_cell(
+    thumb: ScrollbarThumb,
+    row: usize,
+    thumb_style: Style,
+) -> (&'static str, Style) {
+    if thumb.contains(row) {
+        (THUMB_GLYPH, thumb_style)
+    } else {
+        (TRACK_GLYPH, Theme::dim().add_modifier(Modifier::DIM))
+    }
+}
+
+/// [`track_cell`] as a span, for scrollbars rendered as line content.
+pub(super) fn track_span(thumb: ScrollbarThumb, row: usize, thumb_style: Style) -> Span<'static> {
+    let (glyph, style) = track_cell(thumb, row, thumb_style);
+    Span::styled(glyph, style)
+}
+
 /// Thumb geometry for a `track_height` row scrollbar, or `None` when the
 /// content fits the viewport and no bar should render.
 pub(super) fn scrollbar_thumb(
@@ -366,7 +397,6 @@ impl HistoryScrollbar {
 
     pub(super) fn render(&self, frame: &mut Frame<'_>, dragging: bool) {
         let thumb = self.thumb();
-        let track_style = Theme::dim().add_modifier(Modifier::DIM);
         let thumb_style = if dragging {
             Theme::brand()
         } else {
@@ -375,10 +405,7 @@ impl HistoryScrollbar {
         let buffer = frame.buffer_mut();
 
         for row in 0..self.rect.height {
-            let row_index = row as usize;
-            let is_thumb = thumb.contains(row_index);
-            let symbol = if is_thumb { "█" } else { "│" };
-            let style = if is_thumb { thumb_style } else { track_style };
+            let (symbol, style) = track_cell(thumb, row as usize, thumb_style);
             buffer[(self.rect.x, self.rect.y.saturating_add(row))]
                 .set_symbol(symbol)
                 .set_style(style);

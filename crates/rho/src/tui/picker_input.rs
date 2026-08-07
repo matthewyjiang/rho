@@ -2,7 +2,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{layout::Rect, DefaultTerminal};
 
 use super::{
-    picker_overlay::{picker_overlay_layout, OverlayLayout, OverlayPane, OverlayScrollTargets},
+    picker_overlay_layout::{
+        picker_overlay_layout, OverlayLayout, OverlayPane, OverlayScrollTargets,
+    },
     App, ComposerMode, InteractiveRuntime, OverlayFocus, UiPicker,
 };
 
@@ -58,7 +60,7 @@ fn overlay_scroll_targets(
 fn focused_detail_viewport(
     picker: &UiPicker,
     targets: Option<OverlayScrollTargets>,
-) -> Option<super::picker_overlay::DetailViewport> {
+) -> Option<super::picker_overlay_layout::DetailViewport> {
     if !picker.detail_pane_focused() {
         return None;
     }

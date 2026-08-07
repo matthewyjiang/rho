@@ -89,7 +89,7 @@ fn overlay_picker_with_detail() -> UiPicker {
 fn detail_targets() -> Option<OverlayScrollTargets> {
     Some(OverlayScrollTargets {
         nav_rows: 10,
-        detail: Some(super::super::picker_overlay::DetailViewport { width: 40, rows: 5 }),
+        detail: Some(super::super::picker_overlay_layout::DetailViewport { width: 40, rows: 5 }),
     })
 }
 

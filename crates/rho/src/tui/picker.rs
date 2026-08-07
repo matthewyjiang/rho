@@ -367,8 +367,8 @@ impl UiPicker {
     }
 
     /// Content hints the overlay uses to size its outer box.
-    pub(super) fn overlay_sizing(&self) -> super::picker_overlay::OverlaySizing {
-        super::picker_overlay::OverlaySizing {
+    pub(super) fn overlay_sizing(&self) -> super::picker_overlay_layout::OverlaySizing {
+        super::picker_overlay_layout::OverlaySizing {
             has_details: self.has_item_details(),
             nav_rows: super::picker_rows::rows(&self.items, 0..self.items.len()).count(),
         }
@@ -406,7 +406,7 @@ impl UiPicker {
     pub(super) fn scroll_detail_by(
         &mut self,
         delta: isize,
-        viewport: super::picker_overlay::DetailViewport,
+        viewport: super::picker_overlay_layout::DetailViewport,
     ) {
         if !self.has_scrollable_detail() {
             return;
@@ -426,7 +426,10 @@ impl UiPicker {
         self.reset_detail_scroll();
     }
 
-    pub(super) fn scroll_detail_end(&mut self, viewport: super::picker_overlay::DetailViewport) {
+    pub(super) fn scroll_detail_end(
+        &mut self,
+        viewport: super::picker_overlay_layout::DetailViewport,
+    ) {
         if !self.has_scrollable_detail() {
             return;
         }
@@ -437,7 +440,7 @@ impl UiPicker {
     pub(super) fn scroll_detail_page(
         &mut self,
         delta_pages: isize,
-        viewport: super::picker_overlay::DetailViewport,
+        viewport: super::picker_overlay_layout::DetailViewport,
     ) {
         if !self.has_scrollable_detail() {
             return;
@@ -446,7 +449,10 @@ impl UiPicker {
         self.scroll_detail_by(delta_pages.saturating_mul(rows), viewport);
     }
 
-    pub(super) fn clamp_detail_scroll(&mut self, viewport: super::picker_overlay::DetailViewport) {
+    pub(super) fn clamp_detail_scroll(
+        &mut self,
+        viewport: super::picker_overlay_layout::DetailViewport,
+    ) {
         if !self.has_scrollable_detail() {
             return;
         }
@@ -873,7 +879,7 @@ impl super::App {
         if !picker.has_scrollable_detail() {
             return;
         }
-        let layout = super::picker_overlay::picker_overlay_layout(
+        let layout = super::picker_overlay_layout::picker_overlay_layout(
             ratatui::layout::Rect::new(0, 0, size.width, size.height),
             picker.overlay_sizing(),
         );

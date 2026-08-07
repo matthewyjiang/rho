@@ -1,30 +1,26 @@
-//! Generic picker overlay geometry and line rendering.
+//! Generic picker overlay line rendering.
 //!
 //! Feature policy (what items mean, confirm verbs, filters, chrome labels)
-//! stays at call sites. This module only lays out a bordered overlay with a
+//! stays at call sites. This module only draws a bordered overlay with a
 //! navigation list and an optional independently scrollable detail pane.
 //! Detail presence is derived from item data, not a separate layout mode.
+//! Every measurement comes from [`super::picker_overlay_layout`].
 
 use ratatui::{
     layout::{Position, Rect},
     text::{Line, Span},
 };
 
+use super::picker_overlay_layout::{
+    picker_overlay_layout, OverlayLayout, OverlayOrientation, OverlayPanes, BOTTOM_BORDER_ROWS,
+    FOOTER_CHROME_ROWS, HEADER_CHROME_ROWS, SEPARATOR,
+};
 use super::render::wrap_line_at_whitespace;
 use super::{
     display_width, styled_line, truncate_one_line, LineFill, PickerBadge, PickerBadgePlacement,
     PickerItem, Theme, UiPicker,
 };
 
-const TWO_COLUMN_MIN_INNER_WIDTH: usize = 60;
-const MIN_NAV_WIDTH: usize = 14;
-const MAX_NAV_WIDTH: usize = 28;
-const SEPARATOR: &str = " │ ";
-/// Rows consumed inside the border: search, divider, pane header, status divider, footer.
-const INNER_CHROME_ROWS: usize = 5;
-/// Column reserved beside the detail text for its scrollbar, so wrapped text
-/// never re-flows when the bar appears.
-const DETAIL_SCROLLBAR_GUTTER: usize = 1;
 const FILTER_PREFIX: &str = " Search  > ";
 const DEFAULT_NAV_LABEL: &str = " NAV";
 const DEFAULT_DETAIL_LABEL: &str = " DETAILS";
@@ -36,172 +32,6 @@ pub(super) struct OverlayChrome {
     /// Only used when the overlay has a detail pane.
     pub(super) detail_label: Option<String>,
     pub(super) nav_keys_hint: String,
-}
-
-/// Responsive arrangement of nav + detail. Only used when a detail pane exists.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum OverlayOrientation {
-    SideBySide,
-    Stacked,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum OverlayPanes {
-    NavOnly {
-        nav_width: usize,
-        nav_viewport_rows: usize,
-    },
-    NavAndDetail {
-        orientation: OverlayOrientation,
-        nav_width: usize,
-        detail_width: usize,
-        detail_viewport_rows: usize,
-        nav_viewport_rows: usize,
-    },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct OverlayLayout {
-    pub(super) outer: Rect,
-    pub(super) inner_width: usize,
-    pub(super) inner_height: usize,
-    pub(super) body_rows: usize,
-    pub(super) panes: OverlayPanes,
-}
-
-impl OverlayLayout {
-    pub(super) fn detail_viewport(self) -> Option<DetailViewport> {
-        match self.panes {
-            OverlayPanes::NavOnly { .. } => None,
-            OverlayPanes::NavAndDetail {
-                detail_width,
-                detail_viewport_rows,
-                ..
-            } => Some(DetailViewport {
-                width: detail_width,
-                rows: detail_viewport_rows,
-            }),
-        }
-    }
-
-    pub(super) fn scroll_targets(self) -> OverlayScrollTargets {
-        OverlayScrollTargets {
-            nav_rows: self.nav_viewport_rows().max(1),
-            detail: self.detail_viewport(),
-        }
-    }
-
-    /// Overlay pane and pane-local row under a screen position, for wheel,
-    /// click, and hover routing. `None` when the position sits outside the
-    /// body rows (chrome, or off the overlay).
-    pub(super) fn pane_hit(self, column: u16, row: u16) -> Option<PaneHit> {
-        let outer = self.outer;
-        if !outer.contains(Position { x: column, y: row }) {
-            return None;
-        }
-        // Rows above the body: border, filter, rule, pane header.
-        let body_top = outer.y.saturating_add(4);
-        let body_bottom = body_top.saturating_add(self.body_rows.min(u16::MAX as usize) as u16);
-        if row < body_top || row >= body_bottom {
-            return None;
-        }
-        let body_row = row.saturating_sub(body_top) as usize;
-        match self.panes {
-            OverlayPanes::NavOnly { .. } => Some(PaneHit {
-                pane: OverlayPane::Nav,
-                pane_row: body_row,
-            }),
-            OverlayPanes::NavAndDetail {
-                orientation: OverlayOrientation::SideBySide,
-                nav_width,
-                ..
-            } => {
-                // Left border plus nav pane plus the separator's leading half.
-                let nav_end = outer
-                    .x
-                    .saturating_add(1)
-                    .saturating_add(nav_width.min(u16::MAX as usize) as u16)
-                    .saturating_add(1);
-                let pane = if column < nav_end {
-                    OverlayPane::Nav
-                } else {
-                    OverlayPane::Detail
-                };
-                Some(PaneHit {
-                    pane,
-                    pane_row: body_row,
-                })
-            }
-            OverlayPanes::NavAndDetail {
-                orientation: OverlayOrientation::Stacked,
-                detail_viewport_rows,
-                ..
-            } => {
-                if body_row < detail_viewport_rows {
-                    return Some(PaneHit {
-                        pane: OverlayPane::Detail,
-                        pane_row: body_row,
-                    });
-                }
-                // The rule row between the stacked panes is chrome.
-                let separator_rows = usize::from(self.body_rows > 2);
-                let nav_top = detail_viewport_rows.saturating_add(separator_rows);
-                if body_row < nav_top {
-                    return None;
-                }
-                Some(PaneHit {
-                    pane: OverlayPane::Nav,
-                    pane_row: body_row - nav_top,
-                })
-            }
-        }
-    }
-
-    fn nav_width(self) -> usize {
-        match self.panes {
-            OverlayPanes::NavOnly { nav_width, .. }
-            | OverlayPanes::NavAndDetail { nav_width, .. } => nav_width,
-        }
-    }
-
-    fn nav_viewport_rows(self) -> usize {
-        match self.panes {
-            OverlayPanes::NavOnly {
-                nav_viewport_rows, ..
-            }
-            | OverlayPanes::NavAndDetail {
-                nav_viewport_rows, ..
-            } => nav_viewport_rows,
-        }
-    }
-}
-
-/// Scroll geometry for an open overlay: nav viewport rows plus the detail
-/// viewport when a detail pane exists.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct OverlayScrollTargets {
-    pub(super) nav_rows: usize,
-    pub(super) detail: Option<DetailViewport>,
-}
-
-/// One of the two overlay panes, for focus and wheel routing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum OverlayPane {
-    Nav,
-    Detail,
-}
-
-/// A body position resolved to a pane plus the row within that pane.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct PaneHit {
-    pub(super) pane: OverlayPane,
-    pub(super) pane_row: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct DetailViewport {
-    pub(super) width: usize,
-    pub(super) rows: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -236,19 +66,6 @@ struct OverlayContent<'a> {
     footer: &'a str,
     empty_match_message: &'a str,
     chrome: OverlayChromeView<'a>,
-}
-
-/// Content hints that drive the overlay's outer size.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct OverlaySizing {
-    pub(super) has_details: bool,
-    /// Item rows plus section headers, counted over the full item set (not the
-    /// filtered matches) so the box does not resize while typing.
-    pub(super) nav_rows: usize,
-}
-
-pub(super) fn picker_overlay_layout(area: Rect, sizing: OverlaySizing) -> OverlayLayout {
-    layout_for_outer(outer_rect(area, sizing), sizing.has_details)
 }
 
 pub(super) fn picker_overlay_frame(picker: &UiPicker, area: Rect) -> Option<OverlayFrame> {
@@ -330,104 +147,6 @@ pub(super) fn filter_cursor_x(filter: &str, inner_width: usize) -> u16 {
         .min(inner_width.saturating_sub(1)) as u16
 }
 
-/// Fewest body rows an overlay keeps when a detail pane needs reading room.
-const MIN_DETAIL_BODY_ROWS: usize = 12;
-/// Fewest body rows a nav-only overlay keeps.
-const MIN_NAV_ONLY_BODY_ROWS: usize = 3;
-
-fn outer_rect(area: Rect, sizing: OverlaySizing) -> Rect {
-    if area.width == 0 || area.height == 0 {
-        return Rect::new(area.x, area.y, 0, 0);
-    }
-
-    let horizontal_margin = ((area.width as usize) / 20).clamp(1, 4) as u16;
-    let vertical_margin = ((area.height as usize) / 12).clamp(1, 3) as u16;
-    let width = area
-        .width
-        .saturating_sub(horizontal_margin.saturating_mul(2))
-        .max(1);
-    let max_height = area
-        .height
-        .saturating_sub(vertical_margin.saturating_mul(2))
-        .max(1);
-    // Height follows the item count instead of always filling the screen, so
-    // short pickers render as a compact box. The detail minimum keeps long
-    // detail text readable behind its own scrolling.
-    let min_body_rows = if sizing.has_details {
-        MIN_DETAIL_BODY_ROWS
-    } else {
-        MIN_NAV_ONLY_BODY_ROWS
-    };
-    let desired_height = sizing
-        .nav_rows
-        .max(min_body_rows)
-        .saturating_add(INNER_CHROME_ROWS)
-        .saturating_add(2)
-        .min(u16::MAX as usize) as u16;
-    let height = desired_height.min(max_height);
-    let x = area.x.saturating_add(area.width.saturating_sub(width) / 2);
-    let y = area
-        .y
-        .saturating_add(area.height.saturating_sub(height) / 2);
-    Rect::new(x, y, width, height)
-}
-
-fn layout_for_outer(outer: Rect, has_details: bool) -> OverlayLayout {
-    let outer_width = outer.width as usize;
-    let outer_height = outer.height as usize;
-    let inner_width = outer_width.saturating_sub(2).max(1);
-    let inner_height = outer_height.saturating_sub(2).max(1);
-    let body_rows = inner_height.saturating_sub(INNER_CHROME_ROWS).max(1);
-
-    let panes = if !has_details {
-        OverlayPanes::NavOnly {
-            nav_width: inner_width,
-            nav_viewport_rows: body_rows,
-        }
-    } else if inner_width < TWO_COLUMN_MIN_INNER_WIDTH {
-        // One body row is the horizontal rule between detail and nav when there
-        // is room for both panes plus the separator.
-        let separator_rows = usize::from(body_rows > 2);
-        let usable_rows = body_rows.saturating_sub(separator_rows).max(1);
-        let detail_viewport_rows = (usable_rows.saturating_mul(3) / 5)
-            .max(2.min(usable_rows.saturating_sub(1)))
-            .min(usable_rows.saturating_sub(1));
-        let nav_viewport_rows = usable_rows.saturating_sub(detail_viewport_rows);
-        OverlayPanes::NavAndDetail {
-            orientation: OverlayOrientation::Stacked,
-            nav_width: inner_width,
-            // One column stays reserved for the detail scrollbar gutter so the
-            // wrapped text never re-flows when the bar appears.
-            detail_width: inner_width.saturating_sub(DETAIL_SCROLLBAR_GUTTER).max(1),
-            detail_viewport_rows,
-            nav_viewport_rows,
-        }
-    } else {
-        let nav_width = ((inner_width * 30) / 100).clamp(MIN_NAV_WIDTH, MAX_NAV_WIDTH);
-        let separator_width = display_width(SEPARATOR);
-        let detail_width = inner_width
-            .saturating_sub(nav_width)
-            .saturating_sub(separator_width)
-            .saturating_sub(DETAIL_SCROLLBAR_GUTTER)
-            .max(1);
-        OverlayPanes::NavAndDetail {
-            orientation: OverlayOrientation::SideBySide,
-            nav_width,
-            detail_width,
-            detail_viewport_rows: body_rows,
-            nav_viewport_rows: body_rows,
-        }
-    };
-
-    OverlayLayout {
-        outer,
-        inner_width,
-        inner_height,
-        body_rows,
-        panes,
-    }
-}
-
 fn chrome_view(chrome: Option<&OverlayChrome>) -> OverlayChromeView<'_> {
     match chrome {
         Some(chrome) => OverlayChromeView {
@@ -448,26 +167,27 @@ fn chrome_view(chrome: Option<&OverlayChrome>) -> OverlayChromeView<'_> {
 
 fn overlay_lines(layout: OverlayLayout, content: OverlayContent<'_>) -> Vec<Line<'static>> {
     let mut lines = Vec::with_capacity(layout.outer.height as usize);
-    let divider_col = side_by_side_divider_col(layout);
+    let divider_col = layout.divider_col();
     lines.push(border_line(
         layout.outer.width as usize,
         '┌',
         '┐',
         Some(content.title),
     ));
-    lines.push(content_row(
-        layout.inner_width,
-        filter_line(content.filter, layout.inner_width),
-    ));
-    lines.push(horizontal_rule(
-        layout.outer.width as usize,
-        divider_col,
-        '┬',
-    ));
-    lines.push(content_row(
-        layout.inner_width,
-        pane_header_line(layout, &content.chrome, content.detail_focused),
-    ));
+    // The array length ties the drawn header chrome to the row count geometry
+    // uses to place the body, so the two cannot drift apart.
+    let header_chrome: [Line<'static>; HEADER_CHROME_ROWS] = [
+        content_row(
+            layout.inner_width,
+            filter_line(content.filter, layout.inner_width),
+        ),
+        horizontal_rule(layout.outer.width as usize, divider_col, '┬'),
+        content_row(
+            layout.inner_width,
+            pane_header_line(layout, &content.chrome, content.detail_focused),
+        ),
+    ];
+    lines.extend(header_chrome);
 
     let body_sections = match layout.panes {
         OverlayPanes::NavOnly { .. } => vec![nav_only_body(layout, &content)],
@@ -508,21 +228,17 @@ fn overlay_lines(layout: OverlayLayout, content: OverlayContent<'_>) -> Vec<Line
         }
     }
 
-    while lines.len() + 3 < layout.outer.height as usize {
+    while lines.len() + FOOTER_CHROME_ROWS + BOTTOM_BORDER_ROWS < layout.outer.height as usize {
         // Keep the column rule continuous through spare body rows so it meets
         // the footer junction instead of leaving a gap.
         lines.push(content_row(layout.inner_width, pane_filler_row(layout)));
     }
 
-    lines.push(horizontal_rule(
-        layout.outer.width as usize,
-        divider_col,
-        '┴',
-    ));
-    lines.push(content_row(
-        layout.inner_width,
-        footer_line(layout, &content),
-    ));
+    let footer_chrome: [Line<'static>; FOOTER_CHROME_ROWS] = [
+        horizontal_rule(layout.outer.width as usize, divider_col, '┴'),
+        content_row(layout.inner_width, footer_line(layout, &content)),
+    ];
+    lines.extend(footer_chrome);
     lines.push(border_line(layout.outer.width as usize, '└', '┘', None));
     lines.truncate(layout.outer.height as usize);
     while lines.len() < layout.outer.height as usize {
@@ -641,15 +357,8 @@ fn append_scrollbar_column(
         return;
     };
     for (row, line) in rows.iter_mut().enumerate() {
-        let span = if thumb.contains(row) {
-            Span::styled("█", Theme::accent())
-        } else {
-            Span::styled(
-                "│",
-                Theme::dim().add_modifier(ratatui::style::Modifier::DIM),
-            )
-        };
-        line.spans.push(span);
+        line.spans
+            .push(super::scrollbar::track_span(thumb, row, Theme::accent()));
     }
 }
 
@@ -933,25 +642,6 @@ fn pane_header_line(
             Theme::text_strong(),
             LineFill::PadToWidth,
         ),
-    }
-}
-
-/// Column of the side-by-side pane rule within a full outer-width border row.
-fn side_by_side_divider_col(layout: OverlayLayout) -> Option<usize> {
-    match layout.panes {
-        OverlayPanes::NavAndDetail {
-            orientation: OverlayOrientation::SideBySide,
-            nav_width,
-            ..
-        } => {
-            // left border │ + nav + leading space of " │ "
-            Some(1usize.saturating_add(nav_width).saturating_add(1))
-        }
-        OverlayPanes::NavAndDetail {
-            orientation: OverlayOrientation::Stacked,
-            ..
-        }
-        | OverlayPanes::NavOnly { .. } => None,
     }
 }
 

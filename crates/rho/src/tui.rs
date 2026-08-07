@@ -97,6 +97,7 @@ mod permission_mode;
 mod picker;
 mod picker_input;
 mod picker_overlay;
+mod picker_overlay_layout;
 mod picker_rows;
 mod prompt_turn;
 mod provider_actions;
