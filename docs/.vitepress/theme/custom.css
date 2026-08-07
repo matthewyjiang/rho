@@ -1,12 +1,643 @@
+/*
+  Rho docs visual system
+  THESIS: Print-specimen clarity over dense reading columns; native binary energy without AI-marketing theater.
+  OWN-WORLD: Newsprint ground, rich black ink, one synthetic red accent; Public Sans for UI/body, Source Code Pro for code; hairline rules and ink plates.
+  STORY: Visitor knows Rho is a small Rust harness, sees the TUI proof, and picks a path.
+  FIRST VIEWPORT: Large Rho wordmark, job line, install specimen, actions, TUI proof plate.
+  FORM: Emigre Bitmap Specimen (challenger), seed 759ff781 - type path revised to readable Public Sans.
+  FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
+*/
+
+:root {
+  --rho-font-display: 'Public Sans', ui-sans-serif, system-ui, sans-serif;
+  --rho-font-body: 'Public Sans', ui-sans-serif, system-ui, sans-serif;
+  --rho-font-mono: 'Source Code Pro', ui-monospace, monospace;
+
+  --rho-newsprint: #f2efe6;
+  --rho-ink: #121212;
+  --rho-ink-soft: #3a3834;
+  --rho-rule: color-mix(in srgb, var(--rho-ink) 16%, transparent);
+  --rho-accent: #e63228;
+  --rho-accent-deep: #c41f1a;
+  --rho-accent-soft: color-mix(in srgb, var(--rho-accent) 12%, var(--rho-newsprint));
+  --rho-ink-plate: #121212;
+  --rho-ink-plate-fg: #f2efe6;
+  --rho-code-bg: color-mix(in srgb, var(--rho-ink) 6%, var(--rho-newsprint));
+
+  --vp-font-family-base: var(--rho-font-body);
+  --vp-font-family-mono: var(--rho-font-mono);
+
+  --vp-c-bg: var(--rho-newsprint);
+  --vp-c-bg-alt: color-mix(in srgb, var(--rho-ink) 4%, var(--rho-newsprint));
+  --vp-c-bg-elv: #faf8f2;
+  --vp-c-bg-soft: color-mix(in srgb, var(--rho-ink) 5%, var(--rho-newsprint));
+
+  --vp-c-border: color-mix(in srgb, var(--rho-ink) 14%, transparent);
+  --vp-c-divider: color-mix(in srgb, var(--rho-ink) 12%, transparent);
+  --vp-c-gutter: color-mix(in srgb, var(--rho-ink) 8%, var(--rho-newsprint));
+
+  --vp-c-text-1: var(--rho-ink);
+  --vp-c-text-2: var(--rho-ink-soft);
+  --vp-c-text-3: color-mix(in srgb, var(--rho-ink) 55%, var(--rho-newsprint));
+
+  --vp-c-brand-1: var(--rho-accent);
+  --vp-c-brand-2: var(--rho-accent-deep);
+  --vp-c-brand-3: #ff4d42;
+  --vp-c-brand-soft: var(--rho-accent-soft);
+
+  --vp-c-default-1: color-mix(in srgb, var(--rho-ink) 8%, var(--rho-newsprint));
+  --vp-c-default-2: color-mix(in srgb, var(--rho-ink) 12%, var(--rho-newsprint));
+  --vp-c-default-3: color-mix(in srgb, var(--rho-ink) 18%, var(--rho-newsprint));
+  --vp-c-default-soft: color-mix(in srgb, var(--rho-ink) 6%, var(--rho-newsprint));
+
+  --vp-c-tip-1: #0b6e4f;
+  --vp-c-tip-2: #0a5c43;
+  --vp-c-tip-3: #084c37;
+  --vp-c-tip-soft: color-mix(in srgb, #0b6e4f 12%, var(--rho-newsprint));
+
+  --vp-c-warning-1: #9a6700;
+  --vp-c-warning-2: #7d5400;
+  --vp-c-warning-3: #654400;
+  --vp-c-warning-soft: color-mix(in srgb, #9a6700 14%, var(--rho-newsprint));
+
+  --vp-c-danger-1: var(--rho-accent-deep);
+  --vp-c-danger-2: #a11914;
+  --vp-c-danger-3: #861510;
+  --vp-c-danger-soft: color-mix(in srgb, var(--rho-accent) 12%, var(--rho-newsprint));
+
+  --vp-c-sponsor: var(--rho-accent);
+
+  --vp-button-brand-border: var(--rho-accent);
+  --vp-button-brand-text: #ffffff;
+  --vp-button-brand-bg: var(--rho-accent);
+  --vp-button-brand-hover-border: var(--rho-accent-deep);
+  --vp-button-brand-hover-text: #ffffff;
+  --vp-button-brand-hover-bg: var(--rho-accent-deep);
+  --vp-button-brand-active-border: var(--rho-accent-deep);
+  --vp-button-brand-active-text: #ffffff;
+  --vp-button-brand-active-bg: var(--rho-accent-deep);
+
+  --vp-button-alt-border: var(--rho-ink);
+  --vp-button-alt-text: var(--rho-ink);
+  --vp-button-alt-bg: transparent;
+  --vp-button-alt-hover-border: var(--rho-ink);
+  --vp-button-alt-hover-text: var(--rho-newsprint);
+  --vp-button-alt-hover-bg: var(--rho-ink);
+  --vp-button-alt-active-border: var(--rho-ink);
+  --vp-button-alt-active-text: var(--rho-newsprint);
+  --vp-button-alt-active-bg: var(--rho-ink);
+
+  --vp-custom-block-font-size: 0.95rem;
+  --vp-code-color: var(--rho-ink);
+  --vp-code-bg: var(--rho-code-bg);
+  /* Light mode: light fence plate so Shiki light tokens keep contrast. */
+  --vp-code-block-bg: #f3f0e6;
+  --vp-code-block-color: var(--rho-ink);
+  --vp-code-lang-color: color-mix(in srgb, var(--rho-ink) 45%, transparent);
+  --vp-code-copy-code-border-color: color-mix(in srgb, var(--rho-ink) 18%, transparent);
+  --vp-code-copy-code-bg: color-mix(in srgb, var(--rho-ink) 5%, var(--vp-code-block-bg));
+  --vp-code-copy-code-hover-border-color: color-mix(in srgb, var(--rho-ink) 32%, transparent);
+  --vp-code-copy-code-hover-bg: color-mix(in srgb, var(--rho-ink) 9%, var(--vp-code-block-bg));
+  --vp-code-copy-code-active-text: var(--rho-ink);
+  --vp-sidebar-bg-color: var(--vp-c-bg-alt);
+  --vp-nav-bg-color: var(--vp-c-bg);
+
+  --vp-layout-max-width: 1480px;
+  --vp-c-indigo-1: var(--rho-accent);
+  --vp-c-indigo-2: var(--rho-accent-deep);
+  --vp-c-indigo-3: #ff4d42;
+}
+
+.dark {
+  --rho-newsprint: #121110;
+  --rho-ink: #f0ebe1;
+  --rho-ink-soft: #c2bbb0;
+  --rho-rule: color-mix(in srgb, var(--rho-ink) 16%, transparent);
+  --rho-accent: #ff5a4f;
+  --rho-accent-deep: #e63228;
+  --rho-accent-soft: color-mix(in srgb, var(--rho-accent) 16%, var(--rho-newsprint));
+  --rho-ink-plate: #050505;
+  --rho-ink-plate-fg: #f0ebe1;
+  --rho-code-bg: color-mix(in srgb, var(--rho-ink) 8%, var(--rho-newsprint));
+
+  --vp-c-bg: var(--rho-newsprint);
+  --vp-c-bg-alt: #0c0b0a;
+  --vp-c-bg-elv: #1a1816;
+  --vp-c-bg-soft: #1c1a17;
+
+  --vp-c-border: color-mix(in srgb, var(--rho-ink) 14%, transparent);
+  --vp-c-divider: color-mix(in srgb, var(--rho-ink) 12%, transparent);
+  --vp-c-gutter: #0a0908;
+
+  --vp-c-text-1: var(--rho-ink);
+  --vp-c-text-2: var(--rho-ink-soft);
+  --vp-c-text-3: color-mix(in srgb, var(--rho-ink) 55%, var(--rho-newsprint));
+
+  --vp-button-alt-hover-text: #121110;
+  --vp-button-alt-active-text: #121110;
+
+  --vp-code-block-bg: #0a0908;
+  --vp-code-block-color: #f0ebe1;
+  --vp-code-copy-code-border-color: color-mix(in srgb, #f0ebe1 22%, transparent);
+  --vp-code-copy-code-bg: #1c1916;
+  --vp-code-copy-code-hover-border-color: color-mix(in srgb, #f0ebe1 40%, transparent);
+  --vp-code-copy-code-hover-bg: #2a2622;
+  --vp-code-copy-code-active-text: #f0ebe1;
+
+  --vp-c-tip-1: #3ecf8e;
+  --vp-c-tip-2: #2fb87a;
+  --vp-c-tip-3: #239a66;
+  --vp-c-tip-soft: color-mix(in srgb, #3ecf8e 14%, var(--rho-newsprint));
+}
+
+html,
+body {
+  background: var(--vp-c-bg);
+  color: var(--vp-c-text-1);
+}
+
+body {
+  font-family: var(--vp-font-family-base);
+  font-feature-settings: 'ss01' on, 'cv11' on;
+  text-rendering: optimizeLegibility;
+}
+
+/* ---------- Shell: nav / sidebar / search ---------- */
+
+/* Solid nav always - never translucent over scrolling content. */
+.VPNav {
+  background-color: var(--vp-c-bg);
+}
+
+.VPNavBar {
+  border-bottom: 1px solid var(--rho-rule);
+  background-color: var(--vp-c-bg) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.VPNavBar .wrapper,
+.VPNavBar .container,
+.VPNavBar .title,
+.VPNavBar .content,
+.VPNavBar .content-body {
+  background-color: var(--vp-c-bg) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Override VP desktop states that force transparent nav over the doc column. */
+@media (min-width: 960px) {
+  .VPNavBar,
+  .VPNavBar:not(.home),
+  .VPNavBar.home,
+  .VPNavBar.home.top,
+  .VPNavBar.has-sidebar,
+  .VPNavBar:not(.has-sidebar):not(.home.top),
+  .VPNavBar:not(.home.top) .content-body,
+  .VPNavBar:not(.has-sidebar):not(.home.top) .content-body,
+  .VPNavBar.has-sidebar .title {
+    background-color: var(--vp-c-bg) !important;
+  }
+}
+
+.VPNavBar .wrapper {
+  max-width: var(--vp-layout-max-width);
+}
+
+.VPNavBarTitle .title {
+  border: 0 !important;
+}
+
+.VPNavBarMenuLink,
+.VPNavBarMenuGroup .button {
+  font-size: 0.92rem !important;
+  font-weight: 600 !important;
+}
+
+.VPNavBarMenuLink.active {
+  color: var(--rho-accent) !important;
+}
+
+.VPNavBarExtra,
+.VPNavBarHamburger,
+.VPNavBarSocialLink,
+.VPSkipLink,
+.DocSearch-Button,
+.DocSearch-Button-Key,
+.VPMenu,
+.VPMenu .VPMenuLink,
+.VPMenu .VPLink,
+.VPNavScreenAppearance,
+.VPLocalNav,
+.VPLocalNav .button,
+.VPFlyout .menu-item,
+.VPFlyoutMenu {
+  border-radius: 0 !important;
+}
+
+/* Search trigger: square specimen control on desktop; icon-only on small screens. */
+@media (min-width: 768px) {
+  /* Compact control — don't flex-grow a wide empty search slot. */
+  .VPNavBarSearch {
+    flex-grow: 0 !important;
+    padding-left: 0 !important;
+    margin-right: 0.75rem;
+  }
+
+  .DocSearch-Button {
+    border: 1px solid var(--rho-rule) !important;
+    background: transparent !important;
+    padding: 0 0.65rem 0 0.7rem !important;
+    width: auto !important;
+    height: 2.25rem !important;
+    gap: 0.55rem;
+  }
+
+  .DocSearch-Button:hover {
+    border-color: color-mix(in srgb, var(--rho-ink) 32%, transparent) !important;
+    background: color-mix(in srgb, var(--rho-ink) 4%, var(--vp-c-bg)) !important;
+  }
+
+  .DocSearch-Button .DocSearch-Button-Placeholder {
+    margin: 0 !important;
+    padding: 0 0.15rem 0 0 !important;
+    font-family: var(--rho-font-display);
+    font-size: 0.88rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--vp-c-text-2);
+  }
+
+  /* Joined Ctrl/⌘ + K plate — one outer rule, one divider, no double borders. */
+  .DocSearch-Button .DocSearch-Button-Keys {
+    display: flex !important;
+    align-items: stretch;
+    border: 1px solid var(--rho-rule);
+    border-radius: 0 !important;
+    background: color-mix(in srgb, var(--rho-ink) 5%, var(--vp-c-bg));
+    overflow: hidden;
+    min-width: 0 !important;
+  }
+
+  .DocSearch-Button .DocSearch-Button-Key {
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    margin: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    height: 1.25rem !important;
+    line-height: 1 !important;
+    padding: 0 0.35rem !important;
+    font-family: var(--rho-font-mono) !important;
+    font-size: 0.72rem !important;
+    font-weight: 600 !important;
+    color: var(--vp-c-text-2) !important;
+    min-width: 0 !important;
+    width: auto !important;
+  }
+
+  .DocSearch-Button .DocSearch-Button-Key + .DocSearch-Button-Key {
+    border-left: 1px solid var(--rho-rule) !important;
+    border-right: 0 !important;
+    padding-left: 0.35rem !important;
+    padding-right: 0.35rem !important;
+  }
+
+  /* Meta key label is painted via ::after; keep element text size at 0. */
+  .DocSearch-Button .DocSearch-Button-Key:first-child {
+    font-size: 0 !important;
+    padding-left: 0.4rem !important;
+    padding-right: 0.3rem !important;
+  }
+
+  .DocSearch-Button .DocSearch-Button-Key:first-child::after {
+    font-family: var(--rho-font-mono) !important;
+    font-size: 0.72rem !important;
+    font-weight: 600 !important;
+    letter-spacing: -0.01em;
+    color: var(--vp-c-text-2) !important;
+  }
+}
+
+/* Desktop flyout menus: hairline plate, no soft card radius. */
+.VPMenu {
+  border: 1px solid var(--rho-rule) !important;
+  border-radius: 0 !important;
+  background: var(--vp-c-bg-elv) !important;
+  box-shadow: none !important;
+  padding: 0.35rem 0 !important;
+}
+
+.VPMenu .VPLink,
+.VPMenuGroup .title {
+  border-radius: 0 !important;
+  font-size: 0.9rem !important;
+}
+
+.VPMenuGroup .title {
+  font-family: var(--rho-font-display);
+  font-weight: 700 !important;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 0.72rem !important;
+  color: var(--vp-c-text-2) !important;
+}
+
+/* Mobile full-screen nav: stronger type on newsprint, square appearance strip. */
+.VPNavScreenMenuLink {
+  font-size: 1rem !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.015em;
+}
+
+.VPNavScreenMenuGroup .button {
+  font-size: 1rem !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.015em;
+}
+
+.VPNavScreenMenuGroupLink {
+  font-size: 0.95rem !important;
+  font-weight: 500 !important;
+}
+
+.VPNavScreenAppearance {
+  border: 1px solid var(--rho-rule) !important;
+  border-radius: 0 !important;
+  background: color-mix(in srgb, var(--rho-ink) 4%, var(--vp-c-bg)) !important;
+}
+
+.VPNavScreenAppearance .text {
+  font-family: var(--rho-font-display);
+  font-size: 0.88rem !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.01em;
+}
+
+.VPLocalSearchBox .shell,
+.VPLocalSearchBox input {
+  border-radius: 0 !important;
+}
+
+.VPLocalSearchBox .shell {
+  border: 1px solid var(--rho-rule) !important;
+  box-shadow: none !important;
+}
+
+/* ---------- Content typography ---------- */
+
+.vp-doc {
+  font-size: 1.02rem;
+  line-height: 1.7;
+}
+
+.vp-doc h1 {
+  margin-top: 0.2rem;
+  margin-bottom: 1.1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--vp-c-text-1);
+  font-family: var(--rho-font-display);
+  font-size: clamp(1.85rem, 3vw, 2.35rem);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: 1.2;
+}
+
+.vp-doc h2 {
+  margin-top: 2.4rem;
+  margin-bottom: 0.85rem;
+  border-top: 1px solid var(--rho-rule);
+  border-bottom: 0;
+  padding-top: 1.4rem;
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.vp-doc h3 {
+  margin-top: 1.7rem;
+  margin-bottom: 0.55rem;
+  font-size: 1.12rem;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+
+.vp-doc p,
+.vp-doc li {
+  max-width: 72ch;
+}
+
+.vp-doc a {
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.16em;
+  color: var(--vp-c-text-1);
+}
+
+.vp-doc a:hover {
+  color: var(--rho-accent);
+}
+
+.vp-doc strong {
+  font-weight: 700;
+}
+
+.vp-doc :not(pre) > code {
+  border: 1px solid var(--rho-rule);
+  border-radius: 0;
+  padding: 0.1em 0.35em;
+  font-size: 0.9em;
+  font-weight: 500;
+  background: var(--vp-code-bg);
+  color: var(--vp-c-text-1);
+}
+
+.vp-doc tr:nth-child(2n) {
+  background: color-mix(in srgb, var(--vp-c-text-1) 3%, var(--vp-c-bg));
+}
+
+.vp-doc th,
+.vp-doc td {
+  border-color: var(--rho-rule);
+}
+
+.vp-doc th {
+  font-family: var(--rho-font-display);
+  font-size: 0.88rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  text-align: left;
+  background: color-mix(in srgb, var(--vp-c-text-1) 5%, var(--vp-c-bg));
+}
+
+.vp-doc table {
+  display: table;
+  width: 100%;
+  border-color: var(--rho-rule);
+}
+
+.vp-doc div[class*='language-'],
+.vp-block {
+  border: 1px solid color-mix(in srgb, var(--vp-c-text-1) 28%, transparent);
+  border-radius: 0 !important;
+  margin: 1.35rem 0 !important;
+}
+
+.vp-doc div[class*='language-'] code {
+  font-size: 0.88em;
+  line-height: 1.6;
+}
+
+.vp-doc .custom-block {
+  border-radius: 0;
+  border: 1px solid var(--rho-rule);
+  box-shadow: none;
+}
+
+.vp-doc .custom-block.tip {
+  border-color: color-mix(in srgb, var(--vp-c-tip-1) 45%, var(--rho-rule));
+}
+
+.vp-doc .custom-block.warning {
+  border-color: color-mix(in srgb, var(--vp-c-warning-1) 45%, var(--rho-rule));
+}
+
+.vp-doc .custom-block.danger {
+  border-color: color-mix(in srgb, var(--vp-c-danger-1) 45%, var(--rho-rule));
+}
+
+.vp-doc .custom-block-title {
+  font-family: var(--rho-font-display);
+  font-size: 0.9rem;
+  letter-spacing: -0.01em;
+}
+
+.vp-doc img {
+  border: 1px solid var(--rho-rule);
+  background: var(--vp-c-bg-alt);
+}
+
+.vp-doc hr {
+  border-top: 1px solid var(--vp-c-text-1);
+  margin: 2.5rem 0;
+}
+
+/* Buttons used by default VP home remnants and markdown */
+.VPButton {
+  border-radius: 0 !important;
+  font-family: var(--rho-font-display) !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.01em !important;
+}
+
+/* Doc footer / outline / pager */
+.VPDocFooter,
+.VPDocAsideOutline,
+.VPDocAsideCarbonAds {
+  --vp-c-brand-1: var(--rho-accent);
+}
+
+.VPDocAside .outline-title {
+  font-family: var(--rho-font-display);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  text-transform: none;
+}
+
+.VPDocAside .outline-link.active,
+.VPDocAside .outline-link:hover {
+  color: var(--rho-accent) !important;
+}
+
+.pager-link {
+  border-radius: 0 !important;
+  border-color: var(--rho-rule) !important;
+}
+
+.pager-link:hover {
+  border-color: var(--vp-c-text-1) !important;
+}
+
+.pager-link .title {
+  font-family: var(--rho-font-display);
+  font-size: 0.95rem !important;
+  letter-spacing: -0.015em;
+}
+
+.edit-link-button {
+  font-family: var(--rho-font-display);
+  font-size: 0.88rem !important;
+  letter-spacing: -0.01em;
+}
+
+/* Home layout breathing room under nav */
+.VPHome {
+  margin-bottom: 0 !important;
+  padding-bottom: 0 !important;
+}
+
 /* Mermaid diagrams rendered by vitepress-plugin-mermaid */
 .rho-mermaid {
   display: flex;
   justify-content: center;
   margin: 1.25rem 0;
   overflow-x: auto;
+  border: 1px solid var(--rho-rule);
+  background: color-mix(in srgb, var(--vp-c-bg) 92%, var(--vp-c-text-1));
+  padding: 1rem;
 }
 
 .rho-mermaid svg {
   max-width: 100%;
   height: auto;
+}
+
+/* Local search polish */
+.VPLocalSearchBox .result.selected {
+  background: var(--rho-accent-soft) !important;
+}
+
+/* Focus visibility — skip the copy control (it owns its own pressed state). */
+:focus-visible {
+  outline: 2px solid var(--rho-accent);
+  outline-offset: 2px;
+}
+
+.vp-doc [class*='language-'] > button.copy:focus,
+.vp-doc [class*='language-'] > button.copy:focus-visible {
+  outline: none;
+}
+
+/* Code copy: square control, icon-only success — no expanding "Copied" pill. */
+.vp-doc [class*='language-'] > button.copy {
+  border-radius: 0 !important;
+}
+
+.vp-doc [class*='language-'] > button.copy.copied,
+.vp-doc [class*='language-'] > button.copy:hover.copied {
+  border-radius: 0 !important;
+}
+
+.vp-doc [class*='language-'] > button.copy.copied::before,
+.vp-doc [class*='language-'] > button.copy:hover.copied::before {
+  content: none !important;
+  display: none !important;
+}
+
+/* Reduce motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
