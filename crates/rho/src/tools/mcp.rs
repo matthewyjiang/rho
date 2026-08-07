@@ -88,6 +88,7 @@ pub(crate) struct McpConnectOutcome {
 }
 
 impl McpConnectOutcome {
+    #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self {
             report: McpSessionReport::default(),
