@@ -1,13 +1,17 @@
+//! Readable line summaries for model-facing workflow tool results.
+//!
+//! Formatting produces lines and bounding consumes lines, so an oversized
+//! result loses whole trailing lines and clips the last one it keeps, rather
+//! than dropping content the budget could still have carried.
+
 use rho_sdk::tool::{ToolError, ToolErrorKind};
+use rho_tools::tool::{truncate, TRUNCATION_MARKER};
 
-use crate::workflow::{ArtifactKind, ArtifactObservation};
-
-use super::{
-    WorkflowCancellationStateSummary, WorkflowNodeStateSummary, WorkflowNodeSummary,
-    WorkflowRunStateSummary, WorkflowToolResult,
+use super::workflow::{
+    WorkflowArtifactSummary, WorkflowDiagnosticSummary, WorkflowNodeSummary, WorkflowToolResult,
 };
 
-pub(super) fn format_workflow_result(result: &WorkflowToolResult) -> String {
+pub(super) fn format_workflow_result(result: &WorkflowToolResult) -> Vec<String> {
     let mut lines = Vec::new();
     match result {
         WorkflowToolResult::Validate { valid, diagnostics } => {
@@ -19,17 +23,7 @@ pub(super) fn format_workflow_result(result: &WorkflowToolResult) -> String {
                 lines.push("diagnostics:".into());
             }
             for diagnostic in diagnostics {
-                let label = format!("{} [{}]", diagnostic.severity, diagnostic.code);
-                push_labeled_lines(&mut lines, "  ", &label, &diagnostic.message);
-                if let Some(source) = &diagnostic.source {
-                    push_labeled_lines(&mut lines, "    ", "source", source);
-                }
-                if let Some(line) = diagnostic.line {
-                    lines.push(format!("    line: {line}"));
-                }
-                if let Some(column) = diagnostic.column {
-                    lines.push(format!("    column: {column}"));
-                }
+                push_diagnostic(&mut lines, diagnostic);
             }
         }
         WorkflowToolResult::Plan {
@@ -48,80 +42,70 @@ pub(super) fn format_workflow_result(result: &WorkflowToolResult) -> String {
             graph_digest,
             state,
             nodes,
+        } => {
+            lines.push(format!("workflow {run_id}: {}", state.as_str()));
+            lines.push(format!("graph_digest: {graph_digest}"));
+            lines.push(format!("nodes: {}", nodes.len()));
+            for node in nodes {
+                push_node(&mut lines, node);
+            }
         }
-        | WorkflowToolResult::Status {
-            run_id,
-            graph_digest,
-            state,
-            nodes,
-        }
-        | WorkflowToolResult::Resume {
-            run_id,
-            graph_digest,
-            state,
-            nodes,
-        } => push_run_summary(&mut lines, run_id, graph_digest, *state, nodes),
         WorkflowToolResult::Cancel {
             run_id,
             request_id,
             cancellation_state,
             state,
         } => {
-            lines.push(format!("workflow {run_id}: {}", run_state_label(*state)));
-            lines.push(format!(
-                "cancellation: {}",
-                cancellation_state_label(*cancellation_state)
-            ));
+            lines.push(format!("workflow {run_id}: {}", state.as_str()));
+            lines.push(format!("cancellation: {}", cancellation_state.as_str()));
             if let Some(request_id) = request_id {
                 lines.push(format!("request_id: {request_id}"));
             }
         }
     }
-    lines.join("\n")
+    lines
 }
 
-fn push_run_summary(
-    lines: &mut Vec<String>,
-    run_id: &str,
-    graph_digest: &str,
-    state: WorkflowRunStateSummary,
-    nodes: &[WorkflowNodeSummary],
-) {
-    lines.push(format!("workflow {run_id}: {}", run_state_label(state)));
-    lines.push(format!("graph_digest: {graph_digest}"));
-    lines.push(format!("nodes: {}", nodes.len()));
-    for node in nodes {
-        let attempt = node
-            .attempt
-            .map(|attempt| format!(" · attempt {attempt}"))
-            .unwrap_or_default();
-        lines.push(format!(
-            "  {} · {}{attempt}",
-            node.node_id,
-            node_state_label(node.state)
-        ));
-        for artifact in &node.artifacts {
-            let reference = &artifact.artifact;
-            let observation = match &reference.observed {
-                ArtifactObservation::Complete { observed_bytes } => {
-                    format!("{observed_bytes} bytes observed (complete)")
-                }
-                ArtifactObservation::Truncated {
-                    observed_bytes_at_least,
-                } => format!("at least {observed_bytes_at_least} bytes observed (truncated)"),
-                ArtifactObservation::Incomplete { observed_bytes } => {
-                    format!("{observed_bytes} bytes observed (incomplete)")
-                }
-            };
-            lines.push(format!(
-                "    {}: {} · {} bytes retained · {observation} · digest {}",
-                artifact_kind_label(artifact.kind),
-                reference.relative_path,
-                reference.retained_bytes,
-                reference.digest.0
-            ));
-        }
+fn push_diagnostic(lines: &mut Vec<String>, diagnostic: &WorkflowDiagnosticSummary) {
+    let label = format!("{} [{}]", diagnostic.severity, diagnostic.code);
+    push_labeled_lines(lines, "  ", &label, &diagnostic.message);
+    if let Some(source) = &diagnostic.source {
+        push_labeled_lines(lines, "    ", "source", source);
     }
+    if let Some(line) = diagnostic.line {
+        lines.push(format!("    line: {line}"));
+    }
+    if let Some(column) = diagnostic.column {
+        lines.push(format!("    column: {column}"));
+    }
+}
+
+fn push_node(lines: &mut Vec<String>, node: &WorkflowNodeSummary) {
+    let attempt = node
+        .attempt
+        .map(|attempt| format!(" · attempt {attempt}"))
+        .unwrap_or_default();
+    lines.push(format!(
+        "  {} · {}{attempt}",
+        node.node_id,
+        node.state.as_str()
+    ));
+    lines.extend(node.artifacts.iter().map(artifact_line));
+}
+
+fn artifact_line(artifact: &WorkflowArtifactSummary) -> String {
+    let reference = &artifact.artifact;
+    let observation = reference
+        .observation_notice()
+        .map(|notice| format!(" · {notice}"))
+        .unwrap_or_default();
+    format!(
+        "    {}: {} · {} bytes · digest {}{observation}",
+        artifact.kind.label(),
+        reference.relative_path,
+        reference.retained_bytes,
+        reference.digest.0
+    )
 }
 
 fn push_labeled_lines(lines: &mut Vec<String>, indent: &str, label: &str, value: &str) {
@@ -134,89 +118,73 @@ fn push_labeled_lines(lines: &mut Vec<String>, indent: &str, label: &str, value:
     lines.extend(value_lines.map(|line| format!("{indent}  {line}")));
 }
 
-fn run_state_label(state: WorkflowRunStateSummary) -> &'static str {
-    match state {
-        WorkflowRunStateSummary::Planned => "planned",
-        WorkflowRunStateSummary::Running => "running",
-        WorkflowRunStateSummary::Cancelling => "cancelling",
-        WorkflowRunStateSummary::Completed => "completed",
-        WorkflowRunStateSummary::NeedsRecovery => "needs_recovery",
-    }
-}
-
-fn cancellation_state_label(state: WorkflowCancellationStateSummary) -> &'static str {
-    match state {
-        WorkflowCancellationStateSummary::Acknowledged => "acknowledged",
-        WorkflowCancellationStateSummary::Pending => "pending",
-        WorkflowCancellationStateSummary::AlreadyCompleted => "already_completed",
-    }
-}
-
-fn node_state_label(state: WorkflowNodeStateSummary) -> &'static str {
-    match state {
-        WorkflowNodeStateSummary::Pending => "pending",
-        WorkflowNodeStateSummary::Ready => "ready",
-        WorkflowNodeStateSummary::Running => "running",
-        WorkflowNodeStateSummary::Success => "success",
-        WorkflowNodeStateSummary::Failure => "failure",
-        WorkflowNodeStateSummary::Denial => "denial",
-        WorkflowNodeStateSummary::Cancellation => "cancellation",
-        WorkflowNodeStateSummary::Skipped => "skipped",
-        WorkflowNodeStateSummary::Blocked => "blocked",
-    }
-}
-
-fn artifact_kind_label(kind: ArtifactKind) -> &'static str {
-    match kind {
-        ArtifactKind::Stdout => "stdout",
-        ArtifactKind::Stderr => "stderr",
-        ArtifactKind::AgentAnswer => "agent answer",
-        ArtifactKind::StructuredOutput => "structured output",
-        ArtifactKind::CommandOutcome => "command outcome",
-    }
-}
-
 pub(super) fn bounded_result(
     result: &WorkflowToolResult,
     max_output_bytes: usize,
 ) -> Result<String, ToolError> {
-    let formatted = format_workflow_result(result);
-    if formatted.len() <= max_output_bytes {
-        return Ok(formatted);
+    let lines = format_workflow_result(result);
+    let total_bytes = joined_len(&lines);
+    if total_bytes <= max_output_bytes {
+        return Ok(lines.join("\n"));
     }
 
-    let notice = format!(
-        "... workflow details omitted: output is {} bytes; limit is {max_output_bytes} bytes",
-        formatted.len()
-    );
-    if notice.len() > max_output_bytes {
+    // Reserve against the widest notice this result can produce. The real
+    // notice reports how many lines were dropped, which is never more than the
+    // line count, so it can only be shorter than the reservation.
+    let reserved = omission_notice(lines.len(), total_bytes, max_output_bytes).len();
+    if reserved > max_output_bytes {
         return Err(ToolError::new(
             ToolErrorKind::Execution,
             format!(
-                "workflow tool output budget is too small: accepted limit {max_output_bytes}, required {}",
-                notice.len()
+                "workflow tool output budget is too small: accepted limit {max_output_bytes}, required {reserved}"
             ),
         ));
     }
-    if notice.len() == max_output_bytes {
-        return Ok(notice);
-    }
-
-    let prefix_bytes = max_output_bytes - notice.len() - 1;
-    let candidate = byte_prefix(&formatted, prefix_bytes);
-    let Some(boundary) = candidate.rfind('\n') else {
-        return Ok(notice);
+    let Some(budget) = max_output_bytes.checked_sub(reserved + 1) else {
+        return Ok(omission_notice(lines.len(), total_bytes, max_output_bytes));
     };
-    if boundary == 0 {
-        return Ok(notice);
+
+    let mut kept = Vec::new();
+    let mut delivered = 0;
+    let mut used = 0;
+    for line in &lines {
+        let separator = usize::from(!kept.is_empty());
+        if used + separator + line.len() <= budget {
+            used += separator + line.len();
+            delivered += 1;
+            kept.push(line.clone());
+            continue;
+        }
+        // A line longer than the whole budget could never be delivered intact,
+        // so clip it and keep what fits; one huge diagnostic still reports
+        // which diagnostic it was. A line that merely ran out of room here is
+        // dropped whole, because a two-character stub tells the model nothing.
+        let available = budget.saturating_sub(used + separator);
+        if line.len() > budget && available > TRUNCATION_MARKER.len() {
+            kept.push(truncate(line.clone(), available - TRUNCATION_MARKER.len()));
+        }
+        break;
     }
-    Ok(format!("{}\n{notice}", &candidate[..boundary]))
+
+    kept.push(omission_notice(
+        lines.len() - delivered,
+        total_bytes,
+        max_output_bytes,
+    ));
+    Ok(kept.join("\n"))
 }
 
-fn byte_prefix(value: &str, max_bytes: usize) -> &str {
-    let mut boundary = max_bytes.min(value.len());
-    while boundary > 0 && !value.is_char_boundary(boundary) {
-        boundary -= 1;
-    }
-    &value[..boundary]
+/// Bytes the lines occupy once newline-joined.
+fn joined_len(lines: &[String]) -> usize {
+    lines.iter().map(String::len).sum::<usize>() + lines.len().saturating_sub(1)
 }
+
+fn omission_notice(omitted: usize, total_bytes: usize, max_output_bytes: usize) -> String {
+    format!(
+        "... {omitted} more line(s) omitted; workflow summary is {total_bytes} bytes and the limit is {max_output_bytes} bytes"
+    )
+}
+
+#[cfg(test)]
+#[path = "workflow_output_tests.rs"]
+mod tests;

@@ -9,7 +9,7 @@ use std::{
 use ratatui::text::Line;
 
 use super::event_adapter::{ArtifactReference, WorkflowNodeSnapshot};
-use crate::workflow::{ArtifactKind, ArtifactObservation, Digest};
+use crate::workflow::{ArtifactKind, Digest};
 
 /// Preferred artifact kinds for the details body, most useful first.
 const PREFERRED_KINDS: [ArtifactKind; 4] = [
@@ -63,10 +63,7 @@ pub(super) fn load_finished_output(
         }
     };
     let mut notices = Vec::new();
-    if let Some(notice) = observation_notice(
-        &reference.artifact.observed,
-        reference.artifact.retained_bytes,
-    ) {
+    if let Some(notice) = reference.artifact.observation_notice() {
         notices.push(notice);
     }
     notices.extend(read_notices);
@@ -87,16 +84,6 @@ pub(super) fn body_matches_node(body: &NodeOutputBody, node: &WorkflowNodeSnapsh
             && body.digest == reference.artifact.digest
             && body.kind == reference.kind
     })
-}
-
-pub(super) fn kind_label(kind: ArtifactKind) -> &'static str {
-    match kind {
-        ArtifactKind::AgentAnswer => "answer",
-        ArtifactKind::StructuredOutput => "structured output",
-        ArtifactKind::Stdout => "stdout",
-        ArtifactKind::Stderr => "stderr",
-        ArtifactKind::CommandOutcome => "command outcome",
-    }
 }
 
 /// Render loaded output text for the current pane width.
@@ -158,20 +145,6 @@ fn render_plain(text: &str, width: usize) -> Vec<Line<'static>> {
 fn pretty_json(text: &str) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(text.trim()).ok()?;
     serde_json::to_string_pretty(&value).ok()
-}
-
-fn observation_notice(observed: &ArtifactObservation, retained_bytes: u64) -> Option<String> {
-    match observed {
-        ArtifactObservation::Complete { .. } => None,
-        ArtifactObservation::Truncated {
-            observed_bytes_at_least,
-        } => Some(format!(
-            "truncated · showing {retained_bytes} of at least {observed_bytes_at_least} bytes"
-        )),
-        ArtifactObservation::Incomplete { observed_bytes } => Some(format!(
-            "incomplete · retained {retained_bytes} bytes (observed {observed_bytes})"
-        )),
-    }
 }
 
 fn read_artifact_text(

@@ -10,9 +10,7 @@ use std::{
     time::Instant,
 };
 
-use crate::workflow::{
-    NodeState, NodeTerminalState, RunLifecycle, StoredRun, WorkflowOutcome, WorkflowValue,
-};
+use crate::workflow::{StoredRun, WorkflowOutcome, WorkflowValue};
 
 const MODEL_NOTIFICATION_BYTES: usize = 16 * 1024;
 const RESULT_EXCERPT_BYTES: usize = 4 * 1024;
@@ -293,8 +291,13 @@ fn format_notification_summary(notification: &WorkflowNotification) -> String {
 }
 
 pub(crate) fn snapshot_from_stored(run: &StoredRun) -> WorkflowFinishedSnapshot {
-    let lifecycle = lifecycle_name(run.state.state.lifecycle).into();
-    let outcome = run.state.state.outcome.map(outcome_name).map(str::to_owned);
+    let lifecycle = run.state.state.lifecycle.as_str().into();
+    let outcome = run
+        .state
+        .state
+        .outcome
+        .map(WorkflowOutcome::as_str)
+        .map(str::to_owned);
     let nodes = run
         .state
         .state
@@ -302,7 +305,7 @@ pub(crate) fn snapshot_from_stored(run: &StoredRun) -> WorkflowFinishedSnapshot 
         .iter()
         .map(|(node_id, state)| WorkflowNodeLine {
             node_id: node_id.to_string(),
-            state: node_state_name(state).into(),
+            state: state.as_str().into(),
         })
         .collect();
     let mut outputs = Vec::new();
@@ -324,42 +327,6 @@ fn compact_output(value: &WorkflowValue) -> Option<String> {
     match serde_json::to_string(value) {
         Ok(text) if !text.is_empty() && text != "null" => Some(text),
         _ => None,
-    }
-}
-
-fn lifecycle_name(lifecycle: RunLifecycle) -> &'static str {
-    match lifecycle {
-        RunLifecycle::Planned => "planned",
-        RunLifecycle::Running => "running",
-        RunLifecycle::Cancelling => "cancelling",
-        RunLifecycle::Completed => "completed",
-        RunLifecycle::NeedsRecovery => "needs_recovery",
-    }
-}
-
-fn outcome_name(outcome: WorkflowOutcome) -> &'static str {
-    match outcome {
-        WorkflowOutcome::Success => "success",
-        WorkflowOutcome::Failure => "failure",
-        WorkflowOutcome::Denial => "denial",
-        WorkflowOutcome::Cancellation => "cancellation",
-        WorkflowOutcome::Blocked => "blocked",
-    }
-}
-
-fn node_state_name(state: &NodeState) -> &'static str {
-    match state {
-        NodeState::Pending => "pending",
-        NodeState::Ready => "ready",
-        NodeState::Running { .. } => "running",
-        NodeState::Terminal { outcome } => match outcome {
-            NodeTerminalState::Success => "success",
-            NodeTerminalState::Failure => "failure",
-            NodeTerminalState::Denial => "denial",
-            NodeTerminalState::Cancellation => "cancellation",
-            NodeTerminalState::Skipped => "skipped",
-            NodeTerminalState::Blocked => "blocked",
-        },
     }
 }
 

@@ -18,14 +18,13 @@ use crate::{
     tools::{
         workflow::{
             WorkflowArtifactSummary, WorkflowCancellationStateSummary, WorkflowDiagnosticSummary,
-            WorkflowNodeStateSummary, WorkflowNodeSummary, WorkflowRunStateSummary,
-            WorkflowToolRequest, WorkflowToolResult, WorkflowToolService,
+            WorkflowNodeSummary, WorkflowToolRequest, WorkflowToolResult, WorkflowToolService,
         },
         workflow_tracker::WorkflowRunTracker,
     },
     workflow::{
-        InputName, NodeState, NodeTerminalState, PlanningLimits, RunLifecycle, SourceBytes,
-        SourceCollector, StoredRun, WorkflowError, WorkflowResult, WorkflowValue,
+        InputName, NodeState, PlanningLimits, RunLifecycle, SourceBytes, SourceCollector,
+        StoredRun, WorkflowError, WorkflowResult, WorkflowValue,
     },
 };
 
@@ -301,13 +300,13 @@ impl AppWorkflowToolService {
                 )
                 .await
                 .map_err(model_workflow_tool_error)?;
-                run_result(started, RunResultKind::Run)
+                run_result(started)
             }
             WorkflowToolRequest::Status { run_id } => {
                 let ops = self.ops().map_err(model_workflow_tool_error)?;
                 let run = ops.load_run_id(run_id).map_err(model_workflow_tool_error)?;
                 observe_if_terminal(&self.tracker, &run);
-                run_result(run, RunResultKind::Status)
+                run_result(run)
             }
             WorkflowToolRequest::Cancel { run_id } => {
                 let ops = self.ops().map_err(model_workflow_tool_error)?;
@@ -336,7 +335,7 @@ impl AppWorkflowToolService {
                             WorkflowCancellationStateSummary::AlreadyCompleted
                         }
                     },
-                    state: state_summary(outcome.lifecycle),
+                    state: outcome.lifecycle,
                 })
             }
             WorkflowToolRequest::Resume {
@@ -373,7 +372,7 @@ impl AppWorkflowToolService {
                 )
                 .await
                 .map_err(model_workflow_tool_error)?;
-                run_result(started, RunResultKind::Resume)
+                run_result(started)
             }
         }
     }
@@ -562,13 +561,6 @@ async fn confirm_exact_plan(
     Ok(())
 }
 
-#[derive(Clone, Copy)]
-enum RunResultKind {
-    Run,
-    Status,
-    Resume,
-}
-
 fn observe_if_terminal(tracker: &WorkflowRunTracker, run: &StoredRun) {
     if matches!(
         run.state.state.lifecycle,
@@ -580,10 +572,10 @@ fn observe_if_terminal(tracker: &WorkflowRunTracker, run: &StoredRun) {
     }
 }
 
-fn run_result(run: StoredRun, kind: RunResultKind) -> Result<WorkflowToolResult, ToolError> {
+fn run_result(run: StoredRun) -> Result<WorkflowToolResult, ToolError> {
     let run_id = run.manifest.run_id.to_string();
     let graph_digest = run.manifest.graph_digest.0.clone();
-    let state = state_summary(run.state.state.lifecycle);
+    let state = run.state.state.lifecycle;
     let nodes = run
         .state
         .state
@@ -603,7 +595,7 @@ fn run_result(run: StoredRun, kind: RunResultKind) -> Result<WorkflowToolResult,
             };
             WorkflowNodeSummary {
                 node_id: node_id.to_string(),
-                state: node_state_summary(state),
+                state: state.clone(),
                 attempt,
                 artifacts: run
                     .state
@@ -620,52 +612,12 @@ fn run_result(run: StoredRun, kind: RunResultKind) -> Result<WorkflowToolResult,
             }
         })
         .collect();
-    Ok(match kind {
-        RunResultKind::Run => WorkflowToolResult::Run {
-            run_id,
-            graph_digest,
-            state,
-            nodes,
-        },
-        RunResultKind::Status => WorkflowToolResult::Status {
-            run_id,
-            graph_digest,
-            state,
-            nodes,
-        },
-        RunResultKind::Resume => WorkflowToolResult::Resume {
-            run_id,
-            graph_digest,
-            state,
-            nodes,
-        },
+    Ok(WorkflowToolResult::Run {
+        run_id,
+        graph_digest,
+        state,
+        nodes,
     })
-}
-
-fn state_summary(lifecycle: RunLifecycle) -> WorkflowRunStateSummary {
-    match lifecycle {
-        RunLifecycle::Planned => WorkflowRunStateSummary::Planned,
-        RunLifecycle::Running => WorkflowRunStateSummary::Running,
-        RunLifecycle::Cancelling => WorkflowRunStateSummary::Cancelling,
-        RunLifecycle::Completed => WorkflowRunStateSummary::Completed,
-        RunLifecycle::NeedsRecovery => WorkflowRunStateSummary::NeedsRecovery,
-    }
-}
-
-fn node_state_summary(state: &NodeState) -> WorkflowNodeStateSummary {
-    match state {
-        NodeState::Pending => WorkflowNodeStateSummary::Pending,
-        NodeState::Ready => WorkflowNodeStateSummary::Ready,
-        NodeState::Running { .. } => WorkflowNodeStateSummary::Running,
-        NodeState::Terminal { outcome } => match outcome {
-            NodeTerminalState::Success => WorkflowNodeStateSummary::Success,
-            NodeTerminalState::Failure => WorkflowNodeStateSummary::Failure,
-            NodeTerminalState::Denial => WorkflowNodeStateSummary::Denial,
-            NodeTerminalState::Cancellation => WorkflowNodeStateSummary::Cancellation,
-            NodeTerminalState::Skipped => WorkflowNodeStateSummary::Skipped,
-            NodeTerminalState::Blocked => WorkflowNodeStateSummary::Blocked,
-        },
-    }
 }
 
 fn diagnostic_summary(diagnostic: crate::workflow::Diagnostic) -> WorkflowDiagnosticSummary {
