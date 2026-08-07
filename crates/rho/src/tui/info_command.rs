@@ -176,10 +176,17 @@ pub(super) fn runtime_info_lines(info: &RuntimeInfo, width: usize) -> Vec<Line<'
             block.push_field("Generation", &format_duration(duration));
         }
         push_optional_number(&mut block, "Output tokens", metrics.output_tokens);
-        if let Some(rate) = metrics.generation_tokens_per_second() {
+        // Compute rates from published metric fields. Do not call
+        // ModelCallMetrics::{generation,response}_tokens_per_second here until
+        // a released rho-sdk cut exports them; package verify builds against
+        // crates.io.
+        if let Some(rate) = metrics
+            .generation_time
+            .and_then(|window| tokens_per_second(metrics.output_tokens, window))
+        {
             block.push_field("Generation rate", &format!("{rate:.1} tok/s"));
         }
-        if let Some(rate) = metrics.response_tokens_per_second() {
+        if let Some(rate) = tokens_per_second(metrics.output_tokens, metrics.total_latency) {
             block.push_field("Response rate", &format!("{rate:.1} tok/s"));
         }
         block.push_field("Total latency", &format_duration(metrics.total_latency));
@@ -346,6 +353,12 @@ fn format_context(info: &RuntimeInfo) -> Option<String> {
         format_number(tokens),
         format_number(window)
     ))
+}
+
+fn tokens_per_second(tokens: Option<u64>, window: Duration) -> Option<f64> {
+    let tokens = tokens?;
+    let seconds = window.as_secs_f64();
+    (seconds > 0.0).then(|| tokens as f64 / seconds)
 }
 
 fn format_duration(duration: Duration) -> String {
