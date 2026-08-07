@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.18.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.17.1...rho-providers-v0.18.0) (2026-08-07)
+
+
+### Features
+
+* **agents:** allow pinning auth profiles on rho agents ([#781](https://github.com/matthewyjiang/rho/issues/781)) ([3e1f691](https://github.com/matthewyjiang/rho/commit/3e1f691e693dd93bf888cb5c3eb3093a7169525a))
+
+
+### Bug Fixes
+
+* **sdk:** recover failed 1.32.0 release packaging ([#792](https://github.com/matthewyjiang/rho/issues/792)) ([a782145](https://github.com/matthewyjiang/rho/commit/a782145820f2924a47140f9e8cd8e3cbd13be8a3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.17.0 to 1.17.1
+
 ## [0.17.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.17.0...rho-providers-v0.17.1) (2026-08-06)
 
 
