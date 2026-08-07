@@ -55,7 +55,7 @@ impl AgentDefinition {
         let is_claude = self.runtime.runtime() == AgentRuntime::ClaudeCli;
         let policy = match value {
             "inherit" => {
-                self.set_model_selection(None, None);
+                self.set_model_selection(None, None, None);
                 ModelPolicy::Inherit
             }
             "prefer" if !is_claude => ModelPolicy::Prefer(self.current_selection()),
@@ -74,10 +74,12 @@ impl AgentDefinition {
             | ModelPolicy::Select(selection) => ModelSelection {
                 provider: selection.provider.clone(),
                 model: selection.model.clone(),
+                auth: selection.auth.clone(),
             },
             ModelPolicy::Inherit => ModelSelection {
                 provider: None,
                 model: String::new(),
+                auth: None,
             },
         }
     }
@@ -125,24 +127,29 @@ impl AgentDefinition {
             self.set_model_policy(ModelPolicy::Inherit);
             return;
         }
-        let provider = match self.model_policy().as_ref() {
+        let (provider, auth) = match self.model_policy().as_ref() {
             ModelPolicy::Prefer(selection)
             | ModelPolicy::Require(selection)
-            | ModelPolicy::Select(selection) => selection.provider.clone(),
-            ModelPolicy::Inherit => None,
+            | ModelPolicy::Select(selection) => {
+                (selection.provider.clone(), selection.auth.clone())
+            }
+            ModelPolicy::Inherit => (None, None),
         };
         let policy = match self.model_policy().as_ref() {
             ModelPolicy::Prefer(_) => ModelPolicy::Prefer(ModelSelection {
                 provider,
                 model: trimmed,
+                auth,
             }),
             ModelPolicy::Require(_) => ModelPolicy::Require(ModelSelection {
                 provider,
                 model: trimmed,
+                auth,
             }),
             _ => ModelPolicy::Select(ModelSelection {
                 provider,
                 model: trimmed,
+                auth,
             }),
         };
         self.set_model_policy(policy);
@@ -150,38 +157,120 @@ impl AgentDefinition {
 
     pub(crate) fn set_provider_text(&mut self, value: String) {
         let trimmed = value.trim().to_string();
-        let model = match self.model_policy().as_ref() {
+        let (model, auth) = match self.model_policy().as_ref() {
             ModelPolicy::Prefer(selection)
             | ModelPolicy::Require(selection)
-            | ModelPolicy::Select(selection) => selection.model.clone(),
+            | ModelPolicy::Select(selection) => (selection.model.clone(), selection.auth.clone()),
             ModelPolicy::Inherit => return,
         };
         let provider = (!trimmed.is_empty()).then_some(trimmed);
+        let auth = auth.filter(|auth| auth_fits_provider(provider.as_deref(), auth));
         let policy = match self.model_policy().as_ref() {
-            ModelPolicy::Prefer(_) => ModelPolicy::Prefer(ModelSelection { provider, model }),
-            ModelPolicy::Require(_) => ModelPolicy::Require(ModelSelection { provider, model }),
-            _ => ModelPolicy::Select(ModelSelection { provider, model }),
+            ModelPolicy::Prefer(_) => ModelPolicy::Prefer(ModelSelection {
+                provider,
+                model,
+                auth,
+            }),
+            ModelPolicy::Require(_) => ModelPolicy::Require(ModelSelection {
+                provider,
+                model,
+                auth,
+            }),
+            _ => ModelPolicy::Select(ModelSelection {
+                provider,
+                model,
+                auth,
+            }),
         };
         self.set_model_policy(policy);
     }
 
-    pub(crate) fn set_model_selection(&mut self, provider: Option<String>, model: Option<String>) {
+    /// Pins or clears the auth profile for a non-inherit model policy.
+    ///
+    /// When setting an auth profile and provider is empty or incompatible, the
+    /// provider is updated from the auth profile's provider.
+    pub(crate) fn set_auth_selection(&mut self, auth: Option<String>) -> bool {
+        if self.runtime.runtime() == AgentRuntime::ClaudeCli {
+            return auth.is_none();
+        }
+        let (provider, model) = match self.model_policy().as_ref() {
+            ModelPolicy::Prefer(selection)
+            | ModelPolicy::Require(selection)
+            | ModelPolicy::Select(selection) => {
+                (selection.provider.clone(), selection.model.clone())
+            }
+            ModelPolicy::Inherit => return false,
+        };
+        let (provider, auth) = match auth {
+            None => (provider, None),
+            Some(auth) => {
+                let Some((descriptor, mode)) = rho_providers::provider::resolve_auth_mode(&auth)
+                else {
+                    return false;
+                };
+                let provider = match provider {
+                    Some(existing) if auth_fits_provider(Some(&existing), mode.id) => {
+                        Some(existing)
+                    }
+                    _ => Some(descriptor.name.to_string()),
+                };
+                (provider, Some(mode.id.to_string()))
+            }
+        };
+        let policy = match self.model_policy().as_ref() {
+            ModelPolicy::Prefer(_) => ModelPolicy::Prefer(ModelSelection {
+                provider,
+                model,
+                auth,
+            }),
+            ModelPolicy::Require(_) => ModelPolicy::Require(ModelSelection {
+                provider,
+                model,
+                auth,
+            }),
+            _ => ModelPolicy::Select(ModelSelection {
+                provider,
+                model,
+                auth,
+            }),
+        };
+        self.set_model_policy(policy);
+        true
+    }
+
+    pub(crate) fn set_model_selection(
+        &mut self,
+        provider: Option<String>,
+        model: Option<String>,
+        auth: Option<String>,
+    ) {
         if self.runtime.runtime() == AgentRuntime::ClaudeCli {
             if let AgentRuntimeSpec::ClaudeCli(config) = &mut self.runtime {
                 config.model = model.filter(|value| !value.is_empty());
             }
             return;
         }
+        let auth = auth.filter(|value| !value.is_empty());
         let policy = match (self.model_policy().as_ref(), model) {
             (ModelPolicy::Prefer(_), Some(model)) if !model.is_empty() => {
-                ModelPolicy::Prefer(ModelSelection { provider, model })
+                ModelPolicy::Prefer(ModelSelection {
+                    provider,
+                    model,
+                    auth,
+                })
             }
             (ModelPolicy::Require(_), Some(model)) if !model.is_empty() => {
-                ModelPolicy::Require(ModelSelection { provider, model })
+                ModelPolicy::Require(ModelSelection {
+                    provider,
+                    model,
+                    auth,
+                })
             }
-            (_, Some(model)) if !model.is_empty() => {
-                ModelPolicy::Select(ModelSelection { provider, model })
-            }
+            (_, Some(model)) if !model.is_empty() => ModelPolicy::Select(ModelSelection {
+                provider,
+                model,
+                auth,
+            }),
             _ => ModelPolicy::Inherit,
         };
         self.set_model_policy(policy);
@@ -284,6 +373,22 @@ impl AgentDefinition {
         }
     }
 
+    pub(crate) fn auth_text(&self) -> String {
+        match self.model_policy().as_ref() {
+            ModelPolicy::Prefer(selection)
+            | ModelPolicy::Require(selection)
+            | ModelPolicy::Select(selection) => selection.auth.clone().unwrap_or_default(),
+            ModelPolicy::Inherit => String::new(),
+        }
+    }
+
+    pub(crate) fn auth_badge(&self) -> String {
+        match self.auth_text() {
+            value if value.is_empty() => "host".into(),
+            value => value,
+        }
+    }
+
     pub(crate) fn tools_badge(&self) -> String {
         match &self.runtime {
             AgentRuntimeSpec::Rho {
@@ -362,6 +467,7 @@ fn build_runtime_spec(
                 | ModelPolicy::Select(selection) => ModelPolicy::Select(ModelSelection {
                     provider: selection.provider.clone(),
                     model: selection.model.clone(),
+                    auth: selection.auth.clone(),
                 }),
             };
             AgentRuntimeSpec::Rho {
@@ -386,6 +492,19 @@ fn build_runtime_spec(
                 reasoning,
             })
         }
+    }
+}
+
+fn auth_fits_provider(provider: Option<&str>, auth: &str) -> bool {
+    let Some((auth_provider, mode)) = rho_providers::provider::resolve_auth_mode(auth) else {
+        return false;
+    };
+    let Some(provider) = provider else {
+        return true;
+    };
+    match rho_providers::provider::resolve_profile(provider, mode.id) {
+        Ok(profile) => profile.auth_id() == mode.id,
+        Err(_) => auth_provider.name == provider,
     }
 }
 

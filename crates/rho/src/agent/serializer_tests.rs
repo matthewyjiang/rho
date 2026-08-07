@@ -116,6 +116,7 @@ fn canonicalizes_ordered_fields() {
             model: ModelPolicy::Select(ModelSelection {
                 provider: Some("openai".into()),
                 model: "model-x".into(),
+                auth: None,
             }),
             reasoning: Some(ReasoningLevel::Low),
         },

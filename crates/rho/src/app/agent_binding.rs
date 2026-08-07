@@ -475,13 +475,12 @@ fn bind_rho_config(
             }
             config.model_alias = resolved.alias;
             let provider = resolved.provider.or_else(|| selection.provider.clone());
-            if let Some(provider) = &provider {
-                super::cli_config::apply_provider_override(
-                    &mut config,
-                    provider,
-                    /* explicit_model */ true,
-                )?;
-            }
+            apply_bound_provider_auth(
+                agent_id,
+                &mut config,
+                provider.as_deref(),
+                selection.auth.as_deref(),
+            )?;
             config.model = resolved.model;
         }
     }
@@ -489,6 +488,81 @@ fn bind_rho_config(
         config.reasoning = reasoning;
     }
     Ok(config)
+}
+
+/// Applies optional provider/auth pins from an agent definition onto a host clone.
+///
+/// - Explicit `auth` wins and must resolve to a known profile. When `provider` is
+///   also set, it must accept that auth.
+/// - Provider without `auth` keeps the host auth when it is valid for that
+///   provider; otherwise it uses the provider default. This avoids forcing
+///   `xai` onto `xai-api-key` when the host is already on `xai-oauth`.
+/// - Auth without `provider` sets both from the auth profile.
+fn apply_bound_provider_auth(
+    agent_id: &str,
+    config: &mut Config,
+    provider: Option<&str>,
+    auth: Option<&str>,
+) -> anyhow::Result<()> {
+    use rho_providers::provider::{resolve_auth_mode, resolve_profile, resolve_provider_reference};
+
+    match (provider, auth) {
+        (None, None) => Ok(()),
+        (None, Some(auth)) => {
+            let (descriptor, mode) = resolve_auth_mode(auth).ok_or_else(|| {
+                anyhow::anyhow!("agent '{agent_id}': unknown auth profile '{auth}'")
+            })?;
+            config.provider = descriptor.name.to_string();
+            config.auth = mode.id.to_string();
+            Ok(())
+        }
+        (Some(provider), None) => {
+            // Keep host auth when resolve_profile preserves it for this provider.
+            if let Some((_, host_mode)) = resolve_auth_mode(&config.auth) {
+                if let Ok(profile) = resolve_profile(provider, host_mode.id) {
+                    if profile.auth_id() == host_mode.id {
+                        config.provider = profile.provider_name().to_string();
+                        config.auth = profile.auth_id().to_string();
+                        return Ok(());
+                    }
+                }
+            }
+            let profile = resolve_provider_reference(provider)
+                .map_err(|error| bind_profile_error(agent_id, provider, None, error))?;
+            config.provider = profile.provider_name().to_string();
+            config.auth = profile.auth_id().to_string();
+            Ok(())
+        }
+        (Some(provider), Some(auth)) => {
+            let (_, mode) = resolve_auth_mode(auth).ok_or_else(|| {
+                anyhow::anyhow!("agent '{agent_id}': unknown auth profile '{auth}'")
+            })?;
+            let profile = resolve_profile(provider, auth)
+                .map_err(|error| bind_profile_error(agent_id, provider, Some(auth), error))?;
+            if profile.auth_id() != mode.id {
+                anyhow::bail!(
+                    "agent '{agent_id}': auth '{auth}' is not valid for provider '{provider}'"
+                );
+            }
+            config.provider = profile.provider_name().to_string();
+            config.auth = profile.auth_id().to_string();
+            Ok(())
+        }
+    }
+}
+
+fn bind_profile_error(
+    agent_id: &str,
+    provider: &str,
+    auth: Option<&str>,
+    error: rho_providers::provider::ProfileResolutionError,
+) -> anyhow::Error {
+    match auth {
+        Some(auth) => {
+            anyhow::anyhow!("agent '{agent_id}': provider '{provider}' auth '{auth}': {error}")
+        }
+        None => anyhow::anyhow!("agent '{agent_id}': provider '{provider}': {error}"),
+    }
 }
 
 fn bind_claude_runtime(

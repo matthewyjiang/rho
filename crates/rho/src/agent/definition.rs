@@ -178,6 +178,11 @@ pub enum PromptPolicy {
 pub struct ModelSelection {
     pub provider: Option<String>,
     pub model: String,
+    /// Optional auth profile id (for example `xai-oauth`).
+    ///
+    /// When unset, bind keeps the host auth if it is valid for the selected
+    /// provider; otherwise it falls back to that provider's default auth.
+    pub auth: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -349,6 +354,7 @@ impl AgentDefinition {
                 Some(model) => ModelPolicy::Select(ModelSelection {
                     provider: None,
                     model: model.clone(),
+                    auth: None,
                 }),
             }),
         }
@@ -495,6 +501,12 @@ fn hash_selection(hash: &mut Sha256, policy: &[u8], selection: &ModelSelection) 
     hash_field(hash, policy);
     hash_field(hash, selection.provider.as_deref().unwrap_or("").as_bytes());
     hash_field(hash, selection.model.as_bytes());
+    // Only hash explicit auth pins so definitions without `auth` keep the same
+    // fingerprint as before this field existed.
+    if let Some(auth) = selection.auth.as_deref() {
+        hash_field(hash, b"auth");
+        hash_field(hash, auth.as_bytes());
+    }
 }
 
 fn hash_field(hash: &mut Sha256, value: &[u8]) {

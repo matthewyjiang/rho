@@ -55,6 +55,7 @@ fn switching_to_claude_cli_resets_incompatible_fields() {
             model: ModelPolicy::Select(ModelSelection {
                 provider: Some("openai".into()),
                 model: "gpt-5.5".into(),
+                auth: None,
             }),
             reasoning: Some(ReasoningLevel::Off),
         },
@@ -207,6 +208,7 @@ fn setting_model_text_pins_select_policy_for_rho() {
         &ModelPolicy::Select(ModelSelection {
             provider: None,
             model: "gpt-5.5".into(),
+            auth: None,
         })
     );
 }
@@ -250,4 +252,18 @@ fn switching_to_same_runtime_is_noop() {
     assert!(draft.switch_runtime_kind("rho"));
     assert_eq!(draft, before);
     assert_eq!(draft.runtime.runtime(), AgentRuntime::Rho);
+}
+
+// Covers: auth selection pins profile and fills provider when needed
+// Owner: agent edit
+#[test]
+fn set_auth_selection_pins_profile_and_provider() {
+    let mut draft = rho_draft();
+    draft.set_model_text("grok-4.5".into());
+    assert!(draft.set_auth_selection(Some("xai-oauth".into())));
+    assert_eq!(draft.provider_text(), "xai");
+    assert_eq!(draft.auth_text(), "xai-oauth");
+    assert!(draft.set_auth_selection(None));
+    assert_eq!(draft.auth_text(), "");
+    assert_eq!(draft.provider_text(), "xai");
 }

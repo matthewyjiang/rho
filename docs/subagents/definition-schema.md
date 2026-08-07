@@ -42,6 +42,7 @@ flowchart TD
 | `model-policy` | enum | no | see model rules | Depends on `runtime` (below) |
 | `model` | string | policy-dependent | unset | Non-empty; no whitespace. Rho may use `@alias`. Claude rejects `@alias` and passes the value to `--model` |
 | `provider` | string | no | unset | Non-empty; no whitespace. **Rho only**. Rejected on `claude-cli` |
+| `auth` | string | no | unset | Auth profile id (for example `xai-oauth`, `xai-api-key`). **Rho only**. Rejected on `claude-cli` and with `model-policy: inherit`. Must be a known profile; when set with `provider`, must be valid for that provider |
 | `reasoning` | enum | no | unset (inherit) | Rho: `off` \| `minimal` \| `low` \| `medium` \| `high` \| `xhigh` \| `max`. Claude: `low` \| `medium` \| `high` \| `xhigh` \| `max` only (maps to `--effort`). `off` / `minimal` rejected on Claude |
 | `tools` | `all` or string list | no | runtime-specific | See tool vocabulary. Mixing Rho and Claude names is a parse error |
 | `inherit_claude_config` | bool | no | `false` | `true` \| `false`. `true` only with `runtime: claude-cli` |
@@ -54,16 +55,16 @@ Model selection depends on `runtime`. Rho can inherit or pin host models. Claude
 
 **`runtime: rho` (default)**
 
-| `model-policy` | `model` | `provider` | Result |
-| --- | --- | --- | --- |
-| omitted, no `model` | omitted | omitted | `inherit` |
-| omitted, with `model` | required | optional | treated as `select` |
-| `inherit` | must omit | must omit | keep parent provider/model |
-| `prefer` \| `require` \| `select` | required | optional | pin that selection; `@alias` allowed |
+| `model-policy` | `model` | `provider` | `auth` | Result |
+| --- | --- | --- | --- | --- |
+| omitted, no `model` | omitted | omitted | omitted | `inherit` |
+| omitted, with `model` | required | optional | optional | treated as `select` |
+| `inherit` | must omit | must omit | must omit | keep parent provider/model/auth |
+| `prefer` \| `require` \| `select` | required | optional | optional | pin that selection; `@alias` allowed. Unset `auth` keeps a host login that fits the provider; otherwise the provider default auth is used |
 
 **`runtime: claude-cli`**
 
-| `model-policy` | `model` | `provider` | Result |
+| `model-policy` | `model` | `provider` / `auth` | Result |
 | --- | --- | --- | --- |
 | omitted / `inherit`, no `model` | omitted | must omit | Claude default model (no `--model`) |
 | omitted / `select`, with `model` | required | must omit | pass-through `--model` |
@@ -191,6 +192,11 @@ Machine-readable shape for the frontmatter object after parse. Runtime-specific 
       "minLength": 1,
       "pattern": "^\\S+$"
     },
+    "auth": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^\\S+$"
+    },
     "reasoning": {
       "type": "string",
       "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
@@ -219,6 +225,7 @@ Machine-readable shape for the frontmatter object after parse. Runtime-specific 
       "then": {
         "properties": {
           "provider": false,
+          "auth": false,
           "model-policy": { "enum": ["inherit", "select"] },
           "reasoning": { "enum": ["low", "medium", "high", "xhigh", "max"] },
           "tools": {
@@ -243,7 +250,11 @@ Machine-readable shape for the frontmatter object after parse. Runtime-specific 
       },
       "then": {
         "not": {
-          "anyOf": [{ "required": ["model"] }, { "required": ["provider"] }]
+          "anyOf": [
+            { "required": ["model"] },
+            { "required": ["provider"] },
+            { "required": ["auth"] }
+          ]
         }
       }
     },
@@ -274,6 +285,23 @@ reasoning: high
 tools: [read_file, list_dir, bash]
 ---
 Review the requested changes. Do not modify files.
+```
+
+Rho agent with pinned provider and OAuth auth:
+
+```markdown
+---
+id: worker
+description: Implements delegated tasks
+runtime: rho
+model-policy: prefer
+model: grok-4.5
+provider: xai
+auth: xai-oauth
+reasoning: medium
+tools: all
+---
+Complete the delegated task fully before finishing.
 ```
 
 Claude Code delegated agent:

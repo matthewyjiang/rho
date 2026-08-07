@@ -157,6 +157,9 @@ impl App {
             AGENT_FIELD_PROVIDER => {
                 self.open_agent_text_input(AgentField::Provider, draft.provider_text());
             }
+            AGENT_FIELD_AUTH => {
+                self.open_agent_choice(AgentChoiceField::Auth, &draft);
+            }
             AGENT_FIELD_REASONING => {
                 self.open_agent_choice(AgentChoiceField::Reasoning, &draft);
             }
@@ -181,12 +184,16 @@ impl App {
         if let Some(session) = &mut self.agent_editor_session {
             session.set_phase(AgentEditPhase::Choosing(field));
         }
-        let picker = agent_choice_picker(field, draft);
+        if matches!(field, AgentChoiceField::Auth) {
+            self.refresh_available_auths();
+        }
+        let picker = agent_choice_picker(field, draft, &self.available_auths);
         self.open_child_picker(picker);
         self.set_status(match field {
             AgentChoiceField::PromptPolicy => "prompt policy",
             AgentChoiceField::Runtime => "runtime",
             AgentChoiceField::ModelPolicy => "model policy",
+            AgentChoiceField::Auth => "auth",
             AgentChoiceField::Reasoning => "reasoning",
             AgentChoiceField::InheritClaudeConfig => "inherit Claude config",
         });
@@ -209,6 +216,13 @@ impl App {
                     session.with_draft_mut(|draft| match other {
                         AgentChoiceField::PromptPolicy => draft.set_prompt_policy_kind(rest),
                         AgentChoiceField::ModelPolicy => draft.set_model_policy_kind(rest),
+                        AgentChoiceField::Auth => {
+                            if rest == "host" {
+                                draft.set_auth_selection(None)
+                            } else {
+                                draft.set_auth_selection(Some(rest.to_string()))
+                            }
+                        }
                         AgentChoiceField::Reasoning => draft.set_reasoning_kind(rest),
                         AgentChoiceField::InheritClaudeConfig => {
                             draft.set_inherit_claude_config(rest)
@@ -249,6 +263,7 @@ impl App {
                 draft.set_model_selection(
                     Some(selection.provider.clone()),
                     Some(selection.model.clone()),
+                    Some(selection.auth.clone()),
                 );
             }
             Err(err) => {
