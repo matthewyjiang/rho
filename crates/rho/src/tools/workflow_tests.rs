@@ -82,10 +82,25 @@ fn workflow_tool_schema_is_a_root_object() {
     );
 }
 
-// Covers: large workflow state must not bypass the configured tool output bound.
-// Owner: model-facing workflow tool adapter.
+// Covers: model-facing workflow JSON must be readable without bypassing the configured output bound.
+// Owner: model-facing workflow tool serializer.
 #[test]
-fn oversized_results_are_replaced_with_a_bounded_summary() {
+fn bounded_results_are_pretty_and_respect_the_output_budget() {
+    let result = WorkflowToolResult::Validate {
+        valid: true,
+        diagnostics: Vec::new(),
+    };
+    assert_eq!(
+        bounded_result(&result, 256).unwrap(),
+        concat!(
+            "{\n",
+            "  \"operation\": \"validate\",\n",
+            "  \"valid\": true,\n",
+            "  \"diagnostics\": []\n",
+            "}"
+        )
+    );
+
     let result = WorkflowToolResult::Validate {
         valid: false,
         diagnostics: vec![WorkflowDiagnosticSummary {
@@ -97,13 +112,20 @@ fn oversized_results_are_replaced_with_a_bounded_summary() {
             column: None,
         }],
     };
+    let requested_bytes = serde_json::to_string_pretty(&result).unwrap().len();
 
     let output = bounded_result(&result, 256).unwrap();
 
     assert!(output.len() <= 256);
     assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&output).unwrap()["truncated"],
-        true
+        output,
+        serde_json::to_string_pretty(&serde_json::json!({
+            "truncated": true,
+            "reason": "workflow summary exceeded the tool output budget",
+            "requested_bytes": requested_bytes,
+            "limit_bytes": 256,
+        }))
+        .unwrap()
     );
 }
 

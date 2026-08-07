@@ -277,8 +277,9 @@ available. Node capabilities are authorized separately.
 The tool cancel result has the same `request_id` and typed
 `cancellation_state` as the CLI result.
 
-Results contain bounded diagnostics, IDs, typed state summaries, and artifact
-references. They do not return full source files or logs.
+Results use pretty-printed JSON and remain subject to the configured output
+byte limit. They contain bounded diagnostics, IDs, typed state summaries, and
+artifact references. They do not return full source files or logs.
 
 `workflow_command` is a separate host-only built-in tool. The workflow runtime
 uses it to send one frozen command process request through normal policy and

@@ -256,18 +256,18 @@ fn bounded_result(
     result: &WorkflowToolResult,
     max_output_bytes: usize,
 ) -> Result<String, ToolError> {
-    let serialized = serde_json::to_string(result)
+    let serialized = serde_json::to_string_pretty(result)
         .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
     if serialized.len() <= max_output_bytes {
         return Ok(serialized);
     }
-    let summary = serde_json::json!({
+    let summary = serde_json::to_string_pretty(&serde_json::json!({
         "truncated": true,
         "reason": "workflow summary exceeded the tool output budget",
         "requested_bytes": serialized.len(),
         "limit_bytes": max_output_bytes,
-    })
-    .to_string();
+    }))
+    .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
     if summary.len() <= max_output_bytes {
         return Ok(summary);
     }
