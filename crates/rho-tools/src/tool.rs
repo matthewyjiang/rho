@@ -120,6 +120,12 @@ fn normalize_path(path: &Path) -> PathBuf {
 
 /// Appended by [`truncate`] when it drops content.
 ///
+/// Re-exported from `rho-sdk` so existing `rho_agent_tools::TRUNCATION_MARKER`
+/// callers stay valid. Packaging this crate therefore requires a published
+/// `rho-sdk` that exports [`rho_sdk::TRUNCATION_MARKER`] and
+/// [`rho_sdk::floor_char_boundary`]; bump both crates together when that shared
+/// surface changes.
+///
 /// Callers that must keep a hard byte budget subtract this before choosing the
 /// `max` they pass, so the marker cannot push the result past their limit.
 pub use rho_sdk::TRUNCATION_MARKER;
