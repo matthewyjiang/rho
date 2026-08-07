@@ -22,6 +22,7 @@ colors:
   dark-ink-plate: "#050505"
   dark-code-block: "#0a0908"
   proof-plate: "#0d1117"
+  proof-plate-light: "#ffffff"
   white: "#ffffff"
   white-short: "#fff"
 typography:
@@ -192,7 +193,7 @@ Personality is direct and technical. Density is measured: tight within a group, 
 - Square corners everywhere (radius 0)
 - Hairline rules and ink underlines instead of shadows
 - Public Sans for UI/body; Source Code Pro for code
-- Proof lives in terminal-dark plates, not lifestyle imagery
+- Proof lives in theme-matched terminal plates (dark + light SVG captures), not lifestyle imagery
 - VitePress default theme extended — identity in tokens and chrome, not a from-scratch app shell
 
 ## Colors
@@ -210,7 +211,7 @@ A warm paper field with near-black ink and a single signal red. Semantic greens/
 - **Ink Plate** (`#121212` fg `#f2efe6`): Reserved for inverted specimen blocks when needed.
 - **Code Block Light** (`#f3f0e6`): Light-mode fence plate (keeps Shiki light tokens contrasted).
 - **Code Block Dark** (`#0a0908`): Dark-mode fence plate.
-- **Proof Plate** (`#0d1117`): Terminal capture frame behind the TUI SVG.
+- **Proof Plate** (`#0d1117` dark / `#ffffff` light): Terminal capture frame behind the TUI SVG.
 
 ### Named Rules
 **The One Red Rule.** Synthetic red is the only brand chroma on chrome and actions. Do not introduce a second brand hue for links, charts, or decoration.
@@ -272,7 +273,7 @@ Spacing rhythm: section padding ~2.25–3.25rem vertical; path rows 1rem vertica
 - Home install fence reuses VP fence markup so copy behavior stays native.
 
 ### Proof plate
-- Hard ink border, `#0d1117` terminal well, linked to Interactive TUI docs.
+- Hard ink border; dark well `#0d1117` or light well `#ffffff` from the matching SVG; linked to Interactive TUI docs.
 - Mono caption under the frame (“Interactive TUI”).
 
 ### Path list (home Guides)
@@ -302,7 +303,7 @@ Spacing rhythm: section padding ~2.25–3.25rem vertical; path rows 1rem vertica
 - **Do** keep corners at 0px and separate regions with hairline rules.
 - **Do** use specimen red only for primary action, active state, focus, and the ρ glyph.
 - **Do** ship light and dark with the same geometry; only ink/paper/accent shift.
-- **Do** put product proof in terminal-dark plates (SVG/PNG captures), not stock illustration.
+- **Do** put product proof in theme-matched terminal plates (SVG/PNG captures), not stock illustration.
 - **Do** prefer VitePress structural components restyled with tokens over one-off card grids.
 
 ### Don't:

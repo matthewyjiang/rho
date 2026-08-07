@@ -5,7 +5,9 @@
 //!   cargo run -p rho-tui-pty --bin rho-pty-demo -- \
 //!     --bin target/debug/rho \
 //!     --output docs/assets/rho-ui-demo.svg \
-//!     --output docs/public/assets/rho-ui-demo.svg
+//!     --output docs/public/assets/rho-ui-demo.svg \
+//!     --light-output docs/assets/rho-ui-demo-light.svg \
+//!     --light-output docs/public/assets/rho-ui-demo-light.svg
 
 use std::{
     fs,
@@ -20,7 +22,7 @@ use rho_tui_pty::{
     env::{resolve_rho_binary, IsolatedHome, RhoLaunchPlan},
     harness::{PtyHarness, WaitTimeout},
     pty::PtySize,
-    svg::{render_screen_svg, SvgOptions},
+    svg::{render_screen_svg, SvgColorScheme, SvgOptions},
 };
 
 /// Default terminal size for the docs proof plate.
@@ -59,9 +61,13 @@ struct Args {
     #[arg(long)]
     bin: Option<PathBuf>,
 
-    /// Write the SVG to this path. Repeat to mirror into docs/public.
+    /// Write the dark SVG to this path. Repeat to mirror into docs/public.
     #[arg(long = "output", required = true)]
     outputs: Vec<PathBuf>,
+
+    /// Write the light SVG to this path. Repeat to mirror into docs/public.
+    #[arg(long = "light-output")]
+    light_outputs: Vec<PathBuf>,
 
     /// Compare against existing outputs and exit non-zero on drift.
     #[arg(long)]
@@ -98,33 +104,15 @@ fn run() -> Result<()> {
     let capture = capture_demo(&binary)?;
 
     if let Some(path) = &args.screen_text {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create {}", parent.display()))?;
-        }
-        fs::write(path, &capture.screen_text)
-            .with_context(|| format!("failed to write {}", path.display()))?;
+        write_text(path, &capture.screen_text)?;
         println!("wrote {}", path.display());
     }
 
     if args.check {
         let mut failed = false;
-        for expected_path in &args.outputs {
-            let expected = fs::read_to_string(expected_path).with_context(|| {
-                format!(
-                    "failed to read existing SVG for --check: {}",
-                    expected_path.display()
-                )
-            })?;
-            if expected != capture.svg {
-                failed = true;
-                eprintln!(
-                    "SVG drift at {}\nregenerate with:\n  cargo run -p rho-tui-pty --bin rho-pty-demo -- --bin target/debug/rho --output docs/assets/rho-ui-demo.svg --output docs/public/assets/rho-ui-demo.svg",
-                    expected_path.display()
-                );
-            } else {
-                println!("OK {}", expected_path.display());
-            }
+        failed |= check_outputs(&args.outputs, &capture.dark_svg, "dark")?;
+        if !args.light_outputs.is_empty() {
+            failed |= check_outputs(&args.light_outputs, &capture.light_svg, "light")?;
         }
         if failed {
             bail!("one or more SVG outputs drifted from the live PTY capture");
@@ -132,21 +120,52 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
-    for path in &args.outputs {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create {}", parent.display()))?;
-        }
-        fs::write(path, &capture.svg)
-            .with_context(|| format!("failed to write {}", path.display()))?;
-        println!("wrote {}", path.display());
-    }
-
+    write_outputs(&args.outputs, &capture.dark_svg)?;
+    write_outputs(&args.light_outputs, &capture.light_svg)?;
     Ok(())
 }
 
+fn check_outputs(paths: &[PathBuf], expected_svg: &str, label: &str) -> Result<bool> {
+    let mut failed = false;
+    for expected_path in paths {
+        let expected = fs::read_to_string(expected_path).with_context(|| {
+            format!(
+                "failed to read existing {label} SVG for --check: {}",
+                expected_path.display()
+            )
+        })?;
+        if expected != expected_svg {
+            failed = true;
+            eprintln!(
+                "SVG drift at {}\nregenerate with:\n  bash scripts/check_docs_ui_demo.sh --write",
+                expected_path.display()
+            );
+        } else {
+            println!("OK {}", expected_path.display());
+        }
+    }
+    Ok(failed)
+}
+
+fn write_outputs(paths: &[PathBuf], svg: &str) -> Result<()> {
+    for path in paths {
+        write_text(path, svg)?;
+        println!("wrote {}", path.display());
+    }
+    Ok(())
+}
+
+fn write_text(path: &Path, contents: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    fs::write(path, contents).with_context(|| format!("failed to write {}", path.display()))
+}
+
 struct DemoCapture {
-    svg: String,
+    dark_svg: String,
+    light_svg: String,
     screen_text: String,
 }
 
@@ -200,16 +219,28 @@ fn capture_demo(binary: &Path) -> Result<DemoCapture> {
         );
     }
 
-    let options = SvgOptions {
-        description: "Rho interactive TUI captured from the deterministic PTY harness after a request-ID middleware turn.".into(),
-        ..SvgOptions::default()
+    let description: String =
+        "Rho interactive TUI captured from the deterministic PTY harness after a request-ID middleware turn."
+            .into();
+    let dark_options = SvgOptions {
+        description: description.clone(),
+        ..SvgOptions::for_scheme(SvgColorScheme::Dark)
     };
-    let svg = stabilize_demo_svg(&render_screen_svg(screen, &options));
+    let light_options = SvgOptions {
+        description,
+        ..SvgOptions::for_scheme(SvgColorScheme::Light)
+    };
+    let dark_svg = stabilize_demo_svg(&render_screen_svg(screen, &dark_options));
+    let light_svg = stabilize_demo_svg(&render_screen_svg(screen, &light_options));
     let screen_text = screen.debug_dump();
 
     // Leave cleanly so the child does not linger under the generator.
     let _ = harness.quit_with_exit_command();
-    Ok(DemoCapture { svg, screen_text })
+    Ok(DemoCapture {
+        dark_svg,
+        light_svg,
+        screen_text,
+    })
 }
 
 /// Pin load-volatile status and duration fragments so CI matches local captures.

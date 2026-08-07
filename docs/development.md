@@ -169,7 +169,13 @@ Failure artifacts default to a temp directory (or `--artifacts <dir>`). Successf
 
 ### Regenerate the docs TUI proof plate
 
-`docs/assets/rho-ui-demo.svg` and `docs/public/assets/rho-ui-demo.svg` are captured from a real matrix-mode PTY session (not hand-drawn). After TUI layout or chrome changes, regenerate both paths:
+Dark and light proof plates are captured from one matrix-mode PTY session (not
+hand-drawn), then rendered with two SVG color schemes:
+
+- dark: `docs/assets/rho-ui-demo.svg` and `docs/public/assets/rho-ui-demo.svg`
+- light: `docs/assets/rho-ui-demo-light.svg` and `docs/public/assets/rho-ui-demo-light.svg`
+
+After TUI layout or chrome changes, regenerate all four paths:
 
 ```bash
 bash scripts/check_docs_ui_demo.sh --write

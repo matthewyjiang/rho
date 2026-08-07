@@ -32,7 +32,7 @@ For PRs:
 - Update documentation for important user-visible changes.
 - When the diff adds or materially expands tests, follow the `rho-test-selection` skill and fill the test-gate section in the pull request template.
 - When the diff ships a minor-only API compromise, follow the `rho-next-major-debt` skill, leave a `NEXT_MAJOR(...)` marker, and fill the next-major debt section in the pull request template (or delete it if none).
-- When the diff changes Interactive TUI layout, chrome, tool cards, statusline, version display, matrix fixtures used by the proof plate, or `rho-pty-demo` itself, run `bash scripts/check_docs_ui_demo.sh --check` before opening or updating the PR. If it drifts, regenerate with `bash scripts/check_docs_ui_demo.sh --write` and commit both `docs/assets/rho-ui-demo.svg` and `docs/public/assets/rho-ui-demo.svg`. CI quality job enforces this.
+- When the diff changes Interactive TUI layout, chrome, tool cards, statusline, version display, matrix fixtures used by the proof plate, or `rho-pty-demo` itself, run `bash scripts/check_docs_ui_demo.sh --check` before opening or updating the PR. If it drifts, regenerate with `bash scripts/check_docs_ui_demo.sh --write` and commit all four SVGs (`docs/assets/rho-ui-demo.svg`, `docs/public/assets/rho-ui-demo.svg`, and the matching `-light` paths). CI quality job enforces this.
 
 ## Rust code
 

@@ -31,5 +31,5 @@ pub use pty::{PtyController, PtySize};
 pub use scenario::{Scenario, ScenarioOutcome, ScenarioRunner, Step};
 pub use scenarios::{all_scenarios, run_named, smoke_scenario_ids};
 pub use screen::ScreenModel;
-pub use svg::{render_screen_svg, SvgOptions};
+pub use svg::{render_screen_svg, SvgColorScheme, SvgOptions};
 pub use timing::{TimingSample, TimingSummary};
