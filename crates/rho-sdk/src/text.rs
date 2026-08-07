@@ -4,14 +4,23 @@
 //! library methods stabilized in Rust 1.91. The crate MSRV is older, so callers
 //! use these helpers instead of hand-rolling the walk. Drop them when the MSRV
 //! reaches 1.91.
+//!
+//! Workspace crates and out-of-tree callers that import these root exports must
+//! depend on a published `rho-sdk` version that includes them. Bump `rho-sdk`
+//! (and any re-exporting crate) together when this public surface changes.
 
 /// Marker appended when model-facing or tool output is cut at a byte budget.
 ///
 /// Callers that must keep a hard byte budget subtract this before choosing the
 /// cut they pass, so the marker cannot push the result past their limit.
+/// Downstream crates that import this constant need a published `rho-sdk`
+/// version that exports it.
 pub const TRUNCATION_MARKER: &str = "\n[truncated]";
 
 /// Marker appended when a provider diagnostic is cut at its display budget.
+///
+/// Downstream crates that import this constant need a published `rho-sdk`
+/// version that exports it.
 pub const DIAGNOSTIC_TRUNCATION_MARKER: &str = "\n[diagnostic truncated]";
 
 /// ASCII ellipsis used when a short inline preview is clipped.
