@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.31.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.30.1...rho-coding-agent-v1.31.0) (2026-08-07)
+
+
+### Features
+
+* **advisor:** add selectable advisor reasoning level ([#767](https://github.com/matthewyjiang/rho/issues/767)) ([b9eb143](https://github.com/matthewyjiang/rho/commit/b9eb1437b629aa4c7ce89ed2e8f12bea3e7d99f8))
+* **tui:** fold advisor cost into session total ([#761](https://github.com/matthewyjiang/rho/issues/761)) ([2360599](https://github.com/matthewyjiang/rho/commit/23605992b408199c60cd79d9441e6aceab5bfef2))
+* **tui:** render display and inline math with txm ([#770](https://github.com/matthewyjiang/rho/issues/770)) ([c681deb](https://github.com/matthewyjiang/rho/commit/c681deb6097d36dcccc5bf5f5ef05b513751f824))
+
 ## [1.30.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.30.0...rho-coding-agent-v1.30.1) (2026-08-06)
 
 
