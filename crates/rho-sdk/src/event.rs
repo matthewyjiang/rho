@@ -267,7 +267,7 @@ impl ModelCallMetrics {
     ///
     /// Kept as a minor-compatible alias after generation throughput became the
     /// preferred primary rate. Prefer [`Self::response_tokens_per_second`].
-    #[deprecated(since = "1.17.1", note = "use response_tokens_per_second")]
+    #[deprecated(since = "1.18.0", note = "use response_tokens_per_second")]
     pub fn output_tokens_per_second(self) -> Option<f64> {
         self.response_tokens_per_second()
     }
