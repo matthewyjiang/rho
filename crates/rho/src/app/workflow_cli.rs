@@ -15,9 +15,9 @@ use crate::{
     cli::{Cli, WorkflowCommand, WorkflowDocumentFormat, WorkflowRunFormat},
     workflow::{
         derive_workflow_outcome, CollectedSources, Diagnostic, InputName, PlanInventoryItem,
-        PlanningLimits, PlanningMeasurements, RunInventoryItem, RunLifecycle, SourceManifest,
-        StarlarkPlanner, StoredPlan, StoredRun, WorkflowError, WorkflowResult, WorkflowService,
-        WorkflowStore, WorkflowValue,
+        PlanningLimits, PlanningMeasurements, RunInventoryItem, SourceManifest, StarlarkPlanner,
+        StoredPlan, StoredRun, WorkflowError, WorkflowResult, WorkflowService, WorkflowStore,
+        WorkflowValue,
     },
 };
 
@@ -172,7 +172,7 @@ fn run_list(
                 println!(
                     "  {}  {:<12}  {}/{}  {}",
                     short_uuid(&run.run_id.to_string()),
-                    lifecycle_public_value(run.lifecycle),
+                    run.lifecycle.as_str(),
                     run.done_steps,
                     run.total_steps,
                     run.name
@@ -241,22 +241,11 @@ impl From<&RunInventoryItem> for RunListItem {
         Self {
             id: run.run_id.to_string(),
             name: run.name.clone(),
-            lifecycle: lifecycle_public_value(run.lifecycle).to_string(),
+            lifecycle: run.lifecycle.as_str().to_string(),
             done_steps: run.done_steps,
             total_steps: run.total_steps,
             created_at_unix_nanos: run.created_at_unix_nanos,
         }
-    }
-}
-
-/// Wire/public lifecycle token shared by text and JSON list output.
-fn lifecycle_public_value(lifecycle: RunLifecycle) -> &'static str {
-    match lifecycle {
-        RunLifecycle::Planned => "planned",
-        RunLifecycle::Running => "running",
-        RunLifecycle::Cancelling => "cancelling",
-        RunLifecycle::Completed => "completed",
-        RunLifecycle::NeedsRecovery => "needs_recovery",
     }
 }
 
@@ -474,7 +463,7 @@ fn run_status(prefix: &str, output: WorkflowDocumentFormat) -> anyhow::Result<()
             println!("run id: {}", run.manifest.run_id);
             println!("plan id: {}", run.manifest.plan_id);
             println!("digest: {}", run.manifest.graph_digest.0);
-            println!("lifecycle: {:?}", run.state.state.lifecycle);
+            println!("lifecycle: {}", run.state.state.lifecycle.as_str());
             println!("revision: {}", run.state.state.revision);
             println!(
                 "cancellation requested: {}",
@@ -492,13 +481,14 @@ fn run_status(prefix: &str, output: WorkflowDocumentFormat) -> anyhow::Result<()
             for (node, completion) in &run.state.state.completions {
                 for (kind, artifact) in completion.artifacts.iter() {
                     println!(
-                        "artifact {node} {kind:?}: {}",
+                        "artifact {node} {}: {}",
+                        kind.label(),
                         serde_json::to_string(artifact)?
                     );
                 }
             }
             if let Some(outcome) = document.outcome {
-                println!("outcome: {:?}", outcome);
+                println!("outcome: {}", outcome.as_str());
             }
             Ok(())
         }

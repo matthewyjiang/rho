@@ -118,13 +118,19 @@ fn normalize_path(path: &Path) -> PathBuf {
     normalized
 }
 
+/// Appended by [`truncate`] when it drops content.
+///
+/// Callers that must keep a hard byte budget subtract this before choosing the
+/// `max` they pass, so the marker cannot push the result past their limit.
+pub const TRUNCATION_MARKER: &str = "\n[truncated]";
+
 pub fn truncate(mut s: String, max: usize) -> String {
     if s.len() <= max {
         return s;
     }
     let boundary = previous_char_boundary(&s, max);
     s.truncate(boundary);
-    s.push_str("\n[truncated]");
+    s.push_str(TRUNCATION_MARKER);
     s
 }
 

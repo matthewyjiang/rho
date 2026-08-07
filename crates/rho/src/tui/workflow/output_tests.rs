@@ -3,9 +3,7 @@ use std::path::Path;
 use pretty_assertions::assert_eq;
 use tempfile::tempdir;
 
-use super::{
-    body_matches_node, kind_label, load_finished_output, primary_artifact, render_body_lines,
-};
+use super::{body_matches_node, load_finished_output, primary_artifact, render_body_lines};
 use crate::{
     tui::workflow::event_adapter::{ArtifactReference, ExecutionMetadata, WorkflowNodeSnapshot},
     workflow::{
@@ -70,7 +68,7 @@ fn prefers_agent_answer_over_stdout() {
     ]);
     let primary = primary_artifact(&node).expect("primary");
     assert_eq!(primary.kind, ArtifactKind::AgentAnswer);
-    assert_eq!(kind_label(primary.kind), "answer");
+    assert_eq!(primary.kind.label(), "answer");
 }
 
 // Covers: selecting a finished node loads and formats its durable answer.

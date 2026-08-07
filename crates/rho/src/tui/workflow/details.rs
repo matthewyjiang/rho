@@ -95,7 +95,7 @@ impl DetailPane {
                 Some(body) => {
                     let mut lines = vec![
                         Line::from(Span::styled(
-                            format!("{} · {}", output::kind_label(body.kind), body.relative_path),
+                            format!("{} · {}", body.kind.label(), body.relative_path),
                             Theme::dim(),
                         )),
                         Line::styled("─".repeat(width), Theme::dim()),

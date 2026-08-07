@@ -405,11 +405,38 @@ pub(crate) enum NodeState {
     Terminal { outcome: NodeTerminalState },
 }
 
+impl NodeTerminalState {
+    /// The public terminal-outcome token, identical to the serialized form.
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Failure => "failure",
+            Self::Denial => "denial",
+            Self::Cancellation => "cancellation",
+            Self::Skipped => "skipped",
+            Self::Blocked => "blocked",
+        }
+    }
+}
+
 impl NodeState {
     pub(crate) fn terminal(&self) -> Option<NodeTerminalState> {
         match self {
             Self::Terminal { outcome } => Some(*outcome),
             _ => None,
+        }
+    }
+
+    /// The public node-state token, flattening `Terminal` to its outcome.
+    ///
+    /// Shared by the model-facing workflow tool and workflow notifications so
+    /// one node vocabulary cannot drift across call sites.
+    pub(crate) const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Ready => "ready",
+            Self::Running { .. } => "running",
+            Self::Terminal { outcome } => outcome.as_str(),
         }
     }
 }
@@ -434,6 +461,19 @@ pub(crate) enum WorkflowOutcome {
     Blocked,
 }
 
+impl WorkflowOutcome {
+    /// The public run-outcome token, identical to the serialized form.
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Failure => "failure",
+            Self::Denial => "denial",
+            Self::Cancellation => "cancellation",
+            Self::Blocked => "blocked",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum RunLifecycle {
@@ -451,6 +491,21 @@ impl RunLifecycle {
     /// the live set cannot drift across call sites.
     pub(crate) const fn is_live(self) -> bool {
         matches!(self, Self::Running | Self::Cancelling)
+    }
+
+    /// The public lifecycle token, identical to the serialized form.
+    ///
+    /// Every model-facing, CLI, and hook surface renders lifecycle through this
+    /// method so one vocabulary cannot drift across call sites. TUI prose
+    /// (`finished`, `needs recovery`) is deliberately separate.
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Planned => "planned",
+            Self::Running => "running",
+            Self::Cancelling => "cancelling",
+            Self::Completed => "completed",
+            Self::NeedsRecovery => "needs_recovery",
+        }
     }
 }
 
@@ -521,3 +576,7 @@ pub(crate) enum TruthValue {
     False,
     Unavailable,
 }
+
+#[cfg(test)]
+#[path = "model_tests.rs"]
+mod tests;

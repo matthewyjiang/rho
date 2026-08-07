@@ -277,8 +277,22 @@ available. Node capabilities are authorized separately.
 The tool cancel result has the same `request_id` and typed
 `cancellation_state` as the CLI result.
 
-Results contain bounded diagnostics, IDs, typed state summaries, and artifact
+Results use readable, line-oriented summaries like the `agent` and `agents`
+tools, and remain subject to the configured output byte limit. They contain
+bounded diagnostics, IDs, run and node state, and indented node and artifact
 references. They do not return full source files or logs.
+
+Run, status, and resume return the same run summary. State words match the
+durable and CLI vocabulary. A run lifecycle reads as `running`, `completed`, or
+`needs_recovery`, and a node terminal state reads as `success` or `skipped`, on
+every surface. An artifact line names the artifact, its path, its retained
+bytes, and its digest, and adds a shortfall note only when the retained bytes
+are not the whole artifact.
+
+A summary that exceeds the byte limit keeps as many whole lines as fit and ends
+with a notice naming how many lines it dropped and the sizes involved. A single
+line too long to ever fit is clipped rather than dropped, so an oversized
+diagnostic still says which diagnostic failed.
 
 `workflow_command` is a separate host-only built-in tool. The workflow runtime
 uses it to send one frozen command process request through normal policy and

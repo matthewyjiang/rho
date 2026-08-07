@@ -160,6 +160,28 @@ pub(crate) struct ArtifactRef {
     pub(crate) digest: Digest,
 }
 
+impl ArtifactRef {
+    /// How this artifact fell short of its full source, when it did.
+    ///
+    /// `None` means the retained bytes are the whole artifact, so callers stay
+    /// quiet in the common case. Shared by the model-facing workflow tool and
+    /// the TUI so one artifact is described the same way in both.
+    pub(crate) fn observation_notice(&self) -> Option<String> {
+        let retained_bytes = self.retained_bytes;
+        match self.observed {
+            ArtifactObservation::Complete { .. } => None,
+            ArtifactObservation::Truncated {
+                observed_bytes_at_least,
+            } => Some(format!(
+                "truncated · showing {retained_bytes} of at least {observed_bytes_at_least} bytes"
+            )),
+            ArtifactObservation::Incomplete { observed_bytes } => Some(format!(
+                "incomplete · retained {retained_bytes} bytes (observed {observed_bytes})"
+            )),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum ArtifactObservation {
@@ -199,6 +221,23 @@ pub(crate) enum ArtifactKind {
     AgentAnswer,
     StructuredOutput,
     CommandOutcome,
+}
+
+impl ArtifactKind {
+    /// The human-readable artifact name.
+    ///
+    /// Shared by the model-facing workflow tool, the TUI, and the CLI so one
+    /// artifact reads the same everywhere. The serialized token stays
+    /// snake_case and is a separate concern.
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Stdout => "stdout",
+            Self::Stderr => "stderr",
+            Self::AgentAnswer => "answer",
+            Self::StructuredOutput => "structured output",
+            Self::CommandOutcome => "command outcome",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -274,3 +313,7 @@ pub(crate) enum CancellationResumeState {
     Pending,
     Ready,
 }
+
+#[cfg(test)]
+#[path = "wire_tests.rs"]
+mod tests;

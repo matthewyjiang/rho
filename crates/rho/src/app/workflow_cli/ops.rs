@@ -157,7 +157,7 @@ impl WorkflowOps {
             anyhow::bail!(
                 "run {} is still {}, stop it before deleting",
                 run_id,
-                format!("{:?}", run.lifecycle).to_ascii_lowercase()
+                run.lifecycle.as_str()
             );
         }
         Ok(self.service.store().delete_run(run_id)?)

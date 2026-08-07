@@ -1,4 +1,5 @@
 use super::*;
+use crate::workflow::RunLifecycle;
 
 // Covers: malformed or duplicate --input values could produce an ambiguous frozen plan.
 // Owner: workflow CLI input parser.

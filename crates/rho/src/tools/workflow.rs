@@ -7,11 +7,11 @@ use rho_sdk::tool::{
     ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture,
     ToolSecurity,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
-use crate::workflow::{PlanId, RunId};
+use crate::workflow::{ArtifactKind, ArtifactRef, NodeState, PlanId, RunId, RunLifecycle};
 
-use super::sdk_registry::StaticToolBundle;
+use super::{sdk_registry::StaticToolBundle, workflow_output::bounded_result};
 
 pub(crate) const NAME: &str = "workflow";
 
@@ -64,71 +64,54 @@ impl WorkflowToolRequest {
 }
 
 /// A bounded artifact pointer. Workflow tool results never contain artifact data.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct WorkflowArtifactSummary {
-    pub(crate) kind: crate::workflow::ArtifactKind,
-    #[serde(flatten)]
-    pub(crate) artifact: crate::workflow::ArtifactRef,
+    pub(crate) kind: ArtifactKind,
+    pub(crate) artifact: ArtifactRef,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum WorkflowRunStateSummary {
-    Planned,
-    Running,
-    Cancelling,
-    Completed,
-    NeedsRecovery,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
+/// Cancellation acknowledgement, mirrored because the owning
+/// `CancellationState` lives in the application layer this contract sits above.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum WorkflowCancellationStateSummary {
     Acknowledged,
     Pending,
     AlreadyCompleted,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum WorkflowNodeStateSummary {
-    Pending,
-    Ready,
-    Running,
-    Success,
-    Failure,
-    Denial,
-    Cancellation,
-    Skipped,
-    Blocked,
+impl WorkflowCancellationStateSummary {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Acknowledged => "acknowledged",
+            Self::Pending => "pending",
+            Self::AlreadyCompleted => "already_completed",
+        }
+    }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct WorkflowNodeSummary {
     pub(crate) node_id: String,
-    pub(crate) state: WorkflowNodeStateSummary,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) state: NodeState,
     pub(crate) attempt: Option<u32>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) artifacts: Vec<WorkflowArtifactSummary>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct WorkflowDiagnosticSummary {
     pub(crate) severity: String,
     pub(crate) code: String,
     pub(crate) message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) source: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) line: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) column: Option<u64>,
 }
 
 /// Typed summaries returned by the shared workflow application service.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(tag = "operation", rename_all = "snake_case")]
+///
+/// These are rendered to text for the model and are never serialized, so the
+/// state fields carry the workflow domain enums directly rather than mirrors.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum WorkflowToolResult {
     Validate {
         valid: bool,
@@ -140,30 +123,18 @@ pub(crate) enum WorkflowToolResult {
         workflow_name: String,
         node_count: u64,
     },
+    /// Shared by `run`, `status`, and `resume`: all three report the same run.
     Run {
         run_id: String,
         graph_digest: String,
-        state: WorkflowRunStateSummary,
-        nodes: Vec<WorkflowNodeSummary>,
-    },
-    Status {
-        run_id: String,
-        graph_digest: String,
-        state: WorkflowRunStateSummary,
+        state: RunLifecycle,
         nodes: Vec<WorkflowNodeSummary>,
     },
     Cancel {
         run_id: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
         request_id: Option<String>,
         cancellation_state: WorkflowCancellationStateSummary,
-        state: WorkflowRunStateSummary,
-    },
-    Resume {
-        run_id: String,
-        graph_digest: String,
-        state: WorkflowRunStateSummary,
-        nodes: Vec<WorkflowNodeSummary>,
+        state: RunLifecycle,
     },
 }
 
@@ -250,34 +221,6 @@ impl Tool for WorkflowTool {
             ))
         })
     }
-}
-
-fn bounded_result(
-    result: &WorkflowToolResult,
-    max_output_bytes: usize,
-) -> Result<String, ToolError> {
-    let serialized = serde_json::to_string(result)
-        .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
-    if serialized.len() <= max_output_bytes {
-        return Ok(serialized);
-    }
-    let summary = serde_json::json!({
-        "truncated": true,
-        "reason": "workflow summary exceeded the tool output budget",
-        "requested_bytes": serialized.len(),
-        "limit_bytes": max_output_bytes,
-    })
-    .to_string();
-    if summary.len() <= max_output_bytes {
-        return Ok(summary);
-    }
-    Err(ToolError::new(
-        ToolErrorKind::Execution,
-        format!(
-            "workflow tool output budget is too small: accepted limit {max_output_bytes}, required {}",
-            summary.len()
-        ),
-    ))
 }
 
 fn workflow_schema() -> serde_json::Value {
