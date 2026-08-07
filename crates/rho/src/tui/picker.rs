@@ -327,7 +327,7 @@ impl UiPicker {
         }
         let selected_row =
             super::picker_rows::selected_row_index(&self.items, &matching, self.selected);
-        let lowest = selected_row.saturating_add(1).saturating_sub(viewport_rows);
+        let lowest = super::picker_rows::scroll_window_start(selected_row, viewport_rows);
         let highest = selected_row.min(max_start);
         base.clamp(lowest.min(highest), highest)
     }
@@ -368,18 +368,9 @@ impl UiPicker {
 
     /// Content hints the overlay uses to size its outer box.
     pub(super) fn overlay_sizing(&self) -> super::picker_overlay::OverlaySizing {
-        let mut nav_rows = 0usize;
-        let mut current_section: Option<&str> = None;
-        for item in &self.items {
-            if item.section.as_deref() != current_section {
-                current_section = item.section.as_deref();
-                nav_rows += usize::from(current_section.is_some());
-            }
-            nav_rows += 1;
-        }
         super::picker_overlay::OverlaySizing {
             has_details: self.has_item_details(),
-            nav_rows,
+            nav_rows: super::picker_rows::rows(&self.items, 0..self.items.len()).count(),
         }
     }
 
@@ -804,17 +795,16 @@ fn fuzzy_matching_indices(items: &[PickerItem], filter: &str) -> Vec<usize> {
 /// Long free text (detail, preview) stays out: subsequence matching over a
 /// paragraph matches almost any filter and would drown the ranking.
 fn fuzzy_item_score(item: &PickerItem, filter: &str) -> Option<i64> {
-    let mut fields = vec![item.label.as_str(), item.value.as_str()];
-    if let Some(section) = item.section.as_deref() {
-        fields.push(section);
-    }
-    if let Some(badge) = item.badge.as_ref() {
-        fields.push(badge.text.as_str());
-    }
-    fields
-        .into_iter()
-        .filter_map(|field| fuzzy_match_score(field, filter))
-        .max()
+    [
+        Some(item.label.as_str()),
+        Some(item.value.as_str()),
+        item.section.as_deref(),
+        item.badge.as_ref().map(|badge| badge.text.as_str()),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(|field| fuzzy_match_score(field, filter))
+    .max()
 }
 
 fn picker_haystack(item: &PickerItem) -> String {

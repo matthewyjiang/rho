@@ -77,21 +77,45 @@ pub(super) fn label_column_width(items: &[PickerItem], width: usize) -> usize {
         .clamp(min_label_width, max_label_width)
 }
 
-/// Rows [`picker_item_rows`] will emit: matching items plus section headers.
-pub(super) fn picker_row_count(items: &[PickerItem], matching: &[usize]) -> usize {
-    let mut count = 0;
-    let mut current_section: Option<&str> = None;
-    for index in matching.iter().copied() {
+/// One row of picker row space: either a section header or a matching item.
+///
+/// Row space is the single source of truth for counting, hit testing,
+/// scrolling, and rendering, so those four cannot disagree about where a row
+/// sits.
+pub(super) enum PickerRow<'a> {
+    Header(&'a str),
+    Item {
+        /// Index into the full item list, not into `matching`.
+        index: usize,
+        item: &'a PickerItem,
+    },
+}
+
+/// Walk row space: the matching items, with a header row wherever the section
+/// changes. Indices outside `items` are skipped.
+pub(super) fn rows<'a>(
+    items: &'a [PickerItem],
+    matching: impl IntoIterator<Item = usize> + 'a,
+) -> impl Iterator<Item = PickerRow<'a>> + 'a {
+    let mut current_section: Option<&'a str> = None;
+    matching.into_iter().flat_map(move |index| {
         let Some(item) = items.get(index) else {
-            continue;
+            return Option::<PickerRow<'a>>::None.into_iter().chain(None);
         };
+        let mut header = None;
         if item.section.as_deref() != current_section {
             current_section = item.section.as_deref();
-            count += usize::from(current_section.is_some());
+            header = current_section.map(PickerRow::Header);
         }
-        count += 1;
-    }
-    count
+        header
+            .into_iter()
+            .chain(Some(PickerRow::Item { index, item }))
+    })
+}
+
+/// Rows [`picker_item_rows`] will emit: matching items plus section headers.
+pub(super) fn picker_row_count(items: &[PickerItem], matching: &[usize]) -> usize {
+    rows(items, matching.iter().copied()).count()
 }
 
 /// Row-space index of the selected item among the matching rows, counting
@@ -101,22 +125,9 @@ pub(super) fn selected_row_index(
     matching: &[usize],
     selected: usize,
 ) -> usize {
-    let mut row = 0;
-    let mut current_section: Option<&str> = None;
-    for index in matching.iter().copied() {
-        let Some(item) = items.get(index) else {
-            continue;
-        };
-        if item.section.as_deref() != current_section {
-            current_section = item.section.as_deref();
-            row += usize::from(current_section.is_some());
-        }
-        if index == selected {
-            return row;
-        }
-        row += 1;
-    }
-    0
+    rows(items, matching.iter().copied())
+        .position(|row| matches!(row, PickerRow::Item { index, .. } if index == selected))
+        .unwrap_or(0)
 }
 
 /// Item index shown at `row_index` in row space, or `None` for section
@@ -126,25 +137,10 @@ pub(super) fn item_index_at_row(
     matching: &[usize],
     row_index: usize,
 ) -> Option<usize> {
-    let mut row = 0;
-    let mut current_section: Option<&str> = None;
-    for index in matching.iter().copied() {
-        let item = items.get(index)?;
-        if item.section.as_deref() != current_section {
-            current_section = item.section.as_deref();
-            if current_section.is_some() {
-                if row == row_index {
-                    return None;
-                }
-                row += 1;
-            }
-        }
-        if row == row_index {
-            return Some(index);
-        }
-        row += 1;
+    match rows(items, matching.iter().copied()).nth(row_index)? {
+        PickerRow::Header(_) => None,
+        PickerRow::Item { index, .. } => Some(index),
     }
-    None
 }
 
 /// Build the rows for the matching items, inserting a header row whenever the
@@ -157,26 +153,24 @@ pub(super) fn picker_item_rows(
     layout: RowLayout,
     hovered_row: Option<usize>,
 ) -> PickerRows {
-    let mut rows = Vec::with_capacity(matching.len());
-    let mut current_section = None;
+    let mut lines = Vec::with_capacity(matching.len());
     let mut selected_row = 0;
-    for index in matching.iter().copied() {
-        let Some(item) = items.get(index) else {
-            continue;
-        };
-        if item.section.as_deref() != current_section {
-            current_section = item.section.as_deref();
-            if let Some(section) = current_section {
-                rows.push(section_header_line(section, layout));
+    for row in rows(items, matching.iter().copied()) {
+        match row {
+            PickerRow::Header(section) => lines.push(section_header_line(section, layout)),
+            PickerRow::Item { index, item } => {
+                if index == selected {
+                    selected_row = lines.len();
+                }
+                let hovered = hovered_row == Some(lines.len());
+                lines.push(item_line(item, index == selected, hovered, layout));
             }
         }
-        if index == selected {
-            selected_row = rows.len();
-        }
-        let hovered = hovered_row == Some(rows.len());
-        rows.push(item_line(item, index == selected, hovered, layout));
     }
-    PickerRows { rows, selected_row }
+    PickerRows {
+        rows: lines,
+        selected_row,
+    }
 }
 
 /// First visible row when `viewport_rows` rows show and the selected row must

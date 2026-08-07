@@ -609,9 +609,9 @@ fn nav_item_rows(
         },
         content.hovered_nav_row,
     );
-    let start = content
-        .nav_window_start
-        .min(total_rows.saturating_sub(viewport_rows));
+    // `UiPicker::nav_window_start` already clamped to this viewport's last
+    // window start, so the offset needs no second clamp here.
+    let start = content.nav_window_start;
     let mut visible = rows
         .rows
         .into_iter()
