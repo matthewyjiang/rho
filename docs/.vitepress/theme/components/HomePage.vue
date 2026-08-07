@@ -1,14 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { useData, withBase } from 'vitepress'
+import { withBase } from 'vitepress'
 import RhoWordmark from './RhoWordmark.vue'
 
-const { isDark } = useData()
-
-/** Theme-matched terminal capture; README keeps the dark asset. */
-const proofSrc = computed(() =>
-  withBase(isDark.value ? '/assets/rho-ui-demo.svg' : '/assets/rho-ui-demo-light.svg'),
-)
+/** Shared alt for the theme-matched proof plates (one visible at a time). */
+const proofAlt =
+  'Rho terminal UI showing a request-ID middleware edit with read, edit, and test tool cards'
 
 /** One-line install command shown in a native VitePress code plate. */
 const installCommand =
@@ -93,12 +89,24 @@ const paths = [
 
         <figure class="rho-home__proof">
           <a :href="withBase('/interactive-tui')" class="rho-home__proof-link">
+            <!--
+              Both assets ship in the static HTML. VitePress flips html.dark before
+              paint; CSS picks the plate. A single :src from isDark SSRs as light
+              and flashes wrong on dark first load.
+            -->
             <img
-              class="rho-home__proof-img"
-              :src="proofSrc"
+              class="rho-home__proof-img rho-home__proof-img--light"
+              :src="withBase('/assets/rho-ui-demo-light.svg')"
               width="1008"
               height="848"
-              alt="Rho terminal UI showing a request-ID middleware edit with read, edit, and test tool cards"
+              :alt="proofAlt"
+            />
+            <img
+              class="rho-home__proof-img rho-home__proof-img--dark"
+              :src="withBase('/assets/rho-ui-demo.svg')"
+              width="1008"
+              height="848"
+              :alt="proofAlt"
             />
           </a>
           <figcaption class="rho-home__proof-cap">
@@ -341,6 +349,18 @@ const paths = [
   width: 100%;
   height: auto;
   vertical-align: middle;
+}
+
+.rho-home__proof-img--dark {
+  display: none;
+}
+
+:global(.dark) .rho-home__proof-img--light {
+  display: none;
+}
+
+:global(.dark) .rho-home__proof-img--dark {
+  display: block;
 }
 
 .rho-home__proof-cap {
