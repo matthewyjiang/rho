@@ -82,7 +82,7 @@ Plugin packages are described in [Agent Plugins](/integrations/plugins).
 
 ## Add a skill
 
-You don't need an install command. Choose where the skill should live:
+Loose skills do not need an install command. Choose where the skill should live:
 
 - `~/.rho/skills` makes it available only to Rho.
 - `~/.agents/skills` shares it with Rho and other agents that use this layout.
@@ -99,6 +99,11 @@ touch ~/.agents/skills/inspect-logs/SKILL.md
 Open the new file and follow the format above. To add a third-party skill, copy
 its directory into one of these locations.
 Read its instructions before you use it.
+
+Plugin-owned skills arrive through [Agent Plugin packages](/integrations/plugins)
+(`rho plugins install` / `link`). Those skills keep the package as their owner
+and sit below every loose skill location in precedence. Loose skills and
+plugin-owned skills stay distinct in inventory output.
 
 ## Built-in skills
 

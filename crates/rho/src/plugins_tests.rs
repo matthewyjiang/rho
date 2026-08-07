@@ -484,8 +484,13 @@ fn translates_stdio_server_with_placeholders() {
                 .expect("PLUGIN_DATA provided")
                 .clone();
             assert!(Path::new(&root).ends_with("devtools"));
-            assert!(Path::new(&data).ends_with(Path::new("data/devtools")));
-            assert_eq!(command, &format!("{root}/bin/validator"));
+            assert!(Path::new(&data).ends_with(Path::new("data").join("devtools")));
+            // Relative commands resolve through the workspace path helpers, so
+            // the expanded executable uses the host path separators.
+            assert_eq!(
+                Path::new(command.as_str()),
+                Path::new(&root).join("bin").join("validator")
+            );
             assert_eq!(args, &["--data".to_string(), format!("{data}/validator")]);
             assert_eq!(cwd, &Some(PathBuf::from(&root)));
             assert_eq!(env.get("CONFIG").unwrap(), &format!("{root}/config.json"));

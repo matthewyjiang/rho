@@ -52,7 +52,7 @@ Rho checks explicit roots only. It never searches arbitrary directories.
 
 Only immediate child directories that contain a `plugin.json` are plugins.
 When two roots contain the same plugin name, the nearer root wins and Rho
-reports the shadowed copy.
+reports the shadowed copy. Installed and linked packages use these same roots.
 
 Supported component types in the current build: skills, and MCP servers with
 the `stdio` and `streamable-http` transports. Legacy `sse` entries are
@@ -137,19 +137,119 @@ at the narrowest boundary: the plugin for `plugin.json`, the component type
 for a fixed location, the skill for a `SKILL.md`, or the server entry for a
 command or working directory.
 
+## Install roots and lifecycle
+
+Rho manages packages in the same explicit roots it discovers:
+
+```text
+~/.agents/plugins/<name>/          user scope (default for install and link)
+<repository>/.agents/plugins/<name>/   project scope (`--scope project`)
+```
+
+Lifecycle commands:
+
+```bash
+rho plugins list
+rho plugins inspect <name>
+rho plugins install <path> [--scope user|project] [--force]
+rho plugins link <path> [--scope user|project] [--force]
+rho plugins enable <name>
+rho plugins disable <name>
+rho plugins remove <name> [--yes]
+```
+
+Behavior:
+
+- `install` validates `plugin.json` first, then copies the package into the
+  managed root. It never executes package code.
+- `link` validates first, then creates a directory symlink in the managed root.
+- `inspect` and `list` read manifests and component metadata only. They do not
+  connect MCP servers or run skill scripts. Use `rho mcp list` / `/mcp` for live
+  MCP status.
+- `disable` keeps package files on disk and drops the package's skills and MCP
+  servers from new sessions.
+- `remove` deletes only the package directory or symlink under a managed root.
+  It does not delete `<plugins-root>/data/<plugin>` runtime data.
+- `--force` is required to replace an existing package at the destination.
+- Destination paths must be immediate children of a managed root. The reserved
+  `data/` directory is never a package slot.
+
+### Activation state
+
+Enable and disable state is Rho policy, not part of the Agent Plugins package
+format. State files live outside package directories:
+
+```text
+$RHO_HOME/plugins.toml          user scope (default `~/.rho/plugins.toml`)
+<repository>/.rho/plugins.toml  project scope
+```
+
+A missing file means every discovered plugin is enabled. Disabling writes
+`enabled = false` for that package name in the matching scope file. Package
+contents are never modified.
+
+### Precedence
+
+Discovery order and conflict rules:
+
+```text
+project plugins (nearest ancestor first) > user plugins
+```
+
+Within that order:
+
+1. The first valid package for a given plugin name wins.
+2. Later packages with the same name are reported as shadowed.
+3. Disabled packages stay visible in `rho plugins list` / `inspect` but do not
+   contribute skills or MCP servers.
+4. Loose skills still outrank every plugin skill
+   (`built-in > loose user > loose project > project plugins > user plugins`).
+5. Ordinary `[mcp.servers]` identities stay separate from plugin-scoped
+   `<plugin>/<server>` identities.
+
+When the same plugin name exists in more than one root, enable, disable, and
+remove act on the higher-precedence match.
+
 ## Diagnostics
 
-- Session logs report rejected plugins, shadowed duplicates, invalid skills,
-  invalid MCP entries, unsupported transports, and plugins with no usable
-  components.
-- `/doctor` includes an Agent Plugins check with loaded and problem counts.
-- `/mcp` and `rho mcp list` show plugin servers alongside ordinary servers,
+- Session logs report rejected plugins, shadowed duplicates, disabled packages,
+  invalid skills, invalid MCP entries, unsupported transports, and plugins with
+  no usable components.
+- `/doctor` includes an Agent Plugins check with loaded, disabled, and problem
+  counts.
+- `rho plugins list` and `rho plugins inspect` show package inventory, scope,
+  origin (`local`, `install`, or `link`), enablement, component names, and
+  diagnostics without executing package code.
+- `/mcp` and `rho mcp list` show live plugin servers alongside ordinary servers,
   with status, errors, and exported tool names.
+- Plugin-owned skills keep their owner in the skill source model
+  (`plugin <name> (...)`), so inventory and skill listings can show which
+  package contributed a skill.
+
+## Trust
+
+- Manifest inspection, install validation, and list/inspect never execute
+  package code.
+- Skills can still direct the agent to run scripts and touch resources through
+  ordinary Rho permissions after a package is enabled and loaded into a session.
+- MCP servers from enabled packages use the same permission, cancellation, and
+  output paths as ordinary MCP configuration. Remote registry install, automatic
+  updates, and package signatures are not implemented yet.
 
 ## Relationship to ordinary configuration
 
 Ordinary `[mcp.servers]` entries and loose skills keep working unchanged.
 Plugin servers merge with ordinary servers under their namespaced identities,
-and ordinary config keeps full precedence for its own identities. Plugin
-loading adds no install, update, enable, or disable commands, and no remote
-plugin downloads.
+and ordinary config keeps full precedence for its own identities.
+
+What comes from Agent Plugins versus Rho policy:
+
+| Behavior | Source |
+| --- | --- |
+| Package layout, `plugin.json`, skills/, `mcp.json`, path containment | Agent Plugins |
+| Explicit discovery roots and component loading | Agent Plugins, with Rho root choices |
+| Install, link, enable, disable, remove commands | Rho policy |
+| Enablement state files and managed install roots | Rho policy |
+| Skill and MCP runtime behavior after load | Rho |
+
+Remote registry distribution and automatic updates remain unsupported.
