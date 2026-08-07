@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.17.0...rho-sdk-v1.17.1) (2026-08-07)
+
+
+### Bug Fixes
+
+* **sdk:** recover failed 1.32.0 release packaging ([#792](https://github.com/matthewyjiang/rho/issues/792)) ([a782145](https://github.com/matthewyjiang/rho/commit/a782145820f2924a47140f9e8cd8e3cbd13be8a3))
+
 ## [1.17.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v1.16.0...rho-sdk-v1.17.0) (2026-08-06)
 
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.12.5](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.12.4...rho-agent-tools-v0.12.5) (2026-08-07)
+
+
+### Bug Fixes
+
+* **sdk:** recover failed 1.32.0 release packaging ([#792](https://github.com/matthewyjiang/rho/issues/792)) ([a782145](https://github.com/matthewyjiang/rho/commit/a782145820f2924a47140f9e8cd8e3cbd13be8a3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.17.0 to 1.17.1
+
 ## [0.12.4](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.12.3...rho-agent-tools-v0.12.4) (2026-08-06)
 
 
