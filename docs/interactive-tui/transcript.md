@@ -52,6 +52,7 @@ Assistant Markdown renders in the feed as it streams.
 | ATX headings `#` … `######` | Syntax markers are dropped. Each level has its own color. H1–H3 use stronger emphasis |
 | Code fences | Bordered blocks with a top-right `COPY` control that highlights on hover |
 | Mermaid fences | Terminal diagram art when supported; see [Mermaid diagrams](/interactive-tui/mermaid) |
+| Display and inline math | TXM Unicode art for closed `$$...$$` and single-row `$...$`; see [Math rendering](/interactive-tui/math) |
 | Tables and ordinary Markdown | Wrapped to the pane width |
 
 Heading-like text inside code fences, or invalid heading lines, stays literal.
@@ -60,9 +61,9 @@ Heading-like text inside code fences, or invalid heading lines, stays literal.
 
 - Drag-select transcript text to copy it to the terminal clipboard. Rho briefly
   shows how many characters were copied.
-- Code block and Mermaid panel `COPY` actions sit in the top-right border and
-  highlight on hover. For Mermaid, `COPY` always copies the **source**, not the
-  box art.
+- Code block, Mermaid, and math panel `COPY` actions sit in the top-right border
+  and highlight on hover. For Mermaid and math, `COPY` always copies the
+  **source**, not the rendered art.
 - Click without drag does not copy. The code-block copy control is excluded
   from drag selection so a click on `COPY` does not grab neighboring text.
 
@@ -96,6 +97,7 @@ the [sessions](/sessions) layout. Export a transcript with `/export` or
 ## Related
 
 - [Mermaid diagrams](/interactive-tui/mermaid)
+- [Math rendering](/interactive-tui/math)
 - [Attachments](/interactive-tui/attachments)
 - [Interactive TUI](/interactive-tui) - shortcuts and commands
 - [Keybindings example](/configuration/full-example)
