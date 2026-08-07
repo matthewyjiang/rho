@@ -1,12 +1,5 @@
 # Changelog
 
-## [0.18.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.17.1...rho-providers-v0.18.0) (2026-08-07)
-
-
-### Features
-
-* **agents:** allow pinning auth profiles on rho agents ([#781](https://github.com/matthewyjiang/rho/issues/781)) ([3e1f691](https://github.com/matthewyjiang/rho/commit/3e1f691e693dd93bf888cb5c3eb3093a7169525a))
-
 ## [0.17.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.17.0...rho-providers-v0.17.1) (2026-08-06)
 
 
