@@ -1,9 +1,15 @@
 use std::collections::HashMap;
 
 use mermaid_rs_renderer::{
-    DiagramKind, Direction, EdgeArrowhead, EdgeDecoration, EdgeStyle, NodeShape,
+    DiagramKind, Direction as MermaidDirection, EdgeArrowhead, EdgeDecoration, EdgeStyle,
+    NodeShape as MermaidNodeShape,
 };
 use unicode_width::UnicodeWidthStr;
+
+use crate::tui::terminal_graph::{
+    Direction, Edge as TerminalEdge, EdgeHead as TerminalHead, EdgeLine as TerminalLine,
+    Node as TerminalNode, NodeShape, NodeStyle,
+};
 
 use super::{
     drawing::wrap_label,
@@ -12,52 +18,12 @@ use super::{
     sequence::{NoteAnchor, SeqHead, SeqItem, Sequence},
 };
 
-#[derive(Clone, Copy, PartialEq)]
-pub(super) enum Shape {
-    Rect,
-    Round,
-    Diamond,
-}
-
-pub(super) struct Node {
-    pub(super) label: String,
-    pub(super) shape: Shape,
-}
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub(super) enum Head {
-    None,
-    Arrow,
-    Circle,
-    Cross,
-    Triangle,
-    DiamondFill,
-    DiamondOpen,
-}
-
-#[derive(Clone, Copy, PartialEq)]
-pub(super) enum LineKind {
-    Solid,
-    Dotted,
-    Thick,
-}
-
-pub(super) struct Edge {
-    pub(super) from: usize,
-    pub(super) to: usize,
-    pub(super) label: Option<String>,
-    pub(super) head_to: Head,
-    pub(super) head_from: Head,
-    pub(super) line: LineKind,
-}
-
-#[derive(Clone, Copy, PartialEq)]
-pub(super) enum Dir {
-    Down,
-    Up,
-    Right,
-    Left,
-}
+pub(super) type Shape = NodeShape;
+pub(super) type Node = TerminalNode;
+pub(super) type Head = TerminalHead;
+pub(super) type LineKind = TerminalLine;
+pub(super) type Edge = TerminalEdge;
+pub(super) type Dir = Direction;
 
 pub(super) struct Group {
     pub(super) id: String,
@@ -72,6 +38,17 @@ pub(super) struct Graph {
     pub(super) groups: Vec<Group>,
     pub(super) node_group: Vec<Option<usize>>,
     pub(super) dir: Dir,
+}
+
+impl Graph {
+    pub(super) fn layout_graph(&self) -> crate::tui::terminal_graph::Graph {
+        crate::tui::terminal_graph::Graph::from_parts(
+            self.nodes.clone(),
+            self.edges.clone(),
+            self.dir,
+        )
+        .expect("Mermaid model validates edge endpoints before layout")
+    }
 }
 
 pub(super) struct ClassInfo {
@@ -137,6 +114,7 @@ pub(super) fn from_ir(ir: &mermaid_rs_renderer::Graph) -> Option<TerminalModel> 
             Node {
                 label,
                 shape: shape(node.shape),
+                style: NodeStyle::default(),
             }
         })
         .collect::<Vec<_>>();
@@ -193,34 +171,34 @@ pub(super) fn from_ir(ir: &mermaid_rs_renderer::Graph) -> Option<TerminalModel> 
     })
 }
 
-fn shape(shape: NodeShape) -> Shape {
+fn shape(shape: MermaidNodeShape) -> Shape {
     match shape {
-        NodeShape::Diamond | NodeShape::Hexagon => Shape::Diamond,
-        NodeShape::RoundRect
-        | NodeShape::Stadium
-        | NodeShape::Circle
-        | NodeShape::DoubleCircle
-        | NodeShape::ActorBox => Shape::Round,
-        NodeShape::Rectangle
-        | NodeShape::ForkJoin
-        | NodeShape::Subroutine
-        | NodeShape::Cylinder
-        | NodeShape::Parallelogram
-        | NodeShape::ParallelogramAlt
-        | NodeShape::Trapezoid
-        | NodeShape::TrapezoidAlt
-        | NodeShape::Asymmetric
-        | NodeShape::MindmapDefault
-        | NodeShape::Text => Shape::Rect,
+        MermaidNodeShape::Diamond | MermaidNodeShape::Hexagon => Shape::Diamond,
+        MermaidNodeShape::RoundRect
+        | MermaidNodeShape::Stadium
+        | MermaidNodeShape::Circle
+        | MermaidNodeShape::DoubleCircle
+        | MermaidNodeShape::ActorBox => Shape::Round,
+        MermaidNodeShape::Rectangle
+        | MermaidNodeShape::ForkJoin
+        | MermaidNodeShape::Subroutine
+        | MermaidNodeShape::Cylinder
+        | MermaidNodeShape::Parallelogram
+        | MermaidNodeShape::ParallelogramAlt
+        | MermaidNodeShape::Trapezoid
+        | MermaidNodeShape::TrapezoidAlt
+        | MermaidNodeShape::Asymmetric
+        | MermaidNodeShape::MindmapDefault
+        | MermaidNodeShape::Text => Shape::Rect,
     }
 }
 
-fn direction(direction: Direction) -> Dir {
+fn direction(direction: MermaidDirection) -> Dir {
     match direction {
-        Direction::TopDown => Dir::Down,
-        Direction::BottomTop => Dir::Up,
-        Direction::LeftRight => Dir::Right,
-        Direction::RightLeft => Dir::Left,
+        MermaidDirection::TopDown => Dir::TopDown,
+        MermaidDirection::BottomTop => Dir::BottomUp,
+        MermaidDirection::LeftRight => Dir::LeftRight,
+        MermaidDirection::RightLeft => Dir::RightLeft,
     }
 }
 
@@ -454,7 +432,9 @@ pub(super) fn can_paint_losslessly(ir: &mermaid_rs_renderer::Graph) -> bool {
             ir.nodes.values().all(|node| {
                 matches!(
                     node.shape,
-                    NodeShape::Rectangle | NodeShape::RoundRect | NodeShape::Diamond
+                    MermaidNodeShape::Rectangle
+                        | MermaidNodeShape::RoundRect
+                        | MermaidNodeShape::Diamond
                 ) && plain_label_fits(&node.label)
             }) && ir
                 .subgraphs
@@ -464,24 +444,28 @@ pub(super) fn can_paint_losslessly(ir: &mermaid_rs_renderer::Graph) -> bool {
         DiagramPolicy::PaintState => {
             ir.state_notes.is_empty()
                 && ir.nodes.values().all(|node| {
-                    matches!(node.shape, NodeShape::Rectangle | NodeShape::RoundRect)
-                        && !node.label.contains("\n---")
+                    matches!(
+                        node.shape,
+                        MermaidNodeShape::Rectangle | MermaidNodeShape::RoundRect
+                    ) && !node.label.contains("\n---")
                         && plain_label_fits(&node.label)
                 })
         }
         DiagramPolicy::PaintClass => {
             ir.nodes
                 .values()
-                .all(|node| node.shape == NodeShape::Rectangle)
+                .all(|node| node.shape == MermaidNodeShape::Rectangle)
                 && ir
                     .edges
                     .iter()
                     .all(|edge| edge.start_label.is_none() && edge.end_label.is_none())
         }
-        DiagramPolicy::PaintEr => ir
-            .nodes
-            .values()
-            .all(|node| matches!(node.shape, NodeShape::Rectangle | NodeShape::RoundRect)),
+        DiagramPolicy::PaintEr => ir.nodes.values().all(|node| {
+            matches!(
+                node.shape,
+                MermaidNodeShape::Rectangle | MermaidNodeShape::RoundRect
+            )
+        }),
         DiagramPolicy::PaintSequence => {
             !ir.sequence_participants.is_empty()
                 && ir.sequence_activations.is_empty()
@@ -492,7 +476,8 @@ pub(super) fn can_paint_losslessly(ir: &mermaid_rs_renderer::Graph) -> bool {
                     ir.nodes
                         .get(id)
                         .map(|node| {
-                            node.shape == NodeShape::ActorBox && node.label.width() <= WRAP_WIDTH
+                            node.shape == MermaidNodeShape::ActorBox
+                                && node.label.width() <= WRAP_WIDTH
                         })
                         .unwrap_or(false)
                 })

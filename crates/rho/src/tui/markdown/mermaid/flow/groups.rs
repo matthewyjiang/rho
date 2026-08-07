@@ -1,14 +1,10 @@
-// Adapted from Grok Build's terminal Mermaid renderer:
-// https://github.com/xai-org/grok-build/blob/b189869b7755d2b482969acf6c92da3ecfeffd36/crates/codegen/xai-grok-markdown/src/mermaid.rs
-// Copyright 2023-2026 SpaceXAI. Licensed under Apache-2.0.
-use super::{layout_canvas, NodeExtra, Placed};
+use std::collections::HashMap;
+
 use crate::tui::markdown::mermaid::{
-    canvas::{Canvas, Cls},
-    drawing::{draw_box, draw_seq_text, fit_label},
-    model::{Dir, Edge, Graph, Node, Shape},
+    model::{Dir, Edge, Graph as ModelGraph, Node, Shape},
     painter::{MermaidArt, MermaidStyles, Oversize},
 };
-use std::collections::HashMap;
+use crate::tui::terminal_graph::{self, Canvas, NodeExtra, NodeStyle};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Item {
@@ -17,82 +13,87 @@ enum Item {
 }
 
 pub(super) fn render_grouped(
-    graph: &Graph,
+    graph: &ModelGraph,
     styles: &MermaidStyles,
     max_width: Option<usize>,
     wrap_width: usize,
 ) -> Result<MermaidArt, Oversize> {
     let mut proxy: HashMap<usize, usize> = HashMap::new();
-    for (gi, g) in graph.groups.iter().enumerate() {
-        if let Some(&ni) = graph.index.get(&g.id) {
-            proxy.insert(ni, gi);
+    for (group_index, group) in graph.groups.iter().enumerate() {
+        if let Some(&node_index) = graph.index.get(&group.id) {
+            proxy.insert(node_index, group_index);
         }
     }
 
-    let group_chain = |g: Option<usize>| -> Vec<usize> {
+    let group_chain = |group: Option<usize>| -> Vec<usize> {
         let mut chain = Vec::new();
-        let mut cur = g;
-        while let Some(gi) = cur {
-            chain.push(gi);
-            cur = graph.groups[gi].parent;
+        let mut current = group;
+        while let Some(group_index) = current {
+            chain.push(group_index);
+            current = graph.groups[group_index].parent;
         }
         chain.reverse();
         chain
     };
-    let endpoint = |n: usize| -> (Item, Vec<usize>) {
-        match proxy.get(&n) {
-            Some(&gi) => (Item::Group(gi), group_chain(graph.groups[gi].parent)),
-            None => (Item::Node(n), group_chain(graph.node_group[n])),
+    let endpoint = |node: usize| -> (Item, Vec<usize>) {
+        match proxy.get(&node) {
+            Some(&group) => (Item::Group(group), group_chain(graph.groups[group].parent)),
+            None => (Item::Node(node), group_chain(graph.node_group[node])),
         }
     };
 
     let mut scope_edges: HashMap<Option<usize>, Vec<(Item, Item, usize)>> = HashMap::new();
-    let mut referenced: Vec<bool> = vec![false; graph.groups.len()];
-    for (ei, e) in graph.edges.iter().enumerate() {
-        let (item_f, chain_f) = endpoint(e.from);
-        let (item_t, chain_t) = endpoint(e.to);
-        let k = chain_f
+    let mut referenced = vec![false; graph.groups.len()];
+    for (edge_index, edge) in graph.edges.iter().enumerate() {
+        let (from_item, from_chain) = endpoint(edge.from);
+        let (to_item, to_chain) = endpoint(edge.to);
+        let common = from_chain
             .iter()
-            .zip(&chain_t)
-            .take_while(|(a, b)| a == b)
+            .zip(&to_chain)
+            .take_while(|(from, to)| from == to)
             .count();
-        let scope = if k == 0 { None } else { Some(chain_f[k - 1]) };
-        let f = if chain_f.len() > k {
-            Item::Group(chain_f[k])
+        let scope = (common > 0).then(|| from_chain[common - 1]);
+        let from = if from_chain.len() > common {
+            Item::Group(from_chain[common])
         } else {
-            item_f
+            from_item
         };
-        let t = if chain_t.len() > k {
-            Item::Group(chain_t[k])
+        let to = if to_chain.len() > common {
+            Item::Group(to_chain[common])
         } else {
-            item_t
+            to_item
         };
-        if let Item::Group(gi) = f {
-            referenced[gi] = true;
+        if let Item::Group(group) = from {
+            referenced[group] = true;
         }
-        if let Item::Group(gi) = t {
-            referenced[gi] = true;
+        if let Item::Group(group) = to {
+            referenced[group] = true;
         }
-        scope_edges.entry(scope).or_default().push((f, t, ei));
+        scope_edges
+            .entry(scope)
+            .or_default()
+            .push((from, to, edge_index));
     }
 
     let mut direct_nodes: HashMap<Option<usize>, Vec<usize>> = HashMap::new();
-    for (ni, g) in graph.node_group.iter().enumerate() {
-        if !proxy.contains_key(&ni) {
-            direct_nodes.entry(*g).or_default().push(ni);
+    for (node, group) in graph.node_group.iter().enumerate() {
+        if !proxy.contains_key(&node) {
+            direct_nodes.entry(*group).or_default().push(node);
         }
     }
     let mut keep = vec![false; graph.groups.len()];
-    for gi in (0..graph.groups.len()).rev() {
-        let has_nodes = direct_nodes.get(&Some(gi)).is_some_and(|v| !v.is_empty());
-        let has_children =
-            (0..graph.groups.len()).any(|c| graph.groups[c].parent == Some(gi) && keep[c]);
-        keep[gi] = has_nodes || has_children || referenced[gi];
+    for group in (0..graph.groups.len()).rev() {
+        let has_nodes = direct_nodes
+            .get(&Some(group))
+            .is_some_and(|nodes| !nodes.is_empty());
+        let has_children = (0..graph.groups.len())
+            .any(|child| graph.groups[child].parent == Some(group) && keep[child]);
+        keep[group] = has_nodes || has_children || referenced[group];
     }
 
     let mut canvas = build_scope(
         graph,
-        None,
+        /*scope*/ None,
         &scope_edges,
         &direct_nodes,
         &keep,
@@ -100,9 +101,9 @@ pub(super) fn render_grouped(
         wrap_width,
     )?;
     match graph.dir {
-        Dir::Up => canvas.flip_vertical(),
-        Dir::Left => canvas.flip_horizontal(),
-        Dir::Down | Dir::Right => {}
+        Dir::BottomUp => canvas.flip_vertical(),
+        Dir::RightLeft => canvas.flip_horizontal(),
+        Dir::TopDown | Dir::LeftRight => {}
     }
     let (styled_lines, plain_lines) = canvas.to_lines(styles);
     Ok(MermaidArt {
@@ -112,7 +113,7 @@ pub(super) fn render_grouped(
 }
 
 fn build_scope(
-    graph: &Graph,
+    graph: &ModelGraph,
     scope: Option<usize>,
     scope_edges: &HashMap<Option<usize>, Vec<(Item, Item, usize)>>,
     direct_nodes: &HashMap<Option<usize>, Vec<usize>>,
@@ -120,85 +121,74 @@ fn build_scope(
     max_width: Option<usize>,
     wrap_width: usize,
 ) -> Result<Canvas, Oversize> {
-    let mut items: Vec<Item> = Vec::new();
+    let mut items = Vec::new();
     if let Some(nodes) = direct_nodes.get(&scope) {
-        items.extend(nodes.iter().map(|&n| Item::Node(n)));
+        items.extend(nodes.iter().map(|&node| Item::Node(node)));
     }
     let child_groups: Vec<usize> = (0..graph.groups.len())
-        .filter(|&gi| graph.groups[gi].parent == scope && keep[gi])
+        .filter(|&group| graph.groups[group].parent == scope && keep[group])
         .collect();
-    items.extend(child_groups.iter().map(|&gi| Item::Group(gi)));
+    items.extend(child_groups.iter().map(|&group| Item::Group(group)));
 
     if items.is_empty() {
         return Ok(Canvas::new(1, 1));
     }
 
-    let mut index_of: HashMap<Item, usize> = HashMap::new();
-    let mut nodes: Vec<Node> = Vec::new();
-    let mut extras: Vec<NodeExtra> = Vec::new();
+    let mut index_of = HashMap::new();
+    let mut nodes = Vec::new();
+    let mut extras = Vec::new();
     for item in &items {
         index_of.insert(*item, nodes.len());
         match item {
-            Item::Node(ni) => {
+            Item::Node(node) => {
                 nodes.push(Node {
-                    label: graph.nodes[*ni].label.clone(),
-                    shape: graph.nodes[*ni].shape,
+                    label: graph.nodes[*node].label.clone(),
+                    shape: graph.nodes[*node].shape,
+                    style: graph.nodes[*node].style,
                 });
                 extras.push(NodeExtra::Plain);
             }
-            Item::Group(gi) => {
+            Item::Group(group) => {
                 let sub = build_scope(
                     graph,
-                    Some(*gi),
+                    Some(*group),
                     scope_edges,
                     direct_nodes,
                     keep,
-                    None,
+                    /*max_width*/ None,
                     wrap_width,
                 )?;
                 nodes.push(Node {
-                    label: graph.groups[*gi].label.clone(),
+                    label: graph.groups[*group].label.clone(),
                     shape: Shape::Rect,
+                    style: NodeStyle::default(),
                 });
                 extras.push(NodeExtra::Frame(sub));
             }
         }
     }
 
-    let mut edges: Vec<Edge> = Vec::new();
+    let mut edges = Vec::new();
     if let Some(list) = scope_edges.get(&scope) {
-        for (f, t, ei) in list {
-            let (Some(&fi), Some(&ti)) = (index_of.get(f), index_of.get(t)) else {
+        for (from, to, edge_index) in list {
+            let (Some(&from), Some(&to)) = (index_of.get(from), index_of.get(to)) else {
                 continue;
             };
-            let e = &graph.edges[*ei];
+            let edge = &graph.edges[*edge_index];
             edges.push(Edge {
-                from: fi,
-                to: ti,
-                label: e.label.clone(),
-                head_to: e.head_to,
-                head_from: e.head_from,
-                line: e.line,
+                from,
+                to,
+                label: edge.label.clone(),
+                head_to: edge.head_to,
+                head_from: edge.head_from,
+                line: edge.line,
             });
         }
     }
 
-    let synth = Graph {
-        nodes,
-        edges,
-        index: HashMap::new(),
-        groups: Vec::new(),
-        node_group: Vec::new(),
-        dir: graph.dir,
-    };
-    layout_canvas(&synth, &extras, max_width, wrap_width)
-}
-
-pub(super) fn draw_frame(canvas: &mut Canvas, p: &Placed, title: &str, sub: &Canvas) {
-    draw_box(canvas, p, &[], Shape::Rect);
-    let t = fit_label(title, p.w.saturating_sub(4));
-    draw_seq_text(canvas, &format!(" {t} "), p.x + 1, p.y, Cls::Text);
-    let ox = p.x + 1 + (p.w - 2 - sub.w) / 2;
-    let oy = p.y + 1 + (p.h - 2 - sub.h) / 2;
-    canvas.blit(sub, ox, oy);
+    let direction = graph.dir;
+    let synth =
+        terminal_graph::Graph::from_parts(nodes, edges, direction).map_err(|_| Oversize::Cells)?;
+    let layout = terminal_graph::layout_canvas(&synth, &extras, max_width, wrap_width)?;
+    Ok(layout.canvas)
 }

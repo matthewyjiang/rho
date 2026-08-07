@@ -134,6 +134,7 @@ fn render_inner(source: &str, inner_width: usize) -> MermaidRender {
         node_text: style,
         edge: style,
         edge_label: style,
+        node_styles: Vec::new(),
     };
     let result = match diagram_policy {
         policy::DiagramPolicy::PaintSequence => sequence::layout_sequence(

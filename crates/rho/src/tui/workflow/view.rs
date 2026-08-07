@@ -70,26 +70,18 @@ fn draw_header(frame: &mut Frame<'_>, area: Rect, state: &WorkflowUiState) {
 }
 
 fn draw_dag(frame: &mut Frame<'_>, area: Rect, state: &WorkflowUiState) {
-    let inner_width = area.width.saturating_sub(2);
     let activities = state
         .snapshot()
         .nodes
         .iter()
         .map(|node| node_graph_activity(node, state))
         .collect::<Vec<_>>();
-    let dag_lines = dag::render_dag(
-        &state.snapshot().nodes,
-        state.selected_index(),
-        inner_width,
-        &activities,
-    );
-    let lines = dag::to_paragraph_lines(dag_lines);
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(Block::default().title(" Graph ").borders(Borders::ALL))
-            .wrap(Wrap { trim: false }),
-        area,
-    );
+    let dag = dag::render_dag(&state.snapshot().nodes, state.selected_index(), &activities);
+    let block = Block::default().title(" Graph ").borders(Borders::ALL);
+    let inner = block.inner(area);
+    let scroll = dag.viewport_offset(state.selected_index(), inner.width, inner.height);
+    frame.render_widget(block, area);
+    frame.render_widget(Paragraph::new(dag.lines).scroll(scroll), inner);
 }
 
 fn draw_details(frame: &mut Frame<'_>, area: Rect, state: &mut WorkflowUiState) {

@@ -60,6 +60,17 @@ fn run_to_completion(
     let plan = workflow_plan(runner, home, &["workflow", "run", PLAN_ID]);
     let mut harness = spawn(runner, &plan, WORKFLOW_RUN_ID)?;
     let result = (|| -> Result<()> {
+        // The run screen keeps the graph and selected-node details visible while
+        // j/k moves between frozen scheduler-order nodes.
+        harness.wait_for_text("Graph", STARTUP)?;
+        harness.wait_for_text("Selected", STARTUP)?;
+        harness.wait_for_text("Inspect workspace", STARTUP)?;
+        harness.wait_for_text("agent reviewer", STARTUP)?;
+        harness.inject_key(&Key::Char('j'))?;
+        harness.wait_for_text("Run checks", UPDATE)?;
+        harness.wait_for_text("command cargo", UPDATE)?;
+        harness.inject_key(&Key::Char('k'))?;
+        harness.wait_for_text("agent reviewer", UPDATE)?;
         // Owner plan gate: footer shows start; header is ready.
         harness.wait_for_text("enter start", STARTUP)?;
         harness.wait_for_text("matrix workflow", STARTUP)?;

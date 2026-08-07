@@ -193,6 +193,7 @@ pub(super) fn layout_sequence(
                 &p,
                 std::slice::from_ref(&labels[i]),
                 Shape::Rect,
+                /*node_index*/ None,
             );
         }
     }
@@ -208,7 +209,13 @@ pub(super) fn layout_sequence(
                 cy: r + 1,
                 rank: 0,
             };
-            draw_box(&mut canvas, &p, std::slice::from_ref(text), Shape::Rect);
+            draw_box(
+                &mut canvas,
+                &p,
+                std::slice::from_ref(text),
+                Shape::Rect,
+                /*node_index*/ None,
+            );
         }
     }
     for &x in &xs {

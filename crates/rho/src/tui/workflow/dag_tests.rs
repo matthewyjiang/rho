@@ -1,10 +1,14 @@
-use super::{layer_index_of, render_dag, state_label, state_style};
+use super::{render_dag, state_label, state_style, workflow_graph, MAX_GRAPH_ACTIVITY_WIDTH};
 use crate::workflow::AttemptNumber;
 use crate::{
-    tui::workflow::event_adapter::{ExecutionMetadata, WorkflowNodeSnapshot},
+    tui::{
+        terminal_graph::NodeStyle,
+        workflow::event_adapter::{ExecutionMetadata, WorkflowNodeSnapshot},
+    },
     workflow::{AgentRuntime, NodeId, NodeState, NodeTerminalState, WorkspaceAccess},
 };
 use pretty_assertions::assert_eq;
+use ratatui::style::Modifier;
 
 use super::super::super::theme::Theme;
 
@@ -30,32 +34,70 @@ fn node(id: &str, name: &str, deps: &[&str], state: NodeState) -> WorkflowNodeSn
     }
 }
 
+// Covers: workflow dependencies must remain distinct routed graph edges.
+// Owner: workflow-to-terminal-graph adapter.
 #[test]
-fn dependents_render_below_dependencies() {
+fn dependencies_render_as_edges_below_their_parents() {
     let nodes = vec![
         node("apply", "Apply", &["inspect", "test"], NodeState::Pending),
         node("inspect", "Inspect", &[], NodeState::Pending),
         node("test", "Test", &[], NodeState::Pending),
     ];
-    // indices: 0 apply, 1 inspect, 2 test
-    assert_eq!(layer_index_of(&nodes, 1), Some(0));
-    assert_eq!(layer_index_of(&nodes, 2), Some(0));
-    assert_eq!(layer_index_of(&nodes, 0), Some(1));
+    let activities = vec![None; nodes.len()];
+    let graph = workflow_graph(&nodes, 0, &activities);
+    assert_eq!(
+        graph
+            .edges
+            .iter()
+            .map(|edge| (edge.from, edge.to))
+            .collect::<Vec<_>>(),
+        vec![(1, 0), (2, 0)]
+    );
 
-    let lines = render_dag(&nodes, 0, 80, &vec![None; nodes.len()]);
-    let text = lines
-        .iter()
-        .map(|line| {
-            line.spans
-                .iter()
-                .map(|span| span.content.as_ref())
-                .collect::<String>()
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    let inspect_pos = text.find("Inspect").expect("inspect label");
-    let apply_pos = text.find("Apply").expect("apply label");
-    assert!(inspect_pos < apply_pos);
+    let rendered = render_dag(&nodes, 0, &activities);
+    assert!(rendered.node_rects[1].y < rendered.node_rects[0].y);
+    assert!(rendered.node_rects[2].y < rendered.node_rects[0].y);
+}
+
+// Covers: graph traversal must keep the selected node inside a clipped pane.
+// Owner: workflow graph viewport math.
+#[test]
+fn viewport_follows_the_selected_node() {
+    let nodes = vec![
+        node("inspect", "Inspect", &[], NodeState::Pending),
+        node("test", "Test", &["inspect"], NodeState::Pending),
+        node("apply", "Apply", &["test"], NodeState::Pending),
+    ];
+    let rendered = render_dag(&nodes, 2, &vec![None; nodes.len()]);
+    let (row, column) = rendered.viewport_offset(2, 5, 5);
+    let selected = rendered.node_rects[2];
+
+    assert!(selected.y >= usize::from(row));
+    assert!(selected.y < usize::from(row) + 5);
+    assert_eq!(column, selected.x as u16);
+    assert!(selected.x >= usize::from(column));
+    assert!(selected.x < usize::from(column) + 5);
+}
+
+// Covers: arbitrary progress messages must not consume the graph's render budget.
+// Owner: workflow-to-terminal-graph adapter.
+#[test]
+fn progress_activity_keeps_the_graph_compact() {
+    let nodes = vec![node("inspect", "Inspect", &[], NodeState::Pending)];
+    let activities = vec![Some("still checking ".repeat(MAX_GRAPH_ACTIVITY_WIDTH * 2))];
+    let graph = workflow_graph(&nodes, 0, &activities);
+    let activity = graph.nodes[0]
+        .label
+        .rsplit_once(" · ")
+        .expect("activity is present")
+        .1;
+
+    assert_eq!(
+        unicode_width::UnicodeWidthStr::width(activity),
+        MAX_GRAPH_ACTIVITY_WIDTH
+    );
+    assert!(activity.ends_with('…'));
+    assert_eq!(render_dag(&nodes, 0, &activities).node_rects.len(), 1);
 }
 
 // Covers: a running node labels its in-flight attempt so the details pane and
@@ -92,5 +134,28 @@ fn state_styles_route_through_theme_and_keep_ready_distinct() {
             outcome: NodeTerminalState::Success
         }),
         Theme::success()
+    );
+
+    let running = NodeState::Running {
+        attempt: AttemptNumber::new(1).unwrap(),
+    };
+    let nodes = vec![
+        node("pending", "Pending", &[], NodeState::Pending),
+        node("running", "Running", &[], running),
+    ];
+    let graph = workflow_graph(&nodes, 1, &[None, None]);
+    assert_eq!(
+        graph
+            .nodes
+            .iter()
+            .map(|node| node.style)
+            .collect::<Vec<_>>(),
+        vec![
+            NodeStyle::uniform(Theme::dim()),
+            NodeStyle::new(
+                Theme::accent().add_modifier(Modifier::BOLD),
+                Theme::accent().add_modifier(Modifier::BOLD | Modifier::REVERSED),
+            ),
+        ]
     );
 }
