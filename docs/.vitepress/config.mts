@@ -225,11 +225,11 @@ const sdkSidebar: DefaultTheme.SidebarItem[] = [
 
 export default withMermaid({
   title: 'Rho',
-  description: 'A lightweight agent harness inspired by Pi',
+  description: 'A lightweight agent harness inspired by Pi. Built in Rust.',
   base: '/rho/',
   cleanUrls: true,
   lastUpdated: true,
-  // Render fenced ```mermaid blocks as interactive diagrams.
+  appearance: true,
   mermaid: {
     securityLevel: 'strict',
     theme: 'neutral',
