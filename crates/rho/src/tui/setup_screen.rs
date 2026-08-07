@@ -239,7 +239,7 @@ fn welcome_lines(width: usize) -> Vec<Line<'static>> {
         Line::from(vec![
             Span::styled("rho", Theme::brand()),
             Span::raw("  v"),
-            Span::styled(env!("CARGO_PKG_VERSION"), Theme::success()),
+            Span::styled(super::smoke_injection::display_version(), Theme::success()),
         ]),
         Line::raw(""),
         Line::from(Span::styled(

@@ -13,7 +13,7 @@
 
 <!-- Required when this PR changes Interactive TUI layout/chrome, tool cards, statusline, version display, the docs demo fixture, or rho-pty-demo. Delete this section if the diff does not touch those surfaces. -->
 
-- [ ] Ran `bash scripts/check_docs_ui_demo.sh --check` (or `--write` and committed dark + light SVG paths)
+- [ ] Ran `bash scripts/check_docs_ui_demo.sh --check` (or `--write` and committed dark SVGs + site light SVG)
 
 
 ## Test gate

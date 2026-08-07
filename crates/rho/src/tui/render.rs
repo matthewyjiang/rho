@@ -61,7 +61,7 @@ pub(super) fn session_header_lines(
             Span::raw(" "),
             Span::styled("rho", Theme::brand()),
             Span::raw("  v"),
-            Span::styled(env!("CARGO_PKG_VERSION"), Theme::success()),
+            Span::styled(super::smoke_injection::display_version(), Theme::success()),
         ]),
     ];
     if let Some(notice) = update_notice {

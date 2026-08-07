@@ -2,8 +2,8 @@
 # Check or regenerate the Interactive TUI docs proof plate.
 #
 # Default mode compares a live matrix-mode PTY capture to the checked-in SVGs.
-# Pass --write to overwrite both dark and light asset paths after a layout or
-# chrome change.
+# Pass --write to overwrite dark (README + site) and light (site) asset paths
+# after a layout or chrome change.
 #
 # Requires a Unix PTY and a debug rho build (RHO_TUI_TEST_MODE=matrix).
 
@@ -19,8 +19,8 @@ dark_assets=(
   "docs/assets/rho-ui-demo.svg"
   "docs/public/assets/rho-ui-demo.svg"
 )
+# Light is site-only (HomePage). README keeps the dark plate under docs/assets.
 light_assets=(
-  "docs/assets/rho-ui-demo-light.svg"
   "docs/public/assets/rho-ui-demo-light.svg"
 )
 
