@@ -190,6 +190,7 @@ Details: [Attachments](/interactive-tui/attachments).
 The TUI owns the transcript viewport (use its scroll controls, not terminal scrollback). Headings, copy actions, jump-to-bottom, and stale-stream handling are documented separately.
 
 - [Transcript display](/interactive-tui/transcript)
+- [Theme](/interactive-tui/theme)
 - [Mermaid diagrams](/interactive-tui/mermaid)
 - [Math rendering](/interactive-tui/math)
 

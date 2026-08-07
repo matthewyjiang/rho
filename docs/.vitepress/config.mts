@@ -93,6 +93,7 @@ const appSidebar: DefaultTheme.SidebarItem[] = [
           { text: 'Overview', link: '/interactive-tui' },
           { text: 'Attachments', link: '/interactive-tui/attachments' },
           { text: 'Transcript display', link: '/interactive-tui/transcript' },
+          { text: 'Theme', link: '/interactive-tui/theme' },
           { text: 'Mermaid diagrams', link: '/interactive-tui/mermaid' },
           { text: 'Math rendering', link: '/interactive-tui/math' },
         ],
