@@ -199,9 +199,6 @@ pub(super) async fn evaluate(
         OneShotAgentRequest {
             definition: internal_definition(GOAL_JUDGE_AGENT_ID),
             usage_purpose: "goal",
-            provider_name,
-            model,
-            auth,
             reasoning: Some(reasoning),
             input: format!(
                 "Completion condition:\n{condition}\n\nConversation transcript:\n{transcript}"
@@ -210,6 +207,9 @@ pub(super) async fn evaluate(
             session_id,
             workspace_path,
         },
+        provider_name,
+        model,
+        auth,
         usage_recording,
     )?
     .await?;

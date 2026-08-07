@@ -78,9 +78,6 @@ pub(super) async fn generate_session_title(
         OneShotAgentRequest {
             definition: internal_definition(SESSION_TITLE_AGENT_ID),
             usage_purpose: "title",
-            provider_name: &provider_name,
-            model: &model,
-            auth: &auth,
             reasoning: Some(reasoning),
             input: format!(
                 "First turn:\n\nUser:\n{first_user_message}\n\nAssistant:\n{first_assistant_message}"
@@ -89,6 +86,9 @@ pub(super) async fn generate_session_title(
             session_id: &session_id,
             workspace_path: &workspace_path,
         },
+        &provider_name,
+        &model,
+        &auth,
         usage_recording,
     )?;
     tokio::pin!(request);

@@ -48,9 +48,6 @@ fn request<'a>(
     OneShotAgentRequest {
         definition,
         usage_purpose: "test-purpose",
-        provider_name: "test-provider",
-        model: "test-model",
-        auth: "api-key",
         reasoning: None,
         input: "user input".into(),
         cancellation: CancellationToken::new(),
@@ -141,6 +138,7 @@ async fn assembles_messages_extracts_text_and_records_usage_purpose() {
         &provider,
         request(&definition, &session_id, Path::new("/test/workspace")),
         ProviderRequestUsageRecording::new(recorder.clone()),
+        /*updates*/ None,
     )
     .await
     .unwrap();
@@ -191,11 +189,141 @@ async fn forwards_cancellation_to_the_provider_request() {
     let request = request(&definition, &session_id, Path::new("/test/workspace"));
     request.cancellation.cancel();
 
-    let error =
-        run_one_shot_with_provider(&provider, request, ProviderRequestUsageRecording::default())
-            .await
-            .unwrap_err();
+    let error = run_one_shot_with_provider(
+        &provider,
+        request,
+        ProviderRequestUsageRecording::default(),
+        /*updates*/ None,
+    )
+    .await
+    .unwrap_err();
 
     assert!(error.to_string().contains("cancel"));
     assert!(provider.recorded_requests().is_empty());
+}
+
+// Covers: live updates track phase and canonical text without exposing reasoning
+// Owner: one-shot agent stream
+#[tokio::test]
+async fn streams_phase_and_text_without_reasoning_content() {
+    let provider = ScriptedProvider::new(
+        ModelIdentity::new("provider", "api", "model"),
+        [ScriptedTurn::streaming(
+            vec![
+                rho_sdk::model::ModelEvent::ReasoningDelta("hidden chain".into()),
+                rho_sdk::model::ModelEvent::OutputDelta("plan ".into()),
+                rho_sdk::model::ModelEvent::OutputDelta("next".into()),
+                rho_sdk::model::ModelEvent::Usage(ModelUsage {
+                    output_tokens: Some(2),
+                    ..ModelUsage::default()
+                }),
+            ],
+            ModelResponse::Assistant(vec![ContentBlock::Text("plan next".into())]),
+        )],
+    );
+    let definition = definition();
+    let session_id = SessionId::new();
+    let (tx, rx) =
+        tokio::sync::watch::channel(OneShotUpdate::new(OneShotPhase::WaitingForProvider, ""));
+
+    let result = run_one_shot_with_provider(
+        &provider,
+        request(&definition, &session_id, Path::new("/test/workspace")),
+        ProviderRequestUsageRecording::default(),
+        Some(tx),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.texts, ["plan next"]);
+    // Latest-wins: after a full stream the card holds final phase and text.
+    let final_update = rx.borrow().clone();
+    assert_eq!(final_update.phase, OneShotPhase::Responding);
+    assert_eq!(final_update.text.as_ref(), "plan next");
+    assert!(!final_update.text.contains("hidden"));
+}
+
+// Covers: a failed physical attempt clears partial text before the next try
+// Owner: one-shot agent stream
+#[tokio::test]
+async fn retry_clears_partial_text_before_the_next_attempt() {
+    use rho_sdk::{
+        provider::{ProviderRequestEvent, ProviderStreamEvent},
+        ProviderErrorKind,
+    };
+
+    let provider = ScriptedProvider::new(
+        ModelIdentity::new("provider", "api", "model"),
+        [ScriptedTurn::streaming_with_request_events(
+            vec![
+                ProviderStreamEvent::Model(rho_sdk::model::ModelEvent::OutputDelta("stale".into())),
+                ProviderStreamEvent::Request(ProviderRequestEvent::RequestAttemptFailed {
+                    kind: ProviderErrorKind::Timeout,
+                    usage: ModelUsage::default(),
+                }),
+                ProviderStreamEvent::Model(rho_sdk::model::ModelEvent::OutputDelta(
+                    "recovered".into(),
+                )),
+            ],
+            ModelResponse::Assistant(vec![ContentBlock::Text("recovered".into())]),
+        )],
+    );
+    let definition = definition();
+    let session_id = SessionId::new();
+    let (tx, rx) =
+        tokio::sync::watch::channel(OneShotUpdate::new(OneShotPhase::WaitingForProvider, ""));
+
+    let result = run_one_shot_with_provider(
+        &provider,
+        request(&definition, &session_id, Path::new("/test/workspace")),
+        ProviderRequestUsageRecording::default(),
+        Some(tx),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.texts, ["recovered"]);
+    let final_update = rx.borrow().clone();
+    assert_eq!(final_update.phase, OneShotPhase::Responding);
+    assert_eq!(final_update.text.as_ref(), "recovered");
+    assert!(!final_update.text.contains("stale"));
+}
+
+// Covers: each stream event advances phase/body before the next event arrives
+// Owner: one-shot agent stream
+#[test]
+fn observe_advances_phase_without_leaking_reasoning() {
+    use rho_sdk::provider::{ProviderRequestEvent, ProviderStreamEvent};
+    use rho_sdk::ProviderErrorKind;
+
+    let (tx, rx) =
+        tokio::sync::watch::channel(OneShotUpdate::new(OneShotPhase::WaitingForProvider, ""));
+    let mut stream = OneShotStream::new(Some(tx));
+
+    stream.observe(&ProviderStreamEvent::Model(
+        rho_sdk::model::ModelEvent::ReasoningDelta("secret".into()),
+    ));
+    assert_eq!(rx.borrow().phase, OneShotPhase::Thinking);
+    assert_eq!(rx.borrow().text.as_ref(), "");
+
+    stream.observe(&ProviderStreamEvent::Model(
+        rho_sdk::model::ModelEvent::OutputDelta("go".into()),
+    ));
+    assert_eq!(rx.borrow().phase, OneShotPhase::Responding);
+    assert_eq!(rx.borrow().text.as_ref(), "go");
+
+    stream.observe(&ProviderStreamEvent::Request(
+        ProviderRequestEvent::RequestAttemptFailed {
+            kind: ProviderErrorKind::Timeout,
+            usage: ModelUsage::default(),
+        },
+    ));
+    assert_eq!(rx.borrow().phase, OneShotPhase::RetryingProvider);
+    assert_eq!(rx.borrow().text.as_ref(), "");
+
+    stream.observe(&ProviderStreamEvent::Model(
+        rho_sdk::model::ModelEvent::OutputDelta("again".into()),
+    ));
+    assert_eq!(rx.borrow().phase, OneShotPhase::Responding);
+    assert_eq!(rx.borrow().text.as_ref(), "again");
 }

@@ -27,6 +27,30 @@ pub(crate) async fn send_recorded_from_attempt(
     recording: ProviderRequestUsageRecording,
     first_attempt_index: usize,
 ) -> Result<(ModelResponse, ModelUsage), ProviderError> {
+    send_recorded_observing(
+        provider,
+        request,
+        context,
+        recording,
+        first_attempt_index,
+        |_| {},
+    )
+    .await
+}
+
+/// Like [`send_recorded_from_attempt`], with a live observer for stream events.
+///
+/// The observer runs on the usage-collection task as each provider event arrives.
+/// It must stay cheap: heavy work belongs outside this path. Dropping or ignoring
+/// events is fine; the final response and durable usage accounting stay unchanged.
+pub(crate) async fn send_recorded_observing(
+    provider: &dyn ModelProvider,
+    request: ModelRequest<'_>,
+    context: ProviderRequestUsageContext,
+    recording: ProviderRequestUsageRecording,
+    first_attempt_index: usize,
+    mut on_event: impl FnMut(&ProviderStreamEvent) + Send,
+) -> Result<(ModelResponse, ModelUsage), ProviderError> {
     let cancellation = request.cancellation.clone();
     let (events, mut receiver) =
         provider_event_channel(NonZeroUsize::new(EVENT_CAPACITY).expect("capacity is nonzero"));
@@ -35,6 +59,7 @@ pub(crate) async fn send_recorded_from_attempt(
         let mut usage = ModelUsage::default();
         let mut failed_attempts = Vec::new();
         while let Some(event) = receiver.recv_stream_event().await {
+            on_event(&event);
             match event {
                 ProviderStreamEvent::Model(ModelEvent::Usage(partial)) => {
                     usage = usage.saturating_add(&partial);
