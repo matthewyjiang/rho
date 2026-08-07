@@ -90,9 +90,9 @@ const paths = [
         <figure class="rho-home__proof">
           <a :href="withBase('/interactive-tui')" class="rho-home__proof-link">
             <!--
-              Both assets ship in the static HTML. VitePress flips html.dark before
-              paint; CSS picks the plate. A single :src from isDark SSRs as light
-              and flashes wrong on dark first load.
+              Both assets ship in the static HTML. Theme toggle CSS lives in
+              custom.css (unscoped): Vue scoped :global(.dark) compiles wrong and
+              left the light plate stuck on. html.dark is set before first paint.
             -->
             <img
               class="rho-home__proof-img rho-home__proof-img--light"
@@ -335,13 +335,7 @@ const paths = [
 .rho-home__proof-link {
   display: block;
   border: 1px solid var(--vp-c-text-1);
-  /* Match the active SVG well so letterbox edges do not flash the other theme. */
-  background: #ffffff;
   text-decoration: none !important;
-}
-
-:global(.dark) .rho-home__proof-link {
-  background: #0d1117;
 }
 
 .rho-home__proof-img {
@@ -349,18 +343,6 @@ const paths = [
   width: 100%;
   height: auto;
   vertical-align: middle;
-}
-
-.rho-home__proof-img--dark {
-  display: none;
-}
-
-:global(.dark) .rho-home__proof-img--light {
-  display: none;
-}
-
-:global(.dark) .rho-home__proof-img--dark {
-  display: block;
 }
 
 .rho-home__proof-cap {

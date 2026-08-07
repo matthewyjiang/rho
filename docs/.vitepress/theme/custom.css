@@ -630,6 +630,26 @@ body {
   display: none !important;
 }
 
+/* Home proof plate: both SVGs are in the static HTML. Do not put these rules in
+   a Vue scoped block — `:global(.dark) .foo` compiles to bare `.dark { … }` and
+   breaks the toggle (light plate always wins). Match VitePress VPImage. */
+.rho-home__proof-link {
+  /* Match the active SVG well so letterbox edges do not flash the other theme. */
+  background: #ffffff;
+}
+
+html.dark .rho-home__proof-link {
+  background: #0d1117;
+}
+
+html:not(.dark) .rho-home__proof-img--dark {
+  display: none;
+}
+
+html.dark .rho-home__proof-img--light {
+  display: none;
+}
+
 /* Reduce motion */
 @media (prefers-reduced-motion: reduce) {
   *,
