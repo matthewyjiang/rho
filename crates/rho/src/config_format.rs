@@ -73,6 +73,8 @@ struct GroupedConfig<'a> {
     behavior: BehaviorConfig<'a>,
     keybindings: &'a Keybindings,
     prompt_templates: &'a crate::prompt_templates::PromptTemplates,
+    #[serde(skip_serializing_if = "crate::tools::mcp::config::McpConfig::is_empty")]
+    mcp: &'a crate::tools::mcp::config::McpConfig,
     providers: PersistedProviderConfigs<'a>,
 }
 
@@ -203,6 +205,7 @@ impl<'a> From<&'a Config> for GroupedConfig<'a> {
             },
             keybindings: &config.keybindings,
             prompt_templates: &config.prompt_templates,
+            mcp: &config.mcp,
             providers: PersistedProviderConfigs::from(&config.providers),
         }
     }

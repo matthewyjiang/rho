@@ -152,7 +152,8 @@ impl InteractiveRuntime {
             background_subagents: BackgroundSubagents::Enabled,
             diagnostics: &diagnostics,
             agent: &agent,
-        })?;
+        })
+        .await?;
         let workspace = sdk_options.workspace.build_workspace()?;
         let context_window = configured_context_window(config);
         let compaction = sdk_options.runtime.compaction.clone();

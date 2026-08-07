@@ -258,6 +258,9 @@ impl AppToolSet {
         self.tools.extend(bundle.tools().iter().cloned());
         self.bundles.push(Box::new(bundle));
     }
+    pub(crate) fn add_mcp_bundle(&mut self, bundle: super::mcp::McpBundle) {
+        self.add_bundle(bundle);
+    }
 
     pub fn tools(&self) -> &[Arc<dyn Tool>] {
         &self.tools

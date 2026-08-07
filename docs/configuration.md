@@ -21,6 +21,7 @@ flowchart TD
 | Permission mode | `[behavior].permission_mode` or `/config` → **Agent behavior** |
 | Prompt templates | `~/.rho/prompts/` files or `[prompt_templates]` |
 | Web search | `[web_search]` or `/config` → **Tools** |
+| MCP servers | `[mcp.servers]`; see [Model Context Protocol](/integrations/mcp) |
 | Auto compaction | `[compaction]` or `/config` → **Context & limits** |
 | Keybindings | `[keybindings]` (restart required) |
 

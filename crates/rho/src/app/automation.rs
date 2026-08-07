@@ -466,7 +466,8 @@ async fn run_session_with_output(
         background_subagents: BackgroundSubagents::Disabled,
         diagnostics: &startup.diagnostics,
         agent: &startup.agent,
-    })?;
+    })
+    .await?;
 
     let workspace_root = sdk_options.workspace.root.clone();
     let workspace = sdk_options.workspace.build_workspace()?;

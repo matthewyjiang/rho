@@ -57,7 +57,7 @@ fn bound_agent(config: &Config) -> crate::app::agent_binding::BoundAgent {
     .unwrap()
 }
 
-fn assemble(config: &Config, cwd: &std::path::Path) -> (bool, String) {
+async fn assemble(config: &Config, cwd: &std::path::Path) -> (bool, String) {
     let diagnostics = RuntimeDiagnostics::new(config);
     let agent = bound_agent(config);
     let (tools, prompt) = assemble_tools_and_prompt(ToolsAndPromptOptions {
@@ -72,6 +72,7 @@ fn assemble(config: &Config, cwd: &std::path::Path) -> (bool, String) {
         diagnostics: &diagnostics,
         agent: &agent,
     })
+    .await
     .unwrap();
     let registered = tools.advisor_registered();
     let text = match prompt.for_advisor_mode(registered) {
@@ -85,8 +86,8 @@ fn assemble(config: &Config, cwd: &std::path::Path) -> (bool, String) {
 // Covers: the advisor tool must appear only when advisor mode is on and an
 // advisor model is configured, and the steering text must track the tool.
 // Owner: root tool/prompt assembly.
-#[test]
-fn the_advisor_tool_needs_both_the_mode_and_a_model() {
+#[tokio::test]
+async fn the_advisor_tool_needs_both_the_mode_and_a_model() {
     let cwd = tempfile::tempdir().unwrap();
     let cases = [
         (false, false, false),
@@ -98,7 +99,7 @@ fn the_advisor_tool_needs_both_the_mode_and_a_model() {
     for (advisor_mode, with_model, expected) in cases {
         let config = advisor_config(advisor_mode, with_model);
 
-        let (registered, prompt) = assemble(&config, cwd.path());
+        let (registered, prompt) = assemble(&config, cwd.path()).await;
 
         assert_eq!(
             registered, expected,
@@ -114,8 +115,8 @@ fn the_advisor_tool_needs_both_the_mode_and_a_model() {
 
 // Covers: the advisor must review the prompt the executor actually runs with.
 // Owner: root tool/prompt assembly.
-#[test]
-fn the_advisor_receives_the_executor_system_prompt() {
+#[tokio::test]
+async fn the_advisor_receives_the_executor_system_prompt() {
     let cwd = tempfile::tempdir().unwrap();
     let config = advisor_config(true, true);
     let diagnostics = RuntimeDiagnostics::new(&config);
@@ -133,6 +134,7 @@ fn the_advisor_receives_the_executor_system_prompt() {
         diagnostics: &diagnostics,
         agent: &agent,
     })
+    .await
     .unwrap();
 
     let SystemPrompt::Custom(text) = prompt.for_advisor_mode(true) else {
@@ -145,8 +147,8 @@ fn the_advisor_receives_the_executor_system_prompt() {
 // Covers: both prompt forms are built once so a mid-session /advisor toggle can
 // swap them, and the executor is never told about a tool it does not have.
 // Owner: root tool/prompt assembly.
-#[test]
-fn both_prompt_variants_are_available_whatever_the_saved_mode_is() {
+#[tokio::test]
+async fn both_prompt_variants_are_available_whatever_the_saved_mode_is() {
     let cwd = tempfile::tempdir().unwrap();
     let steering = "You have access to an `advisor` tool";
 
@@ -167,6 +169,7 @@ fn both_prompt_variants_are_available_whatever_the_saved_mode_is() {
             diagnostics: &diagnostics,
             agent: &agent,
         })
+        .await
         .unwrap();
 
         let text = |enabled| match prompt.for_advisor_mode(enabled) {

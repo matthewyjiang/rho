@@ -9,6 +9,7 @@ use {
     crate::model_aliases::ModelAliases,
     crate::paths,
     crate::permission::PermissionMode,
+    crate::tools::mcp::config::McpConfig,
     rho_providers::credentials::{
         load_web_search_api_key, save_web_search_api_key, CredentialStore, CredentialStoreBackend,
         WebSearchCredential,
@@ -90,6 +91,7 @@ pub struct Config {
     pub keybindings: Keybindings,
     pub prompt_templates: crate::prompt_templates::PromptTemplates,
     pub(crate) providers: ProviderConfigs,
+    pub(crate) mcp: McpConfig,
 }
 
 pub(crate) fn default_inline_shell() -> String {
@@ -142,6 +144,7 @@ impl Default for Config {
             keybindings: Keybindings::default(),
             prompt_templates: Default::default(),
             providers: ProviderConfigs::default(),
+            mcp: McpConfig::default(),
         }
     }
 }

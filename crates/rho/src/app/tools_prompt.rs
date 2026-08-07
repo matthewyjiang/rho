@@ -63,9 +63,10 @@ impl SystemPromptVariants {
 /// automation startup. Claude-cli agents bind no Rho host tools; root runs still
 /// use the Rho loop and parent config, with Claude execution via AgentExecutor
 /// for delegated runs.
-pub(crate) fn assemble_tools_and_prompt(
+pub(crate) async fn assemble_tools_and_prompt(
     options: ToolsAndPromptOptions<'_>,
 ) -> anyhow::Result<(AppToolSet, SystemPromptVariants)> {
+    let native_runtime = options.agent.rho_capabilities().is_some();
     let mut capabilities = options
         .agent
         .rho_capabilities()
@@ -112,7 +113,13 @@ pub(crate) fn assemble_tools_and_prompt(
                 workflow_tracker,
             ));
         }
-        AppToolSet::new(options.config, options.diagnostics.clone(), tool_options)
+        let mut tools = AppToolSet::new(options.config, options.diagnostics.clone(), tool_options);
+        if native_runtime {
+            if let Some(bundle) = crate::tools::mcp::McpBundle::connect(&options.config.mcp).await {
+                tools.add_mcp_bundle(bundle);
+            }
+        }
+        tools
     };
     let specs = tools.specs();
     let system_prompt = if options.no_system_prompt {
