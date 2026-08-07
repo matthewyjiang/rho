@@ -281,7 +281,6 @@ impl AppToolSet {
         self.bundles.push(Box::new(bundle));
     }
 
-
     pub(crate) fn mcp_report(&self) -> &super::mcp::McpSessionReport {
         &self.mcp_report
     }
