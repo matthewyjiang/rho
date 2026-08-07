@@ -153,6 +153,7 @@ fn list_picker_lines(
         &matching_indices,
         picker.selected,
         row_layout,
+        /*hovered_row*/ None,
     );
     let start = super::picker_rows::scroll_window_start(rows.selected_row, item_cap);
     lines.extend(rows.rows.into_iter().skip(start).take(item_cap));

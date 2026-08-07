@@ -2,12 +2,13 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{layout::Rect, DefaultTerminal};
 
 use super::{
-    picker_overlay::{picker_overlay_layout, OverlayPane, OverlayScrollTargets},
+    picker_overlay::{picker_overlay_layout, OverlayLayout, OverlayPane, OverlayScrollTargets},
     App, ComposerMode, InteractiveRuntime, OverlayFocus, UiPicker,
 };
 
-/// Detail lines one wheel event scrolls, matching history wheel speed.
-const DETAIL_WHEEL_LINES: isize = 3;
+/// Lines one wheel event scrolls in either overlay pane, matching history
+/// wheel speed.
+const PICKER_WHEEL_LINES: isize = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PickerKeyEffect {
@@ -17,6 +18,23 @@ enum PickerKeyEffect {
     Escape,
     ToggleFavorite,
     DeleteRow,
+}
+
+/// Row-space nav row under the pointer, or `None` off the nav items.
+fn overlay_nav_row_at(
+    picker: &UiPicker,
+    layout: OverlayLayout,
+    column: u16,
+    row: u16,
+) -> Option<usize> {
+    let hit = layout
+        .pane_hit(column, row)
+        .filter(|hit| hit.pane == OverlayPane::Nav)?;
+    let viewport_rows = layout.scroll_targets().nav_rows;
+    let row_index = picker
+        .nav_window_start(viewport_rows)
+        .checked_add(hit.pane_row)?;
+    picker.nav_item_at_row(row_index).map(|_| row_index)
 }
 
 fn overlay_scroll_targets(
@@ -158,6 +176,11 @@ impl App {
     /// Wheel scroll routed to an open picker. Returns true when a picker
     /// consumed the event; open pickers swallow the wheel even outside their
     /// box so the history behind a popup never scrolls by accident.
+    ///
+    /// The wheel moves viewports, never the selection: the nav pane scrolls
+    /// its window (useful only when the list overflows) and the detail pane
+    /// scrolls its text. Inline list pickers have no separate viewport, so
+    /// the wheel steps their selection instead.
     pub(super) fn scroll_picker_on_wheel(
         &mut self,
         delta: isize,
@@ -179,14 +202,61 @@ impl App {
         } else {
             OverlayPane::Nav
         };
-        match layout.pane_at(column, row).unwrap_or(fallback) {
-            OverlayPane::Nav => picker.select_by_offset(delta),
+        let pane = layout
+            .pane_hit(column, row)
+            .map_or(fallback, |hit| hit.pane);
+        match pane {
+            OverlayPane::Nav => {
+                let rows = layout.scroll_targets().nav_rows;
+                picker.scroll_nav_by(delta.saturating_mul(PICKER_WHEEL_LINES), rows);
+            }
             OverlayPane::Detail => {
                 if let Some(viewport) = layout.detail_viewport() {
-                    picker.scroll_detail_by(delta.saturating_mul(DETAIL_WHEEL_LINES), viewport);
+                    picker.scroll_detail_by(delta.saturating_mul(PICKER_WHEEL_LINES), viewport);
                 }
             }
         }
+        true
+    }
+
+    /// Left click routed to an open overlay picker: a nav row selects its
+    /// item, the detail pane takes keyboard focus. Returns true when an
+    /// overlay picker consumed the click.
+    pub(super) fn click_picker(&mut self, column: u16, row: u16, width: u16, height: u16) -> bool {
+        let ComposerMode::Picker(picker) = self.input_ui.composer_mut() else {
+            return false;
+        };
+        if !picker.is_overlay() {
+            return false;
+        }
+        let layout = picker_overlay_layout(Rect::new(0, 0, width, height), picker.overlay_sizing());
+        match layout.pane_hit(column, row) {
+            Some(hit) if hit.pane == OverlayPane::Nav => {
+                let viewport_rows = layout.scroll_targets().nav_rows;
+                let row_index = picker.nav_window_start(viewport_rows) + hit.pane_row;
+                if picker.select_nav_row(row_index, viewport_rows) {
+                    picker.focus_overlay_pane(OverlayFocus::Nav);
+                }
+            }
+            Some(hit) if hit.pane == OverlayPane::Detail && picker.has_scrollable_detail() => {
+                picker.focus_overlay_pane(OverlayFocus::Detail);
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// Pointer movement over an open overlay picker: highlights the hovered
+    /// nav row. Returns true when an overlay picker consumed the event.
+    pub(super) fn hover_picker(&mut self, column: u16, row: u16, width: u16, height: u16) -> bool {
+        let ComposerMode::Picker(picker) = self.input_ui.composer_mut() else {
+            return false;
+        };
+        if !picker.is_overlay() {
+            return false;
+        }
+        let layout = picker_overlay_layout(Rect::new(0, 0, width, height), picker.overlay_sizing());
+        picker.hovered_nav_row = overlay_nav_row_at(picker, layout, column, row);
         true
     }
 

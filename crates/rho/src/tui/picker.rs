@@ -66,6 +66,14 @@ pub(super) struct UiPicker {
     pub(super) detail_scroll: usize,
     /// Pane that keyboard scrolling targets in overlay pickers.
     pub(super) overlay_focus: OverlayFocus,
+    /// Manual nav viewport offset (row space). Only used while
+    /// `nav_follows_selection` is false.
+    nav_scroll: usize,
+    /// Whether the nav viewport tracks the selection (keyboard mode) or holds
+    /// a manual wheel-scrolled offset.
+    nav_follows_selection: bool,
+    /// Nav row under the mouse pointer, in row space.
+    pub(super) hovered_nav_row: Option<usize>,
     pub(super) confirm_verb: Option<String>,
     /// When set, overrides [`PickerAction::uses_regex_filter`] for this picker.
     pub(super) force_fuzzy_filter: bool,
@@ -231,6 +239,9 @@ impl UiPicker {
             badge_placement: PickerBadgePlacement::Navigation,
             detail_scroll: 0,
             overlay_focus: OverlayFocus::default(),
+            nav_scroll: 0,
+            nav_follows_selection: true,
+            hovered_nav_row: None,
             confirm_verb: None,
             force_fuzzy_filter: false,
             overlay_chrome: None,
@@ -294,6 +305,67 @@ impl UiPicker {
         self.has_scrollable_detail() && self.overlay_focus == OverlayFocus::Detail
     }
 
+    /// Selection changed: show it, and return the nav viewport to it.
+    fn on_selection_changed(&mut self) {
+        self.reset_detail_scroll();
+        self.nav_follows_selection = true;
+    }
+
+    /// First visible nav row for a `viewport_rows` tall nav pane.
+    ///
+    /// In keyboard mode the window moves the least amount that keeps the
+    /// selection visible; after a wheel scroll it holds the manual offset even
+    /// when the selection leaves the window.
+    pub(super) fn nav_window_start(&self, viewport_rows: usize) -> usize {
+        let matching = self.matching_indices();
+        let total = super::picker_rows::picker_row_count(&self.items, &matching);
+        let viewport_rows = viewport_rows.max(1);
+        let max_start = total.saturating_sub(viewport_rows);
+        let base = self.nav_scroll.min(max_start);
+        if !self.nav_follows_selection {
+            return base;
+        }
+        let selected_row =
+            super::picker_rows::selected_row_index(&self.items, &matching, self.selected);
+        let lowest = selected_row.saturating_add(1).saturating_sub(viewport_rows);
+        let highest = selected_row.min(max_start);
+        base.clamp(lowest.min(highest), highest)
+    }
+
+    /// Wheel scroll of the nav viewport without moving the selection.
+    pub(super) fn scroll_nav_by(&mut self, delta: isize, viewport_rows: usize) {
+        let current = self.nav_window_start(viewport_rows);
+        let max_start = {
+            let matching = self.matching_indices();
+            super::picker_rows::picker_row_count(&self.items, &matching)
+                .saturating_sub(viewport_rows.max(1))
+        };
+        self.nav_scroll = current.saturating_add_signed(delta).min(max_start);
+        self.nav_follows_selection = false;
+    }
+
+    /// Item index shown at a row-space nav row, skipping section headers.
+    pub(super) fn nav_item_at_row(&self, row_index: usize) -> Option<usize> {
+        let matching = self.matching_indices();
+        super::picker_rows::item_index_at_row(&self.items, &matching, row_index)
+    }
+
+    /// Select the item at a row-space nav row (mouse click).
+    ///
+    /// Pins the current window first so the click never shifts the viewport.
+    pub(super) fn select_nav_row(&mut self, row_index: usize, viewport_rows: usize) -> bool {
+        let Some(index) = self.nav_item_at_row(row_index) else {
+            return false;
+        };
+        self.nav_scroll = self.nav_window_start(viewport_rows);
+        self.nav_follows_selection = true;
+        if index != self.selected {
+            self.selected = index;
+            self.on_selection_changed();
+        }
+        true
+    }
+
     /// Content hints the overlay uses to size its outer box.
     pub(super) fn overlay_sizing(&self) -> super::picker_overlay::OverlaySizing {
         let mut nav_rows = 0usize;
@@ -332,7 +404,7 @@ impl UiPicker {
         };
         if next != self.selected {
             self.selected = next;
-            self.reset_detail_scroll();
+            self.on_selection_changed();
         }
     }
 
@@ -578,7 +650,7 @@ impl UiPicker {
             }
         };
         self.selected = next;
-        self.reset_detail_scroll();
+        self.on_selection_changed();
     }
 
     pub(super) fn select_next(&mut self) {
@@ -594,7 +666,7 @@ impl UiPicker {
             matches[(position + 1) % matches.len()]
         };
         self.selected = next;
-        self.reset_detail_scroll();
+        self.on_selection_changed();
     }
 
     pub(super) fn push_filter_char(&mut self, ch: char) {
@@ -634,7 +706,7 @@ impl UiPicker {
         let first = self.matching_indices().first().copied();
         if let Some(index) = first {
             self.selected = index;
-            self.reset_detail_scroll();
+            self.on_selection_changed();
         }
     }
 
@@ -642,7 +714,7 @@ impl UiPicker {
         let last = self.matching_indices().last().copied();
         if let Some(index) = last {
             self.selected = index;
-            self.reset_detail_scroll();
+            self.on_selection_changed();
         }
     }
 

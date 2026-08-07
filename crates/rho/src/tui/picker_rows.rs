@@ -94,13 +94,68 @@ pub(super) fn picker_row_count(items: &[PickerItem], matching: &[usize]) -> usiz
     count
 }
 
+/// Row-space index of the selected item among the matching rows, counting
+/// section headers.
+pub(super) fn selected_row_index(
+    items: &[PickerItem],
+    matching: &[usize],
+    selected: usize,
+) -> usize {
+    let mut row = 0;
+    let mut current_section: Option<&str> = None;
+    for index in matching.iter().copied() {
+        let Some(item) = items.get(index) else {
+            continue;
+        };
+        if item.section.as_deref() != current_section {
+            current_section = item.section.as_deref();
+            row += usize::from(current_section.is_some());
+        }
+        if index == selected {
+            return row;
+        }
+        row += 1;
+    }
+    0
+}
+
+/// Item index shown at `row_index` in row space, or `None` for section
+/// headers and out-of-range rows.
+pub(super) fn item_index_at_row(
+    items: &[PickerItem],
+    matching: &[usize],
+    row_index: usize,
+) -> Option<usize> {
+    let mut row = 0;
+    let mut current_section: Option<&str> = None;
+    for index in matching.iter().copied() {
+        let item = items.get(index)?;
+        if item.section.as_deref() != current_section {
+            current_section = item.section.as_deref();
+            if current_section.is_some() {
+                if row == row_index {
+                    return None;
+                }
+                row += 1;
+            }
+        }
+        if row == row_index {
+            return Some(index);
+        }
+        row += 1;
+    }
+    None
+}
+
 /// Build the rows for the matching items, inserting a header row whenever the
-/// section changes.
+/// section changes. `hovered_row` highlights that row-space row under the
+/// pointer.
 pub(super) fn picker_item_rows(
     items: &[PickerItem],
     matching: &[usize],
     selected: usize,
     layout: RowLayout,
+    hovered_row: Option<usize>,
 ) -> PickerRows {
     let mut rows = Vec::with_capacity(matching.len());
     let mut current_section = None;
@@ -118,7 +173,8 @@ pub(super) fn picker_item_rows(
         if index == selected {
             selected_row = rows.len();
         }
-        rows.push(item_line(item, index == selected, layout));
+        let hovered = hovered_row == Some(rows.len());
+        rows.push(item_line(item, index == selected, hovered, layout));
     }
     PickerRows { rows, selected_row }
 }
@@ -141,7 +197,7 @@ fn section_header_line(section: &str, layout: RowLayout) -> Line<'static> {
     )
 }
 
-fn item_line(item: &PickerItem, selected: bool, layout: RowLayout) -> Line<'static> {
+fn item_line(item: &PickerItem, selected: bool, hovered: bool, layout: RowLayout) -> Line<'static> {
     let width = layout.width;
     if width == 0 {
         return Line::raw("");
@@ -153,6 +209,8 @@ fn item_line(item: &PickerItem, selected: bool, layout: RowLayout) -> Line<'stat
     };
     let style = if selected {
         Theme::accent()
+    } else if hovered {
+        Theme::text_strong()
     } else {
         Theme::text()
     };

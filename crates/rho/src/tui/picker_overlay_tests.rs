@@ -248,16 +248,20 @@ fn pane_at_maps_positions_to_panes() {
     };
     let body_row = outer.y + 4;
     assert_eq!(
-        side_by_side.pane_at(outer.x + 2, body_row),
+        side_by_side
+            .pane_hit(outer.x + 2, body_row)
+            .map(|hit| hit.pane),
         Some(OverlayPane::Nav)
     );
     assert_eq!(
-        side_by_side.pane_at(outer.x + 2 + nav_width as u16 + 3, body_row),
+        side_by_side
+            .pane_hit(outer.x + 2 + nav_width as u16 + 3, body_row)
+            .map(|hit| hit.pane),
         Some(OverlayPane::Detail)
     );
     // Chrome rows (title, filter) and space outside the overlay hit nothing.
-    assert_eq!(side_by_side.pane_at(outer.x + 2, outer.y + 1), None);
-    assert_eq!(side_by_side.pane_at(0, 0), None);
+    assert_eq!(side_by_side.pane_hit(outer.x + 2, outer.y + 1), None);
+    assert_eq!(side_by_side.pane_hit(0, 0), None);
 
     // Narrow terminals stack detail above nav.
     let stacked = picker_overlay_layout(Rect::new(0, 0, 40, 40), sizing);
@@ -270,12 +274,22 @@ fn pane_at_maps_positions_to_panes() {
         panic!("expected nav+detail");
     };
     assert_eq!(
-        stacked.pane_at(outer.x + 2, outer.y + 4),
+        stacked
+            .pane_hit(outer.x + 2, outer.y + 4)
+            .map(|hit| hit.pane),
         Some(OverlayPane::Detail)
     );
+    // The rule row between the stacked panes is chrome, not a pane.
     assert_eq!(
-        stacked.pane_at(outer.x + 2, outer.y + 4 + detail_viewport_rows as u16 + 1),
-        Some(OverlayPane::Nav)
+        stacked.pane_hit(outer.x + 2, outer.y + 4 + detail_viewport_rows as u16),
+        None
+    );
+    assert_eq!(
+        stacked.pane_hit(outer.x + 2, outer.y + 4 + detail_viewport_rows as u16 + 1),
+        Some(PaneHit {
+            pane: OverlayPane::Nav,
+            pane_row: 0
+        })
     );
 }
 

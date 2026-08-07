@@ -91,9 +91,10 @@ impl OverlayLayout {
         }
     }
 
-    /// Overlay pane under a screen position, for wheel routing. `None` when
-    /// the position sits outside the body rows (chrome, or off the overlay).
-    pub(super) fn pane_at(self, column: u16, row: u16) -> Option<OverlayPane> {
+    /// Overlay pane and pane-local row under a screen position, for wheel,
+    /// click, and hover routing. `None` when the position sits outside the
+    /// body rows (chrome, or off the overlay).
+    pub(super) fn pane_hit(self, column: u16, row: u16) -> Option<PaneHit> {
         let outer = self.outer;
         if !outer.contains(Position { x: column, y: row }) {
             return None;
@@ -104,8 +105,12 @@ impl OverlayLayout {
         if row < body_top || row >= body_bottom {
             return None;
         }
+        let body_row = row.saturating_sub(body_top) as usize;
         match self.panes {
-            OverlayPanes::NavOnly { .. } => Some(OverlayPane::Nav),
+            OverlayPanes::NavOnly { .. } => Some(PaneHit {
+                pane: OverlayPane::Nav,
+                pane_row: body_row,
+            }),
             OverlayPanes::NavAndDetail {
                 orientation: OverlayOrientation::SideBySide,
                 nav_width,
@@ -117,10 +122,14 @@ impl OverlayLayout {
                     .saturating_add(1)
                     .saturating_add(nav_width.min(u16::MAX as usize) as u16)
                     .saturating_add(1);
-                Some(if column < nav_end {
+                let pane = if column < nav_end {
                     OverlayPane::Nav
                 } else {
                     OverlayPane::Detail
+                };
+                Some(PaneHit {
+                    pane,
+                    pane_row: body_row,
                 })
             }
             OverlayPanes::NavAndDetail {
@@ -128,12 +137,21 @@ impl OverlayLayout {
                 detail_viewport_rows,
                 ..
             } => {
-                let detail_bottom =
-                    body_top.saturating_add(detail_viewport_rows.min(u16::MAX as usize) as u16);
-                Some(if row < detail_bottom {
-                    OverlayPane::Detail
-                } else {
-                    OverlayPane::Nav
+                if body_row < detail_viewport_rows {
+                    return Some(PaneHit {
+                        pane: OverlayPane::Detail,
+                        pane_row: body_row,
+                    });
+                }
+                // The rule row between the stacked panes is chrome.
+                let separator_rows = usize::from(self.body_rows > 2);
+                let nav_top = detail_viewport_rows.saturating_add(separator_rows);
+                if body_row < nav_top {
+                    return None;
+                }
+                Some(PaneHit {
+                    pane: OverlayPane::Nav,
+                    pane_row: body_row - nav_top,
                 })
             }
         }
@@ -173,6 +191,13 @@ pub(super) enum OverlayPane {
     Detail,
 }
 
+/// A body position resolved to a pane plus the row within that pane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct PaneHit {
+    pub(super) pane: OverlayPane,
+    pub(super) pane_row: usize,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct DetailViewport {
     pub(super) width: usize,
@@ -205,6 +230,9 @@ struct OverlayContent<'a> {
     show_nav_badges: bool,
     detail_focused: bool,
     detail_scroll: usize,
+    /// First visible nav row, owned by the picker's scroll/follow state.
+    nav_window_start: usize,
+    hovered_nav_row: Option<usize>,
     footer: &'a str,
     empty_match_message: &'a str,
     chrome: OverlayChromeView<'a>,
@@ -261,6 +289,8 @@ pub(super) fn render_picker_overlay(picker: &UiPicker, area: Rect) -> OverlayFra
         show_nav_badges: picker.badge_placement == PickerBadgePlacement::Navigation,
         detail_focused: picker.detail_pane_focused(),
         detail_scroll: picker.detail_scroll,
+        nav_window_start: picker.nav_window_start(layout.nav_viewport_rows()),
+        hovered_nav_row: picker.hovered_nav_row,
         footer: &footer,
         empty_match_message,
         chrome,
@@ -458,15 +488,7 @@ fn overlay_lines(layout: OverlayLayout, content: OverlayContent<'_>) -> Vec<Line
                 layout.inner_width,
                 detail_rows_budget,
             );
-            let nav_rows = nav_item_rows(
-                content.items,
-                content.matching,
-                content.selected,
-                layout.nav_width(),
-                nav_rows_budget,
-                content.show_nav_badges,
-                content.empty_match_message,
-            );
+            let nav_rows = nav_item_rows(&content, layout.nav_width(), nav_rows_budget);
             if detail_rows_budget > 0 && nav_rows_budget > 0 {
                 vec![detail_rows, nav_rows]
             } else if detail_rows_budget > 0 {
@@ -520,15 +542,7 @@ fn side_by_side_body(layout: OverlayLayout, content: &OverlayContent<'_>) -> Vec
     else {
         return Vec::new();
     };
-    let nav_rows = nav_item_rows(
-        content.items,
-        content.matching,
-        content.selected,
-        nav_width,
-        nav_viewport_rows,
-        content.show_nav_badges,
-        content.empty_match_message,
-    );
+    let nav_rows = nav_item_rows(content, nav_width, nav_viewport_rows);
     let detail_rows = detail_viewport_rows(
         content.detail,
         content.detail_badge,
@@ -552,15 +566,7 @@ fn side_by_side_body(layout: OverlayLayout, content: &OverlayContent<'_>) -> Vec
 }
 
 fn nav_only_body(layout: OverlayLayout, content: &OverlayContent<'_>) -> Vec<Line<'static>> {
-    let mut rows = nav_item_rows(
-        content.items,
-        content.matching,
-        content.selected,
-        layout.nav_width(),
-        layout.nav_viewport_rows(),
-        content.show_nav_badges,
-        content.empty_match_message,
-    );
+    let mut rows = nav_item_rows(content, layout.nav_width(), layout.nav_viewport_rows());
     rows.truncate(layout.body_rows);
     while rows.len() < layout.body_rows {
         rows.push(Line::raw(""));
@@ -569,20 +575,16 @@ fn nav_only_body(layout: OverlayLayout, content: &OverlayContent<'_>) -> Vec<Lin
 }
 
 fn nav_item_rows(
-    items: &[PickerItem],
-    matching: &[usize],
-    selected: usize,
+    content: &OverlayContent<'_>,
     width: usize,
     viewport_rows: usize,
-    show_badges: bool,
-    empty_match_message: &str,
 ) -> Vec<Line<'static>> {
     if viewport_rows == 0 {
         return Vec::new();
     }
-    if matching.is_empty() {
+    if content.matching.is_empty() {
         let mut rows = vec![styled_line(
-            format!("  {empty_match_message}"),
+            format!("  {}", content.empty_match_message),
             width,
             Theme::dim(),
             LineFill::PadToWidth,
@@ -591,22 +593,25 @@ fn nav_item_rows(
         return rows;
     }
 
-    let total_rows = super::picker_rows::picker_row_count(items, matching);
+    let total_rows = super::picker_rows::picker_row_count(content.items, content.matching);
     let show_scrollbar = width > MIN_SCROLLBAR_PANE_WIDTH && total_rows > viewport_rows;
     let content_width = width.saturating_sub(usize::from(show_scrollbar));
     let rows = super::picker_rows::picker_item_rows(
-        items,
-        matching,
-        selected,
+        content.items,
+        content.matching,
+        content.selected,
         super::picker_rows::RowLayout {
             width: content_width,
             width_mode: super::picker_rows::RowWidthMode::FillPane,
-            show_badges,
+            show_badges: content.show_nav_badges,
             show_preview: false,
             fill: LineFill::PadToWidth,
         },
+        content.hovered_nav_row,
     );
-    let start = super::picker_rows::scroll_window_start(rows.selected_row, viewport_rows);
+    let start = content
+        .nav_window_start
+        .min(total_rows.saturating_sub(viewport_rows));
     let mut visible = rows
         .rows
         .into_iter()

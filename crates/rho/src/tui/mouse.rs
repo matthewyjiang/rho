@@ -70,6 +70,9 @@ impl App {
                 );
             }
             MouseEventKind::Down(MouseButton::Left) => {
+                if self.click_picker(column, row, size.width, size.height) {
+                    return Ok(());
+                }
                 self.screen_selection = None;
                 let layout = self.screen_layout(screen, now);
                 let (history, history_start) =
@@ -239,6 +242,9 @@ impl App {
             MouseEventKind::Moved if self.last_mouse_position == Some((column, row)) => {}
             MouseEventKind::Moved => {
                 self.last_mouse_position = Some((column, row));
+                if self.hover_picker(column, row, size.width, size.height) {
+                    return Ok(());
+                }
                 let layout = self.screen_layout(screen, now);
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
                 let (history, history_start) =

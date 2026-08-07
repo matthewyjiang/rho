@@ -42,7 +42,7 @@ fn aligned_rows_insert_section_headers_on_transitions() {
         item("gamma", Some("SECOND")),
     ];
     let matching = vec![0, 1, 2];
-    let rows = picker_item_rows(&items, &matching, 2, aligned_layout(40, 12));
+    let rows = picker_item_rows(&items, &matching, 2, aligned_layout(40, 12), None);
 
     let texts = rows
         .rows
@@ -62,7 +62,7 @@ fn aligned_rows_insert_section_headers_on_transitions() {
 #[test]
 fn selected_row_index_ignores_headers_before_it() {
     let items = vec![item("one", None), item("two", Some("GROUP"))];
-    let rows = picker_item_rows(&items, &[0, 1], 1, aligned_layout(30, 12));
+    let rows = picker_item_rows(&items, &[0, 1], 1, aligned_layout(30, 12), None);
     // one, GROUP header, two → selected "two" sits at row 2.
     assert_eq!(rows.selected_row, 2);
     assert_eq!(rows.rows.len(), 3);
@@ -101,6 +101,7 @@ fn fill_pane_rows_pad_label_and_keep_badge() {
             show_preview: false,
             fill: crate::tui::LineFill::PadToWidth,
         },
+        None,
     );
     let text = line_text(&rows.rows[0]);
     assert_eq!(text, "→ workhorse     editable");
@@ -118,7 +119,7 @@ fn aligned_rows_show_preview_after_badge() {
         tone: PickerBadgeTone::Favorite,
     });
     full.preview = Some("fast default".into());
-    let rows = picker_item_rows(&[full], &[0], 0, aligned_layout(60, 12));
+    let rows = picker_item_rows(&[full], &[0], 0, aligned_layout(60, 12), None);
     assert_eq!(
         line_text(&rows.rows[0]),
         "→ model         pinned  fast default"
