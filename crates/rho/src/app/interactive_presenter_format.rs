@@ -363,7 +363,7 @@ pub(super) fn progress_card(
 ) -> ToolCard {
     if let Some((view, _)) = view {
         if view.kind == ToolKind::Advisor {
-            return advisor_progress_card(progress.text());
+            return advisor_progress_card(progress);
         }
         if view.kind == ToolKind::Agent {
             return agent_format::agent_progress_card(view, progress.text());
@@ -416,11 +416,14 @@ fn advisor_card(status: ToolStatus, detail: impl Into<String>) -> ToolCard {
     )
 }
 
-fn advisor_progress_card(message: &str) -> ToolCard {
-    let (phase, body) = crate::tools::advisor::decode_progress(message);
+fn advisor_progress_card(progress: &ToolProgress) -> ToolCard {
+    let phase = progress
+        .presentation()
+        .command_summary_text()
+        .unwrap_or("waiting for provider");
     let mut card = advisor_card(ToolStatus::Running, phase);
-    if !body.trim().is_empty() {
-        card.body = ToolBody::Lines(split_body_lines(body));
+    if !progress.text().trim().is_empty() {
+        card.body = ToolBody::Lines(split_body_lines(progress.text()));
     }
     card
 }

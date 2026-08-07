@@ -1,4 +1,4 @@
-use std::{future::Future, path::Path};
+use std::{future::Future, path::Path, sync::Arc};
 
 use anyhow::bail;
 use rho_sdk::{
@@ -6,7 +6,7 @@ use rho_sdk::{
     provider::{ModelProvider, ProviderStreamEvent},
     CancellationToken, ProviderRequestUsageContext, ProviderRequestUsageRecording, SessionId,
 };
-use tokio::sync::mpsc;
+use tokio::sync::watch;
 
 use crate::credential_store::build_provider;
 
@@ -48,14 +48,24 @@ impl OneShotPhase {
     }
 }
 
-/// Complete display snapshot while a one-shot request is in flight.
+/// Latest display snapshot while a one-shot request is in flight.
 ///
-/// `text` is the canonical assistant output accumulated so far. Reasoning never
-/// appears here - only the phase moves to [`OneShotPhase::Thinking`].
+/// `text` is the canonical assistant output so far. Reasoning never appears
+/// here - only the phase moves to [`OneShotPhase::Thinking`]. Published through
+/// a watch channel so a slow consumer keeps only the newest snapshot.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct OneShotUpdate {
     pub phase: OneShotPhase,
-    pub text: String,
+    pub text: Arc<str>,
+}
+
+impl OneShotUpdate {
+    pub(crate) fn new(phase: OneShotPhase, text: impl AsRef<str>) -> Self {
+        Self {
+            phase,
+            text: Arc::from(text.as_ref()),
+        }
+    }
 }
 
 /// Text blocks and usage from a finished one-shot agent request.
@@ -70,19 +80,6 @@ pub(crate) fn run_one_shot_agent(
     request: OneShotAgentRequest<'_>,
     usage_recording: ProviderRequestUsageRecording,
 ) -> anyhow::Result<impl Future<Output = anyhow::Result<OneShotAgentResult>> + '_> {
-    run_one_shot_agent_with_updates(request, usage_recording, None)
-}
-
-/// Like [`run_one_shot_agent`], forwarding live phase and text snapshots.
-///
-/// Each update is a full card snapshot. On provider retry the text clears so a
-/// later attempt never appends onto abandoned partial output. Closing `updates`
-/// ends the stream when the request finishes.
-pub(crate) fn run_one_shot_agent_with_updates(
-    request: OneShotAgentRequest<'_>,
-    usage_recording: ProviderRequestUsageRecording,
-    updates: Option<mpsc::UnboundedSender<OneShotUpdate>>,
-) -> anyhow::Result<impl Future<Output = anyhow::Result<OneShotAgentResult>> + '_> {
     let reasoning = resolve_reasoning(request.definition, request.reasoning)?;
     let provider = build_provider(
         request.provider_name,
@@ -91,15 +88,16 @@ pub(crate) fn run_one_shot_agent_with_updates(
         request.auth,
     )?;
     Ok(async move {
-        run_one_shot_with_provider(provider.as_ref(), request, usage_recording, updates).await
+        run_one_shot_with_provider(provider.as_ref(), request, usage_recording, None).await
     })
 }
 
-async fn run_one_shot_with_provider(
+/// Runs a prepared one-shot request against an already-built provider.
+pub(crate) async fn run_one_shot_with_provider(
     provider: &dyn ModelProvider,
     request: OneShotAgentRequest<'_>,
     usage_recording: ProviderRequestUsageRecording,
-    updates: Option<mpsc::UnboundedSender<OneShotUpdate>>,
+    updates: Option<watch::Sender<OneShotUpdate>>,
 ) -> anyhow::Result<OneShotAgentResult> {
     let reasoning = resolve_reasoning(request.definition, request.reasoning)?;
     let PromptPolicy::Replace(prompt) = &request.definition.prompt else {
@@ -115,7 +113,7 @@ async fn run_one_shot_with_provider(
             .with_workspace_path(request.workspace_path);
 
     let mut stream = OneShotStream::new(updates);
-    stream.publish(OneShotPhase::WaitingForProvider, String::new());
+    stream.publish(OneShotPhase::WaitingForProvider, "");
 
     let model_request = ModelRequest {
         messages: &messages,
@@ -157,11 +155,11 @@ async fn run_one_shot_with_provider(
 struct OneShotStream {
     phase: OneShotPhase,
     text: String,
-    updates: Option<mpsc::UnboundedSender<OneShotUpdate>>,
+    updates: Option<watch::Sender<OneShotUpdate>>,
 }
 
 impl OneShotStream {
-    fn new(updates: Option<mpsc::UnboundedSender<OneShotUpdate>>) -> Self {
+    fn new(updates: Option<watch::Sender<OneShotUpdate>>) -> Self {
         Self {
             phase: OneShotPhase::WaitingForProvider,
             text: String::new(),
@@ -212,17 +210,13 @@ impl OneShotStream {
         let Some(updates) = &self.updates else {
             return;
         };
-        // Unbounded: one-shot replies are short, and dropping mid-stream
-        // snapshots would freeze the tool card on a stale phase/body.
-        let _ = updates.send(OneShotUpdate {
-            phase: self.phase,
-            text: self.text.clone(),
-        });
+        // Latest-wins: a slow tool-card consumer never queues every token copy.
+        let _ = updates.send(OneShotUpdate::new(self.phase, &self.text));
     }
 
-    fn publish(&mut self, phase: OneShotPhase, text: String) {
+    fn publish(&mut self, phase: OneShotPhase, text: &str) {
         self.phase = phase;
-        self.text = text;
+        self.text = text.to_owned();
         self.try_publish();
     }
 }

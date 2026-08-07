@@ -5,11 +5,10 @@
 //! agent with no tools and returns only advice text. While the request is in
 //! flight, live phase and text snapshots stream into the tool card.
 
-mod progress;
 mod transcript;
 
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
@@ -17,22 +16,23 @@ use rho_sdk::{
     model::{ModelUsage, ToolSpec},
     tool::{
         OperationKind, Tool as SdkTool, ToolContext, ToolError, ToolErrorKind, ToolFuture,
-        ToolInvocation, ToolMetadata, ToolOutput, ToolProgress, ToolSecurity,
+        ToolInvocation, ToolMetadata, ToolOutput, ToolProgress, ToolProgressSender, ToolSecurity,
     },
     CancellationToken, Session, SessionId,
 };
 use serde_json::json;
-use tokio::sync::mpsc;
+use tokio::sync::watch;
 
 use crate::{
     agent::{
         effective_internal_agent_reasoning, internal_agent_requires_model, internal_definition,
-        run_one_shot_agent_with_updates, OneShotAgentRequest, ADVISOR_AGENT_ID,
+        run_one_shot_with_provider, OneShotAgentRequest, OneShotPhase, OneShotUpdate,
+        ADVISOR_AGENT_ID,
     },
     config::{Config, InternalAgentModelConfig},
+    credential_store::build_provider,
 };
 
-pub(crate) use progress::{decode as decode_progress, encode as encode_progress};
 pub(crate) use transcript::{TranscriptBudget, DEFAULT_TRANSCRIPT_BUDGET};
 
 pub(crate) const TOOL_NAME: &str = "advisor";
@@ -278,66 +278,105 @@ impl SdkTool for AdvisorTool {
 /// Every failure comes back as a tool error, never as a run failure, so a
 /// broken advisor leaves the executor's turn intact. Successful provider runs
 /// (including empty text) return usage so the caller can fold cost into the
-/// parent session total. Live updates stream into `progress` as full card
-/// snapshots; the final tool output stays plain guidance text.
+/// parent session total. Live updates stream into `progress` as plain guidance
+/// text plus a phase in metadata; the final tool output stays plain guidance.
 async fn consult_advisor(
     request: AdvisorRequest,
     workspace_path: PathBuf,
     cancellation: CancellationToken,
-    progress: rho_sdk::tool::ToolProgressSender,
+    progress: ToolProgressSender,
 ) -> Result<(String, ModelUsage), ToolError> {
     let AdvisorRequest {
         model,
         session_id,
         transcript,
     } = request;
+    let reasoning = advisor_effective_reasoning(&model);
+    let provider = build_provider(&model.provider, &model.model, reasoning, &model.auth).map_err(
+        |error| {
+            execution_error(format!(
+                "advisor model {} could not start: {error}. Choose a rho-runtime advisor model with /advisor.",
+                rho_providers::provider::model_reference(&model.provider, &model.model)
+            ))
+        },
+    )?;
+    consult_advisor_with_provider(
+        provider.as_ref(),
+        &session_id,
+        &workspace_path,
+        transcript,
+        reasoning,
+        cancellation,
+        progress,
+    )
+    .await
+}
+
+async fn consult_advisor_with_provider(
+    provider: &dyn rho_sdk::provider::ModelProvider,
+    session_id: &SessionId,
+    workspace_path: &Path,
+    transcript: String,
+    reasoning: rho_providers::reasoning::ReasoningLevel,
+    cancellation: CancellationToken,
+    progress: ToolProgressSender,
+) -> Result<(String, ModelUsage), ToolError> {
     let usage_recording = crate::usage::default_recording().await;
-    let (updates_tx, mut updates_rx) = mpsc::unbounded_channel();
-    let started = run_one_shot_agent_with_updates(
+    let (updates_tx, updates_rx) =
+        watch::channel(OneShotUpdate::new(OneShotPhase::WaitingForProvider, ""));
+    let identity = provider.identity();
+    let started = run_one_shot_with_provider(
+        provider,
         OneShotAgentRequest {
             definition: internal_definition(ADVISOR_AGENT_ID),
             usage_purpose: USAGE_PURPOSE,
-            provider_name: &model.provider,
-            model: &model.model,
-            auth: &model.auth,
-            reasoning: Some(advisor_effective_reasoning(&model)),
+            provider_name: &identity.provider,
+            model: &identity.model,
+            auth: "unused",
+            reasoning: Some(reasoning),
             input: transcript,
             cancellation,
-            session_id: &session_id,
-            workspace_path: &workspace_path,
+            session_id,
+            workspace_path,
         },
         usage_recording,
         Some(updates_tx),
-    )
-    .map_err(|error| {
-        execution_error(format!(
-            "advisor model {} could not start: {error}. Choose a rho-runtime advisor model with /advisor.",
-            rho_providers::provider::model_reference(&model.provider, &model.model)
-        ))
-    })?;
-
-    let forward_progress = async {
-        while let Some(update) = updates_rx.recv().await {
-            if !progress
-                .send(ToolProgress::message(encode_progress(
-                    update.phase,
-                    &update.text,
-                )))
-                .await
-            {
-                // Host dropped the card; keep draining so the one-shot task is
-                // not stuck with a full channel of undrained updates.
-                while updates_rx.recv().await.is_some() {}
-                break;
-            }
-        }
-    };
-
+    );
+    let forward_progress = forward_advisor_progress(updates_rx, progress);
     let (result, ()) = tokio::join!(started, forward_progress);
     let result =
         result.map_err(|error| execution_error(format!("the advisor request failed: {error}")))?;
     let advice = result.texts.join("\n").trim().to_owned();
     Ok((advice, result.usage))
+}
+
+/// Forwards latest-wins one-shot snapshots into tool progress.
+///
+/// Guidance stays in the progress message. Phase rides in `command_summary`
+/// metadata so the presenter can set the header without a private text codec.
+async fn forward_advisor_progress(
+    mut updates: watch::Receiver<OneShotUpdate>,
+    progress: ToolProgressSender,
+) {
+    let initial = updates.borrow().clone();
+    if !send_advisor_progress(&progress, &initial).await {
+        return;
+    }
+    while updates.changed().await.is_ok() {
+        let update = updates.borrow().clone();
+        if !send_advisor_progress(&progress, &update).await {
+            return;
+        }
+    }
+}
+
+async fn send_advisor_progress(progress: &ToolProgressSender, update: &OneShotUpdate) -> bool {
+    progress.send(advisor_progress_message(update)).await
+}
+
+fn advisor_progress_message(update: &OneShotUpdate) -> ToolProgress {
+    ToolProgress::message(update.text.to_string())
+        .metadata(ToolMetadata::new().command_summary(update.phase.label()))
 }
 
 fn execution_error(message: impl Into<String>) -> ToolError {

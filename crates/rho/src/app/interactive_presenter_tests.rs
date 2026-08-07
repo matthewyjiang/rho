@@ -120,10 +120,8 @@ fn advisor_cards_use_status_first_headers() {
 
     let progress = progress_card(
         Some((&view, dir.path())),
-        &rho_sdk::tool::ToolProgress::message(crate::tools::advisor::encode_progress(
-            crate::agent::OneShotPhase::Responding,
-            "try the simpler path",
-        )),
+        &rho_sdk::tool::ToolProgress::message("try the simpler path")
+            .metadata(rho_sdk::tool::ToolMetadata::new().command_summary("responding")),
     );
     assert_eq!(
         progress.header,

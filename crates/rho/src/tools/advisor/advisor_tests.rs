@@ -1,13 +1,21 @@
+use std::num::NonZeroUsize;
+
 use pretty_assertions::assert_eq;
 use rho_providers::reasoning::ReasoningLevel;
-use rho_sdk::{tool::Tool as _, tool::ToolErrorKind};
+use rho_sdk::{
+    model::{ContentBlock, ModelIdentity, ModelResponse},
+    provider::{ScriptedProvider, ScriptedTurn},
+    tool::{tool_progress_channel, Tool, ToolErrorKind},
+    CancellationToken, SessionId,
+};
 use serde_json::json;
 
 use crate::config::{Config, InternalAgentModelConfig};
 
 use super::{
-    advisor_effective_reasoning, advisor_model, AdvisorSessionStore, AdvisorTool,
-    DEFAULT_TRANSCRIPT_BUDGET, NO_MODEL_MESSAGE, NO_SESSION_MESSAGE, TOOL_NAME,
+    advisor_effective_reasoning, advisor_model, advisor_progress_message,
+    consult_advisor_with_provider, AdvisorSessionStore, AdvisorTool, DEFAULT_TRANSCRIPT_BUDGET,
+    NO_MODEL_MESSAGE, NO_SESSION_MESSAGE, TOOL_NAME,
 };
 
 fn advisor_selection() -> InternalAgentModelConfig {
@@ -171,4 +179,81 @@ async fn rebinding_session_scopes_unclaimed_advisor_cost() {
     // A new conversation must not inherit the previous total.
     store.bind_session(second);
     assert_eq!(store.unclaimed_cost_usd_micros(), 0);
+}
+
+// Covers: one-shot updates reach tool progress, reasoning stays out of progress
+// text, and the final tool output is plain guidance only
+// Owner: advisor tool progress bridge
+#[tokio::test]
+async fn streams_progress_before_completion_with_plain_final_output() {
+    let provider = ScriptedProvider::new(
+        ModelIdentity::new("provider", "api", "model"),
+        [ScriptedTurn::streaming(
+            vec![
+                rho_sdk::model::ModelEvent::ReasoningDelta("do not show".into()),
+                rho_sdk::model::ModelEvent::OutputDelta("prefer ".into()),
+                rho_sdk::model::ModelEvent::OutputDelta("the simple path".into()),
+            ],
+            ModelResponse::Assistant(vec![ContentBlock::Text("prefer the simple path".into())]),
+        )],
+    );
+    let (progress_tx, mut progress_rx) = tool_progress_channel(NonZeroUsize::new(16).unwrap());
+    let session_id = SessionId::new();
+
+    let consult = consult_advisor_with_provider(
+        &provider,
+        &session_id,
+        std::path::Path::new("/test/workspace"),
+        "transcript".into(),
+        ReasoningLevel::Medium,
+        CancellationToken::new(),
+        progress_tx,
+    );
+
+    let collect = async {
+        let mut snapshots = Vec::new();
+        while let Some(progress) = progress_rx.recv().await {
+            snapshots.push(progress);
+        }
+        snapshots
+    };
+
+    let (result, snapshots) = tokio::join!(consult, collect);
+    let (advice, _usage) = result.expect("advisor consultation");
+
+    assert_eq!(advice, "prefer the simple path");
+    assert!(
+        !snapshots.is_empty(),
+        "expected live progress before completion, got none"
+    );
+    assert!(
+        snapshots.iter().any(|progress| {
+            progress.presentation().command_summary_text() == Some("responding")
+                && progress.text().contains("prefer")
+        }),
+        "expected responding progress with guidance body, got {snapshots:?}"
+    );
+    assert!(snapshots
+        .iter()
+        .all(|progress| !progress.text().contains("do not show")));
+    // Final model-visible result must stay plain guidance, not status labels.
+    assert!(!advice.contains("responding"));
+    assert!(!advice.contains("thinking"));
+}
+
+// Covers: progress messages keep phase in metadata and body as plain text
+// Owner: advisor tool progress bridge
+#[test]
+fn progress_message_keeps_phase_out_of_body() {
+    use crate::agent::{OneShotPhase, OneShotUpdate};
+
+    let progress = advisor_progress_message(&OneShotUpdate::new(
+        OneShotPhase::Responding,
+        "ship the smaller change",
+    ));
+    assert_eq!(progress.text(), "ship the smaller change");
+    assert_eq!(
+        progress.presentation().command_summary_text(),
+        Some("responding")
+    );
 }
