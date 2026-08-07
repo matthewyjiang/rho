@@ -114,6 +114,7 @@ closed `mermaid` fences, small diagrams, short labels.
 ## Related
 
 - [Transcript display](/interactive-tui/transcript) - scroll, copy, and Markdown
+- [Math rendering](/interactive-tui/math) - terminal math art
 - [Interactive TUI](/interactive-tui)
 - Docs authoring in this repo also uses fenced `mermaid` blocks (VitePress +
   Mermaid.js on the site)
