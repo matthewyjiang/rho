@@ -212,28 +212,121 @@ fn capture_demo(binary: &Path) -> Result<DemoCapture> {
     Ok(DemoCapture { svg, screen_text })
 }
 
-/// Pin wall-clock tool durations so the SVG stays load-stable.
+/// Pin load-volatile status and duration fragments so CI matches local captures.
+///
+/// Tool durations and statusline usage are split across styled SVG text runs, so
+/// stabilize by rewriting those fragments rather than whole-row matches.
 fn stabilize_demo_svg(svg: &str) -> String {
-    let marker = "exit 0 · ";
+    let mut out = pin_tool_durations(svg);
+    out = pin_statusline_usage(&out);
+    out
+}
+
+fn pin_tool_durations(svg: &str) -> String {
+    // Styled runs look like ` · 0.2s`, not contiguous `exit 0 · 0.2s`.
+    let marker = " · ";
     let mut out = String::with_capacity(svg.len());
     let mut rest = svg;
     while let Some(idx) = rest.find(marker) {
-        out.push_str(&rest[..idx]);
-        out.push_str(marker);
-        out.push_str("0.1s");
+        out.push_str(&rest[..idx + marker.len()]);
         rest = &rest[idx + marker.len()..];
         if let Some(end) = rest.find('s') {
             let token = &rest[..=end];
-            if token
-                .chars()
-                .all(|ch| ch.is_ascii_digit() || ch == '.' || ch == 's')
-            {
+            if is_duration_token(token) {
+                out.push_str("0.1s");
                 rest = &rest[end + 1..];
                 continue;
             }
         }
-        break;
+        // Not a duration; keep scanning past this marker.
     }
     out.push_str(rest);
     out
+}
+
+fn is_duration_token(token: &str) -> bool {
+    let Some(body) = token.strip_suffix('s') else {
+        return false;
+    };
+    if body.is_empty() {
+        return false;
+    }
+    let mut seen_dot = false;
+    for ch in body.chars() {
+        match ch {
+            '0'..='9' => {}
+            '.' if !seen_dot => seen_dot = true,
+            _ => return false,
+        }
+    }
+    true
+}
+
+fn pin_statusline_usage(svg: &str) -> String {
+    // Example: `6.0K (0.6%)` followed by trailing spaces in one text run.
+    let mut out = String::with_capacity(svg.len());
+    let bytes = svg.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if let Some((end, spaces)) = match_usage_run(&svg[i..]) {
+            out.push_str("6.0K (0.6%)");
+            out.push_str(spaces);
+            i += end;
+            continue;
+        }
+        out.push(svg[i..].chars().next().unwrap());
+        i += svg[i..].chars().next().unwrap().len_utf8();
+    }
+    out
+}
+
+fn match_usage_run(rest: &str) -> Option<(usize, &str)> {
+    let bytes = rest.as_bytes();
+    let mut i = 0usize;
+    // digits
+    if i >= bytes.len() || !bytes[i].is_ascii_digit() {
+        return None;
+    }
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        i += 1;
+    }
+    // optional .digits
+    if i < bytes.len() && bytes[i] == b'.' {
+        i += 1;
+        let start = i;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i == start {
+            return None;
+        }
+    }
+    if i + 1 >= bytes.len() || &rest[i..i + 2] != "K " {
+        return None;
+    }
+    i += 2;
+    if i >= bytes.len() || bytes[i] != b'(' {
+        return None;
+    }
+    i += 1;
+    let pct_start = i;
+    while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b'.') {
+        i += 1;
+    }
+    if i == pct_start || i >= bytes.len() || bytes[i] != b'%' {
+        return None;
+    }
+    i += 1;
+    if i >= bytes.len() || bytes[i] != b')' {
+        return None;
+    }
+    i += 1;
+    let space_start = i;
+    while i < bytes.len() && bytes[i] == b' ' {
+        i += 1;
+    }
+    if i == space_start {
+        return None;
+    }
+    Some((i, &rest[space_start..i]))
 }

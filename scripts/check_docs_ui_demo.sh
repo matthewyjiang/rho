@@ -69,9 +69,14 @@ case "$(uname -s)" in
 esac
 
 if [[ -z "$bin_path" ]]; then
-  echo "==> Build debug rho for matrix mode"
-  cargo build -j "$jobs" -p rho-coding-agent --locked
-  bin_path="$root/target/debug/rho"
+  if [[ -f "$root/target/debug/rho" ]]; then
+    bin_path="$root/target/debug/rho"
+    echo "==> Reuse existing debug rho at $bin_path"
+  else
+    echo "==> Build debug rho for matrix mode"
+    cargo build -j "$jobs" -p rho-coding-agent --locked
+    bin_path="$root/target/debug/rho"
+  fi
 fi
 
 if [[ ! -x "$bin_path" && ! -f "$bin_path" ]]; then

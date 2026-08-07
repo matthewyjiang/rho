@@ -65,7 +65,7 @@ Useful flags:
 
 ## Regenerate the docs TUI proof plate
 
-CI job `docs TUI proof plate` and `python3 scripts/validate.py full` both run this check. Before opening or updating a PR that changes Interactive TUI layout/chrome or the proof-plate fixture, run it locally:
+The CI quality job and `python3 scripts/validate.py full` both run this check. Before opening or updating a PR that changes Interactive TUI layout/chrome or the proof-plate fixture, run it locally:
 
 ```bash
 # fail on drift

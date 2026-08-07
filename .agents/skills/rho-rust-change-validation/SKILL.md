@@ -128,7 +128,7 @@ bash scripts/check_docs_ui_demo.sh --check
 bash scripts/check_docs_ui_demo.sh --write
 ```
 
-Commit both `docs/assets/rho-ui-demo.svg` and `docs/public/assets/rho-ui-demo.svg` after `--write`. CI job `docs TUI proof plate` enforces the check on every PR.
+Commit both `docs/assets/rho-ui-demo.svg` and `docs/public/assets/rho-ui-demo.svg` after `--write`. The CI quality job enforces the check on every PR.
 
 ## 4. Handle failures
 

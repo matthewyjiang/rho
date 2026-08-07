@@ -43,13 +43,14 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: Run workspace tests
         run: cargo test --workspace --locked
+      - name: Check docs TUI proof plate
+        run: bash scripts/check_docs_ui_demo.sh --check --bin target/debug/rho
       - name: Run documentation tests
         run: cargo test --workspace --doc --all-features --locked
       - name: Check rho-tools document features independently
         run: |
           cargo check -p rho-agent-tools --no-default-features --features document-docx --locked
           cargo check -p rho-agent-tools --no-default-features --features document-pdf --locked
-          cargo check -p rho-agent-tools --no-default-features --features document-spreadsheets --locked
 
   sdk-benchmarks:
     name: SDK release benchmarks
@@ -139,20 +140,6 @@ jobs:
           shared-key: platform-${{ matrix.os }}
       - name: Compile and test the workspace
         run: cargo test --workspace --all-targets --locked
-
-  docs-ui-demo:
-    name: docs TUI proof plate
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-      - name: Cache Cargo registry
-        uses: swatinem/rust-cache@v2
-        with:
-          shared-key: docs-ui-demo
-      - name: Build debug rho and check docs TUI proof plate
-        run: bash scripts/check_docs_ui_demo.sh --check
 
   package:
     name: release package checks

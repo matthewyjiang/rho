@@ -181,7 +181,7 @@ Detect drift without writing:
 bash scripts/check_docs_ui_demo.sh --check
 ```
 
-CI job `docs TUI proof plate` and `python3 scripts/validate.py full` run the check. The generator needs a Unix PTY and a debug build because `RHO_TUI_TEST_MODE=matrix` is debug-only.
+The CI quality job and `python3 scripts/validate.py full` run the check. The generator needs a Unix PTY and a debug build because `RHO_TUI_TEST_MODE=matrix` is debug-only.
 
 ### Environment isolation
 
