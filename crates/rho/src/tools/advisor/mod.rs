@@ -2,8 +2,10 @@
 //!
 //! The tool takes no arguments. Rho serializes the session itself, so nothing
 //! the executor writes reaches the advisor. The advisor runs as a one-shot Rho
-//! agent with no tools and returns only advice text.
+//! agent with no tools and returns only advice text. While the request is in
+//! flight, live phase and text snapshots stream into the tool card.
 
+mod progress;
 mod transcript;
 
 use std::{
@@ -15,20 +17,22 @@ use rho_sdk::{
     model::{ModelUsage, ToolSpec},
     tool::{
         OperationKind, Tool as SdkTool, ToolContext, ToolError, ToolErrorKind, ToolFuture,
-        ToolInvocation, ToolMetadata, ToolOutput, ToolSecurity,
+        ToolInvocation, ToolMetadata, ToolOutput, ToolProgress, ToolSecurity,
     },
     CancellationToken, Session, SessionId,
 };
 use serde_json::json;
+use tokio::sync::mpsc;
 
 use crate::{
     agent::{
         effective_internal_agent_reasoning, internal_agent_requires_model, internal_definition,
-        run_one_shot_agent, OneShotAgentRequest, ADVISOR_AGENT_ID,
+        run_one_shot_agent_with_updates, OneShotAgentRequest, ADVISOR_AGENT_ID,
     },
     config::{Config, InternalAgentModelConfig},
 };
 
+pub(crate) use progress::{decode as decode_progress, encode as encode_progress};
 pub(crate) use transcript::{TranscriptBudget, DEFAULT_TRANSCRIPT_BUDGET};
 
 pub(crate) const TOOL_NAME: &str = "advisor";
@@ -251,8 +255,13 @@ impl SdkTool for AdvisorTool {
                 .map(std::path::Path::to_path_buf)
                 .ok_or_else(|| execution_error(NO_WORKSPACE_MESSAGE))?;
             let request = self.store.request(self.budget)?;
-            let (advice, usage) =
-                consult_advisor(request, workspace_path, context.cancellation().clone()).await?;
+            let (advice, usage) = consult_advisor(
+                request,
+                workspace_path,
+                context.cancellation().clone(),
+                context.progress().clone(),
+            )
+            .await?;
             // Note before the empty-guidance check: the provider already spent.
             self.store.note_usage(&usage);
             if advice.is_empty() {
@@ -269,11 +278,13 @@ impl SdkTool for AdvisorTool {
 /// Every failure comes back as a tool error, never as a run failure, so a
 /// broken advisor leaves the executor's turn intact. Successful provider runs
 /// (including empty text) return usage so the caller can fold cost into the
-/// parent session total.
+/// parent session total. Live updates stream into `progress` as full card
+/// snapshots; the final tool output stays plain guidance text.
 async fn consult_advisor(
     request: AdvisorRequest,
     workspace_path: PathBuf,
     cancellation: CancellationToken,
+    progress: rho_sdk::tool::ToolProgressSender,
 ) -> Result<(String, ModelUsage), ToolError> {
     let AdvisorRequest {
         model,
@@ -281,7 +292,8 @@ async fn consult_advisor(
         transcript,
     } = request;
     let usage_recording = crate::usage::default_recording().await;
-    let started = run_one_shot_agent(
+    let (updates_tx, mut updates_rx) = mpsc::unbounded_channel();
+    let started = run_one_shot_agent_with_updates(
         OneShotAgentRequest {
             definition: internal_definition(ADVISOR_AGENT_ID),
             usage_purpose: USAGE_PURPOSE,
@@ -295,6 +307,7 @@ async fn consult_advisor(
             workspace_path: &workspace_path,
         },
         usage_recording,
+        Some(updates_tx),
     )
     .map_err(|error| {
         execution_error(format!(
@@ -302,9 +315,27 @@ async fn consult_advisor(
             rho_providers::provider::model_reference(&model.provider, &model.model)
         ))
     })?;
-    let result = started
-        .await
-        .map_err(|error| execution_error(format!("the advisor request failed: {error}")))?;
+
+    let forward_progress = async {
+        while let Some(update) = updates_rx.recv().await {
+            if !progress
+                .send(ToolProgress::message(encode_progress(
+                    update.phase,
+                    &update.text,
+                )))
+                .await
+            {
+                // Host dropped the card; keep draining so the one-shot task is
+                // not stuck with a full channel of undrained updates.
+                while updates_rx.recv().await.is_some() {}
+                break;
+            }
+        }
+    };
+
+    let (result, ()) = tokio::join!(started, forward_progress);
+    let result =
+        result.map_err(|error| execution_error(format!("the advisor request failed: {error}")))?;
     let advice = result.texts.join("\n").trim().to_owned();
     Ok((advice, result.usage))
 }

@@ -87,8 +87,12 @@ pub(super) fn preview_card(
         return kind_card(status, kind, header);
     };
     match kind {
-        // The advisor takes no arguments, so the row is the verb alone.
-        ToolKind::Advisor => kind_card(status, kind, ToolHeader::call("advisor", None)),
+        // Status-first like a nested agent: phase lives on the header line.
+        ToolKind::Advisor => kind_card(
+            status,
+            kind,
+            ToolHeader::status_first("advisor", "waiting for provider"),
+        ),
         ToolKind::Agent => agent_format::agent_start_card(arguments),
         ToolKind::Agents => agent_format::agents_start_card(arguments),
         ToolKind::Bash => shell_card("$", arguments, status),
@@ -286,7 +290,7 @@ pub(super) fn finished_card(
 ) -> ToolCard {
     let status = ToolStatus::from_finished(ok);
     match view.kind {
-        ToolKind::Advisor => generic_card(view, content, status),
+        ToolKind::Advisor => advisor_finished_card(content, ok),
         ToolKind::Agent => agent_format::agent_finished_card(view, content, ok),
         ToolKind::Agents => agent_format::agents_finished_card(view, content, ok),
         ToolKind::Bash => shell_result_card("$", &view.arguments, content, status),
@@ -358,6 +362,9 @@ pub(super) fn progress_card(
     progress: &ToolProgress,
 ) -> ToolCard {
     if let Some((view, _)) = view {
+        if view.kind == ToolKind::Advisor {
+            return advisor_progress_card(progress.text());
+        }
         if view.kind == ToolKind::Agent {
             return agent_format::agent_progress_card(view, progress.text());
         }
@@ -401,6 +408,37 @@ pub(super) fn progress_card(
     card
 }
 
+fn advisor_card(status: ToolStatus, detail: impl Into<String>) -> ToolCard {
+    kind_card(
+        status,
+        ToolKind::Advisor,
+        ToolHeader::status_first("advisor", detail),
+    )
+}
+
+fn advisor_progress_card(message: &str) -> ToolCard {
+    let (phase, body) = crate::tools::advisor::decode_progress(message);
+    let mut card = advisor_card(ToolStatus::Running, phase);
+    if !body.trim().is_empty() {
+        card.body = ToolBody::Lines(split_body_lines(body));
+    }
+    card
+}
+
+fn advisor_finished_card(content: &str, ok: bool) -> ToolCard {
+    let status = ToolStatus::from_finished(ok);
+    let mut card = advisor_card(status, if ok { "completed" } else { "failed" });
+    if content.trim().is_empty() {
+        return card;
+    }
+    if status == ToolStatus::Error {
+        push_error_output(&mut card, content);
+    } else {
+        card.body = ToolBody::Lines(split_body_lines(content));
+    }
+    card
+}
+
 pub(super) fn interrupted_card(
     view: &ToolView,
     partial_arguments: &str,
@@ -408,13 +446,7 @@ pub(super) fn interrupted_card(
 ) -> ToolCard {
     match view.kind {
         // A partial argument buffer for a no-argument tool is only `{}` noise.
-        ToolKind::Advisor => preview_card(
-            view.kind,
-            &view.name,
-            Some(&view.arguments),
-            cwd,
-            ToolStatus::Interrupted,
-        ),
+        ToolKind::Advisor => advisor_card(ToolStatus::Interrupted, "interrupted"),
         ToolKind::Agent => agent_format::agent_interrupted_card(&view.arguments),
         ToolKind::Agents => agent_format::agents_interrupted_card(&view.arguments),
         ToolKind::Edit => edit_planned_card(&view.arguments, cwd, ToolStatus::Interrupted),

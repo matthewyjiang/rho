@@ -96,3 +96,56 @@ fn edit_planned_card_surfaces_unverified_document_fallback() {
         card.facts
     );
 }
+
+// Covers: advisor cards keep phase on the header and body as plain guidance
+// Owner: interactive presenter
+#[test]
+fn advisor_cards_use_status_first_headers() {
+    use rho_tools::tool_card::{ToolBody, ToolHeader, ToolStatus};
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let view = ToolView {
+        kind: ToolKind::Advisor,
+        name: "advisor".into(),
+        arguments: serde_json::json!({}),
+        metadata: Default::default(),
+    };
+
+    let start = start_card(&view, dir.path());
+    assert_eq!(start.status, ToolStatus::Running);
+    assert_eq!(
+        start.header,
+        ToolHeader::status_first("advisor", "waiting for provider")
+    );
+
+    let progress = progress_card(
+        Some((&view, dir.path())),
+        &rho_sdk::tool::ToolProgress::message(crate::tools::advisor::encode_progress(
+            crate::agent::OneShotPhase::Responding,
+            "try the simpler path",
+        )),
+    );
+    assert_eq!(
+        progress.header,
+        ToolHeader::status_first("advisor", "responding")
+    );
+    assert_eq!(
+        progress.body,
+        ToolBody::Lines(vec!["try the simpler path".into()])
+    );
+
+    let finished = finished_card(&view, "final guidance", true, dir.path());
+    assert_eq!(finished.status, ToolStatus::Ok);
+    assert_eq!(
+        finished.header,
+        ToolHeader::status_first("advisor", "completed")
+    );
+    assert_eq!(
+        finished.body,
+        ToolBody::Lines(vec!["final guidance".into()])
+    );
+
+    let failed = finished_card(&view, "advisor blew up", false, dir.path());
+    assert_eq!(failed.status, ToolStatus::Error);
+    assert_eq!(failed.header, ToolHeader::status_first("advisor", "failed"));
+}

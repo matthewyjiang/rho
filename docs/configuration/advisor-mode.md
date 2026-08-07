@@ -27,7 +27,12 @@ flowchart TD
    payload.
 3. Rho starts a one-shot advisor run on the configured advisor model. That run
    has no tools. It cannot read files, run commands, or change the workspace.
-4. The advisor returns guidance text. Rho hands it back as an ordinary tool
+4. While the request is in flight, the advisor tool card shows live status on
+   the first line (`waiting for provider`, `thinking`, `responding`, or
+   `retrying provider`) and streams guidance text into the card body as it
+   arrives. Reasoning content stays hidden; only the phase changes to
+   `thinking`.
+5. The advisor finishes. Rho hands the final guidance back as an ordinary tool
    result. The executor keeps its turn and decides what to do next.
 
 Rho runs the advisor itself. There is no server-side advisor and no provider
@@ -109,9 +114,11 @@ declares done.
 
 While advisor mode is on, the status line names the reviewing model, for
 example `advisor: anthropic/claude-fable-5`. It stays out of the status line
-while the mode is off. Advice appears as a normal `advisor` tool card, collapsed
-past the [tool output limit](/configuration#tool-output-limit) and expandable
-with `ctrl+o`. `/info` also reports whether advisor mode is on.
+while the mode is off. An in-flight `advisor` call uses an agent-style card:
+`advisor  responding` on the header with streamed guidance below. Finished
+advice stays on the same card as `advisor  completed`, collapsed past the
+[tool output limit](/configuration#tool-output-limit) and expandable with
+`ctrl+o`. `/info` also reports whether advisor mode is on.
 
 ## Cost and scope
 
