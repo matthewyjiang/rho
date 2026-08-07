@@ -861,7 +861,7 @@ impl App {
             .summary(&self.info.runtime.model_call_profile());
         self.statusline.update_average_output_rate(
             performance
-                .average_output_tokens_per_second
+                .average_generation_tokens_per_second
                 .map(|rate| rate.round() as u64),
         );
         self.statusline

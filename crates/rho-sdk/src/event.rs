@@ -226,11 +226,23 @@ pub struct ModelCallMetrics {
 }
 
 impl ModelCallMetrics {
+    /// Provider-reported output tokens divided by generation time.
+    ///
+    /// Generation time runs from the first generated event to stream end, so
+    /// this matches common throughput definitions that exclude time to first
+    /// token. Returns `None` when the call never streamed generated output.
+    pub fn generation_tokens_per_second(self) -> Option<f64> {
+        let tokens = self.output_tokens?;
+        let seconds = self.generation_time?.as_secs_f64();
+        (seconds > 0.0).then(|| tokens as f64 / seconds)
+    }
+
     /// Provider-reported output tokens divided by total attempt latency.
     ///
-    /// Total latency rather than generation time keeps the time boundary
-    /// aligned with providers that count hidden reasoning in `output_tokens`
-    /// before emitting their first event.
+    /// Total latency includes time to first token. Prefer
+    /// [`Self::generation_tokens_per_second`] for decode/throughput style rates.
+    /// This end-to-end form stays useful when hidden pre-stream work is charged
+    /// in `output_tokens` before any event is emitted.
     pub fn output_tokens_per_second(self) -> Option<f64> {
         let tokens = self.output_tokens?;
         let seconds = self.total_latency.as_secs_f64();

@@ -19,20 +19,19 @@ fn profile(
     }
 }
 
-/// Builds metrics for a call that succeeded on its first attempt, where the
-/// attempt spans the whole request and drives the reported rate.
-fn metrics(output_tokens: u64, total_latency: Duration) -> ModelCallMetrics {
+/// Builds metrics where generation time is the throughput window.
+fn metrics(output_tokens: u64, generation_time: Duration) -> ModelCallMetrics {
+    let time_to_first_token = Duration::from_millis(200);
     ModelCallMetrics {
         output_tokens: Some(output_tokens),
-        time_to_first_token: Some(Duration::from_millis(200)),
-        generation_time: total_latency.checked_sub(Duration::from_millis(200)),
-
-        total_latency,
+        time_to_first_token: Some(time_to_first_token),
+        generation_time: Some(generation_time),
+        total_latency: time_to_first_token + generation_time,
     }
 }
 
 #[test]
-fn computes_a_token_weighted_average_from_completed_calls() {
+fn computes_a_token_weighted_generation_average_from_completed_calls() {
     let mut tracker = ModelPerformanceTracker::default();
     let profile = profile("openai", "model", ReasoningLevel::Medium, None);
     tracker.record(profile.clone(), metrics(100, Duration::from_secs(2)));
@@ -42,7 +41,7 @@ fn computes_a_token_weighted_average_from_completed_calls() {
         tracker.summary(&profile),
         ModelPerformanceSummary {
             latest_call: Some(metrics(300, Duration::from_secs(3))),
-            average_output_tokens_per_second: Some(80.0),
+            average_generation_tokens_per_second: Some(80.0),
             eligible_calls: 2,
         }
     );
@@ -60,17 +59,17 @@ fn keeps_short_calls_as_latest_without_adding_them_to_the_average() {
         tracker.summary(&profile),
         ModelPerformanceSummary {
             latest_call: Some(short_call),
-            average_output_tokens_per_second: None,
+            average_generation_tokens_per_second: None,
             eligible_calls: 0,
         }
     );
 }
 
-// Covers: eligibility no longer depends on stream timing, so a call whose output
-// was all hidden reasoning still contributes to the average.
+// Covers: generation throughput needs a streamed generation interval, so a
+// call with only hidden pre-stream work cannot enter the average.
 // Owner: tui model-performance aggregation
 #[test]
-fn counts_calls_that_reported_tokens_without_streaming_any_output() {
+fn ignores_calls_without_generation_time_for_the_average() {
     let mut tracker = ModelPerformanceTracker::default();
     let profile = profile("openai", "model", ReasoningLevel::High, None);
     let reasoning_only = ModelCallMetrics {
@@ -86,8 +85,8 @@ fn counts_calls_that_reported_tokens_without_streaming_any_output() {
         tracker.summary(&profile),
         ModelPerformanceSummary {
             latest_call: Some(reasoning_only),
-            average_output_tokens_per_second: Some(50.0),
-            eligible_calls: 1,
+            average_generation_tokens_per_second: None,
+            eligible_calls: 0,
         }
     );
 }
@@ -106,11 +105,15 @@ fn separates_model_profiles_including_service_tier() {
     tracker.record(priority.clone(), metrics(200, Duration::from_secs(2)));
 
     assert_eq!(
-        tracker.summary(&standard).average_output_tokens_per_second,
+        tracker
+            .summary(&standard)
+            .average_generation_tokens_per_second,
         Some(50.0)
     );
     assert_eq!(
-        tracker.summary(&priority).average_output_tokens_per_second,
+        tracker
+            .summary(&priority)
+            .average_generation_tokens_per_second,
         Some(100.0)
     );
     assert_eq!(
