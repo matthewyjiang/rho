@@ -260,7 +260,7 @@ fn progress_now_line(progress: &super::event_adapter::WorkflowProgress) -> Strin
 fn draw_footer(frame: &mut Frame<'_>, area: Rect, state: &WorkflowUiState) {
     let snapshot = state.snapshot();
     let policy = state.policy();
-    let mut keys = vec!["j/k move".to_owned()];
+    let mut keys = vec!["arrows/hjkl move".to_owned()];
     if state.details().is_scrollable() || state.details().has_body() {
         keys.push("pgup/pgdn scroll".into());
     }

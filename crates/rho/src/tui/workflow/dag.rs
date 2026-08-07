@@ -24,6 +24,12 @@ use super::event_adapter::WorkflowNodeSnapshot;
 // force the whole graph past the renderer's line limit.
 const MAX_GRAPH_ACTIVITY_WIDTH: usize = 28;
 
+#[derive(Clone, Copy)]
+pub(super) enum HorizontalDirection {
+    Left,
+    Right,
+}
+
 pub(super) struct DagRender {
     pub(super) lines: Vec<Line<'static>>,
     canvas_width: usize,
@@ -58,6 +64,26 @@ impl DagRender {
         let x = follow_axis(rect.x, rect.width, self.canvas_width, usize::from(width));
         let y = follow_axis(rect.y, rect.height, self.canvas_height, usize::from(height));
         (to_u16(y), to_u16(x))
+    }
+}
+
+pub(super) fn node_ranks(nodes: &[WorkflowNodeSnapshot]) -> Vec<usize> {
+    workflow_graph(nodes, /*selected*/ 0, &[]).ranks()
+}
+
+pub(super) fn horizontal_neighbor(
+    ranks: &[usize],
+    selected: usize,
+    direction: HorizontalDirection,
+) -> Option<usize> {
+    let selected_rank = *ranks.get(selected)?;
+    match direction {
+        HorizontalDirection::Left => (0..selected)
+            .rev()
+            .find(|&index| ranks[index] == selected_rank),
+        HorizontalDirection::Right => {
+            ((selected + 1)..ranks.len()).find(|&index| ranks[index] == selected_rank)
+        }
     }
 }
 

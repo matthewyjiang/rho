@@ -4,6 +4,7 @@ use crate::workflow::NodeId;
 
 use super::{
     control::{control_policy, ControlPolicy},
+    dag::{self, HorizontalDirection},
     details::DetailPane,
     event_adapter::{
         WorkflowEvent, WorkflowNodeSnapshot, WorkflowProgress, WorkflowSession, WorkflowSnapshot,
@@ -14,6 +15,7 @@ pub(super) struct WorkflowUiState {
     session: WorkflowSession,
     snapshot: WorkflowSnapshot,
     selected: usize,
+    node_ranks: Vec<usize>,
     progress: BTreeMap<NodeId, WorkflowProgress>,
     notice: Option<String>,
     details: DetailPane,
@@ -25,10 +27,12 @@ impl WorkflowUiState {
         snapshot: WorkflowSnapshot,
         run_directory: Option<PathBuf>,
     ) -> Self {
+        let node_ranks = dag::node_ranks(&snapshot.nodes);
         let mut state = Self {
             session,
             snapshot,
             selected: 0,
+            node_ranks,
             progress: BTreeMap::new(),
             notice: None,
             details: DetailPane::default(),
@@ -42,6 +46,7 @@ impl WorkflowUiState {
         match event {
             WorkflowEvent::Snapshot(snapshot) => {
                 let previous_id = self.selected_node().map(|node| node.id.clone());
+                self.node_ranks = dag::node_ranks(&snapshot.nodes);
                 self.snapshot = snapshot;
                 self.selected = self
                     .selected
@@ -122,6 +127,13 @@ impl WorkflowUiState {
     pub(super) fn select_next(&mut self) {
         if self.selected + 1 < self.snapshot.nodes.len() {
             self.selected += 1;
+            self.refresh_details(/*reset_scroll*/ true);
+        }
+    }
+
+    pub(super) fn select_horizontal(&mut self, direction: HorizontalDirection) {
+        if let Some(index) = dag::horizontal_neighbor(&self.node_ranks, self.selected, direction) {
+            self.selected = index;
             self.refresh_details(/*reset_scroll*/ true);
         }
     }

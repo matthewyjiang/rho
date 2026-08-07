@@ -76,15 +76,35 @@ flowchart TD
 2. **RUNS** - `Watch <state> · <id>` opens the DAG watch screen (live or finished).
 3. **SAVED PLANS** - `Run plan · <id>` starts from a frozen plan in the background.
 
-### Watch and cleanup
+### DAG watch screen
 
-Keep chatting while a run continues. Reopen `/workflow` and Enter a run to **watch**
-the DAG without taking ownership of the driver. Press `q` to leave watch; `c` requests
-stop on a live run. On a finished step, the right pane shows that node's formatted
-output (agent answers as markdown, command streams as text). Use `PgUp`/`PgDn`,
-`Home`/`End`, mouse wheel, or the scrollbar to scroll long output. Press `d` on a
-**RUNS** or **SAVED PLANS** row to delete it after confirm. Local `.star` source
-files are not deleted from disk.
+Keep chatting while a run continues. Reopen `/workflow` and press Enter on a
+run to watch it without taking ownership of the driver. The left pane draws the
+complete frozen dependency graph from top to bottom. An arrow runs from each
+dependency to the node that needs it, and independent nodes share a rank.
+
+| Key | Action |
+| --- | --- |
+| `j` or Down | Select the next frozen node |
+| `k` or Up | Select the previous frozen node |
+| `h` or Left | Select the node to the left on the same rank |
+| `l` or Right | Select the node to the right on the same rank |
+| `c` | Request stop on a live run |
+| `q` | Leave the watch screen without stopping the run |
+
+The graph viewport follows the selected node when the complete graph is larger
+than its pane. Node labels use `·` for waiting, `○` for ready, `●` for running,
+`✓` for success, `–` for skipped, and `✗` for other terminal outcomes. A
+running node also shows its current activity when available.
+
+The right pane shows details for the selected node. Finished agent answers
+render as Markdown, while command streams render as text. Use `PgUp`/`PgDn`,
+`Home`/`End`, the mouse wheel, or the scrollbar to scroll long output.
+
+### Cleanup
+
+Press `d` on a **RUNS** or **SAVED PLANS** row to delete it after confirmation.
+Local `.star` source files are not deleted from disk.
 
 ### Model tool and context
 
