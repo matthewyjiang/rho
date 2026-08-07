@@ -24,7 +24,7 @@ fn overlay_page_target(picker: &UiPicker, terminal: &DefaultTerminal) -> Option<
     Some(
         picker_overlay_layout(
             Rect::new(0, 0, size.width, size.height),
-            picker.has_item_details(),
+            picker.overlay_sizing(),
         )
         .page_target(),
     )

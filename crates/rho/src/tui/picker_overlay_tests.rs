@@ -103,7 +103,13 @@ fn detail_badge_rows_never_exceed_narrow_overlay_widths() {
 
 #[test]
 fn tiny_stacked_layout_keeps_viewports_within_the_body() {
-    let layout = picker_overlay_layout(Rect::new(0, 0, 20, 1), /*has_details*/ true);
+    let layout = picker_overlay_layout(
+        Rect::new(0, 0, 20, 1),
+        OverlaySizing {
+            has_details: true,
+            nav_rows: 2,
+        },
+    );
     let OverlayPanes::NavAndDetail {
         orientation,
         detail_viewport_rows,
@@ -130,8 +136,8 @@ fn clamp_detail_scroll_respects_viewport() {
 #[test]
 fn overlay_detail_end_scroll_uses_max_without_sentinel() {
     let area = Rect::new(0, 0, 80, 16);
-    let layout = picker_overlay_layout(area, /*has_details*/ true);
     let mut picker = sample_picker(&long_detail(), "other");
+    let layout = picker_overlay_layout(area, picker.overlay_sizing());
     let viewport = layout.detail_viewport().expect("detail viewport");
     picker.scroll_detail_end(viewport);
     let line_count = overlay_detail_lines(picker.selected_detail(), viewport.width).len();
@@ -184,4 +190,43 @@ fn overlay_empty_match_state_is_visible() {
         text.contains(expected),
         "expected empty-state label {expected:?} in overlay body: {text:?}"
     );
+}
+
+// Covers: the overlay height must follow the item count instead of always
+// filling the screen; short pickers get a compact box, long pickers still
+// clamp to the margin-bounded maximum.
+// Owner: tui picker_overlay geometry
+#[test]
+fn overlay_height_follows_item_count() {
+    let area = Rect::new(0, 0, 120, 40);
+    let small = picker_overlay_layout(
+        area,
+        OverlaySizing {
+            has_details: true,
+            nav_rows: 5,
+        },
+    );
+    // 12-row detail minimum + 5 chrome rows + 2 border rows.
+    assert_eq!(small.outer.height, 19);
+
+    let nav_only = picker_overlay_layout(
+        area,
+        OverlaySizing {
+            has_details: false,
+            nav_rows: 5,
+        },
+    );
+    // 5 nav rows + 5 chrome rows + 2 border rows.
+    assert_eq!(nav_only.outer.height, 12);
+
+    let large = picker_overlay_layout(
+        area,
+        OverlaySizing {
+            has_details: true,
+            nav_rows: 100,
+        },
+    );
+    // Clamped to the screen minus vertical margins.
+    assert_eq!(large.outer.height, 34);
+    assert!(large.outer.y > area.y);
 }

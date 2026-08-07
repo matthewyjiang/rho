@@ -161,8 +161,17 @@ struct OverlayContent<'a> {
     chrome: OverlayChromeView<'a>,
 }
 
-pub(super) fn picker_overlay_layout(area: Rect, has_details: bool) -> OverlayLayout {
-    layout_for_outer(outer_rect(area), has_details)
+/// Content hints that drive the overlay's outer size.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct OverlaySizing {
+    pub(super) has_details: bool,
+    /// Item rows plus section headers, counted over the full item set (not the
+    /// filtered matches) so the box does not resize while typing.
+    pub(super) nav_rows: usize,
+}
+
+pub(super) fn picker_overlay_layout(area: Rect, sizing: OverlaySizing) -> OverlayLayout {
+    layout_for_outer(outer_rect(area, sizing), sizing.has_details)
 }
 
 pub(super) fn picker_overlay_frame(picker: &UiPicker, area: Rect) -> Option<OverlayFrame> {
@@ -172,7 +181,7 @@ pub(super) fn picker_overlay_frame(picker: &UiPicker, area: Rect) -> Option<Over
 }
 
 pub(super) fn render_picker_overlay(picker: &UiPicker, area: Rect) -> OverlayFrame {
-    let layout = picker_overlay_layout(area, picker.has_item_details());
+    let layout = picker_overlay_layout(area, picker.overlay_sizing());
     // Own footer and wrap detail before matching indices so temporary match
     // cache borrows from footer/detail helpers do not overlap.
     let detail_holder = layout
@@ -241,7 +250,12 @@ pub(super) fn filter_cursor_x(filter: &str, inner_width: usize) -> u16 {
         .min(inner_width.saturating_sub(1)) as u16
 }
 
-fn outer_rect(area: Rect) -> Rect {
+/// Fewest body rows an overlay keeps when a detail pane needs reading room.
+const MIN_DETAIL_BODY_ROWS: usize = 12;
+/// Fewest body rows a nav-only overlay keeps.
+const MIN_NAV_ONLY_BODY_ROWS: usize = 3;
+
+fn outer_rect(area: Rect, sizing: OverlaySizing) -> Rect {
     if area.width == 0 || area.height == 0 {
         return Rect::new(area.x, area.y, 0, 0);
     }
@@ -252,10 +266,25 @@ fn outer_rect(area: Rect) -> Rect {
         .width
         .saturating_sub(horizontal_margin.saturating_mul(2))
         .max(1);
-    let height = area
+    let max_height = area
         .height
         .saturating_sub(vertical_margin.saturating_mul(2))
         .max(1);
+    // Height follows the item count instead of always filling the screen, so
+    // short pickers render as a compact box. The detail minimum keeps long
+    // detail text readable behind its own scrolling.
+    let min_body_rows = if sizing.has_details {
+        MIN_DETAIL_BODY_ROWS
+    } else {
+        MIN_NAV_ONLY_BODY_ROWS
+    };
+    let desired_height = sizing
+        .nav_rows
+        .max(min_body_rows)
+        .saturating_add(INNER_CHROME_ROWS)
+        .saturating_add(2)
+        .min(u16::MAX as usize) as u16;
+    let height = desired_height.min(max_height);
     let x = area.x.saturating_add(area.width.saturating_sub(width) / 2);
     let y = area
         .y
@@ -509,97 +538,27 @@ fn nav_item_rows(
         return rows;
     }
 
-    let mut rows = Vec::with_capacity(matching.len());
-    let mut current_section = None;
-    let mut selected_row = 0;
-    for index in matching.iter().copied() {
-        let Some(item) = items.get(index) else {
-            continue;
-        };
-        if item.section.as_deref() != current_section {
-            current_section = item.section.as_deref();
-            if let Some(section) = current_section {
-                rows.push(section_header_line(section, width));
-            }
-        }
-        if index == selected {
-            selected_row = rows.len();
-        }
-        rows.push(nav_item_line(item, index == selected, width, show_badges));
-    }
-
-    let start = selected_row.saturating_add(1).saturating_sub(viewport_rows);
+    let rows = super::picker_rows::picker_item_rows(
+        items,
+        matching,
+        selected,
+        super::picker_rows::RowLayout {
+            width,
+            width_mode: super::picker_rows::RowWidthMode::FillPane,
+            show_badges,
+            show_preview: false,
+            fill: LineFill::PadToWidth,
+        },
+    );
+    let start = super::picker_rows::scroll_window_start(rows.selected_row, viewport_rows);
     let mut visible = rows
+        .rows
         .into_iter()
         .skip(start)
         .take(viewport_rows)
         .collect::<Vec<_>>();
     visible.resize_with(viewport_rows, || padded_plain("", width));
     visible
-}
-
-fn section_header_line(section: &str, width: usize) -> Line<'static> {
-    let label = truncate_one_line(section, width.saturating_sub(2));
-    styled_line(
-        format!("  {label}"),
-        width,
-        Theme::dim(),
-        LineFill::PadToWidth,
-    )
-}
-
-fn nav_item_line(
-    item: &PickerItem,
-    selected: bool,
-    width: usize,
-    show_badge: bool,
-) -> Line<'static> {
-    if width == 0 {
-        return Line::raw("");
-    }
-    let marker = if selected {
-        super::composer_chrome::SELECTION_MARKER_ACTIVE
-    } else {
-        super::composer_chrome::SELECTION_MARKER_INACTIVE
-    };
-    let style = if selected {
-        Theme::accent()
-    } else {
-        Theme::text()
-    };
-    if width == 1 {
-        return Line::from(Span::styled(marker.to_string(), style));
-    }
-
-    let available = width.saturating_sub(2);
-    let badge = if show_badge {
-        item.badge.as_ref()
-    } else {
-        None
-    }
-    .and_then(|badge| {
-        let budget = display_width(&badge.text)
-            .min(16)
-            .min(available.saturating_sub(2));
-        (budget > 0).then(|| (truncate_one_line(&badge.text, budget), badge.tone))
-    });
-    let badge_width = badge
-        .as_ref()
-        .map_or(0, |(text, _)| display_width(text).saturating_add(1));
-    let label_budget = available.saturating_sub(badge_width);
-    let label = truncate_one_line(&item.label, label_budget);
-    let mut spans = vec![Span::styled(
-        format!(
-            "{marker} {label}{}",
-            " ".repeat(label_budget.saturating_sub(display_width(&label)))
-        ),
-        style,
-    )];
-    if let Some((text, tone)) = badge {
-        spans.push(Span::raw(" "));
-        spans.push(Span::styled(text, super::render::picker_badge_style(tone)));
-    }
-    Line::from(spans)
 }
 
 const DETAIL_BADGE_ROWS: usize = 2;
@@ -616,7 +575,7 @@ fn detail_badge_row(badge: &PickerBadge, width: usize) -> Line<'static> {
         // Extremely narrow panes: drop the label and keep a truncated badge.
         return Line::from(Span::styled(
             pad_text(&badge.text, width),
-            super::render::picker_badge_style(badge.tone),
+            super::picker_rows::picker_badge_style(badge.tone),
         ));
     }
     let badge_budget = width.saturating_sub(label_width);
@@ -624,7 +583,10 @@ fn detail_badge_row(badge: &PickerBadge, width: usize) -> Line<'static> {
     let used_width = label_width.saturating_add(display_width(&badge_text));
     Line::from(vec![
         Span::styled(label.to_string(), Theme::dim()),
-        Span::styled(badge_text, super::render::picker_badge_style(badge.tone)),
+        Span::styled(
+            badge_text,
+            super::picker_rows::picker_badge_style(badge.tone),
+        ),
         Span::raw(" ".repeat(width.saturating_sub(used_width))),
     ])
 }

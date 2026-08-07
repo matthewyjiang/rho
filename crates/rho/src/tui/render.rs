@@ -13,7 +13,7 @@ use super::{
     message_render::{render_assistant_content, render_reasoning_content},
     rendered_entry::RenderedEntry,
     theme::Theme,
-    Entry, FeedImage, PickerBadgeTone, PickerItem, UiPicker,
+    Entry, FeedImage, UiPicker,
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -25,17 +25,27 @@ use ratatui::{
     text::{Line, Span},
 };
 
-/// Rows a picker leaves to the rest of the screen: its own chrome (filter, count,
-/// detail, footer, spacers) plus history and the statusline.
-const PICKER_CHROME_ROWS: usize = 12;
+/// Rows outside the picker that must stay visible: history headroom, the
+/// composer divider, and the statusline.
+const PICKER_RESERVED_FEED_ROWS: usize = 5;
 
-/// Items a picker can list in a `viewport_height` row terminal.
+/// Rows the inline list picker spends on its own chrome, matching what
+/// `list_picker_lines` emits around the item rows.
+fn list_picker_chrome_rows(picker: &UiPicker) -> usize {
+    // filter + blank + count + blank + footer, plus detail + blank when shown.
+    5 + if picker.has_item_details() { 2 } else { 0 }
+}
+
+/// Item rows a picker can list in a `viewport_height` row terminal.
 ///
 /// The list grows with the terminal instead of staying at the number that fits
 /// the default height fallback, so a tall window shows a long model or session
 /// list without scrolling.
-pub(super) fn picker_visible_item_cap(viewport_height: usize) -> usize {
-    viewport_height.saturating_sub(PICKER_CHROME_ROWS).max(1)
+pub(super) fn picker_visible_item_cap(picker: &UiPicker, viewport_height: usize) -> usize {
+    viewport_height
+        .saturating_sub(list_picker_chrome_rows(picker))
+        .saturating_sub(PICKER_RESERVED_FEED_ROWS)
+        .max(1)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,7 +55,7 @@ pub(super) enum LineFill {
 }
 
 impl LineFill {
-    fn pads_to_width(self) -> bool {
+    pub(super) fn pads_to_width(self) -> bool {
         matches!(self, Self::PadToWidth)
     }
 }
@@ -106,7 +116,7 @@ fn list_picker_lines(
     width: usize,
     viewport_height: usize,
 ) -> Vec<Line<'static>> {
-    let item_cap = picker_visible_item_cap(viewport_height);
+    let item_cap = picker_visible_item_cap(picker, viewport_height);
     let matching_indices = picker.matching_indices();
     let mut lines = Vec::with_capacity(item_cap + 7);
     lines.push(picker_filter_line(picker, width));
@@ -129,13 +139,23 @@ fn list_picker_lines(
         return lines;
     }
 
-    let label_width = picker_label_width(picker, width);
-    let start = visible_picker_match_start(picker, &matching_indices, item_cap);
-    for index in matching_indices.iter().copied().skip(start).take(item_cap) {
-        let item = &picker.items[index];
-        let selected = index == picker.selected;
-        lines.push(picker_item_line(item, selected, label_width, width));
-    }
+    let row_layout = super::picker_rows::RowLayout {
+        width,
+        width_mode: super::picker_rows::RowWidthMode::AlignedColumn(
+            super::picker_rows::label_column_width(&picker.items, width),
+        ),
+        show_badges: true,
+        show_preview: true,
+        fill: LineFill::Natural,
+    };
+    let rows = super::picker_rows::picker_item_rows(
+        &picker.items,
+        &matching_indices,
+        picker.selected,
+        row_layout,
+    );
+    let start = super::picker_rows::scroll_window_start(rows.selected_row, item_cap);
+    lines.extend(rows.rows.into_iter().skip(start).take(item_cap));
 
     let selected_position = matching_indices
         .iter()
@@ -187,119 +207,6 @@ fn picker_filter_line(picker: &UiPicker, width: usize) -> Line<'static> {
             Theme::text_strong(),
         ),
     ])
-}
-
-fn picker_label_width(picker: &UiPicker, width: usize) -> usize {
-    let max_label_width = match picker.action {
-        super::PickerAction::SelectModel | super::PickerAction::SelectInternalAgentModel => 60,
-        super::PickerAction::ResumeSession
-        | super::PickerAction::SelectTreeNode
-        | super::PickerAction::SelectRewindCheckpoint
-        | super::PickerAction::ConfirmRewindCheckpoint
-        | super::PickerAction::Workflow => 60,
-        super::PickerAction::Config
-        | super::PickerAction::Dismiss
-        | super::PickerAction::LoginGroup
-        | super::PickerAction::LoginProvider
-        | super::PickerAction::LogoutProvider
-        | super::PickerAction::SwitchAuthMode
-        | super::PickerAction::RefreshModelList
-        | super::PickerAction::InsertSkillCommand
-        | super::PickerAction::ViewAgent
-        | super::PickerAction::EditAgent => 30,
-    };
-    let reserved_preview_width = width.saturating_sub(18);
-    let available_width = if reserved_preview_width >= 12 {
-        reserved_preview_width
-    } else {
-        width.saturating_sub(2).max(1)
-    };
-    let max_label_width = max_label_width.min(available_width);
-    let min_label_width = 12.min(max_label_width).max(1);
-    // The widest label is taken across every item, not just the visible window, so
-    // the label column does not jump while scrolling.
-    picker
-        .items
-        .iter()
-        .map(|item| display_width(&item.label))
-        .max()
-        .unwrap_or(min_label_width)
-        .clamp(min_label_width, max_label_width)
-}
-
-fn picker_item_line(
-    item: &PickerItem,
-    selected: bool,
-    label_width: usize,
-    width: usize,
-) -> Line<'static> {
-    let marker = if selected {
-        super::composer_chrome::SELECTION_MARKER_ACTIVE
-    } else {
-        super::composer_chrome::SELECTION_MARKER_INACTIVE
-    };
-    let row_style = if selected {
-        Theme::accent()
-    } else {
-        Theme::text()
-    };
-    if width <= 1 {
-        return Line::from(Span::styled(marker.to_string(), row_style));
-    }
-
-    let label_width = label_width.min(width.saturating_sub(2));
-    let label = truncate_one_line(&item.label, label_width);
-    let mut used_width = 2 + label_width;
-    let mut spans = vec![Span::styled(
-        format!(
-            "{marker} {label}{}",
-            " ".repeat(label_width.saturating_sub(display_width(&label)))
-        ),
-        row_style,
-    )];
-    if let Some(badge) = &item.badge {
-        let remaining = width.saturating_sub(used_width.saturating_add(2));
-        if remaining > 1 {
-            // Value badges (config) should use free width instead of a magic cap.
-            // Preview text, when present, takes whatever remains after the badge.
-            let badge_text = truncate_one_line(&badge.text, remaining);
-            used_width += 2 + display_width(&badge_text);
-            spans.push(Span::raw("  "));
-            spans.push(Span::styled(badge_text, picker_badge_style(badge.tone)));
-        }
-    }
-    if let Some(preview) = &item.preview {
-        let remaining = width.saturating_sub(used_width.saturating_add(2));
-        if remaining > 1 {
-            spans.push(Span::raw("  "));
-            spans.push(Span::styled(
-                truncate_one_line(preview, remaining),
-                Theme::dim(),
-            ));
-        }
-    }
-    Line::from(spans)
-}
-
-pub(super) fn picker_badge_style(tone: PickerBadgeTone) -> Style {
-    match tone {
-        PickerBadgeTone::Internal | PickerBadgeTone::Editable => Theme::accent(),
-        PickerBadgeTone::Selected => Theme::warning(),
-        PickerBadgeTone::Favorite | PickerBadgeTone::Healthy => Theme::success(),
-        PickerBadgeTone::Warning => Theme::warning(),
-    }
-}
-
-pub(super) fn visible_picker_match_start(
-    picker: &UiPicker,
-    matching_indices: &[usize],
-    item_cap: usize,
-) -> usize {
-    let selected_position = matching_indices
-        .iter()
-        .position(|index| *index == picker.selected)
-        .unwrap_or(0);
-    selected_position.saturating_add(1).saturating_sub(item_cap)
 }
 
 pub(super) fn truncate_one_line(text: &str, width: usize) -> String {

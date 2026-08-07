@@ -134,3 +134,26 @@ fn complete_filter_skips_internal_agent_conversation_model_row() {
     picker.complete_filter();
     assert_eq!(picker.filter, "openai/gpt-5.5");
 }
+
+// Covers: fuzzy pickers must find items by any visible short field, not only
+// the internal value; a user typing a label or badge word must get a match.
+// Owner: tui picker filter policy
+#[test]
+fn fuzzy_filter_matches_label_section_and_badge() {
+    let mut labeled = item("anthropic/claude-fable-5");
+    labeled.value = "claude-fable-5".into();
+    let mut sectioned = item("gpt-oss:120b");
+    sectioned.section = Some("OLLAMA CLOUD".into());
+    let mut badged = item("kimi-k3");
+    badged.badge = Some(super::PickerBadge {
+        text: "pinned".into(),
+        tone: super::PickerBadgeTone::Favorite,
+    });
+    let items = vec![labeled, sectioned, badged];
+
+    let matches_for = |filter: &str| super::fuzzy_picker_matching_indices(&items, filter);
+    assert_eq!(matches_for("anthropic"), vec![0], "label word must match");
+    assert_eq!(matches_for("ollama"), vec![1], "section word must match");
+    assert_eq!(matches_for("pinned"), vec![2], "badge word must match");
+    assert_eq!(matches_for("zzzz"), Vec::<usize>::new());
+}

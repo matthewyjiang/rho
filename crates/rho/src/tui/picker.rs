@@ -271,6 +271,23 @@ impl UiPicker {
         self.is_overlay() && self.has_item_details()
     }
 
+    /// Content hints the overlay uses to size its outer box.
+    pub(super) fn overlay_sizing(&self) -> super::picker_overlay::OverlaySizing {
+        let mut nav_rows = 0usize;
+        let mut current_section: Option<&str> = None;
+        for item in &self.items {
+            if item.section.as_deref() != current_section {
+                current_section = item.section.as_deref();
+                nav_rows += usize::from(current_section.is_some());
+            }
+            nav_rows += 1;
+        }
+        super::picker_overlay::OverlaySizing {
+            has_details: self.has_item_details(),
+            nav_rows,
+        }
+    }
+
     pub(super) fn select_by_offset(&mut self, delta: isize) {
         let next = {
             let matches = self.matching_indices();
@@ -677,9 +694,7 @@ fn fuzzy_matching_indices(items: &[PickerItem], filter: &str) -> Vec<usize> {
     let mut matches = items
         .iter()
         .enumerate()
-        .filter_map(|(index, item)| {
-            fuzzy_match_score(&item.value, filter).map(|score| (index, score))
-        })
+        .filter_map(|(index, item)| fuzzy_item_score(item, filter).map(|score| (index, score)))
         .collect::<Vec<_>>();
     matches.sort_by(|(left_index, left_score), (right_index, right_score)| {
         right_score
@@ -687,6 +702,24 @@ fn fuzzy_matching_indices(items: &[PickerItem], filter: &str) -> Vec<usize> {
             .then_with(|| left_index.cmp(right_index))
     });
     matches.into_iter().map(|(index, _)| index).collect()
+}
+
+/// Best fuzzy score across the fields a user can see and reasonably type.
+///
+/// Long free text (detail, preview) stays out: subsequence matching over a
+/// paragraph matches almost any filter and would drown the ranking.
+fn fuzzy_item_score(item: &PickerItem, filter: &str) -> Option<i64> {
+    let mut fields = vec![item.label.as_str(), item.value.as_str()];
+    if let Some(section) = item.section.as_deref() {
+        fields.push(section);
+    }
+    if let Some(badge) = item.badge.as_ref() {
+        fields.push(badge.text.as_str());
+    }
+    fields
+        .into_iter()
+        .filter_map(|field| fuzzy_match_score(field, filter))
+        .max()
 }
 
 fn picker_haystack(item: &PickerItem) -> String {
@@ -757,7 +790,7 @@ impl super::App {
         }
         let layout = super::picker_overlay::picker_overlay_layout(
             ratatui::layout::Rect::new(0, 0, size.width, size.height),
-            /*has_details*/ true,
+            picker.overlay_sizing(),
         );
         if let Some(viewport) = layout.detail_viewport() {
             picker.clamp_detail_scroll(viewport);
