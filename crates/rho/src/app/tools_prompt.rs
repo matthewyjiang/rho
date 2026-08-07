@@ -28,6 +28,16 @@ pub(crate) struct ToolsAndPromptOptions<'a> {
     pub(crate) diagnostics: &'a RuntimeDiagnostics,
     pub(crate) agent: &'a BoundAgent,
 }
+pub(crate) struct StartupInventory {
+    pub(crate) mcp: crate::tools::mcp::McpSessionReport,
+    pub(crate) plugins: crate::plugins::PluginLoadReport,
+}
+
+pub(crate) struct ToolsAndPrompt {
+    pub(crate) tools: AppToolSet,
+    pub(crate) system_prompt: SystemPromptVariants,
+    pub(crate) inventory: StartupInventory,
+}
 
 /// The system prompt with and without the advisor steering text.
 ///
@@ -65,7 +75,7 @@ impl SystemPromptVariants {
 /// for delegated runs.
 pub(crate) async fn assemble_tools_and_prompt(
     options: ToolsAndPromptOptions<'_>,
-) -> anyhow::Result<(AppToolSet, SystemPromptVariants)> {
+) -> anyhow::Result<ToolsAndPrompt> {
     let native_runtime = options.agent.rho_capabilities().is_some();
     let mut capabilities = options
         .agent
@@ -90,10 +100,14 @@ pub(crate) async fn assemble_tools_and_prompt(
     // MCP servers through the generic native MCP configuration.
     let plugin_discovery =
         crate::plugins::discover(options.cwd, crate::paths::home_dir().as_deref());
-    let plugin_skills = plugin_discovery.skills_by_precedence();
     crate::plugins::log(&plugin_discovery.report);
+    let crate::plugins::PluginDiscovery {
+        skills: plugin_skills,
+        mcp: plugin_mcp,
+        report: plugins_report,
+    } = plugin_discovery;
     let mut mcp_config = options.config.mcp.clone();
-    plugin_discovery.merge_mcp_into(&mut mcp_config);
+    mcp_config.merge(plugin_mcp);
     let mcp_plan = if !native_runtime {
         crate::tools::mcp::McpSessionPlan::Inventory(
             crate::tools::mcp::McpLoadMode::UnsupportedAgent,
@@ -104,7 +118,7 @@ pub(crate) async fn assemble_tools_and_prompt(
         crate::tools::mcp::McpSessionPlan::Connect
     };
     let mcp = crate::tools::mcp::McpConnectOutcome::run(mcp_plan, &mcp_config).await;
-    let mut tools = if options.no_tools {
+    let tools = if options.no_tools {
         AppToolSet::disabled_with_mcp(mcp)
     } else {
         let mut tool_options = ToolSetOptions::new(capabilities);
@@ -138,7 +152,7 @@ pub(crate) async fn assemble_tools_and_prompt(
             mcp,
         )
     };
-    tools.install_plugins_report(plugin_discovery.report);
+    let mcp_report = tools.mcp_report().clone();
     let specs = tools.specs();
     let system_prompt = if options.no_system_prompt {
         options.diagnostics.update_prompt_sources(Vec::new());
@@ -182,7 +196,14 @@ pub(crate) async fn assemble_tools_and_prompt(
         });
     }
     options.diagnostics.update_tools(&specs);
-    Ok((tools, system_prompt))
+    Ok(ToolsAndPrompt {
+        tools,
+        system_prompt,
+        inventory: StartupInventory {
+            mcp: mcp_report,
+            plugins: plugins_report,
+        },
+    })
 }
 
 #[cfg(test)]

@@ -23,26 +23,43 @@ use std::{
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SkillSource {
     BuiltIn,
-    File(PathBuf),
-    /// Skill contributed by an Agent Plugins package.
-    Plugin {
-        plugin: String,
-        plugin_root: PathBuf,
-        skill_root: PathBuf,
+    Filesystem {
+        skill_file: PathBuf,
+        owner: Option<String>,
     },
+}
+
+impl SkillSource {
+    fn file(skill_file: PathBuf) -> Self {
+        Self::Filesystem {
+            skill_file,
+            owner: None,
+        }
+    }
+
+    pub(crate) fn plugin(skill_file: PathBuf, plugin: String) -> Self {
+        Self::Filesystem {
+            skill_file,
+            owner: Some(plugin),
+        }
+    }
 }
 
 impl std::fmt::Display for SkillSource {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::BuiltIn => formatter.write_str("built in to rho"),
-            Self::File(path) => formatter.write_str(&crate::paths::display(path)),
-            Self::Plugin {
-                plugin, skill_root, ..
+            Self::Filesystem {
+                skill_file,
+                owner: None,
+            } => formatter.write_str(&crate::paths::display(skill_file)),
+            Self::Filesystem {
+                skill_file,
+                owner: Some(owner),
             } => write!(
                 formatter,
-                "plugin {plugin} ({})",
-                crate::paths::display(skill_root)
+                "plugin {owner} ({})",
+                crate::paths::display(skill_file.parent().unwrap_or(skill_file))
             ),
         }
     }
@@ -158,7 +175,7 @@ fn skill_paths(root: &Path) -> Vec<PathBuf> {
 
 fn read_skill(path: &Path) -> anyhow::Result<Skill> {
     let contents = std::fs::read_to_string(path)?;
-    parse_skill(&contents, SkillSource::File(path.to_path_buf()), Some(path))
+    parse_skill(&contents, SkillSource::file(path.to_path_buf()), Some(path))
 }
 
 fn builtin_skills() -> Vec<Skill> {
@@ -477,85 +494,35 @@ mod tests {
     }
 
     #[test]
-    fn rejects_missing_frontmatter() {
-        let root = TempDir::new().unwrap();
-        let skill_dir = root.path().join(".rho/skills/bad-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(skill_dir.join("SKILL.md"), "# bad").unwrap();
+    fn rejects_invalid_discovered_skills() {
+        let cases = [
+            ("bad-skill", "# bad", "bad-skill"),
+            (
+                "dir-name",
+                "---\nname: other-name\ndescription: desc\n---\n",
+                "other-name",
+            ),
+            (
+                "bad--skill",
+                "---\nname: bad--skill\ndescription: desc\n---\n",
+                "bad--skill",
+            ),
+            (
+                "bad-skill",
+                "---\nname: bad-skill\ndescription: \n---\n",
+                "bad-skill",
+            ),
+        ];
 
-        let skills = discover_with_home(root.path(), Some(root.path()));
+        for (directory, contents, rejected) in cases {
+            let root = TempDir::new().unwrap();
+            let skill_dir = root.path().join(".rho/skills").join(directory);
+            std::fs::create_dir_all(&skill_dir).unwrap();
+            std::fs::write(skill_dir.join("SKILL.md"), contents).unwrap();
 
-        assert_only_builtins_excluding(&skills, "bad-skill");
-    }
-
-    #[test]
-    fn rejects_name_that_does_not_match_directory() {
-        let root = TempDir::new().unwrap();
-        write_skill(root.path(), ".rho/skills/dir-name", "other-name", "desc");
-
-        let skills = discover_with_home(root.path(), Some(root.path()));
-
-        assert_only_builtins_excluding(&skills, "other-name");
-    }
-
-    #[test]
-    fn rejects_invalid_name_format() {
-        let root = TempDir::new().unwrap();
-        write_skill(root.path(), ".rho/skills/bad--skill", "bad--skill", "desc");
-
-        let skills = discover_with_home(root.path(), Some(root.path()));
-
-        assert_only_builtins_excluding(&skills, "bad--skill");
-    }
-
-    #[test]
-    fn rejects_empty_description() {
-        let root = TempDir::new().unwrap();
-        write_skill(root.path(), ".rho/skills/bad-skill", "bad-skill", "");
-
-        let skills = discover_with_home(root.path(), Some(root.path()));
-
-        assert_only_builtins_excluding(&skills, "bad-skill");
-    }
-
-    #[test]
-    fn parses_block_scalar_description() {
-        let root = TempDir::new().unwrap();
-        let skill_dir = root.path().join(".rho/skills/block-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(
-            skill_dir.join("SKILL.md"),
-            "---\nname: block-skill\ndescription: >\n  first line\n  second line\n---\n# block\n",
-        )
-        .unwrap();
-
-        let skills = discover_with_home(root.path(), Some(root.path()));
-
-        let skill = skills
-            .iter()
-            .find(|skill| skill.name == "block-skill")
-            .unwrap();
-        assert_eq!(skill.description, "first line second line");
-    }
-
-    #[test]
-    fn parses_block_scalar_chomping_description() {
-        let root = TempDir::new().unwrap();
-        let skill_dir = root.path().join(".rho/skills/chomp-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(
-            skill_dir.join("SKILL.md"),
-            "---\nname: chomp-skill\ndescription: |-\n  first line\n  second line\n---\n# block\n",
-        )
-        .unwrap();
-
-        let skills = discover_with_home(root.path(), Some(root.path()));
-
-        let skill = skills
-            .iter()
-            .find(|skill| skill.name == "chomp-skill")
-            .unwrap();
-        assert_eq!(skill.description, "first line\nsecond line");
+            let skills = discover_with_home(root.path(), Some(root.path()));
+            assert_only_builtins_excluding(&skills, rejected);
+        }
     }
 
     #[test]
@@ -639,6 +606,15 @@ description: "a \"quoted\" description"
                 expected: Ok(Expected {
                     name: "quote-skill",
                     description: "first second",
+                    disable_model_invocation: false,
+                }),
+            },
+            Case {
+                name: "literal multiline description",
+                frontmatter: "name: quote-skill\ndescription: |-\n  first\n  second\n",
+                expected: Ok(Expected {
+                    name: "quote-skill",
+                    description: "first\nsecond",
                     disable_model_invocation: false,
                 }),
             },

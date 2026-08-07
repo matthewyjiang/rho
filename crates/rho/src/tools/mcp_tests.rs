@@ -5,8 +5,8 @@ use pretty_assertions::assert_eq;
 use super::{
     call_remote_tool,
     config::{McpConfig, McpFilesystemPolicy, McpServerConfig, McpToolFilter, McpTransport},
-    namespaced_tool_name, prepare_server_filesystem, validate_remote_url, McpBundle,
-    McpServerStatus, MCP_RUNTIME_CONSTRUCTIONS,
+    namespaced_tool_name, parse_remote_url, prepare_server_filesystem, McpBundle, McpServerStatus,
+    MCP_RUNTIME_CONSTRUCTIONS,
 };
 use crate::tools::sdk_registry::ToolBundle;
 use rho_sdk::{tool::ToolErrorKind, CancellationToken};
@@ -59,7 +59,10 @@ async fn disabled_servers_are_reported_without_runtime() {
 
     assert!(outcome.bundle.is_none());
     assert_eq!(outcome.report.servers.len(), 1);
-    assert_eq!(outcome.report.servers[0].status, McpServerStatus::Disabled);
+    assert_eq!(
+        outcome.report.servers[0].status(),
+        McpServerStatus::Disabled
+    );
     assert_eq!(
         MCP_RUNTIME_CONSTRUCTIONS.load(std::sync::atomic::Ordering::Relaxed),
         before
@@ -88,6 +91,11 @@ fn malformed_servers_are_isolated() {
         transport = "streamable_http"
         url = "http://example.com/mcp"
 
+        [servers.duplicate-header]
+        transport = "streamable_http"
+        url = "https://example.com/mcp"
+        headers_from_env = { Authorization = "TOKEN_A", authorization = "TOKEN_B" }
+
         [servers."bad id"]
         transport = "stdio"
         command = "server"
@@ -111,6 +119,7 @@ fn malformed_servers_are_isolated() {
                 "bad id".to_string(),
                 "blank".to_string(),
                 "cleartext".to_string(),
+                "duplicate-header".to_string(),
             ],
         )
     );
@@ -205,7 +214,7 @@ fn remote_and_tool_policy_is_deterministic() {
         ("file:///tmp/mcp", false),
     ];
     for (url, expected) in url_cases {
-        assert_eq!(validate_remote_url(url).is_ok(), expected, "{url}");
+        assert_eq!(parse_remote_url(url).is_ok(), expected, "{url}");
     }
 
     assert_eq!(
@@ -337,7 +346,10 @@ async fn streamable_http_discovery() {
     let outcome = McpBundle::connect(&config).await;
     let bundle = outcome.bundle.unwrap();
     assert_eq!(bundle.tools()[0].spec().name, "mcp__remote__remote_echo");
-    assert_eq!(outcome.report.servers[0].status, McpServerStatus::Connected);
+    assert_eq!(
+        outcome.report.servers[0].status(),
+        McpServerStatus::Connected
+    );
     bundle.shutdown().await;
     server.await.unwrap();
 }
@@ -444,7 +456,7 @@ open(sys.argv[1], "w").close()
         .report
         .servers
         .iter()
-        .map(|server| (server.identity.as_str(), server.status))
+        .map(|server| (server.identity.as_str(), server.status()))
         .collect::<Vec<_>>();
     assert_eq!(
         statuses,

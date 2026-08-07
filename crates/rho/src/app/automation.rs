@@ -29,7 +29,7 @@ use super::{
         build_runtime_with_max_steps, configured_context_window, RuntimeBuildOptions,
     },
     sdk_config::SdkBootstrapOptions,
-    tools_prompt::{assemble_tools_and_prompt, ToolsAndPromptOptions},
+    tools_prompt::{assemble_tools_and_prompt, ToolsAndPrompt, ToolsAndPromptOptions},
 };
 
 /// Error returned after an automation run has cleaned up and selected a stable exit code.
@@ -455,7 +455,13 @@ async fn run_session_with_output(
         Arc::new(AppCredentialStore),
     );
     let provider = build_automation_provider(sdk_options.provider, &credentials)?;
-    let (tool_set, system_prompt) = assemble_tools_and_prompt(ToolsAndPromptOptions {
+    let workspace_root = sdk_options.workspace.root.clone();
+    let workspace = sdk_options.workspace.build_workspace()?;
+    let ToolsAndPrompt {
+        tools: tool_set,
+        system_prompt,
+        ..
+    } = assemble_tools_and_prompt(ToolsAndPromptOptions {
         config: startup.config,
         config_path: startup.config_path.clone(),
         cwd: &startup.cwd,
@@ -470,8 +476,6 @@ async fn run_session_with_output(
     })
     .await?;
 
-    let workspace_root = sdk_options.workspace.root.clone();
-    let workspace = sdk_options.workspace.build_workspace()?;
     let context_window = configured_context_window(startup.config);
     let compaction = sdk_options.runtime.compaction.clone();
     startup.diagnostics.update_compaction_config(&compaction);
@@ -480,27 +484,47 @@ async fn run_session_with_output(
     if let Some(hooks) = hooks.as_ref() {
         startup.diagnostics.attach_hooks(hooks);
     }
-    let runtime = build_runtime_with_max_steps(
-        RuntimeBuildOptions {
-            provider,
-            tools: tool_set.tools(),
-            workspace,
-            workspace_policy: AppPolicy::for_mode(startup.config.permission_mode),
-            approval_session: startup.approval_session.clone(),
-            system_prompt: system_prompt.for_advisor_mode(tool_set.advisor_registered()),
-            reasoning: sdk_options.runtime.reasoning,
-            service_tier: sdk_options.runtime.service_tier,
-            compaction,
-            context_window,
-            usage_purpose: startup.usage_purpose,
-            usage_parent_session_id: startup.parent_session_id.clone(),
-            usage_recording,
-            hook_host_labels: startup.hook_host_labels.clone(),
-            hooks: hooks.as_ref(),
-        },
-        startup.max_steps,
-    )?;
-    let session = runtime.session(SessionOptions::default()).await?;
+    let startup_result: anyhow::Result<_> = async {
+        let runtime = build_runtime_with_max_steps(
+            RuntimeBuildOptions {
+                provider,
+                tools: tool_set.tools(),
+                workspace,
+                workspace_policy: AppPolicy::for_mode(startup.config.permission_mode),
+                approval_session: startup.approval_session.clone(),
+                system_prompt: system_prompt.for_advisor_mode(tool_set.advisor_registered()),
+                reasoning: sdk_options.runtime.reasoning,
+                service_tier: sdk_options.runtime.service_tier,
+                compaction,
+                context_window,
+                usage_purpose: startup.usage_purpose,
+                usage_parent_session_id: startup.parent_session_id.clone(),
+                usage_recording,
+                hook_host_labels: startup.hook_host_labels.clone(),
+                hooks: hooks.as_ref(),
+            },
+            startup.max_steps,
+        )?;
+        let session = match runtime.session(SessionOptions::default()).await {
+            Ok(session) => session,
+            Err(error) => {
+                runtime.shutdown();
+                return Err(error.into());
+            }
+        };
+        anyhow::Ok((runtime, session))
+    }
+    .await;
+    let (runtime, session) = match startup_result {
+        Ok(startup) => startup,
+        Err(error) => {
+            if let Some(hooks) = hooks {
+                hooks.shutdown(crate::hooks::DRAIN_GRACE).await;
+            }
+            tool_set.shutdown().await;
+            return Err(error);
+        }
+    };
     if let Some(advisor) = tool_set.advisor() {
         advisor.bind_session(session.clone());
     }

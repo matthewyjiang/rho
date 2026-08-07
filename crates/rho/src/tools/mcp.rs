@@ -44,9 +44,6 @@ type McpSession = RunningService<RoleClient, ClientInfo>;
 // The local end-to-end fixture initializes in about 40 ms. Two minutes leaves
 // a 3,000x margin for cold package runners while still bounding broken servers.
 const MCP_SERVER_STARTUP_BUDGET: std::time::Duration = std::time::Duration::from_secs(120);
-// Graceful MCP session teardown should be quick; bound it so one hung server
-// cannot stall process or CLI shutdown.
-const MCP_SESSION_CLOSE_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
 
 const SAFE_CHILD_ENVIRONMENT: &[&str] = &[
     "APPDATA",
@@ -110,7 +107,6 @@ impl McpConnectOutcome {
 
 pub(crate) struct McpBundle {
     tools: Vec<Arc<dyn Tool>>,
-    /// Taken once during shutdown; tools hold independent peer handles.
     sessions: tokio::sync::Mutex<Vec<McpSession>>,
 }
 
@@ -119,7 +115,7 @@ impl McpBundle {
     /// returns a structured inventory. The no-enabled-server path exits before
     /// allocating a transport, client, task, or bundle.
     pub(crate) async fn connect(config: &McpConfig) -> McpConnectOutcome {
-        let mut report = McpSessionReport::connect_base(config);
+        let mut servers = Vec::with_capacity(config.servers.len() + config.invalid_servers.len());
 
         for invalid in &config.invalid_servers {
             tracing::warn!(
@@ -127,12 +123,25 @@ impl McpBundle {
                 error = %invalid.error,
                 "ignoring invalid MCP server configuration"
             );
+            servers.push(McpServerReport::invalid(
+                invalid.identity.clone(),
+                invalid.error.clone(),
+            ));
+        }
+
+        for (identity, server) in &config.servers {
+            if !server.enabled {
+                servers.push(McpServerReport::disabled(identity.clone(), server));
+            }
         }
 
         if !config.has_enabled_servers() {
-            report::sort_servers(&mut report.servers);
+            servers.sort_by(|left, right| left.identity.cmp(&right.identity));
             return McpConnectOutcome {
-                report,
+                report: McpSessionReport {
+                    mode: McpLoadMode::Native,
+                    servers,
+                },
                 bundle: None,
             };
         }
@@ -168,7 +177,7 @@ impl McpBundle {
                 Ok(Ok(connected)) => connected,
                 Ok(Err(error)) => {
                     tracing::warn!(server = %identity, error = %error, "MCP server failed to initialize");
-                    report.servers.push(McpServerReport::failed(
+                    servers.push(McpServerReport::failed(
                         identity,
                         transport,
                         error.to_string(),
@@ -181,7 +190,7 @@ impl McpBundle {
                         limit_seconds = MCP_SERVER_STARTUP_BUDGET.as_secs(),
                         "MCP server exceeded its startup budget"
                     );
-                    report.servers.push(McpServerReport::timed_out(
+                    servers.push(McpServerReport::timed_out(
                         identity,
                         transport,
                         MCP_SERVER_STARTUP_BUDGET.as_secs(),
@@ -190,25 +199,53 @@ impl McpBundle {
                 }
             };
             let (session, discovered) = connected;
-            let exported = export_discovered_tools(
-                &identity,
-                &server,
-                &session,
-                discovered,
-                &mut registered_names,
-                &mut tools,
-            );
-            report.servers.push(McpServerReport::connected(
+            let permission = PermissionTarget::from_server(&server);
+            let mut exported = Vec::new();
+            let mut filtered_out_count = 0usize;
+            let mut collision_skipped_count = 0usize;
+            for remote in discovered {
+                let remote_name = remote.name.to_string();
+                if !server.tools.includes(&remote_name) {
+                    filtered_out_count += 1;
+                    continue;
+                }
+                let name = namespaced_tool_name(&identity, &remote_name);
+                if !registered_names.insert(name.clone()) {
+                    tracing::warn!(server = %identity, tool = %remote_name, exported = %name, "MCP tool name collision; ignoring tool");
+                    collision_skipped_count += 1;
+                    continue;
+                }
+                let description = remote
+                    .description
+                    .as_deref()
+                    .unwrap_or("No description supplied by the MCP server");
+                let tool = McpTool {
+                    spec: ToolSpec {
+                        name: name.clone(),
+                        description: format!("MCP server `{identity}`: {description}"),
+                        input_schema: serde_json::Value::Object((*remote.input_schema).clone()),
+                    },
+                    remote_name: remote_name.clone(),
+                    peer: session.peer().clone(),
+                    permission: permission.clone(),
+                };
+                tools.push(Arc::new(tool));
+                exported.push(McpToolReport {
+                    remote_name,
+                    exported_name: name,
+                });
+            }
+            servers.push(McpServerReport::connected(
                 identity,
                 transport,
-                exported.tools,
-                exported.filtered_out_count,
-                exported.collision_skipped_count,
+                exported,
+                filtered_out_count,
+                collision_skipped_count,
             ));
             sessions.push(session);
         }
 
-        report::sort_servers(&mut report.servers);
+        servers.sort_by(|left, right| left.identity.cmp(&right.identity));
         let bundle = if sessions.is_empty() {
             None
         } else {
@@ -217,87 +254,23 @@ impl McpBundle {
                 sessions: tokio::sync::Mutex::new(sessions),
             })
         };
-        McpConnectOutcome { report, bundle }
+        McpConnectOutcome {
+            report: McpSessionReport {
+                mode: McpLoadMode::Native,
+                servers,
+            },
+            bundle,
+        }
     }
 
     /// Close live MCP sessions. Used by CLI inspect after printing inventory.
     pub(crate) async fn close(&self) {
-        let sessions = {
-            let mut guard = self.sessions.lock().await;
-            std::mem::take(&mut *guard)
-        };
-        let close_jobs = sessions.into_iter().map(|mut session| async move {
-            match tokio::time::timeout(MCP_SESSION_CLOSE_BUDGET, session.close()).await {
-                Ok(Ok(_)) => {}
-                Ok(Err(error)) => {
-                    tracing::warn!(error = %error, "MCP session shutdown failed");
-                }
-                Err(_) => {
-                    tracing::warn!(
-                        limit_seconds = MCP_SESSION_CLOSE_BUDGET.as_secs(),
-                        "MCP session shutdown exceeded its close budget"
-                    );
-                }
+        let mut sessions = self.sessions.lock().await;
+        for session in sessions.iter_mut() {
+            if let Err(error) = session.close().await {
+                tracing::warn!(error = %error, "MCP session shutdown failed");
             }
-        });
-        futures_util::future::join_all(close_jobs).await;
-    }
-}
-
-struct ExportedTools {
-    tools: Vec<McpToolReport>,
-    filtered_out_count: usize,
-    collision_skipped_count: usize,
-}
-
-fn export_discovered_tools(
-    identity: &str,
-    server: &McpServerConfig,
-    session: &McpSession,
-    discovered: Vec<rmcp::model::Tool>,
-    registered_names: &mut HashSet<String>,
-    tools: &mut Vec<Arc<dyn Tool>>,
-) -> ExportedTools {
-    let permission = PermissionTarget::from_server(server);
-    let mut exported = Vec::new();
-    let mut filtered_out_count = 0usize;
-    let mut collision_skipped_count = 0usize;
-    for remote in discovered {
-        let remote_name = remote.name.to_string();
-        if !server.tools.includes(&remote_name) {
-            filtered_out_count += 1;
-            continue;
         }
-        let name = namespaced_tool_name(identity, &remote_name);
-        if !registered_names.insert(name.clone()) {
-            tracing::warn!(server = %identity, tool = %remote_name, exported = %name, "MCP tool name collision; ignoring tool");
-            collision_skipped_count += 1;
-            continue;
-        }
-        let description = remote
-            .description
-            .as_deref()
-            .unwrap_or("No description supplied by the MCP server");
-        let tool = McpTool {
-            spec: ToolSpec {
-                name: name.clone(),
-                description: format!("MCP server `{identity}`: {description}"),
-                input_schema: serde_json::Value::Object((*remote.input_schema).clone()),
-            },
-            remote_name: remote_name.clone(),
-            peer: session.peer().clone(),
-            permission: permission.clone(),
-        };
-        tools.push(Arc::new(tool));
-        exported.push(McpToolReport {
-            remote_name,
-            exported_name: name,
-        });
-    }
-    ExportedTools {
-        tools: exported,
-        filtered_out_count,
-        collision_skipped_count,
     }
 }
 
@@ -345,7 +318,9 @@ async fn connect_server(
             headers: literal_headers,
             headers_from_env,
         } => {
-            validate_remote_url(url)?;
+            parse_remote_url(url)?;
+            validate_literal_headers(literal_headers)?;
+            validate_environment_header_names(headers_from_env)?;
             let mut headers = HashMap::new();
             // Literal headers apply first; environment-derived headers
             // override them on a name collision.
@@ -507,16 +482,41 @@ pub(super) fn validate_identity(identity: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(crate) fn validate_remote_url(value: &str) -> anyhow::Result<()> {
+pub(crate) fn parse_remote_url(value: &str) -> anyhow::Result<url::Url> {
     let url = url::Url::parse(value).context("invalid Streamable HTTP URL")?;
     let loopback = match url.host() {
         Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
         Some(url::Host::Ipv4(address)) => IpAddr::V4(address).is_loopback(),
         Some(url::Host::Ipv6(address)) => IpAddr::V6(address).is_loopback(),
-        None => false,
+        None => bail!("remote MCP URL must have a host"),
     };
     if url.scheme() != "https" && !(url.scheme() == "http" && loopback) {
         bail!("remote MCP URL must use HTTPS unless its host is loopback");
+    }
+    Ok(url)
+}
+
+pub(crate) fn validate_literal_headers(headers: &BTreeMap<String, String>) -> anyhow::Result<()> {
+    validate_header_names(headers.keys())?;
+    for value in headers.values() {
+        HeaderValue::try_from(value).context("invalid MCP header value")?;
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_environment_header_names(
+    headers: &BTreeMap<String, String>,
+) -> anyhow::Result<()> {
+    validate_header_names(headers.keys())
+}
+
+fn validate_header_names<'a>(names: impl IntoIterator<Item = &'a String>) -> anyhow::Result<()> {
+    let mut parsed = HashSet::new();
+    for name in names {
+        let name = HeaderName::try_from(name).context("invalid MCP header name")?;
+        if !parsed.insert(name) {
+            bail!("MCP headers repeat a name under different casing");
+        }
     }
     Ok(())
 }
@@ -595,18 +595,14 @@ impl PermissionTarget {
                 environment,
             } => {
                 let invocation = ProcessInvocation::executable_from_path(command, args.clone());
-                // Debt: MCP reuses process/network capabilities to describe an
-                // already-running configured server so existing approval UX
-                // applies. This is not a fresh spawn: limits are synthetic and
-                // the execution snapshot is for policy matching only. Follow-up:
-                // session-scoped MCP grant at connect time, or a dedicated
-                // capability kind, so tool calls do not synthesize ProcessExecution.
                 let execution = ProcessExecution::new(
                     cwd.clone()
                         .or_else(|| workspace_root.map(std::path::Path::to_path_buf))
                         .unwrap_or_default(),
                     invocation,
                     environment.clone(),
+                    // This object describes an already-running configured MCP
+                    // server to the approval layer; it does not impose a runtime budget.
                     ProcessOutputLimits::new(usize::MAX, None),
                 );
                 CapabilityRequest::process(execution, source)

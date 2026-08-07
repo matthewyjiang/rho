@@ -138,6 +138,7 @@ impl SdkTool for SdkSkillTool {
                 ));
             }
             let metadata = ToolMetadata::new().operation(OperationKind::Read);
+            let source_display = skill.source.to_string();
             match skill.source {
                 crate::skills::SkillSource::BuiltIn => {
                     let capability = CapabilityRequest::skill(
@@ -151,7 +152,7 @@ impl SdkTool for SdkSkillTool {
                     ));
                     let content = truncate(
                         format!(
-                            "Loaded skill: {name}\nSource: built in to rho\n\n{}",
+                            "Loaded skill: {name}\nSource: {source_display}\n\n{}",
                             skill.contents
                         ),
                         self.max_output_bytes,
@@ -163,16 +164,15 @@ impl SdkTool for SdkSkillTool {
                         move |_context| Box::pin(async move { Ok(ToolOutput::text(content)) }),
                     ))
                 }
-                crate::skills::SkillSource::File(requested) => {
-                    let source_display = crate::paths::display(&requested);
-                    let skill_directory = requested
+                crate::skills::SkillSource::Filesystem { skill_file, .. } => {
+                    let skill_directory = skill_file
                         .parent()
                         .ok_or_else(|| {
                             SdkToolError::new(
                                 ToolErrorKind::Execution,
                                 format!(
                                     "skill path '{}' has no parent directory",
-                                    requested.display()
+                                    skill_file.display()
                                 ),
                             )
                         })?
@@ -180,18 +180,10 @@ impl SdkTool for SdkSkillTool {
                     self.prepare_fs_skill(
                         &name,
                         source_display,
-                        requested,
+                        skill_file,
                         &skill_directory,
                         &context,
                     )
-                }
-                crate::skills::SkillSource::Plugin {
-                    plugin, skill_root, ..
-                } => {
-                    let source_display =
-                        format!("plugin {plugin} ({})", crate::paths::display(&skill_root));
-                    let requested = skill_root.join("SKILL.md");
-                    self.prepare_fs_skill(&name, source_display, requested, &skill_root, &context)
                 }
             }
         })

@@ -60,7 +60,7 @@ fn bound_agent(config: &Config) -> crate::app::agent_binding::BoundAgent {
 async fn assemble(config: &Config, cwd: &std::path::Path) -> (bool, String) {
     let diagnostics = RuntimeDiagnostics::new(config);
     let agent = bound_agent(config);
-    let (tools, prompt) = assemble_tools_and_prompt(ToolsAndPromptOptions {
+    let assembled = assemble_tools_and_prompt(ToolsAndPromptOptions {
         config,
         config_path: cwd.join("config.toml"),
         cwd,
@@ -74,6 +74,8 @@ async fn assemble(config: &Config, cwd: &std::path::Path) -> (bool, String) {
     })
     .await
     .unwrap();
+    let tools = assembled.tools;
+    let prompt = assembled.system_prompt;
     let registered = tools.advisor_registered();
     let text = match prompt.for_advisor_mode(registered) {
         SystemPrompt::Custom(text) => text,
@@ -122,7 +124,7 @@ async fn the_advisor_receives_the_executor_system_prompt() {
     let diagnostics = RuntimeDiagnostics::new(&config);
     let agent = bound_agent(&config);
 
-    let (tools, prompt) = assemble_tools_and_prompt(ToolsAndPromptOptions {
+    let assembled = assemble_tools_and_prompt(ToolsAndPromptOptions {
         config: &config,
         config_path: cwd.path().join("config.toml"),
         cwd: cwd.path(),
@@ -136,6 +138,8 @@ async fn the_advisor_receives_the_executor_system_prompt() {
     })
     .await
     .unwrap();
+    let tools = assembled.tools;
+    let prompt = assembled.system_prompt;
 
     let SystemPrompt::Custom(text) = prompt.for_advisor_mode(true) else {
         panic!("expected a custom system prompt");
@@ -157,7 +161,7 @@ async fn both_prompt_variants_are_available_whatever_the_saved_mode_is() {
         let diagnostics = RuntimeDiagnostics::new(&config);
         let agent = bound_agent(&config);
 
-        let (_, prompt) = assemble_tools_and_prompt(ToolsAndPromptOptions {
+        let prompt = assemble_tools_and_prompt(ToolsAndPromptOptions {
             config: &config,
             config_path: cwd.path().join("config.toml"),
             cwd: cwd.path(),
@@ -170,7 +174,8 @@ async fn both_prompt_variants_are_available_whatever_the_saved_mode_is() {
             agent: &agent,
         })
         .await
-        .unwrap();
+        .unwrap()
+        .system_prompt;
 
         let text = |enabled| match prompt.for_advisor_mode(enabled) {
             SystemPrompt::Custom(text) => text,

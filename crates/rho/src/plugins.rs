@@ -47,14 +47,6 @@ enum PluginScope {
     User,
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct LoadedPlugin {
-    pub(crate) name: String,
-    pub(crate) skills: Vec<Skill>,
-    pub(crate) mcp_servers: Vec<(String, McpServerConfig)>,
-    pub(crate) invalid_mcp_servers: Vec<InvalidMcpServer>,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PluginStatus {
@@ -79,62 +71,61 @@ pub(crate) struct PluginLoadReport {
     pub(crate) plugins: Vec<PluginReportEntry>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
-pub(crate) struct PluginDoctorPresentation {
-    pub(crate) status: String,
-    pub(crate) healthy: bool,
-    pub(crate) detail: String,
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct PluginLoadSummary {
+    pub(crate) discovered: bool,
+    pub(crate) loaded: usize,
+    pub(crate) rejected: usize,
+    pub(crate) problems: usize,
+    pub(crate) skills: usize,
+    pub(crate) mcp_servers: usize,
 }
 
 pub(crate) struct PluginDiscovery {
-    /// Accepted plugins in precedence order (project nearest first, then user).
-    pub(crate) plugins: Vec<LoadedPlugin>,
+    pub(crate) skills: Vec<Skill>,
+    pub(crate) mcp: McpConfig,
     pub(crate) report: PluginLoadReport,
 }
-
-impl PluginDiscovery {
-    /// Contribute plugin MCP servers to the generic native MCP configuration.
-    /// Plugins without valid enabled servers add nothing, preserving the
-    /// zero-server fast path for ordinary configuration.
-    pub(crate) fn merge_mcp_into(&self, config: &mut McpConfig) {
-        for plugin in &self.plugins {
-            for (server_name, server_config) in &plugin.mcp_servers {
-                let identity = format!("{}/{server_name}", plugin.name);
-                config.servers.insert(identity, server_config.clone());
-            }
-            config
-                .invalid_servers
-                .extend(plugin.invalid_mcp_servers.iter().cloned());
-        }
-    }
-
-    pub(crate) fn skills_by_precedence(&self) -> Vec<Skill> {
-        self.plugins
-            .iter()
-            .flat_map(|plugin| plugin.skills.iter().cloned())
-            .collect()
-    }
-}
-
-#[derive(Clone, Copy)]
-enum Components {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ComponentSelection {
     All,
     SkillsOnly,
+    McpOnly,
+}
+
+impl ComponentSelection {
+    const fn loads_skills(self) -> bool {
+        matches!(self, Self::All | Self::SkillsOnly)
+    }
+
+    const fn loads_mcp(self) -> bool {
+        matches!(self, Self::All | Self::McpOnly)
+    }
 }
 
 /// Plugin-owned skills in precedence order for ordinary skill discovery.
 pub(crate) fn skills_by_precedence(cwd: &Path, home: Option<&Path>) -> Vec<Skill> {
-    discover_components(cwd, home, Components::SkillsOnly).skills_by_precedence()
+    discover_components(cwd, home, ComponentSelection::SkillsOnly).skills
 }
 
 /// Discover and load plugin packages from the explicit roots.
 pub(crate) fn discover(cwd: &Path, home: Option<&Path>) -> PluginDiscovery {
-    discover_components(cwd, home, Components::All)
+    discover_components(cwd, home, ComponentSelection::All)
 }
 
-fn discover_components(cwd: &Path, home: Option<&Path>, components: Components) -> PluginDiscovery {
+/// Discover only plugin MCP configuration for the `rho mcp` inventory path.
+pub(crate) fn discover_mcp(cwd: &Path, home: Option<&Path>) -> PluginDiscovery {
+    discover_components(cwd, home, ComponentSelection::McpOnly)
+}
+
+fn discover_components(
+    cwd: &Path,
+    home: Option<&Path>,
+    components: ComponentSelection,
+) -> PluginDiscovery {
     let mut discovery = PluginDiscovery {
-        plugins: Vec::new(),
+        skills: Vec::new(),
+        mcp: McpConfig::default(),
         report: PluginLoadReport::default(),
     };
 
@@ -197,7 +188,7 @@ fn load_candidate(
     plugins_root: &Path,
     candidate: &Path,
     scope: PluginScope,
-    components: Components,
+    components: ComponentSelection,
 ) {
     let directory_name = candidate
         .file_name()
@@ -237,11 +228,11 @@ fn load_candidate(
         Err(error) => return reject(discovery, format!("invalid manifest: {error}")),
     };
 
-    // Plugin names resolve by root precedence; nearest root wins.
     if discovery
+        .report
         .plugins
         .iter()
-        .any(|plugin| plugin.name == manifest.name)
+        .any(|entry| entry.status == PluginStatus::Loaded && entry.name == manifest.name)
     {
         discovery.report.plugins.push(PluginReportEntry {
             name: manifest.name.clone(),
@@ -258,30 +249,41 @@ fn load_candidate(
 
     let mut problems: Vec<String> = manifest.warnings.clone();
 
-    let skills = discover_plugin_skills(&manifest.name, &root, &mut problems);
-
-    let (mcp_servers, invalid_mcp_servers) = match components {
-        Components::All => load_mcp_component(&manifest, &root, plugins_root, &mut problems),
-        Components::SkillsOnly => (Vec::new(), Vec::new()),
+    let skills = if components.loads_skills() {
+        discover_plugin_skills(&manifest.name, &root, &mut problems)
+    } else {
+        Vec::new()
     };
 
-    if skills.is_empty() && mcp_servers.is_empty() && invalid_mcp_servers.is_empty() {
+    let (mcp_servers, invalid_mcp_servers) = if components.loads_mcp() {
+        load_mcp_component(&manifest, &root, plugins_root, &mut problems)
+    } else {
+        (Vec::new(), Vec::new())
+    };
+
+    if components == ComponentSelection::All
+        && skills.is_empty()
+        && mcp_servers.is_empty()
+        && invalid_mcp_servers.is_empty()
+    {
         problems.push("plugin has no usable components".to_string());
     }
 
+    let skill_count = skills.len();
     let mcp_server_count = mcp_servers.len();
-    discovery.plugins.push(LoadedPlugin {
-        name: manifest.name.clone(),
-        skills: skills.clone(),
-        mcp_servers,
-        invalid_mcp_servers,
-    });
+    discovery.skills.extend(skills);
+    discovery.mcp.servers.extend(
+        mcp_servers
+            .into_iter()
+            .map(|(name, server)| (format!("{}/{name}", manifest.name), server)),
+    );
+    discovery.mcp.invalid_servers.extend(invalid_mcp_servers);
     discovery.report.plugins.push(PluginReportEntry {
         name: manifest.name,
         root: crate::paths::display(candidate),
         status: PluginStatus::Loaded,
         problems,
-        skill_count: skills.len(),
+        skill_count,
         mcp_server_count,
     });
 }
@@ -347,11 +349,7 @@ fn discover_plugin_skills(
                 continue;
             }
         };
-        let source = SkillSource::Plugin {
-            plugin: plugin_name.to_string(),
-            plugin_root: root.to_path_buf(),
-            skill_root: child.clone(),
-        };
+        let source = SkillSource::plugin(skill_md.clone(), plugin_name.to_string());
         match crate::skills::parse_skill(&contents, source, Some(&skill_md)) {
             Ok(skill) => skills.push(skill),
             Err(error) => problems.push(format!("skipping skill `{skill_name}`: {error}")),
@@ -405,14 +403,8 @@ fn load_mcp_component(
             return (Vec::new(), Vec::new());
         }
     };
-    let outcome = mcp_adapter::load_plugin_mcp(
-        &text,
-        &manifest.name,
-        &manifest.spec_version,
-        root,
-        &storage_root,
-        &data_dir,
-    );
+    let outcome =
+        mcp_adapter::load_plugin_mcp(&text, &manifest.name, root, &storage_root, &data_dir);
     if let Some(reason) = outcome.disabled_reason {
         problems.push(format!("MCP disabled for plugin: {reason}"));
     }
@@ -473,50 +465,23 @@ pub(crate) fn log(report: &PluginLoadReport) {
 }
 
 impl PluginLoadReport {
-    pub(crate) fn doctor_presentation(&self) -> PluginDoctorPresentation {
-        if self.plugins.is_empty() {
-            return PluginDoctorPresentation {
-                status: "none discovered".into(),
-                healthy: true,
-                detail: format!(
-                    "no Agent Plugins found in the explicit roots; supported: {SUPPORTED_COMPONENTS}"
-                ),
-            };
-        }
-        let loaded = self
-            .plugins
-            .iter()
-            .filter(|entry| entry.status == PluginStatus::Loaded)
-            .count();
-        let rejected = self
-            .plugins
-            .iter()
-            .filter(|entry| entry.status == PluginStatus::Rejected)
-            .count();
-        let problem_count: usize = self
-            .plugins
-            .iter()
-            .filter(|entry| entry.status == PluginStatus::Loaded)
-            .map(|entry| entry.problems.len())
-            .sum();
-        let skills: usize = self.plugins.iter().map(|entry| entry.skill_count).sum();
-        let servers: usize = self
-            .plugins
-            .iter()
-            .map(|entry| entry.mcp_server_count)
-            .sum();
-        let healthy = rejected == 0 && problem_count == 0;
-        let status = if !healthy {
-            format!("{loaded} loaded, {rejected} rejected, {problem_count} problem(s)")
-        } else {
-            format!("{loaded} loaded")
+    pub(crate) fn summary(&self) -> PluginLoadSummary {
+        let mut summary = PluginLoadSummary {
+            discovered: !self.plugins.is_empty(),
+            ..PluginLoadSummary::default()
         };
-        PluginDoctorPresentation {
-            status,
-            healthy,
-            detail: format!(
-                "{skills} skill(s), {servers} MCP server(s); supported: {SUPPORTED_COMPONENTS}"
-            ),
+        for entry in &self.plugins {
+            match entry.status {
+                PluginStatus::Loaded => {
+                    summary.loaded += 1;
+                    summary.problems += entry.problems.len();
+                }
+                PluginStatus::Rejected => summary.rejected += 1,
+                PluginStatus::Shadowed => {}
+            }
+            summary.skills += entry.skill_count;
+            summary.mcp_servers += entry.mcp_server_count;
         }
+        summary
     }
 }
