@@ -50,9 +50,10 @@ Rho checks explicit roots only. It never searches arbitrary directories.
 ~/.agents/plugins/<plugin>/plugin.json
 ```
 
-Only immediate child directories that contain a `plugin.json` are plugins.
-When two roots contain the same plugin name, the nearer root wins and Rho
-reports the shadowed copy. Installed and linked packages use these same roots.
+Only immediate child directories, and immediate child symlinks whose resolved
+targets contain a `plugin.json`, are plugins. When two roots contain the same
+plugin name, the nearer root wins and Rho reports the shadowed copy. Installed
+and linked packages use these same roots.
 
 Supported component types in the current build: skills, and MCP servers with
 the `stdio` and `streamable-http` transports. Legacy `sse` entries are

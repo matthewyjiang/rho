@@ -55,12 +55,12 @@ impl PluginOrigin {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PluginStateStore {
     pub(crate) user: PluginStateFile,
     pub(crate) project: PluginStateFile,
-    pub(crate) user_path: Option<PathBuf>,
-    pub(crate) project_path: Option<PathBuf>,
+    pub(crate) user_path: PathBuf,
+    pub(crate) project_path: PathBuf,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,9 +124,19 @@ impl PluginStateStore {
         Ok(Self {
             user: load_file(&user_path)?,
             project: load_file(&project_path)?,
-            user_path: Some(user_path),
-            project_path: Some(project_path),
+            user_path,
+            project_path,
         })
+    }
+
+    /// Empty store with paths resolved for `cwd` (tests and fallback loads).
+    pub(crate) fn empty(cwd: &Path, rho_home: Option<&Path>) -> Self {
+        Self {
+            user: PluginStateFile::default(),
+            project: PluginStateFile::default(),
+            user_path: user_state_path(rho_home).unwrap_or_else(|_| PathBuf::from("plugins.toml")),
+            project_path: project_state_path(cwd),
+        }
     }
 
     pub(crate) fn is_enabled(&self, scope: PluginScope, name: &str) -> bool {
@@ -162,13 +172,11 @@ impl PluginStateStore {
         name: &str,
         enabled: bool,
     ) -> anyhow::Result<()> {
-        let entry = self
-            .file_mut(scope)
-            .plugins
-            .entry(name.to_string())
-            .or_default();
-        entry.enabled = enabled;
-        self.persist(scope)
+        self.update_scope(scope, |file| {
+            let entry = file.plugins.entry(name.to_string()).or_default();
+            entry.enabled = enabled;
+            Ok(())
+        })
     }
 
     pub(crate) fn record_install(
@@ -178,16 +186,14 @@ impl PluginStateStore {
         origin: PluginOrigin,
         link_target: Option<String>,
     ) -> anyhow::Result<()> {
-        let entry = self
-            .file_mut(scope)
-            .plugins
-            .entry(name.to_string())
-            .or_default();
-        entry.origin = Some(origin);
-        entry.link_target = link_target;
-        // Fresh installs start enabled even if a prior disable entry remained.
-        entry.enabled = true;
-        self.persist(scope)
+        self.update_scope(scope, |file| {
+            let entry = file.plugins.entry(name.to_string()).or_default();
+            entry.origin = Some(origin);
+            entry.link_target = link_target;
+            // Fresh installs start enabled even if a prior disable entry remained.
+            entry.enabled = true;
+            Ok(())
+        })
     }
 
     pub(crate) fn clear_package_record(
@@ -195,8 +201,10 @@ impl PluginStateStore {
         scope: PluginScope,
         name: &str,
     ) -> anyhow::Result<()> {
-        self.file_mut(scope).plugins.remove(name);
-        self.persist(scope)
+        self.update_scope(scope, |file| {
+            file.plugins.remove(name);
+            Ok(())
+        })
     }
 
     fn file(&self, scope: PluginScope) -> &PluginStateFile {
@@ -213,18 +221,32 @@ impl PluginStateStore {
         }
     }
 
-    fn persist(&self, scope: PluginScope) -> anyhow::Result<()> {
-        let path = match scope {
-            PluginScope::User => self
-                .user_path
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("user plugin state path is not configured"))?,
-            PluginScope::Project => self
-                .project_path
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("project plugin state path is not configured"))?,
-        };
-        let file = self.file(scope);
+    /// Serialize one scope mutation under a lock that covers reload + write.
+    fn update_scope<F>(&mut self, scope: PluginScope, mutate: F) -> anyhow::Result<()>
+    where
+        F: FnOnce(&mut PluginStateFile) -> anyhow::Result<()>,
+    {
+        let path = self.path(scope).to_path_buf();
+        let _guard = lock_scope_state(&path)?;
+        // Reload under the lock so concurrent writers cannot lose updates.
+        *self.file_mut(scope) = load_file(&path)?;
+        mutate(self.file_mut(scope))?;
+        self.persist_locked(scope)
+    }
+
+    fn path(&self, scope: PluginScope) -> &Path {
+        match scope {
+            PluginScope::User => &self.user_path,
+            PluginScope::Project => &self.project_path,
+        }
+    }
+
+    fn persist_locked(&self, scope: PluginScope) -> anyhow::Result<()> {
+        let path = self.path(scope);
+        let mut file = self.file(scope).clone();
+        // Drop inert default entries so a clean tree does not keep noise.
+        file.plugins
+            .retain(|_, entry| entry != &PluginStateEntry::default());
         // Drop empty files so a clean tree does not keep an inert plugins.toml.
         if file.plugins.is_empty() {
             match std::fs::remove_file(path) {
@@ -233,9 +255,41 @@ impl PluginStateStore {
                 Err(error) => return Err(error.into()),
             }
         }
-        let serialized = toml::to_string_pretty(file)?;
+        let serialized = toml::to_string_pretty(&file)?;
         config_writer::write_atomically(path, &serialized)
     }
+}
+
+fn lock_scope_state(path: &Path) -> anyhow::Result<rho_providers::file_lock::FileLock> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let lock_path = scope_lock_path(path);
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "cannot open plugin state lock {}: {error}",
+                crate::paths::display(&lock_path)
+            )
+        })?;
+    rho_providers::file_lock::FileLock::acquire(file).map_err(|error| {
+        anyhow::anyhow!(
+            "cannot lock plugin state {}: {error}",
+            crate::paths::display(&lock_path)
+        )
+    })
+}
+
+fn scope_lock_path(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("plugins.toml");
+    path.with_file_name(format!(".{file_name}.lock"))
 }
 
 pub(crate) fn user_state_path(rho_home: Option<&Path>) -> anyhow::Result<PathBuf> {
@@ -258,12 +312,16 @@ pub(crate) fn project_root(cwd: &Path) -> PathBuf {
         .unwrap_or_else(|| cwd.to_path_buf())
 }
 
+pub(crate) fn plugins_root_at(dir: &Path) -> PathBuf {
+    dir.join(".agents").join("plugins")
+}
+
 pub(crate) fn user_plugins_root(home: &Path) -> PathBuf {
-    home.join(".agents").join("plugins")
+    plugins_root_at(home)
 }
 
 pub(crate) fn project_plugins_root(cwd: &Path) -> PathBuf {
-    project_root(cwd).join(".agents").join("plugins")
+    plugins_root_at(&project_root(cwd))
 }
 
 fn load_file(path: &Path) -> anyhow::Result<PluginStateFile> {

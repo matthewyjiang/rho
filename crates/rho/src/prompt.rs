@@ -30,9 +30,18 @@ pub struct SystemPrompt {
     pub sources: Vec<PromptSource>,
 }
 
+/// How plugin skills are supplied to system prompt assembly.
+pub(crate) enum PluginSkills {
+    /// Discover loose and plugin skills from the filesystem.
+    #[allow(dead_code)] // retained so callers can opt into filesystem discovery
+    Discover,
+    /// Use the already-discovered plugin skill list (including empty).
+    Provided(Vec<skills::Skill>),
+}
+
 #[cfg(test)]
 fn system_prompt_with_home(tools: &[ToolSpec], cwd: &Path, home: Option<&Path>) -> SystemPrompt {
-    system_prompt_with_home_and_plugin_skills(tools, cwd, home, None)
+    system_prompt_with_home_and_plugin_skills(tools, cwd, home, PluginSkills::Discover)
 }
 
 pub(crate) fn system_prompt_with_plugin_skills(
@@ -41,14 +50,19 @@ pub(crate) fn system_prompt_with_plugin_skills(
     plugin_skills: Vec<skills::Skill>,
 ) -> SystemPrompt {
     let home = crate::paths::home_dir();
-    system_prompt_with_home_and_plugin_skills(tools, cwd, home.as_deref(), Some(plugin_skills))
+    system_prompt_with_home_and_plugin_skills(
+        tools,
+        cwd,
+        home.as_deref(),
+        PluginSkills::Provided(plugin_skills),
+    )
 }
 
 fn system_prompt_with_home_and_plugin_skills(
     tools: &[ToolSpec],
     cwd: &Path,
     home: Option<&Path>,
-    plugin_skills: Option<Vec<skills::Skill>>,
+    plugin_skills: PluginSkills,
 ) -> SystemPrompt {
     let mut text = BASE_SYSTEM_PROMPT.to_string();
     text.push_str(
@@ -119,8 +133,10 @@ Do not delegate simple questions, routine codebase inspection, or small/local ch
 
     let skills = if tools.iter().any(|tool| tool.name == "skill") {
         match plugin_skills {
-            Some(plugin_skills) => skills::discover_with_plugin_skills(cwd, home, plugin_skills),
-            None => skills::discover_with_home(cwd, home),
+            PluginSkills::Discover => skills::discover_with_home(cwd, home),
+            PluginSkills::Provided(plugin_skills) => {
+                skills::discover_with_plugin_skills(cwd, home, plugin_skills)
+            }
         }
         .into_iter()
         .filter(|skill| !skill.disable_model_invocation)

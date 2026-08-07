@@ -32,52 +32,56 @@ pub(super) fn run(command: &PluginsCommand, _cli: &Cli) -> anyhow::Result<()> {
             crate::plugins::log(&discovery.report);
             print_inspect(&discovery.report, name, *json)
         }
-        PluginsCommand::Install { path, scope, force } => {
+        PluginsCommand::Install { path, scope, force }
+        | PluginsCommand::Link { path, scope, force } => {
             let home = require_home(home.as_deref())?;
+            let mode = match command {
+                PluginsCommand::Install { .. } => InstallMode::Copy,
+                PluginsCommand::Link { .. } => InstallMode::Link,
+                _ => unreachable!("matched install/link only"),
+            };
             let package = manage::install(
                 path,
                 resolve_scope(*scope),
-                InstallMode::Copy,
-                *force,
+                mode,
+                /* force */ *force,
                 &cwd,
                 home,
                 rho_home.as_deref(),
             )?;
-            println!(
-                "installed {} ({}) to {}",
-                package.name,
-                package.scope.as_str(),
-                crate::paths::display(&package.path)
-            );
-            Ok(())
-        }
-        PluginsCommand::Link { path, scope, force } => {
-            let home = require_home(home.as_deref())?;
-            let package = manage::install(
-                path,
-                resolve_scope(*scope),
-                InstallMode::Link,
-                *force,
-                &cwd,
-                home,
-                rho_home.as_deref(),
-            )?;
-            println!(
-                "linked {} ({}) at {} -> {}",
-                package.name,
-                package.scope.as_str(),
-                crate::paths::display(&package.path),
-                package
-                    .link_target
-                    .as_ref()
-                    .map(|path| crate::paths::display(path))
-                    .unwrap_or_else(|| crate::paths::display(path))
-            );
+            match mode {
+                InstallMode::Copy => {
+                    println!(
+                        "installed {} ({}) to {}",
+                        package.name,
+                        package.scope.as_str(),
+                        crate::paths::display(&package.path)
+                    );
+                }
+                InstallMode::Link => {
+                    println!(
+                        "linked {} ({}) at {} -> {}",
+                        package.name,
+                        package.scope.as_str(),
+                        crate::paths::display(&package.path),
+                        package
+                            .link_target
+                            .as_ref()
+                            .map(|path| crate::paths::display(path))
+                            .unwrap_or_else(|| crate::paths::display(path))
+                    );
+                }
+            }
             Ok(())
         }
         PluginsCommand::Enable { name } => {
-            let package =
-                manage::set_enabled(name, true, &cwd, home.as_deref(), rho_home.as_deref())?;
+            let package = manage::set_enabled(
+                name,
+                /* enabled */ true,
+                &cwd,
+                home.as_deref(),
+                rho_home.as_deref(),
+            )?;
             println!(
                 "enabled {} ({}) at {}",
                 package.name,
@@ -87,8 +91,13 @@ pub(super) fn run(command: &PluginsCommand, _cli: &Cli) -> anyhow::Result<()> {
             Ok(())
         }
         PluginsCommand::Disable { name } => {
-            let package =
-                manage::set_enabled(name, false, &cwd, home.as_deref(), rho_home.as_deref())?;
+            let package = manage::set_enabled(
+                name,
+                /* enabled */ false,
+                &cwd,
+                home.as_deref(),
+                rho_home.as_deref(),
+            )?;
             println!(
                 "disabled {} ({}) at {}",
                 package.name,
@@ -129,8 +138,10 @@ fn require_home(home: Option<&Path>) -> anyhow::Result<&Path> {
 
 fn confirm_remove(name: &str) -> anyhow::Result<bool> {
     use std::io::{self, IsTerminal, Write};
-    if !io::stdin().is_terminal() {
-        anyhow::bail!("refusing to remove `{name}` without --yes when stdin is not a terminal");
+    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+        anyhow::bail!(
+            "refusing to remove `{name}` without --yes when not running in an interactive terminal"
+        );
     }
     print!("remove plugin `{name}`? [y/N] ");
     io::stdout().flush()?;

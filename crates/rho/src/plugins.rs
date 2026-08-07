@@ -156,7 +156,8 @@ fn discover_components(
         mcp: McpConfig::default(),
         report: PluginLoadReport::default(),
     };
-    let state = PluginStateStore::load(cwd, rho_home).unwrap_or_default();
+    let state = PluginStateStore::load(cwd, rho_home)
+        .unwrap_or_else(|_| PluginStateStore::empty(cwd, rho_home));
 
     for root in plugin_roots(cwd, home) {
         let Some(candidates) = plugin_candidates(&root.path) else {
@@ -183,19 +184,24 @@ struct RootSpec {
 }
 
 fn plugin_roots(cwd: &Path, home: Option<&Path>) -> Vec<RootSpec> {
-    let mut roots: Vec<RootSpec> = crate::workspace::project_ancestor_dirs(cwd)
+    discovery_roots(cwd, home)
+        .into_iter()
+        .map(|(scope, path)| RootSpec { path, scope })
+        .collect()
+}
+
+/// Shared project/user root enumeration used by discovery and management.
+///
+/// Project ancestors are reversed so nearer roots win during first-match walks
+/// that prefer the front of the list.
+pub(crate) fn discovery_roots(cwd: &Path, home: Option<&Path>) -> Vec<(PluginScope, PathBuf)> {
+    let mut roots: Vec<(PluginScope, PathBuf)> = crate::workspace::project_ancestor_dirs(cwd)
         .into_iter()
         .rev()
-        .map(|dir| RootSpec {
-            path: dir.join(".agents").join("plugins"),
-            scope: PluginScope::Project,
-        })
+        .map(|dir| (PluginScope::Project, state::plugins_root_at(&dir)))
         .collect();
     if let Some(home) = home {
-        roots.push(RootSpec {
-            path: home.join(".agents").join("plugins"),
-            scope: PluginScope::User,
-        });
+        roots.push((PluginScope::User, state::user_plugins_root(home)));
     }
     roots
 }
@@ -398,9 +404,12 @@ fn discover_plugin_skills(
         return skills;
     };
 
-    // Immediate child directories only; never recurse for nested skills.
-    let Ok(entries) = std::fs::read_dir(&skills_dir) else {
-        return skills;
+    let entries = match std::fs::read_dir(&skills_dir) {
+        Ok(entries) => entries,
+        Err(error) => {
+            problems.push(format!("skills directory unreadable: {error}"));
+            return skills;
+        }
     };
     let mut children: Vec<PathBuf> = entries
         .filter_map(Result::ok)
@@ -567,6 +576,8 @@ impl PluginLoadReport {
                 PluginStatus::Loaded => {
                     summary.loaded += 1;
                     summary.problems += entry.problems.len();
+                    summary.skills += entry.skill_count;
+                    summary.mcp_servers += entry.mcp_server_count;
                 }
                 PluginStatus::Disabled => {
                     summary.disabled += 1;
@@ -576,8 +587,6 @@ impl PluginLoadReport {
                 PluginStatus::Rejected => summary.rejected += 1,
                 PluginStatus::Shadowed => {}
             }
-            summary.skills += entry.skill_count;
-            summary.mcp_servers += entry.mcp_server_count;
         }
         summary
     }

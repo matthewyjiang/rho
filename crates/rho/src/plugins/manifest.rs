@@ -32,14 +32,19 @@ struct RawManifest {
     version: Option<String>,
     #[serde(default, deserialize_with = "optional_non_null")]
     description: Option<String>,
+    #[expect(dead_code, reason = "type-validated only")]
     #[serde(default, deserialize_with = "optional_non_null")]
     author: Option<RawAuthor>,
+    #[expect(dead_code, reason = "type-validated only")]
     #[serde(default, deserialize_with = "optional_non_null")]
     homepage: Option<String>,
+    #[expect(dead_code, reason = "type-validated only")]
     #[serde(default, deserialize_with = "optional_non_null")]
     repository: Option<String>,
+    #[expect(dead_code, reason = "type-validated only")]
     #[serde(default, deserialize_with = "optional_non_null")]
     license: Option<String>,
+    #[expect(dead_code, reason = "type-validated only")]
     #[serde(default, deserialize_with = "optional_non_null")]
     keywords: Option<Vec<String>>,
     #[serde(default, deserialize_with = "optional_non_null")]
@@ -51,10 +56,13 @@ struct RawManifest {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawAuthor {
+    #[expect(dead_code, reason = "type-validated only")]
     #[serde(default, deserialize_with = "optional_non_null")]
     name: Option<String>,
+    #[expect(dead_code, reason = "type-validated only")]
     #[serde(default, deserialize_with = "optional_non_null")]
     email: Option<String>,
+    #[expect(dead_code, reason = "type-validated only")]
     #[serde(default, deserialize_with = "optional_non_null")]
     url: Option<String>,
 }
@@ -88,14 +96,6 @@ pub(crate) fn parse_manifest(text: &str) -> Result<PluginManifest, String> {
 
     // Author/homepage/repository/license/keywords are validated by typed
     // fields above and intentionally not retained beyond name/version/description.
-    let _ = (
-        raw.author
-            .map(|author| (author.name, author.email, author.url)),
-        raw.homepage,
-        raw.repository,
-        raw.license,
-        raw.keywords,
-    );
 
     Ok(PluginManifest {
         name: raw.name,

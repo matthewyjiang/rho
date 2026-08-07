@@ -141,6 +141,8 @@ impl<'de> Deserialize<'de> for McpServerConfig {
                 if command.trim().is_empty() {
                     return Err(serde::de::Error::custom("stdio command must not be empty"));
                 }
+                super::validate_stdio_environment(&env, &env_from_env)
+                    .map_err(serde::de::Error::custom)?;
                 (
                     enabled,
                     tools,

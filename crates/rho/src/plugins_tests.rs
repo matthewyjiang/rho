@@ -743,7 +743,20 @@ fn invalid_remote_entries_isolate_per_server() {
     let plugin = contributions(&discovery, "remote-bad");
     let names: Vec<_> = plugin.mcp_servers.iter().map(|(name, _)| *name).collect();
     assert_eq!(names, ["fine"]);
-    assert_eq!(plugin.invalid_mcp_servers.len(), 4);
+    let identities: Vec<_> = plugin
+        .invalid_mcp_servers
+        .iter()
+        .map(|invalid| invalid.identity.as_str())
+        .collect();
+    assert_eq!(
+        identities,
+        [
+            "remote-bad/dup-header",
+            "remote-bad/fragment",
+            "remote-bad/plain-http",
+            "remote-bad/userinfo",
+        ]
+    );
 }
 
 // Covers: merged server identities stay plugin-scoped.

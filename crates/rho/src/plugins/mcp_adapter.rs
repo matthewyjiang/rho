@@ -160,7 +160,7 @@ fn translate_stdio(
     cwd: Option<&str>,
     paths: PluginPaths<'_>,
 ) -> Result<(McpTransport, McpFilesystemPolicy), ServerRejection> {
-    let invalid = |error: String| ServerRejection::Invalid(error);
+    let invalid = ServerRejection::Invalid;
     if command.trim().is_empty() {
         return Err(invalid(format!(
             "server `{name}` requires a non-empty `command`"
@@ -195,7 +195,9 @@ fn translate_stdio(
         }
         #[cfg(windows)]
         if key.eq_ignore_ascii_case("PLUGIN_ROOT") || key.eq_ignore_ascii_case("PLUGIN_DATA") {
-            continue;
+            return Err(invalid(format!(
+                "server `{name}` `env` must not set reserved variable `{key}`"
+            )));
         }
         expanded_env.insert(
             key,

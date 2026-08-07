@@ -1,5 +1,6 @@
 //! Filesystem containment regressions for package-provided paths.
 
+use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
 use super::contain;

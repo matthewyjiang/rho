@@ -1,9 +1,6 @@
 //! SDK implementations for app-owned skill and host-input features.
 
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::Path, sync::Arc};
 
 use rho_sdk::{
     tool::{
@@ -40,7 +37,7 @@ impl SdkSkillTool {
         &self,
         name: &str,
         source_display: String,
-        requested: PathBuf,
+        requested: &Path,
         skill_directory: &Path,
         context: &ToolPreparationContext,
     ) -> Result<PreparedToolInvocation<'_>, SdkToolError> {
@@ -50,7 +47,7 @@ impl SdkSkillTool {
             .with_granted_root(skill_directory)
             .map_err(|error| SdkToolError::new(ToolErrorKind::Execution, error.to_string()))?;
         let resolved = skill_workspace
-            .resolve_for_read(&requested)
+            .resolve_for_read(requested)
             .map_err(|error| SdkToolError::new(ToolErrorKind::Execution, error.to_string()))?;
         let capability = CapabilityRequest::skill(
             name,
@@ -137,10 +134,10 @@ impl SdkTool for SdkSkillTool {
                     format!("skill '{name}' requires direct user invocation"),
                 ));
             }
-            let metadata = ToolMetadata::new().operation(OperationKind::Read);
             let source_display = skill.source.to_string();
             match skill.source {
                 crate::skills::SkillSource::BuiltIn => {
+                    let metadata = ToolMetadata::new().operation(OperationKind::Read);
                     let capability = CapabilityRequest::skill(
                         &name,
                         None,
@@ -165,23 +162,20 @@ impl SdkTool for SdkSkillTool {
                     ))
                 }
                 crate::skills::SkillSource::Filesystem { skill_file, .. } => {
-                    let skill_directory = skill_file
-                        .parent()
-                        .ok_or_else(|| {
-                            SdkToolError::new(
-                                ToolErrorKind::Execution,
-                                format!(
-                                    "skill path '{}' has no parent directory",
-                                    skill_file.display()
-                                ),
-                            )
-                        })?
-                        .to_path_buf();
+                    let skill_directory = skill_file.parent().ok_or_else(|| {
+                        SdkToolError::new(
+                            ToolErrorKind::Execution,
+                            format!(
+                                "skill path '{}' has no parent directory",
+                                skill_file.display()
+                            ),
+                        )
+                    })?;
                     self.prepare_fs_skill(
                         &name,
                         source_display,
-                        skill_file,
-                        &skill_directory,
+                        &skill_file,
+                        skill_directory,
                         &context,
                     )
                 }

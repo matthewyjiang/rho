@@ -403,9 +403,9 @@ fn mcp_check(report: &crate::tools::mcp::McpSessionReport) -> DoctorCheck {
                 format!(
                     "{} connected server{}, {} exported tool{}.",
                     summary.connected,
-                    plural_suffix(summary.connected),
+                    super::plural_suffix(summary.connected),
                     summary.exported_tools,
-                    plural_suffix(summary.exported_tools),
+                    super::plural_suffix(summary.exported_tools),
                 ),
             ),
             McpLoadMode::Native => (
@@ -414,10 +414,10 @@ fn mcp_check(report: &crate::tools::mcp::McpSessionReport) -> DoctorCheck {
                 format!(
                     "{} server problem{}, {} connected, {} tool{}. Run /mcp for details.",
                     summary.problems,
-                    plural_suffix(summary.problems),
+                    super::plural_suffix(summary.problems),
                     summary.connected,
                     summary.exported_tools,
-                    plural_suffix(summary.exported_tools),
+                    super::plural_suffix(summary.exported_tools),
                 ),
             ),
             McpLoadMode::UnsupportedAgent => (
@@ -453,15 +453,21 @@ fn plugins_check(report: &crate::plugins::PluginLoadReport) -> DoctorCheck {
         format!("{} loaded, {} disabled", summary.loaded, summary.disabled)
     } else {
         format!(
-            "{} loaded, {} disabled, {} rejected, {} problem(s)",
-            summary.loaded, summary.disabled, summary.rejected, summary.problems
+            "{} loaded, {} disabled, {} rejected, {} problem{}",
+            summary.loaded,
+            summary.disabled,
+            summary.rejected,
+            summary.problems,
+            super::plural_suffix(summary.problems)
         )
     };
     let detail = if summary.discovered {
         format!(
-            "{} skill(s), {} MCP server(s); supported: {}",
+            "{} skill{}, {} MCP server{}; supported: {}",
             summary.skills,
+            super::plural_suffix(summary.skills),
             summary.mcp_servers,
+            super::plural_suffix(summary.mcp_servers),
             crate::plugins::SUPPORTED_COMPONENTS
         )
     } else {
@@ -476,14 +482,6 @@ fn plugins_check(report: &crate::plugins::PluginLoadReport) -> DoctorCheck {
         status,
         healthy,
         detail,
-    }
-}
-
-fn plural_suffix(count: usize) -> &'static str {
-    if count == 1 {
-        ""
-    } else {
-        "s"
     }
 }
 

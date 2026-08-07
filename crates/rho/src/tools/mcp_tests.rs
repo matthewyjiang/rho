@@ -20,7 +20,7 @@ async fn zero_server_path_is_inert() {
     let _guard = MCP_CONNECT_TEST_LOCK.lock().await;
     let before = MCP_RUNTIME_CONSTRUCTIONS.load(std::sync::atomic::Ordering::Relaxed);
 
-    let outcome = McpBundle::connect(&McpConfig::default()).await;
+    let outcome = McpBundle::connect(&McpConfig::default(), 12_000).await;
 
     assert!(outcome.bundle.is_none());
     assert!(outcome.report.servers.is_empty());
@@ -55,7 +55,7 @@ async fn disabled_servers_are_reported_without_runtime() {
         invalid_servers: Vec::new(),
     };
 
-    let outcome = McpBundle::connect(&config).await;
+    let outcome = McpBundle::connect(&config, 12_000).await;
 
     assert!(outcome.bundle.is_none());
     assert_eq!(outcome.report.servers.len(), 1);
@@ -343,7 +343,7 @@ async fn streamable_http_discovery() {
         )]),
         invalid_servers: Vec::new(),
     };
-    let outcome = McpBundle::connect(&config).await;
+    let outcome = McpBundle::connect(&config, 12_000).await;
     let bundle = outcome.bundle.unwrap();
     assert_eq!(bundle.tools()[0].spec().name, "mcp__remote__remote_echo");
     assert_eq!(
@@ -438,7 +438,7 @@ open(sys.argv[1], "w").close()
         invalid_servers: Vec::new(),
     };
     assert!(!data.exists());
-    let outcome = McpBundle::connect(&config).await;
+    let outcome = McpBundle::connect(&config, 12_000).await;
     assert!(data.is_dir());
     let bundle = outcome.bundle.unwrap();
     assert_eq!(
@@ -473,6 +473,7 @@ open(sys.argv[1], "w").close()
         "echo/value".into(),
         serde_json::Map::new(),
         &cancellation,
+        12_000,
     )
     .await
     .unwrap();
@@ -485,11 +486,19 @@ open(sys.argv[1], "w").close()
         "echo/value".into(),
         serde_json::Map::new(),
         &cancellation,
+        12_000,
     )
     .await
     .unwrap_err();
     assert_eq!(error.kind(), ToolErrorKind::Cancelled);
 
     bundle.shutdown().await;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while !closed.exists() {
+        if std::time::Instant::now() >= deadline {
+            panic!("MCP server did not create shutdown marker in time");
+        }
+        tokio::task::yield_now().await;
+    }
     assert!(closed.exists());
 }

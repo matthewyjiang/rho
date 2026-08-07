@@ -11,9 +11,7 @@ use rho_sdk::{Workspace, WorkspacePathErrorKind};
 
 /// Filesystem-resolved plugin root. Callers pass this to the other helpers.
 pub(crate) fn canonical_root(root: &Path) -> Result<PathBuf, String> {
-    Workspace::new(root)
-        .map(|workspace| workspace.root().to_path_buf())
-        .map_err(|error| format!("cannot resolve plugin root `{}`: {error}", root.display()))
+    workspace(root).map(|workspace| workspace.root().to_path_buf())
 }
 
 /// Resolve a package-supplied path that must exist within `root`.

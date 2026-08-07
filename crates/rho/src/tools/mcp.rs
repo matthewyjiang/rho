@@ -46,6 +46,8 @@ const MCP_SERVER_STARTUP_BUDGET: std::time::Duration = std::time::Duration::from
 // Graceful MCP session teardown should be quick; bound it so one hung server
 // cannot stall process or CLI shutdown.
 const MCP_SESSION_CLOSE_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
+// Bound in-flight tool calls so an unresponsive server cannot hang a turn.
+const MCP_TOOL_CALL_BUDGET: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// Whether this session should connect MCP servers or only inventory config.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,9 +65,13 @@ pub(crate) struct McpConnectOutcome {
 
 impl McpConnectOutcome {
     /// Run the session plan against config: connect or inventory-only.
-    pub(crate) async fn run(plan: McpSessionPlan, config: &McpConfig) -> Self {
+    pub(crate) async fn run(
+        plan: McpSessionPlan,
+        config: &McpConfig,
+        max_output_bytes: usize,
+    ) -> Self {
         match plan {
-            McpSessionPlan::Connect => McpBundle::connect(config).await,
+            McpSessionPlan::Connect => McpBundle::connect(config, max_output_bytes).await,
             McpSessionPlan::Inventory(mode) => Self {
                 report: McpSessionReport::from_config_unloaded(config, mode),
                 bundle: None,
@@ -84,7 +90,8 @@ impl McpBundle {
     /// Connect enabled servers in parallel and discover their tools. Always
     /// returns a structured inventory. The no-enabled-server path exits before
     /// allocating a transport, client, task, or bundle.
-    pub(crate) async fn connect(config: &McpConfig) -> McpConnectOutcome {
+    pub(crate) async fn connect(config: &McpConfig, max_output_bytes: usize) -> McpConnectOutcome {
+        let max_output_bytes = max_output_bytes.max(1);
         let mut servers = Vec::with_capacity(config.servers.len() + config.invalid_servers.len());
 
         for invalid in &config.invalid_servers {
@@ -197,6 +204,7 @@ impl McpBundle {
                     remote_name: remote_name.clone(),
                     peer: session.peer().clone(),
                     metadata: metadata.clone(),
+                    max_output_bytes,
                 };
                 tools.push(Arc::new(tool));
                 exported.push(McpToolReport {
@@ -503,6 +511,50 @@ pub(crate) fn validate_environment_header_names(
     validate_header_names(headers.keys())
 }
 
+/// Reject blank/invalid env names, NULs, and duplicate child variable names
+/// across `env` and `env_from_env` before a stdio server is constructed.
+pub(crate) fn validate_stdio_environment(
+    env: &BTreeMap<String, String>,
+    env_from_env: &BTreeMap<String, String>,
+) -> anyhow::Result<()> {
+    let mut child_names = HashSet::new();
+    for (name, value) in env {
+        validate_process_env_name(name, "env")?;
+        validate_process_env_value(value, name)?;
+        if !child_names.insert(name.as_str()) {
+            bail!("stdio env repeats child variable `{name}`");
+        }
+    }
+    for (name, source) in env_from_env {
+        validate_process_env_name(name, "env_from_env")?;
+        validate_process_env_name(source, "env_from_env source")?;
+        if !child_names.insert(name.as_str()) {
+            bail!("stdio env repeats child variable `{name}` across env and env_from_env");
+        }
+    }
+    Ok(())
+}
+
+fn validate_process_env_name(name: &str, field: &str) -> anyhow::Result<()> {
+    if name.is_empty() {
+        bail!("stdio {field} variable name must not be empty");
+    }
+    if name.contains('=') {
+        bail!("stdio {field} variable name `{name}` must not contain '='");
+    }
+    if name.contains('\0') {
+        bail!("stdio {field} variable name must not contain NUL");
+    }
+    Ok(())
+}
+
+fn validate_process_env_value(value: &str, name: &str) -> anyhow::Result<()> {
+    if value.contains('\0') {
+        bail!("stdio env value for `{name}` must not contain NUL");
+    }
+    Ok(())
+}
+
 fn validate_header_names<'a>(names: impl IntoIterator<Item = &'a String>) -> anyhow::Result<()> {
     let mut parsed = HashSet::new();
     for name in names {
@@ -554,15 +606,32 @@ async fn call_remote_tool(
     remote_name: String,
     arguments: serde_json::Map<String, serde_json::Value>,
     cancellation: &rho_sdk::CancellationToken,
+    max_output_bytes: usize,
 ) -> Result<String, ToolError> {
     let params = CallToolRequestParams::new(remote_name).with_arguments(arguments);
     let result = tokio::select! {
-        result = peer.call_tool(params) => result,
+        result = tokio::time::timeout(MCP_TOOL_CALL_BUDGET, peer.call_tool(params)) => {
+            match result {
+                Ok(Ok(result)) => result,
+                Ok(Err(error)) => {
+                    return Err(ToolError::new(ToolErrorKind::Execution, error.to_string()));
+                }
+                Err(_) => {
+                    return Err(ToolError::new(
+                        ToolErrorKind::Execution,
+                        format!(
+                            "MCP tool call exceeded its {}s budget",
+                            MCP_TOOL_CALL_BUDGET.as_secs()
+                        ),
+                    ));
+                }
+            }
+        }
         () = cancellation.cancelled() => return Err(ToolError::cancelled()),
-    }
-    .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
+    };
     let content = serde_json::to_string(&result)
         .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
+    let content = rho_tools::tool::truncate(content, max_output_bytes);
     if result.is_error.unwrap_or(false) {
         return Err(ToolError::new(ToolErrorKind::Execution, content));
     }
@@ -574,6 +643,7 @@ struct McpTool {
     remote_name: String,
     peer: rmcp::Peer<RoleClient>,
     metadata: ToolMetadata,
+    max_output_bytes: usize,
 }
 
 impl Tool for McpTool {
@@ -613,6 +683,7 @@ impl Tool for McpTool {
                             self.remote_name.clone(),
                             arguments,
                             context.cancellation(),
+                            self.max_output_bytes,
                         )
                         .await?;
                         Ok(ToolOutput::text(content).metadata(metadata))

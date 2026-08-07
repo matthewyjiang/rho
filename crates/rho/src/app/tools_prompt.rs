@@ -117,7 +117,12 @@ pub(crate) async fn assemble_tools_and_prompt(
     } else {
         crate::tools::mcp::McpSessionPlan::Connect
     };
-    let mcp = crate::tools::mcp::McpConnectOutcome::run(mcp_plan, &mcp_config).await;
+    let mcp = crate::tools::mcp::McpConnectOutcome::run(
+        mcp_plan,
+        &mcp_config,
+        options.config.max_output_bytes,
+    )
+    .await;
     let tools = if options.no_tools {
         AppToolSet::disabled().with_mcp(mcp)
     } else {

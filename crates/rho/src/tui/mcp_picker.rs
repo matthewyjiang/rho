@@ -48,9 +48,9 @@ fn mode_item(report: &McpSessionReport, config_path: &std::path::Path) -> Picker
                     "{} enabled, {} exported tool{}, {} problem{}. Config: {config}.",
                     summary.enabled,
                     summary.exported_tools,
-                    plural_suffix(summary.exported_tools),
+                    super::plural_suffix(summary.exported_tools),
                     summary.problems,
-                    plural_suffix(summary.problems),
+                    super::plural_suffix(summary.problems),
                 ),
             ),
             McpLoadMode::UnsupportedAgent => (
@@ -84,14 +84,6 @@ fn mode_item(report: &McpSessionReport, config_path: &std::path::Path) -> Picker
         }),
         value: "session".into(),
         selection_verb: None,
-    }
-}
-
-fn plural_suffix(count: usize) -> &'static str {
-    if count == 1 {
-        ""
-    } else {
-        "s"
     }
 }
 

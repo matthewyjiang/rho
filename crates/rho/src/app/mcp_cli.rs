@@ -29,7 +29,7 @@ pub(super) async fn run(command: &McpCommand, cli: &Cli) -> anyhow::Result<()> {
     } else {
         McpSessionPlan::Inventory(McpLoadMode::Native)
     };
-    let outcome = McpConnectOutcome::run(plan, &mcp_config).await;
+    let outcome = McpConnectOutcome::run(plan, &mcp_config, config.max_output_bytes).await;
     let result = match command {
         McpCommand::List { json, .. } => print_list(&outcome.report, *json),
         McpCommand::Show { id, json, .. } => print_show(&outcome.report, id, *json),

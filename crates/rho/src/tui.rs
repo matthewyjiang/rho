@@ -49,6 +49,15 @@ mod goal;
 mod line_editor;
 mod subagent_questionnaires;
 mod text_input;
+
+fn plural_suffix(count: usize) -> &'static str {
+    if count == 1 {
+        ""
+    } else {
+        "s"
+    }
+}
+
 pub(crate) use first_run::SetupEntry;
 pub(crate) use goal::GOAL_JUDGE_PROMPT;
 mod changelog_command;
