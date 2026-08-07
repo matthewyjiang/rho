@@ -4,7 +4,6 @@ use pretty_assertions::assert_eq;
 use rho_providers::reasoning::ReasoningLevel;
 use rho_sdk::{
     model::{ContentBlock, ModelIdentity, ModelResponse},
-    provider::{ScriptedProvider, ScriptedTurn},
     tool::{tool_progress_channel, Tool, ToolErrorKind},
     CancellationToken, SessionId,
 };
@@ -181,22 +180,90 @@ async fn rebinding_session_scopes_unclaimed_advisor_cost() {
     assert_eq!(store.unclaimed_cost_usd_micros(), 0);
 }
 
-// Covers: one-shot updates reach tool progress, reasoning stays out of progress
-// text, and the final tool output is plain guidance only
+// Covers: partial advisor progress is visible while the provider is still
+// running, reasoning stays hidden, and the final tool output is plain guidance
 // Owner: advisor tool progress bridge
 #[tokio::test]
 async fn streams_progress_before_completion_with_plain_final_output() {
-    let provider = ScriptedProvider::new(
-        ModelIdentity::new("provider", "api", "model"),
-        [ScriptedTurn::streaming(
-            vec![
-                rho_sdk::model::ModelEvent::ReasoningDelta("do not show".into()),
-                rho_sdk::model::ModelEvent::OutputDelta("prefer ".into()),
-                rho_sdk::model::ModelEvent::OutputDelta("the simple path".into()),
-            ],
-            ModelResponse::Assistant(vec![ContentBlock::Text("prefer the simple path".into())]),
-        )],
-    );
+    use std::sync::Mutex;
+
+    use rho_sdk::{
+        model::{ModelEvent, ModelRequest},
+        provider::{ModelProvider, ProviderEventSender, ProviderFuture},
+    };
+
+    struct GatedAdvisorProvider {
+        identity: ModelIdentity,
+        partial_ready: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+        release: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+    }
+
+    impl ModelProvider for GatedAdvisorProvider {
+        fn identity(&self) -> ModelIdentity {
+            self.identity.clone()
+        }
+
+        fn send_turn<'a>(&'a self, _request: ModelRequest<'a>) -> ProviderFuture<'a> {
+            Box::pin(async {
+                Err(rho_sdk::ProviderError::interrupted(
+                    "gated advisor provider is stream-only",
+                ))
+            })
+        }
+
+        fn send_turn_stream<'a>(
+            &'a self,
+            request: ModelRequest<'a>,
+            events: ProviderEventSender,
+        ) -> ProviderFuture<'a> {
+            Box::pin(async move {
+                if request.cancellation.is_cancelled() {
+                    return Err(rho_sdk::ProviderError::interrupted(
+                        "provider request cancelled",
+                    ));
+                }
+                events
+                    .send(ModelEvent::ReasoningDelta("do not show".into()))
+                    .await?;
+                events
+                    .send(ModelEvent::OutputDelta("prefer ".into()))
+                    .await?;
+                if let Some(ready) = self.partial_ready.lock().unwrap().take() {
+                    let _ = ready.send(());
+                }
+                let release = self
+                    .release
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .expect("release gate installed");
+                tokio::select! {
+                    result = release => {
+                        result.expect("release gate closed");
+                    }
+                    () = request.cancellation.cancelled() => {
+                        return Err(rho_sdk::ProviderError::interrupted(
+                            "provider request cancelled",
+                        ));
+                    }
+                }
+                events
+                    .send(ModelEvent::OutputDelta("the simple path".into()))
+                    .await?;
+                Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
+                    "prefer the simple path".into(),
+                )]))
+            })
+        }
+    }
+
+    let (partial_ready_tx, partial_ready_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+    let provider = GatedAdvisorProvider {
+        identity: ModelIdentity::new("provider", "api", "model"),
+        partial_ready: Mutex::new(Some(partial_ready_tx)),
+        release: Mutex::new(Some(release_rx)),
+    };
     let (progress_tx, mut progress_rx) = tool_progress_channel(NonZeroUsize::new(16).unwrap());
     let session_id = SessionId::new();
 
@@ -209,34 +276,45 @@ async fn streams_progress_before_completion_with_plain_final_output() {
         CancellationToken::new(),
         progress_tx,
     );
+    tokio::pin!(consult);
 
-    let collect = async {
-        let mut snapshots = Vec::new();
-        while let Some(progress) = progress_rx.recv().await {
-            snapshots.push(progress);
+    // Drive the consultation while waiting for the provider's partial gate.
+    tokio::select! {
+        ready = partial_ready_rx => {
+            ready.expect("partial progress gate");
         }
-        snapshots
-    };
+        result = &mut consult => {
+            panic!("advisor finished before partial progress gate: {result:?}");
+        }
+    }
+    let mut saw_partial = false;
+    while !saw_partial {
+        tokio::select! {
+            progress = progress_rx.recv() => {
+                let progress = progress.expect("progress channel closed before partial output");
+                assert!(
+                    !progress.text().contains("do not show"),
+                    "reasoning leaked into progress: {}",
+                    progress.text()
+                );
+                if progress.presentation().command_summary_text() == Some("responding")
+                    && progress.text().contains("prefer")
+                {
+                    saw_partial = true;
+                    // Provider is still gated; completion text must not be present yet.
+                    assert!(!progress.text().contains("simple path"));
+                }
+            }
+            result = &mut consult => {
+                panic!("advisor finished before partial progress was observed: {result:?}");
+            }
+        }
+    }
 
-    let (result, snapshots) = tokio::join!(consult, collect);
-    let (advice, _usage) = result.expect("advisor consultation");
+    release_tx.send(()).expect("release gated provider");
+    let (advice, _usage) = consult.await.expect("advisor consultation");
 
     assert_eq!(advice, "prefer the simple path");
-    assert!(
-        !snapshots.is_empty(),
-        "expected live progress before completion, got none"
-    );
-    assert!(
-        snapshots.iter().any(|progress| {
-            progress.presentation().command_summary_text() == Some("responding")
-                && progress.text().contains("prefer")
-        }),
-        "expected responding progress with guidance body, got {snapshots:?}"
-    );
-    assert!(snapshots
-        .iter()
-        .all(|progress| !progress.text().contains("do not show")));
-    // Final model-visible result must stay plain guidance, not status labels.
     assert!(!advice.contains("responding"));
     assert!(!advice.contains("thinking"));
 }
