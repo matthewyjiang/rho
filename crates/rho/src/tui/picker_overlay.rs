@@ -1,27 +1,26 @@
-//! Generic picker overlay geometry and line rendering.
+//! Generic picker overlay line rendering.
 //!
 //! Feature policy (what items mean, confirm verbs, filters, chrome labels)
-//! stays at call sites. This module only lays out a bordered overlay with a
+//! stays at call sites. This module only draws a bordered overlay with a
 //! navigation list and an optional independently scrollable detail pane.
 //! Detail presence is derived from item data, not a separate layout mode.
+//! Every measurement comes from [`super::picker_overlay_layout`].
 
 use ratatui::{
     layout::{Position, Rect},
     text::{Line, Span},
 };
 
+use super::picker_overlay_layout::{
+    picker_overlay_layout, OverlayLayout, OverlayOrientation, OverlayPanes, BOTTOM_BORDER_ROWS,
+    FOOTER_CHROME_ROWS, HEADER_CHROME_ROWS, SEPARATOR,
+};
 use super::render::wrap_line_at_whitespace;
 use super::{
     display_width, styled_line, truncate_one_line, LineFill, PickerBadge, PickerBadgePlacement,
     PickerItem, Theme, UiPicker,
 };
 
-const TWO_COLUMN_MIN_INNER_WIDTH: usize = 60;
-const MIN_NAV_WIDTH: usize = 14;
-const MAX_NAV_WIDTH: usize = 28;
-const SEPARATOR: &str = " │ ";
-/// Rows consumed inside the border: search, divider, pane header, status divider, footer.
-const INNER_CHROME_ROWS: usize = 5;
 const FILTER_PREFIX: &str = " Search  > ";
 const DEFAULT_NAV_LABEL: &str = " NAV";
 const DEFAULT_DETAIL_LABEL: &str = " DETAILS";
@@ -33,102 +32,6 @@ pub(super) struct OverlayChrome {
     /// Only used when the overlay has a detail pane.
     pub(super) detail_label: Option<String>,
     pub(super) nav_keys_hint: String,
-}
-
-/// Responsive arrangement of nav + detail. Only used when a detail pane exists.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum OverlayOrientation {
-    SideBySide,
-    Stacked,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum OverlayPanes {
-    NavOnly {
-        nav_width: usize,
-        nav_viewport_rows: usize,
-    },
-    NavAndDetail {
-        orientation: OverlayOrientation,
-        nav_width: usize,
-        detail_width: usize,
-        detail_viewport_rows: usize,
-        nav_viewport_rows: usize,
-    },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct OverlayLayout {
-    pub(super) outer: Rect,
-    pub(super) inner_width: usize,
-    pub(super) inner_height: usize,
-    pub(super) body_rows: usize,
-    pub(super) panes: OverlayPanes,
-}
-
-impl OverlayLayout {
-    pub(super) fn detail_viewport(self) -> Option<DetailViewport> {
-        match self.panes {
-            OverlayPanes::NavOnly { .. } => None,
-            OverlayPanes::NavAndDetail {
-                detail_width,
-                detail_viewport_rows,
-                ..
-            } => Some(DetailViewport {
-                width: detail_width,
-                rows: detail_viewport_rows,
-            }),
-        }
-    }
-
-    pub(super) fn page_target(self) -> OverlayPageTarget {
-        match self.panes {
-            OverlayPanes::NavOnly {
-                nav_viewport_rows, ..
-            } => OverlayPageTarget::Nav {
-                rows: nav_viewport_rows.max(1),
-            },
-            OverlayPanes::NavAndDetail {
-                detail_width,
-                detail_viewport_rows,
-                ..
-            } => OverlayPageTarget::Detail(DetailViewport {
-                width: detail_width,
-                rows: detail_viewport_rows,
-            }),
-        }
-    }
-
-    fn nav_width(self) -> usize {
-        match self.panes {
-            OverlayPanes::NavOnly { nav_width, .. }
-            | OverlayPanes::NavAndDetail { nav_width, .. } => nav_width,
-        }
-    }
-
-    fn nav_viewport_rows(self) -> usize {
-        match self.panes {
-            OverlayPanes::NavOnly {
-                nav_viewport_rows, ..
-            }
-            | OverlayPanes::NavAndDetail {
-                nav_viewport_rows, ..
-            } => nav_viewport_rows,
-        }
-    }
-}
-
-/// Where Page/Home/End keys act for an open overlay.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum OverlayPageTarget {
-    Detail(DetailViewport),
-    Nav { rows: usize },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct DetailViewport {
-    pub(super) width: usize,
-    pub(super) rows: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -155,14 +58,14 @@ struct OverlayContent<'a> {
     detail: &'a [String],
     detail_badge: Option<&'a PickerBadge>,
     show_nav_badges: bool,
+    detail_focused: bool,
     detail_scroll: usize,
+    /// First visible nav row, owned by the picker's scroll/follow state.
+    nav_window_start: usize,
+    hovered_nav_row: Option<usize>,
     footer: &'a str,
     empty_match_message: &'a str,
     chrome: OverlayChromeView<'a>,
-}
-
-pub(super) fn picker_overlay_layout(area: Rect, has_details: bool) -> OverlayLayout {
-    layout_for_outer(outer_rect(area), has_details)
 }
 
 pub(super) fn picker_overlay_frame(picker: &UiPicker, area: Rect) -> Option<OverlayFrame> {
@@ -172,7 +75,7 @@ pub(super) fn picker_overlay_frame(picker: &UiPicker, area: Rect) -> Option<Over
 }
 
 pub(super) fn render_picker_overlay(picker: &UiPicker, area: Rect) -> OverlayFrame {
-    let layout = picker_overlay_layout(area, picker.has_item_details());
+    let layout = picker_overlay_layout(area, picker.overlay_sizing());
     // Own footer and wrap detail before matching indices so temporary match
     // cache borrows from footer/detail helpers do not overlap.
     let detail_holder = layout
@@ -201,7 +104,10 @@ pub(super) fn render_picker_overlay(picker: &UiPicker, area: Rect) -> OverlayFra
         detail,
         detail_badge: picker.selected_detail_badge(),
         show_nav_badges: picker.badge_placement == PickerBadgePlacement::Navigation,
+        detail_focused: picker.detail_pane_focused(),
         detail_scroll: picker.detail_scroll,
+        nav_window_start: picker.nav_window_start(layout.nav_viewport_rows()),
+        hovered_nav_row: picker.hovered_nav_row(),
         footer: &footer,
         empty_match_message,
         chrome,
@@ -241,81 +147,6 @@ pub(super) fn filter_cursor_x(filter: &str, inner_width: usize) -> u16 {
         .min(inner_width.saturating_sub(1)) as u16
 }
 
-fn outer_rect(area: Rect) -> Rect {
-    if area.width == 0 || area.height == 0 {
-        return Rect::new(area.x, area.y, 0, 0);
-    }
-
-    let horizontal_margin = ((area.width as usize) / 20).clamp(1, 4) as u16;
-    let vertical_margin = ((area.height as usize) / 12).clamp(1, 3) as u16;
-    let width = area
-        .width
-        .saturating_sub(horizontal_margin.saturating_mul(2))
-        .max(1);
-    let height = area
-        .height
-        .saturating_sub(vertical_margin.saturating_mul(2))
-        .max(1);
-    let x = area.x.saturating_add(area.width.saturating_sub(width) / 2);
-    let y = area
-        .y
-        .saturating_add(area.height.saturating_sub(height) / 2);
-    Rect::new(x, y, width, height)
-}
-
-fn layout_for_outer(outer: Rect, has_details: bool) -> OverlayLayout {
-    let outer_width = outer.width as usize;
-    let outer_height = outer.height as usize;
-    let inner_width = outer_width.saturating_sub(2).max(1);
-    let inner_height = outer_height.saturating_sub(2).max(1);
-    let body_rows = inner_height.saturating_sub(INNER_CHROME_ROWS).max(1);
-
-    let panes = if !has_details {
-        OverlayPanes::NavOnly {
-            nav_width: inner_width,
-            nav_viewport_rows: body_rows,
-        }
-    } else if inner_width < TWO_COLUMN_MIN_INNER_WIDTH {
-        // One body row is the horizontal rule between detail and nav when there
-        // is room for both panes plus the separator.
-        let separator_rows = usize::from(body_rows > 2);
-        let usable_rows = body_rows.saturating_sub(separator_rows).max(1);
-        let detail_viewport_rows = (usable_rows.saturating_mul(3) / 5)
-            .max(2.min(usable_rows.saturating_sub(1)))
-            .min(usable_rows.saturating_sub(1));
-        let nav_viewport_rows = usable_rows.saturating_sub(detail_viewport_rows);
-        OverlayPanes::NavAndDetail {
-            orientation: OverlayOrientation::Stacked,
-            nav_width: inner_width,
-            detail_width: inner_width,
-            detail_viewport_rows,
-            nav_viewport_rows,
-        }
-    } else {
-        let nav_width = ((inner_width * 30) / 100).clamp(MIN_NAV_WIDTH, MAX_NAV_WIDTH);
-        let separator_width = display_width(SEPARATOR);
-        let detail_width = inner_width
-            .saturating_sub(nav_width)
-            .saturating_sub(separator_width)
-            .max(1);
-        OverlayPanes::NavAndDetail {
-            orientation: OverlayOrientation::SideBySide,
-            nav_width,
-            detail_width,
-            detail_viewport_rows: body_rows,
-            nav_viewport_rows: body_rows,
-        }
-    };
-
-    OverlayLayout {
-        outer,
-        inner_width,
-        inner_height,
-        body_rows,
-        panes,
-    }
-}
-
 fn chrome_view(chrome: Option<&OverlayChrome>) -> OverlayChromeView<'_> {
     match chrome {
         Some(chrome) => OverlayChromeView {
@@ -336,26 +167,27 @@ fn chrome_view(chrome: Option<&OverlayChrome>) -> OverlayChromeView<'_> {
 
 fn overlay_lines(layout: OverlayLayout, content: OverlayContent<'_>) -> Vec<Line<'static>> {
     let mut lines = Vec::with_capacity(layout.outer.height as usize);
-    let divider_col = side_by_side_divider_col(layout);
+    let divider_col = layout.divider_col();
     lines.push(border_line(
         layout.outer.width as usize,
         '┌',
         '┐',
         Some(content.title),
     ));
-    lines.push(content_row(
-        layout.inner_width,
-        filter_line(content.filter, layout.inner_width),
-    ));
-    lines.push(horizontal_rule(
-        layout.outer.width as usize,
-        divider_col,
-        '┬',
-    ));
-    lines.push(content_row(
-        layout.inner_width,
-        pane_header_line(layout, &content.chrome),
-    ));
+    // The array length ties the drawn header chrome to the row count geometry
+    // uses to place the body, so the two cannot drift apart.
+    let header_chrome: [Line<'static>; HEADER_CHROME_ROWS] = [
+        content_row(
+            layout.inner_width,
+            filter_line(content.filter, layout.inner_width),
+        ),
+        horizontal_rule(layout.outer.width as usize, divider_col, '┬'),
+        content_row(
+            layout.inner_width,
+            pane_header_line(layout, &content.chrome, content.detail_focused),
+        ),
+    ];
+    lines.extend(header_chrome);
 
     let body_sections = match layout.panes {
         OverlayPanes::NavOnly { .. } => vec![nav_only_body(layout, &content)],
@@ -376,15 +208,7 @@ fn overlay_lines(layout: OverlayLayout, content: OverlayContent<'_>) -> Vec<Line
                 layout.inner_width,
                 detail_rows_budget,
             );
-            let nav_rows = nav_item_rows(
-                content.items,
-                content.matching,
-                content.selected,
-                layout.nav_width(),
-                nav_rows_budget,
-                content.show_nav_badges,
-                content.empty_match_message,
-            );
+            let nav_rows = nav_item_rows(&content, layout.nav_width(), nav_rows_budget);
             if detail_rows_budget > 0 && nav_rows_budget > 0 {
                 vec![detail_rows, nav_rows]
             } else if detail_rows_budget > 0 {
@@ -404,21 +228,17 @@ fn overlay_lines(layout: OverlayLayout, content: OverlayContent<'_>) -> Vec<Line
         }
     }
 
-    while lines.len() + 3 < layout.outer.height as usize {
+    while lines.len() + FOOTER_CHROME_ROWS + BOTTOM_BORDER_ROWS < layout.outer.height as usize {
         // Keep the column rule continuous through spare body rows so it meets
         // the footer junction instead of leaving a gap.
         lines.push(content_row(layout.inner_width, pane_filler_row(layout)));
     }
 
-    lines.push(horizontal_rule(
-        layout.outer.width as usize,
-        divider_col,
-        '┴',
-    ));
-    lines.push(content_row(
-        layout.inner_width,
-        footer_line(layout, &content),
-    ));
+    let footer_chrome: [Line<'static>; FOOTER_CHROME_ROWS] = [
+        horizontal_rule(layout.outer.width as usize, divider_col, '┴'),
+        content_row(layout.inner_width, footer_line(layout, &content)),
+    ];
+    lines.extend(footer_chrome);
     lines.push(border_line(layout.outer.width as usize, '└', '┘', None));
     lines.truncate(layout.outer.height as usize);
     while lines.len() < layout.outer.height as usize {
@@ -438,15 +258,7 @@ fn side_by_side_body(layout: OverlayLayout, content: &OverlayContent<'_>) -> Vec
     else {
         return Vec::new();
     };
-    let nav_rows = nav_item_rows(
-        content.items,
-        content.matching,
-        content.selected,
-        nav_width,
-        nav_viewport_rows,
-        content.show_nav_badges,
-        content.empty_match_message,
-    );
+    let nav_rows = nav_item_rows(content, nav_width, nav_viewport_rows);
     let detail_rows = detail_viewport_rows(
         content.detail,
         content.detail_badge,
@@ -470,15 +282,7 @@ fn side_by_side_body(layout: OverlayLayout, content: &OverlayContent<'_>) -> Vec
 }
 
 fn nav_only_body(layout: OverlayLayout, content: &OverlayContent<'_>) -> Vec<Line<'static>> {
-    let mut rows = nav_item_rows(
-        content.items,
-        content.matching,
-        content.selected,
-        layout.nav_width(),
-        layout.nav_viewport_rows(),
-        content.show_nav_badges,
-        content.empty_match_message,
-    );
+    let mut rows = nav_item_rows(content, layout.nav_width(), layout.nav_viewport_rows());
     rows.truncate(layout.body_rows);
     while rows.len() < layout.body_rows {
         rows.push(Line::raw(""));
@@ -487,20 +291,16 @@ fn nav_only_body(layout: OverlayLayout, content: &OverlayContent<'_>) -> Vec<Lin
 }
 
 fn nav_item_rows(
-    items: &[PickerItem],
-    matching: &[usize],
-    selected: usize,
+    content: &OverlayContent<'_>,
     width: usize,
     viewport_rows: usize,
-    show_badges: bool,
-    empty_match_message: &str,
 ) -> Vec<Line<'static>> {
     if viewport_rows == 0 {
         return Vec::new();
     }
-    if matching.is_empty() {
+    if content.matching.is_empty() {
         let mut rows = vec![styled_line(
-            format!("  {empty_match_message}"),
+            format!("  {}", content.empty_match_message),
             width,
             Theme::dim(),
             LineFill::PadToWidth,
@@ -509,97 +309,57 @@ fn nav_item_rows(
         return rows;
     }
 
-    let mut rows = Vec::with_capacity(matching.len());
-    let mut current_section = None;
-    let mut selected_row = 0;
-    for index in matching.iter().copied() {
-        let Some(item) = items.get(index) else {
-            continue;
-        };
-        if item.section.as_deref() != current_section {
-            current_section = item.section.as_deref();
-            if let Some(section) = current_section {
-                rows.push(section_header_line(section, width));
-            }
-        }
-        if index == selected {
-            selected_row = rows.len();
-        }
-        rows.push(nav_item_line(item, index == selected, width, show_badges));
-    }
-
-    let start = selected_row.saturating_add(1).saturating_sub(viewport_rows);
+    let total_rows = super::picker_rows::picker_row_count(content.items, content.matching);
+    let show_scrollbar = width > MIN_SCROLLBAR_PANE_WIDTH && total_rows > viewport_rows;
+    let content_width = width.saturating_sub(usize::from(show_scrollbar));
+    let rows = super::picker_rows::picker_item_rows(
+        content.items,
+        content.matching,
+        content.selected,
+        super::picker_rows::RowLayout {
+            width: content_width,
+            width_mode: super::picker_rows::RowWidthMode::FillPane,
+            show_badges: content.show_nav_badges,
+            show_preview: false,
+            fill: LineFill::PadToWidth,
+        },
+        content.hovered_nav_row,
+    );
+    // `UiPicker::nav_window_start` already clamped to this viewport's last
+    // window start, so the offset needs no second clamp here.
+    let start = content.nav_window_start;
     let mut visible = rows
+        .rows
         .into_iter()
         .skip(start)
         .take(viewport_rows)
         .collect::<Vec<_>>();
-    visible.resize_with(viewport_rows, || padded_plain("", width));
+    visible.resize_with(viewport_rows, || padded_plain("", content_width));
+    if show_scrollbar {
+        append_scrollbar_column(&mut visible, total_rows, viewport_rows, start);
+    }
     visible
 }
 
-fn section_header_line(section: &str, width: usize) -> Line<'static> {
-    let label = truncate_one_line(section, width.saturating_sub(2));
-    styled_line(
-        format!("  {label}"),
-        width,
-        Theme::dim(),
-        LineFill::PadToWidth,
-    )
-}
+/// Narrowest pane that still spends a column on a scrollbar.
+const MIN_SCROLLBAR_PANE_WIDTH: usize = 4;
 
-fn nav_item_line(
-    item: &PickerItem,
-    selected: bool,
-    width: usize,
-    show_badge: bool,
-) -> Line<'static> {
-    if width == 0 {
-        return Line::raw("");
-    }
-    let marker = if selected {
-        super::composer_chrome::SELECTION_MARKER_ACTIVE
-    } else {
-        super::composer_chrome::SELECTION_MARKER_INACTIVE
+/// Add a one-column track and thumb to the right edge of pane rows.
+fn append_scrollbar_column(
+    rows: &mut [Line<'static>],
+    content_len: usize,
+    viewport_rows: usize,
+    top_line: usize,
+) {
+    let Some(thumb) =
+        super::scrollbar::scrollbar_thumb(content_len, viewport_rows, top_line, viewport_rows)
+    else {
+        return;
     };
-    let style = if selected {
-        Theme::accent()
-    } else {
-        Theme::text()
-    };
-    if width == 1 {
-        return Line::from(Span::styled(marker.to_string(), style));
+    for (row, line) in rows.iter_mut().enumerate() {
+        line.spans
+            .push(super::scrollbar::track_span(thumb, row, Theme::accent()));
     }
-
-    let available = width.saturating_sub(2);
-    let badge = if show_badge {
-        item.badge.as_ref()
-    } else {
-        None
-    }
-    .and_then(|badge| {
-        let budget = display_width(&badge.text)
-            .min(16)
-            .min(available.saturating_sub(2));
-        (budget > 0).then(|| (truncate_one_line(&badge.text, budget), badge.tone))
-    });
-    let badge_width = badge
-        .as_ref()
-        .map_or(0, |(text, _)| display_width(text).saturating_add(1));
-    let label_budget = available.saturating_sub(badge_width);
-    let label = truncate_one_line(&item.label, label_budget);
-    let mut spans = vec![Span::styled(
-        format!(
-            "{marker} {label}{}",
-            " ".repeat(label_budget.saturating_sub(display_width(&label)))
-        ),
-        style,
-    )];
-    if let Some((text, tone)) = badge {
-        spans.push(Span::raw(" "));
-        spans.push(Span::styled(text, super::render::picker_badge_style(tone)));
-    }
-    Line::from(spans)
 }
 
 const DETAIL_BADGE_ROWS: usize = 2;
@@ -616,7 +376,7 @@ fn detail_badge_row(badge: &PickerBadge, width: usize) -> Line<'static> {
         // Extremely narrow panes: drop the label and keep a truncated badge.
         return Line::from(Span::styled(
             pad_text(&badge.text, width),
-            super::render::picker_badge_style(badge.tone),
+            super::picker_rows::picker_badge_style(badge.tone),
         ));
     }
     let badge_budget = width.saturating_sub(label_width);
@@ -624,7 +384,10 @@ fn detail_badge_row(badge: &PickerBadge, width: usize) -> Line<'static> {
     let used_width = label_width.saturating_add(display_width(&badge_text));
     Line::from(vec![
         Span::styled(label.to_string(), Theme::dim()),
-        Span::styled(badge_text, super::render::picker_badge_style(badge.tone)),
+        Span::styled(
+            badge_text,
+            super::picker_rows::picker_badge_style(badge.tone),
+        ),
         Span::raw(" ".repeat(width.saturating_sub(used_width))),
     ])
 }
@@ -658,6 +421,16 @@ fn detail_viewport_rows(
     rows.resize_with(viewport_rows, || {
         Line::from(Span::styled(" ".repeat(width.max(1)), Theme::dim()))
     });
+    // Fill the reserved gutter: a track when the detail overflows, blank space
+    // otherwise, so the text width never changes.
+    if super::scrollbar::scrollbar_thumb(line_count, viewport_rows, scroll, viewport_rows).is_some()
+    {
+        append_scrollbar_column(&mut rows, line_count, viewport_rows, scroll);
+    } else {
+        for line in &mut rows {
+            line.spans.push(Span::raw(" "));
+        }
+    }
     rows
 }
 
@@ -690,12 +463,22 @@ fn footer_line(layout: OverlayLayout, content: &OverlayContent<'_>) -> Line<'sta
             content.match_count
         )
     };
+    let pane_hint = match layout.panes {
+        OverlayPanes::NavOnly { .. } => None,
+        OverlayPanes::NavAndDetail { .. } => Some("←/→ pane"),
+    };
     let essential = [
         content.chrome.nav_keys_hint,
+        pane_hint.unwrap_or_default(),
         "PgUp/PgDn",
         content.footer,
         position.as_str(),
     ];
+    let essential = essential
+        .iter()
+        .copied()
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
     let detail = match layout.panes {
         OverlayPanes::NavOnly { .. } => None,
         OverlayPanes::NavAndDetail {
@@ -818,7 +601,11 @@ fn join_footer_segments<'a>(segments: impl IntoIterator<Item = &'a str>) -> Stri
     format!(" {}", super::composer_chrome::join_footer_parts(segments))
 }
 
-fn pane_header_line(layout: OverlayLayout, chrome: &OverlayChromeView<'_>) -> Line<'static> {
+fn pane_header_line(
+    layout: OverlayLayout,
+    chrome: &OverlayChromeView<'_>,
+    detail_focused: bool,
+) -> Line<'static> {
     match layout.panes {
         OverlayPanes::NavAndDetail {
             orientation: OverlayOrientation::SideBySide,
@@ -826,12 +613,18 @@ fn pane_header_line(layout: OverlayLayout, chrome: &OverlayChromeView<'_>) -> Li
             detail_width,
             ..
         } => {
+            // The focused pane keeps the strong label so ←/→ has visible effect.
+            let (nav_style, detail_style) = if detail_focused {
+                (Theme::dim(), Theme::text_strong())
+            } else {
+                (Theme::text_strong(), Theme::dim())
+            };
             let left = pad_text(chrome.nav_label, nav_width);
             let right = pad_text(chrome.detail_label, detail_width);
             Line::from(vec![
-                Span::styled(left, Theme::text_strong()),
+                Span::styled(left, nav_style),
                 Span::styled(SEPARATOR, Theme::dim()),
-                Span::styled(right, Theme::text_strong()),
+                Span::styled(right, detail_style),
             ])
         }
         OverlayPanes::NavAndDetail {
@@ -849,25 +642,6 @@ fn pane_header_line(layout: OverlayLayout, chrome: &OverlayChromeView<'_>) -> Li
             Theme::text_strong(),
             LineFill::PadToWidth,
         ),
-    }
-}
-
-/// Column of the side-by-side pane rule within a full outer-width border row.
-fn side_by_side_divider_col(layout: OverlayLayout) -> Option<usize> {
-    match layout.panes {
-        OverlayPanes::NavAndDetail {
-            orientation: OverlayOrientation::SideBySide,
-            nav_width,
-            ..
-        } => {
-            // left border │ + nav + leading space of " │ "
-            Some(1usize.saturating_add(nav_width).saturating_add(1))
-        }
-        OverlayPanes::NavAndDetail {
-            orientation: OverlayOrientation::Stacked,
-            ..
-        }
-        | OverlayPanes::NavOnly { .. } => None,
     }
 }
 

@@ -30,7 +30,7 @@ Usage: scripts/check_docs_ui_demo.sh [--check|--write] [--bin PATH] [--jobs N]
 
   --check   Fail when checked-in SVGs drift from a live PTY capture (default).
   --write   Regenerate dark and light docs asset paths from a live PTY capture.
-  --bin     Path to a debug rho binary (default: build target/debug/rho).
+  --bin     Path to a debug rho binary (skips the default rebuild of target/debug/rho).
   --jobs    Cargo job cap (default: CARGO_BUILD_JOBS or 12).
 EOF
 }
@@ -74,14 +74,11 @@ case "$(uname -s)" in
 esac
 
 if [[ -z "$bin_path" ]]; then
-  if [[ -f "$root/target/debug/rho" ]]; then
-    bin_path="$root/target/debug/rho"
-    echo "==> Reuse existing debug rho at $bin_path"
-  else
-    echo "==> Build debug rho for matrix mode"
-    cargo build -j "$jobs" -p rho-coding-agent --locked
-    bin_path="$root/target/debug/rho"
-  fi
+  # Always rebuild so rust-cache / earlier cargo steps cannot leave a stale
+  # target/debug/rho that captures a different screen than the checked-out source.
+  echo "==> Build debug rho for matrix mode"
+  cargo build -j "$jobs" -p rho-coding-agent --bin rho --locked
+  bin_path="$root/target/debug/rho"
 fi
 
 if [[ ! -x "$bin_path" && ! -f "$bin_path" ]]; then
@@ -89,23 +86,67 @@ if [[ ! -x "$bin_path" && ! -f "$bin_path" ]]; then
   exit 1
 fi
 
-args=(
+demo_args=(
   run -j "$jobs" -p rho-tui-pty --bin rho-pty-demo --locked --
   --bin "$bin_path"
 )
 
-if [[ "$mode" == "check" ]]; then
-  args+=(--check)
-  echo "==> Check docs TUI proof plate against live PTY capture"
-else
+if [[ "$mode" == "write" ]]; then
   echo "==> Write docs TUI proof plate from live PTY capture"
+  write_args=("${demo_args[@]}")
+  for asset in "${dark_assets[@]}"; do
+    write_args+=(--output "$asset")
+  done
+  for asset in "${light_assets[@]}"; do
+    write_args+=(--light-output "$asset")
+  done
+  cargo "${write_args[@]}"
+  exit 0
 fi
 
+echo "==> Check docs TUI proof plate against live PTY capture"
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/rho-ui-demo.XXXXXX")"
+cleanup() { rm -rf "$tmp"; }
+trap cleanup EXIT
+
+live_dark="$tmp/rho-ui-demo.svg"
+live_light="$tmp/rho-ui-demo-light.svg"
+live_screen="$tmp/screen.txt"
+
+check_args=(
+  "${demo_args[@]}"
+  --output "$live_dark"
+  --light-output "$live_light"
+  --screen-text "$live_screen"
+)
+cargo "${check_args[@]}"
+
+failed=0
+compare_asset() {
+  local expected="$1"
+  local actual="$2"
+  if cmp -s "$expected" "$actual"; then
+    echo "OK $expected"
+    return 0
+  fi
+  failed=1
+  echo "SVG drift at $expected" >&2
+  echo "regenerate with:" >&2
+  echo "  bash scripts/check_docs_ui_demo.sh --write" >&2
+  echo "--- diff: $expected vs live capture ---" >&2
+  diff -u "$expected" "$actual" >&2 || true
+}
+
 for asset in "${dark_assets[@]}"; do
-  args+=(--output "$asset")
+  compare_asset "$asset" "$live_dark"
 done
 for asset in "${light_assets[@]}"; do
-  args+=(--light-output "$asset")
+  compare_asset "$asset" "$live_light"
 done
 
-cargo "${args[@]}"
+if [[ "$failed" -ne 0 ]]; then
+  echo "--- live screen text ---" >&2
+  cat "$live_screen" >&2 || true
+  echo "error: one or more SVG outputs drifted from the live PTY capture" >&2
+  exit 1
+fi

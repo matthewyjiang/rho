@@ -134,3 +134,82 @@ fn complete_filter_skips_internal_agent_conversation_model_row() {
     picker.complete_filter();
     assert_eq!(picker.filter, "openai/gpt-5.5");
 }
+
+// Covers: fuzzy pickers must find items by any visible short field, not only
+// the internal value; a user typing a label or badge word must get a match.
+// Owner: tui picker filter policy
+#[test]
+fn fuzzy_filter_matches_label_section_and_badge() {
+    let mut labeled = item("anthropic/claude-fable-5");
+    labeled.value = "claude-fable-5".into();
+    let mut sectioned = item("gpt-oss:120b");
+    sectioned.section = Some("OLLAMA CLOUD".into());
+    let mut badged = item("kimi-k3");
+    badged.badge = Some(super::PickerBadge {
+        text: "pinned".into(),
+        tone: super::PickerBadgeTone::Favorite,
+    });
+    let items = vec![labeled, sectioned, badged];
+
+    let matches_for = |filter: &str| super::fuzzy_picker_matching_indices(&items, filter);
+    assert_eq!(matches_for("anthropic"), vec![0], "label word must match");
+    assert_eq!(matches_for("ollama"), vec![1], "section word must match");
+    assert_eq!(matches_for("pinned"), vec![2], "badge word must match");
+    assert_eq!(matches_for("zzzz"), Vec::<usize>::new());
+}
+
+// Covers: the wheel scrolls the nav viewport without moving the selection,
+// clamps to the overflow range, and keyboard navigation afterwards brings the
+// window back to the selection with minimal movement.
+// Owner: tui picker nav scroll policy
+#[test]
+fn nav_wheel_scroll_is_independent_of_selection() {
+    let items = (0..20).map(|i| item(&format!("item-{i:02}"))).collect();
+    let mut picker = UiPicker::new("list", items, PickerAction::ViewAgent);
+    let viewport = 5;
+    assert_eq!(picker.nav_window_start(viewport), 0);
+
+    picker.scroll_nav_by(6, viewport);
+    assert_eq!(picker.nav_window_start(viewport), 6);
+    assert_eq!(picker.selected, 0, "wheel must not move the selection");
+
+    picker.scroll_nav_by(100, viewport);
+    assert_eq!(picker.nav_window_start(viewport), 15, "clamps to max start");
+
+    picker.select_next();
+    assert_eq!(picker.selected, 1);
+    assert_eq!(
+        picker.nav_window_start(viewport),
+        1,
+        "keyboard navigation snaps the window back to the selection"
+    );
+}
+
+// Covers: clicking a nav row selects its item, ignores section headers, and
+// never shifts the viewport.
+// Owner: tui picker mouse selection
+#[test]
+fn click_selects_nav_row_and_keeps_window() {
+    let items = (0..10)
+        .map(|i| {
+            let mut it = item(&format!("row-{i}"));
+            it.section = Some("GROUP".into());
+            it
+        })
+        .collect();
+    let mut picker = UiPicker::new("list", items, PickerAction::ViewAgent);
+    let viewport = 5;
+    picker.scroll_nav_by(3, viewport);
+
+    assert!(
+        !picker.select_nav_row(0, viewport),
+        "section header rows are not selectable"
+    );
+    assert!(picker.select_nav_row(4, viewport));
+    assert_eq!(picker.selected, 3, "row space offsets by the header row");
+    assert_eq!(
+        picker.nav_window_start(viewport),
+        3,
+        "click must not shift the window"
+    );
+}

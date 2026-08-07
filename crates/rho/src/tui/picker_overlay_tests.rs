@@ -50,13 +50,6 @@ fn long_detail() -> String {
         .join("\n")
 }
 
-fn nav_and_detail_panes(layout: &OverlayLayout) -> OverlayPanes {
-    match layout.panes {
-        panes @ OverlayPanes::NavAndDetail { .. } => panes,
-        OverlayPanes::NavOnly { .. } => panic!("expected nav+detail panes, got nav-only"),
-    }
-}
-
 #[test]
 fn section_headers_follow_filtered_items_without_becoming_selectable() {
     let mut picker = sample_picker("agent detail", "worker detail");
@@ -102,25 +95,6 @@ fn detail_badge_rows_never_exceed_narrow_overlay_widths() {
 }
 
 #[test]
-fn tiny_stacked_layout_keeps_viewports_within_the_body() {
-    let layout = picker_overlay_layout(Rect::new(0, 0, 20, 1), /*has_details*/ true);
-    let OverlayPanes::NavAndDetail {
-        orientation,
-        detail_viewport_rows,
-        nav_viewport_rows,
-        ..
-    } = nav_and_detail_panes(&layout)
-    else {
-        unreachable!()
-    };
-
-    assert_eq!(orientation, OverlayOrientation::Stacked);
-    let separator_rows = usize::from(layout.body_rows > 2);
-    assert!(detail_viewport_rows + nav_viewport_rows + separator_rows <= layout.body_rows);
-    assert_eq!(nav_viewport_rows, 1);
-}
-
-#[test]
 fn clamp_detail_scroll_respects_viewport() {
     assert_eq!(clamp_detail_scroll(100, 12, 5), 7);
     assert_eq!(clamp_detail_scroll(0, 3, 5), 0);
@@ -130,8 +104,8 @@ fn clamp_detail_scroll_respects_viewport() {
 #[test]
 fn overlay_detail_end_scroll_uses_max_without_sentinel() {
     let area = Rect::new(0, 0, 80, 16);
-    let layout = picker_overlay_layout(area, /*has_details*/ true);
     let mut picker = sample_picker(&long_detail(), "other");
+    let layout = picker_overlay_layout(area, picker.overlay_sizing());
     let viewport = layout.detail_viewport().expect("detail viewport");
     picker.scroll_detail_end(viewport);
     let line_count = overlay_detail_lines(picker.selected_detail(), viewport.width).len();
@@ -183,5 +157,51 @@ fn overlay_empty_match_state_is_visible() {
     assert!(
         text.contains(expected),
         "expected empty-state label {expected:?} in overlay body: {text:?}"
+    );
+}
+
+// Covers: overflowing panes must render a scrollbar so overflow is visible;
+// panes that fit stay bar-free.
+// Owner: tui picker_overlay geometry
+#[test]
+fn overflowing_panes_render_scrollbars() {
+    let items = (0..50)
+        .map(|index| PickerItem {
+            section: None,
+            label: format!("agent-{index:02}"),
+            detail: Some(long_detail()),
+            preview: None,
+            badge: None,
+            value: format!("agent-{index:02}"),
+            selection_verb: None,
+        })
+        .collect();
+    let picker =
+        UiPicker::new("agents", items, PickerAction::ViewAgent).with_layout(PickerLayout::Overlay);
+    let frame = render_picker_overlay(&picker, Rect::new(0, 0, 100, 24));
+    let body_line = frame
+        .lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .find(|text| text.contains('█'))
+        .expect("expected a scrollbar thumb in an overflowing overlay");
+    // Both panes overflow, so the thumb row carries one thumb per pane.
+    assert_eq!(body_line.matches('█').count(), 2, "nav and detail thumbs");
+
+    let short = sample_picker("fits", "also fits");
+    let frame = render_picker_overlay(&short, Rect::new(0, 0, 100, 24));
+    let text = frame
+        .lines
+        .iter()
+        .flat_map(|line| line.spans.iter().map(|span| span.content.as_ref()))
+        .collect::<String>();
+    assert!(
+        !text.contains('█'),
+        "fitting panes must not render a scrollbar"
     );
 }

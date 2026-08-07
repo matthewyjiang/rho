@@ -64,6 +64,16 @@ pub(super) struct UiPicker {
     pub(super) badge_placement: PickerBadgePlacement,
     /// Top visible detail line for overlay pickers.
     pub(super) detail_scroll: usize,
+    /// Pane that keyboard scrolling targets in overlay pickers.
+    pub(super) overlay_focus: OverlayFocus,
+    /// Manual nav viewport offset (row space). Only used while
+    /// `nav_follows_selection` is false.
+    nav_scroll: usize,
+    /// Whether the nav viewport tracks the selection (keyboard mode) or holds
+    /// a manual wheel-scrolled offset.
+    nav_follows_selection: bool,
+    /// Nav row under the mouse pointer, in row space.
+    hovered_nav_row: Option<usize>,
     pub(super) confirm_verb: Option<String>,
     /// When set, overrides [`PickerAction::uses_regex_filter`] for this picker.
     pub(super) force_fuzzy_filter: bool,
@@ -105,6 +115,17 @@ pub(super) enum PickerBadgeTone {
 pub(super) enum PickerBadgePlacement {
     #[default]
     Navigation,
+    Detail,
+}
+
+/// Which overlay pane keyboard scrolling acts on.
+///
+/// Only meaningful while an overlay picker shows a detail pane; nav-only
+/// overlays and list pickers always scroll the nav list.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum OverlayFocus {
+    #[default]
+    Nav,
     Detail,
 }
 
@@ -217,6 +238,10 @@ impl UiPicker {
             layout: PickerLayout::List,
             badge_placement: PickerBadgePlacement::Navigation,
             detail_scroll: 0,
+            overlay_focus: OverlayFocus::default(),
+            nav_scroll: 0,
+            nav_follows_selection: true,
+            hovered_nav_row: None,
             confirm_verb: None,
             force_fuzzy_filter: false,
             overlay_chrome: None,
@@ -271,6 +296,94 @@ impl UiPicker {
         self.is_overlay() && self.has_item_details()
     }
 
+    pub(super) fn focus_overlay_pane(&mut self, focus: OverlayFocus) {
+        self.overlay_focus = focus;
+    }
+
+    /// Whether keyboard scrolling currently targets the detail pane.
+    pub(super) fn detail_pane_focused(&self) -> bool {
+        self.has_scrollable_detail() && self.overlay_focus == OverlayFocus::Detail
+    }
+
+    /// Selection changed: show it, and return the nav viewport to it.
+    fn on_selection_changed(&mut self) {
+        self.reset_detail_scroll();
+        self.nav_follows_selection = true;
+    }
+
+    /// First visible nav row for a `viewport_rows` tall nav pane.
+    ///
+    /// In keyboard mode the window moves the least amount that keeps the
+    /// selection visible; after a wheel scroll it holds the manual offset even
+    /// when the selection leaves the window.
+    pub(super) fn nav_window_start(&self, viewport_rows: usize) -> usize {
+        let matching = self.matching_indices();
+        let total = super::picker_rows::picker_row_count(&self.items, &matching);
+        let viewport_rows = viewport_rows.max(1);
+        let max_start = total.saturating_sub(viewport_rows);
+        let base = self.nav_scroll.min(max_start);
+        if !self.nav_follows_selection {
+            return base;
+        }
+        let selected_row =
+            super::picker_rows::selected_row_index(&self.items, &matching, self.selected);
+        let lowest = super::picker_rows::scroll_window_start(selected_row, viewport_rows);
+        let highest = selected_row.min(max_start);
+        base.clamp(lowest.min(highest), highest)
+    }
+
+    /// Wheel scroll of the nav viewport without moving the selection.
+    pub(super) fn scroll_nav_by(&mut self, delta: isize, viewport_rows: usize) {
+        let current = self.nav_window_start(viewport_rows);
+        let max_start = {
+            let matching = self.matching_indices();
+            super::picker_rows::picker_row_count(&self.items, &matching)
+                .saturating_sub(viewport_rows.max(1))
+        };
+        self.nav_scroll = current.saturating_add_signed(delta).min(max_start);
+        self.nav_follows_selection = false;
+    }
+
+    /// Nav row under the mouse pointer, in row space.
+    pub(super) fn hovered_nav_row(&self) -> Option<usize> {
+        self.hovered_nav_row
+    }
+
+    /// Record the nav row under the mouse pointer, or `None` off the rows.
+    pub(super) fn set_hovered_nav_row(&mut self, row_index: Option<usize>) {
+        self.hovered_nav_row = row_index;
+    }
+
+    /// Item index shown at a row-space nav row, skipping section headers.
+    pub(super) fn nav_item_at_row(&self, row_index: usize) -> Option<usize> {
+        let matching = self.matching_indices();
+        super::picker_rows::item_index_at_row(&self.items, &matching, row_index)
+    }
+
+    /// Select the item at a row-space nav row (mouse click).
+    ///
+    /// Pins the current window first so the click never shifts the viewport.
+    pub(super) fn select_nav_row(&mut self, row_index: usize, viewport_rows: usize) -> bool {
+        let Some(index) = self.nav_item_at_row(row_index) else {
+            return false;
+        };
+        self.nav_scroll = self.nav_window_start(viewport_rows);
+        self.nav_follows_selection = true;
+        if index != self.selected {
+            self.selected = index;
+            self.on_selection_changed();
+        }
+        true
+    }
+
+    /// Content hints the overlay uses to size its outer box.
+    pub(super) fn overlay_sizing(&self) -> super::picker_overlay_layout::OverlaySizing {
+        super::picker_overlay_layout::OverlaySizing {
+            has_details: self.has_item_details(),
+            nav_rows: super::picker_rows::rows(&self.items, 0..self.items.len()).count(),
+        }
+    }
+
     pub(super) fn select_by_offset(&mut self, delta: isize) {
         let next = {
             let matches = self.matching_indices();
@@ -292,7 +405,7 @@ impl UiPicker {
         };
         if next != self.selected {
             self.selected = next;
-            self.reset_detail_scroll();
+            self.on_selection_changed();
         }
     }
 
@@ -303,7 +416,7 @@ impl UiPicker {
     pub(super) fn scroll_detail_by(
         &mut self,
         delta: isize,
-        viewport: super::picker_overlay::DetailViewport,
+        viewport: super::picker_overlay_layout::DetailViewport,
     ) {
         if !self.has_scrollable_detail() {
             return;
@@ -323,7 +436,10 @@ impl UiPicker {
         self.reset_detail_scroll();
     }
 
-    pub(super) fn scroll_detail_end(&mut self, viewport: super::picker_overlay::DetailViewport) {
+    pub(super) fn scroll_detail_end(
+        &mut self,
+        viewport: super::picker_overlay_layout::DetailViewport,
+    ) {
         if !self.has_scrollable_detail() {
             return;
         }
@@ -334,7 +450,7 @@ impl UiPicker {
     pub(super) fn scroll_detail_page(
         &mut self,
         delta_pages: isize,
-        viewport: super::picker_overlay::DetailViewport,
+        viewport: super::picker_overlay_layout::DetailViewport,
     ) {
         if !self.has_scrollable_detail() {
             return;
@@ -343,7 +459,10 @@ impl UiPicker {
         self.scroll_detail_by(delta_pages.saturating_mul(rows), viewport);
     }
 
-    pub(super) fn clamp_detail_scroll(&mut self, viewport: super::picker_overlay::DetailViewport) {
+    pub(super) fn clamp_detail_scroll(
+        &mut self,
+        viewport: super::picker_overlay_layout::DetailViewport,
+    ) {
         if !self.has_scrollable_detail() {
             return;
         }
@@ -538,7 +657,7 @@ impl UiPicker {
             }
         };
         self.selected = next;
-        self.reset_detail_scroll();
+        self.on_selection_changed();
     }
 
     pub(super) fn select_next(&mut self) {
@@ -554,7 +673,7 @@ impl UiPicker {
             matches[(position + 1) % matches.len()]
         };
         self.selected = next;
-        self.reset_detail_scroll();
+        self.on_selection_changed();
     }
 
     pub(super) fn push_filter_char(&mut self, ch: char) {
@@ -594,7 +713,7 @@ impl UiPicker {
         let first = self.matching_indices().first().copied();
         if let Some(index) = first {
             self.selected = index;
-            self.reset_detail_scroll();
+            self.on_selection_changed();
         }
     }
 
@@ -602,7 +721,7 @@ impl UiPicker {
         let last = self.matching_indices().last().copied();
         if let Some(index) = last {
             self.selected = index;
-            self.reset_detail_scroll();
+            self.on_selection_changed();
         }
     }
 
@@ -677,9 +796,7 @@ fn fuzzy_matching_indices(items: &[PickerItem], filter: &str) -> Vec<usize> {
     let mut matches = items
         .iter()
         .enumerate()
-        .filter_map(|(index, item)| {
-            fuzzy_match_score(&item.value, filter).map(|score| (index, score))
-        })
+        .filter_map(|(index, item)| fuzzy_item_score(item, filter).map(|score| (index, score)))
         .collect::<Vec<_>>();
     matches.sort_by(|(left_index, left_score), (right_index, right_score)| {
         right_score
@@ -687,6 +804,23 @@ fn fuzzy_matching_indices(items: &[PickerItem], filter: &str) -> Vec<usize> {
             .then_with(|| left_index.cmp(right_index))
     });
     matches.into_iter().map(|(index, _)| index).collect()
+}
+
+/// Best fuzzy score across the fields a user can see and reasonably type.
+///
+/// Long free text (detail, preview) stays out: subsequence matching over a
+/// paragraph matches almost any filter and would drown the ranking.
+fn fuzzy_item_score(item: &PickerItem, filter: &str) -> Option<i64> {
+    [
+        Some(item.label.as_str()),
+        Some(item.value.as_str()),
+        item.section.as_deref(),
+        item.badge.as_ref().map(|badge| badge.text.as_str()),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(|field| fuzzy_match_score(field, filter))
+    .max()
 }
 
 fn picker_haystack(item: &PickerItem) -> String {
@@ -755,9 +889,9 @@ impl super::App {
         if !picker.has_scrollable_detail() {
             return;
         }
-        let layout = super::picker_overlay::picker_overlay_layout(
+        let layout = super::picker_overlay_layout::picker_overlay_layout(
             ratatui::layout::Rect::new(0, 0, size.width, size.height),
-            /*has_details*/ true,
+            picker.overlay_sizing(),
         );
         if let Some(viewport) = layout.detail_viewport() {
             picker.clamp_detail_scroll(viewport);

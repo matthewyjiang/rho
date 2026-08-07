@@ -2,9 +2,26 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{layout::Rect, DefaultTerminal};
 
 use super::{
-    picker_overlay::{picker_overlay_layout, OverlayPageTarget},
-    App, InteractiveRuntime, UiPicker,
+    picker_overlay_layout::{
+        picker_overlay_layout, OverlayLayout, OverlayPane, OverlayScrollTargets,
+    },
+    App, ComposerMode, InteractiveRuntime, OverlayFocus, UiPicker,
 };
+
+/// Lines one wheel event scrolls in either overlay pane. Tied to the history
+/// wheel speed so the two cannot drift.
+const PICKER_WHEEL_LINES: isize = super::HISTORY_MOUSE_SCROLL_LINES as isize;
+
+/// Pointer events an open picker can consume.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PickerMouseEvent {
+    /// Wheel step, negative up and positive down.
+    Wheel(isize),
+    /// Left button press.
+    Click,
+    /// Pointer movement.
+    Move,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PickerKeyEffect {
@@ -16,7 +33,27 @@ enum PickerKeyEffect {
     DeleteRow,
 }
 
-fn overlay_page_target(picker: &UiPicker, terminal: &DefaultTerminal) -> Option<OverlayPageTarget> {
+/// Row-space nav row under the pointer, or `None` off the nav items.
+fn overlay_nav_row_at(
+    picker: &UiPicker,
+    layout: OverlayLayout,
+    column: u16,
+    row: u16,
+) -> Option<usize> {
+    let hit = layout
+        .pane_hit(column, row)
+        .filter(|hit| hit.pane == OverlayPane::Nav)?;
+    let viewport_rows = layout.scroll_targets().nav_rows;
+    let row_index = picker
+        .nav_window_start(viewport_rows)
+        .checked_add(hit.pane_row)?;
+    picker.nav_item_at_row(row_index).map(|_| row_index)
+}
+
+fn overlay_scroll_targets(
+    picker: &UiPicker,
+    terminal: &DefaultTerminal,
+) -> Option<OverlayScrollTargets> {
     if !picker.is_overlay() {
         return None;
     }
@@ -24,78 +61,103 @@ fn overlay_page_target(picker: &UiPicker, terminal: &DefaultTerminal) -> Option<
     Some(
         picker_overlay_layout(
             Rect::new(0, 0, size.width, size.height),
-            picker.has_item_details(),
+            picker.overlay_sizing(),
         )
-        .page_target(),
+        .scroll_targets(),
     )
 }
 
-fn apply_page_key(picker: &mut UiPicker, target: OverlayPageTarget, direction: isize) {
-    match target {
-        OverlayPageTarget::Detail(viewport) => {
-            picker.scroll_detail_page(direction, viewport);
-        }
-        OverlayPageTarget::Nav { rows } => {
-            picker.select_by_offset(direction.saturating_mul(rows as isize));
-        }
+/// Detail viewport when keyboard scrolling targets the detail pane.
+fn focused_detail_viewport(
+    picker: &UiPicker,
+    targets: OverlayScrollTargets,
+) -> Option<super::picker_overlay_layout::DetailViewport> {
+    if !picker.detail_pane_focused() {
+        return None;
     }
+    targets.detail
 }
 
-fn apply_home_end_key(picker: &mut UiPicker, target: OverlayPageTarget, home: bool) {
-    match target {
-        OverlayPageTarget::Detail(viewport) => {
-            if home {
-                picker.scroll_detail_home();
-            } else {
-                picker.scroll_detail_end(viewport);
-            }
+fn apply_page_key(picker: &mut UiPicker, targets: OverlayScrollTargets, direction: isize) {
+    if let Some(viewport) = focused_detail_viewport(picker, targets) {
+        picker.scroll_detail_page(direction, viewport);
+        return;
+    }
+    picker.select_by_offset(direction.saturating_mul(targets.nav_rows as isize));
+}
+
+fn apply_home_end_key(picker: &mut UiPicker, targets: OverlayScrollTargets, home: bool) {
+    if let Some(viewport) = focused_detail_viewport(picker, targets) {
+        if home {
+            picker.scroll_detail_home();
+        } else {
+            picker.scroll_detail_end(viewport);
         }
-        OverlayPageTarget::Nav { .. } => {
-            if home {
-                picker.select_first_match();
-            } else {
-                picker.select_last_match();
-            }
-        }
+        return;
+    }
+    if home {
+        picker.select_first_match();
+    } else {
+        picker.select_last_match();
     }
 }
 
 fn apply_picker_key(
     picker: &mut UiPicker,
     key: KeyEvent,
-    page_target: Option<OverlayPageTarget>,
+    targets: Option<OverlayScrollTargets>,
     space_confirms: bool,
 ) -> PickerKeyEffect {
     match (key.modifiers, key.code) {
         (KeyModifiers::NONE, KeyCode::Up) => {
-            picker.select_previous();
+            if let Some(viewport) =
+                targets.and_then(|targets| focused_detail_viewport(picker, targets))
+            {
+                picker.scroll_detail_by(-1, viewport);
+            } else {
+                picker.select_previous();
+            }
             PickerKeyEffect::Handled
         }
         (KeyModifiers::NONE, KeyCode::Down) => {
-            picker.select_next();
+            if let Some(viewport) =
+                targets.and_then(|targets| focused_detail_viewport(picker, targets))
+            {
+                picker.scroll_detail_by(1, viewport);
+            } else {
+                picker.select_next();
+            }
+            PickerKeyEffect::Handled
+        }
+        (KeyModifiers::NONE, KeyCode::Left) if picker.has_scrollable_detail() => {
+            picker.focus_overlay_pane(OverlayFocus::Nav);
+            PickerKeyEffect::Handled
+        }
+        (KeyModifiers::NONE, KeyCode::Right) if picker.has_scrollable_detail() => {
+            picker.focus_overlay_pane(OverlayFocus::Detail);
             PickerKeyEffect::Handled
         }
         (KeyModifiers::NONE, KeyCode::PageUp) => {
-            if let Some(target) = page_target {
-                apply_page_key(picker, target, -1);
+            if let Some(targets) = targets {
+                apply_page_key(picker, targets, -1);
             }
             PickerKeyEffect::Handled
         }
         (KeyModifiers::NONE, KeyCode::PageDown) => {
-            if let Some(target) = page_target {
-                apply_page_key(picker, target, 1);
+            if let Some(targets) = targets {
+                apply_page_key(picker, targets, 1);
             }
             PickerKeyEffect::Handled
         }
         (KeyModifiers::NONE, KeyCode::Home) => {
-            if let Some(target) = page_target {
-                apply_home_end_key(picker, target, /*home*/ true);
+            if let Some(targets) = targets {
+                apply_home_end_key(picker, targets, /*home*/ true);
             }
             PickerKeyEffect::Handled
         }
         (KeyModifiers::NONE, KeyCode::End) => {
-            if let Some(target) = page_target {
-                apply_home_end_key(picker, target, /*home*/ false);
+            if let Some(targets) = targets {
+                apply_home_end_key(picker, targets, /*home*/ false);
             }
             PickerKeyEffect::Handled
         }
@@ -127,6 +189,85 @@ fn apply_picker_key(
 }
 
 impl App {
+    /// Pointer event routed to an open picker. Returns true when the picker
+    /// consumed it.
+    ///
+    /// An open overlay swallows every pointer event it is offered, even
+    /// outside its box, so the history behind a popup never scrolls or
+    /// selects by accident. An inline list picker has no box: only the wheel
+    /// reaches it, stepping the selection because it has no viewport of its
+    /// own; clicks and movement fall through to the history.
+    ///
+    /// Over an overlay the wheel moves viewports, never the selection. The
+    /// pane under the pointer takes the scroll, falling back to the focused
+    /// pane when the pointer sits outside the box.
+    pub(super) fn route_picker_mouse(
+        &mut self,
+        event: PickerMouseEvent,
+        column: u16,
+        row: u16,
+        width: u16,
+        height: u16,
+    ) -> bool {
+        let ComposerMode::Picker(picker) = self.input_ui.composer_mut() else {
+            return false;
+        };
+        if !picker.is_overlay() {
+            return match event {
+                PickerMouseEvent::Wheel(delta) => {
+                    picker.select_by_offset(delta);
+                    true
+                }
+                PickerMouseEvent::Click | PickerMouseEvent::Move => false,
+            };
+        }
+        let layout = picker_overlay_layout(Rect::new(0, 0, width, height), picker.overlay_sizing());
+        match event {
+            PickerMouseEvent::Wheel(delta) => {
+                let fallback = if picker.detail_pane_focused() {
+                    OverlayPane::Detail
+                } else {
+                    OverlayPane::Nav
+                };
+                let pane = layout
+                    .pane_hit(column, row)
+                    .map_or(fallback, |hit| hit.pane);
+                match pane {
+                    OverlayPane::Nav => {
+                        let rows = layout.scroll_targets().nav_rows;
+                        picker.scroll_nav_by(delta.saturating_mul(PICKER_WHEEL_LINES), rows);
+                    }
+                    OverlayPane::Detail => {
+                        if let Some(viewport) = layout.detail_viewport() {
+                            picker.scroll_detail_by(
+                                delta.saturating_mul(PICKER_WHEEL_LINES),
+                                viewport,
+                            );
+                        }
+                    }
+                }
+            }
+            PickerMouseEvent::Click => match layout.pane_hit(column, row) {
+                Some(hit) if hit.pane == OverlayPane::Nav => {
+                    let viewport_rows = layout.scroll_targets().nav_rows;
+                    let row_index = picker.nav_window_start(viewport_rows) + hit.pane_row;
+                    if picker.select_nav_row(row_index, viewport_rows) {
+                        picker.focus_overlay_pane(OverlayFocus::Nav);
+                    }
+                }
+                Some(hit) if hit.pane == OverlayPane::Detail && picker.has_scrollable_detail() => {
+                    picker.focus_overlay_pane(OverlayFocus::Detail);
+                }
+                _ => {}
+            },
+            PickerMouseEvent::Move => {
+                let hovered = overlay_nav_row_at(picker, layout, column, row);
+                picker.set_hovered_nav_row(hovered);
+            }
+        }
+        true
+    }
+
     pub(super) async fn handle_picker_key(
         &mut self,
         key: KeyEvent,
@@ -148,8 +289,8 @@ impl App {
             let super::ComposerMode::Picker(picker) = self.input_ui.composer_mut() else {
                 return Ok(false);
             };
-            let page_target = overlay_page_target(picker, terminal);
-            apply_picker_key(picker, key, page_target, space_confirms)
+            let targets = overlay_scroll_targets(picker, terminal);
+            apply_picker_key(picker, key, targets, space_confirms)
         };
 
         match effect {
@@ -208,8 +349,8 @@ impl App {
             let super::ComposerMode::Picker(picker) = self.input_ui.composer_mut() else {
                 return Ok(false);
             };
-            let page_target = overlay_page_target(picker, terminal);
-            apply_picker_key(picker, key, page_target, space_confirms)
+            let targets = overlay_scroll_targets(picker, terminal);
+            apply_picker_key(picker, key, targets, space_confirms)
         };
 
         match effect {

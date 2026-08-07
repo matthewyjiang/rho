@@ -360,8 +360,8 @@ fn picker_lists_more_items_on_a_taller_viewport() {
             .count()
     };
 
-    assert_eq!(item_rows(18), 6);
-    assert_eq!(item_rows(40), 28);
+    assert_eq!(item_rows(18), 8);
+    assert_eq!(item_rows(40), 30);
     // A viewport with no room left still shows the selected item.
     assert_eq!(item_rows(4), 1);
 }

@@ -5,6 +5,7 @@ use ratatui::{backend::Backend, layout::Rect, Terminal};
 
 use super::{
     copy_interaction::{code_block_copy_target_at, selection_position, selection_position_clamped},
+    picker_input::PickerMouseEvent,
     render::tool_entry_lines,
     text_selection::{screen_lines, CopyNotice, TextSelection},
     tool_output_ui::{expandable_tool_entry, tool_output_toggleable},
@@ -38,6 +39,15 @@ impl App {
         let now = Instant::now();
         match kind {
             MouseEventKind::ScrollUp => {
+                if self.route_picker_mouse(
+                    PickerMouseEvent::Wheel(-1),
+                    column,
+                    row,
+                    size.width,
+                    size.height,
+                ) {
+                    return Ok(());
+                }
                 self.screen_selection = None;
                 self.history.set_hovered_code_block_copy(None);
                 self.subagent_panel.clear_pointer_state();
@@ -51,6 +61,15 @@ impl App {
                 );
             }
             MouseEventKind::ScrollDown => {
+                if self.route_picker_mouse(
+                    PickerMouseEvent::Wheel(1),
+                    column,
+                    row,
+                    size.width,
+                    size.height,
+                ) {
+                    return Ok(());
+                }
                 self.screen_selection = None;
                 self.history.set_hovered_code_block_copy(None);
                 self.subagent_panel.clear_pointer_state();
@@ -64,6 +83,15 @@ impl App {
                 );
             }
             MouseEventKind::Down(MouseButton::Left) => {
+                if self.route_picker_mouse(
+                    PickerMouseEvent::Click,
+                    column,
+                    row,
+                    size.width,
+                    size.height,
+                ) {
+                    return Ok(());
+                }
                 self.screen_selection = None;
                 let layout = self.screen_layout(screen, now);
                 let (history, history_start) =
@@ -233,6 +261,15 @@ impl App {
             MouseEventKind::Moved if self.last_mouse_position == Some((column, row)) => {}
             MouseEventKind::Moved => {
                 self.last_mouse_position = Some((column, row));
+                if self.route_picker_mouse(
+                    PickerMouseEvent::Move,
+                    column,
+                    row,
+                    size.width,
+                    size.height,
+                ) {
+                    return Ok(());
+                }
                 let layout = self.screen_layout(screen, now);
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
                 let (history, history_start) =
