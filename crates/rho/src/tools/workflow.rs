@@ -13,6 +13,12 @@ use crate::workflow::{PlanId, RunId};
 
 use super::sdk_registry::StaticToolBundle;
 
+#[path = "workflow_output.rs"]
+mod output;
+use output::bounded_result;
+#[cfg(test)]
+use output::format_workflow_result;
+
 pub(crate) const NAME: &str = "workflow";
 
 pub(crate) fn sdk_bundle(
@@ -250,34 +256,6 @@ impl Tool for WorkflowTool {
             ))
         })
     }
-}
-
-fn bounded_result(
-    result: &WorkflowToolResult,
-    max_output_bytes: usize,
-) -> Result<String, ToolError> {
-    let serialized = serde_json::to_string_pretty(result)
-        .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
-    if serialized.len() <= max_output_bytes {
-        return Ok(serialized);
-    }
-    let summary = serde_json::to_string_pretty(&serde_json::json!({
-        "truncated": true,
-        "reason": "workflow summary exceeded the tool output budget",
-        "requested_bytes": serialized.len(),
-        "limit_bytes": max_output_bytes,
-    }))
-    .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
-    if summary.len() <= max_output_bytes {
-        return Ok(summary);
-    }
-    Err(ToolError::new(
-        ToolErrorKind::Execution,
-        format!(
-            "workflow tool output budget is too small: accepted limit {max_output_bytes}, required {}",
-            summary.len()
-        ),
-    ))
 }
 
 fn workflow_schema() -> serde_json::Value {
