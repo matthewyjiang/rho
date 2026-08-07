@@ -5,38 +5,93 @@
 
 use crate::screen::{CellColor, ScreenCell, ScreenModel};
 
-/// Color scheme for the static proof-plate SVG.
+/// Full color contract for one static proof-plate render.
 ///
-/// Matrix captures use ANSI indexed colors. The scheme maps those indexes (and
-/// default/frame chrome) so one screen can render for dark or light docs.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SvgColorScheme {
+/// Matrix captures use ANSI indexed colors. One palette owns chrome defaults and
+/// the ANSI-16 map so callers cannot mix light ANSI with dark frame colors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SvgPalette {
+    pub default_fg: Rgb,
+    pub default_bg: Rgb,
+    pub frame_bg: Rgb,
+    pub frame_stroke: Rgb,
+    pub ansi16: [Rgb; 16],
+}
+
+impl SvgPalette {
     /// GitHub-dark terminal well used by the README and dark docs proof plate.
-    #[default]
-    Dark,
-    /// GitHub Primer light terminal well for the light docs proof plate.
+    pub const fn github_dark() -> Self {
+        Self {
+            default_fg: Rgb::new(0xc9, 0xd1, 0xd9),
+            default_bg: Rgb::new(0x0d, 0x11, 0x17),
+            frame_bg: Rgb::new(0x09, 0x0c, 0x10),
+            frame_stroke: Rgb::new(0x30, 0x36, 0x3d),
+            ansi16: [
+                Rgb::new(0x0d, 0x11, 0x17), // 0 black
+                Rgb::new(0xff, 0x7b, 0x72), // 1 red
+                Rgb::new(0x3f, 0xb9, 0x50), // 2 green
+                Rgb::new(0xd2, 0x99, 0x22), // 3 yellow
+                Rgb::new(0x58, 0xa6, 0xff), // 4 blue
+                Rgb::new(0xbc, 0x8c, 0xff), // 5 magenta
+                Rgb::new(0x39, 0xc5, 0xcf), // 6 cyan
+                Rgb::new(0xc9, 0xd1, 0xd9), // 7 white
+                Rgb::new(0x6e, 0x76, 0x81), // 8 bright black
+                Rgb::new(0xff, 0xa1, 0x98), // 9 bright red
+                Rgb::new(0x56, 0xd3, 0x64), // 10 bright green
+                Rgb::new(0xe3, 0xb3, 0x41), // 11 bright yellow
+                Rgb::new(0x79, 0xc0, 0xff), // 12 bright blue
+                Rgb::new(0xd2, 0xa8, 0xff), // 13 bright magenta
+                Rgb::new(0x56, 0xd4, 0xdd), // 14 bright cyan
+                Rgb::new(0xf0, 0xf3, 0xf6), // 15 bright white
+            ],
+        }
+    }
+
+    /// Primer light terminal well for the light docs proof plate.
     ///
     /// ANSI slots match github-vscode-theme `light_default` terminal.* tokens.
-    Light,
+    /// Index 15 stays near-white so block text on dark ANSI washes keeps contrast.
+    /// Body ink for Default cells comes from `default_fg`, not slot 15.
+    pub const fn primer_light() -> Self {
+        Self {
+            default_fg: Rgb::new(0x1f, 0x23, 0x28),
+            default_bg: Rgb::new(0xff, 0xff, 0xff),
+            frame_bg: Rgb::new(0xf6, 0xf8, 0xfa),
+            frame_stroke: Rgb::new(0xd0, 0xd7, 0xde),
+            ansi16: [
+                Rgb::new(0x24, 0x29, 0x2f), // 0 black
+                Rgb::new(0xcf, 0x22, 0x2e), // 1 red
+                Rgb::new(0x11, 0x63, 0x29), // 2 green
+                Rgb::new(0x4d, 0x2d, 0x00), // 3 yellow
+                Rgb::new(0x09, 0x69, 0xda), // 4 blue
+                Rgb::new(0x82, 0x50, 0xdf), // 5 magenta
+                Rgb::new(0x1b, 0x7c, 0x83), // 6 cyan
+                Rgb::new(0x6e, 0x77, 0x81), // 7 white
+                Rgb::new(0x57, 0x60, 0x6a), // 8 bright black
+                Rgb::new(0xa4, 0x0e, 0x26), // 9 bright red
+                Rgb::new(0x1a, 0x7f, 0x37), // 10 bright green
+                Rgb::new(0x63, 0x3c, 0x01), // 11 bright yellow
+                Rgb::new(0x21, 0x8b, 0xff), // 12 bright blue
+                Rgb::new(0xa4, 0x75, 0xf9), // 13 bright magenta
+                Rgb::new(0x31, 0x92, 0xaa), // 14 bright cyan
+                Rgb::new(0xff, 0xff, 0xff), // 15 bright white
+            ],
+        }
+    }
+
+    fn indexed(self, index: u8) -> Rgb {
+        self.ansi16[index as usize]
+    }
 }
 
 /// GitHub-dark terminal well used by the docs proof plate.
-pub const DEFAULT_BG: Rgb = Rgb::new(0x0d, 0x11, 0x17);
+pub const DEFAULT_BG: Rgb = SvgPalette::github_dark().default_bg;
 /// Default body text on the docs proof plate.
-pub const DEFAULT_FG: Rgb = Rgb::new(0xc9, 0xd1, 0xd9);
+pub const DEFAULT_FG: Rgb = SvgPalette::github_dark().default_fg;
 /// Outer plate behind the terminal well.
-pub const FRAME_BG: Rgb = Rgb::new(0x09, 0x0c, 0x10);
+pub const FRAME_BG: Rgb = SvgPalette::github_dark().frame_bg;
 /// Hairline around the terminal well.
-pub const FRAME_STROKE: Rgb = Rgb::new(0x30, 0x36, 0x3d);
-
-/// Primer `canvas.default` well for the light docs proof plate.
-pub const LIGHT_DEFAULT_BG: Rgb = Rgb::new(0xff, 0xff, 0xff);
-/// Primer `fg.default` body text on the light proof plate.
-pub const LIGHT_DEFAULT_FG: Rgb = Rgb::new(0x1f, 0x23, 0x28);
-/// Primer `canvas.subtle` outer plate behind the light terminal well.
-pub const LIGHT_FRAME_BG: Rgb = Rgb::new(0xf6, 0xf8, 0xfa);
-/// Primer `border.default` hairline around the light terminal well.
-pub const LIGHT_FRAME_STROKE: Rgb = Rgb::new(0xd0, 0xd7, 0xde);
+pub const FRAME_STROKE: Rgb = SvgPalette::github_dark().frame_stroke;
 
 const FONT_STACK: &str = "DejaVu Sans Mono, Liberation Mono, Consolas, monospace";
 
@@ -69,31 +124,18 @@ pub struct SvgOptions {
     pub padding: f64,
     pub outer_radius: f64,
     pub inner_radius: f64,
-    pub color_scheme: SvgColorScheme,
-    pub default_fg: Rgb,
-    pub default_bg: Rgb,
-    pub frame_bg: Rgb,
-    pub frame_stroke: Rgb,
+    pub palette: SvgPalette,
 }
 
 impl Default for SvgOptions {
     fn default() -> Self {
-        Self::for_scheme(SvgColorScheme::Dark)
+        Self::with_palette(SvgPalette::github_dark())
     }
 }
 
 impl SvgOptions {
-    /// Build options with chrome and ANSI mapping for `scheme`.
-    pub fn for_scheme(scheme: SvgColorScheme) -> Self {
-        let (default_fg, default_bg, frame_bg, frame_stroke) = match scheme {
-            SvgColorScheme::Dark => (DEFAULT_FG, DEFAULT_BG, FRAME_BG, FRAME_STROKE),
-            SvgColorScheme::Light => (
-                LIGHT_DEFAULT_FG,
-                LIGHT_DEFAULT_BG,
-                LIGHT_FRAME_BG,
-                LIGHT_FRAME_STROKE,
-            ),
-        };
+    /// Build options with a complete color palette.
+    pub fn with_palette(palette: SvgPalette) -> Self {
         Self {
             title: "Rho interactive terminal UI".into(),
             description: "A Rho terminal session captured from the deterministic PTY harness."
@@ -107,11 +149,7 @@ impl SvgOptions {
             // full-width cell backgrounds from fighting rounded corner clipping.
             outer_radius: 0.0,
             inner_radius: 0.0,
-            color_scheme: scheme,
-            default_fg,
-            default_bg,
-            frame_bg,
-            frame_stroke,
+            palette,
         }
     }
 }
@@ -144,13 +182,13 @@ pub fn render_screen_svg(screen: &ScreenModel, options: &SvgOptions) -> String {
     parts.push(format!(
         "  <rect width=\"{width:.1}\" height=\"{height:.1}\" rx=\"{:.1}\" fill=\"{}\"/>",
         options.outer_radius,
-        options.frame_bg.css()
+        options.palette.frame_bg.css()
     ));
     parts.push(format!(
         "  <rect x=\"{origin_x:.1}\" y=\"{origin_y:.1}\" width=\"{content_w:.1}\" height=\"{content_h:.1}\" rx=\"{:.1}\" fill=\"{}\" stroke=\"{}\"/>",
         options.inner_radius,
-        options.default_bg.css(),
-        options.frame_stroke.css()
+        options.palette.default_bg.css(),
+        options.palette.frame_stroke.css()
     ));
 
     for row in 0..screen.rows() {
@@ -211,7 +249,7 @@ pub fn render_screen_svg(screen: &ScreenModel, options: &SvgOptions) -> String {
             let x = origin_x + f64::from(col) * options.cell_width;
             let run_w = f64::from(run_cols) * options.cell_width;
 
-            if bg != options.default_bg {
+            if bg != options.palette.default_bg {
                 parts.push(format!(
                     "  <rect x=\"{x:.1}\" y=\"{y:.1}\" width=\"{run_w:.1}\" height=\"{:.1}\" fill=\"{}\"/>",
                     options.cell_height,
@@ -279,17 +317,17 @@ impl StyleKey {
 fn resolve_colors(cell: &ScreenCell, options: &SvgOptions) -> (Rgb, Rgb) {
     let mut fg = resolve_color(
         cell.fg,
-        options.default_fg,
+        options.palette.default_fg,
         /*is_fg*/ true,
         cell.bold,
-        options.color_scheme,
+        options.palette,
     );
     let mut bg = resolve_color(
         cell.bg,
-        options.default_bg,
+        options.palette.default_bg,
         /*is_fg*/ false,
         cell.bold,
-        options.color_scheme,
+        options.palette,
     );
     if cell.inverse {
         std::mem::swap(&mut fg, &mut bg);
@@ -305,13 +343,13 @@ fn resolve_color(
     default: Rgb,
     is_fg: bool,
     bold: bool,
-    scheme: SvgColorScheme,
+    palette: SvgPalette,
 ) -> Rgb {
     match color {
         CellColor::Default => default,
-        CellColor::Indexed(index) => indexed_color(index, is_fg, bold, scheme),
+        CellColor::Indexed(index) => indexed_color(index, is_fg, bold, palette),
         // Truecolor cells keep the captured RGB. Matrix chrome is ANSI-indexed, so
-        // light/dark plates diverge through the scheme map rather than RGB rewrite.
+        // light/dark plates diverge through the palette map rather than RGB rewrite.
         CellColor::Rgb(r, g, b) => Rgb::new(r, g, b),
     }
 }
@@ -330,7 +368,7 @@ fn blend(from: u8, toward: u8, amount: f64) -> u8 {
     value.round().clamp(0.0, 255.0) as u8
 }
 
-fn indexed_color(index: u8, is_fg: bool, bold: bool, scheme: SvgColorScheme) -> Rgb {
+fn indexed_color(index: u8, is_fg: bool, bold: bool, palette: SvgPalette) -> Rgb {
     // Brighten bold ANSI 0-7 foregrounds the way most terminals do.
     let index = if is_fg && bold && index < 8 {
         index + 8
@@ -338,7 +376,7 @@ fn indexed_color(index: u8, is_fg: bool, bold: bool, scheme: SvgColorScheme) -> 
         index
     };
     match index {
-        0..=15 => scheme.ansi16(index),
+        0..=15 => palette.indexed(index),
         16..=231 => {
             let value = index - 16;
             let r = value / 36;
@@ -349,56 +387,6 @@ fn indexed_color(index: u8, is_fg: bool, bold: bool, scheme: SvgColorScheme) -> 
         232..=255 => {
             let level = 8 + (index - 232) * 10;
             Rgb::new(level, level, level)
-        }
-    }
-}
-
-impl SvgColorScheme {
-    /// Map ANSI 0-15 to the scheme palette.
-    const fn ansi16(self, index: u8) -> Rgb {
-        match self {
-            // GitHub-dark terminal palette used by the original docs proof plate.
-            Self::Dark => match index {
-                0 => Rgb::new(0x0d, 0x11, 0x17),
-                1 => Rgb::new(0xff, 0x7b, 0x72),
-                2 => Rgb::new(0x3f, 0xb9, 0x50),
-                3 => Rgb::new(0xd2, 0x99, 0x22),
-                4 => Rgb::new(0x58, 0xa6, 0xff),
-                5 => Rgb::new(0xbc, 0x8c, 0xff),
-                6 => Rgb::new(0x39, 0xc5, 0xcf),
-                7 => Rgb::new(0xc9, 0xd1, 0xd9),
-                8 => Rgb::new(0x6e, 0x76, 0x81),
-                9 => Rgb::new(0xff, 0xa1, 0x98),
-                10 => Rgb::new(0x56, 0xd3, 0x64),
-                11 => Rgb::new(0xe3, 0xb3, 0x41),
-                12 => Rgb::new(0x79, 0xc0, 0xff),
-                13 => Rgb::new(0xd2, 0xa8, 0xff),
-                14 => Rgb::new(0x56, 0xd4, 0xdd),
-                15 => Rgb::new(0xf0, 0xf3, 0xf6),
-                _ => Rgb::new(0xc9, 0xd1, 0xd9),
-            },
-            // github-vscode-theme light_default terminal.ansi* / terminal.ansiBright*.
-            // Index 15 stays near-white so block text on dark ANSI washes keeps contrast.
-            // Body ink for Default cells comes from LIGHT_DEFAULT_FG, not this slot.
-            Self::Light => match index {
-                0 => Rgb::new(0x24, 0x29, 0x2f),
-                1 => Rgb::new(0xcf, 0x22, 0x2e),
-                2 => Rgb::new(0x11, 0x63, 0x29),
-                3 => Rgb::new(0x4d, 0x2d, 0x00),
-                4 => Rgb::new(0x09, 0x69, 0xda),
-                5 => Rgb::new(0x82, 0x50, 0xdf),
-                6 => Rgb::new(0x1b, 0x7c, 0x83),
-                7 => Rgb::new(0x6e, 0x77, 0x81),
-                8 => Rgb::new(0x57, 0x60, 0x6a),
-                9 => Rgb::new(0xa4, 0x0e, 0x26),
-                10 => Rgb::new(0x1a, 0x7f, 0x37),
-                11 => Rgb::new(0x63, 0x3c, 0x01),
-                12 => Rgb::new(0x21, 0x8b, 0xff),
-                13 => Rgb::new(0xa4, 0x75, 0xf9),
-                14 => Rgb::new(0x31, 0x92, 0xaa),
-                15 => Rgb::new(0xff, 0xff, 0xff),
-                _ => Rgb::new(0x1f, 0x23, 0x28),
-            },
         }
     }
 }
@@ -480,58 +468,48 @@ mod tests {
         assert_eq!(svg.matches("\u{FF21}").count(), 1);
     }
 
-    // Covers: light scheme must change plate chrome and semantic ANSI colors.
+    // Covers: light palette must change plate chrome and semantic ANSI colors.
     // Owner: pty svg renderer
     #[test]
-    fn light_scheme_remaps_chrome_and_ansi_colors() {
+    fn light_palette_remaps_chrome_and_ansi_colors() {
         let mut screen = ScreenModel::new(1, 16);
         screen.process(b"\x1b[32mok\x1b[m \x1b[90mdim\x1b[m");
 
-        let dark = render_screen_svg(&screen, &SvgOptions::for_scheme(SvgColorScheme::Dark));
-        let light = render_screen_svg(&screen, &SvgOptions::for_scheme(SvgColorScheme::Light));
+        let dark_palette = SvgPalette::github_dark();
+        let light_palette = SvgPalette::primer_light();
+        let dark = render_screen_svg(&screen, &SvgOptions::with_palette(dark_palette));
+        let light = render_screen_svg(&screen, &SvgOptions::with_palette(light_palette));
 
-        assert!(dark.contains(&format!("fill=\"{}\"", DEFAULT_BG.css())));
-        assert!(light.contains(&format!("fill=\"{}\"", LIGHT_DEFAULT_BG.css())));
-        assert!(dark.contains(&format!("fill=\"{}\"", FRAME_BG.css())));
-        assert!(light.contains(&format!("fill=\"{}\"", LIGHT_FRAME_BG.css())));
+        assert_ne!(dark_palette.default_bg, light_palette.default_bg);
+        assert_ne!(dark_palette.ansi16[2], light_palette.ansi16[2]);
+        assert_ne!(dark_palette.ansi16[8], light_palette.ansi16[8]);
 
-        let dark_green = SvgColorScheme::Dark.ansi16(2).css();
-        let light_green = SvgColorScheme::Light.ansi16(2).css();
-        assert_ne!(dark_green, light_green);
-        assert!(dark.contains(&format!("fill=\"{dark_green}\"")));
-        assert!(light.contains(&format!("fill=\"{light_green}\"")));
-
-        let dark_dim = SvgColorScheme::Dark.ansi16(8).css();
-        let light_dim = SvgColorScheme::Light.ansi16(8).css();
-        assert_ne!(dark_dim, light_dim);
-        assert!(dark.contains(&format!("fill=\"{dark_dim}\"")));
-        assert!(light.contains(&format!("fill=\"{light_dim}\"")));
+        assert!(dark.contains(&format!("fill=\"{}\"", dark_palette.default_bg.css())));
+        assert!(light.contains(&format!("fill=\"{}\"", light_palette.default_bg.css())));
+        assert!(dark.contains(&format!("fill=\"{}\"", dark_palette.frame_bg.css())));
+        assert!(light.contains(&format!("fill=\"{}\"", light_palette.frame_bg.css())));
+        assert!(dark.contains(&format!("fill=\"{}\"", dark_palette.ansi16[2].css())));
+        assert!(light.contains(&format!("fill=\"{}\"", light_palette.ansi16[2].css())));
+        assert!(dark.contains(&format!("fill=\"{}\"", dark_palette.ansi16[8].css())));
+        assert!(light.contains(&format!("fill=\"{}\"", light_palette.ansi16[8].css())));
     }
 
-    // Covers: bright white on a dim wash stays light-colored on the light plate.
+    // Covers: bright white on a dim wash stays distinct from body ink on light plates.
     // Owner: pty svg renderer
     #[test]
-    fn light_scheme_keeps_bright_white_on_dim_wash() {
+    fn light_palette_keeps_bright_white_on_dim_wash() {
         let mut screen = ScreenModel::new(1, 12);
         // Dim wash (index 8) with bright white text (index 97 / 15).
         screen.process(b"\x1b[100;97mhello\x1b[m");
 
-        let light = render_screen_svg(&screen, &SvgOptions::for_scheme(SvgColorScheme::Light));
-        let wash = SvgColorScheme::Light.ansi16(8).css();
-        let bright_white = SvgColorScheme::Light.ansi16(15).css();
-        assert_eq!(bright_white, "#ffffff");
-        assert!(light.contains(&format!("fill=\"{wash}\"")));
-        assert!(light.contains(&format!("fill=\"{bright_white}\"")));
+        let palette = SvgPalette::primer_light();
+        let light = render_screen_svg(&screen, &SvgOptions::with_palette(palette));
+        let wash = palette.ansi16[8];
+        let bright_white = palette.ansi16[15];
+        assert_ne!(bright_white, palette.default_fg);
+        assert_ne!(bright_white, wash);
+        assert!(light.contains(&format!("fill=\"{}\"", wash.css())));
+        assert!(light.contains(&format!("fill=\"{}\"", bright_white.css())));
         assert!(light.contains(">hello</text>"));
-    }
-
-    // Covers: default SvgOptions stays on the dark GitHub well (README contract).
-    // Owner: pty svg renderer
-    #[test]
-    fn default_options_use_dark_scheme() {
-        let options = SvgOptions::default();
-        assert_eq!(options.color_scheme, SvgColorScheme::Dark);
-        assert_eq!(options.default_bg, DEFAULT_BG);
-        assert_eq!(options.default_fg, DEFAULT_FG);
     }
 }

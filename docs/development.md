@@ -170,12 +170,12 @@ Failure artifacts default to a temp directory (or `--artifacts <dir>`). Successf
 ### Regenerate the docs TUI proof plate
 
 Dark and light proof plates are captured from one matrix-mode PTY session (not
-hand-drawn), then rendered with two SVG color schemes:
+hand-drawn), then rendered with two SVG palettes:
 
-- dark: `docs/assets/rho-ui-demo.svg` and `docs/public/assets/rho-ui-demo.svg`
-- light: `docs/assets/rho-ui-demo-light.svg` and `docs/public/assets/rho-ui-demo-light.svg`
+- dark (README + site): `docs/assets/rho-ui-demo.svg` and `docs/public/assets/rho-ui-demo.svg`
+- light (site only): `docs/public/assets/rho-ui-demo-light.svg`
 
-After TUI layout or chrome changes, regenerate all four paths:
+After TUI layout or chrome changes, regenerate those paths:
 
 ```bash
 bash scripts/check_docs_ui_demo.sh --write
@@ -187,7 +187,7 @@ Detect drift without writing:
 bash scripts/check_docs_ui_demo.sh --check
 ```
 
-The CI quality job and `python3 scripts/validate.py full` run the check. The generator needs a Unix PTY and a debug build because `RHO_TUI_TEST_MODE=matrix` is debug-only. Load-volatile fragments (tool durations, statusline usage, and the header package version) are pinned in the SVG so release version bumps do not force a regen.
+The CI quality job and `python3 scripts/validate.py full` run the check. The generator needs a Unix PTY and a debug build because `RHO_TUI_TEST_MODE=matrix` is debug-only. Load-volatile fragments (tool durations and statusline usage) are pinned in the SVG. The header package version is pinned at capture input via `RHO_TUI_DISPLAY_VERSION` so release bumps do not force a regen.
 
 ### Environment isolation
 

@@ -6,7 +6,6 @@
 //!     --bin target/debug/rho \
 //!     --output docs/assets/rho-ui-demo.svg \
 //!     --output docs/public/assets/rho-ui-demo.svg \
-//!     --light-output docs/assets/rho-ui-demo-light.svg \
 //!     --light-output docs/public/assets/rho-ui-demo-light.svg
 
 use std::{
@@ -22,7 +21,7 @@ use rho_tui_pty::{
     env::{resolve_rho_binary, IsolatedHome, RhoLaunchPlan},
     harness::{PtyHarness, WaitTimeout},
     pty::PtySize,
-    svg::{render_screen_svg, SvgColorScheme, SvgOptions},
+    svg::{render_screen_svg, SvgOptions, SvgPalette},
 };
 
 /// Default terminal size for the docs proof plate.
@@ -34,6 +33,9 @@ const DEMO_SIZE: PtySize = PtySize {
 
 const DEMO_MODEL: &str = "gpt-5.6-sol";
 const DEMO_PROMPT: &str = "Add request IDs to API logs and update the tests.";
+/// Stable header version for the proof plate. Not the live package version -
+/// release bumps must not force SVG regen.
+const DEMO_DISPLAY_VERSION: &str = "1.0.0";
 
 const STARTUP: WaitTimeout = WaitTimeout::secs(20, "startup");
 const STREAM: WaitTimeout = WaitTimeout::secs(30, "stream response");
@@ -65,7 +67,7 @@ struct Args {
     #[arg(long = "output", required = true)]
     outputs: Vec<PathBuf>,
 
-    /// Write the light SVG to this path. Repeat to mirror into docs/public.
+    /// Write the light SVG to this path (docs site public asset).
     #[arg(long = "light-output")]
     light_outputs: Vec<PathBuf>,
 
@@ -181,6 +183,9 @@ fn capture_demo(binary: &Path) -> Result<DemoCapture> {
 
     let mut plan = RhoLaunchPlan::matrix(binary, &home, DEMO_SIZE);
     plan.cwd = workspace;
+    // Pin the header version at the capture input so release bumps do not force
+    // proof-plate regen and the plate does not show a placeholder 0.0.0.
+    plan = plan.with_env("RHO_TUI_DISPLAY_VERSION", DEMO_DISPLAY_VERSION);
     // Set the model in config only. A CLI `--model` flag forces a credentialed
     // catalog refresh and exits before matrix fixture mode can attach.
 
@@ -207,6 +212,7 @@ fn capture_demo(binary: &Path) -> Result<DemoCapture> {
         "request_id",
         DEMO_MODEL,
         "~/rho",
+        DEMO_DISPLAY_VERSION,
     ] {
         if !screen.contains_text(needle) {
             bail!("demo frame missing {needle:?}:\n{}", screen.debug_dump());
@@ -224,11 +230,11 @@ fn capture_demo(binary: &Path) -> Result<DemoCapture> {
             .into();
     let dark_options = SvgOptions {
         description: description.clone(),
-        ..SvgOptions::for_scheme(SvgColorScheme::Dark)
+        ..SvgOptions::with_palette(SvgPalette::github_dark())
     };
     let light_options = SvgOptions {
         description,
-        ..SvgOptions::for_scheme(SvgColorScheme::Light)
+        ..SvgOptions::with_palette(SvgPalette::primer_light())
     };
     let dark_svg = stabilize_demo_svg(&render_screen_svg(screen, &dark_options));
     let light_svg = stabilize_demo_svg(&render_screen_svg(screen, &light_options));
@@ -245,14 +251,12 @@ fn capture_demo(binary: &Path) -> Result<DemoCapture> {
 
 /// Pin load-volatile status and duration fragments so CI matches local captures.
 ///
-/// Tool durations, statusline usage, and the package version are split across
-/// styled SVG text runs, so stabilize by rewriting those fragments rather than
-/// whole-row matches. Version must stay pinned: automated releases change
-/// `CARGO_PKG_VERSION` and would otherwise force proof-plate regen on every cut.
+/// Tool durations and statusline usage are split across styled SVG text runs, so
+/// stabilize by rewriting those fragments rather than whole-row matches. Header
+/// package version is pinned at capture input via `RHO_TUI_DISPLAY_VERSION`.
 fn stabilize_demo_svg(svg: &str) -> String {
     let mut out = pin_tool_durations(svg);
     out = pin_statusline_usage(&out);
-    out = pin_header_version(&out);
     out
 }
 
@@ -363,93 +367,4 @@ fn match_usage_run(rest: &str) -> Option<(usize, &str)> {
         return None;
     }
     Some((i, &rest[space_start..i]))
-}
-
-/// Demo plate header version. Not the live package version - release bumps must
-/// not force SVG regen.
-const PINNED_HEADER_VERSION: &str = "0.0.0";
-
-fn pin_header_version(svg: &str) -> String {
-    // Header paints `CARGO_PKG_VERSION` as its own text run (`>1.32.2</text>`).
-    let mut out = String::with_capacity(svg.len());
-    let mut rest = svg;
-    let mut replaced = false;
-    while let Some(gt) = rest.find('>') {
-        out.push_str(&rest[..=gt]);
-        rest = &rest[gt + 1..];
-        if replaced {
-            continue;
-        }
-        let Some(end) = rest.find("</text>") else {
-            continue;
-        };
-        let content = &rest[..end];
-        if is_semver_token(content) {
-            out.push_str(PINNED_HEADER_VERSION);
-            rest = &rest[end..];
-            replaced = true;
-        }
-    }
-    out.push_str(rest);
-    out
-}
-
-fn is_semver_token(token: &str) -> bool {
-    let mut parts = token.split('.');
-    let Some(major) = parts.next() else {
-        return false;
-    };
-    let Some(minor) = parts.next() else {
-        return false;
-    };
-    let Some(patch) = parts.next() else {
-        return false;
-    };
-    if parts.next().is_some() {
-        return false;
-    }
-    is_digit_run(major) && is_digit_run(minor) && is_digit_run(patch)
-}
-
-fn is_digit_run(token: &str) -> bool {
-    !token.is_empty() && token.bytes().all(|b| b.is_ascii_digit())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{is_semver_token, pin_header_version, PINNED_HEADER_VERSION};
-
-    // Covers: release package version in the header text run must pin so SVG
-    // drift checks do not fail on automated version bumps.
-    // Owner: pty demo stabilizer
-    #[test]
-    fn pins_first_semver_text_run_only() {
-        let svg = concat!(
-            r#"<text>rho</text>"#,
-            r#"<text font-weight="700">1.32.2</text>"#,
-            r#"<text>note 2.0.0 stays</text>"#,
-        );
-        let pinned = pin_header_version(svg);
-        assert!(pinned.contains(&format!(">{PINNED_HEADER_VERSION}</text>")));
-        assert!(!pinned.contains(">1.32.2</text>"));
-        // Only the pure semver text run is rewritten; prose keeps other numbers.
-        assert!(pinned.contains(">note 2.0.0 stays</text>"));
-    }
-
-    // Covers: only bare X.Y.Z header runs count as pin targets.
-    // Owner: pty demo stabilizer
-    #[test]
-    fn semver_token_requires_three_numeric_parts() {
-        let cases = [
-            ("1.32.2", true),
-            ("0.0.0", true),
-            ("1.32", false),
-            ("1.32.2-rc.1", false),
-            ("v1.32.2", false),
-            ("", false),
-        ];
-        for (token, expected) in cases {
-            assert_eq!(is_semver_token(token), expected, "token={token:?}");
-        }
-    }
 }
