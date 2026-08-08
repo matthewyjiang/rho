@@ -1,3 +1,4 @@
+#[cfg(any(debug_assertions, test))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Termination {
     Error,
@@ -38,8 +39,8 @@ fn resolve_display_version(matrix: bool, override_version: Option<&str>, package
 /// empty in an isolated matrix HOME. Seed the fixture provider's models so
 /// `/model` and internal-agent model pickers have rows without a network
 /// refresh.
+#[cfg(debug_assertions)]
 pub(super) fn seed_matrix_model_cache() {
-    #[cfg(debug_assertions)]
     if matrix_enabled() {
         use rho_providers::model::provider_models::{
             replace_cached_provider_models_for_tests, ProviderModel,
@@ -85,6 +86,7 @@ pub(super) fn after_terminal_init() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(any(debug_assertions, test))]
 fn parse_termination(value: &str) -> anyhow::Result<Termination> {
     match value {
         "error" => Ok(Termination::Error),
