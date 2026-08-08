@@ -123,9 +123,9 @@ requests no capability has nothing to gate.
 The `tools` matcher accepts only these names. They are part of the hook
 contract and do not change with which tools a given run enables:
 
-`agent`, `agents`, `apply_patch`, `bash`, `edit`, `edit_file`,
+`agent`, `agents`, `apply_patch`, `bash`, `edit`,
 `fetch_content`, `get_search_content`, `glob`, `grep`, `list_dir`, `powershell`,
-`process`, `questionnaire`, `read_file`, `rho`, `skill`, `web_search`, `write`.
+`process`, `questionnaire`, `read_file`, `rho`, `skill`, `str_replace`, `web_search`, `write`.
 
 ## Protocol reference
 

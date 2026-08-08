@@ -77,9 +77,11 @@ pub(super) fn streaming_preview_card(
                     ToolStatus::Running,
                     rho_tools::apply_patch::ProposedDiffTrailingLine::CompleteLinesOnly,
                 ),
-                rho_tools::EditFormat::EditFile => {
+                rho_tools::EditFormat::StrReplace => {
                     preview_card(kind, name, Some(arguments), cwd, ToolStatus::Running)
                 }
+                // Published enum stays non_exhaustive; unknown future formats
+                // get a generic path/header card rather than hashline parsing.
                 _ => preview_card(kind, name, Some(arguments), cwd, ToolStatus::Running),
             },
         ),
@@ -229,7 +231,7 @@ fn edit_preview_card(
             status,
             rho_tools::apply_patch::ProposedDiffTrailingLine::Include,
         ),
-        rho_tools::EditFormat::EditFile => kind_card(
+        rho_tools::EditFormat::StrReplace => kind_card(
             status,
             ToolKind::Edit(format),
             ToolHeader::call(
@@ -237,10 +239,15 @@ fn edit_preview_card(
                 Some(display_path(arguments, cwd)).filter(|path| !path.is_empty()),
             ),
         ),
+        // Published enum stays non_exhaustive; unknown future formats get a
+        // path header rather than hashline/document parsing.
         _ => kind_card(
             status,
             ToolKind::Edit(format),
-            ToolHeader::call(format.tool_name(), None),
+            ToolHeader::call(
+                format.tool_name(),
+                Some(display_path(arguments, cwd)).filter(|path| !path.is_empty()),
+            ),
         ),
     }
 }
@@ -662,7 +669,7 @@ pub(super) fn edit_paths(
     cwd: &std::path::Path,
 ) -> Vec<String> {
     match format {
-        rho_tools::EditFormat::EditFile => {
+        rho_tools::EditFormat::StrReplace => {
             let path = display_path(arguments, cwd);
             (!path.is_empty()).then_some(path).into_iter().collect()
         }

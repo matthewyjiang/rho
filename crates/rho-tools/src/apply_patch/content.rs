@@ -1,9 +1,6 @@
 //! Content matching and replacement for update hunks.
 
-use crate::{
-    file_mutation::{normalize_newlines, preferred_line_ending},
-    tool::ToolError,
-};
+use crate::{file_mutation::preferred_line_ending, tool::ToolError};
 
 use super::{parser::UpdateFileChunk, seek_sequence::seek_sequence};
 
@@ -13,31 +10,56 @@ pub(super) fn derive_new_contents(
     chunks: &[UpdateFileChunk],
 ) -> Result<String, ToolError> {
     let line_ending = preferred_line_ending(original_contents);
-    let normalized_original = normalize_newlines(original_contents);
-    let had_trailing_newline = normalized_original.ends_with('\n');
-    let original_lines = split_lines(&normalized_original);
+    let source_lines = split_source_lines(original_contents);
+    let original_lines = source_lines
+        .iter()
+        .map(|line| line.content.clone())
+        .collect::<Vec<_>>();
+    let had_trailing_newline = source_lines
+        .last()
+        .is_some_and(|line| !line.ending.is_empty());
     let replacements = compute_replacements(&original_lines, path, chunks)?;
-    let new_lines = apply_replacements(original_lines, &replacements);
-    Ok(join_lines(&new_lines, had_trailing_newline).replace('\n', line_ending))
+    Ok(apply_replacements(
+        &source_lines,
+        &replacements,
+        line_ending,
+        had_trailing_newline,
+    ))
 }
 
-fn split_lines(contents: &str) -> Vec<String> {
-    if contents.is_empty() {
-        return Vec::new();
-    }
-    let body = contents.strip_suffix('\n').unwrap_or(contents);
-    if body.is_empty() {
-        return vec![String::new()];
-    }
-    body.split('\n').map(String::from).collect()
+struct SourceLine {
+    content: String,
+    ending: String,
 }
 
-fn join_lines(lines: &[String], trailing_newline: bool) -> String {
-    let mut out = lines.join("\n");
-    if trailing_newline {
-        out.push('\n');
+fn split_source_lines(contents: &str) -> Vec<SourceLine> {
+    let mut lines = Vec::new();
+    let mut start = 0;
+    let bytes = contents.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        let ending_len = match bytes[index] {
+            b'\r' if bytes.get(index + 1) == Some(&b'\n') => 2,
+            b'\r' | b'\n' => 1,
+            _ => {
+                index += 1;
+                continue;
+            }
+        };
+        lines.push(SourceLine {
+            content: contents[start..index].to_string(),
+            ending: contents[index..index + ending_len].to_string(),
+        });
+        index += ending_len;
+        start = index;
     }
-    out
+    if start < contents.len() {
+        lines.push(SourceLine {
+            content: contents[start..].to_string(),
+            ending: String::new(),
+        });
+    }
+    lines
 }
 
 fn compute_replacements(
@@ -51,13 +73,22 @@ fn compute_replacements(
 
     for chunk in chunks {
         if let Some(ctx_line) = &chunk.change_context {
-            if let Some(idx) = seek_sequence(
-                original_lines,
-                std::slice::from_ref(ctx_line),
-                line_index,
-                /*eof*/ false,
-            ) {
+            let context = std::slice::from_ref(ctx_line);
+            if let Some(idx) =
+                seek_sequence(original_lines, context, line_index, /*eof*/ false)
+            {
                 line_index = idx + 1;
+            } else if seek_sequence(
+                original_lines,
+                context,
+                /*start*/ 0,
+                /*eof*/ false,
+            )
+            .is_some()
+            {
+                return Err(ToolError::Message(format!(
+                    "patch chunks overlap or apply out of order in {path}"
+                )));
             } else {
                 return Err(ToolError::Message(format!(
                     "Failed to find context '{ctx_line}' in {path}"
@@ -108,17 +139,50 @@ fn compute_replacements(
     Ok(replacements)
 }
 
+enum OutputLine<'a> {
+    Original(&'a SourceLine),
+    Replacement(&'a str),
+}
+
 fn apply_replacements(
-    mut lines: Vec<String>,
+    lines: &[SourceLine],
     replacements: &[(usize, usize, Vec<String>)],
-) -> Vec<String> {
-    for (start_idx, old_len, new_segment) in replacements.iter().rev() {
-        let start_idx = *start_idx;
-        let old_len = *old_len;
-        let end = (start_idx + old_len).min(lines.len());
-        if start_idx <= lines.len() {
-            lines.splice(start_idx..end, new_segment.iter().cloned());
+    preferred_ending: &str,
+    trailing_newline: bool,
+) -> String {
+    let mut output_lines = Vec::new();
+    let mut source_index = 0;
+    for (start, old_len, replacement) in replacements {
+        output_lines.extend(lines[source_index..*start].iter().map(OutputLine::Original));
+        output_lines.extend(
+            replacement
+                .iter()
+                .map(|line| OutputLine::Replacement(line.as_str())),
+        );
+        source_index = start + old_len;
+    }
+    output_lines.extend(lines[source_index..].iter().map(OutputLine::Original));
+
+    let mut output = String::new();
+    let last = output_lines.len().saturating_sub(1);
+    for (index, line) in output_lines.into_iter().enumerate() {
+        let has_following_line = index < last;
+        match line {
+            OutputLine::Original(line) => {
+                output.push_str(&line.content);
+                if has_following_line && line.ending.is_empty() {
+                    output.push_str(preferred_ending);
+                } else {
+                    output.push_str(&line.ending);
+                }
+            }
+            OutputLine::Replacement(line) => {
+                output.push_str(line);
+                if has_following_line || trailing_newline {
+                    output.push_str(preferred_ending);
+                }
+            }
         }
     }
-    lines
+    output
 }

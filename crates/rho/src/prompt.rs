@@ -91,6 +91,16 @@ Prefer the `grep` tool over shell `rg` or `grep` for workspace content search. U
 "#,
         );
     }
+    let selected_edit_tool = tools
+        .iter()
+        .find(|tool| rho_tools::EditFormat::is_edit_tool_name(tool.name.as_str()));
+    if let Some(tool) = selected_edit_tool {
+        text.push_str(&format!(
+            "\nPrefer the `{}` tool over shell or script-based rewrites for existing UTF-8 files. Prefer `write` only to create or fully rewrite a file.\n",
+            tool.name
+        ));
+    }
+    // Hashline-only policy: only the hashline `edit` surface needs TAG/PUT guidance.
     if tools.iter().any(|tool| tool.name == "edit") {
         if grep_available {
             text.push_str(
@@ -418,21 +428,39 @@ mod tests {
     }
 
     #[test]
-    fn includes_edit_policy_only_when_edit_tool_is_available() {
+    fn includes_selected_edit_policy_and_hashline_details_only_for_edit() {
         let project = TempDir::new().unwrap();
-        let edit_tool = ToolSpec {
-            name: "edit".into(),
-            description: "edit".into(),
-            input_schema: serde_json::json!({}),
-        };
+        for (config_name, tool_name, expect_hashline) in [
+            ("hashline", "edit", true),
+            ("apply_patch", "apply_patch", false),
+            ("str_replace", "str_replace", false),
+        ] {
+            let tool = ToolSpec {
+                name: tool_name.into(),
+                description: "edit".into(),
+                input_schema: serde_json::json!({}),
+            };
 
-        let enabled = system_prompt_with_home(&[edit_tool], project.path(), None).text;
+            let prompt = system_prompt_with_home(&[tool], project.path(), None).text;
+
+            assert!(
+                prompt.contains(&format!("Prefer the `{tool_name}` tool")),
+                "config {config_name}"
+            );
+            assert_eq!(
+                prompt.contains("never `PUT 12.:`"),
+                expect_hashline,
+                "config {config_name}"
+            );
+            assert_eq!(
+                prompt.contains("without chainable body lines"),
+                expect_hashline,
+                "config {config_name}"
+            );
+        }
+
         let disabled = system_prompt_with_home(&[], project.path(), None).text;
-
-        assert!(enabled.contains("Use `edit` (not shell or Python rewrites)"));
-        assert!(enabled.contains("never `PUT 12.:`"));
-        assert!(enabled.contains("without chainable body lines"));
-        assert!(!disabled.contains("Use `edit` (not shell or Python rewrites)"));
+        assert!(!disabled.contains("over shell or script-based rewrites"));
     }
 
     #[test]

@@ -38,7 +38,7 @@ fn rejects_invalid_replacement_arguments() {
     ];
 
     for (old_string, new_string, expected) in cases {
-        let args = EditFileArgs {
+        let args = StrReplaceArgs {
             path: "sample.txt".into(),
             old_string: old_string.into(),
             new_string: new_string.into(),
@@ -126,4 +126,61 @@ async fn preserves_crlf_when_arguments_use_lf() {
     .unwrap();
 
     assert_eq!(std::fs::read_to_string(path).unwrap(), "alpha\r\ngamma\r\n");
+}
+
+// Covers: edit_file_content honors replace_all and reports the applied count.
+// Owner: edit_file public content path
+#[tokio::test]
+async fn replaces_all_occurrences_through_edit_file_content() {
+    let (_dir, ctx) = test_context();
+    let path = ctx.cwd.join("sample.txt");
+    std::fs::write(&path, "old middle old\n").unwrap();
+
+    let outcome = edit_file_content(
+        &path,
+        "sample.txt",
+        "old",
+        "new",
+        /*replace_all*/ true,
+        ctx.max_output_bytes,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "new middle new\n");
+    assert!(outcome
+        .content
+        .starts_with("edited sample.txt; replaced 2 occurrence(s)"));
+}
+
+#[cfg(unix)]
+// Covers: edit_file rejects a symlink leaf instead of rewriting its target.
+// Owner: edit_file locked path validation
+#[tokio::test]
+async fn rejects_symlink_leaf_without_mutating_target() {
+    use std::os::unix::fs::symlink;
+
+    let (_dir, ctx) = test_context();
+    let target = ctx.cwd.join("target.txt");
+    let alias = ctx.cwd.join("alias.txt");
+    std::fs::write(&target, "old\n").unwrap();
+    symlink(&target, &alias).unwrap();
+
+    let error = edit_file_content(
+        &alias,
+        "alias.txt",
+        "old",
+        "new",
+        /*replace_all*/ false,
+        ctx.max_output_bytes,
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(
+        message(error),
+        "edit alias.txt failed: path changed after validation"
+    );
+    assert_eq!(std::fs::read_to_string(target).unwrap(), "old\n");
+    assert!(alias.is_symlink());
 }

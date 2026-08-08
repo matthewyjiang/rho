@@ -4,14 +4,52 @@ use super::*;
 // Owner: interactive presenter
 #[test]
 fn selected_edit_tool_names_share_the_edit_presentation_kind() {
-    let formats = rho_tools::EditFormat::ALL.iter().copied();
     assert_eq!(
-        formats
-            .clone()
-            .map(|format| ToolKind::from_name(format.tool_name()))
-            .collect::<Vec<_>>(),
-        formats.map(ToolKind::Edit).collect::<Vec<_>>()
+        ToolKind::from_name("apply_patch"),
+        ToolKind::Edit(rho_tools::EditFormat::ApplyPatch)
     );
+    assert_eq!(
+        ToolKind::from_name("edit"),
+        ToolKind::Edit(rho_tools::EditFormat::Hashline)
+    );
+    assert_eq!(
+        ToolKind::from_name("str_replace"),
+        ToolKind::Edit(rho_tools::EditFormat::StrReplace)
+    );
+    // Legacy model-facing name still classifies as string-replace.
+    assert_eq!(
+        ToolKind::from_name("edit_file"),
+        ToolKind::Edit(rho_tools::EditFormat::StrReplace)
+    );
+}
+
+// Covers: started keeps str_replace identity from the unique tool name
+// Owner: interactive presenter
+#[test]
+fn started_keeps_str_replace_kind_from_tool_name() {
+    let mut presenter = InteractiveToolPresenter::new(std::path::PathBuf::from("."));
+    let call = ToolCall {
+        id: "call-1".into(),
+        name: "str_replace".into(),
+        arguments: serde_json::json!({
+            "path": "a.rs",
+            "old_string": "a",
+            "new_string": "b"
+        }),
+    };
+    let _ = presenter.proposed(call);
+    let presented = presenter.started(
+        ToolCallId::from_string("call-1").unwrap(),
+        "str_replace".into(),
+        ToolMetadata::default(),
+    );
+    match &presented.card.header {
+        rho_tools::tool_card::ToolHeader::Call { verb, primary } => {
+            assert_eq!(verb, "str_replace");
+            assert_eq!(primary.as_deref(), Some("a.rs"));
+        }
+        other => panic!("expected call header, got {other:?}"),
+    }
 }
 
 // Covers: large edit preview checkpoints grow with buffer size

@@ -61,7 +61,7 @@ fn edit_capability_aliases_match_edit() {
         "---\ndescription: work\ntools: [edit]\n---\n",
     )
     .unwrap();
-    for alias in ["edit_file", "apply_patch"] {
+    for alias in ["edit_file", "apply_patch", "hashline", "str_replace"] {
         let legacy = parse_definition(
             Path::new("b.md"),
             "worker",

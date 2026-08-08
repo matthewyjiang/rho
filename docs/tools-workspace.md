@@ -25,11 +25,11 @@ Core workspace tools on every platform:
 | `list_dir` | List directory entries |
 | `read_file` | Read text, documents, and images |
 | `write` | Create or fully rewrite a file |
-| `edit`, `apply_patch`, or `edit_file` | Edit files with the selected format |
+| `edit`, `apply_patch`, or `str_replace` | Edit files with the selected format |
 | `grep` | Search file contents with a regex (in-process) |
 | `glob` | List paths that match a glob (in-process) |
 
-Rho exposes exactly one edit tool per session. Select it with [`behavior.edit_tool`](/configuration#edit-tool) or `/config` > **Tools** > **Edit tool**. The default is the hash-line `edit` tool.
+Rho exposes exactly one edit tool per session. Select it with [`behavior.edit_tool`](/configuration#edit-tool) or `/config` > **Tools** > **Edit tool**. The default is `hashline`, which exposes the hash-line `edit` tool.
 
 Additional tools:
 
@@ -71,9 +71,9 @@ For session storage separate from the workspace, see [sessions](/sessions). For 
 
 Rho supports three edit formats and registers only the selected tool:
 
-- `edit` applies snapshot-tagged, line-anchored `PUT` and `CUT` operations to existing files.
+- `edit` (config/selector `hashline`) applies snapshot-tagged, line-anchored `PUT` and `CUT` operations to existing files.
 - `apply_patch` applies Codex-style add, delete, update, and move sections across one or more files. Patch paths must be workspace-relative, must not contain `..`, and `Add File` targets must not exist.
-- `edit_file` replaces an exact string in one existing file, with an optional `replace_all` flag.
+- `str_replace` replaces an exact string in one existing file, with an optional `replace_all` flag.
 
 Use `write` for a complete create-or-replace operation. Successful file mutations return model-facing snapshots for chaining, while unified diffs stay in tool metadata for UI cards. In the interactive TUI, added lines are highlighted in green, removed lines in red, and diff headers use the accent color.
 

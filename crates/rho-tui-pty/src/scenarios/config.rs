@@ -68,13 +68,13 @@ pub(super) const OPEN_CONFIG_PICKER_STEPS: &[Step] = &[
     Step::Key(Key::Down),
     Step::Key(Key::Enter),
     Step::WaitText {
-        text: "Hash-line",
+        text: "hashline",
         timeout: SETTLE,
     },
     Step::Key(Key::Down),
     Step::Key(Key::Enter),
     Step::WaitText {
-        text: "Apply patch",
+        text: "apply_patch",
         timeout: SETTLE,
     },
     Step::Key(Key::Esc),

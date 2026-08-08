@@ -121,9 +121,9 @@ provider = "unknown"
 #[test]
 fn edit_tool_preferences_load_from_behavior_config() {
     for (value, expected) in [
-        ("edit", super::super::EditTool::Hashline),
+        ("hashline", super::super::EditTool::Hashline),
         ("apply_patch", super::super::EditTool::ApplyPatch),
-        ("edit_file", super::super::EditTool::EditFile),
+        ("str_replace", super::super::EditTool::StrReplace),
     ] {
         let (config, warnings) =
             parse_settings(&format!("[behavior]\nedit_tool = {value:?}\n")).unwrap();

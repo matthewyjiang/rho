@@ -1,7 +1,7 @@
 //! SDK adapters and authorization policy for file edit tools.
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     path::PathBuf,
     sync::Arc,
 };
@@ -12,9 +12,8 @@ use serde_json::Value;
 use rho_sdk::{
     tool::{
         AuthorizedToolContext, OperationKind, PreparedToolInvocation, Tool, ToolError,
-        ToolErrorKind, ToolFuture, ToolInvocation, ToolMetadata, ToolOutput,
-        ToolPreparationContext, ToolPrepareFuture, ToolProgress, ToolResource, ToolResourceAccess,
-        ToolSecurity,
+        ToolErrorKind, ToolFuture, ToolInvocation, ToolMetadata, ToolPreparationContext,
+        ToolPrepareFuture, ToolProgress, ToolResource, ToolResourceAccess, ToolSecurity,
     },
     CapabilityKind, CapabilityRequest, ResolvedWorkspacePath, Workspace, WorkspacePathState,
 };
@@ -24,14 +23,14 @@ use crate::{
         apply_hunks, parse_patch, patch_paths_lenient, reject_symlink_entry, validate_hunk_paths,
         ApplyPatch, Hunk,
     },
-    edit_file::{edit_file_content, EditFile, EditFileArgs},
+    edit_file::{edit_file_content, StrReplace, StrReplaceArgs},
     hashline::{
         apply_prepared_sections, claim_unique_path, parse_hashline, proposed_sections, Edit,
         PreparedSection,
     },
     sdk_support::{
-        check_preparation_cancelled, map_app_error, map_invalid_app_error, map_path_error,
-        parse_args, path_request, preparation_workspace, PathCapability,
+        check_preparation_cancelled, map_invalid_app_error, map_path_error, parse_args,
+        path_request, preparation_workspace, PathCapability,
     },
     tool::{compact_display_path, Tool as AppTool, ToolError as AppToolError},
 };
@@ -48,7 +47,7 @@ struct ApplyPatchTool {
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
 }
 
-struct EditFileTool {
+struct StrReplaceTool {
     max_output_bytes: usize,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
 }
@@ -67,7 +66,7 @@ pub(super) fn build_sdk_tool(
             max_output_bytes,
             mutation_observer,
         }),
-        crate::EditFormat::EditFile => Arc::new(EditFileTool {
+        crate::EditFormat::StrReplace => Arc::new(StrReplaceTool {
             max_output_bytes,
             mutation_observer,
         }),
@@ -150,9 +149,9 @@ impl Tool for HashlineEditTool {
     }
 }
 
-impl Tool for EditFileTool {
+impl Tool for StrReplaceTool {
     fn spec(&self) -> rho_sdk::model::ToolSpec {
-        EditFile.spec()
+        StrReplace.spec()
     }
 
     fn security(&self) -> ToolSecurity {
@@ -170,11 +169,11 @@ impl Tool for EditFileTool {
     ) -> ToolPrepareFuture<'a> {
         Box::pin(async move {
             check_preparation_cancelled(&context)?;
-            let args: EditFileArgs = parse_args(invocation.into_arguments())?;
-            args.validate().map_err(map_invalid_edit_args)?;
+            let args: StrReplaceArgs = parse_args(invocation.into_arguments())?;
+            args.validate().map_err(map_invalid_app_error)?;
             let workspace = preparation_workspace(&context)?.clone();
             let resolved = workspace
-                .resolve_for_read(&args.path)
+                .resolve_for_write(&args.path)
                 .map_err(map_path_error)?;
             let metadata = path_start_metadata(
                 &serde_json::json!({"path": args.path}),
@@ -185,8 +184,8 @@ impl Tool for EditFileTool {
                     resolved.path(),
                 ))],
                 [
-                    path_request(&resolved, PathCapability::Write, "edit_file"),
-                    path_request(&resolved, PathCapability::Read, "edit_file"),
+                    path_request(&resolved, PathCapability::Write, "str_replace"),
+                    path_request(&resolved, PathCapability::Read, "str_replace"),
                 ],
                 metadata,
                 move |context| {
@@ -233,12 +232,11 @@ impl Tool for ApplyPatchTool {
             let mut path_set = PatchPathSet::default();
             for hunk in &hunks {
                 validate_hunk_paths(hunk).map_err(map_invalid_app_error)?;
-                let mutates_source_entry = hunk.mutates_source_entry();
                 path_set.collect(
                     &workspace,
                     hunk.source_path(),
                     /*require_existing*/ hunk.requires_existing_source(),
-                    mutates_source_entry,
+                    /*reject_symlink_leaf*/ hunk.mutates_source_entry(),
                 )?;
                 if let Some(destination) = hunk.move_destination() {
                     path_set.collect(
@@ -251,7 +249,9 @@ impl Tool for ApplyPatchTool {
             }
             let PatchPathSet {
                 resolved_by_request,
+                validation_by_request: _,
                 resolved_by_canonical,
+                read_capabilities: _,
                 accesses,
                 capabilities,
             } = path_set;
@@ -278,9 +278,17 @@ impl Tool for ApplyPatchTool {
 #[derive(Default)]
 struct PatchPathSet {
     resolved_by_request: HashMap<String, PathBuf>,
+    validation_by_request: HashMap<String, PatchPathValidation>,
     resolved_by_canonical: BTreeMap<PathBuf, ResolvedWorkspacePath>,
+    read_capabilities: BTreeSet<PathBuf>,
     accesses: Vec<ToolResourceAccess>,
     capabilities: Vec<CapabilityRequest>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct PatchPathValidation {
+    require_existing: bool,
+    reject_symlink_leaf: bool,
 }
 
 impl PatchPathSet {
@@ -291,14 +299,26 @@ impl PatchPathSet {
         require_existing: bool,
         reject_symlink_leaf: bool,
     ) -> Result<(), ToolError> {
-        if self.resolved_by_request.contains_key(requested_path) {
+        let prior = self
+            .validation_by_request
+            .get(requested_path)
+            .copied()
+            .unwrap_or_default();
+        if (!require_existing || prior.require_existing)
+            && (!reject_symlink_leaf || prior.reject_symlink_leaf)
+            && self.resolved_by_request.contains_key(requested_path)
+        {
             return Ok(());
         }
-        if reject_symlink_leaf {
+        let required = PatchPathValidation {
+            require_existing: prior.require_existing || require_existing,
+            reject_symlink_leaf: prior.reject_symlink_leaf || reject_symlink_leaf,
+        };
+        if required.reject_symlink_leaf {
             let lexical = workspace.resolve(requested_path).map_err(map_path_error)?;
             reject_symlink_entry(&lexical, requested_path).map_err(map_invalid_app_error)?;
         }
-        let resolved = if require_existing {
+        let resolved = if required.require_existing {
             workspace
                 .resolve_for_read(requested_path)
                 .map_err(map_path_error)?
@@ -307,23 +327,28 @@ impl PatchPathSet {
                 .resolve_for_write(requested_path)
                 .map_err(map_path_error)?
         };
+        self.validation_by_request
+            .insert(requested_path.to_string(), required);
+        let canonical = resolved.path().to_path_buf();
         self.resolved_by_request
-            .insert(requested_path.to_string(), resolved.path().to_path_buf());
-        if self.resolved_by_canonical.contains_key(resolved.path()) {
-            return Ok(());
+            .insert(requested_path.to_string(), canonical.clone());
+        if !self.resolved_by_canonical.contains_key(&canonical) {
+            self.accesses.extend(write_accesses(&resolved));
+            self.capabilities.push(path_request(
+                &resolved,
+                PathCapability::Write,
+                "apply_patch",
+            ));
         }
-        self.accesses.extend(write_accesses(&resolved));
-        self.capabilities.push(path_request(
-            &resolved,
-            PathCapability::Write,
-            "apply_patch",
-        ));
-        if require_existing || resolved.state() == WorkspacePathState::Existing {
+        if (required.require_existing || resolved.state() == WorkspacePathState::Existing)
+            && self.read_capabilities.insert(canonical.clone())
+        {
             self.capabilities
                 .push(path_request(&resolved, PathCapability::Read, "apply_patch"));
         }
         self.resolved_by_canonical
-            .insert(resolved.path().to_path_buf(), resolved);
+            .entry(canonical)
+            .or_insert(resolved);
         Ok(())
     }
 }
@@ -407,7 +432,7 @@ fn execute_prepared_string_edit(
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
     workspace: Workspace,
     resolved: ResolvedWorkspacePath,
-    args: EditFileArgs,
+    args: StrReplaceArgs,
     context: AuthorizedToolContext,
 ) -> ToolFuture<'static> {
     Box::pin(async move {
@@ -498,19 +523,8 @@ fn execute_prepared_patch(
                     .metadata(ToolMetadata::new().operation(OperationKind::Write)),
             )
             .await;
-        let mut metadata = ToolMetadata::new().operation(OperationKind::Write);
-        for path in &outcome.display_paths {
-            metadata = metadata.affected_path(path);
-        }
-        Ok(ToolOutput::text(outcome.content).metadata(metadata.diff(outcome.diff)))
+        Ok(mutation_output(outcome))
     })
-}
-
-fn map_invalid_edit_args(error: AppToolError) -> ToolError {
-    match error {
-        AppToolError::Message(message) => ToolError::new(ToolErrorKind::InvalidArguments, message),
-        other => map_app_error(other),
-    }
 }
 
 fn edit_start_metadata(arguments: &Value) -> ToolMetadata {

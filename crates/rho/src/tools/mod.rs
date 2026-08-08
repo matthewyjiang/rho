@@ -50,6 +50,7 @@ pub(crate) fn canonical_tool_names() -> &'static [&'static str] {
                 .map(rho_tools::EditFormat::tool_name),
         );
         names.sort_unstable();
+        names.dedup();
         names
     });
     NAMES.as_slice()
@@ -60,7 +61,7 @@ pub(crate) fn canonical_tool_is_mutating(name: &str) -> Option<bool> {
     match name {
         "agent" | "agents" | "bash" | "powershell" | "process" | "rho" | "workflow"
         | "workflow_command" | "write" => Some(true),
-        name if rho_tools::EditFormat::from_tool_name(name).is_some() => Some(true),
+        name if rho_tools::EditFormat::is_edit_tool_name(name) => Some(true),
         "advisor" | "fetch_content" | "get_search_content" | "glob" | "grep" | "list_dir"
         | "questionnaire" | "read_file" | "skill" | "web_search" => Some(false),
         _ => None,

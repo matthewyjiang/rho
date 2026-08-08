@@ -12,7 +12,9 @@ use std::{
 
 use crate::{
     diff::unified_diff,
-    file_mutation::{lock_for_rewrite, rewrite_locked_file, FileMutationOutcome},
+    file_mutation::{
+        lock_for_rewrite, locked_path_identity_matches, rewrite_locked_file, FileMutationOutcome,
+    },
     tool::*,
 };
 
@@ -185,6 +187,14 @@ fn apply_sections_locked(
 fn commit_planned_file(file: &PlannedFile) -> Result<(), ToolError> {
     let display_path = &file.display_path;
     let mut handle = lock_for_rewrite(&file.path, display_path, "")?;
+    if !locked_path_identity_matches(&handle, &file.path, display_path)? {
+        return Err(recovery_error(
+            display_path,
+            &file.original,
+            &file.anchor_lines,
+            "path changed after validation",
+        ));
+    }
     let mut live = String::new();
     handle
         .read_to_string(&mut live)
@@ -200,8 +210,8 @@ fn commit_planned_file(file: &PlannedFile) -> Result<(), ToolError> {
     rewrite_locked_file(
         &mut handle,
         display_path,
-        &file.original,
-        &file.outcome.text,
+        /*original*/ &file.original,
+        /*updated*/ &file.outcome.text,
     )
 }
 
@@ -233,6 +243,12 @@ fn rollback_applied(applied: &[AppliedFile<'_>]) -> Result<(), ToolError> {
 
 fn rollback_one(file: &AppliedFile<'_>) -> Result<(), ToolError> {
     let mut handle = lock_for_rewrite(file.path, file.display_path, " for rollback")?;
+    if !locked_path_identity_matches(&handle, file.path, file.display_path)? {
+        return Err(ToolError::Message(format!(
+            "{}: path changed after apply; refusing rollback",
+            file.display_path
+        )));
+    }
     let mut live = String::new();
     handle.read_to_string(&mut live).map_err(|error| {
         ToolError::Message(format!(
@@ -249,8 +265,8 @@ fn rollback_one(file: &AppliedFile<'_>) -> Result<(), ToolError> {
     rewrite_locked_file(
         &mut handle,
         file.display_path,
-        file.applied_text,
-        file.original,
+        /*original*/ file.applied_text,
+        /*updated*/ file.original,
     )
 }
 

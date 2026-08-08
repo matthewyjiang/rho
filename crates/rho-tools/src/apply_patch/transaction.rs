@@ -8,9 +8,9 @@ use std::{
 
 use crate::{
     file_mutation::{
-        atomic_create_file, lock_for_rewrite, rewrite_locked_file_tracked, AtomicCreateEffects,
-        AtomicCreateFailure, AtomicCreateFaultInjector, AtomicCreateTargetEffect, RewriteFailure,
-        RewriteFaultInjector,
+        atomic_create_file, lock_for_rewrite, locked_path_identity_matches,
+        rewrite_locked_file_tracked, AtomicCreateEffects, AtomicCreateFailure,
+        AtomicCreateFaultInjector, AtomicCreateTargetEffect, RewriteFailure, RewriteFaultInjector,
     },
     tool::ToolError,
 };
@@ -254,8 +254,11 @@ async fn rewrite_current(
     tokio::task::spawn_blocking(move || {
         let mut file = lock_for_rewrite(&path, &display_path, " for apply_patch")
             .map_err(RewriteFailure::Unchanged)?;
-        ensure_locked_path_identity(&file, &path, &display_path)
-            .map_err(RewriteFailure::Unchanged)?;
+        if !locked_path_identity_matches(&file, &path, &display_path)
+            .map_err(RewriteFailure::Unchanged)?
+        {
+            return Err(RewriteFailure::Unchanged(changed_error(&display_path)));
+        }
         let mut live = String::new();
         file.read_to_string(&mut live).map_err(|error| {
             RewriteFailure::Unchanged(ToolError::Message(format!(
@@ -268,8 +271,8 @@ async fn rewrite_current(
         rewrite_locked_file_tracked(
             &mut file,
             &display_path,
-            &live,
-            &updated,
+            /*original*/ &live,
+            /*updated*/ &updated,
             rewrite_fault.as_deref(),
         )
     })
@@ -287,7 +290,9 @@ async fn remove_current(path: &Path, display_path: &str, expected: &str) -> Resu
     let expected = expected.to_string();
     tokio::task::spawn_blocking(move || {
         let mut file = lock_for_rewrite(&path, &display_path, " for apply_patch")?;
-        ensure_locked_path_identity(&file, &path, &display_path)?;
+        if !locked_path_identity_matches(&file, &path, &display_path)? {
+            return Err(changed_error(&display_path));
+        }
         let mut live = String::new();
         file.read_to_string(&mut live).map_err(|error| {
             ToolError::Message(format!("failed to re-read {display_path}: {error}"))
@@ -301,59 +306,6 @@ async fn remove_current(path: &Path, display_path: &str, expected: &str) -> Resu
     })
     .await
     .map_err(|error| ToolError::Message(format!("apply_patch task failed: {error}")))?
-}
-
-fn ensure_locked_path_identity(
-    file: &std::fs::File,
-    path: &Path,
-    display_path: &str,
-) -> Result<(), ToolError> {
-    let live = std::fs::symlink_metadata(path).map_err(|error| {
-        ToolError::Message(format!("failed to inspect live {display_path}: {error}"))
-    })?;
-    let same_file = same_file_identity(file, path).map_err(|error| {
-        ToolError::Message(format!("failed to compare live {display_path}: {error}"))
-    })?;
-    if live.file_type().is_symlink() || !same_file {
-        return Err(changed_error(display_path));
-    }
-    Ok(())
-}
-
-#[cfg(unix)]
-fn same_file_identity(file: &std::fs::File, path: &Path) -> std::io::Result<bool> {
-    use std::os::unix::fs::MetadataExt;
-    let left = file.metadata()?;
-    let right = std::fs::metadata(path)?;
-    Ok(left.dev() == right.dev() && left.ino() == right.ino())
-}
-
-#[cfg(windows)]
-fn same_file_identity(file: &std::fs::File, path: &Path) -> std::io::Result<bool> {
-    use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
-
-    use windows_sys::Win32::Storage::FileSystem::{
-        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_FLAG_OPEN_REPARSE_POINT,
-    };
-
-    fn identity(file: &std::fs::File) -> std::io::Result<(u32, u64)> {
-        let mut info = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::zeroed();
-        // SAFETY: `file` owns a valid handle and `info` points to writable storage.
-        let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle(), info.as_mut_ptr()) };
-        if ok == 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        // SAFETY: A successful call initialized the full structure.
-        let info = unsafe { info.assume_init() };
-        let index = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
-        Ok((info.dwVolumeSerialNumber, index))
-    }
-
-    let live = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
-        .open(path)?;
-    Ok(identity(file)? == identity(&live)?)
 }
 
 async fn apply_one<'a>(

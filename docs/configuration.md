@@ -34,7 +34,7 @@ Unknown keys in `config.toml` are a load error so typos fail loudly. Values that
 
 In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#commands) opens a category browser. **Models & reasoning** contains the conversation model, reasoning level, reasoning-output toggle, zen mode, and theme. **Agent behavior** contains permission mode, delegation, and advisor mode. **Context & limits** contains auto compaction and output limits. **Tools** contains the inline shell, edit tool, and Web search settings. **Providers** contains login, logout, and model-list refresh actions. **Updates** contains the startup update check. Type in the category browser to find a category by any setting it contains, then press `enter` to open it. Press `esc` to return to the category browser.
 
-Settings save as soon as they change. The `permission_mode` row applies the selected policy before the next turn. The `reasoning` row cycles through `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` and applies to the current session. The `show_reasoning_output`, `zen_mode`, and `theme` rows apply immediately, including during the current model turn. The `check_for_updates` row controls startup checks against GitHub releases. The `enable_subagents` and `edit_tool` rows apply to the next session. The `advisor_mode` row applies before the next turn; turning it on without an advisor model opens the model picker first. The auto-compaction rows edit its threshold and target percentages. The `max_output_bytes` row saves for the next session.
+Settings save as soon as they change. The `permission_mode` row applies the selected policy before the next turn. The `reasoning` row cycles through `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` and applies to the current session. The `show_reasoning_output`, `zen_mode`, and `theme` rows apply immediately, including during the current model turn. The `check_for_updates` row controls startup checks against GitHub releases. The `enable_subagents` row applies to the next session. The `edit_tool` row applies on the next Rho startup. The `advisor_mode` row applies before the next turn; turning it on without an advisor model opens the model picker first. The auto-compaction rows edit its threshold and target percentages. The `max_output_bytes` row saves for the next session.
 
 [`/login`](/interactive-tui#commands), [`/logout`](/interactive-tui#commands), and [`/model`](/interactive-tui#commands) remain direct shortcuts for provider credentials and conversation-model selection. The corresponding `/config` rows provide the same picker flows. Use `/agents` to inspect reserved internal agents and configure their optional model overrides. Model pickers show entries from Rho's [model catalog](/authentication-and-models#selecting-models) and cached dynamic provider model lists for providers with available auth, and `/model provider/model` can switch explicitly. See the [provider pages](/authentication-and-models#providers) for per-provider auth and model details.
 
@@ -166,22 +166,22 @@ Model aliases work in these entries. Rho keeps reading the old `[title]` section
 
 ## Edit tool
 
-`edit_tool` under `[behavior]` selects the one file edit schema exposed to the model. It defaults to `edit`. Supported values are:
+`edit_tool` under `[behavior]` selects the one file edit schema exposed to the model. It defaults to `hashline`. Supported values are:
 
 | Value | Exposed tool | Format |
 | --- | --- | --- |
-| `edit` | `edit` | Snapshot-tagged, line-anchored `PUT` and `CUT` operations |
+| `hashline` | `edit` | Snapshot-tagged, line-anchored `PUT` and `CUT` operations |
 | `apply_patch` | `apply_patch` | Codex-style, multi-file patch documents |
-| `edit_file` | `edit_file` | Exact `old_string` to `new_string` replacement in one file |
+| `str_replace` | `str_replace` | Exact `old_string` to `new_string` replacement in one file |
 
-Only the selected tool is registered. The other two names and schemas are not sent to the model. Change it from **Tools** > **Edit tool** in `/config`, or set it directly:
+Only the selected tool is registered. Each format keeps its own model-facing name. Change it from **Tools** > **Edit tool** in `/config`, or set it directly:
 
 ```toml
 [behavior]
 edit_tool = "apply_patch"
 ```
 
-The change applies on the next Rho startup because the process fixes tool schemas when it starts. Restart Rho after changing it. Use `edit` when you want stale-file checks, `apply_patch` for models trained on that patch format, or `edit_file` for models that work best with exact string replacement.
+The change applies on the next Rho startup because the process fixes tool schemas when it starts. Restart Rho after changing it. Use `hashline` when you want stale-file checks, `apply_patch` for models trained on that patch format, or `str_replace` for models that work best with exact string replacement.
 
 ## Web search
 
@@ -202,11 +202,11 @@ Legacy flat `web_search_openai_api_key`, `web_search_exa_api_key`, and `web_sear
 
 `advisor_mode` controls whether the [`advisor`](/configuration/advisor-mode) tool is available. It defaults to `false`.
 
-`enable_subagents` controls whether the `agent` and `agents` tools are available. It defaults to `true`. Set it to `false` to remove both tools and instruct the model not to attempt to use subagents. Restart Rho after changing this setting.
+`enable_subagents` controls whether the `agent` and `agents` tools are available. It defaults to `true`. Set it to `false` to remove both tools and instruct the model not to attempt to use subagents. The change applies to the next session.
 
 `inline_shell` selects the shell used for `!` and `!!` commands in the [interactive TUI](/interactive-tui). It defaults to `bash` on macOS and Linux and `powershell` on Windows. Change it from **Tools** > **Inline shell** in `/config`, or set a detected shell name or custom executable path in config. Rho keeps a configured custom path in the picker even when it is not on `PATH`. See [inline shell](/inline-shell).
 
-`experimental_workspace_rewind` enables native file-tool checkpoints and `/rewind`. It defaults to `false`. Restart Rho after changing it. Checkpoints cover `write` and the selected edit tool (`edit`, `apply_patch`, or `edit_file`). Rho warns when a turn ran a shell command because shell, Git, process, network, database, and service effects cannot be restored. `/tree` branches conversation state only, `/rewind` branches conversation state and restores captured files, and Git commands remain separate operations.
+`experimental_workspace_rewind` enables native file-tool checkpoints and `/rewind`. It defaults to `false`. Restart Rho after changing it. Checkpoints cover `write` and the selected edit tool (`hashline`, `apply_patch`, or `str_replace`). Rho warns when a turn ran a shell command because shell, Git, process, network, database, and service effects cannot be restored. `/tree` branches conversation state only, `/rewind` branches conversation state and restores captured files, and Git commands remain separate operations.
 
 ## Auto compaction
 

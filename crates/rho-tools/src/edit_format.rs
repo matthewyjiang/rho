@@ -12,6 +12,10 @@ use crate::sdk_adapter::build_edit_sdk_tool;
 /// depend on a published `rho-agent-tools` version that exports them. Bump this
 /// crate together with those consumers when the public edit surface changes so
 /// crates.io package verification path-patches the unpublished cut.
+///
+/// Config identity, selector label, and model-facing tool name share one
+/// vocabulary per format: `hashline` exposes `edit`, `apply_patch` exposes
+/// `apply_patch`, and `str_replace` exposes `str_replace`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum EditFormat {
@@ -20,34 +24,39 @@ pub enum EditFormat {
     Hashline,
     /// Codex-compatible `apply_patch` tool.
     ApplyPatch,
-    /// Exact string replacement through `edit_file`.
-    EditFile,
+    /// Exact string replacement through the `str_replace` tool.
+    StrReplace,
 }
 
 impl EditFormat {
     /// Every supported edit format, in UI display order.
-    pub const ALL: &'static [Self] = &[Self::Hashline, Self::ApplyPatch, Self::EditFile];
+    pub const ALL: &'static [Self] = &[Self::Hashline, Self::ApplyPatch, Self::StrReplace];
 
     /// The canonical model-facing tool name.
+    ///
+    /// Each format has a unique name so hosts classify by name alone.
     pub const fn tool_name(self) -> &'static str {
         match self {
             Self::Hashline => "edit",
             Self::ApplyPatch => "apply_patch",
-            Self::EditFile => "edit_file",
+            Self::StrReplace => "str_replace",
         }
     }
 
-    /// The canonical configured value and model-facing tool name.
+    /// The canonical configured value and selector label (`behavior.edit_tool`).
     pub const fn as_str(self) -> &'static str {
-        self.tool_name()
-    }
-    /// The short human-readable format label.
-    pub const fn label(self) -> &'static str {
         match self {
-            Self::Hashline => "Hash-line",
-            Self::ApplyPatch => "Apply patch",
-            Self::EditFile => "Replace string",
+            Self::Hashline => "hashline",
+            Self::ApplyPatch => "apply_patch",
+            Self::StrReplace => "str_replace",
         }
+    }
+
+    /// The short human-readable format label shown in selectors.
+    ///
+    /// Same string as [`Self::as_str`].
+    pub const fn label(self) -> &'static str {
+        self.as_str()
     }
 
     /// The format detail shown when selecting an edit surface.
@@ -59,16 +68,41 @@ impl EditFormat {
             Self::ApplyPatch => {
                 "Expose `apply_patch` with a Codex-style multi-file patch document."
             }
-            Self::EditFile => "Expose `edit_file` with exact old_string/new_string replacement.",
+            Self::StrReplace => {
+                "Expose `str_replace` with exact old_string/new_string replacement."
+            }
         }
     }
 
-    /// Resolves a canonical model-facing edit tool name.
+    /// Resolves a configured `behavior.edit_tool` value.
+    pub fn from_config_value(value: &str) -> Option<Self> {
+        match value {
+            "hashline" => Some(Self::Hashline),
+            "apply_patch" => Some(Self::ApplyPatch),
+            "str_replace" => Some(Self::StrReplace),
+            _ => None,
+        }
+    }
+
+    /// Whether `name` is a model-facing built-in edit tool name.
+    ///
+    /// Includes the legacy `edit_file` name so older transcripts and agent
+    /// frontmatter still classify as edit.
+    pub fn is_edit_tool_name(name: &str) -> bool {
+        matches!(name, "edit" | "apply_patch" | "str_replace" | "edit_file")
+    }
+
+    /// Resolves a model-facing edit tool name.
+    ///
+    /// Names are unique per format. The legacy model-facing name `edit_file`
+    /// still maps to [`Self::StrReplace`].
     pub fn from_tool_name(name: &str) -> Option<Self> {
-        Self::ALL
-            .iter()
-            .copied()
-            .find(|format| format.tool_name() == name)
+        match name {
+            "edit" => Some(Self::Hashline),
+            "apply_patch" => Some(Self::ApplyPatch),
+            "str_replace" | "edit_file" => Some(Self::StrReplace),
+            _ => None,
+        }
     }
 
     pub(crate) fn build_sdk_tool(
@@ -82,7 +116,7 @@ impl EditFormat {
 
 impl fmt::Display for EditFormat {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.tool_name())
+        formatter.write_str(self.as_str())
     }
 }
 
@@ -91,11 +125,11 @@ impl FromStr for EditFormat {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         let normalized = value.trim().to_ascii_lowercase();
-        Self::from_tool_name(&normalized).ok_or_else(|| {
+        Self::from_config_value(&normalized).ok_or_else(|| {
             let expected = Self::ALL
                 .iter()
                 .copied()
-                .map(Self::tool_name)
+                .map(Self::as_str)
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("unknown edit tool {normalized:?}; expected {expected}")
@@ -108,7 +142,7 @@ impl Serialize for EditFormat {
     where
         S: Serializer,
     {
-        serializer.serialize_str(self.tool_name())
+        serializer.serialize_str(self.as_str())
     }
 }
 

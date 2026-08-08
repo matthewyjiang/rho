@@ -81,7 +81,7 @@ fn runtime_updates_do_not_replace_restart_only_config() {
             "check_for_updates": false,
             "enable_subagents": true,
             "advisor_mode": false,
-            "edit_tool": "edit",
+            "edit_tool": "hashline",
             "rtk": true,
             "source": "live values used by this process; restart-only settings may differ from saved config"
         })

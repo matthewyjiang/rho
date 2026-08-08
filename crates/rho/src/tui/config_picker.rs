@@ -497,7 +497,7 @@ pub(super) fn edit_tool_picker(selected: EditTool) -> UiPicker {
                     text: "selected".into(),
                     tone: PickerBadgeTone::Selected,
                 }),
-                value: format!("{EDIT_TOOL_PREFIX}{}", edit_tool.tool_name()),
+                value: format!("{EDIT_TOOL_PREFIX}{}", edit_tool.as_str()),
                 selection_verb: None,
             })
             .collect(),

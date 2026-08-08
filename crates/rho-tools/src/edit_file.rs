@@ -12,17 +12,17 @@ use serde_json::json;
 use crate::{
     diff::unified_diff,
     file_mutation::{
-        lock_for_rewrite, normalize_newlines, preferred_line_ending, rewrite_locked_file,
-        FileMutationOutcome,
+        lock_for_rewrite, locked_path_identity_matches, normalize_newlines, preferred_line_ending,
+        rewrite_locked_file, FileMutationOutcome,
     },
     tool::*,
 };
 
-pub struct EditFile;
+pub struct StrReplace;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct EditFileArgs {
+pub(crate) struct StrReplaceArgs {
     pub path: String,
     pub old_string: String,
     pub new_string: String,
@@ -30,16 +30,16 @@ pub(crate) struct EditFileArgs {
     pub replace_all: bool,
 }
 
-impl EditFileArgs {
+impl StrReplaceArgs {
     pub(crate) fn validate(&self) -> Result<(), ToolError> {
         validate_edit_args(&self.old_string, &self.new_string)
     }
 }
 
-impl Tool for EditFile {
+impl Tool for StrReplace {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
-            name: "edit_file".into(),
+            name: "str_replace".into(),
             description: "Edits an existing UTF-8 text file by string replacement. Matching normalizes CRLF/LF newlines while preserving the file's newline style on write. By default old_string must match exactly once; set replace_all to replace every match. Use write to create or fully rewrite a file.".into(),
             input_schema: json!({
                 "type": "object",
@@ -74,7 +74,7 @@ impl Tool for EditFile {
         id: String,
     ) -> AppToolFuture<'a> {
         Box::pin(async move {
-            let args: EditFileArgs = serde_json::from_value(args)?;
+            let args: StrReplaceArgs = serde_json::from_value(args)?;
             let path = resolve_path(&ctx.cwd, &args.path);
             let outcome = edit_file_content(
                 &path,
@@ -132,6 +132,11 @@ fn edit_file_content_locked(
     max_output_bytes: usize,
 ) -> Result<FileMutationOutcome, ToolError> {
     let mut file = lock_for_rewrite(path, display_path, "")?;
+    if !locked_path_identity_matches(&file, path, display_path)? {
+        return Err(ToolError::Message(format!(
+            "edit {display_path} failed: path changed after validation"
+        )));
+    }
 
     let mut original = String::new();
     file.read_to_string(&mut original)
@@ -142,7 +147,12 @@ fn edit_file_content_locked(
     let replacement = match_file_eol(&original, new_string);
     let updated = replace_spans(&original, &spans, &replacement);
 
-    rewrite_locked_file(&mut file, display_path, &original, &updated)?;
+    rewrite_locked_file(
+        &mut file,
+        display_path,
+        /*original*/ &original,
+        /*updated*/ &updated,
+    )?;
 
     let diff = unified_diff(&original, &updated, display_path, /*created*/ false);
     let replaced = spans.len();

@@ -87,7 +87,18 @@ fn canonical_tool_names_match_the_unfiltered_registry() {
         let mut tools = AppToolSet::new(&config, RuntimeDiagnostics::new(&config), options);
         // Advisor mode is off by default; the registry still owns the name.
         tools.set_advisor_registered(true);
-        model_names.extend(tools.unfiltered_names());
+        let names = tools.unfiltered_names().collect::<Vec<_>>();
+        let selected = edit_tool.tool_name();
+        // Model-facing names only; legacy `edit_file` is not registered.
+        for name in ["edit", "apply_patch", "str_replace"] {
+            assert_eq!(
+                names.iter().any(|candidate| candidate == name),
+                name == selected,
+                "edit_tool={edit_tool:?} name={name}"
+            );
+        }
+        assert!(!names.iter().any(|candidate| candidate == "edit_file"));
+        model_names.extend(names);
     }
 
     assert!(!model_names.iter().any(|name| name == "workflow_command"));

@@ -6,8 +6,8 @@ agent and adapters for registering them with `rho-sdk`. The crate is imported as
 
 The built-in tools cover `read_file`, `write`, one selectable edit surface,
 `list_dir`, `grep`, and `glob`, with shared diff generation and output limiting.
-`CodingToolOptions::edit_tool` selects hashline `edit`, Codex-style
-`apply_patch`, or exact-replacement `edit_file`; only that tool is registered.
+`CodingToolOptions::edit_tool` selects `hashline` (`edit`), Codex-style
+`apply_patch`, or `str_replace`; only that tool is registered.
 `read_file` returns UTF-8 sources as hashline views. `grep` content mode also
 mints `[path#TAG]` headers on matching files plus `N | text` match previews.
 These snapshots let the default hashline `edit` chain tags and line numbers;

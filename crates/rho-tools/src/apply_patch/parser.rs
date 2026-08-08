@@ -331,7 +331,7 @@ fn parse_chunk(lines: &[&str], mut index: usize) -> Result<(UpdateFileChunk, usi
             continue;
         }
 
-        if trimmed_end.is_empty() {
+        if raw.is_empty() {
             chunk.old_lines.push(String::new());
             chunk.new_lines.push(String::new());
             index += 1;

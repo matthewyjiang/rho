@@ -50,15 +50,15 @@ fn edit_preferences_select_one_model_facing_surface() {
         (crate::EditFormat::Hashline, "edit", &["input"][..]),
         (crate::EditFormat::ApplyPatch, "apply_patch", &["input"][..]),
         (
-            crate::EditFormat::EditFile,
-            "edit_file",
+            crate::EditFormat::StrReplace,
+            "str_replace",
             &["path", "old_string", "new_string"][..],
         ),
     ] {
         let tools = coding_tools(CodingToolOptions::new().edit_tool(edit_tool));
         let selected = tools
             .iter()
-            .filter(|tool| crate::EditFormat::from_tool_name(&tool.spec().name).is_some())
+            .filter(|tool| crate::EditFormat::is_edit_tool_name(&tool.spec().name))
             .collect::<Vec<_>>();
 
         assert_eq!(selected.len(), 1);
@@ -683,8 +683,8 @@ async fn allowed_policy_executes_selected_alternate_edit_tools() {
             }),
         ),
         (
-            crate::EditFormat::EditFile,
-            "edit_file",
+            crate::EditFormat::StrReplace,
+            "str_replace",
             json!({
                 "path": "sample.txt",
                 "old_string": "old",
@@ -748,10 +748,10 @@ async fn allowed_policy_executes_selected_alternate_edit_tools() {
 }
 
 #[cfg(unix)]
-// Covers: SDK preparation rejects delete semantics on a symlink leaf before authorization.
+// Covers: repeated patch paths upgrade cached preparation to reject symlink leaf mutation.
 // Owner: SDK apply_patch path preparation
 #[tokio::test]
-async fn apply_patch_rejects_symlink_delete_without_following_it() {
+async fn apply_patch_upgrades_cached_path_validation_for_symlink_delete() {
     use std::os::unix::fs::symlink;
 
     let dir = tempfile::tempdir().unwrap();
@@ -766,7 +766,7 @@ async fn apply_patch_rejects_symlink_delete_without_following_it() {
                         id: "call-1".into(),
                         name: "apply_patch".into(),
                         arguments: json!({
-                            "input": "*** Begin Patch\n*** Delete File: alias.txt\n*** End Patch"
+                            "input": "*** Begin Patch\n*** Update File: alias.txt\n@@\n-keep\n+changed\n*** Delete File: alias.txt\n*** End Patch"
                         }),
                     },
                 )])),

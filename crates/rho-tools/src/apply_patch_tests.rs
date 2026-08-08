@@ -338,6 +338,82 @@ fn rejects_malformed_patch_documents() {
     }
 }
 
+// Covers: whitespace-only context keeps all content after the required prefix.
+// Owner: apply_patch parser
+#[test]
+fn parses_whitespace_only_context_lines() {
+    let hunks =
+        parse_patch("*** Begin Patch\n*** Update File: a.txt\n@@\n   \n-old\n+new\n*** End Patch")
+            .unwrap();
+    let Hunk::Update { chunks, .. } = &hunks[0] else {
+        panic!("expected update hunk");
+    };
+    assert_eq!(chunks[0].old_lines, ["  ", "old"]);
+    assert_eq!(chunks[0].new_lines, ["  ", "new"]);
+}
+
+// Covers: reverse chunk contexts fail as out of order without changing the file.
+// Owner: apply_patch content derivation
+#[tokio::test]
+async fn rejects_reverse_chunk_contexts_without_mutation() {
+    let (_dir, ctx) = test_context();
+    let path = ctx.cwd.join("ordered.txt");
+    let original = "first\nsecond\nthird\nfourth\n";
+    std::fs::write(&path, original).unwrap();
+
+    let error = apply(
+        "*** Begin Patch\n*** Update File: ordered.txt\n@@ third\n-fourth\n+FOURTH\n@@ first\n-second\n+SECOND\n*** End Patch",
+        &ctx,
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(
+        message(error),
+        "patch chunks overlap or apply out of order in ordered.txt"
+    );
+    assert_eq!(std::fs::read_to_string(path).unwrap(), original);
+}
+
+// Covers: repeated context headers continue searching forward for ordered chunks.
+// Owner: apply_patch content derivation
+#[tokio::test]
+async fn applies_ordered_chunks_with_repeated_contexts() {
+    let (_dir, ctx) = test_context();
+    let path = ctx.cwd.join("repeated.txt");
+    std::fs::write(&path, "section\nold\nsection\nold\n").unwrap();
+
+    apply(
+        "*** Begin Patch\n*** Update File: repeated.txt\n@@ section\n-old\n+first\n@@ section\n-old\n+second\n*** End Patch",
+        &ctx,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(path).unwrap(),
+        "section\nfirst\nsection\nsecond\n"
+    );
+}
+
+// Covers: deleting an unterminated final line preserves the preceding untouched CRLF.
+// Owner: apply_patch content derivation
+#[tokio::test]
+async fn preserves_untouched_ending_before_deleted_final_line() {
+    let (_dir, ctx) = test_context();
+    let path = ctx.cwd.join("unterminated.txt");
+    std::fs::write(&path, "one\r\ntwo").unwrap();
+
+    apply(
+        "*** Begin Patch\n*** Update File: unterminated.txt\n@@\n-two\n*** End Patch",
+        &ctx,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(std::fs::read(path).unwrap(), b"one\r\n");
+}
+
 // Covers: one transaction applies add/update/delete and returns current metadata/output shapes.
 // Owner: apply_patch application
 #[tokio::test]
@@ -457,23 +533,23 @@ async fn rejects_add_for_an_existing_file() {
     );
 }
 
-// Covers: update hunks preserve a CRLF source file's line endings.
+// Covers: update hunks retain untouched mixed line endings and use the preferred ending for replacements.
 // Owner: apply_patch content derivation
 #[tokio::test]
-async fn preserves_crlf_during_update() {
+async fn preserves_untouched_line_endings_during_mixed_eol_update() {
     let (_dir, ctx) = test_context();
-    std::fs::write(ctx.cwd.join("windows.txt"), "one\r\ntwo\r\n").unwrap();
+    std::fs::write(ctx.cwd.join("mixed.txt"), "one\r\ntwo\nthree\r\n").unwrap();
 
     apply(
-        "*** Begin Patch\n*** Update File: windows.txt\n@@\n-two\n+changed\n*** End Patch",
+        "*** Begin Patch\n*** Update File: mixed.txt\n@@\n-three\n+changed\n*** End Patch",
         &ctx,
     )
     .await
     .unwrap();
 
     assert_eq!(
-        std::fs::read(ctx.cwd.join("windows.txt")).unwrap(),
-        b"one\r\nchanged\r\n"
+        std::fs::read(ctx.cwd.join("mixed.txt")).unwrap(),
+        b"one\r\ntwo\nchanged\r\n"
     );
 }
 
