@@ -116,6 +116,7 @@ mod session_picker;
 mod session_title;
 mod sessions_hub;
 mod setup_screen;
+mod syntax;
 pub(in crate::tui) mod terminal_graph;
 mod transcript_events;
 pub(crate) use session_title::SESSION_TITLE_PROMPT;

@@ -45,7 +45,7 @@ fn panel_line(mut line: Line<'static>, width: usize, canvas_width: usize) -> Lin
     if left_padding > 0 {
         line.spans.insert(
             0,
-            Span::styled(" ".repeat(left_padding), Theme::markdown_code_block()),
+            Span::styled(" ".repeat(left_padding), Theme::code_text()),
         );
     }
     line

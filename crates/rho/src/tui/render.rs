@@ -771,6 +771,30 @@ pub(super) fn wrap_line_hard(line: &str, width: usize) -> Vec<String> {
         .collect()
 }
 
+/// Hard-wrap a pre-styled line at display columns, preserving span styles.
+///
+/// `text` must be the concatenation of `spans` contents. Empty input yields one
+/// empty span row using `empty_style`.
+pub(super) fn hard_wrap_styled_spans(
+    text: &str,
+    spans: &[Span<'static>],
+    width: usize,
+    empty_style: Style,
+) -> Vec<Vec<Span<'static>>> {
+    let width = width.max(1);
+    hard_wrap_ranges(text, width)
+        .into_iter()
+        .map(|range| {
+            let chunk = slice_spans_by_bytes(spans, range.start, range.end);
+            if chunk.is_empty() {
+                vec![Span::styled(String::new(), empty_style)]
+            } else {
+                chunk
+            }
+        })
+        .collect()
+}
+
 /// Display width of concatenated styled spans.
 pub(super) fn spans_display_width(spans: &[Span<'_>]) -> usize {
     spans

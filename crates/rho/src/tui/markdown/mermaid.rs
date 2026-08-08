@@ -131,7 +131,7 @@ fn render_inner(source: &str, inner_width: usize) -> MermaidRender {
     let Some(model) = model::from_ir(&parsed.graph) else {
         return MermaidRender::Fallback(MermaidFallback::Unsupported);
     };
-    let style = Theme::markdown_code_block();
+    let style = Theme::code_text();
     let styles = GraphStyles {
         border: style,
         node_text: style,

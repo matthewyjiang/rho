@@ -12,12 +12,13 @@ use unicode_width::UnicodeWidthStr;
 use super::{
     feed_image::reserve_optional_image_rows,
     render::{
-        display_width, pad_display_line, padded_content_width, push_wrapped_text,
-        slice_spans_by_bytes, soft_wrap_visible_ranges, spans_display_width, styled_blank_line,
-        wrap_line_at_whitespace_ranges, wrap_line_hard, LineFill,
+        display_width, hard_wrap_styled_spans, pad_display_line, padded_content_width,
+        push_wrapped_text, slice_spans_by_bytes, soft_wrap_visible_ranges, spans_display_width,
+        styled_blank_line, wrap_line_at_whitespace_ranges, wrap_line_hard, LineFill,
     },
     theme::Theme,
-    tool_diff, ToolEntry,
+    tool_diff::{self, DiffSyntax},
+    ToolEntry,
 };
 
 /// First-line mid branch: `  ├ `.
@@ -212,16 +213,25 @@ fn render_child_groups(card: &ToolCard, width: usize) -> Vec<ChildGroup> {
         }
         ToolBody::Diff(rows) => {
             let gutter = tool_diff::gutter_width(rows);
+            // Multi-file cards emit File rows; only seed from the header when
+            // the body has none (single-file write/edit).
+            let fallback = rows
+                .iter()
+                .all(|row| row.kind != DiffRowKind::File)
+                .then(|| tool_diff::single_file_path_from_header(card.family, &card.header))
+                .flatten();
+            let mut syntax = DiffSyntax::new(fallback);
             for row in rows {
                 // Multi-file File headers are tree branches (path + structured
-                // stats). Content rows hang under them as Plain groups.
+                // stats). Still feed DiffSyntax so language paint tracks path.
                 if row.kind == DiffRowKind::File {
+                    let _ = syntax.paint_row(row);
                     let spans = file_section_spans(row);
                     groups.push(ChildGroup::TreeFact(push_wrapped_tree_fact(spans, width)));
                     continue;
                 }
                 let mut lines = Vec::new();
-                push_diff_row(&mut lines, row, gutter, width);
+                push_diff_row(&mut lines, row, gutter, width, &mut syntax);
                 groups.push(ChildGroup::Plain(lines));
             }
         }
@@ -500,9 +510,17 @@ fn fact_spans(fact: &ToolFact) -> Vec<Span<'static>> {
 ///
 /// The number gutter and sign column are fixed, so wrapped text hangs under the
 /// text column and added/removed rows stay distinguishable without color.
-fn push_diff_row(lines: &mut Vec<Line<'static>>, row: &DiffRow, gutter: usize, width: usize) {
+/// Content lines may carry language-aware spans when a path is known.
+fn push_diff_row(
+    lines: &mut Vec<Line<'static>>,
+    row: &DiffRow,
+    gutter: usize,
+    width: usize,
+    syntax: &mut DiffSyntax,
+) {
     // File rows are TreeFact groups in render_child_groups. Fallback keeps path
     // plain if a caller still routes a File row through this helper.
+    let highlighted = syntax.paint_row(row);
     if row.kind == DiffRowKind::File {
         push_body_line(lines, &row.plain_text(), width, Theme::tool_path());
         return;
@@ -525,24 +543,33 @@ fn push_diff_row(lines: &mut Vec<Line<'static>>, row: &DiffRow, gutter: usize, w
     let prefix_width = display_width(CHILD_CONTENT_INDENT) + display_width(&number) + sign.len();
     let content_width = width.saturating_sub(prefix_width).max(1);
     let text_style = Theme::tool_diff_text(row.kind);
+    let sign_style = text_style;
 
-    let mut chunks = wrap_line_hard(&row.text, content_width);
-    if chunks.is_empty() {
-        chunks.push(String::new());
-    }
-    for (index, chunk) in chunks.into_iter().enumerate() {
+    let content_spans = match highlighted {
+        Some(segments) => segments
+            .into_iter()
+            .map(|segment| {
+                let style = segment.style(text_style);
+                Span::styled(segment.text, style)
+            })
+            .collect::<Vec<_>>(),
+        None => vec![Span::styled(row.text.clone(), text_style)],
+    };
+
+    let wrapped = hard_wrap_styled_spans(&row.text, &content_spans, content_width, text_style);
+    for (index, chunk) in wrapped.into_iter().enumerate() {
         let mut spans = if index == 0 {
             vec![
                 Span::styled(
                     format!("{CHILD_CONTENT_INDENT}{number}"),
                     Theme::tool_diff_gutter(),
                 ),
-                Span::styled(sign.clone(), text_style),
+                Span::styled(sign.clone(), sign_style),
             ]
         } else {
             vec![Span::styled(" ".repeat(prefix_width), Theme::tool_tree())]
         };
-        spans.push(Span::styled(chunk, text_style));
+        spans.extend(chunk);
         lines.push(pad_spans_line(spans, width));
     }
 }

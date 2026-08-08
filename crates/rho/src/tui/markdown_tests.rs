@@ -107,7 +107,7 @@ fn code_blocks_preserve_markdown_markers_as_literal_text() {
     );
 
     assert!(line_text(&lines[1]).contains("fn __init__() { println!(\"*ok*\"); }"));
-    assert_eq!(line_styles(&lines[1]), vec![Theme::markdown_code_block()]);
+    assert_eq!(line_styles(&lines[1]), vec![Theme::code_text()]);
 }
 
 #[test]
@@ -136,9 +136,7 @@ fn highlighted_code_blocks_style_tokens_and_keep_literal_text() {
     assert_eq!(line_text(&lines[1]), "let answer = 42; // note");
     let styles = line_styles(&lines[1]);
     assert!(styles.len() > 1, "expected highlighted spans: {styles:?}");
-    assert!(styles
-        .iter()
-        .any(|style| *style != Theme::markdown_code_block()));
+    assert!(styles.iter().any(|style| *style != Theme::code_text()));
 }
 
 #[test]
@@ -152,7 +150,7 @@ fn unknown_language_code_blocks_fall_back_to_plain_styling() {
 
     assert!(line_text(&lines[0]).starts_with("NO-SUCH-LANGUAGE"));
     assert_eq!(line_text(&lines[1]), "plain text body");
-    assert_eq!(line_styles(&lines[1]), vec![Theme::markdown_code_block()]);
+    assert_eq!(line_styles(&lines[1]), vec![Theme::code_text()]);
 }
 
 #[test]
@@ -211,9 +209,7 @@ fn fence_state_continuation_highlights_with_carried_language() {
         styles.len() > 1,
         "continuation must be highlighted, got {styles:?}"
     );
-    assert!(styles
-        .iter()
-        .any(|style| *style != Theme::markdown_code_block()));
+    assert!(styles.iter().any(|style| *style != Theme::code_text()));
     assert!(state.is_open());
 }
 

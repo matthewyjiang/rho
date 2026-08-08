@@ -313,7 +313,7 @@ fn active_ansi_color(color: AnsiColor) -> Color {
     sampled_or_named(TERMINAL_SAMPLE.get(), color)
 }
 
-/// Syntax-highlighting roles for fenced code blocks. The markdown highlighter
+/// Syntax-highlighting roles for code fences and diff bodies. The highlighter
 /// maps syntect scopes onto these; the theme maps them onto the palette.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum SyntaxRole {
@@ -570,16 +570,17 @@ impl Theme {
             .remove_modifier(Modifier::UNDERLINED)
     }
 
-    pub(super) fn markdown_code_block() -> Style {
-        // Match assistant body text so code, Mermaid, and math read as content
-        // rather than accent-colored chrome.
+    /// Plain style for code, Mermaid, and math content (not chrome).
+    pub(super) fn code_text() -> Style {
+        // Match assistant body text so source reads as content rather than
+        // accent-colored chrome.
         Self::text()
     }
 
-    /// Style for one syntax-highlighting role inside a fenced code block.
+    /// Style for one syntax-highlighting role.
     /// Colors track the active ANSI palette so every theme, including
     /// terminal-sampled ones, keeps highlighted code readable.
-    pub(super) fn markdown_syntax(role: SyntaxRole) -> Style {
+    pub(super) fn syntax(role: SyntaxRole) -> Style {
         let color = match role {
             SyntaxRole::Comment => active_ansi_color(AnsiColor::BrightBlack),
             SyntaxRole::String => active_ansi_color(AnsiColor::Green),

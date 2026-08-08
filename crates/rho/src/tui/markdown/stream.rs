@@ -40,7 +40,7 @@ pub(in crate::tui) fn markdown_stream_bounds(
 
     if current_line_in_code_block {
         // Code-block rows render at the full pane width; keep the streaming
-        // wrap boundary in lockstep with `hard_wrap_ranges` / `wrap_styled_segments_hard`.
+        // wrap boundary in lockstep with `hard_wrap_ranges` / `hard_wrap_styled_spans`.
         let complete = complete_hard_wrap_prefix(current_line, width.max(1));
         if complete.byte_index > 0 {
             drain.byte_index = current_line_start + complete.byte_index;

@@ -4,6 +4,7 @@ use rho_tools::tool_card::{
 };
 
 use super::push_tool_card;
+use crate::tui::theme::{SyntaxRole, Theme};
 
 fn line_text(line: &ratatui::text::Line<'_>) -> String {
     line.spans
@@ -164,5 +165,52 @@ fn fact_wrap_breaks_on_whitespace() {
             .any(|line| line.contains("three four") || line.ends_with("three")),
         "expected whitespace-bounded wrap rows: {:?}",
         lines
+    );
+}
+
+// Covers: write/edit diff bodies syntax-highlight from the header path
+// Owner: pure TUI (tool card diff highlighting)
+#[test]
+fn file_diff_body_highlights_rust_from_header_path() {
+    let card = ToolCard::new(
+        ToolStatus::Ok,
+        ToolFamily::FileDiff,
+        ToolHeader::call("write", Some("src/lib.rs".into())),
+    )
+    .with_body(ToolBody::Diff(vec![DiffRow::new(
+        DiffRowKind::Added,
+        Some(1),
+        "let answer = 42; // note",
+    )]));
+
+    let mut lines = Vec::new();
+    push_tool_card(
+        &mut lines, &card, /*width*/ 80, /*max_tool_output_lines*/ 32,
+        /*expanded*/ true,
+    );
+    let body = lines
+        .iter()
+        .find(|line| line.spans.iter().any(|span| span.content.contains("let")))
+        .expect("diff body row");
+
+    assert!(
+        body.spans.iter().any(|span| {
+            span.content.contains("let") && span.style == Theme::syntax(SyntaxRole::Keyword)
+        }),
+        "expected keyword highlight in spans: {:?}",
+        body.spans
+            .iter()
+            .map(|s| (s.content.as_ref(), s.style))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        body.spans.iter().any(|span| {
+            span.content.contains('+') && span.style == Theme::tool_diff_text(DiffRowKind::Added)
+        }),
+        "expected green add sign: {:?}",
+        body.spans
+            .iter()
+            .map(|s| (s.content.as_ref(), s.style))
+            .collect::<Vec<_>>()
     );
 }

@@ -5,7 +5,6 @@ use ratatui::{
 
 mod code_fence;
 mod heading;
-mod highlight;
 mod inline;
 mod math;
 mod mermaid;
@@ -21,9 +20,9 @@ pub(in crate::tui) use code_fence::{
     is_closing_fence, parse_opening_fence, update_code_block_state, CodeFenceState,
 };
 use code_fence::{mermaid_opening_fence, opening_fence_info_token, CodeFence};
-use highlight::BlockHighlighter;
 
 use super::markdown_image::standalone_markdown_image;
+use super::syntax::BlockHighlighter;
 use inline::{inline_markdown_stable_prefix_len, markdown_inline_segments, markdown_inline_text};
 use panel::ClosedPanel;
 
@@ -37,7 +36,7 @@ mod table_tests;
 
 use super::{
     render::{
-        char_display_width, display_width, hard_wrap_ranges, slice_spans_by_bytes,
+        char_display_width, display_width, hard_wrap_styled_spans, slice_spans_by_bytes,
         soft_wrap_visible_ranges, truncate_to_display_width,
         wrap_line_at_whitespace_ranges_with_protected_prefix,
     },
@@ -211,12 +210,17 @@ fn render_markdown_from_fence_state(
             if let Some(capture) = &mut block.copy {
                 capture.content.push(raw_line);
             }
+            let plain = Theme::code_text();
             let segments = match &mut block.highlighter {
-                Some(highlighter) => highlighter.highlight_line(raw_line),
-                None => vec![StyledSegment::new(
-                    raw_line.to_string(),
-                    Theme::markdown_code_block(),
-                )],
+                Some(highlighter) => highlighter
+                    .highlight_line(raw_line)
+                    .into_iter()
+                    .map(|segment| {
+                        let style = segment.style(plain);
+                        StyledSegment::new(segment.text, style)
+                    })
+                    .collect(),
+                None => vec![StyledSegment::new(raw_line.to_string(), plain)],
             };
             lines.extend(wrap_styled_segments_hard(&segments, width));
             line_index += 1;
@@ -333,19 +337,14 @@ fn push_closed_panel(
         } => (title, panel::panel_lines(art, width), source),
         ClosedPanel::SourceFallback { title, source } => {
             let mut body = Vec::new();
+            let plain = Theme::code_text();
             for content_line in source.lines() {
-                let segments = vec![StyledSegment::new(
-                    content_line.to_string(),
-                    Theme::markdown_code_block(),
-                )];
+                let segments = vec![StyledSegment::new(content_line.to_string(), plain)];
                 body.extend(wrap_styled_segments_hard(&segments, width));
             }
             if body.is_empty() {
                 body.extend(wrap_styled_segments_hard(
-                    &[StyledSegment::new(
-                        String::new(),
-                        Theme::markdown_code_block(),
-                    )],
+                    &[StyledSegment::new(String::new(), plain)],
                     width,
                 ));
             }
@@ -436,7 +435,6 @@ fn code_block_copy_columns(width: usize) -> Option<std::ops::Range<usize>> {
 /// styles across breaks. Code needs hard wrapping; [`wrap_styled_segments`]
 /// soft-wraps at whitespace and would reflow source lines.
 fn wrap_styled_segments_hard(segments: &[StyledSegment], width: usize) -> Vec<Line<'static>> {
-    let width = width.max(1);
     let text = segments
         .iter()
         .map(|segment| segment.text.as_str())
@@ -445,21 +443,13 @@ fn wrap_styled_segments_hard(segments: &[StyledSegment], width: usize) -> Vec<Li
         .iter()
         .map(|segment| Span::styled(segment.text.clone(), segment.style))
         .collect::<Vec<_>>();
-    let fallback_style = segments
+    let empty_style = segments
         .first()
         .map(|segment| segment.style)
-        .unwrap_or_else(Theme::markdown_code_block);
-
-    hard_wrap_ranges(&text, width)
+        .unwrap_or_else(Theme::code_text);
+    hard_wrap_styled_spans(&text, &spans, width, empty_style)
         .into_iter()
-        .map(|range| {
-            let chunk = slice_spans_by_bytes(&spans, range.start, range.end);
-            if chunk.is_empty() {
-                Line::from(Span::styled(String::new(), fallback_style))
-            } else {
-                Line::from(chunk)
-            }
-        })
+        .map(Line::from)
         .collect()
 }
 
