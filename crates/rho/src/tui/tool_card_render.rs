@@ -35,11 +35,14 @@ const TREE_CHILD_HANG: &str = CHILD_CONTENT_INDENT;
 /// One fact or body/diff block rendered to terminal rows.
 ///
 /// Tree facts always render mid trunk (`├` / `│`); last-child `└` / hang is
-/// applied after budget clipping. Body/diff groups never take tree glyphs.
+/// applied after budget clipping. Plain body rows start with a content indent;
+/// when a later tree branch remains after clipping, that indent is rewritten
+/// to a continuing trunk stem (`│`) so multi-file File headers stay connected.
 enum ChildGroup {
-    /// Fact rows: `[0]` is the branch, `[1..]` are wrap stems.
+    /// Fact / File-section rows: `[0]` is the branch, `[1..]` are wrap stems.
     TreeFact(Vec<Line<'static>>),
-    /// Body/diff rows with fixed content indent only.
+    /// Body/diff rows with fixed content indent (stem applied after clip when
+    /// a later tree branch still follows).
     Plain(Vec<Line<'static>>),
 }
 
@@ -129,11 +132,32 @@ pub(super) fn push_tool_card(
 
     let show_expand_prompt = !expanded && hidden_rows > 0;
     let has_prompt = show_expand_prompt || show_collapse_prompt;
-    let last_child = emitted.len().saturating_sub(1);
+    // For each group, whether a later TreeFact still needs the trunk. Mid
+    // branches stay ├ and plain rows between them keep │ so multi-file File
+    // headers connect through their body content.
+    let later_has_tree = {
+        let mut later = false;
+        let mut flags = vec![false; emitted.len()];
+        for (index, group) in emitted.iter().enumerate().rev() {
+            flags[index] = later;
+            if matches!(group, ChildGroup::TreeFact(_)) {
+                later = true;
+            }
+        }
+        flags
+    };
     for (index, mut group) in emitted.into_iter().enumerate() {
-        let is_last_child = index == last_child && !has_prompt;
-        if let ChildGroup::TreeFact(ref mut fact_lines) = group {
-            rewrite_tree_fact(fact_lines, is_last_child);
+        match &mut group {
+            ChildGroup::TreeFact(fact_lines) => {
+                // Last tree branch uses └ even when plain body hangs under it.
+                // A following expand/collapse prompt keeps mid ├, matching facts.
+                let is_last_tree = !later_has_tree[index] && !has_prompt;
+                rewrite_tree_fact(fact_lines, is_last_tree);
+            }
+            ChildGroup::Plain(plain_lines) if later_has_tree[index] => {
+                apply_trunk_stem(plain_lines);
+            }
+            ChildGroup::Plain(_) => {}
         }
         lines.extend(group.into_lines());
     }
@@ -189,6 +213,13 @@ fn render_child_groups(card: &ToolCard, width: usize) -> Vec<ChildGroup> {
         ToolBody::Diff(rows) => {
             let gutter = tool_diff::gutter_width(rows);
             for row in rows {
+                // Multi-file File headers are tree branches (path + structured
+                // stats). Content rows hang under them as Plain groups.
+                if row.kind == DiffRowKind::File {
+                    let spans = file_section_spans(row);
+                    groups.push(ChildGroup::TreeFact(push_wrapped_tree_fact(spans, width)));
+                    continue;
+                }
                 let mut lines = Vec::new();
                 push_diff_row(&mut lines, row, gutter, width);
                 groups.push(ChildGroup::Plain(lines));
@@ -228,6 +259,35 @@ fn set_tree_prefix(line: &mut Line<'static>, prefix: &str) {
         return;
     };
     first.content = prefix.to_string().into();
+}
+
+/// Swap the leading content-indent columns for a continuing trunk stem (`  │ `).
+///
+/// Body/diff rows start with [`CHILD_CONTENT_INDENT`] (or a pure-space hang of
+/// at least that width). When a later tree branch still follows, rewrite only
+/// those leading columns so File headers read as one connected tree. Gutter
+/// digits and other content after the indent keep their original style.
+fn apply_trunk_stem(lines: &mut [Line<'static>]) {
+    let indent_len = CHILD_CONTENT_INDENT.len();
+    for line in lines {
+        let Some(first) = line.spans.first() else {
+            continue;
+        };
+        let text = first.content.as_ref();
+        let rewrite_indent = text.starts_with(CHILD_CONTENT_INDENT)
+            || (text.len() >= indent_len && text.bytes().all(|b| b == b' '));
+        if !rewrite_indent {
+            continue;
+        }
+        let rest = text[indent_len..].to_string();
+        let rest_style = first.style;
+        let mut spans = vec![Span::styled(TREE_WRAP_STEM.to_string(), Theme::tool_tree())];
+        if !rest.is_empty() {
+            spans.push(Span::styled(rest, rest_style));
+        }
+        spans.extend(line.spans.iter().skip(1).cloned());
+        line.spans = spans;
+    }
 }
 
 fn push_header_line(
@@ -394,19 +454,7 @@ fn fact_spans(fact: &ToolFact) -> Vec<Span<'static>> {
             added,
             removed,
             path,
-        } => {
-            let mut spans = vec![
-                Span::styled(format!("+{added}"), Theme::tool_stat_add()),
-                Span::raw(" "),
-                Span::styled(format!("-{removed}"), Theme::tool_stat_del()),
-                Span::styled(" lines", Theme::tool_meta()),
-            ];
-            if let Some(path) = path.as_ref().filter(|path| !path.is_empty()) {
-                spans.push(Span::styled(" | ", Theme::tool_meta()));
-                spans.push(Span::styled(path.clone(), Theme::tool_path()));
-            }
-            spans
-        }
+        } => diff_stat_spans(*added, *removed, path.as_deref()),
         ToolFact::Exit { code, duration_ms } => {
             let status = if *code == 0 {
                 ToolStatus::Ok
@@ -453,8 +501,10 @@ fn fact_spans(fact: &ToolFact) -> Vec<Span<'static>> {
 /// The number gutter and sign column are fixed, so wrapped text hangs under the
 /// text column and added/removed rows stay distinguishable without color.
 fn push_diff_row(lines: &mut Vec<Line<'static>>, row: &DiffRow, gutter: usize, width: usize) {
+    // File rows are TreeFact groups in render_child_groups. Fallback keeps path
+    // plain if a caller still routes a File row through this helper.
     if row.kind == DiffRowKind::File {
-        push_body_line(lines, &row.text, width, Theme::tool_path());
+        push_body_line(lines, &row.plain_text(), width, Theme::tool_path());
         return;
     }
     // Op locators and other annotations are not content lines; drop the sign
@@ -522,6 +572,29 @@ fn push_body_line(lines: &mut Vec<Line<'static>>, line: &str, width: usize, styl
             width,
         ));
     }
+}
+
+/// File section header spans from structured path + optional stats.
+fn file_section_spans(row: &DiffRow) -> Vec<Span<'static>> {
+    match row.stats {
+        Some((added, removed)) => diff_stat_spans(added, removed, Some(row.text.as_str())),
+        None => vec![Span::styled(row.text.clone(), Theme::tool_path())],
+    }
+}
+
+/// Shared colored spans for DiffStat facts and multi-file File section headers.
+fn diff_stat_spans(added: u64, removed: u64, path: Option<&str>) -> Vec<Span<'static>> {
+    let mut spans = vec![
+        Span::styled(format!("+{added}"), Theme::tool_stat_add()),
+        Span::raw(" "),
+        Span::styled(format!("-{removed}"), Theme::tool_stat_del()),
+        Span::styled(" lines", Theme::tool_meta()),
+    ];
+    if let Some(path) = path.filter(|path| !path.is_empty()) {
+        spans.push(Span::styled(" | ", Theme::tool_meta()));
+        spans.push(Span::styled(path.to_string(), Theme::tool_path()));
+    }
+    spans
 }
 
 fn pad_spans_line(mut spans: Vec<Span<'static>>, width: usize) -> Line<'static> {

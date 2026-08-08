@@ -234,6 +234,42 @@ fn deleted_file_keeps_old_path_not_dev_null() {
     );
 }
 
+// Covers: multi-file card sections keep path + stats on File rows so the
+// presenter can drop DiffStat facts without losing identity or counts.
+// Owner: pure unit (tool card)
+#[test]
+fn multi_file_card_headers_include_content_stats() {
+    let files = vec![
+        DiffCardFile {
+            path: "a.rs".into(),
+            source_path: None,
+            change: DiffCardChange::Content,
+            stats: Some((1, 1)),
+            rows: vec![DiffRow::new(DiffRowKind::Added, Some(1), "A")],
+        },
+        DiffCardFile {
+            path: "b.rs".into(),
+            source_path: None,
+            change: DiffCardChange::Content,
+            stats: Some((0, 2)),
+            rows: vec![DiffRow::new(DiffRowKind::Removed, Some(1), "x")],
+        },
+    ];
+    assert_eq!(
+        compact_diff_rows_from_card_files(&files, /*include_file_headers*/ true),
+        vec![
+            DiffRow::file_header("a.rs", Some((1, 1))),
+            DiffRow::new(DiffRowKind::Added, Some(1), "A"),
+            DiffRow::file_header("b.rs", Some((0, 2))),
+            DiffRow::new(DiffRowKind::Removed, Some(1), "x"),
+        ]
+    );
+    assert_eq!(
+        DiffRow::file_header("a.rs", Some((1, 1))).plain_text(),
+        "+1 -1 lines | a.rs"
+    );
+}
+
 #[test]
 fn diff_stats_multi_file_without_blank_separator() {
     let diff = "\

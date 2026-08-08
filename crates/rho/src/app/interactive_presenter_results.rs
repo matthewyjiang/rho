@@ -215,6 +215,8 @@ pub(super) fn diff_card(
         return card;
     }
 
+    // Path appears once: multi-file File section headers own path + counts;
+    // single-file headers already name the path, so DiffStat is counts only.
     let include_file_headers = files.len() > 1;
     for file in &files {
         match file.change {
@@ -227,11 +229,15 @@ pub(super) fn diff_card(
                 card.push_fact(ToolFact::Meta { text });
             }
             DiffCardChange::Content => {
+                // Multi-file: counts live on File section rows (see body below).
+                if include_file_headers {
+                    continue;
+                }
                 if let Some((added, removed)) = file.stats {
                     card.push_fact(ToolFact::DiffStat {
                         added,
                         removed,
-                        path: Some(file.display_path()),
+                        path: None,
                     });
                 }
             }
