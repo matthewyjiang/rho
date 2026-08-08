@@ -268,8 +268,8 @@ fn render_child_groups(card: &ToolCard, width: usize, paint_budget: Option<usize
                 if row.kind == DiffRowKind::File {
                     let _ = syntax.paint_row(row);
                     if paint_remaining == 0 {
-                        total_rows = total_rows
-                            .saturating_add(estimate_diff_row_rows(row, gutter, width));
+                        total_rows =
+                            total_rows.saturating_add(estimate_diff_row_rows(row, gutter, width));
                         continue;
                     }
                     let spans = file_section_spans(row);
