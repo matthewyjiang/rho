@@ -200,13 +200,13 @@ fn write_status_inner(path: &Path, status: &RunStatus, force: bool) -> std::io::
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     // One read covers monotonicity and finish-time preservation for same-run updates.
     let existing = if force { None } else { read_status(path) };
-    if !force && !status.state.is_terminal() {
-        if existing
+    if !force
+        && !status.state.is_terminal()
+        && existing
             .as_ref()
             .is_some_and(|existing| existing.state.is_terminal())
-        {
-            return Ok(());
-        }
+    {
+        return Ok(());
     }
     #[cfg(test)]
     status_write_hooks::run_after_read(path, status);
@@ -214,14 +214,13 @@ fn write_status_inner(path: &Path, status: &RunStatus, force: bool) -> std::io::
     let mut status = status.clone();
     if status.state.is_terminal() && status.finished_at.is_none() {
         // Same-run terminal upgrades (Error -> Stopped, etc.) keep the first finish.
-        if !force {
-            if let Some(finished_at) = existing
-                .as_ref()
-                .filter(|existing| existing.state.is_terminal())
-                .and_then(|existing| existing.finished_at)
-            {
-                status.finished_at = Some(finished_at);
-            }
+        let preserved = (!force)
+            .then_some(existing.as_ref())
+            .flatten()
+            .filter(|existing| existing.state.is_terminal())
+            .and_then(|existing| existing.finished_at);
+        if let Some(finished_at) = preserved {
+            status.finished_at = Some(finished_at);
         }
         status.mark_finished_now();
     }
