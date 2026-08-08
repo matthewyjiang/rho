@@ -16,6 +16,15 @@ use crate::sdk_adapter::build_edit_sdk_tool;
 /// Config identity, selector label, and model-facing tool name share one
 /// vocabulary per format: `hashline` exposes `edit`, `apply_patch` exposes
 /// `apply_patch`, and `str_replace` exposes `str_replace`.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-tools): drop the legacy `edit_file` tool-name alias from
+/// [`Self::is_edit_tool_name`] and [`Self::from_tool_name`]; only `str_replace`
+/// remains.
+///
+/// The alias keeps 1.x transcripts and agent frontmatter classifying as
+/// string-replace. New code and docs should use `str_replace` only.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum EditFormat {
@@ -87,7 +96,7 @@ impl EditFormat {
     /// Whether `name` is a model-facing built-in edit tool name.
     ///
     /// Includes the legacy `edit_file` name so older transcripts and agent
-    /// frontmatter still classify as edit.
+    /// frontmatter still classify as edit. See the type-level next-major note.
     pub fn is_edit_tool_name(name: &str) -> bool {
         matches!(name, "edit" | "apply_patch" | "str_replace" | "edit_file")
     }
@@ -95,11 +104,12 @@ impl EditFormat {
     /// Resolves a model-facing edit tool name.
     ///
     /// Names are unique per format. The legacy model-facing name `edit_file`
-    /// still maps to [`Self::StrReplace`].
+    /// still maps to [`Self::StrReplace`]. See the type-level next-major note.
     pub fn from_tool_name(name: &str) -> Option<Self> {
         match name {
             "edit" => Some(Self::Hashline),
             "apply_patch" => Some(Self::ApplyPatch),
+            // NEXT_MAJOR(rho-tools): drop `edit_file` once only `str_replace` remains.
             "str_replace" | "edit_file" => Some(Self::StrReplace),
             _ => None,
         }

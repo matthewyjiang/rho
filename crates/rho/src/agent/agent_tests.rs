@@ -61,6 +61,8 @@ fn edit_capability_aliases_match_edit() {
         "---\ndescription: work\ntools: [edit]\n---\n",
     )
     .unwrap();
+    // edit_file is a 1.x alias for str_replace.
+    // NEXT_MAJOR(rho): drop edit_file once agent frontmatter uses str_replace.
     for alias in ["edit_file", "apply_patch", "hashline", "str_replace"] {
         let legacy = parse_definition(
             Path::new("b.md"),

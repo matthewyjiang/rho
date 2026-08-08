@@ -16,7 +16,8 @@ fn selected_edit_tool_names_share_the_edit_presentation_kind() {
         ToolKind::from_name("str_replace"),
         ToolKind::Edit(rho_tools::EditFormat::StrReplace)
     );
-    // Legacy model-facing name still classifies as string-replace.
+    // Legacy model-facing name still classifies as string-replace until 2.0.
+    // NEXT_MAJOR(rho-tools): drop edit_file once only str_replace remains.
     assert_eq!(
         ToolKind::from_name("edit_file"),
         ToolKind::Edit(rho_tools::EditFormat::StrReplace)

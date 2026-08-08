@@ -29,6 +29,8 @@ macro_rules! define_tool_capabilities {
                     $($name => Self::$variant,)+
                     // Alternate edit tool names share one capability; the global
                     // edit preference chooses the model-facing implementation.
+                    // NEXT_MAJOR(rho): drop edit_file once agent frontmatter uses
+                    // the canonical str_replace name.
                     "edit_file" | "apply_patch" | "hashline" | "str_replace" => Self::Edit,
                     // NEXT_MAJOR(rho): drop write_file once agent frontmatter uses the canonical write name.
                     "write_file" => Self::WriteFile,

@@ -90,6 +90,7 @@ fn canonical_tool_names_match_the_unfiltered_registry() {
         let names = tools.unfiltered_names().collect::<Vec<_>>();
         let selected = edit_tool.tool_name();
         // Model-facing names only; legacy `edit_file` is not registered.
+        // NEXT_MAJOR(rho-tools): drop edit_file alias recognition entirely in 2.0.
         for name in ["edit", "apply_patch", "str_replace"] {
             assert_eq!(
                 names.iter().any(|candidate| candidate == name),
