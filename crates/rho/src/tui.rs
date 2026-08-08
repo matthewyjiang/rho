@@ -126,7 +126,8 @@ mod reasoning_phase;
 mod rewind_actions;
 mod skill_actions;
 mod skill_picker;
-#[cfg(debug_assertions)]
+// Always compiled: display_version() is used in release TUI chrome.
+// Matrix/herdr injection paths stay no-ops outside debug builds.
 mod smoke_injection;
 mod status_overlay;
 mod statusline;
@@ -388,10 +389,7 @@ pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::
         )
         .await;
     let result = {
-        #[cfg(debug_assertions)]
         let injected = smoke_injection::after_terminal_init();
-        #[cfg(not(debug_assertions))]
-        let injected: anyhow::Result<()> = Ok(());
 
         match injected {
             Ok(()) => {

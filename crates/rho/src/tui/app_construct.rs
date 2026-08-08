@@ -25,6 +25,7 @@ impl App {
         mcp_report: crate::tools::mcp::McpSessionReport,
         plugins_report: crate::plugins::PluginLoadReport,
     ) -> Self {
+        // Matrix mode is debug-only (matrix_enabled is always false in release).
         #[cfg(debug_assertions)]
         if smoke_injection::matrix_enabled() {
             smoke_injection::seed_matrix_model_cache();
