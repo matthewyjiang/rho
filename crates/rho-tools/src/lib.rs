@@ -32,7 +32,6 @@ pub mod apply_patch;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod bash;
 pub mod diff;
-mod edit_file;
 mod glob;
 mod grep;
 mod grep_format;
@@ -47,6 +46,7 @@ mod sdk_search;
 pub mod sdk_security;
 pub mod sdk_shell;
 pub mod sdk_support;
+pub mod str_replace;
 pub mod write_file;
 
 pub use cancellation::RunCancellation;

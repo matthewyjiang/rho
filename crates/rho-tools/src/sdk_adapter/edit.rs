@@ -23,7 +23,6 @@ use crate::{
         apply_hunks, parse_patch, patch_paths_lenient, reject_symlink_entry, validate_hunk_paths,
         ApplyPatch, Hunk,
     },
-    edit_file::{edit_file_content, StrReplace, StrReplaceArgs},
     hashline::{
         apply_prepared_sections, claim_unique_path, parse_hashline, proposed_sections, Edit,
         PreparedSection,
@@ -32,6 +31,7 @@ use crate::{
         check_preparation_cancelled, map_invalid_app_error, map_path_error, parse_args,
         path_request, preparation_workspace, PathCapability,
     },
+    str_replace::{str_replace_content, StrReplace, StrReplaceArgs},
     tool::{compact_display_path, Tool as AppTool, ToolError as AppToolError},
 };
 
@@ -449,7 +449,7 @@ fn execute_prepared_string_edit(
         let outcome = run_observed_mutation(
             mutation_observer.as_ref(),
             &mutation_paths,
-            edit_file_content(
+            str_replace_content(
                 resolved.path(),
                 &display,
                 &args.old_string,

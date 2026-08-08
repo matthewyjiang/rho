@@ -20,7 +20,7 @@ fn message(error: ToolError) -> String {
 }
 
 // Covers: invalid replacement requests fail before any file mutation.
-// Owner: edit_file argument validation
+// Owner: str_replace argument validation
 #[test]
 fn rejects_invalid_replacement_arguments() {
     let cases = [
@@ -49,14 +49,14 @@ fn rejects_invalid_replacement_arguments() {
 }
 
 // Covers: a unique replacement rewrites the target and returns chainable output.
-// Owner: edit_file application
+// Owner: str_replace application
 #[tokio::test]
 async fn replaces_unique_occurrence_with_hashline_snapshot() {
     let (_dir, ctx) = test_context();
     let path = ctx.cwd.join("sample.txt");
     std::fs::write(&path, "alpha beta gamma").unwrap();
 
-    let outcome = edit_file_content(
+    let outcome = str_replace_content(
         &path,
         "sample.txt",
         "beta",
@@ -81,14 +81,14 @@ async fn replaces_unique_occurrence_with_hashline_snapshot() {
 }
 
 // Covers: ambiguous default matching fails closed instead of guessing.
-// Owner: edit_file application
+// Owner: str_replace application
 #[tokio::test]
 async fn rejects_ambiguous_match_without_mutation() {
     let (_dir, ctx) = test_context();
     let path = ctx.cwd.join("sample.txt");
     std::fs::write(&path, "old old").unwrap();
 
-    let error = edit_file_content(
+    let error = str_replace_content(
         &path,
         "sample.txt",
         "old",
@@ -107,14 +107,14 @@ async fn rejects_ambiguous_match_without_mutation() {
 }
 
 // Covers: newline-normalized matching preserves the target file's CRLF style.
-// Owner: edit_file application
+// Owner: str_replace application
 #[tokio::test]
 async fn preserves_crlf_when_arguments_use_lf() {
     let (_dir, ctx) = test_context();
     let path = ctx.cwd.join("sample.txt");
     std::fs::write(&path, "alpha\r\nbeta\r\n").unwrap();
 
-    edit_file_content(
+    str_replace_content(
         &path,
         "sample.txt",
         "beta\n",
@@ -128,15 +128,15 @@ async fn preserves_crlf_when_arguments_use_lf() {
     assert_eq!(std::fs::read_to_string(path).unwrap(), "alpha\r\ngamma\r\n");
 }
 
-// Covers: edit_file_content honors replace_all and reports the applied count.
-// Owner: edit_file public content path
+// Covers: str_replace_content honors replace_all and reports the applied count.
+// Owner: str_replace public content path
 #[tokio::test]
-async fn replaces_all_occurrences_through_edit_file_content() {
+async fn replaces_all_occurrences_through_str_replace_content() {
     let (_dir, ctx) = test_context();
     let path = ctx.cwd.join("sample.txt");
     std::fs::write(&path, "old middle old\n").unwrap();
 
-    let outcome = edit_file_content(
+    let outcome = str_replace_content(
         &path,
         "sample.txt",
         "old",
@@ -154,8 +154,8 @@ async fn replaces_all_occurrences_through_edit_file_content() {
 }
 
 #[cfg(unix)]
-// Covers: edit_file rejects a symlink leaf instead of rewriting its target.
-// Owner: edit_file locked path validation
+// Covers: str_replace rejects a symlink leaf instead of rewriting its target.
+// Owner: str_replace locked path validation
 #[tokio::test]
 async fn rejects_symlink_leaf_without_mutating_target() {
     use std::os::unix::fs::symlink;
@@ -166,7 +166,7 @@ async fn rejects_symlink_leaf_without_mutating_target() {
     std::fs::write(&target, "old\n").unwrap();
     symlink(&target, &alias).unwrap();
 
-    let error = edit_file_content(
+    let error = str_replace_content(
         &alias,
         "alias.txt",
         "old",

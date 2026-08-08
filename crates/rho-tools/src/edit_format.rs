@@ -8,7 +8,7 @@ use crate::sdk_adapter::build_edit_sdk_tool;
 
 /// A built-in file edit surface exposed to models.
 ///
-/// Hosts that import this type (or the `apply_patch` / `edit_file` modules) must
+/// Hosts that import this type (or the `apply_patch` / `str_replace` modules) must
 /// depend on a published `rho-agent-tools` version that exports them. Bump this
 /// crate together with those consumers when the public edit surface changes so
 /// crates.io package verification path-patches the unpublished cut.

@@ -1,13 +1,6 @@
-//! Single-file string replacement tool.
-//!
-//! One call edits one existing UTF-8 file. By default the old string must match
-//! exactly once after newline normalization. Set `replace_all` to replace every
-//! occurrence.
+//! Exact string matching and locked file replacement for `str_replace`.
 
 use std::{io::Read, ops::Range, path::Path};
-
-use serde::Deserialize;
-use serde_json::json;
 
 use crate::{
     diff::unified_diff,
@@ -18,84 +11,8 @@ use crate::{
     tool::*,
 };
 
-pub struct StrReplace;
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct StrReplaceArgs {
-    pub path: String,
-    pub old_string: String,
-    pub new_string: String,
-    #[serde(default)]
-    pub replace_all: bool,
-}
-
-impl StrReplaceArgs {
-    pub(crate) fn validate(&self) -> Result<(), ToolError> {
-        validate_edit_args(&self.old_string, &self.new_string)
-    }
-}
-
-impl Tool for StrReplace {
-    fn spec(&self) -> ToolSpec {
-        ToolSpec {
-            name: "str_replace".into(),
-            description: "Edits an existing UTF-8 text file by string replacement. Matching normalizes CRLF/LF newlines while preserving the file's newline style on write. By default old_string must match exactly once; set replace_all to replace every match. Use write to create or fully rewrite a file.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Path of an existing file to edit."
-                    },
-                    "old_string": {
-                        "type": "string",
-                        "description": "Text to find. Must be non-empty and must differ from new_string. CRLF and LF newlines are treated equivalently when matching."
-                    },
-                    "new_string": {
-                        "type": "string",
-                        "description": "Replacement text. Newlines are rewritten to match the file's existing style."
-                    },
-                    "replace_all": {
-                        "type": "boolean",
-                        "description": "When true, replace every occurrence of old_string. When false or omitted, require exactly one match."
-                    }
-                },
-                "required": ["path", "old_string", "new_string"],
-                "additionalProperties": false
-            }),
-        }
-    }
-
-    fn call<'a>(
-        &'a self,
-        args: serde_json::Value,
-        ctx: ToolContext,
-        id: String,
-    ) -> AppToolFuture<'a> {
-        Box::pin(async move {
-            let args: StrReplaceArgs = serde_json::from_value(args)?;
-            let path = resolve_path(&ctx.cwd, &args.path);
-            let outcome = edit_file_content(
-                &path,
-                &compact_display_path(&ctx.cwd, &args.path),
-                &args.old_string,
-                &args.new_string,
-                args.replace_all,
-                ctx.max_output_bytes,
-            )
-            .await?;
-            Ok(ToolResult {
-                id,
-                ok: true,
-                content: outcome.content,
-            })
-        })
-    }
-}
-
 /// Apply one string replacement to an existing file under an exclusive lock.
-pub(crate) async fn edit_file_content(
+pub(crate) async fn str_replace_content(
     path: &Path,
     display_path: &str,
     old_string: &str,
@@ -110,7 +27,7 @@ pub(crate) async fn edit_file_content(
     let old_string = old_string.to_string();
     let new_string = new_string.to_string();
     tokio::task::spawn_blocking(move || {
-        edit_file_content_locked(
+        str_replace_content_locked(
             &path,
             &display_path,
             &old_string,
@@ -123,7 +40,19 @@ pub(crate) async fn edit_file_content(
     .map_err(|error| ToolError::Message(format!("edit task failed: {error}")))?
 }
 
-fn edit_file_content_locked(
+pub(super) fn validate_edit_args(old_string: &str, new_string: &str) -> Result<(), ToolError> {
+    if old_string.is_empty() {
+        return Err(ToolError::Message("old_string must not be empty".into()));
+    }
+    if normalize_newlines(old_string) == normalize_newlines(new_string) {
+        return Err(ToolError::Message(
+            "old_string and new_string are identical after newline normalization; nothing to change".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn str_replace_content_locked(
     path: &Path,
     display_path: &str,
     old_string: &str,
@@ -165,18 +94,6 @@ fn edit_file_content_locked(
         display_paths: vec![display_path.to_string()],
         diff,
     })
-}
-
-fn validate_edit_args(old_string: &str, new_string: &str) -> Result<(), ToolError> {
-    if old_string.is_empty() {
-        return Err(ToolError::Message("old_string must not be empty".into()));
-    }
-    if normalize_newlines(old_string) == normalize_newlines(new_string) {
-        return Err(ToolError::Message(
-            "old_string and new_string are identical after newline normalization; nothing to change".into(),
-        ));
-    }
-    Ok(())
 }
 
 fn validate_match_count(
@@ -274,7 +191,3 @@ fn match_file_eol(content: &str, new_string: &str) -> String {
     let eol = preferred_line_ending(content);
     normalize_newlines(new_string).replace('\n', eol)
 }
-
-#[cfg(test)]
-#[path = "edit_file_tests.rs"]
-mod tests;
