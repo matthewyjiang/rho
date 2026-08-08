@@ -64,26 +64,29 @@ impl BoundRuntime {
         }
     }
 
-    /// Provider/model labels for the initial status snapshot.
+    /// Identity fields for the initial status / artifact snapshot.
     pub(crate) fn artifact_labels(&self) -> ArtifactLabels {
         match self {
             Self::ClaudeCli { model, .. } => ArtifactLabels {
                 provider: "claude-code".into(),
                 model: model.clone().unwrap_or_else(|| "claude-cli".into()),
+                runtime: crate::agent::AgentRuntime::ClaudeCli,
             },
             Self::Rho { config, .. } => ArtifactLabels {
                 provider: config.provider.clone(),
                 model: config.model.clone(),
+                runtime: crate::agent::AgentRuntime::Rho,
             },
         }
     }
 }
 
-/// Named provider/model labels from a bound runtime.
+/// Named provider/model/runtime labels from a bound runtime.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ArtifactLabels {
     pub(crate) provider: String,
     pub(crate) model: String,
+    pub(crate) runtime: crate::agent::AgentRuntime,
 }
 
 #[derive(Clone, Debug)]

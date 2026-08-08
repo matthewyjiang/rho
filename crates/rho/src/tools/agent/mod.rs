@@ -61,10 +61,13 @@ struct AgentEntry {
 impl AgentEntry {
     fn snapshot(&self, id: &str) -> SubagentSnapshot {
         let status = self.handle.status();
+        let elapsed = status
+            .elapsed_duration(subagent::unix_now_secs())
+            .unwrap_or_else(|| self.started.elapsed());
         SubagentSnapshot {
             id: id.to_string(),
             agent_id: self.agent_id.clone(),
-            elapsed: self.started.elapsed(),
+            elapsed,
             done: status.state.is_terminal(),
             status,
         }

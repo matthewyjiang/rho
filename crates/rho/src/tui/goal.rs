@@ -333,19 +333,15 @@ pub(super) fn format_elapsed(elapsed: Duration) -> String {
 }
 
 pub(super) fn format_elapsed_with(elapsed: Duration, precision: ElapsedPrecision) -> String {
-    let seconds = elapsed.as_secs();
-    if seconds < 60 {
-        return match precision {
-            ElapsedPrecision::WholeSeconds => format!("{seconds}s"),
-            ElapsedPrecision::TenthsUnderMinute => {
+    match precision {
+        ElapsedPrecision::WholeSeconds => crate::subagent::format_elapsed_secs(elapsed.as_secs()),
+        ElapsedPrecision::TenthsUnderMinute => {
+            if elapsed.as_secs() < 60 {
                 format!("{:.1}s", elapsed.as_secs_f64())
+            } else {
+                crate::subagent::format_elapsed_secs(elapsed.as_secs())
             }
-        };
-    }
-    if seconds < 3_600 {
-        format!("{}m {}s", seconds / 60, seconds % 60)
-    } else {
-        format!("{}h {}m", seconds / 3_600, seconds % 3_600 / 60)
+        }
     }
 }
 

@@ -163,7 +163,7 @@ fn notification_prompts_bound_many_large_utf8_results_and_keep_run_statuses() {
 
 async fn spawn_background_run(manager: &SubagentManager, root: &Path) -> String {
     let tool = AgentTool::new(manager.clone(), root, BackgroundSubagents::Enabled);
-    call_agent(
+    let output = call_agent(
         &tool,
         root,
         serde_json::json!({
@@ -173,7 +173,15 @@ async fn spawn_background_run(manager: &SubagentManager, root: &Path) -> String 
         }),
     )
     .await;
-    manager.list().last().unwrap().id.clone()
+    // Parse the start receipt. Do not use list().last(): list sorts by elapsed,
+    // so equal-duration runs make "last" non-deterministic across HashMap order.
+    let content = output.content();
+    let id = content
+        .strip_prefix("agent ")
+        .and_then(|rest| rest.split_once(' ').map(|(id, _)| id))
+        .expect("background start receipt names the run id");
+    assert_eq!(id.len(), 6, "run id should be 6 hex chars: {content}");
+    id.to_string()
 }
 
 #[tokio::test]
