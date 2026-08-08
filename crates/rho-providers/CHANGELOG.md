@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.18.2](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.18.1...rho-providers-v0.18.2) (2026-08-08)
+
+
+### Bug Fixes
+
+* exclude reasoning tokens from throughput ([#819](https://github.com/matthewyjiang/rho/issues/819)) ([d261b5b](https://github.com/matthewyjiang/rho/commit/d261b5b35bfb119f49a81d83b33ca06b62b383e7))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.17.2 to 1.17.3
+
 ## [0.18.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.18.0...rho-providers-v0.18.1) (2026-08-07)
 
 
