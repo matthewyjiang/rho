@@ -1,5 +1,6 @@
 use std::{borrow::Cow, collections::BTreeSet, fmt, str::FromStr};
 
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -226,7 +227,10 @@ pub enum ToolPolicy {
 /// Runtime is independent of model selection. `Rho` uses Rho's own loop and
 /// tool vocabulary. `ClaudeCli` delegates the loop to the `claude` binary and
 /// uses Claude Code tool names.
-#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Clone, Copy, Debug, Default, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
+)]
+#[serde(rename_all = "kebab-case")]
 pub enum AgentRuntime {
     #[default]
     Rho,

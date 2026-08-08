@@ -1,11 +1,19 @@
-use std::{collections::HashMap, sync::OnceLock};
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 use ratatui::{
     style::{Color, Modifier, Style},
     text::Line,
 };
 
-use super::markdown::HeadingLevel;
+use super::{
+    markdown::HeadingLevel,
+    theme_scheme::{
+        self, is_terminal_theme_id, normalize_theme_id, resolve_fixed_scheme, ColorScheme, Rgb,
+        TERMINAL_THEME_ID,
+    },
+    theme_terminal::{query_terminal_palette, AnsiColor, TerminalPalette},
+};
 
 const USER_BACKGROUND_ALPHA: f32 = 0.10;
 const NEUTRAL_TOOL_BACKGROUND_ALPHA: f32 = 0.10;
@@ -21,30 +29,46 @@ const DIM_MIN_LUMINANCE_ON_DARK: f32 = 0.12;
 const DIM_MAX_LUMINANCE_ON_LIGHT: f32 = 0.45;
 // Minimum luminance gap so muted text neither matches the wash nor the body.
 const DIM_CONTRAST_MARGIN: f32 = 0.08;
+// Status/role ink (warning, success, ...) vs surface. Bright yellow on light
+// surfaces is the usual failure; require a clear darker/lighter separation.
+const ROLE_INK_MARGIN: f32 = 0.22;
 
-static TERMINAL_PALETTE: OnceLock<TerminalPalette> = OnceLock::new();
+/// Host terminal sample captured once at startup.
+static TERMINAL_SAMPLE: OnceLock<TerminalPalette> = OnceLock::new();
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Rgb {
-    red: u8,
-    green: u8,
-    blue: u8,
+/// Active theme selection (terminal-matched or a fixed scheme).
+static THEME_STATE: Mutex<ThemeState> = Mutex::new(ThemeState::new());
+
+#[derive(Clone, Debug)]
+struct ThemeState {
+    /// Configured / committed theme id (`terminal`, `one-half-dark`, ...).
+    committed_id: String,
+    /// Id currently driving colors (may be a live picker preview).
+    active_id: String,
+    /// Fixed scheme when `active_id` is not terminal.
+    active_scheme: Option<ColorScheme>,
+    /// Bumps when active colors change so history cache rebuilds.
+    generation: u64,
+    /// Schemes retained from the open theme picker so preview/apply do not
+    /// re-read custom theme files while browsing.
+    picker_catalog: Option<HashMap<String, ColorScheme>>,
+}
+
+impl ThemeState {
+    const fn new() -> Self {
+        Self {
+            committed_id: String::new(),
+            active_id: String::new(),
+            active_scheme: None,
+            generation: 0,
+            picker_catalog: None,
+        }
+    }
 }
 
 impl Rgb {
-    const fn new(red: u8, green: u8, blue: u8) -> Self {
-        Self { red, green, blue }
-    }
-
     fn color(self) -> Color {
         Color::Rgb(self.red, self.green, self.blue)
-    }
-
-    fn luminance(self) -> f32 {
-        (0.2126 * f32::from(self.red)
-            + 0.7152 * f32::from(self.green)
-            + 0.0722 * f32::from(self.blue))
-            / 255.0
     }
 
     /// True when this sample can serve as muted chrome against `background_luminance`.
@@ -58,20 +82,6 @@ impl Rgb {
                 && luminance >= background_luminance + DIM_CONTRAST_MARGIN
         }
     }
-
-    fn blend_toward(self, overlay: Self, alpha: f32) -> Self {
-        Self::new(
-            blend_channel(self.red, overlay.red, alpha),
-            blend_channel(self.green, overlay.green, alpha),
-            blend_channel(self.blue, overlay.blue, alpha),
-        )
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct TerminalPalette {
-    background: Rgb,
-    ansi: HashMap<AnsiColor, Rgb>,
 }
 
 impl TerminalPalette {
@@ -84,6 +94,7 @@ impl TerminalPalette {
 
     fn dim_foreground(&self) -> Color {
         // Dim chrome comes from ANSI bright black (index 8), never white (index 7).
+        // Terminal mode keeps named ANSI fallbacks so the host palette paints them.
         let background_luminance = self.background.luminance();
         let fallback = if is_light_background(background_luminance) {
             Color::Black
@@ -96,6 +107,24 @@ impl TerminalPalette {
             .filter(|rgb| rgb.is_usable_dim(background_luminance))
             .map_or(fallback, Rgb::color)
     }
+}
+
+/// Dim ink for a fixed RGB scheme. Never returns named ANSI fallbacks.
+fn scheme_dim_foreground(scheme: &ColorScheme) -> Color {
+    let background = scheme.background;
+    let background_luminance = background.luminance();
+    let candidates = [
+        scheme_ansi(scheme, AnsiColor::BrightBlack),
+        scheme.ansi[0], // black (ANSI 0 has no AnsiColor variant)
+        scheme.foreground,
+    ];
+    for candidate in candidates {
+        if candidate.is_usable_dim(background_luminance) {
+            return candidate.color();
+        }
+    }
+    // Last resort: pull foreground toward the surface so chrome stays muted.
+    background.blend_toward(scheme.foreground, 0.55).color()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -117,77 +146,12 @@ impl BlockColor {
     }
 }
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
-#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
-enum AnsiColor {
-    Red,
-    Green,
-    Yellow,
-    Blue,
-    Magenta,
-    Cyan,
-    /// ANSI index 7. Most palettes store white here. Blend target only - never dim chrome.
-    White,
-    /// ANSI index 8 (bright black). Standard muted chrome slot.
-    BrightBlack,
-}
-
-/// Chromatic colors plus white. Required before a queried palette is accepted.
-const REQUIRED_ANSI_COLORS: [AnsiColor; 7] = [
-    AnsiColor::Red,
-    AnsiColor::Green,
-    AnsiColor::Yellow,
-    AnsiColor::Blue,
-    AnsiColor::Magenta,
-    AnsiColor::Cyan,
-    AnsiColor::White,
-];
-
-/// Colors sampled from the terminal: required set plus optional bright black for dim.
-const SAMPLED_ANSI_COLORS: [AnsiColor; 8] = [
-    AnsiColor::Red,
-    AnsiColor::Green,
-    AnsiColor::Yellow,
-    AnsiColor::Blue,
-    AnsiColor::Magenta,
-    AnsiColor::Cyan,
-    AnsiColor::White,
-    AnsiColor::BrightBlack,
-];
-
-#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
-impl AnsiColor {
-    const fn index(self) -> u8 {
-        match self {
-            Self::Red => 1,
-            Self::Green => 2,
-            Self::Yellow => 3,
-            Self::Blue => 4,
-            Self::Magenta => 5,
-            Self::Cyan => 6,
-            Self::White => 7,
-            Self::BrightBlack => 8,
-        }
-    }
-
-    const fn color(self) -> Color {
-        match self {
-            Self::Red => Color::Red,
-            Self::Green => Color::Green,
-            Self::Yellow => Color::Yellow,
-            Self::Blue => Color::Blue,
-            Self::Magenta => Color::Magenta,
-            Self::Cyan => Color::Cyan,
-            // ratatui has no Color::White. Color::Gray is ANSI SGR 37 (white/grey slot).
-            // Color::DarkGray is bright black. Do not treat Gray as muted chrome.
-            Self::White => Color::Gray,
-            Self::BrightBlack => Color::DarkGray,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Palette {
+    /// Body text. `None` keeps the host default foreground (terminal theme).
+    text: Option<Color>,
+    /// Full-screen surface. `None` keeps the host default background.
+    surface: Option<Color>,
     dim: Color,
     accent: Color,
     success: Color,
@@ -200,18 +164,29 @@ struct Palette {
 
 impl Palette {
     fn current() -> Self {
-        let terminal = TERMINAL_PALETTE.get();
-        Self::from_terminal(terminal)
+        let state = THEME_STATE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        match state.active_scheme.as_ref() {
+            Some(scheme) => Self::from_scheme(scheme),
+            None => Self::from_terminal(TERMINAL_SAMPLE.get()),
+        }
     }
 
     fn from_terminal(terminal: Option<&TerminalPalette>) -> Self {
+        let surface = terminal.map(|palette| palette.background);
         Self {
+            text: None,
+            surface: None,
             dim: terminal.map_or(Color::DarkGray, TerminalPalette::dim_foreground),
-            accent: AnsiColor::Cyan.color(),
-            success: AnsiColor::Green.color(),
-            warning: AnsiColor::Yellow.color(),
-            error: AnsiColor::Red.color(),
-            skill: AnsiColor::Magenta.color(),
+            // Prefer sampled RGB when the host answered palette queries so brand,
+            // version, and status colors track the real terminal theme instead of
+            // generic named ANSI (which often looks "hardcoded").
+            accent: role_ink(sampled_or_named(terminal, AnsiColor::Cyan), surface),
+            success: role_ink(sampled_or_named(terminal, AnsiColor::Green), surface),
+            warning: role_ink(sampled_or_named(terminal, AnsiColor::Yellow), surface),
+            error: role_ink(sampled_or_named(terminal, AnsiColor::Red), surface),
+            skill: role_ink(sampled_or_named(terminal, AnsiColor::Magenta), surface),
             user_background: blended_or_fallback(
                 terminal,
                 AnsiColor::White,
@@ -228,6 +203,114 @@ impl Palette {
             ),
         }
     }
+
+    fn from_scheme(scheme: &ColorScheme) -> Self {
+        let panel = scheme_panel_background(scheme);
+        let surface = scheme.background;
+        Self {
+            text: Some(scheme.foreground.color()),
+            surface: Some(scheme.background.color()),
+            dim: scheme_dim_foreground(scheme),
+            accent: role_ink(scheme_ansi(scheme, AnsiColor::Cyan).color(), Some(surface)),
+            success: role_ink(scheme_ansi(scheme, AnsiColor::Green).color(), Some(surface)),
+            warning: role_ink(
+                scheme_ansi(scheme, AnsiColor::Yellow).color(),
+                Some(surface),
+            ),
+            error: role_ink(scheme_ansi(scheme, AnsiColor::Red).color(), Some(surface)),
+            skill: role_ink(
+                scheme_ansi(scheme, AnsiColor::Magenta).color(),
+                Some(surface),
+            ),
+            user_background: panel,
+            neutral_tool_background: panel,
+        }
+    }
+}
+
+/// Soft panel wash: blend dark ink into light surfaces, light ink into dark ones.
+fn scheme_panel_background(scheme: &ColorScheme) -> BlockColor {
+    let background = scheme.background;
+    let wash = if is_light_background(background.luminance()) {
+        scheme.ansi[0] // black
+    } else {
+        scheme_ansi(scheme, AnsiColor::White)
+    };
+    BlockColor::from_rgb(background.blend_toward(wash, USER_BACKGROUND_ALPHA))
+}
+
+fn scheme_ansi(scheme: &ColorScheme, color: AnsiColor) -> Rgb {
+    scheme.ansi[color.index() as usize]
+}
+
+/// Sampled host RGB when available, else the named ANSI fallback.
+fn sampled_or_named(terminal: Option<&TerminalPalette>, color: AnsiColor) -> Color {
+    terminal
+        .and_then(|palette| palette.ansi.get(&color).copied())
+        .map(Rgb::color)
+        .unwrap_or_else(|| color.color())
+}
+
+/// Make role ink readable as text on the UI surface.
+///
+/// Keeps the hue family (yellow stays warm, red stays red) but pulls bright
+/// inks darker on light surfaces and invisible dark inks lighter on dark ones.
+/// Named ANSI colors pass through unchanged so the host can still paint them.
+fn role_ink(ink: Color, surface: Option<Rgb>) -> Color {
+    let Color::Rgb(red, green, blue) = ink else {
+        return ink;
+    };
+    let Some(surface) = surface else {
+        return ink;
+    };
+    let ink = Rgb::new(red, green, blue);
+    let surface_luminance = surface.luminance();
+    let ink_luminance = ink.luminance();
+
+    if is_light_background(surface_luminance) {
+        // Light UI: role text must sit clearly below the surface luminance.
+        if ink_luminance + ROLE_INK_MARGIN <= surface_luminance {
+            return ink.color();
+        }
+        return pull_ink_until(ink, Rgb::new(0, 0, 0), |candidate| {
+            candidate.luminance() + ROLE_INK_MARGIN <= surface_luminance
+        });
+    }
+
+    // Dark UI: keep any ink already brighter than the surface; only lift
+    // colors that disappear into the background.
+    if ink_luminance > surface_luminance {
+        return ink.color();
+    }
+    pull_ink_until(ink, Rgb::new(255, 255, 255), |candidate| {
+        candidate.luminance() > surface_luminance
+    })
+}
+
+fn pull_ink_until(start: Rgb, target: Rgb, acceptable: impl Fn(Rgb) -> bool) -> Color {
+    if acceptable(start) {
+        return start.color();
+    }
+    let mut best = start.blend_toward(target, 0.95);
+    for alpha in [0.25_f32, 0.4, 0.55, 0.7, 0.85, 0.95] {
+        let candidate = start.blend_toward(target, alpha);
+        if acceptable(candidate) {
+            return candidate.color();
+        }
+        best = candidate;
+    }
+    best.color()
+}
+
+/// Color for an ANSI role under the active theme.
+fn active_ansi_color(color: AnsiColor) -> Color {
+    let state = THEME_STATE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if let Some(scheme) = state.active_scheme.as_ref() {
+        return scheme_ansi(scheme, color).color();
+    }
+    sampled_or_named(TERMINAL_SAMPLE.get(), color)
 }
 
 pub(super) struct Theme;
@@ -235,16 +318,115 @@ pub(super) struct Theme;
 impl Theme {
     pub(super) fn initialize_from_terminal() {
         if let Some(palette) = query_terminal_palette() {
-            let _ = TERMINAL_PALETTE.set(palette);
+            let _ = TERMINAL_SAMPLE.set(palette);
+        }
+    }
+
+    /// Retain fixed schemes from the open theme picker so preview uses them
+    /// directly instead of re-resolving custom files on each row change.
+    pub(super) fn set_picker_catalog(entries: &[theme_scheme::ThemeEntry]) {
+        let mut catalog = HashMap::new();
+        for entry in entries {
+            if let theme_scheme::ThemeEntry::Fixed(scheme) = entry {
+                catalog.insert(scheme.id.clone(), scheme.clone());
+            }
+        }
+        THEME_STATE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .picker_catalog = Some(catalog);
+    }
+
+    pub(super) fn clear_picker_catalog() {
+        THEME_STATE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .picker_catalog = None;
+    }
+
+    /// Apply the committed config theme (startup and after successful apply).
+    pub(super) fn apply_committed(id: &str) {
+        apply_theme_id(id, /*commit*/ true);
+    }
+
+    /// Live preview while browsing the theme picker. Does not change commit.
+    /// Prefers schemes retained in the picker catalog.
+    pub(super) fn preview(id: &str) {
+        apply_theme_id(id, /*commit*/ false);
+    }
+
+    /// Abandon a live preview and restore the last committed theme.
+    pub(super) fn cancel_preview() {
+        let id = {
+            let state = THEME_STATE
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if state.active_id == state.committed_id {
+                return;
+            }
+            normalize_theme_id(&state.committed_id)
+        };
+        apply_theme_id(&id, /*commit*/ false);
+    }
+
+    pub(super) fn committed_id() -> String {
+        let id = THEME_STATE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .committed_id
+            .clone();
+        normalize_theme_id(&id)
+    }
+
+    pub(super) fn active_id() -> String {
+        let id = THEME_STATE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .active_id
+            .clone();
+        normalize_theme_id(&id)
+    }
+
+    /// Cache key: changes when the active palette changes.
+    pub(super) fn generation() -> u64 {
+        THEME_STATE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .generation
+    }
+
+    /// Full-frame / popup base style. Fixed schemes set fg+bg; terminal leaves host defaults.
+    pub(super) fn surface() -> Style {
+        let palette = Palette::current();
+        let mut style = Style::default().remove_modifier(Modifier::UNDERLINED);
+        if let Some(fg) = palette.text {
+            style = style.fg(fg);
+        }
+        if let Some(bg) = palette.surface {
+            style = style.bg(bg);
+        }
+        style
+    }
+
+    /// Ink that contrasts with a solid fill (RGB under fixed themes).
+    pub(super) fn contrasting_ink_on(background: Color) -> Color {
+        match background {
+            Color::Rgb(red, green, blue) => block_foreground(Some(Rgb::new(red, green, blue))),
+            Color::White | Color::Gray | Color::Yellow => Color::Black,
+            _ => Color::White,
         }
     }
 
     pub(super) fn text() -> Style {
-        Style::default().remove_modifier(Modifier::UNDERLINED)
+        let mut style = Style::default().remove_modifier(Modifier::UNDERLINED);
+        if let Some(fg) = Palette::current().text {
+            style = style.fg(fg);
+        }
+        style
     }
 
     pub(super) fn text_strong() -> Style {
-        Style::default().add_modifier(Modifier::BOLD)
+        Self::text().add_modifier(Modifier::BOLD)
     }
 
     pub(super) fn dim() -> Style {
@@ -283,10 +465,13 @@ impl Theme {
         match state {
             SubagentRowState::Idle => Self::activity_rail(),
             SubagentRowState::Hovered => Self::activity_rail().fg(Palette::current().accent),
-            SubagentRowState::Pressed => Style::default()
-                .fg(Color::Black)
-                .bg(Palette::current().accent)
-                .add_modifier(Modifier::BOLD),
+            SubagentRowState::Pressed => {
+                let accent = Palette::current().accent;
+                Style::default()
+                    .fg(Self::contrasting_ink_on(accent))
+                    .bg(accent)
+                    .add_modifier(Modifier::BOLD)
+            }
         }
     }
 
@@ -335,24 +520,26 @@ impl Theme {
     pub(super) fn reasoning_input_border(level: rho_providers::reasoning::ReasoningLevel) -> Style {
         let color = match level {
             rho_providers::reasoning::ReasoningLevel::Off => return Theme::dim(),
-            rho_providers::reasoning::ReasoningLevel::Minimal => AnsiColor::Blue.color(),
-            rho_providers::reasoning::ReasoningLevel::Low => AnsiColor::Cyan.color(),
-            rho_providers::reasoning::ReasoningLevel::Medium => AnsiColor::Green.color(),
-            rho_providers::reasoning::ReasoningLevel::High => AnsiColor::Yellow.color(),
-            rho_providers::reasoning::ReasoningLevel::Xhigh => AnsiColor::Magenta.color(),
-            rho_providers::reasoning::ReasoningLevel::Max => AnsiColor::Red.color(),
+            rho_providers::reasoning::ReasoningLevel::Minimal => active_ansi_color(AnsiColor::Blue),
+            rho_providers::reasoning::ReasoningLevel::Low => active_ansi_color(AnsiColor::Cyan),
+            rho_providers::reasoning::ReasoningLevel::Medium => active_ansi_color(AnsiColor::Green),
+            rho_providers::reasoning::ReasoningLevel::High => active_ansi_color(AnsiColor::Yellow),
+            rho_providers::reasoning::ReasoningLevel::Xhigh => {
+                active_ansi_color(AnsiColor::Magenta)
+            }
+            rho_providers::reasoning::ReasoningLevel::Max => active_ansi_color(AnsiColor::Red),
         };
         Style::default().fg(color)
     }
 
     pub(super) fn markdown_heading(level: HeadingLevel) -> Style {
         let color = match level {
-            HeadingLevel::H1 => AnsiColor::Magenta.color(),
-            HeadingLevel::H2 => AnsiColor::Blue.color(),
-            HeadingLevel::H3 => AnsiColor::Cyan.color(),
-            HeadingLevel::H4 => AnsiColor::Green.color(),
-            HeadingLevel::H5 => AnsiColor::Yellow.color(),
-            HeadingLevel::H6 => AnsiColor::BrightBlack.color(),
+            HeadingLevel::H1 => active_ansi_color(AnsiColor::Magenta),
+            HeadingLevel::H2 => active_ansi_color(AnsiColor::Blue),
+            HeadingLevel::H3 => active_ansi_color(AnsiColor::Cyan),
+            HeadingLevel::H4 => active_ansi_color(AnsiColor::Green),
+            HeadingLevel::H5 => active_ansi_color(AnsiColor::Yellow),
+            HeadingLevel::H6 => active_ansi_color(AnsiColor::BrightBlack),
         };
         let style = Style::default()
             .fg(color)
@@ -381,7 +568,7 @@ impl Theme {
         let palette = Palette::current();
         if hovered {
             Style::default()
-                .fg(Color::Black)
+                .fg(Self::contrasting_ink_on(palette.accent))
                 .bg(palette.accent)
                 .add_modifier(Modifier::BOLD)
         } else {
@@ -390,13 +577,13 @@ impl Theme {
     }
 
     pub(super) fn markdown_bold() -> Style {
-        Style::default()
+        Self::text()
             .add_modifier(Modifier::BOLD)
             .remove_modifier(Modifier::UNDERLINED)
     }
 
     pub(super) fn markdown_italic() -> Style {
-        Style::default()
+        Self::text()
             .add_modifier(Modifier::ITALIC)
             .remove_modifier(Modifier::UNDERLINED)
     }
@@ -428,7 +615,7 @@ impl Theme {
         let palette = Palette::current();
         match family {
             ToolFamily::FileCommand | ToolFamily::FileDiff => Style::default().fg(palette.success),
-            ToolFamily::Web => Style::default().fg(AnsiColor::Blue.color()),
+            ToolFamily::Web => Style::default().fg(active_ansi_color(AnsiColor::Blue)),
             ToolFamily::Skill => Style::default().fg(palette.skill),
             ToolFamily::Form => Style::default().fg(palette.warning),
             ToolFamily::Agent => Self::text(),
@@ -503,10 +690,79 @@ impl Theme {
     }
 }
 
+fn apply_theme_id(id: &str, commit: bool) {
+    let id = normalize_theme_id(id);
+    let mut state = THEME_STATE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let scheme = if is_terminal_theme_id(&id) {
+        None
+    } else if let Some(scheme) = state
+        .picker_catalog
+        .as_ref()
+        .and_then(|catalog| catalog.get(&id).cloned())
+    {
+        // Prefer the scheme already loaded into the open picker catalog.
+        Some(scheme)
+    } else {
+        // Unknown id falls back to terminal so a bad config never blanks the UI.
+        // Drop the lock while resolving from disk.
+        drop(state);
+        let scheme = resolve_fixed_scheme(&id);
+        state = THEME_STATE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        scheme
+    };
+    let resolved_id = if scheme.is_none() {
+        TERMINAL_THEME_ID.to_string()
+    } else {
+        id
+    };
+
+    let changed = state.active_id != resolved_id
+        || state.active_scheme.as_ref().map(|s| s.id.as_str())
+            != scheme.as_ref().map(|s| s.id.as_str());
+    if commit {
+        state.committed_id = resolved_id.clone();
+    }
+    if changed {
+        state.active_id = resolved_id;
+        state.active_scheme = scheme;
+        state.generation = state.generation.saturating_add(1);
+    }
+}
+
+// Re-export catalog helpers used by the picker and config layers.
+pub(super) use theme_scheme::{
+    list_themes, theme_display_name, ThemeEntry, TERMINAL_THEME_ID as THEME_TERMINAL_ID,
+};
+
 fn block_foreground(background: Option<Rgb>) -> Color {
-    match background {
-        Some(rgb) if is_light_background(rgb.luminance()) => Color::Black,
-        Some(_) | None => Color::White,
+    let on_light = background.is_some_and(|rgb| is_light_background(rgb.luminance()));
+    let state = THEME_STATE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if let Some(scheme) = state.active_scheme.as_ref() {
+        let fg = scheme.foreground;
+        let bg = scheme.background;
+        // Prefer the scheme ink that actually contrasts with the panel wash.
+        return if on_light {
+            if fg.luminance() <= bg.luminance() {
+                fg.color()
+            } else {
+                bg.color()
+            }
+        } else if fg.luminance() >= bg.luminance() {
+            fg.color()
+        } else {
+            bg.color()
+        };
+    }
+    if on_light {
+        Color::Black
+    } else {
+        Color::White
     }
 }
 
@@ -523,351 +779,6 @@ fn blended_or_fallback(
     terminal
         .and_then(|palette| palette.blended_background(color, alpha))
         .unwrap_or(fallback)
-}
-
-fn blend_channel(base: u8, overlay: u8, alpha: f32) -> u8 {
-    (base as f32 + (overlay as f32 - base as f32) * alpha).round() as u8
-}
-
-fn query_terminal_palette() -> Option<TerminalPalette> {
-    query_terminal_palette_impl().ok().flatten()
-}
-
-#[cfg(windows)]
-fn is_native_wezterm() -> bool {
-    std::env::var_os("WEZTERM_PANE").is_some()
-}
-
-fn write_palette_queries(output: &mut impl std::io::Write) -> std::io::Result<()> {
-    // White (7) for panel blends; bright black (8) for dim text. Never use 7 as dim.
-    output.write_all(b"\x1b]11;?\x1b\\")?;
-    for color in SAMPLED_ANSI_COLORS {
-        write!(output, "\x1b]4;{};?\x1b\\", color.index())?;
-    }
-    output.flush()
-}
-
-#[cfg(unix)]
-fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
-    use std::io::Read;
-    use std::os::fd::AsRawFd;
-    use std::time::{Duration, Instant};
-
-    let mut stdout = std::io::stdout();
-    write_palette_queries(&mut stdout)?;
-
-    let stdin = std::io::stdin();
-    let fd = stdin.as_raw_fd();
-    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-    if flags < 0 {
-        return Ok(None);
-    }
-    if unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
-        return Ok(None);
-    }
-
-    let mut bytes = Vec::new();
-    let mut palette = None;
-    let deadline = Instant::now() + Duration::from_millis(80);
-    let mut handle = stdin.lock();
-    while Instant::now() < deadline && palette.is_none() {
-        let mut buffer = [0u8; 1024];
-        match handle.read(&mut buffer) {
-            Ok(0) => std::thread::sleep(Duration::from_millis(2)),
-            Ok(count) => {
-                bytes.extend_from_slice(&buffer[..count]);
-                palette = parse_palette_response(&String::from_utf8_lossy(&bytes));
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(Duration::from_millis(2));
-            }
-            Err(error) => {
-                let _ = unsafe { libc::fcntl(fd, libc::F_SETFL, flags) };
-                return Err(error);
-            }
-        }
-    }
-
-    let _ = unsafe { libc::fcntl(fd, libc::F_SETFL, flags) };
-    Ok(palette)
-}
-
-#[cfg(windows)]
-fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
-    if is_native_wezterm() {
-        // WezTerm's bundled ConPTY does not pass terminal query responses back
-        // to native Windows applications. Use the console palette directly.
-        return query_windows_console_palette();
-    }
-
-    use std::io::stdout;
-    use std::time::{Duration, Instant};
-    use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
-    use windows_sys::Win32::Storage::FileSystem::ReadFile;
-    use windows_sys::Win32::System::Console::{
-        GetConsoleMode, GetStdHandle, PeekConsoleInputW, ReadConsoleInputW, SetConsoleMode,
-        ENABLE_VIRTUAL_TERMINAL_INPUT, INPUT_RECORD, KEY_EVENT, STD_INPUT_HANDLE,
-    };
-    use windows_sys::Win32::System::Threading::WaitForSingleObject;
-
-    struct ConsoleModeGuard {
-        handle: *mut std::ffi::c_void,
-        mode: u32,
-    }
-
-    impl Drop for ConsoleModeGuard {
-        fn drop(&mut self) {
-            unsafe { SetConsoleMode(self.handle, self.mode) };
-        }
-    }
-
-    let input = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
-    if input.is_null() || input == -1isize as _ {
-        return Ok(None);
-    }
-
-    let mut original_mode = 0;
-    if unsafe { GetConsoleMode(input, &mut original_mode) } == 0 {
-        return Ok(None);
-    }
-    if unsafe { SetConsoleMode(input, original_mode | ENABLE_VIRTUAL_TERMINAL_INPUT) } == 0 {
-        return Ok(None);
-    }
-    let _mode_guard = ConsoleModeGuard {
-        handle: input,
-        mode: original_mode,
-    };
-
-    let mut output = stdout();
-    write_palette_queries(&mut output)?;
-
-    let mut bytes = Vec::new();
-    let deadline = Instant::now() + Duration::from_millis(80);
-    while Instant::now() < deadline {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        let timeout_ms = remaining.as_millis().max(1).min(u128::from(u32::MAX)) as u32;
-        if unsafe { WaitForSingleObject(input, timeout_ms) } != WAIT_OBJECT_0 {
-            break;
-        }
-
-        let mut records = [INPUT_RECORD::default(); 128];
-        let mut record_count = 0;
-        if unsafe {
-            PeekConsoleInputW(
-                input,
-                records.as_mut_ptr(),
-                records.len() as u32,
-                &mut record_count,
-            )
-        } == 0
-        {
-            return Err(std::io::Error::last_os_error());
-        }
-        let leading_non_keys = records[..record_count as usize]
-            .iter()
-            .position(|record| {
-                if u32::from(record.EventType) != KEY_EVENT {
-                    return false;
-                }
-                let key = unsafe { record.Event.KeyEvent };
-                key.bKeyDown != 0 && unsafe { key.uChar.UnicodeChar } != 0
-            })
-            .unwrap_or(record_count as usize);
-        if leading_non_keys > 0 {
-            let mut discarded = 0;
-            if unsafe {
-                ReadConsoleInputW(
-                    input,
-                    records.as_mut_ptr(),
-                    leading_non_keys as u32,
-                    &mut discarded,
-                )
-            } == 0
-            {
-                return Err(std::io::Error::last_os_error());
-            }
-            continue;
-        }
-        if record_count == 0 {
-            continue;
-        }
-
-        let mut buffer = [0u8; 1024];
-        let mut count = 0;
-        if unsafe {
-            ReadFile(
-                input,
-                buffer.as_mut_ptr(),
-                buffer.len() as u32,
-                &mut count,
-                std::ptr::null_mut(),
-            )
-        } == 0
-        {
-            return Err(std::io::Error::last_os_error());
-        }
-        bytes.extend_from_slice(&buffer[..count as usize]);
-        if let Some(palette) = parse_palette_response(&String::from_utf8_lossy(&bytes)) {
-            return Ok(Some(palette));
-        }
-    }
-
-    query_windows_console_palette()
-}
-
-#[cfg(windows)]
-fn query_windows_console_palette() -> std::io::Result<Option<TerminalPalette>> {
-    use windows_sys::Win32::System::Console::{
-        GetConsoleScreenBufferInfoEx, GetStdHandle, CONSOLE_SCREEN_BUFFER_INFOEX, STD_OUTPUT_HANDLE,
-    };
-
-    let output = unsafe { GetStdHandle(STD_OUTPUT_HANDLE) };
-    if output.is_null() || output == -1isize as _ {
-        return Ok(None);
-    }
-
-    let mut info = CONSOLE_SCREEN_BUFFER_INFOEX {
-        cbSize: std::mem::size_of::<CONSOLE_SCREEN_BUFFER_INFOEX>() as u32,
-        ..Default::default()
-    };
-    if unsafe { GetConsoleScreenBufferInfoEx(output, &mut info) } == 0 {
-        return Ok(None);
-    }
-
-    Ok(Some(windows_console_palette(
-        &info.ColorTable,
-        info.wAttributes,
-    )))
-}
-
-#[cfg(any(windows, test))]
-fn windows_console_palette(color_table: &[u32; 16], attributes: u16) -> TerminalPalette {
-    // Win32's table uses attribute-bit order (blue, green, red), not ANSI order.
-    const COLORS: [(AnsiColor, usize); 8] = [
-        (AnsiColor::Red, 4),
-        (AnsiColor::Green, 2),
-        (AnsiColor::Yellow, 6),
-        (AnsiColor::Blue, 1),
-        (AnsiColor::Magenta, 5),
-        (AnsiColor::Cyan, 3),
-        (AnsiColor::White, 7),
-        (AnsiColor::BrightBlack, 8),
-    ];
-    let ansi = COLORS
-        .into_iter()
-        .map(|(color, index)| (color, rgb_from_colorref(color_table[index])))
-        .collect();
-    let background_index = usize::from((attributes >> 4) & 0x0f);
-
-    TerminalPalette {
-        background: rgb_from_colorref(color_table[background_index]),
-        ansi,
-    }
-}
-
-#[cfg(any(windows, test))]
-fn rgb_from_colorref(color: u32) -> Rgb {
-    Rgb::new(color as u8, (color >> 8) as u8, (color >> 16) as u8)
-}
-
-#[cfg(not(any(unix, windows)))]
-fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
-    Ok(None)
-}
-
-#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
-fn parse_palette_response(response: &str) -> Option<TerminalPalette> {
-    let mut background = None;
-    let mut ansi = HashMap::new();
-
-    for sequence in osc_sequences(response) {
-        if let Some(color) = sequence.strip_prefix("11;").and_then(parse_rgb_response) {
-            background = Some(color);
-            continue;
-        }
-
-        if let Some(rest) = sequence.strip_prefix("4;") {
-            let mut parts = rest.splitn(2, ';');
-            let index = parts.next().and_then(|part| part.parse::<u8>().ok());
-            let color = parts.next().and_then(parse_rgb_response);
-            if let (Some(index), Some(color)) = (index, color) {
-                if let Some(ansi_color) = ansi_color_from_index(index) {
-                    ansi.insert(ansi_color, color);
-                }
-            }
-        }
-    }
-
-    Some(TerminalPalette {
-        background: background?,
-        ansi,
-    })
-    // Bright black (index 8) is optional and only improves dim text when present.
-    .filter(|palette| {
-        REQUIRED_ANSI_COLORS
-            .into_iter()
-            .all(|color| palette.ansi.contains_key(&color))
-    })
-}
-
-#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
-fn osc_sequences(response: &str) -> Vec<&str> {
-    let mut sequences = Vec::new();
-    let mut rest = response;
-    while let Some(start) = rest.find("\x1b]") {
-        rest = &rest[start + 2..];
-        let bel_end = rest.find('\x07');
-        let st_end = rest.find("\x1b\\");
-        let Some(end) = earliest_end(bel_end, st_end) else {
-            break;
-        };
-        sequences.push(&rest[..end]);
-        rest = &rest[end..];
-    }
-    sequences
-}
-
-#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
-fn earliest_end(bel_end: Option<usize>, st_end: Option<usize>) -> Option<usize> {
-    match (bel_end, st_end) {
-        (Some(bel), Some(st)) => Some(bel.min(st)),
-        (Some(bel), None) => Some(bel),
-        (None, Some(st)) => Some(st),
-        (None, None) => None,
-    }
-}
-
-#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
-fn parse_rgb_response(response: &str) -> Option<Rgb> {
-    let rgb = response.strip_prefix("rgb:")?;
-    let mut components = rgb.split('/');
-    Some(Rgb::new(
-        parse_xterm_component(components.next()?)?,
-        parse_xterm_component(components.next()?)?,
-        parse_xterm_component(components.next()?)?,
-    ))
-}
-
-#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
-fn parse_xterm_component(component: &str) -> Option<u8> {
-    let value = u16::from_str_radix(component, 16).ok()?;
-    let max = (1u32 << (component.len() * 4)) - 1;
-    Some(((value as u32 * 255 + max / 2) / max) as u8)
-}
-
-#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
-fn ansi_color_from_index(index: u8) -> Option<AnsiColor> {
-    match index {
-        1 => Some(AnsiColor::Red),
-        2 => Some(AnsiColor::Green),
-        3 => Some(AnsiColor::Yellow),
-        4 => Some(AnsiColor::Blue),
-        5 => Some(AnsiColor::Magenta),
-        6 => Some(AnsiColor::Cyan),
-        7 => Some(AnsiColor::White),
-        8 => Some(AnsiColor::BrightBlack),
-        _ => None,
-    }
 }
 
 #[cfg(test)]

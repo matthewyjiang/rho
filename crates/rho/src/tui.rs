@@ -138,6 +138,10 @@ mod terminal_events;
 mod terminal_session;
 mod text_selection;
 mod theme;
+mod theme_actions;
+mod theme_picker;
+mod theme_scheme;
+mod theme_terminal;
 mod tool_call_batch;
 mod tool_card_render;
 mod tool_diff;
@@ -324,6 +328,7 @@ impl RuntimeModelView {
             width,
             max_tool_output_lines: self.max_tool_output_lines,
             zen_mode: self.zen_mode,
+            theme_generation: theme::Theme::generation(),
         }
     }
 
@@ -359,6 +364,13 @@ pub(crate) use attachment::{run as run_attachment, translate_run_event};
 pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::Result<TuiResult> {
     let mut terminal = ratatui::init();
     Theme::initialize_from_terminal();
+    let startup_theme = info
+        .services
+        .config_repository
+        .load()
+        .map(|config| config.theme)
+        .unwrap_or_else(|_| "terminal".into());
+    Theme::apply_committed(&startup_theme);
     let herdr = info.services.herdr.clone();
     let herdr_graphics = herdr.graphics_capability().await;
     let initial_state = if info.services.auth_unavailable.is_some() {

@@ -261,115 +261,130 @@ impl App {
         width: u16,
         height: u16,
     ) -> bool {
-        let ComposerMode::Picker(picker) = self.input_ui.composer_mut() else {
-            return false;
-        };
-        if !picker.is_overlay() {
-            return match event {
-                PickerMouseEvent::Wheel(delta) => {
-                    picker.select_by_offset(delta);
-                    true
-                }
-                PickerMouseEvent::Click
-                | PickerMouseEvent::Drag
-                | PickerMouseEvent::Release
-                | PickerMouseEvent::Move => false,
+        let selection_may_change = {
+            let ComposerMode::Picker(picker) = self.input_ui.composer_mut() else {
+                return false;
             };
-        }
-        let layout = picker_overlay_layout(Rect::new(0, 0, width, height), picker.overlay_sizing());
-        match event {
-            PickerMouseEvent::Wheel(delta) => {
-                picker.set_overlay_scrollbar_drag(None);
-                let fallback = if picker.detail_pane_focused() {
-                    OverlayPane::Detail
-                } else {
-                    OverlayPane::Nav
-                };
-                let pane = layout
-                    .pane_hit(column, row)
-                    .map_or(fallback, |hit| hit.pane);
-                match pane {
-                    OverlayPane::Nav => {
-                        let rows = layout.scroll_targets().nav_rows;
-                        picker.scroll_nav_by(delta.saturating_mul(PICKER_WHEEL_LINES), rows);
+            if !picker.is_overlay() {
+                match event {
+                    PickerMouseEvent::Wheel(delta) => {
+                        picker.select_by_offset(delta);
+                        true
                     }
-                    OverlayPane::Detail => {
-                        if let Some(viewport) = layout.detail_viewport() {
-                            picker.scroll_detail_by(
-                                delta.saturating_mul(PICKER_WHEEL_LINES),
-                                viewport,
-                            );
-                        }
-                    }
+                    PickerMouseEvent::Click
+                    | PickerMouseEvent::Drag
+                    | PickerMouseEvent::Release
+                    | PickerMouseEvent::Move => return false,
                 }
-            }
-            PickerMouseEvent::Click => {
-                if let Some(scrollbar) = nav_scrollbar(picker, layout)
-                    .filter(|scrollbar| scrollbar.contains(column, row))
-                {
-                    let drag = scrollbar.begin_drag(row);
-                    let top = scrollbar.top_line_for_pointer(row, drag);
-                    apply_nav_scrollbar_top(picker, layout, top);
-                    picker.set_overlay_scrollbar_drag(Some(OverlayScrollbarDrag::Nav(drag)));
-                    picker.focus_overlay_pane(OverlayFocus::Nav);
-                } else if let Some(scrollbar) = detail_scrollbar(picker, layout)
-                    .filter(|scrollbar| scrollbar.contains(column, row))
-                {
-                    let drag = scrollbar.begin_drag(row);
-                    let top = scrollbar.top_line_for_pointer(row, drag);
-                    apply_detail_scrollbar_top(picker, layout, top);
-                    picker.set_overlay_scrollbar_drag(Some(OverlayScrollbarDrag::Detail(drag)));
-                    picker.focus_overlay_pane(OverlayFocus::Detail);
-                } else {
-                    picker.set_overlay_scrollbar_drag(None);
-                    match layout.pane_hit(column, row) {
-                        Some(hit) if hit.pane == OverlayPane::Nav => {
-                            let viewport_rows = layout.scroll_targets().nav_rows;
-                            let row_index = picker.nav_window_start(viewport_rows) + hit.pane_row;
-                            if picker.select_nav_row(row_index, viewport_rows) {
-                                picker.focus_overlay_pane(OverlayFocus::Nav);
+            } else {
+                let layout =
+                    picker_overlay_layout(Rect::new(0, 0, width, height), picker.overlay_sizing());
+                let may_change =
+                    matches!(event, PickerMouseEvent::Click | PickerMouseEvent::Wheel(_));
+                match event {
+                    PickerMouseEvent::Wheel(delta) => {
+                        picker.set_overlay_scrollbar_drag(None);
+                        let fallback = if picker.detail_pane_focused() {
+                            OverlayPane::Detail
+                        } else {
+                            OverlayPane::Nav
+                        };
+                        let pane = layout
+                            .pane_hit(column, row)
+                            .map_or(fallback, |hit| hit.pane);
+                        match pane {
+                            OverlayPane::Nav => {
+                                let rows = layout.scroll_targets().nav_rows;
+                                picker
+                                    .scroll_nav_by(delta.saturating_mul(PICKER_WHEEL_LINES), rows);
+                            }
+                            OverlayPane::Detail => {
+                                if let Some(viewport) = layout.detail_viewport() {
+                                    picker.scroll_detail_by(
+                                        delta.saturating_mul(PICKER_WHEEL_LINES),
+                                        viewport,
+                                    );
+                                }
                             }
                         }
-                        Some(hit)
-                            if hit.pane == OverlayPane::Detail
-                                && picker.has_scrollable_detail() =>
+                    }
+                    PickerMouseEvent::Click => {
+                        if let Some(scrollbar) = nav_scrollbar(picker, layout)
+                            .filter(|scrollbar| scrollbar.contains(column, row))
                         {
+                            let drag = scrollbar.begin_drag(row);
+                            let top = scrollbar.top_line_for_pointer(row, drag);
+                            apply_nav_scrollbar_top(picker, layout, top);
+                            picker
+                                .set_overlay_scrollbar_drag(Some(OverlayScrollbarDrag::Nav(drag)));
+                            picker.focus_overlay_pane(OverlayFocus::Nav);
+                        } else if let Some(scrollbar) = detail_scrollbar(picker, layout)
+                            .filter(|scrollbar| scrollbar.contains(column, row))
+                        {
+                            let drag = scrollbar.begin_drag(row);
+                            let top = scrollbar.top_line_for_pointer(row, drag);
+                            apply_detail_scrollbar_top(picker, layout, top);
+                            picker.set_overlay_scrollbar_drag(Some(OverlayScrollbarDrag::Detail(
+                                drag,
+                            )));
                             picker.focus_overlay_pane(OverlayFocus::Detail);
+                        } else {
+                            picker.set_overlay_scrollbar_drag(None);
+                            match layout.pane_hit(column, row) {
+                                Some(hit) if hit.pane == OverlayPane::Nav => {
+                                    let viewport_rows = layout.scroll_targets().nav_rows;
+                                    let row_index =
+                                        picker.nav_window_start(viewport_rows) + hit.pane_row;
+                                    if picker.select_nav_row(row_index, viewport_rows) {
+                                        picker.focus_overlay_pane(OverlayFocus::Nav);
+                                    }
+                                }
+                                Some(hit)
+                                    if hit.pane == OverlayPane::Detail
+                                        && picker.has_scrollable_detail() =>
+                                {
+                                    picker.focus_overlay_pane(OverlayFocus::Detail);
+                                }
+                                _ => {}
+                            }
                         }
-                        _ => {}
+                    }
+                    PickerMouseEvent::Drag => match picker.overlay_scrollbar_drag() {
+                        Some(OverlayScrollbarDrag::Nav(drag)) => {
+                            if let Some(scrollbar) = nav_scrollbar(picker, layout) {
+                                apply_nav_scrollbar_top(
+                                    picker,
+                                    layout,
+                                    scrollbar.top_line_for_pointer(row, drag),
+                                );
+                            }
+                        }
+                        Some(OverlayScrollbarDrag::Detail(drag)) => {
+                            if let Some(scrollbar) = detail_scrollbar(picker, layout) {
+                                apply_detail_scrollbar_top(
+                                    picker,
+                                    layout,
+                                    scrollbar.top_line_for_pointer(row, drag),
+                                );
+                            }
+                        }
+                        None => {}
+                    },
+                    PickerMouseEvent::Release => {
+                        picker.set_overlay_scrollbar_drag(None);
+                    }
+                    PickerMouseEvent::Move => {
+                        if picker.overlay_scrollbar_drag().is_none() {
+                            let hovered = overlay_nav_row_at(picker, layout, column, row);
+                            picker.set_hovered_nav_row(hovered);
+                        }
                     }
                 }
+                may_change
             }
-            PickerMouseEvent::Drag => match picker.overlay_scrollbar_drag() {
-                Some(OverlayScrollbarDrag::Nav(drag)) => {
-                    if let Some(scrollbar) = nav_scrollbar(picker, layout) {
-                        apply_nav_scrollbar_top(
-                            picker,
-                            layout,
-                            scrollbar.top_line_for_pointer(row, drag),
-                        );
-                    }
-                }
-                Some(OverlayScrollbarDrag::Detail(drag)) => {
-                    if let Some(scrollbar) = detail_scrollbar(picker, layout) {
-                        apply_detail_scrollbar_top(
-                            picker,
-                            layout,
-                            scrollbar.top_line_for_pointer(row, drag),
-                        );
-                    }
-                }
-                None => {}
-            },
-            PickerMouseEvent::Release => {
-                picker.set_overlay_scrollbar_drag(None);
-            }
-            PickerMouseEvent::Move => {
-                if picker.overlay_scrollbar_drag().is_none() {
-                    let hovered = overlay_nav_row_at(picker, layout, column, row);
-                    picker.set_hovered_nav_row(hovered);
-                }
-            }
+        };
+        if selection_may_change {
+            self.preview_selected_theme_if_active();
         }
         true
     }
@@ -404,6 +419,7 @@ impl App {
             PickerKeyEffect::Handled => {
                 self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
+                self.preview_selected_theme_if_active();
                 Ok(true)
             }
             PickerKeyEffect::Submit => {
@@ -464,7 +480,10 @@ impl App {
 
         match effect {
             PickerKeyEffect::None => Ok(true),
-            PickerKeyEffect::Handled => Ok(true),
+            PickerKeyEffect::Handled => {
+                self.preview_selected_theme_if_active();
+                Ok(true)
+            }
             PickerKeyEffect::Submit => {
                 self.submit_picker_selection_during_turn()?;
                 Ok(true)

@@ -7,7 +7,10 @@ use super::{
     render::{display_width, truncate_one_line},
     theme::Theme,
 };
-use crate::{subagent::RunState, tools::agent::SubagentManager};
+use crate::{
+    subagent::{self, RunState},
+    tools::agent::SubagentManager,
+};
 
 const MAX_VISIBLE_AGENTS: usize = 2;
 const MAX_AGENT_CONTENT_WIDTH: usize = 52;
@@ -220,7 +223,7 @@ fn agent_line(
         .min(MAX_AGENT_CONTENT_WIDTH);
     let identity_width = display_width(&agent.agent_id) + 2 + display_width(&agent.id);
     let separator_width = display_width(SEPARATOR);
-    let elapsed = format_elapsed(agent.elapsed_seconds);
+    let elapsed = subagent::format_elapsed_secs(agent.elapsed_seconds);
     let trailing = match row_state {
         SubagentRowState::Idle => elapsed,
         SubagentRowState::Hovered | SubagentRowState::Pressed => action_hint.to_string(),
@@ -268,18 +271,4 @@ fn activity_label(activity: Option<&str>) -> &str {
         Some(activity) => activity.strip_prefix("tool: ").unwrap_or(activity),
         None => "working",
     }
-}
-
-fn format_elapsed(seconds: u64) -> String {
-    if seconds < 60 {
-        return format!("{seconds}s");
-    }
-    let minutes = seconds / 60;
-    let seconds = seconds % 60;
-    if minutes < 60 {
-        return format!("{minutes}m {seconds:02}s");
-    }
-    let hours = minutes / 60;
-    let minutes = minutes % 60;
-    format!("{hours}h {minutes:02}m")
 }

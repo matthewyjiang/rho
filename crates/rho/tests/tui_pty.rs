@@ -14,7 +14,7 @@ use std::{
     os::unix::net::UnixListener,
     path::PathBuf,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use rho_tui_pty::{
@@ -617,6 +617,10 @@ fn attach_is_read_only_and_updates_live() {
         r#"{
             "state": "running",
             "agent_id": "explorer",
+            "provider": "openai",
+            "model": "gpt-5.5",
+            "runtime": "rho",
+            "started_at": 1700000000,
             "turns": 1,
             "input_tokens": 12,
             "output_tokens": 3,
@@ -658,9 +662,12 @@ fn attach_is_read_only_and_updates_live() {
     let mut harness = PtyHarness::spawn_named(&plan, "attach_read_only").unwrap();
 
     harness
+        .wait_for_text("attach abc123", WaitTimeout::secs(10, "attach startup"))
+        .unwrap();
+    harness
         .wait_for_text(
-            "attached to abc123",
-            WaitTimeout::secs(10, "attach startup"),
+            "openai/gpt-5.5 · rho",
+            WaitTimeout::secs(5, "provider model runtime"),
         )
         .unwrap();
     harness
@@ -692,6 +699,11 @@ fn attach_is_read_only_and_updates_live() {
         r#"{
             "state": "ok",
             "agent_id": "explorer",
+            "provider": "openai",
+            "model": "gpt-5.5",
+            "runtime": "rho",
+            "started_at": 1700000000,
+            "finished_at": 1700000065,
             "turns": 1,
             "input_tokens": 12,
             "output_tokens": 3,
@@ -701,11 +713,13 @@ fn attach_is_read_only_and_updates_live() {
     )
     .unwrap();
     harness
-        .wait_for_text(
-            "explorer  |  complete",
-            WaitTimeout::secs(5, "completion state"),
-        )
+        .wait_for_text("complete", WaitTimeout::secs(5, "completion activity"))
         .unwrap();
+    harness
+        .wait_for_text("1m 05s", WaitTimeout::secs(5, "finished elapsed"))
+        .unwrap();
+    assert!(harness.screen().contains_text("explorer"));
+    assert!(harness.screen().contains_text("ok"));
 
     harness.inject_key(&Key::Char('q')).unwrap();
     assert_eq!(
@@ -725,6 +739,124 @@ fn attach_is_read_only_and_updates_live() {
     assert_eq!(requests[2]["method"], "pane.report_agent");
     assert_eq!(requests[2]["params"]["state"], "idle");
     assert_eq!(requests[3]["method"], "pane.release_agent");
+}
+
+#[test]
+fn attach_live_elapsed_advances_without_status_change() {
+    let home = IsolatedHome::new().unwrap();
+    let directory = home.home.join(".rho/subagents/e1a95e");
+    std::fs::create_dir_all(&directory).unwrap();
+    let started_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        .saturating_sub(2);
+    std::fs::write(
+        directory.join("result.json"),
+        format!(
+            r#"{{
+            "state": "running",
+            "agent_id": "explorer",
+            "provider": "openai",
+            "model": "gpt-5.5",
+            "runtime": "rho",
+            "started_at": {started_at},
+            "turns": 1,
+            "last_activity": "assistant text"
+        }}"#
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        directory.join("events.jsonl"),
+        "{\"type\":\"prompt\",\"data\":\"elapsed clock\"}\n",
+    )
+    .unwrap();
+
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
+    let plan = RhoLaunchPlan::matrix(binary, &home, PtySize { rows: 24, cols: 90 })
+        .with_arg("attach")
+        .with_arg("e1a95e");
+    let mut harness = PtyHarness::spawn_named(&plan, "attach_live_elapsed").unwrap();
+
+    harness
+        .wait_for_text("attach e1a95e", WaitTimeout::secs(10, "attach startup"))
+        .unwrap();
+    harness
+        .wait_for_text("elapsed clock", WaitTimeout::secs(5, "prompt"))
+        .unwrap();
+
+    // Capture an initial whole-second elapsed label from the identity row.
+    let first = wait_for_turn_elapsed_secs(&mut harness, WaitTimeout::secs(5, "first elapsed"));
+    // result.json stays unchanged; elapsed must still tick forward.
+    let later = wait_for_turn_elapsed_secs_at_least(
+        &mut harness,
+        first + 2,
+        WaitTimeout::secs(8, "elapsed advanced"),
+    );
+    assert!(
+        later >= first + 2,
+        "elapsed should advance without status I/O (first={first}s later={later}s)"
+    );
+
+    harness.inject_key(&Key::Char('q')).unwrap();
+    assert_eq!(
+        harness
+            .wait_for_exit(WaitTimeout::secs(5, "detach"))
+            .unwrap(),
+        0
+    );
+}
+
+/// Parse `turn N · Xs` whole-second elapsed from the attach identity line.
+fn turn_elapsed_secs(screen: &str) -> Option<u64> {
+    let marker = "turn ";
+    let rest = screen.split(marker).nth(1)?;
+    let after_turn = rest.split_once('·')?.1.trim_start();
+    let token = after_turn.split_whitespace().next()?;
+    token.strip_suffix('s')?.parse().ok()
+}
+
+fn wait_for_turn_elapsed_secs(harness: &mut PtyHarness, timeout: WaitTimeout) -> u64 {
+    let started = Instant::now();
+    let deadline = started + timeout.duration;
+    loop {
+        harness.poll(Duration::from_millis(50));
+        if let Some(secs) = turn_elapsed_secs(&harness.screen().contents()) {
+            return secs;
+        }
+        if Instant::now() >= deadline {
+            panic!(
+                "timeout waiting for live elapsed seconds during {}: screen=\n{}",
+                timeout.label,
+                harness.screen().contents()
+            );
+        }
+    }
+}
+
+fn wait_for_turn_elapsed_secs_at_least(
+    harness: &mut PtyHarness,
+    minimum: u64,
+    timeout: WaitTimeout,
+) -> u64 {
+    let started = Instant::now();
+    let deadline = started + timeout.duration;
+    loop {
+        harness.poll(Duration::from_millis(50));
+        if let Some(secs) = turn_elapsed_secs(&harness.screen().contents()) {
+            if secs >= minimum {
+                return secs;
+            }
+        }
+        if Instant::now() >= deadline {
+            panic!(
+                "timeout waiting for elapsed >= {minimum}s during {}: screen=\n{}",
+                timeout.label,
+                harness.screen().contents()
+            );
+        }
+    }
 }
 
 #[test]
@@ -754,10 +886,7 @@ fn attach_replays_finished_claude_run_from_fixtures() {
     let mut harness = PtyHarness::spawn_named(&plan, "claude_attach_replay").unwrap();
 
     harness
-        .wait_for_text(
-            "attached to c1a0de",
-            WaitTimeout::secs(10, "attach startup"),
-        )
+        .wait_for_text("attach c1a0de", WaitTimeout::secs(10, "attach startup"))
         .unwrap();
     harness
         .wait_for_text(
@@ -767,6 +896,12 @@ fn attach_replays_finished_claude_run_from_fixtures() {
         .unwrap();
     harness
         .wait_for_text("Hello from Claude.", WaitTimeout::secs(5, "assistant text"))
+        .unwrap();
+    harness
+        .wait_for_text(
+            "claude-code/claude-opus-demo · claude-cli · turn 1 · 42s",
+            WaitTimeout::secs(5, "provider model runtime elapsed"),
+        )
         .unwrap();
     harness
         .wait_for_text(
@@ -908,7 +1043,7 @@ fn fake_claude_runtime_end_to_end_success() {
     let mut attach = PtyHarness::spawn_named(&plan, "fake_claude_runtime_e2e_attach").unwrap();
     attach
         .wait_for_text(
-            &format!("attached to {run_id}"),
+            &format!("attach {run_id}"),
             WaitTimeout::secs(10, "attach startup"),
         )
         .unwrap();

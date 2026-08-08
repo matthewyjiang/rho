@@ -70,7 +70,7 @@ pub(super) fn session_header_lines(
         Line::from(vec![
             Span::raw(" "),
             Span::styled("rho", Theme::brand()),
-            Span::raw("  v"),
+            Span::styled("  v", Theme::dim()),
             Span::styled(super::smoke_injection::display_version(), Theme::success()),
         ]),
     ];

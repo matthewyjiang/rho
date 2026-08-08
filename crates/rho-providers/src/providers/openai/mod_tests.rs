@@ -3,7 +3,7 @@ use crate::model::{
     AbortedAssistant, ContentBlock, Message, PartialToolCall, ReasoningCapabilities,
     ReasoningLevelSet, ToolCall, ToolSpec,
 };
-use crate::protocol::openai_chat::ChatStreamAccumulator;
+use crate::protocol::openai_chat::{generation_output_tokens_event, ChatStreamAccumulator};
 use crate::protocol::openai_responses::{
     codex_input_items, codex_reasoning_param, extract_sse_text, handle_codex_sse_line,
     CodexSseState,
@@ -390,66 +390,69 @@ fn parallel_tool_calls_stream_arguments_per_output_index() {
     );
 }
 
+// Covers: Chat Completions must emit generation-only throughput before unchanged usage
+// Owner: OpenAI Chat Completions protocol
 #[test]
 fn chat_stream_usage_normalizes_prompt_cache_tokens() {
     let mut chat_stream = ChatStreamAccumulator::default();
-    let mut usage = None;
+    let mut events = Vec::new();
     chat_stream
         .handle_line(
-            r#"data: {"usage":{"prompt_tokens":1000,"completion_tokens":20,"total_tokens":1020,"prompt_tokens_details":{"cached_tokens":700,"cache_write_tokens":200}},"choices":[{"delta":{}}]}"#,
+            r#"data: {"usage":{"prompt_tokens":1000,"completion_tokens":20,"total_tokens":1020,"prompt_tokens_details":{"cached_tokens":700,"cache_write_tokens":200},"completion_tokens_details":{"reasoning_tokens":5}},"choices":[{"delta":{}}]}"#,
             &mut |event| {
-                match event {
-                    ModelEvent::Usage(event_usage) => usage = Some(event_usage),
-                    ModelEvent::OutputDelta(_)
-                    | ModelEvent::ReasoningDelta(_)
-                    | ModelEvent::ReasoningSummaryDelta(_)
-                    | ModelEvent::ProviderContext { .. }
-                    | ModelEvent::WebSearch(_)
-                    | ModelEvent::ToolCallDelta { .. } => {}
-                }
+                events.push(event);
                 Ok(())
             },
         )
         .unwrap();
 
-    let usage = usage.unwrap();
-    assert_eq!(usage.input_tokens, Some(100));
-    assert_eq!(usage.cache_read_tokens, Some(700));
-    assert_eq!(usage.cache_write_tokens, Some(200));
-    assert_eq!(usage.output_tokens, Some(20));
-    assert_eq!(usage.total_input_tokens(), Some(1000));
-    assert_eq!(usage.total_tokens, Some(1020));
+    assert_eq!(
+        events,
+        vec![
+            generation_output_tokens_event(15),
+            ModelEvent::Usage(crate::model::ModelUsage {
+                input_tokens: Some(100),
+                output_tokens: Some(20),
+                cache_read_tokens: Some(700),
+                cache_write_tokens: Some(200),
+                total_tokens: Some(1020),
+                ..crate::model::ModelUsage::default()
+            }),
+        ]
+    );
 }
 
+// Covers: Responses must keep generation and aggregate counts on the same
+// envelope source while emitting generation-only throughput before usage.
+// Owner: OpenAI Responses protocol
 #[test]
 fn codex_response_usage_normalizes_input_cache_tokens() {
     let mut state = CodexSseState::default();
-    let mut usage = None;
+    let mut events = Vec::new();
     handle_codex_sse_line(
-        r#"data: {"type":"response.completed","response":{"usage":{"input_tokens":1000,"output_tokens":25,"total_tokens":1025,"input_tokens_details":{"cached_tokens":700,"cache_write_tokens":200}},"output_text":"done","output":[]}}"#,
+        r#"data: {"type":"response.completed","usage":{"output_tokens":99,"output_tokens_details":{"reasoning_tokens":1}},"response":{"usage":{"input_tokens":1000,"output_tokens":25,"total_tokens":1025,"input_tokens_details":{"cached_tokens":700,"cache_write_tokens":200},"output_tokens_details":{"reasoning_tokens":7}},"output_text":"done","output":[]}}"#,
         &mut state,
         &mut Some(&mut |event| {
-            match event {
-                ModelEvent::Usage(event_usage) => usage = Some(event_usage),
-                ModelEvent::OutputDelta(_)
-                | ModelEvent::ReasoningDelta(_)
-                | ModelEvent::ReasoningSummaryDelta(_)
-                | ModelEvent::ProviderContext { .. }
-                | ModelEvent::WebSearch(_)
-                                | ModelEvent::ToolCallDelta { .. } => {}
-            }
+            events.push(event);
             Ok(())
         }),
     )
     .unwrap();
 
-    let usage = usage.unwrap();
-    assert_eq!(usage.input_tokens, Some(100));
-    assert_eq!(usage.cache_read_tokens, Some(700));
-    assert_eq!(usage.cache_write_tokens, Some(200));
-    assert_eq!(usage.output_tokens, Some(25));
-    assert_eq!(usage.total_input_tokens(), Some(1000));
-    assert_eq!(usage.total_tokens, Some(1025));
+    assert_eq!(
+        events,
+        vec![
+            generation_output_tokens_event(18),
+            ModelEvent::Usage(crate::model::ModelUsage {
+                input_tokens: Some(100),
+                output_tokens: Some(25),
+                cache_read_tokens: Some(700),
+                cache_write_tokens: Some(200),
+                total_tokens: Some(1025),
+                ..crate::model::ModelUsage::default()
+            }),
+        ]
+    );
 }
 
 #[test]

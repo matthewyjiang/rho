@@ -6,8 +6,8 @@ use crate::{
     client::Rho,
     event::{RunOutcome, StopReason},
     model::{
-        AssistantMessage, ContentBlock, Message, ModelEvent, ModelRequest, ModelResponse,
-        ModelUsage,
+        AssistantMessage, ContentBlock, GenerationOutputTokens, Message, ModelEvent, ModelRequest,
+        ModelResponse, ModelUsage,
     },
     provider::{provider_event_channel, ModelRequestOptions, ProviderCancellationMode},
     run::RunCommand,
@@ -31,6 +31,7 @@ const RETRYABLE_REQUEST_BASE_DELAY: std::time::Duration = std::time::Duration::f
 const MAX_HONORED_RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(60);
 
 mod model_call_timer;
+mod provider_cancellation;
 mod run_hooks;
 mod stream_capture;
 mod terminal;
@@ -38,6 +39,9 @@ mod tool_batch;
 mod tool_turn;
 
 use model_call_timer::ModelCallTimer;
+use provider_cancellation::{
+    drain_cancelled_provider_events, drain_cooperative_provider_on_cancellation,
+};
 use run_hooks::RunHooks;
 use stream_capture::{capture_provider_event, StreamCapture};
 use terminal::{commit_terminal, commit_terminal_history, send_terminal, TerminalKind};
@@ -782,6 +786,23 @@ async fn provider_turn(
     }
     match result {
         Ok(response) => {
+            if let Some(tokens) = timer.generation_output_tokens() {
+                let detail = match tokens {
+                    GenerationOutputTokens::Reported(tokens) => tokens.to_string(),
+                    GenerationOutputTokens::Unavailable => "unavailable".into(),
+                };
+                #[allow(deprecated)]
+                let carrier = RunEvent::ProviderActivity {
+                    kind: crate::event::PROVIDER_ACTIVITY_GENERATION_OUTPUT_TOKENS.into(),
+                    detail,
+                };
+                if let Err(error) = emit(control.events, control.cancellation, carrier).await {
+                    return Err(RequestFailure {
+                        error: ProviderError::interrupted(error.to_string()),
+                        capture,
+                    });
+                }
+            }
             let metrics = timer.finish(completed_at, capture.usage().output_tokens);
             if let Err(error) = emit(
                 control.events,
@@ -812,6 +833,10 @@ async fn handle_timed_provider_stream_event(
 ) -> Result<(), ProviderError> {
     match event {
         crate::provider::ProviderStreamEvent::Model(event) => {
+            if let Some(tokens) = event.as_generation_output_tokens() {
+                timer.observe_generation_output_tokens(tokens);
+                return Ok(());
+            }
             timer.observe(&event, observed_at);
             handle_provider_event(
                 event,
@@ -921,60 +946,6 @@ async fn handle_provider_event(
             .map_err(|error| ProviderError::interrupted(error.to_string()))?;
     }
     Ok(())
-}
-
-async fn drain_cooperative_provider_on_cancellation(
-    future: &mut crate::provider::ProviderFuture<'_>,
-    receiver: &mut crate::provider::ProviderEventReceiver,
-    identity: &crate::model::ModelIdentity,
-    capture: &mut StreamCapture,
-) {
-    let mut stream_open = true;
-    loop {
-        tokio::select! {
-            biased;
-            event = receiver.recv_timed_stream_event(), if stream_open => {
-                match event {
-                    Some((crate::provider::ProviderStreamEvent::Model(event), _)) => {
-                        let _ = capture_provider_event(
-                            event,
-                            identity,
-                            &ModelUsage::default(),
-                            capture,
-                        );
-                    }
-                    Some((crate::provider::ProviderStreamEvent::Request(
-                        crate::provider::ProviderRequestEvent::RequestAttemptFailed { kind, usage }
-                    ), _)) => {
-                        capture.record_request_attempt_failure(kind, usage);
-                    }
-                    None => stream_open = false,
-                }
-            }
-            _ = &mut *future => break,
-        }
-    }
-}
-
-fn drain_cancelled_provider_events(
-    receiver: &mut crate::provider::ProviderEventReceiver,
-    identity: &crate::model::ModelIdentity,
-    capture: &mut StreamCapture,
-) {
-    while let Some((event, _)) = receiver.try_recv_timed_stream_event() {
-        match event {
-            crate::provider::ProviderStreamEvent::Model(event) => {
-                // Cancellation-sensitive host publication must not prevent capture of
-                // events the provider had already queued before its future was dropped.
-                let _ = capture_provider_event(event, identity, &ModelUsage::default(), capture);
-            }
-            crate::provider::ProviderStreamEvent::Request(
-                crate::provider::ProviderRequestEvent::RequestAttemptFailed { kind, usage },
-            ) => {
-                capture.record_request_attempt_failure(kind, usage);
-            }
-        }
-    }
 }
 
 async fn emit(

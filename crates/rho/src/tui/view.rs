@@ -60,6 +60,10 @@ impl App {
     pub(super) fn draw(&mut self, frame: &mut Frame<'_>) {
         let now = Instant::now();
         let area = frame.area();
+        frame.render_widget(
+            ratatui::widgets::Block::default().style(Theme::surface()),
+            area,
+        );
         if !terminal_meets_minimum(area) {
             draw_terminal_too_small(frame, area);
             return;
@@ -163,6 +167,7 @@ impl App {
         } = surface;
         if let Some(activity_gap) = layout.activity_gap {
             frame.render_widget(Clear, activity_gap);
+            frame.render_widget(Paragraph::new("").style(Theme::surface()), activity_gap);
         }
         if let Some(activity_rail) = layout.activity_rail {
             frame.render_widget(Clear, activity_rail);
@@ -320,9 +325,11 @@ impl App {
         } = surface;
         let popup_cursor = if let ComposerMode::Picker(picker) = self.input_ui.composer() {
             picker_overlay_frame(picker, area).map(|overlay| {
+                // Clear punches host defaults; fixed themes must repaint their surface
+                // or light schemes leave dark holes under dark body ink.
                 frame.render_widget(Clear, overlay.outer);
                 frame.render_widget(
-                    Paragraph::new(overlay.lines).style(Style::default()),
+                    Paragraph::new(overlay.lines).style(Theme::surface()),
                     overlay.outer,
                 );
                 overlay.cursor
@@ -450,8 +457,12 @@ impl App {
     pub(super) fn session_header_lines(&mut self, width: usize) -> &[Line<'static>] {
         let update_notice = self.info.services.update_notice.clone();
         let setup = self.setup_state();
+        let theme_generation = Theme::generation();
         let stale = self.history.session_header_cache().is_none_or(|cache| {
-            cache.width != width || cache.update_notice != update_notice || cache.setup != setup
+            cache.width != width
+                || cache.update_notice != update_notice
+                || cache.setup != setup
+                || cache.theme_generation != theme_generation
         });
         if stale {
             self.history
@@ -459,6 +470,7 @@ impl App {
                     width,
                     update_notice,
                     setup,
+                    theme_generation,
                     lines: session_header_lines(
                         self.info.services.update_notice.as_deref(),
                         setup,

@@ -296,8 +296,14 @@ impl App {
                 self.usage.current_context = Some(usage);
                 None
             }
-            ViewModelEvent::ModelCallCompleted { profile, metrics } => {
-                self.usage.model_performance.record(profile, metrics);
+            ViewModelEvent::ModelCallCompleted {
+                profile,
+                metrics,
+                generation_output_tokens,
+            } => {
+                self.usage
+                    .model_performance
+                    .record(profile, metrics, generation_output_tokens);
                 None
             }
             ViewModelEvent::Usage(usage) => {

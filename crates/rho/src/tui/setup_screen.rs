@@ -168,6 +168,10 @@ impl App {
 
     pub(super) fn draw_setup_screen(&mut self, frame: &mut Frame<'_>, area: Rect, step: SetupStep) {
         frame.render_widget(Clear, area);
+        frame.render_widget(
+            ratatui::widgets::Paragraph::new("").style(Theme::surface()),
+            area,
+        );
         let column = content_column(area);
         if column.height == 0 {
             return;
@@ -185,7 +189,7 @@ impl App {
             Theme::dim(),
         )));
 
-        frame.render_widget(Paragraph::new(lines), column);
+        frame.render_widget(Paragraph::new(lines).style(Theme::surface()), column);
         if let Some(position) = self.setup_filter_cursor(column, body_row) {
             frame.set_cursor_position(position);
         }
@@ -238,7 +242,7 @@ fn welcome_lines(width: usize) -> Vec<Line<'static>> {
     vec![
         Line::from(vec![
             Span::styled("rho", Theme::brand()),
-            Span::raw("  v"),
+            Span::styled("  v", Theme::dim()),
             Span::styled(super::smoke_injection::display_version(), Theme::success()),
         ]),
         Line::raw(""),

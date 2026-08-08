@@ -62,7 +62,10 @@ fn terminal_status_is_not_overwritten_by_nonterminal() {
     };
     write_status(&path, &running).unwrap();
     let loaded = read_status(&path).unwrap();
-    assert_eq!(loaded, terminal);
+    assert_eq!(loaded.state, RunState::Error);
+    assert_eq!(loaded.agent_id.as_deref(), Some("alpha"));
+    assert_eq!(loaded.error.as_deref(), Some("fallback error"));
+    assert!(loaded.finished_at.is_some());
 
     // Terminal-to-terminal remains allowed (for example Stopped after cancel).
     let stopped = RunStatus {
@@ -340,6 +343,9 @@ fn old_status_files_without_parent_session_id_still_parse() {
     let status = read_status(&path).unwrap();
     assert_eq!(status.state, RunState::Ok);
     assert_eq!(status.parent_session_id, None);
+    assert_eq!(status.runtime, None);
+    assert_eq!(status.started_at, None);
+    assert_eq!(status.finished_at, None);
 }
 
 #[test]
@@ -357,4 +363,82 @@ fn parent_session_id_round_trips_in_status_file() {
         read_status(&path).unwrap().parent_session_id.as_deref(),
         Some("parent-session-id")
     );
+}
+
+#[test]
+fn runtime_and_timing_fields_round_trip_in_status_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join(RESULT_FILE_NAME);
+    let status = RunStatus {
+        state: RunState::Ok,
+        agent_id: Some("worker".into()),
+        runtime: Some(crate::agent::AgentRuntime::ClaudeCli),
+        started_at: Some(1_700_000_000),
+        finished_at: Some(1_700_000_042),
+        ..RunStatus::default()
+    };
+    initialize_status(&path, &status).unwrap();
+    let loaded = read_status(&path).unwrap();
+    assert_eq!(loaded.runtime, Some(crate::agent::AgentRuntime::ClaudeCli));
+    assert_eq!(loaded.started_at, Some(1_700_000_000));
+    assert_eq!(loaded.finished_at, Some(1_700_000_042));
+    assert_eq!(
+        loaded
+            .elapsed_duration(9_999)
+            .map(|elapsed| elapsed.as_secs()),
+        Some(42)
+    );
+}
+
+#[test]
+fn write_status_stamps_finished_at_for_terminal_snapshots() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join(RESULT_FILE_NAME);
+    let status = RunStatus {
+        state: RunState::Ok,
+        agent_id: Some("worker".into()),
+        started_at: Some(1_700_000_000),
+        ..RunStatus::default()
+    };
+    write_status(&path, &status).unwrap();
+    let loaded = read_status(&path).unwrap();
+    assert!(loaded.finished_at.is_some());
+    assert!(loaded.finished_at.unwrap() >= loaded.started_at.unwrap());
+}
+
+#[test]
+fn write_status_preserves_existing_terminal_finished_at() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join(RESULT_FILE_NAME);
+    let original = RunStatus {
+        state: RunState::Error,
+        agent_id: Some("worker".into()),
+        started_at: Some(1_700_000_000),
+        finished_at: Some(1_700_000_042),
+        error: Some("first failure".into()),
+        ..RunStatus::default()
+    };
+    write_status(&path, &original).unwrap();
+    assert_eq!(read_status(&path).unwrap().finished_at, Some(1_700_000_042));
+
+    // Later terminal snapshot omits finished_at; keep the first durable finish.
+    let upgraded = RunStatus {
+        state: RunState::Stopped,
+        agent_id: Some("worker".into()),
+        started_at: Some(1_700_000_000),
+        last_activity: Some("cancelled after error".into()),
+        error: Some("first failure".into()),
+        ..RunStatus::default()
+    };
+    write_status(&path, &upgraded).unwrap();
+    let loaded = read_status(&path).unwrap();
+    assert_eq!(loaded.state, RunState::Stopped);
+    assert_eq!(loaded.finished_at, Some(1_700_000_042));
+}
+
+#[test]
+fn format_elapsed_secs_covers_second_minute_and_hour_buckets() {
+    assert_eq!(format_elapsed_secs(12), "12s");
+    assert_eq!(format_elapsed_secs(65), "1m 05s");
+    assert_eq!(format_elapsed_secs(3_725), "1h 02m");
 }

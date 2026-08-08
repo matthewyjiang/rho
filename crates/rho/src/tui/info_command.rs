@@ -167,7 +167,9 @@ pub(super) fn runtime_info_lines(info: &RuntimeInfo, width: usize) -> Vec<Line<'
     block.push_section("Session usage");
     push_usage_fields(&mut block, info);
 
-    if let Some(metrics) = info.model_performance.latest_call {
+    if let Some(call) = info.model_performance.latest_call {
+        let metrics = call.metrics;
+        let generation_output_tokens = call.throughput_output_tokens();
         block.push_section("Last model call");
         if let Some(duration) = metrics.time_to_first_token {
             block.push_field("First event", &format_duration(duration));
@@ -175,6 +177,7 @@ pub(super) fn runtime_info_lines(info: &RuntimeInfo, width: usize) -> Vec<Line<'
         if let Some(duration) = metrics.generation_time {
             block.push_field("Generation", &format_duration(duration));
         }
+        push_optional_number(&mut block, "Generation tokens", generation_output_tokens);
         push_optional_number(&mut block, "Output tokens", metrics.output_tokens);
         // Compute rates from published metric fields. Do not call
         // ModelCallMetrics::{generation,response}_tokens_per_second here until
@@ -182,7 +185,7 @@ pub(super) fn runtime_info_lines(info: &RuntimeInfo, width: usize) -> Vec<Line<'
         // crates.io.
         if let Some(rate) = metrics
             .generation_time
-            .and_then(|window| tokens_per_second(metrics.output_tokens, window))
+            .and_then(|window| tokens_per_second(generation_output_tokens, window))
         {
             block.push_field("Generation rate", &format!("{rate:.1} tok/s"));
         }

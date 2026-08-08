@@ -286,6 +286,8 @@ impl AgentExecutor {
             agent_fingerprint: Some(bound.fingerprint().to_string()),
             provider: Some(labels.provider.clone()),
             model: Some(labels.model.clone()),
+            runtime: Some(labels.runtime),
+            started_at: Some(subagent::unix_now_secs()),
             parent_session_id: parent_session_id.as_ref().map(ToString::to_string),
             ..RunStatus::default()
         };
@@ -321,6 +323,7 @@ impl AgentExecutor {
                 let mut stopped = task_status_tx.borrow().clone();
                 stopped.state = RunState::Stopped;
                 stopped.last_activity = Some("cancelled before execution".into());
+                stopped.mark_finished_now();
                 task_status_tx.send_replace(stopped.clone());
                 subagent::write_status(&output_file, &stopped)?;
                 return Ok(());
@@ -394,6 +397,7 @@ impl AgentExecutor {
                 if !failed.state.is_terminal() {
                     failed.state = RunState::Error;
                     failed.error = Some(error);
+                    failed.mark_finished_now();
                     status_tx.send_replace(failed.clone());
                     let _ = subagent::write_status(&persisted_output, &failed);
                 }

@@ -36,6 +36,7 @@ pub(crate) struct RunArtifactIdentity {
     pub(crate) agent_fingerprint: String,
     pub(crate) provider: String,
     pub(crate) model: String,
+    pub(crate) runtime: crate::agent::AgentRuntime,
 }
 
 enum WriterCommand {
@@ -75,6 +76,8 @@ fn starting_status(identity: &RunArtifactIdentity) -> RunStatus {
         agent_fingerprint: Some(identity.agent_fingerprint.clone()),
         provider: Some(identity.provider.clone()),
         model: Some(identity.model.clone()),
+        runtime: Some(identity.runtime),
+        started_at: Some(subagent::unix_now_secs()),
         last_activity: Some("starting".into()),
         ..RunStatus::default()
     }
@@ -237,6 +240,7 @@ impl RunArtifactSink {
             self.status.result = Some(bound_text(result));
         }
         self.status.last_activity = Some("completed".into());
+        self.status.mark_finished_now();
         self.finish(Some(AttachmentEvent::Completed));
     }
 
@@ -249,6 +253,7 @@ impl RunArtifactSink {
         self.status.state = RunState::Error;
         self.status.error = Some(error.clone());
         self.status.last_activity = Some("failed".into());
+        self.status.mark_finished_now();
         self.finish(Some(AttachmentEvent::Failed(error)));
     }
 
@@ -264,6 +269,7 @@ impl RunArtifactSink {
                 self.status.result = Some(format!("(partial, stopped before finishing)\n{text}"));
             }
         }
+        self.status.mark_finished_now();
         self.finish(Some(AttachmentEvent::Cancelled));
     }
 

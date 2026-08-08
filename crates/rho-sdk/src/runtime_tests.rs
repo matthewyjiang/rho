@@ -505,6 +505,61 @@ async fn stream_usage_events_merge_within_a_turn() {
     assert!(metrics.response_tokens_per_second().is_some());
 }
 
+// Covers: reasoning tokens remain in billable usage but not generation throughput metrics.
+// Owner: SDK orchestration
+#[tokio::test]
+async fn reasoning_breakdown_separates_usage_from_performance_tokens() {
+    let provider = ScriptedProvider::new(
+        identity(),
+        [ScriptedTurn::streaming(
+            vec![
+                ModelEvent::OutputDelta("done".into()),
+                ModelEvent::generation_output_tokens(30),
+                ModelEvent::Usage(crate::model::ModelUsage {
+                    output_tokens: Some(100),
+                    ..crate::model::ModelUsage::default()
+                }),
+            ],
+            ModelResponse::Assistant(vec![ContentBlock::Text("done".into())]),
+        )],
+    );
+    let runtime = Rho::builder().provider(provider).build().unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let mut run = session.start(UserInput::text("hello")).await.unwrap();
+    let mut usage = None;
+    let mut generation_output_tokens = None;
+    let mut carrier_preceded_completion = false;
+    let mut metrics = None;
+    while let Some(event) = run.next_event().await {
+        #[allow(deprecated)]
+        match event {
+            RunEvent::UsageUpdated { usage: reported } => usage = Some(reported),
+            RunEvent::ProviderActivity { kind, detail }
+                if kind == crate::PROVIDER_ACTIVITY_GENERATION_OUTPUT_TOKENS =>
+            {
+                generation_output_tokens = detail.parse().ok();
+            }
+            RunEvent::ModelCallCompleted {
+                metrics: completed, ..
+            } => {
+                carrier_preceded_completion = generation_output_tokens.is_some();
+                metrics = Some(completed);
+            }
+            _ => {}
+        }
+    }
+    let outcome = run.outcome().await.unwrap();
+
+    assert_eq!(
+        usage.as_ref().and_then(|usage| usage.output_tokens),
+        Some(100)
+    );
+    assert_eq!(outcome.usage().output_tokens, Some(100));
+    assert_eq!(metrics.and_then(|metrics| metrics.output_tokens), Some(100));
+    assert_eq!(generation_output_tokens, Some(30));
+    assert!(carrier_preceded_completion);
+}
+
 #[derive(Debug)]
 struct CompletionOnlyProvider;
 

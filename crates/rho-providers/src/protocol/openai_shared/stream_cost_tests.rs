@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
-use super::extract_usage;
+use super::{extract_generation_output_tokens, extract_usage, GenerationOutputTokens};
 use crate::model::ModelUsage;
 
 #[test]
@@ -74,4 +74,87 @@ fn invalid_reported_costs_do_not_replace_catalog_fallback() {
         extract_usage(&malformed_cost).and_then(|usage| usage.cost_usd_micros),
         None
     );
+}
+
+// Covers: throughput must exclude reasoning tokens across ordered OpenAI usage aliases
+// Owner: OpenAI shared usage parser
+#[test]
+fn generation_output_tokens_exclude_reasoning_across_usage_aliases() {
+    let cases = [
+        (
+            "responses aliases",
+            json!({"usage": {
+                "output_tokens": 30,
+                "output_tokens_details": {"reasoning_tokens": 12}
+            }}),
+            GenerationOutputTokens::Reported(18),
+            Some(30),
+        ),
+        (
+            "chat completions aliases",
+            json!({"usage": {
+                "completion_tokens": 21,
+                "completion_tokens_details": {"reasoning_tokens": 8}
+            }}),
+            GenerationOutputTokens::Reported(13),
+            Some(21),
+        ),
+        (
+            "count and details aliases stay paired",
+            json!({"usage": {
+                "output_tokens": 30,
+                "completion_tokens": 21,
+                "completion_tokens_details": {"reasoning_tokens": 8}
+            }}),
+            GenerationOutputTokens::Unreported,
+            Some(30),
+        ),
+        (
+            "malformed preferred aliases fall through",
+            json!({"usage": {
+                "output_tokens": "invalid",
+                "completion_tokens": 19,
+                "output_tokens_details": {"reasoning_tokens": "invalid"},
+                "completion_tokens_details": {"reasoning_tokens": 4}
+            }}),
+            GenerationOutputTokens::Reported(15),
+            Some(19),
+        ),
+        (
+            "reasoning cannot underflow output",
+            json!({"usage": {
+                "output_tokens": 3,
+                "output_tokens_details": {"reasoning_tokens": 9}
+            }}),
+            GenerationOutputTokens::Invalid,
+            Some(3),
+        ),
+        (
+            "output absent",
+            json!({"usage": {
+                "output_tokens_details": {"reasoning_tokens": 2}
+            }}),
+            GenerationOutputTokens::Unreported,
+            None,
+        ),
+        (
+            "details absent",
+            json!({"usage": {"output_tokens": 11}}),
+            GenerationOutputTokens::Unreported,
+            Some(11),
+        ),
+    ];
+
+    for (name, value, expected_generation, expected_usage) in cases {
+        assert_eq!(
+            extract_generation_output_tokens(&value),
+            expected_generation,
+            "{name}: generation output"
+        );
+        assert_eq!(
+            extract_usage(&value).and_then(|usage| usage.output_tokens),
+            expected_usage,
+            "{name}: aggregate usage"
+        );
+    }
 }

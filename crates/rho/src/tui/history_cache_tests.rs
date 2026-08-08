@@ -12,6 +12,7 @@ fn settings(width: usize) -> HistoryRenderSettings {
         width,
         max_tool_output_lines: 10,
         zen_mode: false,
+        theme_generation: 0,
     }
 }
 
@@ -24,6 +25,7 @@ fn settings_with(
         width,
         max_tool_output_lines,
         zen_mode,
+        theme_generation: 0,
     }
 }
 

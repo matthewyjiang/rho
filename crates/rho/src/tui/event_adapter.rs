@@ -11,10 +11,15 @@ use {
 use super::{
     activity::{ActivityPhase, ProviderRetryHint},
     compaction_display::compaction_call_id,
+    model_performance::GenerationOutputTokens,
     questionnaire::{QuestionnaireChoice, QuestionnaireQuestion, QuestionnaireRequest},
 };
 
 pub(super) use super::compaction_display::{CompactionDisplayFacts, CompactionUiOutcome};
+
+// NEXT_MAJOR(rho): consume the SDK's explicit generation-output metric and
+// remove this 1.x ProviderActivity bridge.
+const MODEL_CALL_GENERATION_OUTPUT_TOKENS_KIND: &str = "model_call_generation_output_tokens";
 
 #[derive(Clone, Debug)]
 pub(super) enum ViewModelEvent {
@@ -34,6 +39,7 @@ pub(super) enum ViewModelEvent {
     ModelCallCompleted {
         profile: ModelCallProfile,
         metrics: ModelCallMetrics,
+        generation_output_tokens: GenerationOutputTokens,
     },
     ToolUpdated {
         call_id: rho_sdk::ToolCallId,
@@ -118,6 +124,7 @@ pub(crate) struct SdkEventAdapter {
     attachment_preview_keys: std::collections::BTreeMap<usize, String>,
     /// call_id -> attachment journal key so later events reuse the preview slot.
     attachment_call_keys: std::collections::BTreeMap<String, String>,
+    pending_generation_output_tokens: Option<GenerationOutputTokens>,
 }
 
 impl SdkEventAdapter {
@@ -128,6 +135,7 @@ impl SdkEventAdapter {
             bound_stream_call_ids: std::collections::BTreeMap::new(),
             attachment_preview_keys: std::collections::BTreeMap::new(),
             attachment_call_keys: std::collections::BTreeMap::new(),
+            pending_generation_output_tokens: None,
         }
     }
 
@@ -205,9 +213,11 @@ impl SdkEventAdapter {
     pub(super) fn translate(&mut self, event: RunEvent) -> Vec<ViewEvent> {
         match event {
             RunEvent::Started { .. } => {
+                self.pending_generation_output_tokens = None;
                 vec![ViewEvent::Update(ViewModelEvent::RunStarted)]
             }
             RunEvent::StepStarted { step } => {
+                self.pending_generation_output_tokens = None;
                 self.presenter().step_started();
                 self.bound_stream_call_ids.clear();
                 vec![ViewEvent::Update(ViewModelEvent::StepStarted(step))]
@@ -302,6 +312,10 @@ impl SdkEventAdapter {
                 vec![ViewEvent::Update(ViewModelEvent::ModelCallCompleted {
                     profile,
                     metrics,
+                    generation_output_tokens: self
+                        .pending_generation_output_tokens
+                        .take()
+                        .unwrap_or(GenerationOutputTokens::AggregateFallback),
                 })]
             }
             RunEvent::WebSearch { detail } => {
@@ -321,10 +335,20 @@ impl SdkEventAdapter {
             RunEvent::ProviderRequestRetry => {
                 vec![ViewEvent::Update(ViewModelEvent::ProviderRetry)]
             }
-            // Legacy dual-emitted activity; typed variants above drive the TUI.
+            // Legacy activity also carries a minor-compatible performance hint
+            // until the SDK can add a dedicated metric in its next major version.
             #[allow(deprecated)]
-            RunEvent::ProviderActivity { .. } => Vec::new(),
+            RunEvent::ProviderActivity { kind, detail } => {
+                if kind == MODEL_CALL_GENERATION_OUTPUT_TOKENS_KIND {
+                    self.pending_generation_output_tokens = Some(detail.parse().map_or(
+                        GenerationOutputTokens::Unavailable,
+                        GenerationOutputTokens::Reported,
+                    ));
+                }
+                Vec::new()
+            }
             RunEvent::ProviderStreamReset { reason, .. } => {
+                self.pending_generation_output_tokens = None;
                 self.presenter().step_started();
                 self.bound_stream_call_ids.clear();
                 vec![ViewEvent::Update(ViewModelEvent::ProviderStreamReset(

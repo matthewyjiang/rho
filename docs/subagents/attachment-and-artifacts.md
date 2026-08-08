@@ -28,7 +28,7 @@ Parentless runs, including delegated work started by `rho run`, remain under `~/
 
 Each run directory can contain:
 
-- `result.json` - live status, agent ID, semantic fingerprint, usage, final result, optional `parent_session_id`, and optional `claude_session_id`
+- `result.json` - live status, agent ID, runtime (`rho` or `claude-cli`), start/finish timestamps, semantic fingerprint, usage, final result, optional `parent_session_id`, and optional `claude_session_id`
 - `events.jsonl` - display events used by attachment
 - `log.txt` - Claude stderr for `runtime: claude-cli` runs
 

@@ -1,6 +1,9 @@
 use std::time::Instant;
 
-use crate::{model::ModelEvent, ModelCallMetrics};
+use crate::{
+    model::{GenerationOutputTokens, ModelEvent},
+    ModelCallMetrics,
+};
 
 /// Times one model call. Every reported duration is scoped to the attempt that
 /// produced the returned output: a discarded attempt and the backoff before the
@@ -9,6 +12,7 @@ pub(super) struct ModelCallTimer {
     attempt_started: Instant,
     first_generated: Option<Instant>,
     last_observed: Option<Instant>,
+    generation_output_tokens: Option<GenerationOutputTokens>,
 }
 
 impl ModelCallTimer {
@@ -17,6 +21,7 @@ impl ModelCallTimer {
             attempt_started,
             first_generated: None,
             last_observed: None,
+            generation_output_tokens: None,
         }
     }
 
@@ -24,6 +29,7 @@ impl ModelCallTimer {
     pub(super) fn discard_attempt_output(&mut self, observed_at: Option<Instant>) {
         self.first_generated = None;
         self.last_observed = None;
+        self.generation_output_tokens = None;
         if let Some(observed_at) = observed_at {
             self.attempt_started = observed_at;
         }
@@ -47,6 +53,14 @@ impl ModelCallTimer {
         {
             self.first_generated = Some(observed_at);
         }
+    }
+
+    pub(super) fn observe_generation_output_tokens(&mut self, tokens: GenerationOutputTokens) {
+        self.generation_output_tokens = Some(tokens);
+    }
+
+    pub(super) fn generation_output_tokens(&self) -> Option<GenerationOutputTokens> {
+        self.generation_output_tokens
     }
 
     pub(super) fn finish(
