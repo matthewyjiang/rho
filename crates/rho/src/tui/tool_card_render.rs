@@ -129,11 +129,32 @@ pub(super) fn push_tool_card(
 
     let show_expand_prompt = !expanded && hidden_rows > 0;
     let has_prompt = show_expand_prompt || show_collapse_prompt;
-    let last_child = emitted.len().saturating_sub(1);
+    // For each group, whether a later TreeFact still needs the trunk. Mid
+    // branches stay ├ and plain rows between them keep │ so multi-file File
+    // headers connect through their body content.
+    let later_has_tree = {
+        let mut later = false;
+        let mut flags = vec![false; emitted.len()];
+        for (index, group) in emitted.iter().enumerate().rev() {
+            flags[index] = later;
+            if matches!(group, ChildGroup::TreeFact(_)) {
+                later = true;
+            }
+        }
+        flags
+    };
     for (index, mut group) in emitted.into_iter().enumerate() {
-        let is_last_child = index == last_child && !has_prompt;
-        if let ChildGroup::TreeFact(ref mut fact_lines) = group {
-            rewrite_tree_fact(fact_lines, is_last_child);
+        match &mut group {
+            ChildGroup::TreeFact(fact_lines) => {
+                // Last tree branch uses └ even when plain body hangs under it.
+                // A following expand/collapse prompt keeps mid ├, matching facts.
+                let is_last_tree = !later_has_tree[index] && !has_prompt;
+                rewrite_tree_fact(fact_lines, is_last_tree);
+            }
+            ChildGroup::Plain(plain_lines) if later_has_tree[index] => {
+                apply_trunk_stem(plain_lines);
+            }
+            ChildGroup::Plain(_) => {}
         }
         lines.extend(group.into_lines());
     }
@@ -189,6 +210,16 @@ fn render_child_groups(card: &ToolCard, width: usize) -> Vec<ChildGroup> {
         ToolBody::Diff(rows) => {
             let gutter = tool_diff::gutter_width(rows);
             for row in rows {
+                // Multi-file section headers keep the same ├ / └ trunk as
+                // DiffStat facts so the card still reads as a connected tree
+                // after path+stats moved onto the File row.
+                if row.kind == DiffRowKind::File {
+                    let spans = multi_file_header_spans(&row.text).unwrap_or_else(|| {
+                        vec![Span::styled(row.text.clone(), Theme::tool_path())]
+                    });
+                    groups.push(ChildGroup::TreeFact(push_wrapped_tree_fact(spans, width)));
+                    continue;
+                }
                 let mut lines = Vec::new();
                 push_diff_row(&mut lines, row, gutter, width);
                 groups.push(ChildGroup::Plain(lines));
@@ -228,6 +259,32 @@ fn set_tree_prefix(line: &mut Line<'static>, prefix: &str) {
         return;
     };
     first.content = prefix.to_string().into();
+}
+
+/// Swap the plain content indent for a continuing trunk stem (`  │ `).
+///
+/// Body/diff rows start with [`CHILD_CONTENT_INDENT`] (or a hang of spaces that
+/// begins with that indent width). When a later tree branch still follows,
+/// replace that leading indent so the File headers read as one connected tree.
+fn apply_trunk_stem(lines: &mut [Line<'static>]) {
+    let indent = CHILD_CONTENT_INDENT;
+    let indent_len = indent.len();
+    for line in lines {
+        let Some(first) = line.spans.first_mut() else {
+            continue;
+        };
+        let text = first.content.as_ref();
+        if text.starts_with(indent) {
+            first.content = format!("{TREE_WRAP_STEM}{}", &text[indent_len..]).into();
+            first.style = Theme::tool_tree();
+            continue;
+        }
+        // Wrapped diff hangs use a pure-space first span wider than the indent.
+        if text.len() >= indent_len && text.bytes().all(|b| b == b' ') {
+            first.content = format!("{TREE_WRAP_STEM}{}", &text[indent_len..]).into();
+            first.style = Theme::tool_tree();
+        }
+    }
 }
 
 fn push_header_line(
@@ -453,6 +510,8 @@ fn fact_spans(fact: &ToolFact) -> Vec<Span<'static>> {
 /// The number gutter and sign column are fixed, so wrapped text hangs under the
 /// text column and added/removed rows stay distinguishable without color.
 fn push_diff_row(lines: &mut Vec<Line<'static>>, row: &DiffRow, gutter: usize, width: usize) {
+    // File rows are promoted to TreeFact in render_child_groups so they keep
+    // the connecting trunk. Plain body fallback still paints the path.
     if row.kind == DiffRowKind::File {
         push_body_line(lines, &row.text, width, Theme::tool_path());
         return;
@@ -522,6 +581,30 @@ fn push_body_line(lines: &mut Vec<Line<'static>>, line: &str, width: usize, styl
             width,
         ));
     }
+}
+
+/// Parse `+N -M | path` multi-file headers into colored spans.
+fn multi_file_header_spans(text: &str) -> Option<Vec<Span<'static>>> {
+    let (stats, path) = text.split_once(" | ")?;
+    let (added, removed) = stats.split_once(' ')?;
+    if !added.starts_with('+') || !removed.starts_with('-') {
+        return None;
+    }
+    if !added[1..].bytes().all(|b| b.is_ascii_digit())
+        || !removed[1..].bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    if path.is_empty() {
+        return None;
+    }
+    Some(vec![
+        Span::styled(added.to_string(), Theme::tool_stat_add()),
+        Span::raw(" "),
+        Span::styled(removed.to_string(), Theme::tool_stat_del()),
+        Span::styled(" | ", Theme::tool_meta()),
+        Span::styled(path.to_string(), Theme::tool_path()),
+    ])
 }
 
 fn pad_spans_line(mut spans: Vec<Span<'static>>, width: usize) -> Line<'static> {

@@ -586,35 +586,50 @@ pub fn compact_diff_rows_from_files(
 ) -> Vec<DiffRow> {
     let mut rows = Vec::new();
     for file in files {
-        push_compact_diff_section(&mut rows, &file.path, &file.rows, include_file_headers);
+        let header = include_file_headers.then(|| file.path.clone());
+        push_compact_diff_section(&mut rows, header, &file.rows);
     }
     rows
 }
 
 /// Build compact body rows from card-facing file sections.
+///
+/// When `include_file_headers` is true, each section starts with a File row.
+/// Content sections with known stats use `+N -M | path` so multi-file cards can
+/// drop separate DiffStat facts without losing the per-file counts.
 pub fn compact_diff_rows_from_card_files(
     files: &[DiffCardFile],
     include_file_headers: bool,
 ) -> Vec<DiffRow> {
     let mut rows = Vec::new();
     for file in files {
-        push_compact_diff_section(
-            &mut rows,
-            file.display_path(),
-            &file.rows,
-            include_file_headers,
-        );
+        let header = if include_file_headers {
+            Some(multi_file_section_header(file))
+        } else {
+            None
+        };
+        push_compact_diff_section(&mut rows, header, &file.rows);
     }
     rows
 }
 
+/// Multi-file section label: attach stats when known so path appears once.
+fn multi_file_section_header(file: &DiffCardFile) -> String {
+    let path = file.display_path();
+    match (file.change, file.stats) {
+        (DiffCardChange::Content, Some((added, removed))) => {
+            format!("+{added} -{removed} | {path}")
+        }
+        _ => path,
+    }
+}
+
 fn push_compact_diff_section(
     rows: &mut Vec<DiffRow>,
-    path: impl Into<String>,
+    file_header: Option<String>,
     file_rows: &[DiffRow],
-    include_file_headers: bool,
 ) {
-    if include_file_headers {
+    if let Some(path) = file_header {
         rows.push(DiffRow::new(DiffRowKind::File, None, path));
     }
     rows.extend(file_rows.iter().cloned());

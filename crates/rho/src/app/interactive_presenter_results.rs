@@ -215,6 +215,10 @@ pub(super) fn diff_card(
         return card;
     }
 
+    // Multi-file bodies already name each section with a File row. Putting the
+    // same path on DiffStat facts doubles the path noise (long relative paths
+    // twice). Single-file cards keep DiffStat because the body has no File row
+    // and the counts still need a home under the path-bearing header.
     let include_file_headers = files.len() > 1;
     for file in &files {
         match file.change {
@@ -227,6 +231,9 @@ pub(super) fn diff_card(
                 card.push_fact(ToolFact::Meta { text });
             }
             DiffCardChange::Content => {
+                if include_file_headers {
+                    continue;
+                }
                 if let Some((added, removed)) = file.stats {
                     card.push_fact(ToolFact::DiffStat {
                         added,

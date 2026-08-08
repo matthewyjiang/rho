@@ -1,5 +1,7 @@
 use pretty_assertions::assert_eq;
-use rho_tools::tool_card::{ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
+use rho_tools::tool_card::{
+    DiffRow, DiffRowKind, ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus,
+};
 
 use super::push_tool_card;
 
@@ -83,6 +85,53 @@ fn last_fact_wrap_uses_space_hang_not_stem() {
             lines
         );
     }
+}
+
+// Covers: multi-file File headers keep a continuous trunk through body rows so
+// section branches read as one tree (│ under mid files, hang under the last).
+// Owner: pure TUI layout
+#[test]
+fn multi_file_diff_connects_body_under_section_headers() {
+    let card = ToolCard::new(
+        ToolStatus::Ok,
+        ToolFamily::FileDiff,
+        ToolHeader::call("edit", Some("2 files".into())),
+    )
+    .with_body(ToolBody::Diff(vec![
+        DiffRow::new(DiffRowKind::File, None, "+1 -1 | a.txt"),
+        DiffRow::new(DiffRowKind::Added, Some(1), "A"),
+        DiffRow::new(DiffRowKind::File, None, "+0 -1 | b.txt"),
+        DiffRow::new(DiffRowKind::Removed, Some(1), "B"),
+    ]));
+
+    let lines = render(&card, 40);
+    assert_eq!(lines[0], "✓ edit(2 files)");
+    assert!(
+        lines[1].starts_with("  ├ ") && lines[1].contains("+1 -1") && lines[1].contains("a.txt"),
+        "first file section should mid-branch: {:?}",
+        lines
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.starts_with("  │ ") && line.contains("A")),
+        "body under first file must keep trunk stem: {:?}",
+        lines
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.starts_with("  └ ") && line.contains("b.txt")),
+        "last file section should end-branch: {:?}",
+        lines
+    );
+    assert!(
+        lines.iter().any(|line| {
+            line.contains("B") && line.starts_with("    ") && !line.starts_with("  │ ")
+        }),
+        "body under last file must hang without stem: {:?}",
+        lines
+    );
 }
 
 // Covers: fact wrap prefers whitespace over hard mid-word cuts (same as headers).

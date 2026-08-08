@@ -21,7 +21,7 @@
   <text x="24.0" y="339.6" fill="#1a7f37" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none" font-weight="700"> ✓ </text>
   <text x="52.8" y="339.6" fill="#116329" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">edit</text>
   <text x="91.2" y="339.6" fill="#1f2328" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">(crates/api/src/middleware/request_id.rs)                                                   </text>
-  <text x="24.0" y="359.6" fill="#57606a" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">   ├ </text>
+  <text x="24.0" y="359.6" fill="#57606a" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">   └ </text>
   <text x="72.0" y="359.6" fill="#116329" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">+1</text>
   <text x="100.8" y="359.6" fill="#cf222e" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">-0</text>
   <text x="120.0" y="359.6" fill="#57606a" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none"> lines | crates/api/src/middleware/request_id.rs</text>
@@ -35,7 +35,7 @@
   <text x="52.8" y="459.6" fill="#116329" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">$</text>
   <text x="62.4" y="459.6" fill="#1f2328" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none"> bash scripts/check-request-id.sh                                                              </text>
   <text x="24.0" y="479.6" fill="#57606a" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">   ├ timeout none</text>
-  <text x="24.0" y="499.6" fill="#57606a" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">   ├ </text>
+  <text x="24.0" y="499.6" fill="#57606a" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">   └ </text>
   <text x="72.0" y="499.6" fill="#1a7f37" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none" font-weight="700">exit 0</text>
   <text x="129.6" y="499.6" fill="#57606a" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none"> · 0.1s</text>
   <text x="72.0" y="519.6" fill="#1f2328" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">running 28 tests                                                                              </text>
