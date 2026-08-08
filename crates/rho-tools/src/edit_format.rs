@@ -7,6 +7,11 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::sdk_adapter::build_edit_sdk_tool;
 
 /// A built-in file edit surface exposed to models.
+///
+/// Hosts that import this type (or the `apply_patch` / `edit_file` modules) must
+/// depend on a published `rho-agent-tools` version that exports them. Bump this
+/// crate together with those consumers when the public edit surface changes so
+/// crates.io package verification path-patches the unpublished cut.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum EditFormat {
