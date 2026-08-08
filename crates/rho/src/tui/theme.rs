@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 use ratatui::{
@@ -48,6 +49,9 @@ struct ThemeState {
     active_scheme: Option<ColorScheme>,
     /// Bumps when active colors change so history cache rebuilds.
     generation: u64,
+    /// Schemes retained from the open theme picker so preview/apply do not
+    /// re-read custom theme files while browsing.
+    picker_catalog: Option<HashMap<String, ColorScheme>>,
 }
 
 impl ThemeState {
@@ -57,6 +61,7 @@ impl ThemeState {
             active_id: String::new(),
             active_scheme: None,
             generation: 0,
+            picker_catalog: None,
         }
     }
 }
@@ -102,24 +107,24 @@ impl TerminalPalette {
             .filter(|rgb| rgb.is_usable_dim(background_luminance))
             .map_or(fallback, Rgb::color)
     }
+}
 
-    /// Dim ink for a fixed RGB scheme. Never returns named ANSI fallbacks.
-    fn scheme_dim_foreground(scheme: &ColorScheme) -> Color {
-        let background = scheme.background;
-        let background_luminance = background.luminance();
-        let candidates = [
-            scheme.ansi[8], // bright black
-            scheme.ansi[0], // black
-            scheme.foreground,
-        ];
-        for candidate in candidates {
-            if candidate.is_usable_dim(background_luminance) {
-                return candidate.color();
-            }
+/// Dim ink for a fixed RGB scheme. Never returns named ANSI fallbacks.
+fn scheme_dim_foreground(scheme: &ColorScheme) -> Color {
+    let background = scheme.background;
+    let background_luminance = background.luminance();
+    let candidates = [
+        scheme_ansi(scheme, AnsiColor::BrightBlack),
+        scheme.ansi[0], // black (ANSI 0 has no AnsiColor variant)
+        scheme.foreground,
+    ];
+    for candidate in candidates {
+        if candidate.is_usable_dim(background_luminance) {
+            return candidate.color();
         }
-        // Last resort: pull foreground toward the surface so chrome stays muted.
-        background.blend_toward(scheme.foreground, 0.55).color()
     }
+    // Last resort: pull foreground toward the surface so chrome stays muted.
+    background.blend_toward(scheme.foreground, 0.55).color()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -205,12 +210,18 @@ impl Palette {
         Self {
             text: Some(scheme.foreground.color()),
             surface: Some(scheme.background.color()),
-            dim: TerminalPalette::scheme_dim_foreground(scheme),
-            accent: role_ink(scheme.ansi[6].color(), Some(surface)),
-            success: role_ink(scheme.ansi[2].color(), Some(surface)),
-            warning: role_ink(scheme.ansi[3].color(), Some(surface)),
-            error: role_ink(scheme.ansi[1].color(), Some(surface)),
-            skill: role_ink(scheme.ansi[5].color(), Some(surface)),
+            dim: scheme_dim_foreground(scheme),
+            accent: role_ink(scheme_ansi(scheme, AnsiColor::Cyan).color(), Some(surface)),
+            success: role_ink(scheme_ansi(scheme, AnsiColor::Green).color(), Some(surface)),
+            warning: role_ink(
+                scheme_ansi(scheme, AnsiColor::Yellow).color(),
+                Some(surface),
+            ),
+            error: role_ink(scheme_ansi(scheme, AnsiColor::Red).color(), Some(surface)),
+            skill: role_ink(
+                scheme_ansi(scheme, AnsiColor::Magenta).color(),
+                Some(surface),
+            ),
             user_background: panel,
             neutral_tool_background: panel,
         }
@@ -221,11 +232,15 @@ impl Palette {
 fn scheme_panel_background(scheme: &ColorScheme) -> BlockColor {
     let background = scheme.background;
     let wash = if is_light_background(background.luminance()) {
-        scheme.ansi[0]
+        scheme.ansi[0] // black
     } else {
-        scheme.ansi[7]
+        scheme_ansi(scheme, AnsiColor::White)
     };
     BlockColor::from_rgb(background.blend_toward(wash, USER_BACKGROUND_ALPHA))
+}
+
+fn scheme_ansi(scheme: &ColorScheme, color: AnsiColor) -> Rgb {
+    scheme.ansi[color.index() as usize]
 }
 
 /// Sampled host RGB when available, else the named ANSI fallback.
@@ -293,7 +308,7 @@ fn active_ansi_color(color: AnsiColor) -> Color {
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     if let Some(scheme) = state.active_scheme.as_ref() {
-        return scheme.ansi[color.index() as usize].color();
+        return scheme_ansi(scheme, color).color();
     }
     sampled_or_named(TERMINAL_SAMPLE.get(), color)
 }
@@ -307,12 +322,35 @@ impl Theme {
         }
     }
 
+    /// Retain fixed schemes from the open theme picker so preview uses them
+    /// directly instead of re-resolving custom files on each row change.
+    pub(super) fn set_picker_catalog(entries: &[theme_scheme::ThemeEntry]) {
+        let mut catalog = HashMap::new();
+        for entry in entries {
+            if let theme_scheme::ThemeEntry::Fixed(scheme) = entry {
+                catalog.insert(scheme.id.clone(), scheme.clone());
+            }
+        }
+        THEME_STATE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .picker_catalog = Some(catalog);
+    }
+
+    pub(super) fn clear_picker_catalog() {
+        THEME_STATE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .picker_catalog = None;
+    }
+
     /// Apply the committed config theme (startup and after successful apply).
     pub(super) fn apply_committed(id: &str) {
         apply_theme_id(id, /*commit*/ true);
     }
 
     /// Live preview while browsing the theme picker. Does not change commit.
+    /// Prefers schemes retained in the picker catalog.
     pub(super) fn preview(id: &str) {
         apply_theme_id(id, /*commit*/ false);
     }
@@ -654,11 +692,27 @@ impl Theme {
 
 fn apply_theme_id(id: &str, commit: bool) {
     let id = normalize_theme_id(id);
+    let mut state = THEME_STATE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let scheme = if is_terminal_theme_id(&id) {
         None
+    } else if let Some(scheme) = state
+        .picker_catalog
+        .as_ref()
+        .and_then(|catalog| catalog.get(&id).cloned())
+    {
+        // Prefer the scheme already loaded into the open picker catalog.
+        Some(scheme)
     } else {
         // Unknown id falls back to terminal so a bad config never blanks the UI.
-        resolve_fixed_scheme(&id)
+        // Drop the lock while resolving from disk.
+        drop(state);
+        let scheme = resolve_fixed_scheme(&id);
+        state = THEME_STATE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        scheme
     };
     let resolved_id = if scheme.is_none() {
         TERMINAL_THEME_ID.to_string()
@@ -666,9 +720,6 @@ fn apply_theme_id(id: &str, commit: bool) {
         id
     };
 
-    let mut state = THEME_STATE
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let changed = state.active_id != resolved_id
         || state.active_scheme.as_ref().map(|s| s.id.as_str())
             != scheme.as_ref().map(|s| s.id.as_str());

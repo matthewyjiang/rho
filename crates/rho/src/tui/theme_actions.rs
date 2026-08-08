@@ -28,6 +28,7 @@ impl App {
     }
 
     /// Preview the highlighted theme row after selection changes (not during draw).
+    /// Uses schemes retained in the picker catalog when the picker was opened.
     pub(super) fn preview_selected_theme_if_active(&mut self) {
         let ComposerMode::Picker(picker) = self.input_ui.composer() else {
             return;
@@ -47,6 +48,7 @@ impl App {
     pub(super) fn cancel_theme_preview_if_leaving(&self, action: PickerAction) {
         if action == PickerAction::SelectTheme {
             Theme::cancel_preview();
+            Theme::clear_picker_catalog();
         }
     }
 
@@ -58,11 +60,13 @@ impl App {
         match save {
             Ok(theme) => {
                 Theme::apply_committed(&theme);
+                Theme::clear_picker_catalog();
                 let label = theme_picker::label_for_theme_id(&theme);
                 self.set_status(format!("theme: {label}"));
             }
             Err(error) => {
                 Theme::cancel_preview();
+                Theme::clear_picker_catalog();
                 self.insert_entry(&Entry::Error(format!("could not save theme: {error}")));
                 self.set_status("config save failed");
             }

@@ -165,6 +165,26 @@ theme = "one-half-dark"
     assert_eq!(config.theme, "one-half-dark");
     assert_eq!(warnings, Vec::<ConfigWarning>::new());
 
+    let (padded, padded_warnings) = parse_settings(
+        r#"
+[display]
+theme = "  one-half-light  "
+"#,
+    )
+    .unwrap();
+    assert_eq!(padded.theme, "one-half-light");
+    assert_eq!(padded_warnings, Vec::<ConfigWarning>::new());
+
+    let (blank, blank_warnings) = parse_settings(
+        r#"
+[display]
+theme = "   "
+"#,
+    )
+    .unwrap();
+    assert_eq!(blank.theme, "terminal");
+    assert_eq!(blank_warnings, Vec::<ConfigWarning>::new());
+
     let (defaulted, default_warnings) = parse_settings("").unwrap();
     assert_eq!(defaulted.theme, "terminal");
     assert_eq!(default_warnings, Vec::<ConfigWarning>::new());

@@ -114,6 +114,8 @@ fn resolves_windows_console_palette_in_attribute_bit_order() {
 
 #[test]
 fn chooses_dark_block_foreground_for_light_resolved_backgrounds() {
+    let _guard = theme_test_lock();
+    Theme::apply_committed("terminal");
     assert_eq!(
         block_foreground(Some(Rgb::new(240, 240, 240))),
         Color::Black
@@ -132,6 +134,8 @@ fn blends_toward_terminal_ansi_color() {
 
 #[test]
 fn resolved_ansi_background_keeps_rgb_for_foreground_contrast() {
+    let _guard = theme_test_lock();
+    Theme::apply_committed("terminal");
     let palette = TerminalPalette {
         background: Rgb::new(255, 255, 255),
         ansi: HashMap::from([(AnsiColor::White, Rgb::new(240, 240, 240))]),

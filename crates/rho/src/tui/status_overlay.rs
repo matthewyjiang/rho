@@ -239,7 +239,7 @@ pub(super) fn render_status_overlay(
     frame.render_widget(
         Paragraph::new(format!(" {text} "))
             .alignment(Alignment::Right)
-            .style(tone_style(overlay.tone()).patch(Theme::surface())),
+            .style(Theme::surface().patch(tone_style(overlay.tone()))),
         popup,
     );
 }

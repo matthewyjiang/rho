@@ -255,7 +255,7 @@ pub(super) fn render_copy_notice(
         frame.render_widget(
             Paragraph::new(notice.message.as_str())
                 .alignment(Alignment::Center)
-                .style(style.patch(base))
+                .style(base.patch(style))
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
@@ -268,7 +268,7 @@ pub(super) fn render_copy_notice(
         frame.render_widget(
             Paragraph::new(notice.message.as_str())
                 .alignment(Alignment::Right)
-                .style(style.patch(base)),
+                .style(base.patch(style)),
             popup,
         );
     }

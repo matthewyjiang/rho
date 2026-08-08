@@ -13,7 +13,11 @@ pub(super) fn theme_picker(current_id: &str) -> UiPicker {
         }
     };
 
-    let items = list_themes()
+    let entries = list_themes();
+    // Retain resolved schemes so preview/apply do not re-read custom files.
+    Theme::set_picker_catalog(&entries);
+
+    let items = entries
         .into_iter()
         .map(|entry| {
             let badge = if entry.id() == current {

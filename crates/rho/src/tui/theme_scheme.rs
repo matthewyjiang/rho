@@ -29,6 +29,9 @@ impl Rgb {
 
     pub(super) fn from_hex(hex: &str) -> Option<Self> {
         let hex = hex.trim().strip_prefix('#').unwrap_or(hex.trim());
+        if hex.is_empty() || !hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
+            return None;
+        }
         match hex.len() {
             6 => {
                 let value = u32::from_str_radix(hex, 16).ok()?;
@@ -176,6 +179,11 @@ pub(super) fn themes_dir() -> anyhow::Result<PathBuf> {
 /// `terminal` returns `None` (caller keeps host sampling). Unknown ids return
 /// `None` so the TUI can fall back to the terminal theme.
 pub(super) fn resolve_fixed_scheme(id: &str) -> Option<ColorScheme> {
+    resolve_fixed_scheme_in(id, themes_dir().ok().as_deref())
+}
+
+/// Resolve against an explicit custom themes directory (tests and tooling).
+pub(super) fn resolve_fixed_scheme_in(id: &str, custom_dir: Option<&Path>) -> Option<ColorScheme> {
     let id = normalize_theme_id(id);
     if is_terminal_theme_id(&id) {
         return None;
@@ -183,7 +191,13 @@ pub(super) fn resolve_fixed_scheme(id: &str) -> Option<ColorScheme> {
     if let Some(scheme) = builtin_scheme(&id) {
         return Some(scheme);
     }
-    load_custom_scheme(&id).ok().flatten()
+    match load_custom_scheme_in(&id, custom_dir) {
+        Ok(scheme) => scheme,
+        Err(error) => {
+            eprintln!("rho: theme '{id}' failed to load: {error}");
+            None
+        }
+    }
 }
 
 /// Catalog for the theme picker: terminal, built-ins, and custom files.
@@ -191,14 +205,19 @@ pub(super) fn resolve_fixed_scheme(id: &str) -> Option<ColorScheme> {
 /// Order is alphabetical by display name so built-ins are not privileged.
 /// Fixed entries are fully loaded so callers do not re-resolve.
 pub(super) fn list_themes() -> Vec<ThemeEntry> {
+    list_themes_in(themes_dir().ok().as_deref())
+}
+
+/// Build the catalog using an explicit custom themes directory.
+pub(super) fn list_themes_in(custom_dir: Option<&Path>) -> Vec<ThemeEntry> {
     let mut items = vec![ThemeEntry::Terminal];
 
     for scheme in builtin_schemes() {
         items.push(ThemeEntry::Fixed(scheme));
     }
 
-    if let Ok(dir) = themes_dir() {
-        items.extend(scan_custom_theme_dir(&dir));
+    if let Some(dir) = custom_dir {
+        items.extend(scan_custom_theme_dir(dir));
     }
 
     items.sort_by(|left, right| {
@@ -259,8 +278,8 @@ fn one_half_dark() -> ColorScheme {
         "one-half-dark",
         "One Half Dark",
         ThemeSourceKind::Builtin,
-        "#282c34",
-        "#dcdfe4",
+        /* background */ "#282c34",
+        /* foreground */ "#dcdfe4",
         [
             "#282c34", "#e06c75", "#98c379", "#e5c07b", "#61afef", "#c678dd", "#56b6c2", "#dcdfe4",
             "#5c6370", "#e06c75", "#98c379", "#e5c07b", "#61afef", "#c678dd", "#56b6c2", "#ffffff",
@@ -274,8 +293,8 @@ fn one_half_light() -> ColorScheme {
         "one-half-light",
         "One Half Light",
         ThemeSourceKind::Builtin,
-        "#fafafa",
-        "#383a42",
+        /* background */ "#fafafa",
+        /* foreground */ "#383a42",
         [
             "#383a42", "#e45649", "#50a14f", "#c18401", "#0184bc", "#a626a4", "#0997b3", "#fafafa",
             "#4f525e", "#e06c75", "#98c379", "#e5c07b", "#61afef", "#c678dd", "#56b6c2", "#ffffff",
@@ -288,8 +307,8 @@ fn monochrome_dark() -> ColorScheme {
         "monochrome-dark",
         "Monochrome Dark",
         ThemeSourceKind::Builtin,
-        "#121212",
-        "#e6e6e6",
+        /* background */ "#121212",
+        /* foreground */ "#e6e6e6",
         [
             "#121212", "#b0b0b0", "#c0c0c0", "#d0d0d0", "#a8a8a8", "#b8b8b8", "#c8c8c8", "#e6e6e6",
             "#6a6a6a", "#c4c4c4", "#d4d4d4", "#e0e0e0", "#bcbcbc", "#cccccc", "#dadada", "#ffffff",
@@ -302,8 +321,8 @@ fn monochrome_light() -> ColorScheme {
         "monochrome-light",
         "Monochrome Light",
         ThemeSourceKind::Builtin,
-        "#f5f5f5",
-        "#1a1a1a",
+        /* background */ "#f5f5f5",
+        /* foreground */ "#1a1a1a",
         [
             "#1a1a1a", "#4a4a4a", "#3a3a3a", "#5a5a5a", "#2a2a2a", "#404040", "#505050", "#f5f5f5",
             "#8a8a8a", "#5a5a5a", "#4a4a4a", "#6a6a6a", "#3a3a3a", "#505050", "#606060", "#ffffff",
@@ -346,16 +365,25 @@ fn scan_custom_theme_dir(dir: &Path) -> Vec<ThemeEntry> {
             // Built-in ids stay reserved so a colliding file does not hide them.
             continue;
         }
-        let Ok(Some(scheme)) = load_custom_scheme_from_path(stem, &path) else {
-            continue;
-        };
-        items.push(ThemeEntry::Fixed(scheme));
+        match load_custom_scheme_from_path(stem, &path) {
+            Ok(Some(scheme)) => items.push(ThemeEntry::Fixed(scheme)),
+            Ok(None) => {}
+            Err(error) => {
+                eprintln!("rho: skipped theme '{}': {error}", path.display());
+            }
+        }
     }
     items
 }
 
-fn load_custom_scheme(id: &str) -> anyhow::Result<Option<ColorScheme>> {
-    let path = themes_dir()?.join(format!("{id}.json"));
+fn load_custom_scheme_in(
+    id: &str,
+    custom_dir: Option<&Path>,
+) -> anyhow::Result<Option<ColorScheme>> {
+    let Some(dir) = custom_dir else {
+        return Ok(None);
+    };
+    let path = dir.join(format!("{id}.json"));
     if !path.is_file() {
         return Ok(None);
     }
@@ -406,17 +434,9 @@ impl WindowsTerminalScheme {
                 .ok_or_else(|| anyhow::anyhow!("invalid {label} color '{value}' in theme '{id}'"))
         };
         // cursorColor / selectionBackground are accepted for WT compatibility but
-        // not stored; the TUI derives chrome from background, foreground, and ANSI.
-        let _cursor = self
-            .cursor_color
-            .as_deref()
-            .map(|value| parse("cursorColor", value))
-            .transpose()?;
-        let _selection = self
-            .selection_background
-            .as_deref()
-            .map(|value| parse("selectionBackground", value))
-            .transpose()?;
+        // not stored; ignore parse failures so a bad optional field cannot reject a scheme.
+        let _ = self.cursor_color.as_deref().and_then(Rgb::from_hex);
+        let _ = self.selection_background.as_deref().and_then(Rgb::from_hex);
         Ok(ColorScheme {
             id: id.into(),
             name: self

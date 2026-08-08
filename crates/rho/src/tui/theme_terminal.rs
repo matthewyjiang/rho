@@ -139,6 +139,11 @@ fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
 }
 
 #[cfg(windows)]
+fn is_native_wezterm() -> bool {
+    std::env::var_os("WEZTERM_PANE").is_some()
+}
+
+#[cfg(windows)]
 fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
     if is_native_wezterm() {
         // WezTerm's bundled ConPTY does not pass terminal query responses back
