@@ -1,9 +1,14 @@
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
-use super::apply::{rollback_one, FileChange};
+use std::sync::{Arc, Mutex};
+
+use super::apply::{apply_hunks_with_faults, rollback_one, FileChange};
 use super::*;
 use crate::{
+    file_mutation::{
+        AtomicCreateFaultInjector, AtomicInstallMethod, RewriteAttempt, RewriteFaultInjector,
+    },
     tool::{ToolContext, ToolError},
     tool_card::{DiffRow, DiffRowKind},
 };
@@ -36,6 +41,269 @@ async fn apply(
         ctx.max_output_bytes,
     )
     .await
+}
+
+async fn apply_with_rewrite_fault(
+    input: &str,
+    ctx: &ToolContext,
+    fault: Arc<dyn RewriteFaultInjector>,
+) -> Result<crate::file_mutation::FileMutationOutcome, ToolError> {
+    let hunks = parse_patch(input).map_err(|error| ToolError::Message(error.to_string()))?;
+    apply_hunks_with_faults(
+        hunks,
+        {
+            let cwd = ctx.cwd.clone();
+            move |path| Ok(cwd.join(path))
+        },
+        str::to_string,
+        ctx.max_output_bytes,
+        Some(fault),
+        None,
+    )
+    .await
+}
+
+enum RewriteFaultPlan {
+    ReplacementOnly,
+    ReplacementAndRestoration,
+}
+
+impl RewriteFaultInjector for RewriteFaultPlan {
+    fn fail_after_truncate(&self, attempt: RewriteAttempt) -> Option<std::io::Error> {
+        let should_fail = match (self, attempt) {
+            (Self::ReplacementOnly, RewriteAttempt::Replacement)
+            | (Self::ReplacementAndRestoration, _) => true,
+            (Self::ReplacementOnly, RewriteAttempt::Restoration) => false,
+        };
+        should_fail.then(|| std::io::Error::other(format!("injected {attempt:?} write failure")))
+    }
+}
+
+struct RewriteFaultWithConcurrentEntry {
+    path: std::path::PathBuf,
+}
+
+impl RewriteFaultInjector for RewriteFaultWithConcurrentEntry {
+    fn fail_after_truncate(&self, attempt: RewriteAttempt) -> Option<std::io::Error> {
+        if attempt == RewriteAttempt::Replacement {
+            std::fs::write(&self.path, "concurrent\n").unwrap();
+            Some(std::io::Error::other("injected replacement failure"))
+        } else {
+            None
+        }
+    }
+}
+
+struct FailBeforeStaging;
+
+impl AtomicCreateFaultInjector for FailBeforeStaging {
+    fn fail_before_staging(&self, display_path: &str) -> Option<std::io::Error> {
+        Some(std::io::Error::other(format!(
+            "injected staging failure for {display_path}"
+        )))
+    }
+}
+
+#[derive(Default)]
+struct FailHardLinkStagingRemoval {
+    staged: Mutex<Option<std::path::PathBuf>>,
+}
+
+impl AtomicCreateFaultInjector for FailHardLinkStagingRemoval {
+    fn install_method(&self, _display_path: &str) -> AtomicInstallMethod {
+        AtomicInstallMethod::HardLink
+    }
+
+    fn fail_staged_removal_after_hard_link(
+        &self,
+        staged: &std::path::Path,
+    ) -> Option<std::io::Error> {
+        *self.staged.lock().unwrap() = Some(staged.to_path_buf());
+        Some(std::io::Error::other(
+            "injected hard-link staging cleanup failure",
+        ))
+    }
+}
+
+async fn apply_with_create_fault(
+    input: &str,
+    ctx: &ToolContext,
+    fault: Arc<dyn AtomicCreateFaultInjector>,
+) -> Result<crate::file_mutation::FileMutationOutcome, ToolError> {
+    let hunks = parse_patch(input).map_err(|error| ToolError::Message(error.to_string()))?;
+    apply_hunks_with_faults(
+        hunks,
+        {
+            let cwd = ctx.cwd.clone();
+            move |path| Ok(cwd.join(path))
+        },
+        str::to_string,
+        ctx.max_output_bytes,
+        None,
+        Some(fault),
+    )
+    .await
+}
+
+// Covers: a partial rewrite restores the target and rolls back nested add and move entries.
+// Owner: apply_patch transaction/filesystem commit
+#[tokio::test]
+async fn replacement_write_failure_restores_full_filesystem_shape() {
+    let (_dir, ctx) = test_context();
+    std::fs::write(ctx.cwd.join("target.txt"), "before\n").unwrap();
+    std::fs::write(ctx.cwd.join("source.txt"), "source\n").unwrap();
+
+    let error = apply_with_rewrite_fault(
+        "*** Begin Patch\n*** Add File: created/inside/added.txt\n+added\n*** Update File: source.txt\n*** Move to: moved/inside/source.txt\n@@\n-source\n+moved\n*** Update File: target.txt\n@@\n-before\n+after\n*** End Patch",
+        &ctx,
+        Arc::new(RewriteFaultPlan::ReplacementOnly),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(
+        message(error),
+        "could not write target.txt: injected Replacement write failure; original contents were restored; applied changes were rolled back"
+    );
+    assert_eq!(
+        std::fs::read_to_string(ctx.cwd.join("target.txt")).unwrap(),
+        "before\n"
+    );
+    assert!(!ctx.cwd.join("created").exists());
+    assert_eq!(
+        std::fs::read_to_string(ctx.cwd.join("source.txt")).unwrap(),
+        "source\n"
+    );
+    assert!(!ctx.cwd.join("moved").exists());
+}
+
+// Covers: rollback preserves concurrent directory contents and reports the owned tree as dirty.
+// Owner: apply_patch transaction/filesystem commit
+#[tokio::test]
+async fn rollback_reports_created_directory_kept_for_concurrent_contents() {
+    let (_dir, ctx) = test_context();
+    std::fs::write(ctx.cwd.join("target.txt"), "before\n").unwrap();
+    let concurrent = ctx.cwd.join("created/inside/concurrent.txt");
+
+    let error = apply_with_rewrite_fault(
+        "*** Begin Patch\n*** Add File: created/inside/added.txt\n+added\n*** Update File: target.txt\n@@\n-before\n+after\n*** End Patch",
+        &ctx,
+        Arc::new(RewriteFaultWithConcurrentEntry {
+            path: concurrent.clone(),
+        }),
+    )
+    .await
+    .unwrap_err();
+    let error = message(error);
+
+    assert!(error.contains("rollback incomplete; unrecovered paths:"));
+    assert!(error.contains("created/inside"));
+    assert_eq!(std::fs::read_to_string(concurrent).unwrap(), "concurrent\n");
+    assert!(!ctx.cwd.join("created/inside/added.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(ctx.cwd.join("target.txt")).unwrap(),
+        "before\n"
+    );
+}
+
+// Covers: failed restoration reports the dirty target and never claims full rollback.
+// Owner: apply_patch transaction/filesystem commit
+#[tokio::test]
+async fn restoration_failure_reports_unrecovered_dirty_path() {
+    let (_dir, ctx) = test_context();
+    std::fs::write(ctx.cwd.join("target.txt"), "before\n").unwrap();
+
+    let error = apply_with_rewrite_fault(
+        "*** Begin Patch\n*** Add File: added.txt\n+added\n*** Update File: target.txt\n@@\n-before\n+after\n*** End Patch",
+        &ctx,
+        Arc::new(RewriteFaultPlan::ReplacementAndRestoration),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(
+        message(error),
+        "could not write target.txt: injected Replacement write failure; failed to restore original contents: could not write target.txt: injected Restoration write failure; other applied changes were rolled back; rollback incomplete; unrecovered paths: target.txt"
+    );
+    assert_eq!(
+        std::fs::read_to_string(ctx.cwd.join("target.txt")).unwrap(),
+        ""
+    );
+    assert!(!ctx.cwd.join("added.txt").exists());
+}
+
+// Covers: staging failure after nested parent creation leaves no filesystem entries.
+// Owner: apply_patch transaction/filesystem commit
+#[tokio::test]
+async fn staging_failure_removes_owned_parent_directories() {
+    let (_dir, ctx) = test_context();
+
+    let error = apply_with_create_fault(
+        "*** Begin Patch\n*** Add File: created/inside/added.txt\n+added\n*** End Patch",
+        &ctx,
+        Arc::new(FailBeforeStaging),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(
+        message(error),
+        "failed to stage created/inside/added.txt: injected staging failure for created/inside/added.txt; applied changes were rolled back"
+    );
+    assert!(!ctx.cwd.join("created").exists());
+}
+
+// Covers: a zero-effect create failure reports only the staging error.
+// Owner: apply_patch transaction/filesystem commit
+#[tokio::test]
+async fn staging_failure_under_existing_parent_does_not_claim_rollback() {
+    let (_dir, ctx) = test_context();
+    std::fs::create_dir(ctx.cwd.join("existing")).unwrap();
+
+    let error = apply_with_create_fault(
+        "*** Begin Patch\n*** Add File: existing/added.txt\n+added\n*** End Patch",
+        &ctx,
+        Arc::new(FailBeforeStaging),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(
+        message(error),
+        "failed to stage existing/added.txt: injected staging failure for existing/added.txt"
+    );
+    assert_eq!(
+        std::fs::read_dir(ctx.cwd.join("existing")).unwrap().count(),
+        0
+    );
+}
+
+// Covers: hard-link installation followed by staging cleanup failure rolls back both links.
+// Owner: apply_patch transaction/filesystem commit
+#[tokio::test]
+async fn hard_link_staging_cleanup_failure_is_tracked_and_rolled_back() {
+    let (_dir, ctx) = test_context();
+    let fault = Arc::new(FailHardLinkStagingRemoval::default());
+
+    let error = apply_with_create_fault(
+        "*** Begin Patch\n*** Add File: added.txt\n+added\n*** End Patch",
+        &ctx,
+        fault.clone(),
+    )
+    .await
+    .unwrap_err();
+    let staged = fault.staged.lock().unwrap().clone().unwrap();
+
+    assert_eq!(
+        message(error),
+        format!(
+            "failed to finalize added.txt: target was installed but staged hard link {} could not be removed: injected hard-link staging cleanup failure; applied changes were rolled back",
+            staged.display()
+        )
+    );
+    assert!(!ctx.cwd.join("added.txt").exists());
+    assert!(!staged.exists());
+    assert_eq!(std::fs::read_dir(&ctx.cwd).unwrap().count(), 0);
 }
 
 // Covers: malformed wrappers, empty updates, and invalid add bodies fail in the parser.

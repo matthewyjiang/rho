@@ -12,14 +12,9 @@ pub(super) fn sdk_bundle(
 ) -> super::sdk_registry::StaticToolBundle {
     use rho_tools::CodingToolKind;
 
-    let edit_tool = match config_edit_tool {
-        crate::config::EditTool::Hashline => rho_tools::EditToolKind::Hashline,
-        crate::config::EditTool::ApplyPatch => rho_tools::EditToolKind::ApplyPatch,
-        crate::config::EditTool::EditFile => rho_tools::EditToolKind::EditFile,
-    };
     let options = rho_tools::CodingToolOptions::new()
         .max_output_bytes(max_output_bytes)
-        .edit_tool(edit_tool)
+        .edit_tool(config_edit_tool)
         .mutation_observer(Arc::clone(&mutation_observer));
     let mut tools = Vec::new();
     for (capability, kind) in [

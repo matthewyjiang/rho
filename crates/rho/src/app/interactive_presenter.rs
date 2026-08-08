@@ -41,7 +41,7 @@ enum ToolKind {
     Glob,
     ReadFile,
     WriteFile,
-    Edit,
+    Edit(rho_tools::EditFormat),
     Skill,
     WebSearch,
     FetchContent,
@@ -52,6 +52,9 @@ enum ToolKind {
 
 impl ToolKind {
     fn from_name(name: &str) -> Self {
+        if let Some(format) = rho_tools::EditFormat::from_tool_name(name) {
+            return Self::Edit(format);
+        }
         match name {
             "advisor" => Self::Advisor,
             "agent" => Self::Agent,
@@ -64,7 +67,6 @@ impl ToolKind {
             "glob" => Self::Glob,
             "read_file" => Self::ReadFile,
             "write" | "write_file" => Self::WriteFile,
-            "edit" | "apply_patch" | "edit_file" => Self::Edit,
             "skill" => Self::Skill,
             "web_search" => Self::WebSearch,
             "fetch_content" => Self::FetchContent,
@@ -83,7 +85,7 @@ impl ToolKind {
     /// Oversized buffers, including long agent prompts, fall back to a coarse
     /// stride so parse cost stays linear in argument size.
     fn preview_parse_stride(self, arguments_len: usize) -> usize {
-        if matches!(self, Self::Edit) && arguments_len >= EDIT_STREAM_PREVIEW_LIMIT {
+        if matches!(self, Self::Edit(_)) && arguments_len >= EDIT_STREAM_PREVIEW_LIMIT {
             // Grow with buffer size so total parse work stays linear for long
             // streams instead of rescanning on a fixed byte interval.
             return arguments_len.max(EDIT_STREAM_PREVIEW_STRIDE);
@@ -100,7 +102,7 @@ impl ToolKind {
             | Self::Glob
             | Self::ReadFile
             | Self::WriteFile
-            | Self::Edit
+            | Self::Edit(_)
             | Self::Skill
             | Self::WebSearch
             | Self::FetchContent

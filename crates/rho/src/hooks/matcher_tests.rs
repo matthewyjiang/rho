@@ -1,4 +1,4 @@
-use crate::tools::CANONICAL_TOOL_NAMES;
+use crate::tools::canonical_tool_names;
 use pretty_assertions::assert_eq;
 
 use super::*;
@@ -9,7 +9,7 @@ fn matcher(patterns: &[&str]) -> ToolMatcher {
             .iter()
             .map(|pattern| (*pattern).to_owned())
             .collect(),
-        CANONICAL_TOOL_NAMES,
+        canonical_tool_names(),
     )
     .expect("pattern list is valid")
 }
@@ -53,7 +53,7 @@ fn a_bare_star_matches_everything() {
 #[test]
 fn an_empty_list_is_rejected_rather_than_read_as_all_tools() {
     assert_eq!(
-        ToolMatcher::new(Vec::new(), CANONICAL_TOOL_NAMES),
+        ToolMatcher::new(Vec::new(), canonical_tool_names()),
         Err(ToolMatcherError::Empty)
     );
 }
@@ -61,7 +61,7 @@ fn an_empty_list_is_rejected_rather_than_read_as_all_tools() {
 #[test]
 fn a_blank_pattern_is_rejected() {
     assert_eq!(
-        ToolMatcher::new(vec!["  ".into()], CANONICAL_TOOL_NAMES),
+        ToolMatcher::new(vec!["  ".into()], canonical_tool_names()),
         Err(ToolMatcherError::BlankPattern)
     );
 }
@@ -69,13 +69,13 @@ fn a_blank_pattern_is_rejected() {
 #[test]
 fn only_a_single_trailing_star_is_supported() {
     assert_eq!(
-        ToolMatcher::new(vec!["*_file".into()], CANONICAL_TOOL_NAMES),
+        ToolMatcher::new(vec!["*_file".into()], canonical_tool_names()),
         Err(ToolMatcherError::UnsupportedGlob {
             pattern: "*_file".into()
         })
     );
     assert_eq!(
-        ToolMatcher::new(vec!["re*d*".into()], CANONICAL_TOOL_NAMES),
+        ToolMatcher::new(vec!["re*d*".into()], canonical_tool_names()),
         Err(ToolMatcherError::UnsupportedGlob {
             pattern: "re*d*".into()
         })
@@ -85,13 +85,13 @@ fn only_a_single_trailing_star_is_supported() {
 #[test]
 fn a_name_outside_the_canonical_list_fails_at_load() {
     assert_eq!(
-        ToolMatcher::new(vec!["Bash".into()], CANONICAL_TOOL_NAMES),
+        ToolMatcher::new(vec!["Bash".into()], canonical_tool_names()),
         Err(ToolMatcherError::UnknownTool {
             pattern: "Bash".into()
         })
     );
     assert_eq!(
-        ToolMatcher::new(vec!["shell".into()], CANONICAL_TOOL_NAMES),
+        ToolMatcher::new(vec!["shell".into()], canonical_tool_names()),
         Err(ToolMatcherError::UnknownTool {
             pattern: "shell".into()
         })
@@ -101,7 +101,7 @@ fn a_name_outside_the_canonical_list_fails_at_load() {
 #[test]
 fn a_prefix_that_selects_nothing_fails_at_load() {
     assert_eq!(
-        ToolMatcher::new(vec!["zzz*".into()], CANONICAL_TOOL_NAMES),
+        ToolMatcher::new(vec!["zzz*".into()], canonical_tool_names()),
         Err(ToolMatcherError::UnknownTool {
             pattern: "zzz*".into()
         })

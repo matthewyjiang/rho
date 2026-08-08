@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::tools::CANONICAL_TOOL_NAMES;
+use crate::tools::canonical_tool_names;
 use rho_sdk::hooks::HookEventKind;
 
 use super::{
@@ -223,7 +223,14 @@ fn read_definitions(
             ));
         }
     };
-    parse_hooks_file(path, &contents, source, project_root, CANONICAL_TOOL_NAMES).map(Some)
+    parse_hooks_file(
+        path,
+        &contents,
+        source,
+        project_root,
+        canonical_tool_names(),
+    )
+    .map(Some)
 }
 
 fn spawn_contract(hook: &HookDefinition, active: bool) -> HookSpawnContract {

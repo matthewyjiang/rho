@@ -13,6 +13,7 @@
 
 pub mod cancellation;
 pub mod document;
+mod edit_format;
 pub mod image_format;
 mod path_glob;
 mod paths;
@@ -49,6 +50,7 @@ pub mod sdk_support;
 pub mod write_file;
 
 pub use cancellation::RunCancellation;
+pub use edit_format::EditFormat;
 pub use image_format::{supported_image_mime_type, MAX_IMAGE_FILE_BYTES};
 pub use process_env::apply_process_environment;
 pub use sdk_adapter::{coding_tool, coding_tools, CodingToolKind, CodingToolOptions, EditToolKind};

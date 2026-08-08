@@ -4,9 +4,13 @@
 //! codex-rs apply-patch crate so models trained on that format can reuse it.
 
 mod apply;
+mod content;
+mod model;
 mod parser;
+mod planning;
 mod proposed_diff;
 mod seek_sequence;
+mod transaction;
 
 use serde::Deserialize;
 use serde_json::json;

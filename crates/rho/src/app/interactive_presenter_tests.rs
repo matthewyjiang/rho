@@ -4,9 +4,13 @@ use super::*;
 // Owner: interactive presenter
 #[test]
 fn selected_edit_tool_names_share_the_edit_presentation_kind() {
+    let formats = rho_tools::EditFormat::ALL.iter().copied();
     assert_eq!(
-        ["edit", "apply_patch", "edit_file"].map(ToolKind::from_name),
-        [ToolKind::Edit; 3]
+        formats
+            .clone()
+            .map(|format| ToolKind::from_name(format.tool_name()))
+            .collect::<Vec<_>>(),
+        formats.map(ToolKind::Edit).collect::<Vec<_>>()
     );
 }
 
@@ -18,15 +22,15 @@ fn edit_preview_stride_grows_with_input_size() {
     let min_stride = EDIT_STREAM_PREVIEW_STRIDE;
 
     assert_eq!(
-        ToolKind::Edit.preview_parse_stride(limit),
+        ToolKind::Edit(rho_tools::EditFormat::Hashline).preview_parse_stride(limit),
         limit.max(min_stride)
     );
     assert_eq!(
-        ToolKind::Edit.preview_parse_stride(limit * 2),
+        ToolKind::Edit(rho_tools::EditFormat::Hashline).preview_parse_stride(limit * 2),
         (limit * 2).max(min_stride)
     );
     assert_eq!(
-        ToolKind::Edit.preview_parse_stride(limit * 3),
+        ToolKind::Edit(rho_tools::EditFormat::Hashline).preview_parse_stride(limit * 3),
         (limit * 3).max(min_stride)
     );
 
@@ -34,7 +38,7 @@ fn edit_preview_stride_grows_with_input_size() {
     let mut size = limit;
     let mut previous_stride = 0usize;
     for _ in 0..4 {
-        let stride = ToolKind::Edit.preview_parse_stride(size);
+        let stride = ToolKind::Edit(rho_tools::EditFormat::Hashline).preview_parse_stride(size);
         assert!(stride >= min_stride);
         assert!(stride >= previous_stride);
         previous_stride = stride;
@@ -46,17 +50,23 @@ fn edit_preview_stride_grows_with_input_size() {
 // Owner: interactive presenter
 #[test]
 fn edit_preview_uses_generic_cadence_below_stream_limit() {
-    assert_eq!(ToolKind::Edit.preview_parse_stride(0), 0);
     assert_eq!(
-        ToolKind::Edit.preview_parse_stride(PREVIEW_FULL_PARSE_LIMIT - 1),
+        ToolKind::Edit(rho_tools::EditFormat::Hashline).preview_parse_stride(0),
         0
     );
     assert_eq!(
-        ToolKind::Edit.preview_parse_stride(PREVIEW_FULL_PARSE_LIMIT),
+        ToolKind::Edit(rho_tools::EditFormat::Hashline)
+            .preview_parse_stride(PREVIEW_FULL_PARSE_LIMIT - 1),
+        0
+    );
+    assert_eq!(
+        ToolKind::Edit(rho_tools::EditFormat::Hashline)
+            .preview_parse_stride(PREVIEW_FULL_PARSE_LIMIT),
         PREVIEW_LARGE_PARSE_STRIDE
     );
     assert_eq!(
-        ToolKind::Edit.preview_parse_stride(EDIT_STREAM_PREVIEW_LIMIT - 1),
+        ToolKind::Edit(rho_tools::EditFormat::Hashline)
+            .preview_parse_stride(EDIT_STREAM_PREVIEW_LIMIT - 1),
         PREVIEW_LARGE_PARSE_STRIDE
     );
 }
@@ -68,7 +78,7 @@ fn edit_preview_uses_generic_cadence_below_stream_limit() {
 fn edit_planned_card_surfaces_unverified_document_fallback() {
     let dir = tempfile::TempDir::new().unwrap();
     let view = ToolView {
-        kind: ToolKind::Edit,
+        kind: ToolKind::Edit(rho_tools::EditFormat::Hashline),
         name: "edit".into(),
         arguments: serde_json::json!({
             "input": "[missing.txt#AAAA]\nCUT 1.=2\n"

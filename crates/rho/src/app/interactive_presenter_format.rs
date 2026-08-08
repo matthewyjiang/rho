@@ -65,16 +65,21 @@ pub(super) fn streaming_preview_card(
         ToolKind::Agent => agent_format::agent_streaming_preview_card(
             arguments.unwrap_or(&serde_json::Value::Object(Default::default())),
         ),
-        ToolKind::Edit => arguments.map_or_else(
+        ToolKind::Edit(format) => arguments.map_or_else(
             || kind_card(ToolStatus::Running, kind, ToolHeader::call(name, None)),
-            |arguments| match name {
-                "edit" => edit_document_card(arguments, cwd, ToolStatus::Running),
-                "apply_patch" => apply_patch_card(
+            |arguments| match format {
+                rho_tools::EditFormat::Hashline => {
+                    edit_document_card(arguments, cwd, ToolStatus::Running)
+                }
+                rho_tools::EditFormat::ApplyPatch => apply_patch_card(
                     arguments,
                     cwd,
                     ToolStatus::Running,
                     rho_tools::apply_patch::ProposedDiffTrailingLine::CompleteLinesOnly,
                 ),
+                rho_tools::EditFormat::EditFile => {
+                    preview_card(kind, name, Some(arguments), cwd, ToolStatus::Running)
+                }
                 _ => preview_card(kind, name, Some(arguments), cwd, ToolStatus::Running),
             },
         ),
@@ -159,7 +164,7 @@ pub(super) fn preview_card(
                 Some(display_path(arguments, cwd)).filter(|p| !p.is_empty()),
             ),
         ),
-        ToolKind::Edit => edit_preview_card(name, arguments, cwd, status),
+        ToolKind::Edit(format) => edit_preview_card(format, arguments, cwd, status),
         ToolKind::Skill => kind_card(
             status,
             kind,
@@ -211,28 +216,32 @@ pub(super) fn preview_card(
 }
 
 fn edit_preview_card(
-    name: &str,
+    format: rho_tools::EditFormat,
     arguments: &serde_json::Value,
     cwd: &std::path::Path,
     status: ToolStatus,
 ) -> ToolCard {
-    match name {
-        "edit" => edit_planned_card(arguments, cwd, status),
-        "apply_patch" => apply_patch_card(
+    match format {
+        rho_tools::EditFormat::Hashline => edit_planned_card(arguments, cwd, status),
+        rho_tools::EditFormat::ApplyPatch => apply_patch_card(
             arguments,
             cwd,
             status,
             rho_tools::apply_patch::ProposedDiffTrailingLine::Include,
         ),
-        "edit_file" => kind_card(
+        rho_tools::EditFormat::EditFile => kind_card(
             status,
-            ToolKind::Edit,
+            ToolKind::Edit(format),
             ToolHeader::call(
-                "edit_file",
+                format.tool_name(),
                 Some(display_path(arguments, cwd)).filter(|path| !path.is_empty()),
             ),
         ),
-        _ => kind_card(status, ToolKind::Edit, ToolHeader::call(name, None)),
+        _ => kind_card(
+            status,
+            ToolKind::Edit(format),
+            ToolHeader::call(format.tool_name(), None),
+        ),
     }
 }
 
@@ -245,7 +254,7 @@ fn apply_patch_card(
     let Some(input) = arguments.get("input").and_then(serde_json::Value::as_str) else {
         return kind_card(
             status,
-            ToolKind::Edit,
+            ToolKind::Edit(rho_tools::EditFormat::ApplyPatch),
             ToolHeader::call("apply_patch", None),
         );
     };
@@ -296,7 +305,11 @@ fn edit_document_card(
     status: ToolStatus,
 ) -> ToolCard {
     let Some(input) = arguments.get("input").and_then(serde_json::Value::as_str) else {
-        return kind_card(status, ToolKind::Edit, ToolHeader::call("edit", None));
+        return kind_card(
+            status,
+            ToolKind::Edit(rho_tools::EditFormat::Hashline),
+            ToolHeader::call("edit", None),
+        );
     };
     edit_card_from_preview(rho_tools::hashline::proposed_edit(input), cwd, status)
 }
@@ -309,7 +322,11 @@ fn edit_planned_card(
     status: ToolStatus,
 ) -> ToolCard {
     let Some(input) = arguments.get("input").and_then(serde_json::Value::as_str) else {
-        return kind_card(status, ToolKind::Edit, ToolHeader::call("edit", None));
+        return kind_card(
+            status,
+            ToolKind::Edit(rho_tools::EditFormat::Hashline),
+            ToolHeader::call("edit", None),
+        );
     };
     let cwd_buf = cwd.to_path_buf();
     let mut referenced = 0usize;
@@ -439,7 +456,7 @@ pub(super) fn finished_card(
             }
             card
         }
-        ToolKind::WriteFile | ToolKind::Edit => file_diff_card(view, content, ok, cwd),
+        ToolKind::WriteFile | ToolKind::Edit(_) => file_diff_card(view, content, ok, cwd),
         ToolKind::Skill => preview_card(view.kind, &view.name, Some(&view.arguments), cwd, status),
         ToolKind::WebSearch => web_search_card(&view.arguments, content, status),
         ToolKind::FetchContent => fetch_content_card(&view.arguments, content, status),
@@ -546,8 +563,8 @@ pub(super) fn interrupted_card(
         ToolKind::Advisor => advisor_card(ToolStatus::Interrupted, "interrupted"),
         ToolKind::Agent => agent_format::agent_interrupted_card(&view.arguments),
         ToolKind::Agents => agent_format::agents_interrupted_card(&view.arguments),
-        ToolKind::Edit => {
-            edit_preview_card(&view.name, &view.arguments, cwd, ToolStatus::Interrupted)
+        ToolKind::Edit(format) => {
+            edit_preview_card(format, &view.arguments, cwd, ToolStatus::Interrupted)
         }
         _ => {
             let mut card = preview_card(
@@ -575,7 +592,7 @@ pub(super) fn family_for_kind(kind: ToolKind, metadata: Option<&ToolMetadata>) -
         | ToolKind::Grep
         | ToolKind::Glob
         | ToolKind::ReadFile => ToolFamily::FileCommand,
-        ToolKind::WriteFile | ToolKind::Edit => ToolFamily::FileDiff,
+        ToolKind::WriteFile | ToolKind::Edit(_) => ToolFamily::FileDiff,
         ToolKind::Skill => ToolFamily::Skill,
         ToolKind::WebSearch | ToolKind::FetchContent | ToolKind::GetSearchContent => {
             ToolFamily::Web
@@ -640,16 +657,16 @@ pub(super) fn read_path(arguments: &serde_json::Value, cwd: &std::path::Path) ->
 }
 
 pub(super) fn edit_paths(
-    name: &str,
+    format: rho_tools::EditFormat,
     arguments: &serde_json::Value,
     cwd: &std::path::Path,
 ) -> Vec<String> {
-    match name {
-        "edit_file" => {
+    match format {
+        rho_tools::EditFormat::EditFile => {
             let path = display_path(arguments, cwd);
             (!path.is_empty()).then_some(path).into_iter().collect()
         }
-        "apply_patch" => arguments
+        rho_tools::EditFormat::ApplyPatch => arguments
             .get("input")
             .and_then(|value| value.as_str())
             .map(rho_tools::apply_patch::patch_paths_lenient)
@@ -657,7 +674,7 @@ pub(super) fn edit_paths(
             .into_iter()
             .map(|path| compact_display_path(cwd, &path))
             .collect(),
-        _ => arguments
+        rho_tools::EditFormat::Hashline => arguments
             .get("input")
             .and_then(|value| value.as_str())
             .map(rho_tools::hashline::proposed_sections)
@@ -665,6 +682,7 @@ pub(super) fn edit_paths(
             .into_iter()
             .map(|section| compact_display_path(cwd, &section.path))
             .collect(),
+        _ => Vec::new(),
     }
 }
 

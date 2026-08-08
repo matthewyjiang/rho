@@ -485,31 +485,19 @@ pub(super) fn inline_shell_picker(config: &Config) -> UiPicker {
 pub(super) fn edit_tool_picker(selected: EditTool) -> UiPicker {
     UiPicker::new(
         "Edit tool",
-        [EditTool::Hashline, EditTool::ApplyPatch, EditTool::EditFile]
-            .into_iter()
+        EditTool::ALL
+            .iter()
+            .copied()
             .map(|edit_tool| PickerItem {
                 section: None,
                 label: edit_tool.label().into(),
-                detail: Some(
-                    match edit_tool {
-                        EditTool::Hashline => {
-                            "Expose `edit` with snapshot tags and line-anchored PUT/CUT operations."
-                        }
-                        EditTool::ApplyPatch => {
-                            "Expose `apply_patch` with a Codex-style multi-file patch document."
-                        }
-                        EditTool::EditFile => {
-                            "Expose `edit_file` with exact old_string/new_string replacement."
-                        }
-                    }
-                    .into(),
-                ),
+                detail: Some(edit_tool.detail().into()),
                 preview: None,
                 badge: (edit_tool == selected).then_some(PickerBadge {
                     text: "selected".into(),
                     tone: PickerBadgeTone::Selected,
                 }),
-                value: format!("{EDIT_TOOL_PREFIX}{}", edit_tool.as_str()),
+                value: format!("{EDIT_TOOL_PREFIX}{}", edit_tool.tool_name()),
                 selection_verb: None,
             })
             .collect(),

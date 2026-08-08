@@ -257,75 +257,7 @@ impl<'de> Deserialize<'de> for SearchProvider {
 }
 
 /// Built-in file edit surface exposed to models.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum EditTool {
-    /// Snapshot-tagged, line-anchored `edit` tool.
-    #[default]
-    Hashline,
-    /// Codex-compatible `apply_patch` tool.
-    ApplyPatch,
-    /// Exact string replacement through `edit_file`.
-    EditFile,
-}
-
-impl EditTool {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Hashline => "edit",
-            Self::ApplyPatch => "apply_patch",
-            Self::EditFile => "edit_file",
-        }
-    }
-
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Hashline => "Hash-line",
-            Self::ApplyPatch => "Apply patch",
-            Self::EditFile => "Replace string",
-        }
-    }
-}
-
-impl fmt::Display for EditTool {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.as_str())
-    }
-}
-
-impl FromStr for EditTool {
-    type Err = String;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "edit" => Ok(Self::Hashline),
-            "apply_patch" => Ok(Self::ApplyPatch),
-            "edit_file" => Ok(Self::EditFile),
-            other => Err(format!(
-                "unknown edit tool {other:?}; expected edit, apply_patch, or edit_file"
-            )),
-        }
-    }
-}
-
-impl Serialize for EditTool {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
-impl<'de> Deserialize<'de> for EditTool {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        value.parse().map_err(serde::de::Error::custom)
-    }
-}
+pub type EditTool = rho_tools::EditFormat;
 
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub(crate) struct LegacyWebSearchCredentials {

@@ -47,10 +47,10 @@ async fn prepared_policy(
 #[test]
 fn edit_preferences_select_one_model_facing_surface() {
     for (edit_tool, expected_name, expected_required) in [
-        (EditToolKind::Hashline, "edit", &["input"][..]),
-        (EditToolKind::ApplyPatch, "apply_patch", &["input"][..]),
+        (crate::EditFormat::Hashline, "edit", &["input"][..]),
+        (crate::EditFormat::ApplyPatch, "apply_patch", &["input"][..]),
         (
-            EditToolKind::EditFile,
+            crate::EditFormat::EditFile,
             "edit_file",
             &["path", "old_string", "new_string"][..],
         ),
@@ -58,12 +58,7 @@ fn edit_preferences_select_one_model_facing_surface() {
         let tools = coding_tools(CodingToolOptions::new().edit_tool(edit_tool));
         let selected = tools
             .iter()
-            .filter(|tool| {
-                matches!(
-                    tool.spec().name.as_str(),
-                    "edit" | "apply_patch" | "edit_file"
-                )
-            })
+            .filter(|tool| crate::EditFormat::from_tool_name(&tool.spec().name).is_some())
             .collect::<Vec<_>>();
 
         assert_eq!(selected.len(), 1);
@@ -576,7 +571,7 @@ async fn apply_patch_prepare_rejects_unsafe_paths() {
     std::fs::write(dir.path().join("source.txt"), "source\n").unwrap();
     let tool = coding_tool(
         CodingToolKind::Edit,
-        CodingToolOptions::default().edit_tool(EditToolKind::ApplyPatch),
+        CodingToolOptions::default().edit_tool(crate::EditFormat::ApplyPatch),
     );
     let cases = [
         "*** Begin Patch\n*** Add File: ../escape.txt\n+nope\n*** End Patch",
@@ -681,14 +676,14 @@ async fn allowed_policy_edits_with_diff_metadata_and_progress() {
 async fn allowed_policy_executes_selected_alternate_edit_tools() {
     for (edit_tool, name, arguments) in [
         (
-            EditToolKind::ApplyPatch,
+            crate::EditFormat::ApplyPatch,
             "apply_patch",
             json!({
                 "input": "*** Begin Patch\n*** Update File: sample.txt\n@@\n-old\n+patched\n*** End Patch"
             }),
         ),
         (
-            EditToolKind::EditFile,
+            crate::EditFormat::EditFile,
             "edit_file",
             json!({
                 "path": "sample.txt",
@@ -743,7 +738,7 @@ async fn allowed_policy_executes_selected_alternate_edit_tools() {
 
         assert!(succeeded, "{name} did not finish successfully");
         let content = std::fs::read_to_string(dir.path().join("sample.txt")).unwrap();
-        let expected = if edit_tool == EditToolKind::ApplyPatch {
+        let expected = if edit_tool == crate::EditFormat::ApplyPatch {
             "patched\n"
         } else {
             "replaced\n"
@@ -784,7 +779,7 @@ async fn apply_patch_rejects_symlink_delete_without_following_it() {
         ScopedWorkspacePolicy::new()
             .allow_read_paths()
             .allow_write_paths(),
-        CodingToolOptions::new().edit_tool(EditToolKind::ApplyPatch),
+        CodingToolOptions::new().edit_tool(crate::EditFormat::ApplyPatch),
     );
     let session = runtime.session(SessionOptions::default()).await.unwrap();
     let mut run = session

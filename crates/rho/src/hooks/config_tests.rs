@@ -18,7 +18,7 @@ fn parse_user(contents: &str) -> Result<Vec<HookDefinition>, HookConfigError> {
         contents,
         HookSource::User,
         None,
-        crate::tools::CANONICAL_TOOL_NAMES,
+        crate::tools::canonical_tool_names(),
     )
 }
 
@@ -28,7 +28,7 @@ fn parse_project(contents: &str, root: &Path) -> Result<Vec<HookDefinition>, Hoo
         contents,
         HookSource::Project,
         Some(root),
-        crate::tools::CANONICAL_TOOL_NAMES,
+        crate::tools::canonical_tool_names(),
     )
 }
 

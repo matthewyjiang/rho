@@ -71,11 +71,7 @@ fn canonical_tool_names_match_the_unfiltered_registry() {
 
     let root = tempfile::tempdir().unwrap();
     let mut model_names = Vec::new();
-    for edit_tool in [
-        crate::config::EditTool::Hashline,
-        crate::config::EditTool::ApplyPatch,
-        crate::config::EditTool::EditFile,
-    ] {
+    for &edit_tool in rho_tools::EditFormat::ALL {
         let config = Config {
             edit_tool,
             ..Config::default()
@@ -104,7 +100,7 @@ fn canonical_tool_names_match_the_unfiltered_registry() {
     assert_eq!(
         normalized(registry_names),
         normalized(
-            super::super::CANONICAL_TOOL_NAMES
+            super::super::canonical_tool_names()
                 .iter()
                 .map(|name| (*name).to_owned())
         )
