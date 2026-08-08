@@ -78,12 +78,19 @@ pub(in crate::tui) fn is_closing_fence(line: &str, opening: CodeFence) -> bool {
     length >= opening.length && rest[length..].chars().all(char::is_whitespace)
 }
 
-pub(super) fn mermaid_opening_fence(line: &str) -> Option<MermaidOpeningFence> {
+/// Lowercased first info-string token of an opening fence line, when present.
+///
+/// Fences that opened in an earlier render entry lose their info string, so
+/// callers must treat `None` as "plain code".
+pub(super) fn opening_fence_info_token(line: &str) -> Option<String> {
     let fence = parse_opening_fence(line)?;
     let indent = line.len() - line.trim_start_matches(' ').len();
     let rest = &line[indent + fence.length..];
-    rest.split_whitespace()
-        .next()
-        .is_some_and(|token| token.eq_ignore_ascii_case("mermaid"))
+    rest.split_whitespace().next().map(str::to_ascii_lowercase)
+}
+
+pub(super) fn mermaid_opening_fence(line: &str) -> Option<MermaidOpeningFence> {
+    let fence = parse_opening_fence(line)?;
+    (opening_fence_info_token(line).as_deref() == Some("mermaid"))
         .then_some(MermaidOpeningFence { fence })
 }

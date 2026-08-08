@@ -57,13 +57,13 @@ fn excludes_code_block_copy_button_from_drag_selection() {
     let selection = TextSelection {
         anchor: SelectionPosition { line: 0, column: 0 },
         focus: SelectionPosition {
-            line: 2,
+            line: 1,
             column: 19,
         },
     };
 
     assert_eq!(
         selection.selected_text(&lines, 0),
-        Some("╭────────────╮\n│ let x = 1;       │\n╰──────────────────╯".into())
+        Some("RUST\nlet x = 1;".into())
     );
 }

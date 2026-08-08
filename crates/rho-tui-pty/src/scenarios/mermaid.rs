@@ -82,8 +82,8 @@ fn assert_narrow_pane_explains_fallback(harness: &mut PtyHarness) -> Result<()> 
         harness.screen().debug_dump()
     );
     ensure!(
-        !screen.contains("┌") && !screen.contains("╭─ MERMAID ─"),
-        "narrow pane still showed diagram art instead of source:\n{}",
+        !screen.contains("┌") && !screen.contains("╭"),
+        "narrow pane still showed diagram art or block borders:\n{}",
         harness.screen().debug_dump()
     );
     Ok(())

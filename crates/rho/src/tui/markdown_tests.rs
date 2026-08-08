@@ -84,24 +84,74 @@ fn wraps_long_unicode_styled_lines_without_losing_text_or_styles() {
 }
 
 #[test]
-fn code_block_padding_uses_display_width() {
+fn code_block_rows_use_the_full_pane_width_without_borders() {
     let mut in_code_block = false;
-    let lines = markdown_lines("```\n你\n```", 6, &mut in_code_block);
+    let lines = markdown_lines("```\n你好你好\n```", 6, &mut in_code_block);
 
-    assert_eq!(line_text(&lines[1]), "│ 你 │");
-    assert_eq!(display_width(&line_text(&lines[1])), 6);
+    // Header row plus content rows, no bottom border.
+    assert_eq!(lines.len(), 3);
+    assert_eq!(line_text(&lines[1]), "你好你");
+    assert_eq!(line_text(&lines[2]), "好");
+    assert!(lines
+        .iter()
+        .all(|line| !line_text(line).contains(['╭', '╮', '╰', '╯', '│'])));
 }
 
 #[test]
 fn code_blocks_preserve_markdown_markers_as_literal_text() {
     let mut in_code_block = false;
     let lines = markdown_lines(
-        "```rust\nfn __init__() { println!(\"*ok*\"); }\n```",
+        "```\nfn __init__() { println!(\"*ok*\"); }\n```",
         80,
         &mut in_code_block,
     );
 
     assert!(line_text(&lines[1]).contains("fn __init__() { println!(\"*ok*\"); }"));
+    assert_eq!(line_styles(&lines[1]), vec![Theme::markdown_code_block()]);
+}
+
+#[test]
+fn code_block_header_shows_language_label_and_copy_button() {
+    let mut in_code_block = false;
+    let rendered = render_markdown("```rust\nlet x = 1;\n```", 40, &mut in_code_block);
+
+    let header = &rendered.lines[0];
+    // COPY keeps one blank column of inset from the right pane edge.
+    assert_eq!(display_width(&line_text(header)), 39);
+    assert!(line_text(header).starts_with("RUST"));
+    assert!(line_text(header).ends_with(" COPY "));
+    assert!(line_styles(header).contains(&Theme::dim()));
+    assert!(line_styles(header).contains(&Theme::markdown_code_copy_button(/*hovered*/ false)));
+}
+
+#[test]
+fn highlighted_code_blocks_style_tokens_and_keep_literal_text() {
+    let mut in_code_block = false;
+    let lines = markdown_lines(
+        "```rust\nlet answer = 42; // note\n```",
+        80,
+        &mut in_code_block,
+    );
+
+    assert_eq!(line_text(&lines[1]), "let answer = 42; // note");
+    let styles = line_styles(&lines[1]);
+    assert!(styles.len() > 1, "expected highlighted spans: {styles:?}");
+    assert!(styles
+        .iter()
+        .any(|style| *style != Theme::markdown_code_block()));
+}
+
+#[test]
+fn unknown_language_code_blocks_fall_back_to_plain_styling() {
+    let mut in_code_block = false;
+    let lines = markdown_lines(
+        "```no-such-language\nplain text body\n```",
+        80,
+        &mut in_code_block,
+    );
+
+    assert!(line_text(&lines[0]).starts_with("NO-SUCH-LANGUAGE"));
+    assert_eq!(line_text(&lines[1]), "plain text body");
     assert_eq!(line_styles(&lines[1]), vec![Theme::markdown_code_block()]);
 }
 
@@ -162,8 +212,9 @@ fn open_mermaid_fence_stays_raw_until_closed() {
     let open_text = open.lines.iter().map(line_text).collect::<Vec<_>>();
 
     assert!(in_code_block);
+    // The header labels the open block, but the source stays raw until closed.
+    assert!(open_text[0].starts_with("MERMAID"));
     assert!(open_text.iter().any(|line| line.contains("flowchart LR")));
-    assert!(!open_text.iter().any(|line| line.contains("MERMAID")));
 
     let mut in_code_block = false;
     let closed = render_markdown(

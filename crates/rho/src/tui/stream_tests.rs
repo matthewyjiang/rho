@@ -264,13 +264,13 @@ fn markdown_drain_uses_code_block_content_width() {
     let mut stream = AppendOnlyStream::default();
 
     stream.push_delta("abcd ");
-    let fragment = stream.drain_renderable_markdown(8, true).unwrap();
+    let fragment = stream.drain_renderable_markdown(4, true).unwrap();
     assert_eq!(fragment.text.as_str(), "abcd");
     assert_eq!(
-        rendered_markdown_text(fragment.render_text(), 8, true),
-        vec!["│ abcd │"]
+        rendered_markdown_text(fragment.render_text(), 4, true),
+        vec!["abcd"]
     );
-    assert_eq!(stream.drain_renderable_markdown(8, true), None);
+    assert_eq!(stream.drain_renderable_markdown(4, true), None);
 }
 
 #[test]
@@ -328,7 +328,7 @@ fn markdown_drain_hard_wraps_code_block_content() {
     let mut stream = AppendOnlyStream::default();
 
     stream.push_delta("ab cd");
-    let fragment = stream.drain_renderable_markdown(8, true).unwrap();
+    let fragment = stream.drain_renderable_markdown(4, true).unwrap();
     assert_eq!(fragment.text.as_str(), "ab c");
     assert_eq!(stream.emitted_text(), "ab c");
 }
@@ -338,10 +338,10 @@ fn markdown_drain_uses_display_width_in_code_blocks() {
     let mut stream = AppendOnlyStream::default();
 
     stream.push_delta("你a");
-    let fragment = stream.drain_renderable_markdown(6, true).unwrap();
+    let fragment = stream.drain_renderable_markdown(2, true).unwrap();
     assert_eq!(fragment.text.as_str(), "你");
     assert_eq!(stream.emitted_text(), "你");
-    assert_eq!(stream.drain_renderable_markdown(6, true), None);
+    assert_eq!(stream.drain_renderable_markdown(2, true), None);
 }
 
 #[test]

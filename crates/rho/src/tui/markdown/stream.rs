@@ -218,13 +218,10 @@ fn line_starts_in_code_block(text: &str, line_start: usize, in_code_block: bool)
     active_fence.is_some()
 }
 
+/// Code-block rows render at the full pane width; keep the streaming wrap
+/// boundary in lockstep with `code_block_content_lines`.
 fn code_block_stream_content_width(width: usize) -> usize {
-    let width = width.max(1);
-    match width {
-        1 => 1,
-        2 | 3 => width - 1,
-        width => width - 4,
-    }
+    width.max(1)
 }
 
 fn starts_with_code_fence_fragment(line: &str) -> bool {

@@ -5,6 +5,7 @@ use ratatui::{
 
 mod code_fence;
 mod heading;
+mod highlight;
 mod inline;
 mod math;
 mod mermaid;
@@ -19,7 +20,8 @@ pub(crate) use mermaid::PHASE_CHAIN_FLOWCHART;
 pub(in crate::tui) use code_fence::{
     is_closing_fence, parse_opening_fence, update_code_block_state, CodeFenceState,
 };
-use code_fence::{mermaid_opening_fence, CodeFence};
+use code_fence::{mermaid_opening_fence, opening_fence_info_token, CodeFence};
+use highlight::BlockHighlighter;
 
 use super::markdown_image::standalone_markdown_image;
 use inline::{inline_markdown_stable_prefix_len, markdown_inline_segments, markdown_inline_text};
@@ -114,6 +116,7 @@ fn render_markdown_from_fence_state(
     let mut image_sources = Vec::new();
     let mut image_rows = Vec::new();
     let mut active_code_block: Option<(usize, std::ops::Range<usize>, Vec<&str>)> = None;
+    let mut active_highlighter: Option<BlockHighlighter> = None;
 
     let raw_lines = text.lines().collect::<Vec<_>>();
     let mut line_index = 0;
@@ -128,7 +131,7 @@ fn render_markdown_from_fence_state(
                 {
                     let closing_index = line_index + 1 + closing_offset;
                     let source = raw_lines[line_index + 1..closing_index].join("\n");
-                    let panel = mermaid::render_closed_fence(source, width.saturating_sub(4));
+                    let panel = mermaid::render_closed_fence(source, width);
                     push_closed_panel(&mut lines, &mut code_blocks, copy_button, width, panel);
                     line_index = closing_index + 1;
                     continue;
@@ -137,7 +140,7 @@ fn render_markdown_from_fence_state(
             if let Some((source, consumed_lines)) =
                 math::take_closed_display_math(&raw_lines[line_index..])
             {
-                let panel = math::render_closed_display_math(source, width.saturating_sub(4));
+                let panel = math::render_closed_display_math(source, width);
                 push_closed_panel(&mut lines, &mut code_blocks, copy_button, width, panel);
                 line_index += consumed_lines;
                 continue;
@@ -149,7 +152,6 @@ fn render_markdown_from_fence_state(
         let closing_fence = active_fence.is_some_and(|fence| is_closing_fence(raw_line, fence));
         if opening_fence.is_some() || closing_fence {
             if closing_fence {
-                lines.push(code_block_border(width, '╰', copy_button, None));
                 if let Some((top_line, copy_columns, content)) = active_code_block.take() {
                     code_blocks.push(MarkdownCodeBlock {
                         top_line,
@@ -158,10 +160,14 @@ fn render_markdown_from_fence_state(
                     });
                 }
                 active_fence = None;
+                active_highlighter = None;
             } else {
                 active_fence = opening_fence;
+                let language = opening_fence_info_token(raw_line);
+                active_highlighter = language.as_deref().and_then(BlockHighlighter::for_language);
+                let label = language.map(|token| token.to_ascii_uppercase());
                 let top_line = lines.len();
-                lines.push(code_block_border(width, '╭', copy_button, None));
+                lines.push(code_block_header(width, label.as_deref(), copy_button));
                 if copy_button == CodeBlockCopyButton::Visible {
                     if let Some(copy_columns) = code_block_copy_columns(width) {
                         active_code_block = Some((top_line, copy_columns, Vec::new()));
@@ -177,7 +183,13 @@ fn render_markdown_from_fence_state(
             if let Some((_, _, content)) = &mut active_code_block {
                 content.push(raw_line);
             }
-            lines.extend(code_block_content_lines(raw_line, width));
+            match &mut active_highlighter {
+                Some(highlighter) => lines.extend(wrap_styled_segments_hard(
+                    &highlighter.highlight_line(raw_line),
+                    width,
+                )),
+                None => lines.extend(code_block_content_lines(raw_line, width)),
+            }
             line_index += 1;
             continue;
         }
@@ -270,7 +282,7 @@ fn markdown_divider(width: usize) -> Line<'static> {
     Line::from(Span::styled("─".repeat(width.max(1)), Theme::dim()))
 }
 
-/// Emit a closed art panel (mermaid, display math) with borders and copy state.
+/// Emit a closed art panel (mermaid, display math) with header and copy state.
 fn push_closed_panel(
     lines: &mut Vec<Line<'static>>,
     code_blocks: &mut Vec<MarkdownCodeBlock>,
@@ -296,9 +308,8 @@ fn push_closed_panel(
             (title, body, source)
         }
     };
-    lines.push(code_block_border(width, '╭', copy_button, Some(title)));
+    lines.push(code_block_header(width, Some(title), copy_button));
     lines.extend(body);
-    lines.push(code_block_border(width, '╰', copy_button, None));
     push_copyable_code_block(code_blocks, copy_button, top_line, width, source);
 }
 
@@ -321,50 +332,58 @@ fn push_copyable_code_block(
     }
 }
 
-fn code_block_border(
+/// Slim header row above a code block or art panel: dim label on the left,
+/// COPY right-aligned at the geometry [`code_block_copy_columns`] promises to
+/// hit-testing. Always one row, even with no label and a hidden button, so
+/// block line counts stay uniform.
+fn code_block_header(
     width: usize,
-    corner: char,
+    label: Option<&str>,
     copy_button: CodeBlockCopyButton,
-    title: Option<&str>,
 ) -> Line<'static> {
     let width = width.max(1);
-    let style = Theme::markdown_code_block();
-    if width == 1 {
-        return Line::from(Span::styled(corner.to_string(), style));
-    }
-
-    let closing_corner = if corner == '╭' { '╮' } else { '╯' };
-    let copy_columns = (corner == '╭' && copy_button == CodeBlockCopyButton::Visible)
+    let copy_columns = (copy_button == CodeBlockCopyButton::Visible)
         .then(|| code_block_copy_columns(width))
         .flatten();
-    let label = copy_columns
+    let copy_label = copy_columns
         .as_ref()
         .and_then(|_| code_block_copy_label(width));
-    let prefix_width = copy_columns
+    // Keep at least one blank column between the label and COPY.
+    let label_budget = copy_columns
         .as_ref()
-        .map_or(width.saturating_sub(2), |columns| {
-            columns.start.saturating_sub(1)
-        });
-    let title = title
-        .map(|title| format!("─ {title} "))
-        .filter(|title| display_width(title) <= prefix_width)
-        .unwrap_or_default();
-    let title_width = display_width(&title);
-    let mut spans = vec![Span::styled(
-        format!(
-            "{corner}{title}{}",
-            "─".repeat(prefix_width.saturating_sub(title_width))
-        ),
-        style,
-    )];
-    if let Some(label) = label {
+        .map_or(width, |columns| columns.start.saturating_sub(1));
+    let label = truncate_to_display_width(label.unwrap_or_default(), label_budget);
+    let mut spans = Vec::new();
+    if let Some(columns) = &copy_columns {
+        let filler = columns.start.saturating_sub(display_width(&label));
         spans.push(Span::styled(
-            label,
+            format!("{label}{}", " ".repeat(filler)),
+            Theme::dim(),
+        ));
+    } else {
+        spans.push(Span::styled(label, Theme::dim()));
+    }
+    if let Some(copy_label) = copy_label {
+        spans.push(Span::styled(
+            copy_label,
             Theme::markdown_code_copy_button(/*hovered*/ false),
         ));
     }
-    spans.push(Span::styled(closing_corner.to_string(), style));
     Line::from(spans)
+}
+
+fn truncate_to_display_width(text: &str, budget: usize) -> String {
+    let mut out = String::new();
+    let mut used = 0;
+    for ch in text.chars() {
+        let ch_width = char_display_width(ch);
+        if used + ch_width > budget {
+            break;
+        }
+        out.push(ch);
+        used += ch_width;
+    }
+    out
 }
 
 fn code_block_copy_label(width: usize) -> Option<&'static str> {
@@ -385,28 +404,67 @@ fn code_block_copy_columns(width: usize) -> Option<std::ops::Range<usize>> {
 
 fn code_block_content_lines(line: &str, width: usize) -> Vec<Line<'static>> {
     let style = Theme::markdown_code_block();
-    if width <= 1 {
-        return wrap_line_hard(line, 1)
-            .into_iter()
-            .map(|chunk| Line::from(Span::styled(chunk, style)))
-            .collect();
-    }
-    if width <= 3 {
-        return wrap_line_hard(line, width.saturating_sub(1).max(1))
-            .into_iter()
-            .map(|chunk| Line::from(Span::styled(format!("│{chunk}"), style)))
-            .collect();
-    }
-
-    let content_width = width - 4;
-    wrap_line_hard(line, content_width.max(1))
+    wrap_line_hard(line, width.max(1))
         .into_iter()
-        .map(|chunk| {
-            let chunk_width = display_width(&chunk);
-            let padding = " ".repeat(content_width.saturating_sub(chunk_width));
-            Line::from(Span::styled(format!("│ {chunk}{padding} │"), style))
-        })
+        .map(|chunk| Line::from(Span::styled(chunk, style)))
         .collect()
+}
+
+/// Hard-wrap highlighted segments at display-width columns, preserving span
+/// styles across breaks. Code needs hard wrapping; [`wrap_styled_segments`]
+/// soft-wraps at whitespace and would reflow source lines.
+fn wrap_styled_segments_hard(segments: &[StyledSegment], width: usize) -> Vec<Line<'static>> {
+    let width = width.max(1);
+    let text = segments
+        .iter()
+        .map(|segment| segment.text.as_str())
+        .collect::<String>();
+    if text.is_empty() {
+        return vec![Line::from(Span::styled(
+            String::new(),
+            Theme::markdown_code_block(),
+        ))];
+    }
+    let spans = segments
+        .iter()
+        .map(|segment| Span::styled(segment.text.clone(), segment.style))
+        .collect::<Vec<_>>();
+
+    let mut lines = Vec::new();
+    let mut chunk_start = 0usize;
+    let mut offset = 0usize;
+    let mut current_width = 0usize;
+    for ch in text.chars() {
+        let ch_width = char_display_width(ch);
+        if current_width > 0 && current_width + ch_width > width {
+            lines.push(Line::from(slice_spans_by_bytes(
+                &spans,
+                chunk_start,
+                offset,
+            )));
+            chunk_start = offset;
+            current_width = 0;
+        }
+        offset += ch.len_utf8();
+        current_width += ch_width;
+        if current_width >= width {
+            lines.push(Line::from(slice_spans_by_bytes(
+                &spans,
+                chunk_start,
+                offset,
+            )));
+            chunk_start = offset;
+            current_width = 0;
+        }
+    }
+    if chunk_start < text.len() {
+        lines.push(Line::from(slice_spans_by_bytes(
+            &spans,
+            chunk_start,
+            text.len(),
+        )));
+    }
+    lines
 }
 
 fn markdown_heading_lines(heading: heading::AtxHeading<'_>, width: usize) -> Vec<Line<'static>> {
