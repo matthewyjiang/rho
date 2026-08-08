@@ -231,6 +231,44 @@ impl RunArtifactSink {
         }
     }
 
+    /// Journal the event and publish status at the cadence its variant earns.
+    ///
+    /// Every event is journalled so `rho attach` replay stays complete. Only the
+    /// high-frequency streaming variants (text and reasoning deltas, streaming
+    /// tool card updates) take the throttled publish: at fast token rates or
+    /// with a chatty tool, one status write per event floods the writer and
+    /// stalls the journal behind it. Everything else publishes immediately so a
+    /// polling host sees state changes without waiting out the throttle window.
+    ///
+    /// Matched exhaustively on purpose: a new high-frequency variant folded into
+    /// a wildcard would silently restore the per-event status write this avoids.
+    pub(crate) fn record_attachment(&mut self, event: AttachmentEvent) {
+        let throttled = match &event {
+            AttachmentEvent::AssistantTextDelta(_)
+            | AttachmentEvent::ReasoningDelta(_)
+            | AttachmentEvent::ToolUpdated { .. } => true,
+            AttachmentEvent::Prompt(_)
+            | AttachmentEvent::ToolStarted { .. }
+            | AttachmentEvent::ToolFinished { .. }
+            | AttachmentEvent::Notice(_)
+            | AttachmentEvent::ContextUsage(_)
+            | AttachmentEvent::Usage(_)
+            | AttachmentEvent::StepStarted
+            | AttachmentEvent::ProviderStreamReset
+            | AttachmentEvent::Completed
+            | AttachmentEvent::Cancelled
+            | AttachmentEvent::Failed(_) => false,
+        };
+        // Journal first: `write_attachment` publishes itself when recording
+        // fails, and that failure status must not be pre-empted by this one.
+        self.write_attachment(event);
+        if throttled {
+            self.publish_throttled();
+        } else {
+            self.publish();
+        }
+    }
+
     pub(crate) fn append_last_text(&mut self, text: &str) {
         let buffer = self.status.last_text.get_or_insert_with(String::new);
         buffer.push_str(text);
