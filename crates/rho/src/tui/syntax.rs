@@ -230,17 +230,22 @@ impl MatchQuery {
 
 /// Byte ranges of pattern matches inside `text` for search-hit overlay.
 ///
-/// Semantics mirror [`GrepRequest`]: `literal` escapes/substrings rather than
-/// compiling a regex, and `case_sensitive` defaults to true at the card layer.
+/// Semantics mirror the grep tool: `literal` escapes the pattern before
+/// compiling, and `case_sensitive` maps onto regex case-insensitivity so
+/// Unicode case pairs (for example `Ä`/`ä`) match the engine that produced the
+/// hits.
 pub(in crate::tui) fn match_byte_ranges(text: &str, query: &MatchQuery) -> Vec<(usize, usize)> {
     let pattern = query.pattern.as_str();
     if pattern.is_empty() || text.is_empty() {
         return Vec::new();
     }
-    if query.literal {
-        return literal_match_ranges(text, pattern, query.case_sensitive);
-    }
-    let Ok(re) = RegexBuilder::new(pattern)
+    // Same construction as GrepRequest: escape literals, then compile once.
+    let source = if query.literal {
+        regex::escape(pattern)
+    } else {
+        pattern.to_string()
+    };
+    let Ok(re) = RegexBuilder::new(&source)
         .case_insensitive(!query.case_sensitive)
         .size_limit(1 << 20)
         .dfa_size_limit(1 << 20)
@@ -250,65 +255,6 @@ pub(in crate::tui) fn match_byte_ranges(text: &str, query: &MatchQuery) -> Vec<(
         return Vec::new();
     };
     re.find_iter(text).map(|m| (m.start(), m.end())).collect()
-}
-
-fn literal_match_ranges(text: &str, pattern: &str, case_sensitive: bool) -> Vec<(usize, usize)> {
-    if pattern.is_empty() {
-        return Vec::new();
-    }
-    if case_sensitive {
-        let mut ranges = Vec::new();
-        let mut start = 0usize;
-        while let Some(rel) = text[start..].find(pattern) {
-            let abs = start + rel;
-            let end = abs + pattern.len();
-            ranges.push((abs, end));
-            start = end;
-            if start >= text.len() {
-                break;
-            }
-        }
-        return ranges;
-    }
-    let lower_text = text.to_ascii_lowercase();
-    let lower_pat = pattern.to_ascii_lowercase();
-    if lower_pat.is_empty() {
-        return Vec::new();
-    }
-    let mut ranges = Vec::new();
-    let mut start = 0usize;
-    while let Some(rel) = lower_text[start..].find(&lower_pat) {
-        let abs = start + rel;
-        let end = abs + lower_pat.len();
-        // Align to char boundaries in the original text (ASCII path only for
-        // the lowered copy; clamp to UTF-8 boundaries if needed).
-        let abs = floor_char_boundary(text, abs);
-        let end = ceil_char_boundary(text, end.min(text.len()));
-        if abs < end {
-            ranges.push((abs, end));
-        }
-        start = end.max(abs + 1);
-        if start >= text.len() {
-            break;
-        }
-    }
-    ranges
-}
-
-fn floor_char_boundary(text: &str, mut index: usize) -> usize {
-    index = index.min(text.len());
-    while index > 0 && !text.is_char_boundary(index) {
-        index -= 1;
-    }
-    index
-}
-
-fn ceil_char_boundary(text: &str, mut index: usize) -> usize {
-    index = index.min(text.len());
-    while index < text.len() && !text.is_char_boundary(index) {
-        index += 1;
-    }
-    index
 }
 
 /// Build spans from role segments, overlaying match ranges with

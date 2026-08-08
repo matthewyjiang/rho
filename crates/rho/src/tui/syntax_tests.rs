@@ -188,3 +188,25 @@ fn case_sensitive_regex_skips_different_case() {
     );
     assert_eq!(ranges, vec![(4, 7)]);
 }
+
+// Covers: case-insensitive literal overlay matches Unicode case pairs like grep
+// Owner: pure unit (search match semantics)
+#[test]
+fn case_insensitive_literal_matches_unicode_case_pair() {
+    let ranges = match_byte_ranges(
+        "prefix ä suffix",
+        &MatchQuery::new("Ä", /*literal*/ true, /*case_sensitive*/ false),
+    );
+    assert_eq!(ranges, vec![(7, 9)], "ä is two UTF-8 bytes at offset 7");
+}
+
+// Covers: case-insensitive literal still treats metacharacters as plain text
+// Owner: pure unit (search match semantics)
+#[test]
+fn case_insensitive_literal_keeps_metacharacters_inert() {
+    let ranges = match_byte_ranges(
+        "A.B a.b",
+        &MatchQuery::new("a.b", /*literal*/ true, /*case_sensitive*/ false),
+    );
+    assert_eq!(ranges, vec![(0, 3), (4, 7)]);
+}
