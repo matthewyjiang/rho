@@ -418,6 +418,12 @@ pub const HOSTED_TOOL_ACTIVITY_KIND: &str = "hosted_tool_activity";
 /// this kind to [`crate::RunEvent::ProviderServiceTierFallback`] and does not
 /// retain it as provider-context replay state.
 pub const SERVICE_TIER_FALLBACK_KIND: &str = "service_tier_fallback";
+/// Reserved internal carrier for provider-reported non-reasoning output tokens.
+///
+/// Construct with [`ModelEvent::generation_output_tokens`]. Built-in provider
+/// adapters intercept this event before it reaches model-event consumers or
+/// provider-context replay state.
+pub(crate) const GENERATION_OUTPUT_TOKENS_KIND: &str = "generation_output_tokens";
 
 impl ModelEvent {
     /// Builds provider-native hosted tool activity for the stream.
@@ -442,6 +448,35 @@ impl ModelEvent {
                 let name = data.get("name")?.as_str()?;
                 let detail = data.get("detail")?.as_str()?;
                 Some((name, detail))
+            }
+            _ => None,
+        }
+    }
+
+    /// Carries the exact non-reasoning output-token count through a 1.x provider callback.
+    ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-sdk): replace the generation-token ProviderContext carrier
+    /// with a dedicated provider metric callback that does not pass through ModelEvent.
+    ///
+    /// This reserved context kind keeps the exhaustive 1.x [`ModelEvent`] enum
+    /// source-compatible. Built-in adapters consume it as internal performance
+    /// metadata and do not expose or persist it as provider context.
+    #[doc(hidden)]
+    pub fn generation_output_tokens(tokens: u64) -> Self {
+        Self::ProviderContext {
+            kind: GENERATION_OUTPUT_TOKENS_KIND.into(),
+            position: None,
+            data: json!({ "tokens": tokens }),
+        }
+    }
+
+    /// Returns non-reasoning output tokens from the reserved internal carrier.
+    pub(crate) fn as_generation_output_tokens(&self) -> Option<u64> {
+        match self {
+            Self::ProviderContext { kind, data, .. } if kind == GENERATION_OUTPUT_TOKENS_KIND => {
+                data.get("tokens")?.as_u64()
             }
             _ => None,
         }

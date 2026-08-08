@@ -149,7 +149,10 @@ async fn observed_event_timestamp_survives_channel_delivery() {
 
     assert_eq!(
         receiver.recv_timed_stream_event().await,
-        Some((super::ProviderStreamEvent::Model(event), Some(observed_at),))
+        Some((
+            super::ProviderEnvelopeEvent::Stream(super::ProviderStreamEvent::Model(event)),
+            Some(observed_at),
+        ))
     );
 }
 
@@ -162,8 +165,29 @@ async fn synthesized_event_has_no_provider_observation_timestamp() {
 
     assert_eq!(
         receiver.recv_timed_stream_event().await,
-        Some((super::ProviderStreamEvent::Model(event), None))
+        Some((
+            super::ProviderEnvelopeEvent::Stream(super::ProviderStreamEvent::Model(event)),
+            None,
+        ))
     );
+}
+
+// Covers: internal generation metrics must not leak through the public model-event receiver.
+// Owner: SDK provider channel
+#[tokio::test]
+async fn public_receiver_skips_generation_output_token_metadata() {
+    let (events, mut receiver) = provider_event_channel(NonZeroUsize::new(2).unwrap());
+    let observed_at = Instant::now();
+    events
+        .send_observed(ModelEvent::generation_output_tokens(12), observed_at)
+        .await
+        .unwrap();
+    let expected = ModelEvent::OutputDelta("done".into());
+    events.send(expected.clone()).await.unwrap();
+    drop(events);
+
+    assert_eq!(receiver.recv().await, Some(expected));
+    assert_eq!(receiver.recv().await, None);
 }
 
 #[tokio::test]

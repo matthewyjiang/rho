@@ -506,6 +506,85 @@ async fn stream_usage_events_merge_within_a_turn() {
 }
 
 #[derive(Debug)]
+struct ReasoningUsageProvider;
+
+impl ModelProvider for ReasoningUsageProvider {
+    fn identity(&self) -> ModelIdentity {
+        identity()
+    }
+
+    fn send_turn<'a>(&'a self, _request: ModelRequest<'a>) -> ProviderFuture<'a> {
+        unreachable!("test uses streaming")
+    }
+
+    fn send_turn_stream<'a>(
+        &'a self,
+        _request: ModelRequest<'a>,
+        events: ProviderEventSender,
+    ) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            events.send(ModelEvent::OutputDelta("done".into())).await?;
+            events
+                .send(ModelEvent::generation_output_tokens(30))
+                .await?;
+            events
+                .send(ModelEvent::Usage(crate::model::ModelUsage {
+                    output_tokens: Some(100),
+                    ..crate::model::ModelUsage::default()
+                }))
+                .await?;
+            Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
+                "done".into(),
+            )]))
+        })
+    }
+}
+
+// Covers: reasoning tokens remain in billable usage but not generation throughput metrics.
+// Owner: SDK orchestration
+#[tokio::test]
+async fn reasoning_breakdown_separates_usage_from_performance_tokens() {
+    let runtime = Rho::builder()
+        .provider(ReasoningUsageProvider)
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let mut run = session.start(UserInput::text("hello")).await.unwrap();
+    let mut usage = None;
+    let mut generation_output_tokens = None;
+    let mut carrier_preceded_completion = false;
+    let mut metrics = None;
+    while let Some(event) = run.next_event().await {
+        #[allow(deprecated)]
+        match event {
+            RunEvent::UsageUpdated { usage: reported } => usage = Some(reported),
+            RunEvent::ProviderActivity { kind, detail }
+                if kind == crate::PROVIDER_ACTIVITY_GENERATION_OUTPUT_TOKENS =>
+            {
+                generation_output_tokens = detail.parse().ok();
+            }
+            RunEvent::ModelCallCompleted {
+                metrics: completed, ..
+            } => {
+                carrier_preceded_completion = generation_output_tokens.is_some();
+                metrics = Some(completed);
+            }
+            _ => {}
+        }
+    }
+    let outcome = run.outcome().await.unwrap();
+
+    assert_eq!(
+        usage.as_ref().and_then(|usage| usage.output_tokens),
+        Some(100)
+    );
+    assert_eq!(outcome.usage().output_tokens, Some(100));
+    assert_eq!(metrics.and_then(|metrics| metrics.output_tokens), Some(100));
+    assert_eq!(generation_output_tokens, Some(30));
+    assert!(carrier_preceded_completion);
+}
+
+#[derive(Debug)]
 struct CompletionOnlyProvider;
 
 impl ModelProvider for CompletionOnlyProvider {

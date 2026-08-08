@@ -65,6 +65,9 @@ impl ChatStreamAccumulator {
             return Ok(false);
         };
         if let Some(usage) = extract_usage(&value) {
+            if let Some(tokens) = extract_generation_output_tokens(&value) {
+                on_event(generation_output_tokens_event(tokens))?;
+            }
             on_event(ModelEvent::Usage(usage))?;
         }
         let Some(choice) = value
@@ -269,16 +272,44 @@ pub(crate) fn sse_data(line: &str) -> Option<&str> {
     Some(rest.strip_prefix(' ').unwrap_or(rest))
 }
 
+// Keep the raw 1.x carrier until rho-providers can raise its minimum rho-sdk
+// version. Package verification must compile against the currently published SDK.
+pub(crate) fn generation_output_tokens_event(tokens: u64) -> ModelEvent {
+    ModelEvent::ProviderContext {
+        kind: "generation_output_tokens".into(),
+        position: None,
+        data: serde_json::json!({ "tokens": tokens }),
+    }
+}
+fn extract_output_usage(usage: &serde_json::Value) -> (Option<u64>, Option<u64>) {
+    for (tokens_key, details_key) in [
+        ("output_tokens", "output_tokens_details"),
+        ("completion_tokens", "completion_tokens_details"),
+    ] {
+        let Some(output_tokens) = usage.get(tokens_key).and_then(serde_json::Value::as_u64) else {
+            continue;
+        };
+        let reasoning_tokens = usage
+            .get(details_key)
+            .and_then(|details| details.get("reasoning_tokens"))
+            .and_then(serde_json::Value::as_u64);
+        return (Some(output_tokens), reasoning_tokens);
+    }
+    (None, None)
+}
+
+pub(crate) fn extract_generation_output_tokens(value: &serde_json::Value) -> Option<u64> {
+    let (output_tokens, reasoning_tokens) = extract_output_usage(value.get("usage")?);
+    Some(output_tokens?.saturating_sub(reasoning_tokens?))
+}
+
 pub(crate) fn extract_usage(value: &serde_json::Value) -> Option<ModelUsage> {
     let usage = value.get("usage")?;
     let raw_input_tokens = usage
         .get("input_tokens")
         .or_else(|| usage.get("prompt_tokens"))
         .and_then(|v| v.as_u64());
-    let output_tokens = usage
-        .get("output_tokens")
-        .or_else(|| usage.get("completion_tokens"))
-        .and_then(|v| v.as_u64());
+    let (output_tokens, _) = extract_output_usage(usage);
     let total_tokens = usage.get("total_tokens").and_then(|v| v.as_u64());
     let input_details = usage
         .get("input_tokens_details")

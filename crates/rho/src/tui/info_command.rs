@@ -175,7 +175,7 @@ pub(super) fn runtime_info_lines(info: &RuntimeInfo, width: usize) -> Vec<Line<'
         if let Some(duration) = metrics.generation_time {
             block.push_field("Generation", &format_duration(duration));
         }
-        push_optional_number(&mut block, "Output tokens", metrics.output_tokens);
+        push_optional_number(&mut block, "Generation tokens", metrics.output_tokens);
         // Compute rates from published metric fields. Do not call
         // ModelCallMetrics::{generation,response}_tokens_per_second here until
         // a released rho-sdk cut exports them; package verify builds against

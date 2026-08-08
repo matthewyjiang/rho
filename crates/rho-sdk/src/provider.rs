@@ -113,8 +113,23 @@ pub struct ProviderEventSender {
 
 #[derive(Debug)]
 struct ProviderEventEnvelope {
-    event: ProviderStreamEvent,
+    event: ProviderEnvelopeEvent,
     observed_at: Option<Instant>,
+}
+
+#[derive(Debug, PartialEq)]
+pub(crate) enum ProviderEnvelopeEvent {
+    Stream(ProviderStreamEvent),
+    GenerationOutputTokens(u64),
+}
+
+impl ProviderEnvelopeEvent {
+    fn from_model(event: ModelEvent) -> Self {
+        event
+            .as_generation_output_tokens()
+            .map(Self::GenerationOutputTokens)
+            .unwrap_or(Self::Stream(ProviderStreamEvent::Model(event)))
+    }
 }
 
 /// Internal lifecycle event for a physical provider request.
@@ -153,7 +168,7 @@ impl ProviderEventSender {
     async fn send_unobserved(&self, event: ModelEvent) -> Result<(), ProviderError> {
         self.sender
             .send(ProviderEventEnvelope {
-                event: ProviderStreamEvent::Model(event),
+                event: ProviderEnvelopeEvent::from_model(event),
                 observed_at: None,
             })
             .await
@@ -172,7 +187,7 @@ impl ProviderEventSender {
     ) -> Result<(), ProviderError> {
         self.sender
             .send(ProviderEventEnvelope {
-                event: ProviderStreamEvent::Model(event),
+                event: ProviderEnvelopeEvent::from_model(event),
                 observed_at: Some(observed_at),
             })
             .await
@@ -200,10 +215,9 @@ impl ProviderEventSender {
     ) -> Result<(), ProviderError> {
         self.sender
             .send(ProviderEventEnvelope {
-                event: ProviderStreamEvent::Request(ProviderRequestEvent::RequestAttemptFailed {
-                    kind,
-                    usage,
-                }),
+                event: ProviderEnvelopeEvent::Stream(ProviderStreamEvent::Request(
+                    ProviderRequestEvent::RequestAttemptFailed { kind, usage },
+                )),
                 observed_at: Some(observed_at),
             })
             .await
@@ -227,8 +241,13 @@ impl ProviderEventReceiver {
         }
         while let Some(event) = self.receiver.recv().await.map(|envelope| envelope.event) {
             match event {
-                ProviderStreamEvent::Model(event) => return Some(event),
-                ProviderStreamEvent::Request(event) => self.pending_request_events.push_back(event),
+                ProviderEnvelopeEvent::Stream(ProviderStreamEvent::Model(event)) => {
+                    return Some(event);
+                }
+                ProviderEnvelopeEvent::Stream(ProviderStreamEvent::Request(event)) => {
+                    self.pending_request_events.push_back(event);
+                }
+                ProviderEnvelopeEvent::GenerationOutputTokens(_) => {}
             }
         }
         None
@@ -242,8 +261,13 @@ impl ProviderEventReceiver {
         }
         while let Some(event) = self.receiver.recv().await.map(|envelope| envelope.event) {
             match event {
-                ProviderStreamEvent::Request(event) => return Some(event),
-                ProviderStreamEvent::Model(event) => self.pending_model_events.push_back(event),
+                ProviderEnvelopeEvent::Stream(ProviderStreamEvent::Request(event)) => {
+                    return Some(event);
+                }
+                ProviderEnvelopeEvent::Stream(ProviderStreamEvent::Model(event)) => {
+                    self.pending_model_events.push_back(event);
+                }
+                ProviderEnvelopeEvent::GenerationOutputTokens(_) => {}
             }
         }
         None
@@ -252,12 +276,17 @@ impl ProviderEventReceiver {
     /// Receives the next semantic or physical request event.
     #[doc(hidden)]
     pub async fn recv_stream_event(&mut self) -> Option<ProviderStreamEvent> {
-        self.receiver.recv().await.map(|envelope| envelope.event)
+        while let Some(event) = self.receiver.recv().await.map(|envelope| envelope.event) {
+            if let ProviderEnvelopeEvent::Stream(event) = event {
+                return Some(event);
+            }
+        }
+        None
     }
 
     pub(crate) async fn recv_timed_stream_event(
         &mut self,
-    ) -> Option<(ProviderStreamEvent, Option<Instant>)> {
+    ) -> Option<(ProviderEnvelopeEvent, Option<Instant>)> {
         self.receiver
             .recv()
             .await
@@ -266,7 +295,7 @@ impl ProviderEventReceiver {
 
     pub(crate) fn try_recv_timed_stream_event(
         &mut self,
-    ) -> Option<(ProviderStreamEvent, Option<Instant>)> {
+    ) -> Option<(ProviderEnvelopeEvent, Option<Instant>)> {
         self.receiver
             .try_recv()
             .ok()

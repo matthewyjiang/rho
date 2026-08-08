@@ -165,7 +165,7 @@ pub use error::{
 };
 pub use event::{
     ModelCallMetrics, ModelCallProfile, ProviderStreamResetReason, RunEvent, RunOutcome,
-    StopReason, ToolCompletion, ToolFailure,
+    StopReason, ToolCompletion, ToolFailure, PROVIDER_ACTIVITY_GENERATION_OUTPUT_TOKENS,
 };
 #[allow(deprecated)]
 pub use event::{

@@ -76,6 +76,46 @@ fn translates_streaming_and_usage_events_without_rendering_state() {
     ));
 }
 
+// Covers: the 1.x performance carrier must replace aggregate tokens once and
+// never inflate a later model call.
+// Owner: TUI SDK event adapter
+#[test]
+fn generation_output_carrier_enriches_the_next_model_call() {
+    let mut adapter = SdkEventAdapter::default();
+    #[allow(deprecated)]
+    let carrier = RunEvent::ProviderActivity {
+        kind: "model_call_generation_output_tokens".into(),
+        detail: "30".into(),
+    };
+    assert!(adapter.translate(carrier).is_empty());
+    let profile = rho_sdk::ModelCallProfile {
+        provider: "xai".into(),
+        model: "grok".into(),
+        reasoning: rho_sdk::ReasoningLevel::High,
+        service_tier: None,
+    };
+    let metrics = rho_sdk::ModelCallMetrics {
+        output_tokens: Some(100),
+        time_to_first_token: Some(Duration::from_secs(1)),
+        generation_time: Some(Duration::from_secs(2)),
+        total_latency: Duration::from_secs(3),
+    };
+
+    assert!(matches!(
+        only_event(adapter.translate(RunEvent::ModelCallCompleted {
+            profile: profile.clone(),
+            metrics,
+        })),
+        ViewEvent::Update(ViewModelEvent::ModelCallCompleted { metrics, .. })
+            if metrics.output_tokens == Some(30)
+    ));
+    assert!(matches!(
+        only_event(adapter.translate(RunEvent::ModelCallCompleted { profile, metrics })),
+        ViewEvent::Update(ViewModelEvent::ModelCallCompleted { metrics, .. })
+            if metrics.output_tokens == Some(100)
+    ));
+}
+
 #[test]
 fn provider_retry_resets_the_current_provider_stream() {
     let mut adapter = SdkEventAdapter::default();
