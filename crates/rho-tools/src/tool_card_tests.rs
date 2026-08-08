@@ -234,8 +234,8 @@ fn deleted_file_keeps_old_path_not_dev_null() {
     );
 }
 
-// Covers: multi-file card sections fold +N -M into the File header so the
-// presenter can drop DiffStat path facts without losing identity or counts.
+// Covers: multi-file card sections keep path + stats on File rows so the
+// presenter can drop DiffStat facts without losing identity or counts.
 // Owner: pure unit (tool card)
 #[test]
 fn multi_file_card_headers_include_content_stats() {
@@ -258,11 +258,15 @@ fn multi_file_card_headers_include_content_stats() {
     assert_eq!(
         compact_diff_rows_from_card_files(&files, /*include_file_headers*/ true),
         vec![
-            DiffRow::new(DiffRowKind::File, None, "+1 -1 | a.rs"),
+            DiffRow::file_header("a.rs", Some((1, 1))),
             DiffRow::new(DiffRowKind::Added, Some(1), "A"),
-            DiffRow::new(DiffRowKind::File, None, "+0 -2 | b.rs"),
+            DiffRow::file_header("b.rs", Some((0, 2))),
             DiffRow::new(DiffRowKind::Removed, Some(1), "x"),
         ]
+    );
+    assert_eq!(
+        DiffRow::file_header("a.rs", Some((1, 1))).plain_text(),
+        "+1 -1 lines | a.rs"
     );
 }
 

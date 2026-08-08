@@ -98,16 +98,18 @@ fn multi_file_diff_connects_body_under_section_headers() {
         ToolHeader::call("edit", Some("2 files".into())),
     )
     .with_body(ToolBody::Diff(vec![
-        DiffRow::new(DiffRowKind::File, None, "+1 -1 | a.txt"),
+        DiffRow::file_header("a.txt", Some((1, 1))),
         DiffRow::new(DiffRowKind::Added, Some(1), "A"),
-        DiffRow::new(DiffRowKind::File, None, "+0 -1 | b.txt"),
+        DiffRow::file_header("b.txt", Some((0, 1))),
         DiffRow::new(DiffRowKind::Removed, Some(1), "B"),
     ]));
 
     let lines = render(&card, 40);
     assert_eq!(lines[0], "✓ edit(2 files)");
     assert!(
-        lines[1].starts_with("  ├ ") && lines[1].contains("+1 -1") && lines[1].contains("a.txt"),
+        lines[1].starts_with("  ├ ")
+            && lines[1].contains("+1 -1 lines")
+            && lines[1].contains("a.txt"),
         "first file section should mid-branch: {:?}",
         lines
     );

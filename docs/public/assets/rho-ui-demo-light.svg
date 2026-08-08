@@ -24,7 +24,7 @@
   <text x="24.0" y="359.6" fill="#57606a" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">   └ </text>
   <text x="72.0" y="359.6" fill="#116329" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">+1</text>
   <text x="100.8" y="359.6" fill="#cf222e" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">-0</text>
-  <text x="120.0" y="359.6" fill="#57606a" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none"> lines | crates/api/src/middleware/request_id.rs</text>
+  <text x="120.0" y="359.6" fill="#57606a" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none"> lines</text>
   <text x="24.0" y="379.6" fill="#57606a" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">     2 </text>
   <text x="91.2" y="379.6" fill="#1f2328" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">      let request_id = resolve_request_id(&amp;request);                                        </text>
   <text x="24.0" y="399.6" fill="#57606a" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">     3 </text>

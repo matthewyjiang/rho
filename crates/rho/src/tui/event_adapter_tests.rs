@@ -339,7 +339,8 @@ fn edit_keeps_one_diff_card_from_stream_through_completion() {
     .with_facts(vec![ToolFact::DiffStat {
         added: 1,
         removed: 1,
-        path: Some("src/lib.rs".into()),
+        // Single-file header already names the path.
+        path: None,
     }])
     .with_body(ToolBody::Diff(vec![
         DiffRow::new(DiffRowKind::Meta, None, "PUT 1"),
@@ -371,7 +372,7 @@ fn edit_keeps_one_diff_card_from_stream_through_completion() {
         ToolFact::DiffStat {
             added: 1,
             removed: 1,
-            path: Some("src/lib.rs".into()),
+            path: None,
         },
         ToolFact::Meta {
             text: notice.into(),
@@ -471,7 +472,7 @@ fn edit_keeps_one_diff_card_from_stream_through_completion() {
         vec![ToolFact::DiffStat {
             added: 1,
             removed: 1,
-            path: Some("src/lib.rs".into()),
+            path: None,
         }]
     );
     assert_eq!(
@@ -536,18 +537,18 @@ fn edit_binds_a_late_call_id_after_a_large_preview_stride() {
 #[test]
 fn edit_preview_preserves_multi_file_identity() {
     let input = "[a.txt#AAAA]\nPUT 1.=1:\n+A\n\n[b.txt#BBBB]\nCUT 1.=1\n";
-    // Multi-file: path + stats live once on body File rows (not DiffStat facts).
+    // Multi-file: path + stats live once on structured File rows (not DiffStat).
     let expected = rho_tools::tool_card::ToolCard::new(
         ToolStatus::Running,
         ToolFamily::FileDiff,
         ToolHeader::call("edit", Some("2 files".into())),
     )
     .with_body(ToolBody::Diff(vec![
-        DiffRow::new(DiffRowKind::File, None, "+1 -1 | a.txt"),
+        DiffRow::file_header("a.txt", Some((1, 1))),
         DiffRow::new(DiffRowKind::Meta, None, "PUT 1"),
         DiffRow::new(DiffRowKind::Added, None, "A"),
         // Pure CUT is in-file content change, not path deletion.
-        DiffRow::new(DiffRowKind::File, None, "+0 -1 | b.txt"),
+        DiffRow::file_header("b.txt", Some((0, 1))),
         DiffRow::new(DiffRowKind::Meta, None, "CUT 1"),
     ]));
 

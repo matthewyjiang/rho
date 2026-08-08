@@ -163,6 +163,10 @@ pub struct DiffRow {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<u32>,
     pub text: String,
+    /// Per-file `+N -M` counts on multi-file [`DiffRowKind::File`] section
+    /// headers. Structured so hosts style counts without parsing display text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stats: Option<(u64, u64)>,
 }
 
 impl DiffRow {
@@ -171,18 +175,44 @@ impl DiffRow {
             kind,
             line,
             text: text.into(),
+            stats: None,
+        }
+    }
+
+    /// Multi-file section header: path plus optional content stats.
+    pub fn file_header(path: impl Into<String>, stats: Option<(u64, u64)>) -> Self {
+        Self {
+            kind: DiffRowKind::File,
+            line: None,
+            text: path.into(),
+            stats,
         }
     }
 
     /// Gutter number, sign and text as one string, for text-only surfaces.
     pub fn plain_text(&self) -> String {
         match self.kind {
-            DiffRowKind::File | DiffRowKind::Skip | DiffRowKind::Meta => self.text.clone(),
+            DiffRowKind::File => match self.stats {
+                Some((added, removed)) => {
+                    format_diff_stat_plain(added, removed, Some(self.text.as_str()))
+                }
+                None => self.text.clone(),
+            },
+            DiffRowKind::Skip | DiffRowKind::Meta => self.text.clone(),
             DiffRowKind::Context | DiffRowKind::Added | DiffRowKind::Removed => match self.line {
                 Some(line) => format!("{line} {}{}", self.kind.sign(), self.text),
                 None => format!("{}{}", self.kind.sign(), self.text),
             },
         }
+    }
+}
+
+/// Shared plain-text form for DiffStat facts and File section headers.
+pub fn format_diff_stat_plain(added: u64, removed: u64, path: Option<&str>) -> String {
+    let stats = format!("+{added} -{removed} lines");
+    match path {
+        Some(path) if !path.is_empty() => format!("{stats} | {path}"),
+        Some(_) | None => stats,
     }
 }
 
@@ -372,13 +402,7 @@ impl ToolFact {
                 added,
                 removed,
                 path,
-            } => {
-                let stats = format!("+{added} -{removed} lines");
-                match path {
-                    Some(path) if !path.is_empty() => format!("{stats} | {path}"),
-                    Some(_) | None => stats,
-                }
-            }
+            } => format_diff_stat_plain(*added, *removed, path.as_deref()),
             Self::Exit { code, duration_ms } => match duration_ms {
                 Some(ms) => {
                     let secs = *ms as f64 / 1000.0;
@@ -595,33 +619,25 @@ pub fn compact_diff_rows_from_files(
 /// Build compact body rows from card-facing file sections.
 ///
 /// When `include_file_headers` is true, each section starts with a File row.
-/// Content sections with known stats use `+N -M | path` so multi-file cards can
-/// drop separate DiffStat facts without losing the per-file counts.
+/// Content sections keep known `+N -M` counts on the row's structured `stats`
+/// field so multi-file cards can drop separate DiffStat facts without losing
+/// identity or counts (and without encoding stats into path text).
 pub fn compact_diff_rows_from_card_files(
     files: &[DiffCardFile],
     include_file_headers: bool,
 ) -> Vec<DiffRow> {
     let mut rows = Vec::new();
     for file in files {
-        let header = if include_file_headers {
-            Some(multi_file_section_header(file))
-        } else {
-            None
-        };
-        push_compact_diff_section(&mut rows, header, &file.rows);
+        if include_file_headers {
+            let stats = match (file.change, file.stats) {
+                (DiffCardChange::Content, stats) => stats,
+                _ => None,
+            };
+            rows.push(DiffRow::file_header(file.display_path(), stats));
+        }
+        rows.extend(file.rows.iter().cloned());
     }
     rows
-}
-
-/// Multi-file section label: attach stats when known so path appears once.
-fn multi_file_section_header(file: &DiffCardFile) -> String {
-    let path = file.display_path();
-    match (file.change, file.stats) {
-        (DiffCardChange::Content, Some((added, removed))) => {
-            format!("+{added} -{removed} | {path}")
-        }
-        _ => path,
-    }
 }
 
 fn push_compact_diff_section(
@@ -630,7 +646,7 @@ fn push_compact_diff_section(
     file_rows: &[DiffRow],
 ) {
     if let Some(path) = file_header {
-        rows.push(DiffRow::new(DiffRowKind::File, None, path));
+        rows.push(DiffRow::file_header(path, None));
     }
     rows.extend(file_rows.iter().cloned());
 }
