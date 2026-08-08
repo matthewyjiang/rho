@@ -147,7 +147,7 @@ impl WorkspaceSearch for GrepSearch {
     fn spec() -> ToolSpec {
         ToolSpec {
             name: Self::NAME.into(),
-            description: "Searches file contents under a directory with a regular expression. Skips ignored, hidden, and binary files. Returns matches grouped by file with line numbers. Content mode prefixes each file with a chainable [path#TAG] header (via hashline) and match previews as `N | text` so edit can take TAG and line numbers. Match text is search preview only and may be truncated - do not copy preview bodies into PUT rows; use read_file when you need exact line text.".into(),
+            description: "Searches file contents under a directory with a regular expression. Skips ignored, hidden, and binary files. Returns matches grouped by file with line numbers. Content mode prefixes each file with a stable [path#TAG] snapshot header and shows matches as `N | text`. Match text is a preview and may be truncated; use read_file when you need exact line text.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {

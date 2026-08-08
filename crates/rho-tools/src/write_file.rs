@@ -20,7 +20,7 @@ impl Tool for WriteFile {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "write".into(),
-            description: "Creates or fully rewrites a UTF-8 text file with complete contents. Prefer `edit` for multi-hunk line-anchored edits when you already have a fresh `[path#TAG]`. Successful writes return a bounded hashline chain snapshot (`[path#TAG]` plus numbered lines) so a follow-up `edit` can start without an extra `read_file`. Re-read only for lines outside that snapshot. Unified diff is tool metadata for UI cards.".into(),
+            description: "Creates or fully rewrites a UTF-8 text file with complete contents. Prefer the selected edit tool for targeted changes. Successful writes return a bounded hashline chain snapshot (`[path#TAG]` plus numbered lines) for follow-up work without an extra `read_file`. Re-read only for lines outside that snapshot. Unified diff is tool metadata for UI cards.".into(),
             input_schema: json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}),
         }
     }

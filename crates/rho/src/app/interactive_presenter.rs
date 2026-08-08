@@ -41,7 +41,7 @@ enum ToolKind {
     Glob,
     ReadFile,
     WriteFile,
-    Edit,
+    Edit(rho_tools::EditFormat),
     Skill,
     WebSearch,
     FetchContent,
@@ -52,6 +52,13 @@ enum ToolKind {
 
 impl ToolKind {
     fn from_name(name: &str) -> Self {
+        Self::from_name_and_args(name, None)
+    }
+
+    fn from_name_and_args(name: &str, _arguments: Option<&serde_json::Value>) -> Self {
+        if let Some(format) = rho_tools::EditFormat::from_tool_name(name) {
+            return Self::Edit(format);
+        }
         match name {
             "advisor" => Self::Advisor,
             "agent" => Self::Agent,
@@ -64,7 +71,6 @@ impl ToolKind {
             "glob" => Self::Glob,
             "read_file" => Self::ReadFile,
             "write" | "write_file" => Self::WriteFile,
-            "edit" => Self::Edit,
             "skill" => Self::Skill,
             "web_search" => Self::WebSearch,
             "fetch_content" => Self::FetchContent,
@@ -83,7 +89,7 @@ impl ToolKind {
     /// Oversized buffers, including long agent prompts, fall back to a coarse
     /// stride so parse cost stays linear in argument size.
     fn preview_parse_stride(self, arguments_len: usize) -> usize {
-        if matches!(self, Self::Edit) && arguments_len >= EDIT_STREAM_PREVIEW_LIMIT {
+        if matches!(self, Self::Edit(_)) && arguments_len >= EDIT_STREAM_PREVIEW_LIMIT {
             // Grow with buffer size so total parse work stays linear for long
             // streams instead of rescanning on a fixed byte interval.
             return arguments_len.max(EDIT_STREAM_PREVIEW_STRIDE);
@@ -100,7 +106,7 @@ impl ToolKind {
             | Self::Glob
             | Self::ReadFile
             | Self::WriteFile
-            | Self::Edit
+            | Self::Edit(_)
             | Self::Skill
             | Self::WebSearch
             | Self::FetchContent
@@ -194,13 +200,13 @@ impl InteractiveToolPresenter {
             return None;
         }
         let name = preview.name.as_deref()?;
-        let kind = ToolKind::from_name(name);
         if !name_changed && preview.arguments.len() < preview.next_parse_length {
             return None;
         }
         if let Some(args) = parse_incomplete_json(&preview.arguments) {
             preview.last_args = Some(args);
         }
+        let kind = ToolKind::from_name_and_args(name, preview.last_args.as_ref());
         let card = match kind {
             // Keep the last successful parse so a mid-stream incomplete fragment
             // does not wipe a useful card back to a bare header.
@@ -234,11 +240,10 @@ impl InteractiveToolPresenter {
         partial_arguments: &str,
     ) -> ToolPresentation {
         let name = name.unwrap_or("tool call");
-        let kind = ToolKind::from_name(name);
         let arguments = parse_incomplete_json(partial_arguments)
             .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
         let view = ToolView {
-            kind,
+            kind: ToolKind::from_name_and_args(name, Some(&arguments)),
             name: name.into(),
             arguments,
             metadata: ToolMetadata::default(),
@@ -248,7 +253,7 @@ impl InteractiveToolPresenter {
 
     pub(crate) fn historical(&self, call: &ToolCall, ok: bool, content: &str) -> ToolPresentation {
         let view = ToolView {
-            kind: ToolKind::from_name(&call.name),
+            kind: ToolKind::from_name_and_args(&call.name, Some(&call.arguments)),
             name: call.name.clone(),
             arguments: call.arguments.clone(),
             metadata: ToolMetadata::default(),
@@ -259,7 +264,7 @@ impl InteractiveToolPresenter {
     pub(crate) fn proposed(&mut self, call: ToolCall) -> ToolPresentation {
         let id = call.id.clone();
         let view = ToolView {
-            kind: ToolKind::from_name(&call.name),
+            kind: ToolKind::from_name_and_args(&call.name, Some(&call.arguments)),
             name: call.name,
             arguments: call.arguments,
             metadata: ToolMetadata::default(),
@@ -282,7 +287,9 @@ impl InteractiveToolPresenter {
             arguments: serde_json::Value::Object(Default::default()),
             metadata: metadata.clone(),
         });
-        view.kind = ToolKind::from_name(&name);
+        // Keep any format already classified from proposed args; recompute from
+        // name + stored args so a late start does not clobber str_replace etc.
+        view.kind = ToolKind::from_name_and_args(&name, Some(&view.arguments));
         view.name = name;
         view.metadata = metadata;
         presentation(view, start_card(view, &self.cwd))

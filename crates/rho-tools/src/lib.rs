@@ -3,7 +3,7 @@
 //! The crate has two layers:
 //!
 //! - Application tools ([`tool::Tool`]) implement the user-facing built-ins
-//!   (`bash`, `read_file`, `write`, `edit` (hashline), `list_dir`)
+//!   (`bash`, `read_file`, `write`, one selected edit surface, `list_dir`)
 //!   with output truncation, diffs, and display formatting.
 //! - Workspace searches implement `grep` and `glob` over the shared
 //!   [`workspace_walk`] walker.
@@ -13,6 +13,7 @@
 
 pub mod cancellation;
 pub mod document;
+mod edit_format;
 pub mod image_format;
 mod path_glob;
 mod paths;
@@ -27,6 +28,7 @@ pub mod tool_card;
 pub mod workspace_mutation;
 pub mod workspace_walk;
 
+pub mod apply_patch;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod bash;
 pub mod diff;
@@ -44,12 +46,14 @@ mod sdk_search;
 pub mod sdk_security;
 pub mod sdk_shell;
 pub mod sdk_support;
+pub mod str_replace;
 pub mod write_file;
 
 pub use cancellation::RunCancellation;
+pub use edit_format::EditFormat;
 pub use image_format::{supported_image_mime_type, MAX_IMAGE_FILE_BYTES};
 pub use process_env::apply_process_environment;
-pub use sdk_adapter::{coding_tool, coding_tools, CodingToolKind, CodingToolOptions};
+pub use sdk_adapter::{coding_tool, coding_tools, CodingToolKind, CodingToolOptions, EditToolKind};
 pub use sdk_shell::{shell_invocation, shell_tool, ShellToolOptions};
 pub use tool::{compact_display_path, resolve_path, truncate, Tool, ToolContext, ToolError};
 pub use workspace_mutation::{UntrackedWorkspaceEffect, WorkspaceMutationObserver};

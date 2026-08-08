@@ -116,6 +116,23 @@ provider = "unknown"
     );
 }
 
+// Covers: each configured edit preference selects its distinct model-facing tool
+// Owner: config load
+#[test]
+fn edit_tool_preferences_load_from_behavior_config() {
+    for (value, expected) in [
+        ("hashline", super::super::EditTool::Hashline),
+        ("apply_patch", super::super::EditTool::ApplyPatch),
+        ("str_replace", super::super::EditTool::StrReplace),
+    ] {
+        let (config, warnings) =
+            parse_settings(&format!("[behavior]\nedit_tool = {value:?}\n")).unwrap();
+
+        assert_eq!(config.edit_tool, expected);
+        assert_eq!(warnings, Vec::<ConfigWarning>::new());
+    }
+}
+
 // Covers: known keys alone produce no warnings
 // Owner: config load
 #[test]

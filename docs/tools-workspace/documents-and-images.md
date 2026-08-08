@@ -43,10 +43,10 @@ They do not page through a PDF or spreadsheet.
 3. Else if the path or bytes look like a supported rich document, run the shared
    extractor and return rendered text.
 4. Else treat the body as UTF-8 text and return a
-   [hashline](/tools-workspace/edit-format) view for `edit` chaining.
+   [hashline](/tools-workspace/edit-format) view for default `edit` chaining.
 
-Rich documents are not hashline-editable. Use their extracted text to reason
-about them; write results back with `write` or `edit` on real source files.
+Rich documents are not editable source files. Use their extracted text to reason
+about them; write results back with `write` or the selected edit tool on real source files.
 
 ## Document extraction
 

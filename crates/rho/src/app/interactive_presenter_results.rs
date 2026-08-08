@@ -109,8 +109,8 @@ pub(super) fn file_diff_card(
 ) -> ToolCard {
     let status = ToolStatus::from_finished(ok);
     let paths = metadata_paths(view, cwd);
-    let arg_paths = if view.kind == ToolKind::Edit {
-        edit_paths(&view.arguments, cwd)
+    let arg_paths = if let ToolKind::Edit(format) = view.kind {
+        edit_paths(format, &view.arguments, cwd)
     } else {
         let path = display_path(&view.arguments, cwd);
         if path.is_empty() {

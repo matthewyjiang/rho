@@ -6,12 +6,17 @@
 
 use std::{
     collections::BTreeMap,
-    fs::OpenOptions,
-    io::{Read, Seek, SeekFrom, Write},
+    io::Read,
     path::{Path, PathBuf},
 };
 
-use crate::{diff::unified_diff, file_mutation::FileMutationOutcome, tool::*};
+use crate::{
+    diff::unified_diff,
+    file_mutation::{
+        lock_for_rewrite, locked_path_identity_matches, rewrite_locked_file, FileMutationOutcome,
+    },
+    tool::*,
+};
 
 use super::{
     apply::apply_ops,
@@ -182,6 +187,14 @@ fn apply_sections_locked(
 fn commit_planned_file(file: &PlannedFile) -> Result<(), ToolError> {
     let display_path = &file.display_path;
     let mut handle = lock_for_rewrite(&file.path, display_path, "")?;
+    if !locked_path_identity_matches(&handle, &file.path, display_path)? {
+        return Err(recovery_error(
+            display_path,
+            &file.original,
+            &file.anchor_lines,
+            "path changed after validation",
+        ));
+    }
     let mut live = String::new();
     handle
         .read_to_string(&mut live)
@@ -194,7 +207,12 @@ fn commit_planned_file(file: &PlannedFile) -> Result<(), ToolError> {
             "changed during edit",
         ));
     }
-    rewrite_locked_file(&mut handle, display_path, &file.outcome.text)
+    rewrite_locked_file(
+        &mut handle,
+        display_path,
+        /*original*/ &file.original,
+        /*updated*/ &file.outcome.text,
+    )
 }
 
 fn recovery_error(
@@ -225,6 +243,12 @@ fn rollback_applied(applied: &[AppliedFile<'_>]) -> Result<(), ToolError> {
 
 fn rollback_one(file: &AppliedFile<'_>) -> Result<(), ToolError> {
     let mut handle = lock_for_rewrite(file.path, file.display_path, " for rollback")?;
+    if !locked_path_identity_matches(&handle, file.path, file.display_path)? {
+        return Err(ToolError::Message(format!(
+            "{}: path changed after apply; refusing rollback",
+            file.display_path
+        )));
+    }
     let mut live = String::new();
     handle.read_to_string(&mut live).map_err(|error| {
         ToolError::Message(format!(
@@ -238,68 +262,12 @@ fn rollback_one(file: &AppliedFile<'_>) -> Result<(), ToolError> {
             file.display_path
         )));
     }
-    rewrite_locked_file(&mut handle, file.display_path, file.original)
-}
-
-fn lock_for_rewrite(
-    path: &Path,
-    display_path: &str,
-    context: &str,
-) -> Result<std::fs::File, ToolError> {
-    use std::time::{Duration, Instant};
-
-    const LOCK_TIMEOUT: Duration = Duration::from_secs(1);
-    const INITIAL_BACKOFF: Duration = Duration::from_millis(2);
-    const MAX_BACKOFF: Duration = Duration::from_millis(50);
-
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(path)
-        .map_err(|error| {
-            ToolError::Message(format!("could not open {display_path}{context}: {error}"))
-        })?;
-
-    let deadline = Instant::now() + LOCK_TIMEOUT;
-    let mut backoff = INITIAL_BACKOFF;
-    loop {
-        match file.try_lock() {
-            Ok(()) => return Ok(file),
-            Err(std::fs::TryLockError::WouldBlock) => {
-                if Instant::now() >= deadline {
-                    return Err(ToolError::Message(format!(
-                        "could not lock {display_path}{context}: timed out after {}ms",
-                        LOCK_TIMEOUT.as_millis()
-                    )));
-                }
-                std::thread::sleep(backoff);
-                backoff = (backoff * 2).min(MAX_BACKOFF);
-            }
-            Err(std::fs::TryLockError::Error(error)) => {
-                return Err(ToolError::Message(format!(
-                    "could not lock {display_path}{context}: {error}"
-                )));
-            }
-        }
-    }
-}
-
-fn rewrite_locked_file(
-    file: &mut std::fs::File,
-    display_path: &str,
-    contents: &str,
-) -> Result<(), ToolError> {
-    file.seek(SeekFrom::Start(0)).map_err(|error| {
-        ToolError::Message(format!("could not rewrite {display_path}: {error}"))
-    })?;
-    file.set_len(0).map_err(|error| {
-        ToolError::Message(format!("could not rewrite {display_path}: {error}"))
-    })?;
-    file.write_all(contents.as_bytes())
-        .map_err(|error| ToolError::Message(format!("could not write {display_path}: {error}")))?;
-    file.flush()
-        .map_err(|error| ToolError::Message(format!("could not write {display_path}: {error}")))?;
-    Ok(())
+    rewrite_locked_file(
+        &mut handle,
+        file.display_path,
+        /*original*/ file.applied_text,
+        /*updated*/ file.original,
+    )
 }
 
 /// Span endpoints and insert anchors for focused live snapshots on failure.

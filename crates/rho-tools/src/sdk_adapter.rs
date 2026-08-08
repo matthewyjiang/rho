@@ -17,165 +17,76 @@
 //! SDK runtime. They do not participate in tool presentation, which is derived
 //! from SDK events and metadata by the application presenter.
 
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
 use serde::Deserialize;
 use serde_json::Value;
 
 use rho_sdk::{
     tool::{
-        AuthorizedToolContext, OperationKind, PreparedToolInvocation, Tool, ToolAsset, ToolError,
-        ToolErrorKind, ToolFuture, ToolInvocation, ToolMetadata, ToolOutput,
-        ToolPreparationContext, ToolPrepareFuture, ToolProgress, ToolResource, ToolResourceAccess,
-        ToolSecurity,
+        AuthorizedToolContext, OperationKind, PreparedToolInvocation, Tool, ToolAsset, ToolFuture,
+        ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture,
+        ToolProgress, ToolResource, ToolResourceAccess, ToolSecurity,
     },
-    CapabilityKind, CapabilityRequest, ResolvedWorkspacePath, Workspace, WorkspacePathState,
+    CapabilityKind, ResolvedWorkspacePath, Workspace, WorkspacePathState,
 };
 
-#[cfg(test)]
-use rho_sdk::tool::{DuplicateToolName, ToolRegistry};
-
 use crate::{
-    sdk_search::{GlobTool, GrepTool},
     sdk_support::{
         check_preparation_cancelled, map_app_error, map_path_error, parse_args, path_request,
         preparation_workspace, PathCapability,
     },
-    tool::{compact_display_path, truncate, Tool as AppTool, ToolError as AppToolError},
-    DEFAULT_MAX_OUTPUT_BYTES,
+    tool::{compact_display_path, truncate, Tool as AppTool},
 };
 
 use super::{
-    file_mutation::FileMutationOutcome,
-    hashline::{
-        apply_prepared_sections, claim_unique_path, parse_hashline, proposed_sections, Edit,
-        PreparedSection,
-    },
     list_dir::{list_directory, ListDir},
     read_file::{read_file_content, read_file_display_content, ReadFile},
     write_file::{write_file_content, WriteFile},
 };
 
-/// Options for coding tools registered on an SDK runtime.
-#[derive(Clone)]
-pub struct CodingToolOptions {
+#[path = "sdk_adapter/edit.rs"]
+mod edit;
+pub(crate) fn build_edit_sdk_tool(
+    format: crate::EditFormat,
     max_output_bytes: usize,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
+) -> Arc<dyn Tool> {
+    edit::build_sdk_tool(format, max_output_bytes, mutation_observer)
 }
 
-impl Default for CodingToolOptions {
-    fn default() -> Self {
-        Self {
-            max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
-            mutation_observer: None,
-        }
-    }
-}
+#[path = "sdk_adapter/mutation.rs"]
+mod mutation;
+use mutation::{mutation_output, run_observed_mutation};
 
-impl CodingToolOptions {
-    pub fn new() -> Self {
-        Self::default()
-    }
+#[path = "sdk_adapter/registry.rs"]
+mod registry;
+pub use registry::{coding_tool, coding_tools, CodingToolKind, CodingToolOptions};
 
-    pub fn max_output_bytes(mut self, max_output_bytes: usize) -> Self {
-        self.max_output_bytes = max_output_bytes.max(1);
-        self
-    }
-
-    pub fn mutation_observer(
-        mut self,
-        observer: Arc<dyn crate::WorkspaceMutationObserver>,
-    ) -> Self {
-        self.mutation_observer = Some(observer);
-        self
-    }
-
-    #[cfg(test)]
-    pub fn output_budget(&self) -> usize {
-        self.max_output_bytes
-    }
-}
-
-/// Registers the workspace coding tools on an SDK registry.
+/// Compatibility name for the canonical [`crate::EditFormat`] type.
 ///
-/// The tools do not grant capabilities by themselves. Hosts must attach a
-/// workspace and a non-default policy on the runtime before reads or writes
-/// succeed.
-#[cfg(test)]
-pub fn register_coding_tools(
-    registry: &mut ToolRegistry,
-    options: CodingToolOptions,
-) -> Result<(), DuplicateToolName> {
-    for tool in coding_tools(options) {
-        registry.register_shared(tool)?;
-    }
-    Ok(())
+/// # Next major
+///
+/// NEXT_MAJOR(rho-tools): remove the EditToolKind alias and use EditFormat directly.
+///
+/// The alias keeps source compatibility for 1.x hosts. New code should name
+/// [`crate::EditFormat`].
+pub type EditToolKind = crate::EditFormat;
+
+// Tool selection and registry mechanics live in `registry`; adapters below
+// only translate individual filesystem operations to the SDK contract.
+
+pub(super) struct ListDirTool {
+    pub(super) max_output_bytes: usize,
 }
 
-/// A workspace coding tool selected by a host capability set.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CodingToolKind {
-    ListDir,
-    ReadFile,
-    WriteFile,
-    Edit,
-    Grep,
-    Glob,
+pub(super) struct ReadFileTool {
+    pub(super) max_output_bytes: usize,
 }
 
-/// Returns one selected SDK coding tool.
-pub fn coding_tool(kind: CodingToolKind, options: CodingToolOptions) -> Arc<dyn Tool> {
-    match kind {
-        CodingToolKind::ListDir => Arc::new(ListDirTool {
-            max_output_bytes: options.max_output_bytes,
-        }),
-        CodingToolKind::ReadFile => Arc::new(ReadFileTool {
-            max_output_bytes: options.max_output_bytes,
-        }),
-        CodingToolKind::WriteFile => Arc::new(WriteFileTool {
-            max_output_bytes: options.max_output_bytes,
-            mutation_observer: options.mutation_observer.clone(),
-        }),
-        CodingToolKind::Edit => Arc::new(EditTool {
-            max_output_bytes: options.max_output_bytes,
-            mutation_observer: options.mutation_observer.clone(),
-        }),
-        CodingToolKind::Grep => Arc::new(GrepTool::new(options.max_output_bytes)),
-        CodingToolKind::Glob => Arc::new(GlobTool::new(options.max_output_bytes)),
-    }
-}
-
-/// Returns all SDK coding tools as shared trait objects.
-pub fn coding_tools(options: CodingToolOptions) -> Vec<Arc<dyn Tool>> {
-    [
-        CodingToolKind::ListDir,
-        CodingToolKind::ReadFile,
-        CodingToolKind::WriteFile,
-        CodingToolKind::Edit,
-        CodingToolKind::Grep,
-        CodingToolKind::Glob,
-    ]
-    .into_iter()
-    .map(|kind| coding_tool(kind, options.clone()))
-    .collect()
-}
-
-struct ListDirTool {
-    max_output_bytes: usize,
-}
-
-struct ReadFileTool {
-    max_output_bytes: usize,
-}
-
-struct WriteFileTool {
-    max_output_bytes: usize,
-    mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
-}
-
-struct EditTool {
-    max_output_bytes: usize,
-    mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
+pub(super) struct WriteFileTool {
+    pub(super) max_output_bytes: usize,
+    pub(super) mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
 }
 
 #[derive(Deserialize)]
@@ -194,12 +105,6 @@ struct ReadArgs {
 struct WriteArgs {
     path: String,
     content: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct EditArgs {
-    input: String,
 }
 
 impl Tool for ListDirTool {
@@ -383,111 +288,6 @@ impl Tool for WriteFileTool {
     }
 }
 
-impl Tool for EditTool {
-    fn spec(&self) -> rho_sdk::model::ToolSpec {
-        Edit.spec()
-    }
-
-    fn security(&self) -> ToolSecurity {
-        ToolSecurity::built_in([CapabilityKind::Write, CapabilityKind::Read])
-    }
-
-    fn start_metadata(&self, arguments: &Value) -> ToolMetadata {
-        edit_start_metadata(arguments)
-    }
-
-    fn prepare<'a>(
-        &'a self,
-        invocation: ToolInvocation,
-        context: ToolPreparationContext,
-    ) -> ToolPrepareFuture<'a> {
-        Box::pin(async move {
-            check_preparation_cancelled(&context)?;
-            let metadata = edit_start_metadata(invocation.arguments());
-            let args: EditArgs = parse_args(invocation.into_arguments())?;
-            let sections = parse_hashline(&args.input).map_err(|error| {
-                ToolError::new(ToolErrorKind::InvalidArguments, error.to_string())
-            })?;
-            let workspace = preparation_workspace(&context)?.clone();
-            // Resolve while collecting so the executor inherits the authorized
-            // target for each section instead of re-parsing the document.
-            let mut targets = EditTargetSet::default();
-            let mut prepared = Vec::with_capacity(sections.len());
-            for section in sections {
-                let path = targets.push_existing(&workspace, &section.path)?;
-                prepared.push(PreparedSection {
-                    display_path: compact_display_path(workspace.root(), &section.path),
-                    section,
-                    path,
-                });
-            }
-            let EditTargetSet {
-                resolved,
-                accesses,
-                capabilities,
-                claimed_as: _,
-            } = targets;
-
-            Ok(PreparedToolInvocation::resource_aware(
-                accesses,
-                capabilities,
-                metadata,
-                move |context| {
-                    execute_prepared_edit(
-                        self.max_output_bytes,
-                        self.mutation_observer.clone(),
-                        workspace,
-                        resolved,
-                        prepared,
-                        context,
-                    )
-                },
-            ))
-        })
-    }
-}
-
-/// Existing edit targets collected during prepare. Edit never creates paths, so
-/// this set has no missing-write / rename seam.
-///
-/// Duplicate paths use [`claim_unique_path`] (same predicate as execute) and map
-/// to `InvalidArguments` so authorization never starts for a multi-claim doc.
-#[derive(Default)]
-struct EditTargetSet {
-    resolved: std::collections::BTreeMap<PathBuf, ResolvedWorkspacePath>,
-    /// Document claim string per canonical path - shared uniqueness owner.
-    claimed_as: std::collections::BTreeMap<PathBuf, String>,
-    accesses: Vec<ToolResourceAccess>,
-    capabilities: Vec<CapabilityRequest>,
-}
-
-impl EditTargetSet {
-    fn push_existing(
-        &mut self,
-        workspace: &Workspace,
-        requested_path: &str,
-    ) -> Result<PathBuf, ToolError> {
-        // Existing edit targets are rewritten in place; resolve for write so path
-        // policy matches mutation rather than a read-only open.
-        let resolved = workspace
-            .resolve_for_write(requested_path)
-            .map_err(map_path_error)?;
-        let canonical = resolved.path().to_path_buf();
-        claim_unique_path(&mut self.claimed_as, canonical.clone(), requested_path)
-            .map_err(|message| ToolError::new(ToolErrorKind::InvalidArguments, message))?;
-        self.accesses
-            .push(ToolResourceAccess::exclusive(ToolResource::workspace_path(
-                resolved.path(),
-            )));
-        self.capabilities
-            .push(path_request(&resolved, PathCapability::Write, "edit"));
-        self.capabilities
-            .push(path_request(&resolved, PathCapability::Read, "edit"));
-        self.resolved.insert(canonical.clone(), resolved);
-        Ok(canonical)
-    }
-}
-
 fn execute_prepared_write(
     max_output_bytes: usize,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
@@ -517,79 +317,10 @@ fn execute_prepared_write(
     })
 }
 
-fn execute_prepared_edit(
-    max_output_bytes: usize,
-    mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
-    workspace: Workspace,
-    resolved: std::collections::BTreeMap<PathBuf, ResolvedWorkspacePath>,
-    sections: Vec<PreparedSection>,
-    context: AuthorizedToolContext,
-) -> ToolFuture<'static> {
-    Box::pin(async move {
-        let _ = context
-            .progress()
-            .send(
-                ToolProgress::message(format!("applying edit ({} path(s))", resolved.len()))
-                    .metadata(ToolMetadata::new().operation(OperationKind::Write)),
-            )
-            .await;
-        let mutation_paths = resolved
-            .values()
-            .map(ResolvedWorkspacePath::path)
-            .collect::<Vec<_>>();
-        for prepared in resolved.values() {
-            workspace.revalidate(prepared).map_err(map_path_error)?;
-        }
-        let outcome = run_observed_mutation(
-            mutation_observer.as_ref(),
-            &mutation_paths,
-            apply_prepared_sections(sections, max_output_bytes),
-        )
-        .await?;
-        Ok(mutation_output(outcome))
-    })
-}
+// Mutation observation is shared by write and every edit adapter; its paired
+// before/after semantics live in the focused `mutation` module.
 
-async fn run_observed_mutation<T>(
-    observer: Option<&Arc<dyn crate::WorkspaceMutationObserver>>,
-    paths: &[&std::path::Path],
-    op: impl std::future::Future<Output = Result<T, AppToolError>>,
-) -> Result<T, ToolError> {
-    if let Some(observer) = observer {
-        observer
-            .before_mutation(paths)
-            .await
-            .map_err(|error| ToolError::new(ToolErrorKind::Execution, error))?;
-    }
-    let op_result = op.await.map_err(map_app_error);
-    let capture_result = match observer {
-        Some(observer) => observer
-            .after_mutation(paths)
-            .await
-            .map_err(|error| ToolError::new(ToolErrorKind::Execution, error)),
-        None => Ok(()),
-    };
-    match (op_result, capture_result) {
-        (Ok(value), Ok(())) => Ok(value),
-        (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
-        (Err(op_error), Err(capture_error)) => Err(ToolError::new(
-            ToolErrorKind::Execution,
-            format!("{op_error}; failed to capture resulting workspace state: {capture_error}"),
-        )),
-    }
-}
-
-fn mutation_output(outcome: FileMutationOutcome) -> ToolOutput {
-    let mut metadata = ToolMetadata::new()
-        .operation(OperationKind::Write)
-        .diff(outcome.diff);
-    for path in outcome.display_paths {
-        metadata = metadata.affected_path(path);
-    }
-    ToolOutput::text(outcome.content).metadata(metadata)
-}
-
-fn write_accesses(path: &ResolvedWorkspacePath) -> Vec<ToolResourceAccess> {
+pub(super) fn write_accesses(path: &ResolvedWorkspacePath) -> Vec<ToolResourceAccess> {
     let mut accesses = vec![ToolResourceAccess::exclusive(ToolResource::workspace_path(
         path.path(),
     ))];
@@ -609,20 +340,10 @@ fn write_accesses(path: &ResolvedWorkspacePath) -> Vec<ToolResourceAccess> {
     accesses
 }
 
-fn path_start_metadata(arguments: &Value, operation: OperationKind) -> ToolMetadata {
+pub(super) fn path_start_metadata(arguments: &Value, operation: OperationKind) -> ToolMetadata {
     let mut metadata = ToolMetadata::new().operation(operation);
     if let Some(path) = arguments.get("path").and_then(Value::as_str) {
         metadata = metadata.affected_path(path);
-    }
-    metadata
-}
-
-fn edit_start_metadata(arguments: &Value) -> ToolMetadata {
-    let mut metadata = ToolMetadata::new().operation(OperationKind::Write);
-    if let Some(input) = arguments.get("input").and_then(Value::as_str) {
-        for section in proposed_sections(input) {
-            metadata = metadata.affected_path(section.path);
-        }
     }
     metadata
 }

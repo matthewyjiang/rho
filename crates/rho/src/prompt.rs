@@ -83,17 +83,35 @@ For display math, use closed `$$ ... $$` blocks. The TUI renders a limited TeX s
 Inline `$...$` math renders only when it fits one text row: simple superscripts or subscripts (`x^2`, `a_i`), Greek letters, and symbols. Taller inline formulas (`\frac`, summation limits, mixed `x_i^2` scripts) stay raw source text, so put those in `$$` blocks instead.
 "#,
     );
-    if tools.iter().any(|tool| tool.name == "grep") {
+    let grep_available = tools.iter().any(|tool| tool.name == "grep");
+    if grep_available {
         text.push_str(
             r#"
-Prefer the `grep` tool over shell `rg` or `grep` for workspace content search. Content mode returns chainable `[path#TAG]` headers and match line numbers (`N | preview`) so you can target `edit` anchors. Match text is search preview only and may be truncated - copy TAG and line numbers, not preview bodies, into PUT rows; use `read_file` when you need exact line text. Use `files_with_matches` or `count` when you only need paths or tallies. Prefer `glob` over shell `fd` or `find` for file discovery when it is available.
+Prefer the `grep` tool over shell `rg` or `grep` for workspace content search. Use `files_with_matches` or `count` when you only need paths or tallies. Prefer `glob` over shell `fd` or `find` for file discovery when it is available.
 "#,
         );
     }
+    let selected_edit_tool = tools
+        .iter()
+        .find(|tool| rho_tools::EditFormat::is_edit_tool_name(tool.name.as_str()));
+    if let Some(tool) = selected_edit_tool {
+        text.push_str(&format!(
+            "\nPrefer the `{}` tool over shell or script-based rewrites for existing UTF-8 files. Prefer `write` only to create or fully rewrite a file.\n",
+            tool.name
+        ));
+    }
+    // Hashline-only policy: only the hashline `edit` surface needs TAG/PUT guidance.
     if tools.iter().any(|tool| tool.name == "edit") {
+        if grep_available {
+            text.push_str(
+                r#"
+`grep` content mode returns chainable `[path#TAG]` headers and match line numbers (`N | preview`) for hash-line edit anchors. Match text is preview only and may be truncated - copy TAG and line numbers, not preview bodies, into PUT rows; use `read_file` when you need exact line text.
+"#,
+            );
+        }
         text.push_str(
             r#"
-Use `edit` (not shell or Python rewrites) for existing UTF-8 files once you have a fresh `[path#TAG]`. Copy locator forms and the PUT body/span contract from the tool description (`PUT 12:` never `PUT 12.:`). Put every hunk for one path in a single document; do not stack two `edit` calls on the same path in one batch. After a structural edit the tool returns TAG + ops summary without chainable body lines — re-read before further ops on that path. Prefer `write` only to create or fully rewrite a file.
+Use `edit` (not shell or Python rewrites) for existing UTF-8 files once you have a fresh `[path#TAG]`. Copy locator forms and the PUT body/span contract from the tool description (`PUT 12:` never `PUT 12.:`). Put every hunk for one path in a single document; do not stack two `edit` calls on the same path in one batch. After a structural edit the tool returns TAG + ops summary without chainable body lines - re-read before further ops on that path. Prefer `write` only to create or fully rewrite a file.
 "#,
         );
     }
@@ -405,28 +423,44 @@ mod tests {
         let disabled = system_prompt_with_home(&[], project.path(), None).text;
 
         assert!(enabled.contains("Prefer the `grep` tool over shell `rg` or `grep`"));
-        assert!(enabled.contains("chainable `[path#TAG]`"));
-        assert!(enabled.contains("not preview bodies"));
-        assert!(enabled.contains("`N | preview`"));
+        assert!(!enabled.contains("chainable `[path#TAG]`"));
         assert!(!disabled.contains("Prefer the `grep` tool over shell `rg` or `grep`"));
     }
 
     #[test]
-    fn includes_edit_policy_only_when_edit_tool_is_available() {
+    fn includes_selected_edit_policy_and_hashline_details_only_for_edit() {
         let project = TempDir::new().unwrap();
-        let edit_tool = ToolSpec {
-            name: "edit".into(),
-            description: "edit".into(),
-            input_schema: serde_json::json!({}),
-        };
+        for (config_name, tool_name, expect_hashline) in [
+            ("hashline", "edit", true),
+            ("apply_patch", "apply_patch", false),
+            ("str_replace", "str_replace", false),
+        ] {
+            let tool = ToolSpec {
+                name: tool_name.into(),
+                description: "edit".into(),
+                input_schema: serde_json::json!({}),
+            };
 
-        let enabled = system_prompt_with_home(&[edit_tool], project.path(), None).text;
+            let prompt = system_prompt_with_home(&[tool], project.path(), None).text;
+
+            assert!(
+                prompt.contains(&format!("Prefer the `{tool_name}` tool")),
+                "config {config_name}"
+            );
+            assert_eq!(
+                prompt.contains("never `PUT 12.:`"),
+                expect_hashline,
+                "config {config_name}"
+            );
+            assert_eq!(
+                prompt.contains("without chainable body lines"),
+                expect_hashline,
+                "config {config_name}"
+            );
+        }
+
         let disabled = system_prompt_with_home(&[], project.path(), None).text;
-
-        assert!(enabled.contains("Use `edit` (not shell or Python rewrites)"));
-        assert!(enabled.contains("never `PUT 12.:`"));
-        assert!(enabled.contains("without chainable body lines"));
-        assert!(!disabled.contains("Use `edit` (not shell or Python rewrites)"));
+        assert!(!disabled.contains("over shell or script-based rewrites"));
     }
 
     #[test]

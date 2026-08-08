@@ -6,6 +6,7 @@ use rho_sdk::ProcessEnvironment;
 pub(super) fn sdk_bundle(
     capabilities: &AgentCapabilities,
     max_output_bytes: usize,
+    config_edit_tool: crate::config::EditTool,
     process_environment: ProcessEnvironment,
     mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
 ) -> super::sdk_registry::StaticToolBundle {
@@ -13,6 +14,7 @@ pub(super) fn sdk_bundle(
 
     let options = rho_tools::CodingToolOptions::new()
         .max_output_bytes(max_output_bytes)
+        .edit_tool(config_edit_tool)
         .mutation_observer(Arc::clone(&mutation_observer));
     let mut tools = Vec::new();
     for (capability, kind) in [

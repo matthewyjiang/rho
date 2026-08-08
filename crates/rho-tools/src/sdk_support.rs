@@ -119,3 +119,10 @@ pub(crate) fn map_app_error(error: AppToolError) -> ToolError {
         AppToolError::Message(message) => ToolError::new(ToolErrorKind::Execution, message),
     }
 }
+
+pub(crate) fn map_invalid_app_error(error: AppToolError) -> ToolError {
+    match error {
+        AppToolError::Message(message) => ToolError::new(ToolErrorKind::InvalidArguments, message),
+        other => map_app_error(other),
+    }
+}

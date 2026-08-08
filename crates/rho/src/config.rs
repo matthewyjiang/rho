@@ -77,6 +77,8 @@ pub struct Config {
     pub web_search_hosted: bool,
     /// Client-side backup backend used when hosted search is off or unsupported.
     pub web_search_provider: SearchProvider,
+    /// Selects the one built-in file edit tool exposed to models.
+    pub edit_tool: EditTool,
     pub check_for_updates: bool,
     pub enable_subagents: bool,
     /// Offer the `advisor` tool, which reviews the session with the model
@@ -135,6 +137,7 @@ impl Default for Config {
             favorite_models: Vec::new(),
             web_search_hosted: true,
             web_search_provider: SearchProvider::Auto,
+            edit_tool: EditTool::default(),
             check_for_updates: true,
             enable_subagents: true,
             advisor_mode: false,
@@ -252,6 +255,9 @@ impl<'de> Deserialize<'de> for SearchProvider {
         value.parse().map_err(serde::de::Error::custom)
     }
 }
+
+/// Built-in file edit surface exposed to models.
+pub type EditTool = rho_tools::EditFormat;
 
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub(crate) struct LegacyWebSearchCredentials {

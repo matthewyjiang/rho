@@ -4,12 +4,17 @@
 Release prep must not hide registry-boundary breaks behind workspace path
 patches. Rule:
 
-- If an internal dependency's exact workspace version already exists on
+- If every internal dependency's exact workspace version already exists on
   crates.io (including yanked releases), verify against the registry. Do not
-  path-patch that dependency.
-- If that version is not on crates.io yet, keep a path patch so a coordinated
-  same-PR cut can still package before the dependency is published.
-  "unpublished".
+  path-patch any dependency.
+- If any direct internal dependency version is not on crates.io yet, path-patch
+  the full transitive internal dependency closure of the package under test.
+  Path-source crates keep `path =` edges to siblings; patching only the
+  unpublished leaf would load a second copy of shared crates such as
+  `rho-sdk` and break type identity. The closure patch keeps one graph so a
+  coordinated same-PR cut can still package before dependencies are published.
+- crates.io transport or HTTP failures fail the check. A timeout or 500 is not
+  treated as "unpublished".
 
 Used by scripts/check_crate_publish_prep.sh and the dry-run path in
 scripts/publish_workspace_crates.sh.
@@ -239,6 +244,44 @@ def path_patches_for_dependencies(
     return tuple(patches)
 
 
+def internal_dependency_closure(
+    package_name: str,
+    metadata: dict[str, object],
+) -> tuple[InternalDependency, ...]:
+    """Return every transitive internal path dep of package_name, sorted."""
+    packages = load_workspace_packages(metadata)
+    adjacency: dict[str, tuple[InternalDependency, ...]] = {}
+    for name in INTERNAL_PACKAGE_NAMES:
+        adjacency[name] = internal_dependencies_for(name, metadata)
+
+    if package_name not in INTERNAL_PACKAGE_NAMES:
+        raise RuntimeError(f"package {package_name!r} not found in cargo metadata")
+
+    ordered: list[InternalDependency] = []
+    seen: set[str] = set()
+    stack = list(reversed(adjacency[package_name]))
+    while stack:
+        dep = stack.pop()
+        if dep.package_name in seen:
+            continue
+        seen.add(dep.package_name)
+        # Prefer the workspace package root so patches stay stable even if a
+        # dependent lists a slightly different path spelling.
+        workspace = packages[dep.package_name]
+        ordered.append(
+            InternalDependency(
+                package_name=dep.package_name,
+                version=workspace.version,
+                package_root=workspace.package_root,
+            )
+        )
+        for child in reversed(adjacency.get(dep.package_name, ())):
+            if child.package_name not in seen:
+                stack.append(child)
+    ordered.sort(key=lambda item: item.package_name)
+    return tuple(ordered)
+
+
 def select_path_patches(
     package_name: str,
     *,
@@ -247,14 +290,27 @@ def select_path_patches(
     version_available: VersionProbe | None = None,
     cache: dict[tuple[str, str], bool] | None = None,
 ) -> tuple[PathPatch, ...]:
-    """Return path patches required to verify package_name for publish."""
+    """Return path patches required to verify package_name for publish.
+
+    Published-only graphs stay on crates.io so missing exports fail closed.
+    When any direct internal dep is unpublished, path-patch the full internal
+    closure so path-source crates share one type identity with the consumer.
+    """
     if metadata is None:
         metadata = load_metadata(root=root)
     probe = version_available or crates_io_version_available
-    return path_patches_for_dependencies(
-        internal_dependencies_for(package_name, metadata),
+    direct = internal_dependencies_for(package_name, metadata)
+    unpublished = path_patches_for_dependencies(
+        direct,
         version_available=probe,
         cache=cache,
+    )
+    if not unpublished:
+        return ()
+    closure = internal_dependency_closure(package_name, metadata)
+    return tuple(
+        PathPatch(package_name=dep.package_name, path=dep.package_root)
+        for dep in closure
     )
 
 

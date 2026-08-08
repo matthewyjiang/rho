@@ -4189,7 +4189,7 @@ dependencies = [
 
 [[package]]
 name = "rho-agent-tools"
-version = "0.12.6"
+version = "0.13.0"
 dependencies = [
  "calamine",
  "flate2",
