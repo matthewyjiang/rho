@@ -77,7 +77,7 @@ impl Tool for StrReplace {
                 &compact_display_path(&ctx.cwd, &args.path),
                 &args.old_string,
                 &args.new_string,
-                args.replace_all,
+                /*replace_all*/ args.replace_all,
                 ctx.max_output_bytes,
             )
             .await?;

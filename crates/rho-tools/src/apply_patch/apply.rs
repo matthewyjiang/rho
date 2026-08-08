@@ -41,8 +41,8 @@ pub(crate) async fn apply_hunks(
         resolve_path,
         display_path,
         max_output_bytes,
-        None,
-        None,
+        /*rewrite_fault*/ None,
+        /*create_fault*/ None,
     )
     .await
 }

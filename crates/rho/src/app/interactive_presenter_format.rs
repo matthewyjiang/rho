@@ -5,8 +5,7 @@ use rho_tools::{
     resolve_path,
     tool::compact_display_path,
     tool_card::{
-        DiffCardChange, DiffCardFile, ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader,
-        ToolStatus,
+        ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus,
     },
 };
 
@@ -17,6 +16,10 @@ use results::{
     get_search_content_card, process_result_card, push_error_output, search_result_card,
     shell_card, shell_result_card, split_body_lines, web_search_card, EmptyDiffState,
 };
+
+#[path = "interactive_presenter_apply_patch.rs"]
+mod apply_patch_format;
+use apply_patch_format::apply_patch_card;
 
 use super::{agent_format, ToolKind, ToolPresentation, ToolView};
 
@@ -250,60 +253,6 @@ fn edit_preview_card(
             ),
         ),
     }
-}
-
-fn apply_patch_card(
-    arguments: &serde_json::Value,
-    cwd: &std::path::Path,
-    status: ToolStatus,
-    trailing_line: rho_tools::apply_patch::ProposedDiffTrailingLine,
-) -> ToolCard {
-    let Some(input) = arguments.get("input").and_then(serde_json::Value::as_str) else {
-        return kind_card(
-            status,
-            ToolKind::Edit(rho_tools::EditFormat::ApplyPatch),
-            ToolHeader::call("apply_patch", None),
-        );
-    };
-    let proposed = rho_tools::apply_patch::proposed_diff_lenient(input, trailing_line);
-    let files = proposed
-        .files
-        .into_iter()
-        .map(|file| {
-            use rho_tools::apply_patch::ProposedDiffOperation;
-            let change = match file.operation {
-                ProposedDiffOperation::Delete => DiffCardChange::Delete,
-                ProposedDiffOperation::Add | ProposedDiffOperation::Update => {
-                    DiffCardChange::Content
-                }
-            };
-            let path = compact_display_path(cwd, &file.display_path);
-            let source_path = match (&file.source_path, &file.destination_path) {
-                (Some(source), Some(destination)) if source != destination => {
-                    Some(compact_display_path(cwd, source))
-                }
-                _ => None,
-            };
-            DiffCardFile {
-                path,
-                source_path,
-                change,
-                stats: file
-                    .added_lines
-                    .zip(file.removed_lines)
-                    .filter(|(added, removed)| *added > 0 || *removed > 0),
-                rows: file.rows,
-            }
-        })
-        .collect::<Vec<_>>();
-    diff_card(
-        status,
-        "apply_patch",
-        Vec::new(),
-        files,
-        EmptyDiffState::Silent,
-        proposed.truncated,
-    )
 }
 
 fn edit_document_card(

@@ -1,10 +1,8 @@
 //! Canonical built-in file edit format registry.
 
-use std::{fmt, str::FromStr, sync::Arc};
+use std::{fmt, str::FromStr};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-use crate::sdk_adapter::build_edit_sdk_tool;
 
 /// A built-in file edit surface exposed to models.
 ///
@@ -98,7 +96,7 @@ impl EditFormat {
     /// Includes the legacy `edit_file` name so older transcripts and agent
     /// frontmatter still classify as edit. See the type-level next-major note.
     pub fn is_edit_tool_name(name: &str) -> bool {
-        matches!(name, "edit" | "apply_patch" | "str_replace" | "edit_file")
+        Self::from_tool_name(name).is_some()
     }
 
     /// Resolves a model-facing edit tool name.
@@ -106,21 +104,14 @@ impl EditFormat {
     /// Names are unique per format. The legacy model-facing name `edit_file`
     /// still maps to [`Self::StrReplace`]. See the type-level next-major note.
     pub fn from_tool_name(name: &str) -> Option<Self> {
-        match name {
-            "edit" => Some(Self::Hashline),
-            "apply_patch" => Some(Self::ApplyPatch),
-            // NEXT_MAJOR(rho-tools): drop `edit_file` once only `str_replace` remains.
-            "str_replace" | "edit_file" => Some(Self::StrReplace),
-            _ => None,
+        // NEXT_MAJOR(rho-tools): drop `edit_file` once only `str_replace` remains.
+        if name == "edit_file" {
+            return Some(Self::StrReplace);
         }
-    }
-
-    pub(crate) fn build_sdk_tool(
-        self,
-        max_output_bytes: usize,
-        mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
-    ) -> Arc<dyn rho_sdk::tool::Tool> {
-        build_edit_sdk_tool(self, max_output_bytes, mutation_observer)
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|format| format.tool_name() == name)
     }
 }
 

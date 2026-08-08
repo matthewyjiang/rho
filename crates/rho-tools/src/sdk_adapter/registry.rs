@@ -82,9 +82,11 @@ pub fn coding_tool(kind: CodingToolKind, options: CodingToolOptions) -> Arc<dyn 
             max_output_bytes: options.max_output_bytes,
             mutation_observer: options.mutation_observer.clone(),
         }),
-        CodingToolKind::Edit => options
-            .edit_tool
-            .build_sdk_tool(options.max_output_bytes, options.mutation_observer.clone()),
+        CodingToolKind::Edit => super::build_edit_sdk_tool(
+            options.edit_tool,
+            options.max_output_bytes,
+            options.mutation_observer.clone(),
+        ),
         CodingToolKind::Grep => Arc::new(GrepTool::new(options.max_output_bytes)),
         CodingToolKind::Glob => Arc::new(GlobTool::new(options.max_output_bytes)),
     }

@@ -372,9 +372,9 @@ async fn apply_one<'a>(
                 rewrite_current(
                     target,
                     display_path,
-                    old_content,
-                    new_content,
-                    rewrite_fault,
+                    /*expected*/ old_content,
+                    /*updated*/ new_content,
+                    /*rewrite_fault*/ rewrite_fault,
                 )
                 .await
                 .map(|()| TransactionEffects::change_only(change))
@@ -495,9 +495,15 @@ pub(super) async fn rollback_one(change: &FileChange) -> Result<(), ToolError> {
             } else {
                 match read_live(target, display_path).await? {
                     LiveText::Content(live) if live == *new_content => {
-                        rewrite_current(target, display_path, new_content, old_content, &None)
-                            .await
-                            .map_err(RewriteFailure::into_tool_error)
+                        rewrite_current(
+                            target,
+                            display_path,
+                            /*expected*/ new_content,
+                            /*updated*/ old_content,
+                            /*rewrite_fault*/ &None,
+                        )
+                        .await
+                        .map_err(RewriteFailure::into_tool_error)
                     }
                     LiveText::Content(live) if live == *old_content => Ok(()),
                     LiveText::Missing | LiveText::Content(_) => {

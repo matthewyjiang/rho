@@ -67,6 +67,15 @@ async fn plan_hunk(
             let requested = validated_path(path)?;
             let display = display_path(&requested);
             let target = resolve_path(&requested)?;
+            // Dangling symlink leaves are invisible to read_optional (NotFound).
+            if std::fs::symlink_metadata(&target)
+                .map(|metadata| metadata.file_type().is_symlink())
+                .unwrap_or(false)
+            {
+                return Err(ToolError::Message(format!(
+                    "Refusing to add '{display}': file already exists"
+                )));
+            }
             if read_optional(&target, &display).await?.is_some() {
                 return Err(ToolError::Message(format!(
                     "Refusing to add '{display}': file already exists"

@@ -454,7 +454,7 @@ fn execute_prepared_string_edit(
                 &display,
                 &args.old_string,
                 &args.new_string,
-                args.replace_all,
+                /*replace_all*/ args.replace_all,
                 max_output_bytes,
             ),
         )

@@ -254,9 +254,12 @@ def internal_dependency_closure(
     for name in INTERNAL_PACKAGE_NAMES:
         adjacency[name] = internal_dependencies_for(name, metadata)
 
+    if package_name not in INTERNAL_PACKAGE_NAMES:
+        raise RuntimeError(f"package {package_name!r} not found in cargo metadata")
+
     ordered: list[InternalDependency] = []
     seen: set[str] = set()
-    stack = list(reversed(adjacency.get(package_name, ())))
+    stack = list(reversed(adjacency[package_name]))
     while stack:
         dep = stack.pop()
         if dep.package_name in seen:
