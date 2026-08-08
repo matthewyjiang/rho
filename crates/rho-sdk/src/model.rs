@@ -418,12 +418,19 @@ pub const HOSTED_TOOL_ACTIVITY_KIND: &str = "hosted_tool_activity";
 /// this kind to [`crate::RunEvent::ProviderServiceTierFallback`] and does not
 /// retain it as provider-context replay state.
 pub const SERVICE_TIER_FALLBACK_KIND: &str = "service_tier_fallback";
-/// Reserved internal carrier for provider-reported non-reasoning output tokens.
+/// Reserved [`ModelEvent::ProviderContext::kind`] for provider-reported
+/// non-reasoning output tokens.
 ///
-/// Construct with [`ModelEvent::generation_output_tokens`]. Built-in provider
-/// adapters intercept this event before it reaches model-event consumers or
-/// provider-context replay state.
-pub(crate) const GENERATION_OUTPUT_TOKENS_KIND: &str = "generation_output_tokens";
+/// Construct with [`ModelEvent::generation_output_tokens`]. The runtime consumes
+/// this performance metadata before provider-context replay.
+#[doc(hidden)]
+pub const GENERATION_OUTPUT_TOKENS_KIND: &str = "rho_model_call_generation_output_tokens";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GenerationOutputTokens {
+    Reported(u64),
+    Unavailable,
+}
 
 impl ModelEvent {
     /// Builds provider-native hosted tool activity for the stream.
@@ -461,8 +468,8 @@ impl ModelEvent {
     /// with a dedicated provider metric callback that does not pass through ModelEvent.
     ///
     /// This reserved context kind keeps the exhaustive 1.x [`ModelEvent`] enum
-    /// source-compatible. Built-in adapters consume it as internal performance
-    /// metadata and do not expose or persist it as provider context.
+    /// source-compatible. The runtime consumes it as internal performance
+    /// metadata and does not expose or persist it as provider context.
     #[doc(hidden)]
     pub fn generation_output_tokens(tokens: u64) -> Self {
         Self::ProviderContext {
@@ -472,11 +479,18 @@ impl ModelEvent {
         }
     }
 
-    /// Returns non-reasoning output tokens from the reserved internal carrier.
-    pub(crate) fn as_generation_output_tokens(&self) -> Option<u64> {
+    /// Returns the state carried by the reserved generation-output metadata.
+    pub(crate) fn as_generation_output_tokens(&self) -> Option<GenerationOutputTokens> {
         match self {
             Self::ProviderContext { kind, data, .. } if kind == GENERATION_OUTPUT_TOKENS_KIND => {
-                data.get("tokens")?.as_u64()
+                Some(
+                    data.get("tokens")
+                        .and_then(serde_json::Value::as_u64)
+                        .map_or(
+                            GenerationOutputTokens::Unavailable,
+                            GenerationOutputTokens::Reported,
+                        ),
+                )
             }
             _ => None,
         }

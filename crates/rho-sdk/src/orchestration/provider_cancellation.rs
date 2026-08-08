@@ -1,9 +1,6 @@
 use crate::{
-    model::{ModelIdentity, ModelUsage},
-    provider::{
-        ProviderEnvelopeEvent, ProviderEventReceiver, ProviderFuture, ProviderRequestEvent,
-        ProviderStreamEvent,
-    },
+    model::{ModelEvent, ModelIdentity, ModelUsage},
+    provider::{ProviderEventReceiver, ProviderFuture, ProviderRequestEvent, ProviderStreamEvent},
 };
 
 use super::stream_capture::{capture_provider_event, StreamCapture};
@@ -20,24 +17,14 @@ pub(super) async fn drain_cooperative_provider_on_cancellation(
             biased;
             event = receiver.recv_timed_stream_event(), if stream_open => {
                 match event {
-                    Some((ProviderEnvelopeEvent::Stream(
-                        ProviderStreamEvent::Model(event)
-                    ), _)) => {
-                        let _ = capture_provider_event(
-                            event,
-                            identity,
-                            &ModelUsage::default(),
-                            capture,
-                        );
+                    Some((ProviderStreamEvent::Model(event), _)) => {
+                        capture_model_event(event, identity, capture);
                     }
-                    Some((ProviderEnvelopeEvent::Stream(
-                        ProviderStreamEvent::Request(
-                            ProviderRequestEvent::RequestAttemptFailed { kind, usage }
-                        )
+                    Some((ProviderStreamEvent::Request(
+                        ProviderRequestEvent::RequestAttemptFailed { kind, usage }
                     ), _)) => {
                         capture.record_request_attempt_failure(kind, usage);
                     }
-                    Some((ProviderEnvelopeEvent::GenerationOutputTokens(_), _)) => {}
                     None => stream_open = false,
                 }
             }
@@ -53,17 +40,27 @@ pub(super) fn drain_cancelled_provider_events(
 ) {
     while let Some((event, _)) = receiver.try_recv_timed_stream_event() {
         match event {
-            ProviderEnvelopeEvent::Stream(ProviderStreamEvent::Model(event)) => {
+            ProviderStreamEvent::Model(event) => {
                 // Cancellation-sensitive host publication must not prevent capture of
                 // events the provider had already queued before its future was dropped.
-                let _ = capture_provider_event(event, identity, &ModelUsage::default(), capture);
+                capture_model_event(event, identity, capture);
             }
-            ProviderEnvelopeEvent::Stream(ProviderStreamEvent::Request(
-                ProviderRequestEvent::RequestAttemptFailed { kind, usage },
-            )) => {
+            ProviderStreamEvent::Request(ProviderRequestEvent::RequestAttemptFailed {
+                kind,
+                usage,
+            }) => {
                 capture.record_request_attempt_failure(kind, usage);
             }
-            ProviderEnvelopeEvent::GenerationOutputTokens(_) => {}
         }
     }
 }
+
+fn capture_model_event(event: ModelEvent, identity: &ModelIdentity, capture: &mut StreamCapture) {
+    if event.as_generation_output_tokens().is_none() {
+        let _ = capture_provider_event(event, identity, &ModelUsage::default(), capture);
+    }
+}
+
+#[cfg(test)]
+#[path = "provider_cancellation_tests.rs"]
+mod tests;

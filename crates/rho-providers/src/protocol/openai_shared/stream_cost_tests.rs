@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
-use super::{extract_generation_output_tokens, extract_usage};
+use super::{extract_generation_output_tokens, extract_usage, GenerationOutputTokens};
 use crate::model::ModelUsage;
 
 #[test]
@@ -87,7 +87,7 @@ fn generation_output_tokens_exclude_reasoning_across_usage_aliases() {
                 "output_tokens": 30,
                 "output_tokens_details": {"reasoning_tokens": 12}
             }}),
-            Some(18),
+            GenerationOutputTokens::Reported(18),
             Some(30),
         ),
         (
@@ -96,7 +96,7 @@ fn generation_output_tokens_exclude_reasoning_across_usage_aliases() {
                 "completion_tokens": 21,
                 "completion_tokens_details": {"reasoning_tokens": 8}
             }}),
-            Some(13),
+            GenerationOutputTokens::Reported(13),
             Some(21),
         ),
         (
@@ -106,7 +106,7 @@ fn generation_output_tokens_exclude_reasoning_across_usage_aliases() {
                 "completion_tokens": 21,
                 "completion_tokens_details": {"reasoning_tokens": 8}
             }}),
-            None,
+            GenerationOutputTokens::Unreported,
             Some(30),
         ),
         (
@@ -117,7 +117,7 @@ fn generation_output_tokens_exclude_reasoning_across_usage_aliases() {
                 "output_tokens_details": {"reasoning_tokens": "invalid"},
                 "completion_tokens_details": {"reasoning_tokens": 4}
             }}),
-            Some(15),
+            GenerationOutputTokens::Reported(15),
             Some(19),
         ),
         (
@@ -126,7 +126,7 @@ fn generation_output_tokens_exclude_reasoning_across_usage_aliases() {
                 "output_tokens": 3,
                 "output_tokens_details": {"reasoning_tokens": 9}
             }}),
-            Some(0),
+            GenerationOutputTokens::Invalid,
             Some(3),
         ),
         (
@@ -134,13 +134,13 @@ fn generation_output_tokens_exclude_reasoning_across_usage_aliases() {
             json!({"usage": {
                 "output_tokens_details": {"reasoning_tokens": 2}
             }}),
-            None,
+            GenerationOutputTokens::Unreported,
             None,
         ),
         (
             "details absent",
             json!({"usage": {"output_tokens": 11}}),
-            None,
+            GenerationOutputTokens::Unreported,
             Some(11),
         ),
     ];

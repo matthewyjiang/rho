@@ -29,7 +29,8 @@ pub const PROVIDER_ACTIVITY_REQUEST_RETRY: &str = "provider_request_retry";
 #[deprecated(since = "1.11.0", note = "use RunEvent::WebSearch")]
 pub const PROVIDER_ACTIVITY_WEB_SEARCH: &str = "web_search";
 /// Internal 1.x carrier emitted immediately before [`RunEvent::ModelCallCompleted`].
-/// Its decimal `detail` is the provider-reported output total minus reasoning tokens.
+/// Its `detail` is the non-reasoning output count or `unavailable` when a
+/// provider reported an invalid reasoning breakdown.
 ///
 /// # Next major
 ///

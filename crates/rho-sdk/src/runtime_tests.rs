@@ -505,49 +505,25 @@ async fn stream_usage_events_merge_within_a_turn() {
     assert!(metrics.response_tokens_per_second().is_some());
 }
 
-#[derive(Debug)]
-struct ReasoningUsageProvider;
-
-impl ModelProvider for ReasoningUsageProvider {
-    fn identity(&self) -> ModelIdentity {
-        identity()
-    }
-
-    fn send_turn<'a>(&'a self, _request: ModelRequest<'a>) -> ProviderFuture<'a> {
-        unreachable!("test uses streaming")
-    }
-
-    fn send_turn_stream<'a>(
-        &'a self,
-        _request: ModelRequest<'a>,
-        events: ProviderEventSender,
-    ) -> ProviderFuture<'a> {
-        Box::pin(async move {
-            events.send(ModelEvent::OutputDelta("done".into())).await?;
-            events
-                .send(ModelEvent::generation_output_tokens(30))
-                .await?;
-            events
-                .send(ModelEvent::Usage(crate::model::ModelUsage {
-                    output_tokens: Some(100),
-                    ..crate::model::ModelUsage::default()
-                }))
-                .await?;
-            Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
-                "done".into(),
-            )]))
-        })
-    }
-}
-
 // Covers: reasoning tokens remain in billable usage but not generation throughput metrics.
 // Owner: SDK orchestration
 #[tokio::test]
 async fn reasoning_breakdown_separates_usage_from_performance_tokens() {
-    let runtime = Rho::builder()
-        .provider(ReasoningUsageProvider)
-        .build()
-        .unwrap();
+    let provider = ScriptedProvider::new(
+        identity(),
+        [ScriptedTurn::streaming(
+            vec![
+                ModelEvent::OutputDelta("done".into()),
+                ModelEvent::generation_output_tokens(30),
+                ModelEvent::Usage(crate::model::ModelUsage {
+                    output_tokens: Some(100),
+                    ..crate::model::ModelUsage::default()
+                }),
+            ],
+            ModelResponse::Assistant(vec![ContentBlock::Text("done".into())]),
+        )],
+    );
+    let runtime = Rho::builder().provider(provider).build().unwrap();
     let session = runtime.session(SessionOptions::default()).await.unwrap();
     let mut run = session.start(UserInput::text("hello")).await.unwrap();
     let mut usage = None;

@@ -11,6 +11,7 @@ use {
 use super::{
     activity::{ActivityPhase, ProviderRetryHint},
     compaction_display::compaction_call_id,
+    model_performance::GenerationOutputTokens,
     questionnaire::{QuestionnaireChoice, QuestionnaireQuestion, QuestionnaireRequest},
 };
 
@@ -38,6 +39,7 @@ pub(super) enum ViewModelEvent {
     ModelCallCompleted {
         profile: ModelCallProfile,
         metrics: ModelCallMetrics,
+        generation_output_tokens: GenerationOutputTokens,
     },
     ToolUpdated {
         call_id: rho_sdk::ToolCallId,
@@ -122,7 +124,7 @@ pub(crate) struct SdkEventAdapter {
     attachment_preview_keys: std::collections::BTreeMap<usize, String>,
     /// call_id -> attachment journal key so later events reuse the preview slot.
     attachment_call_keys: std::collections::BTreeMap<String, String>,
-    pending_generation_output_tokens: Option<u64>,
+    pending_generation_output_tokens: Option<GenerationOutputTokens>,
 }
 
 impl SdkEventAdapter {
@@ -306,16 +308,14 @@ impl SdkEventAdapter {
             RunEvent::UsageUpdated { usage } => {
                 vec![ViewEvent::Update(ViewModelEvent::Usage(usage))]
             }
-            RunEvent::ModelCallCompleted {
-                profile,
-                mut metrics,
-            } => {
-                if let Some(tokens) = self.pending_generation_output_tokens.take() {
-                    metrics.output_tokens = Some(tokens);
-                }
+            RunEvent::ModelCallCompleted { profile, metrics } => {
                 vec![ViewEvent::Update(ViewModelEvent::ModelCallCompleted {
                     profile,
                     metrics,
+                    generation_output_tokens: self
+                        .pending_generation_output_tokens
+                        .take()
+                        .unwrap_or(GenerationOutputTokens::AggregateFallback),
                 })]
             }
             RunEvent::WebSearch { detail } => {
@@ -340,7 +340,10 @@ impl SdkEventAdapter {
             #[allow(deprecated)]
             RunEvent::ProviderActivity { kind, detail } => {
                 if kind == MODEL_CALL_GENERATION_OUTPUT_TOKENS_KIND {
-                    self.pending_generation_output_tokens = detail.parse().ok();
+                    self.pending_generation_output_tokens = Some(detail.parse().map_or(
+                        GenerationOutputTokens::Unavailable,
+                        GenerationOutputTokens::Reported,
+                    ));
                 }
                 Vec::new()
             }

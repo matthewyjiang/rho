@@ -14,10 +14,7 @@ use crate::{
 use rho_sdk::model::ToolCall;
 
 use super::convert::{extract_response_text, ResponsesResponse};
-use super::stream::{
-    extract_generation_output_tokens, extract_usage, generation_output_tokens_event,
-    line_decode_error, sse_data,
-};
+use super::stream::{extract_usage_report, line_decode_error, sse_data};
 
 /// Max chars for a single search/url detail string in activity previews.
 const DETAIL_MAX_CHARS: usize = 80;
@@ -649,18 +646,15 @@ pub(crate) fn handle_codex_sse_value(
             .filter(|status| !status.is_empty())
             .map(str::to_owned);
         let response = value.get("response");
-        let usage = response
-            .and_then(extract_usage)
-            .or_else(|| extract_usage(value));
-        let generation_output_tokens = response
-            .and_then(extract_generation_output_tokens)
-            .or_else(|| extract_generation_output_tokens(value));
-        if let Some(usage) = usage {
+        let usage_report = response
+            .and_then(extract_usage_report)
+            .or_else(|| extract_usage_report(value));
+        if let Some(report) = usage_report {
             if let Some(on_event) = on_event.as_mut() {
-                if let Some(tokens) = generation_output_tokens {
-                    on_event(generation_output_tokens_event(tokens))?;
+                if let Some(event) = report.generation_output_tokens.into_event() {
+                    on_event(event)?;
                 }
-                on_event(ModelEvent::Usage(usage))?;
+                on_event(ModelEvent::Usage(report.usage))?;
             }
         }
         // The completed envelope is authoritative, but may restate items already

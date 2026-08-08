@@ -6,8 +6,8 @@ use crate::{
     client::Rho,
     event::{RunOutcome, StopReason},
     model::{
-        AssistantMessage, ContentBlock, Message, ModelEvent, ModelRequest, ModelResponse,
-        ModelUsage,
+        AssistantMessage, ContentBlock, GenerationOutputTokens, Message, ModelEvent, ModelRequest,
+        ModelResponse, ModelUsage,
     },
     provider::{provider_event_channel, ModelRequestOptions, ProviderCancellationMode},
     run::RunCommand,
@@ -787,10 +787,14 @@ async fn provider_turn(
     match result {
         Ok(response) => {
             if let Some(tokens) = timer.generation_output_tokens() {
+                let detail = match tokens {
+                    GenerationOutputTokens::Reported(tokens) => tokens.to_string(),
+                    GenerationOutputTokens::Unavailable => "unavailable".into(),
+                };
                 #[allow(deprecated)]
                 let carrier = RunEvent::ProviderActivity {
                     kind: crate::event::PROVIDER_ACTIVITY_GENERATION_OUTPUT_TOKENS.into(),
-                    detail: tokens.to_string(),
+                    detail,
                 };
                 if let Err(error) = emit(control.events, control.cancellation, carrier).await {
                     return Err(RequestFailure {
@@ -819,7 +823,7 @@ async fn provider_turn(
 }
 
 async fn handle_timed_provider_stream_event(
-    (event, observed_at): (crate::provider::ProviderEnvelopeEvent, Option<Instant>),
+    (event, observed_at): (crate::provider::ProviderStreamEvent, Option<Instant>),
     timer: &mut ModelCallTimer,
     identity: &crate::model::ModelIdentity,
     accumulated_usage: &ModelUsage,
@@ -828,9 +832,11 @@ async fn handle_timed_provider_stream_event(
     cancellation: &CancellationToken,
 ) -> Result<(), ProviderError> {
     match event {
-        crate::provider::ProviderEnvelopeEvent::Stream(
-            crate::provider::ProviderStreamEvent::Model(event),
-        ) => {
+        crate::provider::ProviderStreamEvent::Model(event) => {
+            if let Some(tokens) = event.as_generation_output_tokens() {
+                timer.observe_generation_output_tokens(tokens);
+                return Ok(());
+            }
             timer.observe(&event, observed_at);
             handle_provider_event(
                 event,
@@ -842,15 +848,9 @@ async fn handle_timed_provider_stream_event(
             )
             .await
         }
-        crate::provider::ProviderEnvelopeEvent::Stream(
-            crate::provider::ProviderStreamEvent::Request(event),
-        ) => {
+        crate::provider::ProviderStreamEvent::Request(event) => {
             timer.discard_attempt_output(observed_at);
             handle_provider_request_event(event, capture, events, cancellation).await
-        }
-        crate::provider::ProviderEnvelopeEvent::GenerationOutputTokens(tokens) => {
-            timer.observe_generation_output_tokens(tokens);
-            Ok(())
         }
     }
 }

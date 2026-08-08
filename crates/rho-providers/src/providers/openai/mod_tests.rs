@@ -422,14 +422,15 @@ fn chat_stream_usage_normalizes_prompt_cache_tokens() {
     );
 }
 
-// Covers: Responses must emit generation-only throughput before unchanged usage
+// Covers: Responses must keep generation and aggregate counts on the same
+// envelope source while emitting generation-only throughput before usage.
 // Owner: OpenAI Responses protocol
 #[test]
 fn codex_response_usage_normalizes_input_cache_tokens() {
     let mut state = CodexSseState::default();
     let mut events = Vec::new();
     handle_codex_sse_line(
-        r#"data: {"type":"response.completed","response":{"usage":{"input_tokens":1000,"output_tokens":25,"total_tokens":1025,"input_tokens_details":{"cached_tokens":700,"cache_write_tokens":200},"output_tokens_details":{"reasoning_tokens":7}},"output_text":"done","output":[]}}"#,
+        r#"data: {"type":"response.completed","usage":{"output_tokens":99,"output_tokens_details":{"reasoning_tokens":1}},"response":{"usage":{"input_tokens":1000,"output_tokens":25,"total_tokens":1025,"input_tokens_details":{"cached_tokens":700,"cache_write_tokens":200},"output_tokens_details":{"reasoning_tokens":7}},"output_text":"done","output":[]}}"#,
         &mut state,
         &mut Some(&mut |event| {
             events.push(event);

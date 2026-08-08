@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use crate::model::{ModelEvent, ModelUsage};
+use crate::model::{GenerationOutputTokens, ModelEvent, ModelUsage};
 
 use super::ModelCallTimer;
 
@@ -34,12 +34,15 @@ fn generation_output_tokens_stay_separate_from_aggregate_metrics() {
         &ModelEvent::OutputDelta("done".into()),
         Some(started + Duration::from_secs(1)),
     );
-    timer.observe_generation_output_tokens(30);
+    timer.observe_generation_output_tokens(GenerationOutputTokens::Reported(30));
 
     let metrics = timer.finish(started + Duration::from_secs(3), Some(100));
 
     assert_eq!(metrics.output_tokens, Some(100));
-    assert_eq!(timer.generation_output_tokens(), Some(30));
+    assert_eq!(
+        timer.generation_output_tokens(),
+        Some(GenerationOutputTokens::Reported(30))
+    );
 }
 
 // Covers: a discarded attempt and the backoff before the retry must not be
@@ -53,7 +56,7 @@ fn failed_attempt_restarts_every_duration_at_the_retry() {
         &ModelEvent::OutputDelta("failed".into()),
         Some(started + Duration::from_secs(1)),
     );
-    timer.observe_generation_output_tokens(99);
+    timer.observe_generation_output_tokens(GenerationOutputTokens::Reported(99));
 
     let retry_started = started + Duration::from_secs(3);
     timer.discard_attempt_output(Some(retry_started));

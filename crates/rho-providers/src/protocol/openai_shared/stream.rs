@@ -64,11 +64,11 @@ impl ChatStreamAccumulator {
         let Some(value) = serde_json::from_str::<serde_json::Value>(data).ok() else {
             return Ok(false);
         };
-        if let Some(usage) = extract_usage(&value) {
-            if let Some(tokens) = extract_generation_output_tokens(&value) {
-                on_event(generation_output_tokens_event(tokens))?;
+        if let Some(report) = extract_usage_report(&value) {
+            if let Some(event) = report.generation_output_tokens.into_event() {
+                on_event(event)?;
             }
-            on_event(ModelEvent::Usage(usage))?;
+            on_event(ModelEvent::Usage(report.usage))?;
         }
         let Some(choice) = value
             .get("choices")
@@ -276,11 +276,42 @@ pub(crate) fn sse_data(line: &str) -> Option<&str> {
 // version. Package verification must compile against the currently published SDK.
 pub(crate) fn generation_output_tokens_event(tokens: u64) -> ModelEvent {
     ModelEvent::ProviderContext {
-        kind: "generation_output_tokens".into(),
+        kind: "rho_model_call_generation_output_tokens".into(),
         position: None,
         data: serde_json::json!({ "tokens": tokens }),
     }
 }
+
+fn generation_output_tokens_unavailable_event() -> ModelEvent {
+    ModelEvent::ProviderContext {
+        kind: "rho_model_call_generation_output_tokens".into(),
+        position: None,
+        data: serde_json::json!({ "tokens": null }),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GenerationOutputTokens {
+    Unreported,
+    Reported(u64),
+    Invalid,
+}
+
+impl GenerationOutputTokens {
+    pub(crate) fn into_event(self) -> Option<ModelEvent> {
+        match self {
+            Self::Unreported => None,
+            Self::Reported(tokens) => Some(generation_output_tokens_event(tokens)),
+            Self::Invalid => Some(generation_output_tokens_unavailable_event()),
+        }
+    }
+}
+
+pub(crate) struct UsageReport {
+    pub(crate) usage: ModelUsage,
+    pub(crate) generation_output_tokens: GenerationOutputTokens,
+}
+
 fn extract_output_usage(usage: &serde_json::Value) -> (Option<u64>, Option<u64>) {
     for (tokens_key, details_key) in [
         ("output_tokens", "output_tokens_details"),
@@ -298,9 +329,27 @@ fn extract_output_usage(usage: &serde_json::Value) -> (Option<u64>, Option<u64>)
     (None, None)
 }
 
-pub(crate) fn extract_generation_output_tokens(value: &serde_json::Value) -> Option<u64> {
-    let (output_tokens, reasoning_tokens) = extract_output_usage(value.get("usage")?);
-    Some(output_tokens?.saturating_sub(reasoning_tokens?))
+pub(crate) fn extract_generation_output_tokens(
+    value: &serde_json::Value,
+) -> GenerationOutputTokens {
+    let Some(usage) = value.get("usage") else {
+        return GenerationOutputTokens::Unreported;
+    };
+    let (output_tokens, reasoning_tokens) = extract_output_usage(usage);
+    let (Some(output_tokens), Some(reasoning_tokens)) = (output_tokens, reasoning_tokens) else {
+        return GenerationOutputTokens::Unreported;
+    };
+    output_tokens.checked_sub(reasoning_tokens).map_or(
+        GenerationOutputTokens::Invalid,
+        GenerationOutputTokens::Reported,
+    )
+}
+
+pub(crate) fn extract_usage_report(value: &serde_json::Value) -> Option<UsageReport> {
+    Some(UsageReport {
+        usage: extract_usage(value)?,
+        generation_output_tokens: extract_generation_output_tokens(value),
+    })
 }
 
 pub(crate) fn extract_usage(value: &serde_json::Value) -> Option<ModelUsage> {
