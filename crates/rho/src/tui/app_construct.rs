@@ -27,6 +27,7 @@ impl App {
     ) -> Self {
         #[cfg(debug_assertions)]
         if smoke_injection::matrix_enabled() {
+            smoke_injection::seed_matrix_model_cache();
             return Self::new_with_credentials(
                 info,
                 Arc::new(rho_providers::credentials::MemoryCredentialStore::default()),
@@ -99,6 +100,7 @@ impl App {
             pending_model_selection: None,
             internal_agent_model_target: None,
             agent_editor_session: None,
+            sessions_hub_state: super::sessions_hub::SessionsHubState::default(),
             pending_session_title: None,
             session_title_locked: false,
             clipboard: Box::new(SystemClipboard::default()),

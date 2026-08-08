@@ -179,6 +179,7 @@ impl App {
                     .set_composer(ComposerMode::InlineChoice(InlineChoiceModal {
                         choice,
                         pending: InlineChoicePending::CredentialStore { next },
+                        parent_picker: None,
                     }));
                 self.set_status("choose credential store before login");
             }

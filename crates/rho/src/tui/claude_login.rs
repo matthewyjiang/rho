@@ -151,6 +151,7 @@ impl App {
             .set_composer(ComposerMode::InlineChoice(InlineChoiceModal {
                 choice,
                 pending: InlineChoicePending::ClaudeCodeLogout,
+                parent_picker: None,
             }));
         self.set_status("confirm claude code logout");
     }
@@ -253,6 +254,7 @@ impl App {
             .set_composer(ComposerMode::InlineChoice(InlineChoiceModal {
                 choice,
                 pending: InlineChoicePending::ClaudeCodeRelogin,
+                parent_picker: None,
             }));
         self.set_status("claude code already signed in");
     }

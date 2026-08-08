@@ -134,3 +134,35 @@ fn pane_at_maps_positions_to_panes() {
         })
     );
 }
+
+// Covers: nav scrollbar hit testing must use the same body rect the renderer
+// paints into, or track clicks select rows instead of scrolling.
+// Owner: pure unit (overlay geometry)
+#[test]
+fn nav_body_rect_right_edge_is_scrollbar_column() {
+    let layout = picker_overlay_layout(
+        Rect::new(0, 0, 120, 40),
+        OverlaySizing {
+            has_details: true,
+            nav_rows: 40,
+        },
+    );
+    let nav = layout.nav_body_rect();
+    assert!(
+        nav.width >= 4,
+        "nav pane must be wide enough for a scrollbar"
+    );
+    assert_eq!(nav.y, layout.body_top());
+    assert_eq!(nav.height as usize, layout.nav_viewport_rows());
+    // Rightmost column of the nav body is where the track is drawn.
+    let scrollbar_x = nav.x + nav.width - 1;
+    let hit = layout
+        .pane_hit(scrollbar_x, nav.y)
+        .expect("scrollbar column still belongs to the nav pane");
+    assert_eq!(hit.pane, OverlayPane::Nav);
+    assert_eq!(hit.pane_row, 0);
+
+    let detail = layout.detail_body_rect().expect("detail pane");
+    assert_eq!(detail.y, layout.body_top());
+    assert!(detail.x > nav.x + nav.width);
+}

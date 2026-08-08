@@ -67,17 +67,33 @@ pub(super) enum InlineChoiceKeyOutcome {
 pub(super) struct InlineChoiceModal {
     pub(super) choice: InlineChoice,
     pub(super) pending: InlineChoicePending,
+    pub(super) parent_picker: Option<Box<super::UiPicker>>,
 }
 
 #[derive(Debug)]
 pub(super) enum InlineChoicePending {
-    CredentialStore { next: super::login::StoreChoiceNext },
+    CredentialStore {
+        next: super::login::StoreChoiceNext,
+    },
     ContextHandoff(Box<super::context_handoff::PendingContextHandoff>),
     ClaudeCodeRelogin,
     ClaudeCodeLogout,
-    DeleteSession { session_id: String },
-    DeleteWorkflowPlan { plan_id: String },
-    DeleteWorkflowRun { run_id: String },
+    DeleteSession {
+        target: crate::session::SessionTarget,
+    },
+    DeleteDirectorySessions {
+        cwd: std::path::PathBuf,
+        targets: Vec<crate::session::SessionTarget>,
+    },
+    CleanupMissingSessionDirectories {
+        targets: Vec<crate::session::SessionTarget>,
+    },
+    DeleteWorkflowPlan {
+        plan_id: String,
+    },
+    DeleteWorkflowRun {
+        run_id: String,
+    },
 }
 
 impl InlineChoiceModal {

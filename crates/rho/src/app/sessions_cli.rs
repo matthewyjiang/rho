@@ -1,8 +1,9 @@
-//! CLI handlers for `rho sessions list`, `export`, `rename`, and `rm`.
+//! CLI handlers for `rho sessions list`, `export`, `rename`, `rm`, and `cleanup`.
 
 use std::{
+    collections::BTreeMap,
     io::{self, IsTerminal, Write},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use serde::Serialize;
@@ -45,6 +46,9 @@ pub(super) fn run(command: &SessionsCommand) -> anyhow::Result<()> {
             for id in ids {
                 delete_one(&cwd, id, *force, *yes)?;
             }
+        }
+        SessionsCommand::Cleanup { force, yes } => {
+            cleanup_missing_workspaces(*force, *yes)?;
         }
         SessionsCommand::Rename { id_prefix, title } => {
             rename_one(&cwd, id_prefix, &title.join(" "))?;
@@ -193,21 +197,18 @@ fn rename_one(cwd: &Path, id_prefix: &str, title: &str) -> anyhow::Result<()> {
 }
 
 fn delete_one(cwd: &Path, id_prefix: &str, force: bool, yes: bool) -> anyhow::Result<()> {
-    // Resolve first so cross-project confirmation can show the real cwd before
-    // any destructive work. delete_by_id resolves again; that is intentional so
-    // the confirmation path stays a pure preview.
+    // Resolve once so confirmation and deletion retain the same workspace identity.
     let session = resolve_candidate(cwd, id_prefix)?;
 
     if is_cross_project(&session.cwd, cwd) && !yes {
         confirm_cross_project(&session)?;
     }
 
-    let outcome = Session::delete_by_id(
-        cwd,
-        id_prefix,
+    let outcome = Session::delete_target(
+        &session.target(),
         DeleteOptions {
             force,
-            protect_session_id: None,
+            protected_session: None,
         },
     )?;
 
@@ -239,17 +240,98 @@ fn delete_one(cwd: &Path, id_prefix: &str, force: bool, yes: bool) -> anyhow::Re
     Ok(())
 }
 
+fn cleanup_missing_workspaces(force: bool, yes: bool) -> anyhow::Result<()> {
+    let candidates = Session::list_missing_workspaces()?;
+    if candidates.is_empty() {
+        println!("no sessions found for missing workspace directories");
+        return Ok(());
+    }
+
+    let mut directories = BTreeMap::<PathBuf, usize>::new();
+    for session in &candidates {
+        *directories.entry(session.cwd.clone()).or_default() += 1;
+    }
+    if !yes {
+        confirm_missing_workspace_cleanup(&directories, candidates.len())?;
+    }
+
+    let targets = candidates
+        .into_iter()
+        .map(|session| session.target())
+        .collect::<Vec<_>>();
+    let outcome = Session::cleanup_missing_targets(
+        &targets,
+        DeleteOptions {
+            force,
+            protected_session: None,
+        },
+    )?;
+    for deleted in &outcome.deleted {
+        if !deleted.forced_run_ids.is_empty() {
+            eprintln!(
+                "warning: force-deleted non-terminal run(s) for session {}: {}",
+                short_id(&deleted.id),
+                deleted.forced_run_ids.join(", ")
+            );
+        }
+    }
+    for failure in &outcome.failures {
+        eprintln!(
+            "could not delete session {} ({}): {}",
+            short_id(&failure.id),
+            crate::paths::display(&failure.cwd),
+            failure.error
+        );
+    }
+
+    let deleted = outcome.deleted.len();
+    if !outcome.failures.is_empty() {
+        anyhow::bail!(
+            "cleanup deleted {deleted} session(s), but {} failed",
+            outcome.failures.len()
+        );
+    }
+    if outcome.restored_workspaces > 0 {
+        println!(
+            "deleted {deleted} session(s); skipped {} after their workspace reappeared",
+            outcome.restored_workspaces
+        );
+    } else {
+        println!("deleted {deleted} session(s) for missing workspace directories");
+    }
+    Ok(())
+}
+
+fn confirm_missing_workspace_cleanup(
+    directories: &BTreeMap<PathBuf, usize>,
+    session_count: usize,
+) -> anyhow::Result<()> {
+    if !io::stdin().is_terminal() {
+        anyhow::bail!(
+            "cleanup would delete {session_count} session(s) from {} missing workspace director{}; pass --yes to confirm",
+            directories.len(),
+            if directories.len() == 1 { "y" } else { "ies" }
+        );
+    }
+    eprintln!("Sessions will be deleted for these missing workspace directories:");
+    for (cwd, count) in directories {
+        eprintln!("  {}  ({count} session(s))", crate::paths::display(cwd));
+    }
+    eprint!("Delete {session_count} session(s)? [y/N] ");
+    io::stderr().flush()?;
+    let mut line = String::new();
+    io::stdin().read_line(&mut line)?;
+    let answer = line.trim();
+    if !answer.eq_ignore_ascii_case("y") && !answer.eq_ignore_ascii_case("yes") {
+        anyhow::bail!("cleanup cancelled");
+    }
+    Ok(())
+}
+
 fn resolve_candidate(cwd: &Path, id_prefix: &str) -> anyhow::Result<SessionSummary> {
-    let preview = Session::list_all()?
-        .into_iter()
-        .filter(|session| session.id.starts_with(id_prefix))
-        .collect::<Vec<_>>();
-    // Prefer the same resolution rules as delete (local workspace first).
-    let local = Session::list(cwd)?
-        .into_iter()
-        .filter(|session| session.id.starts_with(id_prefix))
-        .collect::<Vec<_>>();
-    let candidates = if local.is_empty() { preview } else { local };
+    // Prefer the same resolution rules as delete (local workspace first), but
+    // do not resync every workspace just to confirm the target.
+    let candidates = Session::find_by_id_prefix(cwd, id_prefix)?;
     match candidates.as_slice() {
         [] => anyhow::bail!("no session found matching '{id_prefix}'"),
         [only] => Ok(only.clone()),

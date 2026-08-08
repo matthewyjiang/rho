@@ -104,6 +104,17 @@ fn parses_sessions_list_and_rm() {
         }) if ids == ["abc", "def"]
     ));
 
+    let cleanup = Cli::try_parse_from(["rho", "sessions", "cleanup", "--force", "--yes"]).unwrap();
+    assert!(matches!(
+        cleanup.command,
+        Some(Command::Sessions {
+            command: SessionsCommand::Cleanup {
+                force: true,
+                yes: true
+            }
+        })
+    ));
+
     let rename = Cli::try_parse_from([
         "rho", "sessions", "rename", "abc123", "new", "session", "title",
     ])

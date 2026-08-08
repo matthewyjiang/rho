@@ -11,9 +11,10 @@ use ratatui::{
     text::{Line, Span},
 };
 
+pub(super) use super::picker_overlay_layout::clamp_overlay_scroll as clamp_detail_scroll;
 use super::picker_overlay_layout::{
-    picker_overlay_layout, OverlayLayout, OverlayOrientation, OverlayPanes, BOTTOM_BORDER_ROWS,
-    FOOTER_CHROME_ROWS, HEADER_CHROME_ROWS, SEPARATOR,
+    picker_overlay_layout, OverlayLayout, OverlayOrientation, OverlayPanes, OverlayScrollbarState,
+    BOTTOM_BORDER_ROWS, FOOTER_CHROME_ROWS, HEADER_CHROME_ROWS, SEPARATOR,
 };
 use super::render::wrap_line_at_whitespace;
 use super::{
@@ -130,15 +131,6 @@ pub(super) fn render_picker_overlay(picker: &UiPicker, area: Rect) -> OverlayFra
 
 pub(super) fn overlay_detail_lines(detail: &str, detail_width: usize) -> Vec<String> {
     detail_wrapped_lines(detail, detail_width.max(1))
-}
-
-pub(super) fn clamp_detail_scroll(
-    detail_scroll: usize,
-    detail_line_count: usize,
-    viewport_rows: usize,
-) -> usize {
-    let max_scroll = detail_line_count.saturating_sub(viewport_rows.max(1));
-    detail_scroll.min(max_scroll)
 }
 
 pub(super) fn filter_cursor_x(filter: &str, inner_width: usize) -> u16 {
@@ -310,8 +302,9 @@ fn nav_item_rows(
     }
 
     let total_rows = super::picker_rows::picker_row_count(content.items, content.matching);
-    let show_scrollbar = width > MIN_SCROLLBAR_PANE_WIDTH && total_rows > viewport_rows;
-    let content_width = width.saturating_sub(usize::from(show_scrollbar));
+    let scrollbar =
+        OverlayScrollbarState::nav(width, total_rows, viewport_rows, content.nav_window_start);
+    let content_width = width.saturating_sub(usize::from(scrollbar.is_some()));
     let rows = super::picker_rows::picker_item_rows(
         content.items,
         content.matching,
@@ -335,27 +328,15 @@ fn nav_item_rows(
         .take(viewport_rows)
         .collect::<Vec<_>>();
     visible.resize_with(viewport_rows, || padded_plain("", content_width));
-    if show_scrollbar {
-        append_scrollbar_column(&mut visible, total_rows, viewport_rows, start);
+    if let Some(scrollbar) = scrollbar {
+        append_scrollbar_column(&mut visible, scrollbar);
     }
     visible
 }
 
-/// Narrowest pane that still spends a column on a scrollbar.
-const MIN_SCROLLBAR_PANE_WIDTH: usize = 4;
-
 /// Add a one-column track and thumb to the right edge of pane rows.
-fn append_scrollbar_column(
-    rows: &mut [Line<'static>],
-    content_len: usize,
-    viewport_rows: usize,
-    top_line: usize,
-) {
-    let Some(thumb) =
-        super::scrollbar::scrollbar_thumb(content_len, viewport_rows, top_line, viewport_rows)
-    else {
-        return;
-    };
+fn append_scrollbar_column(rows: &mut [Line<'static>], scrollbar: OverlayScrollbarState) {
+    let thumb = scrollbar.thumb();
     for (row, line) in rows.iter_mut().enumerate() {
         line.spans
             .push(super::scrollbar::track_span(thumb, row, Theme::accent()));
@@ -423,9 +404,8 @@ fn detail_viewport_rows(
     });
     // Fill the reserved gutter: a track when the detail overflows, blank space
     // otherwise, so the text width never changes.
-    if super::scrollbar::scrollbar_thumb(line_count, viewport_rows, scroll, viewport_rows).is_some()
-    {
-        append_scrollbar_column(&mut rows, line_count, viewport_rows, scroll);
+    if let Some(scrollbar) = OverlayScrollbarState::detail(line_count, viewport_rows, scroll) {
+        append_scrollbar_column(&mut rows, scrollbar);
     } else {
         for line in &mut rows {
             line.spans.push(Span::raw(" "));

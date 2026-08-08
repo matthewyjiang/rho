@@ -68,13 +68,13 @@ pub(super) const LOGIN_PROVIDER_GROUPS_STEPS: &[Step] = &[
     },
     Step::AssertText("API Key"),
     Step::AssertText("OAuth"),
-    Step::AssertText("Esc to back"),
+    Step::AssertText("Esc back"),
     Step::Key(Key::Esc),
     Step::WaitText {
         text: "select provider to login",
         timeout: SETTLE,
     },
-    Step::AssertText("Esc to cancel"),
+    Step::AssertText("Esc cancel"),
     Step::Phase("close_group_picker"),
     Step::Key(Key::Esc),
     Step::WaitQuiet {

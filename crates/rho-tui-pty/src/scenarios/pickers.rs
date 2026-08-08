@@ -6,6 +6,10 @@ use crate::{env::IsolatedHome, keys::Key, scenario::Step, PtyHarness};
 
 use super::{SETTLE, STARTUP};
 
+/// Model pickers list models only for authenticated providers, so inject a
+/// fixture key the way the advisor scenarios do.
+pub(super) const OPENAI_KEY_ENV: &[(&str, &str)] = &[("OPENAI_API_KEY", "fixture-openai-key")];
+
 pub(super) const OPEN_MODEL_PICKER_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
@@ -111,10 +115,11 @@ pub(super) const EDIT_USER_AGENT_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
-/// Phrase near the end of the goal-judge prompt body. On the default scenario
-/// size it starts below the first detail viewport and becomes visible after
-/// paging the detail pane.
-const HIDDEN_DETAIL_MARKER: &str = "empty human_steps array";
+/// Word near the end of the goal-judge prompt body. On the default scenario
+/// size it sits below the first detail viewport and becomes visible after
+/// paging the detail pane. A single word cannot be split by detail wrapping,
+/// which broke the previous multi-word phrase when the pane width changed.
+const HIDDEN_DETAIL_MARKER: &str = "array";
 
 fn assert_wide_popup_divider_is_stable(harness: &mut PtyHarness) -> Result<()> {
     let screen = harness.screen().contents();
@@ -172,7 +177,10 @@ fn assert_narrow_agents_popup(harness: &mut PtyHarness) -> Result<()> {
     if !screen.contains("goal-judge") {
         anyhow::bail!("narrow agents popup missing navigation list:\n{screen}");
     }
-    if screen.lines().any(|line| line.matches('│').count() >= 3) {
+    // Side-by-side layout joins the column divider to the frame with `┬`;
+    // stacked layout has none. Counting `│` no longer works because pane
+    // scrollbar tracks reuse that glyph.
+    if screen.contains('┬') {
         anyhow::bail!("narrow agents popup still used a side-by-side separator:\n{screen}");
     }
     Ok(())
@@ -232,6 +240,8 @@ pub(super) const OPEN_AGENTS_PICKER_STEPS: &[Step] = &[
     Step::Custom(assert_wide_popup_divider_is_stable),
     Step::Custom(assert_hidden_detail_marker_absent),
     Step::Phase("scroll_detail"),
+    // Scroll keys page the navigation list until the detail pane takes focus.
+    Step::Key(Key::Right),
     Step::Custom(scroll_detail_until_marker_visible),
     Step::AssertText(HIDDEN_DETAIL_MARKER),
     Step::Key(Key::Enter),

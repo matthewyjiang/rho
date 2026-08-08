@@ -425,6 +425,7 @@ impl App {
             .set_composer(ComposerMode::InlineChoice(InlineChoiceModal {
                 choice,
                 pending: InlineChoicePending::ContextHandoff(Box::new(pending)),
+                parent_picker: None,
             }));
         self.set_status(status);
     }

@@ -25,7 +25,7 @@ use {
 };
 
 #[path = "statusline_path.rs"]
-mod path;
+pub(super) mod path;
 use path::{compact_cwd, fit_cwd, format_cwd_left};
 
 #[cfg(test)]

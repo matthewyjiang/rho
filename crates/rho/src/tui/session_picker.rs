@@ -62,7 +62,7 @@ pub(super) fn short_session_id(id: &str) -> String {
     id.chars().take(8).collect()
 }
 
-fn preview_text(text: &str) -> String {
+pub(super) fn preview_text(text: &str) -> String {
     let text = text.replace('\n', " ");
     if text.chars().count() <= 80 {
         return text;
@@ -72,7 +72,7 @@ fn preview_text(text: &str) -> String {
     preview
 }
 
-fn now_unix_secs() -> u64 {
+pub(super) fn now_unix_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
@@ -80,7 +80,7 @@ fn now_unix_secs() -> u64 {
 }
 
 /// Relative age for resume-picker recency, e.g. `2h ago`.
-fn format_updated_ago(updated_at: u64, now: u64) -> String {
+pub(super) fn format_updated_ago(updated_at: u64, now: u64) -> String {
     let age_secs = now.saturating_sub(updated_at);
     if age_secs < 60 {
         return format!("{age_secs}s ago");

@@ -223,6 +223,7 @@ impl App {
                 | PickerAction::SelectRewindCheckpoint
                 | PickerAction::ConfirmRewindCheckpoint
                 | PickerAction::Workflow
+                | PickerAction::ManageSessions
         ) {
             self.input_ui.set_composer(ComposerMode::Input);
         }
@@ -338,6 +339,10 @@ impl App {
             PickerAction::ResumeSession => {
                 self.submit_resume_selection(&value, terminal, agent).await
             }
+            PickerAction::ManageSessions => {
+                self.submit_sessions_selection(&value, terminal, agent)
+                    .await
+            }
             PickerAction::SelectTreeNode => {
                 self.submit_tree_selection(&value, terminal, agent).await
             }
@@ -398,7 +403,15 @@ impl App {
         if let Some(action) = leaving_action {
             self.cancel_theme_preview_if_leaving(action);
         }
-        if !self.pop_picker_level() {
+        let sessions_picker = matches!(leaving_action, Some(PickerAction::ManageSessions));
+        if self.pop_picker_level() {
+            if sessions_picker {
+                self.sessions_hub_state.navigate_back();
+            }
+        } else {
+            if sessions_picker {
+                self.sessions_hub_state.clear();
+            }
             self.input_ui.set_composer(ComposerMode::Input);
             if !self.cancel_advisor_model_prompt() {
                 self.set_status(if running { "running" } else { "ready" });
@@ -478,6 +491,7 @@ impl App {
             | PickerAction::InsertSkillCommand
             | PickerAction::ViewAgent
             | PickerAction::ResumeSession
+            | PickerAction::ManageSessions
             | PickerAction::SelectTreeNode
             | PickerAction::SelectRewindCheckpoint
             | PickerAction::ConfirmRewindCheckpoint
@@ -545,6 +559,7 @@ impl App {
             | PickerAction::InsertSkillCommand
             | PickerAction::ViewAgent
             | PickerAction::ResumeSession
+            | PickerAction::ManageSessions
             | PickerAction::SelectTreeNode
             | PickerAction::SelectRewindCheckpoint
             | PickerAction::ConfirmRewindCheckpoint

@@ -61,21 +61,14 @@ impl SessionStore {
     }
 
     pub(super) fn resolve(&self, id_prefix: &str) -> anyhow::Result<ResolvedSession> {
-        let dir = self.ensure_dir()?;
-        let local = matching_session_files(&dir, id_prefix)?;
-        for path in &local {
-            let _ = index::sync_session_file(&self.root, &self.cwd, path);
-        }
-        if let Some(path) = single_match(&local, id_prefix)? {
-            return Ok(ResolvedSession {
-                id: session_id(path)?,
-                path: path.clone(),
-                cwd: self.cwd.clone(),
-            });
+        if let Some(local) = self.resolve_local(id_prefix)? {
+            return Ok(local);
         }
 
-        // Recover by id across every workspace, keeping the session's own
-        // workspace so resume does not silently continue in the current one.
+        // A foreign transcript may exist before any process has indexed it, or
+        // after a best-effort index write failed. Reconcile once before global
+        // prefix resolution so cold caches do not make valid sessions invisible.
+        index::reconcile_all_workspaces(&self.root)?;
         let global = index::matching_sessions_any_workspace(&self.root, id_prefix)?;
         let Some((path, cwd)) = single_match(&global, id_prefix)? else {
             anyhow::bail!("no session found matching '{id_prefix}'");
@@ -85,6 +78,37 @@ impl SessionStore {
             path: path.clone(),
             cwd: cwd.clone(),
         })
+    }
+
+    pub(super) fn resolve_in_workspace(&self, id_prefix: &str) -> anyhow::Result<ResolvedSession> {
+        self.resolve_local(id_prefix)?.ok_or_else(|| {
+            anyhow::anyhow!(
+                "no session found matching '{id_prefix}' in {}",
+                self.cwd.display()
+            )
+        })
+    }
+
+    fn resolve_local(&self, id_prefix: &str) -> anyhow::Result<Option<ResolvedSession>> {
+        let dir = self.ensure_dir()?;
+        let local = matching_session_files(&dir, id_prefix)?
+            .into_iter()
+            .filter_map(|path| {
+                let cwd = read_session_cwd(&path).ok()?;
+                (workspace_key(&cwd) == workspace_key(&self.cwd)).then_some((path, cwd))
+            })
+            .collect::<Vec<_>>();
+        for (path, _) in &local {
+            let _ = index::sync_session_file(&self.root, &self.cwd, path);
+        }
+        let Some((path, cwd)) = single_match(&local, id_prefix)? else {
+            return Ok(None);
+        };
+        Ok(Some(ResolvedSession {
+            id: session_id(path)?,
+            path: path.clone(),
+            cwd: cwd.clone(),
+        }))
     }
 
     pub(super) fn create_path(&self, id: &str, created_at: u64) -> anyhow::Result<PathBuf> {
@@ -462,6 +486,23 @@ pub(super) fn read_agent_identity(path: &Path) -> anyhow::Result<Option<(String,
     }
 }
 
+/// Workspace directory recorded on the session header line.
+///
+/// Reads only the first line, so callers can recover a workspace's cwd from
+/// its one-way hashed directory name without parsing whole transcripts.
+pub(super) fn read_session_cwd(path: &Path) -> anyhow::Result<PathBuf> {
+    let file = fs::File::open(path)?;
+    let line = BufReader::new(file)
+        .lines()
+        .next()
+        .transpose()?
+        .ok_or_else(|| anyhow::anyhow!("session file is empty"))?;
+    match serde_json::from_str::<SessionEntry>(&line)? {
+        SessionEntry::Session { cwd, .. } => Ok(cwd),
+        _ => anyhow::bail!("session file does not start with session metadata"),
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct PersistedSessionState {
     pub(crate) model: Vec<Message>,
@@ -745,7 +786,9 @@ fn list_session_summaries_by_scan(dir: &Path, cwd: &Path) -> anyhow::Result<Vec<
         .filter_map(Result::ok)
         .filter_map(|entry| {
             let unit = SessionUnit::from_path(&entry.path())?;
-            summarize_session_file(&unit.transcript_path(), cwd).ok()
+            summarize_session_file(&unit.transcript_path(), cwd)
+                .ok()
+                .filter(|record| record.summary.cwd == cwd)
         })
         .map(|record| record.summary)
         .collect::<Vec<_>>();
