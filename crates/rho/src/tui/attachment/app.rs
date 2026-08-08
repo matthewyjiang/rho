@@ -380,20 +380,17 @@ impl AttachmentApp {
         let activity = status
             .and_then(|status| status.last_activity.as_deref())
             .unwrap_or("waiting for activity");
-        let metrics = status_metrics_line(status, agent_id, activity, self.run_usage.current());
-        let live_metrics = live_metrics_line(
+        let identity = identity_line(status, self.run_usage.current(), subagent::unix_now_secs());
+        let activity_metrics = activity_metrics_line(
+            activity,
             self.context_usage.as_ref(),
             self.run_usage.current(),
             status,
         );
         let header = vec![
-            Line::from(vec![
-                Span::styled("rho", Theme::brand()),
-                Span::raw(format!("  attached to {}", self.id)),
-                Span::styled(format!("  {state}"), state_style(status)),
-            ]),
-            Line::styled(truncate_one_line(&metrics, width), Theme::dim()),
-            Line::styled(truncate_one_line(&live_metrics, width), Theme::dim()),
+            header_title_line(&self.id, agent_id, state, status),
+            Line::styled(truncate_one_line(&identity, width), Theme::dim()),
+            Line::styled(truncate_one_line(&activity_metrics, width), Theme::dim()),
             Line::styled("─".repeat(width.max(1)), Theme::dim()),
         ];
         frame.render_widget(Paragraph::new(header), chunks[0]);
@@ -417,7 +414,7 @@ impl AttachmentApp {
         let footer = vec![
             Line::styled("─".repeat(width.max(1)), Theme::dim()),
             Line::styled(
-                truncate_one_line("read-only  |  scroll  |  home/end  |  q detach", width),
+                truncate_one_line("read-only · scroll · home/end · q detach", width),
                 Theme::dim(),
             ),
         ];
@@ -479,34 +476,59 @@ impl AttachmentApp {
     }
 }
 
-fn status_metrics_line(
+/// Middle header row: model, runtime, turn, elapsed, optional Claude session, cost.
+fn identity_line(
     status: Option<&RunStatus>,
-    agent_id: &str,
-    activity: &str,
     run_usage: Option<&ModelUsage>,
+    now_unix_secs: u64,
 ) -> String {
     let Some(status) = status else {
-        return format!("{agent_id}  |  {activity}");
+        return String::new();
     };
-    let mut parts = vec![
-        agent_id.to_string(),
-        activity.to_string(),
-        format!("turn {}", status.turns),
-    ];
-    if let Some(session_id) = status.claude_session_id.as_deref() {
+    let mut parts = Vec::new();
+    if let Some(model) = format_model_identity(status) {
+        parts.push(model);
+    }
+    if let Some(runtime) = status.runtime {
+        parts.push(runtime.as_str().to_string());
+    }
+    parts.push(format!("turn {}", status.turns));
+    if let Some(elapsed) = status
+        .elapsed_duration(now_unix_secs)
+        .map(|elapsed| subagent::format_elapsed_secs(elapsed.as_secs()))
+    {
+        parts.push(elapsed);
+    }
+    if let Some(session_id) = status
+        .claude_session_id
+        .as_deref()
+        .filter(|session_id| !session_id.is_empty())
+    {
         parts.push(format!("claude {session_id}"));
     }
     if let Some(cost) = format_run_cost(status, run_usage) {
         parts.push(cost);
     }
-    parts.join("  |  ")
+    join_fields(parts)
 }
 
-fn live_metrics_line(
+/// Bottom header row: what the run is doing plus live usage.
+fn activity_metrics_line(
+    activity: &str,
     context: Option<&ContextUsage>,
     run_usage: Option<&ModelUsage>,
     status: Option<&RunStatus>,
 ) -> String {
+    let mut parts = vec![activity.to_string()];
+    parts.extend(usage_metric_parts(context, run_usage, status));
+    join_fields(parts)
+}
+
+fn usage_metric_parts(
+    context: Option<&ContextUsage>,
+    run_usage: Option<&ModelUsage>,
+    status: Option<&RunStatus>,
+) -> Vec<String> {
     let mut parts = Vec::new();
     if let Some(context_summary) = format_context_summary(context) {
         parts.push(context_summary);
@@ -517,8 +539,50 @@ fn live_metrics_line(
     {
         parts.push(usage_summary);
     }
-    parts.join("  |  ")
+    parts
 }
+
+fn header_title_line(
+    run_id: &str,
+    agent_id: &str,
+    state: &str,
+    status: Option<&RunStatus>,
+) -> Line<'static> {
+    Line::from(vec![
+        Span::styled("rho", Theme::brand()),
+        Span::raw(format!("  attach {run_id}")),
+        Span::styled(format!(" · {agent_id}"), Theme::dim()),
+        Span::styled(format!(" · {state}"), state_style(status)),
+    ])
+}
+
+fn format_model_identity(status: &RunStatus) -> Option<String> {
+    let provider = status
+        .provider
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let model = status
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    match (provider, model) {
+        (Some(provider), Some(model)) => {
+            Some(rho_providers::provider::model_reference(provider, model))
+        }
+        (None, Some(model)) => Some(model.to_string()),
+        (Some(provider), None) => Some(provider.to_string()),
+        (None, None) => None,
+    }
+}
+
+fn join_fields(parts: Vec<String>) -> String {
+    parts.join(FIELD_SEP)
+}
+
+/// Separator between attach header fields. Matches the main TUI statusline.
+const FIELD_SEP: &str = " · ";
 
 fn run_status_usage(status: &RunStatus) -> ModelUsage {
     ModelUsage {

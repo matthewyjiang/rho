@@ -4,10 +4,10 @@ use std::{
     fs::{File, OpenOptions},
     path::Path,
     sync::{Mutex, OnceLock},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Serialize};
-
 mod storage;
 pub(crate) use storage::{
     is_trusted_directory, lock_parent_for_cleanup, release_run_directory, reserve_run_directory,
@@ -56,6 +56,22 @@ impl RunState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RunRuntime {
+    Rho,
+    ClaudeCli,
+}
+
+impl RunRuntime {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Rho => "rho",
+            Self::ClaudeCli => "claude-cli",
+        }
+    }
+}
+
 /// Contents of the `--output-file` a subagent writes atomically as it runs.
 ///
 /// The parent process reads this file for status checks and completion
@@ -71,6 +87,15 @@ pub struct RunStatus {
     pub provider: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Backend that executes this run (`rho` or `claude-cli`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<RunRuntime>,
+    /// Unix seconds when the Starting boundary was first written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<u64>,
+    /// Unix seconds when the run first entered a terminal state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<u64>,
     #[serde(default)]
     pub turns: u64,
     /// Cumulative input tokens when known. Absent means unknown (for example a
@@ -103,6 +128,45 @@ pub struct RunStatus {
     /// result files and on top-level automation runs with no parent session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_session_id: Option<String>,
+}
+
+impl RunStatus {
+    /// Elapsed wall time from [`Self::started_at`] to finish or `now_unix_secs`.
+    pub fn elapsed_duration(&self, now_unix_secs: u64) -> Option<Duration> {
+        let started = self.started_at?;
+        let end = self.finished_at.unwrap_or(now_unix_secs).max(started);
+        Some(Duration::from_secs(end - started))
+    }
+
+    /// Stamp [`Self::finished_at`] once when entering a terminal state.
+    pub fn mark_finished_now(&mut self) {
+        if self.state.is_terminal() && self.finished_at.is_none() {
+            self.finished_at = Some(unix_now_secs());
+        }
+    }
+}
+
+/// Current Unix time in whole seconds.
+pub fn unix_now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
+/// Compact elapsed label for rails and attach chrome (`12s`, `1m 05s`, `2h 03m`).
+pub fn format_elapsed_secs(seconds: u64) -> String {
+    if seconds < 60 {
+        return format!("{seconds}s");
+    }
+    let minutes = seconds / 60;
+    let seconds = seconds % 60;
+    if minutes < 60 {
+        return format!("{minutes}m {seconds:02}s");
+    }
+    let hours = minutes / 60;
+    let minutes = minutes % 60;
+    format!("{hours}h {minutes:02}m")
 }
 
 /// Convert a provider-reported USD amount into microdollars for session totals.
@@ -156,7 +220,12 @@ fn write_status_inner(path: &Path, status: &RunStatus, force: bool) -> std::io::
     }
     #[cfg(test)]
     status_write_hooks::run_after_read(path, status);
-    let contents = serde_json::to_vec_pretty(status)
+    // Durable finish time for attach elapsed, even when a caller forgot to stamp.
+    let mut status = status.clone();
+    if status.state.is_terminal() && status.finished_at.is_none() {
+        status.finished_at = Some(unix_now_secs());
+    }
+    let contents = serde_json::to_vec_pretty(&status)
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
     crate::config_writer::write_bytes_atomically(path, &contents)
 }

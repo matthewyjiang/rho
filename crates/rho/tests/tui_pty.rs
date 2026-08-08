@@ -617,6 +617,10 @@ fn attach_is_read_only_and_updates_live() {
         r#"{
             "state": "running",
             "agent_id": "explorer",
+            "provider": "openai",
+            "model": "gpt-5.5",
+            "runtime": "rho",
+            "started_at": 1700000000,
             "turns": 1,
             "input_tokens": 12,
             "output_tokens": 3,
@@ -658,9 +662,12 @@ fn attach_is_read_only_and_updates_live() {
     let mut harness = PtyHarness::spawn_named(&plan, "attach_read_only").unwrap();
 
     harness
+        .wait_for_text("attach abc123", WaitTimeout::secs(10, "attach startup"))
+        .unwrap();
+    harness
         .wait_for_text(
-            "attached to abc123",
-            WaitTimeout::secs(10, "attach startup"),
+            "openai/gpt-5.5 · rho",
+            WaitTimeout::secs(5, "provider model runtime"),
         )
         .unwrap();
     harness
@@ -692,6 +699,11 @@ fn attach_is_read_only_and_updates_live() {
         r#"{
             "state": "ok",
             "agent_id": "explorer",
+            "provider": "openai",
+            "model": "gpt-5.5",
+            "runtime": "rho",
+            "started_at": 1700000000,
+            "finished_at": 1700000065,
             "turns": 1,
             "input_tokens": 12,
             "output_tokens": 3,
@@ -701,11 +713,13 @@ fn attach_is_read_only_and_updates_live() {
     )
     .unwrap();
     harness
-        .wait_for_text(
-            "explorer  |  complete",
-            WaitTimeout::secs(5, "completion state"),
-        )
+        .wait_for_text("complete", WaitTimeout::secs(5, "completion activity"))
         .unwrap();
+    harness
+        .wait_for_text("1m 05s", WaitTimeout::secs(5, "finished elapsed"))
+        .unwrap();
+    assert!(harness.screen().contains_text("explorer"));
+    assert!(harness.screen().contains_text("ok"));
 
     harness.inject_key(&Key::Char('q')).unwrap();
     assert_eq!(
@@ -754,10 +768,7 @@ fn attach_replays_finished_claude_run_from_fixtures() {
     let mut harness = PtyHarness::spawn_named(&plan, "claude_attach_replay").unwrap();
 
     harness
-        .wait_for_text(
-            "attached to c1a0de",
-            WaitTimeout::secs(10, "attach startup"),
-        )
+        .wait_for_text("attach c1a0de", WaitTimeout::secs(10, "attach startup"))
         .unwrap();
     harness
         .wait_for_text(
@@ -767,6 +778,12 @@ fn attach_replays_finished_claude_run_from_fixtures() {
         .unwrap();
     harness
         .wait_for_text("Hello from Claude.", WaitTimeout::secs(5, "assistant text"))
+        .unwrap();
+    harness
+        .wait_for_text(
+            "claude-code/claude-opus-demo · claude-cli · turn 1 · 42s",
+            WaitTimeout::secs(5, "provider model runtime elapsed"),
+        )
         .unwrap();
     harness
         .wait_for_text(
@@ -908,7 +925,7 @@ fn fake_claude_runtime_end_to_end_success() {
     let mut attach = PtyHarness::spawn_named(&plan, "fake_claude_runtime_e2e_attach").unwrap();
     attach
         .wait_for_text(
-            &format!("attached to {run_id}"),
+            &format!("attach {run_id}"),
             WaitTimeout::secs(10, "attach startup"),
         )
         .unwrap();

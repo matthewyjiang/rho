@@ -157,6 +157,7 @@ fn reporter_discards_partial_text_when_provider_attempt_resets() {
             agent_fingerprint: "fingerprint".into(),
             provider: "test".into(),
             model: "test".into(),
+            runtime: crate::subagent::RunRuntime::Rho,
         },
         root.path().to_path_buf(),
         "review",

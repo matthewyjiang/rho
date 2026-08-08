@@ -192,6 +192,7 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
                     agent_fingerprint: startup.agent.fingerprint().to_string(),
                     provider: startup.config.provider.clone(),
                     model: startup.config.model.clone(),
+                    runtime: crate::subagent::RunRuntime::Rho,
                 },
                 startup.cwd.clone(),
                 &prompt_text,

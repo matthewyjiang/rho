@@ -233,5 +233,6 @@ fn identity_to_artifact(identity: &ClaudeRunIdentity) -> RunArtifactIdentity {
             .model
             .clone()
             .unwrap_or_else(|| "claude-cli".into()),
+        runtime: crate::subagent::RunRuntime::ClaudeCli,
     }
 }

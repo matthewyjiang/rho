@@ -231,7 +231,8 @@ fn herdr_state_follows_attached_subagent_state() {
 
 #[test]
 fn status_token_fallback_uses_run_status_totals() {
-    let summary = live_metrics_line(
+    let summary = activity_metrics_line(
+        "assistant text",
         None,
         None,
         Some(&RunStatus {
@@ -240,7 +241,67 @@ fn status_token_fallback_uses_run_status_totals() {
             ..RunStatus::default()
         }),
     );
-    assert_eq!(summary, "tokens in 1.2K · out 300");
+    assert_eq!(summary, "assistant text · tokens in 1.2K · out 300");
+}
+
+#[test]
+fn identity_line_includes_provider_model_runtime_elapsed_and_cost() {
+    let line = identity_line(
+        Some(&RunStatus {
+            agent_id: Some("explorer".into()),
+            provider: Some("openai".into()),
+            model: Some("gpt-5.5".into()),
+            runtime: Some(crate::subagent::RunRuntime::Rho),
+            started_at: Some(1_000),
+            finished_at: Some(1_065),
+            turns: 3,
+            total_cost_usd: Some(0.0388),
+            claude_session_id: Some("sess-1".into()),
+            ..RunStatus::default()
+        }),
+        None,
+        /* now_unix_secs */ 9_999,
+    );
+    assert_eq!(
+        line,
+        "openai/gpt-5.5 · rho · turn 3 · 1m 05s · claude sess-1 · $0.039"
+    );
+}
+
+#[test]
+fn identity_line_handles_partial_model_fields() {
+    assert_eq!(
+        identity_line(
+            Some(&RunStatus {
+                model: Some("gpt-5.5".into()),
+                turns: 1,
+                ..RunStatus::default()
+            }),
+            None,
+            /* now_unix_secs */ 0,
+        ),
+        "gpt-5.5 · turn 1"
+    );
+    assert_eq!(
+        identity_line(
+            Some(&RunStatus {
+                provider: Some("anthropic".into()),
+                runtime: Some(crate::subagent::RunRuntime::ClaudeCli),
+                turns: 2,
+                ..RunStatus::default()
+            }),
+            None,
+            /* now_unix_secs */ 0,
+        ),
+        "anthropic · claude-cli · turn 2"
+    );
+    assert_eq!(identity_line(None, None, 0), "");
+}
+
+#[test]
+fn header_title_line_names_run_and_agent() {
+    let line = header_title_line("abc123", "explorer", "running", None);
+    assert_eq!(line.to_string(), "rho  attach abc123 · explorer · running");
 }
 
 #[test]
