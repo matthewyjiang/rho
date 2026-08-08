@@ -70,6 +70,35 @@ class PathPatchPolicyTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(calls, [("rho-sdk", "1.18.0")])
 
+    def test_select_patches_full_internal_closure_when_any_unpublished(self) -> None:
+        # Covers: path-patch only the unpublished leaf would dual-load rho-sdk
+        # Owner: release packaging scripts
+        metadata = prep.load_metadata()
+        packages = prep.load_workspace_packages(metadata)
+        available = {
+            (name, packages[name].version): name != "rho-agent-tools"
+            for name in prep.INTERNAL_PACKAGE_NAMES
+        }
+        patches = prep.select_path_patches(
+            "rho-coding-agent",
+            metadata=metadata,
+            version_available=lambda name, version: available[(name, version)],
+        )
+        patched = {patch.package_name for patch in patches}
+        self.assertEqual(
+            patched,
+            {"rho-sdk", "rho-providers", "rho-agent-tools"},
+        )
+
+    def test_select_patches_empty_when_all_direct_deps_published(self) -> None:
+        metadata = prep.load_metadata()
+        patches = prep.select_path_patches(
+            "rho-coding-agent",
+            metadata=metadata,
+            version_available=lambda _name, _version: True,
+        )
+        self.assertEqual(patches, ())
+
 
 class CargoConfigFlagTests(unittest.TestCase):
     def test_uses_package_name_and_relative_path(self) -> None:

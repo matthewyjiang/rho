@@ -57,11 +57,16 @@ each independently released crate.
 
 Internal path dependencies use this registry-boundary rule:
 
-- If the dependency's exact workspace version already exists on crates.io
-  (including yanked releases), verify against the registry. Do not path-patch
-  that dependency.
-- If that version is not on crates.io yet, keep a path patch so a coordinated
-  same-PR version cut can still package before the dependency is published.
+- If every internal dependency's exact workspace version already exists on
+  crates.io (including yanked releases), verify against the registry. Do not
+  path-patch any dependency.
+- If any direct internal dependency version is not on crates.io yet, path-patch
+  the full transitive internal dependency closure of the package under test.
+  Path-source crates keep `path =` edges to siblings; patching only the
+  unpublished leaf would load a second copy of shared crates such as
+  `rho-sdk` and break type identity. The closure patch keeps one graph so a
+  coordinated same-PR version cut can still package before dependencies are
+  published.
 - crates.io transport or HTTP failures fail the check. A timeout or 500 is not
   treated as "unpublished".
 
