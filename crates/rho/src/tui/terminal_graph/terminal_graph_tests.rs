@@ -260,9 +260,10 @@ fn fan_in_edges_share_one_bus_row_per_target() {
     );
 }
 
-// Covers: a forward edge that skips a rank must approach its target from
-// above through the right lane instead of running through sibling boxes at
-// the target's center row, which left detached arrow fragments between nodes.
+// Covers: a forward edge that skips a rank must reach its target through the
+// right lane and the target's own fan-in bus row, instead of running through
+// sibling boxes at the target's center row (detached arrow fragments) or a
+// separate approach row that crosses unrelated edges.
 // Owner: terminal graph skip-edge routing.
 #[test]
 fn rank_skipping_edge_drops_into_the_target_from_above() {
@@ -293,18 +294,69 @@ fn rank_skipping_edge_drops_into_the_target_from_above() {
             "         ┌───────┐".to_owned(),
             "         │ setup │".to_owned(),
             "         └───┬───┘".to_owned(),
-            "          ┌──┤".to_owned(),
-            "          │  └───────┐".to_owned(),
+            "          ┌──┴───────┐".to_owned(),
             "          ▼          │".to_owned(),
             "     ┌────────┐      │".to_owned(),
             "     │ review │      │".to_owned(),
             "     └────┬───┘      │".to_owned(),
-            "     ┌────┴─────┐    │".to_owned(),
-            "     │          ├────┘".to_owned(),
+            "     ┌────┤          │".to_owned(),
+            "     │    └─────┬────┘".to_owned(),
             "     ▼          ▼".to_owned(),
             " ┌───────┐  ┌──────┐".to_owned(),
             " │ apply │  │ skip │".to_owned(),
             " └───────┘  └──────┘".to_owned(),
+        ]
+    );
+}
+
+// Covers: skip edges whose targets share the full source set must join the
+// one merged fan-in bus row instead of adding approach rows that cross other
+// edges, so shared ink always means joined edges.
+// Owner: terminal graph skip-edge routing and bus track assignment.
+#[test]
+fn skip_edges_join_the_shared_fan_in_bus_row() {
+    let style = NodeStyle::default();
+    let nodes = vec![
+        Node::rectangular("collect", style),
+        Node::rectangular("boundaries", style),
+        Node::rectangular("spaghetti", style),
+        Node::rectangular("structure", style),
+        Node::rectangular("apply", style),
+        Node::rectangular("none", style),
+    ];
+    let edges = vec![
+        Edge::directed(0, 1),
+        Edge::directed(0, 2),
+        Edge::directed(0, 3),
+        Edge::directed(1, 4),
+        Edge::directed(2, 4),
+        Edge::directed(3, 4),
+        Edge::directed(0, 4),
+        Edge::directed(1, 5),
+        Edge::directed(2, 5),
+        Edge::directed(3, 5),
+        Edge::directed(0, 5),
+    ];
+    let graph = Graph::top_down(nodes, edges, RankOrdering::PreserveInput).unwrap();
+
+    let art = graph.render(Style::default()).unwrap();
+
+    assert_eq!(
+        art.plain_lines,
+        vec![
+            "                  ┌─────────┐".to_owned(),
+            "                  │ collect │".to_owned(),
+            "                  └─────┬───┘".to_owned(),
+            "       ┌────────────────┼───────────────┬───────┐".to_owned(),
+            "       ▼                ▼               ▼       │".to_owned(),
+            "┌────────────┐    ┌───────────┐   ┌───────────┐ │".to_owned(),
+            "│ boundaries │    │ spaghetti │   │ structure │ │".to_owned(),
+            "└──────┬─────┘    └─────┬─────┘   └─────┬─────┘ │".to_owned(),
+            "       └──────────┬─────┴────┬──────────┴───────┘".to_owned(),
+            "                  ▼          ▼".to_owned(),
+            "              ┌───────┐  ┌──────┐".to_owned(),
+            "              │ apply │  │ none │".to_owned(),
+            "              └───────┘  └──────┘".to_owned(),
         ]
     );
 }

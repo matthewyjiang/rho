@@ -8,6 +8,7 @@ use super::{
     drawing::{
         art_node_rect, compute_ranks, draw_box, draw_compartment_box, draw_frame, route_back,
         route_back_lr, route_forward, route_forward_lr, route_self, route_skip, wrap_label,
+        SkipPath,
     },
     ordering::order_ranks,
     painter::{
@@ -307,9 +308,12 @@ pub(in crate::tui) fn layout_canvas(
                 from,
                 to,
                 edge,
-                bus,
-                lane,
-                plan.edge_approach[i],
+                SkipPath {
+                    exit_row: bus,
+                    lane_x: lane,
+                    join_row: plan.edge_join[i],
+                    source_anchor: plan.source_anchors[edge.from],
+                },
             ),
             (true, false) => route_back(&mut canvas, from, to, edge, lane),
             (false, true) => route_forward_lr(

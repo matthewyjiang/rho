@@ -208,31 +208,44 @@ fn head_glyph(head: Head, arrow: char) -> char {
     }
 }
 
-/// Route a forward edge that skips ranks: down from the source to its bus
+/// Plan-derived geometry for one rank-skipping edge: where it leaves its
+/// source's gap, which right-lane column carries it down, and which fan-in
+/// bus row of its target it joins.
+pub(in crate::tui) struct SkipPath {
+    pub(in crate::tui) exit_row: usize,
+    pub(in crate::tui) lane_x: usize,
+    pub(in crate::tui) join_row: usize,
+    pub(in crate::tui) source_anchor: usize,
+}
+
+/// Route a forward edge that skips ranks: down from the source to its exit
 /// row, right along the shared lane, down past the intermediate ranks, then
-/// left along a reserved approach row and into the target from above. This
-/// keeps the edge out of sibling node rows, where an approach at the target's
-/// center row would surface as detached arrow fragments between boxes.
+/// left along the target's own fan-in bus row and into the target from above.
+/// Joining the target's bus keeps every edge into one target on the same
+/// shared ink, so shared rows always mean joined edges rather than crossings.
 pub(in crate::tui) fn route_skip(
     canvas: &mut Canvas,
     from: &Placed,
     to: &Placed,
     edge: &Edge,
-    bus: usize,
-    lane_x: usize,
-    approach_row: usize,
+    path: SkipPath,
 ) {
-    let bx = from.cx;
+    let SkipPath {
+        exit_row,
+        lane_x,
+        join_row,
+        source_anchor: bx,
+    } = path;
     let by = from.y + from.h - 1;
     let tx = to.cx;
     let head_row = to.y - 1;
 
     canvas.junction(bx, by, D);
-    canvas.seg_v(bx, by, bus);
-    canvas.seg_h(bus, bx, lane_x);
-    canvas.seg_v(lane_x, bus, approach_row);
-    canvas.seg_h(approach_row, tx, lane_x);
-    canvas.seg_v(tx, approach_row, head_row);
+    canvas.seg_v(bx, by, exit_row);
+    canvas.seg_h(exit_row, bx, lane_x);
+    canvas.seg_v(lane_x, exit_row, join_row);
+    canvas.seg_h(join_row, tx, lane_x);
+    canvas.seg_v(tx, join_row, head_row);
 
     if edge.head_to == Head::None {
         canvas.add_bits(tx, head_row, U);
@@ -244,7 +257,7 @@ pub(in crate::tui) fn route_skip(
     }
 
     if let Some(label) = &edge.label {
-        place_label(canvas, label, approach_row.saturating_sub(1), tx + 2);
+        place_label(canvas, label, join_row.saturating_sub(1), tx + 2);
     }
 }
 
