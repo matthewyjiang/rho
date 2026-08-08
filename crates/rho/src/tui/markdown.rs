@@ -19,9 +19,10 @@ pub(crate) use mermaid::PHASE_CHAIN_FLOWCHART;
 pub(in crate::tui) use code_fence::{
     is_closing_fence, parse_opening_fence, update_code_block_state, CodeFenceState,
 };
-use code_fence::{mermaid_opening_fence, CodeFence};
+use code_fence::{mermaid_opening_fence, opening_fence_info_token, CodeFence};
 
 use super::markdown_image::standalone_markdown_image;
+use super::syntax::BlockHighlighter;
 use inline::{inline_markdown_stable_prefix_len, markdown_inline_segments, markdown_inline_text};
 use panel::ClosedPanel;
 
@@ -35,8 +36,9 @@ mod table_tests;
 
 use super::{
     render::{
-        char_display_width, display_width, slice_spans_by_bytes, soft_wrap_visible_ranges,
-        wrap_line_at_whitespace_ranges_with_protected_prefix, wrap_line_hard,
+        char_display_width, display_width, hard_wrap_styled_spans, slice_spans_by_bytes,
+        soft_wrap_visible_ranges, truncate_to_display_width,
+        wrap_line_at_whitespace_ranges_with_protected_prefix,
     },
     theme::Theme,
 };
@@ -74,32 +76,34 @@ pub(super) struct RenderedMarkdown {
     pub(super) image_rows: Vec<usize>,
 }
 
+/// Render-local open fenced block: fence marker, optional highlighter, and
+/// optional copy-button capture. Open/close is a single state transition.
+struct ActiveBlock<'a> {
+    fence: CodeFence,
+    highlighter: Option<BlockHighlighter>,
+    copy: Option<ActiveCopyCapture<'a>>,
+}
+
+struct ActiveCopyCapture<'a> {
+    top_line: usize,
+    copy_columns: std::ops::Range<usize>,
+    content: Vec<&'a str>,
+}
+
 pub(super) fn markdown_lines(
     text: &str,
     width: usize,
-    in_code_block: &mut bool,
+    state: &mut CodeFenceState,
 ) -> Vec<Line<'static>> {
-    render_markdown(text, width, in_code_block).lines
+    render_markdown(text, width, state).lines
 }
 
 pub(super) fn render_markdown(
     text: &str,
     width: usize,
-    in_code_block: &mut bool,
+    state: &mut CodeFenceState,
 ) -> RenderedMarkdown {
-    render_markdown_with_copy_button(text, width, in_code_block, CodeBlockCopyButton::Visible)
-}
-
-fn render_markdown_with_copy_button(
-    text: &str,
-    width: usize,
-    in_code_block: &mut bool,
-    copy_button: CodeBlockCopyButton,
-) -> RenderedMarkdown {
-    let mut state = CodeFenceState::from_open_flag(*in_code_block);
-    let rendered = render_markdown_from_fence_state(text, width, &mut state, copy_button);
-    *in_code_block = state.is_open();
-    rendered
+    render_markdown_from_fence_state(text, width, state, CodeBlockCopyButton::Visible)
 }
 
 fn render_markdown_from_fence_state(
@@ -113,14 +117,20 @@ fn render_markdown_from_fence_state(
     let mut code_blocks = Vec::new();
     let mut image_sources = Vec::new();
     let mut image_rows = Vec::new();
-    let mut active_code_block: Option<(usize, std::ops::Range<usize>, Vec<&str>)> = None;
+    // Continue an open fence from a prior chunk (live preview). No header row:
+    // that belongs to the opening line already committed above. Reuse the
+    // stored highlighter so multi-line tokens keep their lexical state.
+    let mut active = state.active.map(|fence| ActiveBlock {
+        fence,
+        highlighter: state.highlighter.take(),
+        copy: None,
+    });
 
     let raw_lines = text.lines().collect::<Vec<_>>();
     let mut line_index = 0;
-    let mut active_fence = state.active;
     while line_index < raw_lines.len() {
         let raw_line = raw_lines[line_index];
-        if active_fence.is_none() {
+        if active.is_none() {
             if let Some(opening) = mermaid_opening_fence(raw_line) {
                 if let Some(closing_offset) = raw_lines[line_index + 1..]
                     .iter()
@@ -128,7 +138,7 @@ fn render_markdown_from_fence_state(
                 {
                     let closing_index = line_index + 1 + closing_offset;
                     let source = raw_lines[line_index + 1..closing_index].join("\n");
-                    let panel = mermaid::render_closed_fence(source, width.saturating_sub(4));
+                    let panel = mermaid::render_closed_fence(source, width);
                     push_closed_panel(&mut lines, &mut code_blocks, copy_button, width, panel);
                     line_index = closing_index + 1;
                     continue;
@@ -137,47 +147,80 @@ fn render_markdown_from_fence_state(
             if let Some((source, consumed_lines)) =
                 math::take_closed_display_math(&raw_lines[line_index..])
             {
-                let panel = math::render_closed_display_math(source, width.saturating_sub(4));
+                let panel = math::render_closed_display_math(source, width);
                 push_closed_panel(&mut lines, &mut code_blocks, copy_button, width, panel);
                 line_index += consumed_lines;
                 continue;
             }
         }
-        let opening_fence = (active_fence.is_none())
+        let opening_fence = active
+            .is_none()
             .then(|| parse_opening_fence(raw_line))
             .flatten();
-        let closing_fence = active_fence.is_some_and(|fence| is_closing_fence(raw_line, fence));
+        let closing_fence = active
+            .as_ref()
+            .is_some_and(|block| is_closing_fence(raw_line, block.fence));
         if opening_fence.is_some() || closing_fence {
             if closing_fence {
-                lines.push(code_block_border(width, '╰', copy_button, None));
-                if let Some((top_line, copy_columns, content)) = active_code_block.take() {
+                if let Some(ActiveBlock {
+                    copy: Some(capture),
+                    ..
+                }) = active.take()
+                {
                     code_blocks.push(MarkdownCodeBlock {
+                        top_line: capture.top_line,
+                        copy_columns: capture.copy_columns,
+                        text: capture.content.join("\n"),
+                    });
+                } else {
+                    active = None;
+                }
+                state.clear_open();
+            } else {
+                let fence = opening_fence.expect("opening branch");
+                let language = opening_fence_info_token(raw_line);
+                let label = language.as_deref().map(str::to_ascii_uppercase);
+                let top_line = lines.len();
+                lines.push(code_block_header(width, label.as_deref(), copy_button));
+                let copy = (copy_button == CodeBlockCopyButton::Visible)
+                    .then(|| code_block_copy_columns(width))
+                    .flatten()
+                    .map(|copy_columns| ActiveCopyCapture {
                         top_line,
                         copy_columns,
-                        text: content.join("\n"),
+                        content: Vec::new(),
                     });
-                }
-                active_fence = None;
-            } else {
-                active_fence = opening_fence;
-                let top_line = lines.len();
-                lines.push(code_block_border(width, '╭', copy_button, None));
-                if copy_button == CodeBlockCopyButton::Visible {
-                    if let Some(copy_columns) = code_block_copy_columns(width) {
-                        active_code_block = Some((top_line, copy_columns, Vec::new()));
-                    }
-                }
+                // Seed language/active; take the highlighter onto the render-local
+                // block so body lines advance one shared ParseState.
+                state.open_fence(fence, language);
+                let highlighter = state.highlighter.take();
+                active = Some(ActiveBlock {
+                    fence,
+                    highlighter,
+                    copy,
+                });
             }
-            state.active = active_fence;
             line_index += 1;
             continue;
         }
 
-        if active_fence.is_some() {
-            if let Some((_, _, content)) = &mut active_code_block {
-                content.push(raw_line);
+        if let Some(block) = &mut active {
+            if let Some(capture) = &mut block.copy {
+                capture.content.push(raw_line);
             }
-            lines.extend(code_block_content_lines(raw_line, width));
+            let plain = Theme::code_text();
+            let segments = match &mut block.highlighter {
+                Some(highlighter) => highlighter
+                    .highlight_line(raw_line)
+                    .into_iter()
+                    .map(|segment| {
+                        let style = segment.style(plain);
+                        StyledSegment::new(segment.text, style)
+                    })
+                    .collect(),
+                None => vec![StyledSegment::new(raw_line.to_string(), plain)],
+            };
+            lines.extend(wrap_styled_segments_hard(&segments, width));
             line_index += 1;
             continue;
         }
@@ -222,19 +265,32 @@ fn render_markdown_from_fence_state(
         line_index += 1;
     }
 
-    if let Some((top_line, copy_columns, content)) = active_code_block {
-        code_blocks.push(MarkdownCodeBlock {
-            top_line,
-            copy_columns,
-            text: content.join("\n"),
-        });
+    // Persist highlighter lexical state when the fence stays open across chunks.
+    match active {
+        Some(ActiveBlock {
+            highlighter,
+            copy: Some(capture),
+            ..
+        }) => {
+            state.highlighter = highlighter;
+            code_blocks.push(MarkdownCodeBlock {
+                top_line: capture.top_line,
+                copy_columns: capture.copy_columns,
+                text: capture.content.join("\n"),
+            });
+        }
+        Some(ActiveBlock { highlighter, .. }) => {
+            state.highlighter = highlighter;
+        }
+        None => {
+            // Closed path already cleared state; leave highlighter unset.
+        }
     }
 
     if lines.is_empty() && text.is_empty() {
         lines.push(Line::from(Span::styled(String::new(), Theme::text())));
     }
 
-    state.active = active_fence;
     RenderedMarkdown {
         lines,
         code_blocks,
@@ -270,7 +326,7 @@ fn markdown_divider(width: usize) -> Line<'static> {
     Line::from(Span::styled("─".repeat(width.max(1)), Theme::dim()))
 }
 
-/// Emit a closed art panel (mermaid, display math) with borders and copy state.
+/// Emit a closed art panel (mermaid, display math) with header and copy state.
 fn push_closed_panel(
     lines: &mut Vec<Line<'static>>,
     code_blocks: &mut Vec<MarkdownCodeBlock>,
@@ -287,18 +343,22 @@ fn push_closed_panel(
         } => (title, panel::panel_lines(art, width), source),
         ClosedPanel::SourceFallback { title, source } => {
             let mut body = Vec::new();
+            let plain = Theme::code_text();
             for content_line in source.lines() {
-                body.extend(code_block_content_lines(content_line, width));
+                let segments = vec![StyledSegment::new(content_line.to_string(), plain)];
+                body.extend(wrap_styled_segments_hard(&segments, width));
             }
             if body.is_empty() {
-                body.extend(code_block_content_lines("", width));
+                body.extend(wrap_styled_segments_hard(
+                    &[StyledSegment::new(String::new(), plain)],
+                    width,
+                ));
             }
             (title, body, source)
         }
     };
-    lines.push(code_block_border(width, '╭', copy_button, Some(title)));
+    lines.push(code_block_header(width, Some(title), copy_button));
     lines.extend(body);
-    lines.push(code_block_border(width, '╰', copy_button, None));
     push_copyable_code_block(code_blocks, copy_button, top_line, width, source);
 }
 
@@ -321,49 +381,43 @@ fn push_copyable_code_block(
     }
 }
 
-fn code_block_border(
+/// Slim header row above a code block or art panel: dim label on the left,
+/// COPY right-aligned at the geometry [`code_block_copy_columns`] promises to
+/// hit-testing. Always one row, even with no label and a hidden button, so
+/// block line counts stay uniform.
+fn code_block_header(
     width: usize,
-    corner: char,
+    label: Option<&str>,
     copy_button: CodeBlockCopyButton,
-    title: Option<&str>,
 ) -> Line<'static> {
     let width = width.max(1);
-    let style = Theme::markdown_code_block();
-    if width == 1 {
-        return Line::from(Span::styled(corner.to_string(), style));
-    }
-
-    let closing_corner = if corner == '╭' { '╮' } else { '╯' };
-    let copy_columns = (corner == '╭' && copy_button == CodeBlockCopyButton::Visible)
+    let copy_columns = (copy_button == CodeBlockCopyButton::Visible)
         .then(|| code_block_copy_columns(width))
         .flatten();
-    let label = copy_columns
+    let copy_label = copy_columns
         .as_ref()
         .and_then(|_| code_block_copy_label(width));
-    let prefix_width = copy_columns
+    // Keep at least one blank column between the label and COPY.
+    let label_budget = copy_columns
         .as_ref()
-        .map_or(width.saturating_sub(2), |columns| {
-            columns.start.saturating_sub(1)
-        });
-    let title = title
-        .map(|title| format!("─ {title} "))
-        .filter(|title| display_width(title) <= prefix_width)
-        .unwrap_or_default();
-    let title_width = display_width(&title);
-    let mut spans = vec![Span::styled(
-        format!(
-            "{corner}{title}{}",
-            "─".repeat(prefix_width.saturating_sub(title_width))
-        ),
-        style,
-    )];
-    if let Some(label) = label {
+        .map_or(width, |columns| columns.start.saturating_sub(1));
+    let label = truncate_to_display_width(label.unwrap_or_default(), label_budget);
+    let mut spans = Vec::new();
+    if let Some(columns) = &copy_columns {
+        let filler = columns.start.saturating_sub(display_width(&label));
         spans.push(Span::styled(
-            label,
+            format!("{label}{}", " ".repeat(filler)),
+            Theme::dim(),
+        ));
+    } else {
+        spans.push(Span::styled(label.into_owned(), Theme::dim()));
+    }
+    if let Some(copy_label) = copy_label {
+        spans.push(Span::styled(
+            copy_label,
             Theme::markdown_code_copy_button(/*hovered*/ false),
         ));
     }
-    spans.push(Span::styled(closing_corner.to_string(), style));
     Line::from(spans)
 }
 
@@ -383,29 +437,25 @@ fn code_block_copy_columns(width: usize) -> Option<std::ops::Range<usize>> {
     Some(start..start + label_width)
 }
 
-fn code_block_content_lines(line: &str, width: usize) -> Vec<Line<'static>> {
-    let style = Theme::markdown_code_block();
-    if width <= 1 {
-        return wrap_line_hard(line, 1)
-            .into_iter()
-            .map(|chunk| Line::from(Span::styled(chunk, style)))
-            .collect();
-    }
-    if width <= 3 {
-        return wrap_line_hard(line, width.saturating_sub(1).max(1))
-            .into_iter()
-            .map(|chunk| Line::from(Span::styled(format!("│{chunk}"), style)))
-            .collect();
-    }
-
-    let content_width = width - 4;
-    wrap_line_hard(line, content_width.max(1))
+/// Hard-wrap highlighted segments at display-width columns, preserving span
+/// styles across breaks. Code needs hard wrapping; [`wrap_styled_segments`]
+/// soft-wraps at whitespace and would reflow source lines.
+fn wrap_styled_segments_hard(segments: &[StyledSegment], width: usize) -> Vec<Line<'static>> {
+    let text = segments
+        .iter()
+        .map(|segment| segment.text.as_str())
+        .collect::<String>();
+    let spans = segments
+        .iter()
+        .map(|segment| Span::styled(segment.text.clone(), segment.style))
+        .collect::<Vec<_>>();
+    let empty_style = segments
+        .first()
+        .map(|segment| segment.style)
+        .unwrap_or_else(Theme::code_text);
+    hard_wrap_styled_spans(&text, &spans, width, empty_style)
         .into_iter()
-        .map(|chunk| {
-            let chunk_width = display_width(&chunk);
-            let padding = " ".repeat(content_width.saturating_sub(chunk_width));
-            Line::from(Span::styled(format!("│ {chunk}{padding} │"), style))
-        })
+        .map(Line::from)
         .collect()
 }
 

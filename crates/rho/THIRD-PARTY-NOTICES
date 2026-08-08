@@ -59,3 +59,18 @@ crates/rho/src/tui/markdown/txm.rs and crates/rho/src/tui/markdown/txm/,
 because crates.io txm 0.1.5's ratatui feature does not build and cargo cannot
 publish a crate with a git dependency. The vendored copy should be replaced by
 the crates.io dependency once a fixed txm release ships.
+
+
+two-face (bat syntax pack)
+==========================
+
+Fenced code-block highlighting loads extra syntect syntax definitions from
+two-face 0.5.x (the bat-derived dump), including TypeScript, TOML, Dockerfile,
+and related grammars:
+
+  https://codeberg.org/CosmicHarper/two-face
+  https://github.com/sharkdp/bat
+
+two-face is licensed under MIT OR Apache-2.0. Embedded syntax and theme assets
+retain their upstream licenses; see two-face's acknowledgement listing and
+bat's LICENSE and NOTICE files for the full set.

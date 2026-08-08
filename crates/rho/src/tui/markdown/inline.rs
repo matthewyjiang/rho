@@ -71,7 +71,7 @@ pub(super) fn markdown_inline_segments(line: &str) -> Vec<StyledSegment> {
                 let source = &rest[start + "$".len()..end - "$".len()];
                 match math::render_inline_math(source) {
                     Some(text) => {
-                        segments.push(StyledSegment::new(text, Theme::markdown_code_block()));
+                        segments.push(StyledSegment::new(text, Theme::code_text()));
                     }
                     // Formulas taller than one row keep their literal source so
                     // no math is lost inside wrapped prose.

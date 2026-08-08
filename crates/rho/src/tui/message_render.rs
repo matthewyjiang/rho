@@ -1,11 +1,13 @@
 use super::{
-    markdown::render_markdown, render::padded_content_width, rendered_entry::RenderedEntry,
+    markdown::{render_markdown, CodeFenceState},
+    render::padded_content_width,
+    rendered_entry::RenderedEntry,
     theme::Theme,
 };
 
 pub(super) fn render_assistant_content(text: &str, width: usize) -> RenderedEntry {
-    let mut in_code_block = false;
-    let rendered = render_markdown(text, padded_content_width(width), &mut in_code_block);
+    let mut state = CodeFenceState::default();
+    let rendered = render_markdown(text, padded_content_width(width), &mut state);
     RenderedEntry {
         lines: rendered.lines,
         code_blocks: rendered.code_blocks,

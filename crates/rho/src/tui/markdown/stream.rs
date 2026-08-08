@@ -39,8 +39,9 @@ pub(in crate::tui) fn markdown_stream_bounds(
     }
 
     if current_line_in_code_block {
-        let complete =
-            complete_hard_wrap_prefix(current_line, code_block_stream_content_width(width));
+        // Code-block rows render at the full pane width; keep the streaming
+        // wrap boundary in lockstep with `hard_wrap_ranges` / `hard_wrap_styled_spans`.
+        let complete = complete_hard_wrap_prefix(current_line, width.max(1));
         if complete.byte_index > 0 {
             drain.byte_index = current_line_start + complete.byte_index;
             drain.ends_with_wrap = complete.ends_with_wrap;
@@ -216,15 +217,6 @@ fn line_starts_in_code_block(text: &str, line_start: usize, in_code_block: bool)
         }
     }
     active_fence.is_some()
-}
-
-fn code_block_stream_content_width(width: usize) -> usize {
-    let width = width.max(1);
-    match width {
-        1 => 1,
-        2 | 3 => width - 1,
-        width => width - 4,
-    }
 }
 
 fn starts_with_code_fence_fragment(line: &str) -> bool {

@@ -1,3 +1,5 @@
+use crate::tui::syntax::BlockHighlighter;
+
 #[derive(Clone, Copy)]
 pub(in crate::tui) struct CodeFence {
     pub(super) marker: char,
@@ -8,23 +10,37 @@ pub(super) struct MermaidOpeningFence {
     pub(super) fence: CodeFence,
 }
 
-#[derive(Clone, Copy, Default)]
+/// Open/closed fence tracker for streaming markdown. Carries the info-string
+/// language and the syntect lexical state so live preview can keep highlighting
+/// continuation lines (including multi-line strings/comments) correctly.
+#[derive(Clone, Default)]
 pub(in crate::tui) struct CodeFenceState {
     pub(super) active: Option<CodeFence>,
+    /// Lowercased first info-string token from the opening fence, when present.
+    pub(super) language: Option<String>,
+    /// Highlighter advanced through committed body lines of the open fence.
+    /// Cloned into live-preview renders; taken/restored by full renders.
+    pub(super) highlighter: Option<BlockHighlighter>,
 }
 
 impl CodeFenceState {
-    pub(in crate::tui) fn is_open(self) -> bool {
+    pub(in crate::tui) fn is_open(&self) -> bool {
         self.active.is_some()
     }
 
-    pub(super) fn from_open_flag(is_open: bool) -> Self {
-        Self {
-            active: is_open.then_some(CodeFence {
-                marker: '`',
-                length: 3,
-            }),
-        }
+    pub(super) fn clear_open(&mut self) {
+        self.active = None;
+        self.language = None;
+        self.highlighter = None;
+    }
+
+    /// Record an opening fence. Leaves the highlighter on `self` so
+    /// [`update_code_block_state`] can advance it; render paths that move the
+    /// highlighter onto an active block should take it afterward.
+    pub(super) fn open_fence(&mut self, fence: CodeFence, language: Option<String>) {
+        self.highlighter = language.as_deref().and_then(BlockHighlighter::for_language);
+        self.active = Some(fence);
+        self.language = language;
     }
 }
 
@@ -34,9 +50,15 @@ pub(in crate::tui) fn update_code_block_state(text: &str, state: &mut CodeFenceS
             .active
             .is_some_and(|fence| is_closing_fence(line, fence))
         {
-            state.active = None;
+            state.clear_open();
         } else if state.active.is_none() {
-            state.active = parse_opening_fence(line);
+            if let Some(fence) = parse_opening_fence(line) {
+                state.open_fence(fence, opening_fence_info_token(line));
+            }
+        } else if let Some(highlighter) = state.highlighter.as_mut() {
+            // Advance lexical state for committed body lines so a later
+            // preview/render chunk resumes inside multi-line tokens.
+            highlighter.advance_line(line);
         }
     }
 }
@@ -78,12 +100,16 @@ pub(in crate::tui) fn is_closing_fence(line: &str, opening: CodeFence) -> bool {
     length >= opening.length && rest[length..].chars().all(char::is_whitespace)
 }
 
-pub(super) fn mermaid_opening_fence(line: &str) -> Option<MermaidOpeningFence> {
+/// Lowercased first info-string token of an opening fence line, when present.
+pub(super) fn opening_fence_info_token(line: &str) -> Option<String> {
     let fence = parse_opening_fence(line)?;
     let indent = line.len() - line.trim_start_matches(' ').len();
     let rest = &line[indent + fence.length..];
-    rest.split_whitespace()
-        .next()
-        .is_some_and(|token| token.eq_ignore_ascii_case("mermaid"))
+    rest.split_whitespace().next().map(str::to_ascii_lowercase)
+}
+
+pub(super) fn mermaid_opening_fence(line: &str) -> Option<MermaidOpeningFence> {
+    let fence = parse_opening_fence(line)?;
+    (opening_fence_info_token(line).as_deref() == Some("mermaid"))
         .then_some(MermaidOpeningFence { fence })
 }

@@ -69,6 +69,9 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 tracing = "0.1"
 pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
 katex-rs = "0.2.4"
+syntect = { version = "5", default-features = false, features = ["regex-fancy", "parsing", "dump-load"] }
+# Bat/syntect extra syntax dump (TypeScript, TOML, Dockerfile, ...). Matches fancy regex.
+two-face = { version = "0.5", default-features = false, features = ["syntect-fancy"] }
 mermaid-rs-renderer = { version = "=0.3.1", default-features = false }
 arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
 rmcp = { version = "3.1.1", default-features = false, features = [

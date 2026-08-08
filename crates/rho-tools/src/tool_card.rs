@@ -285,6 +285,26 @@ pub struct ToolCard {
     pub facts: Vec<ToolFact>,
     #[serde(default, skip_serializing_if = "ToolBody::is_empty")]
     pub body: ToolBody,
+    /// Optional search pattern for match highlighting (grep content bodies).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub match_pattern: Option<String>,
+    /// When true, [`Self::match_pattern`] is a literal substring (grep `literal`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub match_literal: bool,
+    /// Case-sensitive match overlay. Defaults to true to match grep.
+    #[serde(
+        default = "default_match_case_sensitive",
+        skip_serializing_if = "is_true"
+    )]
+    pub match_case_sensitive: bool,
+}
+
+fn default_match_case_sensitive() -> bool {
+    true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 impl ToolCard {
@@ -295,6 +315,9 @@ impl ToolCard {
             header,
             facts: Vec::new(),
             body: ToolBody::None,
+            match_pattern: None,
+            match_literal: false,
+            match_case_sensitive: true,
         }
     }
 
@@ -305,6 +328,19 @@ impl ToolCard {
 
     pub fn with_body(mut self, body: ToolBody) -> Self {
         self.body = body;
+        self
+    }
+
+    pub fn with_match_pattern(mut self, pattern: impl Into<String>) -> Self {
+        let pattern = pattern.into();
+        self.match_pattern = (!pattern.is_empty()).then_some(pattern);
+        self
+    }
+
+    /// Carry the grep tool's literal/case options into the match overlay.
+    pub fn with_match_semantics(mut self, literal: bool, case_sensitive: bool) -> Self {
+        self.match_literal = literal;
+        self.match_case_sensitive = case_sensitive;
         self
     }
 

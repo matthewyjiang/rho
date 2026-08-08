@@ -313,6 +313,18 @@ fn active_ansi_color(color: AnsiColor) -> Color {
     sampled_or_named(TERMINAL_SAMPLE.get(), color)
 }
 
+/// Syntax-highlighting roles for code fences and diff bodies. The highlighter
+/// maps syntect scopes onto these; the theme maps them onto the palette.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SyntaxRole {
+    Comment,
+    String,
+    Constant,
+    Keyword,
+    Function,
+    Type,
+}
+
 pub(super) struct Theme;
 
 impl Theme {
@@ -558,9 +570,40 @@ impl Theme {
             .remove_modifier(Modifier::UNDERLINED)
     }
 
-    pub(super) fn markdown_code_block() -> Style {
+    /// Plain style for code, Mermaid, and math content (not chrome).
+    pub(super) fn code_text() -> Style {
+        // Match assistant body text so source reads as content rather than
+        // accent-colored chrome.
+        Self::text()
+    }
+
+    /// Style for one syntax-highlighting role.
+    /// Colors track the active ANSI palette so every theme, including
+    /// terminal-sampled ones, keeps highlighted code readable.
+    pub(super) fn syntax(role: SyntaxRole) -> Style {
+        let color = match role {
+            SyntaxRole::Comment => active_ansi_color(AnsiColor::BrightBlack),
+            SyntaxRole::String => active_ansi_color(AnsiColor::Green),
+            SyntaxRole::Constant => active_ansi_color(AnsiColor::Magenta),
+            SyntaxRole::Keyword => active_ansi_color(AnsiColor::Blue),
+            SyntaxRole::Function => active_ansi_color(AnsiColor::Yellow),
+            SyntaxRole::Type => active_ansi_color(AnsiColor::Cyan),
+        };
         Style::default()
-            .fg(Palette::current().accent)
+            .fg(color)
+            .remove_modifier(Modifier::UNDERLINED)
+    }
+
+    /// Grep/search match overlay on top of plain or syntax-colored text.
+    ///
+    /// Keeps the underlying foreground when present, adds a warning-tinted
+    /// background and bold so hits stay visible without erasing language roles.
+    pub(super) fn search_match(base: Style) -> Style {
+        let palette = Palette::current();
+        let bg = palette.warning;
+        base.bg(bg)
+            .fg(Self::contrasting_ink_on(bg))
+            .add_modifier(Modifier::BOLD)
             .remove_modifier(Modifier::UNDERLINED)
     }
 

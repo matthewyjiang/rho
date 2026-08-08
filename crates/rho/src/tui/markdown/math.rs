@@ -151,7 +151,7 @@ fn render_inner(source: &str, inner_width: usize) -> MathRender {
         return MathRender::Fallback(MathFallback::TooWide);
     }
 
-    let style = Theme::markdown_code_block();
+    let style = Theme::code_text();
     let math = match Math::new(source) {
         Ok(math) => math.style(style),
         Err(_) => return MathRender::Fallback(MathFallback::Parse),

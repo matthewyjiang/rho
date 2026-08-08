@@ -51,19 +51,19 @@ fn click_without_drag_does_not_copy() {
 
 #[test]
 fn excludes_code_block_copy_button_from_drag_selection() {
-    let mut in_code_block = false;
+    let mut fence_state = crate::tui::markdown::CodeFenceState::default();
     let lines =
-        crate::tui::markdown::markdown_lines("```rust\nlet x = 1;\n```", 20, &mut in_code_block);
+        crate::tui::markdown::markdown_lines("```rust\nlet x = 1;\n```", 20, &mut fence_state);
     let selection = TextSelection {
         anchor: SelectionPosition { line: 0, column: 0 },
         focus: SelectionPosition {
-            line: 2,
+            line: 1,
             column: 19,
         },
     };
 
     assert_eq!(
         selection.selected_text(&lines, 0),
-        Some("╭────────────╮\n│ let x = 1;       │\n╰──────────────────╯".into())
+        Some("RUST\nlet x = 1;".into())
     );
 }
