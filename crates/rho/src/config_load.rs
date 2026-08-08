@@ -113,6 +113,14 @@ pub(super) fn parse_settings(text: &str) -> anyhow::Result<(Config, Vec<ConfigWa
         if let Some(value) = group.zen_mode {
             cfg.zen_mode = value;
         }
+        if let Some(value) = group.theme {
+            let trimmed = value.trim();
+            cfg.theme = if trimmed.is_empty() {
+                "terminal".into()
+            } else {
+                trimmed.to_string()
+            };
+        }
         if let Some(value) = group.max_tool_output_lines {
             let clamped = value.max(1);
             if clamped != value {
@@ -339,11 +347,13 @@ impl PartialConfig {
             let group = self.display.take().unwrap_or(PartialDisplayConfig {
                 show_reasoning_output: None,
                 zen_mode: None,
+                theme: None,
                 max_tool_output_lines: None,
             });
             self.display = Some(PartialDisplayConfig {
                 show_reasoning_output: group.show_reasoning_output.or(show_reasoning_output),
                 zen_mode: group.zen_mode.or(zen_mode),
+                theme: group.theme,
                 max_tool_output_lines: group.max_tool_output_lines.or(max_tool_output_lines),
             });
         }
@@ -513,6 +523,7 @@ struct PartialModelConfig {
 struct PartialDisplayConfig {
     show_reasoning_output: Option<bool>,
     zen_mode: Option<bool>,
+    theme: Option<String>,
     max_tool_output_lines: Option<usize>,
 }
 

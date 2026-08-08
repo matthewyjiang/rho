@@ -41,6 +41,8 @@ pub(crate) struct HistoryRenderSettings {
     pub width: usize,
     pub max_tool_output_lines: usize,
     pub zen_mode: bool,
+    /// Active theme generation so palette switches rebuild styled lines.
+    pub theme_generation: u64,
 }
 
 impl HistoryRenderSettings {

@@ -25,6 +25,7 @@ pub(super) const PERMISSION_MODE_PREFIX: &str = "permission_mode:";
 pub(super) const REASONING_VALUE: &str = "reasoning";
 pub(super) const SHOW_REASONING_OUTPUT_VALUE: &str = "show_reasoning_output";
 pub(super) const ZEN_MODE_VALUE: &str = "zen_mode";
+pub(super) const THEME_VALUE: &str = "theme";
 pub(super) const CHECK_FOR_UPDATES_VALUE: &str = "check_for_updates";
 pub(super) const ENABLE_SUBAGENTS_VALUE: &str = "enable_subagents";
 pub(super) const ADVISOR_MODE_VALUE: &str = "advisor_mode";
@@ -70,6 +71,10 @@ fn item(
 
 fn on_off(value: bool) -> String {
     if value { "on" } else { "off" }.into()
+}
+
+fn theme_badge(config: &Config) -> String {
+    super::theme::theme_display_name(&config.theme)
 }
 
 /// Advisor badge: the mode, plus the advisor model once one is selected.
@@ -126,7 +131,7 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
         vec![
             item(
                 "Models & reasoning",
-                "Conversation model, reasoning level, reasoning output, and zen mode.",
+                "Conversation model, reasoning level, reasoning output, zen mode, and theme.",
                 Some(info.model.clone()),
                 MODELS_CATEGORY_VALUE,
             ),
@@ -223,6 +228,12 @@ pub(super) fn category_picker(
                     "Show only message text. Hides tool cards, reasoning, and the Thinking... placeholder. Keeps the activity rail. Space toggles.",
                     Some(on_off(info.zen_mode)),
                     ZEN_MODE_VALUE,
+                ),
+                item(
+                    "Theme",
+                    "Color theme for the interactive TUI. Enter opens a preview picker. Default matches the host terminal.",
+                    Some(theme_badge(config)),
+                    THEME_VALUE,
                 ),
             ];
             if capabilities == rho_providers::model::ReasoningCapabilities::NotConfigurable {
@@ -384,7 +395,8 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
         CONVERSATION_MODEL_VALUE
         | REASONING_VALUE
         | SHOW_REASONING_OUTPUT_VALUE
-        | ZEN_MODE_VALUE => Some(MODELS_CATEGORY_VALUE),
+        | ZEN_MODE_VALUE
+        | THEME_VALUE => Some(MODELS_CATEGORY_VALUE),
         PERMISSION_MODE_VALUE
         | ENABLE_SUBAGENTS_VALUE
         | ADVISOR_MODE_VALUE

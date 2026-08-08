@@ -213,6 +213,7 @@ fn recovered_history_tail_limits_initial_redraw() {
             width: 80,
             max_tool_output_lines: 10,
             zen_mode: false,
+            theme_generation: 0,
         },
     );
 
@@ -257,6 +258,7 @@ fn recovered_history_tail_keeps_oversized_visible_before_hidden_suffix() {
             width: 40,
             max_tool_output_lines: 10,
             zen_mode: true,
+            theme_generation: 0,
         },
     );
 

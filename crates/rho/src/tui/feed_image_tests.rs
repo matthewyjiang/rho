@@ -134,6 +134,7 @@ fn tool_entry_history_cache_omits_partially_visible_image_placement() {
         width,
         max_tool_output_lines: 20,
         zen_mode: false,
+        theme_generation: 0,
     };
     let line_count = cache.line_count(&entries, settings, &no_images);
 

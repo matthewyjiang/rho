@@ -16,6 +16,7 @@ pub enum CommandId {
     Compact,
     Goal,
     Skills,
+    Theme,
     Hooks,
     Agents,
     Changelog,
@@ -266,6 +267,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "skills",
         usage: "/skills",
         description: "show loaded skills and descriptions",
+        argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Theme,
+        name: "theme",
+        usage: "/theme",
+        description: "preview and apply a color theme",
         argument_choices: &[],
     },
     CommandSpec {

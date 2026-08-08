@@ -363,6 +363,7 @@ impl App {
     ) -> anyhow::Result<()> {
         match invocation.id {
             CommandId::Exit => self.execute_exit_command(),
+            CommandId::Theme => self.open_theme_picker(),
             CommandId::Config => self.execute_config_command(terminal),
             CommandId::Info => self.execute_info_command().await,
             CommandId::Help => self.execute_help_command(),
@@ -505,6 +506,7 @@ impl App {
                     }
                 }
             }
+            PickerAction::SelectTheme => self.submit_theme_selection(&value)?,
             PickerAction::LoginGroup
             | PickerAction::LoginProvider
             | PickerAction::LogoutProvider
@@ -570,6 +572,7 @@ impl App {
             config_picker::SHOW_REASONING_OUTPUT_VALUE => {
                 self.toggle_reasoning_output()?;
             }
+            config_picker::THEME_VALUE => self.open_theme_picker_from_config()?,
             config_picker::ZEN_MODE_VALUE => {
                 self.toggle_zen_mode()?;
             }

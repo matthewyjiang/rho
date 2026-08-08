@@ -18,6 +18,7 @@ favorite_models = []
 [display]
 show_reasoning_output = true
 zen_mode = false
+theme = "terminal" # terminal, one-half-dark, one-half-light, monochrome-dark, monochrome-light, or a custom ~/.rho/themes/<id>.json stem
 max_tool_output_lines = 10
 
 [output]

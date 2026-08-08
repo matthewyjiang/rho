@@ -42,6 +42,7 @@ impl App {
             config_picker::REASONING_VALUE => self.cycle_reasoning(agent),
             config_picker::SHOW_REASONING_OUTPUT_VALUE => self.toggle_reasoning_output(),
             config_picker::ZEN_MODE_VALUE => self.toggle_zen_mode(),
+            config_picker::THEME_VALUE => self.open_theme_picker_from_config(),
             config_picker::CHECK_FOR_UPDATES_VALUE => self.toggle_check_for_updates(),
             config_picker::ENABLE_SUBAGENTS_VALUE => self.toggle_enable_subagents(),
             config_picker::ADVISOR_MODE_VALUE => self.toggle_advisor_mode(agent).await,
