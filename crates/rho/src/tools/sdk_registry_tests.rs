@@ -70,20 +70,30 @@ fn canonical_tool_names_match_the_unfiltered_registry() {
     }
 
     let root = tempfile::tempdir().unwrap();
-    let config = Config::default();
-    let options = ToolSetOptions::default()
-        .advisor(AdvisorSessionStore::new())
-        .delegation(DelegationConfig::new(
-            root.path().to_owned(),
-            root.path().join("config.toml"),
-            BackgroundSubagents::Enabled,
-        ))
-        .workflow(Arc::new(RegistryWorkflowService));
-    let mut tools = AppToolSet::new(&config, RuntimeDiagnostics::new(&config), options);
-    // Advisor mode is off by default; the registry still owns the name.
-    tools.set_advisor_registered(true);
+    let mut model_names = Vec::new();
+    for edit_tool in [
+        crate::config::EditTool::Hashline,
+        crate::config::EditTool::ApplyPatch,
+        crate::config::EditTool::EditFile,
+    ] {
+        let config = Config {
+            edit_tool,
+            ..Config::default()
+        };
+        let options = ToolSetOptions::default()
+            .advisor(AdvisorSessionStore::new())
+            .delegation(DelegationConfig::new(
+                root.path().to_owned(),
+                root.path().join("config.toml"),
+                BackgroundSubagents::Enabled,
+            ))
+            .workflow(Arc::new(RegistryWorkflowService));
+        let mut tools = AppToolSet::new(&config, RuntimeDiagnostics::new(&config), options);
+        // Advisor mode is off by default; the registry still owns the name.
+        tools.set_advisor_registered(true);
+        model_names.extend(tools.unfiltered_names());
+    }
 
-    let model_names = tools.unfiltered_names().collect::<Vec<_>>();
     assert!(!model_names.iter().any(|name| name == "workflow_command"));
     let registry_names = model_names.into_iter().chain(
         super::super::HOST_ONLY_TOOL_NAMES

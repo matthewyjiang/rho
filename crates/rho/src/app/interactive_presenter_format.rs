@@ -4,7 +4,10 @@ use rho_sdk::tool::{OperationKind, ToolMetadata, ToolProgress};
 use rho_tools::{
     resolve_path,
     tool::compact_display_path,
-    tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus},
+    tool_card::{
+        DiffCardChange, DiffCardFile, ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader,
+        ToolStatus,
+    },
 };
 
 #[path = "interactive_presenter_results.rs"]
@@ -64,8 +67,16 @@ pub(super) fn streaming_preview_card(
         ),
         ToolKind::Edit => arguments.map_or_else(
             || kind_card(ToolStatus::Running, kind, ToolHeader::call(name, None)),
-            // Streaming: document-only projection — never touch disk mid-JSON.
-            |arguments| edit_document_card(arguments, cwd, ToolStatus::Running),
+            |arguments| match name {
+                "edit" => edit_document_card(arguments, cwd, ToolStatus::Running),
+                "apply_patch" => apply_patch_card(
+                    arguments,
+                    cwd,
+                    ToolStatus::Running,
+                    rho_tools::apply_patch::ProposedDiffTrailingLine::CompleteLinesOnly,
+                ),
+                _ => preview_card(kind, name, Some(arguments), cwd, ToolStatus::Running),
+            },
         ),
         _ => preview_card(kind, name, arguments, cwd, ToolStatus::Running),
     }
@@ -148,7 +159,7 @@ pub(super) fn preview_card(
                 Some(display_path(arguments, cwd)).filter(|p| !p.is_empty()),
             ),
         ),
-        ToolKind::Edit => edit_planned_card(arguments, cwd, status),
+        ToolKind::Edit => edit_preview_card(name, arguments, cwd, status),
         ToolKind::Skill => kind_card(
             status,
             kind,
@@ -197,6 +208,86 @@ pub(super) fn preview_card(
             ToolHeader::call("get_search_content", Some(get_search_primary(arguments))),
         ),
     }
+}
+
+fn edit_preview_card(
+    name: &str,
+    arguments: &serde_json::Value,
+    cwd: &std::path::Path,
+    status: ToolStatus,
+) -> ToolCard {
+    match name {
+        "edit" => edit_planned_card(arguments, cwd, status),
+        "apply_patch" => apply_patch_card(
+            arguments,
+            cwd,
+            status,
+            rho_tools::apply_patch::ProposedDiffTrailingLine::Include,
+        ),
+        "edit_file" => kind_card(
+            status,
+            ToolKind::Edit,
+            ToolHeader::call(
+                "edit_file",
+                Some(display_path(arguments, cwd)).filter(|path| !path.is_empty()),
+            ),
+        ),
+        _ => kind_card(status, ToolKind::Edit, ToolHeader::call(name, None)),
+    }
+}
+
+fn apply_patch_card(
+    arguments: &serde_json::Value,
+    cwd: &std::path::Path,
+    status: ToolStatus,
+    trailing_line: rho_tools::apply_patch::ProposedDiffTrailingLine,
+) -> ToolCard {
+    let Some(input) = arguments.get("input").and_then(serde_json::Value::as_str) else {
+        return kind_card(
+            status,
+            ToolKind::Edit,
+            ToolHeader::call("apply_patch", None),
+        );
+    };
+    let proposed = rho_tools::apply_patch::proposed_diff_lenient(input, trailing_line);
+    let files = proposed
+        .files
+        .into_iter()
+        .map(|file| {
+            use rho_tools::apply_patch::ProposedDiffOperation;
+            let change = match file.operation {
+                ProposedDiffOperation::Delete => DiffCardChange::Delete,
+                ProposedDiffOperation::Add | ProposedDiffOperation::Update => {
+                    DiffCardChange::Content
+                }
+            };
+            let path = compact_display_path(cwd, &file.display_path);
+            let source_path = match (&file.source_path, &file.destination_path) {
+                (Some(source), Some(destination)) if source != destination => {
+                    Some(compact_display_path(cwd, source))
+                }
+                _ => None,
+            };
+            DiffCardFile {
+                path,
+                source_path,
+                change,
+                stats: file
+                    .added_lines
+                    .zip(file.removed_lines)
+                    .filter(|(added, removed)| *added > 0 || *removed > 0),
+                rows: file.rows,
+            }
+        })
+        .collect::<Vec<_>>();
+    diff_card(
+        status,
+        "apply_patch",
+        Vec::new(),
+        files,
+        EmptyDiffState::Silent,
+        proposed.truncated,
+    )
 }
 
 fn edit_document_card(
@@ -455,7 +546,9 @@ pub(super) fn interrupted_card(
         ToolKind::Advisor => advisor_card(ToolStatus::Interrupted, "interrupted"),
         ToolKind::Agent => agent_format::agent_interrupted_card(&view.arguments),
         ToolKind::Agents => agent_format::agents_interrupted_card(&view.arguments),
-        ToolKind::Edit => edit_planned_card(&view.arguments, cwd, ToolStatus::Interrupted),
+        ToolKind::Edit => {
+            edit_preview_card(&view.name, &view.arguments, cwd, ToolStatus::Interrupted)
+        }
         _ => {
             let mut card = preview_card(
                 view.kind,
@@ -546,15 +639,33 @@ pub(super) fn read_path(arguments: &serde_json::Value, cwd: &std::path::Path) ->
     format!("{path}:{start}-{end}")
 }
 
-pub(super) fn edit_paths(arguments: &serde_json::Value, cwd: &std::path::Path) -> Vec<String> {
-    arguments
-        .get("input")
-        .and_then(|value| value.as_str())
-        .map(rho_tools::hashline::proposed_sections)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|section| compact_display_path(cwd, &section.path))
-        .collect()
+pub(super) fn edit_paths(
+    name: &str,
+    arguments: &serde_json::Value,
+    cwd: &std::path::Path,
+) -> Vec<String> {
+    match name {
+        "edit_file" => {
+            let path = display_path(arguments, cwd);
+            (!path.is_empty()).then_some(path).into_iter().collect()
+        }
+        "apply_patch" => arguments
+            .get("input")
+            .and_then(|value| value.as_str())
+            .map(rho_tools::apply_patch::patch_paths_lenient)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|path| compact_display_path(cwd, &path))
+            .collect(),
+        _ => arguments
+            .get("input")
+            .and_then(|value| value.as_str())
+            .map(rho_tools::hashline::proposed_sections)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|section| compact_display_path(cwd, &section.path))
+            .collect(),
+    }
 }
 
 pub(super) fn metadata_paths(view: &ToolView, cwd: &std::path::Path) -> Vec<String> {

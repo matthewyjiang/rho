@@ -3,7 +3,7 @@ use super::{
     PickerItem, UiPicker,
 };
 use {
-    crate::config::Config,
+    crate::config::{Config, EditTool},
     crate::permission::PermissionMode,
     rho_providers::credentials::{
         load_web_search_api_key, CredentialResult, CredentialStore, WebSearchCredential,
@@ -39,6 +39,8 @@ pub(super) const MAX_TOOL_OUTPUT_LINES_VALUE: &str = "max_tool_output_lines";
 pub(super) const WEB_SEARCH_VALUE: &str = "web_search";
 pub(super) const INLINE_SHELL_VALUE: &str = "inline_shell";
 pub(super) const INLINE_SHELL_PREFIX: &str = "inline_shell:";
+pub(super) const EDIT_TOOL_VALUE: &str = "edit_tool";
+pub(super) const EDIT_TOOL_PREFIX: &str = "edit_tool:";
 pub(super) const WEB_SEARCH_HOSTED_VALUE: &str = "web_search_hosted";
 pub(super) const WEB_SEARCH_PROVIDER_VALUE: &str = "web_search_provider";
 pub(super) const WEB_SEARCH_OPENAI_KEY_VALUE: &str = "web_search_openai_api_key";
@@ -156,10 +158,11 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
             ),
             item(
                 "Tools",
-                "Inline shell and web search (hosted + backup).",
+                "Inline shell, edit tool, and web search (hosted + backup).",
                 Some(format!(
-                    "{} shell · {}",
+                    "{} shell · {} · {}",
                     config.inline_shell,
+                    config.edit_tool.label(),
                     web_search_summary(config)
                 )),
                 TOOLS_CATEGORY_VALUE,
@@ -323,6 +326,12 @@ pub(super) fn category_picker(
                     INLINE_SHELL_VALUE,
                 ),
                 item(
+                    "Edit tool",
+                    "Choose the file edit format exposed to models. Restart Rho to apply changes.",
+                    Some(config.edit_tool.label().into()),
+                    EDIT_TOOL_VALUE,
+                ),
+                item(
                     "Web search",
                     "Hosted search when supported; backup client backend and API keys.",
                     Some(web_search_summary(config)),
@@ -407,7 +416,7 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
         | COMPACT_TARGET_PERCENT_VALUE
         | MAX_OUTPUT_BYTES_VALUE
         | MAX_TOOL_OUTPUT_LINES_VALUE => Some(CONTEXT_CATEGORY_VALUE),
-        INLINE_SHELL_VALUE | WEB_SEARCH_VALUE => Some(TOOLS_CATEGORY_VALUE),
+        INLINE_SHELL_VALUE | EDIT_TOOL_VALUE | WEB_SEARCH_VALUE => Some(TOOLS_CATEGORY_VALUE),
         PROVIDER_LOGIN_VALUE
         | PROVIDER_LOGOUT_VALUE
         | SWITCH_AUTH_MODE_VALUE
@@ -466,6 +475,41 @@ pub(super) fn inline_shell_picker(config: &Config) -> UiPicker {
                     tone: PickerBadgeTone::Selected,
                 }),
                 value: format!("{INLINE_SHELL_PREFIX}{shell}"),
+                selection_verb: None,
+            })
+            .collect(),
+        PickerAction::Config,
+    )
+}
+
+pub(super) fn edit_tool_picker(selected: EditTool) -> UiPicker {
+    UiPicker::new(
+        "Edit tool",
+        [EditTool::Hashline, EditTool::ApplyPatch, EditTool::EditFile]
+            .into_iter()
+            .map(|edit_tool| PickerItem {
+                section: None,
+                label: edit_tool.label().into(),
+                detail: Some(
+                    match edit_tool {
+                        EditTool::Hashline => {
+                            "Expose `edit` with snapshot tags and line-anchored PUT/CUT operations."
+                        }
+                        EditTool::ApplyPatch => {
+                            "Expose `apply_patch` with a Codex-style multi-file patch document."
+                        }
+                        EditTool::EditFile => {
+                            "Expose `edit_file` with exact old_string/new_string replacement."
+                        }
+                    }
+                    .into(),
+                ),
+                preview: None,
+                badge: (edit_tool == selected).then_some(PickerBadge {
+                    text: "selected".into(),
+                    tone: PickerBadgeTone::Selected,
+                }),
+                value: format!("{EDIT_TOOL_PREFIX}{}", edit_tool.as_str()),
                 selection_verb: None,
             })
             .collect(),

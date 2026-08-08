@@ -45,7 +45,7 @@ Rho stores persistent config at `~/.rho/config.toml` by default. `RHO_HOME` over
 
 ## Inspect the current live config
 
-Use the read-only `rho` tool with action `config` to see the sanitized live configuration (model, provider, reasoning, compaction, web search, update checks, subagents, rtk, output limits). It excludes credentials and user content. It reports the values the running process uses; restart-only settings may differ from what is saved for the next session.
+Use the read-only `rho` tool with action `config` to see the sanitized live configuration (model, provider, reasoning, compaction, edit tool, web search, update checks, subagents, rtk, output limits). It excludes credentials and user content. It reports the values the running process uses; restart-only settings may differ from what is saved for the next startup.
 
 ## Common tasks
 
@@ -57,6 +57,7 @@ Use the read-only `rho` tool with action `config` to see the sanitized live conf
 - **Permission mode**: `permission_mode` must be `auto`, `plan`, or `supervised`. Set it under Agent behavior in `/config`, or in config. `auto` allows, `plan` denies file writes and process execution, `supervised` asks before file writes and process execution. The change applies before the next turn and clears session approvals.
 - **Auto compaction**: under Context & limits in `/config`. `compact_target_percent` must stay below `compact_threshold_percent`; values at or above the threshold are clamped.
 - **Web search**: under Tools in `/config`. `hosted` enables provider-hosted search; `provider` selects the backup backend (`auto`, `openai`, `exa`, `brave`, `disabled`). Set `hosted` to `false` and `provider` to `disabled` to disable search entirely.
+- **Edit tool**: under Tools in `/config`, choose `edit`, `apply_patch`, or `edit_file`. Exactly one edit schema is exposed. The saved choice applies on the next Rho startup, so restart Rho after changing it.
 - **Prompt templates**: add a file under `~/.rho/prompts/` or `<project>/.rho/prompts/`, or define `[prompt_templates]` inline in config. The filename or key becomes the slash command. Restart rho after adding or editing templates.
 - **Global instructions**: to change rules that apply to every session, edit `~/.rho/AGENTS.md` (see above).
 - **Keybindings**: edit `[keybindings]` in config. Values use `+`-separated modifiers and keys. Keybinding changes take effect at startup.

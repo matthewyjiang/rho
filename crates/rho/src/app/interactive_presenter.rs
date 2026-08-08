@@ -64,7 +64,7 @@ impl ToolKind {
             "glob" => Self::Glob,
             "read_file" => Self::ReadFile,
             "write" | "write_file" => Self::WriteFile,
-            "edit" => Self::Edit,
+            "edit" | "apply_patch" | "edit_file" => Self::Edit,
             "skill" => Self::Skill,
             "web_search" => Self::WebSearch,
             "fetch_content" => Self::FetchContent,

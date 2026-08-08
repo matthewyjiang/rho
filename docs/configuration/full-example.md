@@ -61,6 +61,7 @@ advisor_mode = false
 check_for_updates = true
 enable_subagents = true
 experimental_workspace_rewind = false
+edit_tool = "edit" # edit, apply_patch, or edit_file
 permission_mode = "auto" # auto, plan, or supervised
 rtk = true
 inline_shell = "bash" # bash default on macOS/Linux; powershell on Windows

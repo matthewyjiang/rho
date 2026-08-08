@@ -13,7 +13,8 @@ use {
 
 use super::{
     format::InternalAgentModelConfig, inferred_provider_auth,
-    provider_config::PartialProviderConfigs, Config, LegacyWebSearchCredentials, SearchProvider,
+    provider_config::PartialProviderConfigs, Config, EditTool, LegacyWebSearchCredentials,
+    SearchProvider,
 };
 
 /// Non-fatal issue found while loading config.
@@ -239,6 +240,9 @@ pub(super) fn parse_settings(text: &str) -> anyhow::Result<(Config, Vec<ConfigWa
         if let Some(value) = group.permission_mode {
             cfg.permission_mode = value;
         }
+        if let Some(value) = group.edit_tool {
+            cfg.edit_tool = value;
+        }
         if let Some(value) = group.credential_store.as_deref() {
             cfg.credential_store = Some(
                 CredentialStoreBackend::parse(value)
@@ -302,7 +306,6 @@ struct PartialConfig {
     web_search_provider: Option<String>,
     check_for_updates: Option<bool>,
     enable_subagents: Option<bool>,
-    #[serde(default)]
     permission_mode: Option<PermissionMode>,
     web_search_openai_api_key: Option<String>,
     web_search_exa_api_key: Option<String>,
@@ -408,6 +411,7 @@ impl PartialConfig {
                 advisor_mode: None,
                 experimental_workspace_rewind: None,
                 permission_mode: None,
+                edit_tool: None,
                 credential_store: None,
                 rtk: None,
                 inline_shell: None,
@@ -418,6 +422,7 @@ impl PartialConfig {
                 advisor_mode: group.advisor_mode,
                 experimental_workspace_rewind: group.experimental_workspace_rewind,
                 permission_mode: group.permission_mode.or(permission_mode),
+                edit_tool: group.edit_tool,
                 credential_store: group.credential_store,
                 rtk: group.rtk.or(rtk),
                 inline_shell: group.inline_shell.or(inline_shell),
@@ -577,6 +582,7 @@ struct PartialBehaviorConfig {
     experimental_workspace_rewind: Option<bool>,
     #[serde(default)]
     permission_mode: Option<PermissionMode>,
+    edit_tool: Option<EditTool>,
     credential_store: Option<String>,
     rtk: Option<bool>,
     inline_shell: Option<String>,

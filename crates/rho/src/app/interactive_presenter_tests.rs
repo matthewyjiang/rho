@@ -1,5 +1,15 @@
 use super::*;
 
+// Covers: every selectable edit schema routes through file-diff presentation
+// Owner: interactive presenter
+#[test]
+fn selected_edit_tool_names_share_the_edit_presentation_kind() {
+    assert_eq!(
+        ["edit", "apply_patch", "edit_file"].map(ToolKind::from_name),
+        [ToolKind::Edit; 3]
+    );
+}
+
 // Covers: large edit preview checkpoints grow with buffer size
 // Owner: interactive presenter
 #[test]

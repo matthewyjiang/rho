@@ -1,0 +1,377 @@
+use pretty_assertions::assert_eq;
+use tempfile::TempDir;
+
+use super::apply::{rollback_one, FileChange};
+use super::*;
+use crate::{
+    tool::{ToolContext, ToolError},
+    tool_card::{DiffRow, DiffRowKind},
+};
+
+fn test_context() -> (TempDir, ToolContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ToolContext {
+        cwd: dir.path().to_path_buf(),
+        max_output_bytes: 12_000,
+    };
+    (dir, ctx)
+}
+
+fn message(error: ToolError) -> String {
+    let ToolError::Message(message) = error else {
+        panic!("expected ToolError::Message, got {error:?}");
+    };
+    message
+}
+
+async fn apply(
+    input: &str,
+    ctx: &ToolContext,
+) -> Result<crate::file_mutation::FileMutationOutcome, ToolError> {
+    let hunks = parse_patch(input).map_err(|error| ToolError::Message(error.to_string()))?;
+    apply_hunks(
+        hunks,
+        |path| Ok(ctx.cwd.join(path)),
+        str::to_string,
+        ctx.max_output_bytes,
+    )
+    .await
+}
+
+// Covers: malformed wrappers, empty updates, and invalid add bodies fail in the parser.
+// Owner: apply_patch parser
+#[test]
+fn rejects_malformed_patch_documents() {
+    let cases = [
+        (
+            "missing begin marker",
+            "*** Add File: a.txt\n+x\n*** End Patch",
+        ),
+        (
+            "missing end marker",
+            "*** Begin Patch\n*** Add File: a.txt\n+x",
+        ),
+        (
+            "empty update",
+            "*** Begin Patch\n*** Update File: a.txt\n*** End Patch",
+        ),
+        (
+            "add line without plus",
+            "*** Begin Patch\n*** Add File: a.txt\nplain\n*** End Patch",
+        ),
+        (
+            "heredoc wrapper",
+            "<<EOF\n*** Begin Patch\n*** Add File: a.txt\n+x\n*** End Patch\nEOF",
+        ),
+    ];
+
+    for (name, input) in cases {
+        assert!(parse_patch(input).is_err(), "case should fail: {name}");
+    }
+}
+
+// Covers: one transaction applies add/update/delete and returns current metadata/output shapes.
+// Owner: apply_patch application
+#[tokio::test]
+async fn applies_mixed_operations_with_hashline_snapshots() {
+    let (_dir, ctx) = test_context();
+    std::fs::write(ctx.cwd.join("modify.txt"), "line1\nline2\n").unwrap();
+    std::fs::write(ctx.cwd.join("delete.txt"), "obsolete\n").unwrap();
+
+    let outcome = apply(
+        "*** Begin Patch\n*** Add File: nested/new.txt\n+created\n*** Delete File: delete.txt\n*** Update File: modify.txt\n@@\n-line2\n+changed\n*** End Patch",
+        &ctx,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(ctx.cwd.join("nested/new.txt")).unwrap(),
+        "created\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(ctx.cwd.join("modify.txt")).unwrap(),
+        "line1\nchanged\n"
+    );
+    assert!(!ctx.cwd.join("delete.txt").exists());
+    assert_eq!(
+        outcome.display_paths,
+        vec!["nested/new.txt", "delete.txt", "modify.txt"]
+    );
+    assert!(outcome.content.contains("[nested/new.txt#"));
+    assert!(outcome.content.contains("[modify.txt#"));
+    assert!(!outcome.content.contains("@@"));
+    assert!(outcome.diff.contains("--- a/modify.txt"));
+}
+
+// Covers: a move reports and mutates both its source and destination paths.
+// Owner: apply_patch application
+#[tokio::test]
+async fn moves_report_both_affected_paths() {
+    let (_dir, ctx) = test_context();
+    std::fs::write(ctx.cwd.join("before.txt"), "old\n").unwrap();
+
+    let outcome = apply(
+        "*** Begin Patch\n*** Update File: before.txt\n*** Move to: after.txt\n@@\n-old\n+new\n*** End Patch",
+        &ctx,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome.display_paths, ["before.txt", "after.txt"]);
+    assert!(!ctx.cwd.join("before.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(ctx.cwd.join("after.txt")).unwrap(),
+        "new\n"
+    );
+}
+
+// Covers: workspace escape paths and move clobbers fail without mutation.
+// Owner: apply_patch application policy
+#[tokio::test]
+async fn rejects_unsafe_paths_and_existing_move_destination() {
+    let (_dir, ctx) = test_context();
+    std::fs::write(ctx.cwd.join("src.txt"), "source\n").unwrap();
+    std::fs::write(ctx.cwd.join("dst.txt"), "existing\n").unwrap();
+
+    let escape = apply(
+        "*** Begin Patch\n*** Add File: ../escape.txt\n+nope\n*** End Patch",
+        &ctx,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        message(escape),
+        "patch path must not contain '..': ../escape.txt"
+    );
+
+    let clobber = apply(
+        "*** Begin Patch\n*** Update File: src.txt\n*** Move to: dst.txt\n@@\n-source\n+moved\n*** End Patch",
+        &ctx,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        message(clobber),
+        "Refusing to move to 'dst.txt': destination already exists"
+    );
+    assert_eq!(
+        std::fs::read_to_string(ctx.cwd.join("src.txt")).unwrap(),
+        "source\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(ctx.cwd.join("dst.txt")).unwrap(),
+        "existing\n"
+    );
+}
+
+// Covers: Add File never overwrites an existing target.
+// Owner: apply_patch transaction planning
+#[tokio::test]
+async fn rejects_add_for_an_existing_file() {
+    let (_dir, ctx) = test_context();
+    std::fs::write(ctx.cwd.join("existing.txt"), "keep\n").unwrap();
+
+    let error = apply(
+        "*** Begin Patch\n*** Add File: existing.txt\n+replace\n*** End Patch",
+        &ctx,
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(
+        message(error),
+        "Refusing to add 'existing.txt': file already exists"
+    );
+    assert_eq!(
+        std::fs::read_to_string(ctx.cwd.join("existing.txt")).unwrap(),
+        "keep\n"
+    );
+}
+
+// Covers: update hunks preserve a CRLF source file's line endings.
+// Owner: apply_patch content derivation
+#[tokio::test]
+async fn preserves_crlf_during_update() {
+    let (_dir, ctx) = test_context();
+    std::fs::write(ctx.cwd.join("windows.txt"), "one\r\ntwo\r\n").unwrap();
+
+    apply(
+        "*** Begin Patch\n*** Update File: windows.txt\n@@\n-two\n+changed\n*** End Patch",
+        &ctx,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        std::fs::read(ctx.cwd.join("windows.txt")).unwrap(),
+        b"one\r\nchanged\r\n"
+    );
+}
+
+// Covers: rollback refuses to overwrite a file changed after this patch's write.
+// Owner: apply_patch transaction rollback
+#[tokio::test]
+async fn rollback_preserves_a_concurrent_external_change() {
+    let (_dir, ctx) = test_context();
+    let target = ctx.cwd.join("shared.txt");
+    std::fs::write(&target, "external\n").unwrap();
+    let permissions = std::fs::metadata(&target).unwrap().permissions();
+    let change = FileChange::Update {
+        target: target.clone(),
+        display_path: "shared.txt".into(),
+        old_content: "before\n".into(),
+        new_content: "ours\n".into(),
+        permissions,
+        move_from: None,
+    };
+
+    rollback_one(&change).await.unwrap_err();
+    assert_eq!(std::fs::read_to_string(target).unwrap(), "external\n");
+}
+
+#[cfg(unix)]
+// Covers: move preserves executable mode and delete rejects a symlink leaf.
+// Owner: apply_patch filesystem entry mutation
+#[tokio::test]
+async fn move_preserves_mode_and_delete_rejects_symlink_leaf() {
+    use std::os::unix::{fs::symlink, fs::PermissionsExt};
+
+    let (_dir, ctx) = test_context();
+    let source = ctx.cwd.join("script.sh");
+    std::fs::write(&source, "echo old\n").unwrap();
+    std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o755)).unwrap();
+    apply(
+        "*** Begin Patch\n*** Update File: script.sh\n*** Move to: moved.sh\n@@\n-echo old\n+echo new\n*** End Patch",
+        &ctx,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        std::fs::metadata(ctx.cwd.join("moved.sh"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o755
+    );
+
+    symlink(ctx.cwd.join("moved.sh"), ctx.cwd.join("alias.sh")).unwrap();
+    let error = apply(
+        "*** Begin Patch\n*** Delete File: alias.sh\n*** End Patch",
+        &ctx,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        message(error),
+        "apply_patch cannot delete or move symlink path 'alias.sh'"
+    );
+    assert!(ctx.cwd.join("alias.sh").is_symlink());
+    assert!(ctx.cwd.join("moved.sh").is_file());
+}
+
+// Covers: path conflicts are detected before any operation commits.
+// Owner: apply_patch transaction planning
+#[tokio::test]
+async fn rejects_delete_and_move_of_same_source() {
+    let (_dir, ctx) = test_context();
+    std::fs::write(ctx.cwd.join("a.txt"), "body\n").unwrap();
+
+    apply(
+        "*** Begin Patch\n*** Delete File: a.txt\n*** Update File: a.txt\n*** Move to: b.txt\n@@\n-body\n+body\n*** End Patch",
+        &ctx,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        std::fs::read_to_string(ctx.cwd.join("a.txt")).unwrap(),
+        "body\n"
+    );
+    assert!(!ctx.cwd.join("b.txt").exists());
+}
+
+// Covers: a source changed after planning aborts the whole commit.
+// Owner: apply_patch transaction commit
+#[tokio::test]
+async fn fails_closed_when_a_planned_file_changes() {
+    let (_dir, ctx) = test_context();
+    std::fs::write(ctx.cwd.join("a.txt"), "alpha\n").unwrap();
+    std::fs::write(ctx.cwd.join("b.txt"), "beta\n").unwrap();
+    let cwd = ctx.cwd.clone();
+    let hunks = parse_patch(
+        "*** Begin Patch\n*** Update File: a.txt\n@@\n-alpha\n+ALPHA\n*** Update File: b.txt\n@@\n-beta\n+BETA\n*** End Patch",
+    )
+    .unwrap();
+
+    apply_hunks(
+        hunks,
+        {
+            let cwd = cwd.clone();
+            move |path| {
+                if path == "b.txt" {
+                    std::fs::write(cwd.join("a.txt"), "tampered\n").unwrap();
+                }
+                Ok(cwd.join(path))
+            }
+        },
+        str::to_string,
+        ctx.max_output_bytes,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        std::fs::read_to_string(cwd.join("a.txt")).unwrap(),
+        "tampered\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(cwd.join("b.txt")).unwrap(),
+        "beta\n"
+    );
+}
+
+// Covers: streamed projection distinguishes incomplete lines and move destinations.
+// Owner: apply_patch proposed diff parser
+#[test]
+fn projects_partial_and_moved_diffs_leniently() {
+    let partial = proposed_diff_lenient(
+        "*** Begin Patch\n*** Add File: new.txt\n+first\n+part",
+        ProposedDiffTrailingLine::CompleteLinesOnly,
+    );
+    assert_eq!(
+        partial,
+        ProposedDiff {
+            files: vec![ProposedDiffFile {
+                operation: ProposedDiffOperation::Add,
+                display_path: "new.txt".into(),
+                source_path: None,
+                destination_path: Some("new.txt".into()),
+                rows: vec![DiffRow::new(DiffRowKind::Added, None, "first")],
+                added_lines: Some(1),
+                removed_lines: Some(0),
+            }],
+            truncated: false,
+        }
+    );
+
+    let moved = proposed_diff_lenient(
+        "*** Begin Patch\n*** Update File: old.txt\n*** Move to: new.txt\n@@\n-old\n+new\n*** End Patch\n",
+        ProposedDiffTrailingLine::CompleteLinesOnly,
+    );
+    assert_eq!(moved.files[0].display_path, "new.txt");
+    assert_eq!(moved.files[0].source_path.as_deref(), Some("old.txt"));
+    assert_eq!(moved.files[0].destination_path.as_deref(), Some("new.txt"));
+}
+
+// Covers: presenter path extraction includes both sides of a move in document order.
+// Owner: apply_patch path projection
+#[test]
+fn extracts_affected_paths_including_moves() {
+    assert_eq!(
+        patch_paths_lenient(
+            "*** Begin Patch\n*** Add File: a.txt\n+hi\n*** Update File: old.txt\n*** Move to: new.txt\n@@\n-old\n+new\n*** Delete File: gone.txt\n*** End Patch"
+        ),
+        vec!["a.txt", "old.txt", "new.txt", "gone.txt"]
+    );
+    assert!(patch_paths_lenient("not a patch").is_empty());
+}

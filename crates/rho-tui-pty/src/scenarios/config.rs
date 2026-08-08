@@ -57,6 +57,27 @@ pub(super) const OPEN_CONFIG_PICKER_STEPS: &[Step] = &[
         text: "Models & reasoning",
         timeout: SETTLE,
     },
+    Step::Phase("select_edit_tool"),
+    Step::Key(Key::Up),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "Inline shell",
+        timeout: SETTLE,
+    },
+    Step::AssertText("Edit tool"),
+    Step::Key(Key::Down),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "Hash-line",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Down),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "Apply patch",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
     Step::Key(Key::Esc),
     Step::ExitCommand,
 ];

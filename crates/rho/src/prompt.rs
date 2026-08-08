@@ -83,17 +83,25 @@ For display math, use closed `$$ ... $$` blocks. The TUI renders a limited TeX s
 Inline `$...$` math renders only when it fits one text row: simple superscripts or subscripts (`x^2`, `a_i`), Greek letters, and symbols. Taller inline formulas (`\frac`, summation limits, mixed `x_i^2` scripts) stay raw source text, so put those in `$$` blocks instead.
 "#,
     );
-    if tools.iter().any(|tool| tool.name == "grep") {
+    let grep_available = tools.iter().any(|tool| tool.name == "grep");
+    if grep_available {
         text.push_str(
             r#"
-Prefer the `grep` tool over shell `rg` or `grep` for workspace content search. Content mode returns chainable `[path#TAG]` headers and match line numbers (`N | preview`) so you can target `edit` anchors. Match text is search preview only and may be truncated - copy TAG and line numbers, not preview bodies, into PUT rows; use `read_file` when you need exact line text. Use `files_with_matches` or `count` when you only need paths or tallies. Prefer `glob` over shell `fd` or `find` for file discovery when it is available.
+Prefer the `grep` tool over shell `rg` or `grep` for workspace content search. Use `files_with_matches` or `count` when you only need paths or tallies. Prefer `glob` over shell `fd` or `find` for file discovery when it is available.
 "#,
         );
     }
     if tools.iter().any(|tool| tool.name == "edit") {
+        if grep_available {
+            text.push_str(
+                r#"
+`grep` content mode returns chainable `[path#TAG]` headers and match line numbers (`N | preview`) for hash-line edit anchors. Match text is preview only and may be truncated - copy TAG and line numbers, not preview bodies, into PUT rows; use `read_file` when you need exact line text.
+"#,
+            );
+        }
         text.push_str(
             r#"
-Use `edit` (not shell or Python rewrites) for existing UTF-8 files once you have a fresh `[path#TAG]`. Copy locator forms and the PUT body/span contract from the tool description (`PUT 12:` never `PUT 12.:`). Put every hunk for one path in a single document; do not stack two `edit` calls on the same path in one batch. After a structural edit the tool returns TAG + ops summary without chainable body lines — re-read before further ops on that path. Prefer `write` only to create or fully rewrite a file.
+Use `edit` (not shell or Python rewrites) for existing UTF-8 files once you have a fresh `[path#TAG]`. Copy locator forms and the PUT body/span contract from the tool description (`PUT 12:` never `PUT 12.:`). Put every hunk for one path in a single document; do not stack two `edit` calls on the same path in one batch. After a structural edit the tool returns TAG + ops summary without chainable body lines - re-read before further ops on that path. Prefer `write` only to create or fully rewrite a file.
 "#,
         );
     }
@@ -405,9 +413,7 @@ mod tests {
         let disabled = system_prompt_with_home(&[], project.path(), None).text;
 
         assert!(enabled.contains("Prefer the `grep` tool over shell `rg` or `grep`"));
-        assert!(enabled.contains("chainable `[path#TAG]`"));
-        assert!(enabled.contains("not preview bodies"));
-        assert!(enabled.contains("`N | preview`"));
+        assert!(!enabled.contains("chainable `[path#TAG]`"));
         assert!(!disabled.contains("Prefer the `grep` tool over shell `rg` or `grep`"));
     }
 

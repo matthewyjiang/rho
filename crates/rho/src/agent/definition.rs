@@ -27,9 +27,10 @@ macro_rules! define_tool_capabilities {
             pub fn parse(name: String) -> Self {
                 match name.as_str() {
                     $($name => Self::$variant,)+
-                    // NEXT_MAJOR(rho): drop edit_file, apply_patch, and write_file
-                    // aliases once agent frontmatter has migrated to canonical names.
+                    // Alternate edit tool names share one capability; the global
+                    // edit preference chooses the model-facing implementation.
                     "edit_file" | "apply_patch" => Self::Edit,
+                    // NEXT_MAJOR(rho): drop write_file once agent frontmatter uses the canonical write name.
                     "write_file" => Self::WriteFile,
                     _ => Self::Extension(name),
                 }

@@ -8,7 +8,7 @@ use {
     rho_providers::reasoning::ReasoningLevel,
 };
 
-use super::{provider_config::PersistedProviderConfigs, Config, SearchProvider};
+use super::{provider_config::PersistedProviderConfigs, Config, EditTool, SearchProvider};
 
 pub(super) fn write_config(path: &Path, config: &Config) -> anyhow::Result<()> {
     let serialized = toml::to_string_pretty(&GroupedConfig::from(config))?;
@@ -137,6 +137,7 @@ struct BehaviorConfig<'a> {
     enable_subagents: bool,
     advisor_mode: bool,
     experimental_workspace_rewind: bool,
+    edit_tool: EditTool,
     permission_mode: PermissionMode,
     #[serde(skip_serializing_if = "Option::is_none")]
     credential_store: Option<&'a str>,
@@ -200,6 +201,7 @@ impl<'a> From<&'a Config> for GroupedConfig<'a> {
                 enable_subagents: config.enable_subagents,
                 advisor_mode: config.advisor_mode,
                 experimental_workspace_rewind: config.experimental_workspace_rewind,
+                edit_tool: config.edit_tool,
                 permission_mode: config.permission_mode,
                 credential_store: config.credential_store.map(CredentialStoreBackend::as_str),
                 rtk: config.rtk,

@@ -42,6 +42,43 @@ async fn prepared_policy(
     .map(|prepared| prepared.execution_policy().clone())
 }
 
+// Covers: an edit preference exposes exactly one matching tool name and argument contract
+// Owner: coding tool registry
+#[test]
+fn edit_preferences_select_one_model_facing_surface() {
+    for (edit_tool, expected_name, expected_required) in [
+        (EditToolKind::Hashline, "edit", &["input"][..]),
+        (EditToolKind::ApplyPatch, "apply_patch", &["input"][..]),
+        (
+            EditToolKind::EditFile,
+            "edit_file",
+            &["path", "old_string", "new_string"][..],
+        ),
+    ] {
+        let tools = coding_tools(CodingToolOptions::new().edit_tool(edit_tool));
+        let selected = tools
+            .iter()
+            .filter(|tool| {
+                matches!(
+                    tool.spec().name.as_str(),
+                    "edit" | "apply_patch" | "edit_file"
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(selected.len(), 1);
+        let spec = selected[0].spec();
+        assert_eq!(spec.name, expected_name);
+        let required = spec.input_schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(required, expected_required);
+    }
+}
+
 #[tokio::test]
 async fn preparation_canonicalizes_relative_absolute_symlink_and_granted_root_reads() {
     let primary = tempfile::tempdir().unwrap();
@@ -531,6 +568,37 @@ PUT 1.=1:
     assert_eq!(error.kind(), ToolErrorKind::InvalidArguments);
 }
 
+// Covers: apply_patch rejects unsafe source and move paths during preparation.
+// Owner: SDK apply_patch argument validation
+#[tokio::test]
+async fn apply_patch_prepare_rejects_unsafe_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("source.txt"), "source\n").unwrap();
+    let tool = coding_tool(
+        CodingToolKind::Edit,
+        CodingToolOptions::default().edit_tool(EditToolKind::ApplyPatch),
+    );
+    let cases = [
+        "*** Begin Patch\n*** Add File: ../escape.txt\n+nope\n*** End Patch",
+        "*** Begin Patch\n*** Add File: /absolute.txt\n+nope\n*** End Patch",
+        "*** Begin Patch\n*** Update File: source.txt\n*** Move to: ../escape.txt\n@@\n-source\n+moved\n*** End Patch",
+    ];
+
+    for input in cases {
+        let error = match tool
+            .prepare(
+                invocation(json!({ "input": input })),
+                ToolPreparationContext::new(Some(workspace(&dir)), CancellationToken::new()),
+            )
+            .await
+        {
+            Ok(_) => panic!("unsafe apply_patch path must fail prepare"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), ToolErrorKind::InvalidArguments, "{input}");
+    }
+}
+
 // Covers: edit success path emits diff metadata and progress
 // Owner: SDK contract
 #[tokio::test]
@@ -604,5 +672,140 @@ async fn allowed_policy_edits_with_diff_metadata_and_progress() {
     assert_eq!(
         std::fs::read_to_string(dir.path().join("sample.txt")).unwrap(),
         "alpha\ndelta\ngamma\n"
+    );
+}
+
+// Covers: alternate edit adapters execute through SDK authorization, not only app-tool calls
+// Owner: SDK contract
+#[tokio::test]
+async fn allowed_policy_executes_selected_alternate_edit_tools() {
+    for (edit_tool, name, arguments) in [
+        (
+            EditToolKind::ApplyPatch,
+            "apply_patch",
+            json!({
+                "input": "*** Begin Patch\n*** Update File: sample.txt\n@@\n-old\n+patched\n*** End Patch"
+            }),
+        ),
+        (
+            EditToolKind::EditFile,
+            "edit_file",
+            json!({
+                "path": "sample.txt",
+                "old_string": "old",
+                "new_string": "replaced"
+            }),
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("sample.txt"), "old\n").unwrap();
+        let runtime = build_runtime_with_coding_tools(
+            ScriptedProvider::new(
+                ModelIdentity::new("scripted", "test", "model"),
+                [
+                    ScriptedTurn::completed(ModelResponse::Assistant(vec![
+                        ContentBlock::ToolCall(ToolCall {
+                            id: "call-1".into(),
+                            name: name.into(),
+                            arguments,
+                        }),
+                    ])),
+                    ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+                        "done".into(),
+                    )])),
+                ],
+            ),
+            workspace(&dir),
+            ScopedWorkspacePolicy::new()
+                .allow_read_paths()
+                .allow_write_paths(),
+            CodingToolOptions::new().edit_tool(edit_tool),
+        );
+        let session = runtime.session(SessionOptions::default()).await.unwrap();
+        let mut run = session
+            .start(UserInput::text("edit the file"))
+            .await
+            .unwrap();
+        let mut succeeded = false;
+        while let Some(event) = run.next_event().await {
+            match event {
+                RunEvent::ToolFinished {
+                    result: ToolCompletion::Success(_),
+                    ..
+                } => succeeded = true,
+                RunEvent::ToolFinished { result, .. } => {
+                    panic!("unexpected {name} result: {result:?}")
+                }
+                RunEvent::Completed { .. } => break,
+                _ => {}
+            }
+        }
+
+        assert!(succeeded, "{name} did not finish successfully");
+        let content = std::fs::read_to_string(dir.path().join("sample.txt")).unwrap();
+        let expected = if edit_tool == EditToolKind::ApplyPatch {
+            "patched\n"
+        } else {
+            "replaced\n"
+        };
+        assert_eq!(content, expected, "tool {name}");
+    }
+}
+
+#[cfg(unix)]
+// Covers: SDK preparation rejects delete semantics on a symlink leaf before authorization.
+// Owner: SDK apply_patch path preparation
+#[tokio::test]
+async fn apply_patch_rejects_symlink_delete_without_following_it() {
+    use std::os::unix::fs::symlink;
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("target.txt"), "keep\n").unwrap();
+    symlink(dir.path().join("target.txt"), dir.path().join("alias.txt")).unwrap();
+    let runtime = build_runtime_with_coding_tools(
+        ScriptedProvider::new(
+            ModelIdentity::new("scripted", "test", "model"),
+            [
+                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
+                    ToolCall {
+                        id: "call-1".into(),
+                        name: "apply_patch".into(),
+                        arguments: json!({
+                            "input": "*** Begin Patch\n*** Delete File: alias.txt\n*** End Patch"
+                        }),
+                    },
+                )])),
+                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+                    "done".into(),
+                )])),
+            ],
+        ),
+        workspace(&dir),
+        ScopedWorkspacePolicy::new()
+            .allow_read_paths()
+            .allow_write_paths(),
+        CodingToolOptions::new().edit_tool(EditToolKind::ApplyPatch),
+    );
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let mut run = session
+        .start(UserInput::text("delete alias"))
+        .await
+        .unwrap();
+    let mut completion = None;
+    while let Some(event) = run.next_event().await {
+        if let RunEvent::ToolFinished { result, .. } = event {
+            completion = Some(result);
+        }
+    }
+    run.outcome().await.unwrap();
+
+    let ToolCompletion::Failure(failure) = completion.expect("apply_patch result") else {
+        panic!("symlink delete must fail");
+    };
+    assert_eq!(failure.kind(), ToolErrorKind::InvalidArguments);
+    assert!(dir.path().join("alias.txt").is_symlink());
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("target.txt")).unwrap(),
+        "keep\n"
     );
 }

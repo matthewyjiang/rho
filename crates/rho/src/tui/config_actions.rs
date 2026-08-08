@@ -104,6 +104,22 @@ impl App {
                 self.open_child_picker(child);
                 Ok(())
             }
+            config_picker::EDIT_TOOL_VALUE => {
+                let config = self.info.services.config_repository.load()?;
+                self.open_child_picker(config_picker::edit_tool_picker(config.edit_tool));
+                Ok(())
+            }
+            value if value.starts_with(config_picker::EDIT_TOOL_PREFIX) => {
+                let selected = &value[config_picker::EDIT_TOOL_PREFIX.len()..];
+                let edit_tool: crate::config::EditTool =
+                    selected.parse().map_err(anyhow::Error::msg)?;
+                self.info.services.config_repository.update(|config| {
+                    config.edit_tool = edit_tool;
+                })?;
+                self.open_main_config_picker_selected(config_picker::EDIT_TOOL_VALUE)?;
+                self.set_status(format!("edit tool: {edit_tool}; restart Rho to apply"));
+                Ok(())
+            }
             value if value.starts_with(config_picker::INLINE_SHELL_PREFIX) => {
                 let shell = value[config_picker::INLINE_SHELL_PREFIX.len()..].to_string();
                 self.info.services.config_repository.update(|config| {
