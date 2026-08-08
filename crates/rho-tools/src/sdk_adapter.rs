@@ -571,13 +571,7 @@ async fn run_observed_mutation<T>(
     };
     match (op_result, capture_result) {
         (Ok(value), Ok(())) => Ok(value),
-        (Err(error), Ok(())) => Err(error),
-        (Ok(_), Err(capture_error)) => Err(ToolError::new(
-            ToolErrorKind::Execution,
-            format!(
-                "mutation succeeded but capturing the resulting workspace state failed: {capture_error}"
-            ),
-        )),
+        (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
         (Err(op_error), Err(capture_error)) => Err(ToolError::new(
             ToolErrorKind::Execution,
             format!("{op_error}; failed to capture resulting workspace state: {capture_error}"),
