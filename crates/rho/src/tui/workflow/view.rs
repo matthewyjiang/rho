@@ -14,7 +14,7 @@ use crate::workflow::{
 
 use super::{
     control::ConfirmKind,
-    dag::{self, state_glyph, state_label, state_style},
+    dag::{state_glyph, state_label, state_style},
     dag_pane::{self, DagMouse},
     event_adapter::{CancellationState, ExecutionMetadata, TerminalReason, WorkflowNodeSnapshot},
     state::WorkflowUiState,
@@ -78,13 +78,7 @@ fn draw_header(frame: &mut Frame<'_>, area: Rect, state: &WorkflowUiState) {
 }
 
 fn draw_dag(frame: &mut Frame<'_>, area: Rect, state: &mut WorkflowUiState) {
-    let activities = state
-        .snapshot()
-        .nodes
-        .iter()
-        .map(|node| node_graph_activity(node, state))
-        .collect::<Vec<_>>();
-    let dag = dag::render_dag(&state.snapshot().nodes, state.selected_index(), &activities);
+    let dag = state.render_dag();
     let block = Block::default().title(" Graph ").borders(Borders::ALL);
     let inner = dag_pane::centered_canvas(block.inner(area), (dag.canvas_width, dag.canvas_height));
     let selected = state.selected_index();
@@ -241,19 +235,6 @@ fn detail_meta_lines<'a>(
     }
 
     lines
-}
-
-fn node_graph_activity(node: &WorkflowNodeSnapshot, state: &WorkflowUiState) -> Option<String> {
-    if let Some(progress) = state.progress(node) {
-        return Some(progress.message.clone());
-    }
-    if matches!(node.state, NodeState::Running { .. }) {
-        if node.work.is_empty() {
-            return Some("working".into());
-        }
-        return Some(node.work.clone());
-    }
-    None
 }
 
 fn progress_now_line(progress: &super::event_adapter::WorkflowProgress) -> String {

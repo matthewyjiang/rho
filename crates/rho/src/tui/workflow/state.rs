@@ -4,7 +4,7 @@ use crate::workflow::NodeId;
 
 use super::{
     control::{control_policy, ControlPolicy},
-    dag::{self, SpatialDirection},
+    dag::{self, DagRender, SpatialDirection},
     dag_pane::DagPane,
     details::DetailPane,
     event_adapter::{
@@ -115,14 +115,28 @@ impl WorkflowUiState {
         &mut self.details
     }
 
+    /// Render the graph for the current snapshot. Node labels carry the
+    /// freshest progress message that matches the node's current attempt;
+    /// `render_dag` falls back to the node's own work text while it runs.
+    pub(super) fn render_dag(&self) -> DagRender {
+        let activities = self
+            .snapshot
+            .nodes
+            .iter()
+            .map(|node| self.progress(node).map(|progress| progress.message.clone()))
+            .collect::<Vec<_>>();
+        dag::render_dag(&self.snapshot.nodes, self.selected, &activities)
+    }
+
     /// Move the selection to the spatially nearest node on the rendered
     /// canvas. Keyboard navigation returns the viewport to follow mode.
     pub(super) fn select_spatial(&mut self, direction: SpatialDirection) {
-        // The pane holds last-draw geometry, so a shrinking snapshot can leave
-        // a neighbor index past the current node list.
-        let next = dag::spatial_neighbor(self.dag_pane.node_rects(), self.selected, direction)
-            .or_else(|| self.index_fallback(direction))
-            .filter(|&index| index < self.snapshot.nodes.len());
+        let rects = self.render_dag().node_rects;
+        let next = if rects.is_empty() {
+            self.index_fallback(direction)
+        } else {
+            dag::spatial_neighbor(&rects, self.selected, direction)
+        };
         self.dag_pane.clear_manual_offset();
         if let Some(index) = next.filter(|&index| index != self.selected) {
             self.selected = index;
@@ -130,12 +144,9 @@ impl WorkflowUiState {
         }
     }
 
-    /// Keep Up and Down usable before the first draw or when the graph is too
-    /// large to render and no node geometry exists.
+    /// Keep Up and Down usable when the graph renders no node geometry
+    /// because it exceeds the render budget.
     fn index_fallback(&self, direction: SpatialDirection) -> Option<usize> {
-        if !self.dag_pane.node_rects().is_empty() {
-            return None;
-        }
         match direction {
             SpatialDirection::Up => self.selected.checked_sub(1),
             SpatialDirection::Down => {

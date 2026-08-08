@@ -42,10 +42,6 @@ pub(super) struct DagPane {
 }
 
 impl DagPane {
-    pub(super) fn node_rects(&self) -> &[NodeRect] {
-        &self.node_rects
-    }
-
     /// Return to following the selected node.
     pub(super) fn clear_manual_offset(&mut self) {
         self.manual_offset = None;
