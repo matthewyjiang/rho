@@ -4,9 +4,7 @@ use rho_sdk::tool::{OperationKind, ToolMetadata, ToolProgress};
 use rho_tools::{
     resolve_path,
     tool::compact_display_path,
-    tool_card::{
-        ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus,
-    },
+    tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus},
 };
 
 #[path = "interactive_presenter_results.rs"]

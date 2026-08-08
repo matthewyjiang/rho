@@ -558,4 +558,3 @@ async fn stage_file(
     drop(file);
     Ok(staged)
 }
-
