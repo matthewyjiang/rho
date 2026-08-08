@@ -1,5 +1,34 @@
 # Changelog
 
+## [1.33.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.32.2...rho-coding-agent-v1.33.0) (2026-08-08)
+
+
+### Features
+
+* **tools:** add selectable edit formats ([#820](https://github.com/matthewyjiang/rho/issues/820)) ([5db37d0](https://github.com/matthewyjiang/rho/commit/5db37d0bf714afbf28e91e3f0e66c2e8b807b659))
+* **tui:** add /sessions hub for cross-directory session management ([#818](https://github.com/matthewyjiang/rho/issues/818)) ([5a933db](https://github.com/matthewyjiang/rho/commit/5a933db1cb5c1c6029234a8be8ef54eaa1f824b6))
+* **tui:** borderless code, mermaid, and math blocks with syntect highlighting ([#825](https://github.com/matthewyjiang/rho/issues/825)) ([f0614a8](https://github.com/matthewyjiang/rho/commit/f0614a88d035f0465adbddccc830207d5366450f))
+* **tui:** selectable color themes with live preview ([#817](https://github.com/matthewyjiang/rho/issues/817)) ([c43ba0e](https://github.com/matthewyjiang/rho/commit/c43ba0efbd89ee7eb88ff4716f56697c346737ff))
+* **tui:** show runtime and elapsed in attach header ([#816](https://github.com/matthewyjiang/rho/issues/816)) ([0ab34fc](https://github.com/matthewyjiang/rho/commit/0ab34fc02f304d4c6f88cfc9cfb647e6a22b8397))
+* **tui:** spatial workflow graph navigation, mouse pan, and skip-edge routing ([#823](https://github.com/matthewyjiang/rho/issues/823)) ([e691235](https://github.com/matthewyjiang/rho/commit/e69123517ea35fa2fb78922e8ed6da5be671cc2f))
+* **tui:** unify pickers, scroll both panes, fuzzy-match visible fields, size overlays to content ([#805](https://github.com/matthewyjiang/rho/issues/805)) ([8a60fbf](https://github.com/matthewyjiang/rho/commit/8a60fbfd6761a986263c4077a81a688d37b6172a))
+
+
+### Bug Fixes
+
+* **attach:** keep recording at high token rates ([#824](https://github.com/matthewyjiang/rho/issues/824)) ([d4fec84](https://github.com/matthewyjiang/rho/commit/d4fec8494dfd125023ef1af195fede058df9a6e4))
+* exclude reasoning tokens from throughput ([#819](https://github.com/matthewyjiang/rho/issues/819)) ([d261b5b](https://github.com/matthewyjiang/rho/commit/d261b5b35bfb119f49a81d83b33ca06b62b383e7))
+* **tui-pty:** simplify proof-plate palette and version pin ([#810](https://github.com/matthewyjiang/rho/issues/810)) ([8553e91](https://github.com/matthewyjiang/rho/commit/8553e915e7cd4ea0ac74a8724e8d08fc634e32f3))
+* **tui:** drop duplicate paths on multi-file edit cards ([#826](https://github.com/matthewyjiang/rho/issues/826)) ([16c98e3](https://github.com/matthewyjiang/rho/commit/16c98e3c1898cbb885e71366a940efeaa52aa688))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.17.2 to 1.17.3
+    * rho-providers bumped from 0.18.1 to 0.18.2
+
 ## [1.32.2](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.32.1...rho-coding-agent-v1.32.2) (2026-08-07)
 
 
