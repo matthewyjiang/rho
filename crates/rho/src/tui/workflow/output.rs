@@ -103,11 +103,9 @@ pub(super) fn render_body_lines(body: &NodeOutputBody, width: usize) -> Vec<Line
 
     match body.kind {
         ArtifactKind::AgentAnswer => {
-            let mut in_code_block = false;
+            let mut state = super::super::markdown::CodeFenceState::default();
             lines.extend(super::super::markdown::markdown_lines(
-                &body.text,
-                width,
-                &mut in_code_block,
+                &body.text, width, &mut state,
             ));
         }
         ArtifactKind::StructuredOutput | ArtifactKind::CommandOutcome => {
@@ -123,8 +121,8 @@ pub(super) fn render_body_lines(body: &NodeOutputBody, width: usize) -> Vec<Line
 fn render_structured(text: &str, width: usize) -> Vec<Line<'static>> {
     let pretty = pretty_json(text).unwrap_or_else(|| text.to_owned());
     let fenced = format!("```json\n{}\n```", pretty.trim_end());
-    let mut in_code_block = false;
-    super::super::markdown::markdown_lines(&fenced, width, &mut in_code_block)
+    let mut state = super::super::markdown::CodeFenceState::default();
+    super::super::markdown::markdown_lines(&fenced, width, &mut state)
 }
 
 fn render_plain(text: &str, width: usize) -> Vec<Line<'static>> {

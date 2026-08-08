@@ -19,8 +19,8 @@ impl App {
         }
         let mut text_lines = Vec::new();
         let mut code_fence = match preview.kind {
-            StreamKind::Assistant => self.streams.assistant_stream_code_fence,
-            StreamKind::Reasoning => self.streams.reasoning_stream_code_fence,
+            StreamKind::Assistant => self.streams.assistant_stream_code_fence.clone(),
+            StreamKind::Reasoning => self.streams.reasoning_stream_code_fence.clone(),
         };
         push_wrapped_markdown_without_copy_button_from_fence_state(
             &mut text_lines,

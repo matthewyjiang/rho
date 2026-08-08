@@ -8,23 +8,18 @@ pub(super) struct MermaidOpeningFence {
     pub(super) fence: CodeFence,
 }
 
-#[derive(Clone, Copy, Default)]
+/// Open/closed fence tracker for streaming markdown. Carries the info-string
+/// language so live preview can keep highlighting continuation lines.
+#[derive(Clone, Default)]
 pub(in crate::tui) struct CodeFenceState {
     pub(super) active: Option<CodeFence>,
+    /// Lowercased first info-string token from the opening fence, when present.
+    pub(super) language: Option<String>,
 }
 
 impl CodeFenceState {
-    pub(in crate::tui) fn is_open(self) -> bool {
+    pub(in crate::tui) fn is_open(&self) -> bool {
         self.active.is_some()
-    }
-
-    pub(super) fn from_open_flag(is_open: bool) -> Self {
-        Self {
-            active: is_open.then_some(CodeFence {
-                marker: '`',
-                length: 3,
-            }),
-        }
     }
 }
 
@@ -35,8 +30,12 @@ pub(in crate::tui) fn update_code_block_state(text: &str, state: &mut CodeFenceS
             .is_some_and(|fence| is_closing_fence(line, fence))
         {
             state.active = None;
+            state.language = None;
         } else if state.active.is_none() {
-            state.active = parse_opening_fence(line);
+            if let Some(fence) = parse_opening_fence(line) {
+                state.active = Some(fence);
+                state.language = opening_fence_info_token(line);
+            }
         }
     }
 }
@@ -79,9 +78,6 @@ pub(in crate::tui) fn is_closing_fence(line: &str, opening: CodeFence) -> bool {
 }
 
 /// Lowercased first info-string token of an opening fence line, when present.
-///
-/// Fences that opened in an earlier render entry lose their info string, so
-/// callers must treat `None` as "plain code".
 pub(super) fn opening_fence_info_token(line: &str) -> Option<String> {
     let fence = parse_opening_fence(line)?;
     let indent = line.len() - line.trim_start_matches(' ').len();

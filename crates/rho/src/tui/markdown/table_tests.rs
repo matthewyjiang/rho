@@ -11,11 +11,11 @@ fn line_text(line: &Line<'_>) -> String {
 
 #[test]
 fn wraps_table_cells_to_fit_available_width() {
-    let mut in_code_block = false;
+    let mut fence_state = CodeFenceState::default();
     let lines = markdown_lines(
         "| Package | Description |\n| --- | --- |\n| rho | lightweight coding agent |",
         20,
-        &mut in_code_block,
+        &mut fence_state,
     );
 
     assert!(lines
@@ -39,11 +39,11 @@ fn wraps_table_cells_to_fit_available_width() {
 
 #[test]
 fn table_parser_preserves_escaped_pipes_and_code_spans() {
-    let mut in_code_block = false;
+    let mut fence_state = CodeFenceState::default();
     let lines = markdown_lines(
         "| Expression | Result |\n| --- | --- |\n| a \\| b | `x|y` |",
         30,
-        &mut in_code_block,
+        &mut fence_state,
     );
 
     assert!(lines.iter().any(|line| line_text(line).contains("a | b")));
@@ -60,11 +60,11 @@ fn table_parser_preserves_an_escaped_trailing_pipe_without_a_border() {
 
 #[test]
 fn table_parser_stops_before_lines_with_only_protected_pipes() {
-    let mut in_code_block = false;
+    let mut fence_state = CodeFenceState::default();
     let lines = markdown_lines(
         "| Name | Value |\n| --- | --- |\n| rho | agent |\n`a|b`",
         30,
-        &mut in_code_block,
+        &mut fence_state,
     );
 
     assert_eq!(

@@ -1,5 +1,8 @@
 use super::*;
-use crate::tui::{markdown::markdown_lines, theme::Theme};
+use crate::tui::{
+    markdown::{markdown_lines, CodeFenceState},
+    theme::Theme,
+};
 use pretty_assertions::assert_eq;
 use ratatui::text::Line;
 
@@ -90,8 +93,8 @@ fn classifies_streaming_heading_prefixes_without_committing_early() {
 #[test]
 fn preserves_heading_style_across_unicode_wrapping() {
     let content = "你🙂".repeat(20);
-    let mut in_code_block = false;
-    let lines = markdown_lines(&format!("### {content}"), 7, &mut in_code_block);
+    let mut fence_state = CodeFenceState::default();
+    let lines = markdown_lines(&format!("### {content}"), 7, &mut fence_state);
 
     assert_eq!(lines.iter().map(line_text).collect::<String>(), content);
     assert!(lines
@@ -102,11 +105,11 @@ fn preserves_heading_style_across_unicode_wrapping() {
 
 #[test]
 fn leaves_heading_like_text_literal_when_invalid_or_inside_code() {
-    let mut in_code_block = false;
+    let mut fence_state = CodeFenceState::default();
     let lines = markdown_lines(
         "#hashtag\n####### nope\n    # indented\n```md\n# literal\n```",
         80,
-        &mut in_code_block,
+        &mut fence_state,
     );
     let text = lines.iter().map(line_text).collect::<Vec<_>>();
 

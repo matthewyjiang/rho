@@ -1,4 +1,4 @@
-use super::super::markdown::markdown_lines;
+use super::super::markdown::{markdown_lines, update_code_block_state, CodeFenceState};
 use super::*;
 use ratatui::text::Line;
 
@@ -10,8 +10,11 @@ fn line_text(line: &Line<'_>) -> String {
 }
 
 fn rendered_markdown_text(text: &str, width: usize, in_code_block: bool) -> Vec<String> {
-    let mut in_code_block = in_code_block;
-    markdown_lines(text, width, &mut in_code_block)
+    let mut state = CodeFenceState::default();
+    if in_code_block {
+        update_code_block_state("```", &mut state);
+    }
+    markdown_lines(text, width, &mut state)
         .iter()
         .map(line_text)
         .collect()
@@ -201,10 +204,10 @@ fn markdown_drain_keeps_streamed_heading_atomic_across_narrow_wraps() {
     let fragment = stream.drain_renderable_markdown(9, false).unwrap();
     assert_eq!(fragment.text.as_str(), format!("{source}\n"));
 
-    let mut fragment_code_block = false;
-    let fragment_lines = markdown_lines(fragment.render_text(), 9, &mut fragment_code_block);
-    let mut final_code_block = false;
-    let final_lines = markdown_lines(source, 9, &mut final_code_block);
+    let mut fragment_fence = CodeFenceState::default();
+    let fragment_lines = markdown_lines(fragment.render_text(), 9, &mut fragment_fence);
+    let mut final_fence = CodeFenceState::default();
+    let final_lines = markdown_lines(source, 9, &mut final_fence);
     assert_eq!(fragment_lines, final_lines);
 }
 

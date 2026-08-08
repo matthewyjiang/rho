@@ -38,48 +38,15 @@ static ROLE_SELECTORS: LazyLock<Vec<(Scope, SyntaxRole)>> = LazyLock::new(|| {
     .collect()
 });
 
-/// Palette snapshot taken when the block opens. The history cache re-renders
-/// on theme generation changes, so styles cannot go stale mid-block.
-struct SyntaxStyles {
-    base: Style,
-    comment: Style,
-    string: Style,
-    constant: Style,
-    keyword: Style,
-    function: Style,
-    named_type: Style,
-}
-
-impl SyntaxStyles {
-    fn current() -> Self {
-        Self {
-            base: Theme::markdown_code_block(),
-            comment: Theme::markdown_syntax(SyntaxRole::Comment),
-            string: Theme::markdown_syntax(SyntaxRole::String),
-            constant: Theme::markdown_syntax(SyntaxRole::Constant),
-            keyword: Theme::markdown_syntax(SyntaxRole::Keyword),
-            function: Theme::markdown_syntax(SyntaxRole::Function),
-            named_type: Theme::markdown_syntax(SyntaxRole::Type),
-        }
-    }
-
-    fn style(&self, role: SyntaxRole) -> Style {
-        match role {
-            SyntaxRole::Comment => self.comment,
-            SyntaxRole::String => self.string,
-            SyntaxRole::Constant => self.constant,
-            SyntaxRole::Keyword => self.keyword,
-            SyntaxRole::Function => self.function,
-            SyntaxRole::Type => self.named_type,
-        }
-    }
-}
-
 /// Stateful highlighter for one fenced code block. Feed source lines in order.
 pub(super) struct BlockHighlighter {
     parse: ParseState,
     stack: ScopeStack,
-    styles: SyntaxStyles,
+    /// Palette snapshot taken when the block opens. The history cache
+    /// re-renders on theme generation changes, so styles cannot go stale
+    /// mid-block.
+    base: Style,
+    selectors: Vec<(Scope, Style)>,
 }
 
 impl BlockHighlighter {
@@ -88,10 +55,15 @@ impl BlockHighlighter {
     /// styling).
     pub(super) fn for_language(token: &str) -> Option<Self> {
         let syntax = SYNTAX_SET.find_syntax_by_token(canonical_language_token(token))?;
+        let selectors = ROLE_SELECTORS
+            .iter()
+            .map(|(scope, role)| (*scope, Theme::markdown_syntax(*role)))
+            .collect();
         Some(Self {
             parse: ParseState::new(syntax),
             stack: ScopeStack::new(),
-            styles: SyntaxStyles::current(),
+            base: Theme::markdown_code_block(),
+            selectors,
         })
     }
 
@@ -100,7 +72,7 @@ impl BlockHighlighter {
         // Syntect grammars expect the newline to drive state transitions.
         let text = format!("{line}\n");
         let Ok(ops) = self.parse.parse_line(&text, &SYNTAX_SET) else {
-            return vec![StyledSegment::new(line.to_string(), self.styles.base)];
+            return vec![StyledSegment::new(line.to_string(), self.base)];
         };
         let mut segments: Vec<StyledSegment> = Vec::new();
         let mut cursor = 0usize;
@@ -116,7 +88,7 @@ impl BlockHighlighter {
             push_merged(&mut segments, &line[cursor..], self.scope_style());
         }
         if segments.is_empty() {
-            segments.push(StyledSegment::new(String::new(), self.styles.base));
+            segments.push(StyledSegment::new(String::new(), self.base));
         }
         segments
     }
@@ -124,13 +96,13 @@ impl BlockHighlighter {
     /// Style for the innermost scope that maps onto a role, else the base.
     fn scope_style(&self) -> Style {
         for scope in self.stack.as_slice().iter().rev() {
-            for (selector, role) in ROLE_SELECTORS.iter() {
+            for (selector, style) in &self.selectors {
                 if selector.is_prefix_of(*scope) {
-                    return self.styles.style(*role);
+                    return *style;
                 }
             }
         }
-        self.styles.base
+        self.base
     }
 }
 

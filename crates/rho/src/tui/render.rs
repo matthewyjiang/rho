@@ -280,7 +280,7 @@ pub(super) fn char_display_width(ch: char) -> usize {
     UnicodeWidthChar::width(ch).unwrap_or(0)
 }
 
-fn truncate_to_display_width(text: &str, max_width: usize) -> Cow<'_, str> {
+pub(super) fn truncate_to_display_width(text: &str, max_width: usize) -> Cow<'_, str> {
     if display_width(text) <= max_width {
         return Cow::Borrowed(text);
     }
@@ -730,31 +730,45 @@ pub(super) fn soft_wrap_visible_ranges<'a>(
     })
 }
 
-pub(super) fn wrap_line_hard(line: &str, width: usize) -> Vec<String> {
-    if line.is_empty() {
-        return vec![String::new()];
+/// Hard-wrap `text` into display-width columns as byte ranges into `text`.
+///
+/// Empty input yields one empty range. Wide characters are never split. A
+/// chunk that exactly fills `width` breaks after it.
+pub(super) fn hard_wrap_ranges(text: &str, width: usize) -> Vec<std::ops::Range<usize>> {
+    let width = width.max(1);
+    if text.is_empty() {
+        return vec![std::ops::Range { start: 0, end: 0 }];
     }
-
-    let mut chunks = Vec::new();
-    let mut current = String::new();
-    let mut current_width = 0;
-    for ch in line.chars() {
+    let mut ranges = Vec::new();
+    let mut chunk_start = 0usize;
+    let mut offset = 0usize;
+    let mut current_width = 0usize;
+    for ch in text.chars() {
         let ch_width = char_display_width(ch);
         if current_width > 0 && current_width + ch_width > width {
-            chunks.push(std::mem::take(&mut current));
+            ranges.push(chunk_start..offset);
+            chunk_start = offset;
             current_width = 0;
         }
-        current.push(ch);
+        offset += ch.len_utf8();
         current_width += ch_width;
         if current_width >= width {
-            chunks.push(std::mem::take(&mut current));
+            ranges.push(chunk_start..offset);
+            chunk_start = offset;
             current_width = 0;
         }
     }
-    if !current.is_empty() {
-        chunks.push(current);
+    if chunk_start < text.len() {
+        ranges.push(chunk_start..text.len());
     }
-    chunks
+    ranges
+}
+
+pub(super) fn wrap_line_hard(line: &str, width: usize) -> Vec<String> {
+    hard_wrap_ranges(line, width)
+        .into_iter()
+        .map(|range| line[range].to_string())
+        .collect()
 }
 
 /// Display width of concatenated styled spans.
