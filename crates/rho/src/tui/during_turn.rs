@@ -389,6 +389,7 @@ impl App {
             | CommandId::Logout
             | CommandId::Resume
             | CommandId::Rewind
+            | CommandId::Sessions
             | CommandId::Tree
             | CommandId::Workflow => {
                 self.set_status(format!(
@@ -476,6 +477,7 @@ impl App {
                 self.set_status("skill command inserted");
             }
             PickerAction::ResumeSession
+            | PickerAction::ManageSessions
             | PickerAction::SelectTreeNode
             | PickerAction::SelectRewindCheckpoint
             | PickerAction::ConfirmRewindCheckpoint

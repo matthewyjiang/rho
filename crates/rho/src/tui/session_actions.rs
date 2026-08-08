@@ -2,7 +2,7 @@ use ratatui::DefaultTerminal;
 
 use super::{
     session_picker, App, CommandInvocation, ComposerMode, Entry, InlineChoice, InlineChoiceModal,
-    InlineChoiceOption, InlineChoicePending, InteractiveRuntime, Session,
+    InlineChoiceOption, InlineChoicePending, InteractiveRuntime, Session, SessionDeleteReopen,
 };
 use crate::session::DeleteOptions;
 
@@ -55,6 +55,14 @@ impl App {
         let Some(session_id) = self.selected_resume_session_id() else {
             return Ok(());
         };
+        self.prompt_delete_session(session_id, SessionDeleteReopen::ResumePicker)
+    }
+
+    pub(super) fn prompt_delete_session(
+        &mut self,
+        session_id: String,
+        reopen: SessionDeleteReopen,
+    ) -> anyhow::Result<()> {
         let short = session_picker::short_session_id(&session_id);
         let choice = InlineChoice::new(
             format!("Delete session {short}?"),
@@ -78,19 +86,30 @@ impl App {
         self.input_ui
             .set_composer(ComposerMode::InlineChoice(InlineChoiceModal {
                 choice,
-                pending: InlineChoicePending::DeleteSession { session_id },
+                pending: InlineChoicePending::DeleteSession { session_id, reopen },
             }));
         self.set_status("confirm delete");
         Ok(())
+    }
+
+    fn reopen_after_session_delete(&mut self, reopen: SessionDeleteReopen) -> anyhow::Result<()> {
+        match reopen {
+            SessionDeleteReopen::ResumePicker => self.open_resume_picker(),
+            SessionDeleteReopen::SessionsHub => {
+                self.open_sessions_hub_or_report();
+                Ok(())
+            }
+        }
     }
 
     pub(super) fn submit_delete_session_choice(
         &mut self,
         value: &str,
         session_id: &str,
+        reopen: SessionDeleteReopen,
     ) -> anyhow::Result<()> {
         if value != "delete" {
-            return self.open_resume_picker();
+            return self.reopen_after_session_delete(reopen);
         }
 
         let short = session_picker::short_session_id(session_id);
@@ -115,12 +134,12 @@ impl App {
                         }
                     ));
                 }
-                self.open_resume_picker()?;
+                self.reopen_after_session_delete(reopen)?;
                 self.set_status(notice);
             }
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!("could not delete session: {err}")));
-                self.open_resume_picker()?;
+                self.reopen_after_session_delete(reopen)?;
                 self.set_status("delete failed");
             }
         }

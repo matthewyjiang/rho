@@ -4,7 +4,7 @@ use std::path::Path;
 
 use super::super::render::{display_width, truncate_keep_end};
 
-pub(super) fn compact_cwd(path: &Path) -> String {
+pub(in crate::tui) fn compact_cwd(path: &Path) -> String {
     let Some(home) = crate::paths::home_dir() else {
         return path.display().to_string();
     };

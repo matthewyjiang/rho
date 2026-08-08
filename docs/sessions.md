@@ -77,6 +77,8 @@ rho -R
 
 The picker and session list stay scoped to the current workspace. Inside the TUI, use `/resume [id]` to switch sessions. With no ID, `/resume` opens the same saved-session picker. In the picker, press `d` or `Delete` to remove the selected session after a confirmation prompt; `escape` cancels.
 
+To work across every directory, use `/sessions` inside the TUI. It opens a session manager that groups saved sessions by directory, with the current directory first. Press Enter on a session to resume it, even from another directory, or on a directory row to narrow the list to that directory. Press `d` on a session to delete it, or on a directory row to delete every saved session in that directory; both ask for confirmation. The current session is never deleted.
+
 ## Listing, renaming, exporting, and deleting sessions
 
 Use the `sessions` CLI to inspect, export, rename, and remove saved history:

@@ -35,8 +35,11 @@ impl App {
                     InlineChoicePending::ClaudeCodeLogout => {
                         self.submit_claude_code_logout_choice(modal.choice).await?;
                     }
-                    InlineChoicePending::DeleteSession { session_id } => {
-                        self.submit_delete_session_choice(&value, &session_id)?;
+                    InlineChoicePending::DeleteSession { session_id, reopen } => {
+                        self.submit_delete_session_choice(&value, &session_id, reopen)?;
+                    }
+                    InlineChoicePending::DeleteDirectorySessions { cwd } => {
+                        self.submit_delete_directory_sessions_choice(&value, &cwd)?;
                     }
                     InlineChoicePending::DeleteWorkflowPlan { plan_id } => {
                         self.submit_delete_workflow_plan_choice(&value, &plan_id)?;
@@ -60,8 +63,14 @@ impl App {
                         self.resolve_context_handoff(None, *pending, terminal, agent)
                             .await?;
                     }
-                    InlineChoicePending::DeleteSession { .. } => {
-                        self.open_resume_picker()?;
+                    InlineChoicePending::DeleteSession { reopen, .. } => match reopen {
+                        super::SessionDeleteReopen::ResumePicker => self.open_resume_picker()?,
+                        super::SessionDeleteReopen::SessionsHub => {
+                            self.open_sessions_hub_or_report()
+                        }
+                    },
+                    InlineChoicePending::DeleteDirectorySessions { .. } => {
+                        self.open_sessions_hub_or_report();
                     }
                     InlineChoicePending::DeleteWorkflowPlan { .. }
                     | InlineChoicePending::DeleteWorkflowRun { .. } => {

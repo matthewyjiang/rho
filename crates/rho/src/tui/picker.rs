@@ -155,6 +155,7 @@ pub(super) enum PickerAction {
     InsertSkillCommand,
     ViewAgent,
     ResumeSession,
+    ManageSessions,
     SelectTreeNode,
     SelectRewindCheckpoint,
     ConfirmRewindCheckpoint,
@@ -180,6 +181,7 @@ impl PickerAction {
             | PickerAction::InsertSkillCommand
             | PickerAction::ViewAgent
             | PickerAction::ResumeSession
+            | PickerAction::ManageSessions
             | PickerAction::SelectTreeNode
             | PickerAction::SelectRewindCheckpoint
             | PickerAction::ConfirmRewindCheckpoint
@@ -196,6 +198,7 @@ impl PickerAction {
             | PickerAction::ViewAgent
             | PickerAction::InsertSkillCommand
             | PickerAction::ResumeSession
+            | PickerAction::ManageSessions
             | PickerAction::SelectTreeNode
             | PickerAction::SelectRewindCheckpoint
             | PickerAction::ConfirmRewindCheckpoint
@@ -539,6 +542,7 @@ impl UiPicker {
             | PickerAction::SwitchAuthMode
             | PickerAction::InsertSkillCommand
             | PickerAction::ResumeSession
+            | PickerAction::ManageSessions
             | PickerAction::SelectTreeNode
             | PickerAction::SelectRewindCheckpoint
             | PickerAction::ConfirmRewindCheckpoint

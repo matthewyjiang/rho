@@ -21,6 +21,7 @@ mod paste;
 mod pickers;
 mod resume_delete;
 mod runtime_info;
+mod sessions_hub;
 mod statusline;
 mod subagent_rail;
 mod text_selection;
@@ -57,11 +58,12 @@ use mcp::MCP_INVENTORY_SCENARIO;
 use mermaid::MERMAID_FLOWCHART_RESIZE_STEPS;
 use paste::PASTE_MULTILINE_SCENARIO;
 use pickers::{
-    setup_edit_user_agent, EDIT_USER_AGENT_STEPS, OPEN_AGENTS_PICKER_STEPS,
+    setup_edit_user_agent, EDIT_USER_AGENT_STEPS, OPENAI_KEY_ENV, OPEN_AGENTS_PICKER_STEPS,
     OPEN_MODEL_PICKER_STEPS, OPEN_WORKFLOW_HUB_EMPTY_STEPS,
 };
 use resume_delete::RESUME_PICKER_DELETE_STEPS;
 use runtime_info::RUNTIME_INFO_STEPS;
+use sessions_hub::SESSIONS_HUB_STEPS;
 use statusline::STATUSLINE_HIERARCHY_STEPS;
 use std::time::{Duration, Instant};
 use subagent_rail::SUBAGENT_RAIL_MOUSE_STEPS;
@@ -395,8 +397,10 @@ const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Key(Key::Esc),
+    // Mode changes are routine status text without a toast; the statusline
+    // segment is the observable signal.
     Step::WaitText {
-        text: "permission mode: supervised",
+        text: "Supervised ·",
         timeout: SETTLE,
     },
     Step::Phase("inspect_long_process_approval"),
@@ -434,10 +438,10 @@ const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Key(Key::Esc),
-    Step::WaitText {
-        text: "model interrupted",
-        timeout: STREAM,
-    },
+    // Esc always denies the pending call, but whether the turn is also
+    // interrupted races the instant fixture response. Each outcome renders
+    // different text, so accept either durable form.
+    Step::Custom(wait_for_denied_or_interrupted),
     Step::Phase("continue_session"),
     Step::SubmitText("fixture stream"),
     Step::WaitText {
@@ -450,6 +454,25 @@ const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
     },
     Step::ExitCommand,
 ];
+
+fn wait_for_denied_or_interrupted(harness: &mut PtyHarness) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        harness.poll(Duration::from_millis(30));
+        let screen = harness.screen();
+        if screen.contains_text("model interrupted")
+            || screen.contains_text("capability denied: cancelled by user")
+        {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            anyhow::bail!(
+                "approval Esc produced neither an interrupt nor a denial:\n{}",
+                harness.screen().contents()
+            );
+        }
+    }
+}
 
 fn scroll_approval_detail_until_suffix_visible(harness: &mut PtyHarness) -> Result<()> {
     const MARKER: &str = "DANGEROUS_SUFFIX_INSPECTABLE";
@@ -716,12 +739,20 @@ const ALL_SCENARIOS: &[Scenario] = &[
         false,
     ),
     Scenario::new(
+        "sessions_hub",
+        "Browse, resume, and delete directory sessions from the /sessions hub",
+        DEFAULT_SIZE,
+        SESSIONS_HUB_STEPS,
+        false,
+    ),
+    Scenario::new(
         "open_model_picker",
         "Open and dismiss the model picker",
         DEFAULT_SIZE,
         OPEN_MODEL_PICKER_STEPS,
         false,
-    ),
+    )
+    .with_env(OPENAI_KEY_ENV),
     Scenario::new(
         "open_workflow_hub_empty",
         "Open the workflows hub when the workspace has no workflows yet",
@@ -742,7 +773,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
         DEFAULT_SIZE,
         OPEN_AGENTS_PICKER_STEPS,
         false,
-    ),
+    )
+    .with_env(OPENAI_KEY_ENV),
     Scenario {
         id: "edit_user_agent",
         description: "Edit and save a user-defined agent through the agents picker",

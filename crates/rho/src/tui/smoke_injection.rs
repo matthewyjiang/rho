@@ -34,6 +34,32 @@ fn resolve_display_version(matrix: bool, override_version: Option<&str>, package
     package.to_owned()
 }
 
+/// Cached-model providers list rows from the on-disk model cache, which is
+/// empty in an isolated matrix HOME. Seed the fixture provider's models so
+/// `/model` and internal-agent model pickers have rows without a network
+/// refresh.
+pub(super) fn seed_matrix_model_cache() {
+    #[cfg(debug_assertions)]
+    if matrix_enabled() {
+        use rho_providers::model::provider_models::{
+            replace_cached_provider_models_for_tests, ProviderModel,
+        };
+        // Exactly the fixture model: extra entries would change scripted
+        // navigation in scenarios that step through model lists.
+        let models = [ProviderModel {
+            provider: "openai".into(),
+            model: "gpt-5.5".into(),
+            display_name: "gpt-5.5".into(),
+            context_window: Some(400_000),
+            max_output_tokens: Some(128_000),
+            reasoning_capabilities: Default::default(),
+        }];
+        // A failed seed only leaves pickers empty; the scenario assertion
+        // reports it, so there is no user to warn here.
+        let _ = replace_cached_provider_models_for_tests("openai", &models);
+    }
+}
+
 pub(super) fn after_terminal_init() -> anyhow::Result<()> {
     #[cfg(debug_assertions)]
     {

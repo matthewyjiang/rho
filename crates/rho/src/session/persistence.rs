@@ -462,6 +462,23 @@ pub(super) fn read_agent_identity(path: &Path) -> anyhow::Result<Option<(String,
     }
 }
 
+/// Workspace directory recorded on the session header line.
+///
+/// Reads only the first line, so callers can recover a workspace's cwd from
+/// its one-way hashed directory name without parsing whole transcripts.
+pub(super) fn read_session_cwd(path: &Path) -> anyhow::Result<PathBuf> {
+    let file = fs::File::open(path)?;
+    let line = BufReader::new(file)
+        .lines()
+        .next()
+        .transpose()?
+        .ok_or_else(|| anyhow::anyhow!("session file is empty"))?;
+    match serde_json::from_str::<SessionEntry>(&line)? {
+        SessionEntry::Session { cwd, .. } => Ok(cwd),
+        _ => anyhow::bail!("session file does not start with session metadata"),
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct PersistedSessionState {
     pub(crate) model: Vec<Message>,

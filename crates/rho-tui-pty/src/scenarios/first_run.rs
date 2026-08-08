@@ -70,9 +70,14 @@ pub(super) const FIRST_RUN_SETUP_STEPS: &[Step] = &[
     },
     Step::TypeText("sk-fixture-key"),
     Step::Key(Key::Enter),
-    // The fixture home caches no provider models, so the model step has
-    // nothing to choose between and setup hands straight off to the session
-    // rather than showing an empty step.
+    // Matrix runs seed the fixture model cache, so the model step lists the
+    // fixture model and Enter confirms it before setup hands off.
+    Step::Phase("choose_model"),
+    Step::WaitText {
+        text: "select model",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
     Step::Phase("hand_off_to_session"),
     Step::WaitText {
         text: "Type a message",

@@ -17,7 +17,10 @@ fn assert_tree_list_only_popup(harness: &mut PtyHarness) -> Result<()> {
     if screen.contains(" DETAILS") {
         anyhow::bail!("tree popup still showed a details pane:\n{screen}");
     }
-    if screen.contains(" │ ") {
+    // Side-by-side layout joins the column divider to the frame with `┬`;
+    // a nav-only popup has none. Bare `│` checks no longer work because the
+    // sized-to-content frame is surrounded by blank margin.
+    if screen.contains('┬') {
         anyhow::bail!("tree popup still used a side-by-side separator:\n{screen}");
     }
     if !screen.contains("Enter restore") {

@@ -114,6 +114,7 @@ mod scrollbar;
 mod session_actions;
 mod session_picker;
 mod session_title;
+mod sessions_hub;
 mod setup_screen;
 pub(in crate::tui) mod terminal_graph;
 mod transcript_events;
@@ -172,7 +173,7 @@ use frame_scheduler::FrameScheduler;
 use goal::GoalState;
 use inline_choice::{
     InlineChoice, InlineChoiceKeyOutcome, InlineChoiceModal, InlineChoiceOption,
-    InlineChoicePending,
+    InlineChoicePending, SessionDeleteReopen,
 };
 #[cfg(test)]
 use inline_shell::InlineShellMode;

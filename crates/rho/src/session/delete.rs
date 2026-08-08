@@ -11,7 +11,10 @@ use crate::subagent::{self, RunState, RESULT_FILE_NAME};
 
 use super::{
     index,
-    persistence::{workspace_key, ResolvedSession, SessionStore, SessionUnit},
+    persistence::{
+        read_session_cwd, session_dir_in_root, workspace_key, ResolvedSession, SessionStore,
+        SessionUnit,
+    },
     SessionSummary,
 };
 
@@ -63,17 +66,7 @@ pub(super) fn list_all_in_root(session_root: &Path) -> anyhow::Result<Vec<Sessio
         if !workspace_dir.is_dir() {
             continue;
         }
-        for session_entry in fs::read_dir(&workspace_dir)? {
-            let path = session_entry?.path();
-            let Some(unit) = SessionUnit::from_path(&path) else {
-                continue;
-            };
-            match super::persistence::summarize_session_file(&unit.transcript_path(), Path::new(""))
-            {
-                Ok(record) => summaries.push(record.summary),
-                Err(_) => continue,
-            }
-        }
+        summaries.extend(list_workspace_dir(session_root, &workspace_dir)?);
     }
     summaries.sort_by(|left, right| {
         right
@@ -82,6 +75,45 @@ pub(super) fn list_all_in_root(session_root: &Path) -> anyhow::Result<Vec<Sessio
             .then_with(|| right.created_at.cmp(&left.created_at))
             .then_with(|| left.id.cmp(&right.id))
     });
+    Ok(summaries)
+}
+
+/// Lists one workspace directory through the same synced index the resume
+/// picker uses, so unchanged transcripts are never re-parsed.
+///
+/// The directory name is a one-way hash of the workspace cwd, so recover the
+/// cwd from a session header line (first line only). When no header
+/// round-trips to this directory, fall back to parsing each transcript so
+/// damaged or legacy workspaces still list.
+fn list_workspace_dir(
+    session_root: &Path,
+    workspace_dir: &Path,
+) -> anyhow::Result<Vec<SessionSummary>> {
+    for entry in fs::read_dir(workspace_dir)? {
+        let path = entry?.path();
+        let Some(unit) = SessionUnit::from_path(&path) else {
+            continue;
+        };
+        let Ok(cwd) = read_session_cwd(&unit.transcript_path()) else {
+            continue;
+        };
+        if session_dir_in_root(session_root, &cwd) != workspace_dir {
+            continue;
+        }
+        return SessionStore::new(session_root, &cwd).list();
+    }
+
+    let mut summaries = Vec::new();
+    for entry in fs::read_dir(workspace_dir)? {
+        let path = entry?.path();
+        let Some(unit) = SessionUnit::from_path(&path) else {
+            continue;
+        };
+        match super::persistence::summarize_session_file(&unit.transcript_path(), Path::new("")) {
+            Ok(record) => summaries.push(record.summary),
+            Err(_) => continue,
+        }
+    }
     Ok(summaries)
 }
 

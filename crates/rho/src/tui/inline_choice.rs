@@ -71,13 +71,32 @@ pub(super) struct InlineChoiceModal {
 
 #[derive(Debug)]
 pub(super) enum InlineChoicePending {
-    CredentialStore { next: super::login::StoreChoiceNext },
+    CredentialStore {
+        next: super::login::StoreChoiceNext,
+    },
     ContextHandoff(Box<super::context_handoff::PendingContextHandoff>),
     ClaudeCodeRelogin,
     ClaudeCodeLogout,
-    DeleteSession { session_id: String },
-    DeleteWorkflowPlan { plan_id: String },
-    DeleteWorkflowRun { run_id: String },
+    DeleteSession {
+        session_id: String,
+        reopen: SessionDeleteReopen,
+    },
+    DeleteDirectorySessions {
+        cwd: std::path::PathBuf,
+    },
+    DeleteWorkflowPlan {
+        plan_id: String,
+    },
+    DeleteWorkflowRun {
+        run_id: String,
+    },
+}
+
+/// Which picker a session-delete confirm returns to when it finishes or cancels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SessionDeleteReopen {
+    ResumePicker,
+    SessionsHub,
 }
 
 impl InlineChoiceModal {

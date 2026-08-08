@@ -27,6 +27,7 @@ impl App {
     ) -> Self {
         #[cfg(debug_assertions)]
         if smoke_injection::matrix_enabled() {
+            smoke_injection::seed_matrix_model_cache();
             return Self::new_with_credentials(
                 info,
                 Arc::new(rho_providers::credentials::MemoryCredentialStore::default()),

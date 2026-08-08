@@ -325,6 +325,9 @@ impl App {
                     super::PickerAction::ResumeSession => {
                         self.prompt_delete_selected_session()?;
                     }
+                    super::PickerAction::ManageSessions => {
+                        self.prompt_delete_selected_sessions_item()?;
+                    }
                     super::PickerAction::Workflow => {
                         self.prompt_delete_selected_workflow_item()?;
                     }

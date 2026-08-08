@@ -223,6 +223,7 @@ impl App {
                 | PickerAction::SelectRewindCheckpoint
                 | PickerAction::ConfirmRewindCheckpoint
                 | PickerAction::Workflow
+                | PickerAction::ManageSessions
         ) {
             self.input_ui.set_composer(ComposerMode::Input);
         }
@@ -337,6 +338,10 @@ impl App {
             }
             PickerAction::ResumeSession => {
                 self.submit_resume_selection(&value, terminal, agent).await
+            }
+            PickerAction::ManageSessions => {
+                self.submit_sessions_selection(&value, terminal, agent)
+                    .await
             }
             PickerAction::SelectTreeNode => {
                 self.submit_tree_selection(&value, terminal, agent).await
@@ -473,6 +478,7 @@ impl App {
             | PickerAction::InsertSkillCommand
             | PickerAction::ViewAgent
             | PickerAction::ResumeSession
+            | PickerAction::ManageSessions
             | PickerAction::SelectTreeNode
             | PickerAction::SelectRewindCheckpoint
             | PickerAction::ConfirmRewindCheckpoint
@@ -538,6 +544,7 @@ impl App {
             | PickerAction::InsertSkillCommand
             | PickerAction::ViewAgent
             | PickerAction::ResumeSession
+            | PickerAction::ManageSessions
             | PickerAction::SelectTreeNode
             | PickerAction::SelectRewindCheckpoint
             | PickerAction::ConfirmRewindCheckpoint

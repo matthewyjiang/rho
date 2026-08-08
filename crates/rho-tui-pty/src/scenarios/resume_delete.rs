@@ -60,6 +60,10 @@ pub(super) const RESUME_PICKER_DELETE_STEPS: &[Step] = &[
         text: "deleted session",
         timeout: SETTLE,
     },
+    // The delete notice toast overwrites the picker's own empty-list status,
+    // so reopen the picker to observe the empty state.
+    Step::Phase("empty_picker_after_delete"),
+    Step::SubmitText("/resume"),
     Step::WaitText {
         text: "no saved sessions for this workspace",
         timeout: SETTLE,
