@@ -152,7 +152,12 @@ fn match_overlay_splits_segments() {
             role: None,
         },
     ];
-    let ranges = match_byte_ranges("let answer = 1", "answer");
+    let ranges = match_byte_ranges(
+        "let answer = 1",
+        &MatchQuery::new(
+            "answer", /*literal*/ false, /*case_sensitive*/ true,
+        ),
+    );
     assert_eq!(ranges, vec![(4, 10)]);
     let spans = spans_from_segments_with_matches(&segments, Theme::text(), &ranges);
     let answer = spans
@@ -160,4 +165,26 @@ fn match_overlay_splits_segments() {
         .find(|span| span.content.as_ref() == "answer")
         .expect("answer span");
     assert_eq!(answer.style, Theme::search_match(Theme::text()));
+}
+
+// Covers: literal match keeps regex metacharacters inert
+// Owner: pure unit (search match semantics)
+#[test]
+fn literal_match_does_not_treat_dot_as_wildcard() {
+    let ranges = match_byte_ranges(
+        "a.b",
+        &MatchQuery::new(".", /*literal*/ true, /*case_sensitive*/ true),
+    );
+    assert_eq!(ranges, vec![(1, 2)]);
+}
+
+// Covers: case-sensitive regex match skips differently-cased hits
+// Owner: pure unit (search match semantics)
+#[test]
+fn case_sensitive_regex_skips_different_case() {
+    let ranges = match_byte_ranges(
+        "FOO foo",
+        &MatchQuery::new("foo", /*literal*/ false, /*case_sensitive*/ true),
+    );
+    assert_eq!(ranges, vec![(4, 7)]);
 }

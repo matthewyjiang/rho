@@ -118,13 +118,11 @@ fn render_markdown_from_fence_state(
     let mut image_sources = Vec::new();
     let mut image_rows = Vec::new();
     // Continue an open fence from a prior chunk (live preview). No header row:
-    // that belongs to the opening line already committed above.
+    // that belongs to the opening line already committed above. Reuse the
+    // stored highlighter so multi-line tokens keep their lexical state.
     let mut active = state.active.map(|fence| ActiveBlock {
         fence,
-        highlighter: state
-            .language
-            .as_deref()
-            .and_then(BlockHighlighter::for_language),
+        highlighter: state.highlighter.take(),
         copy: None,
     });
 
@@ -177,12 +175,10 @@ fn render_markdown_from_fence_state(
                 } else {
                     active = None;
                 }
-                state.active = None;
-                state.language = None;
+                state.clear_open();
             } else {
                 let fence = opening_fence.expect("opening branch");
                 let language = opening_fence_info_token(raw_line);
-                let highlighter = language.as_deref().and_then(BlockHighlighter::for_language);
                 let label = language.as_deref().map(str::to_ascii_uppercase);
                 let top_line = lines.len();
                 lines.push(code_block_header(width, label.as_deref(), copy_button));
@@ -194,8 +190,10 @@ fn render_markdown_from_fence_state(
                         copy_columns,
                         content: Vec::new(),
                     });
-                state.active = Some(fence);
-                state.language = language;
+                // Seed language/active; take the highlighter onto the render-local
+                // block so body lines advance one shared ParseState.
+                state.open_fence(fence, language);
+                let highlighter = state.highlighter.take();
                 active = Some(ActiveBlock {
                     fence,
                     highlighter,
@@ -267,24 +265,32 @@ fn render_markdown_from_fence_state(
         line_index += 1;
     }
 
-    if let Some(ActiveBlock {
-        copy: Some(capture),
-        ..
-    }) = active
-    {
-        code_blocks.push(MarkdownCodeBlock {
-            top_line: capture.top_line,
-            copy_columns: capture.copy_columns,
-            text: capture.content.join("\n"),
-        });
+    // Persist highlighter lexical state when the fence stays open across chunks.
+    match active {
+        Some(ActiveBlock {
+            highlighter,
+            copy: Some(capture),
+            ..
+        }) => {
+            state.highlighter = highlighter;
+            code_blocks.push(MarkdownCodeBlock {
+                top_line: capture.top_line,
+                copy_columns: capture.copy_columns,
+                text: capture.content.join("\n"),
+            });
+        }
+        Some(ActiveBlock { highlighter, .. }) => {
+            state.highlighter = highlighter;
+        }
+        None => {
+            // Closed path already cleared state; leave highlighter unset.
+        }
     }
 
     if lines.is_empty() && text.is_empty() {
         lines.push(Line::from(Span::styled(String::new(), Theme::text())));
     }
 
-    // `state.active` / `state.language` already track the open fence for the
-    // next chunk; leave them as updated by open/close transitions above.
     RenderedMarkdown {
         lines,
         code_blocks,

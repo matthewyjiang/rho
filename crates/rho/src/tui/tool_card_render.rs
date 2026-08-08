@@ -229,7 +229,13 @@ fn render_child_groups(card: &ToolCard, width: usize, paint_budget: Option<usize
         ToolBody::Lines(body) => {
             let logical = tool_diff::logical_lines(body);
             let search_mode = card.match_pattern.is_some();
-            let mut search = search_mode.then(|| SearchSyntax::new(card.match_pattern.as_deref()));
+            let mut search = card.match_pattern.as_ref().map(|pattern| {
+                SearchSyntax::new(crate::tui::syntax::MatchQuery::new(
+                    pattern.clone(),
+                    card.match_literal,
+                    card.match_case_sensitive,
+                ))
+            });
             for line in &logical {
                 if paint_remaining == 0 {
                     // Still count wrap height for "... N more" without paint.

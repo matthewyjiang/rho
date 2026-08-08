@@ -65,6 +65,7 @@ impl HighlightSegment {
 }
 
 /// Stateful highlighter for one source stream. Feed lines in order.
+#[derive(Clone)]
 pub(in crate::tui) struct BlockHighlighter {
     parse: ParseState,
     stack: ScopeStack,
@@ -205,27 +206,70 @@ fn syntax_for_path(path: &str) -> Option<&'static SyntaxReference> {
     })
 }
 
+/// Match pattern and the same semantics the grep tool used when searching.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::tui) struct MatchQuery {
+    pub(in crate::tui) pattern: String,
+    pub(in crate::tui) literal: bool,
+    pub(in crate::tui) case_sensitive: bool,
+}
+
+impl MatchQuery {
+    pub(in crate::tui) fn new(
+        pattern: impl Into<String>,
+        literal: bool,
+        case_sensitive: bool,
+    ) -> Self {
+        Self {
+            pattern: pattern.into(),
+            literal,
+            case_sensitive,
+        }
+    }
+}
+
 /// Byte ranges of pattern matches inside `text` for search-hit overlay.
 ///
-/// Tries the pattern as a regex (case-insensitive, size-capped). On compile
-/// failure, falls back to case-insensitive literal substring search.
-pub(in crate::tui) fn match_byte_ranges(text: &str, pattern: &str) -> Vec<(usize, usize)> {
-    let pattern = pattern.trim();
+/// Semantics mirror [`GrepRequest`]: `literal` escapes/substrings rather than
+/// compiling a regex, and `case_sensitive` defaults to true at the card layer.
+pub(in crate::tui) fn match_byte_ranges(text: &str, query: &MatchQuery) -> Vec<(usize, usize)> {
+    let pattern = query.pattern.as_str();
     if pattern.is_empty() || text.is_empty() {
         return Vec::new();
     }
-    if let Ok(re) = RegexBuilder::new(pattern)
-        .case_insensitive(true)
+    if query.literal {
+        return literal_match_ranges(text, pattern, query.case_sensitive);
+    }
+    let Ok(re) = RegexBuilder::new(pattern)
+        .case_insensitive(!query.case_sensitive)
         .size_limit(1 << 20)
         .dfa_size_limit(1 << 20)
         .build()
-    {
-        return re.find_iter(text).map(|m| (m.start(), m.end())).collect();
-    }
-    literal_match_ranges(text, pattern)
+    else {
+        // Invalid regex would not have produced grep hits; do not invent matches.
+        return Vec::new();
+    };
+    re.find_iter(text).map(|m| (m.start(), m.end())).collect()
 }
 
-fn literal_match_ranges(text: &str, pattern: &str) -> Vec<(usize, usize)> {
+fn literal_match_ranges(text: &str, pattern: &str, case_sensitive: bool) -> Vec<(usize, usize)> {
+    if pattern.is_empty() {
+        return Vec::new();
+    }
+    if case_sensitive {
+        let mut ranges = Vec::new();
+        let mut start = 0usize;
+        while let Some(rel) = text[start..].find(pattern) {
+            let abs = start + rel;
+            let end = abs + pattern.len();
+            ranges.push((abs, end));
+            start = end;
+            if start >= text.len() {
+                break;
+            }
+        }
+        return ranges;
+    }
     let lower_text = text.to_ascii_lowercase();
     let lower_pat = pattern.to_ascii_lowercase();
     if lower_pat.is_empty() {

@@ -9,7 +9,7 @@ use super::{
     render::{display_width, hard_wrap_styled_spans, wrap_line_hard},
     syntax::{
         match_byte_ranges, spans_from_segments_with_matches, spans_plain_with_matches,
-        BlockHighlighter, HighlightSegment, MAX_TOOL_SYNTAX_LINES,
+        BlockHighlighter, HighlightSegment, MatchQuery, MAX_TOOL_SYNTAX_LINES,
     },
     theme::Theme,
 };
@@ -26,16 +26,16 @@ const CHILD_CONTENT_INDENT: &str = "    ";
 pub(super) struct SearchSyntax {
     path: Option<String>,
     highlighter: Option<BlockHighlighter>,
-    pattern: String,
+    query: MatchQuery,
     highlighted_lines: usize,
 }
 
 impl SearchSyntax {
-    pub(super) fn new(pattern: Option<&str>) -> Self {
+    pub(super) fn new(query: MatchQuery) -> Self {
         Self {
             path: None,
             highlighter: None,
-            pattern: pattern.unwrap_or("").to_string(),
+            query,
             highlighted_lines: 0,
         }
     }
@@ -59,7 +59,7 @@ impl SearchSyntax {
             }
             SearchLine::Content { prefix, source } => {
                 let plain = Theme::text();
-                let match_ranges = match_byte_ranges(source, &self.pattern);
+                let match_ranges = match_byte_ranges(source, &self.query);
                 let source_spans = self.paint_source(source, plain, &match_ranges);
                 // Prefix (`N | `) stays dim meta; source carries syntax + match.
                 let mut spans = vec![Span::styled(prefix.to_string(), Theme::tool_meta())];
@@ -74,7 +74,7 @@ impl SearchSyntax {
                 vec![Span::styled(line.to_string(), Theme::tool_meta())],
             ),
             SearchLine::Plain => {
-                let match_ranges = match_byte_ranges(line, &self.pattern);
+                let match_ranges = match_byte_ranges(line, &self.query);
                 let spans = spans_plain_with_matches(line, Theme::text(), &match_ranges);
                 push_body_spans(out, line, width, spans)
             }

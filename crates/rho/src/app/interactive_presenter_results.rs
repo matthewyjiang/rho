@@ -312,10 +312,23 @@ pub(super) fn search_result_card(
         });
     }
     card.body = ToolBody::Lines(split_body_lines(content));
-    // Grep content bodies paint language + match overlay from this pattern.
+    // Grep content bodies paint language + match overlay from this pattern,
+    // using the same literal/case semantics as the grep tool request.
     if view.kind == ToolKind::Grep {
         if let Some(pattern) = string_arg(&view.arguments, "pattern") {
-            card = card.with_match_pattern(pattern);
+            let literal = view
+                .arguments
+                .get("literal")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            let case_sensitive = view
+                .arguments
+                .get("case_sensitive")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(true);
+            card = card
+                .with_match_pattern(pattern)
+                .with_match_semantics(literal, case_sensitive);
         }
     }
     card

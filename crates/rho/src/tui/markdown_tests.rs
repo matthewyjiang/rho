@@ -213,6 +213,57 @@ fn fence_state_continuation_highlights_with_carried_language() {
     assert!(state.is_open());
 }
 
+// Covers: multi-line string lexical state survives a committed→preview split.
+// Owner: pure unit (markdown streamed fence highlight)
+#[test]
+fn streamed_fence_preserves_multiline_string_highlight_across_chunks() {
+    let mut state = CodeFenceState::default();
+    // Production path: committed fragment advances fence + highlighter state.
+    update_code_block_state("```rust\nlet text = \"open\n", &mut state);
+    assert!(state.is_open());
+    assert!(
+        state.highlighter.is_some(),
+        "committed open fence must keep a highlighter"
+    );
+
+    // Live-preview fragment continues inside the open string.
+    let lines = markdown_lines("still inside", 80, &mut state);
+    assert_eq!(lines.len(), 1);
+    assert_eq!(line_text(&lines[0]), "still inside");
+    let string_style = Theme::syntax(crate::tui::theme::SyntaxRole::String);
+    assert!(
+        lines[0].spans.iter().all(|span| span.style == string_style),
+        "continuation inside multi-line string must stay string-styled: {:?}",
+        line_styles(&lines[0])
+    );
+    assert!(state.is_open());
+    assert!(state.highlighter.is_some());
+}
+
+// Covers: renderer-to-renderer split also preserves multi-line token state.
+// Owner: pure unit (markdown fence render path)
+#[test]
+fn render_chunks_preserve_multiline_string_highlight() {
+    let mut state = CodeFenceState::default();
+    let first = markdown_lines("```rust\nlet text = \"open\n", 80, &mut state);
+    assert!(first.iter().any(|line| line_text(line).contains("open")));
+    assert!(state.is_open());
+
+    let second = markdown_lines("still inside\nmore\n", 80, &mut state);
+    let string_style = Theme::syntax(crate::tui::theme::SyntaxRole::String);
+    assert!(
+        second.iter().any(|line| {
+            line_text(line) == "still inside"
+                && line.spans.iter().all(|span| span.style == string_style)
+        }),
+        "second chunk must keep string styling: {:?}",
+        second
+            .iter()
+            .map(|line| (line_text(line), line_styles(line)))
+            .collect::<Vec<_>>()
+    );
+}
+
 #[test]
 fn mermaid_scanner_keeps_an_invalid_closer_inside_the_raw_block() {
     let mut fence_state = CodeFenceState::default();
