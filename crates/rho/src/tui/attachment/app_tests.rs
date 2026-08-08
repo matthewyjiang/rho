@@ -251,7 +251,7 @@ fn identity_line_includes_provider_model_runtime_elapsed_and_cost() {
             agent_id: Some("explorer".into()),
             provider: Some("openai".into()),
             model: Some("gpt-5.5".into()),
-            runtime: Some(crate::subagent::RunRuntime::Rho),
+            runtime: Some(crate::agent::AgentRuntime::Rho),
             started_at: Some(1_000),
             finished_at: Some(1_065),
             turns: 3,
@@ -286,7 +286,7 @@ fn identity_line_handles_partial_model_fields() {
         identity_line(
             Some(&RunStatus {
                 provider: Some("anthropic".into()),
-                runtime: Some(crate::subagent::RunRuntime::ClaudeCli),
+                runtime: Some(crate::agent::AgentRuntime::ClaudeCli),
                 turns: 2,
                 ..RunStatus::default()
             }),

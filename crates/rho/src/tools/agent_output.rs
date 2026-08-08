@@ -49,7 +49,7 @@ pub(super) fn format_snapshot(snapshot: &SubagentSnapshot, format: SnapshotForma
         SnapshotFormat::Status => {
             lines.push(format!(
                 "elapsed: {} · {metrics}",
-                format_elapsed(snapshot.elapsed.as_secs())
+                subagent::format_elapsed_secs(snapshot.elapsed.as_secs())
             ));
             // Progress metadata only: a running run's streamed text stays
             // private so the parent cannot act on results before delivery.
@@ -240,13 +240,9 @@ pub(super) fn format_list_entry(snapshot: &SubagentSnapshot) -> String {
         snapshot.id,
         snapshot.agent_id,
         snapshot.status.state.as_str(),
-        format_elapsed(snapshot.elapsed.as_secs()),
+        subagent::format_elapsed_secs(snapshot.elapsed.as_secs()),
         truncate(detail.to_string(), DETAIL_BYTES)
     )
-}
-
-fn format_elapsed(seconds: u64) -> String {
-    subagent::format_elapsed_secs(seconds)
 }
 
 fn format_token_count(tokens: Option<u64>) -> String {

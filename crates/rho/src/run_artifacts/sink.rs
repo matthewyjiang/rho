@@ -36,7 +36,7 @@ pub(crate) struct RunArtifactIdentity {
     pub(crate) agent_fingerprint: String,
     pub(crate) provider: String,
     pub(crate) model: String,
-    pub(crate) runtime: crate::subagent::RunRuntime,
+    pub(crate) runtime: crate::agent::AgentRuntime,
 }
 
 enum WriterCommand {

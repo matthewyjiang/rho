@@ -372,14 +372,14 @@ fn runtime_and_timing_fields_round_trip_in_status_file() {
     let status = RunStatus {
         state: RunState::Ok,
         agent_id: Some("worker".into()),
-        runtime: Some(RunRuntime::ClaudeCli),
+        runtime: Some(crate::agent::AgentRuntime::ClaudeCli),
         started_at: Some(1_700_000_000),
         finished_at: Some(1_700_000_042),
         ..RunStatus::default()
     };
     initialize_status(&path, &status).unwrap();
     let loaded = read_status(&path).unwrap();
-    assert_eq!(loaded.runtime, Some(RunRuntime::ClaudeCli));
+    assert_eq!(loaded.runtime, Some(crate::agent::AgentRuntime::ClaudeCli));
     assert_eq!(loaded.started_at, Some(1_700_000_000));
     assert_eq!(loaded.finished_at, Some(1_700_000_042));
     assert_eq!(

@@ -8,6 +8,9 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+
+use crate::agent::AgentRuntime;
+
 mod storage;
 pub(crate) use storage::{
     is_trusted_directory, lock_parent_for_cleanup, release_run_directory, reserve_run_directory,
@@ -56,22 +59,6 @@ impl RunState {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum RunRuntime {
-    Rho,
-    ClaudeCli,
-}
-
-impl RunRuntime {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Rho => "rho",
-            Self::ClaudeCli => "claude-cli",
-        }
-    }
-}
-
 /// Contents of the `--output-file` a subagent writes atomically as it runs.
 ///
 /// The parent process reads this file for status checks and completion
@@ -89,7 +76,7 @@ pub struct RunStatus {
     pub model: Option<String>,
     /// Backend that executes this run (`rho` or `claude-cli`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime: Option<RunRuntime>,
+    pub runtime: Option<AgentRuntime>,
     /// Unix seconds when the Starting boundary was first written.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at: Option<u64>,
@@ -222,9 +209,7 @@ fn write_status_inner(path: &Path, status: &RunStatus, force: bool) -> std::io::
     status_write_hooks::run_after_read(path, status);
     // Durable finish time for attach elapsed, even when a caller forgot to stamp.
     let mut status = status.clone();
-    if status.state.is_terminal() && status.finished_at.is_none() {
-        status.finished_at = Some(unix_now_secs());
-    }
+    status.mark_finished_now();
     let contents = serde_json::to_vec_pretty(&status)
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
     crate::config_writer::write_bytes_atomically(path, &contents)

@@ -279,12 +279,6 @@ impl AgentExecutor {
 
         let labels = bound.runtime().artifact_labels();
         let capacity_class = bound.runtime().capacity_class();
-        let runtime = match bound.runtime() {
-            crate::app::agent_binding::BoundRuntime::Rho { .. } => crate::subagent::RunRuntime::Rho,
-            crate::app::agent_binding::BoundRuntime::ClaudeCli { .. } => {
-                crate::subagent::RunRuntime::ClaudeCli
-            }
-        };
 
         let initial = RunStatus {
             state: RunState::Starting,
@@ -292,7 +286,7 @@ impl AgentExecutor {
             agent_fingerprint: Some(bound.fingerprint().to_string()),
             provider: Some(labels.provider.clone()),
             model: Some(labels.model.clone()),
-            runtime: Some(runtime),
+            runtime: Some(labels.runtime),
             started_at: Some(subagent::unix_now_secs()),
             parent_session_id: parent_session_id.as_ref().map(ToString::to_string),
             ..RunStatus::default()

@@ -223,7 +223,7 @@ fn agent_line(
         .min(MAX_AGENT_CONTENT_WIDTH);
     let identity_width = display_width(&agent.agent_id) + 2 + display_width(&agent.id);
     let separator_width = display_width(SEPARATOR);
-    let elapsed = format_elapsed(agent.elapsed_seconds);
+    let elapsed = subagent::format_elapsed_secs(agent.elapsed_seconds);
     let trailing = match row_state {
         SubagentRowState::Idle => elapsed,
         SubagentRowState::Hovered | SubagentRowState::Pressed => action_hint.to_string(),
@@ -271,8 +271,4 @@ fn activity_label(activity: Option<&str>) -> &str {
         Some(activity) => activity.strip_prefix("tool: ").unwrap_or(activity),
         None => "working",
     }
-}
-
-fn format_elapsed(seconds: u64) -> String {
-    subagent::format_elapsed_secs(seconds)
 }
