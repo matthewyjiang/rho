@@ -11,7 +11,10 @@ use rho_tools::tool_card::{
     DiffRow, DiffRowKind, ToolBody, ToolFact, ToolFamily, ToolHeader, ToolStatus,
 };
 
-use super::{host_response, questionnaire_request, SdkEventAdapter, ViewEvent, ViewModelEvent};
+use super::{
+    host_response, questionnaire_request, GenerationOutputTokens, SdkEventAdapter, ViewEvent,
+    ViewModelEvent,
+};
 use crate::{
     questionnaire::{QuestionnaireQuestionKind, QuestionnaireResponse},
     tui::questionnaire::{
@@ -71,8 +74,91 @@ fn translates_streaming_and_usage_events_without_rendering_state() {
                 total_latency: Duration::from_millis(1_200),
             },
         })),
-        ViewEvent::Update(ViewModelEvent::ModelCallCompleted { profile, metrics })
-            if profile.model == "gpt" && metrics.output_tokens == Some(3)
+        ViewEvent::Update(ViewModelEvent::ModelCallCompleted {
+            profile,
+            metrics,
+            generation_output_tokens: GenerationOutputTokens::AggregateFallback,
+        }) if profile.model == "gpt" && metrics.output_tokens == Some(3)
+    ));
+}
+
+// Covers: the 1.x performance carrier must stay separate from aggregate tokens
+// and apply only to the next model call.
+// Owner: TUI SDK event adapter
+#[test]
+fn generation_output_carrier_enriches_the_next_model_call() {
+    let mut adapter = SdkEventAdapter::default();
+    #[allow(deprecated)]
+    let carrier = RunEvent::ProviderActivity {
+        kind: "model_call_generation_output_tokens".into(),
+        detail: "30".into(),
+    };
+    assert!(adapter.translate(carrier).is_empty());
+    let profile = rho_sdk::ModelCallProfile {
+        provider: "xai".into(),
+        model: "grok".into(),
+        reasoning: rho_sdk::ReasoningLevel::High,
+        service_tier: None,
+    };
+    let metrics = rho_sdk::ModelCallMetrics {
+        output_tokens: Some(100),
+        time_to_first_token: Some(Duration::from_secs(1)),
+        generation_time: Some(Duration::from_secs(2)),
+        total_latency: Duration::from_secs(3),
+    };
+
+    assert!(matches!(
+        only_event(adapter.translate(RunEvent::ModelCallCompleted {
+            profile: profile.clone(),
+            metrics,
+        })),
+        ViewEvent::Update(ViewModelEvent::ModelCallCompleted {
+            metrics: translated_metrics,
+            generation_output_tokens: GenerationOutputTokens::Reported(30),
+            ..
+        }) if translated_metrics == metrics
+    ));
+    assert!(matches!(
+        only_event(adapter.translate(RunEvent::ModelCallCompleted { profile, metrics })),
+        ViewEvent::Update(ViewModelEvent::ModelCallCompleted {
+            metrics: translated_metrics,
+            generation_output_tokens: GenerationOutputTokens::AggregateFallback,
+            ..
+        }) if translated_metrics == metrics
+    ));
+}
+
+// Covers: an invalid provider breakdown must suppress aggregate throughput fallback.
+// Owner: TUI SDK event adapter
+#[test]
+fn unavailable_generation_output_carrier_is_preserved() {
+    let mut adapter = SdkEventAdapter::default();
+    #[allow(deprecated)]
+    let carrier = RunEvent::ProviderActivity {
+        kind: "model_call_generation_output_tokens".into(),
+        detail: "unavailable".into(),
+    };
+    assert!(adapter.translate(carrier).is_empty());
+
+    assert!(matches!(
+        only_event(adapter.translate(RunEvent::ModelCallCompleted {
+            profile: rho_sdk::ModelCallProfile {
+                provider: "openai".into(),
+                model: "gpt".into(),
+                reasoning: rho_sdk::ReasoningLevel::High,
+                service_tier: None,
+            },
+            metrics: rho_sdk::ModelCallMetrics {
+                output_tokens: Some(100),
+                time_to_first_token: Some(Duration::from_secs(1)),
+                generation_time: Some(Duration::from_secs(2)),
+                total_latency: Duration::from_secs(3),
+            },
+        })),
+        ViewEvent::Update(ViewModelEvent::ModelCallCompleted {
+            generation_output_tokens: GenerationOutputTokens::Unavailable,
+            ..
+        })
     ));
 }
 

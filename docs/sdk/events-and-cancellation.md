@@ -62,6 +62,25 @@ One coordinator consumes run commands for the whole tool batch. It queues concur
 
 The implementation does not guarantee a terminal event for every worker exit; see [known limitations](#known-limitations). Run drop/abort, task panic, failed terminal delivery, and some cancellation or persistence-error races around nonterminal event emission can close the channel without `Completed`, `Cancelled`, or `Failed`. Hosts must treat end-of-stream as "inspect `Run::outcome`," not infer success.
 
+## Model-call performance metrics
+
+`ModelCallCompleted.metrics.output_tokens` keeps the provider's aggregate output
+total for 1.x compatibility. When the provider reports a reasoning-token
+breakdown, the runtime emits a `ProviderActivity` immediately before
+`ModelCallCompleted`. Its kind is
+`PROVIDER_ACTIVITY_GENERATION_OUTPUT_TOKENS`, and its decimal `detail` is the
+aggregate output total minus reasoning tokens. The built-in TUI uses that value
+as the numerator for generation and response speed. If the provider does not
+report a breakdown, it uses the aggregate total.
+
+This does not change usage or billing. `UsageUpdated.usage.output_tokens`,
+`ModelCallCompleted.metrics.output_tokens`, and
+`RunOutcome::usage().output_tokens` all keep the provider's full output total,
+including billable reasoning tokens. The activity carrier is a minor-compatible
+bridge. A future major release will replace it with an explicit performance
+metric.
+
+
 ## Host input and steering
 
 `Run::steer` sends an additional user input to the active run and waits until the worker accepts it. Accepted steering is incorporated at a model-step boundary. It does not mutate completed history independently.

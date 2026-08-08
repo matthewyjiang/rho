@@ -28,6 +28,16 @@ pub const PROVIDER_ACTIVITY_REQUEST_RETRY: &str = "provider_request_retry";
 /// NEXT_MAJOR(rho-sdk): remove ProviderActivity and PROVIDER_ACTIVITY_* dual-emits.
 #[deprecated(since = "1.11.0", note = "use RunEvent::WebSearch")]
 pub const PROVIDER_ACTIVITY_WEB_SEARCH: &str = "web_search";
+/// Internal 1.x carrier emitted immediately before [`RunEvent::ModelCallCompleted`].
+/// Its `detail` is the non-reasoning output count or `unavailable` when a
+/// provider reported an invalid reasoning breakdown.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-sdk): add an explicit generation_output_tokens metric and remove
+/// this ProviderActivity carrier.
+#[doc(hidden)]
+pub const PROVIDER_ACTIVITY_GENERATION_OUTPUT_TOKENS: &str = "model_call_generation_output_tokens";
 
 /// Why the current provider attempt was abandoned before a fresh request.
 ///
@@ -209,7 +219,7 @@ pub struct ModelCallProfile {
 /// Timing and provider-reported output usage for one model call.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ModelCallMetrics {
-    /// Provider-reported output tokens for this call.
+    /// Provider-reported aggregate output tokens for this call.
     pub output_tokens: Option<u64>,
     /// Time from the start of the attempt to its first generated event.
     /// Reasoning deltas count as generated output, so a provider that hides
@@ -328,7 +338,9 @@ pub enum RunEvent {
     ///
     /// Prefer the typed events instead. Still dual-emitted alongside
     /// [`RunEvent::WebSearch`], [`RunEvent::ProviderRequestRetry`], and
-    /// [`RunEvent::ProviderStreamReset`] for 1.0 hosts. New activity such as
+    /// [`RunEvent::ProviderStreamReset`] for 1.0 hosts. It also carries the
+    /// internal [`PROVIDER_ACTIVITY_GENERATION_OUTPUT_TOKENS`] hint immediately
+    /// before [`RunEvent::ModelCallCompleted`]. New activity such as
     /// [`RunEvent::HostedToolActivity`] is typed-only and does not dual-emit
     /// here.
     ///

@@ -2,12 +2,42 @@ use std::{collections::BTreeMap, time::Duration};
 
 use rho_sdk::{ModelCallMetrics, ModelCallProfile};
 
-const MIN_OUTPUT_TOKENS: u64 = 32;
+const MIN_GENERATION_OUTPUT_TOKENS: u64 = 32;
 const MIN_GENERATION_TIME: Duration = Duration::from_millis(500);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum GenerationOutputTokens {
+    AggregateFallback,
+    Reported(u64),
+    Unavailable,
+}
+
+impl GenerationOutputTokens {
+    fn resolve(self, aggregate_output_tokens: Option<u64>) -> Option<u64> {
+        match self {
+            Self::AggregateFallback => aggregate_output_tokens,
+            Self::Reported(tokens) => Some(tokens),
+            Self::Unavailable => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct ModelCallPerformance {
+    pub(super) metrics: ModelCallMetrics,
+    pub(super) generation_output_tokens: GenerationOutputTokens,
+}
+
+impl ModelCallPerformance {
+    pub(super) fn throughput_output_tokens(self) -> Option<u64> {
+        self.generation_output_tokens
+            .resolve(self.metrics.output_tokens)
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(super) struct ModelPerformanceSummary {
-    pub(super) latest_call: Option<ModelCallMetrics>,
+    pub(super) latest_call: Option<ModelCallPerformance>,
     /// Token-weighted average of generation throughput (`tokens / generation_time`).
     pub(super) average_generation_tokens_per_second: Option<f64>,
     pub(super) eligible_calls: u64,
@@ -19,8 +49,16 @@ pub(super) struct ModelPerformanceTracker {
 }
 
 impl ModelPerformanceTracker {
-    pub(super) fn record(&mut self, profile: ModelCallProfile, metrics: ModelCallMetrics) {
-        self.profiles.entry(profile).or_default().record(metrics);
+    pub(super) fn record(
+        &mut self,
+        profile: ModelCallProfile,
+        metrics: ModelCallMetrics,
+        generation_output_tokens: GenerationOutputTokens,
+    ) {
+        self.profiles
+            .entry(profile)
+            .or_default()
+            .record(metrics, generation_output_tokens);
     }
 
     pub(super) fn summary(&self, profile: &ModelCallProfile) -> ModelPerformanceSummary {
@@ -37,26 +75,39 @@ impl ModelPerformanceTracker {
 
 #[derive(Default)]
 struct ModelPerformanceAggregate {
-    latest_call: Option<ModelCallMetrics>,
-    output_tokens: u64,
+    latest_call: Option<ModelCallPerformance>,
+    generation_output_tokens: u64,
     generation_time: Duration,
     eligible_calls: u64,
 }
 
 impl ModelPerformanceAggregate {
-    fn record(&mut self, metrics: ModelCallMetrics) {
-        self.latest_call = Some(metrics);
-        let Some(output_tokens) = metrics.output_tokens else {
+    fn record(
+        &mut self,
+        metrics: ModelCallMetrics,
+        generation_output_tokens: GenerationOutputTokens,
+    ) {
+        let latest_call = ModelCallPerformance {
+            metrics,
+            generation_output_tokens,
+        };
+        let Some(generation_output_tokens) = latest_call.throughput_output_tokens() else {
+            self.latest_call = Some(latest_call);
             return;
         };
+        self.latest_call = Some(latest_call);
         let Some(generation_time) = metrics.generation_time else {
             return;
         };
-        if output_tokens < MIN_OUTPUT_TOKENS || generation_time < MIN_GENERATION_TIME {
+        if generation_output_tokens < MIN_GENERATION_OUTPUT_TOKENS
+            || generation_time < MIN_GENERATION_TIME
+        {
             return;
         }
 
-        self.output_tokens = self.output_tokens.saturating_add(output_tokens);
+        self.generation_output_tokens = self
+            .generation_output_tokens
+            .saturating_add(generation_output_tokens);
         self.generation_time = self.generation_time.saturating_add(generation_time);
         self.eligible_calls = self.eligible_calls.saturating_add(1);
     }
@@ -65,7 +116,7 @@ impl ModelPerformanceAggregate {
         ModelPerformanceSummary {
             latest_call: self.latest_call,
             average_generation_tokens_per_second: (self.eligible_calls > 0)
-                .then(|| self.output_tokens as f64 / self.generation_time.as_secs_f64()),
+                .then(|| self.generation_output_tokens as f64 / self.generation_time.as_secs_f64()),
             eligible_calls: self.eligible_calls,
         }
     }

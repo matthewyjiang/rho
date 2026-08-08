@@ -5,12 +5,12 @@ use rho_sdk::ProviderStreamResetReason;
 
 use crate::tui::{
     activity::ProviderRetryHint, app_state::SessionUiPhase, event_adapter::ViewModelEvent,
-    tests::test_app,
+    model_performance::GenerationOutputTokens, tests::test_app,
 };
 
 fn model_call_metrics() -> rho_sdk::ModelCallMetrics {
     rho_sdk::ModelCallMetrics {
-        output_tokens: Some(100),
+        output_tokens: Some(140),
         time_to_first_token: Some(Duration::from_millis(100)),
         generation_time: Some(Duration::from_millis(1_900)),
         total_latency: Duration::from_secs(2),
@@ -55,10 +55,17 @@ fn completed_model_call_updates_the_active_model_average() {
     app.record_agent_event(ViewModelEvent::ModelCallCompleted {
         profile: profile.clone(),
         metrics,
+        generation_output_tokens: GenerationOutputTokens::Reported(100),
     });
 
     let summary = app.usage.model_performance.summary(&profile);
-    assert_eq!(summary.latest_call, Some(metrics));
+    assert_eq!(summary.latest_call.map(|call| call.metrics), Some(metrics));
+    assert_eq!(
+        summary
+            .latest_call
+            .map(|call| call.generation_output_tokens),
+        Some(GenerationOutputTokens::Reported(100))
+    );
     assert_eq!(
         summary.average_generation_tokens_per_second,
         Some(100.0 / 1.9)
@@ -73,6 +80,7 @@ fn provider_stream_reset_preserves_completed_model_performance() {
     app.record_agent_event(ViewModelEvent::ModelCallCompleted {
         profile: profile.clone(),
         metrics: model_call_metrics(),
+        generation_output_tokens: GenerationOutputTokens::Reported(100),
     });
 
     app.record_agent_event(ViewModelEvent::ProviderStreamReset(ProviderRetryHint {
@@ -96,6 +104,7 @@ fn step_started_clears_stream_state_without_clearing_model_performance() {
     app.record_agent_event(ViewModelEvent::ModelCallCompleted {
         profile: profile.clone(),
         metrics: model_call_metrics(),
+        generation_output_tokens: GenerationOutputTokens::Reported(100),
     });
 
     assert!(app
