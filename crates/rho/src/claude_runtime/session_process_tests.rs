@@ -561,11 +561,16 @@ async fn concurrent_stdin_write_drains_high_volume_stdout() {
     let output = dir.path().join("result.json");
     let fake = dir.path().join("claude");
     let payload = dir.path().join("flood.ndjson");
-    // ~1 MiB of NDJSON lines, enough to fill a typical pipe buffer.
-    let line = r#"{"type":"assistant","session_id":"s","message":{"id":"m","role":"assistant","content":[{"type":"text","text":"padpadpadpadpadpadpadpadpadpadpadpadpadpadpadpad"}]}}"#;
-    let mut body = String::with_capacity(1024 * 1024 + 256);
-    while body.len() < 1024 * 1024 {
-        body.push_str(line);
+    // Enough bulk to fill typical OS pipe buffers several times over. Prefer
+    // keep_alive control frames so the mapper does no journal/status work per
+    // line: this test owns the drain/deadlock failure mode, not presentation.
+    // Assistant flood lines used to enqueue thousands of attachment writes and
+    // race the 5s finish-join budget under macOS CI load (false deadlock).
+    let pad = "p".repeat(240);
+    let line = format!(r#"{{"type":"keep_alive","pad":"{pad}"}}"#);
+    let mut body = String::with_capacity(256 * 1024 + 256);
+    while body.len() < 256 * 1024 {
+        body.push_str(&line);
         body.push('\n');
     }
     body.push_str(
@@ -588,7 +593,9 @@ exit 0
 
     // Large prompt so stdin write itself needs multiple pipe buffers.
     let prompt = "P".repeat(256 * 1024);
-    tokio::time::timeout(Duration::from_secs(5), async {
+    // Stay above RunArtifactSink's finish-join budget so slow CI disks cannot
+    // look like a pipe deadlock.
+    tokio::time::timeout(Duration::from_secs(30), async {
         run_with_fake_prompt(&output, dir.path(), &fake, &prompt, RunCancellation::new()).await;
     })
     .await
