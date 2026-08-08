@@ -1,4 +1,4 @@
-use super::{DagMouse, DagPane};
+use super::{centered_canvas, DagMouse, DagPane};
 use crate::{
     tui::workflow::{
         dag::render_dag,
@@ -80,4 +80,61 @@ fn mouse_click_selects_and_drag_pans() {
     // Keyboard navigation resumes following the selection.
     pane.clear_manual_offset();
     assert_eq!(pane.offset_for_draw(&rendered, 0, inner), (0, 0));
+}
+
+// Covers: a graph smaller than the pane must render centered instead of
+// pinned to the top-left, per axis, while an oversized axis keeps the full
+// pane extent so scrolling still works.
+// Owner: workflow DAG pane draw geometry (pure geometry).
+#[test]
+fn small_canvas_centers_in_the_pane() {
+    let inner = Rect::new(2, 1, 30, 8);
+    let cases = [
+        // Fits on both axes: centered on both.
+        ((10, 4), Rect::new(12, 3, 10, 4)),
+        // Wider than the pane: full width, centered vertically.
+        ((100, 4), Rect::new(2, 3, 30, 4)),
+        // Taller than the pane: full height, centered horizontally.
+        ((10, 40), Rect::new(12, 1, 10, 8)),
+        // Oversized on both axes: the pane rect is unchanged.
+        ((100, 40), inner),
+    ];
+    for (canvas, expected) in cases {
+        assert_eq!(
+            centered_canvas(inner, canvas),
+            expected,
+            "canvas {canvas:?}"
+        );
+    }
+}
+
+// Covers: clicks must map to the node under the pointer when the pane was
+// drawn into a centered rect rather than the full pane.
+// Owner: workflow DAG pane mouse mapping (pure geometry).
+#[test]
+fn click_maps_through_a_centered_draw_rect() {
+    let nodes = vec![
+        node("inspect", "Inspect workspace", &[], NodeState::Pending),
+        node("test", "Run checks", &[], NodeState::Pending),
+    ];
+    let rendered = render_dag(&nodes, 0, &vec![None; nodes.len()]);
+    let mut pane = DagPane::default();
+    let pane_rect = Rect::new(0, 0, 80, 24);
+    let inner = centered_canvas(pane_rect, (rendered.canvas_width, rendered.canvas_height));
+    assert!(inner.x > pane_rect.x && inner.y > pane_rect.y);
+    pane.offset_for_draw(&rendered, 0, inner);
+
+    let target = rendered.node_rects[1];
+    let column = inner.x + (target.x + target.width / 2) as u16;
+    let row = inner.y + (target.y + target.height / 2) as u16;
+    pane.handle_mouse(MouseEventKind::Down(MouseButton::Left), column, row);
+    assert_eq!(
+        pane.handle_mouse(MouseEventKind::Up(MouseButton::Left), column, row),
+        DagMouse::SelectNode(1)
+    );
+    // A click in the pane margin outside the centered canvas is not a hit.
+    assert_eq!(
+        pane.handle_mouse(MouseEventKind::Down(MouseButton::Left), 0, 0),
+        DagMouse::Ignored
+    );
 }

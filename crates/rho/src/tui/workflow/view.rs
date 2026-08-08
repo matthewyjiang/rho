@@ -15,7 +15,7 @@ use crate::workflow::{
 use super::{
     control::ConfirmKind,
     dag::{self, state_glyph, state_label, state_style},
-    dag_pane::DagMouse,
+    dag_pane::{self, DagMouse},
     event_adapter::{CancellationState, ExecutionMetadata, TerminalReason, WorkflowNodeSnapshot},
     state::WorkflowUiState,
 };
@@ -86,7 +86,7 @@ fn draw_dag(frame: &mut Frame<'_>, area: Rect, state: &mut WorkflowUiState) {
         .collect::<Vec<_>>();
     let dag = dag::render_dag(&state.snapshot().nodes, state.selected_index(), &activities);
     let block = Block::default().title(" Graph ").borders(Borders::ALL);
-    let inner = block.inner(area);
+    let inner = dag_pane::centered_canvas(block.inner(area), (dag.canvas_width, dag.canvas_height));
     let selected = state.selected_index();
     let scroll = state.dag_pane_mut().offset_for_draw(&dag, selected, inner);
     frame.render_widget(block, area);

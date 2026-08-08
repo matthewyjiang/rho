@@ -148,6 +148,20 @@ impl DagPane {
     }
 }
 
+/// Center a canvas that fits inside the pane; an axis larger than the pane
+/// keeps the full pane extent and scrolls. Mouse hit tests stay correct
+/// because the pane records this rect as its draw geometry.
+pub(super) fn centered_canvas(inner: Rect, canvas: (usize, usize)) -> Rect {
+    let width = to_u16(canvas.0).min(inner.width);
+    let height = to_u16(canvas.1).min(inner.height);
+    Rect {
+        x: inner.x + (inner.width - width) / 2,
+        y: inner.y + (inner.height - height) / 2,
+        width,
+        height,
+    }
+}
+
 fn pan_axis(origin: u16, press: u16, current: u16) -> u16 {
     // Dragging moves the canvas with the pointer: content follows the mouse.
     clamp_u16(i32::from(origin) + i32::from(press) - i32::from(current))
