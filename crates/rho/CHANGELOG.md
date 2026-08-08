@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.33.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.33.0...rho-coding-agent-v1.33.1) (2026-08-08)
+
+
+### Bug Fixes
+
+* **tui:** compile smoke_injection for release chrome version ([#828](https://github.com/matthewyjiang/rho/issues/828)) ([3ef3357](https://github.com/matthewyjiang/rho/commit/3ef335773845e583789c1540ad5498e35a38c883))
+
 ## [1.33.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.32.2...rho-coding-agent-v1.33.0) (2026-08-08)
 
 
