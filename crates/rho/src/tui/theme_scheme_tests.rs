@@ -152,7 +152,7 @@ fn lists_custom_themes_from_injected_dir() {
     // Alphabetical by name
     let names: Vec<_> = items.iter().map(|item| item.name()).collect();
     let mut sorted = names.clone();
-    sorted.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()));
+    sorted.sort_by_key(|a| a.to_ascii_lowercase());
     assert_eq!(names, sorted);
 
     let loaded = resolve_fixed_scheme_in("forest", Some(&themes)).expect("load forest");
