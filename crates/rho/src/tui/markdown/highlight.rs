@@ -4,6 +4,9 @@
 //! onto a [`SyntaxRole`] which the theme resolves against the active ANSI
 //! palette, so highlighting follows fixed, custom, and terminal-sampled
 //! schemes alike.
+//!
+//! Language grammars come from [`two_face`]'s bat-derived dump (defaults plus
+//! extras such as TypeScript and TOML), not syntect's smaller default set.
 
 use std::sync::LazyLock;
 
@@ -15,7 +18,7 @@ use super::{
     StyledSegment,
 };
 
-static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
+static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(two_face::syntax::extra_newlines);
 
 /// Scope prefixes in match order: specific selectors before general ones.
 static ROLE_SELECTORS: LazyLock<Vec<(Scope, SyntaxRole)>> = LazyLock::new(|| {
@@ -80,10 +83,11 @@ pub(super) struct BlockHighlighter {
 }
 
 impl BlockHighlighter {
-    /// Highlighter for a fence info token such as `rust` or `py`, or `None`
-    /// when no bundled syntax matches (callers fall back to plain styling).
+    /// Highlighter for a fence info token such as `rust`, `ts`, or `py`, or
+    /// `None` when no bundled syntax matches (callers fall back to plain
+    /// styling).
     pub(super) fn for_language(token: &str) -> Option<Self> {
-        let syntax = SYNTAX_SET.find_syntax_by_token(token)?;
+        let syntax = SYNTAX_SET.find_syntax_by_token(canonical_language_token(token))?;
         Some(Self {
             parse: ParseState::new(syntax),
             stack: ScopeStack::new(),
@@ -138,6 +142,18 @@ fn push_merged(segments: &mut Vec<StyledSegment>, text: &str, style: Style) {
         }
     }
     segments.push(StyledSegment::new(text.to_string(), style));
+}
+
+/// Map common fence tags onto tokens the syntax dump actually registers.
+///
+/// Keep this short: prefer dump-native tokens (`ts`, `tsx`, `bash`) when the
+/// author already used them. Only rewrite tags people type that still miss.
+fn canonical_language_token(token: &str) -> &str {
+    match token {
+        "jsx" => "javascript",
+        "shell" | "console" => "bash",
+        other => other,
+    }
 }
 
 #[cfg(test)]

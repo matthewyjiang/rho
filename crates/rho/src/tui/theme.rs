@@ -571,9 +571,9 @@ impl Theme {
     }
 
     pub(super) fn markdown_code_block() -> Style {
-        Style::default()
-            .fg(Palette::current().accent)
-            .remove_modifier(Modifier::UNDERLINED)
+        // Match assistant body text so code, Mermaid, and math read as content
+        // rather than accent-colored chrome.
+        Self::text()
     }
 
     /// Style for one syntax-highlighting role inside a fenced code block.

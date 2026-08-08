@@ -55,6 +55,55 @@ fn unknown_language_has_no_highlighter() {
     assert!(BlockHighlighter::for_language("no-such-language").is_none());
 }
 
+// Covers: TypeScript fence tags must resolve after two-face syntax dump swap
+// Owner: pure unit (markdown highlight language lookup)
+#[test]
+fn typescript_fence_tokens_resolve() {
+    for token in ["ts", "tsx", "typescript"] {
+        assert!(
+            BlockHighlighter::for_language(token).is_some(),
+            "expected highlighter for fence token {token}"
+        );
+    }
+}
+
+// Covers: common alias tags must map onto dump-native grammars
+// Owner: pure unit (markdown highlight language lookup)
+#[test]
+fn common_fence_aliases_resolve() {
+    for token in ["jsx", "shell", "console", "toml"] {
+        assert!(
+            BlockHighlighter::for_language(token).is_some(),
+            "expected highlighter for fence token {token}"
+        );
+    }
+}
+
+// Covers: TypeScript keywords and types get role-colored segments
+// Owner: pure unit (markdown highlight)
+#[test]
+fn typescript_tokens_map_to_palette_roles() {
+    let mut highlighter = BlockHighlighter::for_language("ts").expect("bundled typescript syntax");
+    let segments = highlighter.highlight_line("const answer: number = 42; // note");
+
+    assert_eq!(
+        segment_texts(&segments).concat(),
+        "const answer: number = 42; // note"
+    );
+    assert_eq!(
+        *style_of(&segments, "const"),
+        Theme::markdown_syntax(SyntaxRole::Keyword)
+    );
+    assert_eq!(
+        *style_of(&segments, "42"),
+        Theme::markdown_syntax(SyntaxRole::Constant)
+    );
+    assert_eq!(
+        *style_of(&segments, "// note"),
+        Theme::markdown_syntax(SyntaxRole::Comment)
+    );
+}
+
 #[test]
 fn empty_line_yields_one_empty_base_segment() {
     let mut highlighter = BlockHighlighter::for_language("rust").expect("bundled rust syntax");
