@@ -147,6 +147,7 @@ mod tool_call_batch;
 mod tool_card_render;
 mod tool_diff;
 mod tool_output_ui;
+mod tool_search;
 mod tree_actions;
 mod turn_prompt;
 mod usage_cost;

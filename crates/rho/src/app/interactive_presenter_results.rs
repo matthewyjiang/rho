@@ -312,6 +312,12 @@ pub(super) fn search_result_card(
         });
     }
     card.body = ToolBody::Lines(split_body_lines(content));
+    // Grep content bodies paint language + match overlay from this pattern.
+    if view.kind == ToolKind::Grep {
+        if let Some(pattern) = string_arg(&view.arguments, "pattern") {
+            card = card.with_match_pattern(pattern);
+        }
+    }
     card
 }
 

@@ -594,6 +594,19 @@ impl Theme {
             .remove_modifier(Modifier::UNDERLINED)
     }
 
+    /// Grep/search match overlay on top of plain or syntax-colored text.
+    ///
+    /// Keeps the underlying foreground when present, adds a warning-tinted
+    /// background and bold so hits stay visible without erasing language roles.
+    pub(super) fn search_match(base: Style) -> Style {
+        let palette = Palette::current();
+        let bg = palette.warning;
+        base.bg(bg)
+            .fg(Self::contrasting_ink_on(bg))
+            .add_modifier(Modifier::BOLD)
+            .remove_modifier(Modifier::UNDERLINED)
+    }
+
     pub(super) fn markdown_code_copy_button(hovered: bool) -> Style {
         let palette = Palette::current();
         if hovered {

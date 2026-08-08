@@ -285,6 +285,9 @@ pub struct ToolCard {
     pub facts: Vec<ToolFact>,
     #[serde(default, skip_serializing_if = "ToolBody::is_empty")]
     pub body: ToolBody,
+    /// Optional search pattern for match highlighting (grep content bodies).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub match_pattern: Option<String>,
 }
 
 impl ToolCard {
@@ -295,6 +298,7 @@ impl ToolCard {
             header,
             facts: Vec::new(),
             body: ToolBody::None,
+            match_pattern: None,
         }
     }
 
@@ -305,6 +309,12 @@ impl ToolCard {
 
     pub fn with_body(mut self, body: ToolBody) -> Self {
         self.body = body;
+        self
+    }
+
+    pub fn with_match_pattern(mut self, pattern: impl Into<String>) -> Self {
+        let pattern = pattern.into();
+        self.match_pattern = (!pattern.is_empty()).then_some(pattern);
         self
     }
 

@@ -16,8 +16,10 @@ use super::{
         push_wrapped_text, slice_spans_by_bytes, soft_wrap_visible_ranges, spans_display_width,
         styled_blank_line, wrap_line_at_whitespace_ranges, wrap_line_hard, LineFill,
     },
+    syntax::spans_from_segments_with_matches,
     theme::Theme,
     tool_diff::{self, DiffSyntax},
+    tool_search::SearchSyntax,
     ToolEntry,
 };
 
@@ -104,14 +106,17 @@ pub(super) fn push_tool_card(
     push_header_line(lines, card, card.status, width);
 
     let budget = max_tool_output_lines.max(1);
-    let children = render_child_groups(card, width);
-    let total_rows: usize = children.iter().map(ChildGroup::len).sum();
+    // Collapsed: paint only the visible budget (syntax is the costly part).
+    // Expanded: paint the full body. Toggle checks never full-paint.
+    let paint_budget = if expanded { None } else { Some(budget) };
+    let rendered = render_child_groups(card, width, paint_budget);
+    let total_rows = rendered.total_terminal_rows;
     let show_collapse_prompt = expanded && total_rows > budget;
     let mut remaining = if expanded { usize::MAX } else { budget };
     let mut hidden_rows = 0usize;
     let mut emitted = Vec::new();
 
-    for group in children {
+    for group in rendered.groups {
         if remaining == 0 {
             hidden_rows = hidden_rows.saturating_add(group.len());
             continue;
@@ -129,6 +134,11 @@ pub(super) fn push_tool_card(
         if !clipped.is_empty() {
             emitted.push(clipped);
         }
+    }
+    // When paint stopped early, estimated tail is already in total_rows.
+    if !expanded {
+        let shown: usize = emitted.iter().map(ChildGroup::len).sum();
+        hidden_rows = total_rows.saturating_sub(shown);
     }
 
     let show_expand_prompt = !expanded && hidden_rows > 0;
@@ -185,36 +195,67 @@ pub(super) fn card_is_toggleable(
     _expanded: bool,
 ) -> bool {
     let budget = max_tool_output_lines.max(1);
-    let total_rows: usize = render_child_groups(card, width)
-        .iter()
-        .map(ChildGroup::len)
-        .sum();
-    total_rows > budget
+    // Wrap math only — no syntect. Highlight does not change display width.
+    estimate_child_terminal_rows(card, width) > budget
 }
 
-/// Render each fact/body item into its full terminal-row group at `width`.
-fn render_child_groups(card: &ToolCard, width: usize) -> Vec<ChildGroup> {
+struct ChildRender {
+    groups: Vec<ChildGroup>,
+    /// Full terminal-row height of all children (painted + estimated tail).
+    total_terminal_rows: usize,
+}
+
+/// Render fact/body groups. When `paint_budget` is `Some(n)`, only the first
+/// `n` terminal rows are language-painted; the remainder is wrap-estimated so
+/// collapse stays cheap and expand still shows an accurate "... N more" count.
+fn render_child_groups(card: &ToolCard, width: usize, paint_budget: Option<usize>) -> ChildRender {
     let mut groups = Vec::new();
+    let mut total_rows = 0usize;
+    let mut paint_remaining = paint_budget.unwrap_or(usize::MAX);
+
     for fact in &card.facts {
         // Always mid trunk here; last-child └ / hang is rewritten after clip.
-        groups.push(ChildGroup::TreeFact(push_wrapped_tree_fact(
-            fact_spans(fact),
-            width,
-        )));
+        let fact_lines = push_wrapped_tree_fact(fact_spans(fact), width);
+        take_group(
+            &mut groups,
+            &mut total_rows,
+            &mut paint_remaining,
+            ChildGroup::TreeFact(fact_lines),
+        );
     }
+
     match &card.body {
         ToolBody::None => {}
         ToolBody::Lines(body) => {
-            for line in tool_diff::logical_lines(body) {
+            let logical = tool_diff::logical_lines(body);
+            let search_mode = card.match_pattern.is_some();
+            let mut search = search_mode.then(|| SearchSyntax::new(card.match_pattern.as_deref()));
+            for line in &logical {
+                if paint_remaining == 0 {
+                    // Still count wrap height for "... N more" without paint.
+                    total_rows = total_rows.saturating_add(if search_mode {
+                        SearchSyntax::estimate_rows(line, width)
+                    } else {
+                        estimate_plain_body_rows(line, width)
+                    });
+                    continue;
+                }
                 let mut lines = Vec::new();
-                push_body_line(&mut lines, &line, width, Theme::text());
-                groups.push(ChildGroup::Plain(lines));
+                if let Some(syntax) = search.as_mut() {
+                    let _ = syntax.paint_line(line, width, &mut lines);
+                } else {
+                    push_body_line(&mut lines, line, width, Theme::text());
+                }
+                take_group(
+                    &mut groups,
+                    &mut total_rows,
+                    &mut paint_remaining,
+                    ChildGroup::Plain(lines),
+                );
             }
         }
         ToolBody::Diff(rows) => {
             let gutter = tool_diff::gutter_width(rows);
-            // Multi-file cards emit File rows; only seed from the header when
-            // the body has none (single-file write/edit).
             let fallback = rows
                 .iter()
                 .all(|row| row.kind != DiffRowKind::File)
@@ -226,17 +267,135 @@ fn render_child_groups(card: &ToolCard, width: usize) -> Vec<ChildGroup> {
                 // stats). Still feed DiffSyntax so language paint tracks path.
                 if row.kind == DiffRowKind::File {
                     let _ = syntax.paint_row(row);
+                    if paint_remaining == 0 {
+                        total_rows = total_rows
+                            .saturating_add(estimate_diff_row_rows(row, gutter, width));
+                        continue;
+                    }
                     let spans = file_section_spans(row);
-                    groups.push(ChildGroup::TreeFact(push_wrapped_tree_fact(spans, width)));
+                    take_group(
+                        &mut groups,
+                        &mut total_rows,
+                        &mut paint_remaining,
+                        ChildGroup::TreeFact(push_wrapped_tree_fact(spans, width)),
+                    );
+                    continue;
+                }
+                if paint_remaining == 0 {
+                    total_rows =
+                        total_rows.saturating_add(estimate_diff_row_rows(row, gutter, width));
                     continue;
                 }
                 let mut lines = Vec::new();
                 push_diff_row(&mut lines, row, gutter, width, &mut syntax);
-                groups.push(ChildGroup::Plain(lines));
+                take_group(
+                    &mut groups,
+                    &mut total_rows,
+                    &mut paint_remaining,
+                    ChildGroup::Plain(lines),
+                );
             }
         }
     }
-    groups
+
+    ChildRender {
+        groups,
+        total_terminal_rows: total_rows,
+    }
+}
+
+/// Push one child group, clipping to `paint_remaining` when set. Always adds
+/// the full (pre-clip) height to `total_rows`.
+fn take_group(
+    groups: &mut Vec<ChildGroup>,
+    total_rows: &mut usize,
+    paint_remaining: &mut usize,
+    group: ChildGroup,
+) {
+    let full = group.len().max(1);
+    *total_rows = total_rows.saturating_add(full);
+    if *paint_remaining == 0 {
+        return;
+    }
+    if full <= *paint_remaining {
+        *paint_remaining -= full;
+        groups.push(group);
+        return;
+    }
+    let mut clipped = group;
+    clipped.truncate(*paint_remaining);
+    *paint_remaining = 0;
+    if !clipped.is_empty() {
+        groups.push(clipped);
+    }
+}
+
+/// Full child terminal-row estimate without language highlighting.
+fn estimate_child_terminal_rows(card: &ToolCard, width: usize) -> usize {
+    let mut total = 0usize;
+    for fact in &card.facts {
+        total = total.saturating_add(estimate_fact_rows(fact, width));
+    }
+    match &card.body {
+        ToolBody::None => {}
+        ToolBody::Lines(body) => {
+            let logical = tool_diff::logical_lines(body);
+            let search_mode = card.match_pattern.is_some();
+            total = total.saturating_add(estimate_lines_rows(&logical, width, search_mode));
+        }
+        ToolBody::Diff(rows) => {
+            let gutter = tool_diff::gutter_width(rows);
+            total = total.saturating_add(estimate_diff_rows(rows, gutter, width));
+        }
+    }
+    total
+}
+
+fn estimate_fact_rows(fact: &ToolFact, width: usize) -> usize {
+    push_wrapped_tree_fact(fact_spans(fact), width).len().max(1)
+}
+
+fn estimate_plain_body_rows(line: &str, width: usize) -> usize {
+    let prefix_width = display_width(CHILD_CONTENT_INDENT);
+    let content_width = width.saturating_sub(prefix_width).max(1);
+    wrap_line_hard(line, content_width).len().max(1)
+}
+
+fn estimate_lines_rows(lines: &[String], width: usize, search_mode: bool) -> usize {
+    if search_mode {
+        lines
+            .iter()
+            .map(|line| SearchSyntax::estimate_rows(line, width))
+            .sum()
+    } else {
+        lines
+            .iter()
+            .map(|line| estimate_plain_body_rows(line, width))
+            .sum()
+    }
+}
+
+fn estimate_diff_rows(rows: &[DiffRow], gutter: usize, width: usize) -> usize {
+    rows.iter()
+        .map(|row| estimate_diff_row_rows(row, gutter, width))
+        .sum()
+}
+
+fn estimate_diff_row_rows(row: &DiffRow, gutter: usize, width: usize) -> usize {
+    if row.kind == DiffRowKind::File || row.kind == DiffRowKind::Meta {
+        let prefix_width = display_width(CHILD_CONTENT_INDENT);
+        let content_width = width.saturating_sub(prefix_width).max(1);
+        return wrap_line_hard(&row.text, content_width).len().max(1);
+    }
+    let number = match (gutter, row.line) {
+        (0, _) => 0,
+        (_, Some(line)) => format!("{line} ").len().max(gutter + 1),
+        (_, None) => gutter + 1,
+    };
+    let sign = 2usize; // "+ " / "- " / "  "
+    let prefix_width = display_width(CHILD_CONTENT_INDENT) + number + sign;
+    let content_width = width.saturating_sub(prefix_width).max(1);
+    wrap_line_hard(&row.text, content_width).len().max(1)
 }
 
 /// Final visible tree fact becomes └ with a space hang on wrap so the trunk
@@ -546,13 +705,7 @@ fn push_diff_row(
     let sign_style = text_style;
 
     let content_spans = match highlighted {
-        Some(segments) => segments
-            .into_iter()
-            .map(|segment| {
-                let style = segment.style(text_style);
-                Span::styled(segment.text, style)
-            })
-            .collect::<Vec<_>>(),
+        Some(segments) => spans_from_segments_with_matches(&segments, text_style, &[]),
         None => vec![Span::styled(row.text.clone(), text_style)],
     };
 

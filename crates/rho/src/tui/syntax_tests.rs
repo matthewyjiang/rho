@@ -133,3 +133,31 @@ fn highlight_segment_style_uses_caller_plain() {
     assert_eq!(keyword.style(plain), Theme::syntax(SyntaxRole::Keyword));
     assert_eq!(body.style(plain), plain);
 }
+
+// Covers: match overlay splits segments on pattern ranges
+// Owner: pure unit (search match overlay)
+#[test]
+fn match_overlay_splits_segments() {
+    let segments = vec![
+        HighlightSegment {
+            text: "let ".into(),
+            role: Some(SyntaxRole::Keyword),
+        },
+        HighlightSegment {
+            text: "answer".into(),
+            role: None,
+        },
+        HighlightSegment {
+            text: " = 1".into(),
+            role: None,
+        },
+    ];
+    let ranges = match_byte_ranges("let answer = 1", "answer");
+    assert_eq!(ranges, vec![(4, 10)]);
+    let spans = spans_from_segments_with_matches(&segments, Theme::text(), &ranges);
+    let answer = spans
+        .iter()
+        .find(|span| span.content.as_ref() == "answer")
+        .expect("answer span");
+    assert_eq!(answer.style, Theme::search_match(Theme::text()));
+}

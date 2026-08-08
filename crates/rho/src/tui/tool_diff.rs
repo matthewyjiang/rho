@@ -1,6 +1,6 @@
 use rho_tools::tool_card::{DiffRow, DiffRowKind, ToolFamily, ToolHeader};
 
-use super::syntax::{BlockHighlighter, HighlightSegment};
+use super::syntax::{BlockHighlighter, HighlightSegment, MAX_TOOL_SYNTAX_LINES};
 
 /// Width of the line-number gutter for a diff body.
 ///
@@ -52,6 +52,8 @@ pub(super) struct DiffSyntax {
     path: Option<String>,
     old: Option<BlockHighlighter>,
     new: Option<BlockHighlighter>,
+    /// Content lines (add/remove/context source) already language-painted.
+    highlighted_lines: usize,
 }
 
 impl DiffSyntax {
@@ -60,6 +62,7 @@ impl DiffSyntax {
             path: None,
             old: None,
             new: None,
+            highlighted_lines: 0,
         };
         if let Some(path) = fallback_path {
             syntax.set_path(path);
@@ -70,7 +73,7 @@ impl DiffSyntax {
     /// Observe path/skip chrome and highlight content for one row.
     ///
     /// Returns role segments for add/remove/context source lines, or `None` for
-    /// chrome and unknown languages (caller uses the solid row color).
+    /// chrome, unknown languages, disabled highlight, or past the soft cap.
     pub(super) fn paint_row(&mut self, row: &DiffRow) -> Option<Vec<HighlightSegment>> {
         match row.kind {
             DiffRowKind::File => {
@@ -88,8 +91,8 @@ impl DiffSyntax {
                 }
                 None
             }
-            DiffRowKind::Added => self.new.as_mut().map(|hl| hl.highlight_line(&row.text)),
-            DiffRowKind::Removed => self.old.as_mut().map(|hl| hl.highlight_line(&row.text)),
+            DiffRowKind::Added => self.paint_content(/*side*/ Side::New, &row.text),
+            DiffRowKind::Removed => self.paint_content(/*side*/ Side::Old, &row.text),
             DiffRowKind::Context => {
                 if let Some(path) = path_from_diff_header_line(&row.text) {
                     self.set_path(path);
@@ -100,13 +103,35 @@ impl DiffSyntax {
                 if is_diff_chrome(&row.text) {
                     return None;
                 }
-                // Advance both sides; styles come from the new-file stream.
-                if let Some(old) = self.old.as_mut() {
-                    let _ = old.highlight_line(&row.text);
+                if !self.should_paint_content() {
+                    return None;
                 }
-                self.new.as_mut().map(|hl| hl.highlight_line(&row.text))
+                // Advance old without segment alloc; styles come from new.
+                if let Some(old) = self.old.as_mut() {
+                    old.advance_line(&row.text);
+                }
+                self.paint_content(/*side*/ Side::New, &row.text)
             }
         }
+    }
+
+    fn should_paint_content(&self) -> bool {
+        self.highlighted_lines < MAX_TOOL_SYNTAX_LINES
+    }
+
+    fn paint_content(&mut self, side: Side, text: &str) -> Option<Vec<HighlightSegment>> {
+        if !self.should_paint_content() {
+            // Soft cap: plain row colors, no more syntect work this pass.
+            return None;
+        }
+        let segments = match side {
+            Side::New => self.new.as_mut().map(|hl| hl.highlight_line(text)),
+            Side::Old => self.old.as_mut().map(|hl| hl.highlight_line(text)),
+        };
+        if segments.is_some() {
+            self.highlighted_lines += 1;
+        }
+        segments
     }
 
     fn set_path(&mut self, path: &str) {
@@ -120,6 +145,7 @@ impl DiffSyntax {
         self.path = Some(path.to_string());
         self.old = BlockHighlighter::for_path(path);
         self.new = BlockHighlighter::for_path(path);
+        self.highlighted_lines = 0;
     }
 
     fn restart(&mut self) {
@@ -128,6 +154,11 @@ impl DiffSyntax {
             self.new = BlockHighlighter::for_path(&path);
         }
     }
+}
+
+enum Side {
+    Old,
+    New,
 }
 
 /// Strip unified-diff path prefixes and rename arrows for language lookup.
