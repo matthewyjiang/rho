@@ -198,18 +198,33 @@ fn write_status_inner(path: &Path, status: &RunStatus, force: bool) -> std::io::
     let _guard = status_write_lock()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    // One read covers monotonicity and finish-time preservation for same-run updates.
+    let existing = if force { None } else { read_status(path) };
     if !force && !status.state.is_terminal() {
-        if let Some(existing) = read_status(path) {
-            if existing.state.is_terminal() {
-                return Ok(());
-            }
+        if existing
+            .as_ref()
+            .is_some_and(|existing| existing.state.is_terminal())
+        {
+            return Ok(());
         }
     }
     #[cfg(test)]
     status_write_hooks::run_after_read(path, status);
     // Durable finish time for attach elapsed, even when a caller forgot to stamp.
     let mut status = status.clone();
-    status.mark_finished_now();
+    if status.state.is_terminal() && status.finished_at.is_none() {
+        // Same-run terminal upgrades (Error -> Stopped, etc.) keep the first finish.
+        if !force {
+            if let Some(finished_at) = existing
+                .as_ref()
+                .filter(|existing| existing.state.is_terminal())
+                .and_then(|existing| existing.finished_at)
+            {
+                status.finished_at = Some(finished_at);
+            }
+        }
+        status.mark_finished_now();
+    }
     let contents = serde_json::to_vec_pretty(&status)
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
     crate::config_writer::write_bytes_atomically(path, &contents)

@@ -407,6 +407,36 @@ fn write_status_stamps_finished_at_for_terminal_snapshots() {
 }
 
 #[test]
+fn write_status_preserves_existing_terminal_finished_at() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join(RESULT_FILE_NAME);
+    let original = RunStatus {
+        state: RunState::Error,
+        agent_id: Some("worker".into()),
+        started_at: Some(1_700_000_000),
+        finished_at: Some(1_700_000_042),
+        error: Some("first failure".into()),
+        ..RunStatus::default()
+    };
+    write_status(&path, &original).unwrap();
+    assert_eq!(read_status(&path).unwrap().finished_at, Some(1_700_000_042));
+
+    // Later terminal snapshot omits finished_at; keep the first durable finish.
+    let upgraded = RunStatus {
+        state: RunState::Stopped,
+        agent_id: Some("worker".into()),
+        started_at: Some(1_700_000_000),
+        last_activity: Some("cancelled after error".into()),
+        error: Some("first failure".into()),
+        ..RunStatus::default()
+    };
+    write_status(&path, &upgraded).unwrap();
+    let loaded = read_status(&path).unwrap();
+    assert_eq!(loaded.state, RunState::Stopped);
+    assert_eq!(loaded.finished_at, Some(1_700_000_042));
+}
+
+#[test]
 fn format_elapsed_secs_covers_second_minute_and_hour_buckets() {
     assert_eq!(format_elapsed_secs(12), "12s");
     assert_eq!(format_elapsed_secs(65), "1m 05s");

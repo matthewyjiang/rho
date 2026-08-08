@@ -90,6 +90,8 @@ struct AttachmentApp {
     provider_attempt: ProviderAttempt,
     status: Option<RunStatus>,
     reported_state: Option<RunState>,
+    /// Last whole-second live elapsed painted into the header (running runs only).
+    last_drawn_elapsed_secs: Option<u64>,
     herdr: HerdrReporter,
     scroll: HistoryScrollChrome,
     last_mouse_position: Option<(u16, u16)>,
@@ -114,6 +116,7 @@ impl AttachmentApp {
             provider_attempt: ProviderAttempt::default(),
             status: None,
             reported_state: None,
+            last_drawn_elapsed_secs: None,
             herdr,
             scroll: HistoryScrollChrome::default(),
             last_mouse_position: None,
@@ -130,18 +133,23 @@ impl AttachmentApp {
         refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         self.refresh().await?;
         terminal.draw(|frame| self.draw(frame))?;
+        self.last_drawn_elapsed_secs = self.live_elapsed_secs();
 
         while !self.should_quit {
             let redraw = tokio::select! {
                 event = terminal_events.next() => self.handle_event(event?),
                 _ = refresh.tick() => {
                     let changed = self.refresh().await?;
-                    // Keep redrawing while the auto-hide scrollbar is visible.
-                    changed || self.scroll.should_render(Instant::now())
+                    // Keep redrawing while the auto-hide scrollbar is visible, and
+                    // when a live run's whole-second elapsed label advances without I/O.
+                    changed
+                        || self.scroll.should_render(Instant::now())
+                        || self.live_elapsed_secs() != self.last_drawn_elapsed_secs
                 },
             };
             if redraw {
                 terminal.draw(|frame| self.draw(frame))?;
+                self.last_drawn_elapsed_secs = self.live_elapsed_secs();
             }
         }
         Ok(())
@@ -167,6 +175,17 @@ impl AttachmentApp {
             }
         }
         Ok(changed)
+    }
+
+    /// Whole-second live elapsed for non-terminal runs with `started_at`.
+    fn live_elapsed_secs(&self) -> Option<u64> {
+        let status = self.status.as_ref()?;
+        if status.state.is_terminal() {
+            return None;
+        }
+        status
+            .elapsed_duration(subagent::unix_now_secs())
+            .map(|elapsed| elapsed.as_secs())
     }
 
     fn apply_event(&mut self, event: AttachmentEvent) {
