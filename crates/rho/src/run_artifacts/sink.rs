@@ -28,6 +28,17 @@ const REPORT_THROTTLE: Duration = Duration::from_secs(2);
 const MAX_STATUS_TEXT_BYTES: usize = 256 * 1024;
 const QUEUE_CAPACITY: usize = 256;
 const FINISH_JOIN_BUDGET: Duration = Duration::from_secs(5);
+/// Longest a producer waits for the writer to drain before giving up on a
+/// journal event. Recording is only disabled after this budget is spent.
+///
+/// Producers are tokio tasks driving the run's select loop, and a wedged disk
+/// makes every event pay the full budget, so this stays short: long enough to
+/// ride out a burst the writer is already draining, short enough that a stuck
+/// disk cannot make the run stop responding.
+const ATTACHMENT_ENQUEUE_BUDGET: Duration = Duration::from_millis(250);
+/// Upper bound on one coalesced delta so a fast producer cannot grow a single
+/// journal line without limit. Leftover deltas stay queued and merge next time.
+const MAX_COALESCED_DELTA_BYTES: usize = 64 * 1024;
 
 /// Identity fields stamped onto every run's `result.json`.
 #[derive(Clone, Debug)]
@@ -350,17 +361,60 @@ impl RunArtifactSink {
         }
     }
 
+    /// Hand one command to the writer thread, reporting whether it was accepted.
+    ///
+    /// Invariants when the queue is full:
+    /// - `Status` is replaceable, so a skipped snapshot is not a failure; the
+    ///   next publish carries the newer state.
+    /// - `Attachment` is not replaceable, so the producer blocks for at most
+    ///   [`ATTACHMENT_ENQUEUE_BUDGET`] instead of dropping the event. Losing a
+    ///   burst race must slow the run down, not silently truncate the journal.
     fn enqueue(&mut self, command: WriterCommand) -> bool {
         let Some(tx) = self.tx.as_ref() else {
             return false;
         };
         match tx.try_send(command) {
             Ok(()) => true,
-            Err(mpsc::TrySendError::Full(command)) => {
-                // Status is replaceable: drop oldest-equivalent by skipping.
-                matches!(command, WriterCommand::Status(_))
-            }
+            Err(mpsc::TrySendError::Full(WriterCommand::Status(_))) => true,
+            Err(mpsc::TrySendError::Full(command)) => send_within_budget(tx, command),
             Err(mpsc::TrySendError::Disconnected(_)) => false,
+        }
+    }
+}
+
+/// Retry a full queue until the writer drains a slot or the budget runs out.
+///
+/// `SyncSender::send` alone would wait without limit, which can pin a runtime
+/// worker behind a pathological disk; `send_timeout` is still unstable. Retrying
+/// keeps the wait bounded, and it only ever costs time on the overflow path.
+///
+/// The writer drains coalesced deltas in gulps, so the common overflow clears in
+/// microseconds: the first [`SPIN_ATTEMPTS`] retries only yield the thread, and
+/// the 1 ms sleep starts once a slot is clearly not coming back that fast.
+fn send_within_budget(tx: &SyncSender<WriterCommand>, command: WriterCommand) -> bool {
+    /// Yield-only retries before falling back to sleeping.
+    const SPIN_ATTEMPTS: u32 = 16;
+    const RETRY_INTERVAL: Duration = Duration::from_millis(1);
+
+    let deadline = Instant::now() + ATTACHMENT_ENQUEUE_BUDGET;
+    let mut command = command;
+    let mut attempt = 0_u32;
+    loop {
+        match tx.try_send(command) {
+            Ok(()) => return true,
+            Err(mpsc::TrySendError::Full(returned)) => {
+                if Instant::now() >= deadline {
+                    return false;
+                }
+                command = returned;
+                if attempt < SPIN_ATTEMPTS {
+                    std::thread::yield_now();
+                } else {
+                    std::thread::sleep(RETRY_INTERVAL);
+                }
+                attempt = attempt.saturating_add(1);
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => return false,
         }
     }
 }
@@ -396,8 +450,14 @@ fn writer_loop(
     // Coalesce replaceable status snapshots so a burst of Running updates does
     // not serialize every write behind the attachment journal.
     let mut pending_status: Option<RunStatus> = None;
+    // Set when delta coalescing pulled a command it must not consume; that
+    // command is handled first on the next iteration so journal order matches
+    // enqueue order for every event type.
+    let mut held: Option<WriterCommand> = None;
     loop {
-        let command = if let Some(status) = pending_status.take() {
+        let command = if let Some(command) = held.take() {
+            command
+        } else if let Some(status) = pending_status.take() {
             match rx.recv_timeout(Duration::from_millis(0)) {
                 Ok(command) => {
                     // Keep the latest status; handle the new command below.
@@ -428,6 +488,7 @@ fn writer_loop(
                 if let Some(status) = pending_status.take() {
                     write_status_best_effort(&path, &status, &status_write_failed);
                 }
+                let event = coalesce_adjacent_deltas(event, &rx, &mut held);
                 if let Some(writer) = attachment.as_mut() {
                     if let Err(error) = writer.write_event(&event) {
                         record_attachment_error(&attachment_error, error);
@@ -463,6 +524,68 @@ fn writer_loop(
     }
 }
 
+/// Which streaming text variant a run of deltas belongs to.
+///
+/// Assistant text and reasoning are separate streams, so only same-kind deltas
+/// merge.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DeltaKind {
+    AssistantText,
+    Reasoning,
+}
+
+impl DeltaKind {
+    fn into_event(self, text: String) -> AttachmentEvent {
+        match self {
+            Self::AssistantText => AttachmentEvent::AssistantTextDelta(text),
+            Self::Reasoning => AttachmentEvent::ReasoningDelta(text),
+        }
+    }
+}
+
+/// Merge text deltas queued back-to-back into one journal write.
+///
+/// Invariants:
+/// - Content is lossless and ordered: merging only concatenates neighbouring
+///   deltas of the same kind, so a replaying reader sees the same text with
+///   fewer events.
+/// - Any other command, including a delta of the other kind, ends the run and is
+///   returned through `held` so it is written next, unconsumed.
+/// - The merged text stops growing at [`MAX_COALESCED_DELTA_BYTES`].
+fn coalesce_adjacent_deltas(
+    first: AttachmentEvent,
+    rx: &mpsc::Receiver<WriterCommand>,
+    held: &mut Option<WriterCommand>,
+) -> AttachmentEvent {
+    let (kind, mut text) = match first {
+        AttachmentEvent::AssistantTextDelta(text) => (DeltaKind::AssistantText, text),
+        AttachmentEvent::ReasoningDelta(text) => (DeltaKind::Reasoning, text),
+        other => return other,
+    };
+    while text.len() < MAX_COALESCED_DELTA_BYTES {
+        let Ok(command) = rx.try_recv() else {
+            break;
+        };
+        match command {
+            WriterCommand::Attachment(AttachmentEvent::AssistantTextDelta(next))
+                if kind == DeltaKind::AssistantText =>
+            {
+                text.push_str(&next);
+            }
+            WriterCommand::Attachment(AttachmentEvent::ReasoningDelta(next))
+                if kind == DeltaKind::Reasoning =>
+            {
+                text.push_str(&next);
+            }
+            other => {
+                *held = Some(other);
+                break;
+            }
+        }
+    }
+    kind.into_event(text)
+}
+
 fn record_attachment_error(attachment_error: &Mutex<Option<String>>, error: anyhow::Error) {
     if let Ok(mut recorded) = attachment_error.lock() {
         recorded.get_or_insert_with(|| format!("could not record attach output: {error}"));
@@ -483,6 +606,10 @@ fn write_status_best_effort(path: &Path, status: &RunStatus, status_write_failed
         );
     }
 }
+
+#[cfg(test)]
+#[path = "sink_tests.rs"]
+mod tests;
 
 fn bound_text(text: String) -> String {
     if text.len() <= MAX_STATUS_TEXT_BYTES {

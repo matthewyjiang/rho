@@ -609,6 +609,17 @@ async fn complete_run(
 
 pub(crate) use crate::run_artifacts::RunArtifactIdentity;
 
+/// Status publish a batch of journalled events requires, weakest first.
+///
+/// Ordering matters: a batch takes the strongest publish any of its events asked
+/// for, so one immediate event is never downgraded by a neighbouring delta.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum StatusPublish {
+    None,
+    Throttled,
+    Immediate,
+}
+
 /// Maintains the `--output-file` status contract for subagent runs and
 /// streams progress to stdout so a watching pane shows live activity.
 pub(crate) struct RunReporter {
@@ -661,27 +672,14 @@ impl RunReporter {
 
         let attachments = crate::tui::translate_run_event(&mut self.adapter, event);
         if !attachments.is_empty() {
-            let mut saw_text_delta = false;
-            let mut needs_immediate_publish = false;
+            let mut publish = StatusPublish::None;
             for attachment in attachments {
-                match &attachment {
-                    crate::run_artifacts::AttachmentEvent::AssistantTextDelta(text)
-                        if !text.is_empty() =>
-                    {
-                        self.sink.append_last_text(text);
-                        saw_text_delta = true;
-                        self.sink.write_attachment(attachment);
-                    }
-                    _ => {
-                        needs_immediate_publish = true;
-                        self.sink.write_attachment(attachment);
-                    }
-                }
+                publish = publish.max(self.record_attachment(attachment));
             }
-            if needs_immediate_publish {
-                self.sink.publish();
-            } else if saw_text_delta {
-                self.sink.publish_throttled();
+            match publish {
+                StatusPublish::None => {}
+                StatusPublish::Throttled => self.sink.publish_throttled(),
+                StatusPublish::Immediate => self.sink.publish(),
             }
         }
         match event {
@@ -718,6 +716,51 @@ impl RunReporter {
             }
             _ => {}
         }
+    }
+
+    /// Journal one translated event and report the status publish it needs.
+    ///
+    /// Every event is journalled so `rho attach` replay stays complete. Only the
+    /// `result.json` publish is throttled, and only for the high-frequency
+    /// streaming events: at fast token rates or with a chatty tool, one status
+    /// write per event floods the artifact writer and stalls the journal behind
+    /// it. Card start and finish, notices, and usage stay immediate so a polling
+    /// host sees state changes without waiting out the throttle window.
+    ///
+    /// Matched exhaustively on purpose: a new high-frequency variant folded into a
+    /// wildcard would silently restore the per-event status write this avoids.
+    fn record_attachment(
+        &mut self,
+        attachment: crate::run_artifacts::AttachmentEvent,
+    ) -> StatusPublish {
+        use crate::run_artifacts::AttachmentEvent;
+
+        let publish = match &attachment {
+            AttachmentEvent::AssistantTextDelta(text) => {
+                if !text.is_empty() {
+                    self.sink.append_last_text(text);
+                }
+                StatusPublish::Throttled
+            }
+            // Reasoning is deliberately kept out of `last_text`: the status file
+            // carries the answer, not the thinking.
+            AttachmentEvent::ReasoningDelta(_) | AttachmentEvent::ToolUpdated { .. } => {
+                StatusPublish::Throttled
+            }
+            AttachmentEvent::Prompt(_)
+            | AttachmentEvent::ToolStarted { .. }
+            | AttachmentEvent::ToolFinished { .. }
+            | AttachmentEvent::Notice(_)
+            | AttachmentEvent::ContextUsage(_)
+            | AttachmentEvent::Usage(_)
+            | AttachmentEvent::StepStarted
+            | AttachmentEvent::ProviderStreamReset
+            | AttachmentEvent::Completed
+            | AttachmentEvent::Cancelled
+            | AttachmentEvent::Failed(_) => StatusPublish::Immediate,
+        };
+        self.sink.write_attachment(attachment);
+        publish
     }
 
     #[cfg(test)]

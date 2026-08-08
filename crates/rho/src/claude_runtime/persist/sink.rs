@@ -82,16 +82,36 @@ impl StatusSink {
 
     pub(crate) fn apply_effect(&mut self, effect: StreamEffect) {
         match effect {
+            // Every event is journalled; only the `result.json` publish is
+            // throttled, and only for the high-frequency streaming events.
+            // Matched exhaustively on purpose: a new high-frequency variant folded
+            // into a wildcard would silently restore the per-event status write.
             StreamEffect::Attachment(event) => match &event {
                 AttachmentEvent::AssistantTextDelta(text)
-                | AttachmentEvent::ReasoningDelta(text)
-                    if !text.is_empty() =>
-                {
-                    self.inner.append_last_text(text);
+                | AttachmentEvent::ReasoningDelta(text) => {
+                    if !text.is_empty() {
+                        self.inner.append_last_text(text);
+                    }
                     self.inner.write_attachment(event);
                     self.inner.publish_throttled();
                 }
-                _ => {
+                // A streaming tool card updates as fast as its output arrives, so
+                // it shares the delta throttle.
+                AttachmentEvent::ToolUpdated { .. } => {
+                    self.inner.write_attachment(event);
+                    self.inner.publish_throttled();
+                }
+                AttachmentEvent::Prompt(_)
+                | AttachmentEvent::ToolStarted { .. }
+                | AttachmentEvent::ToolFinished { .. }
+                | AttachmentEvent::Notice(_)
+                | AttachmentEvent::ContextUsage(_)
+                | AttachmentEvent::Usage(_)
+                | AttachmentEvent::StepStarted
+                | AttachmentEvent::ProviderStreamReset
+                | AttachmentEvent::Completed
+                | AttachmentEvent::Cancelled
+                | AttachmentEvent::Failed(_) => {
                     self.inner.write_attachment(event);
                     self.inner.publish();
                 }

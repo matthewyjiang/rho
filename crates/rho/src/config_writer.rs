@@ -4,12 +4,42 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Atomically replace `path` with `contents` via a unique temp file.
+/// How hard an atomic write works to survive a power loss.
+///
+/// Every variant keeps the same reader contract: a unique temp file is written
+/// and then renamed over the destination, so a reader never observes a torn
+/// file. The variants differ only in whether the temp file is flushed to the
+/// storage device before the rename.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WriteDurability {
+    /// `fsync` the temp file before renaming. Use for state a later run must
+    /// trust: configuration, credentials, and terminal run results.
+    Durable,
+    /// Skip the flush. Use only for files that are rewritten continuously and
+    /// whose loss after a crash costs nothing, such as in-progress status
+    /// snapshots that the next update replaces anyway.
+    Replaceable,
+}
+
+/// Atomically replace `path` with `contents` via a unique temp file, flushing
+/// the temp file to disk first.
 ///
 /// On Windows, an existing destination is replaced with `ReplaceFileW` so
 /// repeated updates do not fail the way a plain rename-over-existing can.
 pub(crate) fn write_bytes_atomically(path: &Path, contents: &[u8]) -> std::io::Result<()> {
-    write_bytes_atomically_with_permissions(path, contents, None)
+    write_bytes_atomically_with_durability(path, contents, WriteDurability::Durable)
+}
+
+/// Atomically replace `path` with `contents`, choosing whether to `fsync`.
+///
+/// See [`WriteDurability`]; the rename-based atomicity readers rely on is the
+/// same either way.
+pub(crate) fn write_bytes_atomically_with_durability(
+    path: &Path,
+    contents: &[u8],
+    durability: WriteDurability,
+) -> std::io::Result<()> {
+    write_bytes_atomically_with_permissions(path, contents, None, durability)
 }
 
 /// Atomically replaces a regular file while retaining its current permissions.
@@ -24,13 +54,19 @@ pub(crate) fn replace_regular_file_atomically(path: &Path, contents: &[u8]) -> s
             "destination is not a regular file",
         ));
     }
-    write_bytes_atomically_with_permissions(path, contents, Some(metadata.permissions()))
+    write_bytes_atomically_with_permissions(
+        path,
+        contents,
+        Some(metadata.permissions()),
+        WriteDurability::Durable,
+    )
 }
 
 fn write_bytes_atomically_with_permissions(
     path: &Path,
     contents: &[u8],
     permissions: Option<fs::Permissions>,
+    durability: WriteDurability,
 ) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -43,7 +79,10 @@ fn write_bytes_atomically_with_permissions(
             temp_file.set_permissions(permissions)?;
         }
         temp_file.write_all(contents)?;
-        temp_file.sync_all()?;
+        match durability {
+            WriteDurability::Durable => temp_file.sync_all()?,
+            WriteDurability::Replaceable => {}
+        }
         drop(temp_file);
         replace_file(&temp_path, path)
     })();
