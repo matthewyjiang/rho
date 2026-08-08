@@ -24,17 +24,57 @@ use super::event_adapter::WorkflowNodeSnapshot;
 // force the whole graph past the renderer's line limit.
 const MAX_GRAPH_ACTIVITY_WIDTH: usize = 28;
 
-#[derive(Clone, Copy)]
-pub(super) enum HorizontalDirection {
+#[derive(Clone, Copy, Debug)]
+pub(super) enum SpatialDirection {
+    Up,
+    Down,
     Left,
     Right,
 }
 
+/// Weight for distance across the movement axis, so `j` from any node lands on
+/// the node nearest below it on the rendered canvas rather than the next node
+/// in graph order.
+const CROSS_AXIS_PENALTY: usize = 3;
+
+/// Pick the rendered node nearest to `selected` in `direction`, comparing node
+/// centers on the drawn canvas.
+pub(super) fn spatial_neighbor(
+    rects: &[NodeRect],
+    selected: usize,
+    direction: SpatialDirection,
+) -> Option<usize> {
+    let (from_x, from_y) = rect_center(rects.get(selected)?);
+    rects
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| *index != selected)
+        .filter_map(|(index, rect)| {
+            let (x, y) = rect_center(rect);
+            let (advance, cross) = match direction {
+                SpatialDirection::Up => (from_y.checked_sub(y)?, x.abs_diff(from_x)),
+                SpatialDirection::Down => (y.checked_sub(from_y)?, x.abs_diff(from_x)),
+                SpatialDirection::Left => (from_x.checked_sub(x)?, y.abs_diff(from_y)),
+                SpatialDirection::Right => (x.checked_sub(from_x)?, y.abs_diff(from_y)),
+            };
+            if advance == 0 {
+                return None;
+            }
+            Some((advance + CROSS_AXIS_PENALTY * cross, index))
+        })
+        .min()
+        .map(|(_, index)| index)
+}
+
+fn rect_center(rect: &NodeRect) -> (usize, usize) {
+    (rect.x + rect.width / 2, rect.y + rect.height / 2)
+}
+
 pub(super) struct DagRender {
     pub(super) lines: Vec<Line<'static>>,
-    canvas_width: usize,
-    canvas_height: usize,
-    node_rects: Vec<NodeRect>,
+    pub(super) canvas_width: usize,
+    pub(super) canvas_height: usize,
+    pub(super) node_rects: Vec<NodeRect>,
 }
 
 impl DagRender {
@@ -64,26 +104,6 @@ impl DagRender {
         let x = follow_axis(rect.x, rect.width, self.canvas_width, usize::from(width));
         let y = follow_axis(rect.y, rect.height, self.canvas_height, usize::from(height));
         (to_u16(y), to_u16(x))
-    }
-}
-
-pub(super) fn node_ranks(nodes: &[WorkflowNodeSnapshot]) -> Vec<usize> {
-    workflow_graph(nodes, /*selected*/ 0, &[]).ranks()
-}
-
-pub(super) fn horizontal_neighbor(
-    ranks: &[usize],
-    selected: usize,
-    direction: HorizontalDirection,
-) -> Option<usize> {
-    let selected_rank = *ranks.get(selected)?;
-    match direction {
-        HorizontalDirection::Left => (0..selected)
-            .rev()
-            .find(|&index| ranks[index] == selected_rank),
-        HorizontalDirection::Right => {
-            ((selected + 1)..ranks.len()).find(|&index| ranks[index] == selected_rank)
-        }
     }
 }
 
@@ -191,7 +211,7 @@ fn follow_axis(start: usize, length: usize, canvas: usize, viewport: usize) -> u
         .min(canvas.saturating_sub(viewport))
 }
 
-fn to_u16(value: usize) -> u16 {
+pub(super) fn to_u16(value: usize) -> u16 {
     u16::try_from(value).unwrap_or(u16::MAX)
 }
 

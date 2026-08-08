@@ -208,6 +208,59 @@ fn head_glyph(head: Head, arrow: char) -> char {
     }
 }
 
+/// Plan-derived geometry for one rank-skipping edge: where it leaves its
+/// source's gap, which right-lane column carries it down, and which fan-in
+/// bus row of its target it joins.
+pub(in crate::tui) struct SkipPath {
+    pub(in crate::tui) exit_row: usize,
+    pub(in crate::tui) lane_x: usize,
+    pub(in crate::tui) join_row: usize,
+    pub(in crate::tui) source_anchor: usize,
+}
+
+/// Route a forward edge that skips ranks: down from the source to its exit
+/// row, right along the shared lane, down past the intermediate ranks, then
+/// left along the target's own fan-in bus row and into the target from above.
+/// Joining the target's bus keeps every edge into one target on the same
+/// shared ink, so shared rows always mean joined edges rather than crossings.
+pub(in crate::tui) fn route_skip(
+    canvas: &mut Canvas,
+    from: &Placed,
+    to: &Placed,
+    edge: &Edge,
+    path: SkipPath,
+) {
+    let SkipPath {
+        exit_row,
+        lane_x,
+        join_row,
+        source_anchor: bx,
+    } = path;
+    let by = from.y + from.h - 1;
+    let tx = to.cx;
+    let head_row = to.y - 1;
+
+    canvas.junction(bx, by, D);
+    canvas.seg_v(bx, by, exit_row);
+    canvas.seg_h(exit_row, bx, lane_x);
+    canvas.seg_v(lane_x, exit_row, join_row);
+    canvas.seg_h(join_row, tx, lane_x);
+    canvas.seg_v(tx, join_row, head_row);
+
+    if edge.head_to == Head::None {
+        canvas.add_bits(tx, head_row, U);
+    } else {
+        canvas.set(tx, head_row, head_glyph(edge.head_to, '▼'), Cls::Edge);
+    }
+    if edge.head_from != Head::None {
+        canvas.set(bx, by, head_glyph(edge.head_from, '▲'), Cls::Edge);
+    }
+
+    if let Some(label) = &edge.label {
+        place_label(canvas, label, join_row.saturating_sub(1), tx + 2);
+    }
+}
+
 pub(in crate::tui) fn route_self(canvas: &mut Canvas, p: &Placed, edge: &Edge) {
     let bottom = p.y + p.h - 1;
     let exit_x = p.cx + 1;

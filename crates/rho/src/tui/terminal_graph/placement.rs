@@ -1,6 +1,8 @@
 // Adapted from Grok Build's terminal Mermaid renderer:
 // https://github.com/xai-org/grok-build/blob/b189869b7755d2b482969acf6c92da3ecfeffd36/crates/codegen/xai-grok-markdown/src/mermaid.rs
 // Copyright 2023-2026 SpaceXAI. Licensed under Apache-2.0.
+use std::collections::BTreeMap;
+
 use unicode_width::UnicodeWidthStr;
 
 use super::flow::{NodeSizes, Placed};
@@ -33,25 +35,67 @@ fn near_aligned(from: usize, to: usize) -> bool {
     from.abs_diff(to) <= 1
 }
 
+/// One forward edge inside a rank band, in bus track terms.
+struct BusSpan {
+    start: usize,
+    end: usize,
+    from: usize,
+    to: usize,
+    index: usize,
+    /// Straight drops need no bus row but still join their target's group so
+    /// complete fan-in layers merge onto one shared row.
+    jogs: bool,
+}
+
 fn bus_spans(
     graph: &Graph,
     ranks: &[usize],
     centers: &[usize],
     r: usize,
     alignment: CrossAxisAlignment,
-) -> Vec<(usize, usize, usize, usize, usize)> {
+) -> Vec<BusSpan> {
     graph
         .edges
         .iter()
         .enumerate()
-        .filter(|(_, e)| {
-            let jogs = alignment.has_jog(centers[e.from], centers[e.to]);
-            e.from != e.to && ranks[e.from] == r && ranks[e.to] == r + 1 && jogs
+        .filter(|(_, e)| e.from != e.to && ranks[e.from] == r && ranks[e.to] == r + 1)
+        .map(|(i, e)| BusSpan {
+            start: centers[e.from].min(centers[e.to]),
+            end: centers[e.from].max(centers[e.to]),
+            from: e.from,
+            to: e.to,
+            index: i,
+            jogs: alignment.has_jog(centers[e.from], centers[e.to]),
         })
-        .map(|(i, e)| {
-            let a = centers[e.from].min(centers[e.to]);
-            let b = centers[e.from].max(centers[e.to]);
-            (a, b, e.from, e.to, i)
+        .collect()
+}
+
+/// A forward edge that skips at least one rank. It leaves its source's rank
+/// through the shared right lane and joins its target's fan-in bus row.
+struct SkipEdge {
+    index: usize,
+    from: usize,
+    to: usize,
+    source_center: usize,
+    target_center: usize,
+    source_rank: usize,
+    target_rank: usize,
+}
+
+fn skip_edges(graph: &Graph, ranks: &[usize], centers: &[usize]) -> Vec<SkipEdge> {
+    graph
+        .edges
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| e.from != e.to && ranks[e.to] > ranks[e.from] + 1)
+        .map(|(index, e)| SkipEdge {
+            index,
+            from: e.from,
+            to: e.to,
+            source_center: centers[e.from],
+            target_center: centers[e.to],
+            source_rank: ranks[e.from],
+            target_rank: ranks[e.to],
         })
         .collect()
 }
@@ -73,24 +117,35 @@ fn td_source_anchors(graph: &Graph, ranks: &[usize], centers: &[usize]) -> Vec<u
     source_anchors
 }
 
-fn lane_spans(
-    graph: &Graph,
-    ranks: &[usize],
-    placed: &[Placed],
-    axis: LaneAxis,
-) -> Vec<(usize, usize, usize, usize, usize)> {
+/// One non-adjacent edge in side-lane terms: the cross-axis interval it
+/// crosses plus its endpoints.
+struct LaneSpan {
+    start: usize,
+    end: usize,
+    from: usize,
+    to: usize,
+    index: usize,
+}
+
+fn lane_spans(graph: &Graph, ranks: &[usize], placed: &[Placed], axis: LaneAxis) -> Vec<LaneSpan> {
     graph
         .edges
         .iter()
         .enumerate()
         .filter(|(_, e)| e.from != e.to && ranks[e.to] != ranks[e.from] + 1)
-        .map(|(i, e)| {
+        .map(|(index, e)| {
             let (pf, pt) = (&placed[e.from], &placed[e.to]);
-            let (a, b) = match axis {
+            let (start, end) = match axis {
                 LaneAxis::Vertical => (pf.cy.min(pt.cy), pf.cy.max(pt.cy)),
                 LaneAxis::Horizontal => (pf.cx.min(pt.cx), pf.cx.max(pt.cx)),
             };
-            (a, b, e.from, e.to, i)
+            LaneSpan {
+                start,
+                end,
+                from: e.from,
+                to: e.to,
+                index,
+            }
         })
         .collect()
 }
@@ -105,19 +160,29 @@ pub(super) fn place_td(
 ) -> RoutePlan {
     let centers = assign_positions(by_rank, &sizes.lay_w, GAP_X, &graph.edges, ranks);
     let source_anchors = td_source_anchors(graph, ranks, &centers);
+    let skips = skip_edges(graph, ranks, &centers);
 
     let mut edge_bus = vec![0usize; graph.edges.len()];
+    let mut join_slots = vec![0usize; graph.edges.len()];
     let mut bus_tracks = vec![0usize; max_rank + 1];
     for (r, tracks) in bus_tracks.iter_mut().enumerate().take(max_rank) {
         let spans = bus_spans(graph, ranks, &centers, r, CrossAxisAlignment::Near);
-        if spans.is_empty() {
+        let exits: Vec<&SkipEdge> = skips.iter().filter(|skip| skip.source_rank == r).collect();
+        let joins: Vec<&SkipEdge> = skips
+            .iter()
+            .filter(|skip| skip.target_rank == r + 1)
+            .collect();
+        if spans.is_empty() && exits.is_empty() && joins.is_empty() {
             continue;
         }
-        let (assigned, count) = assign_tracks(&spans);
-        for (idx, slot) in assigned {
+        let assigned = assign_bus_tracks(&spans, &exits, &joins);
+        for (idx, slot) in assigned.edges {
             edge_bus[idx] = slot;
         }
-        *tracks = count;
+        for (idx, slot) in assigned.joins {
+            join_slots[idx] = slot;
+        }
+        *tracks = assigned.tracks;
     }
 
     let rank_h: Vec<usize> = by_rank
@@ -187,6 +252,11 @@ pub(super) fn place_td(
         (content_w + 1 + count, content_w + 1)
     };
 
+    let mut edge_join = vec![0usize; graph.edges.len()];
+    for skip in &skips {
+        edge_join[skip.index] = band_end[skip.target_rank - 1] + join_slots[skip.index];
+    }
+
     RoutePlan {
         canvas: (canvas_w, canvas_h),
         band_end,
@@ -194,6 +264,7 @@ pub(super) fn place_td(
         source_anchors,
         lane_base,
         edge_lane,
+        edge_join,
     }
 }
 
@@ -228,11 +299,11 @@ pub(super) fn place_lr(
         if spans.is_empty() {
             continue;
         }
-        let (assigned, count) = assign_tracks(&spans);
-        for (idx, slot) in assigned {
+        let assigned = assign_bus_tracks(&spans, &[], &[]);
+        for (idx, slot) in assigned.edges {
             edge_bus[idx] = slot;
         }
-        *tracks = count;
+        *tracks = assigned.tracks;
     }
 
     let mut rank_x = vec![0usize; max_rank + 1];
@@ -291,6 +362,7 @@ pub(super) fn place_lr(
         source_anchors,
         lane_base,
         edge_lane,
+        edge_join: vec![0; graph.edges.len()],
     }
 }
 
@@ -301,28 +373,209 @@ pub(super) struct RoutePlan {
     pub(super) source_anchors: Vec<usize>,
     pub(super) lane_base: usize,
     pub(super) edge_lane: Vec<usize>,
+    /// Absolute row of the target's fan-in bus for rank-skipping top-down
+    /// edges; zero for every other edge. The skip edge joins that shared row
+    /// from the right lane, so joined edges share ink and separate edges do
+    /// not.
+    pub(super) edge_join: Vec<usize>,
 }
 
-fn assign_tracks(spans: &[(usize, usize, usize, usize, usize)]) -> (Vec<(usize, usize)>, usize) {
-    let mut sorted = spans.to_vec();
-    sorted.sort_unstable();
-    let mut tracks: Vec<Vec<(usize, usize, usize, usize)>> = Vec::new();
-    let mut out = Vec::with_capacity(sorted.len());
-    for &(s, e, f, t, idx) in &sorted {
-        let compatible = |members: &Vec<(usize, usize, usize, usize)>| {
+/// Greedily pack items into the fewest tracks, in the given order: each item
+/// joins the first track where it is compatible with every member, else it
+/// opens a new track. Returns one slot per item plus the track count.
+fn pack_tracks<T>(items: &[T], compatible: impl Fn(&T, &T) -> bool) -> (Vec<usize>, usize) {
+    let mut tracks: Vec<Vec<usize>> = Vec::new();
+    let mut slots = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        let fits = |members: &Vec<usize>| {
             members
                 .iter()
-                .all(|&(s2, e2, f2, t2)| e2 + 2 <= s || e + 2 <= s2 || f2 == f || t2 == t)
+                .all(|&member| compatible(&items[member], item))
         };
-        let slot = match tracks.iter().position(compatible) {
-            Some(x) => x,
+        let slot = match tracks.iter().position(fits) {
+            Some(slot) => slot,
             None => {
                 tracks.push(Vec::new());
                 tracks.len() - 1
             }
         };
-        tracks[slot].push((s, e, f, t));
-        out.push((idx, slot));
+        tracks[slot].push(index);
+        slots.push(slot);
     }
-    (out, tracks.len())
+    (slots, tracks.len())
+}
+
+fn assign_tracks(spans: &[LaneSpan]) -> (Vec<(usize, usize)>, usize) {
+    let mut sorted: Vec<&LaneSpan> = spans.iter().collect();
+    sorted.sort_by_key(|span| (span.start, span.end, span.from, span.to, span.index));
+    // Spans may share a lane when they stay two cells apart or share an
+    // endpoint: shared ink then still belongs to one node.
+    let (slots, count) = pack_tracks(&sorted, |member, span| {
+        member.end + 2 <= span.start
+            || span.end + 2 <= member.start
+            || member.from == span.from
+            || member.to == span.to
+    });
+    let out = sorted
+        .iter()
+        .zip(slots)
+        .map(|(span, slot)| (span.index, slot))
+        .collect();
+    (out, count)
+}
+
+/// A merged set of edges that must share one bus row. The source set drives
+/// merging: target groups with an identical source set collapse into one
+/// shared row.
+struct BusGroup {
+    start: usize,
+    end: usize,
+    sources: Vec<usize>,
+    edges: Vec<usize>,
+    joins: Vec<usize>,
+    /// The row also carries a skip exit, so it runs out to the right lane.
+    exits: bool,
+}
+
+impl BusGroup {
+    fn empty() -> Self {
+        Self {
+            start: usize::MAX,
+            end: 0,
+            sources: Vec::new(),
+            edges: Vec::new(),
+            joins: Vec::new(),
+            exits: false,
+        }
+    }
+
+    /// `None` marks an open-ended row: a skip join or exit runs it from
+    /// `start` out to the shared right lane, so nothing to its right can
+    /// share it.
+    fn bounded_end(&self) -> Option<usize> {
+        (self.joins.is_empty() && !self.exits).then_some(self.end)
+    }
+}
+
+/// Bus track slots for one rank gap, split by how an edge uses its row.
+struct BusAssignment {
+    /// Adjacent forward edges and skip exits: slot in the gap below the source.
+    edges: Vec<(usize, usize)>,
+    /// Rank-skipping edges: slot of the target's fan-in row they join.
+    joins: Vec<(usize, usize)>,
+    tracks: usize,
+}
+
+/// Assign bus rows so every fan-in target owns exactly one row. Edges that
+/// share a target always share a track, target groups with an identical source
+/// set collapse into one shared bus, and anything else may share a row only
+/// when the spans stay two cells apart. Rank-skipping edges join their
+/// target's row from the right lane, which keeps every connection into a
+/// target on the same shared ink instead of a separate crossing row.
+fn assign_bus_tracks(
+    fan_in: &[BusSpan],
+    skip_exits: &[&SkipEdge],
+    skip_joins: &[&SkipEdge],
+) -> BusAssignment {
+    let mut by_target: BTreeMap<usize, BusGroup> = BTreeMap::new();
+    for span in fan_in {
+        let group = by_target.entry(span.to).or_insert_with(BusGroup::empty);
+        group.sources.push(span.from);
+        if span.jogs {
+            group.start = group.start.min(span.start);
+            group.end = group.end.max(span.end);
+            group.edges.push(span.index);
+        }
+    }
+    for skip in skip_joins {
+        let group = by_target.entry(skip.to).or_insert_with(BusGroup::empty);
+        group.sources.push(skip.from);
+        group.start = group.start.min(skip.target_center);
+        group.joins.push(skip.index);
+    }
+    let mut merged: Vec<BusGroup> = Vec::new();
+    for (_, mut group) in by_target {
+        // Straight drops join their group for source-set merging but never
+        // demand a row of their own.
+        if group.edges.is_empty() && group.joins.is_empty() {
+            continue;
+        }
+        group.sources.sort_unstable();
+        group.sources.dedup();
+        match merged
+            .iter_mut()
+            .find(|existing| existing.sources == group.sources)
+        {
+            // Identical source sets form a complete bipartite fan; one shared
+            // bus row states exactly those connections.
+            Some(existing) => {
+                existing.start = existing.start.min(group.start);
+                existing.end = existing.end.max(group.end);
+                existing.edges.extend(group.edges);
+                existing.joins.extend(group.joins);
+            }
+            None => merged.push(group),
+        }
+    }
+    // A skip exit whose source owns a whole fan-out row rides that same row
+    // out to the lane: every line on the row still leaves one source, so the
+    // shared ink stays unambiguous and the gap needs one row fewer.
+    let mut by_source: BTreeMap<usize, BusGroup> = BTreeMap::new();
+    for skip in skip_exits {
+        match merged.iter_mut().find(|group| group.sources == [skip.from]) {
+            Some(group) => {
+                group.start = group.start.min(skip.source_center);
+                group.edges.push(skip.index);
+                group.exits = true;
+            }
+            None => {
+                let group = by_source.entry(skip.from).or_insert_with(|| BusGroup {
+                    sources: vec![skip.from],
+                    exits: true,
+                    ..BusGroup::empty()
+                });
+                group.start = group.start.min(skip.source_center);
+                group.edges.push(skip.index);
+            }
+        }
+    }
+    // Exit groups without a same-source fan-out row stay separate, so they
+    // never imply a join with another source's edges.
+    let mut groups = merged;
+    groups.extend(by_source.into_values());
+
+    // Open-ended groups sort last: they reach past every bounded span.
+    groups.sort_by_key(|group| {
+        (
+            group.start,
+            group.bounded_end().is_none(),
+            group.bounded_end(),
+            group.edges.first().or(group.joins.first()).copied(),
+        )
+    });
+    let (slots, tracks) = pack_tracks(&groups, |member, group| {
+        match (member.bounded_end(), group.bounded_end()) {
+            (Some(end), Some(group_end)) => end + 2 <= group.start || group_end + 2 <= member.start,
+            // An open-ended member owns the row out to the right lane,
+            // so only a group that ends before it starts can join.
+            (None, Some(group_end)) => group_end + 2 <= member.start,
+            (Some(end), None) => end + 2 <= group.start,
+            // Two open-ended spans always overlap in the right lane.
+            (None, None) => false,
+        }
+    });
+    let mut out = BusAssignment {
+        edges: Vec::new(),
+        joins: Vec::new(),
+        tracks,
+    };
+    for (group, slot) in groups.iter().zip(slots) {
+        for &idx in &group.edges {
+            out.edges.push((idx, slot));
+        }
+        for &idx in &group.joins {
+            out.joins.push((idx, slot));
+        }
+    }
+    out
 }

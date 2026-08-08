@@ -3,7 +3,7 @@ use std::time::Instant;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use super::{
-    control::ConfirmKind, dag::HorizontalDirection, event_adapter::WorkflowAction,
+    control::ConfirmKind, dag::SpatialDirection, event_adapter::WorkflowAction,
     state::WorkflowUiState,
 };
 
@@ -25,19 +25,19 @@ pub(super) fn handle_key(state: &mut WorkflowUiState, key: KeyEvent) -> InputRes
 
     match key.code {
         KeyCode::Up | KeyCode::Char('k') if !ctrl => {
-            state.select_previous();
+            state.select_spatial(SpatialDirection::Up);
             InputResult::Redraw
         }
         KeyCode::Down | KeyCode::Char('j') if !ctrl => {
-            state.select_next();
+            state.select_spatial(SpatialDirection::Down);
             InputResult::Redraw
         }
         KeyCode::Left | KeyCode::Char('h') if !ctrl => {
-            state.select_horizontal(HorizontalDirection::Left);
+            state.select_spatial(SpatialDirection::Left);
             InputResult::Redraw
         }
         KeyCode::Right | KeyCode::Char('l') if !ctrl => {
-            state.select_horizontal(HorizontalDirection::Right);
+            state.select_spatial(SpatialDirection::Right);
             InputResult::Redraw
         }
         KeyCode::PageUp => scroll_details(state, ScrollCommand::PageUp),

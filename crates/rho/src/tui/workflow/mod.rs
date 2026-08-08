@@ -14,6 +14,7 @@
 mod app;
 mod control;
 mod dag;
+mod dag_pane;
 mod details;
 mod event_adapter;
 mod input;

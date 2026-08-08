@@ -203,10 +203,6 @@ impl Graph {
         let styles = GraphStyles::for_nodes(&self.nodes, edge_style);
         layout_flow(self, &styles, /*max_width*/ None)
     }
-
-    pub(in crate::tui) fn ranks(&self) -> Vec<usize> {
-        drawing::compute_ranks(self)
-    }
 }
 
 /// Geometry for one node in the rendered canvas.
