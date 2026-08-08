@@ -57,6 +57,7 @@ pub(super) struct StatusLineState {
 struct StatusLineCache {
     width: usize,
     goal: Option<GoalStatus>,
+    theme_generation: u64,
     lines: Vec<Line<'static>>,
     #[cfg(test)]
     render_count: usize,
@@ -202,10 +203,16 @@ impl StatusLine {
     }
 
     pub(super) fn lines(&mut self, width: usize, goal: Option<GoalStatus>) -> &[Line<'static>] {
-        if self.cache.lines.is_empty() || self.cache.width != width || self.cache.goal != goal {
+        let theme_generation = Theme::generation();
+        if self.cache.lines.is_empty()
+            || self.cache.width != width
+            || self.cache.goal != goal
+            || self.cache.theme_generation != theme_generation
+        {
             let lines = statusline_lines(&self.state, width, goal.as_ref());
             self.cache.width = width;
             self.cache.goal = goal;
+            self.cache.theme_generation = theme_generation;
             self.cache.lines = lines;
             #[cfg(test)]
             {

@@ -250,19 +250,25 @@ pub(super) fn render_copy_notice(
     };
 
     frame.render_widget(Clear, popup);
+    let base = Theme::surface();
     if popup.width >= 3 && popup.height >= 3 {
         frame.render_widget(
             Paragraph::new(notice.message.as_str())
                 .alignment(Alignment::Center)
-                .style(style)
-                .block(Block::default().borders(Borders::ALL).border_style(style)),
+                .style(style.patch(base))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(style)
+                        .style(base),
+                ),
             popup,
         );
     } else {
         frame.render_widget(
             Paragraph::new(notice.message.as_str())
                 .alignment(Alignment::Right)
-                .style(style),
+                .style(style.patch(base)),
             popup,
         );
     }

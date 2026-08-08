@@ -347,6 +347,7 @@ impl App {
                     .await
             }
             PickerAction::Config => self.submit_config_selection(&value, agent).await,
+            PickerAction::SelectTheme => self.submit_theme_selection(&value),
             PickerAction::ViewAgent => self.submit_view_agent_selection(&value),
             PickerAction::EditAgent => self.submit_edit_agent_selection(&value, terminal).await,
             PickerAction::Workflow => {
@@ -368,10 +369,11 @@ impl App {
     }
 
     pub(super) fn handle_picker_escape(&mut self, running: bool) -> anyhow::Result<()> {
-        if matches!(
-            self.input_ui.composer(),
-            ComposerMode::Picker(picker) if picker.action == PickerAction::EditAgent
-        ) {
+        let leaving_action = match self.input_ui.composer() {
+            ComposerMode::Picker(picker) => Some(picker.action),
+            _ => None,
+        };
+        if matches!(leaving_action, Some(PickerAction::EditAgent)) {
             let phase = self
                 .agent_editor_session
                 .as_ref()
@@ -392,6 +394,9 @@ impl App {
                     return Ok(());
                 }
             }
+        }
+        if let Some(action) = leaving_action {
+            self.cancel_theme_preview_if_leaving(action);
         }
         if !self.pop_picker_level() {
             self.input_ui.set_composer(ComposerMode::Input);
@@ -477,6 +482,7 @@ impl App {
             | PickerAction::SelectRewindCheckpoint
             | PickerAction::ConfirmRewindCheckpoint
             | PickerAction::Config
+            | PickerAction::SelectTheme
             | PickerAction::EditAgent
             | PickerAction::Workflow
             | PickerAction::Dismiss => return Ok(()),
@@ -529,6 +535,7 @@ impl App {
     ) -> Option<(UiPicker, &'static str)> {
         let selected_value = match action {
             PickerAction::SelectModel => config_picker::CONVERSATION_MODEL_VALUE,
+            PickerAction::SelectTheme => config_picker::THEME_VALUE,
             PickerAction::SelectInternalAgentModel => return None,
             PickerAction::LogoutProvider => config_picker::PROVIDER_LOGOUT_VALUE,
             PickerAction::SwitchAuthMode => config_picker::SWITCH_AUTH_MODE_VALUE,

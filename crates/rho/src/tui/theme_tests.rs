@@ -1,5 +1,13 @@
 use super::*;
+use crate::tui::theme_terminal::{parse_palette_response, windows_console_palette};
 use pretty_assertions::assert_eq;
+use std::collections::HashMap;
+use std::sync::{Mutex, MutexGuard};
+
+fn theme_test_lock() -> MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    LOCK.lock().unwrap_or_else(|error| error.into_inner())
+}
 
 fn palette(background: Rgb, bright_black: Option<Rgb>) -> TerminalPalette {
     let mut ansi = HashMap::from([(AnsiColor::White, Rgb::new(255, 255, 255))]);
@@ -141,6 +149,8 @@ fn resolved_ansi_background_keeps_rgb_for_foreground_contrast() {
 // Owner: tui theme palette mapping
 #[test]
 fn reasoning_output_uses_one_dimming_mechanism() {
+    let _guard = theme_test_lock();
+    Theme::apply_committed("terminal");
     let styled = Style::default().add_modifier(Modifier::DIM | Modifier::ITALIC);
     let mut lines = vec![Line::styled("reasoning", styled).style(styled)];
 
@@ -152,4 +162,128 @@ fn reasoning_output_uses_one_dimming_mechanism() {
         // No terminal palette in unit tests, so dim falls back to DarkGray.
         assert_eq!(style.fg, Some(Color::DarkGray));
     }
+}
+
+// Covers: fixed light schemes keep RGB dim/ink (no ANSI Black hole under Clear)
+// Owner: tui theme palette mapping
+#[test]
+fn fixed_light_scheme_uses_rgb_dim_and_surface() {
+    let _guard = theme_test_lock();
+    Theme::apply_committed("terminal");
+    Theme::apply_committed("monochrome-light");
+    let palette = Palette::current();
+    assert!(matches!(palette.surface, Some(Color::Rgb(_, _, _))));
+    assert!(matches!(palette.text, Some(Color::Rgb(_, _, _))));
+    assert!(
+        matches!(palette.dim, Color::Rgb(_, _, _)),
+        "dim must be scheme RGB, got {:?}",
+        palette.dim
+    );
+    let surface = Theme::surface();
+    assert!(matches!(surface.bg, Some(Color::Rgb(_, _, _))));
+    assert!(matches!(surface.fg, Some(Color::Rgb(_, _, _))));
+
+    // Soft panels wash toward black on light surfaces, not white-on-white.
+    let panel = palette.user_background.rgb.expect("panel rgb");
+    let scheme = theme_scheme::resolve_fixed_scheme("monochrome-light").unwrap();
+    assert!(
+        panel.luminance() < scheme.background.luminance(),
+        "panel wash should darken light surfaces"
+    );
+
+    Theme::apply_committed("terminal");
+}
+
+// Covers: brand/version roles use sampled terminal RGB, not bare Color::Cyan/Green
+// Owner: tui theme palette mapping
+#[test]
+fn terminal_palette_drives_brand_and_success_rgb() {
+    let ansi = HashMap::from([
+        (AnsiColor::Cyan, Rgb::new(10, 20, 30)),
+        (AnsiColor::Green, Rgb::new(40, 50, 60)),
+        (AnsiColor::Yellow, Rgb::new(70, 80, 90)),
+        (AnsiColor::Red, Rgb::new(100, 110, 120)),
+        (AnsiColor::Magenta, Rgb::new(130, 140, 150)),
+        (AnsiColor::White, Rgb::new(200, 200, 200)),
+    ]);
+    let terminal = TerminalPalette {
+        background: Rgb::new(0, 0, 0),
+        ansi,
+    };
+    let palette = Palette::from_terminal(Some(&terminal));
+    assert_eq!(palette.accent, Color::Rgb(10, 20, 30));
+    assert_eq!(palette.success, Color::Rgb(40, 50, 60));
+    assert_eq!(palette.warning, Color::Rgb(70, 80, 90));
+    assert_eq!(palette.error, Color::Rgb(100, 110, 120));
+    assert_eq!(palette.skill, Color::Rgb(130, 140, 150));
+
+    // Without a sample, keep named ANSI so the host can still paint them.
+    let fallback = Palette::from_terminal(None);
+    assert_eq!(fallback.accent, Color::Cyan);
+    assert_eq!(fallback.success, Color::Green);
+}
+
+// Covers: bright warning yellow is darkened on light surfaces for Auto/status text
+// Owner: tui theme palette mapping
+#[test]
+fn role_ink_darkens_bright_yellow_on_light_surface() {
+    let light = Rgb::new(250, 250, 250);
+    let bright_yellow = Color::Rgb(0xf1, 0xfa, 0x8c);
+    let adjusted = role_ink(bright_yellow, Some(light));
+    let Color::Rgb(red, green, blue) = adjusted else {
+        panic!("expected rgb ink, got {adjusted:?}");
+    };
+    let ink = Rgb::new(red, green, blue);
+    assert!(
+        ink.luminance() + ROLE_INK_MARGIN <= light.luminance(),
+        "warning ink should sit clearly below light surface: {ink:?}"
+    );
+    // Still warm, not pure gray/black.
+    assert!(
+        red > blue && green > blue,
+        "should keep a warm yellow/amber cast"
+    );
+
+    let dark = Rgb::new(20, 20, 20);
+    assert_eq!(
+        role_ink(bright_yellow, Some(dark)),
+        bright_yellow,
+        "bright yellow stays on dark surfaces"
+    );
+}
+
+// Covers: preview does not commit; cancel restores committed
+// Owner: tui theme state
+#[test]
+fn preview_then_cancel_restores_committed() {
+    let _guard = theme_test_lock();
+    Theme::apply_committed("terminal");
+    Theme::apply_committed("one-half-dark");
+    assert_eq!(Theme::committed_id(), "one-half-dark");
+    assert_eq!(Theme::active_id(), "one-half-dark");
+
+    Theme::preview("monochrome-light");
+    assert_eq!(Theme::committed_id(), "one-half-dark");
+    assert_eq!(Theme::active_id(), "monochrome-light");
+
+    Theme::cancel_preview();
+    assert_eq!(Theme::committed_id(), "one-half-dark");
+    assert_eq!(Theme::active_id(), "one-half-dark");
+
+    Theme::apply_committed("terminal");
+}
+
+// Covers: apply_committed updates both active and committed
+// Owner: tui theme state
+#[test]
+fn apply_committed_updates_active_and_committed() {
+    let _guard = theme_test_lock();
+    Theme::apply_committed("terminal");
+    Theme::apply_committed("terminal");
+    let gen = Theme::generation();
+    Theme::apply_committed("one-half-light");
+    assert_eq!(Theme::committed_id(), "one-half-light");
+    assert_eq!(Theme::active_id(), "one-half-light");
+    assert!(Theme::generation() > gen);
+    Theme::apply_committed("terminal");
 }
