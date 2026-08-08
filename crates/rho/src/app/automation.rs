@@ -660,29 +660,15 @@ impl RunReporter {
         use rho_sdk::RunEvent;
 
         let attachments = crate::tui::translate_run_event(&mut self.adapter, event);
-        if !attachments.is_empty() {
-            let mut saw_text_delta = false;
-            let mut needs_immediate_publish = false;
-            for attachment in attachments {
-                match &attachment {
-                    crate::run_artifacts::AttachmentEvent::AssistantTextDelta(text)
-                        if !text.is_empty() =>
-                    {
-                        self.sink.append_last_text(text);
-                        saw_text_delta = true;
-                        self.sink.write_attachment(attachment);
-                    }
-                    _ => {
-                        needs_immediate_publish = true;
-                        self.sink.write_attachment(attachment);
-                    }
+        for attachment in attachments {
+            // Reasoning is deliberately kept out of `last_text`: the status file
+            // carries the answer, not the thinking.
+            if let crate::run_artifacts::AttachmentEvent::AssistantTextDelta(text) = &attachment {
+                if !text.is_empty() {
+                    self.sink.append_last_text(text);
                 }
             }
-            if needs_immediate_publish {
-                self.sink.publish();
-            } else if saw_text_delta {
-                self.sink.publish_throttled();
-            }
+            self.sink.record_attachment(attachment);
         }
         match event {
             RunEvent::StepStarted { step, .. } => {

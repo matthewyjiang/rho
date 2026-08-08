@@ -82,20 +82,19 @@ impl StatusSink {
 
     pub(crate) fn apply_effect(&mut self, effect: StreamEffect) {
         match effect {
-            StreamEffect::Attachment(event) => match &event {
-                AttachmentEvent::AssistantTextDelta(text)
-                | AttachmentEvent::ReasoningDelta(text)
-                    if !text.is_empty() =>
+            StreamEffect::Attachment(event) => {
+                // The Claude path deliberately mirrors reasoning into
+                // `last_text` as well as answer text, unlike the Rho reporter,
+                // which keeps the thinking out of the status file.
+                if let AttachmentEvent::AssistantTextDelta(text)
+                | AttachmentEvent::ReasoningDelta(text) = &event
                 {
-                    self.inner.append_last_text(text);
-                    self.inner.write_attachment(event);
-                    self.inner.publish_throttled();
+                    if !text.is_empty() {
+                        self.inner.append_last_text(text);
+                    }
                 }
-                _ => {
-                    self.inner.write_attachment(event);
-                    self.inner.publish();
-                }
-            },
+                self.inner.record_attachment(event);
+            }
             StreamEffect::Status(patch) => {
                 apply_status_patch(&mut self.inner.status, patch);
                 self.inner.publish();

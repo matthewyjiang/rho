@@ -182,6 +182,10 @@ pub fn usd_to_micros(usd: f64) -> u64 {
 /// interleave a stale nonterminal replace after a terminal write. This
 /// monotonicity is single-process only: concurrent `rho` processes can still
 /// demote a terminal status if they write the same path.
+///
+/// Nonterminal snapshots are written without an `fsync`; terminal states are
+/// flushed. A crash can therefore lose the last in-progress snapshot but never
+/// the recorded outcome.
 pub fn write_status(path: &Path, status: &RunStatus) -> std::io::Result<()> {
     write_status_inner(path, status, /*force*/ false)
 }
@@ -226,7 +230,17 @@ fn write_status_inner(path: &Path, status: &RunStatus, force: bool) -> std::io::
     }
     let contents = serde_json::to_vec_pretty(&status)
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-    crate::config_writer::write_bytes_atomically(path, &contents)
+    // In-progress snapshots are rewritten every couple of seconds and readers
+    // only poll the newest one, so they do not earn an `fsync`: paying one per
+    // update caps the status writer at a few hundred writes per second and
+    // starves the attachment journal behind it. Run boundaries and terminal
+    // states are the states a later `rho attach` must still find after a crash.
+    let durability = if force || status.state.is_terminal() {
+        crate::config_writer::WriteDurability::Durable
+    } else {
+        crate::config_writer::WriteDurability::Replaceable
+    };
+    crate::config_writer::write_bytes_atomically_with_durability(path, &contents, durability)
 }
 
 pub fn read_status(path: &Path) -> Option<RunStatus> {
