@@ -158,3 +158,38 @@ fn state_styles_route_through_theme_and_keep_ready_distinct() {
         ]
     );
 }
+
+// Covers: hjkl must move to the spatially nearest node on the rendered
+// canvas, so `j` from any node in a row reaches the row below even when the
+// graph order lists other siblings first.
+// Owner: workflow DAG spatial navigation (pure geometry policy).
+#[test]
+fn hjkl_selects_the_spatially_nearest_node() {
+    use super::{spatial_neighbor, SpatialDirection};
+    let nodes = vec![
+        node("inspect", "Inspect workspace", &[], NodeState::Pending),
+        node("test", "Run checks", &[], NodeState::Pending),
+        node("apply", "Apply", &["inspect", "test"], NodeState::Pending),
+    ];
+    let rendered = render_dag(&nodes, 0, &vec![None; nodes.len()]);
+    let rects = &rendered.node_rects;
+
+    let cases = [
+        (1, SpatialDirection::Down, Some(2)),
+        (0, SpatialDirection::Down, Some(2)),
+        (0, SpatialDirection::Right, Some(1)),
+        (1, SpatialDirection::Left, Some(0)),
+        (2, SpatialDirection::Down, None),
+        (0, SpatialDirection::Up, None),
+    ];
+    for (selected, direction, expected) in cases {
+        assert_eq!(
+            spatial_neighbor(rects, selected, direction),
+            expected,
+            "from {selected} going {direction:?}"
+        );
+    }
+    // The bottom node sits between both parents; `k` resolves the tie to the
+    // earlier node so keyboard round trips stay deterministic.
+    assert_eq!(spatial_neighbor(rects, 2, SpatialDirection::Up), Some(0));
+}

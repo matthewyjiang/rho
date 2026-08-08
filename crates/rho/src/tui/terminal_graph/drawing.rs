@@ -208,6 +208,46 @@ fn head_glyph(head: Head, arrow: char) -> char {
     }
 }
 
+/// Route a forward edge that skips ranks: down from the source to its bus
+/// row, right along the shared lane, down past the intermediate ranks, then
+/// left along a reserved approach row and into the target from above. This
+/// keeps the edge out of sibling node rows, where an approach at the target's
+/// center row would surface as detached arrow fragments between boxes.
+pub(in crate::tui) fn route_skip(
+    canvas: &mut Canvas,
+    from: &Placed,
+    to: &Placed,
+    edge: &Edge,
+    bus: usize,
+    lane_x: usize,
+    approach_row: usize,
+) {
+    let bx = from.cx;
+    let by = from.y + from.h - 1;
+    let tx = to.cx;
+    let head_row = to.y - 1;
+
+    canvas.junction(bx, by, D);
+    canvas.seg_v(bx, by, bus);
+    canvas.seg_h(bus, bx, lane_x);
+    canvas.seg_v(lane_x, bus, approach_row);
+    canvas.seg_h(approach_row, tx, lane_x);
+    canvas.seg_v(tx, approach_row, head_row);
+
+    if edge.head_to == Head::None {
+        canvas.add_bits(tx, head_row, U);
+    } else {
+        canvas.set(tx, head_row, head_glyph(edge.head_to, '▼'), Cls::Edge);
+    }
+    if edge.head_from != Head::None {
+        canvas.set(bx, by, head_glyph(edge.head_from, '▲'), Cls::Edge);
+    }
+
+    if let Some(label) = &edge.label {
+        place_label(canvas, label, approach_row.saturating_sub(1), tx + 2);
+    }
+}
+
 pub(in crate::tui) fn route_self(canvas: &mut Canvas, p: &Placed, edge: &Edge) {
     let bottom = p.y + p.h - 1;
     let exit_x = p.cx + 1;

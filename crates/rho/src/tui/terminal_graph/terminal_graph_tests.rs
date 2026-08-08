@@ -221,3 +221,90 @@ fn text_style(lines: &[ratatui::text::Line<'_>], needle: &str) -> Style {
 fn is_box_drawing(character: char) -> bool {
     matches!(character, '┌' | '┐' | '└' | '┘' | '─' | '│')
 }
+
+// Covers: every fan-in edge of one target shares a single bus row, so a
+// complete bipartite dependency layer renders one arrow drop per target
+// instead of weaving a target's edges across several rows.
+// Owner: terminal graph bus track assignment.
+#[test]
+fn fan_in_edges_share_one_bus_row_per_target() {
+    let style = NodeStyle::default();
+    let nodes = vec![
+        Node::rectangular("first", style),
+        Node::rectangular("second", style),
+        Node::rectangular("left", style),
+        Node::rectangular("right", style),
+    ];
+    let edges = vec![
+        Edge::directed(0, 2),
+        Edge::directed(1, 2),
+        Edge::directed(0, 3),
+        Edge::directed(1, 3),
+    ];
+    let graph = Graph::top_down(nodes, edges, RankOrdering::PreserveInput).unwrap();
+
+    let art = graph.render(Style::default()).unwrap();
+
+    assert_eq!(
+        art.plain_lines,
+        vec![
+            " ┌───────┐  ┌────────┐".to_owned(),
+            " │ first │  │ second │".to_owned(),
+            " └───┬───┘  └────┬───┘".to_owned(),
+            "     ├───────────┤".to_owned(),
+            "     ▼           ▼".to_owned(),
+            " ┌──────┐    ┌───────┐".to_owned(),
+            " │ left │    │ right │".to_owned(),
+            " └──────┘    └───────┘".to_owned(),
+        ]
+    );
+}
+
+// Covers: a forward edge that skips a rank must approach its target from
+// above through the right lane instead of running through sibling boxes at
+// the target's center row, which left detached arrow fragments between nodes.
+// Owner: terminal graph skip-edge routing.
+#[test]
+fn rank_skipping_edge_drops_into_the_target_from_above() {
+    let style = NodeStyle::default();
+    let nodes = vec![
+        Node::rectangular("setup", style),
+        Node::rectangular("review", style),
+        Node::rectangular("apply", style),
+        Node::rectangular("skip", style),
+    ];
+    let edges = vec![
+        Edge::directed(0, 1),
+        Edge::directed(1, 2),
+        Edge::directed(1, 3),
+        Edge::directed(0, 3),
+    ];
+    let graph = Graph::top_down(nodes, edges, RankOrdering::PreserveInput).unwrap();
+
+    let art = graph.render(Style::default()).unwrap();
+
+    assert!(art
+        .plain_lines
+        .iter()
+        .all(|line| !line.contains('\u{25c4}')));
+    assert_eq!(
+        art.plain_lines,
+        vec![
+            "         ┌───────┐".to_owned(),
+            "         │ setup │".to_owned(),
+            "         └───┬───┘".to_owned(),
+            "          ┌──┤".to_owned(),
+            "          │  └───────┐".to_owned(),
+            "          ▼          │".to_owned(),
+            "     ┌────────┐      │".to_owned(),
+            "     │ review │      │".to_owned(),
+            "     └────┬───┘      │".to_owned(),
+            "     ┌────┴─────┐    │".to_owned(),
+            "     │          ├────┘".to_owned(),
+            "     ▼          ▼".to_owned(),
+            " ┌───────┐  ┌──────┐".to_owned(),
+            " │ apply │  │ skip │".to_owned(),
+            " └───────┘  └──────┘".to_owned(),
+        ]
+    );
+}

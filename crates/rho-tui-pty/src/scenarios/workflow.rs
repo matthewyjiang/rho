@@ -61,7 +61,7 @@ fn run_to_completion(
     let mut harness = spawn(runner, &plan, WORKFLOW_RUN_ID)?;
     let result = (|| -> Result<()> {
         // The run screen keeps the graph and selected-node details visible while
-        // arrows and hjkl move through graph rows and ranks.
+        // arrows and hjkl move to the spatially nearest node on the canvas.
         harness.wait_for_text("Graph", STARTUP)?;
         harness.wait_for_text("Selected", STARTUP)?;
         harness.wait_for_text("Inspect workspace", STARTUP)?;
@@ -74,8 +74,10 @@ fn run_to_completion(
         harness.wait_for_text("command cargo", UPDATE)?;
         harness.inject_key(&Key::Left)?;
         harness.wait_for_text("agent reviewer", UPDATE)?;
+        // `j` drops to the dependent below both parents, not the next sibling
+        // in graph order; `k` climbs back up.
         harness.inject_key(&Key::Char('j'))?;
-        harness.wait_for_text("command cargo", UPDATE)?;
+        harness.wait_for_text("command apply-result", UPDATE)?;
         harness.inject_key(&Key::Char('k'))?;
         harness.wait_for_text("agent reviewer", UPDATE)?;
         // Owner plan gate: footer shows start; header is ready.
@@ -90,7 +92,7 @@ fn run_to_completion(
         // `dag_tests` (running_node_label_reports_attempt).
         harness.wait_for_text("Inspect workspace", UPDATE)?;
         harness.wait_for_text("Run checks", UPDATE)?;
-        harness.inject_key(&Key::Down)?;
+        harness.inject_key(&Key::Right)?;
         // Progress event on the test node, then apply becomes live.
         harness.wait_for_text("checks complete", UPDATE)?;
         harness.resize(20, 72)?;

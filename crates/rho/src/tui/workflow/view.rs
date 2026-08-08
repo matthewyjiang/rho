@@ -15,6 +15,7 @@ use crate::workflow::{
 use super::{
     control::ConfirmKind,
     dag::{self, state_glyph, state_label, state_style},
+    dag_pane::DagMouse,
     event_adapter::{CancellationState, ExecutionMetadata, TerminalReason, WorkflowNodeSnapshot},
     state::WorkflowUiState,
 };
@@ -49,7 +50,14 @@ pub(super) fn handle_mouse(
     column: u16,
     row: u16,
 ) -> bool {
-    state.details_mut().handle_mouse(kind, column, row)
+    match state.dag_pane_mut().handle_mouse(kind, column, row) {
+        DagMouse::SelectNode(index) => {
+            state.select_index(index);
+            true
+        }
+        DagMouse::Redraw => true,
+        DagMouse::Ignored => state.details_mut().handle_mouse(kind, column, row),
+    }
 }
 
 fn draw_header(frame: &mut Frame<'_>, area: Rect, state: &WorkflowUiState) {
@@ -69,7 +77,7 @@ fn draw_header(frame: &mut Frame<'_>, area: Rect, state: &WorkflowUiState) {
     );
 }
 
-fn draw_dag(frame: &mut Frame<'_>, area: Rect, state: &WorkflowUiState) {
+fn draw_dag(frame: &mut Frame<'_>, area: Rect, state: &mut WorkflowUiState) {
     let activities = state
         .snapshot()
         .nodes
@@ -79,7 +87,8 @@ fn draw_dag(frame: &mut Frame<'_>, area: Rect, state: &WorkflowUiState) {
     let dag = dag::render_dag(&state.snapshot().nodes, state.selected_index(), &activities);
     let block = Block::default().title(" Graph ").borders(Borders::ALL);
     let inner = block.inner(area);
-    let scroll = dag.viewport_offset(state.selected_index(), inner.width, inner.height);
+    let selected = state.selected_index();
+    let scroll = state.dag_pane_mut().offset_for_draw(&dag, selected, inner);
     frame.render_widget(block, area);
     frame.render_widget(Paragraph::new(dag.lines).scroll(scroll), inner);
 }
