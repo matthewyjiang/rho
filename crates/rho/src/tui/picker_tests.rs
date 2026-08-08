@@ -213,3 +213,45 @@ fn click_selects_nav_row_and_keeps_window() {
         "click must not shift the window"
     );
 }
+
+// Covers: after deleting a nearby row the reopened picker must land on the
+// following match, not jump back to the top of the list.
+// Owner: pure unit (picker cursor restore)
+#[test]
+fn restore_cursor_keeps_nearby_match_after_removal() {
+    let items = (0..10)
+        .map(|i| item(&format!("session-{i:02}")))
+        .collect::<Vec<_>>();
+    let mut picker = UiPicker::new("sessions", items, PickerAction::ManageSessions);
+    picker.select_by_offset(6);
+    assert_eq!(picker.selected_item().unwrap().value, "session-06");
+    let cursor = picker.cursor();
+    assert_eq!(cursor.match_index, 6);
+
+    let remaining = (0..10)
+        .filter(|i| *i != 6)
+        .map(|i| item(&format!("session-{i:02}")))
+        .collect::<Vec<_>>();
+    let mut reopened = UiPicker::new("sessions", remaining, PickerAction::ManageSessions);
+    reopened.restore_cursor(&cursor);
+    assert_eq!(
+        reopened.selected_item().unwrap().value,
+        "session-07",
+        "cursor should advance to the next surviving neighbor"
+    );
+}
+
+// Covers: absolute nav scrollbar jumps must move the viewport without changing
+// selection, matching history-scrollbar track clicks.
+// Owner: pure unit (picker nav scroll)
+#[test]
+fn scroll_nav_to_jumps_viewport_without_selection() {
+    let items = (0..20).map(|i| item(&format!("item-{i:02}"))).collect();
+    let mut picker = UiPicker::new("list", items, PickerAction::ViewAgent);
+    let viewport = 5;
+    picker.scroll_nav_to(9, viewport);
+    assert_eq!(picker.nav_window_start(viewport), 9);
+    assert_eq!(picker.selected, 0);
+    picker.scroll_nav_to(100, viewport);
+    assert_eq!(picker.nav_window_start(viewport), 15);
+}

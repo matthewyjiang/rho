@@ -97,6 +97,12 @@ pub(crate) struct ParentRunCleanupGuard {
 }
 
 impl ParentRunCleanupGuard {
+    /// Remove index rows for this parent while retaining the cleanup claim.
+    pub(crate) fn clear_index(&self) -> anyhow::Result<()> {
+        clear_parent_index_rows(&self.subagents_root, &self.parent_session_id)
+    }
+
+    #[cfg(test)]
     /// Remove index rows for this parent and release the cleanup claim.
     pub(crate) fn clear_index_and_unlock(mut self) -> anyhow::Result<()> {
         clear_parent_index_rows(&self.subagents_root, &self.parent_session_id)?;

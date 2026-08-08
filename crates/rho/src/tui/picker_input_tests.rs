@@ -1,9 +1,14 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use pretty_assertions::assert_eq;
+use ratatui::layout::Rect;
 
 use super::{
-    super::{PickerAction, PickerItem, PickerKeyHints, UiPicker},
-    apply_picker_key, OverlayScrollTargets, PickerKeyEffect,
+    super::{
+        picker_overlay_layout::picker_overlay_layout, tests::test_app, ComposerMode, PickerAction,
+        PickerItem, PickerKeyHints, UiPicker,
+    },
+    apply_picker_key, OverlayScrollTargets, OverlayScrollbarDrag, PickerKeyEffect,
+    PickerMouseEvent,
 };
 
 fn key(code: KeyCode) -> KeyEvent {
@@ -142,4 +147,65 @@ fn pane_focus_keys_are_inert_without_detail() {
     let effect = apply_picker_key(&mut picker, key(KeyCode::Right), None, false);
     assert_eq!(effect, PickerKeyEffect::None);
     assert!(!picker.detail_pane_focused());
+}
+
+// Covers: the detail scrollbar's painted gutter must accept track clicks and
+// drag events instead of treating them as inert detail-pane clicks.
+// Owner: tui picker mouse routing
+#[test]
+fn detail_scrollbar_click_and_drag_scroll_the_right_pane() {
+    let width = 120;
+    let height = 40;
+    let picker = overlay_picker_with_detail();
+    let layout = picker_overlay_layout(Rect::new(0, 0, width, height), picker.overlay_sizing());
+    let detail = layout.detail_body_rect().expect("detail pane");
+    let scrollbar_column = detail.x + detail.width - 1;
+    let bottom_row = detail.y + detail.height - 1;
+    let top_row = detail.y;
+    let mut app = test_app();
+    app.input_ui.set_composer(ComposerMode::Picker(picker));
+
+    assert!(app.route_picker_mouse(
+        PickerMouseEvent::Click,
+        scrollbar_column,
+        bottom_row,
+        width,
+        height,
+    ));
+    let ComposerMode::Picker(picker) = app.input_ui.composer() else {
+        panic!("picker closed after detail scrollbar click");
+    };
+    assert!(picker.detail_scroll > 0, "track click must jump downward");
+    assert!(picker.detail_pane_focused());
+    assert!(matches!(
+        picker.overlay_scrollbar_drag(),
+        Some(OverlayScrollbarDrag::Detail(_))
+    ));
+
+    assert!(app.route_picker_mouse(
+        PickerMouseEvent::Drag,
+        scrollbar_column,
+        top_row,
+        width,
+        height,
+    ));
+    let ComposerMode::Picker(picker) = app.input_ui.composer() else {
+        panic!("picker closed during detail scrollbar drag");
+    };
+    assert_eq!(
+        picker.detail_scroll, 0,
+        "dragging to the top must reach top"
+    );
+
+    assert!(app.route_picker_mouse(
+        PickerMouseEvent::Release,
+        scrollbar_column,
+        top_row,
+        width,
+        height,
+    ));
+    let ComposerMode::Picker(picker) = app.input_ui.composer() else {
+        panic!("picker closed after detail scrollbar release");
+    };
+    assert_eq!(picker.overlay_scrollbar_drag(), None);
 }

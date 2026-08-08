@@ -398,7 +398,18 @@ impl App {
                 }
             }
         }
-        if !self.pop_picker_level() {
+        let sessions_picker = matches!(
+            self.input_ui.composer(),
+            ComposerMode::Picker(picker) if picker.action == PickerAction::ManageSessions
+        );
+        if self.pop_picker_level() {
+            if sessions_picker {
+                self.sessions_hub_state.navigate_back();
+            }
+        } else {
+            if sessions_picker {
+                self.sessions_hub_state.clear();
+            }
             self.input_ui.set_composer(ComposerMode::Input);
             if !self.cancel_advisor_model_prompt() {
                 self.set_status(if running { "running" } else { "ready" });

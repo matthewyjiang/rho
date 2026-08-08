@@ -293,6 +293,7 @@ impl App {
                     pending: InlineChoicePending::DeleteWorkflowPlan {
                         plan_id: plan_id.to_owned(),
                     },
+                    parent_picker: None,
                 }));
             self.set_status("confirm delete plan");
             return Ok(());
@@ -324,6 +325,7 @@ impl App {
                     pending: InlineChoicePending::DeleteWorkflowRun {
                         run_id: run_id.to_owned(),
                     },
+                    parent_picker: None,
                 }));
             self.set_status("confirm delete run");
             return Ok(());

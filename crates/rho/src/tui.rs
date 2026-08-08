@@ -173,7 +173,7 @@ use frame_scheduler::FrameScheduler;
 use goal::GoalState;
 use inline_choice::{
     InlineChoice, InlineChoiceKeyOutcome, InlineChoiceModal, InlineChoiceOption,
-    InlineChoicePending, SessionDeleteReopen,
+    InlineChoicePending,
 };
 #[cfg(test)]
 use inline_shell::InlineShellMode;
@@ -182,8 +182,9 @@ use login::PendingInteractiveLogin;
 use login::SecretInput;
 use paste_burst::PasteBurstEnter;
 use picker::{
-    sort_items_by_ascii_label, OverlayFocus, PickerAction, PickerBadge, PickerBadgePlacement,
-    PickerBadgeTone, PickerItem, PickerKeyHints, PickerLayout, UiPicker,
+    sort_items_by_ascii_label, OverlayFocus, OverlayScrollbarDrag, PickerAction, PickerBadge,
+    PickerBadgePlacement, PickerBadgeTone, PickerCursor, PickerItem, PickerKeyHints, PickerLayout,
+    UiPicker,
 };
 use prompt_turn::FailedTurn;
 #[cfg(test)]
@@ -452,6 +453,7 @@ struct App {
     pending_model_selection: Option<InteractiveModelSelection>,
     internal_agent_model_target: Option<agent_picker::InternalAgentModelTarget>,
     agent_editor_session: Option<agent_editor::AgentEditSession>,
+    sessions_hub_state: sessions_hub::SessionsHubState,
     pending_session_title: Option<PendingSessionTitle>,
     /// Set by `/title` so auto-title generation cannot overwrite a manual name.
     session_title_locked: bool,

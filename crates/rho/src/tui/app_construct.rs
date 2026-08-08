@@ -100,6 +100,7 @@ impl App {
             pending_model_selection: None,
             internal_agent_model_target: None,
             agent_editor_session: None,
+            sessions_hub_state: super::sessions_hub::SessionsHubState::default(),
             pending_session_title: None,
             session_title_locked: false,
             clipboard: Box::new(SystemClipboard::default()),

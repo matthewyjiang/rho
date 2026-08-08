@@ -67,6 +67,7 @@ pub(super) enum InlineChoiceKeyOutcome {
 pub(super) struct InlineChoiceModal {
     pub(super) choice: InlineChoice,
     pub(super) pending: InlineChoicePending,
+    pub(super) parent_picker: Option<Box<super::UiPicker>>,
 }
 
 #[derive(Debug)]
@@ -78,11 +79,14 @@ pub(super) enum InlineChoicePending {
     ClaudeCodeRelogin,
     ClaudeCodeLogout,
     DeleteSession {
-        session_id: String,
-        reopen: SessionDeleteReopen,
+        target: crate::session::SessionTarget,
     },
     DeleteDirectorySessions {
         cwd: std::path::PathBuf,
+        targets: Vec<crate::session::SessionTarget>,
+    },
+    CleanupMissingSessionDirectories {
+        targets: Vec<crate::session::SessionTarget>,
     },
     DeleteWorkflowPlan {
         plan_id: String,
@@ -90,13 +94,6 @@ pub(super) enum InlineChoicePending {
     DeleteWorkflowRun {
         run_id: String,
     },
-}
-
-/// Which picker a session-delete confirm returns to when it finishes or cancels.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum SessionDeleteReopen {
-    ResumePicker,
-    SessionsHub,
 }
 
 impl InlineChoiceModal {

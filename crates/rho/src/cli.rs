@@ -296,6 +296,17 @@ pub enum SessionsCommand {
         #[arg(short = 'y', long)]
         yes: bool,
     },
+    /// Delete sessions whose workspace directories no longer exist.
+    Cleanup {
+        /// Delete even when a parent-linked run is still non-terminal.
+        ///
+        /// Use only for stale Starting/Running artifacts left after a crash.
+        #[arg(long)]
+        force: bool,
+        /// Skip the confirmation prompt.
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
     /// Rename a session by UUID or UUID prefix.
     Rename {
         /// Session UUID or unique prefix.

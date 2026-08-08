@@ -6,7 +6,10 @@
 
 use ratatui::layout::{Position, Rect};
 
-use super::display_width;
+use super::{
+    display_width,
+    scrollbar::{scrollbar_thumb, HistoryScrollbar, ScrollbarThumb},
+};
 
 const TWO_COLUMN_MIN_INNER_WIDTH: usize = 60;
 const MIN_NAV_WIDTH: usize = 14;
@@ -25,6 +28,8 @@ const INNER_CHROME_ROWS: usize = HEADER_CHROME_ROWS + FOOTER_CHROME_ROWS;
 /// Column reserved beside the detail text for its scrollbar, so wrapped text
 /// never re-flows when the bar appears.
 const DETAIL_SCROLLBAR_GUTTER: usize = 1;
+/// Narrowest nav pane that still spends a column on a scrollbar.
+const MIN_SCROLLBAR_PANE_WIDTH: usize = 4;
 /// Fewest body rows an overlay keeps when a detail pane needs reading room.
 const MIN_DETAIL_BODY_ROWS: usize = 12;
 /// Fewest body rows a nav-only overlay keeps.
@@ -59,6 +64,68 @@ pub(super) struct OverlayLayout {
     pub(super) inner_height: usize,
     pub(super) body_rows: usize,
     pub(super) panes: OverlayPanes,
+}
+
+/// Canonical visibility and position of one picker overlay scrollbar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct OverlayScrollbarState {
+    content_len: usize,
+    viewport_rows: usize,
+    top_line: usize,
+}
+
+impl OverlayScrollbarState {
+    pub(super) fn nav(
+        pane_width: usize,
+        content_len: usize,
+        viewport_rows: usize,
+        top_line: usize,
+    ) -> Option<Self> {
+        if pane_width <= MIN_SCROLLBAR_PANE_WIDTH {
+            return None;
+        }
+        Self::visible(content_len, viewport_rows, top_line)
+    }
+
+    pub(super) fn detail(
+        content_len: usize,
+        viewport_rows: usize,
+        top_line: usize,
+    ) -> Option<Self> {
+        Self::visible(content_len, viewport_rows, top_line)
+    }
+
+    fn visible(content_len: usize, viewport_rows: usize, top_line: usize) -> Option<Self> {
+        let top_line = clamp_overlay_scroll(top_line, content_len, viewport_rows);
+        scrollbar_thumb(content_len, viewport_rows, top_line, viewport_rows).map(|_| Self {
+            content_len,
+            viewport_rows,
+            top_line,
+        })
+    }
+
+    pub(super) fn thumb(self) -> ScrollbarThumb {
+        scrollbar_thumb(
+            self.content_len,
+            self.viewport_rows,
+            self.top_line,
+            self.viewport_rows,
+        )
+        .expect("visible scrollbar state has a thumb")
+    }
+
+    pub(super) fn hitbox(self, rect: Rect) -> HistoryScrollbar {
+        HistoryScrollbar::new(rect, self.content_len, self.top_line)
+            .expect("visible scrollbar state has a hitbox")
+    }
+}
+
+pub(super) fn clamp_overlay_scroll(
+    top_line: usize,
+    content_len: usize,
+    viewport_rows: usize,
+) -> usize {
+    top_line.min(content_len.saturating_sub(viewport_rows.max(1)))
 }
 
 impl OverlayLayout {
@@ -195,6 +262,63 @@ impl OverlayLayout {
                 nav_viewport_rows, ..
             } => nav_viewport_rows,
         }
+    }
+
+    /// Screen rectangle covering the nav item rows (inside the border).
+    pub(super) fn nav_body_rect(self) -> Rect {
+        let x = self.outer.x.saturating_add(1);
+        let width = as_u16(self.nav_width().max(1));
+        let height = as_u16(self.nav_viewport_rows().max(1));
+        let y = match self.panes {
+            OverlayPanes::NavOnly { .. }
+            | OverlayPanes::NavAndDetail {
+                orientation: OverlayOrientation::SideBySide,
+                ..
+            } => self.body_top(),
+            OverlayPanes::NavAndDetail {
+                orientation: OverlayOrientation::Stacked,
+                detail_viewport_rows,
+                ..
+            } => self.body_top().saturating_add(as_u16(
+                detail_viewport_rows.saturating_add(self.stacked_separator_rows()),
+            )),
+        };
+        Rect::new(x, y, width, height)
+    }
+
+    /// Screen rectangle covering the detail pane rows (inside the border).
+    pub(super) fn detail_body_rect(self) -> Option<Rect> {
+        let viewport = self.detail_viewport()?;
+        let x = match self.panes {
+            OverlayPanes::NavOnly { .. } => return None,
+            OverlayPanes::NavAndDetail {
+                orientation: OverlayOrientation::SideBySide,
+                ..
+            } => {
+                // Content after left border + nav + separator.
+                let offset = 1usize
+                    .saturating_add(self.nav_width())
+                    .saturating_add(display_width(SEPARATOR));
+                self.outer.x.saturating_add(as_u16(offset))
+            }
+            OverlayPanes::NavAndDetail {
+                orientation: OverlayOrientation::Stacked,
+                ..
+            } => self.outer.x.saturating_add(1),
+        };
+        // Detail text width plus its reserved scrollbar gutter.
+        let width = as_u16(
+            viewport
+                .width
+                .saturating_add(DETAIL_SCROLLBAR_GUTTER)
+                .max(1),
+        );
+        Some(Rect::new(
+            x,
+            self.body_top(),
+            width,
+            as_u16(viewport.rows.max(1)),
+        ))
     }
 }
 

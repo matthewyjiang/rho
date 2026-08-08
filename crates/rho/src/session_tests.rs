@@ -86,6 +86,27 @@ fn resumes_session_by_id_from_a_different_workspace() {
     ));
 }
 
+// Covers: resume cannot return a live Session after another process has claimed
+// the transcript for deletion.
+// Owner: session persistence
+#[test]
+fn resume_rejects_session_held_for_deletion() {
+    let root = temp_session_root();
+    let cwd = temp_cwd();
+    let session = Session::create_in_root(&root, &cwd).unwrap();
+    session
+        .append_message(&Message::assistant_text("delete race"))
+        .unwrap();
+    let id = session.id().to_string();
+    drop(session);
+
+    let delete_lease = super::acquire_delete_session_lease(&root, &cwd, &id).unwrap();
+    assert!(Session::open_by_id_in_root(&root, &cwd, &id).is_err());
+
+    drop(delete_lease);
+    Session::open_by_id_in_root(&root, &cwd, &id).unwrap();
+}
+
 #[test]
 fn resume_by_id_errors_when_the_original_workspace_is_gone() {
     let root = temp_session_root();
@@ -562,6 +583,7 @@ fn deletes_folder_session_and_cascades_parent_linked_runs() {
         "some-other-session",
         crate::subagent::RunState::Ok,
     );
+    drop(session);
 
     let outcome = Session::delete_by_id_in_roots(
         &root,
@@ -598,18 +620,20 @@ fn deletes_nested_runs_with_folder_session() {
     let cwd = temp_cwd();
     let subagents = tempfile::tempdir().unwrap();
     let session = Session::create_in_root(&root, &cwd).unwrap();
+    let id = session.id().to_string();
     let nested = super::delete::write_linked_run_for_tests(
         &session.subagents_dir().unwrap(),
         "ab12cd",
-        session.id(),
+        &id,
         crate::subagent::RunState::Ok,
     );
+    drop(session);
 
     let outcome = Session::delete_by_id_in_roots(
         &root,
         subagents.path(),
         &cwd,
-        session.id(),
+        &id,
         DeleteOptions::default(),
     )
     .unwrap();
@@ -624,18 +648,20 @@ fn refuses_live_nested_run_without_force() {
     let cwd = temp_cwd();
     let subagents = tempfile::tempdir().unwrap();
     let session = Session::create_in_root(&root, &cwd).unwrap();
+    let id = session.id().to_string();
     let nested = super::delete::write_linked_run_for_tests(
         &session.subagents_dir().unwrap(),
         "ab12cd",
-        session.id(),
+        &id,
         crate::subagent::RunState::Running,
     );
+    drop(session);
 
     let error = Session::delete_by_id_in_roots(
         &root,
         subagents.path(),
         &cwd,
-        session.id(),
+        &id,
         DeleteOptions::default(),
     )
     .unwrap_err();
@@ -645,10 +671,10 @@ fn refuses_live_nested_run_without_force() {
         &root,
         subagents.path(),
         &cwd,
-        session.id(),
+        &id,
         DeleteOptions {
             force: true,
-            protect_session_id: None,
+            protected_session: None,
         },
     )
     .unwrap();
@@ -683,6 +709,32 @@ fn deletes_legacy_flat_session_and_web_companion() {
     assert!(!web.exists());
 }
 
+// Covers: cross-workspace CLI-style deletion discovers transcripts when the
+// global index has not been built yet.
+// Owner: session persistence
+#[test]
+fn deletes_foreign_session_with_a_cold_global_index() {
+    let root = temp_session_root();
+    let created_cwd = temp_cwd();
+    let other_cwd = temp_cwd();
+    let subagents = tempfile::tempdir().unwrap();
+    let id = "cold-foreign-id";
+    write_session_file(&root, &created_cwd, id, 99, &["cold foreign"]);
+    let path = session_dir_in_root(&root, &created_cwd).join(format!("99_{id}.jsonl"));
+    assert!(!root.join("index.sqlite3").exists());
+
+    Session::delete_by_id_in_roots(
+        &root,
+        subagents.path(),
+        &other_cwd,
+        id,
+        DeleteOptions::default(),
+    )
+    .unwrap();
+
+    assert!(!path.exists());
+}
+
 #[test]
 fn refuses_current_session_and_live_runs_without_force() {
     let root = temp_session_root();
@@ -698,7 +750,7 @@ fn refuses_current_session_and_live_runs_without_force() {
         &id,
         DeleteOptions {
             force: false,
-            protect_session_id: Some(id.clone()),
+            protected_session: Some(SessionTarget::new(id.clone(), cwd.to_path_buf())),
         },
     )
     .unwrap_err();
@@ -706,6 +758,7 @@ fn refuses_current_session_and_live_runs_without_force() {
         protected.to_string().contains("current session"),
         "{protected}"
     );
+    drop(session);
 
     super::delete::write_linked_run_for_tests(
         subagents.path(),
@@ -730,12 +783,111 @@ fn refuses_current_session_and_live_runs_without_force() {
         &id,
         DeleteOptions {
             force: true,
-            protect_session_id: None,
+            protected_session: None,
         },
     )
     .unwrap();
     assert_eq!(forced.forced_run_ids, vec!["ee33ff".to_string()]);
     assert_eq!(forced.deleted_run_count, 1);
+}
+
+// Covers: explicit cleanup removes every session whose recorded workspace is
+// gone while preserving sessions for directories that still exist.
+// Owner: session persistence
+#[test]
+fn cleans_up_sessions_for_missing_workspaces_only() {
+    let root = temp_session_root();
+    let subagents = tempfile::tempdir().unwrap();
+    let workspaces = tempfile::tempdir().unwrap();
+    let missing_a = workspaces.path().join("removed-a");
+    let missing_b = workspaces.path().join("removed-b");
+    fs::create_dir(&missing_a).unwrap();
+    fs::create_dir(&missing_b).unwrap();
+    let existing = temp_cwd();
+
+    let stale_a = Session::create_in_root(&root, &missing_a).unwrap();
+    let stale_b = Session::create_in_root(&root, &missing_b).unwrap();
+    let kept = Session::create_in_root(&root, &existing).unwrap();
+    let stale_ids = [stale_a.id().to_owned(), stale_b.id().to_owned()];
+    let kept_id = kept.id().to_owned();
+    drop(stale_a);
+    drop(stale_b);
+    fs::remove_dir(&missing_a).unwrap();
+    fs::remove_dir(&missing_b).unwrap();
+
+    let candidates = Session::list_missing_workspaces_in_root_for_test(&root).unwrap();
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|session| session.id.as_str())
+            .collect::<std::collections::HashSet<_>>(),
+        stale_ids.iter().map(String::as_str).collect()
+    );
+
+    let outcome = Session::cleanup_missing_workspaces_in_roots_for_test(
+        &root,
+        subagents.path(),
+        DeleteOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(outcome.failures, Vec::new());
+    assert_eq!(outcome.restored_workspaces, 0);
+    assert_eq!(
+        outcome
+            .deleted
+            .iter()
+            .map(|deleted| deleted.id.as_str())
+            .collect::<std::collections::HashSet<_>>(),
+        stale_ids.iter().map(String::as_str).collect()
+    );
+    let remaining = Session::list_all_in_root(&root).unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].id, kept_id);
+}
+
+// Covers: cleanup must delete only the targets shown for confirmation, not a
+// session that appears under a missing workspace after that snapshot.
+// Owner: session deletion
+#[test]
+fn missing_workspace_cleanup_deletes_only_reviewed_targets() {
+    let root = temp_session_root();
+    let subagents = tempfile::tempdir().unwrap();
+    let workspaces = tempfile::tempdir().unwrap();
+    let missing = workspaces.path().join("removed");
+    fs::create_dir(&missing).unwrap();
+    let reviewed = Session::create_in_root(&root, &missing).unwrap();
+    let reviewed_id = reviewed.id().to_owned();
+    drop(reviewed);
+    fs::remove_dir(&missing).unwrap();
+
+    let targets = Session::list_missing_workspaces_in_root_for_test(&root)
+        .unwrap()
+        .into_iter()
+        .map(|session| session.target())
+        .collect::<Vec<_>>();
+    let late = Session::create_in_root(&root, &missing).unwrap();
+    let late_id = late.id().to_owned();
+    drop(late);
+
+    let outcome = super::delete::cleanup_missing_targets_in_roots(
+        &root,
+        subagents.path(),
+        &targets,
+        &DeleteOptions::default(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        outcome
+            .deleted
+            .iter()
+            .map(|deleted| deleted.id.as_str())
+            .collect::<Vec<_>>(),
+        vec![reviewed_id.as_str()]
+    );
+    let remaining = Session::list_all_in_root(&root).unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].id, late_id);
 }
 
 #[test]
@@ -761,6 +913,45 @@ fn list_all_includes_other_workspaces() {
     assert!(ids.contains(&session_b.id()));
     assert!(all.iter().any(|summary| summary.cwd == *cwd_a));
     assert!(all.iter().any(|summary| summary.cwd == *cwd_b));
+}
+
+// Covers: list_all stays correct after deleting one workspace's session
+// Owner: session list/delete
+#[test]
+fn list_all_after_delete_omits_removed_session() {
+    let root = temp_session_root();
+    let cwd_a = temp_cwd();
+    let cwd_b = temp_cwd();
+    let session_a = Session::create_in_root(&root, &cwd_a).unwrap();
+    session_a
+        .append_message(&Message::user_text("project a"))
+        .unwrap();
+    let session_b = Session::create_in_root(&root, &cwd_b).unwrap();
+    session_b
+        .append_message(&Message::user_text("project b"))
+        .unwrap();
+    let id_a = session_a.id().to_string();
+    drop(session_a);
+
+    Session::delete_by_id_in_roots(
+        &root,
+        &temp_session_root(),
+        &cwd_a,
+        &id_a,
+        DeleteOptions {
+            force: false,
+            protected_session: None,
+        },
+    )
+    .unwrap();
+
+    let all = Session::list_all_in_root(&root).unwrap();
+    let ids = all
+        .iter()
+        .map(|summary| summary.id.as_str())
+        .collect::<Vec<_>>();
+    assert!(!ids.contains(&id_a.as_str()));
+    assert!(ids.contains(&session_b.id()));
 }
 
 #[test]

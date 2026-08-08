@@ -2,6 +2,7 @@
 
 use std::{
     fs,
+    io::ErrorKind,
     path::{Path, PathBuf},
 };
 
@@ -10,15 +11,12 @@ use crate::subagent::RunStatus;
 use crate::subagent::{self, RunState, RESULT_FILE_NAME};
 
 use super::{
-    index,
-    persistence::{
-        read_session_cwd, session_dir_in_root, workspace_key, ResolvedSession, SessionStore,
-        SessionUnit,
-    },
-    SessionSummary,
+    acquire_delete_session_lease, index,
+    persistence::{workspace_key, ResolvedSession, SessionStore, SessionUnit},
+    SessionSummary, SessionTarget,
 };
 
-/// Controls for [`super::Session::delete_by_id`].
+/// Controls for [`super::Session::delete_target`] and batch deletion.
 #[derive(Clone, Debug, Default)]
 pub struct DeleteOptions {
     /// When true, delete even if a parent-linked run is still non-terminal.
@@ -26,8 +24,8 @@ pub struct DeleteOptions {
     /// Only intended for stale `Running`/`Starting` artifacts left behind after a
     /// crash. Live runs may still be writing; prefer waiting for completion.
     pub force: bool,
-    /// Refuse delete when the resolved session id equals this value.
-    pub protect_session_id: Option<String>,
+    /// Refuse delete when the resolved session has this exact workspace identity.
+    pub protected_session: Option<SessionTarget>,
 }
 
 /// Result of a successful session delete.
@@ -40,6 +38,31 @@ pub struct DeleteOutcome {
     pub deleted_run_count: usize,
     /// Run ids force-deleted while still non-terminal.
     pub forced_run_ids: Vec<String>,
+}
+
+/// One session that cleanup could not remove.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CleanupFailure {
+    pub(crate) id: String,
+    pub(crate) cwd: PathBuf,
+    pub(crate) error: String,
+}
+
+/// Result of an explicit cleanup of sessions for missing workspace directories.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CleanupOutcome {
+    pub(crate) deleted: Vec<DeleteOutcome>,
+    pub(crate) failures: Vec<CleanupFailure>,
+    /// Candidates skipped because their workspace reappeared after preview.
+    pub(crate) restored_workspaces: usize,
+}
+
+/// Result of deleting every deletable session owned by one workspace.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct WorkspaceDeleteOutcome {
+    pub(crate) deleted: Vec<DeleteOutcome>,
+    pub(crate) failures: Vec<CleanupFailure>,
+    pub(crate) kept_protected: Vec<SessionTarget>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,67 +79,83 @@ struct LinkedRun {
     cleanup: RunCleanup,
 }
 
-pub(super) fn list_all_in_root(session_root: &Path) -> anyhow::Result<Vec<SessionSummary>> {
-    let mut summaries = Vec::new();
-    if !session_root.is_dir() {
-        return Ok(summaries);
-    }
-    for entry in fs::read_dir(session_root)? {
-        let workspace_dir = entry?.path();
-        if !workspace_dir.is_dir() {
-            continue;
-        }
-        summaries.extend(list_workspace_dir(session_root, &workspace_dir)?);
-    }
-    summaries.sort_by(|left, right| {
-        right
-            .updated_at
-            .cmp(&left.updated_at)
-            .then_with(|| right.created_at.cmp(&left.created_at))
-            .then_with(|| left.id.cmp(&right.id))
-    });
-    Ok(summaries)
-}
-
-/// Lists one workspace directory through the same synced index the resume
-/// picker uses, so unchanged transcripts are never re-parsed.
-///
-/// The directory name is a one-way hash of the workspace cwd, so recover the
-/// cwd from a session header line (first line only). When no header
-/// round-trips to this directory, fall back to parsing each transcript so
-/// damaged or legacy workspaces still list.
-fn list_workspace_dir(
+pub(super) fn list_missing_workspaces_in_root(
     session_root: &Path,
-    workspace_dir: &Path,
 ) -> anyhow::Result<Vec<SessionSummary>> {
-    for entry in fs::read_dir(workspace_dir)? {
-        let path = entry?.path();
-        let Some(unit) = SessionUnit::from_path(&path) else {
-            continue;
-        };
-        let Ok(cwd) = read_session_cwd(&unit.transcript_path()) else {
-            continue;
-        };
-        if session_dir_in_root(session_root, &cwd) != workspace_dir {
-            continue;
-        }
-        return SessionStore::new(session_root, &cwd).list();
-    }
-
-    let mut summaries = Vec::new();
-    for entry in fs::read_dir(workspace_dir)? {
-        let path = entry?.path();
-        let Some(unit) = SessionUnit::from_path(&path) else {
-            continue;
-        };
-        match super::persistence::summarize_session_file(&unit.transcript_path(), Path::new("")) {
-            Ok(record) => summaries.push(record.summary),
-            Err(_) => continue,
-        }
-    }
-    Ok(summaries)
+    index::list_all_sessions(session_root)?
+        .into_iter()
+        .filter_map(
+            |session| match workspace_directory_is_missing(&session.cwd) {
+                Ok(true) => Some(Ok(session)),
+                Ok(false) => None,
+                Err(error) => Some(Err(error)),
+            },
+        )
+        .collect()
 }
 
+#[cfg(test)]
+pub(super) fn cleanup_missing_workspaces_in_roots(
+    session_root: &Path,
+    subagents_root: &Path,
+    options: &DeleteOptions,
+) -> anyhow::Result<CleanupOutcome> {
+    let targets = list_missing_workspaces_in_root(session_root)?
+        .into_iter()
+        .map(|session| session.target())
+        .collect::<Vec<_>>();
+    cleanup_missing_targets_in_roots(session_root, subagents_root, &targets, options)
+}
+
+pub(super) fn cleanup_missing_targets_in_roots(
+    session_root: &Path,
+    subagents_root: &Path,
+    targets: &[SessionTarget],
+    options: &DeleteOptions,
+) -> anyhow::Result<CleanupOutcome> {
+    let mut outcome = CleanupOutcome::default();
+    for target in targets {
+        // Confirmation and deletion are separate operations. Re-check only the
+        // reviewed target so restored workspaces are kept and new sessions are
+        // never swept into an old confirmation.
+        match workspace_directory_is_missing(&target.cwd) {
+            Ok(true) => {}
+            Ok(false) => {
+                outcome.restored_workspaces += 1;
+                continue;
+            }
+            Err(error) => {
+                outcome.failures.push(CleanupFailure {
+                    id: target.id.clone(),
+                    cwd: target.cwd.clone(),
+                    error: error.to_string(),
+                });
+                continue;
+            }
+        }
+        match delete_target_in_roots(session_root, subagents_root, target, options) {
+            Ok(deleted) => outcome.deleted.push(deleted),
+            Err(error) => outcome.failures.push(CleanupFailure {
+                id: target.id.clone(),
+                cwd: target.cwd.clone(),
+                error: error.to_string(),
+            }),
+        }
+    }
+    Ok(outcome)
+}
+pub(super) fn workspace_directory_is_missing(cwd: &Path) -> anyhow::Result<bool> {
+    match fs::metadata(cwd) {
+        Ok(metadata) => Ok(!metadata.is_dir()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(anyhow::anyhow!(
+            "could not inspect workspace directory {}: {error}",
+            cwd.display()
+        )),
+    }
+}
+
+#[cfg(test)]
 pub(super) fn delete_in_roots(
     session_root: &Path,
     subagents_root: &Path,
@@ -128,6 +167,40 @@ pub(super) fn delete_in_roots(
     delete_resolved(session_root, subagents_root, resolved, options)
 }
 
+pub(super) fn delete_target_in_roots(
+    session_root: &Path,
+    subagents_root: &Path,
+    target: &SessionTarget,
+    options: &DeleteOptions,
+) -> anyhow::Result<DeleteOutcome> {
+    let resolved = SessionStore::new(session_root, &target.cwd).resolve_in_workspace(&target.id)?;
+    delete_resolved(session_root, subagents_root, resolved, options)
+}
+
+pub(super) fn delete_targets_in_roots(
+    session_root: &Path,
+    subagents_root: &Path,
+    targets: &[SessionTarget],
+    options: &DeleteOptions,
+) -> anyhow::Result<WorkspaceDeleteOutcome> {
+    let mut outcome = WorkspaceDeleteOutcome::default();
+    for target in targets {
+        if options.protected_session.as_ref() == Some(target) {
+            outcome.kept_protected.push(target.clone());
+            continue;
+        }
+        match delete_target_in_roots(session_root, subagents_root, target, options) {
+            Ok(deleted) => outcome.deleted.push(deleted),
+            Err(error) => outcome.failures.push(CleanupFailure {
+                id: target.id.clone(),
+                cwd: target.cwd.clone(),
+                error: error.to_string(),
+            }),
+        }
+    }
+    Ok(outcome)
+}
+
 fn delete_resolved(
     session_root: &Path,
     subagents_root: &Path,
@@ -135,9 +208,9 @@ fn delete_resolved(
     options: &DeleteOptions,
 ) -> anyhow::Result<DeleteOutcome> {
     if options
-        .protect_session_id
-        .as_deref()
-        .is_some_and(|protected| protected == resolved.id)
+        .protected_session
+        .as_ref()
+        .is_some_and(|protected| protected.id == resolved.id && protected.cwd == resolved.cwd)
     {
         anyhow::bail!(
             "refusing to delete the current session '{}'; start a new session or resume another first",
@@ -153,6 +226,7 @@ fn delete_resolved(
         )
     })?;
 
+    let _session_lease = acquire_delete_session_lease(session_root, &resolved.cwd, &resolved.id)?;
     let parent_session_id = resolved.id.clone();
     let cleanup_guard = subagent::lock_parent_for_cleanup(subagents_root, &parent_session_id)?;
 
@@ -185,14 +259,10 @@ fn delete_resolved(
         forced_run_ids.push(run.id.clone());
     }
 
-    // Delete session bytes first so nested artifacts disappear with the folder
-    // before index rows for this parent are cleared.
-    unit.delete_from_disk()?;
-    index::remove_session(session_root, &workspace_key(&resolved.cwd), &resolved.id)?;
-
-    let deleted_run_count = linked.len();
+    // Finish every fallible side cleanup while the transcript still exists, so
+    // any error leaves an exact target that the caller can retry.
     for run in linked
-        .into_iter()
+        .iter()
         .filter(|run| run.cleanup == RunCleanup::Explicit)
     {
         match fs::remove_dir_all(&run.dir) {
@@ -200,15 +270,19 @@ fn delete_resolved(
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => {
                 return Err(anyhow::anyhow!(
-                    "deleted session '{}' but failed to remove related run {}: {error}",
-                    resolved.id,
-                    run.id
+                    "could not remove related run {} before deleting session '{}': {error}",
+                    run.id,
+                    resolved.id
                 ));
             }
         }
     }
+    cleanup_guard.clear_index()?;
+    index::remove_session(session_root, &workspace_key(&resolved.cwd), &resolved.id)?;
+    unit.delete_from_disk()?;
+    drop(cleanup_guard);
 
-    cleanup_guard.clear_index_and_unlock()?;
+    let deleted_run_count = linked.len();
 
     Ok(DeleteOutcome {
         id: resolved.id,
@@ -315,3 +389,7 @@ pub(super) fn write_linked_run_for_tests(
     subagent::initialize_status(&dir.join(RESULT_FILE_NAME), &status).unwrap();
     dir
 }
+
+#[cfg(test)]
+#[path = "delete_tests.rs"]
+mod tests;

@@ -151,6 +151,15 @@ impl App {
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
+                if self.route_picker_mouse(
+                    PickerMouseEvent::Drag,
+                    column,
+                    row,
+                    size.width,
+                    size.height,
+                ) {
+                    return Ok(());
+                }
                 let layout = self.screen_layout(screen, now);
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
                 self.subagent_panel.clear_pointer_state();
@@ -184,6 +193,15 @@ impl App {
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
+                if self.route_picker_mouse(
+                    PickerMouseEvent::Release,
+                    column,
+                    row,
+                    size.width,
+                    size.height,
+                ) {
+                    return Ok(());
+                }
                 let pressed_subagent = self.subagent_panel.pressed_run_id().map(str::to_owned);
                 let was_scrollbar_drag = self.history.scrollbar_drag().is_some();
                 self.history.set_scrollbar_drag(None);

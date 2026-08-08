@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use pretty_assertions::assert_eq;
 
-use super::{directory_groups, directory_picker, hub_picker, DirectoryGroup};
-use crate::session::SessionSummary;
+use super::{directory_groups, directory_picker, hub_picker, DirectoryGroup, SessionsHubTarget};
+use crate::session::{SessionSummary, SessionTarget};
 
 fn summary(id: &str, cwd: &str, updated_at: u64) -> SessionSummary {
     SessionSummary {
@@ -63,49 +63,41 @@ fn directory_groups_put_the_current_directory_first() {
     );
 }
 
-// Covers: hub rows carry the value namespace and per-row verbs the submit and
-// delete dispatchers branch on.
-// Owner: sessions hub picker
+// Covers: picker rows retain exact workspace identity even when two workspaces
+// use the same session id.
+// Owner: sessions hub picker state
 #[test]
-fn hub_picker_builds_directory_and_session_rows() {
+fn hub_picker_builds_typed_workspace_targets() {
     let groups = vec![
         group(
             "/work/current",
             "~/current",
-            vec![summary("current-session", "/work/current", 200)],
+            vec![summary("same-session", "/work/current", 200)],
         ),
         group(
             "/work/other",
             "~/other",
-            vec![summary("other-session", "/work/other", 100)],
+            vec![summary("same-session", "/work/other", 100)],
         ),
     ];
+    let current = SessionTarget::new("same-session", "/work/current");
 
-    let picker = hub_picker(
+    let build = hub_picker(
         &groups,
-        Some("current-session"),
+        Some(&current),
         Path::new("/work/current"),
         1_000,
+        Some((2, 1)),
     );
 
-    let rows = picker
-        .items
-        .iter()
-        .map(|item| {
-            (
-                item.section.as_deref().unwrap_or_default(),
-                item.value.as_str(),
-                item.selection_verb.unwrap_or_default(),
-            )
-        })
-        .collect::<Vec<_>>();
     assert_eq!(
-        rows,
+        build.targets,
         vec![
-            ("~/current", "dir:/work/current", "browse"),
-            ("~/current", "session:current-session", "close"),
-            ("~/other", "dir:/work/other", "browse"),
-            ("~/other", "session:other-session", "resume"),
+            SessionsHubTarget::CleanupMissingWorkspaces,
+            SessionsHubTarget::Directory(PathBuf::from("/work/current")),
+            SessionsHubTarget::Session(SessionTarget::new("same-session", "/work/current")),
+            SessionsHubTarget::Directory(PathBuf::from("/work/other")),
+            SessionsHubTarget::Session(SessionTarget::new("same-session", "/work/other")),
         ]
     );
 }
@@ -124,16 +116,15 @@ fn directory_picker_lists_only_that_directorys_sessions() {
         ],
     );
 
-    let picker = directory_picker(&scoped, None, 1_000);
+    let build = directory_picker(&scoped, None, Path::new("/work/current"), 1_000);
 
-    assert_eq!(picker.title, "~/other");
-    let rows = picker
-        .items
-        .iter()
-        .map(|item| (item.section.clone(), item.value.as_str()))
-        .collect::<Vec<_>>();
+    assert_eq!(build.picker.title, "~/other");
+    assert!(build.picker.items.iter().all(|item| item.section.is_none()));
     assert_eq!(
-        rows,
-        vec![(None, "session:a-session"), (None, "session:b-session"),]
+        build.targets,
+        vec![
+            SessionsHubTarget::Session(SessionTarget::new("a-session", "/work/other")),
+            SessionsHubTarget::Session(SessionTarget::new("b-session", "/work/other")),
+        ]
     );
 }

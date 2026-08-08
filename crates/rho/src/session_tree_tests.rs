@@ -502,7 +502,15 @@ fn legacy_projection_uses_stable_byte_offset_ids_and_one_upgrade_marker() {
     let dir = session_dir_in_root(root.path(), cwd.path());
     fs::create_dir_all(&dir).unwrap();
     let path = dir.join(format!("1_{id}.jsonl"));
-    fs::write(&path, include_str!("session/fixtures/session-v3.jsonl")).unwrap();
+    let fixture = include_str!("session/fixtures/session-v3.jsonl");
+    let mut lines = fixture.lines();
+    let mut header = serde_json::from_str::<serde_json::Value>(lines.next().unwrap()).unwrap();
+    header["cwd"] = serde_json::Value::String(cwd.path().to_string_lossy().into_owned());
+    let transcript = std::iter::once(header.to_string())
+        .chain(lines.map(str::to_owned))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(&path, format!("{transcript}\n")).unwrap();
     let (session, _) = Session::open_by_id_in_root(root.path(), cwd.path(), id).unwrap();
 
     let first_ids = session

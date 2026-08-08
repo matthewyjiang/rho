@@ -35,11 +35,23 @@ impl App {
                     InlineChoicePending::ClaudeCodeLogout => {
                         self.submit_claude_code_logout_choice(modal.choice).await?;
                     }
-                    InlineChoicePending::DeleteSession { session_id, reopen } => {
-                        self.submit_delete_session_choice(&value, &session_id, reopen)?;
+                    InlineChoicePending::DeleteSession { target } => {
+                        self.submit_delete_session_choice(&value, &target, modal.parent_picker)?;
                     }
-                    InlineChoicePending::DeleteDirectorySessions { cwd } => {
-                        self.submit_delete_directory_sessions_choice(&value, &cwd)?;
+                    InlineChoicePending::DeleteDirectorySessions { cwd, targets } => {
+                        self.submit_delete_directory_sessions_choice(
+                            &value,
+                            &cwd,
+                            &targets,
+                            modal.parent_picker,
+                        )?;
+                    }
+                    InlineChoicePending::CleanupMissingSessionDirectories { targets } => {
+                        self.submit_cleanup_missing_session_directories_choice(
+                            &value,
+                            &targets,
+                            modal.parent_picker,
+                        )?;
                     }
                     InlineChoicePending::DeleteWorkflowPlan { plan_id } => {
                         self.submit_delete_workflow_plan_choice(&value, &plan_id)?;
@@ -63,14 +75,10 @@ impl App {
                         self.resolve_context_handoff(None, *pending, terminal, agent)
                             .await?;
                     }
-                    InlineChoicePending::DeleteSession { reopen, .. } => match reopen {
-                        super::SessionDeleteReopen::ResumePicker => self.open_resume_picker()?,
-                        super::SessionDeleteReopen::SessionsHub => {
-                            self.open_sessions_hub_or_report()
-                        }
-                    },
-                    InlineChoicePending::DeleteDirectorySessions { .. } => {
-                        self.open_sessions_hub_or_report();
+                    InlineChoicePending::DeleteSession { .. }
+                    | InlineChoicePending::DeleteDirectorySessions { .. }
+                    | InlineChoicePending::CleanupMissingSessionDirectories { .. } => {
+                        self.restore_session_choice_parent(modal.parent_picker);
                     }
                     InlineChoicePending::DeleteWorkflowPlan { .. }
                     | InlineChoicePending::DeleteWorkflowRun { .. } => {

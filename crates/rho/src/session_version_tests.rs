@@ -358,6 +358,6 @@ fn session_from_fixture(
     fs::create_dir_all(&dir).unwrap();
     let path = dir.join(format!("100_{id}.jsonl"));
     fs::write(&path, fixture).unwrap();
-    let session = Session::from_parts(root.path(), cwd.path(), id.into(), path);
+    let session = Session::from_parts(root.path(), cwd.path(), id.into(), path).unwrap();
     (root, cwd, session)
 }

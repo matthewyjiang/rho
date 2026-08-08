@@ -63,7 +63,7 @@ use pickers::{
 };
 use resume_delete::RESUME_PICKER_DELETE_STEPS;
 use runtime_info::RUNTIME_INFO_STEPS;
-use sessions_hub::SESSIONS_HUB_STEPS;
+use sessions_hub::{setup_sessions_hub, SESSIONS_HUB_STEPS};
 use statusline::STATUSLINE_HIERARCHY_STEPS;
 use std::time::{Duration, Instant};
 use subagent_rail::SUBAGENT_RAIL_MOUSE_STEPS;
@@ -740,11 +740,12 @@ const ALL_SCENARIOS: &[Scenario] = &[
     ),
     Scenario::new(
         "sessions_hub",
-        "Browse, resume, and delete directory sessions from the /sessions hub",
+        "Inspect a foreign session safely, then browse, resume, and delete locally",
         DEFAULT_SIZE,
         SESSIONS_HUB_STEPS,
         false,
-    ),
+    )
+    .with_setup(setup_sessions_hub),
     Scenario::new(
         "open_model_picker",
         "Open and dismiss the model picker",
