@@ -24,9 +24,24 @@ pub(crate) struct ToolsAndPromptOptions<'a> {
     pub(crate) no_tools: bool,
     pub(crate) no_subagents: bool,
     pub(crate) questionnaire_enabled: bool,
+    /// Whether this run can put an MCP server's question in front of a person.
+    /// Only a host that answers questionnaires may declare `elicitation`.
+    pub(crate) mcp_elicitation: crate::tools::mcp::McpElicitationSupport,
+    /// Whether this run will bind a model that opted-in MCP servers may sample.
+    pub(crate) mcp_sampling: McpSamplingSupport,
     pub(crate) background_subagents: BackgroundSubagents,
     pub(crate) diagnostics: &'a RuntimeDiagnostics,
     pub(crate) agent: &'a BoundAgent,
+}
+
+/// Whether this run offers MCP sampling at all.
+///
+/// A run that never binds a model must not declare the `sampling` capability,
+/// so the decision is made by the host rather than inferred later.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum McpSamplingSupport {
+    Available,
+    Unavailable,
 }
 pub(crate) struct StartupInventory {
     pub(crate) mcp: crate::tools::mcp::McpSessionReport,
@@ -37,6 +52,10 @@ pub(crate) struct ToolsAndPrompt {
     pub(crate) tools: AppToolSet,
     pub(crate) system_prompt: SystemPromptVariants,
     pub(crate) inventory: StartupInventory,
+    /// Late-bound model handle for MCP sampling. Bound once the runtime exists,
+    /// and rebound whenever the user changes models. Left unbound, every
+    /// sampling request fails closed.
+    pub(crate) mcp_sampling: crate::tools::mcp::McpSamplingBridge,
 }
 
 /// The system prompt with and without the advisor steering text.
@@ -117,15 +136,19 @@ pub(crate) async fn assemble_tools_and_prompt(
     } else {
         crate::tools::mcp::McpSessionPlan::Connect
     };
-    let mcp = crate::tools::mcp::McpConnectOutcome::run(
-        mcp_plan,
-        &mcp_config,
-        crate::tools::mcp::McpSessionOptions::new(
-            options.config.max_output_bytes,
-            crate::tools::mcp::McpRoots::for_workspace(options.cwd),
-        ),
+    let mcp_sampling_bridge = crate::tools::mcp::McpSamplingBridge::new();
+    let mut mcp_options = crate::tools::mcp::McpSessionOptions::new(
+        options.config.max_output_bytes,
+        crate::tools::mcp::McpRoots::for_workspace(options.cwd),
     )
-    .await;
+    .with_elicitation(options.mcp_elicitation);
+    match options.mcp_sampling {
+        McpSamplingSupport::Available => {
+            mcp_options = mcp_options.with_sampling(mcp_sampling_bridge.clone());
+        }
+        McpSamplingSupport::Unavailable => {}
+    }
+    let mcp = crate::tools::mcp::McpConnectOutcome::run(mcp_plan, &mcp_config, mcp_options).await;
     let tools = if options.no_tools {
         AppToolSet::disabled().with_mcp(mcp)
     } else {
@@ -214,6 +237,7 @@ pub(crate) async fn assemble_tools_and_prompt(
             mcp: mcp_report,
             plugins: plugins_report,
         },
+        mcp_sampling: mcp_sampling_bridge,
     })
 }
 

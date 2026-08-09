@@ -7,6 +7,7 @@ impl App {
         let config_path = self.info.services.config_repository.configured_path()?;
         let picker = mcp_picker::picker(mcp_picker::McpPickerContext {
             report: &self.mcp_report,
+            catalog: &self.mcp_catalog,
             config_path: &config_path,
         });
         self.input_ui.set_composer(ComposerMode::Picker(picker));

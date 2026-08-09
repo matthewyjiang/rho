@@ -16,22 +16,32 @@ use rho_sdk::tool::Tool;
 use super::sdk_registry::ToolBundle;
 use config::{McpConfig, McpServerConfig};
 
+pub(crate) mod catalog;
 pub(crate) mod client;
 pub(crate) mod config;
 pub(crate) mod definition;
+pub(crate) mod elicitation;
+pub(crate) mod elicitation_form;
+pub(crate) mod inflight;
 pub(crate) mod progress;
 pub(crate) mod report;
 pub(crate) mod result;
 pub(crate) mod roots;
+pub(crate) mod sampling;
 pub(crate) mod session;
 pub(crate) mod tool;
 pub(crate) mod validate;
 
+pub(crate) use catalog::{
+    McpCatalog, McpCatalogError, McpCompletionSupport, McpResource, McpResourceContent,
+};
+pub(crate) use elicitation::McpElicitationSupport;
 pub(crate) use report::{
     McpLoadMode, McpServerReport, McpServerStatus, McpSessionReport, McpToolReport,
     McpTransportSummary,
 };
 pub(crate) use roots::McpRoots;
+pub(crate) use sampling::{McpSamplingBridge, McpSamplingModel};
 pub(crate) use validate::{
     parse_remote_url, validate_environment_header_names, validate_identity,
     validate_literal_headers, validate_stdio_environment,
@@ -51,11 +61,16 @@ pub(crate) enum McpSessionPlan {
 }
 
 /// Session-scoped inputs every connected server shares.
+///
+/// The two server-to-client services default to off, so a caller that cannot
+/// serve them, such as the `rho mcp` inventory pass, gets the safe shape without
+/// saying anything.
 #[derive(Clone, Debug)]
 pub(crate) struct McpSessionOptions {
     pub(crate) max_output_bytes: usize,
     /// Filesystem roots advertised through `roots/list`.
     pub(crate) roots: McpRoots,
+    services: session::McpSessionServices,
 }
 
 impl McpSessionOptions {
@@ -63,13 +78,32 @@ impl McpSessionOptions {
         Self {
             max_output_bytes: max_output_bytes.max(1),
             roots,
+            services: session::McpSessionServices {
+                elicitation: McpElicitationSupport::Unavailable,
+                sampling: None,
+            },
         }
+    }
+
+    /// Declare that this run can put a server's question in front of a person.
+    pub(crate) fn with_elicitation(mut self, support: McpElicitationSupport) -> Self {
+        self.services.elicitation = support;
+        self
+    }
+
+    /// Declare that this run will bind a model that opted-in servers may sample.
+    pub(crate) fn with_sampling(mut self, bridge: McpSamplingBridge) -> Self {
+        self.services.sampling = Some(bridge);
+        self
     }
 }
 
 pub(crate) struct McpConnectOutcome {
     pub(crate) report: McpSessionReport,
     pub(crate) bundle: Option<McpBundle>,
+    /// Prompts and resources the interactive host can offer. Empty unless
+    /// servers connected and declared them.
+    pub(crate) catalog: McpCatalog,
 }
 
 impl McpConnectOutcome {
@@ -84,6 +118,7 @@ impl McpConnectOutcome {
             McpSessionPlan::Inventory(mode) => Self {
                 report: McpSessionReport::from_config_unloaded(config, mode),
                 bundle: None,
+                catalog: McpCatalog::default(),
             },
         }
     }
@@ -134,6 +169,7 @@ impl McpBundle {
                     servers,
                 },
                 bundle: None,
+                catalog: McpCatalog::default(),
             };
         }
 
@@ -148,9 +184,12 @@ impl McpBundle {
                 let identity = identity.clone();
                 let server = server.clone();
                 let roots = options.roots.clone();
+                let services = options.services.clone();
                 async move {
                     let transport = McpTransportSummary::from_server(&server);
-                    let result = session::connect_server_bounded(&identity, &server, &roots).await;
+                    let result =
+                        session::connect_server_bounded(&identity, &server, &roots, &services)
+                            .await;
                     (identity, server, transport, result)
                 }
             });
@@ -184,16 +223,22 @@ impl McpBundle {
                     continue;
                 }
             };
-            servers.push(bundle.register(identity, server, transport, *connected));
+            servers.push(
+                bundle
+                    .register(identity, server, transport, *connected)
+                    .await,
+            );
         }
 
         servers.sort_by(|left, right| left.identity.cmp(&right.identity));
+        let catalog = bundle.catalog.clone();
         McpConnectOutcome {
             report: McpSessionReport {
                 mode: McpLoadMode::Native,
                 servers,
             },
             bundle: bundle.build(),
+            catalog,
         }
     }
 
@@ -229,6 +274,7 @@ struct McpBundleBuilder {
     sessions: Vec<McpSession>,
     maintenance: Vec<tokio::task::JoinHandle<()>>,
     registered_names: HashSet<String>,
+    catalog: McpCatalog,
 }
 
 impl McpBundleBuilder {
@@ -239,10 +285,11 @@ impl McpBundleBuilder {
             sessions: Vec::new(),
             maintenance: Vec::new(),
             registered_names: HashSet::new(),
+            catalog: McpCatalog::default(),
         }
     }
 
-    fn register(
+    async fn register(
         &mut self,
         identity: String,
         server: McpServerConfig,
@@ -254,7 +301,9 @@ impl McpBundleBuilder {
             discovered,
             instructions,
             progress,
+            calls,
             events,
+            offers,
         } = connected;
         let mut exported = Vec::new();
         let mut slots = BTreeMap::new();
@@ -284,6 +333,7 @@ impl McpBundleBuilder {
                 remote_name: remote_name.clone(),
                 peer: session.peer().clone(),
                 progress: progress.clone(),
+                calls: calls.clone(),
                 transport: server.transport.clone(),
                 max_output_bytes: self.max_output_bytes,
             }));
@@ -293,6 +343,12 @@ impl McpBundleBuilder {
             });
         }
 
+        let catalog = self
+            .catalog
+            .register(identity.clone(), session.peer().clone(), offers);
+        // Prompts and resources are listed before the session goes live, so the
+        // first `/` or `@` a user types already matches.
+        session::list_offers(&catalog, offers).await;
         let live = report::McpLiveServerState::default();
         self.maintenance
             .push(tokio::spawn(session::maintain_session(
@@ -303,6 +359,8 @@ impl McpBundleBuilder {
                     slots,
                     live: live.clone(),
                     events,
+                    catalog,
+                    offers,
                 },
             )));
         self.sessions.push(session);

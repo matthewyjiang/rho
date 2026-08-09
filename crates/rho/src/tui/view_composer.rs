@@ -213,14 +213,11 @@ impl App {
         );
 
         let mut lines = matches
-            .iter()
-            .enumerate()
-            .skip(start)
-            .take(MAX_COMMAND_SUGGESTIONS)
-            .map(|(index, path)| {
+            .rows(start, MAX_COMMAND_SUGGESTIONS)
+            .map(|(index, entry)| {
                 let selected = index == selected_index;
                 let marker = if selected { ">" } else { " " };
-                let text = format!("{marker} @{path}");
+                let text = format!("{marker} {}", file_palette_row(&entry));
                 let style = if selected {
                     Theme::brand()
                 } else {
@@ -250,5 +247,30 @@ impl App {
         }
 
         lines
+    }
+}
+
+/// One `@` palette row.
+///
+/// A workspace file shows the mention it will insert. A resource shows its
+/// server, its own label, and whether picking it attaches content or writes a
+/// template the user still has to fill in, because those look identical
+/// otherwise and behave differently.
+fn file_palette_row(entry: &file_picker::FilePaletteEntry) -> String {
+    match entry {
+        file_picker::FilePaletteEntry::WorkspaceFile(path) => format!("@{path}"),
+        file_picker::FilePaletteEntry::McpResource(resource) => {
+            let suffix = if resource.templated {
+                " · template"
+            } else {
+                ""
+            };
+            format!(
+                "@{}  {}:{}{suffix}",
+                resource.uri,
+                resource.server,
+                resource.label()
+            )
+        }
     }
 }

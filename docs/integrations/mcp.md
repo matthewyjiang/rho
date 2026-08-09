@@ -71,6 +71,10 @@ Authentication discovery and OAuth are not implemented; supply server-issued cre
 Rho identifies itself in `initialize` as `rho` with the running version, and declares the client capabilities it actually answers:
 
 - `roots`: Rho advertises the session workspace as one `file://` root. The declaration sets `listChanged: false`, because a session's workspace never changes and Rho would never send the notification.
+- `elicitation`: declared only in a run that can put a question in front of a person, and only in form mode with `schemaValidation: false`. See [Questions from a server](#questions-from-a-server).
+- `sampling`: declared only to a server that opted in with `sampling = "ask"`, and only in a run that has a model to spend. See [Completions for a server](#completions-for-a-server).
+
+Rho never declares a capability it would then always refuse. A run that cannot show a questionnaire, such as `rho mcp list --connect` or an automation run started without a host-input responder, declares no `elicitation`, so a well-behaved server never asks.
 
 A server's `instructions` from `initialize` reach the model. Rho fences each server's text in the system prompt and marks it as documentation from that server, not as instructions from the user.
 
@@ -140,12 +144,172 @@ A server that declares `tools.listChanged` may send `notifications/tools/list_ch
 - **Withdrawn tools** stay registered under their exported name and fail with a clear reason if called.
 - **Added tools** cannot join the registry mid-session, because a session's tool set is fixed once it starts. `/mcp` and `rho mcp show` list them and say a restart is needed.
 
+## Prompts
+
+A server that declares the `prompts` capability offers its prompts as slash commands:
+
+```text
+/mcp:<server_identity>:<prompt_name>
+```
+
+They appear in the command palette next to built-in commands, prompt templates, and skills. Rho lists a server's prompts once, at connect, so typing `/` matches without a round-trip. `notifications/prompts/list_changed` refreshes the list.
+
+Arguments follow the command. A prompt that takes exactly one argument takes everything you type as that argument's value, because `key=value` for a single field is friction with no purpose:
+
+```text
+/mcp:docs:search how do sessions resume
+```
+
+A prompt with several arguments reads whitespace-separated pairs:
+
+```text
+/mcp:tickets:triage id=4821 severity=high
+```
+
+Leaving out a required argument reports which one is missing and starts no turn.
+
+### Argument suggestions
+
+A server that also declares the `completions` capability can suggest values for
+the argument you are filling in. Put the cursor in a value and the palette
+offers what the server sent back:
+
+```text
+/mcp:tickets:triage id=4821 severity=hi
+                                    ^ high, highest
+```
+
+Picking one replaces that value alone. The command and any other arguments you
+have already typed stay as they are.
+
+The suggestion is a round-trip, so it arrives a moment after the keystroke that
+asked for it. Rho keeps one request in flight at a time and reuses answers it
+already holds, so typing fast costs one request per reply rather than one per
+character. A server that declares no `completions` capability is never asked,
+and a request that fails or arrives late simply leaves the palette empty:
+nothing blocks, and no error interrupts what you are writing.
+
+Rho fetches the prompt when you submit, not when you complete the command, because `prompts/get` is a round-trip to the server. The returned messages become one user turn. A message the server marked as coming from the assistant is labelled as such, so the model reads it as prior context rather than as a request from you. Prompt text is capped by `max_output_bytes`, like tool output.
+## Resources
+
+Tools are for the model. Resources are for you: a server publishes documents,
+records, or images, and you decide which of them a message carries.
+
+At connect, Rho lists the resources of every server that declares the
+`resources` capability, from both `resources/list` and
+`resources/templates/list`. The listing is held for the session and re-listed
+when a server sends `notifications/resources/list_changed`, so matching a
+resource costs no round-trip.
+
+### Picking one
+
+Type `@` in the message box. The palette that already completes workspace file
+paths also offers server resources, matched on their URI against whatever you
+type after the `@`. Resources are listed first, because a workspace holds far
+more files than a server holds resources.
+
+Each row shows the resource URI, the server that offers it, and the server's own
+name for it. Enter or Tab picks the highlighted row.
+
+What picking does depends on the row:
+
+| Row | What Enter does |
+| --- | --- |
+| workspace file | writes `@path` into the message, unchanged from before |
+| resource | reads it from the server and attaches the content, removing the `@` token |
+| resource **template** | writes the template URI into the message for you to fill in |
+
+A template URI carries [RFC 6570](https://www.rfc-editor.org/rfc/rfc6570)
+placeholders, such as `db://users/{id}`, so there is nothing to read until you
+replace them. Rho inserts it as text and marks the row `· template`.
+
+### While the read runs
+
+`resources/read` is a round-trip, so the resource appears in the composer right
+away as `[resource: <uri> · reading]`. You can keep typing. The message cannot be
+sent until the read finishes, and Backspace on the attachment cancels it, the
+same as any other attachment.
+
+A read that fails removes the attachment and reports the reason, so the composer
+never gets stuck holding a resource that never arrived.
+
+### What arrives
+
+| What the server returned | What the message carries |
+| --- | --- |
+| text | a text attachment holding the body |
+| a single `image/*` blob | an image the model can look at |
+| any other blob | a text attachment holding `[resource <mime>, <size>]` |
+| several bodies | one text attachment holding all of them |
+
+Image blobs are passed to the provider exactly as the server encoded them.
+Resource text is capped by the same `max_output_bytes` limit as tool output, so
+one large resource cannot swamp the turn it joins.
+## Questions from a server
+
+A server may interrupt a tool call with `elicitation/create` to ask the user something. Rho shows the request as a form on the tool card that caused it, titled with the asking server's identity so it is never mistaken for one of Rho's own questions.
+
+**How Rho decides which call the question belongs to.** The protocol carries nothing in an `elicitation/create` that names the `tools/call` it came from. Rho therefore records the in-flight calls of each session and answers only when exactly one call is running on that server. With no call running, or with several, Rho declines rather than interrupting a caller it guessed at. Two servers asking at the same time never confuse each other, because the record is per session.
+
+**What Rho does with the answer.**
+
+| What happened | What the server is told |
+| --- | --- |
+| The user filled the form in | `accept`, with the answers typed to the schema |
+| The user dismissed the form | `cancel`, which also ends the turn |
+| Rho could not ask, or could not type the answer | `decline` |
+
+Rho declines rather than failing the request, because a decline is a first-class MCP answer that lets the server carry on without the information.
+
+**Fidelity limit.** Rho's questionnaire is choice-only: every question is a list of values, optionally with free text, and every answer arrives as text. An elicitation schema is richer than that, so the mapping is lossy in one direction:
+
+| Schema field | What the user sees |
+| --- | --- |
+| `enum` (single or multi select) | the choices, with titles when the schema supplies them |
+| `boolean` | a yes/no confirm |
+| `string` | free text |
+| `number`, `integer` | free text, parsed back to a number |
+
+Constraints such as `minLength`, `minimum`, `maxItems`, and `format` are shown to the user as help text and are **not enforced**, which is why Rho declares `schemaValidation: false`. Rho does guarantee the JSON *type* of every field it sends back: a `number` field never returns the string `"3"`. An answer that cannot carry its declared type declines the request instead of sending something the server did not ask for.
+
+A schema Rho cannot render at all, such as one with no properties or an enum with no values, is declined whole rather than shown as a partial form. URL-mode elicitation is always declined: Rho opens no browser, and accepting without opening one would tell the server the user had answered.
+
+While a form is open, the tool call's two-minute budget is paused. The budget exists to bound an unresponsive server, and a turn waiting on a person is not unresponsive.
+
+## Completions for a server
+
+A server may ask Rho's model to write something with `sampling/createMessage`. This spends the user's tokens on work the user did not ask for, so it is behind **two independent gates that both have to open**.
+
+**Gate one, config.** The server opts in per entry. The default is `deny`, and a server left at the default never sees `sampling` in Rho's declared capabilities:
+
+```toml
+[mcp.servers.reviewer]
+transport = "stdio"
+command = "reviewer-mcp"
+sampling = "ask"
+```
+
+Plugin-provided servers cannot opt themselves in; only the selected config file can.
+
+**Gate two, the user.** Every individual request still raises a question naming the server, the number of messages, and the token ceiling it asked for. A refusal rejects the request and no model call happens. The gate is a question rather than a permission prompt on purpose: Rho's default permission mode allows every capability by policy, so an approval prompt would never reach a person there, and token spend a server asked for is not something that mode ever opted into.
+
+Sampling is routed to the in-flight tool call the same way elicitation is, and refuses under the same rules: no call in flight, or more than one, and the request is rejected. A run with no model bound, such as `rho run` or `rho mcp list --connect`, rejects every sampling request and declares no `sampling` capability. Sampling spend is recorded in the usage ledger under the `mcp_sampling` purpose, so it is attributable apart from the user's own turns.
+
+**Fidelity limits.**
+
+- **`modelPreferences` is ignored.** The provider, model, and credentials are the user's configuration. Letting a server steer them would let it choose which of the user's accounts pays and which model sees the prompt. Rho always uses the session's current model and reports its name in the result.
+- **The conversation is flattened.** Rho's one-shot path takes a system prompt and one user turn, so a multi-turn sampling conversation is rendered as labelled text. Non-text blocks are named but not sent; Rho does not forward a server's images or tool results into the user's model.
+- **`maxTokens` is not enforced.** Rho shows the requested ceiling in the confirmation but has no per-request token cap to apply.
+- **`includeContext`, `temperature`, `stopSequences`, `tools`, and `toolChoice` are not honored.** Rho declares no sampling sub-capabilities, so a server should not expect them.
+
+A sampling call is bounded at three minutes. Cancelling the turn cancels it.
+
 ## Inspect status
 
 There is no marketplace in Rho. Configure servers in the selected config file, then inspect config or live load status:
 
-- **Interactive:** `/mcp` lists configured servers, transport, status, errors, and exported tool names for the current session. `/doctor` includes an MCP health row.
-- **CLI:** `rho mcp list` prints configured servers from the selected config and plugins without starting them. `rho mcp show <id>` prints one server. Pass `--connect` on either command to start enabled servers and report live status and discovered tools. Both accept `--json`.
+- **Interactive:** `/mcp` lists configured servers, transport, status, errors, exported tool names, and any prompts and resources the server offers, for the current session. `/doctor` includes an MCP health row.
+- **CLI:** `rho mcp list` prints configured servers from the selected config and plugins without starting them. `rho mcp show <id>` prints one server, including its prompts and resources when started with `--connect`. Pass `--connect` on either command to start enabled servers and report live status and discovered tools. Both accept `--json`.
 
 Use `/mcp` when you already have a session open. Use `rho mcp list` from a shell to verify config before starting the TUI, and `rho mcp list --connect` when you need a live probe.
 

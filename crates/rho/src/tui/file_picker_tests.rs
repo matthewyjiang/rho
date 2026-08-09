@@ -180,6 +180,71 @@ fn ranked_matches_are_capped_for_weak_queries() {
     assert!(matches[0].starts_with("file-"));
 }
 
+// Covers: mixing the two sources must filter server resources by the same query
+// as the files, keep them reachable ahead of a long workspace listing, and leave
+// the workspace order untouched. Appending them would bury them; re-ranking the
+// files with them would move rows a person already learned the position of.
+// Owner: pure unit (`@` palette ranking).
+#[test]
+fn palette_mixes_server_resources_ahead_of_workspace_files() {
+    fn resource(uri: &str) -> crate::tools::mcp::McpResource {
+        crate::tools::mcp::McpResource {
+            server: "docs".into(),
+            uri: uri.into(),
+            name: uri.into(),
+            title: None,
+            description: None,
+            mime_type: None,
+            templated: false,
+        }
+    }
+
+    let discovered = DiscoveredFilePaths::complete(vec![
+        "notes/alpha.md".to_string(),
+        "notes/beta.md".to_string(),
+    ]);
+    let resources = vec![resource("res://alpha"), resource("res://gamma")];
+
+    let cases = [
+        (
+            "a query keeps only the resources it matches, resources first",
+            "alpha",
+            vec![
+                FilePaletteEntry::McpResource(resource("res://alpha")),
+                FilePaletteEntry::WorkspaceFile("notes/alpha.md".into()),
+                FilePaletteEntry::WorkspaceFile("notes/beta.md".into()),
+            ],
+        ),
+        (
+            "a query no resource matches leaves the workspace listing alone",
+            "beta",
+            vec![
+                FilePaletteEntry::WorkspaceFile("notes/alpha.md".into()),
+                FilePaletteEntry::WorkspaceFile("notes/beta.md".into()),
+            ],
+        ),
+        (
+            "a bare mention offers everything in discovery order",
+            "",
+            vec![
+                FilePaletteEntry::McpResource(resource("res://alpha")),
+                FilePaletteEntry::McpResource(resource("res://gamma")),
+                FilePaletteEntry::WorkspaceFile("notes/alpha.md".into()),
+                FilePaletteEntry::WorkspaceFile("notes/beta.md".into()),
+            ],
+        ),
+    ];
+
+    for (name, query, expected) in cases {
+        let matches = file_palette_matches(discovered.clone(), &resources, query);
+        let rows = matches
+            .rows(0, usize::MAX)
+            .map(|(_, entry)| entry)
+            .collect::<Vec<_>>();
+        assert_eq!(rows, expected, "{name}");
+    }
+}
+
 #[test]
 fn scroll_counts_track_hidden_rows_above_and_below() {
     assert_eq!(file_palette_scroll_counts(12, 0, 5), (0, 0, 7));

@@ -19,7 +19,7 @@ use base64::Engine;
 /// 8 MiB of decoded pixels; encoded sources are smaller, so 4 MiB is a
 /// generous tripwire for one screenshot while still bounding memory an
 /// untrusted server can force Rho to hold on a single tool result.
-const MAX_RETAINED_IMAGE_BYTES: usize = 4 * 1024 * 1024;
+pub(super) const MAX_RETAINED_IMAGE_BYTES: usize = 4 * 1024 * 1024;
 
 /// Serialized JSON Schema bytes Rho will compile for `outputSchema` validation.
 const MAX_OUTPUT_SCHEMA_BYTES: usize = 64 * 1024;
@@ -103,6 +103,33 @@ pub(super) fn render(
         return Err(ToolError::new(ToolErrorKind::Execution, rendered.text));
     }
     Ok(rendered)
+}
+
+/// Render the messages one `prompts/get` returned into composer text.
+///
+/// A prompt is a conversation the server suggests. Rho seeds it as one user
+/// message, because the composer submits one turn, so each message is labelled
+/// with the role the server assigned it. Binary blocks become descriptors only;
+/// a prompt is text the user is about to send, not a tool card.
+pub(super) fn render_prompt_messages(
+    messages: &[rmcp::model::PromptMessage],
+    max_output_bytes: usize,
+) -> String {
+    let mut assets = Vec::new();
+    let mut budget = AssetBudget::default();
+    let sections = messages
+        .iter()
+        .filter_map(|message| {
+            let body = render_block(&message.content, &mut assets, &mut budget)?;
+            Some(match message.role {
+                rmcp::model::Role::User => body,
+                // Anything the server puts in the assistant's mouth is labelled,
+                // so the model reads it as prior context and not as a request.
+                _ => format!("[assistant]\n{body}"),
+            })
+        })
+        .collect::<Vec<_>>();
+    rho_tools::tool::truncate(sections.join("\n\n"), max_output_bytes)
 }
 
 /// Fail when structured content does not match the tool's declared schema.
@@ -288,6 +315,23 @@ fn binary_section(
     budget.retained_bytes = budget.retained_bytes.saturating_add(size);
     assets.push(ToolAsset::new(media_type.to_string(), bytes));
     descriptor
+}
+
+/// The one line Rho uses to stand in for binary it cannot show as text.
+///
+/// Hosts that keep the bytes elsewhere, such as the composer keeping an image
+/// attachment, still describe them this way so a person sees the same wording
+/// wherever the content came from. `decoded_size` is `None` when the payload was
+/// not valid base64.
+pub(crate) fn binary_descriptor(
+    label: &str,
+    media_type: &str,
+    decoded_size: Option<usize>,
+) -> String {
+    match decoded_size {
+        Some(size) => format!("[{label} {media_type}, {}]", byte_size(size)),
+        None => format!("[{label} {media_type}, not valid base64]"),
+    }
 }
 
 fn byte_size(bytes: usize) -> String {

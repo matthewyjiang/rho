@@ -117,6 +117,34 @@ impl From<McpLogLevel> for rmcp::model::LoggingLevel {
     }
 }
 
+/// Whether a server may ask Rho's model for a completion through
+/// `sampling/createMessage`.
+///
+/// Config opt-in is only the first of two gates. Even an opted-in server must
+/// still get the user's answer before each individual request runs, because a
+/// server that samples in a loop spends the user's tokens. A server left at the
+/// default never sees `sampling` in Rho's declared capabilities, so a
+/// well-behaved server never asks.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum McpSamplingPolicy {
+    /// Reject every `sampling/createMessage` and never declare the capability.
+    #[default]
+    Deny,
+    /// The server may ask; the user allows or refuses each request.
+    Ask,
+}
+
+impl McpSamplingPolicy {
+    /// Whether Rho may declare `sampling` to this server.
+    pub(crate) fn is_offered(self) -> bool {
+        match self {
+            Self::Deny => false,
+            Self::Ask => true,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct McpServerConfig {
     pub(crate) enabled: bool,
@@ -125,6 +153,8 @@ pub(crate) struct McpServerConfig {
     /// Unset leaves the server's own default in place.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) log_level: Option<McpLogLevel>,
+    /// Whether this server may ask Rho's model for completions.
+    pub(crate) sampling: McpSamplingPolicy,
     #[serde(flatten)]
     pub(crate) transport: McpTransport,
     #[serde(skip)]
@@ -146,6 +176,8 @@ impl<'de> Deserialize<'de> for McpServerConfig {
                 tools: McpToolFilter,
                 #[serde(default)]
                 log_level: Option<McpLogLevel>,
+                #[serde(default)]
+                sampling: McpSamplingPolicy,
                 command: String,
                 #[serde(default)]
                 args: Vec<String>,
@@ -162,6 +194,8 @@ impl<'de> Deserialize<'de> for McpServerConfig {
                 tools: McpToolFilter,
                 #[serde(default)]
                 log_level: Option<McpLogLevel>,
+                #[serde(default)]
+                sampling: McpSamplingPolicy,
                 url: String,
                 #[serde(default)]
                 headers: BTreeMap<String, String>,
@@ -170,63 +204,69 @@ impl<'de> Deserialize<'de> for McpServerConfig {
             },
         }
 
-        let (enabled, tools, log_level, transport) = match RawServer::deserialize(deserializer)? {
-            RawServer::Stdio {
-                enabled,
-                tools,
-                log_level,
-                command,
-                args,
-                cwd,
-                env,
-                env_from_env,
-            } => {
-                if command.trim().is_empty() {
-                    return Err(serde::de::Error::custom("stdio command must not be empty"));
+        let (enabled, tools, log_level, sampling, transport) =
+            match RawServer::deserialize(deserializer)? {
+                RawServer::Stdio {
+                    enabled,
+                    tools,
+                    log_level,
+                    sampling,
+                    command,
+                    args,
+                    cwd,
+                    env,
+                    env_from_env,
+                } => {
+                    if command.trim().is_empty() {
+                        return Err(serde::de::Error::custom("stdio command must not be empty"));
+                    }
+                    super::validate_stdio_environment(&env, &env_from_env)
+                        .map_err(serde::de::Error::custom)?;
+                    (
+                        enabled,
+                        tools,
+                        log_level,
+                        sampling,
+                        McpTransport::Stdio {
+                            command,
+                            args,
+                            cwd,
+                            env,
+                            env_from_env,
+                        },
+                    )
                 }
-                super::validate_stdio_environment(&env, &env_from_env)
-                    .map_err(serde::de::Error::custom)?;
-                (
+                RawServer::StreamableHttp {
                     enabled,
                     tools,
                     log_level,
-                    McpTransport::Stdio {
-                        command,
-                        args,
-                        cwd,
-                        env,
-                        env_from_env,
-                    },
-                )
-            }
-            RawServer::StreamableHttp {
-                enabled,
-                tools,
-                log_level,
-                url,
-                headers,
-                headers_from_env,
-            } => {
-                super::parse_remote_url(&url).map_err(serde::de::Error::custom)?;
-                super::validate_literal_headers(&headers).map_err(serde::de::Error::custom)?;
-                super::validate_environment_header_names(&headers_from_env)
-                    .map_err(serde::de::Error::custom)?;
-                (
-                    enabled,
-                    tools,
-                    log_level,
-                    McpTransport::StreamableHttp {
-                        url,
-                        headers,
-                        headers_from_env,
-                    },
-                )
-            }
-        };
+                    sampling,
+                    url,
+                    headers,
+                    headers_from_env,
+                } => {
+                    super::parse_remote_url(&url).map_err(serde::de::Error::custom)?;
+                    super::validate_literal_headers(&headers).map_err(serde::de::Error::custom)?;
+                    super::validate_environment_header_names(&headers_from_env)
+                        .map_err(serde::de::Error::custom)?;
+                    (
+                        enabled,
+                        tools,
+                        log_level,
+                        sampling,
+                        McpTransport::StreamableHttp {
+                            url,
+                            headers,
+                            headers_from_env,
+                        },
+                    )
+                }
+            };
         Ok(Self {
             enabled,
             tools,
             log_level,
+            sampling,
             transport,
             filesystem: None,
         })

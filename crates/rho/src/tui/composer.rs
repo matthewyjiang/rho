@@ -642,7 +642,8 @@ impl App {
             && !self.input_ui.command_palette_dismissed()
             && (self.cursor_in_command_token()
                 || !commands::argument_choices(self.input_ui.text(), self.input_ui.cursor())
-                    .is_empty())
+                    .is_empty()
+                || !self.mcp_argument_choices().is_empty())
             && !self.command_matches().is_empty()
     }
 
@@ -661,15 +662,22 @@ impl App {
     }
 
     pub(super) fn clamp_command_selection(&mut self) {
-        let prefix = self
-            .cursor_in_command_token()
-            .then(|| commands::command_prefix(self.input_ui.text()).map(str::to_ascii_lowercase))
-            .flatten();
+        // What the palette is answering: a command prefix while the cursor is
+        // still in the command token, otherwise the argument value it has moved
+        // on to. Either way a change starts the selection over, so a row picked
+        // for one question is never left highlighted for the next.
+        let in_command_token = self.cursor_in_command_token();
+        let prefix = if in_command_token {
+            commands::command_prefix(self.input_ui.text()).map(str::to_ascii_lowercase)
+        } else {
+            self.mcp_argument_cursor()
+                .map(|cursor| cursor.palette_identity())
+        };
         if self.input_ui.command_prefix() != prefix.as_deref() {
             self.input_ui.set_command_prefix(prefix);
             self.input_ui.set_command_selection(0);
         }
-        if self.input_ui.command_prefix().is_some() {
+        if in_command_token && self.input_ui.command_prefix().is_some() {
             self.refresh_skill_match_cache();
         }
 

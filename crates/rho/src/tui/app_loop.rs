@@ -5,7 +5,7 @@ use crossterm::event::{Event, KeyEventKind};
 use ratatui::DefaultTerminal;
 
 use super::{
-    clipboard, mouse_capture, paste_burst::normalize_paste, ActivityPhase, ActivityStatus, App,
+    media_attach, mouse_capture, paste_burst::normalize_paste, ActivityPhase, ActivityStatus, App,
     ComposerMode, HerdrState, HerdrUserWait, InteractiveRuntime, TuiResult, ViewModelEvent,
 };
 
@@ -62,6 +62,10 @@ impl App {
             self.poll_pending_interactive_login(terminal, agent).await?;
             needs_redraw |= self.poll_limits_command().await?;
             needs_redraw |= self.poll_changelog_command().await?;
+            // Runs on every pass because the composer is what decides whether
+            // there is anything to ask about, and it changes on key events
+            // rather than on a schedule of its own.
+            needs_redraw |= self.poll_mcp_argument_completion().await;
             needs_redraw |= self.poll_markdown_images();
             let shell_changed = self.finish_completed_inline_shells().await?;
             if !self.is_ui_busy() {
@@ -92,6 +96,7 @@ impl App {
                 || self.pending_interactive_login.is_some()
                 || self.pending_usage_limits.is_some()
                 || self.pending_changelog.is_some()
+                || self.mcp_argument_completions.is_pending()
                 || self.has_pending_subagent_attach()
                 || !self.pending_inline_shells.is_empty()
                 || self.history.images().has_pending()
@@ -120,8 +125,8 @@ impl App {
                     }
                     needs_redraw = true;
                 }
-                outcome = clipboard::next_media_attach_completion(&mut self.media_attach_tasks), if media_attach_pending => {
-                    self.finish_pasted_media(outcome);
+                outcome = media_attach::next_media_attach_completion(&mut self.media_attach_tasks), if media_attach_pending => {
+                    self.finish_media_attach(outcome);
                     needs_redraw = true;
                 }
                 _ = tokio::time::sleep(timeout) => {
@@ -132,6 +137,7 @@ impl App {
         }
         self.cancel_limits_command().await;
         self.cancel_changelog_command().await;
+        self.mcp_argument_completions.cancel();
         if let Some(mut pending) = self.pending_session_title.take() {
             pending.cancel();
             let _ = (&mut pending).await;

@@ -6,7 +6,7 @@ use crate::tui::{
     inline_shell::InlineShellMode,
     paste_burst::{expand_paste_segments, PasteBurst},
     ChatMedia, ComposerAttachment, ComposerMode, FileMatchCache, InputDraft, InputSubmissionMode,
-    MediaAttachId, PasteSegment, SkillMatchCache,
+    MediaAttachId, PasteSegment, PendingAttachmentSource, SkillMatchCache,
 };
 
 #[derive(Debug)]
@@ -404,9 +404,14 @@ impl InputUi {
         self.attachments.push(ComposerAttachment::Ready(media));
     }
 
-    pub(in crate::tui) fn push_pending_attachment(&mut self, id: MediaAttachId, name: String) {
+    pub(in crate::tui) fn push_pending_attachment(
+        &mut self,
+        id: MediaAttachId,
+        source: PendingAttachmentSource,
+        name: String,
+    ) {
         self.attachments
-            .push(ComposerAttachment::Pending { id, name });
+            .push(ComposerAttachment::Pending { id, source, name });
     }
 
     pub(in crate::tui) fn pop_attachment(&mut self) -> Option<ComposerAttachment> {

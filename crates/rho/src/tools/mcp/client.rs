@@ -14,24 +14,51 @@ use std::future::Future;
 
 use rmcp::{
     model::{
-        ClientCapabilities, ClientInfo, Implementation, ListRootsResult, LoggingLevel,
-        LoggingMessageNotificationParam, ProgressNotificationParam, RootsCapabilities,
+        ClientCapabilities, ClientInfo, CreateMessageRequestParams, CreateMessageResult,
+        ElicitRequestParams, ElicitResult, ElicitationCapability, FormElicitationCapability,
+        Implementation, ListRootsResult, LoggingLevel, LoggingMessageNotificationParam,
+        ProgressNotificationParam, RootsCapabilities, SamplingCapability,
     },
     service::{NotificationContext, RequestContext, RoleClient},
     ClientHandler, ErrorData as McpError,
 };
 
-use super::{progress::McpProgressRouter, roots::McpRoots};
+use super::{
+    elicitation::McpElicitationService, progress::McpProgressRouter, roots::McpRoots,
+    sampling::McpSamplingService,
+};
 
 /// A server-initiated change that the owning session must act on.
+///
+/// The shared `Changed` suffix is deliberate: each variant is one
+/// `notifications/<primitive>/list_changed`, and matching the protocol's own
+/// naming is what makes the wire message and the variant obviously the same
+/// thing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
 pub(crate) enum McpServerEvent {
     /// `notifications/tools/list_changed`: re-run discovery for this server.
     ToolsChanged,
+    /// `notifications/prompts/list_changed`: re-list this server's prompts.
+    PromptsChanged,
+    /// `notifications/resources/list_changed`: re-list this server's resources.
+    ResourcesChanged,
 }
 
 pub(crate) type McpEventSender = tokio::sync::mpsc::UnboundedSender<McpServerEvent>;
 pub(crate) type McpEventReceiver = tokio::sync::mpsc::UnboundedReceiver<McpServerEvent>;
+
+/// What one session may ask Rho to do beyond answering `roots/list`.
+///
+/// Bundled so the capability declaration and the handlers that honor it are
+/// built from one value: a capability Rho declares but cannot serve is worse
+/// than one it never offered.
+pub(crate) struct McpClientServices {
+    pub(crate) elicit: McpElicitationService,
+    /// `Some` only when this server opted into sampling and this run can serve
+    /// it.
+    pub(crate) sample: Option<McpSamplingService>,
+}
 
 /// Client handler for one MCP server session.
 pub(crate) struct McpClientHandler {
@@ -40,6 +67,7 @@ pub(crate) struct McpClientHandler {
     roots: McpRoots,
     progress: McpProgressRouter,
     events: McpEventSender,
+    services: McpClientServices,
 }
 
 impl McpClientHandler {
@@ -48,14 +76,16 @@ impl McpClientHandler {
         roots: McpRoots,
         progress: McpProgressRouter,
         events: McpEventSender,
+        services: McpClientServices,
     ) -> Self {
         let identity = identity.into();
         Self {
-            info: client_info(&roots),
+            info: client_info(&roots, &services),
             identity,
             roots,
             progress,
             events,
+            services,
         }
     }
 }
@@ -63,7 +93,7 @@ impl McpClientHandler {
 /// Rho's `initialize` payload. The capability set is the contract servers read
 /// before they send anything back, so it must list exactly what this handler
 /// answers.
-fn client_info(roots: &McpRoots) -> ClientInfo {
+fn client_info(roots: &McpRoots, services: &McpClientServices) -> ClientInfo {
     let mut capabilities = ClientCapabilities::default();
     // Advertise roots only when there is a workspace to advertise. A server
     // that sees the capability may reasonably expect a non-empty list.
@@ -73,6 +103,20 @@ fn client_info(roots: &McpRoots) -> ClientInfo {
         // `notifications/roots/list_changed`.
         declared.list_changed = Some(false);
         capabilities.roots = Some(declared);
+    }
+    if services.elicit.is_available() {
+        // Form mode only: Rho has no way to send a person to a URL from a
+        // background session. Schema validation is declared off because Rho
+        // types answers to the schema but does not enforce its constraints.
+        capabilities.elicitation = Some(
+            ElicitationCapability::new()
+                .with_form(FormElicitationCapability::new().with_schema_validation(false)),
+        );
+    }
+    if services.sample.is_some() {
+        // No sub-capabilities: Rho forwards neither tools nor server context
+        // into a sampling request.
+        capabilities.sampling = Some(SamplingCapability::default());
     }
     ClientInfo::new(
         capabilities,
@@ -98,6 +142,22 @@ impl ClientHandler for McpClientHandler {
         std::future::ready(Ok(ListRootsResult::new(roots)))
     }
 
+    fn create_elicitation(
+        &self,
+        request: ElicitRequestParams,
+        _context: RequestContext<RoleClient>,
+    ) -> impl Future<Output = Result<ElicitResult, McpError>> + Send + '_ {
+        self.services.elicit.elicit(request)
+    }
+
+    fn create_message(
+        &self,
+        params: CreateMessageRequestParams,
+        _context: RequestContext<RoleClient>,
+    ) -> impl Future<Output = Result<CreateMessageResult, McpError>> + Send + '_ {
+        self.sample(params)
+    }
+
     fn on_progress(
         &self,
         params: ProgressNotificationParam,
@@ -119,9 +179,45 @@ impl ClientHandler for McpClientHandler {
         &self,
         _context: NotificationContext<RoleClient>,
     ) -> impl Future<Output = ()> + Send + '_ {
-        // A closed receiver means the session is shutting down; the change has
-        // no one left to apply it.
-        let _ = self.events.send(McpServerEvent::ToolsChanged);
+        self.announce(McpServerEvent::ToolsChanged)
+    }
+
+    fn on_prompt_list_changed(
+        &self,
+        _context: NotificationContext<RoleClient>,
+    ) -> impl Future<Output = ()> + Send + '_ {
+        self.announce(McpServerEvent::PromptsChanged)
+    }
+
+    fn on_resource_list_changed(
+        &self,
+        _context: NotificationContext<RoleClient>,
+    ) -> impl Future<Output = ()> + Send + '_ {
+        self.announce(McpServerEvent::ResourcesChanged)
+    }
+}
+
+impl McpClientHandler {
+    /// A server that did not opt into sampling gets the same answer as one
+    /// talking to a client that never declared the capability, because as far
+    /// as that server is concerned Rho does not implement the method.
+    async fn sample(
+        &self,
+        params: CreateMessageRequestParams,
+    ) -> Result<CreateMessageResult, McpError> {
+        let Some(sampling) = self.services.sample.as_ref() else {
+            return Err(McpError::method_not_found::<
+                rmcp::model::CreateMessageRequestMethod,
+            >());
+        };
+        sampling.create_message(params).await
+    }
+
+    /// Hand a server-announced change to the session's maintenance task. A
+    /// closed receiver means the session is shutting down, so the change has no
+    /// one left to apply it.
+    fn announce(&self, event: McpServerEvent) -> std::future::Ready<()> {
+        let _ = self.events.send(event);
         std::future::ready(())
     }
 }

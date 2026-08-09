@@ -83,7 +83,11 @@ mod login_secret_input;
 mod markdown;
 mod markdown_image;
 mod mcp_actions;
+mod mcp_argument_completion;
 mod mcp_picker;
+mod mcp_prompt;
+mod mcp_resource;
+mod media_attach;
 mod message_history;
 mod message_render;
 mod model_actions;
@@ -167,7 +171,9 @@ use types::*;
 use activity::{ActivityPhase, ActivityStatus, LoadingSpinner};
 use app_state::{HistoryUi, InputUi, PendingWorkUi, TurnUi};
 use approval::{approval_lines, ApprovalKeyOutcome};
-use chat_media::{ChatMedia, ChatTextDocument, ComposerAttachment, MediaAttachId};
+use chat_media::{
+    ChatMedia, ChatTextDocument, ComposerAttachment, MediaAttachId, PendingAttachmentSource,
+};
 use clipboard::ClipboardWriter;
 use config_editor::{
     config_number_input_lines, resolve_web_search_editor_value, ConfigMutation, ConfigNumberInput,
@@ -397,6 +403,7 @@ pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::
                     info,
                     herdr_graphics,
                     agent.mcp_report().clone(),
+                    agent.mcp_catalog().clone(),
                     agent.plugins_report().clone(),
                 );
                 app.terminal_session = Some(TerminalSession::acquire());
@@ -470,13 +477,19 @@ struct App {
     /// Set by `/title` so auto-title generation cannot overwrite a manual name.
     session_title_locked: bool,
     clipboard: Box<dyn ClipboardWriter + Send>,
-    media_attach_tasks: Vec<clipboard::MediaAttachTask>,
+    media_attach_tasks: Vec<media_attach::MediaAttachTask>,
     pending_subagent_attaches: Vec<PendingSubagentAttach>,
     last_mouse_position: Option<(u16, u16)>,
     /// Screen-space drag selection for text outside the history area.
     screen_selection: Option<TextSelection>,
     /// MCP inventory for `/mcp` and `/doctor` (session snapshot from tool assembly).
     mcp_report: crate::tools::mcp::McpSessionReport,
+    /// Prompts and resources connected MCP servers offer, for palette matching.
+    mcp_catalog: crate::tools::mcp::McpCatalog,
+    /// Fetched argument suggestions for the MCP prompt being typed, so palette
+    /// matching reads a local cache instead of awaiting a server.
+    mcp_argument_completions: mcp_argument_completion::McpArgumentCompletions,
+    /// Agent Plugins load report captured at session start for `/doctor`.
     plugins_report: crate::plugins::PluginLoadReport,
 }
 

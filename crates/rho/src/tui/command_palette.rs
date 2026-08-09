@@ -17,6 +17,14 @@ impl App {
                 .collect();
         }
 
+        // Argument values belong to a command the user has already settled, so
+        // they are offered where command matching has nothing left to say
+        // rather than mixed into the command list.
+        let mcp_argument_choices = self.mcp_argument_choices();
+        if !mcp_argument_choices.is_empty() {
+            return mcp_argument_choices;
+        }
+
         let Some(prefix) = commands::command_prefix(self.input_ui.text()) else {
             return Vec::new();
         };
@@ -68,6 +76,25 @@ impl App {
             matches.insert(0, exact);
         }
         matches.extend(template_matches);
+        // The catalog is listed once at connect, so palette matching stays a
+        // local lookup. Prompts are already ordered by server then name.
+        matches.extend(
+            self.mcp_catalog
+                .prompts()
+                .into_iter()
+                .filter(|prompt| prompt.command_name().starts_with(&prefix))
+                .map(|prompt| CommandChoice {
+                    usage: prompt.usage(),
+                    // A server that wrote no description still named the prompt,
+                    // so fall back to that rather than to the same sentence for
+                    // every prompt on the server.
+                    description: prompt.description.clone().unwrap_or_else(|| {
+                        format!("{} · from MCP server `{}`", prompt.label(), prompt.server)
+                    }),
+                    name: prompt.command_name(),
+                    kind: CommandChoiceKind::McpPrompt,
+                }),
+        );
         // discovered skills are sorted by name; filtering preserves that order.
         matches.extend(
             self.discovered_skills()
@@ -149,10 +176,24 @@ impl App {
                     .set_submission_mode(super::InputSubmissionMode::Prompt);
                 (input, cursor)
             }
-            CommandChoiceKind::Skill => {
+            // Both complete to a slash token and expand on submit: a skill
+            // needs a tool call, and an MCP prompt needs a `prompts/get`
+            // round-trip, neither of which can happen in this sync path.
+            CommandChoiceKind::Skill | CommandChoiceKind::McpPrompt => {
                 self.input_ui
                     .set_submission_mode(super::InputSubmissionMode::ParseCommands);
                 complete_slash_command(self.input_ui.text(), self.input_ui.cursor(), &choice.name)
+            }
+            // Only the argument's own range is rewritten: the command and every
+            // other argument already typed stay exactly as they are.
+            CommandChoiceKind::McpPromptArgument { value } => {
+                self.input_ui
+                    .set_submission_mode(super::InputSubmissionMode::ParseCommands);
+                super::mcp_argument_completion::replace_value(
+                    self.input_ui.text(),
+                    value,
+                    &choice.name,
+                )
             }
         };
         self.input_ui.set_text_and_cursor(input, cursor);

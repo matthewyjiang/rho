@@ -45,6 +45,104 @@ pub(super) struct DiscoveredFilePaths {
     pub(super) incomplete: bool,
 }
 
+/// One row the `@` palette can offer.
+///
+/// A mention can name something in the workspace or something a connected MCP
+/// server holds. The two are told apart here rather than by inspecting a string,
+/// because selecting them does entirely different things: one writes a path into
+/// the message, the other pulls content into it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum FilePaletteEntry {
+    WorkspaceFile(String),
+    McpResource(crate::tools::mcp::McpResource),
+}
+
+/// The `@` palette's rows: matched server resources, then workspace paths.
+///
+/// The two sources stay in the lists they arrived in, and a row is built only
+/// when something asks for it. Merging them into one vector of entries would
+/// cost a heap allocation per path every time the query changes, and a bare `@`
+/// on a large repository offers a hundred thousand paths that nobody scrolls to.
+/// The workspace list here is the discovery cache's own `Arc`, shared rather
+/// than copied.
+#[derive(Clone, Debug)]
+pub(super) struct FilePaletteMatches {
+    resources: Arc<Vec<crate::tools::mcp::McpResource>>,
+    paths: Arc<Vec<String>>,
+    /// True when workspace discovery stopped early.
+    pub(super) incomplete: bool,
+}
+
+impl FilePaletteMatches {
+    pub(super) fn empty() -> Self {
+        Self {
+            resources: Arc::new(Vec::new()),
+            paths: Arc::new(Vec::new()),
+            incomplete: false,
+        }
+    }
+
+    pub(super) fn len(&self) -> usize {
+        self.resources.len() + self.paths.len()
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The row at `index`, counting resources first.
+    pub(super) fn get(&self, index: usize) -> Option<FilePaletteEntry> {
+        if let Some(resource) = self.resources.get(index) {
+            return Some(FilePaletteEntry::McpResource(resource.clone()));
+        }
+        self.paths
+            .get(index - self.resources.len())
+            .cloned()
+            .map(FilePaletteEntry::WorkspaceFile)
+    }
+
+    /// The rows from `start`, at most `count` of them, for a scrolled view.
+    pub(super) fn rows(
+        &self,
+        start: usize,
+        count: usize,
+    ) -> impl Iterator<Item = (usize, FilePaletteEntry)> + '_ {
+        (start..self.len())
+            .take(count)
+            .filter_map(|index| Some((index, self.get(index)?)))
+    }
+}
+
+/// Rank the resources connected servers offer, then put them ahead of the
+/// workspace files.
+///
+/// Resources lead because a workspace commonly holds thousands of files and a
+/// server offers a handful. Appended, they would sit below a screenful of paths
+/// and never be seen. The workspace order itself is left exactly as discovery
+/// produced it.
+///
+/// Resources are matched on their URI, which is also what the palette shows and
+/// what a template inserts, so what a person types lines up with what they read.
+pub(super) fn file_palette_matches(
+    discovered: DiscoveredFilePaths,
+    resources: &[crate::tools::mcp::McpResource],
+    query: &str,
+) -> FilePaletteMatches {
+    let keys = resources
+        .iter()
+        .map(|resource| resource.uri.as_str())
+        .collect::<Vec<_>>();
+    let matched = fuzzy_matching_indexes(&keys, query)
+        .into_iter()
+        .map(|index| resources[index].clone())
+        .collect::<Vec<_>>();
+    FilePaletteMatches {
+        resources: Arc::new(matched),
+        paths: discovered.paths,
+        incomplete: discovered.incomplete,
+    }
+}
+
 impl DiscoveredFilePaths {
     fn complete(paths: Vec<String>) -> Self {
         Self {
@@ -290,15 +388,29 @@ fn path_to_unix_string(path: &Path) -> String {
 }
 
 pub(super) fn fuzzy_matching_paths(paths: &[String], query: &str) -> Vec<String> {
+    let keys = paths.iter().map(String::as_str).collect::<Vec<_>>();
+    fuzzy_matching_indexes(&keys, query)
+        .into_iter()
+        .map(|index| paths[index].clone())
+        .collect()
+}
+
+/// Rank `keys` against `query`, best first, returning the positions that
+/// survived. Callers that carry more than a string per row map the positions
+/// back onto their own rows.
+///
+/// An empty query keeps every key in its original order, which is what makes a
+/// bare `@` list the workspace as discovered.
+fn fuzzy_matching_indexes(keys: &[&str], query: &str) -> Vec<usize> {
     let query = query.trim();
     if query.is_empty() {
-        return paths.to_vec();
+        return (0..keys.len()).collect();
     }
 
-    let mut matches = paths
+    let mut matches = keys
         .iter()
         .enumerate()
-        .filter_map(|(index, path)| fuzzy_match_score(path, query).map(|score| (index, score)))
+        .filter_map(|(index, key)| fuzzy_match_score(key, query).map(|score| (index, score)))
         .collect::<Vec<_>>();
 
     if matches.len() > MAX_RANKED_FILE_MATCHES {
@@ -313,10 +425,7 @@ pub(super) fn fuzzy_matching_paths(paths: &[String], query: &str) -> Vec<String>
             .cmp(left_score)
             .then_with(|| left_index.cmp(right_index))
     });
-    matches
-        .into_iter()
-        .map(|(index, _)| paths[index].clone())
-        .collect()
+    matches.into_iter().map(|(index, _)| index).collect()
 }
 
 pub(super) fn file_palette_scroll_counts(
