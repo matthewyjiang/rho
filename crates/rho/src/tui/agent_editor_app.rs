@@ -191,14 +191,7 @@ impl App {
             agent_choice_picker(field, draft)
         };
         self.open_child_picker(picker);
-        self.set_status(match field {
-            AgentChoiceField::PromptPolicy => "prompt policy",
-            AgentChoiceField::Runtime => "runtime",
-            AgentChoiceField::ModelPolicy => "model policy",
-            AgentChoiceField::Auth => "auth",
-            AgentChoiceField::Reasoning => "reasoning",
-            AgentChoiceField::InheritClaudeConfig => "inherit Claude config",
-        });
+        self.set_status(field.status_label());
     }
 
     fn submit_agent_field_choice(&mut self, field: AgentChoiceField, value: &str) {
@@ -224,6 +217,12 @@ impl App {
                             } else {
                                 draft.set_auth_selection(Some(rest.to_string()))
                             }
+                        }
+                        AgentChoiceField::ClaudeModel => {
+                            // Empty rest is the "Claude Code default" row, which
+                            // clears the pinned model.
+                            draft.set_model_text(rest.to_string());
+                            true
                         }
                         AgentChoiceField::Reasoning => draft.set_reasoning_kind(rest),
                         AgentChoiceField::InheritClaudeConfig => {
@@ -286,8 +285,10 @@ impl App {
     }
 
     fn open_agent_model_or_text(&mut self, draft: &crate::agent::AgentDefinition) {
+        // Claude models are not catalog rows: the CLI resolves the value itself
+        // and cannot enumerate models, so the editor offers the family aliases.
         if draft.runtime.runtime() == AgentRuntime::ClaudeCli {
-            self.open_agent_text_input(AgentField::Model, draft.model_text());
+            self.open_agent_choice(AgentChoiceField::ClaudeModel, draft);
             return;
         }
         self.refresh_available_auths();

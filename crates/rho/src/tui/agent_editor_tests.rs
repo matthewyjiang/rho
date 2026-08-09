@@ -296,3 +296,64 @@ fn rho_field_picker_includes_auth_when_model_is_pinned() {
         .collect();
     assert!(values.contains(&AGENT_FIELD_AUTH));
 }
+
+// Covers: Claude models are chosen from the offered aliases, and a definition
+// that pins a full model id keeps its row so the editor never silently rewrites
+// a hand-written agent file.
+// Owner: tui agent editor
+#[test]
+fn claude_model_choices_offer_aliases_and_keep_a_configured_model() {
+    let prefix = AgentChoiceField::ClaudeModel.choice_prefix();
+
+    let default_rows = claude_model_choice_items(&claude_draft(), prefix);
+    let expected_labels = std::iter::once("Claude Code default")
+        .chain(
+            crate::claude_runtime::models::CLAUDE_MODEL_ALIASES
+                .iter()
+                .map(|alias| alias.name),
+        )
+        .collect::<Vec<_>>();
+    assert_eq!(
+        default_rows
+            .iter()
+            .map(|item| item.label.as_str())
+            .collect::<Vec<_>>(),
+        expected_labels
+    );
+    assert_eq!(default_rows[0].value, prefix);
+    assert!(default_rows[0].badge.is_some());
+
+    let mut pinned = claude_draft();
+    pinned.set_model_text("claude-opus-4-6".into());
+    let pinned_rows = claude_model_choice_items(&pinned, prefix);
+    let last = pinned_rows.last().expect("configured row");
+    assert_eq!(last.label, "claude-opus-4-6");
+    assert_eq!(last.value, format!("{prefix}claude-opus-4-6"));
+    assert!(last.badge.is_some());
+    assert!(pinned_rows[0].badge.is_none());
+
+    let mut alias = claude_draft();
+    alias.set_model_text("opus".into());
+    let alias_rows = claude_model_choice_items(&alias, prefix);
+    assert_eq!(alias_rows.len(), default_rows.len());
+    assert_eq!(
+        alias_rows
+            .iter()
+            .filter(|item| item.badge.is_some())
+            .map(|item| item.label.as_str())
+            .collect::<Vec<_>>(),
+        vec!["opus"]
+    );
+}
+
+// Covers: the Model row must show what Claude Code will actually use, and Rho's
+// `inherit` names a different concept than Claude's default.
+// Owner: tui agent editor
+#[test]
+fn claude_model_badge_names_the_claude_code_default() {
+    assert_eq!(claude_model_badge(&claude_draft()), "default");
+
+    let mut pinned = claude_draft();
+    pinned.set_model_text("sonnet".into());
+    assert_eq!(claude_model_badge(&pinned), "sonnet");
+}

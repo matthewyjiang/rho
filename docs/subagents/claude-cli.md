@@ -78,7 +78,7 @@ flowchart TD
 
    - `tools:` uses Claude Code names (`Read`, `Edit`, `Bash(git *)`), not Rho capabilities
    - Omitting `tools` means no tools. There is no `tools: all`
-   - `model:` is a Claude model name or Claude alias such as `opus`, not a Rho `@alias`
+   - `model:` is a Claude model alias such as `opus`, or a full Claude model name. It is not a Rho `@alias`. In `/agents`, the Model row offers the aliases Rho knows (`fable`, `opus`, `sonnet`, `haiku`) plus a Claude Code default row; a definition that pins a full model name keeps its own row
    - optional `reasoning:` maps to Claude `--effort` (`low`/`medium`/`high`/`xhigh`/`max`); omit to inherit Claude's default; `off` and `minimal` are rejected
    - Keep permission mode at Plan or Auto before launch. Supervised refuses Claude-cli spawn because `claude -p` cannot prompt through Rho
 
@@ -143,6 +143,7 @@ Spawn flags are fixed and deliberate:
 | `--model` | From the agent `model:` field when set, passed through unchanged. Omitted when the definition inherits Claude's model. Parent provider/model updates do not overwrite Claude agents |
 | `--effort` | From agent `reasoning:` when set (`low`, `medium`, `high`, `xhigh`, `max`). Omitted when unset so Claude keeps its default. `off` and `minimal` never reach spawn |
 | `--max-turns` | Exact configured step/turn cap from the bound launch data. If the installed binary rejects the flag, the run fails with a clear error |
+| `--no-session-persistence` | Delegated agent runs omit it, so `claude --resume <session-id>` works. Rho's own one-shot calls, such as a Claude Code advisor, set it and leave no session behind |
 | cwd | Explicit project directory |
 | prompt | Written on stdin, not argv |
 

@@ -260,21 +260,32 @@ impl App {
                     return Ok(());
                 };
                 let id = target.id.as_str();
-                let selected = if value == model_picker::USE_CONVERSATION_MODEL {
-                    self.select_internal_agent_model(id, None)?;
-                    true
-                } else {
-                    self.refresh_available_auths();
-                    let current = self.internal_agent_model_selection(id);
-                    match self.resolve_model_selection(&value, &current.provider, &current.auth) {
-                        Ok(selection) => {
-                            self.select_internal_agent_model(id, Some(selection.selection))?;
-                            true
-                        }
-                        Err(err) => {
-                            self.insert_entry(&Entry::Error(err.to_string()));
-                            self.set_status("internal agent model switch failed");
-                            false
+                let selected = match model_picker::parse_internal_agent_model_row(&value) {
+                    model_picker::InternalAgentModelRow::Conversation => {
+                        self.select_internal_agent_model(id, None)?;
+                        true
+                    }
+                    model_picker::InternalAgentModelRow::ClaudeCode { model } => {
+                        self.select_internal_agent_claude_model(id, model)?;
+                        true
+                    }
+                    model_picker::InternalAgentModelRow::RhoModel(reference) => {
+                        self.refresh_available_auths();
+                        let current = self.internal_agent_rho_model_or_conversation(id);
+                        match self.resolve_model_selection(
+                            &reference,
+                            &current.provider,
+                            &current.auth,
+                        ) {
+                            Ok(selection) => {
+                                self.select_internal_agent_model(id, Some(selection.selection))?;
+                                true
+                            }
+                            Err(err) => {
+                                self.insert_entry(&Entry::Error(err.to_string()));
+                                self.set_status("internal agent model switch failed");
+                                false
+                            }
                         }
                     }
                 };
@@ -675,20 +686,43 @@ impl App {
         id: &str,
         selection: Option<ModelSelection>,
     ) -> anyhow::Result<()> {
-        let label = selection
+        let config = selection.map(|selection| {
+            crate::config::InternalAgentModelConfig::new(
+                selection.provider,
+                selection.model,
+                selection.auth,
+            )
+        });
+        self.store_internal_agent_model(id, config)
+    }
+
+    /// Points an internal agent at the Claude Code CLI. `model` is passed
+    /// through as `--model`; `None` lets Claude Code choose.
+    pub(super) fn select_internal_agent_claude_model(
+        &mut self,
+        id: &str,
+        model: Option<String>,
+    ) -> anyhow::Result<()> {
+        self.store_internal_agent_model(
+            id,
+            Some(crate::config::InternalAgentModelConfig::claude_cli(model)),
+        )
+    }
+
+    /// Saves an internal agent's selection, or clears it with `None` so the
+    /// agent falls back to the conversation model.
+    fn store_internal_agent_model(
+        &mut self,
+        id: &str,
+        config: Option<crate::config::InternalAgentModelConfig>,
+    ) -> anyhow::Result<()> {
+        let label = config
             .as_ref()
-            .map(|selection| {
-                rho_providers::provider::model_reference(&selection.provider, &selection.model)
-            })
+            .map(crate::config::InternalAgentModelConfig::display_reference)
             .unwrap_or_else(|| "conversation model".into());
         let previous = self.info.runtime.internal_agents.get(id).cloned();
-        let save_result = match selection {
-            Some(selection) => {
-                let mut config = crate::config::InternalAgentModelConfig::new(
-                    selection.provider,
-                    selection.model,
-                    selection.auth,
-                );
+        let save_result = match config {
+            Some(mut config) => {
                 config.reasoning = carry_internal_agent_reasoning(&config, previous.as_ref());
                 self.info
                     .runtime
@@ -778,13 +812,56 @@ impl App {
             .internal_agents
             .get(id)
             .cloned()
+            .unwrap_or_else(|| self.conversation_internal_agent_model())
+    }
+
+    /// Provider and auth context for resolving a partially-qualified Rho model
+    /// reference against an agent's current selection.
+    ///
+    /// A delegating selection carries no Rho provider or auth, so the
+    /// conversation's stack is the answer here: this is the path that switches
+    /// an agent off Claude Code and back onto a Rho model.
+    pub(super) fn internal_agent_rho_model_or_conversation(
+        &self,
+        id: &str,
+    ) -> crate::config::RhoInternalAgentModel {
+        self.info
+            .runtime
+            .internal_agents
+            .get(id)
+            .and_then(crate::config::InternalAgentModelConfig::rho)
+            .cloned()
             .unwrap_or_else(|| {
-                crate::config::InternalAgentModelConfig::new(
-                    self.info.runtime.provider.clone(),
-                    self.info.runtime.model.clone(),
-                    self.info.runtime.auth.clone(),
-                )
+                self.conversation_internal_agent_model()
+                    .rho()
+                    .cloned()
+                    .expect("conversation selection is always a rho selection")
             })
+    }
+
+    fn conversation_internal_agent_model(&self) -> crate::config::InternalAgentModelConfig {
+        crate::config::InternalAgentModelConfig::new(
+            self.info.runtime.provider.clone(),
+            self.info.runtime.model.clone(),
+            self.info.runtime.auth.clone(),
+        )
+    }
+}
+
+/// The Rho half of a selection that is about to run on Rho's provider stack.
+///
+/// Only agents declaring `accepts_claude_runtime: false` reach here, and neither
+/// the config loader nor the picker will build a delegating selection for one.
+/// Failing loudly beats running a model this path never asked for.
+pub(super) fn expect_rho_internal_agent_model(
+    id: &str,
+    selection: crate::config::InternalAgentModelConfig,
+) -> crate::config::RhoInternalAgentModel {
+    match selection.target {
+        crate::config::InternalAgentTarget::Rho(model) => model,
+        crate::config::InternalAgentTarget::ClaudeCli { .. } => {
+            panic!("internal agent '{id}' declares accepts_claude_runtime: false")
+        }
     }
 }
 

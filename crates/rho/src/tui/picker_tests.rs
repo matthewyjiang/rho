@@ -158,6 +158,25 @@ fn fuzzy_filter_matches_label_section_and_badge() {
     assert_eq!(matches_for("zzzz"), Vec::<usize>::new());
 }
 
+// Covers: typing a row's own text must match that row. The bonus-seeking walk
+// is greedy and can strand the rest of the needle on a haystack that repeats
+// characters, which read to the user as "no matches" for the exact label.
+// Owner: tui picker filter policy
+#[test]
+fn fuzzy_filter_matches_a_row_by_its_full_text() {
+    let items = vec![
+        item("claude-code/default"),
+        item("claude-code/opus"),
+        item("anthropic/claude-fable-5"),
+    ];
+
+    let matches_for = |filter: &str| super::fuzzy_picker_matching_indices(&items, filter);
+    assert_eq!(matches_for("claude-code/opus"), vec![1]);
+    assert_eq!(matches_for("claude-code/default"), vec![0]);
+    assert_eq!(matches_for("opus"), vec![1]);
+    assert_eq!(matches_for("claude-code"), vec![0, 1]);
+}
+
 // Covers: the wheel scrolls the nav viewport without moving the selection,
 // clamps to the overflow range, and keyboard navigation afterwards brings the
 // window back to the selection with minimal movement.

@@ -22,7 +22,10 @@ fn config_normalizes_provider_profiles_for_top_level_and_internal_models() {
     );
     let title = config.internal_agent_model("session-title").unwrap();
     assert_eq!(
-        (title.provider.as_str(), title.auth.as_str()),
+        (
+            title.expect_rho().provider.as_str(),
+            title.expect_rho().auth.as_str()
+        ),
         ("openrouter", "openrouter-oauth")
     );
 }
@@ -46,8 +49,8 @@ fn config_canonicalizes_legacy_poolside_wire_model_ids() {
     assert_eq!(config.provider, "poolside");
     assert_eq!(config.model, "laguna-m.1");
     let title = config.internal_agent_model("session-title").unwrap();
-    assert_eq!(title.provider, "poolside");
-    assert_eq!(title.model, "laguna-m.1");
+    assert_eq!(title.expect_rho().provider, "poolside");
+    assert_eq!(title.expect_rho().model, "laguna-m.1");
 }
 
 // Covers: config load must use one validated endpoint write path

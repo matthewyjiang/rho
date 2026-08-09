@@ -379,10 +379,7 @@ impl App {
             self.set_status("select an advisor model first");
             return Ok(());
         };
-        let capabilities = rho_providers::model::models_dev::current_reasoning_capabilities(
-            &selection.provider,
-            &selection.model,
-        );
+        let capabilities = crate::agent::internal_agent_reasoning_capabilities(&selection);
         if capabilities == rho_providers::model::ReasoningCapabilities::NotConfigurable {
             return Ok(());
         }
