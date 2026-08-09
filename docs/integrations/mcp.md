@@ -105,7 +105,32 @@ mcp__<server_identity>__<tool_name>
 
 Components containing only ASCII letters, digits, and `_` remain unchanged. Rho encodes every other component, and components beginning with the reserved `_rho_` prefix, as `_rho_` followed by the lowercase hexadecimal UTF-8 bytes. This encoding keeps distinct server and remote tool names distinct. Descriptions include the owning server identity for diagnostics. `allow` is an optional allowlist; `deny` always wins.
 
-MCP tool calls use Rho's native tool registry, cancellation, and shutdown path. Results preserve the MCP result, including structured content and non-text content, as JSON in the native tool result. MCP error results and transport failures become tool failures without stopping sibling servers.
+MCP tool calls use Rho's native tool registry, cancellation, and shutdown path. MCP error results and transport failures become tool failures without stopping sibling servers.
+
+### Tool declarations
+
+Rho reads more than the name, description, and input schema:
+
+- **`title`** appears in the exported description, so the model sees the readable name next to the server identity.
+- **Annotations** (`readOnlyHint`, `destructiveHint`, `openWorldHint`) appear as `Server hint:` lines in the description and as notices on the tool card. They are hints from a server Rho does not control, so they never relax a permission or skip an approval. A read-only hint changes the card's icon and nothing else.
+- **`outputSchema`** sets a contract. A server that declares one must return `structuredContent`; a result without it fails the call rather than passing a half-answer to the model.
+
+### Results
+
+Each content block is rendered for what it is, rather than serialized as a JSON envelope:
+
+| Block | What the model reads | What the card shows |
+| --- | --- | --- |
+| `text` | the text | the text |
+| `image` | `[image image/png, 41.2 KB]` | the image |
+| `audio` | `[audio audio/wav, 1.1 MB]` | the descriptor |
+| `resource` (text) | `[resource <uri>]` and the body | the same |
+| `resource` (blob) | `[resource <uri>] [resource <mime>, <size>]` | the image, if it is one |
+| `resource_link` | the URI, name, and description | the same |
+
+Binary payloads never reach the model as base64. A returned image rides on the tool card as an asset, and the model gets a short descriptor it can reason about.
+
+When a result carries `structuredContent`, that JSON is what the model reads. Servers are asked to mirror structured content as text for older clients; Rho drops the mirrored copy so one result does not cost the context twice.
 
 ### Tool lists that change mid-session
 

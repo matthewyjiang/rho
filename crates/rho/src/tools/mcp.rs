@@ -11,18 +11,17 @@ use std::{
     sync::Arc,
 };
 
-use rho_sdk::{
-    model::ToolSpec,
-    tool::{OperationKind, Tool, ToolMetadata},
-};
+use rho_sdk::tool::Tool;
 
 use super::sdk_registry::ToolBundle;
-use config::{McpConfig, McpServerConfig, McpTransport};
+use config::{McpConfig, McpServerConfig};
 
 pub(crate) mod client;
 pub(crate) mod config;
+pub(crate) mod definition;
 pub(crate) mod progress;
 pub(crate) mod report;
+pub(crate) mod result;
 pub(crate) mod roots;
 pub(crate) mod session;
 pub(crate) mod tool;
@@ -38,6 +37,7 @@ pub(crate) use validate::{
     validate_literal_headers, validate_stdio_environment,
 };
 
+use definition::McpToolDefinition;
 use session::{ConnectResult, ConnectedServer, McpSession, SessionMaintenance};
 use tool::{namespaced_tool_name, McpTool, McpToolSlot};
 
@@ -256,7 +256,6 @@ impl McpBundleBuilder {
             progress,
             events,
         } = connected;
-        let metadata = tool_metadata(&server);
         let mut exported = Vec::new();
         let mut slots = BTreeMap::new();
         let mut filtered_out_count = 0usize;
@@ -273,7 +272,7 @@ impl McpBundleBuilder {
                 collision_skipped_count += 1;
                 continue;
             }
-            let slot = Arc::new(McpToolSlot::new(exported_spec(
+            let slot = Arc::new(McpToolSlot::new(McpToolDefinition::from_remote(
                 &identity,
                 &remote_name,
                 &remote,
@@ -285,7 +284,7 @@ impl McpBundleBuilder {
                 remote_name: remote_name.clone(),
                 peer: session.peer().clone(),
                 progress: progress.clone(),
-                metadata: metadata.clone(),
+                transport: server.transport.clone(),
                 max_output_bytes: self.max_output_bytes,
             }));
             exported.push(McpToolReport {
@@ -327,33 +326,6 @@ impl McpBundleBuilder {
             sessions: tokio::sync::Mutex::new(self.sessions),
             maintenance: tokio::sync::Mutex::new(self.maintenance),
         })
-    }
-}
-
-/// The native spec Rho exports for one remote tool. Also used on refresh, so
-/// the exported name and description stay derived from one place.
-fn exported_spec(identity: &str, remote_name: &str, remote: &rmcp::model::Tool) -> ToolSpec {
-    let description = remote
-        .description
-        .as_deref()
-        .unwrap_or("No description supplied by the MCP server");
-    ToolSpec {
-        name: namespaced_tool_name(identity, remote_name),
-        description: format!("MCP server `{identity}`: {description}"),
-        input_schema: serde_json::Value::Object((*remote.input_schema).clone()),
-    }
-}
-
-/// Presentation-only facts for tool cards. Config is the trust boundary for
-/// starting a server; tool calls do not re-synthesize process/network grants.
-fn tool_metadata(server: &McpServerConfig) -> ToolMetadata {
-    match &server.transport {
-        McpTransport::Stdio { command, args, .. } => ToolMetadata::new()
-            .operation(OperationKind::Execute)
-            .command_summary(format!("{command} ({} arguments)", args.len())),
-        McpTransport::StreamableHttp { url, .. } => ToolMetadata::new()
-            .operation(OperationKind::Network)
-            .url(url.clone()),
     }
 }
 

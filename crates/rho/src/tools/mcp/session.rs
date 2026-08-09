@@ -27,6 +27,7 @@ use rmcp::{
 use super::{
     client::{McpClientHandler, McpEventReceiver, McpServerEvent},
     config::{McpServerConfig, McpTransport},
+    definition::McpToolDefinition,
     progress::McpProgressRouter,
     report::McpLiveServerState,
     roots::McpRoots,
@@ -317,7 +318,7 @@ async fn refresh_tools(maintenance: &SessionMaintenance) {
         match maintenance.slots.get(&remote_name) {
             Some(slot) => {
                 present.insert(remote_name.clone());
-                if slot.refresh(super::exported_spec(
+                if slot.refresh(McpToolDefinition::from_remote(
                     &maintenance.identity,
                     &remote_name,
                     &remote,
