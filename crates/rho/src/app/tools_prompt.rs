@@ -120,7 +120,10 @@ pub(crate) async fn assemble_tools_and_prompt(
     let mcp = crate::tools::mcp::McpConnectOutcome::run(
         mcp_plan,
         &mcp_config,
-        options.config.max_output_bytes,
+        crate::tools::mcp::McpSessionOptions::new(
+            options.config.max_output_bytes,
+            crate::tools::mcp::McpRoots::for_workspace(options.cwd),
+        ),
     )
     .await;
     let tools = if options.no_tools {
@@ -167,6 +170,14 @@ pub(crate) async fn assemble_tools_and_prompt(
                 if !launch_delegation_enabled {
                     prompt::append_subagents_disabled_instruction(&mut built.text);
                 }
+                // Server guidance describes the MCP tools this run actually has,
+                // so it belongs in both prompt variants.
+                let mcp_instructions = mcp_report
+                    .servers
+                    .iter()
+                    .filter_map(|server| Some((server.identity.as_str(), server.instructions()?)))
+                    .collect::<Vec<_>>();
+                prompt::append_mcp_instructions(&mut built.text, mcp_instructions.iter().copied());
                 let mut advisor_text = built.text.clone();
                 prompt::append_advisor_instruction(&mut advisor_text);
                 if !extra.is_empty() {

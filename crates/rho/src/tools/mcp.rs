@@ -1,53 +1,45 @@
+//! Native Model Context Protocol client.
+//!
+//! Configuration is the trust boundary: enabling a server is permission to
+//! start it, discover its tools, and expose them for the session. Everything
+//! below is per-session mechanics on top of that decision.
+
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashSet},
     future::Future,
-    net::IpAddr,
-    path::Path,
     pin::Pin,
     sync::Arc,
 };
 
-use anyhow::{bail, Context};
-use http::{HeaderName, HeaderValue};
 use rho_sdk::{
     model::ToolSpec,
-    tool::{
-        OperationKind, PreparedToolInvocation, Tool, ToolError, ToolErrorKind, ToolInvocation,
-        ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture, ToolSecurity,
-    },
-    Workspace,
-};
-use rmcp::{
-    model::{CallToolRequestParams, ClientInfo},
-    service::RunningService,
-    transport::{
-        streamable_http_client::StreamableHttpClientTransportConfig, which_command,
-        StreamableHttpClientTransport, TokioChildProcess,
-    },
-    RoleClient, ServiceExt,
+    tool::{OperationKind, Tool, ToolMetadata},
 };
 
 use super::sdk_registry::ToolBundle;
 use config::{McpConfig, McpServerConfig, McpTransport};
 
+pub(crate) mod client;
 pub(crate) mod config;
+pub(crate) mod progress;
 pub(crate) mod report;
+pub(crate) mod roots;
+pub(crate) mod session;
+pub(crate) mod tool;
+pub(crate) mod validate;
 
 pub(crate) use report::{
     McpLoadMode, McpServerReport, McpServerStatus, McpSessionReport, McpToolReport,
     McpTransportSummary,
 };
+pub(crate) use roots::McpRoots;
+pub(crate) use validate::{
+    parse_remote_url, validate_environment_header_names, validate_identity,
+    validate_literal_headers, validate_stdio_environment,
+};
 
-type McpSession = RunningService<RoleClient, ClientInfo>;
-
-// The local end-to-end fixture initializes in about 40 ms. Two minutes leaves
-// a 3,000x margin for cold package runners while still bounding broken servers.
-const MCP_SERVER_STARTUP_BUDGET: std::time::Duration = std::time::Duration::from_secs(120);
-// Graceful MCP session teardown should be quick; bound it so one hung server
-// cannot stall process or CLI shutdown.
-const MCP_SESSION_CLOSE_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
-// Bound in-flight tool calls so an unresponsive server cannot hang a turn.
-const MCP_TOOL_CALL_BUDGET: std::time::Duration = std::time::Duration::from_secs(120);
+use session::{ConnectResult, ConnectedServer, McpSession, SessionMaintenance};
+use tool::{namespaced_tool_name, McpTool, McpToolSlot};
 
 /// Whether this session should connect MCP servers or only inventory config.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,6 +48,23 @@ pub(crate) enum McpSessionPlan {
     Connect,
     /// Emit config inventory without starting transports.
     Inventory(McpLoadMode),
+}
+
+/// Session-scoped inputs every connected server shares.
+#[derive(Clone, Debug)]
+pub(crate) struct McpSessionOptions {
+    pub(crate) max_output_bytes: usize,
+    /// Filesystem roots advertised through `roots/list`.
+    pub(crate) roots: McpRoots,
+}
+
+impl McpSessionOptions {
+    pub(crate) fn new(max_output_bytes: usize, roots: McpRoots) -> Self {
+        Self {
+            max_output_bytes: max_output_bytes.max(1),
+            roots,
+        }
+    }
 }
 
 pub(crate) struct McpConnectOutcome {
@@ -68,10 +77,10 @@ impl McpConnectOutcome {
     pub(crate) async fn run(
         plan: McpSessionPlan,
         config: &McpConfig,
-        max_output_bytes: usize,
+        options: McpSessionOptions,
     ) -> Self {
         match plan {
-            McpSessionPlan::Connect => McpBundle::connect(config, max_output_bytes).await,
+            McpSessionPlan::Connect => McpBundle::connect(config, options).await,
             McpSessionPlan::Inventory(mode) => Self {
                 report: McpSessionReport::from_config_unloaded(config, mode),
                 bundle: None,
@@ -84,14 +93,19 @@ pub(crate) struct McpBundle {
     tools: Vec<Arc<dyn Tool>>,
     /// Taken once during shutdown; tools hold independent peer handles.
     sessions: tokio::sync::Mutex<Vec<McpSession>>,
+    /// Per-session maintenance tasks, aborted before the sessions close so a
+    /// refresh cannot race teardown.
+    maintenance: tokio::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>,
 }
 
 impl McpBundle {
     /// Connect enabled servers in parallel and discover their tools. Always
     /// returns a structured inventory. The no-enabled-server path exits before
     /// allocating a transport, client, task, or bundle.
-    pub(crate) async fn connect(config: &McpConfig, max_output_bytes: usize) -> McpConnectOutcome {
-        let max_output_bytes = max_output_bytes.max(1);
+    pub(crate) async fn connect(
+        config: &McpConfig,
+        options: McpSessionOptions,
+    ) -> McpConnectOutcome {
         let mut servers = Vec::with_capacity(config.servers.len() + config.invalid_servers.len());
 
         for invalid in &config.invalid_servers {
@@ -133,24 +147,20 @@ impl McpBundle {
             .map(|(identity, server)| {
                 let identity = identity.clone();
                 let server = server.clone();
+                let roots = options.roots.clone();
                 async move {
                     let transport = McpTransportSummary::from_server(&server);
-                    let result = connect_server_bounded(&identity, &server).await;
+                    let result = session::connect_server_bounded(&identity, &server, &roots).await;
                     (identity, server, transport, result)
                 }
             });
         // BTreeMap iteration order is preserved by join_all input order.
         let connect_results = futures_util::future::join_all(connect_jobs).await;
 
-        let mut sessions = Vec::new();
-        let mut tools: Vec<Arc<dyn Tool>> = Vec::new();
-        let mut registered_names = HashSet::new();
+        let mut bundle = McpBundleBuilder::new(options.max_output_bytes);
         for (identity, server, transport, result) in connect_results {
             let connected = match result {
-                ConnectResult::Ready {
-                    session,
-                    discovered,
-                } => (session, discovered),
+                ConnectResult::Ready(connected) => connected,
                 ConnectResult::Failed { error } => {
                     tracing::warn!(server = %identity, error = %error, "MCP server failed to initialize");
                     servers.push(McpServerReport::failed(
@@ -163,90 +173,40 @@ impl McpBundle {
                 ConnectResult::TimedOut => {
                     tracing::warn!(
                         server = %identity,
-                        limit_seconds = MCP_SERVER_STARTUP_BUDGET.as_secs(),
+                        limit_seconds = session::MCP_SERVER_STARTUP_BUDGET.as_secs(),
                         "MCP server exceeded its startup budget"
                     );
                     servers.push(McpServerReport::timed_out(
                         identity,
                         transport,
-                        MCP_SERVER_STARTUP_BUDGET.as_secs(),
+                        session::MCP_SERVER_STARTUP_BUDGET.as_secs(),
                     ));
                     continue;
                 }
             };
-            let (session, discovered) = connected;
-            let metadata = tool_metadata(&server);
-            let mut exported = Vec::new();
-            let mut filtered_out_count = 0usize;
-            let mut collision_skipped_count = 0usize;
-            for remote in discovered {
-                let remote_name = remote.name.to_string();
-                if !server.tools.includes(&remote_name) {
-                    filtered_out_count += 1;
-                    continue;
-                }
-                let name = namespaced_tool_name(&identity, &remote_name);
-                if !registered_names.insert(name.clone()) {
-                    tracing::warn!(server = %identity, tool = %remote_name, exported = %name, "MCP tool name collision; ignoring tool");
-                    collision_skipped_count += 1;
-                    continue;
-                }
-                let description = remote
-                    .description
-                    .as_deref()
-                    .unwrap_or("No description supplied by the MCP server");
-                let tool = McpTool {
-                    spec: ToolSpec {
-                        name: name.clone(),
-                        description: format!("MCP server `{identity}`: {description}"),
-                        input_schema: serde_json::Value::Object((*remote.input_schema).clone()),
-                    },
-                    remote_name: remote_name.clone(),
-                    peer: session.peer().clone(),
-                    metadata: metadata.clone(),
-                    max_output_bytes,
-                };
-                tools.push(Arc::new(tool));
-                exported.push(McpToolReport {
-                    remote_name,
-                    exported_name: name,
-                });
-            }
-            servers.push(McpServerReport::connected(
-                identity,
-                transport,
-                exported,
-                filtered_out_count,
-                collision_skipped_count,
-            ));
-            sessions.push(session);
+            servers.push(bundle.register(identity, server, transport, *connected));
         }
 
         servers.sort_by(|left, right| left.identity.cmp(&right.identity));
-        let bundle = if sessions.is_empty() {
-            None
-        } else {
-            Some(Self {
-                tools,
-                sessions: tokio::sync::Mutex::new(sessions),
-            })
-        };
         McpConnectOutcome {
             report: McpSessionReport {
                 mode: McpLoadMode::Native,
                 servers,
             },
-            bundle,
+            bundle: bundle.build(),
         }
     }
 
     /// Close live MCP sessions. Used by CLI inspect after printing inventory.
     pub(crate) async fn close(&self) {
+        for task in std::mem::take(&mut *self.maintenance.lock().await) {
+            task.abort();
+        }
         let sessions = {
             let mut guard = self.sessions.lock().await;
             std::mem::take(&mut *guard)
         };
-        let close_jobs = sessions.into_iter().map(close_session);
+        let close_jobs = sessions.into_iter().map(session::close_session);
         futures_util::future::join_all(close_jobs).await;
     }
 }
@@ -261,331 +221,127 @@ impl ToolBundle for McpBundle {
     }
 }
 
-enum ConnectResult {
-    Ready {
-        session: McpSession,
-        discovered: Vec<rmcp::model::Tool>,
-    },
-    Failed {
-        error: anyhow::Error,
-    },
-    TimedOut,
+/// Accumulates exported tools, sessions, and maintenance tasks while servers
+/// finish connecting, so `connect` stays a readable pass over the results.
+struct McpBundleBuilder {
+    max_output_bytes: usize,
+    tools: Vec<Arc<dyn Tool>>,
+    sessions: Vec<McpSession>,
+    maintenance: Vec<tokio::task::JoinHandle<()>>,
+    registered_names: HashSet<String>,
 }
 
-/// Establish and discover under one startup budget. After the session exists,
-/// failures and timeouts always attempt a bounded close instead of relying on
-/// Drop alone.
-async fn connect_server_bounded(identity: &str, server: &McpServerConfig) -> ConnectResult {
-    let deadline = tokio::time::Instant::now() + MCP_SERVER_STARTUP_BUDGET;
-    let session = match tokio::time::timeout_at(deadline, establish_session(identity, server)).await
-    {
-        Ok(Ok(session)) => session,
-        Ok(Err(error)) => return ConnectResult::Failed { error },
-        Err(_) => return ConnectResult::TimedOut,
-    };
+impl McpBundleBuilder {
+    fn new(max_output_bytes: usize) -> Self {
+        Self {
+            max_output_bytes,
+            tools: Vec::new(),
+            sessions: Vec::new(),
+            maintenance: Vec::new(),
+            registered_names: HashSet::new(),
+        }
+    }
 
-    match tokio::time::timeout_at(deadline, session.list_all_tools()).await {
-        Ok(Ok(discovered)) => ConnectResult::Ready {
+    fn register(
+        &mut self,
+        identity: String,
+        server: McpServerConfig,
+        transport: McpTransportSummary,
+        connected: ConnectedServer,
+    ) -> McpServerReport {
+        let ConnectedServer {
             session,
             discovered,
-        },
-        Ok(Err(error)) => {
-            close_session(session).await;
-            ConnectResult::Failed {
-                error: anyhow::anyhow!(error)
-                    .context(format!("MCP server `{identity}` failed tools/list")),
+            instructions,
+            progress,
+            events,
+        } = connected;
+        let metadata = tool_metadata(&server);
+        let mut exported = Vec::new();
+        let mut slots = BTreeMap::new();
+        let mut filtered_out_count = 0usize;
+        let mut collision_skipped_count = 0usize;
+        for remote in discovered {
+            let remote_name = remote.name.to_string();
+            if !server.tools.includes(&remote_name) {
+                filtered_out_count += 1;
+                continue;
             }
-        }
-        Err(_) => {
-            close_session(session).await;
-            ConnectResult::TimedOut
-        }
-    }
-}
-
-async fn establish_session(identity: &str, server: &McpServerConfig) -> anyhow::Result<McpSession> {
-    prepare_server_filesystem(server)?;
-    match &server.transport {
-        McpTransport::Stdio {
-            command,
-            args,
-            cwd,
-            env,
-            env_from_env,
-        } => {
-            if command.trim().is_empty() {
-                bail!("stdio command must not be empty");
+            let name = namespaced_tool_name(&identity, &remote_name);
+            if !self.registered_names.insert(name.clone()) {
+                tracing::warn!(server = %identity, tool = %remote_name, exported = %name, "MCP tool name collision; ignoring tool");
+                collision_skipped_count += 1;
+                continue;
             }
-            let mut command = which_command(command)
-                .with_context(|| format!("MCP executable `{command}` was not found"))?;
-            command.args(args);
-            if let Some(cwd) = cwd {
-                command.current_dir(cwd);
-            }
-            // Start from the shared sanitized base. Servers opt into all other
-            // inherited variables through `env_from_env`.
-            apply_stdio_environment(&mut command, env, env_from_env)?;
-            let transport = TokioChildProcess::new(command)
-                .with_context(|| format!("failed to spawn MCP server `{identity}`"))?;
-            Ok(ClientInfo::default().serve(transport).await?)
-        }
-        McpTransport::StreamableHttp {
-            url,
-            headers: literal_headers,
-            headers_from_env,
-        } => {
-            parse_remote_url(url)?;
-            validate_literal_headers(literal_headers)?;
-            validate_environment_header_names(headers_from_env)?;
-            let mut headers = HashMap::new();
-            // Literal headers apply first; environment-derived headers
-            // override them on a name collision.
-            for (name, value) in literal_headers {
-                headers.insert(
-                    HeaderName::try_from(name)
-                        .with_context(|| format!("invalid header `{name}`"))?,
-                    HeaderValue::try_from(value)
-                        .with_context(|| format!("invalid value for MCP header `{name}`"))?,
-                );
-            }
-            for (name, variable) in headers_from_env {
-                let value = std::env::var(variable).with_context(|| {
-                    format!("environment variable `{variable}` for MCP header `{name}` is not set")
-                })?;
-                headers.insert(
-                    HeaderName::try_from(name)
-                        .with_context(|| format!("invalid header `{name}`"))?,
-                    HeaderValue::try_from(value)
-                        .with_context(|| format!("invalid value for MCP header `{name}`"))?,
-                );
-            }
-            // rmcp's reqwest transport disables redirects, so configured
-            // headers never cross origins through a redirect. This satisfies
-            // the Agent Plugins header-forwarding rule.
-            let transport = StreamableHttpClientTransport::from_config(
-                StreamableHttpClientTransportConfig::with_uri(url.clone()).custom_headers(headers),
-            );
-            Ok(ClientInfo::default().serve(transport).await?)
-        }
-    }
-}
-
-async fn close_session(mut session: McpSession) {
-    match tokio::time::timeout(MCP_SESSION_CLOSE_BUDGET, session.close()).await {
-        Ok(Ok(_)) => {}
-        Ok(Err(error)) => {
-            tracing::warn!(error = %error, "MCP session shutdown failed");
-        }
-        Err(_) => {
-            tracing::warn!(
-                limit_seconds = MCP_SESSION_CLOSE_BUDGET.as_secs(),
-                "MCP session shutdown exceeded its close budget"
-            );
-        }
-    }
-}
-
-fn apply_stdio_environment(
-    command: &mut tokio::process::Command,
-    env: &BTreeMap<String, String>,
-    env_from_env: &BTreeMap<String, String>,
-) -> anyhow::Result<()> {
-    crate::child_env::apply_base(command);
-    command.envs(env);
-    for (name, variable) in env_from_env {
-        let value = std::env::var(variable).with_context(|| {
-            format!("environment variable `{variable}` for MCP child variable `{name}` is not set")
-        })?;
-        command.env(name, value);
-    }
-    Ok(())
-}
-
-fn prepare_server_filesystem(server: &McpServerConfig) -> anyhow::Result<()> {
-    let Some(policy) = &server.filesystem else {
-        return Ok(());
-    };
-    let storage = Workspace::new(&policy.directory_root).with_context(|| {
-        format!(
-            "cannot resolve package storage root `{}`",
-            policy.directory_root.display()
-        )
-    })?;
-    let requested_directory = storage.root().join(&policy.directory_relative_to_root);
-    let directory = storage
-        .resolve_for_write(&requested_directory)
-        .with_context(|| {
-            format!(
-                "package data directory `{}` escapes its storage root",
-                requested_directory.display()
-            )
-        })?;
-    std::fs::create_dir_all(directory.path()).with_context(|| {
-        format!(
-            "cannot create package data directory `{}`",
-            directory.path().display()
-        )
-    })?;
-    storage
-        .resolve_for_read(directory.path())
-        .with_context(|| {
-            format!(
-                "cannot revalidate package data directory `{}` after creation",
-                directory.path().display()
-            )
-        })?;
-
-    let (primary_root, granted_roots) = policy
-        .allowed_roots
-        .split_first()
-        .context("package MCP filesystem policy has no allowed roots")?;
-    let mut allowed = Workspace::new(primary_root).with_context(|| {
-        format!(
-            "cannot resolve allowed MCP root `{}`",
-            primary_root.display()
-        )
-    })?;
-    for root in granted_roots {
-        allowed = allowed
-            .with_granted_root(root)
-            .with_context(|| format!("cannot resolve allowed MCP root `{}`", root.display()))?;
-    }
-    if let McpTransport::Stdio { command, cwd, .. } = &server.transport {
-        let command_path = Path::new(command);
-        if command_path.is_absolute() {
-            allowed.resolve_for_read(command_path).with_context(|| {
-                format!(
-                    "MCP command `{}` escapes its permitted roots",
-                    command_path.display()
-                )
-            })?;
-        }
-        if let Some(cwd) = cwd {
-            allowed.resolve_for_read(cwd).with_context(|| {
-                format!(
-                    "MCP working directory `{}` escapes its permitted roots",
-                    cwd.display()
-                )
-            })?;
-        }
-    }
-    Ok(())
-}
-
-pub(super) fn validate_identity(identity: &str) -> anyhow::Result<()> {
-    if identity.is_empty()
-        || !identity
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
-    {
-        bail!("server identity must contain only ASCII letters, digits, '-' or '_'");
-    }
-    Ok(())
-}
-
-pub(crate) fn parse_remote_url(value: &str) -> anyhow::Result<url::Url> {
-    let url = url::Url::parse(value).context("invalid Streamable HTTP URL")?;
-    let loopback = match url.host() {
-        Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
-        Some(url::Host::Ipv4(address)) => IpAddr::V4(address).is_loopback(),
-        Some(url::Host::Ipv6(address)) => IpAddr::V6(address).is_loopback(),
-        None => bail!("remote MCP URL must have a host"),
-    };
-    if url.scheme() != "https" && !(url.scheme() == "http" && loopback) {
-        bail!("remote MCP URL must use HTTPS unless its host is loopback");
-    }
-    Ok(url)
-}
-
-pub(crate) fn validate_literal_headers(headers: &BTreeMap<String, String>) -> anyhow::Result<()> {
-    validate_header_names(headers.keys())?;
-    for value in headers.values() {
-        HeaderValue::try_from(value).context("invalid MCP header value")?;
-    }
-    Ok(())
-}
-
-pub(crate) fn validate_environment_header_names(
-    headers: &BTreeMap<String, String>,
-) -> anyhow::Result<()> {
-    validate_header_names(headers.keys())
-}
-
-/// Reject blank/invalid env names, NULs, and duplicate child variable names
-/// across `env` and `env_from_env` before a stdio server is constructed.
-pub(crate) fn validate_stdio_environment(
-    env: &BTreeMap<String, String>,
-    env_from_env: &BTreeMap<String, String>,
-) -> anyhow::Result<()> {
-    let mut child_names = HashSet::new();
-    for (name, value) in env {
-        validate_process_env_name(name, "env")?;
-        validate_process_env_value(value, name)?;
-        if !child_names.insert(name.as_str()) {
-            bail!("stdio env repeats child variable `{name}`");
-        }
-    }
-    for (name, source) in env_from_env {
-        validate_process_env_name(name, "env_from_env")?;
-        validate_process_env_name(source, "env_from_env source")?;
-        if !child_names.insert(name.as_str()) {
-            bail!("stdio env repeats child variable `{name}` across env and env_from_env");
-        }
-    }
-    Ok(())
-}
-
-fn validate_process_env_name(name: &str, field: &str) -> anyhow::Result<()> {
-    if name.is_empty() {
-        bail!("stdio {field} variable name must not be empty");
-    }
-    if name.contains('=') {
-        bail!("stdio {field} variable name `{name}` must not contain '='");
-    }
-    if name.contains('\0') {
-        bail!("stdio {field} variable name must not contain NUL");
-    }
-    Ok(())
-}
-
-fn validate_process_env_value(value: &str, name: &str) -> anyhow::Result<()> {
-    if value.contains('\0') {
-        bail!("stdio env value for `{name}` must not contain NUL");
-    }
-    Ok(())
-}
-
-fn validate_header_names<'a>(names: impl IntoIterator<Item = &'a String>) -> anyhow::Result<()> {
-    let mut parsed = HashSet::new();
-    for name in names {
-        let name = HeaderName::try_from(name).context("invalid MCP header name")?;
-        if !parsed.insert(name) {
-            bail!("MCP headers repeat a name under different casing");
-        }
-    }
-    Ok(())
-}
-
-fn namespaced_tool_name(server: &str, tool: &str) -> String {
-    fn component(value: &str) -> String {
-        const ESCAPE_PREFIX: &str = "_rho_";
-        let already_safe = value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
-        if already_safe && !value.starts_with(ESCAPE_PREFIX) {
-            return value.to_string();
+            let slot = Arc::new(McpToolSlot::new(exported_spec(
+                &identity,
+                &remote_name,
+                &remote,
+            )));
+            slots.insert(remote_name.clone(), Arc::clone(&slot));
+            self.tools.push(Arc::new(McpTool {
+                slot,
+                identity: identity.clone(),
+                remote_name: remote_name.clone(),
+                peer: session.peer().clone(),
+                progress: progress.clone(),
+                metadata: metadata.clone(),
+                max_output_bytes: self.max_output_bytes,
+            }));
+            exported.push(McpToolReport {
+                remote_name,
+                exported_name: name,
+            });
         }
 
-        let mut encoded = String::with_capacity(ESCAPE_PREFIX.len() + value.len() * 2);
-        encoded.push_str(ESCAPE_PREFIX);
-        const HEX: &[u8; 16] = b"0123456789abcdef";
-        for byte in value.bytes() {
-            encoded.push(HEX[(byte >> 4) as usize] as char);
-            encoded.push(HEX[(byte & 0x0f) as usize] as char);
-        }
-        encoded
+        let live = report::McpLiveServerState::default();
+        self.maintenance
+            .push(tokio::spawn(session::maintain_session(
+                SessionMaintenance {
+                    identity: identity.clone(),
+                    peer: session.peer().clone(),
+                    server,
+                    slots,
+                    live: live.clone(),
+                    events,
+                },
+            )));
+        self.sessions.push(session);
+        McpServerReport::connected(report::ConnectedServerReport {
+            identity,
+            transport,
+            tools: exported,
+            instructions,
+            live,
+            filtered_out_count,
+            collision_skipped_count,
+        })
     }
-    format!("mcp__{}__{}", component(server), component(tool))
+
+    fn build(self) -> Option<McpBundle> {
+        if self.sessions.is_empty() {
+            return None;
+        }
+        Some(McpBundle {
+            tools: self.tools,
+            sessions: tokio::sync::Mutex::new(self.sessions),
+            maintenance: tokio::sync::Mutex::new(self.maintenance),
+        })
+    }
+}
+
+/// The native spec Rho exports for one remote tool. Also used on refresh, so
+/// the exported name and description stay derived from one place.
+fn exported_spec(identity: &str, remote_name: &str, remote: &rmcp::model::Tool) -> ToolSpec {
+    let description = remote
+        .description
+        .as_deref()
+        .unwrap_or("No description supplied by the MCP server");
+    ToolSpec {
+        name: namespaced_tool_name(identity, remote_name),
+        description: format!("MCP server `{identity}`: {description}"),
+        input_schema: serde_json::Value::Object((*remote.input_schema).clone()),
+    }
 }
 
 /// Presentation-only facts for tool cards. Config is the trust boundary for
@@ -598,99 +354,6 @@ fn tool_metadata(server: &McpServerConfig) -> ToolMetadata {
         McpTransport::StreamableHttp { url, .. } => ToolMetadata::new()
             .operation(OperationKind::Network)
             .url(url.clone()),
-    }
-}
-
-async fn call_remote_tool(
-    peer: &rmcp::Peer<RoleClient>,
-    remote_name: String,
-    arguments: serde_json::Map<String, serde_json::Value>,
-    cancellation: &rho_sdk::CancellationToken,
-    max_output_bytes: usize,
-) -> Result<String, ToolError> {
-    let params = CallToolRequestParams::new(remote_name).with_arguments(arguments);
-    let result = tokio::select! {
-        result = tokio::time::timeout(MCP_TOOL_CALL_BUDGET, peer.call_tool(params)) => {
-            match result {
-                Ok(Ok(result)) => result,
-                Ok(Err(error)) => {
-                    return Err(ToolError::new(ToolErrorKind::Execution, error.to_string()));
-                }
-                Err(_) => {
-                    return Err(ToolError::new(
-                        ToolErrorKind::Execution,
-                        format!(
-                            "MCP tool call exceeded its {}s budget",
-                            MCP_TOOL_CALL_BUDGET.as_secs()
-                        ),
-                    ));
-                }
-            }
-        }
-        () = cancellation.cancelled() => return Err(ToolError::cancelled()),
-    };
-    let content = serde_json::to_string(&result)
-        .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
-    let content = rho_tools::tool::truncate(content, max_output_bytes);
-    if result.is_error.unwrap_or(false) {
-        return Err(ToolError::new(ToolErrorKind::Execution, content));
-    }
-    Ok(content)
-}
-
-struct McpTool {
-    spec: ToolSpec,
-    remote_name: String,
-    peer: rmcp::Peer<RoleClient>,
-    metadata: ToolMetadata,
-    max_output_bytes: usize,
-}
-
-impl Tool for McpTool {
-    fn spec(&self) -> ToolSpec {
-        self.spec.clone()
-    }
-
-    fn security(&self) -> ToolSecurity {
-        // Config is the trust boundary: enabling a server starts it at session
-        // load. Tool calls are RPCs on that already-running host-owned session
-        // and must not pretend to spawn a process or open a fresh network grant.
-        ToolSecurity::built_in([])
-    }
-
-    fn prepare<'a>(
-        &'a self,
-        invocation: ToolInvocation,
-        _context: ToolPreparationContext,
-    ) -> ToolPrepareFuture<'a> {
-        let arguments = invocation.into_arguments();
-        Box::pin(async move {
-            let Some(arguments) = arguments.as_object().cloned() else {
-                return Err(ToolError::new(
-                    ToolErrorKind::InvalidArguments,
-                    "MCP tool arguments must be a JSON object",
-                ));
-            };
-            let metadata = self.metadata.clone();
-            Ok(PreparedToolInvocation::resource_aware(
-                [],
-                [],
-                metadata.clone(),
-                move |context| {
-                    Box::pin(async move {
-                        let content = call_remote_tool(
-                            &self.peer,
-                            self.remote_name.clone(),
-                            arguments,
-                            context.cancellation(),
-                            self.max_output_bytes,
-                        )
-                        .await?;
-                        Ok(ToolOutput::text(content).metadata(metadata))
-                    })
-                },
-            ))
-        })
     }
 }
 
