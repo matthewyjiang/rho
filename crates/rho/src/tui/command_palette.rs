@@ -77,10 +77,12 @@ impl App {
                 .filter(|prompt| prompt.command_name().starts_with(&prefix))
                 .map(|prompt| CommandChoice {
                     usage: prompt.usage(),
-                    description: prompt
-                        .description
-                        .clone()
-                        .unwrap_or_else(|| format!("Prompt from MCP server `{}`", prompt.server)),
+                    // A server that wrote no description still named the prompt,
+                    // so fall back to that rather than to the same sentence for
+                    // every prompt on the server.
+                    description: prompt.description.clone().unwrap_or_else(|| {
+                        format!("{} · from MCP server `{}`", prompt.label(), prompt.server)
+                    }),
                     name: prompt.command_name(),
                     kind: CommandChoiceKind::McpPrompt,
                 }),

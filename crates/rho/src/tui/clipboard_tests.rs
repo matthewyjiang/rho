@@ -1,13 +1,15 @@
+use crate::tui::media_attach;
+
 use super::{
     super::{tests::test_app, ComposerAttachment},
-    ChatMedia, ChatTextDocument, ImageContent, MediaAttachId,
+    ChatMedia, ChatTextDocument, ImageContent, MediaAttachId, PendingAttachmentSource,
 };
 
 async fn insert_external_paste_and_finish(app: &mut super::App, text: &str) {
     app.insert_external_paste(text);
     if !app.media_attach_tasks.is_empty() {
-        let outcome = super::next_media_attach_completion(&mut app.media_attach_tasks).await;
-        app.finish_pasted_media(outcome);
+        let outcome = media_attach::next_media_attach_completion(&mut app.media_attach_tasks).await;
+        app.finish_media_attach(outcome);
     }
 }
 
@@ -26,24 +28,24 @@ async fn attachment_task_poll_is_cancellation_safe() {
     let (release_tx, release_rx) = tokio::sync::oneshot::channel();
     let task = tokio::spawn(async {
         let _ = release_rx.await;
-        super::PastedMediaOutcome::Unsupported {
+        media_attach::MediaAttachOutcome::Unsupported {
             original_text: "archive.bin".into(),
         }
     });
     let id = MediaAttachId::new();
-    let mut pending = vec![super::MediaAttachTask { id, task }];
+    let mut pending = vec![media_attach::MediaAttachTask { id, task }];
 
-    let mut first_poll = Box::pin(super::next_media_attach_completion(&mut pending));
+    let mut first_poll = Box::pin(media_attach::next_media_attach_completion(&mut pending));
     assert!(futures_util::poll!(&mut first_poll).is_pending());
     drop(first_poll);
     assert_eq!(pending.len(), 1);
 
     let _ = release_tx.send(());
-    let completion = super::next_media_attach_completion(&mut pending).await;
+    let completion = media_attach::next_media_attach_completion(&mut pending).await;
     assert_eq!(completion.id, id);
     assert!(matches!(
         completion.outcome,
-        super::PastedMediaOutcome::Unsupported { original_text }
+        media_attach::MediaAttachOutcome::Unsupported { original_text }
             if original_text == "archive.bin"
     ));
     assert!(pending.is_empty());
@@ -86,12 +88,13 @@ async fn text_document_path_paste_attaches_document_instead_of_text() {
         app.input_ui.attachments(),
         &[ComposerAttachment::Pending {
             id: app.media_attach_tasks[0].id,
+            source: PendingAttachmentSource::File,
             name: "notes.txt".into(),
         }]
     );
 
-    let outcome = super::next_media_attach_completion(&mut app.media_attach_tasks).await;
-    app.finish_pasted_media(outcome);
+    let outcome = media_attach::next_media_attach_completion(&mut app.media_attach_tasks).await;
+    app.finish_media_attach(outcome);
 
     assert_eq!(
         app.input_ui.attachments(),
@@ -164,15 +167,16 @@ async fn backspace_removes_ready_image_after_pending_document() {
     let (mut release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
     let task = tokio::spawn(async {
         let _ = release_rx.await;
-        super::PastedMediaOutcome::Unsupported {
+        media_attach::MediaAttachOutcome::Unsupported {
             original_text: "notes.txt".into(),
         }
     });
     let id = MediaAttachId::new();
     let mut app = test_app();
     app.media_attach_tasks
-        .push(super::MediaAttachTask { id, task });
-    app.input_ui.push_pending_attachment(id, "notes.txt".into());
+        .push(media_attach::MediaAttachTask { id, task });
+    app.input_ui
+        .push_pending_attachment(id, PendingAttachmentSource::File, "notes.txt".into());
     app.attach_ready_image(ImageContent {
         data: "aW1hZ2U=".into(),
         mime_type: "image/png".into(),
@@ -184,6 +188,7 @@ async fn backspace_removes_ready_image_after_pending_document() {
         app.input_ui.attachments(),
         &[ComposerAttachment::Pending {
             id,
+            source: PendingAttachmentSource::File,
             name: "notes.txt".into(),
         }]
     );
@@ -205,41 +210,48 @@ async fn backspace_removes_ready_image_after_pending_document() {
 async fn completion_targets_pending_id_and_pending_attachments_cannot_submit() {
     let first_id = MediaAttachId::new();
     let second_id = MediaAttachId::new();
-    let first_task = tokio::spawn(std::future::pending::<super::PastedMediaOutcome>());
+    let first_task = tokio::spawn(std::future::pending::<media_attach::MediaAttachOutcome>());
     let second_task = tokio::spawn(async {
-        super::PastedMediaOutcome::Image(ImageContent {
+        media_attach::MediaAttachOutcome::Ready(ChatMedia::Image(ImageContent {
             data: "Y29tcGxldGVk".into(),
             mime_type: "image/webp".into(),
-        })
+        }))
     });
     let mut app = test_app();
     app.media_attach_tasks.extend([
-        super::MediaAttachTask {
+        media_attach::MediaAttachTask {
             id: first_id,
             task: first_task,
         },
-        super::MediaAttachTask {
+        media_attach::MediaAttachTask {
             id: second_id,
             task: second_task,
         },
     ]);
-    app.input_ui
-        .push_pending_attachment(first_id, "first.txt".into());
+    app.input_ui.push_pending_attachment(
+        first_id,
+        PendingAttachmentSource::File,
+        "first.txt".into(),
+    );
     app.input_ui
         .push_ready_attachment(ChatMedia::Image(ImageContent {
             data: "cmVhZHk=".into(),
             mime_type: "image/png".into(),
         }));
-    app.input_ui
-        .push_pending_attachment(second_id, "second.txt".into());
+    app.input_ui.push_pending_attachment(
+        second_id,
+        PendingAttachmentSource::File,
+        "second.txt".into(),
+    );
 
-    let completion = super::next_media_attach_completion(&mut app.media_attach_tasks).await;
+    let completion = media_attach::next_media_attach_completion(&mut app.media_attach_tasks).await;
     assert_eq!(completion.id, second_id);
-    app.finish_pasted_media(completion);
+    app.finish_media_attach(completion);
 
     let expected = vec![
         ComposerAttachment::Pending {
             id: first_id,
+            source: PendingAttachmentSource::File,
             name: "first.txt".into(),
         },
         ComposerAttachment::Ready(ChatMedia::Image(ImageContent {

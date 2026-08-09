@@ -28,7 +28,7 @@ pub(crate) mod session;
 pub(crate) mod tool;
 pub(crate) mod validate;
 
-pub(crate) use catalog::{McpCatalog, McpPrompt, McpResource};
+pub(crate) use catalog::{McpCatalog, McpCatalogError, McpResource, McpResourceContent};
 pub(crate) use report::{
     McpLoadMode, McpServerReport, McpServerStatus, McpSessionReport, McpToolReport,
     McpTransportSummary,
