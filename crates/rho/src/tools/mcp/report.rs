@@ -1,8 +1,66 @@
 //! Structured MCP session inventory for CLI and TUI consumers.
 
+use std::sync::{Arc, Mutex};
+
 use serde::Serialize;
 
 use super::config::{McpConfig, McpServerConfig, McpTransport};
+
+/// Facts about a connected server that only exist after startup.
+///
+/// The rest of a report is a startup snapshot. A server can revise its tool list
+/// and a remote session can go unreachable while the session runs, so those two
+/// live behind a shared handle the session's maintenance task writes and the
+/// `/mcp` inventory reads.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct McpLiveServerState {
+    inner: Arc<Mutex<LiveServerFacts>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub(crate) struct LiveServerFacts {
+    /// Tools discovered after startup. The tool registry is fixed for the
+    /// session, so these need a restart before the model can call them.
+    pub(crate) added_tools: Vec<String>,
+    /// Tools the server withdrew. They stay registered and fail when called.
+    pub(crate) removed_tools: Vec<String>,
+    /// Why the last keepalive ping failed, if it did.
+    pub(crate) unreachable: Option<String>,
+}
+
+impl McpLiveServerState {
+    pub(crate) fn snapshot(&self) -> LiveServerFacts {
+        self.lock().clone()
+    }
+
+    pub(crate) fn record_tool_changes(&self, added: Vec<String>, removed: Vec<String>) {
+        let mut facts = self.lock();
+        facts.added_tools = added;
+        facts.removed_tools = removed;
+    }
+
+    pub(crate) fn mark_unreachable(&self, reason: String) {
+        self.lock().unreachable = Some(reason);
+    }
+
+    pub(crate) fn mark_reachable(&self) {
+        self.lock().unreachable = None;
+    }
+
+    /// A poisoned lock still holds a valid fact set, so recover rather than
+    /// fail an inventory read on an unrelated panic.
+    fn lock(&self) -> std::sync::MutexGuard<'_, LiveServerFacts> {
+        self.inner.lock().unwrap_or_else(|error| error.into_inner())
+    }
+}
+
+impl PartialEq for McpLiveServerState {
+    fn eq(&self, other: &Self) -> bool {
+        self.snapshot() == other.snapshot()
+    }
+}
+
+impl Eq for McpLiveServerState {}
 
 /// How the current process treated MCP configuration.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -87,6 +145,9 @@ pub(crate) struct McpToolReport {
 enum McpServerState {
     Connected {
         tools: Vec<McpToolReport>,
+        /// Server-authored `initialize` guidance for the model.
+        instructions: Option<String>,
+        live: McpLiveServerState,
         filtered_out_count: usize,
         collision_skipped_count: usize,
     },
@@ -171,6 +232,40 @@ impl McpServerState {
             | Self::NotLoaded => 0,
         }
     }
+
+    fn instructions(&self) -> Option<&str> {
+        match self {
+            Self::Connected { instructions, .. } => instructions.as_deref(),
+            Self::Disabled
+            | Self::InvalidConfig { .. }
+            | Self::Failed { .. }
+            | Self::TimedOut { .. }
+            | Self::NotLoaded => None,
+        }
+    }
+
+    fn live(&self) -> LiveServerFacts {
+        match self {
+            Self::Connected { live, .. } => live.snapshot(),
+            Self::Disabled
+            | Self::InvalidConfig { .. }
+            | Self::Failed { .. }
+            | Self::TimedOut { .. }
+            | Self::NotLoaded => LiveServerFacts::default(),
+        }
+    }
+}
+
+/// Inputs for a connected server's inventory row. Named because the row carries
+/// enough independent facts that positional arguments stop being readable.
+pub(crate) struct ConnectedServerReport {
+    pub(crate) identity: String,
+    pub(crate) transport: McpTransportSummary,
+    pub(crate) tools: Vec<McpToolReport>,
+    pub(crate) instructions: Option<String>,
+    pub(crate) live: McpLiveServerState,
+    pub(crate) filtered_out_count: usize,
+    pub(crate) collision_skipped_count: usize,
 }
 
 /// Per-server inventory row. The state enum prevents contradictory status,
@@ -199,6 +294,10 @@ impl Serialize for McpServerReport {
             tools: &'a [McpToolReport],
             filtered_out_count: usize,
             collision_skipped_count: usize,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            instructions: Option<&'a str>,
+            #[serde(flatten)]
+            live: LiveServerFacts,
         }
 
         Wire {
@@ -210,6 +309,8 @@ impl Serialize for McpServerReport {
             tools: self.tools(),
             filtered_out_count: self.filtered_out_count(),
             collision_skipped_count: self.collision_skipped_count(),
+            instructions: self.instructions(),
+            live: self.live(),
         }
         .serialize(serializer)
     }
@@ -274,18 +375,23 @@ impl McpServerReport {
         }
     }
 
-    pub(crate) fn connected(
-        identity: impl Into<String>,
-        transport: McpTransportSummary,
-        tools: Vec<McpToolReport>,
-        filtered_out_count: usize,
-        collision_skipped_count: usize,
-    ) -> Self {
+    pub(crate) fn connected(report: ConnectedServerReport) -> Self {
+        let ConnectedServerReport {
+            identity,
+            transport,
+            tools,
+            instructions,
+            live,
+            filtered_out_count,
+            collision_skipped_count,
+        } = report;
         Self {
-            identity: identity.into(),
+            identity,
             transport: Some(transport),
             state: McpServerState::Connected {
                 tools,
+                instructions,
+                live,
                 filtered_out_count,
                 collision_skipped_count,
             },
@@ -318,6 +424,15 @@ impl McpServerReport {
 
     pub(crate) const fn collision_skipped_count(&self) -> usize {
         self.state.collision_skipped_count()
+    }
+
+    /// Server-authored guidance from `initialize`, for the system prompt.
+    pub(crate) fn instructions(&self) -> Option<&str> {
+        self.state.instructions()
+    }
+
+    pub(crate) fn live(&self) -> LiveServerFacts {
+        self.state.live()
     }
 
     pub(crate) fn detail_text(&self) -> String {
@@ -368,8 +483,33 @@ impl McpServerReport {
                 self.collision_skipped_count()
             ));
         }
+        lines.extend(live_lines(&self.live()));
         lines.join("\n")
     }
+}
+
+/// Inventory lines for changes a server made after startup. The tool registry
+/// is fixed for a session, so an added tool is reported rather than exposed.
+fn live_lines(live: &LiveServerFacts) -> Vec<String> {
+    let mut lines = Vec::new();
+    if !live.added_tools.is_empty() {
+        lines.push(format!(
+            "added {} tool(s) after startup; restart the session to use them: {}",
+            live.added_tools.len(),
+            live.added_tools.join(", ")
+        ));
+    }
+    if !live.removed_tools.is_empty() {
+        lines.push(format!(
+            "withdrew {} tool(s): {}",
+            live.removed_tools.len(),
+            live.removed_tools.join(", ")
+        ));
+    }
+    if let Some(reason) = &live.unreachable {
+        lines.push(format!("last keepalive ping failed: {reason}"));
+    }
+    lines
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

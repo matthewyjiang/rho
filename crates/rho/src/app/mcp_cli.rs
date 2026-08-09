@@ -5,8 +5,8 @@ use serde::Serialize;
 use crate::{
     cli::{Cli, McpCommand},
     tools::mcp::{
-        McpConnectOutcome, McpLoadMode, McpServerReport, McpServerStatus, McpSessionPlan,
-        McpSessionReport, McpTransportSummary,
+        McpConnectOutcome, McpLoadMode, McpRoots, McpServerReport, McpServerStatus,
+        McpSessionOptions, McpSessionPlan, McpSessionReport, McpTransportSummary,
     },
 };
 
@@ -29,7 +29,12 @@ pub(super) async fn run(command: &McpCommand, cli: &Cli) -> anyhow::Result<()> {
     } else {
         McpSessionPlan::Inventory(McpLoadMode::Native)
     };
-    let outcome = McpConnectOutcome::run(plan, &mcp_config, config.max_output_bytes).await;
+    let outcome = McpConnectOutcome::run(
+        plan,
+        &mcp_config,
+        McpSessionOptions::new(config.max_output_bytes, McpRoots::for_workspace(&cwd)),
+    )
+    .await;
     let result = match command {
         McpCommand::List { json, .. } => print_list(&outcome.report, *json),
         McpCommand::Show { id, json, .. } => print_show(&outcome.report, id, *json),

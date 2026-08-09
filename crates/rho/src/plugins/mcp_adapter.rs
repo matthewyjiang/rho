@@ -147,6 +147,8 @@ fn translate_server(
     Ok(McpServerConfig {
         enabled: true,
         tools: McpToolFilter::default(),
+        // Packages do not choose a server's log severity; the user's config does.
+        log_level: None,
         transport,
         filesystem,
     })

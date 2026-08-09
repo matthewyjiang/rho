@@ -83,10 +83,48 @@ pub(crate) struct McpFilesystemPolicy {
     pub(crate) allowed_roots: Vec<PathBuf>,
 }
 
+/// Severity a server should log at, mirroring the MCP `logging/setLevel`
+/// levels. Kept as Rho's own enum so config never depends on the client crate's
+/// type, and so an unset value means "do not send `logging/setLevel`".
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum McpLogLevel {
+    Debug,
+    Info,
+    Notice,
+    Warning,
+    Error,
+    Critical,
+    Alert,
+    Emergency,
+}
+
+// `logging` carries a SEP-2577 deprecation marker in rmcp while every
+// shipping server still uses it. Rho implements the current wire protocol.
+#[expect(deprecated)]
+impl From<McpLogLevel> for rmcp::model::LoggingLevel {
+    fn from(level: McpLogLevel) -> Self {
+        match level {
+            McpLogLevel::Debug => Self::Debug,
+            McpLogLevel::Info => Self::Info,
+            McpLogLevel::Notice => Self::Notice,
+            McpLogLevel::Warning => Self::Warning,
+            McpLogLevel::Error => Self::Error,
+            McpLogLevel::Critical => Self::Critical,
+            McpLogLevel::Alert => Self::Alert,
+            McpLogLevel::Emergency => Self::Emergency,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct McpServerConfig {
     pub(crate) enabled: bool,
     pub(crate) tools: McpToolFilter,
+    /// Severity requested through `logging/setLevel` after the handshake.
+    /// Unset leaves the server's own default in place.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) log_level: Option<McpLogLevel>,
     #[serde(flatten)]
     pub(crate) transport: McpTransport,
     #[serde(skip)]
@@ -106,6 +144,8 @@ impl<'de> Deserialize<'de> for McpServerConfig {
                 enabled: bool,
                 #[serde(default)]
                 tools: McpToolFilter,
+                #[serde(default)]
+                log_level: Option<McpLogLevel>,
                 command: String,
                 #[serde(default)]
                 args: Vec<String>,
@@ -120,6 +160,8 @@ impl<'de> Deserialize<'de> for McpServerConfig {
                 enabled: bool,
                 #[serde(default)]
                 tools: McpToolFilter,
+                #[serde(default)]
+                log_level: Option<McpLogLevel>,
                 url: String,
                 #[serde(default)]
                 headers: BTreeMap<String, String>,
@@ -128,10 +170,11 @@ impl<'de> Deserialize<'de> for McpServerConfig {
             },
         }
 
-        let (enabled, tools, transport) = match RawServer::deserialize(deserializer)? {
+        let (enabled, tools, log_level, transport) = match RawServer::deserialize(deserializer)? {
             RawServer::Stdio {
                 enabled,
                 tools,
+                log_level,
                 command,
                 args,
                 cwd,
@@ -146,6 +189,7 @@ impl<'de> Deserialize<'de> for McpServerConfig {
                 (
                     enabled,
                     tools,
+                    log_level,
                     McpTransport::Stdio {
                         command,
                         args,
@@ -158,6 +202,7 @@ impl<'de> Deserialize<'de> for McpServerConfig {
             RawServer::StreamableHttp {
                 enabled,
                 tools,
+                log_level,
                 url,
                 headers,
                 headers_from_env,
@@ -169,6 +214,7 @@ impl<'de> Deserialize<'de> for McpServerConfig {
                 (
                     enabled,
                     tools,
+                    log_level,
                     McpTransport::StreamableHttp {
                         url,
                         headers,
@@ -180,6 +226,7 @@ impl<'de> Deserialize<'de> for McpServerConfig {
         Ok(Self {
             enabled,
             tools,
+            log_level,
             transport,
             filesystem: None,
         })
