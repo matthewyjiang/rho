@@ -175,11 +175,13 @@ impl App {
         let workspace_path = agent.workspace_path().to_path_buf();
         let usage_recording = agent.usage_recording();
         self.pending_session_title = None;
-        let reasoning = effective_internal_agent_reasoning(
+        let configured = self.internal_agent_model_selection(crate::agent::SESSION_TITLE_AGENT_ID);
+        let reasoning =
+            effective_internal_agent_reasoning(crate::agent::SESSION_TITLE_AGENT_ID, &configured);
+        let selection = super::model_actions::expect_rho_internal_agent_model(
             crate::agent::SESSION_TITLE_AGENT_ID,
-            &self.internal_agent_model_selection(crate::agent::SESSION_TITLE_AGENT_ID),
+            configured,
         );
-        let selection = self.internal_agent_rho_model(crate::agent::SESSION_TITLE_AGENT_ID);
         let cancellation = rho_sdk::CancellationToken::new();
         let task_cancellation = cancellation.clone();
         let task_session_id = session_id.clone();

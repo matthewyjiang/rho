@@ -60,7 +60,9 @@ fn claude_code_rows_appear_only_when_the_agent_can_delegate() {
 }
 
 // Covers: the picker must open on the row that is actually configured, so a
-// user does not overwrite a delegating advisor by pressing Enter.
+// user does not overwrite a delegating advisor by pressing Enter. A selection
+// with no row at all - a Rho model the catalog cannot offer - must fall back to
+// the first row rather than point at an unrelated one.
 // Owner: internal agent model picker
 #[test]
 fn the_picker_opens_on_the_configured_row() {
@@ -81,6 +83,14 @@ fn the_picker_opens_on_the_configured_row() {
             InternalAgentSelection::Unset,
             ConversationModelRow::Offered { selected: true },
             USE_CONVERSATION_MODEL,
+        ),
+        (
+            InternalAgentSelection::RhoModel {
+                provider: "anthropic".into(),
+                model: "claude-fable-5".into(),
+            },
+            ConversationModelRow::Omitted,
+            "claude-code/default",
         ),
     ];
 

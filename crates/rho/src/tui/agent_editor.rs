@@ -666,21 +666,12 @@ fn selectable_agent_reasoning_levels(draft: &AgentDefinition) -> Vec<ReasoningLe
         draft_model_reasoning_capabilities(draft)
     };
     let fallback = if is_claude {
-        CLAUDE_EFFORT_LEVELS
+        crate::claude_runtime::spawn::CLAUDE_EFFORT_LEVELS.levels()
     } else {
         ReasoningLevel::ALL.as_slice()
     };
     capabilities.selectable_levels(fallback, draft.reasoning())
 }
-
-/// Claude `--effort` values exposed in the agent editor (no `off` / `minimal`).
-const CLAUDE_EFFORT_LEVELS: &[ReasoningLevel] = &[
-    ReasoningLevel::Low,
-    ReasoningLevel::Medium,
-    ReasoningLevel::High,
-    ReasoningLevel::Xhigh,
-    ReasoningLevel::Max,
-];
 
 fn draft_model_reasoning_capabilities(draft: &AgentDefinition) -> ReasoningCapabilities {
     let model_policy = draft.model_policy();

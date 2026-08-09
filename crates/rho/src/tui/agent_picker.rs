@@ -214,10 +214,18 @@ fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> Strin
         }
     };
 
-    let restrictions = if entry.metadata.origin == AgentOrigin::Internal {
-        "\n\nRestrictions\nreserved; cannot be overridden or delegated"
-    } else {
-        ""
+    // Every internal agent is reserved, but only some may run on Claude Code,
+    // so the line has to name this agent's own runtime freedom.
+    let restrictions = match entry.metadata.origin {
+        AgentOrigin::Internal if internal_agent_accepts_claude_runtime(definition.id.as_str()) => {
+            "\n\nRestrictions\nreserved; cannot be overridden, and runs on rho or claude code"
+        }
+        AgentOrigin::Internal => "\n\nRestrictions\nreserved; cannot be overridden or delegated",
+        AgentOrigin::BuiltIn
+        | AgentOrigin::AgentsHome
+        | AgentOrigin::RhoHome
+        | AgentOrigin::Project
+        | AgentOrigin::Workflow => "",
     };
     let inherit_section = inherit_claude_config
         .map(|value| format!("\n\nInherit Claude config\n{value}"))

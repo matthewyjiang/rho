@@ -4,34 +4,27 @@
 //! directory, status file, and attachment contract. Rho's own internal agents
 //! need none of that: they ask one question, stream the answer into a tool
 //! card, and keep nothing. This module is that path. It shares auth, binary
-//! resolution, argv construction, and the stream mapper with the subagent
-//! runtime, so both stay on one Claude contract.
+//! resolution, argv construction, the child lifecycle, and the drain with the
+//! subagent runtime, so both stay on one Claude contract.
 
-use std::{path::PathBuf, process::Stdio, time::Duration};
+use std::{path::PathBuf, process::Stdio};
 
 use rho_sdk::{model::ModelUsage, CancellationToken};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt, BufReader},
-    sync::watch,
-};
+use tokio::sync::watch;
 
 use crate::{
     agent::{OneShotPhase, OneShotUpdate, PromptPolicy},
     permission::PermissionMode,
-    tools::process::{prepare_child_command, ProcessTree},
 };
 
 use super::{
     auth::{self, ClaudeAuthError},
+    child::OwnedChild,
+    drain::{self, DrainEnd},
     executable,
-    line_decoder::claude_ndjson_line_decoder,
     spawn::{self, ClaudeSpawnRequest, SessionPersistence},
-    stream::{StreamEffect, StreamMapper, TerminalClassification, TerminalResult},
+    stream::{StreamEffect, TerminalClassification, TerminalResult},
 };
-
-/// Bytes of child stderr kept for diagnosis. The one-shot path writes no log
-/// file, so a failure has to explain itself from memory.
-const MAX_STDERR_BYTES: usize = 8 * 1024;
 
 /// A single Claude question with no tools and no follow-up turn.
 pub(crate) struct ClaudeOneShotRequest {
@@ -100,11 +93,12 @@ pub(crate) async fn run_one_shot(
         .current_dir(&plan.cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
+        // No run directory means no log file, so stderr comes back on a pipe
+        // and the drain keeps a bounded tail of it for failure text.
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    prepare_child_command(&mut command);
 
-    let mut child = command.spawn().map_err(|error| {
+    let mut child = OwnedChild::spawn(command).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             ClaudeAuthError::BinaryMissing.to_string()
         } else {
@@ -114,173 +108,42 @@ pub(crate) async fn run_one_shot(
             )
         }
     })?;
-    let tree = match ProcessTree::attach(&child) {
-        Ok(tree) => tree,
-        Err(error) => {
-            let _ = child.start_kill();
-            return Err(format!("claude code: could not track the child: {error}"));
-        }
-    };
-    let mut child = OwnedChild { child, tree };
 
-    let outcome = drain(&request, &mut child, &mut stream).await;
+    let mut text = String::new();
+    let drained = {
+        let mut on_effect = |effect| apply_effect(effect, &mut text, &mut stream);
+        drain::drain_child(
+            &mut child,
+            &request.input,
+            &request.cancellation,
+            &mut on_effect,
+        )
+        .await
+    };
     // Only a reaped exit guarantees the tree is gone.
-    if !matches!(outcome, Ok(Drained { exited: true, .. })) {
+    if !matches!(drained.end, DrainEnd::Exited(Ok(_))) {
         child.terminate().await;
     }
-    let drained = outcome?;
-    finish(drained)
-}
 
-/// What one drained child produced before its exit status was judged.
-struct Drained {
-    text: String,
-    terminal: Option<TerminalResult>,
-    stderr: String,
-    exited: bool,
-    exit_ok: bool,
-}
-
-async fn drain(
-    request: &ClaudeOneShotRequest,
-    child: &mut OwnedChild,
-    stream: &mut OneShotStream,
-) -> Result<Drained, String> {
-    let stdout = child
-        .child
-        .stdout
-        .take()
-        .ok_or_else(|| "claude code: child stdout was not captured".to_string())?;
-    let stderr = child.child.stderr.take();
-    let stdin = child.child.stdin.take();
-
-    // Write stdin concurrently with the stdout drain: a child that emits enough
-    // output before reading its prompt would otherwise fill the pipe and hang.
-    let prompt = request.input.clone();
-    let stdin_write = async move {
-        let Some(mut stdin) = stdin else {
-            return Ok(());
-        };
-        stdin.write_all(prompt.as_bytes()).await?;
-        stdin.shutdown().await
-    };
-    let read_stderr = async move {
-        let Some(mut stderr) = stderr else {
-            return String::new();
-        };
-        let mut buffer = Vec::new();
-        let _ = stderr.read_to_end(&mut buffer).await;
-        buffer.truncate(MAX_STDERR_BYTES);
-        String::from_utf8_lossy(&buffer).trim().to_string()
-    };
-    tokio::pin!(stdin_write);
-    tokio::pin!(read_stderr);
-
-    let mut stdout = BufReader::new(stdout);
-    let mut decoder = claude_ndjson_line_decoder();
-    let mut mapper = StreamMapper::new();
-    let mut text = String::new();
-    let mut terminal: Option<TerminalResult> = None;
-    let mut stderr_text = String::new();
-    let mut stdin_error: Option<String> = None;
-    let mut stream_error: Option<String> = None;
-    let mut stdin_done = false;
-    let mut stdout_done = false;
-    let mut stderr_done = false;
-    let mut chunk = vec![0_u8; 8 * 1024];
-
-    while !(stdin_done && stdout_done && stderr_done) {
-        tokio::select! {
-            biased;
-            () = request.cancellation.cancelled() => {
-                return Err("the advisor request was cancelled".into());
-            }
-            result = &mut stdin_write, if !stdin_done => {
-                stdin_done = true;
-                if let Err(error) = result {
-                    stdin_error =
-                        Some(format!("claude code: failed to write the prompt to stdin: {error}"));
-                    break;
-                }
-            }
-            captured = &mut read_stderr, if !stderr_done => {
-                stderr_done = true;
-                stderr_text = captured;
-            }
-            read = stdout.read(&mut chunk), if !stdout_done => {
-                match read {
-                    Ok(0) => stdout_done = true,
-                    Ok(count) => {
-                        decoder.push(&chunk[..count]);
-                        loop {
-                            match decoder.next_line() {
-                                Ok(Some(line)) => {
-                                    let line = line.to_string();
-                                    apply_line(&mut mapper, &line, &mut text, &mut terminal, stream);
-                                }
-                                Ok(None) => break,
-                                Err(error) => {
-                                    stream_error = Some(format!("claude code: {error}"));
-                                    break;
-                                }
-                            }
-                        }
-                        if stream_error.is_some() {
-                            break;
-                        }
-                    }
-                    Err(error) => {
-                        stream_error =
-                            Some(format!("claude code: failed reading stdout: {error}"));
-                        break;
-                    }
-                }
-            }
+    match drained.end {
+        DrainEnd::Cancelled => Err("the advisor request was cancelled".into()),
+        DrainEnd::StdinFailed(error) | DrainEnd::StreamFailed(error) => Err(error),
+        DrainEnd::Exited(Err(error)) => {
+            Err(format!("claude code: failed waiting for child: {error}"))
         }
+        DrainEnd::Exited(Ok(status)) => finish(text, drained.terminal, &drained.stderr, status),
     }
-
-    if let Some(error) = stdin_error {
-        return Err(error);
-    }
-    if stream_error.is_none() {
-        match decoder.finish() {
-            Ok(Some(line)) => apply_line(&mut mapper, line, &mut text, &mut terminal, stream),
-            Ok(None) => {}
-            Err(error) => stream_error = Some(format!("claude code: {error}")),
-        }
-    }
-    if let Some(error) = stream_error {
-        return Err(error);
-    }
-
-    let status = tokio::select! {
-        biased;
-        () = request.cancellation.cancelled() => {
-            return Err("the advisor request was cancelled".into());
-        }
-        status = child.wait() => status,
-    };
-    let status =
-        status.map_err(|error| format!("claude code: failed waiting for child: {error}"))?;
-    Ok(Drained {
-        text,
-        terminal,
-        stderr: stderr_text,
-        exited: true,
-        exit_ok: status.success(),
-    })
 }
 
 /// Combines the terminal message with the exit status, the same rule the
 /// subagent runtime applies: only an explicit success plus a clean exit counts.
-fn finish(drained: Drained) -> Result<ClaudeOneShotResult, String> {
-    let Drained {
-        text,
-        terminal,
-        stderr,
-        exit_ok,
-        ..
-    } = drained;
+fn finish(
+    text: String,
+    terminal: Option<TerminalResult>,
+    stderr: &str,
+    status: std::process::ExitStatus,
+) -> Result<ClaudeOneShotResult, String> {
+    let exit_ok = status.success();
     let detail = |fallback: &str| {
         if stderr.is_empty() {
             fallback.to_string()
@@ -310,10 +173,9 @@ fn finish(drained: Drained) -> Result<ClaudeOneShotResult, String> {
     // streamed deltas are bounded for display.
     let answer = terminal
         .result_text
-        .clone()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or(text);
-    let mut usage = terminal.usage.clone().unwrap_or_default();
+    let mut usage = terminal.usage.unwrap_or_default();
     // Claude reports subscription spend as dollars on the result message; the
     // usage ledger and the parent session total both count micros.
     if let Some(cost) = terminal.total_cost_usd.filter(|cost| *cost > 0.0) {
@@ -325,28 +187,21 @@ fn finish(drained: Drained) -> Result<ClaudeOneShotResult, String> {
     })
 }
 
-fn apply_line(
-    mapper: &mut StreamMapper,
-    line: &str,
-    text: &mut String,
-    terminal: &mut Option<TerminalResult>,
-    stream: &mut OneShotStream,
-) {
-    for effect in mapper.push_line(line) {
-        match effect {
-            StreamEffect::Status(patch) => {
-                if let Some(appended) = patch.append_text {
-                    text.push_str(&appended);
-                    stream.publish_text(OneShotPhase::Responding, text);
-                } else if patch.last_activity.as_deref() == Some("reasoning") {
-                    stream.publish(OneShotPhase::Thinking);
-                }
+/// Accumulate the answer and keep the advisor card current.
+fn apply_effect(effect: StreamEffect, text: &mut String, stream: &mut OneShotStream) {
+    match effect {
+        StreamEffect::Status(patch) => {
+            if let Some(appended) = patch.append_text {
+                text.push_str(&appended);
+                stream.publish_text(OneShotPhase::Responding, text);
+            } else if patch.last_activity.as_deref() == Some("reasoning") {
+                stream.publish(OneShotPhase::Thinking);
             }
-            StreamEffect::Terminal(result) => *terminal = Some(result),
-            // Attachments and rate-limit notices belong to the subagent
-            // contract; a one-shot call has no run artifacts to write.
-            StreamEffect::Attachment(_) | StreamEffect::RateLimit(_) => {}
         }
+        // The drain records terminal results; attachments and rate-limit
+        // notices belong to the subagent contract, and a one-shot call has no
+        // run artifacts to write.
+        StreamEffect::Terminal(_) | StreamEffect::Attachment(_) | StreamEffect::RateLimit(_) => {}
     }
 }
 
@@ -378,32 +233,5 @@ impl OneShotStream {
         if let Some(updates) = &self.updates {
             let _ = updates.send(OneShotUpdate::new(phase, text));
         }
-    }
-}
-
-/// A spawned child plus its process group, so no path leaves a live tree.
-struct OwnedChild {
-    child: tokio::process::Child,
-    tree: ProcessTree,
-}
-
-impl OwnedChild {
-    async fn terminate(&mut self) {
-        self.tree
-            .terminate(&mut self.child, Duration::from_millis(200))
-            .await;
-    }
-
-    async fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
-        let status = self.child.wait().await;
-        self.tree.kill();
-        status
-    }
-}
-
-impl Drop for OwnedChild {
-    fn drop(&mut self) {
-        self.tree.kill();
-        let _ = self.child.start_kill();
     }
 }

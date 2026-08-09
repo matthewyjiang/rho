@@ -46,8 +46,10 @@ pub(crate) fn is_offered_alias(model: &str) -> bool {
 
 /// How Claude Code names itself where Rho would otherwise name a provider.
 ///
-/// Matches the `provider` field delegated runs already persist and the
-/// `/login claude-code` target, so one name covers every surface.
+/// Display only: it fills the source slot in a `<source>/<model>` reference on
+/// picker rows, status lines, and badges, and matches the `/login claude-code`
+/// target a user types. It is not the persisted `runtime` key, which is
+/// `crate::config::CLAUDE_CLI_RUNTIME_KEY` (`claude-cli`).
 pub(crate) const CLAUDE_CODE_SOURCE_LABEL: &str = "claude-code";
 
 /// Label for the row that omits `--model` and lets Claude Code choose.

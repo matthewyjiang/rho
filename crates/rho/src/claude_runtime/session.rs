@@ -1,32 +1,24 @@
 //! Execute a `runtime: claude-cli` delegated run via `claude -p`.
 
-use std::{process::Stdio, time::Duration};
+use std::process::Stdio;
 
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt, BufReader},
-    process::Child,
-    sync::watch,
-};
+use tokio::sync::watch;
 
 use rho_tools::cancellation::RunCancellation;
 
 #[cfg(test)]
 use crate::subagent;
 
-use crate::{
-    agent::PromptPolicy,
-    permission::PermissionMode,
-    subagent::RunStatus,
-    tools::process::{prepare_child_command, ProcessTree},
-};
+use crate::{agent::PromptPolicy, permission::PermissionMode, subagent::RunStatus};
 
 use super::{
     auth::{self, ClaudeAuthError, ClaudeAuthStatus},
+    child::OwnedChild,
+    drain::{self, DrainEnd},
     executable::{self, ClaudeExecutable},
-    line_decoder::{claude_ndjson_line_decoder, LineDecodeError},
     persist::StatusSink,
     spawn::{self, ClaudeSpawnPlan, ClaudeSpawnRequest},
-    stream::{StreamEffect, StreamMapper, TerminalResult},
+    stream::TerminalResult,
 };
 
 pub(crate) use super::persist::ClaudeRunIdentity;
@@ -85,74 +77,6 @@ pub(crate) struct ClaudeSessionOverrides {
 
 pub(crate) type BeforeSpawn =
     Box<dyn Fn(&mut tokio::process::Command) -> std::io::Result<()> + Send + Sync>;
-
-struct OwnedChild {
-    child: Child,
-    tree: ProcessTree,
-}
-
-impl OwnedChild {
-    fn spawn(mut command: tokio::process::Command) -> Result<Self, std::io::Error> {
-        prepare_child_command(&mut command);
-        // Linux can return ETXTBSY when a just-written executable is still open
-        // for write (or still being closed) under parallel test load. Retry with
-        // cooperative yields only - no timed sleeps.
-        let child = {
-            let mut attempts = 0;
-            loop {
-                match command.spawn() {
-                    Ok(child) => break child,
-                    Err(error)
-                        if error.kind() == std::io::ErrorKind::ExecutableFileBusy
-                            && attempts < 32 =>
-                    {
-                        attempts += 1;
-                        std::thread::yield_now();
-                    }
-                    Err(error) => return Err(error),
-                }
-            }
-        };
-        let tree = match ProcessTree::attach(&child) {
-            Ok(tree) => tree,
-            Err(error) => {
-                // Attach failed: best-effort kill the lone process.
-                let mut child = child;
-                let _ = child.start_kill();
-                return Err(std::io::Error::other(error));
-            }
-        };
-        Ok(Self { child, tree })
-    }
-
-    async fn terminate(&mut self) {
-        self.tree
-            .terminate(&mut self.child, Duration::from_millis(200))
-            .await;
-    }
-
-    async fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
-        let status = self.child.wait().await;
-        // Ensure any leftover group members are cleaned after the leader exits.
-        self.tree.kill();
-        status
-    }
-
-    fn stdin(&mut self) -> Option<tokio::process::ChildStdin> {
-        self.child.stdin.take()
-    }
-
-    fn stdout(&mut self) -> Option<tokio::process::ChildStdout> {
-        self.child.stdout.take()
-    }
-}
-
-impl Drop for OwnedChild {
-    fn drop(&mut self) {
-        self.tree.kill();
-        let _ = self.child.start_kill();
-    }
-}
 
 /// Run one Claude CLI session to completion, writing the subagent contract.
 pub(crate) async fn run_session(mut request: ClaudeSessionRequest) -> anyhow::Result<()> {
@@ -392,6 +316,9 @@ async fn run_child(
 }
 
 /// Write the prompt, map stdout, and wait for exit.
+///
+/// The drain itself is shared with the one-shot path; session only decides what
+/// each end means for the run's status file.
 async fn drain_child(
     request: &ClaudeSessionRequest,
     sink: &mut StatusSink,
@@ -400,139 +327,33 @@ async fn drain_child(
 ) -> SessionOutcome {
     sink.mark_running();
 
-    let Some(stdout) = child.stdout() else {
-        return SessionOutcome::Failed("claude code: child stdout was not captured".into());
+    // Stderr is a log file here, so the drain captures none of it.
+    let drained = {
+        let mut on_effect = |effect| sink.apply_effect(effect);
+        drain::drain_child(
+            child,
+            &request.prompt,
+            &request.cancellation,
+            &mut on_effect,
+        )
+        .await
     };
 
-    // Prompt on stdin so shell metacharacters cannot break the command line.
-    // Write stdin concurrently with the stdout drain: a child that emits enough
-    // output before consuming stdin would otherwise fill the pipe and deadlock
-    // if we awaited the full prompt write first.
-    let stdin = child.stdin();
-    let prompt = request.prompt.clone();
-    let stdin_write = async move {
-        let Some(mut stdin) = stdin else {
-            return Ok(());
-        };
-        stdin.write_all(prompt.as_bytes()).await?;
-        stdin.shutdown().await?;
-        Ok::<(), std::io::Error>(())
-    };
-    tokio::pin!(stdin_write);
-
-    let mut stdout = BufReader::new(stdout);
-    let mut decoder = claude_ndjson_line_decoder();
-    let mut mapper = StreamMapper::new();
-    let mut pending_terminal: Option<TerminalResult> = None;
-    let mut stream_error: Option<String> = None;
-    let mut stdin_error: Option<String> = None;
-    let mut stdin_done = false;
-    let mut stdout_done = false;
-    let mut chunk = vec![0_u8; 8 * 1024];
-
-    loop {
-        if stdin_done && stdout_done {
-            break;
+    let pending = drained.terminal.map(Box::new);
+    match drained.end {
+        DrainEnd::Cancelled => SessionOutcome::Cancelled {
+            reason: "cancelled",
+            pending,
+        },
+        DrainEnd::StdinFailed(error) | DrainEnd::StreamFailed(error) => {
+            SessionOutcome::Failed(error)
         }
-        tokio::select! {
-            biased;
-            () = request.cancellation.cancelled() => {
-                // Dropping the pinned stdin future closes ChildStdin; the caller
-                // reaps the tree so nothing is left orphaned.
-                return SessionOutcome::Cancelled {
-                    reason: "cancelled",
-                    pending: pending_terminal.map(Box::new),
-                };
-            }
-            result = &mut stdin_write, if !stdin_done => {
-                stdin_done = true;
-                if let Err(error) = result {
-                    stdin_error = Some(format!(
-                        "claude code: failed to write prompt to stdin: {error}"
-                    ));
-                    break;
-                }
-            }
-            read = stdout.read(&mut chunk), if !stdout_done => {
-                match read {
-                    Ok(0) => {
-                        stdout_done = true;
-                    }
-                    Ok(n) => {
-                        decoder.push(&chunk[..n]);
-                        loop {
-                            let line = match decoder.next_line() {
-                                Ok(Some(line)) => line.to_string(),
-                                Ok(None) => break,
-                                Err(error) => {
-                                    stream_error = Some(format_line_error(&error));
-                                    break;
-                                }
-                            };
-                            apply_stream_line(
-                                &mut mapper,
-                                sink,
-                                &mut pending_terminal,
-                                &line,
-                            );
-                        }
-                        if stream_error.is_some() {
-                            break;
-                        }
-                    }
-                    Err(error) => {
-                        stream_error = Some(format!(
-                            "claude code: failed reading stdout: {error}"
-                        ));
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    // Stdin write failures take precedence over later stream noise: the child
-    // often exits uncleanly once its stdin pipe is dropped mid-protocol.
-    if let Some(error) = stdin_error {
-        return SessionOutcome::Failed(error);
-    }
-
-    if stream_error.is_none() {
-        match decoder.finish() {
-            Ok(Some(line)) => {
-                apply_stream_line(&mut mapper, sink, &mut pending_terminal, line);
-            }
-            Ok(None) => {}
-            Err(error) => {
-                stream_error = Some(format_line_error(&error));
-            }
-        }
-    }
-
-    if let Some(error) = stream_error {
-        return SessionOutcome::Failed(error);
-    }
-
-    // After stdout EOF, wait for the process while honoring cancellation. A hang
-    // here would strand the full tree after the child closed stdout and slept.
-    let exit_status = tokio::select! {
-        biased;
-        () = request.cancellation.cancelled() => {
-            return SessionOutcome::Cancelled {
-                reason: "cancelled",
-                pending: pending_terminal.map(Box::new),
-            };
-        }
-        status = child.wait() => status,
-    };
-
-    match exit_status {
-        Ok(status) => SessionOutcome::Exited {
-            pending: pending_terminal.map(Box::new),
+        DrainEnd::Exited(Ok(status)) => SessionOutcome::Exited {
+            pending,
             status,
             log_tail: read_log_tail(log_path).await,
         },
-        Err(error) => {
+        DrainEnd::Exited(Err(error)) => {
             SessionOutcome::Failed(format!("claude code: failed waiting for child: {error}"))
         }
     }
@@ -607,33 +428,6 @@ fn decide_final_outcome(
             detail: "claude code: stream ended without a terminal result message; see log.txt for details".into(),
             prefer_detail: true,
         },
-    }
-}
-
-fn apply_stream_line(
-    mapper: &mut StreamMapper,
-    sink: &mut StatusSink,
-    pending_terminal: &mut Option<TerminalResult>,
-    line: &str,
-) {
-    for effect in mapper.push_line(line) {
-        if let StreamEffect::Terminal(terminal) = &effect {
-            // Later terminals (for example a final `result`) replace earlier
-            // pending protocol-error metadata.
-            *pending_terminal = Some(terminal.clone());
-        }
-        sink.apply_effect(effect);
-    }
-}
-
-fn format_line_error(error: &LineDecodeError) -> String {
-    match error {
-        LineDecodeError::InvalidUtf8(_) => {
-            format!("claude code: malformed UTF-8 on stream-json stdout: {error}")
-        }
-        LineDecodeError::LineTooLong { .. } => {
-            format!("claude code: oversize stream-json line: {error}")
-        }
     }
 }
 

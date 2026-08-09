@@ -2,8 +2,9 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
-use rho_providers::reasoning::ReasoningLevel;
+use rho_providers::{model::ReasoningLevelSet, reasoning::ReasoningLevel};
 
 use crate::{agent::PromptPolicy, permission::PermissionMode};
 
@@ -147,6 +148,17 @@ pub(crate) fn claude_effort_flag(level: ReasoningLevel) -> Option<&'static str> 
         ReasoningLevel::Max => Some("max"),
     }
 }
+
+/// Reasoning levels a Claude run can actually be asked for, derived from
+/// [`claude_effort_flag`] so the mapping is stated once.
+pub(crate) static CLAUDE_EFFORT_LEVELS: LazyLock<ReasoningLevelSet> = LazyLock::new(|| {
+    ReasoningLevelSet::new(
+        ReasoningLevel::ALL
+            .into_iter()
+            .filter(|level| claude_effort_flag(*level).is_some())
+            .collect(),
+    )
+});
 
 pub(crate) fn build_spawn_plan(
     request: &ClaudeSpawnRequest,

@@ -1,7 +1,7 @@
 use std::{collections::BTreeSet, sync::LazyLock};
 
 use rho_providers::{
-    model::{models_dev, ReasoningCapabilities, ReasoningLevelSet, ReasoningRequestSource},
+    model::{models_dev, ReasoningCapabilities, ReasoningRequestSource},
     reasoning::ReasoningLevel,
 };
 
@@ -65,7 +65,7 @@ static INTERNAL_AGENTS: LazyLock<Vec<InternalAgent>> = LazyLock::new(|| {
         InternalAgent {
             definition: AgentDefinition {
                 id: AgentId::new(ADVISOR_AGENT_ID).expect("valid internal agent ID"),
-                description: "Internal agent that reviews the session and advises the executor. Reserved; cannot be overridden or delegated."
+                description: "Internal agent that reviews the session and advises the executor. Reserved; cannot be overridden, and runs on Rho or Claude Code."
                     .to_string(),
                 prompt: PromptPolicy::Replace(ADVISOR_PROMPT.into()),
                 runtime: AgentRuntimeSpec::Rho {
@@ -136,21 +136,15 @@ pub(crate) fn internal_agent_reasoning_capabilities(
 ) -> ReasoningCapabilities {
     match selection.rho() {
         Some(rho) => models_dev::current_reasoning_capabilities(&rho.provider, &rho.model),
-        None => {
-            ReasoningCapabilities::Levels(ReasoningLevelSet::new(CLAUDE_EFFORT_LEVELS.to_vec()))
-        }
+        None => CLAUDE_REASONING_CAPABILITIES.clone(),
     }
 }
 
-/// Rho reasoning levels with a Claude `--effort` counterpart. `off` and
-/// `minimal` have none, so they are never offered for a delegating selection.
-pub(crate) const CLAUDE_EFFORT_LEVELS: &[ReasoningLevel] = &[
-    ReasoningLevel::Low,
-    ReasoningLevel::Medium,
-    ReasoningLevel::High,
-    ReasoningLevel::Xhigh,
-    ReasoningLevel::Max,
-];
+/// Claude's fixed `--effort` ladder as selection capabilities. Built once:
+/// picker render paths ask for this on every frame.
+static CLAUDE_REASONING_CAPABILITIES: LazyLock<ReasoningCapabilities> = LazyLock::new(|| {
+    ReasoningCapabilities::Levels(crate::claude_runtime::spawn::CLAUDE_EFFORT_LEVELS.clone())
+});
 
 /// Reasoning level an internal-agent one-shot will use for `selection`.
 ///

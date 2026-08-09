@@ -372,7 +372,8 @@ auth = "anthropic-api-key"
 }
 
 // Covers: only agents declared as delegating may delegate, so a hand-edited
-// runtime key on a structured internal agent falls back instead of breaking it.
+// runtime key on a structured internal agent falls back to Rho and leaves the
+// rejected runtime's model name behind.
 // Owner: config load
 #[test]
 fn internal_agents_that_cannot_delegate_fall_back_to_the_rho_runtime() {
@@ -391,19 +392,21 @@ model = "opus"
             .unwrap()
             .expect_rho()
             .model,
-        "opus"
+        config.model
     );
     assert_eq!(
         warnings,
         vec![ConfigWarning::Normalized {
             key: "internal_agents.runtime",
             from: "\"claude-cli\"".into(),
-            to: "\"rho\"; internal agent 'goal-judge' cannot delegate".into(),
+            to: "\"rho\" with the conversation model; internal agent 'goal-judge' cannot delegate"
+                .into(),
         }]
     );
 }
 
-// Covers: an unusable runtime value must not fail the whole config load.
+// Covers: an unusable runtime value must not fail the whole config load, and
+// the model written for it does not survive into the Rho selection.
 // Owner: config load
 #[test]
 fn an_unknown_internal_agent_runtime_falls_back_with_a_warning() {
@@ -411,27 +414,27 @@ fn an_unknown_internal_agent_runtime_falls_back_with_a_warning() {
         r#"
 [internal_agents.advisor]
 runtime = "codex"
-model = "gpt-5.5"
+model = "codex-mini"
 provider = "openai"
 auth = "api-key"
 "#,
     )
     .unwrap();
 
-    assert_eq!(
-        config
-            .internal_agent_model(crate::agent::ADVISOR_AGENT_ID)
-            .unwrap()
-            .expect_rho()
-            .provider,
-        "openai"
-    );
+    let selection = config
+        .internal_agent_model(crate::agent::ADVISOR_AGENT_ID)
+        .unwrap()
+        .expect_rho()
+        .clone();
+    assert_eq!(selection.provider, "openai");
+    assert_eq!(selection.auth, "api-key");
+    assert_eq!(selection.model, config.model);
     assert_eq!(
         warnings,
         vec![ConfigWarning::Normalized {
             key: "internal_agents.runtime",
             from: "\"codex\"".into(),
-            to: "\"rho\"".into(),
+            to: "\"rho\" with the conversation model".into(),
         }]
     );
 }

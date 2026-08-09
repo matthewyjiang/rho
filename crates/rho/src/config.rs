@@ -23,13 +23,16 @@ use {
 #[path = "provider_config.rs"]
 mod provider_config;
 
+#[path = "config_internal_agent.rs"]
+mod internal_agent;
+pub use internal_agent::{InternalAgentModelConfig, InternalAgentTarget, RhoInternalAgentModel};
+
 #[path = "config_format.rs"]
 mod format;
 use format::write_config;
 pub(crate) use format::CLAUDE_CLI_RUNTIME_KEY;
 #[cfg(test)]
 pub use format::{EffectiveModelConfig, EffectiveModelSource};
-pub use format::{InternalAgentModelConfig, InternalAgentTarget, RhoInternalAgentModel};
 
 #[path = "config_load.rs"]
 mod load;
@@ -466,12 +469,15 @@ impl Config {
     #[cfg(test)]
     pub fn effective_internal_agent_model(&self, id: &str) -> EffectiveModelConfig {
         match self.internal_agents.get(id) {
-            Some(selection) => EffectiveModelConfig {
-                provider: selection.expect_rho().provider.clone(),
-                model: selection.expect_rho().model.clone(),
-                auth: selection.expect_rho().auth.clone(),
-                source: EffectiveModelSource::Override,
-            },
+            Some(selection) => {
+                let rho = selection.expect_rho();
+                EffectiveModelConfig {
+                    provider: rho.provider.clone(),
+                    model: rho.model.clone(),
+                    auth: rho.auth.clone(),
+                    source: EffectiveModelSource::Override,
+                }
+            }
             None => EffectiveModelConfig {
                 provider: self.provider.clone(),
                 model: self.model.clone(),

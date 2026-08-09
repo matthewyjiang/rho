@@ -3,6 +3,7 @@ use super::{
     UiPicker,
 };
 use crate::claude_runtime::models as claude_models;
+use crate::config::CLAUDE_CLI_RUNTIME_KEY;
 use rho_providers::model::{catalog, favorites};
 
 pub(super) fn model_picker(info: &RuntimeModelView, available_auths: &[String]) -> UiPicker {
@@ -48,9 +49,13 @@ pub(super) fn model_picker_during_run(
 
 pub(super) const USE_CONVERSATION_MODEL: &str = "Use conversation model";
 
-/// Row value prefix for Claude Code rows. Claude Code is not a Rho provider, so
-/// its rows cannot be addressed by a `provider/model` reference.
-const CLAUDE_CODE_ROW_PREFIX: &str = "claude-cli:";
+/// Separates the runtime key from the pass-through model in a Claude Code row
+/// value.
+///
+/// Claude Code is not a Rho provider, so its rows cannot be addressed by a
+/// `provider/model` reference. They carry [`CLAUDE_CLI_RUNTIME_KEY`] instead,
+/// so config and picker keep one spelling of the runtime.
+const CLAUDE_CODE_ROW_MODEL_SEPARATOR: char = ':';
 
 /// What a selected internal-agent model row asks for.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -63,11 +68,23 @@ pub(super) enum InternalAgentModelRow {
     RhoModel(String),
 }
 
+/// The row value a Claude Code row carries. Inverse of the Claude Code arm of
+/// [`parse_internal_agent_model_row`].
+fn claude_code_row_value(model: Option<&str>) -> String {
+    format!(
+        "{CLAUDE_CLI_RUNTIME_KEY}{CLAUDE_CODE_ROW_MODEL_SEPARATOR}{}",
+        model.unwrap_or_default()
+    )
+}
+
 pub(super) fn parse_internal_agent_model_row(value: &str) -> InternalAgentModelRow {
     if value == USE_CONVERSATION_MODEL {
         return InternalAgentModelRow::Conversation;
     }
-    match value.strip_prefix(CLAUDE_CODE_ROW_PREFIX) {
+    match value
+        .strip_prefix(CLAUDE_CLI_RUNTIME_KEY)
+        .and_then(|rest| rest.strip_prefix(CLAUDE_CODE_ROW_MODEL_SEPARATOR))
+    {
         Some(model) => InternalAgentModelRow::ClaudeCode {
             model: (!model.is_empty()).then(|| model.to_string()),
         },
@@ -104,6 +121,25 @@ pub(super) enum InternalAgentSelection {
     Unset,
 }
 
+impl InternalAgentSelection {
+    /// The [`PickerItem::value`] of the row this selection marks, or `None`
+    /// when nothing is configured.
+    ///
+    /// Encode half of the row vocabulary; [`parse_internal_agent_model_row`] is
+    /// the decode half. The conversation row is not here because no selection
+    /// names it: the caller offers it, so the caller asks for it by
+    /// [`USE_CONVERSATION_MODEL`].
+    fn row_value(&self) -> Option<String> {
+        match self {
+            Self::RhoModel { provider, model } => {
+                Some(rho_providers::provider::model_reference(provider, model))
+            }
+            Self::ClaudeCode { model } => Some(claude_code_row_value(model.as_deref())),
+            Self::Unset => None,
+        }
+    }
+}
+
 pub(super) struct InternalAgentPickerInputs<'a> {
     pub(super) agent_id: &'a str,
     pub(super) current: InternalAgentSelection,
@@ -138,29 +174,29 @@ pub(super) fn internal_agent_model_picker(inputs: InternalAgentPickerInputs<'_>)
         PickerAction::SelectInternalAgentModel,
     );
 
-    // Leading rows are inserted in reverse so each lands above the last: the
-    // conversation row stays first when both are present.
-    let mut leading = 0;
-    if claude_code == ClaudeCodeRows::Offered {
-        let rows = claude_code_rows(&current);
-        leading += rows.len();
-        picker.items.splice(0..0, rows);
-    }
+    let mut leading = Vec::new();
     if let ConversationModelRow::Offered { selected } = conversation_model {
-        leading += 1;
-        picker.items.insert(0, conversation_model_row(selected));
+        leading.push(conversation_model_row(selected));
     }
+    if claude_code == ClaudeCodeRows::Offered {
+        leading.extend(claude_code_rows(&current));
+    }
+    picker.items.splice(0..0, leading);
 
-    picker.selected = picker
-        .items
-        .iter()
-        .position(|item| item.badge.is_some() && item.badge.as_ref().is_some_and(is_selected_badge))
-        .unwrap_or(if leading > 0 { 0 } else { picker.selected });
+    // A selected conversation row outranks `current`, which then still carries
+    // the conversation model and so also names a catalog row.
+    let wanted_value = match conversation_model {
+        ConversationModelRow::Offered { selected: true } => {
+            Some(USE_CONVERSATION_MODEL.to_string())
+        }
+        ConversationModelRow::Offered { selected: false } | ConversationModelRow::Omitted => {
+            current.row_value()
+        }
+    };
+    picker.selected = wanted_value
+        .and_then(|value| picker.items.iter().position(|item| item.value == value))
+        .unwrap_or(0);
     picker
-}
-
-fn is_selected_badge(badge: &PickerBadge) -> bool {
-    badge.tone == PickerBadgeTone::Selected && badge.text.ends_with("selected")
 }
 
 fn conversation_model_row(selected: bool) -> PickerItem {
@@ -200,7 +236,7 @@ fn claude_code_rows(current: &InternalAgentSelection) -> Vec<PickerItem> {
             text: "selected".into(),
             tone: PickerBadgeTone::Selected,
         }),
-        value: format!("{CLAUDE_CODE_ROW_PREFIX}{}", model.unwrap_or_default()),
+        value: claude_code_row_value(model),
         selection_verb: None,
     };
     let mut rows = vec![row(

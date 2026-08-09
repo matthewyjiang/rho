@@ -271,7 +271,7 @@ impl App {
                     }
                     model_picker::InternalAgentModelRow::RhoModel(reference) => {
                         self.refresh_available_auths();
-                        let current = self.internal_agent_rho_model(id);
+                        let current = self.internal_agent_rho_model_or_conversation(id);
                         match self.resolve_model_selection(
                             &reference,
                             &current.provider,
@@ -815,12 +815,13 @@ impl App {
             .unwrap_or_else(|| self.conversation_internal_agent_model())
     }
 
-    /// Provider selection for an internal agent that runs on Rho's own stack.
+    /// Provider and auth context for resolving a partially-qualified Rho model
+    /// reference against an agent's current selection.
     ///
-    /// Falls back to the conversation model both when the agent has no override
-    /// and when its override delegates: callers here can only drive Rho's
-    /// provider path, so a delegating selection has no answer for them.
-    pub(super) fn internal_agent_rho_model(
+    /// A delegating selection carries no Rho provider or auth, so the
+    /// conversation's stack is the answer here: this is the path that switches
+    /// an agent off Claude Code and back onto a Rho model.
+    pub(super) fn internal_agent_rho_model_or_conversation(
         &self,
         id: &str,
     ) -> crate::config::RhoInternalAgentModel {
@@ -844,6 +845,23 @@ impl App {
             self.info.runtime.model.clone(),
             self.info.runtime.auth.clone(),
         )
+    }
+}
+
+/// The Rho half of a selection that is about to run on Rho's provider stack.
+///
+/// Only agents declaring `accepts_claude_runtime: false` reach here, and neither
+/// the config loader nor the picker will build a delegating selection for one.
+/// Failing loudly beats running a model this path never asked for.
+pub(super) fn expect_rho_internal_agent_model(
+    id: &str,
+    selection: crate::config::InternalAgentModelConfig,
+) -> crate::config::RhoInternalAgentModel {
+    match selection.target {
+        crate::config::InternalAgentTarget::Rho(model) => model,
+        crate::config::InternalAgentTarget::ClaudeCli { .. } => {
+            panic!("internal agent '{id}' declares accepts_claude_runtime: false")
+        }
     }
 }
 
