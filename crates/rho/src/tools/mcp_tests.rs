@@ -3,15 +3,26 @@ use std::{collections::BTreeMap, fs};
 use pretty_assertions::assert_eq;
 
 use super::{
-    call_remote_tool,
     config::{McpConfig, McpFilesystemPolicy, McpServerConfig, McpToolFilter, McpTransport},
-    namespaced_tool_name, parse_remote_url, prepare_server_filesystem, McpBundle, McpServerStatus,
-    MCP_RUNTIME_CONSTRUCTIONS,
+    parse_remote_url,
+    progress::McpProgressRouter,
+    session::prepare_server_filesystem,
+    tool::{call_remote_tool, namespaced_tool_name, McpCall},
+    McpBundle, McpRoots, McpServerStatus, McpSessionOptions, MCP_RUNTIME_CONSTRUCTIONS,
 };
 use crate::tools::sdk_registry::ToolBundle;
-use rho_sdk::{tool::ToolErrorKind, CancellationToken};
+use rho_sdk::{
+    tool::{ToolContext, ToolErrorKind},
+    CancellationToken,
+};
 
 static MCP_CONNECT_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Connect options for tests: a generous output cap and no advertised roots, so
+/// nothing depends on the machine's working directory.
+fn test_options() -> McpSessionOptions {
+    McpSessionOptions::new(12_000, McpRoots::default())
+}
 
 // Covers: an empty or fully disabled MCP config must not construct runtime work.
 // Owner: MCP runtime initialization boundary.
@@ -20,7 +31,7 @@ async fn zero_server_path_is_inert() {
     let _guard = MCP_CONNECT_TEST_LOCK.lock().await;
     let before = MCP_RUNTIME_CONSTRUCTIONS.load(std::sync::atomic::Ordering::Relaxed);
 
-    let outcome = McpBundle::connect(&McpConfig::default(), 12_000).await;
+    let outcome = McpBundle::connect(&McpConfig::default(), test_options()).await;
 
     assert!(outcome.bundle.is_none());
     assert!(outcome.report.servers.is_empty());
@@ -42,6 +53,7 @@ async fn disabled_servers_are_reported_without_runtime() {
             McpServerConfig {
                 enabled: false,
                 tools: McpToolFilter::default(),
+                log_level: None,
                 transport: McpTransport::Stdio {
                     command: "false".into(),
                     args: Vec::new(),
@@ -55,7 +67,7 @@ async fn disabled_servers_are_reported_without_runtime() {
         invalid_servers: Vec::new(),
     };
 
-    let outcome = McpBundle::connect(&config, 12_000).await;
+    let outcome = McpBundle::connect(&config, test_options()).await;
 
     assert!(outcome.bundle.is_none());
     assert_eq!(outcome.report.servers.len(), 1);
@@ -141,6 +153,7 @@ fn package_filesystem_policy_is_internal_only() {
     let server = McpServerConfig {
         enabled: true,
         tools: McpToolFilter::default(),
+        log_level: None,
         transport: McpTransport::Stdio {
             command: "server".into(),
             args: Vec::new(),
@@ -179,6 +192,7 @@ fn package_filesystem_rejects_observed_symlink_escape() {
     let server = McpServerConfig {
         enabled: true,
         tools: McpToolFilter::default(),
+        log_level: None,
         transport: McpTransport::Stdio {
             command: "server".into(),
             args: Vec::new(),
@@ -224,6 +238,10 @@ fn remote_and_tool_policy_is_deterministic() {
     assert_ne!(
         namespaced_tool_name("devtools/validator", "lint"),
         namespaced_tool_name("devtools_validator", "lint")
+    );
+    assert_ne!(
+        namespaced_tool_name("devtools__validator", "lint"),
+        namespaced_tool_name("devtools", "validator__lint")
     );
     let filter = McpToolFilter {
         allow: vec!["read".into(), "write".into()],
@@ -333,6 +351,7 @@ async fn streamable_http_discovery() {
             McpServerConfig {
                 enabled: true,
                 tools: McpToolFilter::default(),
+                log_level: None,
                 transport: McpTransport::StreamableHttp {
                     url: format!("http://{address}/mcp"),
                     headers: BTreeMap::new(),
@@ -343,7 +362,7 @@ async fn streamable_http_discovery() {
         )]),
         invalid_servers: Vec::new(),
     };
-    let outcome = McpBundle::connect(&config, 12_000).await;
+    let outcome = McpBundle::connect(&config, test_options()).await;
     let bundle = outcome.bundle.unwrap();
     assert_eq!(bundle.tools()[0].spec().name, "mcp__remote__remote_echo");
     assert_eq!(
@@ -400,6 +419,7 @@ open(sys.argv[1], "w").close()
     let healthy = McpServerConfig {
         enabled: true,
         tools: McpToolFilter::default(),
+        log_level: None,
         transport: McpTransport::Stdio {
             command: "python3".into(),
             args: vec![
@@ -420,6 +440,7 @@ open(sys.argv[1], "w").close()
     let failed = McpServerConfig {
         enabled: true,
         tools: McpToolFilter::default(),
+        log_level: None,
         transport: McpTransport::Stdio {
             command: "rho-mcp-command-that-does-not-exist".into(),
             args: Vec::new(),
@@ -438,7 +459,7 @@ open(sys.argv[1], "w").close()
         invalid_servers: Vec::new(),
     };
     assert!(!data.exists());
-    let outcome = McpBundle::connect(&config, 12_000).await;
+    let outcome = McpBundle::connect(&config, test_options()).await;
     assert!(data.is_dir());
     let bundle = outcome.bundle.unwrap();
     assert_eq!(
@@ -467,29 +488,24 @@ open(sys.argv[1], "w").close()
         ]
     );
     let peer = bundle.sessions.lock().await[0].peer().clone();
+    let progress = McpProgressRouter::new();
+    let echo_call = || McpCall {
+        peer: &peer,
+        progress: &progress,
+        remote_name: "echo/value".into(),
+        arguments: serde_json::Map::new(),
+    };
     let cancellation = CancellationToken::new();
-    let content = call_remote_tool(
-        &peer,
-        "echo/value".into(),
-        serde_json::Map::new(),
-        &cancellation,
-        12_000,
-    )
-    .await
-    .unwrap();
+    let content = call_remote_tool(echo_call(), &cancellation, None, 12_000)
+        .await
+        .unwrap();
     let content: serde_json::Value = serde_json::from_str(&content).unwrap();
     assert_eq!(content["content"][0]["text"], "ok");
 
     cancellation.cancel();
-    let error = call_remote_tool(
-        &peer,
-        "echo/value".into(),
-        serde_json::Map::new(),
-        &cancellation,
-        12_000,
-    )
-    .await
-    .unwrap_err();
+    let error = call_remote_tool(echo_call(), &cancellation, None, 12_000)
+        .await
+        .unwrap_err();
     assert_eq!(error.kind(), ToolErrorKind::Cancelled);
 
     bundle.shutdown().await;
@@ -501,4 +517,203 @@ open(sys.argv[1], "w").close()
         tokio::task::yield_now().await;
     }
     assert!(closed.exists());
+}
+
+// Covers: server-initiated protocol traffic must reach the session. Server
+// instructions from `initialize` are captured, progress notifications reach the
+// live tool-progress channel, `tools/list_changed` refreshes definitions and
+// withdraws removed tools, added tools are reported rather than silently
+// dropped, and a cancelled call tells the server to stop.
+// Prerequisite: `python3` must be available on PATH (Unix-gated test).
+// Owner: MCP server-to-client protocol boundary.
+#[cfg(unix)]
+#[tokio::test]
+async fn server_initiated_protocol_traffic_is_handled() {
+    use std::num::NonZeroUsize;
+
+    let _guard = MCP_CONNECT_TEST_LOCK.lock().await;
+    let directory = tempfile::tempdir().unwrap();
+    let script = directory.path().join("server.py");
+    let cancelled_marker = directory.path().join("cancelled");
+    fs::write(
+        &script,
+        r#"import json, sys
+
+mutated = False
+
+FIXED = [
+    {"name": "mutate", "description": "revise the tool list", "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "hang", "description": "never answers", "inputSchema": {"type": "object", "properties": {}}},
+]
+
+def send(message):
+    print(json.dumps(message), flush=True)
+
+def tools():
+    if mutated:
+        return [
+            {"name": "echo", "description": "echo v2", "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "added", "description": "arrived late", "inputSchema": {"type": "object", "properties": {}}},
+        ] + FIXED
+    return [
+        {"name": "echo", "description": "echo v1", "inputSchema": {"type": "object", "properties": {}}},
+        {"name": "removed", "description": "goes away", "inputSchema": {"type": "object", "properties": {}}},
+    ] + FIXED
+
+for line in sys.stdin:
+    message = json.loads(line)
+    method = message.get("method")
+    if "id" not in message:
+        if method == "notifications/cancelled":
+            open(sys.argv[1], "w").close()
+        continue
+    if method == "initialize":
+        result = {
+            "protocolVersion": message["params"]["protocolVersion"],
+            "capabilities": {"tools": {"listChanged": True}, "logging": {}},
+            "serverInfo": {"name": "rho-test", "version": "1"},
+            "instructions": "Prefer echo over shout.",
+        }
+    elif method == "tools/list":
+        result = {"tools": tools()}
+    elif method == "tools/call":
+        name = message["params"]["name"]
+        token = message["params"].get("_meta", {}).get("progressToken")
+        if token is not None:
+            send({"jsonrpc": "2.0", "method": "notifications/progress", "params": {
+                "progressToken": token, "progress": 2, "total": 4, "message": "halfway"}})
+        if name == "hang":
+            continue
+        if name == "mutate":
+            mutated = True
+            send({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
+        result = {"content": [{"type": "text", "text": "ok"}], "isError": False}
+    else:
+        result = {}
+    send({"jsonrpc": "2.0", "id": message["id"], "result": result})
+"#,
+    )
+    .unwrap();
+
+    let config = McpConfig {
+        servers: BTreeMap::from([(
+            "live".into(),
+            McpServerConfig {
+                enabled: true,
+                tools: McpToolFilter::default(),
+                log_level: Some(crate::tools::mcp::config::McpLogLevel::Info),
+                transport: McpTransport::Stdio {
+                    command: "python3".into(),
+                    args: vec![
+                        script.display().to_string(),
+                        cancelled_marker.display().to_string(),
+                    ],
+                    cwd: None,
+                    env: BTreeMap::new(),
+                    env_from_env: BTreeMap::new(),
+                },
+                filesystem: None,
+            },
+        )]),
+        invalid_servers: Vec::new(),
+    };
+    let outcome = McpBundle::connect(&config, test_options()).await;
+    let server = &outcome.report.servers[0];
+    assert_eq!(server.instructions(), Some("Prefer echo over shout."));
+    let bundle = outcome.bundle.unwrap();
+    let tool_of = |name: &str| {
+        bundle
+            .tools()
+            .iter()
+            .find(|tool| tool.spec().name == name)
+            .cloned()
+            .unwrap_or_else(|| panic!("{name} was not exported"))
+    };
+    assert_eq!(
+        tool_of("mcp__live__echo").spec().description,
+        "MCP server `live`: echo v1"
+    );
+
+    // Progress raised against the call's token reaches the invocation's channel.
+    let (sender, mut progress_events) =
+        rho_sdk::tool::tool_progress_channel(NonZeroUsize::new(8).unwrap());
+    let cancellation = CancellationToken::new();
+    tool_of("mcp__live__echo")
+        .call(
+            invocation(),
+            ToolContext::new(None, cancellation.clone(), sender),
+        )
+        .await
+        .unwrap();
+    let reported = progress_events.recv().await.unwrap();
+    assert_eq!(
+        (
+            reported.text(),
+            reported.completed_units(),
+            reported.total_units()
+        ),
+        ("halfway", Some(2), Some(4))
+    );
+
+    // The server revises its tool list and announces the change.
+    tool_of("mcp__live__mutate")
+        .call(invocation(), discarding_context(cancellation.clone()))
+        .await
+        .unwrap();
+    await_condition("tool list refresh", || {
+        server.live().added_tools == vec!["added".to_string()]
+    })
+    .await;
+    assert_eq!(server.live().removed_tools, vec!["removed".to_string()]);
+    assert_eq!(
+        tool_of("mcp__live__echo").spec().description,
+        "MCP server `live`: echo v2"
+    );
+
+    // A withdrawn tool stays registered and fails with a reason, because the
+    // registry is fixed for the session.
+    let withdrawn = tool_of("mcp__live__removed")
+        .call(invocation(), discarding_context(cancellation))
+        .await
+        .unwrap_err();
+    assert_eq!(withdrawn.kind(), ToolErrorKind::Execution);
+    assert!(withdrawn.message().contains("withdrew tool `removed`"));
+
+    // Cancelling an in-flight call notifies the server instead of abandoning it.
+    let cancel_token = CancellationToken::new();
+    let hanging_tool = tool_of("mcp__live__hang");
+    let hanging = hanging_tool.call(invocation(), discarding_context(cancel_token.clone()));
+    let (cancelled, ()) = tokio::join!(hanging, async { cancel_token.cancel() });
+    assert_eq!(cancelled.unwrap_err().kind(), ToolErrorKind::Cancelled);
+    await_condition("cancellation notification", || cancelled_marker.exists()).await;
+
+    bundle.shutdown().await;
+}
+
+/// One MCP invocation with no arguments.
+#[cfg(unix)]
+fn invocation() -> rho_sdk::tool::ToolInvocation {
+    rho_sdk::tool::ToolInvocation::new(rho_sdk::ToolCallId::new(), serde_json::json!({}))
+}
+
+/// A context whose progress goes nowhere, for calls the test does not inspect.
+#[cfg(unix)]
+fn discarding_context(cancellation: CancellationToken) -> ToolContext {
+    let (sender, _receiver) =
+        rho_sdk::tool::tool_progress_channel(std::num::NonZeroUsize::new(1).unwrap());
+    ToolContext::new(None, cancellation, sender)
+}
+
+/// Wait for an out-of-band effect to land, bounded so a real failure reports
+/// what it was waiting for instead of hanging the suite.
+#[cfg(unix)]
+async fn await_condition(what: &str, mut ready: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !ready() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for {what}"
+        );
+        tokio::task::yield_now().await;
+    }
 }

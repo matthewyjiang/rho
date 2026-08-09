@@ -66,9 +66,36 @@ deny = ["delete_account"]
 
 Authentication discovery and OAuth are not implemented; supply server-issued credentials through environment-backed headers. As with stdio, configuration is the trust boundary for the remote session; tool calls do not re-request network capability.
 
+## Handshake
+
+Rho identifies itself in `initialize` as `rho` with the running version, and declares the client capabilities it actually answers:
+
+- `roots`: Rho advertises the session workspace as one `file://` root. The declaration sets `listChanged: false`, because a session's workspace never changes and Rho would never send the notification.
+
+A server's `instructions` from `initialize` reach the model. Rho fences each server's text in the system prompt and marks it as documentation from that server, not as instructions from the user.
+
+## Server logs
+
+Set `log_level` on a server to send `logging/setLevel` after the handshake. Levels are `debug`, `info`, `notice`, `warning`, `error`, `critical`, `alert`, and `emergency`. Leaving it unset keeps the server's own default.
+
+```toml
+[mcp.servers.indexer]
+transport = "stdio"
+command = "indexer-mcp"
+log_level = "info"
+```
+
+Server log messages enter Rho's tracing output under the `rho::mcp::server` target with the server identity and the server's logger name. Severities above `error` map onto `error`. A server that does not declare the `logging` capability is left alone.
+
 ## Discovery and tool calls
 
 Enabled servers initialize independently at session startup because Rho needs `tools/list` before the first model request. Each server has a two-minute startup budget for connection, handshake, and discovery. A timeout logs the server identity and limit. Rho does not retry during startup. A malformed entry, failed executable, failed connection, authentication error, handshake error, or `tools/list` error disables only that server. Other MCP servers and built-in tools continue to load. After a session is established, discovery failures and timeouts attempt a bounded close instead of relying only on Drop.
+
+Rho attaches a progress token to every tool call, so a server may report `notifications/progress` against it. Progress reaches the tool card while the call runs. Counts appear only when the server supplies a total.
+
+Cancelling a turn sends `notifications/cancelled` for the in-flight call, so the server can stop its own work instead of continuing on an abandoned request. The same happens when a call exceeds its two-minute budget.
+
+Streamable HTTP sessions are pinged once a minute, because an idle proxy can drop a remote connection with no local signal. A failed ping appears in `/mcp` and `rho mcp show`. Stdio servers need no ping: a dead child is observable directly.
 
 Rho exports discovered tools as:
 
@@ -76,9 +103,17 @@ Rho exports discovered tools as:
 mcp__<server_identity>__<tool_name>
 ```
 
-Components containing only ASCII letters, digits, and `_` remain unchanged. Rho encodes every other component, and components beginning with the reserved `_rho_` prefix, as `_rho_` followed by the lowercase hexadecimal UTF-8 bytes. This encoding keeps distinct server and remote tool names distinct. Descriptions include the owning server identity for diagnostics. `allow` is an optional allowlist; `deny` always wins.
+Components containing only ASCII letters, digits, and `_` remain unchanged, unless they contain the `__` separator. Rho encodes every other component, and components beginning with the reserved `_rho_` prefix, as `_rho_` followed by the lowercase hexadecimal UTF-8 bytes. This encoding keeps distinct server and remote tool names distinct. Descriptions include the owning server identity for diagnostics. `allow` is an optional allowlist; `deny` always wins.
 
 MCP tool calls use Rho's native tool registry, cancellation, and shutdown path. Results preserve the MCP result, including structured content and non-text content, as JSON in the native tool result. MCP error results and transport failures become tool failures without stopping sibling servers.
+
+### Tool lists that change mid-session
+
+A server that declares `tools.listChanged` may send `notifications/tools/list_changed`. Rho re-runs `tools/list` for that server and reconciles the result:
+
+- **Revised tools** keep working. A new description or input schema reaches the model on the next turn, because Rho reads each tool's definition when it builds a turn.
+- **Withdrawn tools** stay registered under their exported name and fail with a clear reason if called.
+- **Added tools** cannot join the registry mid-session, because a session's tool set is fixed once it starts. `/mcp` and `rho mcp show` list them and say a restart is needed.
 
 ## Inspect status
 
