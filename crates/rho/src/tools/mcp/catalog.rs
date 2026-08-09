@@ -16,7 +16,7 @@ use rmcp::{
     Peer, RoleClient,
 };
 
-use super::result;
+use super::{result, session::McpServerOffers};
 
 /// One prompt a server offers.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -129,6 +129,9 @@ struct McpCatalogEntry {
 struct McpCatalogServer {
     identity: String,
     peer: Peer<RoleClient>,
+    /// What this server declared at `initialize`, so a request Rho knows will
+    /// be refused is never sent.
+    offers: McpServerOffers,
     entry: RwLock<McpCatalogEntry>,
 }
 
@@ -169,10 +172,16 @@ pub(crate) struct McpPromptExpansion {
 
 impl McpCatalog {
     /// Register a connected server. Called once per server during connect.
-    pub(super) fn register(&self, identity: String, peer: Peer<RoleClient>) -> McpCatalogHandle {
+    pub(super) fn register(
+        &self,
+        identity: String,
+        peer: Peer<RoleClient>,
+        offers: McpServerOffers,
+    ) -> McpCatalogHandle {
         let server = Arc::new(McpCatalogServer {
             identity,
             peer,
+            offers,
             entry: RwLock::new(McpCatalogEntry::default()),
         });
         self.write().push(Arc::clone(&server));
@@ -273,17 +282,35 @@ impl McpCatalog {
     }
 }
 
-/// Argument suggestions from `completion/complete`.
+/// Whether a connected server can answer `completion/complete`.
 ///
-/// A server that does not support completion simply has no suggestions, so an
-/// error here is an empty list rather than a failure the user must read.
-///
-/// Nothing calls these yet. Both palettes match synchronously on every
-/// keystroke, and a suggestion is a round-trip, so offering suggestions needs an
-/// async pipeline that neither palette has. The methods stay because the
-/// capability is already negotiated during connect and the shape will not change.
-#[allow(dead_code)]
+/// Named rather than a bare `bool` because callers decide whether to spend a
+/// round-trip on it, and `if support == Declared` reads at the call site.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum McpCompletionSupport {
+    Declared,
+    Absent,
+}
+
 impl McpCatalog {
+    /// Whether `server` declared `completions` at `initialize`.
+    ///
+    /// Answered from the connect-time capability record, so a caller matching
+    /// per keystroke can ask this without a round-trip.
+    pub(crate) fn completion_support(&self, server: &str) -> McpCompletionSupport {
+        if self.offers(server).is_some_and(|offers| offers.completions) {
+            McpCompletionSupport::Declared
+        } else {
+            McpCompletionSupport::Absent
+        }
+    }
+
+    /// Suggested values for one argument of one prompt.
+    ///
+    /// A server that never declared `completions` is not asked at all, and a
+    /// server that fails the request contributes no suggestions: an argument
+    /// hint is help, so its absence must stay silent rather than become an
+    /// error the user has to dismiss mid-sentence.
     pub(crate) async fn complete_prompt_argument(
         &self,
         server: &str,
@@ -291,6 +318,9 @@ impl McpCatalog {
         argument: &str,
         typed: &str,
     ) -> Vec<String> {
+        if self.completion_support(server) == McpCompletionSupport::Absent {
+            return Vec::new();
+        }
         let Ok(peer) = self.peer(server) else {
             return Vec::new();
         };
@@ -299,20 +329,11 @@ impl McpCatalog {
             .unwrap_or_default()
     }
 
-    /// Suggested values for one placeholder in a resource URI template.
-    pub(crate) async fn complete_resource_argument(
-        &self,
-        server: &str,
-        uri_template: &str,
-        argument: &str,
-        typed: &str,
-    ) -> Vec<String> {
-        let Ok(peer) = self.peer(server) else {
-            return Vec::new();
-        };
-        peer.complete_resource_simple(uri_template, argument, typed)
-            .await
-            .unwrap_or_default()
+    fn offers(&self, identity: &str) -> Option<McpServerOffers> {
+        self.read()
+            .iter()
+            .find(|server| server.identity == identity)
+            .map(|server| server.offers)
     }
 }
 

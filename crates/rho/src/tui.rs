@@ -83,6 +83,7 @@ mod login_secret_input;
 mod markdown;
 mod markdown_image;
 mod mcp_actions;
+mod mcp_argument_completion;
 mod mcp_picker;
 mod mcp_prompt;
 mod mcp_resource;
@@ -485,6 +486,9 @@ struct App {
     mcp_report: crate::tools::mcp::McpSessionReport,
     /// Prompts and resources connected MCP servers offer, for palette matching.
     mcp_catalog: crate::tools::mcp::McpCatalog,
+    /// Fetched argument suggestions for the MCP prompt being typed, so palette
+    /// matching reads a local cache instead of awaiting a server.
+    mcp_argument_completions: mcp_argument_completion::McpArgumentCompletions,
     /// Agent Plugins load report captured at session start for `/doctor`.
     plugins_report: crate::plugins::PluginLoadReport,
 }

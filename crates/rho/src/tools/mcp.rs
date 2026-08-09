@@ -28,7 +28,9 @@ pub(crate) mod session;
 pub(crate) mod tool;
 pub(crate) mod validate;
 
-pub(crate) use catalog::{McpCatalog, McpCatalogError, McpResource, McpResourceContent};
+pub(crate) use catalog::{
+    McpCatalog, McpCatalogError, McpCompletionSupport, McpResource, McpResourceContent,
+};
 pub(crate) use report::{
     McpLoadMode, McpServerReport, McpServerStatus, McpSessionReport, McpToolReport,
     McpTransportSummary,
@@ -311,7 +313,7 @@ impl McpBundleBuilder {
 
         let catalog = self
             .catalog
-            .register(identity.clone(), session.peer().clone());
+            .register(identity.clone(), session.peer().clone(), offers);
         // Prompts and resources are listed before the session goes live, so the
         // first `/` or `@` a user types already matches.
         session::list_offers(&catalog, offers).await;
