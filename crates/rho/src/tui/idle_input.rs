@@ -324,6 +324,11 @@ impl App {
                 if let Some(template) = template {
                     let prompt = crate::prompt_templates::expand(template, &trailing_prompt);
                     turn = TurnPrompt::standard(prompt.clone(), prompt);
+                } else if let Some(expanded) = self
+                    .expand_mcp_prompt(&name, &trailing_prompt, &turn.display, agent)
+                    .await?
+                {
+                    turn = expanded;
                 } else {
                     match self.skill_command_action(
                         &name,

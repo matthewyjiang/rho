@@ -84,6 +84,7 @@ mod markdown;
 mod markdown_image;
 mod mcp_actions;
 mod mcp_picker;
+mod mcp_prompt;
 mod message_history;
 mod message_render;
 mod model_actions;
@@ -397,6 +398,7 @@ pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::
                     info,
                     herdr_graphics,
                     agent.mcp_report().clone(),
+            agent.mcp_catalog().clone(),
                     agent.plugins_report().clone(),
                 );
                 app.terminal_session = Some(TerminalSession::acquire());
@@ -477,6 +479,8 @@ struct App {
     screen_selection: Option<TextSelection>,
     /// MCP inventory for `/mcp` and `/doctor` (session snapshot from tool assembly).
     mcp_report: crate::tools::mcp::McpSessionReport,
+    /// Prompts and resources connected MCP servers offer, for palette matching.
+    mcp_catalog: crate::tools::mcp::McpCatalog,
     /// Agent Plugins load report captured at session start for `/doctor`.
     plugins_report: crate::plugins::PluginLoadReport,
 }

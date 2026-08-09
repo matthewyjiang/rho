@@ -28,6 +28,10 @@ use super::{progress::McpProgressRouter, roots::McpRoots};
 pub(crate) enum McpServerEvent {
     /// `notifications/tools/list_changed`: re-run discovery for this server.
     ToolsChanged,
+    /// `notifications/prompts/list_changed`: re-list this server's prompts.
+    PromptsChanged,
+    /// `notifications/resources/list_changed`: re-list this server's resources.
+    ResourcesChanged,
 }
 
 pub(crate) type McpEventSender = tokio::sync::mpsc::UnboundedSender<McpServerEvent>;
@@ -119,9 +123,30 @@ impl ClientHandler for McpClientHandler {
         &self,
         _context: NotificationContext<RoleClient>,
     ) -> impl Future<Output = ()> + Send + '_ {
-        // A closed receiver means the session is shutting down; the change has
-        // no one left to apply it.
-        let _ = self.events.send(McpServerEvent::ToolsChanged);
+        self.announce(McpServerEvent::ToolsChanged)
+    }
+
+    fn on_prompt_list_changed(
+        &self,
+        _context: NotificationContext<RoleClient>,
+    ) -> impl Future<Output = ()> + Send + '_ {
+        self.announce(McpServerEvent::PromptsChanged)
+    }
+
+    fn on_resource_list_changed(
+        &self,
+        _context: NotificationContext<RoleClient>,
+    ) -> impl Future<Output = ()> + Send + '_ {
+        self.announce(McpServerEvent::ResourcesChanged)
+    }
+}
+
+impl McpClientHandler {
+    /// Hand a server-announced change to the session's maintenance task. A
+    /// closed receiver means the session is shutting down, so the change has no
+    /// one left to apply it.
+    fn announce(&self, event: McpServerEvent) -> std::future::Ready<()> {
+        let _ = self.events.send(event);
         std::future::ready(())
     }
 }

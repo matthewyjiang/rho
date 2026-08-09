@@ -72,6 +72,45 @@ pub(super) fn render(
     Ok(rendered)
 }
 
+/// Render the messages one `prompts/get` returned into composer text.
+///
+/// A prompt is a conversation the server suggests. Rho seeds it as one user
+/// message, because the composer submits one turn, so each message is labelled
+/// with the role the server assigned it.
+pub(super) fn render_prompt_messages(
+    messages: &[rmcp::model::PromptMessage],
+    max_output_bytes: usize,
+) -> String {
+    let mut assets = Vec::new();
+    let sections = messages
+        .iter()
+        .filter_map(|message| {
+            let body = render_block(&message.content, &mut assets)?;
+            Some(match message.role {
+                rmcp::model::Role::User => body,
+                // Anything the server puts in the assistant's mouth is labelled,
+                // so the model reads it as prior context and not as a request.
+                _ => format!("[assistant]\n{body}"),
+            })
+        })
+        .collect::<Vec<_>>();
+    rho_tools::tool::truncate(sections.join("\n\n"), max_output_bytes)
+}
+
+/// Render the contents one `resources/read` returned.
+pub(super) fn render_resource_contents(
+    contents: &[ResourceContents],
+    max_output_bytes: usize,
+) -> RenderedResult {
+    let mut rendered = RenderedResult::default();
+    let sections = contents
+        .iter()
+        .map(|resource| render_resource(resource, &mut rendered.assets))
+        .collect::<Vec<_>>();
+    rendered.text = rho_tools::tool::truncate(sections.join("\n\n"), max_output_bytes);
+    rendered
+}
+
 /// Whether a text section is just the structured content written out, in either
 /// the compact or the pretty form servers commonly use.
 fn mirrors(section: &str, structured: &serde_json::Value) -> bool {
@@ -96,24 +135,7 @@ fn render_block(block: &ContentBlock, assets: &mut Vec<ToolAsset>) -> Option<Str
             &audio.data,
             assets,
         )),
-        ContentBlock::Resource(embedded) => Some(match &embedded.resource {
-            ResourceContents::TextResourceContents { uri, text, .. } => {
-                format!("[resource {uri}]\n{text}")
-            }
-            ResourceContents::BlobResourceContents {
-                uri,
-                mime_type,
-                blob,
-                ..
-            } => {
-                let media_type = mime_type.as_deref().unwrap_or("application/octet-stream");
-                let descriptor = binary_section("resource", media_type, blob, assets);
-                format!("[resource {uri}] {descriptor}")
-            }
-            // `ResourceContents` is non-exhaustive: a kind from a newer spec
-            // revision is named rather than dropped.
-            _ => "[resource of a kind Rho does not render]".into(),
-        }),
+        ContentBlock::Resource(embedded) => Some(render_resource(&embedded.resource, assets)),
         ContentBlock::ResourceLink(link) => {
             let mut line = format!("[resource link {} \"{}\"]", link.uri, link.name);
             if let Some(description) = &link.description {
@@ -124,6 +146,28 @@ fn render_block(block: &ContentBlock, assets: &mut Vec<ToolAsset>) -> Option<Str
         // `ContentBlock` is non-exhaustive: a block from a newer spec revision
         // is named rather than dropped, so the model knows something arrived.
         _ => Some("[content block of a kind Rho does not render]".into()),
+    }
+}
+
+/// Render one resource body, inlining text and describing binary.
+fn render_resource(resource: &ResourceContents, assets: &mut Vec<ToolAsset>) -> String {
+    match resource {
+        ResourceContents::TextResourceContents { uri, text, .. } => {
+            format!("[resource {uri}]\n{text}")
+        }
+        ResourceContents::BlobResourceContents {
+            uri,
+            mime_type,
+            blob,
+            ..
+        } => {
+            let media_type = mime_type.as_deref().unwrap_or("application/octet-stream");
+            let descriptor = binary_section("resource", media_type, blob, assets);
+            format!("[resource {uri}] {descriptor}")
+        }
+        // `ResourceContents` is non-exhaustive: a kind from a newer spec
+        // revision is named rather than dropped.
+        _ => "[resource of a kind Rho does not render]".into(),
     }
 }
 

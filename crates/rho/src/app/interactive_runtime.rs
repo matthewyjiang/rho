@@ -734,6 +734,11 @@ impl InteractiveRuntime {
         &self.mcp_report
     }
 
+    /// Prompts and resources connected MCP servers offer the user.
+    pub(crate) fn mcp_catalog(&self) -> &crate::tools::mcp::McpCatalog {
+        self.tools.mcp_catalog()
+    }
+
     pub(crate) fn plugins_report(&self) -> &crate::plugins::PluginLoadReport {
         &self.plugins_report
     }

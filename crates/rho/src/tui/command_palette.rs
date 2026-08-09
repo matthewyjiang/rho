@@ -68,6 +68,23 @@ impl App {
             matches.insert(0, exact);
         }
         matches.extend(template_matches);
+        // The catalog is listed once at connect, so palette matching stays a
+        // local lookup. Prompts are already ordered by server then name.
+        matches.extend(
+            self.mcp_catalog
+                .prompts()
+                .into_iter()
+                .filter(|prompt| prompt.command_name().starts_with(&prefix))
+                .map(|prompt| CommandChoice {
+                    usage: prompt.usage(),
+                    description: prompt
+                        .description
+                        .clone()
+                        .unwrap_or_else(|| format!("Prompt from MCP server `{}`", prompt.server)),
+                    name: prompt.command_name(),
+                    kind: CommandChoiceKind::McpPrompt,
+                }),
+        );
         // discovered skills are sorted by name; filtering preserves that order.
         matches.extend(
             self.discovered_skills()
@@ -149,7 +166,10 @@ impl App {
                     .set_submission_mode(super::InputSubmissionMode::Prompt);
                 (input, cursor)
             }
-            CommandChoiceKind::Skill => {
+            // Both complete to a slash token and expand on submit: a skill
+            // needs a tool call, and an MCP prompt needs a `prompts/get`
+            // round-trip, neither of which can happen in this sync path.
+            CommandChoiceKind::Skill | CommandChoiceKind::McpPrompt => {
                 self.input_ui
                     .set_submission_mode(super::InputSubmissionMode::ParseCommands);
                 complete_slash_command(self.input_ui.text(), self.input_ui.cursor(), &choice.name)

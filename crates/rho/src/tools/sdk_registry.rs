@@ -143,6 +143,7 @@ pub struct AppToolSet {
     checkpoint_tracker: Arc<crate::session::workspace_checkpoint::WorkspaceCheckpointTracker>,
     web_access: super::web::WebAccessStore,
     mcp_report: super::mcp::McpSessionReport,
+    mcp_catalog: super::mcp::McpCatalog,
 }
 
 impl AppToolSet {
@@ -158,6 +159,7 @@ impl AppToolSet {
             ),
             web_access: super::web::WebAccessStore::new(),
             mcp_report: super::mcp::McpSessionReport::default(),
+            mcp_catalog: super::mcp::McpCatalog::default(),
         }
     }
 
@@ -260,6 +262,7 @@ impl AppToolSet {
     /// Attach MCP inventory and any live tool bundle from session assembly.
     pub(crate) fn with_mcp(mut self, outcome: super::mcp::McpConnectOutcome) -> Self {
         self.mcp_report = outcome.report;
+        self.mcp_catalog = outcome.catalog;
         if let Some(bundle) = outcome.bundle {
             self.add_bundle(bundle);
         }
@@ -269,6 +272,11 @@ impl AppToolSet {
     fn add_bundle(&mut self, bundle: impl ToolBundle + 'static) {
         self.tools.extend(bundle.tools().iter().cloned());
         self.bundles.push(Box::new(bundle));
+    }
+
+    /// Prompts and resources connected servers offer the user.
+    pub(crate) fn mcp_catalog(&self) -> &super::mcp::McpCatalog {
+        &self.mcp_catalog
     }
 
     pub(crate) fn mcp_report(&self) -> &super::mcp::McpSessionReport {

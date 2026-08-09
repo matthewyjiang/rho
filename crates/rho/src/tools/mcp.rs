@@ -16,6 +16,7 @@ use rho_sdk::tool::Tool;
 use super::sdk_registry::ToolBundle;
 use config::{McpConfig, McpServerConfig};
 
+pub(crate) mod catalog;
 pub(crate) mod client;
 pub(crate) mod config;
 pub(crate) mod definition;
@@ -31,6 +32,7 @@ pub(crate) use report::{
     McpLoadMode, McpServerReport, McpServerStatus, McpSessionReport, McpToolReport,
     McpTransportSummary,
 };
+pub(crate) use catalog::{McpCatalog, McpPrompt, McpResource};
 pub(crate) use roots::McpRoots;
 pub(crate) use validate::{
     parse_remote_url, validate_environment_header_names, validate_identity,
@@ -70,6 +72,9 @@ impl McpSessionOptions {
 pub(crate) struct McpConnectOutcome {
     pub(crate) report: McpSessionReport,
     pub(crate) bundle: Option<McpBundle>,
+    /// Prompts and resources the interactive host can offer. Empty unless
+    /// servers connected and declared them.
+    pub(crate) catalog: McpCatalog,
 }
 
 impl McpConnectOutcome {
@@ -84,6 +89,7 @@ impl McpConnectOutcome {
             McpSessionPlan::Inventory(mode) => Self {
                 report: McpSessionReport::from_config_unloaded(config, mode),
                 bundle: None,
+                catalog: McpCatalog::default(),
             },
         }
     }
@@ -134,6 +140,7 @@ impl McpBundle {
                     servers,
                 },
                 bundle: None,
+                catalog: McpCatalog::default(),
             };
         }
 
@@ -184,16 +191,22 @@ impl McpBundle {
                     continue;
                 }
             };
-            servers.push(bundle.register(identity, server, transport, *connected));
+            servers.push(
+                bundle
+                    .register(identity, server, transport, *connected)
+                    .await,
+            );
         }
 
         servers.sort_by(|left, right| left.identity.cmp(&right.identity));
+        let catalog = bundle.catalog.clone();
         McpConnectOutcome {
             report: McpSessionReport {
                 mode: McpLoadMode::Native,
                 servers,
             },
             bundle: bundle.build(),
+            catalog,
         }
     }
 
@@ -229,6 +242,7 @@ struct McpBundleBuilder {
     sessions: Vec<McpSession>,
     maintenance: Vec<tokio::task::JoinHandle<()>>,
     registered_names: HashSet<String>,
+    catalog: McpCatalog,
 }
 
 impl McpBundleBuilder {
@@ -239,10 +253,11 @@ impl McpBundleBuilder {
             sessions: Vec::new(),
             maintenance: Vec::new(),
             registered_names: HashSet::new(),
+            catalog: McpCatalog::default(),
         }
     }
 
-    fn register(
+    async fn register(
         &mut self,
         identity: String,
         server: McpServerConfig,
@@ -255,6 +270,7 @@ impl McpBundleBuilder {
             instructions,
             progress,
             events,
+            offers,
         } = connected;
         let mut exported = Vec::new();
         let mut slots = BTreeMap::new();
@@ -293,6 +309,10 @@ impl McpBundleBuilder {
             });
         }
 
+        let catalog = self.catalog.register(identity.clone(), session.peer().clone());
+        // Prompts and resources are listed before the session goes live, so the
+        // first `/` or `@` a user types already matches.
+        session::list_offers(&catalog, offers).await;
         let live = report::McpLiveServerState::default();
         self.maintenance
             .push(tokio::spawn(session::maintain_session(
@@ -303,6 +323,8 @@ impl McpBundleBuilder {
                     slots,
                     live: live.clone(),
                     events,
+                    catalog,
+                    offers,
                 },
             )));
         self.sessions.push(session);

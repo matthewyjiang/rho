@@ -23,6 +23,7 @@ impl App {
         info: TuiBootstrap,
         herdr_graphics: crate::herdr::HerdrGraphicsCapability,
         mcp_report: crate::tools::mcp::McpSessionReport,
+        mcp_catalog: crate::tools::mcp::McpCatalog,
         plugins_report: crate::plugins::PluginLoadReport,
     ) -> Self {
         // Matrix mode is debug-only (matrix_enabled is always false in release).
@@ -34,6 +35,7 @@ impl App {
                 Arc::new(rho_providers::credentials::MemoryCredentialStore::default()),
                 herdr_graphics,
                 mcp_report,
+                mcp_catalog,
                 plugins_report,
             );
         }
@@ -42,6 +44,7 @@ impl App {
             Arc::new(AppCredentialStore),
             herdr_graphics,
             mcp_report,
+            mcp_catalog,
             plugins_report,
         )
     }
@@ -51,6 +54,7 @@ impl App {
         credential_store: Arc<dyn CredentialStore>,
         herdr_graphics: crate::herdr::HerdrGraphicsCapability,
         mcp_report: crate::tools::mcp::McpSessionReport,
+        mcp_catalog: crate::tools::mcp::McpCatalog,
         plugins_report: crate::plugins::PluginLoadReport,
     ) -> Self {
         let available_auths = available_auth_modes(credential_store.as_ref());
@@ -110,6 +114,7 @@ impl App {
             last_mouse_position: None,
             screen_selection: None,
             mcp_report,
+            mcp_catalog,
             plugins_report,
         };
         if let Some(status) = initial_status {

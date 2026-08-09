@@ -262,6 +262,9 @@ pub(super) enum CommandChoiceKind {
     BuiltinArgument(&'static commands::CommandArgumentChoice),
     PromptTemplate(String),
     Skill,
+    /// A prompt offered by a connected MCP server. Expanded on submit, because
+    /// `prompts/get` is a round-trip the palette cannot make.
+    McpPrompt,
 }
 
 #[derive(Clone, Debug)]

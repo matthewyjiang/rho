@@ -25,6 +25,7 @@ use rmcp::{
 };
 
 use super::{
+    catalog::{self, McpCatalogHandle},
     client::{McpClientHandler, McpEventReceiver, McpServerEvent},
     config::{McpServerConfig, McpTransport},
     definition::McpToolDefinition,
@@ -62,6 +63,30 @@ pub(super) struct ConnectedServer {
     pub(super) instructions: Option<String>,
     pub(super) progress: McpProgressRouter,
     pub(super) events: McpEventReceiver,
+    pub(super) offers: McpServerOffers,
+}
+
+/// Which optional primitives a server declared at `initialize`.
+///
+/// Rho only asks for what a server said it has. Listing prompts on a server
+/// that declares none is a guaranteed error and a wasted round-trip in the
+/// startup budget.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct McpServerOffers {
+    pub(super) prompts: bool,
+    pub(super) resources: bool,
+}
+
+impl McpServerOffers {
+    fn from_session(session: &McpSession) -> Self {
+        let Some(info) = session.peer_info() else {
+            return Self::default();
+        };
+        Self {
+            prompts: info.capabilities.prompts.is_some(),
+            resources: info.capabilities.resources.is_some(),
+        }
+    }
 }
 
 /// Establish and discover under one startup budget. After the session exists,
@@ -90,6 +115,7 @@ pub(super) async fn connect_server_bounded(
         .filter(|instructions| !instructions.trim().is_empty());
     apply_log_level(identity, server, &session).await;
 
+    let offers = McpServerOffers::from_session(&session);
     match tokio::time::timeout_at(deadline, session.list_all_tools()).await {
         Ok(Ok(discovered)) => ConnectResult::Ready(Box::new(ConnectedServer {
             session,
@@ -97,6 +123,7 @@ pub(super) async fn connect_server_bounded(
             instructions,
             progress,
             events,
+            offers,
         })),
         Ok(Err(error)) => {
             close_session(session).await;
@@ -240,6 +267,9 @@ pub(super) struct SessionMaintenance {
     pub(super) slots: BTreeMap<String, Arc<McpToolSlot>>,
     pub(super) live: McpLiveServerState,
     pub(super) events: McpEventReceiver,
+    /// Write access to this server's prompt and resource listings.
+    pub(super) catalog: McpCatalogHandle,
+    pub(super) offers: McpServerOffers,
 }
 
 /// Own the long-lived server-to-client work for one session.
@@ -260,6 +290,12 @@ pub(super) async fn maintain_session(mut maintenance: SessionMaintenance) {
         tokio::select! {
             event = maintenance.events.recv() => match event {
                 Some(McpServerEvent::ToolsChanged) => refresh_tools(&maintenance).await,
+                Some(McpServerEvent::PromptsChanged) => {
+                    list_prompts(&maintenance.catalog).await;
+                }
+                Some(McpServerEvent::ResourcesChanged) => {
+                    list_resources(&maintenance.catalog).await;
+                }
                 None => break,
             },
             _ = ticker.tick(), if keepalive => {
@@ -276,6 +312,55 @@ pub(super) async fn maintain_session(mut maintenance: SessionMaintenance) {
             }
         }
     }
+}
+
+/// List the prompts and resources a server declared, once at startup.
+///
+/// A failure here disables neither the server nor its tools: prompts and
+/// resources are things a person reaches for, and their absence is a smaller
+/// problem than losing a working tool set.
+pub(super) async fn list_offers(catalog: &McpCatalogHandle, offers: McpServerOffers) {
+    if offers.prompts {
+        list_prompts(catalog).await;
+    }
+    if offers.resources {
+        list_resources(catalog).await;
+    }
+}
+
+async fn list_prompts(catalog: &McpCatalogHandle) {
+    match catalog.peer().list_all_prompts().await {
+        Ok(prompts) => catalog.set_prompts(catalog::prompts_from_remote(
+            catalog.identity(),
+            prompts,
+        )),
+        Err(error) => tracing::warn!(
+            server = %catalog.identity(),
+            error = %error,
+            "MCP prompts/list failed; this server offers no prompts this session"
+        ),
+    }
+}
+
+async fn list_resources(catalog: &McpCatalogHandle) {
+    let (concrete, templates) = tokio::join!(
+        catalog.peer().list_all_resources(),
+        catalog.peer().list_all_resource_templates(),
+    );
+    // A server may offer concrete resources, templates, or both. One failing
+    // must not discard the other.
+    if concrete.is_err() && templates.is_err() {
+        tracing::warn!(
+            server = %catalog.identity(),
+            "MCP resource listing failed; this server offers no resources this session"
+        );
+        return;
+    }
+    catalog.set_resources(catalog::resources_from_remote(
+        catalog.identity(),
+        concrete.unwrap_or_default(),
+        templates.unwrap_or_default(),
+    ));
 }
 
 /// Send an MCP `ping`. rmcp exposes no typed helper for it on the client peer,
