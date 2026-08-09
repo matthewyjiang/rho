@@ -1,6 +1,6 @@
 //! `/mcp` inventory picker.
 
-use crate::tools::mcp::{McpServerReport, McpServerStatus, McpSessionReport};
+use crate::tools::mcp::{McpCatalog, McpServerReport, McpServerStatus, McpSessionReport};
 
 use super::{
     picker_overlay::OverlayChrome, PickerAction, PickerBadge, PickerBadgeTone, PickerItem,
@@ -9,13 +9,22 @@ use super::{
 
 pub(super) struct McpPickerContext<'a> {
     pub(super) report: &'a McpSessionReport,
+    /// Prompts and resources are session state rather than config, so they come
+    /// from the live catalog rather than the startup report.
+    pub(super) catalog: &'a McpCatalog,
     pub(super) config_path: &'a std::path::Path,
 }
 
 pub(super) fn picker(context: McpPickerContext<'_>) -> UiPicker {
     let mut items = Vec::with_capacity(context.report.servers.len().saturating_add(1));
     items.push(mode_item(context.report, context.config_path));
-    items.extend(context.report.servers.iter().map(server_item));
+    items.extend(
+        context
+            .report
+            .servers
+            .iter()
+            .map(|server| server_item(server, context.catalog)),
+    );
 
     UiPicker::new("MCP servers", items, PickerAction::Dismiss)
         .with_layout(PickerLayout::Overlay)
@@ -87,11 +96,44 @@ fn mode_item(report: &McpSessionReport, config_path: &std::path::Path) -> Picker
     }
 }
 
-fn server_item(server: &McpServerReport) -> PickerItem {
+/// What this server offers beyond tools. Named so a user can tell what to type
+/// next: a prompt is a slash command, a resource is an `@` mention.
+fn catalog_lines(identity: &str, catalog: &McpCatalog) -> Vec<String> {
+    let prompts = catalog
+        .prompts()
+        .into_iter()
+        .filter(|prompt| prompt.server == identity)
+        .map(|prompt| format!("/{}", prompt.command_name()))
+        .collect::<Vec<_>>();
+    let resources = catalog
+        .resources()
+        .into_iter()
+        .filter(|resource| resource.server == identity)
+        .count();
+    let mut lines = Vec::new();
+    if !prompts.is_empty() {
+        lines.push(format!(
+            "{} prompt(s): {}",
+            prompts.len(),
+            prompts.join(", ")
+        ));
+    }
+    if resources > 0 {
+        lines.push(format!("{resources} resource(s), available with @"));
+    }
+    lines
+}
+
+fn server_item(server: &McpServerReport, catalog: &McpCatalog) -> PickerItem {
+    let mut detail = server.detail_text();
+    for line in catalog_lines(&server.identity, catalog) {
+        detail.push('\n');
+        detail.push_str(&line);
+    }
     PickerItem {
         section: Some("SERVERS".into()),
         label: server.identity.clone(),
-        detail: Some(server.detail_text()),
+        detail: Some(detail),
         preview: None,
         badge: Some(PickerBadge {
             text: server.status().as_str().into(),
