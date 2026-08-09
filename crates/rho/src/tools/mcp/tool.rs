@@ -244,7 +244,7 @@ pub(super) async fn call_remote_tool(
     };
     match response {
         Ok(Ok(ServerResult::CallToolResult(result))) => {
-            result::render(&result, expectation, max_output_bytes)
+            result::render(&result, &expectation, max_output_bytes)
         }
         Ok(Ok(_)) => Err(ToolError::new(
             ToolErrorKind::Execution,

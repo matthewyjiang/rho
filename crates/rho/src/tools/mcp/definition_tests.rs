@@ -43,7 +43,7 @@ fn stdio() -> McpTransport {
 fn annotations_and_output_schema_shape_the_exported_tool() {
     let plain = McpToolDefinition::from_remote("docs", "search", &remote(None, false));
     assert_eq!(plain.spec.description, "MCP server `docs`: find things");
-    assert!(!plain.expectation.structured_content);
+    assert_eq!(plain.expectation.output_schema, None);
 
     let annotated = McpToolDefinition::from_remote(
         "docs",
@@ -54,7 +54,10 @@ fn annotations_and_output_schema_shape_the_exported_tool() {
         annotated.spec.description,
         "MCP server `docs`, Search: find things\nServer hint: this tool only reads.\nServer hint: this tool reaches systems outside this machine."
     );
-    assert!(annotated.expectation.structured_content);
+    assert_eq!(
+        annotated.expectation.output_schema,
+        Some(serde_json::json!({"type": "object"}))
+    );
 
     let destructive = McpToolDefinition::from_remote(
         "docs",
