@@ -4,12 +4,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::DefaultTerminal;
 
 use super::{
-    command_actions::CommandSubmission,
-    command_palette::slash_command_args,
-    commands, goal_command,
-    paste_burst::{next_word_boundary, previous_word_boundary},
-    skill_actions, App, ComposerMode, GoalState, HistoryDirection, InputSubmissionMode,
-    InteractiveRuntime, TurnOutcome, TurnPrompt,
+    command_actions::CommandSubmission, command_palette::slash_command_args, commands,
+    goal_command, skill_actions, App, ComposerMode, GoalState, HistoryDirection,
+    InputSubmissionMode, InteractiveRuntime, TurnOutcome, TurnPrompt,
 };
 
 impl App {
@@ -132,19 +129,11 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Left) => {
-                self.input_ui.clear_selection();
-                self.input_ui.set_cursor(previous_word_boundary(
-                    self.input_ui.text(),
-                    self.input_ui.cursor(),
-                ));
+                self.move_input_cursor_to_previous_word();
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Right) => {
-                self.input_ui.clear_selection();
-                self.input_ui.set_cursor(next_word_boundary(
-                    self.input_ui.text(),
-                    self.input_ui.cursor(),
-                ));
+                self.move_input_cursor_to_next_word();
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::Left) => {

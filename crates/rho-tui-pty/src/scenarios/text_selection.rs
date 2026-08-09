@@ -81,8 +81,8 @@ fn assert_drag_updates_highlight_before_release(harness: &mut PtyHarness) -> Res
     Ok(())
 }
 
-// Covers: clicking the free-text composer places the caret so typed text
-// inserts at the pointer, and drag-select + type replaces the span.
+// Covers: click and drag edit the free-text composer, double-click selection
+// survives release, and a clipped composer keeps text stable under the pointer.
 // Owner: interactive UX (PTY).
 fn assert_composer_click_and_replace_selection(harness: &mut PtyHarness) -> Result<()> {
     let (row, column) = screen_cell(harness, "grab this text")?;
@@ -117,6 +117,38 @@ fn assert_composer_click_and_replace_selection(harness: &mut PtyHarness) -> Resu
     harness.wait_for_text(
         "grab Xthat text",
         WaitTimeout::secs(5, "selection replace typing"),
+    )?;
+
+    // Complete both press/release pairs before typing over the selected word.
+    let (row, column) = screen_cell(harness, "grab Xthat text")?;
+    let word_col = column + "grab X".chars().count() as u16;
+    let click = (word_col + 1, row + 1);
+    for _ in 0..2 {
+        harness.mouse(MouseButton::Left, click.0, click.1, true)?;
+        harness.mouse(MouseButton::Left, click.0, click.1, false)?;
+    }
+    harness.type_text("WORD")?;
+    harness.wait_for_text(
+        "grab WORD text",
+        WaitTimeout::secs(5, "double-click selection replace"),
+    )?;
+
+    // With only two composer rows visible, clicking the top row must not move
+    // another source row under the pointer before mouse release.
+    harness.inject_key(&crate::keys::Key::Ctrl('c'))?;
+    harness.resize(6, 20)?;
+    let wrapped = "111111111111111 222222222222222 333333333333333 444444444444444";
+    harness.type_text(wrapped)?;
+    harness.wait_for_text("444444", WaitTimeout::secs(5, "wrapped composer"))?;
+    let target = "333333333333333";
+    let (row, column) = screen_cell(harness, target)?;
+    let click = (column + target.chars().count() as u16 + 1, row + 1);
+    harness.mouse(MouseButton::Left, click.0, click.1, true)?;
+    harness.mouse(MouseButton::Left, click.0, click.1, false)?;
+    harness.type_text("X")?;
+    harness.wait_for_text(
+        "333333333333333X",
+        WaitTimeout::secs(5, "clipped composer click"),
     )?;
 
     // Dragging composer text must not fire the screen-copy notice path.

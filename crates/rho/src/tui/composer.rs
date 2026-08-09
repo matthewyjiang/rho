@@ -240,7 +240,10 @@ impl App {
     }
 
     pub(super) fn move_input_cursor_left(&mut self) {
-        self.input_ui.clear_selection();
+        if let Some(range) = self.input_ui.take_selection_range() {
+            self.input_ui.set_cursor(range.start);
+            return;
+        }
         if let Some(segment) = self.input_ui.paste_segments().iter().find(|segment| {
             segment.start < self.input_ui.cursor() && self.input_ui.cursor() <= segment.end()
         }) {
@@ -252,7 +255,10 @@ impl App {
     }
 
     pub(super) fn move_input_cursor_right(&mut self) {
-        self.input_ui.clear_selection();
+        if let Some(range) = self.input_ui.take_selection_range() {
+            self.input_ui.set_cursor(range.end);
+            return;
+        }
         if let Some(segment) = self.input_ui.paste_segments().iter().find(|segment| {
             segment.start <= self.input_ui.cursor() && self.input_ui.cursor() < segment.end()
         }) {
@@ -271,6 +277,29 @@ impl App {
         }
     }
 
+    pub(super) fn move_input_cursor_to_previous_word(&mut self) {
+        if let Some(range) = self.input_ui.take_selection_range() {
+            self.input_ui.set_cursor(range.start);
+            return;
+        }
+        self.input_ui.set_cursor(previous_word_boundary(
+            self.input_ui.text(),
+            self.input_ui.cursor(),
+        ));
+    }
+
+    pub(super) fn move_input_cursor_to_next_word(&mut self) {
+        if let Some(range) = self.input_ui.take_selection_range() {
+            self.input_ui.set_cursor(range.end);
+            return;
+        }
+        self.input_ui
+            .set_cursor(super::paste_burst::next_word_boundary(
+                self.input_ui.text(),
+                self.input_ui.cursor(),
+            ));
+    }
+
     pub(super) fn focused_paste_segment(&self) -> Option<&PasteSegment> {
         self.input_ui
             .paste_segments()
@@ -279,32 +308,76 @@ impl App {
     }
 
     pub(super) fn replace_input_range(&mut self, start: usize, end: usize, text: &str) {
+        self.replace_input_range_with_paste_content(start, end, text, None);
+    }
+
+    fn replace_input_range_with_paste_content(
+        &mut self,
+        start: usize,
+        end: usize,
+        text: &str,
+        paste_content: Option<String>,
+    ) {
         self.reset_input_history_navigation();
         self.input_ui.clear_selection();
-        self.adjust_paste_segments_for_edit(start, end.saturating_sub(start), text.chars().count());
-        let start_byte = self.input_byte_index(start);
-        let end_byte = self.input_byte_index(end);
+        let range = self.normalize_input_edit_range(start..end);
+        let inserted_len = text.chars().count();
+        self.adjust_paste_segments_for_edit(range.start, range.len(), inserted_len);
+        let start_byte = self.input_byte_index(range.start);
+        let end_byte = self.input_byte_index(range.end);
         self.input_ui
             .with_text_mut(|value| value.replace_range(start_byte..end_byte, text));
-        self.input_ui.set_cursor(start + text.chars().count());
+        self.input_ui.set_cursor(range.start + inserted_len);
+        if let Some(content) = paste_content {
+            self.input_ui.paste_segments_mut().push(PasteSegment {
+                start: range.start,
+                marker_len: inserted_len,
+                content,
+            });
+            self.input_ui
+                .paste_segments_mut()
+                .sort_by_key(|segment| segment.start);
+        }
         self.input_changed();
     }
 
+    /// Expand an edit to consume any collapsed paste marker it intersects.
+    fn normalize_input_edit_range(
+        &self,
+        mut range: std::ops::Range<usize>,
+    ) -> std::ops::Range<usize> {
+        let char_len = self.input_char_len();
+        range.start = range.start.min(char_len);
+        range.end = range.end.max(range.start).min(char_len);
+        for segment in self.input_ui.paste_segments() {
+            let intersects = range.start < segment.end() && range.end > segment.start;
+            let caret_inside =
+                range.is_empty() && segment.start < range.start && range.start < segment.end();
+            if intersects || caret_inside {
+                range.start = range.start.min(segment.start);
+                range.end = range.end.max(segment.end());
+            }
+        }
+        range
+    }
+
+    fn replace_input_selection(&mut self, text: &str) -> bool {
+        let Some(range) = self.input_ui.take_selection_range() else {
+            return false;
+        };
+        self.replace_input_range(range.start, range.end, text);
+        true
+    }
+
     pub(super) fn insert_input_char(&mut self, ch: char) {
-        if let Some(range) = self.input_ui.take_selection_range() {
-            self.replace_input_range(range.start, range.end, &ch.to_string());
+        if self.replace_input_selection(&ch.to_string()) {
             return;
         }
         if ch == '!' && self.try_enter_shell_mode_from_bang() {
             return;
         }
-        self.reset_input_history_navigation();
-        self.adjust_paste_segments_for_edit(self.input_ui.cursor(), 0, 1);
-        let byte_index = self.input_byte_index(self.input_ui.cursor());
-        self.input_ui
-            .with_text_mut(|value| value.insert(byte_index, ch));
-        self.input_ui.set_cursor(self.input_ui.cursor() + (1));
-        self.input_changed();
+        let cursor = self.input_ui.cursor();
+        self.replace_input_range(cursor, cursor, &ch.to_string());
     }
 
     /// Insert plain composer text through the char path so rules like shell-mode
@@ -314,8 +387,7 @@ impl App {
         if text.is_empty() {
             return;
         }
-        if let Some(range) = self.input_ui.take_selection_range() {
-            self.replace_input_range(range.start, range.end, text);
+        if self.replace_input_selection(text) {
             return;
         }
         for ch in text.chars() {
@@ -332,30 +404,11 @@ impl App {
     }
 
     fn insert_input_text_with_paste_content(&mut self, text: &str, paste_content: Option<String>) {
-        if let Some(range) = self.input_ui.take_selection_range() {
-            // Drop the selected span first so the paste lands at the range start.
-            self.replace_input_range(range.start, range.end, "");
-        }
-        self.reset_input_history_navigation();
-        let start = self.input_ui.cursor();
-        let inserted_len = text.chars().count();
-        self.adjust_paste_segments_for_edit(start, 0, inserted_len);
-        let byte_index = self.input_byte_index(start);
-        self.input_ui
-            .with_text_mut(|value| value.insert_str(byte_index, text));
-        self.input_ui
-            .set_cursor(self.input_ui.cursor() + (inserted_len));
-        if let Some(content) = paste_content {
-            self.input_ui.paste_segments_mut().push(PasteSegment {
-                start,
-                marker_len: inserted_len,
-                content,
-            });
-            self.input_ui
-                .paste_segments_mut()
-                .sort_by_key(|segment| segment.start);
-        }
-        self.input_changed();
+        let range = self
+            .input_ui
+            .take_selection_range()
+            .unwrap_or_else(|| self.input_ui.cursor()..self.input_ui.cursor());
+        self.replace_input_range_with_paste_content(range.start, range.end, text, paste_content);
     }
 
     pub(super) fn expanded_input(&self) -> String {
@@ -382,8 +435,7 @@ impl App {
     }
 
     pub(super) fn backspace_input(&mut self) {
-        if let Some(range) = self.input_ui.take_selection_range() {
-            self.replace_input_range(range.start, range.end, "");
+        if self.replace_input_selection("") {
             return;
         }
         if let Some(segment) = self
@@ -421,20 +473,12 @@ impl App {
             }
             return;
         }
-        self.reset_input_history_navigation();
         let edit_start = self.input_ui.cursor() - 1;
-        self.adjust_paste_segments_for_edit(edit_start, 1, 0);
-        let start = self.input_byte_index(edit_start);
-        let end = self.input_byte_index(self.input_ui.cursor());
-        self.input_ui
-            .with_text_mut(|value| value.replace_range(start..end, ""));
-        self.input_ui.set_cursor(self.input_ui.cursor() - (1));
-        self.input_changed();
+        self.replace_input_range(edit_start, self.input_ui.cursor(), "");
     }
 
     pub(super) fn delete_input(&mut self) {
-        if let Some(range) = self.input_ui.take_selection_range() {
-            self.replace_input_range(range.start, range.end, "");
+        if self.replace_input_selection("") {
             return;
         }
         if let Some(segment) = self
@@ -452,29 +496,42 @@ impl App {
         if self.input_ui.cursor() >= self.input_char_len() {
             return;
         }
-        self.reset_input_history_navigation();
-        self.adjust_paste_segments_for_edit(self.input_ui.cursor(), 1, 0);
-        let start = self.input_byte_index(self.input_ui.cursor());
-        let end = self.input_byte_index(self.input_ui.cursor() + 1);
-        self.input_ui
-            .with_text_mut(|value| value.replace_range(start..end, ""));
-        self.input_changed();
+        self.replace_input_range(self.input_ui.cursor(), self.input_ui.cursor() + 1, "");
     }
 
     pub(super) fn delete_word_before_cursor(&mut self) {
-        if let Some(range) = self.input_ui.take_selection_range() {
-            self.replace_input_range(range.start, range.end, "");
+        if self.replace_input_selection("") {
             return;
         }
-        self.reset_input_history_navigation();
         let start_cursor = previous_word_boundary(self.input_ui.text(), self.input_ui.cursor());
-        self.adjust_paste_segments_for_edit(start_cursor, self.input_ui.cursor() - start_cursor, 0);
-        let start = self.input_byte_index(start_cursor);
-        let end = self.input_byte_index(self.input_ui.cursor());
+        self.replace_input_range(start_cursor, self.input_ui.cursor(), "");
+    }
+
+    /// Snap a pointer caret into an atomic collapsed-paste marker.
+    pub(super) fn composer_caret_index(&self, index: usize) -> usize {
         self.input_ui
-            .with_text_mut(|value| value.replace_range(start..end, ""));
-        self.input_ui.set_cursor(start_cursor);
-        self.input_changed();
+            .paste_segments()
+            .iter()
+            .find(|segment| segment.start < index && index < segment.end())
+            .map_or(index, |segment| segment.start)
+    }
+
+    /// Expand a drag endpoint to the nearest edge of an atomic paste marker.
+    pub(super) fn composer_selection_focus(&self, index: usize) -> usize {
+        let Some(origin) = self.input_ui.selection_pointer_origin() else {
+            return index;
+        };
+        self.input_ui
+            .paste_segments()
+            .iter()
+            .find(|segment| segment.start < index && index < segment.end())
+            .map_or(index, |segment| {
+                if index < origin {
+                    segment.start
+                } else {
+                    segment.end()
+                }
+            })
     }
 
     /// Hit-test the free-text composer for pointer placement and selection.

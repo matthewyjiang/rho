@@ -2,9 +2,22 @@ use pretty_assertions::assert_eq;
 use ratatui::layout::Rect;
 
 use super::{
-    bottom_chrome_heights, terminal_meets_minimum, BottomChrome, MIN_TERMINAL_HEIGHT,
-    MIN_TERMINAL_WIDTH,
+    bottom_chrome_heights, terminal_meets_minimum, visible_composer_start, BottomChrome,
+    MIN_TERMINAL_HEIGHT, MIN_TERMINAL_WIDTH,
 };
+
+// Covers: moving the caret within the visible composer must not move the text
+// under an active pointer gesture.
+// Owner: pure layout
+#[test]
+fn composer_view_stays_put_until_cursor_leaves_it() {
+    assert_eq!(visible_composer_start(9, 10, 3, 0), 7);
+    assert_eq!(visible_composer_start(7, 10, 3, 7), 7);
+    assert_eq!(visible_composer_start(8, 10, 3, 7), 7);
+    assert_eq!(visible_composer_start(6, 10, 3, 7), 6);
+    assert_eq!(visible_composer_start(9, 10, 3, 6), 7);
+    assert_eq!(visible_composer_start(0, 2, 3, 1), 0);
+}
 
 // Covers: tiny terminals must not enter the normal chrome layout.
 // Owner: pure layout

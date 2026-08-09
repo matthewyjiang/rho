@@ -126,18 +126,63 @@ fn delete_and_backspace_remove_composer_selection() {
     assert_eq!(app.input_ui.text(), "abf");
 }
 
-// Covers: double-click word select spans the token under the caret.
+// Covers: double-click word selection survives release and extends from the
+// original token edge in either drag direction.
 // Owner: pure unit (composer selection ops)
 #[test]
-fn select_range_marks_composer_word_selection() {
+fn range_selection_preserves_and_extends_its_base_range() {
     let mut app = test_app();
     app.insert_input_text("grab this text");
     let range = super::super::paste_burst::word_range_at(app.input_ui.text(), 7);
-    app.input_ui.select_range(range.start, range.end);
-    app.input_ui.set_cursor(range.end);
-    app.input_ui.finalize_selection();
 
+    app.input_ui.select_range(range.start, range.end);
+    app.input_ui.update_selection(7);
+    app.input_ui.finalize_selection();
     assert_eq!(app.input_ui.selection_range(), Some(5..9));
+
+    app.input_ui.select_range(range.start, range.end);
+    app.input_ui.update_selection(2);
+    app.input_ui.finalize_selection();
+    assert_eq!(app.input_ui.selection_range(), Some(2..9));
+
+    app.input_ui.select_range(range.start, range.end);
+    app.input_ui.update_selection(12);
+    app.input_ui.finalize_selection();
+    assert_eq!(app.input_ui.selection_range(), Some(5..12));
+
     app.insert_input_char('X');
-    assert_eq!(app.input_ui.text(), "grab X text");
+    assert_eq!(app.input_ui.text(), "grab Xxt");
+}
+
+// Covers: an edit that touches any part of a collapsed paste marker must
+// consume the whole marker and its expansion metadata.
+// Owner: pure unit (composer edit ops)
+#[test]
+fn partial_selection_consumes_whole_collapsed_paste() {
+    let mut app = test_app();
+    app.insert_input_text("before ");
+    app.insert_pasted_input_text(&collapsible_paste());
+    app.insert_input_text(" after");
+    let segment = app.input_ui.paste_segments()[0].clone();
+
+    app.input_ui.begin_selection(segment.start - 2);
+    app.input_ui.update_selection(segment.start + 3);
+    app.input_ui.finalize_selection();
+    app.insert_input_char('X');
+
+    assert_eq!(app.input_ui.text(), "beforX after");
+    assert!(app.input_ui.paste_segments().is_empty());
+
+    let mut app = test_app();
+    app.insert_input_text("before ");
+    app.insert_pasted_input_text(&collapsible_paste());
+    app.insert_input_text("XYZ");
+    let segment = app.input_ui.paste_segments()[0].clone();
+    app.input_ui.begin_selection(segment.end() + 1);
+    app.input_ui.update_selection(segment.end() - 3);
+    app.input_ui.finalize_selection();
+    app.delete_input();
+
+    assert_eq!(app.input_ui.text(), "before YZ");
+    assert!(app.input_ui.paste_segments().is_empty());
 }
