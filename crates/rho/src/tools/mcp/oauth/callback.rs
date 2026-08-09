@@ -2,9 +2,10 @@
 //!
 //! The listener binds an ephemeral port on 127.0.0.1 before the authorization
 //! URL is built, so the redirect URI Rho registers is the one it is already
-//! listening on. Only the exact callback path is answered; every other target
-//! gets a 404 and the wait continues, so a stray browser request cannot end
-//! the login or be turned into a redirect somewhere else.
+//! listening on. Only the exact callback path with a matching CSRF `state` is
+//! answered as success; every other target gets a non-success response and the
+//! wait continues, so a stray browser request or a crafted link with the wrong
+//! state cannot end the login or pre-empt the real browser callback.
 
 use std::net::Ipv4Addr;
 
@@ -24,6 +25,8 @@ const CHUNK_BYTES: usize = 2048;
 const SUCCESS_BODY: &str = "Rho is authorized for this MCP server. You can close this tab.";
 const FAILURE_BODY: &str = "Rho could not read this authorization response.";
 const IGNORED_BODY: &str = "Not the Rho authorization callback.";
+const STATE_MISMATCH_BODY: &str =
+    "This authorization response did not match the pending Rho login. Waiting for the correct one.";
 
 /// A bound loopback endpoint waiting for one authorization redirect.
 pub(super) struct LoopbackRedirect {
@@ -50,11 +53,13 @@ impl LoopbackRedirect {
         &self.redirect_uri
     }
 
-    /// Wait for the authorization redirect and return its absolute URL.
+    /// Wait for the authorization redirect whose `state` matches `expected_state`.
     ///
-    /// The caller hands that URL to rmcp, which matches `state` against the
-    /// PKCE round it started and rejects anything else.
-    pub(super) async fn wait_for_redirect(&self) -> anyhow::Result<String> {
+    /// RFC 8252 §8.9 requires rejecting responses whose state does not match
+    /// the pending request. Mismatched or absent state must not terminate the
+    /// wait or receive a success page; the matching browser callback must still
+    /// be accepted afterward.
+    pub(super) async fn wait_for_redirect(&self, expected_state: &str) -> anyhow::Result<String> {
         loop {
             let (mut stream, _) = self
                 .listener
@@ -69,12 +74,18 @@ impl LoopbackRedirect {
                     continue;
                 }
             };
-            match callback_target(&request) {
+            match callback_target(&request, expected_state) {
                 Ok(target) => {
                     respond(&mut stream, CallbackVerdict::Accepted).await;
                     return Ok(format!("http://{}{target}", self.listener.local_addr()?));
                 }
-                Err(error) => {
+                Err(CallbackReject::WrongState) => {
+                    tracing::debug!(
+                        "ignoring MCP OAuth callback with a non-matching state parameter"
+                    );
+                    respond(&mut stream, CallbackVerdict::WrongState).await;
+                }
+                Err(CallbackReject::NotOurs(error)) => {
                     tracing::debug!(error = %error, "ignoring non-callback request on the MCP OAuth listener");
                     respond(&mut stream, CallbackVerdict::NotOurs).await;
                 }
@@ -89,32 +100,63 @@ enum CallbackVerdict {
     Accepted,
     Unreadable,
     NotOurs,
+    WrongState,
 }
 
-/// Extract the request target when the request is our callback.
+/// Why a request was not accepted as the pending callback.
+#[derive(Debug)]
+pub(super) enum CallbackReject {
+    WrongState,
+    NotOurs(anyhow::Error),
+}
+
+/// Extract the request target when the request is our callback for this round.
 ///
-/// Requires the exact callback path and a `state` parameter, so neither a
-/// stray browser probe nor a crafted link without CSRF state can complete the
-/// login.
-pub(super) fn callback_target(request: &str) -> anyhow::Result<&str> {
+/// Requires the exact callback path and a `state` parameter equal to the CSRF
+/// token Rho put in the authorization URL, so neither a stray browser probe nor
+/// a crafted link with a different state can complete the login.
+pub(super) fn callback_target<'a>(
+    request: &'a str,
+    expected_state: &str,
+) -> Result<&'a str, CallbackReject> {
     let request_line = request.lines().next().unwrap_or_default();
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or_default();
     let target = parts.next().unwrap_or_default();
     if method != "GET" {
-        bail!("callback request used {method} rather than GET");
+        return Err(CallbackReject::NotOurs(anyhow::anyhow!(
+            "callback request used {method} rather than GET"
+        )));
     }
     let (path, query) = target.split_once('?').unwrap_or((target, ""));
     if path != CALLBACK_PATH {
-        bail!("callback request targeted `{path}` rather than `{CALLBACK_PATH}`");
+        return Err(CallbackReject::NotOurs(anyhow::anyhow!(
+            "callback request targeted `{path}` rather than `{CALLBACK_PATH}`"
+        )));
     }
-    if !query.split('&').any(|pair| {
-        pair.split_once('=')
-            .is_some_and(|(name, _)| name == "state")
-    }) {
-        bail!("callback request carried no `state` parameter");
+    let state = query.split('&').find_map(|pair| {
+        let (name, value) = pair.split_once('=')?;
+        (name == "state").then_some(value)
+    });
+    match state {
+        None => Err(CallbackReject::NotOurs(anyhow::anyhow!(
+            "callback request carried no `state` parameter"
+        ))),
+        // Compare the raw query value to the value embedded in the auth URL.
+        // Both are application/x-www-form-urlencoded; Rho's CSRF token is
+        // URL-safe, so a literal match is the correct CSRF check here.
+        Some(value) if value == expected_state => Ok(target),
+        Some(_) => Err(CallbackReject::WrongState),
     }
-    Ok(target)
+}
+
+/// Pull the CSRF `state` parameter out of the authorization URL rmcp built.
+pub(super) fn state_from_authorization_url(auth_url: &str) -> anyhow::Result<String> {
+    let url = url::Url::parse(auth_url).context("authorization URL was not a valid URL")?;
+    url.query_pairs()
+        .find(|(name, _)| name == "state")
+        .map(|(_, value)| value.into_owned())
+        .context("authorization URL carried no `state` parameter")
 }
 
 async fn respond(stream: &mut TcpStream, verdict: CallbackVerdict) {
@@ -122,6 +164,7 @@ async fn respond(stream: &mut TcpStream, verdict: CallbackVerdict) {
         CallbackVerdict::Accepted => ("200 OK", SUCCESS_BODY),
         CallbackVerdict::Unreadable => ("400 Bad Request", FAILURE_BODY),
         CallbackVerdict::NotOurs => ("404 Not Found", IGNORED_BODY),
+        CallbackVerdict::WrongState => ("400 Bad Request", STATE_MISMATCH_BODY),
     };
     let response = format!(
         "HTTP/1.1 {status}\r\ncontent-type: text/plain; charset=utf-8\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",

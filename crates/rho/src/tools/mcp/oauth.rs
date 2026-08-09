@@ -391,9 +391,13 @@ async fn log_in(
         url = session.get_authorization_url(),
         "opening a browser to authorize this MCP server"
     );
-    prompt.present(session.get_authorization_url())?;
+    let auth_url = session.get_authorization_url();
+    prompt.present(auth_url)?;
 
-    let redirected_to = redirect.wait_for_redirect().await?;
+    // Validate CSRF state on the loopback acceptor so a mismatched callback
+    // cannot stop the listener before the real browser redirect arrives.
+    let expected_state = callback::state_from_authorization_url(auth_url)?;
+    let redirected_to = redirect.wait_for_redirect(&expected_state).await?;
     session
         .handle_callback_url(&redirected_to)
         .await
