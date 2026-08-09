@@ -372,8 +372,8 @@ auth = "anthropic-api-key"
 }
 
 // Covers: only agents declared as delegating may delegate, so a hand-edited
-// runtime key on a structured internal agent falls back to Rho and leaves the
-// rejected runtime's model name behind.
+// runtime key on a structured internal agent falls back to the conversation
+// selection rather than keeping the rejected runtime's model name.
 // Owner: config load
 #[test]
 fn internal_agents_that_cannot_delegate_fall_back_to_the_rho_runtime() {
@@ -387,31 +387,37 @@ model = "opus"
     .unwrap();
 
     assert_eq!(
-        config
-            .internal_agent_model("goal-judge")
-            .unwrap()
-            .expect_rho()
-            .model,
-        config.model
+        conversation_triple(&config, "goal-judge"),
+        (
+            config.provider.clone(),
+            config.model.clone(),
+            config.auth.clone()
+        )
     );
     assert_eq!(
         warnings,
         vec![ConfigWarning::Normalized {
             key: "internal_agents.runtime",
             from: "\"claude-cli\"".into(),
-            to: "\"rho\" with the conversation model; internal agent 'goal-judge' cannot delegate"
-                .into(),
+            to:
+                "\"rho\" with the conversation selection; internal agent 'goal-judge' cannot delegate"
+                    .into(),
         }]
     );
 }
 
-// Covers: an unusable runtime value must not fail the whole config load, and
-// the model written for it does not survive into the Rho selection.
+// Covers: an unusable runtime value must not fail the whole config load, and it
+// takes the entry's provider, model, and auth with it. Keeping only some of
+// them would route a conversation model through the entry's credentials.
 // Owner: config load
 #[test]
 fn an_unknown_internal_agent_runtime_falls_back_with_a_warning() {
     let (config, warnings) = parse_settings(
         r#"
+provider = "anthropic"
+model = "claude-sonnet-4-5"
+auth = "anthropic-api-key"
+
 [internal_agents.advisor]
 runtime = "codex"
 model = "codex-mini"
@@ -421,20 +427,30 @@ auth = "api-key"
     )
     .unwrap();
 
-    let selection = config
-        .internal_agent_model(crate::agent::ADVISOR_AGENT_ID)
-        .unwrap()
-        .expect_rho()
-        .clone();
-    assert_eq!(selection.provider, "openai");
-    assert_eq!(selection.auth, "api-key");
-    assert_eq!(selection.model, config.model);
+    assert_eq!(
+        conversation_triple(&config, crate::agent::ADVISOR_AGENT_ID),
+        (
+            "anthropic".to_string(),
+            "claude-sonnet-4-5".to_string(),
+            "anthropic-api-key".to_string()
+        )
+    );
     assert_eq!(
         warnings,
         vec![ConfigWarning::Normalized {
             key: "internal_agents.runtime",
             from: "\"codex\"".into(),
-            to: "\"rho\" with the conversation model".into(),
+            to: "\"rho\" with the conversation selection".into(),
         }]
     );
+}
+
+/// The stored Rho provider, model, and auth for one internal agent.
+fn conversation_triple(config: &super::Config, id: &str) -> (String, String, String) {
+    let selection = config.internal_agent_model(id).unwrap().expect_rho();
+    (
+        selection.provider.clone(),
+        selection.model.clone(),
+        selection.auth.clone(),
+    )
 }
