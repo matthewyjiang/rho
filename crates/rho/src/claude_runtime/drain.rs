@@ -98,11 +98,15 @@ pub(crate) async fn drain_child(
     let mut stdin_done = false;
     let mut stdout_done = false;
     let mut stderr_done = false;
+    let mut exit_result = None;
     let mut chunk = vec![0_u8; READ_CHUNK_BYTES];
 
-    // `None` means all three pipes closed cleanly, so the child can be reaped.
+    // `None` means every pipe closed and the child was reaped. Observe exit in
+    // parallel with the pipes: a descendant may inherit one of them, and
+    // `OwnedChild::wait` kills those leftover process-group members once the
+    // leader exits. Waiting for their EOF before reaping would deadlock.
     let early_end: Option<DrainEnd> = loop {
-        if stdin_done && stdout_done && stderr_done {
+        if stdin_done && stdout_done && stderr_done && exit_result.is_some() {
             break None;
         }
         tokio::select! {
@@ -126,6 +130,9 @@ pub(crate) async fn drain_child(
             captured = &mut read_stderr, if !stderr_done => {
                 stderr_done = true;
                 stderr_text = captured.finish();
+            }
+            status = child.wait(), if exit_result.is_none() => {
+                exit_result = Some(status);
             }
             read = stdout.read(&mut chunk), if !stdout_done => {
                 match read {
@@ -169,14 +176,7 @@ pub(crate) async fn drain_child(
                     let line = line.to_string();
                     apply_line(&mut mapper, &mut terminal, on_effect, &line);
                 }
-                // After stdout EOF, wait for the process while honoring
-                // cancellation. A hang here would strand the full tree after the
-                // child closed stdout and slept.
-                tokio::select! {
-                    biased;
-                    () = cancellation.cancelled() => DrainEnd::Cancelled,
-                    status = child.wait() => DrainEnd::Exited(status),
-                }
+                DrainEnd::Exited(exit_result.expect("completed drain reaped the child"))
             }
         },
     };
