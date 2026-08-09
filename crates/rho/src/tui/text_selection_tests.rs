@@ -51,6 +51,9 @@ fn click_without_drag_does_not_copy() {
 
 #[test]
 fn excludes_code_block_copy_button_from_drag_selection() {
+    // The rendered COPY span is matched against the theme's copy-button style,
+    // so a concurrent theme switch would rewrite one side of that comparison.
+    let _theme = crate::tui::theme::theme_test_lock();
     let mut fence_state = crate::tui::markdown::CodeFenceState::default();
     let lines =
         crate::tui::markdown::markdown_lines("```rust\nlet x = 1;\n```", 20, &mut fence_state);

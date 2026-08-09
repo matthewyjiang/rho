@@ -23,6 +23,7 @@ pub(crate) mod definition;
 pub(crate) mod elicitation;
 pub(crate) mod elicitation_form;
 pub(crate) mod inflight;
+pub(crate) mod oauth;
 pub(crate) mod progress;
 pub(crate) mod report;
 pub(crate) mod result;
@@ -36,6 +37,7 @@ pub(crate) use catalog::{
     McpCatalog, McpCatalogError, McpCompletionSupport, McpResource, McpResourceContent,
 };
 pub(crate) use elicitation::McpElicitationSupport;
+pub(crate) use oauth::McpAuthorizationMode;
 pub(crate) use report::{
     McpLoadMode, McpServerReport, McpServerStatus, McpSessionReport, McpToolReport,
     McpTransportSummary,
@@ -44,7 +46,7 @@ pub(crate) use roots::McpRoots;
 pub(crate) use sampling::{McpSamplingBridge, McpSamplingModel};
 pub(crate) use validate::{
     parse_remote_url, validate_environment_header_names, validate_identity,
-    validate_literal_headers, validate_stdio_environment,
+    validate_literal_headers, validate_oauth_client, validate_stdio_environment,
 };
 
 use definition::McpToolDefinition;
@@ -70,14 +72,21 @@ pub(crate) struct McpSessionOptions {
     pub(crate) max_output_bytes: usize,
     /// Filesystem roots advertised through `roots/list`.
     pub(crate) roots: McpRoots,
+    /// Whether a server that needs OAuth may open a browser login.
+    pub(crate) authorization: McpAuthorizationMode,
     services: session::McpSessionServices,
 }
 
 impl McpSessionOptions {
-    pub(crate) fn new(max_output_bytes: usize, roots: McpRoots) -> Self {
+    pub(crate) fn new(
+        max_output_bytes: usize,
+        roots: McpRoots,
+        authorization: McpAuthorizationMode,
+    ) -> Self {
         Self {
             max_output_bytes: max_output_bytes.max(1),
             roots,
+            authorization,
             services: session::McpSessionServices {
                 elicitation: McpElicitationSupport::Unavailable,
                 sampling: None,
@@ -185,11 +194,17 @@ impl McpBundle {
                 let server = server.clone();
                 let roots = options.roots.clone();
                 let services = options.services.clone();
+                let authorization = options.authorization;
                 async move {
                     let transport = McpTransportSummary::from_server(&server);
-                    let result =
-                        session::connect_server_bounded(&identity, &server, &roots, &services)
-                            .await;
+                    let result = session::connect_server_bounded(
+                        &identity,
+                        &server,
+                        &roots,
+                        &services,
+                        authorization,
+                    )
+                    .await;
                     (identity, server, transport, result)
                 }
             });

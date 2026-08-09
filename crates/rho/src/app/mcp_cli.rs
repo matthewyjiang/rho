@@ -5,8 +5,9 @@ use serde::Serialize;
 use crate::{
     cli::{Cli, McpCommand},
     tools::mcp::{
-        McpCatalog, McpConnectOutcome, McpLoadMode, McpRoots, McpServerReport, McpServerStatus,
-        McpSessionOptions, McpSessionPlan, McpSessionReport, McpTransportSummary,
+        McpAuthorizationMode, McpCatalog, McpConnectOutcome, McpLoadMode, McpRoots,
+        McpServerReport, McpServerStatus, McpSessionOptions, McpSessionPlan, McpSessionReport,
+        McpTransportSummary,
     },
 };
 
@@ -32,7 +33,14 @@ pub(super) async fn run(command: &McpCommand, cli: &Cli) -> anyhow::Result<()> {
     let outcome = McpConnectOutcome::run(
         plan,
         &mcp_config,
-        McpSessionOptions::new(config.max_output_bytes, McpRoots::for_workspace(&cwd)),
+        // `--connect` reports reachability; it never starts a browser login,
+        // so an unauthorized server is reported as failed rather than
+        // blocking the command on a person.
+        McpSessionOptions::new(
+            config.max_output_bytes,
+            McpRoots::for_workspace(&cwd),
+            McpAuthorizationMode::NonInteractive,
+        ),
     )
     .await;
     let result = match command {

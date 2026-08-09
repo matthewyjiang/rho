@@ -31,6 +31,7 @@ use super::{
     definition::McpToolDefinition,
     elicitation::{McpElicitationService, McpElicitationSupport},
     inflight::McpInFlightCalls,
+    oauth::{self, McpAuthorizationMode, McpHttpClient},
     progress::McpProgressRouter,
     report::McpLiveServerState,
     roots::McpRoots,
@@ -128,7 +129,15 @@ pub(super) async fn connect_server_bounded(
     server: &McpServerConfig,
     roots: &McpRoots,
     services: &McpSessionServices,
+    authorization: McpAuthorizationMode,
 ) -> ConnectResult {
+    // Authorization runs before the startup clock. It carries its own budgets,
+    // and a browser login is a person's pace, not a server's.
+    let http_client = match resolve_http_client(identity, server, authorization).await {
+        Ok(http_client) => http_client,
+        Err(error) => return ConnectResult::Failed { error },
+    };
+
     let deadline = tokio::time::Instant::now() + MCP_SERVER_STARTUP_BUDGET;
     let progress = McpProgressRouter::new();
     let calls = McpInFlightCalls::new();
@@ -140,13 +149,16 @@ pub(super) async fn connect_server_bounded(
         event_sender,
         client_services(identity, server, services, &calls),
     );
-    let session =
-        match tokio::time::timeout_at(deadline, establish_session(identity, server, handler)).await
-        {
-            Ok(Ok(session)) => session,
-            Ok(Err(error)) => return ConnectResult::Failed { error },
-            Err(_) => return ConnectResult::TimedOut,
-        };
+    let session = match tokio::time::timeout_at(
+        deadline,
+        establish_session(identity, server, handler, http_client),
+    )
+    .await
+    {
+        Ok(Ok(session)) => session,
+        Ok(Err(error)) => return ConnectResult::Failed { error },
+        Err(_) => return ConnectResult::TimedOut,
+    };
 
     let instructions = session
         .peer_info()
@@ -243,10 +255,42 @@ async fn apply_log_level(
     }
 }
 
+/// Resolve the HTTP client a remote session runs on. A stdio server has none.
+///
+/// Headers are resolved here and again when the transport is built. Resolution
+/// is a pure read of config plus the environment, so repeating it costs
+/// nothing and keeps each step's inputs local to it.
+async fn resolve_http_client(
+    identity: &str,
+    server: &McpServerConfig,
+    authorization: McpAuthorizationMode,
+) -> anyhow::Result<McpHttpClient> {
+    let McpTransport::StreamableHttp {
+        url,
+        headers: literal_headers,
+        headers_from_env,
+        oauth: oauth_config,
+    } = &server.transport
+    else {
+        return Ok(McpHttpClient::Default);
+    };
+    validate::parse_remote_url(url)?;
+    let headers = resolve_headers(literal_headers, headers_from_env)?;
+    oauth::prepare_http_client(
+        identity,
+        url,
+        oauth_config.as_ref(),
+        &headers,
+        authorization,
+    )
+    .await
+}
+
 async fn establish_session(
     identity: &str,
     server: &McpServerConfig,
     handler: McpClientHandler,
+    http_client: McpHttpClient,
 ) -> anyhow::Result<McpSession> {
     prepare_server_filesystem(server)?;
     match &server.transport {
@@ -277,16 +321,26 @@ async fn establish_session(
             url,
             headers: literal_headers,
             headers_from_env,
+            oauth: _,
         } => {
             validate::parse_remote_url(url)?;
             let headers = resolve_headers(literal_headers, headers_from_env)?;
-            // rmcp's reqwest transport disables redirects, so configured
-            // headers never cross origins through a redirect. This satisfies
-            // the Agent Plugins header-forwarding rule.
-            let transport = StreamableHttpClientTransport::from_config(
-                StreamableHttpClientTransportConfig::with_uri(url.clone()).custom_headers(headers),
-            );
-            Ok(handler.serve(transport).await?)
+            // Redirects are disabled on every client used here, so configured
+            // headers and bearer tokens never cross origins through a
+            // redirect. This satisfies the Agent Plugins header-forwarding
+            // rule.
+            let config =
+                StreamableHttpClientTransportConfig::with_uri(url.clone()).custom_headers(headers);
+            match http_client {
+                McpHttpClient::Default => {
+                    let transport = StreamableHttpClientTransport::from_config(config);
+                    Ok(handler.serve(transport).await?)
+                }
+                McpHttpClient::Authorized(client) => {
+                    let transport = StreamableHttpClientTransport::with_client(*client, config);
+                    Ok(handler.serve(transport).await?)
+                }
+            }
         }
     }
 }

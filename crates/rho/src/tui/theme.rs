@@ -39,6 +39,19 @@ static TERMINAL_SAMPLE: OnceLock<TerminalPalette> = OnceLock::new();
 /// Active theme selection (terminal-matched or a fixed scheme).
 static THEME_STATE: Mutex<ThemeState> = Mutex::new(ThemeState::new());
 
+/// Serializes tests that change or read the process-wide active theme.
+///
+/// The selection is global, so a test that switches themes rewrites the styles
+/// another test is comparing against. Tests on either side of that hazard hold
+/// this: the ones that call `Theme::apply_committed` or `Theme::preview`, and
+/// the ones that build styled lines and later re-derive a style from the theme
+/// to match them.
+#[cfg(test)]
+pub(super) fn theme_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    LOCK.lock().unwrap_or_else(|error| error.into_inner())
+}
+
 #[derive(Clone, Debug)]
 struct ThemeState {
     /// Configured / committed theme id (`terminal`, `one-half-dark`, ...).

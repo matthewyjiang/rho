@@ -25,7 +25,12 @@ static MCP_CONNECT_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const
 /// Connect options for tests: a generous output cap and no advertised roots, so
 /// nothing depends on the machine's working directory.
 fn test_options() -> McpSessionOptions {
-    McpSessionOptions::new(12_000, McpRoots::default())
+    McpSessionOptions::new(
+        12_000,
+        McpRoots::default(),
+        // No test may open a browser.
+        crate::tools::mcp::McpAuthorizationMode::NonInteractive,
+    )
 }
 
 // Covers: an empty or fully disabled MCP config must not construct runtime work.
@@ -364,6 +369,7 @@ async fn streamable_http_discovery() {
                     url: format!("http://{address}/mcp"),
                     headers: BTreeMap::new(),
                     headers_from_env: BTreeMap::new(),
+                    oauth: None,
                 },
                 filesystem: None,
             },

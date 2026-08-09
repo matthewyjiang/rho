@@ -21,17 +21,51 @@ pub(crate) fn validate_identity(identity: &str) -> anyhow::Result<()> {
 }
 
 pub(crate) fn parse_remote_url(value: &str) -> anyhow::Result<url::Url> {
-    let url = url::Url::parse(value).context("invalid Streamable HTTP URL")?;
+    parse_transport_secure_url(value, "remote MCP URL").context("invalid Streamable HTTP URL")
+}
+
+/// Apply the `parse_remote_url` transport rule to an OAuth endpoint taken from
+/// a discovery document, so a server cannot downgrade the login to plaintext.
+/// `purpose` names the endpoint in the error, such as `token endpoint`.
+pub(crate) fn parse_oauth_endpoint(value: &str, purpose: &str) -> anyhow::Result<url::Url> {
+    parse_transport_secure_url(value, &format!("OAuth {purpose}"))
+        .with_context(|| format!("invalid OAuth {purpose}"))
+}
+
+/// One transport-security rule for every URL Rho talks to: HTTPS, or plain
+/// HTTP only when the host is loopback.
+fn parse_transport_secure_url(value: &str, subject: &str) -> anyhow::Result<url::Url> {
+    let url = url::Url::parse(value)?;
     let loopback = match url.host() {
         Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
         Some(url::Host::Ipv4(address)) => IpAddr::V4(address).is_loopback(),
         Some(url::Host::Ipv6(address)) => IpAddr::V6(address).is_loopback(),
-        None => bail!("remote MCP URL must have a host"),
+        None => bail!("{subject} must have a host"),
     };
     if url.scheme() != "https" && !(url.scheme() == "http" && loopback) {
-        bail!("remote MCP URL must use HTTPS unless its host is loopback");
+        bail!("{subject} must use HTTPS unless its host is loopback");
     }
     Ok(url)
+}
+
+/// Reject OAuth client material that could only fail later, at the token
+/// endpoint, where the reason would be a bare server error.
+pub(crate) fn validate_oauth_client(
+    client_id: Option<&str>,
+    scopes: &[String],
+) -> anyhow::Result<()> {
+    if client_id.is_some_and(|client_id| client_id.trim().is_empty()) {
+        bail!("MCP oauth client_id must not be empty");
+    }
+    for scope in scopes {
+        if scope.trim().is_empty() {
+            bail!("MCP oauth scopes must not contain an empty entry");
+        }
+        if scope.chars().any(char::is_whitespace) {
+            bail!("MCP oauth scope `{scope}` must not contain whitespace; list scopes separately");
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_literal_headers(headers: &BTreeMap<String, String>) -> anyhow::Result<()> {
