@@ -5,7 +5,7 @@ use rho_providers::{
     reasoning::ReasoningLevel,
 };
 
-use crate::config::InternalAgentModelConfig;
+use crate::config::{InternalAgentModelConfig, InternalAgentTarget};
 
 use super::{AgentDefinition, AgentId, AgentRuntimeSpec, ModelPolicy, PromptPolicy, ToolPolicy};
 
@@ -134,9 +134,11 @@ pub(crate) fn is_internal_agent_id(id: &AgentId) -> bool {
 pub(crate) fn internal_agent_reasoning_capabilities(
     selection: &InternalAgentModelConfig,
 ) -> ReasoningCapabilities {
-    match selection.rho() {
-        Some(rho) => models_dev::current_reasoning_capabilities(&rho.provider, &rho.model),
-        None => CLAUDE_REASONING_CAPABILITIES.clone(),
+    match &selection.target {
+        InternalAgentTarget::Rho(rho) => {
+            models_dev::current_reasoning_capabilities(&rho.provider, &rho.model)
+        }
+        InternalAgentTarget::ClaudeCli { .. } => CLAUDE_REASONING_CAPABILITIES.clone(),
     }
 }
 

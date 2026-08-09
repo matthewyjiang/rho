@@ -1,6 +1,9 @@
 //! Decide whether a completed Claude process produced a usable result.
 
-use super::{spawn, stream::TerminalResult};
+use super::{
+    spawn,
+    stream::{TerminalClassification, TerminalResult},
+};
 
 /// The protocol and process result after Claude has exited.
 pub(crate) enum TerminalOutcome {
@@ -38,10 +41,19 @@ pub(crate) fn assess_terminal(
     }
 
     match pending {
-        Some(terminal) if terminal.classification.is_success() => TerminalOutcome::Success(terminal),
-        Some(terminal)
-            if terminal.classification.is_failure() || terminal.classification.is_invalid() =>
-        {
+        Some(
+            terminal @ TerminalResult {
+                classification: TerminalClassification::Success { .. },
+                ..
+            },
+        ) => TerminalOutcome::Success(terminal),
+        Some(
+            terminal @ TerminalResult {
+                classification:
+                    TerminalClassification::Failure { .. } | TerminalClassification::Invalid { .. },
+                ..
+            },
+        ) => {
             let detail = terminal
                 .error
                 .clone()
@@ -53,15 +65,9 @@ pub(crate) fn assess_terminal(
                 prefer_detail: false,
             }
         }
-        Some(terminal) => TerminalOutcome::Failure {
-            terminal: Some(terminal),
-            detail: "claude code: terminal result classification was not success".into(),
-            prefer_detail: true,
-        },
         None => TerminalOutcome::Failure {
             terminal: None,
-            detail: "claude code: stream ended without a terminal result message; see log.txt for details"
-                .into(),
+            detail: "claude code: stream ended without a terminal result message".into(),
             prefer_detail: true,
         },
     }

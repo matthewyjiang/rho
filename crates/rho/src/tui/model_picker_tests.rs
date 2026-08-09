@@ -40,15 +40,19 @@ fn claude_code_rows_appear_only_when_the_agent_can_delegate() {
         ConversationModelRow::Omitted,
         ClaudeCodeRows::Offered,
     ));
+    let expected_labels = std::iter::once("claude-code/default".to_string())
+        .chain(
+            crate::claude_runtime::models::CLAUDE_MODEL_ALIASES
+                .iter()
+                .map(|alias| format!("claude-code/{}", alias.name)),
+        )
+        .collect::<Vec<_>>();
     assert_eq!(
         labels(&offered),
-        vec![
-            "claude-code/default",
-            "claude-code/fable",
-            "claude-code/opus",
-            "claude-code/sonnet",
-            "claude-code/haiku",
-        ]
+        expected_labels
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
     );
 
     let omitted = internal_agent_model_picker(inputs(
@@ -78,6 +82,13 @@ fn the_picker_opens_on_the_configured_row() {
             InternalAgentSelection::ClaudeCode { model: None },
             ConversationModelRow::Omitted,
             "claude-code/default",
+        ),
+        (
+            InternalAgentSelection::ClaudeCode {
+                model: Some("claude-opus-4-6".into()),
+            },
+            ConversationModelRow::Omitted,
+            "claude-code/claude-opus-4-6",
         ),
         (
             InternalAgentSelection::Unset,
@@ -120,25 +131,19 @@ fn each_row_value_routes_to_its_runtime() {
         .map(|item| parse_internal_agent_model_row(&item.value))
         .collect::<Vec<_>>();
 
-    assert_eq!(
-        rows,
-        vec![
-            InternalAgentModelRow::Conversation,
-            InternalAgentModelRow::ClaudeCode { model: None },
-            InternalAgentModelRow::ClaudeCode {
-                model: Some("fable".into())
-            },
-            InternalAgentModelRow::ClaudeCode {
-                model: Some("opus".into())
-            },
-            InternalAgentModelRow::ClaudeCode {
-                model: Some("sonnet".into())
-            },
-            InternalAgentModelRow::ClaudeCode {
-                model: Some("haiku".into())
-            },
-        ]
-    );
+    let expected_rows = std::iter::once(InternalAgentModelRow::Conversation)
+        .chain(std::iter::once(InternalAgentModelRow::ClaudeCode {
+            model: None,
+        }))
+        .chain(
+            crate::claude_runtime::models::CLAUDE_MODEL_ALIASES
+                .iter()
+                .map(|alias| InternalAgentModelRow::ClaudeCode {
+                    model: Some(alias.name.into()),
+                }),
+        )
+        .collect::<Vec<_>>();
+    assert_eq!(rows, expected_rows);
     assert_eq!(
         parse_internal_agent_model_row("anthropic/claude-fable-5"),
         InternalAgentModelRow::RhoModel("anthropic/claude-fable-5".into())

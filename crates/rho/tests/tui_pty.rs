@@ -1372,9 +1372,10 @@ advisor_mode = true
     let prompt =
         value_after(&record.args, "--system-prompt").expect("advisor system prompt on argv");
     assert!(
-        prompt.starts_with("You are a senior advisor reviewing"),
-        "unexpected advisor system prompt: {prompt}"
+        !prompt.is_empty(),
+        "advisor system prompt must not be empty"
     );
+    assert_eq!(prompt, rho_coding_agent::EXPECTED_ADVISOR_PROMPT_FOR_TESTS);
     assert!(
         record.stdin.contains("fixture advisor"),
         "the advisor must receive the session transcript on stdin: {}",
@@ -1392,7 +1393,7 @@ advisor_mode = true
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 }
 
-/// Sole value following `flag` in a recorded argv.
+/// First value following `flag` in a recorded argv.
 fn value_after<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
     args.windows(2)
         .find(|pair| pair[0] == flag)

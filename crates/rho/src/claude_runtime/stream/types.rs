@@ -60,6 +60,7 @@ pub(crate) enum TerminalClassification {
     },
 }
 
+#[cfg(test)]
 impl TerminalClassification {
     pub(crate) fn is_success(&self) -> bool {
         matches!(self, Self::Success { .. })

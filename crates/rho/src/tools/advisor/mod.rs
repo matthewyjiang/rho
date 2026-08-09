@@ -292,9 +292,9 @@ async fn consult_advisor(
         transcript,
     } = request;
     let reasoning = advisor_effective_reasoning(&model);
-    let reference = model.display_reference();
     match &model.target {
         InternalAgentTarget::Rho(selection) => {
+            let reference = model.display_reference();
             let provider = build_provider(
                 &selection.provider,
                 &selection.model,
@@ -359,8 +359,13 @@ async fn consult_advisor_with_claude_cli(
     );
     let forward_progress = forward_advisor_progress(updates_rx, progress);
     let (result, ()) = tokio::join!(started, forward_progress);
-    let result =
-        result.map_err(|error| execution_error(format!("the advisor request failed: {error}")))?;
+    let result = result.map_err(|error| {
+        if error == crate::claude_runtime::one_shot::CANCELLATION_ERROR {
+            execution_error("the advisor request was cancelled")
+        } else {
+            execution_error(format!("the advisor request failed: {error}"))
+        }
+    })?;
     Ok((result.text, result.usage))
 }
 

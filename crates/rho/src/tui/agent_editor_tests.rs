@@ -306,12 +306,19 @@ fn claude_model_choices_offer_aliases_and_keep_a_configured_model() {
     let prefix = AgentChoiceField::ClaudeModel.choice_prefix();
 
     let default_rows = claude_model_choice_items(&claude_draft(), prefix);
+    let expected_labels = std::iter::once("Claude Code default")
+        .chain(
+            crate::claude_runtime::models::CLAUDE_MODEL_ALIASES
+                .iter()
+                .map(|alias| alias.name),
+        )
+        .collect::<Vec<_>>();
     assert_eq!(
         default_rows
             .iter()
             .map(|item| item.label.as_str())
             .collect::<Vec<_>>(),
-        vec!["Claude Code default", "fable", "opus", "sonnet", "haiku"]
+        expected_labels
     );
     assert_eq!(default_rows[0].value, prefix);
     assert!(default_rows[0].badge.is_some());

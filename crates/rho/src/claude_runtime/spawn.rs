@@ -204,8 +204,9 @@ pub(crate) fn build_spawn_plan(
     args.push("--max-turns".into());
     args.push(request.max_turns.to_string());
 
-    if request.session_persistence == SessionPersistence::Discard {
-        args.push("--no-session-persistence".into());
+    match request.session_persistence {
+        SessionPersistence::Discard => args.push("--no-session-persistence".into()),
+        SessionPersistence::Keep => {}
     }
 
     // Always set `--tools`, including the explicit empty set, so Claude does

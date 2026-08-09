@@ -134,6 +134,7 @@ impl<'a> PersistedInternalAgentModelConfig<'a> {
 /// `runtime` value that selects the Claude Code CLI for an internal agent.
 /// Matches the agent frontmatter vocabulary (`runtime: claude-cli`).
 pub const CLAUDE_CLI_RUNTIME_KEY: &str = "claude-cli";
+pub const RHO_RUNTIME_KEY: &str = "rho";
 
 #[derive(Serialize)]
 struct WebSearchConfig<'a> {

@@ -2,15 +2,26 @@ use super::*;
 
 use crate::claude_runtime::stream::{TerminalClassification, TerminalResult};
 
-fn exit_status(success: bool) -> std::process::ExitStatus {
+enum ExitResult {
+    Success,
+    Failure,
+}
+
+fn exit_status(result: ExitResult) -> std::process::ExitStatus {
     #[cfg(unix)]
     {
-        let program = if success { "true" } else { "false" };
+        let program = match result {
+            ExitResult::Success => "true",
+            ExitResult::Failure => "false",
+        };
         std::process::Command::new(program).status().unwrap()
     }
     #[cfg(windows)]
     {
-        let code = if success { "0" } else { "1" };
+        let code = match result {
+            ExitResult::Success => "0",
+            ExitResult::Failure => "1",
+        };
         std::process::Command::new("cmd")
             .args(["/C", &format!("exit {code}")])
             .status()
@@ -67,8 +78,8 @@ fn terminal_assessment_matrix() {
         stop_reason: None,
     };
 
-    let ok_status = exit_status(true);
-    let err_status = exit_status(false);
+    let ok_status = exit_status(ExitResult::Success);
+    let err_status = exit_status(ExitResult::Failure);
 
     assert!(matches!(
         assess_terminal(Some(success.clone()), ok_status, ""),

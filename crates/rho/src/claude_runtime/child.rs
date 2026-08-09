@@ -9,6 +9,9 @@ use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 
 use crate::tools::process::{prepare_child_command, ProcessTree};
 
+// Give Claude a short grace period to exit before force-killing its process tree.
+const TERMINATION_GRACE_PERIOD: Duration = Duration::from_millis(200);
+
 /// Owns a Claude child and its group: dropping it kills both.
 pub(crate) struct OwnedChild {
     child: Child,
@@ -55,7 +58,7 @@ impl OwnedChild {
 
     pub(crate) async fn terminate(&mut self) {
         self.tree
-            .terminate(&mut self.child, Duration::from_millis(200))
+            .terminate(&mut self.child, TERMINATION_GRACE_PERIOD)
             .await;
     }
 

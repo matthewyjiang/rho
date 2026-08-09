@@ -81,14 +81,17 @@ impl Config {
         // Delegating selections have no Rho provider or auth to normalize; the
         // claude binary owns both.
         for (id, selection) in &mut self.internal_agents {
-            let crate::config::InternalAgentTarget::Rho(rho) = &mut selection.target else {
-                continue;
-            };
-            let profile = rho_providers::provider::resolve_profile(&rho.provider, &rho.auth)
-                .map_err(|error| anyhow::anyhow!("internal agent '{id}': {error}"))?;
-            rho.provider = profile.provider_name().into();
-            rho.auth = profile.auth_id().into();
-            rho.model = profile.provider.canonicalize_model_id(&rho.model);
+            match &mut selection.target {
+                crate::config::InternalAgentTarget::Rho(rho) => {
+                    let profile =
+                        rho_providers::provider::resolve_profile(&rho.provider, &rho.auth)
+                            .map_err(|error| anyhow::anyhow!("internal agent '{id}': {error}"))?;
+                    rho.provider = profile.provider_name().into();
+                    rho.auth = profile.auth_id().into();
+                    rho.model = profile.provider.canonicalize_model_id(&rho.model);
+                }
+                crate::config::InternalAgentTarget::ClaudeCli { .. } => {}
+            }
         }
         Ok(())
     }

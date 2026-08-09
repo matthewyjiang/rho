@@ -30,9 +30,9 @@ pub use internal_agent::{InternalAgentModelConfig, InternalAgentTarget, RhoInter
 #[path = "config_format.rs"]
 mod format;
 use format::write_config;
-pub(crate) use format::CLAUDE_CLI_RUNTIME_KEY;
 #[cfg(test)]
 pub use format::{EffectiveModelConfig, EffectiveModelSource};
+pub(crate) use format::{CLAUDE_CLI_RUNTIME_KEY, RHO_RUNTIME_KEY};
 
 #[path = "config_load.rs"]
 mod load;
@@ -445,23 +445,25 @@ impl Config {
     /// agent parser applies to `runtime: claude-cli` definitions.
     fn resolve_internal_agent_model_aliases(&mut self) -> anyhow::Result<()> {
         for (id, selection) in &mut self.internal_agents {
-            let InternalAgentTarget::Rho(rho) = &mut selection.target else {
-                continue;
-            };
-            let resolved = self
-                .model_aliases
-                .resolve(&rho.model)
-                .map_err(|error| anyhow::anyhow!("internal agent '{id}' model: {error}"))?;
-            rho.model_alias = resolved.alias;
-            if let Some(provider) = resolved.provider {
-                if rho.provider != provider {
-                    if let Some(descriptor) = provider::provider_descriptor(&provider) {
-                        rho.auth = descriptor.default_auth().id.into();
+            match &mut selection.target {
+                InternalAgentTarget::Rho(rho) => {
+                    let resolved = self
+                        .model_aliases
+                        .resolve(&rho.model)
+                        .map_err(|error| anyhow::anyhow!("internal agent '{id}' model: {error}"))?;
+                    rho.model_alias = resolved.alias;
+                    if let Some(provider) = resolved.provider {
+                        if rho.provider != provider {
+                            if let Some(descriptor) = provider::provider_descriptor(&provider) {
+                                rho.auth = descriptor.default_auth().id.into();
+                            }
+                            rho.provider = provider;
+                        }
                     }
-                    rho.provider = provider;
+                    rho.model = resolved.model;
                 }
+                InternalAgentTarget::ClaudeCli { .. } => continue,
             }
-            rho.model = resolved.model;
         }
         Ok(())
     }

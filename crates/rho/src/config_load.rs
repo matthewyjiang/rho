@@ -578,7 +578,9 @@ fn internal_agent_selection(
                     warnings.push(ConfigWarning::Normalized {
                         key,
                         from: format!("\"{value}\""),
-                        to: "no value; runtime claude-cli has no Rho provider or auth".into(),
+                        to: format!(
+                            "no value; [internal_agents.{id}] runtime claude-cli has no Rho provider or auth"
+                        ),
                     });
                 }
             }
@@ -598,7 +600,7 @@ fn internal_agent_runtime_key(
     warnings: &mut Vec<ConfigWarning>,
 ) -> InternalAgentRuntimeKey {
     let (from, to) = match runtime {
-        None | Some("rho") => return InternalAgentRuntimeKey::Rho,
+        None | Some(crate::config::RHO_RUNTIME_KEY) => return InternalAgentRuntimeKey::Rho,
         Some(crate::config::CLAUDE_CLI_RUNTIME_KEY)
             if crate::agent::internal_agent_accepts_claude_runtime(id) =>
         {
@@ -607,10 +609,17 @@ fn internal_agent_runtime_key(
         Some(crate::config::CLAUDE_CLI_RUNTIME_KEY) => (
             crate::config::CLAUDE_CLI_RUNTIME_KEY,
             format!(
-                "\"rho\" with the conversation selection; internal agent '{id}' cannot delegate"
+                "\"{}\" with the conversation selection; internal agent '{id}' cannot delegate",
+                crate::config::RHO_RUNTIME_KEY
             ),
         ),
-        Some(other) => (other, "\"rho\" with the conversation selection".into()),
+        Some(other) => (
+            other,
+            format!(
+                "\"{}\" with the conversation selection",
+                crate::config::RHO_RUNTIME_KEY
+            ),
+        ),
     };
     warnings.push(ConfigWarning::Normalized {
         key: "internal_agents.runtime",

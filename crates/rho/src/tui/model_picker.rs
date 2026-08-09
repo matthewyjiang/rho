@@ -252,6 +252,14 @@ fn claude_code_rows(current: &InternalAgentSelection) -> Vec<PickerItem> {
             format!("{CLAUDE_CODE_ROW_DETAIL} {}", alias.detail),
         )
     }));
+    if let Some(Some(model)) = selected_model {
+        if !claude_models::CLAUDE_MODEL_ALIASES
+            .iter()
+            .any(|alias| alias.name == model)
+        {
+            rows.push(row(Some(model), CLAUDE_CODE_ROW_DETAIL.into()));
+        }
+    }
     rows
 }
 

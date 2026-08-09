@@ -27,6 +27,8 @@ use super::{
     terminal::{assess_terminal, TerminalOutcome},
 };
 
+pub(crate) const CANCELLATION_ERROR: &str = "claude code: cancelled";
+
 /// A single Claude question with no tools and no follow-up turn.
 pub(crate) struct ClaudeOneShotRequest {
     /// One of Rho's own constant prompts. It travels on argv, which other
@@ -127,7 +129,7 @@ pub(crate) async fn run_one_shot(
     }
 
     match drained.end {
-        DrainEnd::Cancelled => Err("the advisor request was cancelled".into()),
+        DrainEnd::Cancelled => Err(CANCELLATION_ERROR.into()),
         DrainEnd::StdinFailed(error) | DrainEnd::StreamFailed(error) => Err(error),
         DrainEnd::Exited(Err(error)) => {
             Err(format!("claude code: failed waiting for child: {error}"))

@@ -890,11 +890,16 @@ fn a_claude_cli_advisor_round_trips_through_save() {
 
         config.save_with_store(path.clone(), &store).unwrap();
         let saved = std::fs::read_to_string(&path).unwrap();
-        assert!(saved.contains("runtime = \"claude-cli\""), "{saved}");
-        assert!(
-            !saved.contains("[internal_agents.advisor]\nprovider"),
-            "{saved}"
+        let saved_toml: toml::Value = toml::from_str(&saved).unwrap();
+        let advisor_table = saved_toml["internal_agents"]["advisor"]
+            .as_table()
+            .expect("serialized advisor table");
+        assert_eq!(
+            advisor_table.get("runtime").and_then(toml::Value::as_str),
+            Some("claude-cli")
         );
+        assert!(!advisor_table.contains_key("provider"), "{saved}");
+        assert!(!advisor_table.contains_key("auth"), "{saved}");
 
         let reloaded = Config::load_with_store(path, &store).unwrap();
         assert_eq!(

@@ -360,12 +360,12 @@ auth = "anthropic-api-key"
             ConfigWarning::Normalized {
                 key: "internal_agents.provider",
                 from: "\"anthropic\"".into(),
-                to: "no value; runtime claude-cli has no Rho provider or auth".into(),
+                to: "no value; [internal_agents.advisor] runtime claude-cli has no Rho provider or auth".into(),
             },
             ConfigWarning::Normalized {
                 key: "internal_agents.auth",
                 from: "\"anthropic-api-key\"".into(),
-                to: "no value; runtime claude-cli has no Rho provider or auth".into(),
+                to: "no value; [internal_agents.advisor] runtime claude-cli has no Rho provider or auth".into(),
             },
         ]
     );

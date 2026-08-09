@@ -16,6 +16,7 @@ use super::{
 /// Bytes of child stderr kept for diagnosis. The one-shot path writes no log
 /// file, so a failure has to explain itself from memory.
 const MAX_STDERR_BYTES: usize = 8 * 1024;
+const READ_CHUNK_BYTES: usize = 8 * 1024;
 
 /// How a drained child stopped.
 pub(crate) enum DrainEnd {
@@ -76,7 +77,7 @@ pub(crate) async fn drain_child(
         let Some(mut stderr) = stderr else {
             return tail;
         };
-        let mut chunk = vec![0_u8; 8 * 1024];
+        let mut chunk = vec![0_u8; READ_CHUNK_BYTES];
         loop {
             match stderr.read(&mut chunk).await {
                 // A stderr read error is not worth failing the run over; the
@@ -97,7 +98,7 @@ pub(crate) async fn drain_child(
     let mut stdin_done = false;
     let mut stdout_done = false;
     let mut stderr_done = false;
-    let mut chunk = vec![0_u8; 8 * 1024];
+    let mut chunk = vec![0_u8; READ_CHUNK_BYTES];
 
     // `None` means all three pipes closed cleanly, so the child can be reaped.
     let early_end: Option<DrainEnd> = loop {
