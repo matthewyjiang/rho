@@ -140,11 +140,37 @@ A server that declares `tools.listChanged` may send `notifications/tools/list_ch
 - **Withdrawn tools** stay registered under their exported name and fail with a clear reason if called.
 - **Added tools** cannot join the registry mid-session, because a session's tool set is fixed once it starts. `/mcp` and `rho mcp show` list them and say a restart is needed.
 
+## Prompts
+
+A server that declares the `prompts` capability offers its prompts as slash commands:
+
+```text
+/mcp:<server_identity>:<prompt_name>
+```
+
+They appear in the command palette next to built-in commands, prompt templates, and skills. Rho lists a server's prompts once, at connect, so typing `/` matches without a round-trip. `notifications/prompts/list_changed` refreshes the list.
+
+Arguments follow the command. A prompt that takes exactly one argument takes everything you type as that argument's value, because `key=value` for a single field is friction with no purpose:
+
+```text
+/mcp:docs:search how do sessions resume
+```
+
+A prompt with several arguments reads whitespace-separated pairs:
+
+```text
+/mcp:tickets:triage id=4821 severity=high
+```
+
+Leaving out a required argument reports which one is missing and starts no turn.
+
+Rho fetches the prompt when you submit, not when you complete the command, because `prompts/get` is a round-trip to the server. The returned messages become one user turn. A message the server marked as coming from the assistant is labelled as such, so the model reads it as prior context rather than as a request from you. Prompt text is capped by `max_output_bytes`, like tool output.
+
 ## Inspect status
 
 There is no marketplace in Rho. Configure servers in the selected config file, then inspect config or live load status:
 
-- **Interactive:** `/mcp` lists configured servers, transport, status, errors, and exported tool names for the current session. `/doctor` includes an MCP health row.
+- **Interactive:** `/mcp` lists configured servers, transport, status, errors, exported tool names, and any prompts and resources the server offers, for the current session. `/doctor` includes an MCP health row.
 - **CLI:** `rho mcp list` prints configured servers from the selected config and plugins without starting them. `rho mcp show <id>` prints one server. Pass `--connect` on either command to start enabled servers and report live status and discovered tools. Both accept `--json`.
 
 Use `/mcp` when you already have a session open. Use `rho mcp list` from a shell to verify config before starting the TUI, and `rho mcp list --connect` when you need a live probe.
