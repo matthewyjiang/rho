@@ -22,6 +22,20 @@ fn only_the_callback_path_with_matching_state_is_accepted() {
             "GET /oauth/callback?error=access_denied&state=xyz HTTP/1.1\r\n\r\n",
             Some("/oauth/callback?error=access_denied&state=xyz"),
         ),
+        // Form-urlencoded equivalent of the expected CSRF state (rmcp decodes).
+        (
+            "GET /oauth/callback?code=abc&state=xy%7A HTTP/1.1\r\n\r\n",
+            Some("/oauth/callback?code=abc&state=xy%7A"),
+        ),
+        // Duplicate state: last wins, same as rmcp AuthorizationCallback.
+        (
+            "GET /oauth/callback?code=abc&state=incorrect&state=xyz HTTP/1.1\r\n\r\n",
+            Some("/oauth/callback?code=abc&state=incorrect&state=xyz"),
+        ),
+        (
+            "GET /oauth/callback?code=abc&state=xyz&state=incorrect HTTP/1.1\r\n\r\n",
+            None,
+        ),
         // Present but wrong CSRF state must not finish the login.
         (
             "GET /oauth/callback?code=abc&state=incorrect HTTP/1.1\r\n\r\n",
@@ -49,6 +63,50 @@ fn only_the_callback_path_with_matching_state_is_accepted() {
         .map(|(_, expected)| *expected)
         .collect::<Vec<_>>();
     assert_eq!(accepted, expected_targets);
+}
+
+// Failure mode: the loopback filter and rmcp disagree on which `state` value
+// the redirect carries (first vs last, or raw vs form-decoded), so the listener
+// accepts a callback that handle_callback_url later rejects - or rejects the
+// one that would succeed.
+// Owner layer: callback query parsing aligned with rmcp AuthorizationCallback.
+#[test]
+fn callback_state_matches_rmcp_query_pair_rules() {
+    // Percent-encoded and `+` form-urlencoded equivalents of the same value.
+    let expected = "token with spaces/+";
+    assert_eq!(
+        callback_target(
+            "GET /oauth/callback?code=abc&state=token%20with%20spaces%2F%2B HTTP/1.1\r\n\r\n",
+            expected,
+        )
+        .ok(),
+        Some("/oauth/callback?code=abc&state=token%20with%20spaces%2F%2B")
+    );
+    assert_eq!(
+        callback_target(
+            "GET /oauth/callback?code=abc&state=token+with+spaces%2F%2B HTTP/1.1\r\n\r\n",
+            expected,
+        )
+        .ok(),
+        Some("/oauth/callback?code=abc&state=token+with+spaces%2F%2B")
+    );
+
+    // Last duplicate state is the one rmcp keeps.
+    assert_eq!(
+        callback_target(
+            "GET /oauth/callback?state=first&code=abc&state=second HTTP/1.1\r\n\r\n",
+            "second",
+        )
+        .ok(),
+        Some("/oauth/callback?state=first&code=abc&state=second")
+    );
+    assert!(matches!(
+        callback_target(
+            "GET /oauth/callback?state=first&code=abc&state=second HTTP/1.1\r\n\r\n",
+            "first",
+        ),
+        Err(CallbackReject::WrongState)
+    ));
 }
 
 // Failure mode: the authorization URL does not expose the CSRF state Rho needs

@@ -482,6 +482,8 @@ fn the_oauth_table_is_parsed_strictly() {
         "[oauth]\nclient_id = \"  \"\n",
         "[oauth]\nscopes = [\"\"]\n",
         "[oauth]\nscopes = [\"read write\"]\n",
+        "[oauth]\nscopes = [\"mcp \"]\n",
+        "[oauth]\nscopes = [\" mcp\"]\n",
     ] {
         assert!(parse(rejected).is_err(), "must reject: {rejected}");
     }

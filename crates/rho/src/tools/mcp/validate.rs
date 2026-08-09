@@ -61,7 +61,7 @@ pub(crate) fn validate_oauth_client(
         if scope.trim().is_empty() {
             bail!("MCP oauth scopes must not contain an empty entry");
         }
-        if scope.split_whitespace().count() > 1 {
+        if scope.chars().any(char::is_whitespace) {
             bail!("MCP oauth scope `{scope}` must not contain whitespace; list scopes separately");
         }
     }

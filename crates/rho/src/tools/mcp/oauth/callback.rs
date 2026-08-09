@@ -128,23 +128,32 @@ pub(super) fn callback_target<'a>(
             "callback request used {method} rather than GET"
         )));
     }
-    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+    let path = target.split_once('?').map_or(target, |(path, _)| path);
     if path != CALLBACK_PATH {
         return Err(CallbackReject::NotOurs(anyhow::anyhow!(
             "callback request targeted `{path}` rather than `{CALLBACK_PATH}`"
         )));
     }
-    let state = query.split('&').find_map(|pair| {
-        let (name, value) = pair.split_once('=')?;
-        (name == "state").then_some(value)
-    });
-    match state {
+    // Match rmcp's AuthorizationCallback::from_redirect_url: decoded
+    // application/x-www-form-urlencoded pairs, last-wins for duplicate keys.
+    // The listener must accept exactly the state value that handle_callback_url
+    // will validate after this request is turned into a full redirect URL.
+    let callback_url = format!("http://127.0.0.1{target}");
+    let url = url::Url::parse(&callback_url).map_err(|error| {
+        CallbackReject::NotOurs(anyhow::anyhow!(
+            "callback target was not a valid URL: {error}"
+        ))
+    })?;
+    let mut state = None;
+    for (name, value) in url.query_pairs() {
+        if name == "state" {
+            state = Some(value);
+        }
+    }
+    match state.as_deref() {
         None => Err(CallbackReject::NotOurs(anyhow::anyhow!(
             "callback request carried no `state` parameter"
         ))),
-        // Compare the raw query value to the value embedded in the auth URL.
-        // Both are application/x-www-form-urlencoded; Rho's CSRF token is
-        // URL-safe, so a literal match is the correct CSRF check here.
         Some(value) if value == expected_state => Ok(target),
         Some(_) => Err(CallbackReject::WrongState),
     }

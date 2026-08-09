@@ -227,7 +227,7 @@ async fn authorize(
         .context("stored OAuth credentials could not be reused")?;
     if reusable {
         tracing::debug!(server = %identity, "reusing stored MCP OAuth credentials");
-        return Ok(authorized_client(manager));
+        return authorized_client(manager);
     }
 
     match mode {
@@ -247,22 +247,25 @@ async fn authorize(
                 LOGIN_BUDGET.as_secs()
             )
         })??;
-    Ok(authorized_client(manager))
+    authorized_client(manager)
 }
 
-fn authorized_client(manager: AuthorizationManager) -> McpHttpClient {
-    McpHttpClient::Authorized(Box::new(AuthClient::new(transport_http_client(), manager)))
+fn authorized_client(manager: AuthorizationManager) -> anyhow::Result<McpHttpClient> {
+    Ok(McpHttpClient::Authorized(Box::new(AuthClient::new(
+        transport_http_client()?,
+        manager,
+    ))))
 }
 
 /// Match the transport client rmcp builds for itself: no automatic redirects,
 /// so headers and bearer tokens cannot be replayed to a redirect target, and
 /// no idle pooling, which stalls on Linux delayed ACK.
-fn transport_http_client() -> mcp_reqwest::Client {
+fn transport_http_client() -> anyhow::Result<mcp_reqwest::Client> {
     mcp_reqwest::Client::builder()
         .pool_max_idle_per_host(0)
         .redirect(mcp_reqwest::redirect::Policy::none())
         .build()
-        .expect("reqwest client with static settings must build")
+        .context("reqwest client with static settings could not build")
 }
 
 /// Learn where to authorize: ask the server, read its 401 challenge, then
@@ -331,7 +334,16 @@ async fn protected_resource_challenge(
     url: &str,
     headers: &HashMap<HeaderName, HeaderValue>,
 ) -> Option<String> {
-    let client = transport_http_client();
+    let client = match transport_http_client() {
+        Ok(client) => client,
+        Err(error) => {
+            tracing::debug!(
+                error = %error,
+                "MCP authorization HTTP client could not be built; falling back to well-known discovery"
+            );
+            return None;
+        }
+    };
     let mut request = client
         .post(url)
         .header(http::header::CONTENT_TYPE, "application/json")
@@ -386,12 +398,15 @@ async fn log_in(
         .map_err(|(_, error)| anyhow::anyhow!(error))
         .context("authorization request could not be prepared")?;
 
+    let auth_url = session.get_authorization_url();
+    let auth_origin = url::Url::parse(auth_url)
+        .map(|parsed| parsed.origin().ascii_serialization())
+        .unwrap_or_else(|_| "unknown".to_string());
     tracing::info!(
         server = %identity,
-        url = session.get_authorization_url(),
+        origin = %auth_origin,
         "opening a browser to authorize this MCP server"
     );
-    let auth_url = session.get_authorization_url();
     prompt.present(auth_url)?;
 
     // Validate CSRF state on the loopback acceptor so a mismatched callback

@@ -96,7 +96,7 @@ Rules the flow holds to:
 - A server that publishes no metadata is refused. Rho does not guess authorization endpoints from the MCP URL.
 - The authorization server metadata must carry an issuer that matches where it was discovered, and tokens minted by a previous issuer are discarded if a server is repointed.
 - The loopback listener answers one exact callback path and requires the CSRF state, so a stray browser request cannot finish the login.
-- Discovery is bounded at 60 seconds and the browser login at 5 minutes, so a login nobody finishes cannot hang session startup.
+- Discovery and loading stored credentials are each bounded at 60 seconds (120 seconds combined before login), and the browser login at 5 minutes, so a login nobody finishes cannot hang session startup.
 - Tokens never reach config, `rho mcp list --json`, `rho mcp show`, or logs.
 
 A configured `Authorization` header wins over the `oauth` table and suppresses the flow entirely. You already said which credential to send, so Rho sends it and never opens a browser.
