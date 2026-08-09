@@ -6,7 +6,7 @@ use serde_json::json;
 use rho_sdk::{
     model::{ContentBlock, ModelIdentity, ModelResponse},
     provider::{ScriptedProvider, ScriptedTurn},
-    CancellationToken, HostInputResponse, SessionId,
+    HostInputResponse, SessionId,
 };
 use rmcp::model::CreateMessageRequestParams;
 
@@ -53,7 +53,7 @@ async fn with_answer<T>(
     allow: &'static str,
     work: impl std::future::Future<Output = T>,
 ) -> T {
-    let (registration, mut questions) = calls.register(CancellationToken::new());
+    let (registration, mut questions) = calls.register();
     let (outcome, ()) = tokio::join!(work, async {
         let question = questions
             .recv()
@@ -75,7 +75,7 @@ async fn with_answer<T>(
 async fn a_server_that_did_not_opt_in_is_rejected() {
     let provider = configured_provider("never asked");
     let calls = McpInFlightCalls::new();
-    let (_registration, _questions) = calls.register(CancellationToken::new());
+    let (_registration, _questions) = calls.register();
     let service = McpSamplingService::new(
         "live",
         McpSamplingPolicy::Deny,
@@ -167,7 +167,7 @@ async fn model_preferences_do_not_change_the_model() {
 #[tokio::test]
 async fn an_unbound_model_fails_closed() {
     let calls = McpInFlightCalls::new();
-    let (_registration, _questions) = calls.register(CancellationToken::new());
+    let (_registration, _questions) = calls.register();
     let bridge = McpSamplingBridge::new();
     let service = McpSamplingService::new("live", McpSamplingPolicy::Ask, bridge.clone(), calls);
 

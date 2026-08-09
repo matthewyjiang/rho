@@ -201,3 +201,29 @@ fn image_assets_keep_only_the_first_that_fits_the_budget() {
     assert!(too_large.text.contains("not retained: exceeds"));
     assert!(!too_large.text.contains(&encode(&oversized[..16])));
 }
+
+// Covers: untrusted output schemas and structured payloads must be rejected
+// before compile/validate work can monopolize CPU or memory.
+// Owner: MCP structured-result contract.
+#[test]
+fn structured_validation_rejects_oversize_schemas() {
+    // A schema with far more nodes than the budget, built without a huge
+    // serialized form by nesting many tiny properties.
+    let mut properties = serde_json::Map::new();
+    for index in 0..3_000 {
+        properties.insert(format!("f{index}"), serde_json::json!({"type": "string"}));
+    }
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": properties,
+    });
+    let mut call = result(Vec::new());
+    call.structured_content = Some(serde_json::json!({}));
+    let error = render(&call, &expect_schema(schema), LIMIT).unwrap_err();
+    assert_eq!(error.kind(), ToolErrorKind::Execution);
+    assert!(
+        error.message().contains("validation budget"),
+        "{}",
+        error.message()
+    );
+}

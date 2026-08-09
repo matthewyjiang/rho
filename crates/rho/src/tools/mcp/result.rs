@@ -21,6 +21,18 @@ use base64::Engine;
 /// untrusted server can force Rho to hold on a single tool result.
 pub(super) const MAX_RETAINED_IMAGE_BYTES: usize = 4 * 1024 * 1024;
 
+/// Serialized JSON Schema bytes Rho will compile for `outputSchema` validation.
+const MAX_OUTPUT_SCHEMA_BYTES: usize = 64 * 1024;
+
+/// Serialized structured-content bytes Rho will walk during schema validation.
+const MAX_STRUCTURED_CONTENT_BYTES: usize = 256 * 1024;
+
+/// Maximum JSON nodes (objects, arrays, and leaves) in a declared output schema.
+const MAX_OUTPUT_SCHEMA_NODES: usize = 2_048;
+
+/// Maximum JSON nodes in structured content accepted for schema validation.
+const MAX_STRUCTURED_CONTENT_NODES: usize = 8_192;
+
 /// What one MCP result becomes inside Rho.
 #[derive(Debug, Default, PartialEq)]
 pub(super) struct RenderedResult {
@@ -125,19 +137,85 @@ fn validate_structured_content(
     schema: &serde_json::Value,
     structured: &serde_json::Value,
 ) -> Result<(), ToolError> {
-    // No remote or file $ref resolution: the schema comes from an untrusted
-    // server, and validation must not become a fetch path.
-    let validator = jsonschema::validator_for(schema).map_err(|error| {
-        ToolError::new(
-            ToolErrorKind::Execution,
-            format!("MCP server declared an invalid output schema: {error}"),
-        )
-    })?;
+    // Bound work before compiling or walking anything server-controlled. The
+    // schema and instance both come from an untrusted MCP server.
+    ensure_json_budget(schema, MAX_OUTPUT_SCHEMA_BYTES, "output schema")?;
+    ensure_json_budget(
+        structured,
+        MAX_STRUCTURED_CONTENT_BYTES,
+        "structured content",
+    )?;
+    ensure_node_budget(schema, MAX_OUTPUT_SCHEMA_NODES, "output schema")?;
+    ensure_node_budget(
+        structured,
+        MAX_STRUCTURED_CONTENT_NODES,
+        "structured content",
+    )?;
+
+    // No remote or file $ref resolution: default-features disable the retrieve
+    // backends. Prefer the linear `regex` pattern engine so a hostile pattern
+    // cannot spend exponential backtracking time on every tools/call.
+    let validator = jsonschema::options()
+        .with_pattern_options(jsonschema::PatternOptions::regex())
+        .build(schema)
+        .map_err(|error| {
+            ToolError::new(
+                ToolErrorKind::Execution,
+                format!("MCP server declared an invalid output schema: {error}"),
+            )
+        })?;
     if let Err(error) = validator.validate(structured) {
         return Err(ToolError::new(
             ToolErrorKind::Execution,
             format!("MCP structured content failed the declared output schema: {error}"),
         ));
+    }
+    Ok(())
+}
+
+fn ensure_json_budget(
+    value: &serde_json::Value,
+    max_bytes: usize,
+    label: &str,
+) -> Result<(), ToolError> {
+    let encoded = serde_json::to_vec(value).map_err(|error| {
+        ToolError::new(
+            ToolErrorKind::Execution,
+            format!("MCP server returned {label} that could not be measured: {error}"),
+        )
+    })?;
+    if encoded.len() > max_bytes {
+        return Err(ToolError::new(
+            ToolErrorKind::Execution,
+            format!(
+                "MCP server {label} exceeds the {} validation budget",
+                byte_size(max_bytes)
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_node_budget(
+    value: &serde_json::Value,
+    max_nodes: usize,
+    label: &str,
+) -> Result<(), ToolError> {
+    let mut count = 0usize;
+    let mut stack = vec![value];
+    while let Some(next) = stack.pop() {
+        count = count.saturating_add(1);
+        if count > max_nodes {
+            return Err(ToolError::new(
+                ToolErrorKind::Execution,
+                format!("MCP server {label} exceeds the {max_nodes}-node validation budget"),
+            ));
+        }
+        match next {
+            serde_json::Value::Array(items) => stack.extend(items.iter()),
+            serde_json::Value::Object(map) => stack.extend(map.values()),
+            _ => {}
+        }
     }
     Ok(())
 }

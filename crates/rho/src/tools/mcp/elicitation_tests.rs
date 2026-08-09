@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
-use rho_sdk::{CancellationToken, HostInputResponse};
+use rho_sdk::HostInputResponse;
 use rmcp::model::{ElicitRequestParams, ElicitationAction};
 
 use super::{McpElicitationService, McpElicitationSupport, McpInFlightCalls};
@@ -39,8 +39,8 @@ async fn unroutable_elicitations_are_declined() {
     assert_eq!(with_no_call.action, ElicitationAction::Decline);
     assert_eq!(with_no_call.content, None);
 
-    let (_first, _first_questions) = calls.register(CancellationToken::new());
-    let (_second, _second_questions) = calls.register(CancellationToken::new());
+    let (_first, _first_questions) = calls.register();
+    let (_second, _second_questions) = calls.register();
     let with_two_calls = service.elicit(colour_request()).await.unwrap();
     assert_eq!(with_two_calls.action, ElicitationAction::Decline);
     assert_eq!(with_two_calls.content, None);
@@ -53,7 +53,7 @@ async fn unroutable_elicitations_are_declined() {
 #[tokio::test]
 async fn a_run_that_cannot_ask_anyone_declines() {
     let calls = McpInFlightCalls::new();
-    let (_registration, mut questions) = calls.register(CancellationToken::new());
+    let (_registration, mut questions) = calls.register();
     let service = McpElicitationService::new("live", calls, McpElicitationSupport::Unavailable);
 
     let result = service.elicit(colour_request()).await.unwrap();
@@ -68,7 +68,7 @@ async fn a_run_that_cannot_ask_anyone_declines() {
 #[tokio::test]
 async fn url_elicitation_is_declined() {
     let calls = McpInFlightCalls::new();
-    let (_registration, _questions) = calls.register(CancellationToken::new());
+    let (_registration, _questions) = calls.register();
     let service = McpElicitationService::new("live", calls, McpElicitationSupport::Available);
     let request: ElicitRequestParams = serde_json::from_value(json!({
         "mode": "url",
@@ -94,7 +94,7 @@ async fn answering_the_form_produces_the_matching_action() {
         McpElicitationService::new("live", calls.clone(), McpElicitationSupport::Available);
 
     // Accept: the user answered, so the typed content goes back.
-    let (registration, mut questions) = calls.register(CancellationToken::new());
+    let (registration, mut questions) = calls.register();
     let (accepted, ()) = tokio::join!(service.elicit(colour_request()), async {
         let question = questions.recv().await.expect("the form reached the caller");
         assert_eq!(question.request.title(), "MCP server `live`: which colour?");

@@ -20,7 +20,9 @@
 //! declare during preparation.
 //!
 //! Anything else is a rejection: an unbound model, no in-flight call, a refused
-//! prompt, or a request that outlives its budget.
+//! prompt, a request that outlives its budget, or nested work whose owning
+//! `tools/call` has already ended (the call registration cancels sampling when
+//! it drops, including on the 120s tool-call budget).
 
 // `sampling` carries a SEP-2577 deprecation marker in rmcp while it is still the
 // only completion request in the shipping protocol. Rho implements the current

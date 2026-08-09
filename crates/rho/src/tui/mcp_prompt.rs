@@ -62,14 +62,11 @@ impl App {
             .await
         {
             Ok(expansion) => {
-                // The server's own description of the prompt leads, so the
-                // model knows what the following text is for.
-                let model = match expansion.description {
-                    Some(description) if !description.trim().is_empty() => {
-                        format!("{description}\n\n{}", expansion.text)
-                    }
-                    _ => expansion.text,
-                };
+                let model = prompt_turn_text(
+                    expansion.description.as_deref(),
+                    &expansion.text,
+                    max_output_bytes,
+                );
                 Ok(Some(TurnPrompt::command(model, display.to_string())))
             }
             Err(error) => {
@@ -92,6 +89,24 @@ pub(super) fn parse_command(command: &str) -> Option<(String, String)> {
         return None;
     }
     Some((server.to_string(), prompt.to_string()))
+}
+
+/// Build the model-facing turn text from a prompt expansion.
+///
+/// The server's description leads when present so the model knows what the
+/// following text is for. Description and body share one `max_output_bytes`
+/// budget; the message body alone is already capped upstream.
+pub(super) fn prompt_turn_text(
+    description: Option<&str>,
+    body: &str,
+    max_output_bytes: usize,
+) -> String {
+    match description {
+        Some(description) if !description.trim().is_empty() => {
+            rho_tools::tool::truncate(format!("{description}\n\n{body}"), max_output_bytes)
+        }
+        _ => body.to_string(),
+    }
 }
 
 #[cfg(test)]

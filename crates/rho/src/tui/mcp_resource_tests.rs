@@ -144,6 +144,34 @@ fn resource_contents_map_onto_composer_media() {
     }
 }
 
+// Covers: a lone image resource larger than the paste attachment ceiling must
+// be refused rather than cloned into the composer and provider request.
+// Owner: pure unit (MCP resource to composer media mapping).
+#[test]
+fn oversized_image_resource_is_rejected() {
+    use base64::Engine;
+
+    let bytes = vec![0u8; (rho_tools::MAX_IMAGE_FILE_BYTES as usize) + 1];
+    let blob = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    let outcome = resource_attachment(
+        "res://huge.png",
+        &[McpResourceContent::Blob {
+            uri: "res://huge.png".into(),
+            mime_type: Some("image/png".into()),
+            blob,
+        }],
+        LARGE_CAP,
+    );
+    match outcome {
+        MediaAttachOutcome::Failed { kind, message } => {
+            assert_eq!(kind, "resource read");
+            assert!(message.contains("attachment limit"), "{message}");
+        }
+        MediaAttachOutcome::Ready(_) => panic!("expected failure, got Ready"),
+        MediaAttachOutcome::Unsupported { .. } => panic!("expected failure, got Unsupported"),
+    }
+}
+
 // Covers: a resources/read that fails must take its pending entry with it.
 // Submission is gated on pending attachments, so a failed read that left the
 // entry behind would lock the composer with no way out.

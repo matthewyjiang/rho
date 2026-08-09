@@ -203,8 +203,10 @@ impl Tool for McpTool {
                         // when this future ends, so a server request that
                         // arrives mid-call has a caller and one that arrives
                         // after it does not.
-                        let (_registration, questions) =
-                            self.calls.register(context.cancellation().clone());
+                        // Call-scoped registration: its token cancels when this future
+                        // ends (success, error, turn cancel, or budget), so
+                        // nested sampling cannot outlive the tools/call.
+                        let (_registration, questions) = self.calls.register();
                         let budget = CallBudget::new(MCP_TOOL_CALL_BUDGET);
                         let call = call_remote_tool(
                             McpCall {

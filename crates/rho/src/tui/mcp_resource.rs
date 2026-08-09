@@ -107,11 +107,32 @@ pub(super) fn resource_attachment(
     {
         if mime_type.starts_with("image/") {
             // MCP blobs are already base64, which is the encoding a provider
-            // wants, so the bytes are handed over untouched.
-            return MediaAttachOutcome::Ready(ChatMedia::Image(ImageContent {
-                data: blob.clone(),
-                mime_type: mime_type.clone(),
-            }));
+            // wants. Reject oversize decoded payloads with the same ceiling a
+            // pasted image attachment uses, so a server cannot force unbounded
+            // composer/provider memory through resources/read.
+            match decoded_size(blob) {
+                Some(size) if size as u64 > rho_tools::MAX_IMAGE_FILE_BYTES => {
+                    return MediaAttachOutcome::Failed {
+                        kind: "resource read",
+                        message: format!(
+                            "image resource exceeds the {} byte attachment limit",
+                            rho_tools::MAX_IMAGE_FILE_BYTES
+                        ),
+                    };
+                }
+                None => {
+                    return MediaAttachOutcome::Failed {
+                        kind: "resource read",
+                        message: "image resource was not valid base64".into(),
+                    };
+                }
+                Some(_) => {
+                    return MediaAttachOutcome::Ready(ChatMedia::Image(ImageContent {
+                        data: blob.clone(),
+                        mime_type: mime_type.clone(),
+                    }));
+                }
+            }
         }
     }
 
