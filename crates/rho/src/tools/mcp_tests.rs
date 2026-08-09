@@ -6,6 +6,7 @@ use super::{
     config::{McpConfig, McpFilesystemPolicy, McpServerConfig, McpToolFilter, McpTransport},
     parse_remote_url,
     progress::McpProgressRouter,
+    result::ResultExpectation,
     session::prepare_server_filesystem,
     tool::{call_remote_tool, namespaced_tool_name, McpCall},
     McpBundle, McpRoots, McpServerStatus, McpSessionOptions, MCP_RUNTIME_CONSTRUCTIONS,
@@ -494,13 +495,13 @@ open(sys.argv[1], "w").close()
         progress: &progress,
         remote_name: "echo/value".into(),
         arguments: serde_json::Map::new(),
+        expectation: ResultExpectation::default(),
     };
     let cancellation = CancellationToken::new();
-    let content = call_remote_tool(echo_call(), &cancellation, None, 12_000)
+    let rendered = call_remote_tool(echo_call(), &cancellation, None, 12_000)
         .await
         .unwrap();
-    let content: serde_json::Value = serde_json::from_str(&content).unwrap();
-    assert_eq!(content["content"][0]["text"], "ok");
+    assert_eq!(rendered.text, "ok");
 
     cancellation.cancel();
     let error = call_remote_tool(echo_call(), &cancellation, None, 12_000)

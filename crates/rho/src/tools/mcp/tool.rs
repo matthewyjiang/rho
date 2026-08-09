@@ -14,18 +14,23 @@ use std::sync::{
 use rho_sdk::{
     model::ToolSpec,
     tool::{
-        PreparedToolInvocation, Tool, ToolError, ToolErrorKind, ToolInvocation, ToolMetadata,
-        ToolOutput, ToolPreparationContext, ToolPrepareFuture, ToolProgressSender, ToolSecurity,
+        PreparedToolInvocation, Tool, ToolError, ToolErrorKind, ToolInvocation, ToolOutput,
+        ToolPreparationContext, ToolPrepareFuture, ToolProgressSender, ToolSecurity,
     },
     CancellationToken,
 };
 use rmcp::{
-    model::{CallToolRequest, CallToolRequestParams, CallToolResult, ClientRequest, ServerResult},
+    model::{CallToolRequest, CallToolRequestParams, ClientRequest, ServerResult},
     service::{PeerRequestOptions, RequestHandle, ServiceError, ServiceRole},
     Peer, RoleClient,
 };
 
-use super::progress::McpProgressRouter;
+use super::{
+    config::McpTransport,
+    definition::McpToolDefinition,
+    progress::McpProgressRouter,
+    result::{self, RenderedResult},
+};
 
 // Bound in-flight tool calls so an unresponsive server cannot hang a turn.
 pub(super) const MCP_TOOL_CALL_BUDGET: std::time::Duration = std::time::Duration::from_secs(120);
@@ -34,37 +39,38 @@ const CANCEL_REASON: &str = "Rho cancelled the turn";
 
 /// The part of an exported MCP tool that can change while a session runs.
 ///
-/// `tools/list_changed` lets a server revise a tool's description or schema, and
-/// withdraw it entirely. Rho reads `spec()` when it builds each run, so a
-/// refreshed spec reaches the model on the next turn without a restart. A
-/// withdrawn tool stays registered under its exported name and fails with a
-/// clear reason, because the registry itself is fixed for the session.
+/// `tools/list_changed` lets a server revise a tool's description, schema,
+/// output contract, and annotations, and withdraw it entirely. Rho reads the
+/// definition when it builds each run, so a revision reaches the model on the
+/// next turn without a restart. A withdrawn tool stays registered under its
+/// exported name and fails with a clear reason, because the registry itself is
+/// fixed for the session.
 #[derive(Debug)]
 pub(super) struct McpToolSlot {
-    spec: RwLock<ToolSpec>,
+    definition: RwLock<McpToolDefinition>,
     available: AtomicBool,
 }
 
 impl McpToolSlot {
-    pub(super) fn new(spec: ToolSpec) -> Self {
+    pub(super) fn new(definition: McpToolDefinition) -> Self {
         Self {
-            spec: RwLock::new(spec),
+            definition: RwLock::new(definition),
             available: AtomicBool::new(true),
         }
     }
 
-    pub(super) fn spec(&self) -> ToolSpec {
+    pub(super) fn definition(&self) -> McpToolDefinition {
         self.read().clone()
     }
 
-    /// Returns `true` when the incoming spec differs from the live one.
-    pub(super) fn refresh(&self, spec: ToolSpec) -> bool {
+    /// Returns `true` when the incoming definition differs from the live one.
+    pub(super) fn refresh(&self, definition: McpToolDefinition) -> bool {
         self.available.store(true, Ordering::Relaxed);
         let mut current = self.write();
-        if *current == spec {
+        if *current == definition {
             return false;
         }
-        *current = spec;
+        *current = definition;
         true
     }
 
@@ -76,14 +82,18 @@ impl McpToolSlot {
         self.available.load(Ordering::Relaxed)
     }
 
-    /// A poisoned spec lock still holds a complete `ToolSpec`, so recover
-    /// rather than turn an unrelated panic into a failed tool call.
-    fn read(&self) -> std::sync::RwLockReadGuard<'_, ToolSpec> {
-        self.spec.read().unwrap_or_else(|error| error.into_inner())
+    /// A poisoned lock still holds a complete definition, so recover rather
+    /// than turn an unrelated panic into a failed tool call.
+    fn read(&self) -> std::sync::RwLockReadGuard<'_, McpToolDefinition> {
+        self.definition
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
     }
 
-    fn write(&self) -> std::sync::RwLockWriteGuard<'_, ToolSpec> {
-        self.spec.write().unwrap_or_else(|error| error.into_inner())
+    fn write(&self) -> std::sync::RwLockWriteGuard<'_, McpToolDefinition> {
+        self.definition
+            .write()
+            .unwrap_or_else(|error| error.into_inner())
     }
 }
 
@@ -93,13 +103,13 @@ pub(super) struct McpTool {
     pub(super) remote_name: String,
     pub(super) peer: Peer<RoleClient>,
     pub(super) progress: McpProgressRouter,
-    pub(super) metadata: ToolMetadata,
+    pub(super) transport: McpTransport,
     pub(super) max_output_bytes: usize,
 }
 
 impl Tool for McpTool {
     fn spec(&self) -> ToolSpec {
-        self.slot.spec()
+        self.slot.definition().spec
     }
 
     fn security(&self) -> ToolSecurity {
@@ -131,26 +141,34 @@ impl Tool for McpTool {
                     "MCP tool arguments must be a JSON object",
                 ));
             };
-            let metadata = self.metadata.clone();
+            let definition = self.slot.definition();
+            let metadata = definition.presentation.metadata(&self.transport);
             Ok(PreparedToolInvocation::resource_aware(
                 [],
                 [],
                 metadata.clone(),
                 move |context| {
                     Box::pin(async move {
-                        let content = call_remote_tool(
+                        let rendered = call_remote_tool(
                             McpCall {
                                 peer: &self.peer,
                                 progress: &self.progress,
                                 remote_name: self.remote_name.clone(),
                                 arguments,
+                                expectation: definition.expectation,
                             },
                             context.cancellation(),
                             Some(context.progress().clone()),
                             self.max_output_bytes,
                         )
                         .await?;
-                        Ok(ToolOutput::text(content).metadata(metadata))
+                        // Binary content the server returned rides on the card
+                        // as an asset; the model reads the descriptor instead.
+                        let mut metadata = metadata;
+                        for asset in rendered.assets {
+                            metadata = metadata.asset(asset);
+                        }
+                        Ok(ToolOutput::text(rendered.text).metadata(metadata))
                     })
                 },
             ))
@@ -164,6 +182,8 @@ pub(super) struct McpCall<'a> {
     pub(super) progress: &'a McpProgressRouter,
     pub(super) remote_name: String,
     pub(super) arguments: serde_json::Map<String, serde_json::Value>,
+    /// What the tool's declaration says the result must contain.
+    pub(super) expectation: super::result::ResultExpectation,
 }
 
 /// Issue one `tools/call` and return the serialized MCP result.
@@ -177,12 +197,13 @@ pub(super) async fn call_remote_tool(
     cancellation: &CancellationToken,
     progress_sender: Option<ToolProgressSender>,
     max_output_bytes: usize,
-) -> Result<String, ToolError> {
+) -> Result<RenderedResult, ToolError> {
     let McpCall {
         peer,
         progress,
         remote_name,
         arguments,
+        expectation,
     } = call;
     let params = CallToolRequestParams::new(remote_name).with_arguments(arguments);
     let mut handle = peer
@@ -222,7 +243,9 @@ pub(super) async fn call_remote_tool(
         }
     };
     match response {
-        Ok(Ok(ServerResult::CallToolResult(result))) => render_result(&result, max_output_bytes),
+        Ok(Ok(ServerResult::CallToolResult(result))) => {
+            result::render(&result, &expectation, max_output_bytes)
+        }
         Ok(Ok(_)) => Err(ToolError::new(
             ToolErrorKind::Execution,
             "MCP server answered tools/call with an unexpected result",
@@ -240,16 +263,6 @@ enum CallOutcome<T> {
     Answered(T),
     Cancelled,
     TimedOut,
-}
-
-fn render_result(result: &CallToolResult, max_output_bytes: usize) -> Result<String, ToolError> {
-    let content = serde_json::to_string(result)
-        .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
-    let content = rho_tools::tool::truncate(content, max_output_bytes);
-    if result.is_error.unwrap_or(false) {
-        return Err(ToolError::new(ToolErrorKind::Execution, content));
-    }
-    Ok(content)
 }
 
 fn execution_error(error: ServiceError) -> ToolError {
