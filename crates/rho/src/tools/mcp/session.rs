@@ -26,12 +26,15 @@ use rmcp::{
 
 use super::{
     catalog::{self, McpCatalogHandle},
-    client::{McpClientHandler, McpEventReceiver, McpServerEvent},
+    client::{McpClientHandler, McpClientServices, McpEventReceiver, McpServerEvent},
     config::{McpServerConfig, McpTransport},
     definition::McpToolDefinition,
+    elicitation::{McpElicitationService, McpElicitationSupport},
+    inflight::McpInFlightCalls,
     progress::McpProgressRouter,
     report::McpLiveServerState,
     roots::McpRoots,
+    sampling::{McpSamplingBridge, McpSamplingService},
     tool::McpToolSlot,
     validate,
 };
@@ -62,8 +65,22 @@ pub(super) struct ConnectedServer {
     /// `initialize` guidance, passed to the model as server-authored context.
     pub(super) instructions: Option<String>,
     pub(super) progress: McpProgressRouter,
+    /// The registry this server's tools publish themselves in, so server
+    /// requests can be routed back to the call that caused them.
+    pub(super) calls: McpInFlightCalls,
     pub(super) events: McpEventReceiver,
     pub(super) offers: McpServerOffers,
+}
+
+/// What the host is able to serve a server beyond `roots/list`.
+///
+/// Passed in from the session plan because it is a property of the run, not of
+/// the server: an inventory pass has no turn to interrupt and no model bound.
+#[derive(Clone, Debug)]
+pub(super) struct McpSessionServices {
+    pub(super) elicitation: McpElicitationSupport,
+    /// `Some` when this run will bind a model for sampling.
+    pub(super) sampling: Option<McpSamplingBridge>,
 }
 
 /// Which optional primitives a server declared at `initialize`.
@@ -96,11 +113,19 @@ pub(super) async fn connect_server_bounded(
     identity: &str,
     server: &McpServerConfig,
     roots: &McpRoots,
+    services: &McpSessionServices,
 ) -> ConnectResult {
     let deadline = tokio::time::Instant::now() + MCP_SERVER_STARTUP_BUDGET;
     let progress = McpProgressRouter::new();
+    let calls = McpInFlightCalls::new();
     let (event_sender, events) = tokio::sync::mpsc::unbounded_channel();
-    let handler = McpClientHandler::new(identity, roots.clone(), progress.clone(), event_sender);
+    let handler = McpClientHandler::new(
+        identity,
+        roots.clone(),
+        progress.clone(),
+        event_sender,
+        client_services(identity, server, services, &calls),
+    );
     let session =
         match tokio::time::timeout_at(deadline, establish_session(identity, server, handler)).await
         {
@@ -122,6 +147,7 @@ pub(super) async fn connect_server_bounded(
             discovered,
             instructions,
             progress,
+            calls,
             events,
             offers,
         })),
@@ -136,6 +162,28 @@ pub(super) async fn connect_server_bounded(
             close_session(session).await;
             ConnectResult::TimedOut
         }
+    }
+}
+
+/// Resolve what this session declares and answers for one server.
+///
+/// Sampling needs both halves of its double gate before the capability is
+/// declared: the server opted in through config, and this run has somewhere to
+/// get a model from.
+fn client_services(
+    identity: &str,
+    server: &McpServerConfig,
+    services: &McpSessionServices,
+    calls: &McpInFlightCalls,
+) -> McpClientServices {
+    let sample = services
+        .sampling
+        .clone()
+        .filter(|_| server.sampling.is_offered())
+        .map(|bridge| McpSamplingService::new(identity, server.sampling, bridge, calls.clone()));
+    McpClientServices {
+        elicit: McpElicitationService::new(identity, calls.clone(), services.elicitation),
+        sample,
     }
 }
 

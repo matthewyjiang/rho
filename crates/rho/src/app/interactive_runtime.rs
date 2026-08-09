@@ -67,6 +67,8 @@ pub(crate) struct InteractiveRuntime {
     sessions: InteractiveSessionController,
     provider: ProviderController,
     tools: AppToolSet,
+    /// The model MCP sampling runs against, rebound whenever it changes.
+    mcp_sampling: crate::tools::mcp::McpSamplingBridge,
     mcp_report: crate::tools::mcp::McpSessionReport,
     plugins_report: crate::plugins::PluginLoadReport,
     workspace: Workspace,
@@ -668,6 +670,14 @@ impl InteractiveRuntime {
         if let Some(manager) = self.tools.subagents() {
             manager.update_selection(&identity.provider, &identity.model, reasoning, auth);
         }
+        // MCP sampling must follow the user's current model, never the one that
+        // happened to be selected when the servers connected.
+        startup::bind_mcp_sampling(
+            &self.mcp_sampling,
+            self.provider.provider(),
+            self.sessions.session().id(),
+            self.workspace.root(),
+        );
         self.invalidate_live_context();
         self.runs.finish_transition();
         Ok(report)
@@ -721,6 +731,9 @@ impl InteractiveRuntime {
             self.cancel();
             let _ = self.finish_run().await;
         }
+        // Release the model before the sessions close, so a late server request
+        // finds nothing bound rather than a provider on its way out.
+        self.mcp_sampling.unbind();
         self.runtime.shutdown();
         self.drain_hooks().await;
         self.tools.shutdown().await;

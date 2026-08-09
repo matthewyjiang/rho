@@ -20,20 +20,26 @@ pub(crate) mod catalog;
 pub(crate) mod client;
 pub(crate) mod config;
 pub(crate) mod definition;
+pub(crate) mod elicitation;
+pub(crate) mod elicitation_form;
+pub(crate) mod inflight;
 pub(crate) mod progress;
 pub(crate) mod report;
 pub(crate) mod result;
 pub(crate) mod roots;
+pub(crate) mod sampling;
 pub(crate) mod session;
 pub(crate) mod tool;
 pub(crate) mod validate;
 
-pub(crate) use catalog::{McpCatalog, McpPrompt, McpResource};
+pub(crate) use catalog::McpCatalog;
+pub(crate) use elicitation::McpElicitationSupport;
 pub(crate) use report::{
     McpLoadMode, McpServerReport, McpServerStatus, McpSessionReport, McpToolReport,
     McpTransportSummary,
 };
 pub(crate) use roots::McpRoots;
+pub(crate) use sampling::{McpSamplingBridge, McpSamplingModel};
 pub(crate) use validate::{
     parse_remote_url, validate_environment_header_names, validate_identity,
     validate_literal_headers, validate_stdio_environment,
@@ -53,11 +59,16 @@ pub(crate) enum McpSessionPlan {
 }
 
 /// Session-scoped inputs every connected server shares.
+///
+/// The two server-to-client services default to off, so a caller that cannot
+/// serve them, such as the `rho mcp` inventory pass, gets the safe shape without
+/// saying anything.
 #[derive(Clone, Debug)]
 pub(crate) struct McpSessionOptions {
     pub(crate) max_output_bytes: usize,
     /// Filesystem roots advertised through `roots/list`.
     pub(crate) roots: McpRoots,
+    services: session::McpSessionServices,
 }
 
 impl McpSessionOptions {
@@ -65,7 +76,23 @@ impl McpSessionOptions {
         Self {
             max_output_bytes: max_output_bytes.max(1),
             roots,
+            services: session::McpSessionServices {
+                elicitation: McpElicitationSupport::Unavailable,
+                sampling: None,
+            },
         }
+    }
+
+    /// Declare that this run can put a server's question in front of a person.
+    pub(crate) fn with_elicitation(mut self, support: McpElicitationSupport) -> Self {
+        self.services.elicitation = support;
+        self
+    }
+
+    /// Declare that this run will bind a model that opted-in servers may sample.
+    pub(crate) fn with_sampling(mut self, bridge: McpSamplingBridge) -> Self {
+        self.services.sampling = Some(bridge);
+        self
     }
 }
 
@@ -155,9 +182,12 @@ impl McpBundle {
                 let identity = identity.clone();
                 let server = server.clone();
                 let roots = options.roots.clone();
+                let services = options.services.clone();
                 async move {
                     let transport = McpTransportSummary::from_server(&server);
-                    let result = session::connect_server_bounded(&identity, &server, &roots).await;
+                    let result =
+                        session::connect_server_bounded(&identity, &server, &roots, &services)
+                            .await;
                     (identity, server, transport, result)
                 }
             });
@@ -269,6 +299,7 @@ impl McpBundleBuilder {
             discovered,
             instructions,
             progress,
+            calls,
             events,
             offers,
         } = connected;
@@ -300,6 +331,7 @@ impl McpBundleBuilder {
                 remote_name: remote_name.clone(),
                 peer: session.peer().clone(),
                 progress: progress.clone(),
+                calls: calls.clone(),
                 transport: server.transport.clone(),
                 max_output_bytes: self.max_output_bytes,
             }));
