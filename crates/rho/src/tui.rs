@@ -477,7 +477,6 @@ struct App {
     screen_selection: Option<TextSelection>,
     /// MCP inventory for `/mcp` and `/doctor` (session snapshot from tool assembly).
     mcp_report: crate::tools::mcp::McpSessionReport,
-    /// Agent Plugins load report captured at session start for `/doctor`.
     plugins_report: crate::plugins::PluginLoadReport,
 }
 

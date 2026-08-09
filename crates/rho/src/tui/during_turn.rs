@@ -15,7 +15,7 @@ use super::{
     commands::{self, CommandId, CommandInvocation},
     config_editor::{ConfigNumberInput, ConfigNumberKey, ConfigTextKey},
     config_picker, model_picker, mouse_capture,
-    paste_burst::{next_word_boundary, normalize_paste, previous_word_boundary},
+    paste_burst::normalize_paste,
     App, ApprovalKeyOutcome, ComposerMode, Entry, HistoryDirection, InputSubmissionMode,
     InteractiveModelSelection, InteractiveRuntime, PasteSegment, PickerAction, QueuedPrompt,
     RunningInputMode, StreamControl,
@@ -122,17 +122,11 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Left) => {
-                self.input_ui.set_cursor(previous_word_boundary(
-                    self.input_ui.text(),
-                    self.input_ui.cursor(),
-                ));
+                self.move_input_cursor_to_previous_word();
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Right) => {
-                self.input_ui.set_cursor(next_word_boundary(
-                    self.input_ui.text(),
-                    self.input_ui.cursor(),
-                ));
+                self.move_input_cursor_to_next_word();
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::Left) => {
@@ -155,11 +149,13 @@ impl App {
             }
             (_, KeyCode::Home) => {
                 self.reset_input_history_navigation();
+                self.input_ui.clear_selection();
                 self.input_ui.set_cursor(0);
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::End) => {
                 self.reset_input_history_navigation();
+                self.input_ui.clear_selection();
                 self.input_ui.set_cursor(self.input_char_len());
                 self.ctrl_c_streak = 0;
             }
@@ -761,6 +757,7 @@ impl App {
                     }
                 }
                 Event::Paste(text) if input_mode == RunningInputMode::Turn => {
+                    self.input_ui.cancel_pointer_click_sequence();
                     let text = normalize_paste(&text);
                     self.flush_pending_paste_burst();
                     self.insert_external_paste(&text);
@@ -778,13 +775,17 @@ impl App {
                     control = StreamControl::Resize;
                 }
                 Event::Mouse(mouse) if input_mode == RunningInputMode::Turn => {
+                    self.flush_pending_paste_burst();
                     self.handle_mouse_event(mouse.kind, mouse.column, mouse.row, terminal)?;
                 }
                 Event::FocusGained => {
+                    self.input_ui.cancel_pointer_click_sequence();
                     mouse_capture::reassert();
                     self.statusline.refresh_git_branch();
                 }
                 Event::FocusLost => {
+                    self.input_ui.cancel_pointer_click_sequence();
+                    self.input_ui.finalize_selection();
                     self.subagent_panel.clear_pointer_state();
                 }
                 _ => {}

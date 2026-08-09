@@ -57,14 +57,23 @@ pub(super) fn visible_composer_start(
     cursor_line: usize,
     line_count: usize,
     visible_count: usize,
+    current_start: usize,
 ) -> usize {
     if visible_count == 0 || visible_count >= line_count {
         return 0;
     }
-    cursor_line
-        .saturating_add(1)
-        .saturating_sub(visible_count)
-        .min(line_count.saturating_sub(visible_count))
+    let max_start = line_count.saturating_sub(visible_count);
+    let current_start = current_start.min(max_start);
+    if cursor_line < current_start {
+        cursor_line
+    } else if cursor_line >= current_start.saturating_add(visible_count) {
+        cursor_line
+            .saturating_add(1)
+            .saturating_sub(visible_count)
+            .min(max_start)
+    } else {
+        current_start
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,7 +109,7 @@ impl App {
     }
 
     pub(super) fn screen_layout_for_history_len(
-        &self,
+        &mut self,
         area: Rect,
         history_len: usize,
         composer_lines: &[Line<'_>],
@@ -143,8 +152,13 @@ impl App {
         let composer_budget = interactive_budget
             .saturating_sub(minimum_activity_history + pending_input_reserve + subagent_reserve);
         let visible_composer_len = composer_lines.len().min(composer_budget);
-        let composer_start =
-            visible_composer_start(cursor_line, composer_lines.len(), visible_composer_len);
+        let composer_start = visible_composer_start(
+            cursor_line,
+            composer_lines.len(),
+            visible_composer_len,
+            self.input_ui.composer_view_start(),
+        );
+        self.input_ui.set_composer_view_start(composer_start);
         let pending_input_height = desired_pending_input_height
             .min(interactive_budget.saturating_sub(
                 minimum_activity_history + visible_composer_len + subagent_reserve,
