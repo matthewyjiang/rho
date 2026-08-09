@@ -71,6 +71,10 @@ Authentication discovery and OAuth are not implemented; supply server-issued cre
 Rho identifies itself in `initialize` as `rho` with the running version, and declares the client capabilities it actually answers:
 
 - `roots`: Rho advertises the session workspace as one `file://` root. The declaration sets `listChanged: false`, because a session's workspace never changes and Rho would never send the notification.
+- `elicitation`: declared only in a run that can put a question in front of a person, and only in form mode with `schemaValidation: false`. See [Questions from a server](#questions-from-a-server).
+- `sampling`: declared only to a server that opted in with `sampling = "ask"`, and only in a run that has a model to spend. See [Completions for a server](#completions-for-a-server).
+
+Rho never declares a capability it would then always refuse. A run that cannot show a questionnaire, such as `rho mcp list --connect` or an automation run started without a host-input responder, declares no `elicitation`, so a well-behaved server never asks.
 
 A server's `instructions` from `initialize` reach the model. Rho fences each server's text in the system prompt and marks it as documentation from that server, not as instructions from the user.
 
@@ -220,6 +224,64 @@ never gets stuck holding a resource that never arrived.
 Image blobs are passed to the provider exactly as the server encoded them.
 Resource text is capped by the same `max_output_bytes` limit as tool output, so
 one large resource cannot swamp the turn it joins.
+## Questions from a server
+
+A server may interrupt a tool call with `elicitation/create` to ask the user something. Rho shows the request as a form on the tool card that caused it, titled with the asking server's identity so it is never mistaken for one of Rho's own questions.
+
+**How Rho decides which call the question belongs to.** The protocol carries nothing in an `elicitation/create` that names the `tools/call` it came from. Rho therefore records the in-flight calls of each session and answers only when exactly one call is running on that server. With no call running, or with several, Rho declines rather than interrupting a caller it guessed at. Two servers asking at the same time never confuse each other, because the record is per session.
+
+**What Rho does with the answer.**
+
+| What happened | What the server is told |
+| --- | --- |
+| The user filled the form in | `accept`, with the answers typed to the schema |
+| The user dismissed the form | `cancel`, which also ends the turn |
+| Rho could not ask, or could not type the answer | `decline` |
+
+Rho declines rather than failing the request, because a decline is a first-class MCP answer that lets the server carry on without the information.
+
+**Fidelity limit.** Rho's questionnaire is choice-only: every question is a list of values, optionally with free text, and every answer arrives as text. An elicitation schema is richer than that, so the mapping is lossy in one direction:
+
+| Schema field | What the user sees |
+| --- | --- |
+| `enum` (single or multi select) | the choices, with titles when the schema supplies them |
+| `boolean` | a yes/no confirm |
+| `string` | free text |
+| `number`, `integer` | free text, parsed back to a number |
+
+Constraints such as `minLength`, `minimum`, `maxItems`, and `format` are shown to the user as help text and are **not enforced**, which is why Rho declares `schemaValidation: false`. Rho does guarantee the JSON *type* of every field it sends back: a `number` field never returns the string `"3"`. An answer that cannot carry its declared type declines the request instead of sending something the server did not ask for.
+
+A schema Rho cannot render at all, such as one with no properties or an enum with no values, is declined whole rather than shown as a partial form. URL-mode elicitation is always declined: Rho opens no browser, and accepting without opening one would tell the server the user had answered.
+
+While a form is open, the tool call's two-minute budget is paused. The budget exists to bound an unresponsive server, and a turn waiting on a person is not unresponsive.
+
+## Completions for a server
+
+A server may ask Rho's model to write something with `sampling/createMessage`. This spends the user's tokens on work the user did not ask for, so it is behind **two independent gates that both have to open**.
+
+**Gate one, config.** The server opts in per entry. The default is `deny`, and a server left at the default never sees `sampling` in Rho's declared capabilities:
+
+```toml
+[mcp.servers.reviewer]
+transport = "stdio"
+command = "reviewer-mcp"
+sampling = "ask"
+```
+
+Plugin-provided servers cannot opt themselves in; only the selected config file can.
+
+**Gate two, the user.** Every individual request still raises a question naming the server, the number of messages, and the token ceiling it asked for. A refusal rejects the request and no model call happens. The gate is a question rather than a permission prompt on purpose: Rho's default permission mode allows every capability by policy, so an approval prompt would never reach a person there, and token spend a server asked for is not something that mode ever opted into.
+
+Sampling is routed to the in-flight tool call the same way elicitation is, and refuses under the same rules: no call in flight, or more than one, and the request is rejected. A run with no model bound, such as `rho run` or `rho mcp list --connect`, rejects every sampling request and declares no `sampling` capability. Sampling spend is recorded in the usage ledger under the `mcp_sampling` purpose, so it is attributable apart from the user's own turns.
+
+**Fidelity limits.**
+
+- **`modelPreferences` is ignored.** The provider, model, and credentials are the user's configuration. Letting a server steer them would let it choose which of the user's accounts pays and which model sees the prompt. Rho always uses the session's current model and reports its name in the result.
+- **The conversation is flattened.** Rho's one-shot path takes a system prompt and one user turn, so a multi-turn sampling conversation is rendered as labelled text. Non-text blocks are named but not sent; Rho does not forward a server's images or tool results into the user's model.
+- **`maxTokens` is not enforced.** Rho shows the requested ceiling in the confirmation but has no per-request token cap to apply.
+- **`includeContext`, `temperature`, `stopSequences`, `tools`, and `toolChoice` are not honored.** Rho declares no sampling sub-capabilities, so a server should not expect them.
+
+A sampling call is bounded at three minutes. Cancelling the turn cancels it.
 
 ## Inspect status
 

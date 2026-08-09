@@ -149,6 +149,8 @@ fn translate_server(
         tools: McpToolFilter::default(),
         // Packages do not choose a server's log severity; the user's config does.
         log_level: None,
+        // A package cannot opt itself into spending the user's model tokens.
+        sampling: crate::tools::mcp::config::McpSamplingPolicy::Deny,
         transport,
         filesystem,
     })

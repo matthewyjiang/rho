@@ -472,6 +472,16 @@ async fn run_session_with_output(
         no_subagents: startup.no_subagents,
         // Automation keeps questionnaire capability when the agent exposes it.
         questionnaire_enabled: true,
+        // An automation run can only show a server's question when the caller
+        // supplied a responder for host input; without one the run would fail
+        // on the first question instead of declining it.
+        mcp_elicitation: match startup.host_input {
+            Some(_) => crate::tools::mcp::McpElicitationSupport::Available,
+            None => crate::tools::mcp::McpElicitationSupport::Unavailable,
+        },
+        // Automation binds no model for sampling, so it never declares the
+        // capability and rejects any request that arrives anyway.
+        mcp_sampling: crate::app::tools_prompt::McpSamplingSupport::Unavailable,
         background_subagents: BackgroundSubagents::Disabled,
         diagnostics: &startup.diagnostics,
         agent: &startup.agent,

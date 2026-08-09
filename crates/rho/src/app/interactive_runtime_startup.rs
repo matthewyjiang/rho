@@ -55,6 +55,7 @@ pub(super) async fn initialize(
         tools,
         system_prompt,
         inventory,
+        mcp_sampling,
     } = assemble_tools_and_prompt(ToolsAndPromptOptions {
         config,
         config_path,
@@ -63,6 +64,17 @@ pub(super) async fn initialize(
         no_tools,
         no_subagents,
         questionnaire_enabled,
+        // The interactive host draws questionnaires during a turn, so a server
+        // question reaches a person. Without the questionnaire loop it would
+        // not, and Rho must not declare a capability it would always decline.
+        mcp_elicitation: if questionnaire_enabled {
+            crate::tools::mcp::McpElicitationSupport::Available
+        } else {
+            crate::tools::mcp::McpElicitationSupport::Unavailable
+        },
+        // Interactive sessions bind a model below, so opted-in servers may ask
+        // for completions.
+        mcp_sampling: crate::app::tools_prompt::McpSamplingSupport::Available,
         background_subagents: BackgroundSubagents::Enabled,
         diagnostics: &diagnostics,
         agent: &agent,
@@ -133,6 +145,7 @@ pub(super) async fn initialize(
         }
     };
     bind_subagent_parent(&tools, session.id(), storage.as_ref());
+    bind_mcp_sampling(&mcp_sampling, &provider, session.id(), &cwd);
     Ok(InteractiveRuntime {
         runtime,
         hooks,
@@ -145,6 +158,7 @@ pub(super) async fn initialize(
         ),
         provider: ProviderController::new(provider, sdk_options.runtime.reasoning),
         tools,
+        mcp_sampling,
         mcp_report,
         plugins_report,
         workspace,
@@ -164,6 +178,23 @@ pub(super) async fn initialize(
         live_context_warm: false,
         completed_runs: 0,
     })
+}
+
+/// Hand the live model to MCP sampling.
+///
+/// Called once the session exists and again whenever the user changes models,
+/// because a captured provider would keep spending on the model the user left.
+pub(super) fn bind_mcp_sampling(
+    bridge: &crate::tools::mcp::McpSamplingBridge,
+    provider: &Arc<dyn ModelProvider>,
+    session_id: &SessionId,
+    workspace_path: &std::path::Path,
+) {
+    bridge.bind(crate::tools::mcp::McpSamplingModel {
+        provider: Arc::clone(provider),
+        session_id: session_id.clone(),
+        workspace_path: workspace_path.to_path_buf(),
+    });
 }
 
 pub(super) fn bind_subagent_parent(

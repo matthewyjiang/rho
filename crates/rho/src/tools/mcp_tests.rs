@@ -3,12 +3,15 @@ use std::{collections::BTreeMap, fs};
 use pretty_assertions::assert_eq;
 
 use super::{
-    config::{McpConfig, McpFilesystemPolicy, McpServerConfig, McpToolFilter, McpTransport},
+    config::{
+        McpConfig, McpFilesystemPolicy, McpSamplingPolicy, McpServerConfig, McpToolFilter,
+        McpTransport,
+    },
     parse_remote_url,
     progress::McpProgressRouter,
     result::ResultExpectation,
     session::prepare_server_filesystem,
-    tool::{call_remote_tool, namespaced_tool_name, McpCall},
+    tool::{call_remote_tool, namespaced_tool_name, CallBudget, McpCall, MCP_TOOL_CALL_BUDGET},
     McpBundle, McpRoots, McpServerStatus, McpSessionOptions, MCP_RUNTIME_CONSTRUCTIONS,
 };
 use crate::tools::sdk_registry::ToolBundle;
@@ -55,6 +58,7 @@ async fn disabled_servers_are_reported_without_runtime() {
                 enabled: false,
                 tools: McpToolFilter::default(),
                 log_level: None,
+                sampling: McpSamplingPolicy::Deny,
                 transport: McpTransport::Stdio {
                     command: "false".into(),
                     args: Vec::new(),
@@ -155,6 +159,7 @@ fn package_filesystem_policy_is_internal_only() {
         enabled: true,
         tools: McpToolFilter::default(),
         log_level: None,
+        sampling: McpSamplingPolicy::Deny,
         transport: McpTransport::Stdio {
             command: "server".into(),
             args: Vec::new(),
@@ -194,6 +199,7 @@ fn package_filesystem_rejects_observed_symlink_escape() {
         enabled: true,
         tools: McpToolFilter::default(),
         log_level: None,
+        sampling: McpSamplingPolicy::Deny,
         transport: McpTransport::Stdio {
             command: "server".into(),
             args: Vec::new(),
@@ -349,6 +355,7 @@ async fn streamable_http_discovery() {
                 enabled: true,
                 tools: McpToolFilter::default(),
                 log_level: None,
+                sampling: McpSamplingPolicy::Deny,
                 transport: McpTransport::StreamableHttp {
                     url: format!("http://{address}/mcp"),
                     headers: BTreeMap::new(),
@@ -417,6 +424,7 @@ open(sys.argv[1], "w").close()
         enabled: true,
         tools: McpToolFilter::default(),
         log_level: None,
+        sampling: McpSamplingPolicy::Deny,
         transport: McpTransport::Stdio {
             command: "python3".into(),
             args: vec![
@@ -438,6 +446,7 @@ open(sys.argv[1], "w").close()
         enabled: true,
         tools: McpToolFilter::default(),
         log_level: None,
+        sampling: McpSamplingPolicy::Deny,
         transport: McpTransport::Stdio {
             command: "rho-mcp-command-that-does-not-exist".into(),
             args: Vec::new(),
@@ -486,9 +495,11 @@ open(sys.argv[1], "w").close()
     );
     let peer = bundle.sessions.lock().await[0].peer().clone();
     let progress = McpProgressRouter::new();
+    let budget = CallBudget::new(MCP_TOOL_CALL_BUDGET);
     let echo_call = || McpCall {
         peer: &peer,
         progress: &progress,
+        budget: &budget,
         remote_name: "echo/value".into(),
         arguments: serde_json::Map::new(),
         expectation: ResultExpectation::default(),
@@ -599,6 +610,7 @@ for line in sys.stdin:
                 enabled: true,
                 tools: McpToolFilter::default(),
                 log_level: Some(crate::tools::mcp::config::McpLogLevel::Info),
+                sampling: McpSamplingPolicy::Deny,
                 transport: McpTransport::Stdio {
                     command: "python3".into(),
                     args: vec![
@@ -683,6 +695,167 @@ for line in sys.stdin:
     let (cancelled, ()) = tokio::join!(hanging, async { cancel_token.cancel() });
     assert_eq!(cancelled.unwrap_err().kind(), ToolErrorKind::Cancelled);
     await_condition("cancellation notification", || cancelled_marker.exists()).await;
+
+    bundle.shutdown().await;
+}
+
+// Covers: the two server-to-client services must behave the same on the wire as
+// they do in isolation. Rho declares elicitation only when the run can ask a
+// person and sampling only for a server that opted in, an elicitation it cannot
+// put in front of anyone comes back as a decline rather than an invented
+// answer, a server that did not opt in gets `sampling/createMessage` refused as
+// unknown, and an opted-in server whose run has no model bound is refused too.
+// Prerequisite: `python3` must be available on PATH (Unix-gated test).
+// Owner: MCP server-to-client protocol boundary.
+#[cfg(unix)]
+#[tokio::test]
+async fn elicitation_and_sampling_are_served_under_their_gates() {
+    let _guard = MCP_CONNECT_TEST_LOCK.lock().await;
+    let directory = tempfile::tempdir().unwrap();
+    let script = directory.path().join("server.py");
+    fs::write(
+        &script,
+        r#"import json, sys
+
+seen = {}
+
+TOOLS = [
+    {"name": "capabilities", "description": "report the client capabilities seen at initialize",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "ask", "description": "raise an elicitation",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "sample", "description": "raise a sampling request",
+     "inputSchema": {"type": "object", "properties": {}}},
+]
+
+def send(message):
+    print(json.dumps(message), flush=True)
+
+def recv():
+    line = sys.stdin.readline()
+    if not line:
+        sys.exit(0)
+    return json.loads(line)
+
+def ask_client(method, params, request_id):
+    send({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params})
+    while True:
+        message = recv()
+        if message.get("id") == request_id and ("result" in message or "error" in message):
+            return message.get("result", message.get("error"))
+
+while True:
+    message = recv()
+    if "id" not in message:
+        continue
+    method = message.get("method")
+    if method == "initialize":
+        seen = message["params"].get("capabilities", {})
+        result = {
+            "protocolVersion": message["params"]["protocolVersion"],
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": "rho-test", "version": "1"},
+        }
+    elif method == "tools/list":
+        result = {"tools": TOOLS}
+    elif method == "tools/call":
+        name = message["params"]["name"]
+        if name == "capabilities":
+            answer = seen
+        elif name == "ask":
+            answer = ask_client("elicitation/create", {
+                "message": "pick a colour",
+                "requestedSchema": {
+                    "type": "object",
+                    "properties": {"colour": {"type": "string", "enum": ["red"]}},
+                    "required": ["colour"],
+                },
+            }, 9001)
+        else:
+            answer = ask_client("sampling/createMessage", {
+                "messages": [{"role": "user", "content": {"type": "text", "text": "hi"}}],
+                "maxTokens": 16,
+            }, 9002)
+        result = {"content": [{"type": "text", "text": json.dumps(answer, sort_keys=True)}],
+                  "isError": False}
+    else:
+        result = {}
+    send({"jsonrpc": "2.0", "id": message["id"], "result": result})
+"#,
+    )
+    .unwrap();
+
+    let server = |sampling: McpSamplingPolicy| McpServerConfig {
+        enabled: true,
+        tools: McpToolFilter::default(),
+        log_level: None,
+        sampling,
+        transport: McpTransport::Stdio {
+            command: "python3".into(),
+            args: vec![script.display().to_string()],
+            cwd: None,
+            env: BTreeMap::new(),
+            env_from_env: BTreeMap::new(),
+        },
+        filesystem: None,
+    };
+    let config = McpConfig {
+        servers: BTreeMap::from([
+            ("plain".into(), server(McpSamplingPolicy::Deny)),
+            ("offered".into(), server(McpSamplingPolicy::Ask)),
+        ]),
+        invalid_servers: Vec::new(),
+    };
+    // The bridge is deliberately left unbound: this run offers sampling but
+    // never binds a model, which is exactly the fail-closed case.
+    let options = test_options()
+        .with_elicitation(crate::tools::mcp::McpElicitationSupport::Available)
+        .with_sampling(crate::tools::mcp::McpSamplingBridge::new());
+    let outcome = McpBundle::connect(&config, options).await;
+    let bundle = outcome.bundle.unwrap();
+    let cancellation = CancellationToken::new();
+    let call = |name: &str| {
+        let tool = bundle
+            .tools()
+            .iter()
+            .find(|tool| tool.spec().name == name)
+            .cloned()
+            .unwrap_or_else(|| panic!("{name} was not exported"));
+        let cancellation = cancellation.clone();
+        async move {
+            tool.call(invocation(), discarding_context(cancellation))
+                .await
+                .expect("the scripted server always answers tools/call")
+                .content()
+                .to_owned()
+        }
+    };
+
+    let declared: serde_json::Value =
+        serde_json::from_str(&call("mcp__plain__capabilities").await).unwrap();
+    assert_eq!(
+        declared["elicitation"],
+        serde_json::json!({"form": {"schemaValidation": false}})
+    );
+    assert_eq!(declared["sampling"], serde_json::Value::Null);
+    let declared: serde_json::Value =
+        serde_json::from_str(&call("mcp__offered__capabilities").await).unwrap();
+    assert_eq!(declared["sampling"], serde_json::json!({}));
+
+    // No host in this run answers questionnaires, so the question has nowhere
+    // to go and the server is told so rather than given an answer.
+    let elicited: serde_json::Value = serde_json::from_str(&call("mcp__plain__ask").await).unwrap();
+    assert_eq!(elicited, serde_json::json!({"action": "decline"}));
+
+    let unoffered: serde_json::Value =
+        serde_json::from_str(&call("mcp__plain__sample").await).unwrap();
+    assert_eq!(unoffered["code"], serde_json::json!(-32601));
+    let unbound: serde_json::Value =
+        serde_json::from_str(&call("mcp__offered__sample").await).unwrap();
+    assert_eq!(
+        unbound["message"],
+        serde_json::json!("Rho has no model bound for MCP sampling in this run")
+    );
 
     bundle.shutdown().await;
 }
