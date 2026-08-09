@@ -33,18 +33,6 @@ const MAX_OUTPUT_SCHEMA_NODES: usize = 2_048;
 /// Maximum JSON nodes in structured content accepted for schema validation.
 const MAX_STRUCTURED_CONTENT_NODES: usize = 8_192;
 
-/// Serialized JSON Schema bytes Rho will compile for `outputSchema` validation.
-const MAX_OUTPUT_SCHEMA_BYTES: usize = 64 * 1024;
-
-/// Serialized structured-content bytes Rho will walk during schema validation.
-const MAX_STRUCTURED_CONTENT_BYTES: usize = 256 * 1024;
-
-/// Maximum JSON nodes (objects, arrays, and leaves) in a declared output schema.
-const MAX_OUTPUT_SCHEMA_NODES: usize = 2_048;
-
-/// Maximum JSON nodes in structured content accepted for schema validation.
-const MAX_STRUCTURED_CONTENT_NODES: usize = 8_192;
-
 /// What one MCP result becomes inside Rho.
 #[derive(Debug, Default, PartialEq)]
 pub(super) struct RenderedResult {
