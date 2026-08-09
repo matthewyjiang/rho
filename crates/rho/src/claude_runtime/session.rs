@@ -19,6 +19,7 @@ use super::{
     persist::StatusSink,
     spawn::{self, ClaudeSpawnPlan, ClaudeSpawnRequest},
     stream::TerminalResult,
+    terminal::{assess_terminal, TerminalOutcome},
 };
 
 pub(crate) use super::persist::ClaudeRunIdentity;
@@ -144,11 +145,11 @@ async fn settle(mut sink: StatusSink, outcome: SessionOutcome) {
             // Protocol type:error is pending metadata only; final Failed/Completed
             // is chosen here after exit. Leave already-terminal state alone.
             if !sink.status().state.is_terminal() {
-                match decide_final_outcome(pending.as_deref(), status, &log_tail) {
-                    FinalOutcome::Success(terminal) => {
+                match assess_terminal(pending.map(|terminal| *terminal), status, &log_tail) {
+                    TerminalOutcome::Success(terminal) => {
                         sink.finalize_success_from_stream(&terminal).await;
                     }
-                    FinalOutcome::Failure {
+                    TerminalOutcome::Failure {
                         terminal,
                         detail,
                         prefer_detail,
@@ -356,78 +357,6 @@ async fn drain_child(
         DrainEnd::Exited(Err(error)) => {
             SessionOutcome::Failed(format!("claude code: failed waiting for child: {error}"))
         }
-    }
-}
-
-enum FinalOutcome {
-    Success(TerminalResult),
-    Failure {
-        terminal: Option<TerminalResult>,
-        detail: String,
-        /// Prefer `detail` over stream result/error text (nonzero exit, max-turns).
-        prefer_detail: bool,
-    },
-}
-
-/// Final truth: only explicit valid success + exit 0 + no prior stream error
-/// becomes Ok. Any failure/invalid/nonzero/missing result becomes Error.
-///
-/// The stream mapper never emits Completed/Failed for `result` or protocol
-/// `type:error` messages. Session writes exactly one terminal attachment here
-/// after process exit, combining pending terminal metadata with exit status.
-fn decide_final_outcome(
-    pending: Option<&TerminalResult>,
-    exit_status: std::process::ExitStatus,
-    log_tail: &str,
-) -> FinalOutcome {
-    if !exit_status.success() {
-        if spawn::looks_like_max_turns_unsupported(log_tail) {
-            return FinalOutcome::Failure {
-                terminal: pending.cloned(),
-                detail: "claude code: this claude binary rejected --max-turns; upgrade Claude Code or remove the turn cap".into(),
-                prefer_detail: true,
-            };
-        }
-        let detail = if log_tail.is_empty() {
-            format!("claude code: process exited with {exit_status}")
-        } else {
-            format!("claude code: process exited with {exit_status}: {log_tail}")
-        };
-        return FinalOutcome::Failure {
-            terminal: pending.cloned(),
-            detail,
-            prefer_detail: true,
-        };
-    }
-
-    match pending {
-        Some(terminal) if terminal.classification.is_success() => {
-            FinalOutcome::Success(terminal.clone())
-        }
-        Some(terminal)
-            if terminal.classification.is_failure() || terminal.classification.is_invalid() =>
-        {
-            let detail = terminal
-                .error
-                .clone()
-                .or_else(|| terminal.result_text.clone())
-                .unwrap_or_else(|| "claude code: terminal result was not success".into());
-            FinalOutcome::Failure {
-                terminal: Some(terminal.clone()),
-                detail,
-                prefer_detail: false,
-            }
-        }
-        Some(terminal) => FinalOutcome::Failure {
-            terminal: Some(terminal.clone()),
-            detail: "claude code: terminal result classification was not success".into(),
-            prefer_detail: true,
-        },
-        None => FinalOutcome::Failure {
-            terminal: None,
-            detail: "claude code: stream ended without a terminal result message; see log.txt for details".into(),
-            prefer_detail: true,
-        },
     }
 }
 

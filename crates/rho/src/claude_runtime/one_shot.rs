@@ -23,7 +23,8 @@ use super::{
     drain::{self, DrainEnd},
     executable,
     spawn::{self, ClaudeSpawnRequest, SessionPersistence},
-    stream::{StreamEffect, TerminalClassification, TerminalResult},
+    stream::{StreamEffect, TerminalResult},
+    terminal::{assess_terminal, TerminalOutcome},
 };
 
 /// A single Claude question with no tools and no follow-up turn.
@@ -135,39 +136,17 @@ pub(crate) async fn run_one_shot(
     }
 }
 
-/// Combines the terminal message with the exit status, the same rule the
-/// subagent runtime applies: only an explicit success plus a clean exit counts.
+/// Builds the advisor result after the shared Claude terminal assessment.
 fn finish(
     text: String,
     terminal: Option<TerminalResult>,
     stderr: &str,
     status: std::process::ExitStatus,
 ) -> Result<ClaudeOneShotResult, String> {
-    let exit_ok = status.success();
-    let detail = |fallback: &str| {
-        if stderr.is_empty() {
-            fallback.to_string()
-        } else {
-            format!("{fallback}: {stderr}")
-        }
+    let terminal = match assess_terminal(terminal, status, stderr) {
+        TerminalOutcome::Success(terminal) => terminal,
+        TerminalOutcome::Failure { detail, .. } => return Err(detail),
     };
-    let Some(terminal) = terminal else {
-        return Err(detail("claude code: the run ended with no result message"));
-    };
-    match &terminal.classification {
-        TerminalClassification::Success { .. } if exit_ok => {}
-        TerminalClassification::Success { .. } => {
-            return Err(detail(
-                "claude code: the run reported success but exited nonzero",
-            ));
-        }
-        TerminalClassification::Failure { subtype, .. } => {
-            return Err(detail(&format!("claude code: run failed ({subtype})")));
-        }
-        TerminalClassification::Invalid { reason } => {
-            return Err(detail(&format!("claude code: {reason}")));
-        }
-    }
 
     // Prefer the terminal `result` text: it is the complete answer, while the
     // streamed deltas are bounded for display.
@@ -235,3 +214,7 @@ impl OneShotStream {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "one_shot_tests.rs"]
+mod tests;
