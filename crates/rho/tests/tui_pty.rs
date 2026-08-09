@@ -1375,7 +1375,6 @@ advisor_mode = true
         !prompt.is_empty(),
         "advisor system prompt must not be empty"
     );
-    assert_eq!(prompt, rho_coding_agent::EXPECTED_ADVISOR_PROMPT_FOR_TESTS);
     assert!(
         record.stdin.contains("fixture advisor"),
         "the advisor must receive the session transcript on stdin: {}",

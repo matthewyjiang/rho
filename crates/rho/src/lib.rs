@@ -42,6 +42,3 @@ pub use cli::Cli;
 pub use rho_providers as providers_lib;
 pub use rho_sdk as sdk;
 pub use rho_tools as tools_lib;
-
-#[doc(hidden)]
-pub const EXPECTED_ADVISOR_PROMPT_FOR_TESTS: &str = agent::ADVISOR_PROMPT;
