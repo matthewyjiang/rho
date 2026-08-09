@@ -290,12 +290,16 @@ pub(super) async fn maintain_session(mut maintenance: SessionMaintenance) {
         tokio::select! {
             event = maintenance.events.recv() => match event {
                 Some(McpServerEvent::ToolsChanged) => refresh_tools(&maintenance).await,
-                Some(McpServerEvent::PromptsChanged) => {
+                // Gated on what the server declared, for the same reason the
+                // connect-time listing is: a server that never offered the
+                // primitive can only answer the request with an error.
+                Some(McpServerEvent::PromptsChanged) if maintenance.offers.prompts => {
                     list_prompts(&maintenance.catalog).await;
                 }
-                Some(McpServerEvent::ResourcesChanged) => {
+                Some(McpServerEvent::ResourcesChanged) if maintenance.offers.resources => {
                     list_resources(&maintenance.catalog).await;
                 }
+                Some(McpServerEvent::PromptsChanged | McpServerEvent::ResourcesChanged) => {}
                 None => break,
             },
             _ = ticker.tick(), if keepalive => {

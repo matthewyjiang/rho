@@ -97,20 +97,6 @@ pub(super) fn render_prompt_messages(
     rho_tools::tool::truncate(sections.join("\n\n"), max_output_bytes)
 }
 
-/// Render the contents one `resources/read` returned.
-pub(super) fn render_resource_contents(
-    contents: &[ResourceContents],
-    max_output_bytes: usize,
-) -> RenderedResult {
-    let mut rendered = RenderedResult::default();
-    let sections = contents
-        .iter()
-        .map(|resource| render_resource(resource, &mut rendered.assets))
-        .collect::<Vec<_>>();
-    rendered.text = rho_tools::tool::truncate(sections.join("\n\n"), max_output_bytes);
-    rendered
-}
-
 /// Whether a text section is just the structured content written out, in either
 /// the compact or the pretty form servers commonly use.
 fn mirrors(section: &str, structured: &serde_json::Value) -> bool {
@@ -180,14 +166,33 @@ fn binary_section(
     encoded: &str,
     assets: &mut Vec<ToolAsset>,
 ) -> String {
-    let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(encoded) else {
-        return format!("[{label} {media_type}, not valid base64]");
-    };
-    let size = bytes.len();
-    if media_type.starts_with("image/") {
-        assets.push(ToolAsset::new(media_type.to_string(), bytes));
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .ok();
+    let size = decoded.as_ref().map(Vec::len);
+    if let Some(bytes) = decoded {
+        if media_type.starts_with("image/") {
+            assets.push(ToolAsset::new(media_type.to_string(), bytes));
+        }
     }
-    format!("[{label} {media_type}, {}]", byte_size(size))
+    binary_descriptor(label, media_type, size)
+}
+
+/// The one line Rho uses to stand in for binary it cannot show as text.
+///
+/// Hosts that keep the bytes elsewhere, such as the composer keeping an image
+/// attachment, still describe them this way so a person sees the same wording
+/// wherever the content came from. `decoded_size` is `None` when the payload was
+/// not valid base64.
+pub(crate) fn binary_descriptor(
+    label: &str,
+    media_type: &str,
+    decoded_size: Option<usize>,
+) -> String {
+    match decoded_size {
+        Some(size) => format!("[{label} {media_type}, {}]", byte_size(size)),
+        None => format!("[{label} {media_type}, not valid base64]"),
+    }
 }
 
 fn byte_size(bytes: usize) -> String {

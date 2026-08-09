@@ -5,7 +5,7 @@ use crossterm::event::{Event, KeyEventKind};
 use ratatui::DefaultTerminal;
 
 use super::{
-    clipboard, mouse_capture, paste_burst::normalize_paste, ActivityPhase, ActivityStatus, App,
+    media_attach, mouse_capture, paste_burst::normalize_paste, ActivityPhase, ActivityStatus, App,
     ComposerMode, HerdrState, HerdrUserWait, InteractiveRuntime, TuiResult, ViewModelEvent,
 };
 
@@ -120,8 +120,8 @@ impl App {
                     }
                     needs_redraw = true;
                 }
-                outcome = clipboard::next_media_attach_completion(&mut self.media_attach_tasks), if media_attach_pending => {
-                    self.finish_pasted_media(outcome);
+                outcome = media_attach::next_media_attach_completion(&mut self.media_attach_tasks), if media_attach_pending => {
+                    self.finish_media_attach(outcome);
                     needs_redraw = true;
                 }
                 _ = tokio::time::sleep(timeout) => {

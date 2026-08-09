@@ -16,7 +16,7 @@ use rmcp::{
     Peer, RoleClient,
 };
 
-use super::result::{self, RenderedResult};
+use super::result;
 
 /// One prompt a server offers.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -227,28 +227,63 @@ impl McpCatalog {
         })
     }
 
-    /// Read one resource and render its contents for a message.
+    /// Read one resource, returning its bodies as the server sent them.
+    ///
+    /// Presentation is left to the caller because hosts differ: a tool call
+    /// renders a resource into model text, while the composer turns the same
+    /// bodies into attachments. Rendering here would force one of them to undo
+    /// the other's work.
     pub(crate) async fn read_resource(
         &self,
         server: &str,
         uri: &str,
-        max_output_bytes: usize,
-    ) -> Result<RenderedResult, McpCatalogError> {
+    ) -> Result<Vec<McpResourceContent>, McpCatalogError> {
         let peer = self.peer(server)?;
         let result = peer
             .read_resource(ReadResourceRequestParams::new(uri))
             .await
             .map_err(|error| McpCatalogError::Server(error.to_string()))?;
-        Ok(result::render_resource_contents(
-            &result.contents,
-            max_output_bytes,
-        ))
+        Ok(result
+            .contents
+            .iter()
+            .map(McpResourceContent::from_remote)
+            .collect())
     }
 
-    /// Suggested values for one prompt argument, from `completion/complete`.
-    ///
-    /// A server that does not support completion simply has no suggestions, so
-    /// an error here is an empty list rather than a failure the user must read.
+    fn peer(&self, identity: &str) -> Result<Peer<RoleClient>, McpCatalogError> {
+        self.read()
+            .iter()
+            .find(|server| server.identity == identity)
+            .map(|server| server.peer.clone())
+            .ok_or_else(|| McpCatalogError::UnknownServer(identity.to_string()))
+    }
+
+    /// A poisoned catalog lock still holds a valid server list, so recover
+    /// rather than fail a palette lookup on an unrelated panic.
+    fn read(&self) -> std::sync::RwLockReadGuard<'_, Vec<Arc<McpCatalogServer>>> {
+        self.servers
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+    }
+
+    fn write(&self) -> std::sync::RwLockWriteGuard<'_, Vec<Arc<McpCatalogServer>>> {
+        self.servers
+            .write()
+            .unwrap_or_else(|error| error.into_inner())
+    }
+}
+
+/// Argument suggestions from `completion/complete`.
+///
+/// A server that does not support completion simply has no suggestions, so an
+/// error here is an empty list rather than a failure the user must read.
+///
+/// Nothing calls these yet. Both palettes match synchronously on every
+/// keystroke, and a suggestion is a round-trip, so offering suggestions needs an
+/// async pipeline that neither palette has. The methods stay because the
+/// capability is already negotiated during connect and the shape will not change.
+#[allow(dead_code)]
+impl McpCatalog {
     pub(crate) async fn complete_prompt_argument(
         &self,
         server: &str,
@@ -279,27 +314,57 @@ impl McpCatalog {
             .await
             .unwrap_or_default()
     }
+}
 
-    fn peer(&self, identity: &str) -> Result<Peer<RoleClient>, McpCatalogError> {
-        self.read()
-            .iter()
-            .find(|server| server.identity == identity)
-            .map(|server| server.peer.clone())
-            .ok_or_else(|| McpCatalogError::UnknownServer(identity.to_string()))
-    }
+/// One body a `resources/read` returned.
+///
+/// Blob payloads stay base64 exactly as they arrived. A host that forwards an
+/// image to a model needs base64 anyway, so decoding here would only buy a
+/// re-encode on the way out.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum McpResourceContent {
+    Text {
+        uri: String,
+        mime_type: Option<String>,
+        text: String,
+    },
+    Blob {
+        uri: String,
+        mime_type: Option<String>,
+        blob: String,
+    },
+    /// A body of a kind this spec revision does not define. Named rather than
+    /// dropped, so a host can tell a person that something arrived.
+    Unsupported,
+}
 
-    /// A poisoned catalog lock still holds a valid server list, so recover
-    /// rather than fail a palette lookup on an unrelated panic.
-    fn read(&self) -> std::sync::RwLockReadGuard<'_, Vec<Arc<McpCatalogServer>>> {
-        self.servers
-            .read()
-            .unwrap_or_else(|error| error.into_inner())
-    }
-
-    fn write(&self) -> std::sync::RwLockWriteGuard<'_, Vec<Arc<McpCatalogServer>>> {
-        self.servers
-            .write()
-            .unwrap_or_else(|error| error.into_inner())
+impl McpResourceContent {
+    fn from_remote(remote: &rmcp::model::ResourceContents) -> Self {
+        match remote {
+            rmcp::model::ResourceContents::TextResourceContents {
+                uri,
+                mime_type,
+                text,
+                ..
+            } => Self::Text {
+                uri: uri.clone(),
+                mime_type: mime_type.clone(),
+                text: text.clone(),
+            },
+            rmcp::model::ResourceContents::BlobResourceContents {
+                uri,
+                mime_type,
+                blob,
+                ..
+            } => Self::Blob {
+                uri: uri.clone(),
+                mime_type: mime_type.clone(),
+                blob: blob.clone(),
+            },
+            // `ResourceContents` is non-exhaustive: a kind from a newer spec
+            // revision must not silently become an empty attachment.
+            _ => Self::Unsupported,
+        }
     }
 }
 

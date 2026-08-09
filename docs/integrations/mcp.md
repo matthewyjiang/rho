@@ -165,6 +165,61 @@ A prompt with several arguments reads whitespace-separated pairs:
 Leaving out a required argument reports which one is missing and starts no turn.
 
 Rho fetches the prompt when you submit, not when you complete the command, because `prompts/get` is a round-trip to the server. The returned messages become one user turn. A message the server marked as coming from the assistant is labelled as such, so the model reads it as prior context rather than as a request from you. Prompt text is capped by `max_output_bytes`, like tool output.
+## Resources
+
+Tools are for the model. Resources are for you: a server publishes documents,
+records, or images, and you decide which of them a message carries.
+
+At connect, Rho lists the resources of every server that declares the
+`resources` capability, from both `resources/list` and
+`resources/templates/list`. The listing is held for the session and re-listed
+when a server sends `notifications/resources/list_changed`, so matching a
+resource costs no round-trip.
+
+### Picking one
+
+Type `@` in the message box. The palette that already completes workspace file
+paths also offers server resources, matched on their URI against whatever you
+type after the `@`. Resources are listed first, because a workspace holds far
+more files than a server holds resources.
+
+Each row shows the resource URI, the server that offers it, and the server's own
+name for it. Enter or Tab picks the highlighted row.
+
+What picking does depends on the row:
+
+| Row | What Enter does |
+| --- | --- |
+| workspace file | writes `@path` into the message, unchanged from before |
+| resource | reads it from the server and attaches the content, removing the `@` token |
+| resource **template** | writes the template URI into the message for you to fill in |
+
+A template URI carries [RFC 6570](https://www.rfc-editor.org/rfc/rfc6570)
+placeholders, such as `db://users/{id}`, so there is nothing to read until you
+replace them. Rho inserts it as text and marks the row `· template`.
+
+### While the read runs
+
+`resources/read` is a round-trip, so the resource appears in the composer right
+away as `[resource: <uri> · reading]`. You can keep typing. The message cannot be
+sent until the read finishes, and Backspace on the attachment cancels it, the
+same as any other attachment.
+
+A read that fails removes the attachment and reports the reason, so the composer
+never gets stuck holding a resource that never arrived.
+
+### What arrives
+
+| What the server returned | What the message carries |
+| --- | --- |
+| text | a text attachment holding the body |
+| a single `image/*` blob | an image the model can look at |
+| any other blob | a text attachment holding `[resource <mime>, <size>]` |
+| several bodies | one text attachment holding all of them |
+
+Image blobs are passed to the provider exactly as the server encoded them.
+Resource text is capped by the same `max_output_bytes` limit as tool output, so
+one large resource cannot swamp the turn it joins.
 
 ## Inspect status
 

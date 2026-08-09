@@ -24,7 +24,13 @@ use rmcp::{
 use super::{progress::McpProgressRouter, roots::McpRoots};
 
 /// A server-initiated change that the owning session must act on.
+///
+/// The shared `Changed` suffix is deliberate: each variant is one
+/// `notifications/<primitive>/list_changed`, and matching the protocol's own
+/// naming is what makes the wire message and the variant obviously the same
+/// thing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
 pub(crate) enum McpServerEvent {
     /// `notifications/tools/list_changed`: re-run discovery for this server.
     ToolsChanged,

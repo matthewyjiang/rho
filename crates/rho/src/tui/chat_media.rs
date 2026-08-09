@@ -11,7 +11,21 @@ pub(super) enum ChatMedia {
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum ComposerAttachment {
     Ready(ChatMedia),
-    Pending { id: MediaAttachId, name: String },
+    Pending {
+        id: MediaAttachId,
+        source: PendingAttachmentSource,
+        name: String,
+    },
+}
+
+/// Where a pending attachment is coming from, so the composer names the wait
+/// for what it is instead of calling every slow attachment a file extraction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PendingAttachmentSource {
+    /// A file on disk being read and extracted.
+    File,
+    /// A resource being read from an MCP server.
+    McpResource,
 }
 
 /// Stable identity shared by a pending composer item and its extraction task.
@@ -61,7 +75,10 @@ impl ComposerAttachment {
     pub(super) fn composer_label(&self, index: usize) -> String {
         match self {
             Self::Ready(media) => media.composer_label(index),
-            Self::Pending { name, .. } => format!("[file: {name} · extracting]"),
+            Self::Pending { source, name, .. } => match source {
+                PendingAttachmentSource::File => format!("[file: {name} · extracting]"),
+                PendingAttachmentSource::McpResource => format!("[resource: {name} · reading]"),
+            },
         }
     }
 

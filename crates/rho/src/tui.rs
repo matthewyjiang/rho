@@ -85,6 +85,8 @@ mod markdown_image;
 mod mcp_actions;
 mod mcp_picker;
 mod mcp_prompt;
+mod mcp_resource;
+mod media_attach;
 mod message_history;
 mod message_render;
 mod model_actions;
@@ -168,7 +170,9 @@ use types::*;
 use activity::{ActivityPhase, ActivityStatus, LoadingSpinner};
 use app_state::{HistoryUi, InputUi, PendingWorkUi, TurnUi};
 use approval::{approval_lines, ApprovalKeyOutcome};
-use chat_media::{ChatMedia, ChatTextDocument, ComposerAttachment, MediaAttachId};
+use chat_media::{
+    ChatMedia, ChatTextDocument, ComposerAttachment, MediaAttachId, PendingAttachmentSource,
+};
 use clipboard::ClipboardWriter;
 use config_editor::{
     config_number_input_lines, resolve_web_search_editor_value, ConfigMutation, ConfigNumberInput,
@@ -472,7 +476,7 @@ struct App {
     /// Set by `/title` so auto-title generation cannot overwrite a manual name.
     session_title_locked: bool,
     clipboard: Box<dyn ClipboardWriter + Send>,
-    media_attach_tasks: Vec<clipboard::MediaAttachTask>,
+    media_attach_tasks: Vec<media_attach::MediaAttachTask>,
     pending_subagent_attaches: Vec<PendingSubagentAttach>,
     last_mouse_position: Option<(u16, u16)>,
     /// Screen-space drag selection for text outside the history area.
