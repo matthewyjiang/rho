@@ -306,6 +306,9 @@ fn translate_remote(
         url,
         headers,
         headers_from_env: BTreeMap::new(),
+        // A plugin manifest declares literal headers only. OAuth is a user
+        // decision in Rho's own config, not something a package can request.
+        oauth: None,
     })
 }
 

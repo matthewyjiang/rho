@@ -64,7 +64,44 @@ deny = ["delete_account"]
 `headers_from_env` maps HTTP header names to ambient variable names. Put the complete header value in the environment, such as `Bearer ...`. Rho does not store it in config or diagnostics. Automatic HTTP redirects are disabled, so configured headers cannot be replayed to another origin.
 `headers` supplies literal header values with the configuration. Prefer `headers_from_env` for anything secret. On a name collision, environment-derived headers override literal ones.
 
-Authentication discovery and OAuth are not implemented; supply server-issued credentials through environment-backed headers. As with stdio, configuration is the trust boundary for the remote session; tool calls do not re-request network capability.
+As with stdio, configuration is the trust boundary for the remote session; tool calls do not re-request network capability.
+
+## OAuth
+
+A server that issues its own credentials can be authorized with OAuth 2.1 instead of a header. Declaring the `oauth` table is the opt-in:
+
+```toml
+[mcp.servers.remote]
+transport = "streamable_http"
+url = "https://mcp.example.com/mcp"
+
+[mcp.servers.remote.oauth]
+# Both keys are optional. An empty table asks for full discovery.
+client_id = "issued-out-of-band"
+scopes = ["read", "write"]
+```
+
+Leave `client_id` out and Rho registers itself with the authorization server through dynamic client registration (RFC 7591). Leave `scopes` out and the server's own metadata chooses them. Nothing secret belongs in this table.
+
+What happens on the first connection to such a server:
+
+1. Rho sends one unauthenticated request and reads the `WWW-Authenticate` header of the 401. That header names the protected resource metadata document (RFC 9728), which names the authorization server, whose metadata (RFC 8414) names the endpoints.
+2. Rho registers a client if none is configured.
+3. Rho opens your browser for the authorization code flow with PKCE (S256) and a loopback redirect on an ephemeral port, and includes the `resource` indicator (RFC 8707) so the token is bound to this server.
+4. The tokens go into the same credential store as your provider logins, under the server identity. Later sessions reuse them and refresh an expired access token without asking again.
+
+Rules the flow holds to:
+
+- Every OAuth endpoint must use HTTPS, with the same loopback exception the MCP URL gets. A discovery document cannot move any leg of the exchange onto plaintext HTTP.
+- A server that publishes no metadata is refused. Rho does not guess authorization endpoints from the MCP URL.
+- The authorization server metadata must carry an issuer that matches where it was discovered, and tokens minted by a previous issuer are discarded if a server is repointed.
+- The loopback listener answers one exact callback path and requires the CSRF state, so a stray browser request cannot finish the login.
+- Discovery is bounded at 60 seconds and the browser login at 5 minutes, so a login nobody finishes cannot hang session startup.
+- Tokens never reach config, `rho mcp list --json`, `rho mcp show`, or logs.
+
+A configured `Authorization` header wins over the `oauth` table and suppresses the flow entirely. You already said which credential to send, so Rho sends it and never opens a browser.
+
+The browser login needs a person, so it only runs when Rho has a terminal and is not in CI. `rho mcp list --connect` and `rho mcp show --connect` never open a browser: a server with no stored token is reported as failed, with an error telling you to start Rho interactively and authorize it once.
 
 ## Handshake
 

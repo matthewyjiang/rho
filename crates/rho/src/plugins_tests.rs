@@ -702,10 +702,12 @@ fn translates_streamable_http_server_with_literal_headers() {
             url,
             headers,
             headers_from_env,
+            oauth,
         } => {
             assert_eq!(url, "https://deploy.example.com/mcp");
             assert_eq!(headers.get("X-Tenant").unwrap(), "public-tenant");
             assert!(headers_from_env.is_empty());
+            assert!(oauth.is_none(), "a plugin manifest cannot request OAuth");
         }
         other => panic!("expected streamable-http transport, got {other:?}"),
     }

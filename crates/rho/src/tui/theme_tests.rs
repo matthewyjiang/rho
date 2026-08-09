@@ -2,12 +2,6 @@ use super::*;
 use crate::tui::theme_terminal::{parse_palette_response, windows_console_palette};
 use pretty_assertions::assert_eq;
 use std::collections::HashMap;
-use std::sync::{Mutex, MutexGuard};
-
-fn theme_test_lock() -> MutexGuard<'static, ()> {
-    static LOCK: Mutex<()> = Mutex::new(());
-    LOCK.lock().unwrap_or_else(|error| error.into_inner())
-}
 
 fn palette(background: Rgb, bright_black: Option<Rgb>) -> TerminalPalette {
     let mut ansi = HashMap::from([(AnsiColor::White, Rgb::new(255, 255, 255))]);

@@ -145,6 +145,23 @@ impl McpSamplingPolicy {
     }
 }
 
+/// OAuth 2.1 authorization for one Streamable HTTP server.
+///
+/// The table's presence is the opt-in, so an empty `[mcp.servers.<id>.oauth]`
+/// asks for full discovery with dynamic client registration. Nothing secret
+/// belongs here: tokens live in the credential store, never in config.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct McpOAuthConfig {
+    /// Client id issued out of band. Unset asks for dynamic client
+    /// registration (RFC 7591) against the discovered registration endpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) client_id: Option<String>,
+    /// Scopes to request. Empty lets the server's own metadata pick them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) scopes: Vec<String>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct McpServerConfig {
     pub(crate) enabled: bool,
@@ -201,6 +218,8 @@ impl<'de> Deserialize<'de> for McpServerConfig {
                 headers: BTreeMap<String, String>,
                 #[serde(default)]
                 headers_from_env: BTreeMap<String, String>,
+                #[serde(default)]
+                oauth: Option<McpOAuthConfig>,
             },
         }
 
@@ -244,11 +263,16 @@ impl<'de> Deserialize<'de> for McpServerConfig {
                     url,
                     headers,
                     headers_from_env,
+                    oauth,
                 } => {
                     super::parse_remote_url(&url).map_err(serde::de::Error::custom)?;
                     super::validate_literal_headers(&headers).map_err(serde::de::Error::custom)?;
                     super::validate_environment_header_names(&headers_from_env)
                         .map_err(serde::de::Error::custom)?;
+                    if let Some(oauth) = &oauth {
+                        super::validate_oauth_client(oauth.client_id.as_deref(), &oauth.scopes)
+                            .map_err(serde::de::Error::custom)?;
+                    }
                     (
                         enabled,
                         tools,
@@ -258,6 +282,7 @@ impl<'de> Deserialize<'de> for McpServerConfig {
                             url,
                             headers,
                             headers_from_env,
+                            oauth,
                         },
                     )
                 }
@@ -296,6 +321,11 @@ pub(crate) enum McpTransport {
         headers: BTreeMap<String, String>,
         /// Header names mapped to environment variable names. Values never live in config.
         headers_from_env: BTreeMap<String, String>,
+        /// OAuth 2.1 authorization, opted into by declaring the table. A
+        /// configured `Authorization` header suppresses it: the user already
+        /// said which credential to send.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        oauth: Option<McpOAuthConfig>,
     },
 }
 

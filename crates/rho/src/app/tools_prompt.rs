@@ -140,6 +140,7 @@ pub(crate) async fn assemble_tools_and_prompt(
     let mut mcp_options = crate::tools::mcp::McpSessionOptions::new(
         options.config.max_output_bytes,
         crate::tools::mcp::McpRoots::for_workspace(options.cwd),
+        crate::tools::mcp::McpAuthorizationMode::from_process(),
     )
     .with_elicitation(options.mcp_elicitation);
     match options.mcp_sampling {
