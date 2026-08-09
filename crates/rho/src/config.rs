@@ -26,9 +26,10 @@ mod provider_config;
 #[path = "config_format.rs"]
 mod format;
 use format::write_config;
-pub use format::InternalAgentModelConfig;
+pub(crate) use format::CLAUDE_CLI_RUNTIME_KEY;
 #[cfg(test)]
 pub use format::{EffectiveModelConfig, EffectiveModelSource};
+pub use format::{InternalAgentModelConfig, InternalAgentTarget, RhoInternalAgentModel};
 
 #[path = "config_load.rs"]
 mod load;
@@ -434,22 +435,30 @@ impl Config {
         Ok(())
     }
 
+    /// Resolves `@alias` model references for internal agents.
+    ///
+    /// Only Rho selections take part: the Claude Code runtime passes its model
+    /// straight to `--model` and never resolves a Rho alias, the same rule the
+    /// agent parser applies to `runtime: claude-cli` definitions.
     fn resolve_internal_agent_model_aliases(&mut self) -> anyhow::Result<()> {
         for (id, selection) in &mut self.internal_agents {
+            let InternalAgentTarget::Rho(rho) = &mut selection.target else {
+                continue;
+            };
             let resolved = self
                 .model_aliases
-                .resolve(&selection.model)
+                .resolve(&rho.model)
                 .map_err(|error| anyhow::anyhow!("internal agent '{id}' model: {error}"))?;
-            selection.model_alias = resolved.alias;
+            rho.model_alias = resolved.alias;
             if let Some(provider) = resolved.provider {
-                if selection.provider != provider {
+                if rho.provider != provider {
                     if let Some(descriptor) = provider::provider_descriptor(&provider) {
-                        selection.auth = descriptor.default_auth().id.into();
+                        rho.auth = descriptor.default_auth().id.into();
                     }
-                    selection.provider = provider;
+                    rho.provider = provider;
                 }
             }
-            selection.model = resolved.model;
+            rho.model = resolved.model;
         }
         Ok(())
     }
@@ -458,9 +467,9 @@ impl Config {
     pub fn effective_internal_agent_model(&self, id: &str) -> EffectiveModelConfig {
         match self.internal_agents.get(id) {
             Some(selection) => EffectiveModelConfig {
-                provider: selection.provider.clone(),
-                model: selection.model.clone(),
-                auth: selection.auth.clone(),
+                provider: selection.expect_rho().provider.clone(),
+                model: selection.expect_rho().model.clone(),
+                auth: selection.expect_rho().auth.clone(),
                 source: EffectiveModelSource::Override,
             },
             None => EffectiveModelConfig {

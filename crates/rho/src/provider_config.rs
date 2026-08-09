@@ -78,13 +78,17 @@ impl Config {
         // Collapse legacy wire ids (for example poolside/laguna-m.1) to the
         // internal model id used by cache, config, and display joins.
         self.model = profile.provider.canonicalize_model_id(&self.model);
+        // Delegating selections have no Rho provider or auth to normalize; the
+        // claude binary owns both.
         for (id, selection) in &mut self.internal_agents {
-            let profile =
-                rho_providers::provider::resolve_profile(&selection.provider, &selection.auth)
-                    .map_err(|error| anyhow::anyhow!("internal agent '{id}': {error}"))?;
-            selection.provider = profile.provider_name().into();
-            selection.auth = profile.auth_id().into();
-            selection.model = profile.provider.canonicalize_model_id(&selection.model);
+            let crate::config::InternalAgentTarget::Rho(rho) = &mut selection.target else {
+                continue;
+            };
+            let profile = rho_providers::provider::resolve_profile(&rho.provider, &rho.auth)
+                .map_err(|error| anyhow::anyhow!("internal agent '{id}': {error}"))?;
+            rho.provider = profile.provider_name().into();
+            rho.auth = profile.auth_id().into();
+            rho.model = profile.provider.canonicalize_model_id(&rho.model);
         }
         Ok(())
     }

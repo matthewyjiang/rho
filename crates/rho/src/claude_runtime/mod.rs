@@ -6,6 +6,8 @@
 pub(crate) mod auth;
 pub(crate) mod executable;
 pub(crate) mod line_decoder;
+pub(crate) mod models;
+pub(crate) mod one_shot;
 pub(crate) mod persist;
 pub(crate) mod rate_limit;
 pub(crate) mod session;

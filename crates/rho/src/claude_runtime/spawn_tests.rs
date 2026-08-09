@@ -42,6 +42,7 @@ fn request_with_effort(
         cwd: PathBuf::from("/tmp/project"),
         max_turns,
         effort,
+        session_persistence: SessionPersistence::Keep,
     }
 }
 
@@ -460,4 +461,78 @@ fn detects_max_turns_rejection() {
         "error: unknown option '--max-turns'"
     ));
     assert!(!looks_like_max_turns_unsupported("ran out of turns"));
+}
+
+// Covers: a delegated agent run must stay resumable while Rho's own one-shot
+// calls must not accumulate single-turn sessions in the user's Claude history.
+// Owner: claude spawn argv
+#[test]
+fn session_persistence_decides_the_no_session_persistence_flag() {
+    for (persistence, expected) in [
+        (SessionPersistence::Keep, false),
+        (SessionPersistence::Discard, true),
+    ] {
+        let mut spawn_request = request(
+            vec!["Read"],
+            false,
+            None,
+            PermissionMode::Auto,
+            8,
+            PromptPolicy::Replace("Plan carefully.".into()),
+        );
+        spawn_request.session_persistence = persistence;
+        let plan = build_spawn_plan(&spawn_request).unwrap();
+        assert_eq!(
+            plan.args
+                .iter()
+                .any(|arg| arg == "--no-session-persistence"),
+            expected,
+            "{persistence:?} produced {:?}",
+            plan.args
+        );
+    }
+}
+
+// Covers: an inline prompt must reach argv under the flag that matches its
+// policy, so a Replace prompt never silently becomes an append.
+// Owner: claude spawn argv
+#[test]
+fn inline_prompt_args_carry_the_prompt_under_the_matching_flag() {
+    for (prompt, expected) in [
+        (
+            PromptPolicy::Replace("Review this.".into()),
+            Some(("--system-prompt", "Review this.")),
+        ),
+        (
+            PromptPolicy::Extend("Also review this.".into()),
+            Some(("--append-system-prompt", "Also review this.")),
+        ),
+        (PromptPolicy::Extend(String::new()), None),
+    ] {
+        let plan = build_spawn_plan(&request(
+            vec![],
+            false,
+            None,
+            PermissionMode::Plan,
+            1,
+            prompt.clone(),
+        ))
+        .unwrap();
+        let args = inline_prompt_args(&plan);
+        match expected {
+            Some((flag, text)) => {
+                assert_eq!(
+                    args[args.len() - 2..],
+                    [os(flag), os(text)],
+                    "{prompt:?} produced {args:?}"
+                );
+            }
+            None => assert!(
+                !args.iter().any(
+                    |arg| *arg == os("--system-prompt") || *arg == os("--append-system-prompt")
+                ),
+                "{prompt:?} produced {args:?}"
+            ),
+        }
+    }
 }

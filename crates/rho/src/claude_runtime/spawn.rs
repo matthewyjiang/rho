@@ -31,6 +31,19 @@ pub(crate) struct ClaudeSpawnRequest {
     pub(crate) max_turns: u64,
     /// Claude `--effort` value from definition `reasoning:`. `None` omits the flag.
     pub(crate) effort: Option<&'static str>,
+    /// Whether the run leaves a resumable Claude session behind.
+    pub(crate) session_persistence: SessionPersistence,
+}
+
+/// Whether a `claude -p` run is worth keeping in Claude's session store.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SessionPersistence {
+    /// Keep the session so `claude --resume <id>` works. Delegated agent runs
+    /// publish that id in their status file.
+    Keep,
+    /// Discard it. Rho's own one-shot calls have no resumable identity and
+    /// would otherwise fill the user's session list with single-turn runs.
+    Discard,
 }
 
 /// How the agent system prompt is applied on the Claude CLI.
@@ -54,6 +67,16 @@ impl SystemPromptPlan {
             Self::Omit => None,
             Self::Replace(_) => Some("--system-prompt-file"),
             Self::Extend(_) => Some("--append-system-prompt-file"),
+        }
+    }
+
+    /// Flag that carries the prompt text on argv instead of in a file. Only
+    /// safe for Rho's own constant prompts; see [`inline_prompt_args`].
+    pub(crate) fn argv_flag(&self) -> Option<&'static str> {
+        match self {
+            Self::Omit => None,
+            Self::Replace(_) => Some("--system-prompt"),
+            Self::Extend(_) => Some("--append-system-prompt"),
         }
     }
 
@@ -169,6 +192,10 @@ pub(crate) fn build_spawn_plan(
     args.push("--max-turns".into());
     args.push(request.max_turns.to_string());
 
+    if request.session_persistence == SessionPersistence::Discard {
+        args.push("--no-session-persistence".into());
+    }
+
     // Always set `--tools`, including the explicit empty set, so Claude does
     // not inherit ambient built-in tool availability from user config.
     args.push("--tools".into());
@@ -228,6 +255,25 @@ pub(crate) fn finalize_spawn_args(
     // already live in the prompt file; argv only carries the path token.
     args.push(path.into_os_string());
     Ok(args)
+}
+
+/// Final argv with the system prompt carried on the command line.
+///
+/// Use only when the prompt is one of Rho's own constants. Argv is readable by
+/// other processes, so any prompt built from user or workspace text must go
+/// through [`finalize_spawn_args`] and its private file instead.
+pub(crate) fn inline_prompt_args(plan: &ClaudeSpawnPlan) -> Vec<OsString> {
+    let mut args: Vec<OsString> = plan.args.iter().map(OsString::from).collect();
+    let Some(flag) = plan.system_prompt.argv_flag() else {
+        return args;
+    };
+    let text = plan
+        .system_prompt
+        .text()
+        .expect("argv flag implies prompt text");
+    args.push(OsString::from(flag));
+    args.push(OsString::from(text));
+    args
 }
 
 fn system_prompt_plan(prompt: &PromptPolicy) -> SystemPromptPlan {

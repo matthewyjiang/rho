@@ -27,12 +27,7 @@ fn config_with(advisor_mode: bool, model: Option<InternalAgentModelConfig>) -> C
         ..Config::default()
     };
     if let Some(model) = model {
-        config.set_internal_agent_model(
-            crate::agent::ADVISOR_AGENT_ID,
-            model.provider,
-            model.model,
-            model.auth,
-        );
+        config.set_internal_agent_model_config(crate::agent::ADVISOR_AGENT_ID, model);
     }
     config
 }
@@ -46,8 +41,9 @@ fn the_advisor_model_never_falls_back_to_the_conversation_model() {
 
     assert_eq!(advisor_model(&config), None);
     assert_eq!(
-        advisor_model(&config_with(true, Some(advisor_selection()))).map(|model| &model.model),
-        Some(&"claude-test".to_string())
+        advisor_model(&config_with(true, Some(advisor_selection())))
+            .map(|model| model.expect_rho().model.clone()),
+        Some("claude-test".to_string())
     );
 }
 

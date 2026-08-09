@@ -22,6 +22,7 @@ use crate::agent::{
     AgentDefinition, AgentOrigin, AgentRuntime, AgentRuntimeSpec, ModelPolicy, PromptPolicy,
     ReasoningLevel,
 };
+use crate::claude_runtime::models as claude_models;
 use rho_providers::model::{models_dev, ReasoningCapabilities};
 
 /// Stable field-picker values (choice/model phases dispatch by session phase).
@@ -53,6 +54,8 @@ pub(super) enum AgentChoiceField {
     PromptPolicy,
     Runtime,
     ModelPolicy,
+    /// Claude `--model`, chosen from the offered aliases rather than typed.
+    ClaudeModel,
     Auth,
     Reasoning,
     InheritClaudeConfig,
@@ -64,6 +67,7 @@ impl AgentChoiceField {
             Self::PromptPolicy => AGENT_FIELD_PROMPT_POLICY,
             Self::Runtime => AGENT_FIELD_RUNTIME,
             Self::ModelPolicy => AGENT_FIELD_MODEL_POLICY,
+            Self::ClaudeModel => AGENT_FIELD_MODEL,
             Self::Auth => AGENT_FIELD_AUTH,
             Self::Reasoning => AGENT_FIELD_REASONING,
             Self::InheritClaudeConfig => AGENT_FIELD_INHERIT_CLAUDE_CONFIG,
@@ -75,9 +79,22 @@ impl AgentChoiceField {
             Self::PromptPolicy => "agent_choice:prompt_policy:",
             Self::Runtime => "agent_choice:runtime:",
             Self::ModelPolicy => "agent_choice:model_policy:",
+            Self::ClaudeModel => "agent_choice:claude_model:",
             Self::Auth => "agent_choice:auth:",
             Self::Reasoning => "agent_choice:reasoning:",
             Self::InheritClaudeConfig => "agent_choice:inherit_claude_config:",
+        }
+    }
+
+    pub(super) const fn status_label(self) -> &'static str {
+        match self {
+            Self::PromptPolicy => "prompt policy",
+            Self::Runtime => "runtime",
+            Self::ModelPolicy => "model policy",
+            Self::ClaudeModel => "claude model",
+            Self::Auth => "auth",
+            Self::Reasoning => "reasoning",
+            Self::InheritClaudeConfig => "inherit Claude config",
         }
     }
 }
@@ -330,8 +347,8 @@ pub(super) fn agent_field_picker(draft: &AgentDefinition) -> UiPicker {
         AgentRuntime::ClaudeCli => {
             items.push(field_item(
                 "Model",
-                "Claude model name passed as --model. Omit to inherit Claude's default.",
-                Some(draft.model_badge()),
+                "Claude model alias passed as --model. Default lets Claude Code choose.",
+                Some(claude_model_badge(draft)),
                 AGENT_FIELD_MODEL,
             ));
             items.push(field_item(
@@ -384,6 +401,59 @@ pub(super) fn agent_field_picker(draft: &AgentDefinition) -> UiPicker {
         detail_label: Some(" DETAILS".into()),
         nav_keys_hint: "↑↓ fields".into(),
     })
+}
+
+/// Badge for the Claude model row. Unset reads as the Claude Code default
+/// rather than Rho's `inherit`, which names a different concept.
+fn claude_model_badge(draft: &AgentDefinition) -> String {
+    let model = draft.model_text();
+    if model.is_empty() {
+        claude_models::CLAUDE_DEFAULT_MODEL_BADGE.into()
+    } else {
+        model
+    }
+}
+
+/// Rows for the Claude `--model` choice: the default, every offered alias, and
+/// the configured value when it is neither. Claude accepts full model ids that
+/// Rho does not offer, so a hand-written definition keeps its model and stays
+/// editable instead of being silently rewritten.
+fn claude_model_choice_items(draft: &AgentDefinition, prefix: &str) -> Vec<PickerItem> {
+    let current = draft.model_text();
+    let mut items = vec![PickerItem {
+        section: None,
+        label: claude_models::CLAUDE_DEFAULT_MODEL_LABEL.into(),
+        detail: Some(claude_models::CLAUDE_DEFAULT_MODEL_DETAIL.into()),
+        preview: None,
+        badge: current.is_empty().then(|| badge("selected")),
+        value: prefix.to_string(),
+        selection_verb: None,
+    }];
+    items.extend(
+        claude_models::CLAUDE_MODEL_ALIASES
+            .iter()
+            .map(|alias| PickerItem {
+                section: None,
+                label: alias.name.into(),
+                detail: Some(alias.detail.into()),
+                preview: None,
+                badge: (current == alias.name).then(|| badge("selected")),
+                value: format!("{prefix}{}", alias.name),
+                selection_verb: None,
+            }),
+    );
+    if !current.is_empty() && !claude_models::is_offered_alias(&current) {
+        items.push(PickerItem {
+            section: None,
+            label: current.clone(),
+            detail: Some("Set in the agent file. Passed through as --model unchanged.".into()),
+            preview: None,
+            badge: Some(badge("selected")),
+            value: format!("{prefix}{current}"),
+            selection_verb: None,
+        });
+    }
+    items
 }
 
 fn prompt_body_preview(draft: &AgentDefinition) -> String {
@@ -456,6 +526,7 @@ fn agent_choice_picker(field: AgentChoiceField, draft: &AgentDefinition) -> UiPi
             };
             ("model policy", choice_items(options, &current, prefix))
         }
+        AgentChoiceField::ClaudeModel => ("claude model", claude_model_choice_items(draft, prefix)),
         AgentChoiceField::Auth => unreachable!("use auth_choice_picker"),
         AgentChoiceField::Reasoning => {
             let is_claude = draft.runtime.runtime() == AgentRuntime::ClaudeCli;

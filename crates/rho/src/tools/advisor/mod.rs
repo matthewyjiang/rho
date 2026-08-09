@@ -29,7 +29,7 @@ use crate::{
         run_one_shot_with_provider, OneShotAgentRequest, OneShotPhase, OneShotUpdate,
         ADVISOR_AGENT_ID,
     },
-    config::{Config, InternalAgentModelConfig},
+    config::{Config, InternalAgentModelConfig, InternalAgentTarget},
     credential_store::build_provider,
 };
 
@@ -292,24 +292,76 @@ async fn consult_advisor(
         transcript,
     } = request;
     let reasoning = advisor_effective_reasoning(&model);
-    let provider = build_provider(&model.provider, &model.model, reasoning, &model.auth).map_err(
-        |error| {
-            execution_error(format!(
-                "advisor model {} could not start: {error}. Choose a rho-runtime advisor model with /advisor.",
-                rho_providers::provider::model_reference(&model.provider, &model.model)
-            ))
+    let reference = model.display_reference();
+    match &model.target {
+        InternalAgentTarget::Rho(selection) => {
+            let provider = build_provider(
+                &selection.provider,
+                &selection.model,
+                reasoning,
+                &selection.auth,
+            )
+            .map_err(|error| {
+                execution_error(format!(
+                    "advisor model {reference} could not start: {error}. Choose another advisor model with /advisor."
+                ))
+            })?;
+            consult_advisor_with_provider(
+                provider.as_ref(),
+                &session_id,
+                &workspace_path,
+                transcript,
+                reasoning,
+                cancellation,
+                progress,
+            )
+            .await
+        }
+        InternalAgentTarget::ClaudeCli { model } => {
+            consult_advisor_with_claude_cli(
+                model.clone(),
+                reasoning,
+                &workspace_path,
+                transcript,
+                cancellation,
+                progress,
+            )
+            .await
+        }
+    }
+}
+
+/// Runs the advisor on the Claude Code CLI.
+///
+/// Same contract as the Rho path: one turn, no tools, guidance text back. The
+/// call bills to the user's Claude subscription, so the cost Claude reports
+/// folds into the parent total exactly as a provider's does.
+async fn consult_advisor_with_claude_cli(
+    model: Option<String>,
+    reasoning: rho_providers::reasoning::ReasoningLevel,
+    workspace_path: &Path,
+    transcript: String,
+    cancellation: CancellationToken,
+    progress: ToolProgressSender,
+) -> Result<(String, ModelUsage), ToolError> {
+    let (updates_tx, updates_rx) =
+        watch::channel(OneShotUpdate::new(OneShotPhase::WaitingForProvider, ""));
+    let started = crate::claude_runtime::one_shot::run_one_shot(
+        crate::claude_runtime::one_shot::ClaudeOneShotRequest {
+            system_prompt: crate::agent::ADVISOR_PROMPT,
+            input: transcript,
+            model,
+            effort: crate::claude_runtime::spawn::claude_effort_flag(reasoning),
+            cwd: workspace_path.to_path_buf(),
+            cancellation,
         },
-    )?;
-    consult_advisor_with_provider(
-        provider.as_ref(),
-        &session_id,
-        &workspace_path,
-        transcript,
-        reasoning,
-        cancellation,
-        progress,
-    )
-    .await
+        Some(updates_tx),
+    );
+    let forward_progress = forward_advisor_progress(updates_rx, progress);
+    let (result, ()) = tokio::join!(started, forward_progress);
+    let result =
+        result.map_err(|error| execution_error(format!("the advisor request failed: {error}")))?;
+    Ok((result.text, result.usage))
 }
 
 async fn consult_advisor_with_provider(

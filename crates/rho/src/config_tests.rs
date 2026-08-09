@@ -561,9 +561,9 @@ model = "@titler"
     .unwrap();
 
     let selection = config.internal_agent_model("session-title").unwrap();
-    assert_eq!(selection.provider, "anthropic");
-    assert_eq!(selection.model, "claude-haiku-4-5");
-    assert_eq!(selection.auth, "anthropic-api-key");
+    assert_eq!(selection.expect_rho().provider, "anthropic");
+    assert_eq!(selection.expect_rho().model, "claude-haiku-4-5");
+    assert_eq!(selection.expect_rho().auth, "anthropic-api-key");
     assert_eq!(
         config.current_internal_agent_model_alias("session-title"),
         Some("titler")
@@ -585,6 +585,7 @@ fn stale_title_model_alias_saves_the_concrete_model() {
         .internal_agents
         .get_mut("session-title")
         .unwrap()
+        .expect_rho_mut()
         .model = "claude-sonnet-4-5".into();
     assert_eq!(
         config.current_internal_agent_model_alias("session-title"),
@@ -599,6 +600,7 @@ fn stale_title_model_alias_saves_the_concrete_model() {
         reloaded
             .internal_agent_model("session-title")
             .unwrap()
+            .expect_rho()
             .model,
         "claude-sonnet-4-5"
     );
@@ -681,9 +683,9 @@ fn flat_title_settings_migrate_to_internal_agent_config() {
     let title = config.internal_agent_model("session-title").unwrap();
     assert_eq!(
         (
-            title.provider.as_str(),
-            title.model.as_str(),
-            title.auth.as_str()
+            title.expect_rho().provider.as_str(),
+            title.expect_rho().model.as_str(),
+            title.expect_rho().auth.as_str()
         ),
         ("anthropic", "claude-haiku-4-5", "anthropic-api-key")
     );
@@ -720,9 +722,9 @@ auth = "anthropic-api-key"
     let title = config.internal_agent_model("session-title").unwrap();
     assert_eq!(
         (
-            title.provider.as_str(),
-            title.model.as_str(),
-            title.auth.as_str()
+            title.expect_rho().provider.as_str(),
+            title.expect_rho().model.as_str(),
+            title.expect_rho().auth.as_str()
         ),
         ("anthropic", "claude-haiku-4-5", "anthropic-api-key")
     );
@@ -821,11 +823,19 @@ model = "title-model"
     assert_eq!(config.provider, "ollama");
     assert_eq!(config.auth, "none");
     assert_eq!(
-        config.internal_agent_model("goal-judge").unwrap().auth,
+        config
+            .internal_agent_model("goal-judge")
+            .unwrap()
+            .expect_rho()
+            .auth,
         "none"
     );
     assert_eq!(
-        config.internal_agent_model("session-title").unwrap().auth,
+        config
+            .internal_agent_model("session-title")
+            .unwrap()
+            .expect_rho()
+            .auth,
         "none"
     );
 }
@@ -859,4 +869,40 @@ fn advisor_mode_and_model_round_trip_through_save() {
             .cloned(),
         Some(advisor)
     );
+}
+
+// Covers: a delegating advisor must survive save and reload as a delegating
+// advisor, and must not persist a Rho provider or auth it does not have.
+// Owner: config persistence
+#[test]
+fn a_claude_cli_advisor_round_trips_through_save() {
+    for model in [Some("opus".to_string()), None] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let store = rho_providers::credentials::MemoryCredentialStore::default();
+        let mut config = Config {
+            advisor_mode: true,
+            ..Default::default()
+        };
+        let mut advisor = crate::config::InternalAgentModelConfig::claude_cli(model.clone());
+        advisor.reasoning = Some(rho_providers::reasoning::ReasoningLevel::High);
+        config.set_internal_agent_model_config(crate::agent::ADVISOR_AGENT_ID, advisor.clone());
+
+        config.save_with_store(path.clone(), &store).unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(saved.contains("runtime = \"claude-cli\""), "{saved}");
+        assert!(
+            !saved.contains("[internal_agents.advisor]\nprovider"),
+            "{saved}"
+        );
+
+        let reloaded = Config::load_with_store(path, &store).unwrap();
+        assert_eq!(
+            reloaded
+                .internal_agent_model(crate::agent::ADVISOR_AGENT_ID)
+                .cloned(),
+            Some(advisor),
+            "model {model:?} did not round trip"
+        );
+    }
 }

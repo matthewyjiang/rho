@@ -792,26 +792,51 @@ fn picker_haystack(item: &PickerItem) -> String {
     )
 }
 
+/// Fuzzy score for `needle` against `haystack`, or `None` when the needle is
+/// not a subsequence of it.
+///
+/// Two passes, because scoring well and matching at all are different jobs.
+/// [`CharacterChoice::HighestBonus`] chases word boundaries and runs, which
+/// ranks the way a user expects. It is greedy, so on a haystack that repeats
+/// characters it can consume one too far and strand the rest of the needle -
+/// typing a row's own label would then report no match. The earliest-index pass
+/// has no such hole: it finds a match whenever one exists.
 pub(super) fn fuzzy_match_score(haystack: &str, needle: &str) -> Option<i64> {
-    let haystack = haystack.to_lowercase();
-    let needle = needle.to_lowercase();
-    let haystack_chars = haystack.chars().collect::<Vec<_>>();
+    let haystack = haystack.to_lowercase().chars().collect::<Vec<_>>();
+    let needle = needle.to_lowercase().chars().collect::<Vec<_>>();
+    fuzzy_walk(&haystack, &needle, CharacterChoice::HighestBonus)
+        .or_else(|| fuzzy_walk(&haystack, &needle, CharacterChoice::Earliest))
+}
+
+/// Which occurrence of a needle character a walk takes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CharacterChoice {
+    /// The occurrence that scores best, even if a later one.
+    HighestBonus,
+    /// The first occurrence, which never strands the rest of the needle.
+    Earliest,
+}
+
+fn fuzzy_walk(haystack: &[char], needle: &[char], choice: CharacterChoice) -> Option<i64> {
     let mut search_start = 0;
     let mut first_match = None;
     let mut previous_match = None;
     let mut score = 0;
 
-    for needle_char in needle.chars() {
-        let candidate = haystack_chars[search_start..]
+    for needle_char in needle {
+        let occurrences = haystack[search_start..]
             .iter()
             .enumerate()
-            .filter(|(_, haystack_char)| **haystack_char == needle_char)
-            .map(|(offset, _)| search_start + offset)
-            .max_by_key(|index| fuzzy_character_bonus(&haystack_chars, *index, previous_match))?;
-        let index = candidate;
+            .filter(|(_, haystack_char)| *haystack_char == needle_char)
+            .map(|(offset, _)| search_start + offset);
+        let index = match choice {
+            CharacterChoice::HighestBonus => occurrences
+                .max_by_key(|index| fuzzy_character_bonus(haystack, *index, previous_match))?,
+            CharacterChoice::Earliest => occurrences.min()?,
+        };
         first_match.get_or_insert(index);
         score += 10;
-        score += fuzzy_character_bonus(&haystack_chars, index, previous_match);
+        score += fuzzy_character_bonus(haystack, index, previous_match);
         previous_match = Some(index);
         search_start = index + 1;
     }

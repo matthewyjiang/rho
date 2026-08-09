@@ -1256,3 +1256,145 @@ fn smoke_subset_is_registered() {
         "missing activity-rail smoke scenario"
     );
 }
+
+/// Full Claude Code advisor path: picker selection -> config -> advisor tool
+/// call -> `claude -p` spawn with no tools -> stream-json -> advice in the card.
+/// Never touches a real Claude binary or the network.
+#[test]
+fn fake_claude_advisor_reviews_the_session() {
+    let home = IsolatedHome::new().unwrap();
+    std::fs::write(
+        &home.config_path,
+        r#"provider = "openai"
+model = "gpt-5.5"
+auth = "api-key"
+check_for_updates = false
+web_search_provider = "disabled"
+
+[behavior]
+credential_store = "file"
+advisor_mode = true
+"#,
+    )
+    .unwrap();
+
+    let fake_root = home.path().join("fake-claude");
+    let fake = claude_e2e::install_fake_claude(&fake_root, claude_e2e::FakeClaudeMode::Success);
+    let path = claude_e2e::path_with_fake(&fake.bin_dir);
+    assert_eq!(
+        which_on_path("claude", &path).as_deref(),
+        Some(fake.claude.as_path()),
+        "PATH must resolve the fake claude first"
+    );
+
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
+    let plan = RhoLaunchPlan::matrix(
+        binary,
+        &home,
+        PtySize {
+            rows: 32,
+            cols: 120,
+        },
+    )
+    .with_env("PATH", path);
+    let mut harness = PtyHarness::spawn_named(&plan, "fake_claude_advisor").unwrap();
+    harness
+        .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
+        .unwrap();
+
+    // Picking a Claude Code row is the only step: it selects the runtime too.
+    harness.submit_text("/advisor on").unwrap();
+    harness
+        .wait_for_text(
+            "select model for advisor",
+            WaitTimeout::secs(10, "advisor model picker"),
+        )
+        .unwrap();
+    harness.type_text("claude-code/opus").unwrap();
+    harness
+        .wait_for_text("(1/1)", WaitTimeout::secs(10, "claude code row filtered"))
+        .unwrap();
+    harness.inject_key(&Key::Enter).unwrap();
+    harness
+        .wait_for_text(
+            "advisor mode is on: claude-code/opus reviews the session",
+            WaitTimeout::secs(10, "advisor turned on"),
+        )
+        .unwrap();
+    harness
+        .wait_for_text(
+            "advisor: claude-code/opus",
+            WaitTimeout::secs(10, "advisor statusline"),
+        )
+        .unwrap();
+
+    harness.submit_text("fixture advisor").unwrap();
+    claude_e2e::wait_for_spawn(&fake, Duration::from_secs(20));
+    let record = fake.read_spawn_record();
+
+    // Parity with the Rho advisor: one turn, no tools, no workspace access.
+    // The recorder joins argv on NUL and drops empty chunks, so the empty
+    // `--tools` value shows up as the flag with nothing of its own after it.
+    assert!(
+        value_after(&record.args, "--tools").is_none_or(|value| value.starts_with("--")),
+        "the advisor must run with no tools: {:?}",
+        record.args
+    );
+    assert!(
+        record.args.iter().any(|arg| arg == "--tools"),
+        "--tools must always be set so ambient tools are not inherited: {:?}",
+        record.args
+    );
+    assert!(
+        !record.args.iter().any(|arg| arg == "--allowedTools"),
+        "the advisor must allow no tools: {:?}",
+        record.args
+    );
+    for pair in [
+        ["--model", "opus"],
+        ["--max-turns", "1"],
+        ["--permission-mode", "plan"],
+    ] {
+        assert!(
+            record.args.windows(2).any(|window| window == pair),
+            "missing {pair:?}: {:?}",
+            record.args
+        );
+    }
+    assert!(
+        record
+            .args
+            .iter()
+            .any(|arg| arg == "--no-session-persistence"),
+        "a one-shot advisor call must leave no resumable session: {:?}",
+        record.args
+    );
+    let prompt =
+        value_after(&record.args, "--system-prompt").expect("advisor system prompt on argv");
+    assert!(
+        prompt.starts_with("You are a senior advisor reviewing"),
+        "unexpected advisor system prompt: {prompt}"
+    );
+    assert!(
+        record.stdin.contains("fixture advisor"),
+        "the advisor must receive the session transcript on stdin: {}",
+        record.stdin
+    );
+
+    // The fixture's result text is the advice the executor gets back.
+    harness
+        .wait_for_text(
+            "rho-claude-e2e-ok",
+            WaitTimeout::secs(20, "advice in the advisor card"),
+        )
+        .unwrap();
+
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
+}
+
+/// Sole value following `flag` in a recorded argv.
+fn value_after<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+    args.windows(2)
+        .find(|pair| pair[0] == flag)
+        .map(|pair| pair[1].as_str())
+}

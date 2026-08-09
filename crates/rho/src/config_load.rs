@@ -167,20 +167,8 @@ pub(super) fn parse_settings(text: &str) -> anyhow::Result<(Config, Vec<ConfigWa
         .unwrap_or_default()
         .into_iter()
         .map(|(id, group)| {
-            let provider = group.provider.unwrap_or_else(|| cfg.provider.clone());
-            let auth = group
-                .auth
-                .unwrap_or_else(|| inferred_provider_auth(&provider, &cfg.provider, &cfg.auth));
-            (
-                id,
-                InternalAgentModelConfig {
-                    provider,
-                    model: group.model.unwrap_or_else(|| cfg.model.clone()),
-                    auth,
-                    reasoning: group.reasoning,
-                    model_alias: None,
-                },
-            )
+            let selection = internal_agent_selection(&id, group, &cfg, &mut warnings);
+            (id, selection)
         })
         .collect();
     if let Some(group) = file.title {
@@ -188,15 +176,10 @@ pub(super) fn parse_settings(text: &str) -> anyhow::Result<(Config, Vec<ConfigWa
         let auth = group
             .auth
             .unwrap_or_else(|| inferred_provider_auth(&provider, &cfg.provider, &cfg.auth));
+        let model = group.model.unwrap_or_else(|| cfg.model.clone());
         cfg.internal_agents
             .entry("session-title".into())
-            .or_insert(InternalAgentModelConfig {
-                provider,
-                model: group.model.unwrap_or_else(|| cfg.model.clone()),
-                auth,
-                reasoning: None,
-                model_alias: None,
-            });
+            .or_insert_with(|| InternalAgentModelConfig::new(provider, model, auth));
     }
     cfg.resolve_internal_agent_model_aliases()?;
     cfg.normalize_provider_profiles()?;
@@ -549,10 +532,90 @@ struct PartialCompactionConfig {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PartialInternalAgentModelConfig {
+    /// `rho` (default) or `claude-cli`. Absent means Rho, so entries written
+    /// before the Claude Code runtime existed keep loading unchanged.
+    runtime: Option<String>,
     provider: Option<String>,
     model: Option<String>,
     auth: Option<String>,
     reasoning: Option<ReasoningLevel>,
+}
+
+/// Builds one internal-agent selection, filling Rho defaults from the
+/// conversation model.
+///
+/// An unusable `runtime` value falls back to Rho rather than failing the whole
+/// config load, and Rho-only keys on a `claude-cli` entry are reported instead
+/// of silently dropped.
+fn internal_agent_selection(
+    id: &str,
+    group: PartialInternalAgentModelConfig,
+    cfg: &Config,
+    warnings: &mut Vec<ConfigWarning>,
+) -> InternalAgentModelConfig {
+    let runtime = match group.runtime.as_deref() {
+        None | Some("rho") => InternalAgentRuntimeKey::Rho,
+        Some(crate::config::CLAUDE_CLI_RUNTIME_KEY)
+            if crate::agent::internal_agent_accepts_claude_runtime(id) =>
+        {
+            InternalAgentRuntimeKey::ClaudeCli
+        }
+        Some(crate::config::CLAUDE_CLI_RUNTIME_KEY) => {
+            warnings.push(ConfigWarning::Normalized {
+                key: "internal_agents.runtime",
+                from: format!("\"{}\"", crate::config::CLAUDE_CLI_RUNTIME_KEY),
+                to: format!("\"rho\"; internal agent '{id}' cannot delegate"),
+            });
+            InternalAgentRuntimeKey::Rho
+        }
+        Some(other) => {
+            warnings.push(ConfigWarning::Normalized {
+                key: "internal_agents.runtime",
+                from: format!("\"{other}\""),
+                to: "\"rho\"".into(),
+            });
+            InternalAgentRuntimeKey::Rho
+        }
+    };
+    match runtime {
+        InternalAgentRuntimeKey::Rho => {
+            let provider = group.provider.unwrap_or_else(|| cfg.provider.clone());
+            let auth = group
+                .auth
+                .unwrap_or_else(|| inferred_provider_auth(&provider, &cfg.provider, &cfg.auth));
+            let mut selection = InternalAgentModelConfig::new(
+                provider,
+                group.model.unwrap_or_else(|| cfg.model.clone()),
+                auth,
+            );
+            selection.reasoning = group.reasoning;
+            selection
+        }
+        InternalAgentRuntimeKey::ClaudeCli => {
+            for (key, value) in [
+                ("internal_agents.provider", group.provider),
+                ("internal_agents.auth", group.auth),
+            ] {
+                if let Some(value) = value {
+                    warnings.push(ConfigWarning::Normalized {
+                        key,
+                        from: format!("\"{value}\""),
+                        to: "no value; runtime claude-cli has no Rho provider or auth".into(),
+                    });
+                }
+            }
+            let mut selection = InternalAgentModelConfig::claude_cli(group.model);
+            selection.reasoning = group.reasoning;
+            selection
+        }
+    }
+}
+
+/// Parsed `runtime` key for an internal-agent entry.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InternalAgentRuntimeKey {
+    Rho,
+    ClaudeCli,
 }
 
 #[derive(Deserialize)]

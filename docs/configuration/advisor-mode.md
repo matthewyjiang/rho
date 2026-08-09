@@ -27,6 +27,8 @@ flowchart TD
    payload.
 3. Rho starts a one-shot advisor run on the configured advisor model. That run
    has no tools. It cannot read files, run commands, or change the workspace.
+   This holds on both runtimes: a Claude Code advisor is spawned with
+   `--tools ""`.
 4. While the request is in flight, the advisor tool card shows live status on
    the first line (`waiting for provider`, `thinking`, `responding`, or
    `retrying provider`) and streams guidance text into the card body as it
@@ -37,7 +39,9 @@ flowchart TD
 
 Rho runs the advisor itself. There is no server-side advisor and no provider
 beta flag, so any model in Rho's [catalog](/authentication-and-models#selecting-models)
-can be the advisor on any provider. The advisor itself must use the `rho` runtime.
+can be the advisor on any provider. The advisor can also run on the installed
+`claude` binary instead, using your Claude Code subscription. See
+[Claude Code as the advisor](#claude-code-as-the-advisor).
 
 ## Turn it on
 
@@ -73,11 +77,64 @@ reasoning = "high"
 
 `reasoning` is optional. When omitted, the advisor uses its built-in default
 (`medium`). Model [aliases](/configuration#model-aliases) work in the advisor
-entry (`model = "@deep"`). The advisor must resolve to the `rho` runtime. A
-`claude-cli` advisor is rejected with a clear error.
+entry (`model = "@deep"`).
 
 Changes save at once and apply before the next turn. The session ID and history
 stay. You cannot toggle advisor mode while a run is active.
+
+## Claude Code as the advisor
+
+The advisor model picker lists Claude Code alongside Rho's provider models:
+
+```text
+claude-code/default
+claude-code/fable
+claude-code/opus
+claude-code/sonnet
+claude-code/haiku
+```
+
+Choosing one of those rows also chooses the runtime. Rho runs the review on the
+installed `claude` binary, and nothing else changes: the advisor still sees only
+the rendered transcript, still gets no tools, and still returns guidance text
+into the same card.
+
+The rows appear only when the `claude` binary is on `PATH`. Sign in first with
+`/login claude-code`; Rho never stores a Claude token. A signed-out binary makes
+the advisor call fail with that same instruction, and the executor's turn
+survives it.
+
+The equivalent config is:
+
+```toml
+[behavior]
+advisor_mode = true
+
+[internal_agents.advisor]
+runtime = "claude-cli"
+model = "opus"
+reasoning = "high"
+```
+
+- `runtime` defaults to `rho`, so existing config keeps working unchanged.
+- `model` is a Claude alias or full Claude model name, passed through as
+  `--model`. Omit it to let Claude Code choose. Rho `@alias` references are not
+  resolved here.
+- `provider` and `auth` do not apply. Claude Code owns both, and Rho drops them
+  with a warning if they appear.
+- `reasoning` maps to Claude `--effort`, so only `low`, `medium`, `high`,
+  `xhigh`, and `max` are offered.
+
+Differences worth knowing before you choose it:
+
+- Calls bill to your Claude subscription, not to a Rho provider, and they draw
+  on the same 5-hour and 7-day windows as your own Claude Code use. Reported
+  cost folds into the session total in the TUI. The
+  [usage ledger](/usage-ledger) does not record them, matching delegated Claude
+  runs.
+- Each call spawns a process, so it starts slower than a provider request.
+- The run is one turn with no tools and no session persistence, so it leaves
+  nothing in your Claude session list.
 
 ## What the advisor sees
 
@@ -113,7 +170,8 @@ declares done.
 ## In the TUI
 
 While advisor mode is on, the status line names the reviewing model, for
-example `advisor: anthropic/claude-fable-5`. It stays out of the status line
+example `advisor: anthropic/claude-fable-5`, or `advisor: claude-code/opus`
+when the advisor runs on Claude Code. It stays out of the status line
 while the mode is off. An in-flight `advisor` call uses an agent-style card:
 `advisor  responding` on the header with streamed guidance below. Finished
 advice stays on the same card as `advisor  completed`, collapsed past the
@@ -122,8 +180,11 @@ advice stays on the same card as `advisor  completed`, collapsed past the
 
 ## Cost and scope
 
-- Advisor calls bill to the advisor model's provider.
-- The [usage ledger](/usage-ledger) records them under the `advisor` purpose.
+- Advisor calls bill to the advisor model's provider, or to your Claude
+  subscription when the advisor runs on Claude Code.
+- The [usage ledger](/usage-ledger) records provider calls under the `advisor`
+  purpose. Claude Code calls are not ledger rows, the same as delegated Claude
+  runs.
 - Provider-reported advisor cost folds into the parent session total in the TUI.
 - [Automation runs](/automation-cli) honor `advisor_mode`, so `rho run` gets the
   same tool and steering text when a model is set.
@@ -135,7 +196,7 @@ advice stays on the same card as `advisor  completed`, collapsed past the
 | Setting | Role |
 | --- | --- |
 | `[behavior].advisor_mode` | Offers the `advisor` tool when a model is also set. Default: `false`. |
-| `[internal_agents.advisor]` | Required provider, model, and auth for the reviewer. Optional `reasoning`. No conversation-model fallback. |
+| `[internal_agents.advisor]` | The reviewer. On the default `rho` runtime: required provider, model, and auth. With `runtime = "claude-cli"`: optional pass-through `model` only. Optional `reasoning` either way. No conversation-model fallback. |
 | [`display.max_tool_output_lines`](/configuration#tool-output-limit) | How many lines of advice show inline before the TUI collapses the card. |
 
 See also: [`/advisor`](/interactive-tui#commands),
