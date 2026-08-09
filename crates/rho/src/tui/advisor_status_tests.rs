@@ -42,6 +42,30 @@ fn each_advisor_state_reads_the_same_way_on_every_surface() {
                 false,
             ),
         ),
+        (
+            AdvisorStatus::new(
+                /*advisor_mode*/ true,
+                Some(&InternalAgentModelConfig::claude_cli(Some("opus".into()))),
+            ),
+            (
+                Some("advisor: claude-code/opus"),
+                "on · claude-code/opus",
+                "on, claude-code/opus reviews the session",
+                false,
+            ),
+        ),
+        (
+            AdvisorStatus::new(
+                /*advisor_mode*/ true,
+                Some(&InternalAgentModelConfig::claude_cli(None)),
+            ),
+            (
+                Some("advisor: claude-code/default"),
+                "on · claude-code/default",
+                "on, claude-code/default reviews the session",
+                false,
+            ),
+        ),
     ];
 
     for (status, (statusline, badge, detail, needs_model)) in cases {

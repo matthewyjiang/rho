@@ -285,6 +285,7 @@ fn resolve_agent(
                     cwd: host.workspace().to_path_buf(),
                     max_turns: *max_turns,
                     effort: *effort,
+                    session_persistence: crate::claude_runtime::spawn::SessionPersistence::Keep,
                 },
             )?;
             ResolvedAgent {

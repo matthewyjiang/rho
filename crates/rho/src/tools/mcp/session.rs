@@ -16,7 +16,7 @@ use http::{HeaderName, HeaderValue};
 use rho_sdk::Workspace;
 use rmcp::{
     model::{SetLevelRequestParams, Tool as RemoteTool},
-    service::RunningService,
+    service::{PeerRequestOptions, RunningService},
     transport::{
         streamable_http_client::StreamableHttpClientTransportConfig, which_command,
         StreamableHttpClientTransport, TokioChildProcess,
@@ -51,6 +51,11 @@ const MCP_SESSION_CLOSE_BUDGET: std::time::Duration = std::time::Duration::from_
 // Remote sessions can be dropped by an idle proxy without any local signal, so
 // they are pinged. A stdio child's death is observable directly and needs none.
 const MCP_KEEPALIVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+// One task owns all of a session's maintenance, so a server that accepts a
+// request and never answers would stop every later tool-list change and
+// reachability update. Bound each request well inside the keepalive interval so
+// the next tick still gets its turn.
+const MCP_MAINTENANCE_REQUEST_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
 
 pub(super) enum ConnectResult {
     Ready(Box<ConnectedServer>),
@@ -147,7 +152,7 @@ pub(super) async fn connect_server_bounded(
         .peer_info()
         .and_then(|info| info.instructions.clone())
         .filter(|instructions| !instructions.trim().is_empty());
-    apply_log_level(identity, server, &session).await;
+    apply_log_level(identity, server, &session, deadline).await;
 
     let offers = McpServerOffers::from_session(&session);
     match tokio::time::timeout_at(deadline, session.list_all_tools()).await {
@@ -199,7 +204,16 @@ fn client_services(
 /// Ask the server to emit logs at the configured level. A server that does not
 /// declare `logging` is left alone; asking anyway would fail the request and
 /// tell the user nothing useful.
-async fn apply_log_level(identity: &str, server: &McpServerConfig, session: &McpSession) {
+///
+/// This runs inside the startup deadline. Logging is optional, so a server that
+/// never answers it must not push startup past the budget the user is told
+/// about; it spends the remaining budget and startup then times out as usual.
+async fn apply_log_level(
+    identity: &str,
+    server: &McpServerConfig,
+    session: &McpSession,
+    deadline: tokio::time::Instant,
+) {
     let Some(level) = server.log_level else {
         return;
     };
@@ -213,12 +227,19 @@ async fn apply_log_level(identity: &str, server: &McpServerConfig, session: &Mcp
         );
         return;
     }
-    if let Err(error) = session
+    let set_level = session
         .peer()
-        .set_level(SetLevelRequestParams::new(level.into()))
-        .await
-    {
-        tracing::warn!(server = %identity, error = %error, "MCP logging/setLevel failed");
+        .set_level(SetLevelRequestParams::new(level.into()));
+    match tokio::time::timeout_at(deadline, set_level).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            tracing::warn!(server = %identity, error = %error, "MCP logging/setLevel failed");
+        }
+        Err(_) => tracing::warn!(
+            server = %identity,
+            limit_seconds = MCP_SERVER_STARTUP_BUDGET.as_secs(),
+            "MCP logging/setLevel exhausted the server startup budget"
+        ),
     }
 }
 
@@ -424,11 +445,18 @@ async fn list_resources(catalog: &McpCatalogHandle) {
 }
 
 /// Send an MCP `ping`. rmcp exposes no typed helper for it on the client peer,
-/// so the request goes out through the generic path.
+/// so the request goes out through the generic path, under the request budget
+/// rmcp applies to the handle: an unanswered ping fails and tells the server the
+/// request was cancelled rather than holding the maintenance task.
 async fn ping(peer: &Peer<RoleClient>) -> Result<(), rmcp::service::ServiceError> {
-    peer.send_request(rmcp::model::ClientRequest::PingRequest(
-        rmcp::model::PingRequest::default(),
-    ))
+    let mut options = PeerRequestOptions::no_options();
+    options.timeout = Some(MCP_MAINTENANCE_REQUEST_BUDGET);
+    peer.send_cancellable_request(
+        rmcp::model::ClientRequest::PingRequest(rmcp::model::PingRequest::default()),
+        options,
+    )
+    .await?
+    .await_response()
     .await
     .map(|_| ())
 }
@@ -440,14 +468,31 @@ async fn ping(peer: &Peer<RoleClient>) -> Result<(), rmcp::service::ServiceError
 /// starts failing with a clear reason. A tool the server added cannot join the
 /// registry mid-session, so it is recorded for `/mcp` to report instead of
 /// being silently dropped.
+///
+/// rmcp's paginated helper takes no request options, so the whole refresh runs
+/// under one budget instead of rmcp's per-request one. That bounds a server that
+/// answers pages slowly as well as one that never answers at all.
 async fn refresh_tools(maintenance: &SessionMaintenance) {
-    let discovered = match maintenance.peer.list_all_tools().await {
-        Ok(discovered) => discovered,
-        Err(error) => {
+    let discovered = match tokio::time::timeout(
+        MCP_MAINTENANCE_REQUEST_BUDGET,
+        maintenance.peer.list_all_tools(),
+    )
+    .await
+    {
+        Ok(Ok(discovered)) => discovered,
+        Ok(Err(error)) => {
             tracing::warn!(
                 server = %maintenance.identity,
                 error = %error,
                 "MCP tools/list refresh failed"
+            );
+            return;
+        }
+        Err(_) => {
+            tracing::warn!(
+                server = %maintenance.identity,
+                limit_seconds = MCP_MAINTENANCE_REQUEST_BUDGET.as_secs(),
+                "MCP tools/list refresh exceeded its budget"
             );
             return;
         }

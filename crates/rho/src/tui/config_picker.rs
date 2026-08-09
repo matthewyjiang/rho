@@ -90,19 +90,14 @@ fn advisor_mode_badge(config: &Config, info: &super::RuntimeModelView) -> String
 
 fn advisor_model_badge(info: &super::RuntimeModelView) -> String {
     match info.internal_agents.get(crate::agent::ADVISOR_AGENT_ID) {
-        Some(selection) => {
-            rho_providers::provider::model_reference(&selection.provider, &selection.model)
-        }
+        Some(selection) => selection.display_reference(),
         None => "not selected".into(),
     }
 }
 
 fn advisor_reasoning_row(info: &super::RuntimeModelView) -> Option<(String, String, String)> {
     let selection = info.internal_agents.get(crate::agent::ADVISOR_AGENT_ID)?;
-    let capabilities = rho_providers::model::models_dev::current_reasoning_capabilities(
-        &selection.provider,
-        &selection.model,
-    );
+    let capabilities = crate::agent::internal_agent_reasoning_capabilities(selection);
     if capabilities == rho_providers::model::ReasoningCapabilities::NotConfigurable {
         return None;
     }

@@ -262,11 +262,15 @@ impl App {
 
             let (condition, provider, model, auth, reasoning) = {
                 let goal = self.goal.as_ref().expect("goal checked above");
-                let selection =
+                let configured =
                     self.internal_agent_model_selection(crate::agent::GOAL_JUDGE_AGENT_ID);
                 let reasoning = crate::agent::effective_internal_agent_reasoning(
                     crate::agent::GOAL_JUDGE_AGENT_ID,
-                    &selection,
+                    &configured,
+                );
+                let selection = super::model_actions::expect_rho_internal_agent_model(
+                    crate::agent::GOAL_JUDGE_AGENT_ID,
+                    configured,
                 );
                 (
                     goal.condition.clone(),

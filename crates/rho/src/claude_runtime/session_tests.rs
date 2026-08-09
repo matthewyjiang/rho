@@ -22,22 +22,6 @@ fn logged_in() -> ClaudeAuthStatus {
     }
 }
 
-fn exit_status(success: bool) -> std::process::ExitStatus {
-    #[cfg(unix)]
-    {
-        let program = if success { "true" } else { "false" };
-        std::process::Command::new(program).status().unwrap()
-    }
-    #[cfg(windows)]
-    {
-        let code = if success { "0" } else { "1" };
-        std::process::Command::new("cmd")
-            .args(["/C", &format!("exit {code}")])
-            .status()
-            .unwrap()
-    }
-}
-
 #[tokio::test]
 async fn cancelled_before_start_writes_stopped_status() {
     let dir = tempfile::tempdir().unwrap();
@@ -74,89 +58,6 @@ async fn cancelled_before_start_writes_stopped_status() {
     assert_eq!(status.state, RunState::Stopped);
     assert_eq!(status.provider.as_deref(), Some("claude-code"));
     assert_eq!(status.model.as_deref(), Some("opus"));
-}
-
-#[test]
-fn decide_final_outcome_matrix() {
-    use crate::claude_runtime::stream::{TerminalClassification, TerminalResult};
-
-    let success = TerminalResult {
-        classification: TerminalClassification::Success {
-            subtype: "success".into(),
-        },
-        result_text: Some("ok".into()),
-        error: None,
-        session_id: Some("s".into()),
-        num_turns: Some(1),
-        usage: None,
-        context: None,
-        total_cost_usd: None,
-        permission_denials: Vec::new(),
-        stop_reason: None,
-    };
-    let failure = TerminalResult {
-        classification: TerminalClassification::Failure {
-            subtype: "error_max_turns".into(),
-            is_error: true,
-        },
-        result_text: Some("hit max".into()),
-        error: Some("hit max".into()),
-        session_id: None,
-        num_turns: Some(3),
-        usage: None,
-        context: None,
-        total_cost_usd: None,
-        permission_denials: Vec::new(),
-        stop_reason: None,
-    };
-    let invalid = TerminalResult {
-        classification: TerminalClassification::Invalid {
-            reason: "missing subtype".into(),
-        },
-        result_text: None,
-        error: Some("missing subtype".into()),
-        session_id: None,
-        num_turns: None,
-        usage: None,
-        context: None,
-        total_cost_usd: None,
-        permission_denials: Vec::new(),
-        stop_reason: None,
-    };
-
-    let ok_status = exit_status(true);
-    let err_status = exit_status(false);
-
-    match decide_final_outcome(Some(&success), ok_status, "") {
-        FinalOutcome::Success(terminal) => assert!(terminal.classification.is_success()),
-        FinalOutcome::Failure { .. } => panic!("expected success"),
-    }
-    match decide_final_outcome(Some(&success), err_status, "") {
-        FinalOutcome::Failure { .. } => {}
-        FinalOutcome::Success(_) => panic!("nonzero exit must not succeed"),
-    }
-    match decide_final_outcome(Some(&failure), ok_status, "") {
-        FinalOutcome::Failure { prefer_detail, .. } => assert!(!prefer_detail),
-        FinalOutcome::Success(_) => panic!("failure terminal must not succeed"),
-    }
-    match decide_final_outcome(Some(&invalid), ok_status, "") {
-        FinalOutcome::Failure { .. } => {}
-        FinalOutcome::Success(_) => panic!("invalid terminal must not succeed"),
-    }
-    match decide_final_outcome(None, ok_status, "") {
-        FinalOutcome::Failure {
-            terminal: None,
-            detail,
-            ..
-        } => assert!(detail.contains("without a terminal result")),
-        _ => panic!("missing terminal must fail"),
-    }
-    match decide_final_outcome(None, err_status, "error: unknown option '--max-turns'") {
-        FinalOutcome::Failure { detail, .. } => {
-            assert!(detail.contains("max-turns"));
-        }
-        FinalOutcome::Success(_) => panic!("max-turns rejection must fail"),
-    }
 }
 
 #[cfg(unix)]

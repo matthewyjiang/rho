@@ -1,15 +1,17 @@
 use crate::{
     agent::{
-        effective_internal_agent_reasoning, internal_agent_requires_model, AgentCatalog,
-        AgentCatalogEntry, AgentOrigin, AgentRuntimeSpec, ModelPolicy, ModelSelection,
-        PromptPolicy, ToolPolicy,
+        effective_internal_agent_reasoning, internal_agent_accepts_claude_runtime,
+        internal_agent_requires_model, AgentCatalog, AgentCatalogEntry, AgentOrigin,
+        AgentRuntimeSpec, ModelPolicy, ModelSelection, PromptPolicy, ToolPolicy,
     },
-    config::InternalAgentModelConfig,
+    config::{InternalAgentModelConfig, InternalAgentTarget},
 };
 
 use super::{
-    model_picker::ConversationModelRow, picker_overlay::OverlayChrome, ComposerMode, PickerAction,
-    PickerBadge, PickerBadgeTone, PickerItem, PickerLayout, RuntimeModelView, UiPicker,
+    model_picker::{ClaudeCodeRows, ConversationModelRow, InternalAgentSelection},
+    picker_overlay::OverlayChrome,
+    ComposerMode, PickerAction, PickerBadge, PickerBadgeTone, PickerItem, PickerLayout,
+    RuntimeModelView, UiPicker,
 };
 
 /// Where an internal-agent model picker was opened from, which decides what a
@@ -37,8 +39,7 @@ pub(super) struct InternalAgentModelTarget {
 
 /// Picker inputs for one internal agent's current model.
 struct InternalAgentPickerModel {
-    provider: String,
-    model: String,
+    current: InternalAgentSelection,
     conversation_model: ConversationModelRow,
 }
 
@@ -135,10 +136,7 @@ fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> Strin
         .unwrap_or_else(|| "embedded in rho".to_string());
     let model = if entry.metadata.origin == AgentOrigin::Internal {
         match models.internal_agents.get(definition.id.as_str()) {
-            Some(selection) => format!(
-                "{}\nModel source: override",
-                rho_providers::provider::model_reference(&selection.provider, &selection.model)
-            ),
+            Some(selection) => format!("{}\nModel source: override", selection.display_reference()),
             None if internal_agent_requires_model(definition.id.as_str()) => {
                 "not selected\nModel source: none; this agent has no conversation fallback"
                     .to_string()
@@ -216,10 +214,18 @@ fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> Strin
         }
     };
 
-    let restrictions = if entry.metadata.origin == AgentOrigin::Internal {
-        "\n\nRestrictions\nreserved; cannot be overridden or delegated"
-    } else {
-        ""
+    // Every internal agent is reserved, but only some may run on Claude Code,
+    // so the line has to name this agent's own runtime freedom.
+    let restrictions = match entry.metadata.origin {
+        AgentOrigin::Internal if internal_agent_accepts_claude_runtime(definition.id.as_str()) => {
+            "\n\nRestrictions\nreserved; cannot be overridden, and runs on rho or claude code"
+        }
+        AgentOrigin::Internal => "\n\nRestrictions\nreserved; cannot be overridden or delegated",
+        AgentOrigin::BuiltIn
+        | AgentOrigin::AgentsHome
+        | AgentOrigin::RhoHome
+        | AgentOrigin::Project
+        | AgentOrigin::Workflow => "",
     };
     let inherit_section = inherit_claude_config
         .map(|value| format!("\n\nInherit Claude config\n{value}"))
@@ -229,6 +235,21 @@ fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> Strin
         "Description\n{}\n\nPrompt\n{prompt}\n\nSource\n{source}\n{path}\n\nRuntime\n{runtime}\n\nModel\n{model}\n\nReasoning\n{reasoning}\n\nTools\n{tools}{inherit_section}{restrictions}",
         definition.description
     )
+}
+
+/// Whether this agent's picker offers Claude Code.
+///
+/// Both halves must hold: the agent has to accept a delegated run, and the
+/// `claude` binary has to be installed. Offering rows Rho cannot run would
+/// move the failure to the first advisor call.
+fn claude_code_rows_for(id: &str) -> ClaudeCodeRows {
+    if internal_agent_accepts_claude_runtime(id)
+        && crate::claude_runtime::executable::resolve().is_ok()
+    {
+        ClaudeCodeRows::Offered
+    } else {
+        ClaudeCodeRows::Omitted
+    }
 }
 
 fn model_name(selection: &ModelSelection) -> String {
@@ -251,12 +272,14 @@ impl super::App {
         self.refresh_available_auths();
         let current = self.internal_agent_picker_model(id);
         let picker = super::model_picker::internal_agent_model_picker(
-            id,
-            &current.provider,
-            &current.model,
-            current.conversation_model,
-            &self.info.runtime.favorite_models,
-            &self.available_auths,
+            super::model_picker::InternalAgentPickerInputs {
+                agent_id: id,
+                current: current.current,
+                conversation_model: current.conversation_model,
+                claude_code: claude_code_rows_for(id),
+                favorite_models: &self.info.runtime.favorite_models,
+                available_auths: &self.available_auths,
+            },
         );
         self.internal_agent_model_target = Some(InternalAgentModelTarget {
             id: id.to_string(),
@@ -271,8 +294,17 @@ impl super::App {
         let requires_model = internal_agent_requires_model(id);
         match self.info.runtime.internal_agents.get(id) {
             Some(selection) => InternalAgentPickerModel {
-                provider: selection.provider.clone(),
-                model: selection.model.clone(),
+                current: match &selection.target {
+                    InternalAgentTarget::Rho(rho) => InternalAgentSelection::RhoModel {
+                        provider: rho.provider.clone(),
+                        model: rho.model.clone(),
+                    },
+                    InternalAgentTarget::ClaudeCli { model } => {
+                        InternalAgentSelection::ClaudeCode {
+                            model: model.clone(),
+                        }
+                    }
+                },
                 conversation_model: if requires_model {
                     ConversationModelRow::Omitted
                 } else {
@@ -280,13 +312,14 @@ impl super::App {
                 },
             },
             None if requires_model => InternalAgentPickerModel {
-                provider: String::new(),
-                model: String::new(),
+                current: InternalAgentSelection::Unset,
                 conversation_model: ConversationModelRow::Omitted,
             },
             None => InternalAgentPickerModel {
-                provider: self.info.runtime.provider.clone(),
-                model: self.info.runtime.model.clone(),
+                current: InternalAgentSelection::RhoModel {
+                    provider: self.info.runtime.provider.clone(),
+                    model: self.info.runtime.model.clone(),
+                },
                 conversation_model: ConversationModelRow::Offered { selected: true },
             },
         }

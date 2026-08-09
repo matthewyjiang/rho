@@ -246,6 +246,10 @@ fn remote_and_tool_policy_is_deterministic() {
         namespaced_tool_name("devtools/validator", "lint"),
         namespaced_tool_name("devtools_validator", "lint")
     );
+    assert_ne!(
+        namespaced_tool_name("devtools__validator", "lint"),
+        namespaced_tool_name("devtools", "validator__lint")
+    );
     let filter = McpToolFilter {
         allow: vec!["read".into(), "write".into()],
         deny: vec!["write".into()],

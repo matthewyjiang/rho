@@ -380,7 +380,10 @@ pub(super) fn namespaced_tool_name(server: &str, tool: &str) -> String {
         let already_safe = value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
-        if already_safe && !value.starts_with(ESCAPE_PREFIX) {
+        // `__` joins the two components, so a component holding one would make
+        // the exported name ambiguous: server `a__b` with tool `c` would read
+        // the same as server `a` with tool `b__c`.
+        if already_safe && !value.starts_with(ESCAPE_PREFIX) && !value.contains("__") {
             return value.to_string();
         }
 

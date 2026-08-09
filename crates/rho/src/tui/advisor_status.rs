@@ -25,10 +25,7 @@ impl AdvisorStatus {
         match (advisor_mode, model) {
             (false, _) => Self::Off,
             (true, Some(selection)) => Self::Reviewing {
-                model: rho_providers::provider::model_reference(
-                    &selection.provider,
-                    &selection.model,
-                ),
+                model: selection.display_reference(),
             },
             (true, None) => Self::MissingModel,
         }

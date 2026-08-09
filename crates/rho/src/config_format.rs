@@ -8,21 +8,14 @@ use {
     rho_providers::reasoning::ReasoningLevel,
 };
 
-use super::{provider_config::PersistedProviderConfigs, Config, EditTool, SearchProvider};
+use super::{
+    provider_config::PersistedProviderConfigs, Config, EditTool, InternalAgentModelConfig,
+    InternalAgentTarget, SearchProvider,
+};
 
 pub(super) fn write_config(path: &Path, config: &Config) -> anyhow::Result<()> {
     let serialized = toml::to_string_pretty(&GroupedConfig::from(config))?;
     crate::config_writer::write_atomically(path, &serialized)
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct InternalAgentModelConfig {
-    pub provider: String,
-    pub model: String,
-    pub auth: String,
-    /// Per-agent reasoning override. `None` keeps the agent definition default.
-    pub reasoning: Option<ReasoningLevel>,
-    pub(super) model_alias: Option<String>,
 }
 
 #[cfg(test)]
@@ -39,26 +32,6 @@ pub struct EffectiveModelConfig {
 pub enum EffectiveModelSource {
     Conversation,
     Override,
-}
-
-impl InternalAgentModelConfig {
-    pub fn new(provider: String, model: String, auth: String) -> Self {
-        Self {
-            provider,
-            model,
-            auth,
-            reasoning: None,
-            model_alias: None,
-        }
-    }
-
-    pub(super) fn current_alias<'a>(&'a self, aliases: &'a ModelAliases) -> Option<&'a str> {
-        let name = self.model_alias.as_deref()?;
-        let target = aliases.get(name)?;
-        (target.model == self.model
-            && target.provider.as_deref().unwrap_or(&self.provider) == self.provider)
-            .then_some(name)
-    }
 }
 
 #[derive(Serialize)]
@@ -110,14 +83,58 @@ struct CompactionSection {
     compact_target_percent: u8,
 }
 
+/// On-disk form of one `[internal_agents.<id>]` entry.
+///
+/// `runtime` is omitted for Rho selections, so files written before the Claude
+/// Code runtime existed round-trip unchanged. A `claude-cli` entry carries only
+/// the pass-through model: it has no Rho provider and no Rho auth.
 #[derive(Serialize)]
 struct PersistedInternalAgentModelConfig<'a> {
-    provider: &'a str,
-    model: Cow<'a, str>,
-    auth: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<Cow<'a, str>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auth: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning: Option<ReasoningLevel>,
 }
+
+impl<'a> PersistedInternalAgentModelConfig<'a> {
+    fn new(selection: &'a InternalAgentModelConfig, aliases: &'a ModelAliases) -> Self {
+        let (runtime, provider, model, auth) = match &selection.target {
+            InternalAgentTarget::Rho(rho) => (
+                None,
+                Some(rho.provider.as_str()),
+                Some(persisted_model_reference(
+                    selection.current_alias(aliases),
+                    &rho.model,
+                )),
+                Some(rho.auth.as_str()),
+            ),
+            InternalAgentTarget::ClaudeCli { model } => (
+                Some(CLAUDE_CLI_RUNTIME_KEY),
+                None,
+                model.as_deref().map(Cow::Borrowed),
+                None,
+            ),
+        };
+        Self {
+            runtime,
+            provider,
+            model,
+            auth,
+            reasoning: selection.reasoning,
+        }
+    }
+}
+
+/// `runtime` value that selects the Claude Code CLI for an internal agent.
+/// Matches the agent frontmatter vocabulary (`runtime: claude-cli`).
+pub const CLAUDE_CLI_RUNTIME_KEY: &str = "claude-cli";
+pub const RHO_RUNTIME_KEY: &str = "rho";
 
 #[derive(Serialize)]
 struct WebSearchConfig<'a> {
@@ -163,15 +180,7 @@ impl<'a> From<&'a Config> for GroupedConfig<'a> {
                 .map(|(id, selection)| {
                     (
                         id.as_str(),
-                        PersistedInternalAgentModelConfig {
-                            provider: &selection.provider,
-                            model: persisted_model_reference(
-                                selection.current_alias(&config.model_aliases),
-                                &selection.model,
-                            ),
-                            auth: &selection.auth,
-                            reasoning: selection.reasoning,
-                        },
+                        PersistedInternalAgentModelConfig::new(selection, &config.model_aliases),
                     )
                 })
                 .collect(),

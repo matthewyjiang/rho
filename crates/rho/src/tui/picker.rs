@@ -792,26 +792,36 @@ fn picker_haystack(item: &PickerItem) -> String {
     )
 }
 
+/// Fuzzy score for `needle` against `haystack`, or `None` when the needle is
+/// not a subsequence of it.
+///
+/// Scoring wants the occurrence with the best bonus, but taking that occurrence
+/// greedily can eat a character the rest of the needle still needs, and the
+/// walk then reports no match for text the row plainly contains. A backward
+/// pass fixes it by bounding each choice: [`fuzzy_latest_indices`] records, per
+/// needle character, the latest haystack index it can take while still leaving
+/// room for every character after it. The forward pass picks the best-scoring
+/// occurrence at or before that bound, so it ranks freely and can never strand,
+/// and every row is scored on one scale.
 pub(super) fn fuzzy_match_score(haystack: &str, needle: &str) -> Option<i64> {
-    let haystack = haystack.to_lowercase();
-    let needle = needle.to_lowercase();
-    let haystack_chars = haystack.chars().collect::<Vec<_>>();
+    let haystack = haystack.to_lowercase().chars().collect::<Vec<_>>();
+    let needle = needle.to_lowercase().chars().collect::<Vec<_>>();
+    let latest = fuzzy_latest_indices(&haystack, &needle)?;
+
     let mut search_start = 0;
     let mut first_match = None;
     let mut previous_match = None;
     let mut score = 0;
 
-    for needle_char in needle.chars() {
-        let candidate = haystack_chars[search_start..]
-            .iter()
-            .enumerate()
-            .filter(|(_, haystack_char)| **haystack_char == needle_char)
-            .map(|(offset, _)| search_start + offset)
-            .max_by_key(|index| fuzzy_character_bonus(&haystack_chars, *index, previous_match))?;
-        let index = candidate;
+    for (needle_index, needle_char) in needle.iter().enumerate() {
+        // Always some: `haystack[latest[needle_index]] == *needle_char` and the
+        // bound rises faster than `search_start`, so the range holds it.
+        let index = (search_start..=latest[needle_index])
+            .filter(|index| haystack[*index] == *needle_char)
+            .max_by_key(|index| fuzzy_character_bonus(&haystack, *index, previous_match))?;
         first_match.get_or_insert(index);
         score += 10;
-        score += fuzzy_character_bonus(&haystack_chars, index, previous_match);
+        score += fuzzy_character_bonus(&haystack, index, previous_match);
         previous_match = Some(index);
         search_start = index + 1;
     }
@@ -819,6 +829,23 @@ pub(super) fn fuzzy_match_score(haystack: &str, needle: &str) -> Option<i64> {
     let first_match = first_match.unwrap_or_default() as i64;
     let span = previous_match.unwrap_or_default() as i64 - first_match;
     Some(score - first_match - span)
+}
+
+/// Latest haystack index each needle character can occupy while leaving room
+/// for the rest of the needle, or `None` when the needle is not a subsequence.
+///
+/// This is the definitive match test, so a non-matching row - most rows while
+/// the user is typing - costs this one pass and no scoring work.
+fn fuzzy_latest_indices(haystack: &[char], needle: &[char]) -> Option<Vec<usize>> {
+    let mut latest = vec![0; needle.len()];
+    let mut bound = haystack.len();
+    for (needle_index, needle_char) in needle.iter().enumerate().rev() {
+        bound = haystack[..bound]
+            .iter()
+            .rposition(|haystack_char| haystack_char == needle_char)?;
+        latest[needle_index] = bound;
+    }
+    Some(latest)
 }
 
 fn fuzzy_character_bonus(haystack: &[char], index: usize, previous_match: Option<usize>) -> i64 {
