@@ -867,7 +867,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     ),
     Scenario::new(
         "screen_text_selection",
-        "Drag over composer text outside the history area and copy it",
+        "Click and drag in the composer to place the caret and replace selected text",
         DEFAULT_SIZE,
         SCREEN_TEXT_SELECTION_STEPS,
         false,

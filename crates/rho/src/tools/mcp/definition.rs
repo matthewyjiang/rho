@@ -58,9 +58,12 @@ impl McpToolDefinition {
                 input_schema: serde_json::Value::Object((*remote.input_schema).clone()),
             },
             expectation: ResultExpectation {
-                // The spec requires structured content whenever the tool
-                // declares a schema for it.
-                structured_content: remote.output_schema.is_some(),
+                // Keep the schema itself so successful structured content can
+                // be validated, not only checked for presence.
+                output_schema: remote
+                    .output_schema
+                    .as_ref()
+                    .map(|schema| serde_json::Value::Object((**schema).clone())),
             },
             presentation: McpToolPresentation {
                 read_only: annotations

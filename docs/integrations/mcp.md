@@ -117,7 +117,7 @@ Rho reads more than the name, description, and input schema:
 
 - **`title`** appears in the exported description, so the model sees the readable name next to the server identity.
 - **Annotations** (`readOnlyHint`, `destructiveHint`, `openWorldHint`) appear as `Server hint:` lines in the description and as notices on the tool card. They are hints from a server Rho does not control, so they never relax a permission or skip an approval. A read-only hint changes the card's icon and nothing else.
-- **`outputSchema`** sets a contract. A server that declares one must return `structuredContent`; a result without it fails the call rather than passing a half-answer to the model.
+- **`outputSchema`** sets a contract. A server that declares one must return `structuredContent` that validates against that schema; a missing or invalid result fails the call rather than passing a half-answer to the model.
 
 ### Results
 
@@ -132,7 +132,7 @@ Each content block is rendered for what it is, rather than serialized as a JSON 
 | `resource` (blob) | `[resource <uri>] [resource <mime>, <size>]` | the image, if it is one |
 | `resource_link` | the URI, name, and description | the same |
 
-Binary payloads never reach the model as base64. A returned image rides on the tool card as an asset, and the model gets a short descriptor it can reason about.
+Binary payloads never reach the model as base64. A returned image rides on the tool card as an asset, and the model gets a short descriptor it can reason about. The card shows one image, so Rho keeps only the first image that fits a 4 MiB encoded-byte budget and describes later or oversized images without retaining their bytes.
 
 When a result carries `structuredContent`, that JSON is what the model reads. Servers are asked to mirror structured content as text for older clients; Rho drops the mirrored copy so one result does not cost the context twice.
 

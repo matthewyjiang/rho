@@ -161,6 +161,7 @@ impl App {
                 self.handle_key(key, terminal, agent).await?;
             }
             Event::Paste(text) => {
+                self.input_ui.cancel_pointer_click_sequence();
                 self.flush_pending_paste_burst();
                 let text = normalize_paste(&text);
                 self.insert_external_paste(&text);
@@ -176,15 +177,19 @@ impl App {
                 self.clamp_history_scroll_for_terminal(terminal)?;
             }
             Event::Mouse(mouse) => {
+                self.flush_pending_paste_burst();
                 self.handle_mouse_event(mouse.kind, mouse.column, mouse.row, terminal)?;
             }
             Event::FocusGained => {
+                self.input_ui.cancel_pointer_click_sequence();
                 // Some Windows hosts drop application mouse tracking on focus
                 // changes; re-assert so wheel scrolling keeps working.
                 mouse_capture::reassert();
                 self.statusline.refresh_git_branch();
             }
             Event::FocusLost => {
+                self.input_ui.cancel_pointer_click_sequence();
+                self.input_ui.finalize_selection();
                 self.subagent_panel.clear_pointer_state();
             }
             Event::Key(_) => {}

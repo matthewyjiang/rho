@@ -13,6 +13,14 @@ use rmcp::model::{CallToolResult, ContentBlock, ResourceContents};
 
 use base64::Engine;
 
+/// Encoded image bytes one MCP result may retain for card display.
+///
+/// The interactive card shows one image. The TUI decode path allows up to
+/// 8 MiB of decoded pixels; encoded sources are smaller, so 4 MiB is a
+/// generous tripwire for one screenshot while still bounding memory an
+/// untrusted server can force Rho to hold on a single tool result.
+pub(super) const MAX_RETAINED_IMAGE_BYTES: usize = 4 * 1024 * 1024;
+
 /// What one MCP result becomes inside Rho.
 #[derive(Debug, Default, PartialEq)]
 pub(super) struct RenderedResult {
@@ -23,11 +31,18 @@ pub(super) struct RenderedResult {
 }
 
 /// What the tool's own declaration says its result must contain.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct ResultExpectation {
-    /// The server declared an `outputSchema`, so the spec requires it to return
-    /// `structuredContent` on success.
-    pub(super) structured_content: bool,
+    /// Declared `outputSchema`, when present. A successful result must include
+    /// `structuredContent` that validates against it.
+    pub(super) output_schema: Option<serde_json::Value>,
+}
+
+/// Tracks which image bytes this result still keeps for the card.
+#[derive(Default)]
+struct AssetBudget {
+    retained_bytes: usize,
+    retained_images: usize,
 }
 
 /// Render a successful or failed call. An MCP error result becomes a tool
@@ -35,26 +50,32 @@ pub(super) struct ResultExpectation {
 /// rather than a JSON envelope.
 pub(super) fn render(
     result: &CallToolResult,
-    expectation: ResultExpectation,
+    expectation: &ResultExpectation,
     max_output_bytes: usize,
 ) -> Result<RenderedResult, ToolError> {
     let failed = result.is_error.unwrap_or(false);
     let mut rendered = RenderedResult::default();
+    let mut budget = AssetBudget::default();
     let mut sections = Vec::new();
     for block in &result.content {
-        if let Some(section) = render_block(block, &mut rendered.assets) {
+        if let Some(section) = render_block(block, &mut rendered.assets, &mut budget) {
             sections.push(section);
         }
     }
 
     if let Some(structured) = &result.structured_content {
+        if !failed {
+            if let Some(schema) = &expectation.output_schema {
+                validate_structured_content(schema, structured)?;
+            }
+        }
         // Servers are asked to mirror structured content as text for clients
         // that predate it. Keeping both would spend the context twice.
         sections.retain(|section| !mirrors(section, structured));
         sections.push(
             serde_json::to_string_pretty(structured).unwrap_or_else(|_| structured.to_string()),
         );
-    } else if expectation.structured_content && !failed {
+    } else if expectation.output_schema.is_some() && !failed {
         return Err(ToolError::new(
             ToolErrorKind::Execution,
             "MCP server declared an output schema but returned no structured content",
@@ -76,16 +97,18 @@ pub(super) fn render(
 ///
 /// A prompt is a conversation the server suggests. Rho seeds it as one user
 /// message, because the composer submits one turn, so each message is labelled
-/// with the role the server assigned it.
+/// with the role the server assigned it. Binary blocks become descriptors only;
+/// a prompt is text the user is about to send, not a tool card.
 pub(super) fn render_prompt_messages(
     messages: &[rmcp::model::PromptMessage],
     max_output_bytes: usize,
 ) -> String {
     let mut assets = Vec::new();
+    let mut budget = AssetBudget::default();
     let sections = messages
         .iter()
         .filter_map(|message| {
-            let body = render_block(&message.content, &mut assets)?;
+            let body = render_block(&message.content, &mut assets, &mut budget)?;
             Some(match message.role {
                 rmcp::model::Role::User => body,
                 // Anything the server puts in the assistant's mouth is labelled,
@@ -97,6 +120,28 @@ pub(super) fn render_prompt_messages(
     rho_tools::tool::truncate(sections.join("\n\n"), max_output_bytes)
 }
 
+/// Fail when structured content does not match the tool's declared schema.
+fn validate_structured_content(
+    schema: &serde_json::Value,
+    structured: &serde_json::Value,
+) -> Result<(), ToolError> {
+    // No remote or file $ref resolution: the schema comes from an untrusted
+    // server, and validation must not become a fetch path.
+    let validator = jsonschema::validator_for(schema).map_err(|error| {
+        ToolError::new(
+            ToolErrorKind::Execution,
+            format!("MCP server declared an invalid output schema: {error}"),
+        )
+    })?;
+    if let Err(error) = validator.validate(structured) {
+        return Err(ToolError::new(
+            ToolErrorKind::Execution,
+            format!("MCP structured content failed the declared output schema: {error}"),
+        ));
+    }
+    Ok(())
+}
+
 /// Whether a text section is just the structured content written out, in either
 /// the compact or the pretty form servers commonly use.
 fn mirrors(section: &str, structured: &serde_json::Value) -> bool {
@@ -106,7 +151,11 @@ fn mirrors(section: &str, structured: &serde_json::Value) -> bool {
 
 /// Render one block, pushing any renderable binary onto `assets`. Returns the
 /// text this block contributes, if any.
-fn render_block(block: &ContentBlock, assets: &mut Vec<ToolAsset>) -> Option<String> {
+fn render_block(
+    block: &ContentBlock,
+    assets: &mut Vec<ToolAsset>,
+    budget: &mut AssetBudget,
+) -> Option<String> {
     match block {
         ContentBlock::Text(text) => Some(text.text.clone()),
         ContentBlock::Image(image) => Some(binary_section(
@@ -114,14 +163,33 @@ fn render_block(block: &ContentBlock, assets: &mut Vec<ToolAsset>) -> Option<Str
             &image.mime_type,
             &image.data,
             assets,
+            budget,
         )),
         ContentBlock::Audio(audio) => Some(binary_section(
             "audio",
             &audio.mime_type,
             &audio.data,
             assets,
+            budget,
         )),
-        ContentBlock::Resource(embedded) => Some(render_resource(&embedded.resource, assets)),
+        ContentBlock::Resource(embedded) => Some(match &embedded.resource {
+            ResourceContents::TextResourceContents { uri, text, .. } => {
+                format!("[resource {uri}]\n{text}")
+            }
+            ResourceContents::BlobResourceContents {
+                uri,
+                mime_type,
+                blob,
+                ..
+            } => {
+                let media_type = mime_type.as_deref().unwrap_or("application/octet-stream");
+                let descriptor = binary_section("resource", media_type, blob, assets, budget);
+                format!("[resource {uri}] {descriptor}")
+            }
+            // `ResourceContents` is non-exhaustive: a kind from a newer spec
+            // revision is named rather than dropped.
+            _ => "[resource of a kind Rho does not render]".into(),
+        }),
         ContentBlock::ResourceLink(link) => {
             let mut line = format!("[resource link {} \"{}\"]", link.uri, link.name);
             if let Some(description) = &link.description {
@@ -135,47 +203,40 @@ fn render_block(block: &ContentBlock, assets: &mut Vec<ToolAsset>) -> Option<Str
     }
 }
 
-/// Render one resource body, inlining text and describing binary.
-fn render_resource(resource: &ResourceContents, assets: &mut Vec<ToolAsset>) -> String {
-    match resource {
-        ResourceContents::TextResourceContents { uri, text, .. } => {
-            format!("[resource {uri}]\n{text}")
-        }
-        ResourceContents::BlobResourceContents {
-            uri,
-            mime_type,
-            blob,
-            ..
-        } => {
-            let media_type = mime_type.as_deref().unwrap_or("application/octet-stream");
-            let descriptor = binary_section("resource", media_type, blob, assets);
-            format!("[resource {uri}] {descriptor}")
-        }
-        // `ResourceContents` is non-exhaustive: a kind from a newer spec
-        // revision is named rather than dropped.
-        _ => "[resource of a kind Rho does not render]".into(),
-    }
-}
-
 /// Describe binary content and, when Rho can render it, keep the bytes as a
 /// card asset. The base64 payload never reaches the model: it would be a large
 /// unreadable string that no model can act on.
+///
+/// The card shows one image, so only the first image that fits the retained
+/// budget is kept. Later or oversized images stay as descriptors only.
 fn binary_section(
     label: &str,
     media_type: &str,
     encoded: &str,
     assets: &mut Vec<ToolAsset>,
+    budget: &mut AssetBudget,
 ) -> String {
-    let decoded = base64::engine::general_purpose::STANDARD
-        .decode(encoded)
-        .ok();
-    let size = decoded.as_ref().map(Vec::len);
-    if let Some(bytes) = decoded {
-        if media_type.starts_with("image/") {
-            assets.push(ToolAsset::new(media_type.to_string(), bytes));
-        }
+    let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(encoded) else {
+        return format!("[{label} {media_type}, not valid base64]");
+    };
+    let size = bytes.len();
+    let descriptor = format!("[{label} {media_type}, {}]", byte_size(size));
+    if !media_type.starts_with("image/") {
+        return descriptor;
     }
-    binary_descriptor(label, media_type, size)
+    if budget.retained_images > 0 {
+        return format!("{descriptor} [not shown: card keeps only the first image]");
+    }
+    if size > MAX_RETAINED_IMAGE_BYTES {
+        return format!(
+            "{descriptor} [not retained: exceeds {} asset budget]",
+            byte_size(MAX_RETAINED_IMAGE_BYTES)
+        );
+    }
+    budget.retained_images += 1;
+    budget.retained_bytes = budget.retained_bytes.saturating_add(size);
+    assets.push(ToolAsset::new(media_type.to_string(), bytes));
+    descriptor
 }
 
 /// The one line Rho uses to stand in for binary it cannot show as text.

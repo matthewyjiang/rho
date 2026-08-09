@@ -154,7 +154,7 @@ fn collapsed_paste_marker() -> String {
 fn minimum_terminal_layout_keeps_composer_visible() {
     use ratatui::layout::Rect;
 
-    let app = test_app();
+    let mut app = test_app();
     let area = Rect::new(
         0,
         0,

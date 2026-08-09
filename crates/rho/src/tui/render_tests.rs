@@ -293,6 +293,19 @@ fn visual_cursor_index_maps_row_and_column_to_char_index() {
     }
 }
 
+// Covers: click/hit-test mapping uses the editable visual lines (including the
+// trailing empty row after a full-width wrap) so caret placement matches paint.
+// Owner: pure unit (composer layout math)
+#[test]
+fn input_char_index_at_position_matches_editable_layout() {
+    assert_eq!(input_char_index_at_position("hello", 80, 0, 2), 2);
+    assert_eq!(input_char_index_at_position("hello", 80, 0, 99), 5);
+    // Soft-wrapped second row.
+    assert_eq!(input_char_index_at_position("abcdefghij", 5, 1, 2), 7);
+    // Full-width first visual line leaves an empty editable row for the caret.
+    assert_eq!(input_char_index_at_position("abcde", 5, 1, 0), 5);
+}
+
 // Covers: composer soft-wraps on word boundaries instead of mid-word hard cuts.
 // Owner: pure unit (composer layout math)
 #[test]

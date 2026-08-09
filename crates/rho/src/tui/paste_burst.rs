@@ -145,6 +145,30 @@ pub(super) fn next_word_boundary(input: &str, cursor: usize) -> usize {
     index
 }
 
+/// Character range of the word (or whitespace run) under `index`.
+///
+/// Double-click selection uses the same whitespace split as arrow-word moves:
+/// a contiguous non-whitespace token, or a contiguous whitespace run when the
+/// pointer lands on space. An empty input or past-end empty buffer yields `0..0`.
+pub(super) fn word_range_at(input: &str, index: usize) -> std::ops::Range<usize> {
+    let chars: Vec<char> = input.chars().collect();
+    if chars.is_empty() {
+        return 0..0;
+    }
+    let len = chars.len();
+    let probe = if index >= len { len - 1 } else { index };
+    let class_is_whitespace = chars[probe].is_whitespace();
+    let mut start = probe;
+    while start > 0 && chars[start - 1].is_whitespace() == class_is_whitespace {
+        start -= 1;
+    }
+    let mut end = probe + 1;
+    while end < len && chars[end].is_whitespace() == class_is_whitespace {
+        end += 1;
+    }
+    start..end
+}
+
 pub(super) fn normalize_paste(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
 }
@@ -273,5 +297,19 @@ mod tests {
             paste_marker_for(&"x".repeat(PASTE_COLLAPSE_MIN_CHARS)),
             None
         );
+    }
+
+    // Covers: double-click word select must cover the token under the caret,
+    // including whitespace runs when the pointer lands on space.
+    // Owner: pure unit (word geometry)
+    #[test]
+    fn word_range_at_selects_token_or_whitespace_run() {
+        assert_eq!(word_range_at("", 0), 0..0);
+        assert_eq!(word_range_at("hello world", 1), 0..5);
+        assert_eq!(word_range_at("hello world", 4), 0..5);
+        assert_eq!(word_range_at("hello world", 5), 5..6);
+        assert_eq!(word_range_at("hello world", 7), 6..11);
+        assert_eq!(word_range_at("hello world", 11), 6..11);
+        assert_eq!(word_range_at("a  b", 1), 1..3);
     }
 }

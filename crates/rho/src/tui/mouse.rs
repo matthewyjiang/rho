@@ -1,10 +1,11 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{MouseButton, MouseEventKind};
 use ratatui::{backend::Backend, layout::Rect, Terminal};
 
 use super::{
     copy_interaction::{code_block_copy_target_at, selection_position, selection_position_clamped},
+    paste_burst::word_range_at,
     picker_input::PickerMouseEvent,
     render::tool_entry_lines,
     text_selection::{screen_lines, CopyNotice, TextSelection},
@@ -12,11 +13,15 @@ use super::{
     App, ComposerMode,
 };
 
+/// Max gap between presses that still counts as a double-click in the composer.
+const COMPOSER_DOUBLE_CLICK: Duration = Duration::from_millis(500);
+
 impl App {
     /// Drops both the history-anchored and screen-space text selections.
     pub(super) fn clear_selections(&mut self) {
         self.history.clear_text_selection();
         self.screen_selection = None;
+        self.input_ui.cancel_pointer_click_sequence();
     }
 
     fn mouse_history_view(&self, history_content: Rect, history_len: usize) -> (Rect, usize) {
@@ -39,6 +44,7 @@ impl App {
         let now = Instant::now();
         match kind {
             MouseEventKind::ScrollUp => {
+                self.input_ui.cancel_pointer_click_sequence();
                 if self.route_picker_mouse(
                     PickerMouseEvent::Wheel(-1),
                     column,
@@ -61,6 +67,7 @@ impl App {
                 );
             }
             MouseEventKind::ScrollDown => {
+                self.input_ui.cancel_pointer_click_sequence();
                 if self.route_picker_mouse(
                     PickerMouseEvent::Wheel(1),
                     column,
@@ -90,6 +97,8 @@ impl App {
                     size.width,
                     size.height,
                 ) {
+                    self.input_ui.clear_selection();
+                    self.input_ui.cancel_pointer_click_sequence();
                     return Ok(());
                 }
                 self.screen_selection = None;
@@ -113,11 +122,15 @@ impl App {
                     })
                     .flatten();
                 if let Some(target) = subagent_target {
+                    self.input_ui.clear_selection();
+                    self.input_ui.cancel_pointer_click_sequence();
                     self.history.clear_text_selection();
                     self.history.set_scrollbar_drag(None);
                     self.subagent_panel.set_pressed(Some(&target.run_id));
                     self.subagent_panel.set_hovered(Some(&target.run_id));
                 } else if let Some(scrollbar) = scrollbar {
+                    self.input_ui.clear_selection();
+                    self.input_ui.cancel_pointer_click_sequence();
                     self.subagent_panel.clear_pointer_state();
                     self.history.clear_text_selection();
                     self.history.scroll_chrome_mut().begin_scrollbar_drag(
@@ -129,21 +142,66 @@ impl App {
                 } else if layout.jump_to_bottom.is_some_and(|rect| {
                     rect.contains(ratatui::layout::Position { x: column, y: row })
                 }) {
+                    self.input_ui.clear_selection();
+                    self.input_ui.cancel_pointer_click_sequence();
                     self.subagent_panel.clear_pointer_state();
                     self.history.clear_text_selection();
                     self.history.set_scrollbar_drag(None);
                     self.scroll_history_to_bottom();
                 } else if let Some(target) = code_target {
+                    self.input_ui.clear_selection();
+                    self.input_ui.cancel_pointer_click_sequence();
                     self.subagent_panel.clear_pointer_state();
                     self.history.clear_text_selection();
                     self.copy_text(&target.text, now);
+                } else if self.pointer_in_composer(&layout, column, row) {
+                    // Composer owns the pointer: place the caret / start an
+                    // editable selection instead of screen-copy drag.
+                    self.subagent_panel.clear_pointer_state();
+                    self.history.clear_text_selection();
+                    self.history.set_scrollbar_drag(None);
+                    self.reset_input_history_navigation();
+                    self.input_ui.clear_transient_edit_state();
+                    if let Some(index) =
+                        self.composer_text_char_index_at(&layout, column, row, /*clamp*/ false)
+                    {
+                        let index = self.composer_caret_index(index);
+                        let double_click = self.input_ui.register_pointer_click(
+                            now,
+                            column,
+                            row,
+                            index,
+                            COMPOSER_DOUBLE_CLICK,
+                        );
+                        if double_click {
+                            let range = self
+                                .input_ui
+                                .paste_segments()
+                                .iter()
+                                .find(|segment| segment.start <= index && index < segment.end())
+                                .map(|segment| segment.start..segment.end())
+                                .unwrap_or_else(|| word_range_at(self.input_ui.text(), index));
+                            self.input_ui.select_range(range.start, range.end);
+                            self.input_ui.set_cursor(range.end);
+                        } else {
+                            self.input_ui.begin_selection(index);
+                            self.input_ui.set_cursor(index);
+                        }
+                    } else {
+                        self.input_ui.clear_selection();
+                        self.input_ui.cancel_pointer_click_sequence();
+                    }
                 } else if let Some(position) =
                     selection_position(history, history_start, column, row)
                 {
+                    self.input_ui.clear_selection();
+                    self.input_ui.cancel_pointer_click_sequence();
                     self.subagent_panel.clear_pointer_state();
                     self.history.set_scrollbar_drag(None);
                     *self.history.text_selection_mut() = Some(TextSelection::new(position));
                 } else {
+                    self.input_ui.clear_selection();
+                    self.input_ui.cancel_pointer_click_sequence();
                     self.subagent_panel.clear_pointer_state();
                     self.history.clear_text_selection();
                     self.screen_selection =
@@ -151,6 +209,7 @@ impl App {
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
+                self.input_ui.cancel_pointer_click_sequence();
                 if self.route_picker_mouse(
                     PickerMouseEvent::Drag,
                     column,
@@ -168,6 +227,14 @@ impl App {
                     self.history.set_hovered_code_block_copy(None);
                     if let Some(scrollbar) = layout.history_scrollbar {
                         self.history.scroll_chrome_mut().drag_to(scrollbar, row);
+                    }
+                } else if self.input_ui.selection_dragging() {
+                    if let Some(index) =
+                        self.composer_text_char_index_at(&layout, column, row, /*clamp*/ true)
+                    {
+                        let index = self.composer_selection_focus(index);
+                        self.input_ui.update_selection(index);
+                        self.input_ui.set_cursor(index);
                     }
                 } else if self.screen_selection.is_some() {
                     if let (Some(selection), Some(position)) = (
@@ -204,6 +271,7 @@ impl App {
                 }
                 let pressed_subagent = self.subagent_panel.pressed_run_id().map(str::to_owned);
                 let was_scrollbar_drag = self.history.scrollbar_drag().is_some();
+                let composer_selecting = self.input_ui.selection_dragging();
                 self.history.set_scrollbar_drag(None);
                 let layout = self.screen_layout(screen, now);
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
@@ -229,10 +297,25 @@ impl App {
                         .map(|target| target.line),
                 );
                 if let Some(target) = activate_subagent {
+                    self.input_ui.clear_selection();
                     self.history.clear_text_selection();
                     self.activate_subagent_row(&target, now);
                 } else if was_scrollbar_drag {
+                    self.input_ui.clear_selection();
                     self.history.clear_text_selection();
+                } else if composer_selecting {
+                    if let Some(index) =
+                        self.composer_text_char_index_at(&layout, column, row, /*clamp*/ true)
+                    {
+                        let index = self.composer_selection_focus(index);
+                        self.input_ui.update_selection(index);
+                        self.input_ui.set_cursor(index);
+                    }
+                    let focus = self.input_ui.selection_focus();
+                    self.input_ui.finalize_selection();
+                    if let Some(focus) = focus {
+                        self.input_ui.set_cursor(focus);
+                    }
                 } else if let Some(mut selection) = self.history.text_selection_mut().take() {
                     let release_position =
                         selection_position_clamped(history, history_start, column, row);
@@ -278,6 +361,7 @@ impl App {
             }
             MouseEventKind::Moved if self.last_mouse_position == Some((column, row)) => {}
             MouseEventKind::Moved => {
+                self.input_ui.cancel_pointer_click_sequence();
                 self.last_mouse_position = Some((column, row));
                 if self.route_picker_mouse(
                     PickerMouseEvent::Move,
@@ -316,7 +400,9 @@ impl App {
             | MouseEventKind::Drag(MouseButton::Right)
             | MouseEventKind::Drag(MouseButton::Middle)
             | MouseEventKind::ScrollLeft
-            | MouseEventKind::ScrollRight => {}
+            | MouseEventKind::ScrollRight => {
+                self.input_ui.cancel_pointer_click_sequence();
+            }
         }
         Ok(())
     }
