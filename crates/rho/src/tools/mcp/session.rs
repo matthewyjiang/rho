@@ -87,21 +87,30 @@ pub(super) struct McpSessionServices {
 ///
 /// Rho only asks for what a server said it has. Listing prompts on a server
 /// that declares none is a guaranteed error and a wasted round-trip in the
-/// startup budget.
+/// startup budget, and the same holds for argument completion, which is asked
+/// for while someone is still typing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct McpServerOffers {
     pub(super) prompts: bool,
     pub(super) resources: bool,
+    pub(super) completions: bool,
 }
 
 impl McpServerOffers {
     fn from_session(session: &McpSession) -> Self {
-        let Some(info) = session.peer_info() else {
-            return Self::default();
-        };
+        session
+            .peer_info()
+            .map(|info| Self::from_capabilities(&info.capabilities))
+            .unwrap_or_default()
+    }
+
+    /// Read straight from the declared capabilities, so the mapping can be
+    /// checked without standing up a session.
+    fn from_capabilities(capabilities: &rmcp::model::ServerCapabilities) -> Self {
         Self {
-            prompts: info.capabilities.prompts.is_some(),
-            resources: info.capabilities.resources.is_some(),
+            prompts: capabilities.prompts.is_some(),
+            resources: capabilities.resources.is_some(),
+            completions: capabilities.completions.is_some(),
         }
     }
 }

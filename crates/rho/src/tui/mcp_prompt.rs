@@ -82,7 +82,7 @@ impl App {
 
 /// Split `mcp:<server>:<prompt>` into its parts. Server identities cannot
 /// contain `:`, so the first separator after the prefix is unambiguous.
-fn parse_command(command: &str) -> Option<(String, String)> {
+pub(super) fn parse_command(command: &str) -> Option<(String, String)> {
     let rest = command
         .get(..MCP_PROMPT_PREFIX.len())
         .filter(|prefix| prefix.eq_ignore_ascii_case(MCP_PROMPT_PREFIX))

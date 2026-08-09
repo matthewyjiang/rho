@@ -17,6 +17,14 @@ impl App {
                 .collect();
         }
 
+        // Argument values belong to a command the user has already settled, so
+        // they are offered where command matching has nothing left to say
+        // rather than mixed into the command list.
+        let mcp_argument_choices = self.mcp_argument_choices();
+        if !mcp_argument_choices.is_empty() {
+            return mcp_argument_choices;
+        }
+
         let Some(prefix) = commands::command_prefix(self.input_ui.text()) else {
             return Vec::new();
         };
@@ -175,6 +183,17 @@ impl App {
                 self.input_ui
                     .set_submission_mode(super::InputSubmissionMode::ParseCommands);
                 complete_slash_command(self.input_ui.text(), self.input_ui.cursor(), &choice.name)
+            }
+            // Only the argument's own range is rewritten: the command and every
+            // other argument already typed stay exactly as they are.
+            CommandChoiceKind::McpPromptArgument { value } => {
+                self.input_ui
+                    .set_submission_mode(super::InputSubmissionMode::ParseCommands);
+                super::mcp_argument_completion::replace_value(
+                    self.input_ui.text(),
+                    value,
+                    &choice.name,
+                )
             }
         };
         self.input_ui.set_text_and_cursor(input, cursor);

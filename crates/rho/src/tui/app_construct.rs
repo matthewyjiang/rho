@@ -115,6 +115,8 @@ impl App {
             screen_selection: None,
             mcp_report,
             mcp_catalog,
+            mcp_argument_completions:
+                super::mcp_argument_completion::McpArgumentCompletions::default(),
             plugins_report,
         };
         if let Some(status) = initial_status {

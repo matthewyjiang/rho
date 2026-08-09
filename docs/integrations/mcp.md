@@ -168,6 +168,27 @@ A prompt with several arguments reads whitespace-separated pairs:
 
 Leaving out a required argument reports which one is missing and starts no turn.
 
+### Argument suggestions
+
+A server that also declares the `completions` capability can suggest values for
+the argument you are filling in. Put the cursor in a value and the palette
+offers what the server sent back:
+
+```text
+/mcp:tickets:triage id=4821 severity=hi
+                                    ^ high, highest
+```
+
+Picking one replaces that value alone. The command and any other arguments you
+have already typed stay as they are.
+
+The suggestion is a round-trip, so it arrives a moment after the keystroke that
+asked for it. Rho keeps one request in flight at a time and reuses answers it
+already holds, so typing fast costs one request per reply rather than one per
+character. A server that declares no `completions` capability is never asked,
+and a request that fails or arrives late simply leaves the palette empty:
+nothing blocks, and no error interrupts what you are writing.
+
 Rho fetches the prompt when you submit, not when you complete the command, because `prompts/get` is a round-trip to the server. The returned messages become one user turn. A message the server marked as coming from the assistant is labelled as such, so the model reads it as prior context rather than as a request from you. Prompt text is capped by `max_output_bytes`, like tool output.
 ## Resources
 
