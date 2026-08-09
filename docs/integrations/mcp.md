@@ -226,7 +226,7 @@ one large resource cannot swamp the turn it joins.
 There is no marketplace in Rho. Configure servers in the selected config file, then inspect config or live load status:
 
 - **Interactive:** `/mcp` lists configured servers, transport, status, errors, exported tool names, and any prompts and resources the server offers, for the current session. `/doctor` includes an MCP health row.
-- **CLI:** `rho mcp list` prints configured servers from the selected config and plugins without starting them. `rho mcp show <id>` prints one server. Pass `--connect` on either command to start enabled servers and report live status and discovered tools. Both accept `--json`.
+- **CLI:** `rho mcp list` prints configured servers from the selected config and plugins without starting them. `rho mcp show <id>` prints one server, including its prompts and resources when started with `--connect`. Pass `--connect` on either command to start enabled servers and report live status and discovered tools. Both accept `--json`.
 
 Use `/mcp` when you already have a session open. Use `rho mcp list` from a shell to verify config before starting the TUI, and `rho mcp list --connect` when you need a live probe.
 

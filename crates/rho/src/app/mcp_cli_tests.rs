@@ -23,6 +23,6 @@ fn show_missing_identity_lists_known_servers() {
         })],
     };
     // Behavior: unknown id fails closed; a known id succeeds.
-    assert!(print_show(&report, "missing", false).is_err());
-    assert!(print_show(&report, "filesystem", false).is_ok());
+    assert!(print_show(&report, &McpCatalog::default(), "missing", false).is_err());
+    assert!(print_show(&report, &McpCatalog::default(), "filesystem", false).is_ok());
 }

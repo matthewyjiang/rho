@@ -5,7 +5,7 @@ use serde::Serialize;
 use crate::{
     cli::{Cli, McpCommand},
     tools::mcp::{
-        McpConnectOutcome, McpLoadMode, McpRoots, McpServerReport, McpServerStatus,
+        McpCatalog, McpConnectOutcome, McpLoadMode, McpRoots, McpServerReport, McpServerStatus,
         McpSessionOptions, McpSessionPlan, McpSessionReport, McpTransportSummary,
     },
 };
@@ -37,7 +37,9 @@ pub(super) async fn run(command: &McpCommand, cli: &Cli) -> anyhow::Result<()> {
     .await;
     let result = match command {
         McpCommand::List { json, .. } => print_list(&outcome.report, *json),
-        McpCommand::Show { id, json, .. } => print_show(&outcome.report, id, *json),
+        McpCommand::Show { id, json, .. } => {
+            print_show(&outcome.report, &outcome.catalog, id, *json)
+        }
     };
     if let Some(bundle) = outcome.bundle {
         bundle.close().await;
@@ -55,6 +57,27 @@ struct McpListDocument<'a> {
 struct McpShowDocument<'a> {
     mode: McpLoadMode,
     server: &'a McpServerReport,
+    /// Empty without `--connect`, because prompts and resources are session
+    /// state rather than configuration.
+    prompts: Vec<McpPromptEntry<'a>>,
+    resources: Vec<McpResourceEntry<'a>>,
+}
+
+#[derive(Serialize)]
+struct McpPromptEntry<'a> {
+    name: &'a str,
+    command: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+struct McpResourceEntry<'a> {
+    uri: &'a str,
+    name: &'a str,
+    templated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mime_type: Option<&'a str>,
 }
 
 fn print_list(report: &McpSessionReport, json: bool) -> anyhow::Result<()> {
@@ -112,7 +135,12 @@ fn print_list(report: &McpSessionReport, json: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn print_show(report: &McpSessionReport, id: &str, json: bool) -> anyhow::Result<()> {
+fn print_show(
+    report: &McpSessionReport,
+    catalog: &McpCatalog,
+    id: &str,
+    json: bool,
+) -> anyhow::Result<()> {
     let Some(server) = report.find(id) else {
         let known = report
             .servers
@@ -126,12 +154,40 @@ fn print_show(report: &McpSessionReport, id: &str, json: bool) -> anyhow::Result
         anyhow::bail!("no MCP server named '{id}'; known: {known}");
     };
 
+    let prompts = catalog
+        .prompts()
+        .into_iter()
+        .filter(|prompt| prompt.server == id)
+        .collect::<Vec<_>>();
+    let resources = catalog
+        .resources()
+        .into_iter()
+        .filter(|resource| resource.server == id)
+        .collect::<Vec<_>>();
+
     if json {
         println!(
             "{}",
             serde_json::to_string_pretty(&McpShowDocument {
                 mode: report.mode,
                 server,
+                prompts: prompts
+                    .iter()
+                    .map(|prompt| McpPromptEntry {
+                        name: &prompt.name,
+                        command: format!("/{}", prompt.command_name()),
+                        description: prompt.description.as_deref(),
+                    })
+                    .collect(),
+                resources: resources
+                    .iter()
+                    .map(|resource| McpResourceEntry {
+                        uri: &resource.uri,
+                        name: &resource.name,
+                        templated: resource.templated,
+                        mime_type: resource.mime_type.as_deref(),
+                    })
+                    .collect(),
             })?
         );
         return Ok(());
@@ -159,6 +215,23 @@ fn print_show(report: &McpSessionReport, id: &str, json: bool) -> anyhow::Result
     }
     if server.collision_skipped_count() > 0 {
         println!("collision_skipped: {}", server.collision_skipped_count());
+    }
+    if !prompts.is_empty() {
+        println!("prompts: {}", prompts.len());
+        for prompt in &prompts {
+            println!("  /{}", prompt.command_name());
+        }
+    }
+    if !resources.is_empty() {
+        println!("resources: {}", resources.len());
+        for resource in &resources {
+            let kind = if resource.templated {
+                " (template)"
+            } else {
+                ""
+            };
+            println!("  {} ({}){kind}", resource.uri, resource.name);
+        }
     }
     Ok(())
 }
