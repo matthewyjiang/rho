@@ -330,10 +330,9 @@ pub(super) async fn list_offers(catalog: &McpCatalogHandle, offers: McpServerOff
 
 async fn list_prompts(catalog: &McpCatalogHandle) {
     match catalog.peer().list_all_prompts().await {
-        Ok(prompts) => catalog.set_prompts(catalog::prompts_from_remote(
-            catalog.identity(),
-            prompts,
-        )),
+        Ok(prompts) => {
+            catalog.set_prompts(catalog::prompts_from_remote(catalog.identity(), prompts))
+        }
         Err(error) => tracing::warn!(
             server = %catalog.identity(),
             error = %error,

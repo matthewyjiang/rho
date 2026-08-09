@@ -398,7 +398,7 @@ pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::
                     info,
                     herdr_graphics,
                     agent.mcp_report().clone(),
-            agent.mcp_catalog().clone(),
+                    agent.mcp_catalog().clone(),
                     agent.plugins_report().clone(),
                 );
                 app.terminal_session = Some(TerminalSession::acquire());

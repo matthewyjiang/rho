@@ -40,7 +40,12 @@ impl App {
 
         // Prompt text is bounded by the same cap as tool output, so one very
         // large prompt cannot swamp the turn it starts.
-        let max_output_bytes = self.info.services.config_repository.load()?.max_output_bytes;
+        let max_output_bytes = self
+            .info
+            .services
+            .config_repository
+            .load()?
+            .max_output_bytes;
         let arguments = prompt.parse_arguments(trailing);
         let missing = prompt.missing_arguments(&arguments);
         if !missing.is_empty() {

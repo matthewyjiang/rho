@@ -341,7 +341,10 @@ impl McpCatalogHandle {
 }
 
 /// Convert one server's `prompts/list` page into catalog entries.
-pub(super) fn prompts_from_remote(identity: &str, remote: Vec<rmcp::model::Prompt>) -> Vec<McpPrompt> {
+pub(super) fn prompts_from_remote(
+    identity: &str,
+    remote: Vec<rmcp::model::Prompt>,
+) -> Vec<McpPrompt> {
     let mut prompts = remote
         .into_iter()
         .map(|prompt| McpPrompt {

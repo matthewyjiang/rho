@@ -28,11 +28,11 @@ pub(crate) mod session;
 pub(crate) mod tool;
 pub(crate) mod validate;
 
+pub(crate) use catalog::{McpCatalog, McpPrompt, McpResource};
 pub(crate) use report::{
     McpLoadMode, McpServerReport, McpServerStatus, McpSessionReport, McpToolReport,
     McpTransportSummary,
 };
-pub(crate) use catalog::{McpCatalog, McpPrompt, McpResource};
 pub(crate) use roots::McpRoots;
 pub(crate) use validate::{
     parse_remote_url, validate_environment_header_names, validate_identity,
@@ -309,7 +309,9 @@ impl McpBundleBuilder {
             });
         }
 
-        let catalog = self.catalog.register(identity.clone(), session.peer().clone());
+        let catalog = self
+            .catalog
+            .register(identity.clone(), session.peer().clone());
         // Prompts and resources are listed before the session goes live, so the
         // first `/` or `@` a user types already matches.
         session::list_offers(&catalog, offers).await;
