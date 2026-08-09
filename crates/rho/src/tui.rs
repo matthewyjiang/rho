@@ -473,12 +473,20 @@ struct App {
     media_attach_tasks: Vec<clipboard::MediaAttachTask>,
     pending_subagent_attaches: Vec<PendingSubagentAttach>,
     last_mouse_position: Option<(u16, u16)>,
+    /// Last free-text composer press, used to detect double-click word select.
+    last_composer_click: Option<ComposerClick>,
     /// Screen-space drag selection for text outside the history area.
     screen_selection: Option<TextSelection>,
     /// MCP inventory for `/mcp` and `/doctor` (session snapshot from tool assembly).
     mcp_report: crate::tools::mcp::McpSessionReport,
-    /// Agent Plugins load report captured at session start for `/doctor`.
     plugins_report: crate::plugins::PluginLoadReport,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ComposerClick {
+    at: std::time::Instant,
+    column: u16,
+    row: u16,
 }
 
 struct PendingSubagentQuestionnaire {

@@ -86,3 +86,58 @@ fn editing_from_inside_collapsed_paste_removes_the_whole_item() {
     assert_eq!(app.input_ui.cursor(), 0);
     assert!(app.input_ui.paste_segments().is_empty());
 }
+
+// Covers: typing over a non-empty composer selection replaces the span.
+// Owner: pure unit (composer edit ops)
+#[test]
+fn typing_replaces_composer_selection() {
+    let mut app = test_app();
+    app.insert_input_text("grab this text");
+    app.input_ui.begin_selection(5);
+    app.input_ui.update_selection(9); // "this"
+    app.input_ui.finalize_selection();
+
+    app.insert_input_char('X');
+
+    assert_eq!(app.input_ui.text(), "grab X text");
+    assert_eq!(app.input_ui.cursor(), 6);
+    assert!(app.input_ui.selection_range().is_none());
+}
+
+// Covers: backspace/delete over a selection remove the span once.
+// Owner: pure unit (composer edit ops)
+#[test]
+fn delete_and_backspace_remove_composer_selection() {
+    let mut app = test_app();
+    app.insert_input_text("abcdef");
+    app.input_ui.begin_selection(2);
+    app.input_ui.update_selection(5); // "cde"
+    app.input_ui.finalize_selection();
+    app.backspace_input();
+    assert_eq!(app.input_ui.text(), "abf");
+
+    app.input_ui.clear_text();
+    app.input_ui.set_cursor(0);
+    app.insert_input_text("abcdef");
+    app.input_ui.begin_selection(2);
+    app.input_ui.update_selection(5); // "cde"
+    app.input_ui.finalize_selection();
+    app.delete_input();
+    assert_eq!(app.input_ui.text(), "abf");
+}
+
+// Covers: double-click word select spans the token under the caret.
+// Owner: pure unit (composer selection ops)
+#[test]
+fn select_range_marks_composer_word_selection() {
+    let mut app = test_app();
+    app.insert_input_text("grab this text");
+    let range = super::super::paste_burst::word_range_at(app.input_ui.text(), 7);
+    app.input_ui.select_range(range.start, range.end);
+    app.input_ui.set_cursor(range.end);
+    app.input_ui.finalize_selection();
+
+    assert_eq!(app.input_ui.selection_range(), Some(5..9));
+    app.insert_input_char('X');
+    assert_eq!(app.input_ui.text(), "grab X text");
+}

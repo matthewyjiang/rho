@@ -108,6 +108,7 @@ impl App {
             media_attach_tasks: Vec::new(),
             pending_subagent_attaches: Vec::new(),
             last_mouse_position: None,
+            last_composer_click: None,
             screen_selection: None,
             mcp_report,
             plugins_report,

@@ -4,10 +4,11 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{
     commands,
-    composer_layout::content_width,
+    composer_layout::{content_width, prompt_width},
     paste_burst::{normalize_paste, paste_marker_for, previous_word_boundary},
     render::{
-        editable_input_visual_lines, input_cursor_index_on_visual_line, input_cursor_position,
+        editable_input_visual_lines, input_char_index_at_position,
+        input_cursor_index_on_visual_line, input_cursor_position,
     },
     App, CommandInvocation, ComposerAttachment, ComposerMode, HistoryDirection, InputDraft,
     InputSubmissionMode, PasteBurstEnter, PasteBurstKey, PasteSegment,
@@ -211,6 +212,7 @@ impl App {
         direction: HistoryDirection,
         terminal_width: usize,
     ) {
+        self.input_ui.clear_selection();
         let content_width = content_width(terminal_width);
         let visual_lines = editable_input_visual_lines(self.input_ui.text(), content_width);
         let cursor_position =
@@ -238,6 +240,7 @@ impl App {
     }
 
     pub(super) fn move_input_cursor_left(&mut self) {
+        self.input_ui.clear_selection();
         if let Some(segment) = self.input_ui.paste_segments().iter().find(|segment| {
             segment.start < self.input_ui.cursor() && self.input_ui.cursor() <= segment.end()
         }) {
@@ -249,6 +252,7 @@ impl App {
     }
 
     pub(super) fn move_input_cursor_right(&mut self) {
+        self.input_ui.clear_selection();
         if let Some(segment) = self.input_ui.paste_segments().iter().find(|segment| {
             segment.start <= self.input_ui.cursor() && self.input_ui.cursor() < segment.end()
         }) {
@@ -259,7 +263,7 @@ impl App {
         }
     }
 
-    fn focus_paste_segment_at_cursor(&mut self) {
+    pub(super) fn focus_paste_segment_at_cursor(&mut self) {
         if let Some(segment) = self.input_ui.paste_segments().iter().find(|segment| {
             segment.start < self.input_ui.cursor() && self.input_ui.cursor() < segment.end()
         }) {
@@ -276,6 +280,7 @@ impl App {
 
     pub(super) fn replace_input_range(&mut self, start: usize, end: usize, text: &str) {
         self.reset_input_history_navigation();
+        self.input_ui.clear_selection();
         self.adjust_paste_segments_for_edit(start, end.saturating_sub(start), text.chars().count());
         let start_byte = self.input_byte_index(start);
         let end_byte = self.input_byte_index(end);
@@ -286,6 +291,10 @@ impl App {
     }
 
     pub(super) fn insert_input_char(&mut self, ch: char) {
+        if let Some(range) = self.input_ui.take_selection_range() {
+            self.replace_input_range(range.start, range.end, &ch.to_string());
+            return;
+        }
         if ch == '!' && self.try_enter_shell_mode_from_bang() {
             return;
         }
@@ -302,6 +311,13 @@ impl App {
     /// bang handling stay single-sourced. Paste-burst flushes land here; collapsed
     /// paste markers use [`Self::insert_pasted_input_text`] instead.
     pub(super) fn insert_input_text(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if let Some(range) = self.input_ui.take_selection_range() {
+            self.replace_input_range(range.start, range.end, text);
+            return;
+        }
         for ch in text.chars() {
             self.insert_input_char(ch);
         }
@@ -316,6 +332,10 @@ impl App {
     }
 
     fn insert_input_text_with_paste_content(&mut self, text: &str, paste_content: Option<String>) {
+        if let Some(range) = self.input_ui.take_selection_range() {
+            // Drop the selected span first so the paste lands at the range start.
+            self.replace_input_range(range.start, range.end, "");
+        }
         self.reset_input_history_navigation();
         let start = self.input_ui.cursor();
         let inserted_len = text.chars().count();
@@ -362,6 +382,10 @@ impl App {
     }
 
     pub(super) fn backspace_input(&mut self) {
+        if let Some(range) = self.input_ui.take_selection_range() {
+            self.replace_input_range(range.start, range.end, "");
+            return;
+        }
         if let Some(segment) = self
             .input_ui
             .paste_segments()
@@ -409,6 +433,10 @@ impl App {
     }
 
     pub(super) fn delete_input(&mut self) {
+        if let Some(range) = self.input_ui.take_selection_range() {
+            self.replace_input_range(range.start, range.end, "");
+            return;
+        }
         if let Some(segment) = self
             .input_ui
             .paste_segments()
@@ -434,6 +462,10 @@ impl App {
     }
 
     pub(super) fn delete_word_before_cursor(&mut self) {
+        if let Some(range) = self.input_ui.take_selection_range() {
+            self.replace_input_range(range.start, range.end, "");
+            return;
+        }
         self.reset_input_history_navigation();
         let start_cursor = previous_word_boundary(self.input_ui.text(), self.input_ui.cursor());
         self.adjust_paste_segments_for_edit(start_cursor, self.input_ui.cursor() - start_cursor, 0);
@@ -443,6 +475,76 @@ impl App {
             .with_text_mut(|value| value.replace_range(start..end, ""));
         self.input_ui.set_cursor(start_cursor);
         self.input_changed();
+    }
+
+    /// Hit-test the free-text composer for pointer placement and selection.
+    pub(super) fn composer_text_char_index_at(
+        &self,
+        layout: &super::screen_layout::ScreenLayout,
+        column: u16,
+        row: u16,
+        clamp_to_composer: bool,
+    ) -> Option<usize> {
+        if !matches!(self.input_ui.composer(), ComposerMode::Input) {
+            return None;
+        }
+        let composer = layout.composer;
+        if composer.width == 0 || composer.height == 0 {
+            return None;
+        }
+        let inside = composer.contains(ratatui::layout::Position { x: column, y: row });
+        if !inside && !clamp_to_composer {
+            return None;
+        }
+        let column = if clamp_to_composer {
+            column.clamp(
+                composer.x,
+                composer.x.saturating_add(composer.width.saturating_sub(1)),
+            )
+        } else {
+            column
+        };
+        let row = if clamp_to_composer {
+            row.clamp(
+                composer.y,
+                composer.y.saturating_add(composer.height.saturating_sub(1)),
+            )
+        } else if !inside {
+            return None;
+        } else {
+            row
+        };
+
+        let attachment_rows = self.input_ui.attachments().len();
+        let visible_row = row.saturating_sub(composer.y) as usize;
+        let absolute_row = layout.composer_start.saturating_add(visible_row);
+        if absolute_row < attachment_rows {
+            // Attachment labels are not part of the text buffer.
+            return None;
+        }
+        let text_row = absolute_row.saturating_sub(attachment_rows);
+        let width = composer.width as usize;
+        let content_column =
+            (column.saturating_sub(composer.x) as usize).saturating_sub(prompt_width());
+        Some(input_char_index_at_position(
+            self.input_ui.text(),
+            content_width(width),
+            text_row,
+            content_column,
+        ))
+    }
+
+    /// True when the pointer is over the free-text composer rect (including labels).
+    pub(super) fn pointer_in_composer(
+        &self,
+        layout: &super::screen_layout::ScreenLayout,
+        column: u16,
+        row: u16,
+    ) -> bool {
+        matches!(self.input_ui.composer(), ComposerMode::Input)
+            && layout
+                .composer
+                .contains(ratatui::layout::Position { x: column, y: row })
     }
 
     pub(super) fn replace_composer_from_editor(&mut self, text: String) {

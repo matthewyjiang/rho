@@ -10,11 +10,63 @@ use crate::tui::{
 #[derive(Debug)]
 pub(in crate::tui) struct AttachmentsPending;
 
+/// Editable character-range selection inside the free-text composer.
+///
+/// `anchor` is where the pointer went down; `focus` tracks the live end while
+/// dragging and after release. A collapsed range (`anchor == focus`) is not a
+/// selection for editing purposes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::tui) struct ComposerSelection {
+    anchor: usize,
+    focus: usize,
+}
+
+impl ComposerSelection {
+    pub(in crate::tui) fn new(position: usize) -> Self {
+        Self {
+            anchor: position,
+            focus: position,
+        }
+    }
+
+    pub(in crate::tui) fn from_range(start: usize, end: usize) -> Self {
+        Self {
+            anchor: start,
+            focus: end,
+        }
+    }
+
+    pub(in crate::tui) fn update(&mut self, position: usize) {
+        self.focus = position;
+    }
+
+    pub(in crate::tui) fn focus(self) -> usize {
+        self.focus
+    }
+
+    pub(in crate::tui) fn has_range(self) -> bool {
+        self.anchor != self.focus
+    }
+
+    /// Ordered half-open char range when the selection spans text.
+    pub(in crate::tui) fn range(self) -> Option<std::ops::Range<usize>> {
+        self.has_range().then_some(if self.anchor <= self.focus {
+            self.anchor..self.focus
+        } else {
+            self.focus..self.anchor
+        })
+    }
+}
+
 /// Composer text, paste handling, command/file palettes, and input history.
 #[derive(Default)]
 pub(in crate::tui) struct InputUi {
     text: String,
     cursor: usize,
+    /// Mouse/keyboard text selection within [`Self::text`] (char indices).
+    selection: Option<ComposerSelection>,
+    /// True only while the primary button is held after a composer press.
+    selection_dragging: bool,
     shell_mode: Option<InlineShellMode>,
     attachments: Vec<ComposerAttachment>,
     history: Vec<String>,
@@ -41,6 +93,8 @@ impl InputUi {
         self.paste_segments.clear();
         self.shell_mode = None;
         self.cursor = 0;
+        self.selection = None;
+        self.selection_dragging = false;
         self.attachments.clear();
     }
 
@@ -63,6 +117,8 @@ impl InputUi {
     pub(in crate::tui) fn set_text_and_cursor(&mut self, text: String, cursor: usize) {
         self.text = text;
         self.cursor = cursor;
+        self.selection = None;
+        self.selection_dragging = false;
     }
 
     pub(in crate::tui) fn apply_input_draft(&mut self, draft: InputDraft) {
@@ -71,6 +127,8 @@ impl InputUi {
         self.paste_segments = draft.paste_segments;
         self.submission_mode = draft.submission_mode;
         self.cursor = self.text.chars().count();
+        self.selection = None;
+        self.selection_dragging = false;
     }
 
     pub(in crate::tui) fn text(&self) -> &str {
@@ -84,10 +142,14 @@ impl InputUi {
 
     pub(in crate::tui) fn set_text(&mut self, text: String) {
         self.text = text;
+        self.selection = None;
+        self.selection_dragging = false;
     }
 
     pub(in crate::tui) fn clear_text(&mut self) {
         self.text.clear();
+        self.selection = None;
+        self.selection_dragging = false;
     }
 
     pub(in crate::tui) fn char_len(&self) -> usize {
@@ -100,6 +162,68 @@ impl InputUi {
 
     pub(in crate::tui) fn set_cursor(&mut self, cursor: usize) {
         self.cursor = cursor;
+    }
+
+    pub(in crate::tui) fn selection(&self) -> Option<ComposerSelection> {
+        self.selection
+    }
+
+    pub(in crate::tui) fn selection_dragging(&self) -> bool {
+        self.selection_dragging
+    }
+
+    /// Highlight/edit range when the selection spans at least one character.
+    pub(in crate::tui) fn selection_range(&self) -> Option<std::ops::Range<usize>> {
+        self.selection.and_then(ComposerSelection::range)
+    }
+
+    pub(in crate::tui) fn begin_selection(&mut self, position: usize) {
+        self.selection = Some(ComposerSelection::new(position));
+        self.selection_dragging = true;
+    }
+
+    /// Select an existing character range (for example double-click word select).
+    ///
+    /// Keeps the primary-button drag active so the user can extend the range.
+    pub(in crate::tui) fn select_range(&mut self, start: usize, end: usize) {
+        if start == end {
+            self.clear_selection();
+            return;
+        }
+        self.selection = Some(ComposerSelection::from_range(start, end));
+        self.selection_dragging = true;
+    }
+
+    pub(in crate::tui) fn update_selection(&mut self, position: usize) {
+        if !self.selection_dragging {
+            return;
+        }
+        if let Some(selection) = self.selection.as_mut() {
+            selection.update(position);
+        }
+    }
+
+    /// Keep a non-empty selection after mouse release; drop a collapsed click.
+    pub(in crate::tui) fn finalize_selection(&mut self) {
+        self.selection_dragging = false;
+        if self
+            .selection
+            .is_some_and(|selection| !selection.has_range())
+        {
+            self.selection = None;
+        }
+    }
+
+    pub(in crate::tui) fn clear_selection(&mut self) {
+        self.selection = None;
+        self.selection_dragging = false;
+    }
+
+    /// Take a non-empty selection range and clear selection state.
+    pub(in crate::tui) fn take_selection_range(&mut self) -> Option<std::ops::Range<usize>> {
+        let range = self.selection_range()?;
+        self.clear_selection();
+        Some(range)
     }
 
     pub(in crate::tui) fn composer(&self) -> &ComposerMode {

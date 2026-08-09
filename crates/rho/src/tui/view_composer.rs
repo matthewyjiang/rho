@@ -63,6 +63,7 @@ impl App {
                 let focused_paste = self
                     .focused_paste_segment()
                     .map(|segment| segment.start..segment.end());
+                let highlighted = self.input_ui.selection_range().or(focused_paste);
                 let media_labels = self
                     .input_ui
                     .attachments()
@@ -72,7 +73,7 @@ impl App {
                     .collect::<Vec<_>>();
                 let mut lines = input_label_lines(&media_labels, width);
                 let mut text_lines =
-                    input_lines(self.input_ui.text(), content_width(width), focused_paste);
+                    input_lines(self.input_ui.text(), content_width(width), highlighted);
                 for (index, line) in text_lines.iter_mut().enumerate() {
                     line.spans.insert(
                         0,

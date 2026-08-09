@@ -423,6 +423,21 @@ pub(super) fn input_cursor_index_on_visual_line(
     cursor
 }
 
+/// Map a visual row/column inside the editable composer to a character index.
+pub(super) fn input_char_index_at_position(
+    input: &str,
+    width: usize,
+    row: usize,
+    column: usize,
+) -> usize {
+    let visual_lines = editable_input_visual_lines(input, width);
+    if visual_lines.is_empty() {
+        return 0;
+    }
+    let row = row.min(visual_lines.len() - 1);
+    input_cursor_index_on_visual_line(input, &visual_lines, row, column)
+}
+
 pub(super) fn input_label_lines(labels: &[String], width: usize) -> Vec<Line<'static>> {
     labels
         .iter()

@@ -132,6 +132,7 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Left) => {
+                self.input_ui.clear_selection();
                 self.input_ui.set_cursor(previous_word_boundary(
                     self.input_ui.text(),
                     self.input_ui.cursor(),
@@ -139,6 +140,7 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Right) => {
+                self.input_ui.clear_selection();
                 self.input_ui.set_cursor(next_word_boundary(
                     self.input_ui.text(),
                     self.input_ui.cursor(),
@@ -165,11 +167,13 @@ impl App {
             }
             (_, KeyCode::Home) => {
                 self.reset_input_history_navigation();
+                self.input_ui.clear_selection();
                 self.input_ui.set_cursor(0);
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::End) => {
                 self.reset_input_history_navigation();
+                self.input_ui.clear_selection();
                 self.input_ui.set_cursor(self.input_char_len());
                 self.ctrl_c_streak = 0;
             }
