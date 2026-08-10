@@ -783,5 +783,9 @@ async fn run_observational_hook(
 }
 
 #[cfg(test)]
+#[path = "dispatch_outcome_tests.rs"]
+mod outcome_tests;
+
+#[cfg(test)]
 #[path = "dispatch_tests.rs"]
 mod tests;
