@@ -12,10 +12,11 @@ use crate::{
 #[tokio::test]
 async fn failed_edit_tool_save_keeps_rollback_histories_aligned() {
     let mut app = test_app();
-    // temporary_for_tests keeps load working; inject the durable-write failure
-    // so this path stays OS-independent (Windows ignores directory readonly).
-    app.info.services.config_repository = ConfigRepository::temporary_for_tests().unwrap();
-    ConfigRepository::fail_next_save_for_tests();
+    // Instance-scoped injection keeps load working and fails only this
+    // repository's next durable write, including across Tokio worker hops.
+    let repository = ConfigRepository::temporary_for_tests().unwrap();
+    repository.fail_next_save_for_tests();
+    app.info.services.config_repository = repository;
 
     let mut agent = test_edit_tool_runtime(EditTool::Pinned(rho_tools::EditFormat::Hashline)).await;
     assert!(agent.has_tool("edit"));
@@ -68,7 +69,9 @@ async fn failed_edit_tool_save_keeps_rollback_histories_aligned() {
         notices[1]
     );
 
-    // Transcript mirrors the same sequence, then the save error.
+    // Transcript mirrors the same sequence, then the injected save error.
+    // If save succeeded, status would be the success label and this error
+    // entry would be missing — fail closed on the injection path.
     let entries = app.history.entries();
     assert_eq!(entries.len(), 3);
     assert!(matches!(
@@ -79,10 +82,19 @@ async fn failed_edit_tool_save_keeps_rollback_histories_aligned() {
         &entries[1],
         Entry::Notice(text) if text == "edit tool switched to hashline"
     ));
-    assert!(matches!(
-        &entries[2],
-        Entry::Error(text) if text.contains("could not save edit tool setting")
-    ));
+    match &entries[2] {
+        Entry::Error(text) => {
+            assert!(
+                text.contains("could not save edit tool setting"),
+                "save-failure notice missing: {text}"
+            );
+            assert!(
+                text.contains("injected config save failure"),
+                "expected injected save failure path, got successful save UI: {text}"
+            );
+        }
+        other => panic!("expected save-failure error entry, got {other:?}"),
+    }
     assert_eq!(app.status(), "config save failed");
 
     // Preference diagnostics stay on the pre-save value.
