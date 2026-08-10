@@ -67,6 +67,40 @@ fn renders_requests_replies_tool_calls_and_results_in_order() {
     );
 }
 
+// Covers: zero-arg tools (advisor) must not render as `arguments: {}`, which
+// made Claude plan-mode advisor runs invent "empty args failed" guidance.
+// Owner: advisor transcript renderer
+#[test]
+fn omits_empty_tool_arguments() {
+    let messages = vec![Message::assistant(AssistantMessage::from_content(vec![
+        ContentBlock::Text("Checking with the advisor.".into()),
+        ContentBlock::ToolCall(ToolCall {
+            id: "call-a".into(),
+            name: "advisor".into(),
+            arguments: json!({}),
+        }),
+        ContentBlock::ToolCall(ToolCall {
+            id: "call-b".into(),
+            name: "rho".into(),
+            arguments: json!({ "action": "info" }),
+        }),
+    ]))];
+
+    let rendered = render_transcript(None, &messages, generous());
+
+    assert_eq!(
+        rendered,
+        "# Session transcript\n\
+         \n\
+         ## assistant\n\
+         \n\
+         Checking with the advisor.\n\
+         tool call: advisor (id call-a)\n\
+         tool call: rho (id call-b)\n\
+         arguments: {\"action\":\"info\"}\n"
+    );
+}
+
 #[test]
 fn renders_system_messages_and_interrupted_replies() {
     let messages = vec![

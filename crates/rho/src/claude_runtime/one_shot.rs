@@ -29,6 +29,15 @@ use super::{
 
 pub(crate) const CANCELLATION_ERROR: &str = "claude code: cancelled";
 
+/// Permission mode for no-tools Claude one-shots (advisor).
+///
+/// Must stay [`PermissionMode::Auto`] (`dontAsk`). [`PermissionMode::Plan`]
+/// maps to Claude `--permission-mode plan`, which injects Claude Code plan
+/// scaffolding (AskUserQuestion / ExitPlanMode / "plan mode just activated")
+/// into the model context. That scaffolding is not part of Rho's transcript
+/// and poisons advisor prose even when tools is empty.
+pub(crate) const ONE_SHOT_PERMISSION_MODE: PermissionMode = PermissionMode::Auto;
+
 /// A single Claude question with no tools and no follow-up turn.
 pub(crate) struct ClaudeOneShotRequest {
     /// One of Rho's own constant prompts. It travels on argv, which other
@@ -81,7 +90,8 @@ pub(crate) async fn run_one_shot(
         inherit_claude_config: false,
         // Fixed, not the session's mode: with no tools there is nothing to
         // approve, and Supervised would otherwise refuse the spawn outright.
-        permission_mode: PermissionMode::Plan,
+        // Auto (dontAsk), never Plan - see ONE_SHOT_PERMISSION_MODE.
+        permission_mode: ONE_SHOT_PERMISSION_MODE,
         cwd: request.cwd.clone(),
         max_turns: 1,
         effort: request.effort,

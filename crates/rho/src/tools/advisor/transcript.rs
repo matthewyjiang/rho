@@ -82,9 +82,13 @@ fn push_message(out: &mut String, message: &Message, budget: TranscriptBudget) {
                 let name = call.name.as_deref().unwrap_or("unknown");
                 out.push_str("tool call (incomplete): ");
                 out.push_str(name);
-                out.push_str("\narguments: ");
-                push_clipped(out, &call.arguments, budget.tool_call_bytes);
                 out.push('\n');
+                let arguments = call.arguments.trim();
+                if !arguments.is_empty() && arguments != "{}" {
+                    out.push_str("arguments: ");
+                    push_clipped(out, &call.arguments, budget.tool_call_bytes);
+                    out.push('\n');
+                }
             }
         }
         Message::ToolResult(result) => {
@@ -122,9 +126,24 @@ fn push_tool_call(out: &mut String, call: &ToolCall, max_bytes: usize) {
     out.push_str(&call.name);
     out.push_str(" (id ");
     out.push_str(&call.id);
-    out.push_str(")\narguments: ");
-    push_clipped(out, &call.arguments.to_string(), max_bytes);
-    out.push('\n');
+    out.push_str(")\n");
+    // Zero-arg tools (notably advisor) serialize as `{}`. Omit the line rather
+    // than printing an empty object that looks like a missing payload.
+    if !is_empty_tool_arguments(&call.arguments) {
+        out.push_str("arguments: ");
+        push_clipped(out, &call.arguments.to_string(), max_bytes);
+        out.push('\n');
+    }
+}
+
+fn is_empty_tool_arguments(arguments: &serde_json::Value) -> bool {
+    match arguments {
+        serde_json::Value::Null => true,
+        serde_json::Value::Object(map) => map.is_empty(),
+        serde_json::Value::Array(items) => items.is_empty(),
+        serde_json::Value::String(text) => text.is_empty(),
+        _ => false,
+    }
 }
 
 fn push_clipped(out: &mut String, text: &str, max_bytes: usize) {
