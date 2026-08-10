@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.1](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.15.0...rho-agent-tools-v0.15.1) (2026-08-10)
+
+
+### Bug Fixes
+
+* **tools:** reject shell timeout_seconds of zero consistently ([#843](https://github.com/matthewyjiang/rho/issues/843)) ([c379aec](https://github.com/matthewyjiang/rho/commit/c379aeca8ad0dd2ad53a33df66f967782206db78))
+
 ## [0.15.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.14.0...rho-agent-tools-v0.15.0) (2026-08-10)
 
 

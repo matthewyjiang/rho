@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.19.0...rho-providers-v0.19.1) (2026-08-10)
+
+
+### Bug Fixes
+
+* **tui:** lead approval prompts with the command ([#846](https://github.com/matthewyjiang/rho/issues/846)) ([413063c](https://github.com/matthewyjiang/rho/commit/413063c9d169e10ca369d83172fbbb952619f07c))
+
 ## [0.19.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.18.2...rho-providers-v0.19.0) (2026-08-10)
 
 
