@@ -168,12 +168,15 @@ fn wrapped_detail_lines(
 }
 
 pub(super) fn approval_title(request: &CapabilityRequest) -> String {
-    let tool = match request.source() {
-        CapabilitySource::BuiltInTool { name } | CapabilitySource::HostProvidedTool { name } => {
-            name.as_str()
+    // Host-provided tools are a different trust boundary from SDK built-ins.
+    // Put the provenance marker first so narrow-title truncation keeps it.
+    let actor = match request.source() {
+        CapabilitySource::BuiltInTool { name } => sanitize_controls(name),
+        CapabilitySource::HostProvidedTool { name } => {
+            format!("host {}", sanitize_controls(name))
         }
-        CapabilitySource::PromptConstruction => "rho",
-        _ => "rho",
+        CapabilitySource::PromptConstruction => "rho".into(),
+        _ => "rho".into(),
     };
     let verb = match request.kind() {
         CapabilityKind::Write => "write",
@@ -184,7 +187,7 @@ pub(super) fn approval_title(request: &CapabilityRequest) -> String {
         CapabilityKind::InstructionDiscovery => "discover instructions",
         _ => "use a capability",
     };
-    format!("{} wants to {verb}", sanitize_controls(tool))
+    format!("{actor} wants to {verb}")
 }
 
 /// Flattened detail strings for security and layout tests.

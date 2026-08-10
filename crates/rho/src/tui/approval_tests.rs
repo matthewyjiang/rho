@@ -313,6 +313,47 @@ fn non_process_approvals_lead_with_bare_primary() {
     assert_eq!(skill_details[1], "path /skills/demo/SKILL.md");
 }
 
+// Covers: host-provided tools are labeled in the title without burying the
+// command/path primary body; built-ins stay unmarked.
+// Owner: tui approval layout
+#[test]
+fn title_marks_host_provided_source_without_changing_primary() {
+    let built_in = CapabilityRequest::write_path(
+        "src/main.rs",
+        PathScope::PrimaryWorkspace,
+        CapabilitySource::built_in_tool("write"),
+    );
+    let host = CapabilityRequest::write_path(
+        "src/main.rs",
+        PathScope::PrimaryWorkspace,
+        CapabilitySource::host_tool("workspace_patch"),
+    );
+    let host_hostile = CapabilityRequest::process(
+        ProcessExecution::new(
+            "/work",
+            ProcessInvocation::shell_from_path("sh", vec!["-c".into()], "echo ok"),
+            ProcessEnvironment::Empty,
+            ProcessOutputLimits::new(1024, None),
+        ),
+        CapabilitySource::host_tool("evil\u{202e}tool"),
+    );
+
+    assert_eq!(approval_title(&built_in), "write wants to write");
+    assert_eq!(approval_title(&host), "host workspace_patch wants to write");
+    assert_eq!(
+        approval_title(&host_hostile),
+        "host evil\\u{202e}tool wants to run a command"
+    );
+
+    // Primary body stays the path/command; provenance lives only in the title.
+    assert_eq!(approval_details(&built_in)[0], "src/main.rs");
+    assert_eq!(approval_details(&host)[0], "src/main.rs");
+    assert_eq!(approval_details(&host_hostile)[0], "echo ok");
+    assert!(approval_details(&host)
+        .iter()
+        .all(|line| !line.contains("host-provided") && !line.contains("source:")));
+}
+
 // Covers: paging can reach a long command suffix and the trailing meta context.
 // Owner: tui approval layout
 #[test]
