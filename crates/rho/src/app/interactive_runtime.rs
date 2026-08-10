@@ -890,3 +890,11 @@ impl InteractiveRuntime {
 #[cfg(test)]
 #[path = "interactive_runtime_tests.rs"]
 mod tests;
+
+/// Test factory for TUI seams that need a live edit-capable runtime.
+#[cfg(test)]
+pub(crate) async fn test_edit_tool_runtime(
+    edit_tool: crate::config::EditTool,
+) -> InteractiveRuntime {
+    tests::edit_tool_runtime(edit_tool).await
+}

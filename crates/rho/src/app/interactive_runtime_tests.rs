@@ -779,9 +779,17 @@ async fn advisor_mode_rejects_change_while_a_run_is_active() {
 }
 
 async fn edit_tool_test_runtime() -> InteractiveRuntime {
+    edit_tool_runtime(crate::config::EditTool::Pinned(
+        rho_tools::EditFormat::Hashline,
+    ))
+    .await
+}
+
+/// Shared factory for TUI tests that exercise Auto edit-tool handoff.
+pub(super) async fn edit_tool_runtime(edit_tool: crate::config::EditTool) -> InteractiveRuntime {
     let mut interactive = pending_compaction_runtime("done").await;
     let config = Config {
-        edit_tool: crate::config::EditTool::Pinned(rho_tools::EditFormat::Hashline),
+        edit_tool,
         ..Config::default()
     };
     interactive.tools = AppToolSet::new(
