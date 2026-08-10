@@ -176,6 +176,13 @@ impl App {
                 display_parts.push(display);
             }
         }
+        self.drain_subagent_notices();
+        let notices = self.take_subagent_notices(agent.session_id());
+        if !notices.is_empty() {
+            let (model, display) = Self::format_subagent_notice_prompts(&notices);
+            model_parts.push(model);
+            display_parts.push(display);
+        }
         let workflow_notifications = agent
             .workflow_tracker()
             .take_notifications(agent.session_id().as_str());
@@ -273,6 +280,7 @@ impl App {
                 self.next_running_frame_deadline(frame_scheduler.deferred_deadline());
             let approval_ready = approval_receiver_open;
             let subagent_host_input_bound = self.subagent_host_input.is_some();
+            let subagent_notices_bound = self.subagent_notices.is_some();
             tokio::select! {
                 biased;
                 terminal_event = self.terminal_session.as_mut().expect("terminal session initialized").next_event() => {
@@ -349,6 +357,12 @@ impl App {
                         None => self.subagent_host_input = None,
                     }
                     self.draw_running_frame(terminal, &mut frame_scheduler)?;
+                }
+                notice = super::app_loop::next_subagent_notice(&mut self.subagent_notices), if subagent_notices_bound => {
+                    match notice {
+                        Some(notice) => self.queued_subagent_notices.push_back(notice),
+                        None => self.subagent_notices = None,
+                    }
                 }
                 _ = tokio::time::sleep_until(frame_deadline) => {
                     self.drain_stream_tick(terminal)?;

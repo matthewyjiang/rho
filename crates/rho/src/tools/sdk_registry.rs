@@ -21,7 +21,7 @@ use super::{
 ///
 /// Bundles keep lifecycle ownership in the feature that creates each tool. The
 /// boxed future is `Send` so callers can shut bundles down from async runtimes.
-pub(super) trait ToolBundle: Send + Sync {
+pub(crate) trait ToolBundle: Send + Sync {
     fn tools(&self) -> &[Arc<dyn Tool>];
 
     fn shutdown(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
@@ -269,7 +269,7 @@ impl AppToolSet {
         self
     }
 
-    fn add_bundle(&mut self, bundle: impl ToolBundle + 'static) {
+    pub(crate) fn add_bundle(&mut self, bundle: impl ToolBundle + 'static) {
         self.tools.extend(bundle.tools().iter().cloned());
         self.bundles.push(Box::new(bundle));
     }

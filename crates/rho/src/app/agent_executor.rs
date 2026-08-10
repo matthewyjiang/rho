@@ -14,6 +14,7 @@ use super::{
     agent_binding::{AgentBinder, AgentInvocation, AgentRole, CapacityClass},
     automation::{self, RunReporter},
     subagent_host_input::{SubagentHostInputBridge, SubagentHostInputResponder},
+    subagent_notice::SubagentNoticeBridge,
 };
 
 /// Default total concurrency across all delegated agents (Rho + Claude).
@@ -40,6 +41,7 @@ pub(crate) struct AgentExecutor {
     /// Acquired before the global pool for Claude runs.
     claude_permits: Arc<tokio::sync::Semaphore>,
     host_input: SubagentHostInputBridge,
+    notices: SubagentNoticeBridge,
     approval_session: Option<rho_sdk::ApprovalSession>,
 }
 
@@ -61,11 +63,23 @@ pub(crate) struct FrozenAgentLaunchRequest {
     pub(crate) hook_host_labels: rho_sdk::hooks::HookHostLabels,
 }
 
+/// How a live handle can accept parent plain-text messages.
+#[derive(Clone, Debug)]
+enum MessagingSupport {
+    /// Rho runtime: steering port is published once the session starts.
+    Rho {
+        steering: std::sync::Arc<std::sync::Mutex<Option<rho_sdk::SteeringHandle>>>,
+    },
+    /// Runtime has no parent messaging path (for example claude-cli).
+    Unsupported { runtime: &'static str },
+}
+
 #[derive(Clone)]
 pub(crate) struct AgentRunHandle {
     cancellation: RunCancellation,
     status: tokio::sync::watch::Receiver<RunStatus>,
     completion: tokio::sync::watch::Receiver<bool>,
+    messaging: MessagingSupport,
 }
 
 impl AgentRunHandle {
@@ -95,6 +109,40 @@ impl AgentRunHandle {
         self.status.clone()
     }
 
+    /// Stages a parent message for the next Rho provider turn.
+    pub(crate) async fn message_from_parent(&self, text: &str) -> anyhow::Result<()> {
+        let text = super::subagent_notice::validate_message_text(
+            text,
+            super::subagent_notice::MAX_PARENT_MESSAGE_BYTES,
+        )?;
+        match &self.messaging {
+            MessagingSupport::Unsupported { runtime } => anyhow::bail!(
+                "delegated run uses runtime '{runtime}', which cannot receive parent messages yet"
+            ),
+            MessagingSupport::Rho { steering } => {
+                if self.is_complete() {
+                    anyhow::bail!("delegated run has already finished");
+                }
+                let handle = {
+                    let guard = steering.lock().expect("delegated steering lock");
+                    guard.clone()
+                };
+                let Some(handle) = handle else {
+                    anyhow::bail!(
+                        "delegated run is still starting; wait until status is running, then message again"
+                    );
+                };
+                let body = format!(
+                    "Message from the parent session (not a new task - incorporate this into your current work):\n\n{text}"
+                );
+                handle
+                    .steer(rho_sdk::UserInput::text(body))
+                    .await
+                    .map_err(|error| anyhow::anyhow!("{error}"))
+            }
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn completed_for_test(status: RunStatus) -> Self {
         let (_status_tx, status_rx) = tokio::sync::watch::channel(status);
@@ -103,6 +151,9 @@ impl AgentRunHandle {
             cancellation: RunCancellation::new(),
             status: status_rx,
             completion: completion_rx,
+            messaging: MessagingSupport::Unsupported {
+                runtime: "test-complete",
+            },
         }
     }
 }
@@ -113,6 +164,7 @@ impl AgentExecutor {
         config_path: PathBuf,
         cwd: PathBuf,
         host_input: SubagentHostInputBridge,
+        notices: SubagentNoticeBridge,
     ) -> Self {
         let limits = concurrency_limits();
         Self {
@@ -122,6 +174,7 @@ impl AgentExecutor {
             total_permits: Arc::new(tokio::sync::Semaphore::new(limits.total)),
             claude_permits: Arc::new(tokio::sync::Semaphore::new(limits.claude)),
             host_input,
+            notices,
             approval_session: None,
         }
     }
@@ -135,6 +188,10 @@ impl AgentExecutor {
 
     pub(crate) fn host_input(&self) -> &SubagentHostInputBridge {
         &self.host_input
+    }
+
+    pub(crate) fn notices(&self) -> &SubagentNoticeBridge {
+        &self.notices
     }
 
     /// Atomically updates the parent session's provider selection inherited by
@@ -183,6 +240,9 @@ impl AgentExecutor {
         // that parent to present a questionnaire would deadlock both runs.
         let questionnaire_available =
             request.background && request.parent_session_id.is_some() && self.host_input.is_bound();
+        // Notices share the parent-session binding, not the questionnaire one.
+        let notices_available =
+            request.background && request.parent_session_id.is_some() && self.notices.is_bound();
         if !questionnaire_available {
             capabilities.remove(&ToolCapability::Questionnaire);
         }
@@ -202,6 +262,7 @@ impl AgentExecutor {
             parent_session_id: request.parent_session_id,
             output_file: request.output_file,
             questionnaire_available,
+            notices_available,
             frozen_claude: None,
             hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
         })
@@ -260,6 +321,7 @@ impl AgentExecutor {
             parent_session_id: None,
             output_file: request.output_file,
             questionnaire_available: false,
+            notices_available: false,
             frozen_claude,
             hook_host_labels: request.hook_host_labels,
         })
@@ -273,12 +335,28 @@ impl AgentExecutor {
             parent_session_id,
             output_file,
             questionnaire_available,
+            notices_available,
             frozen_claude,
             hook_host_labels,
         } = request;
 
         let labels = bound.runtime().artifact_labels();
         let capacity_class = bound.runtime().capacity_class();
+        let is_claude = matches!(capacity_class, CapacityClass::Claude);
+        let steering_slot = if is_claude {
+            None
+        } else {
+            Some(Arc::new(std::sync::Mutex::new(None)))
+        };
+        let messaging = if is_claude {
+            MessagingSupport::Unsupported {
+                runtime: "claude-cli",
+            }
+        } else {
+            MessagingSupport::Rho {
+                steering: Arc::clone(steering_slot.as_ref().expect("rho steering slot")),
+            }
+        };
 
         let initial = RunStatus {
             state: RunState::Starting,
@@ -301,10 +379,12 @@ impl AgentExecutor {
         let config_path = self.config_path.clone();
         let cwd = self.cwd.clone();
         let host_input = self.host_input.clone();
+        let notices = self.notices.clone();
         let persisted_output = output_file.clone();
         let total_permits = Arc::clone(&self.total_permits);
         let claude_permits = Arc::clone(&self.claude_permits);
         let approval_session = self.approval_session.clone();
+        let task_steering_slot = steering_slot.clone();
 
         let task_status_tx = status_tx.clone();
         let task: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
@@ -375,7 +455,10 @@ impl AgentExecutor {
                 run_id,
                 parent_session_id,
                 questionnaire_available,
+                notices_available,
                 host_input,
+                notices,
+                steering_slot: task_steering_slot,
                 cancellation: task_cancellation,
                 status_tx: task_status_tx,
                 hook_host_labels,
@@ -402,6 +485,10 @@ impl AgentExecutor {
                     let _ = subagent::write_status(&persisted_output, &failed);
                 }
             }
+            // Drop the steering port so late parent messages fail closed.
+            if let Some(slot) = steering_slot {
+                *slot.lock().expect("delegated steering lock") = None;
+            }
             completion_tx.send_replace(true);
         });
 
@@ -409,6 +496,7 @@ impl AgentExecutor {
             cancellation,
             status,
             completion,
+            messaging,
         })
     }
 }
@@ -420,6 +508,7 @@ struct BoundLaunchRequest {
     parent_session_id: Option<rho_sdk::SessionId>,
     output_file: PathBuf,
     questionnaire_available: bool,
+    notices_available: bool,
     frozen_claude: Option<FrozenClaudeLaunch>,
     hook_host_labels: rho_sdk::hooks::HookHostLabels,
 }
@@ -443,7 +532,10 @@ struct RhoAgentRun {
     run_id: String,
     parent_session_id: Option<rho_sdk::SessionId>,
     questionnaire_available: bool,
+    notices_available: bool,
     host_input: SubagentHostInputBridge,
+    notices: SubagentNoticeBridge,
+    steering_slot: Option<Arc<std::sync::Mutex<Option<rho_sdk::SteeringHandle>>>>,
     cancellation: RunCancellation,
     status_tx: tokio::sync::watch::Sender<RunStatus>,
     hook_host_labels: rho_sdk::hooks::HookHostLabels,
@@ -462,7 +554,10 @@ async fn run_rho_agent(run: RhoAgentRun) -> anyhow::Result<()> {
         run_id,
         parent_session_id,
         questionnaire_available,
+        notices_available,
         host_input,
+        notices,
+        steering_slot,
         cancellation,
         status_tx,
         hook_host_labels,
@@ -495,6 +590,18 @@ async fn run_rho_agent(run: RhoAgentRun) -> anyhow::Result<()> {
             .map_err(|_| anyhow::anyhow!("agent step limit does not fit this platform"))?,
     )
     .ok_or_else(|| anyhow::anyhow!("agent step limit must be positive"))?;
+    let parent_session_for_notice = parent_session_id.clone();
+    let notice_poster = notices_available.then(|| {
+        let parent_session_id = parent_session_for_notice
+            .clone()
+            .expect("notice bridge requires a parent session");
+        Arc::new(DelegatedNoticePoster {
+            run_id: run_id.clone(),
+            agent_id: agent_id.clone(),
+            parent_session_id,
+            notices,
+        }) as Arc<dyn super::subagent_notice::NoticePoster>
+    });
     let startup = automation::Startup {
         config: &config,
         config_path,
@@ -519,6 +626,8 @@ async fn run_rho_agent(run: RhoAgentRun) -> anyhow::Result<()> {
                 host_input,
             )) as Arc<dyn super::headless_run::HostInputResponder>
         }),
+        notice_poster,
+        steering_slot,
         approval_session,
         hook_host_labels,
     };
@@ -526,6 +635,24 @@ async fn run_rho_agent(run: RhoAgentRun) -> anyhow::Result<()> {
         automation::run_session(prompt, &startup, Some(&mut reporter), Some(cancellation)).await;
     reporter.finish(&result);
     result.map(|_| ())
+}
+
+struct DelegatedNoticePoster {
+    run_id: String,
+    agent_id: String,
+    parent_session_id: rho_sdk::SessionId,
+    notices: SubagentNoticeBridge,
+}
+
+impl super::subagent_notice::NoticePoster for DelegatedNoticePoster {
+    fn post(&self, message: String) -> Result<(), super::subagent_notice::NoticePostError> {
+        self.notices.post(super::subagent_notice::SubagentNotice {
+            run_id: self.run_id.clone(),
+            agent_id: self.agent_id.clone(),
+            parent_session_id: self.parent_session_id.clone(),
+            message,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

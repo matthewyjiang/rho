@@ -1,5 +1,7 @@
 //! Delegated-agent questionnaire and completion coordination.
 
+use std::collections::VecDeque;
+
 use futures_util::FutureExt;
 use ratatui::DefaultTerminal;
 use tokio::sync::oneshot;
@@ -25,9 +27,11 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
+        self.drain_subagent_notices();
         if !self.should_deliver_idle_subagent_completions() {
             return Ok(false);
         }
+        // Completions and child notices share one idle delivery path.
         Ok(self
             .run_subagent_completion_turn(terminal, agent)
             .await?
@@ -40,6 +44,7 @@ impl App {
         session_id: &rho_sdk::SessionId,
     ) -> anyhow::Result<bool> {
         let mut changed = self.drain_subagent_host_input();
+        changed |= self.drain_subagent_notices();
         changed |= self.discard_stale_subagent_questionnaires(session_id);
         changed |= self
             .finish_pending_subagent_questionnaire(ParentActivity::Idle)
@@ -57,6 +62,7 @@ impl App {
         session_id: &rho_sdk::SessionId,
     ) -> anyhow::Result<bool> {
         let mut changed = self.drain_subagent_host_input();
+        changed |= self.drain_subagent_notices();
         changed |= self.discard_stale_subagent_questionnaires(session_id);
         changed |= self
             .finish_pending_subagent_questionnaire(ParentActivity::Working("running"))
@@ -70,6 +76,7 @@ impl App {
         session_id: &rho_sdk::SessionId,
     ) -> anyhow::Result<bool> {
         let mut changed = self.drain_subagent_host_input();
+        changed |= self.drain_subagent_notices();
         changed |= self.discard_stale_subagent_questionnaires(session_id);
         changed |= self
             .finish_pending_subagent_questionnaire(ParentActivity::Working(
@@ -95,6 +102,57 @@ impl App {
             changed = true;
         }
         changed
+    }
+
+    pub(super) fn drain_subagent_notices(&mut self) -> bool {
+        let Some(receiver) = self.subagent_notices.as_mut() else {
+            return false;
+        };
+        let mut changed = false;
+        while let Ok(notice) = receiver.try_recv() {
+            self.queued_subagent_notices.push_back(notice);
+            changed = true;
+        }
+        changed
+    }
+
+    /// Takes queued child notices for this parent session in arrival order.
+    pub(super) fn take_subagent_notices(
+        &mut self,
+        session_id: &rho_sdk::SessionId,
+    ) -> Vec<crate::app::subagent_notice::SubagentNotice> {
+        let mut kept = VecDeque::new();
+        let mut taken = Vec::new();
+        for notice in self.queued_subagent_notices.drain(..) {
+            if &notice.parent_session_id == session_id {
+                taken.push(notice);
+            } else {
+                kept.push_back(notice);
+            }
+        }
+        self.queued_subagent_notices = kept;
+        taken
+    }
+
+    pub(super) fn format_subagent_notice_prompts(
+        notices: &[crate::app::subagent_notice::SubagentNotice],
+    ) -> (String, String) {
+        let model = notices
+            .iter()
+            .map(|notice| {
+                format!(
+                    "Message from delegated agent {} ({}):\n{}",
+                    notice.run_id, notice.agent_id, notice.message
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let display = notices
+            .iter()
+            .map(|notice| format!("agent {} ({}) notice", notice.run_id, notice.agent_id))
+            .collect::<Vec<_>>()
+            .join("\n");
+        (model, display)
     }
 
     fn discard_stale_subagent_questionnaires(&mut self, session_id: &rho_sdk::SessionId) -> bool {
@@ -288,6 +346,13 @@ impl App {
                 display_parts.push(display);
             }
         }
+        self.drain_subagent_notices();
+        let notices = self.take_subagent_notices(agent.session_id());
+        if !notices.is_empty() {
+            let (model, display) = Self::format_subagent_notice_prompts(&notices);
+            model_parts.push(model);
+            display_parts.push(display);
+        }
         let workflow_notifications = agent
             .workflow_tracker()
             .take_notifications(agent.session_id().as_str());
@@ -321,6 +386,14 @@ impl App {
             && self.pending_subagent_questionnaire.is_none()
             && !matches!(self.input_ui.composer(), ComposerMode::Questionnaire(_))
             && self.queued_subagent_questionnaires.is_empty()
+    }
+
+    pub(super) fn has_pending_subagent_notices(&self) -> bool {
+        !self.queued_subagent_notices.is_empty()
+            || self
+                .subagent_notices
+                .as_ref()
+                .is_some_and(|receiver| !receiver.is_empty())
     }
 }
 

@@ -25,6 +25,12 @@ pub(super) fn questionnaire_bundle() -> super::sdk_registry::StaticToolBundle {
     super::sdk_registry::StaticToolBundle::new(vec![Arc::new(QuestionnaireTool)])
 }
 
+pub(crate) fn message_parent_bundle(
+    poster: Arc<dyn crate::app::subagent_notice::NoticePoster>,
+) -> super::sdk_registry::StaticToolBundle {
+    super::sdk_registry::StaticToolBundle::new(vec![Arc::new(MessageParentTool { poster })])
+}
+
 impl SdkSkillTool {
     pub(super) fn new(max_output_bytes: usize) -> Self {
         Self { max_output_bytes }
@@ -256,6 +262,59 @@ impl SdkTool for QuestionnaireTool {
             Ok(ToolOutput::text(content).metadata(
                 ToolMetadata::new().operation(OperationKind::Other("questionnaire".into())),
             ))
+        })
+    }
+}
+
+/// Non-blocking plain-text notice from a delegated child to its parent.
+struct MessageParentTool {
+    poster: Arc<dyn crate::app::subagent_notice::NoticePoster>,
+}
+
+impl SdkTool for MessageParentTool {
+    fn spec(&self) -> rho_sdk::model::ToolSpec {
+        rho_sdk::model::ToolSpec {
+            name: "message_parent".into(),
+            description: "Send a short plain-text notice to the parent session without waiting for a reply. Use for blockers, findings, or status the parent should see at its next turn boundary. Do not use this for questions that need an answer - use questionnaire for those. Keep the message under 8 KiB.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "Plain-text notice for the parent session"
+                    }
+                },
+                "required": ["message"],
+                "additionalProperties": false
+            }),
+        }
+    }
+
+    fn security(&self) -> ToolSecurity {
+        ToolSecurity::built_in([])
+    }
+
+    fn call<'a>(&'a self, invocation: ToolInvocation, _context: SdkToolContext) -> ToolFuture<'a> {
+        Box::pin(async move {
+            let arguments = invocation.into_arguments();
+            let message = required_string(&arguments, "message").map_err(|error| {
+                SdkToolError::new(ToolErrorKind::InvalidArguments, error.to_string())
+            })?;
+            let message = crate::app::subagent_notice::validate_message_text(
+                message,
+                crate::app::subagent_notice::MAX_NOTICE_BYTES,
+            )
+            .map_err(|error| {
+                SdkToolError::new(ToolErrorKind::InvalidArguments, error.to_string())
+            })?;
+            self.poster
+                .post(message)
+                .map_err(|error| SdkToolError::new(ToolErrorKind::Execution, error.to_string()))?;
+            Ok(
+                ToolOutput::text("notice queued for the parent session").metadata(
+                    ToolMetadata::new().operation(OperationKind::Other("message_parent".into())),
+                ),
+            )
         })
     }
 }

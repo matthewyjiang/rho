@@ -21,6 +21,7 @@ mod runtime_builder;
 pub(crate) mod sdk_config;
 mod sessions_cli;
 pub(crate) mod subagent_host_input;
+pub(crate) mod subagent_notice;
 mod tools_prompt;
 pub(crate) mod workflow_cli;
 pub(crate) mod workflow_runtime;
