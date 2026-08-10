@@ -690,7 +690,11 @@ fn set_edit_tool_ignores_legacy_edit_file_alias_tools() {
             }
         }
 
-        fn call<'a>(&'a self, _invocation: ToolInvocation, _context: ToolContext) -> ToolFuture<'a> {
+        fn call<'a>(
+            &'a self,
+            _invocation: ToolInvocation,
+            _context: ToolContext,
+        ) -> ToolFuture<'a> {
             Box::pin(async { Ok(ToolOutput::text("unused")) })
         }
     }

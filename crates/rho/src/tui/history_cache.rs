@@ -89,10 +89,7 @@ impl HistoryLineCache {
         if self.dirty_from.is_some() {
             // Already doing a suffix rebuild; fold the earliest index into it.
             for index in indices {
-                self.dirty_from = Some(
-                    self.dirty_from
-                        .map_or(index, |dirty| dirty.min(index)),
-                );
+                self.dirty_from = Some(self.dirty_from.map_or(index, |dirty| dirty.min(index)));
             }
             return;
         }
@@ -364,10 +361,11 @@ impl HistoryLineCache {
                     block.line = offset_usize(block.line, delta);
                 }
             }
-            self.code_blocks.extend(new_code_blocks.into_iter().map(|mut block| {
-                block.line = start.saturating_add(block.line);
-                block
-            }));
+            self.code_blocks
+                .extend(new_code_blocks.into_iter().map(|mut block| {
+                    block.line = start.saturating_add(block.line);
+                    block
+                }));
             // Keep code_blocks ordered by line for stable hit-testing.
             self.code_blocks.sort_by_key(|block| block.line);
 
@@ -458,20 +456,19 @@ impl HistoryLineCache {
             let images = image_resolver(entry_index, &rendered.image_sources);
             apply_markdown_images(&mut rendered, &images, settings.width);
         }
-        self.code_blocks
-            .extend(
-                rendered
-                    .code_blocks
-                    .into_iter()
-                    .map(|block| CachedCodeBlock {
-                        // Content starts at the first entry row; trailing blank is after.
-                        line: entry_start.saturating_add(block.top_line),
-                        // render_entry also pads markdown by one column on each side.
-                        copy_columns: block.copy_columns.start.saturating_add(1)
-                            ..block.copy_columns.end.saturating_add(1),
-                        text: Arc::from(block.text),
-                    }),
-            );
+        self.code_blocks.extend(
+            rendered
+                .code_blocks
+                .into_iter()
+                .map(|block| CachedCodeBlock {
+                    // Content starts at the first entry row; trailing blank is after.
+                    line: entry_start.saturating_add(block.top_line),
+                    // render_entry also pads markdown by one column on each side.
+                    copy_columns: block.copy_columns.start.saturating_add(1)
+                        ..block.copy_columns.end.saturating_add(1),
+                    text: Arc::from(block.text),
+                }),
+        );
         if let Some(placement) = rendered.image_placement {
             self.image_placements
                 .push(placement.offset_rows(entry_start));

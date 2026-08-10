@@ -276,8 +276,7 @@ async fn select_model_report_auto_edit_tool_follows_provider_change() {
         })
         .unwrap();
 
-    let mut agent =
-        test_edit_tool_runtime(EditTool::Pinned(rho_tools::EditFormat::Hashline)).await;
+    let mut agent = test_edit_tool_runtime(EditTool::Pinned(rho_tools::EditFormat::Hashline)).await;
     assert_eq!(advertised_edit_name(&agent), Some("edit"));
 
     switch_to_anthropic(&mut app, &mut agent).await;

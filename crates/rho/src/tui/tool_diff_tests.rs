@@ -76,7 +76,10 @@ fn skips_language_paint_for_overlong_lines() {
 
     warm_syntax_set();
     let mut syntax = DiffSyntax::new(Some("docs/configuration.md"));
-    let long = format!("The `x` span. {}", "word ".repeat(MAX_TOOL_SYNTAX_LINE_BYTES));
+    let long = format!(
+        "The `x` span. {}",
+        "word ".repeat(MAX_TOOL_SYNTAX_LINE_BYTES)
+    );
     assert!(long.len() > MAX_TOOL_SYNTAX_LINE_BYTES);
 
     reset_highlight_line_calls();

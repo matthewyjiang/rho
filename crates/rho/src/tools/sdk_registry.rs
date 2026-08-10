@@ -356,18 +356,14 @@ impl AppToolSet {
         edit_tool: rho_tools::EditFormat,
         max_output_bytes: usize,
     ) -> Option<rho_tools::EditFormat> {
+        let previous = self.edit_tool()?;
+        if previous == edit_tool {
+            return None;
+        }
         let position = self
             .tools
             .iter()
             .position(|tool| is_canonical_edit_tool_name(tool.spec().name.as_str()))?;
-        let previous_name = self.tools[position].spec().name;
-        let previous = rho_tools::EditFormat::ALL
-            .iter()
-            .copied()
-            .find(|format| format.tool_name() == previous_name.as_str())?;
-        if previous == edit_tool {
-            return None;
-        }
         let mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver> =
             self.checkpoint_tracker.clone();
         self.tools[position] = rho_tools::coding_tool(
