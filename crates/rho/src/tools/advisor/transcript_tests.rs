@@ -67,9 +67,11 @@ fn renders_requests_replies_tool_calls_and_results_in_order() {
     );
 }
 
-// Covers: zero-arg tool payloads must not render as `arguments: {}`, which
-// made advisor runs invent "empty args failed" guidance. Only the empty object
-// is omitted; null/[]/"" stay visible as diagnostic evidence.
+// Covers: zero-arg tool payloads must not render as `arguments: {}`, and
+// interrupted calls with no argument bytes must not render a blank
+// `arguments:` line. Both made advisor runs invent "empty args failed"
+// guidance. Only `{}` and empty buffers are omitted; null/[]/"" and non-empty
+// incomplete JSON stay visible as diagnostic evidence.
 // Owner: advisor transcript renderer
 #[test]
 fn omits_empty_object_tool_arguments_but_renders_other_emptyish_values() {
@@ -149,7 +151,6 @@ fn omits_empty_object_tool_arguments_but_renders_other_emptyish_values() {
          Interrupted mid-call.\n\
          tool call (incomplete): advisor\n\
          tool call (incomplete): advisor\n\
-         arguments: \n\
          tool call (incomplete): grep\n\
          arguments: {\"pattern\":\n"
     );
