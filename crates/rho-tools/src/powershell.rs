@@ -20,7 +20,14 @@ impl Tool for PowerShell {
         ToolSpec {
             name: "powershell".into(),
             description: "Runs a PowerShell command in the current working directory.".into(),
-            input_schema: json!({"type":"object","properties":{"command":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["command"]}),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string"},
+                    "timeout_seconds": {"type": "integer", "minimum": 1}
+                },
+                "required": ["command"]
+            }),
         }
     }
 
@@ -62,6 +69,8 @@ impl Tool for PowerShell {
     ) -> AppToolFuture<'a> {
         Box::pin(async move {
             let mut args = ShellArgs::parse(args)?;
+            // Validate before RTK rewrite so invalid timeouts never launch `rtk`.
+            let timeout = args.timeout()?;
             if self.rtk_enabled {
                 if let Some(command) = super::rtk::rewrite(&args.command).await {
                     args.command = command;
@@ -79,7 +88,7 @@ impl Tool for PowerShell {
                     wrapped_command(&args.command),
                 ),
                 ProcessEnvironment::InheritAll,
-                ProcessOutputLimits::new(ctx.max_output_bytes, args.timeout()),
+                ProcessOutputLimits::new(ctx.max_output_bytes, timeout),
             );
             let result = execute_process(execution, id, cancellation, on_update).await?;
             if self.rtk_enabled {

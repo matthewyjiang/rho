@@ -28,8 +28,18 @@ impl ShellArgs {
         Ok(serde_json::from_value(args)?)
     }
 
-    pub(crate) fn timeout(&self) -> Option<Duration> {
-        self.timeout_seconds.map(Duration::from_secs)
+    /// Returns the optional run timeout.
+    ///
+    /// `None` means no timeout. `Some(0)` is rejected so the app shell tools and
+    /// the SDK adapter share one guard instead of spawning and immediately timing out.
+    pub(crate) fn timeout(&self) -> Result<Option<Duration>, ToolError> {
+        match self.timeout_seconds {
+            None => Ok(None),
+            Some(0) => Err(ToolError::Message(
+                "timeout_seconds must be greater than zero".into(),
+            )),
+            Some(seconds) => Ok(Some(Duration::from_secs(seconds))),
+        }
     }
 }
 
