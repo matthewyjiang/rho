@@ -1,12 +1,15 @@
 //! Routes structured host questionnaires from delegated agents to the parent session.
 
-use std::sync::{Arc, Mutex};
-
 use rho_sdk::{CancellationToken, Error, HostInputRequest, HostInputResponse, SessionId};
 use tokio::sync::{mpsc, oneshot};
 
-use super::headless_run::{HostInputRespondFuture, HostInputResponder};
+use super::{
+    headless_run::{HostInputRespondFuture, HostInputResponder},
+    parent_bridge::ParentBridge,
+};
 
+/// Questionnaires block the child until the parent answers, so this only needs
+/// to absorb a burst of parallel children before back-pressuring.
 const HOST_INPUT_QUEUE_CAPACITY: usize = 32;
 
 /// One questionnaire raised by a delegated run and awaiting a parent answer.
@@ -18,14 +21,9 @@ pub(crate) struct SubagentHostInputRequest {
     pub(crate) response: oneshot::Sender<Result<HostInputResponse, Error>>,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct SubagentHostInputBridge {
-    inner: Arc<Inner>,
-}
-
-#[derive(Default)]
-struct Inner {
-    sender: Mutex<Option<mpsc::Sender<SubagentHostInputRequest>>>,
+    bridge: ParentBridge<SubagentHostInputRequest>,
 }
 
 /// Headless responder that forwards child questionnaires through a parent bridge.
@@ -68,38 +66,32 @@ impl HostInputResponder for SubagentHostInputResponder {
     }
 }
 
+impl Default for SubagentHostInputBridge {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SubagentHostInputBridge {
     pub(crate) fn new() -> Self {
-        Self::default()
+        Self {
+            bridge: ParentBridge::new(HOST_INPUT_QUEUE_CAPACITY),
+        }
     }
 
     /// Installs the parent receiver. Replaces any previous binding.
     pub(crate) fn bind_parent(&self) -> mpsc::Receiver<SubagentHostInputRequest> {
-        let (sender, receiver) = mpsc::channel(HOST_INPUT_QUEUE_CAPACITY);
-        *self
-            .inner
-            .sender
-            .lock()
-            .expect("subagent host-input bridge lock") = Some(sender);
-        receiver
+        self.bridge.bind_parent()
     }
 
     /// Drops the parent binding so later child requests fail closed.
     pub(crate) fn unbind_parent(&self) {
-        *self
-            .inner
-            .sender
-            .lock()
-            .expect("subagent host-input bridge lock") = None;
+        self.bridge.unbind_parent();
     }
 
     /// True while an interactive parent is listening.
     pub(crate) fn is_bound(&self) -> bool {
-        self.inner
-            .sender
-            .lock()
-            .expect("subagent host-input bridge lock")
-            .is_some()
+        self.bridge.is_bound()
     }
 
     /// Forwards a child questionnaire to the parent and waits for its answer.
@@ -112,11 +104,8 @@ impl SubagentHostInputBridge {
         cancellation: &CancellationToken,
     ) -> Result<HostInputResponse, Error> {
         let sender = self
-            .inner
-            .sender
-            .lock()
-            .expect("subagent host-input bridge lock")
-            .clone()
+            .bridge
+            .sender()
             .ok_or_else(|| Error::InvalidConfiguration {
                 message: "delegated agent questionnaires require an interactive parent session"
                     .into(),

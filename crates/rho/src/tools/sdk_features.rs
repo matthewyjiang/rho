@@ -26,7 +26,7 @@ pub(super) fn questionnaire_bundle() -> super::sdk_registry::StaticToolBundle {
 }
 
 pub(crate) fn message_parent_bundle(
-    poster: Arc<dyn crate::app::subagent_notice::NoticePoster>,
+    poster: Arc<dyn crate::app::subagent_messaging::NoticePoster>,
 ) -> super::sdk_registry::StaticToolBundle {
     super::sdk_registry::StaticToolBundle::new(vec![Arc::new(MessageParentTool { poster })])
 }
@@ -268,7 +268,7 @@ impl SdkTool for QuestionnaireTool {
 
 /// Non-blocking plain-text notice from a delegated child to its parent.
 struct MessageParentTool {
-    poster: Arc<dyn crate::app::subagent_notice::NoticePoster>,
+    poster: Arc<dyn crate::app::subagent_messaging::NoticePoster>,
 }
 
 impl SdkTool for MessageParentTool {
@@ -300,13 +300,10 @@ impl SdkTool for MessageParentTool {
             let message = required_string(&arguments, "message").map_err(|error| {
                 SdkToolError::new(ToolErrorKind::InvalidArguments, error.to_string())
             })?;
-            let message = crate::app::subagent_notice::validate_message_text(
-                message,
-                crate::app::subagent_notice::MAX_NOTICE_BYTES,
-            )
-            .map_err(|error| {
-                SdkToolError::new(ToolErrorKind::InvalidArguments, error.to_string())
-            })?;
+            let message = crate::app::subagent_messaging::ValidatedMessage::parse(message)
+                .map_err(|error| {
+                    SdkToolError::new(ToolErrorKind::InvalidArguments, error.to_string())
+                })?;
             self.poster
                 .post(message)
                 .map_err(|error| SdkToolError::new(ToolErrorKind::Execution, error.to_string()))?;

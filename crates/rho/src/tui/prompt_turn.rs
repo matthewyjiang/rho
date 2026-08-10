@@ -166,38 +166,11 @@ impl App {
         // Background completions pending at this turn boundary ride in the
         // same model request. This runs after retry delays too, while the
         // persisted display remains the real user-visible prompt.
-        let mut model_parts = Vec::new();
-        let mut display_parts = Vec::new();
-        if let Some(manager) = agent.subagents().cloned() {
-            let notifications = manager.take_notifications(agent.session_id().as_str());
-            if !notifications.is_empty() {
-                let (model, display) = crate::tools::agent::notification_prompts(&notifications);
-                model_parts.push(model);
-                display_parts.push(display);
-            }
-        }
-        self.drain_subagent_notices();
-        let notices = self.take_subagent_notices(agent.session_id());
-        if !notices.is_empty() {
-            let (model, display) = Self::format_subagent_notice_prompts(&notices);
-            model_parts.push(model);
-            display_parts.push(display);
-        }
-        let workflow_notifications = agent
-            .workflow_tracker()
-            .take_notifications(agent.session_id().as_str());
-        if !workflow_notifications.is_empty() {
-            let (model, display) =
-                crate::tools::workflow_tracker::notification_prompts(&workflow_notifications);
-            model_parts.push(model);
-            display_parts.push(display);
-        }
-        if !model_parts.is_empty() {
+        if let Some((model, display)) = self.collect_turn_boundary_prompts(agent) {
             self.insert_entry(&Entry::Notice(format!(
-                "delivered with this message:\n{}",
-                display_parts.join("\n")
+                "delivered with this message:\n{display}"
             )));
-            failed_turn.attach_notification_context(model_parts.join("\n\n"));
+            failed_turn.attach_notification_context(model);
         }
         let model_input = failed_turn.model_input()?;
         self.turn.set_current_turn_start(Some(self.history.len()));
@@ -264,7 +237,7 @@ impl App {
                 self.draw_running_frame(terminal, &mut frame_scheduler)?;
             }
             queued_interactions
-                .extend_subagent_questionnaires(self.queued_subagent_questionnaires.drain(..));
+                .extend_subagent_questionnaires(self.subagent_inbox.take_questionnaires());
             let panel_changed = self.update_subagent_panel(agent);
             let attach_changed = self.poll_pending_subagent_attaches(Instant::now());
             if panel_changed || attach_changed {
@@ -279,8 +252,6 @@ impl App {
             let frame_deadline =
                 self.next_running_frame_deadline(frame_scheduler.deferred_deadline());
             let approval_ready = approval_receiver_open;
-            let subagent_host_input_bound = self.subagent_host_input.is_some();
-            let subagent_notices_bound = self.subagent_notices.is_some();
             tokio::select! {
                 biased;
                 terminal_event = self.terminal_session.as_mut().expect("terminal session initialized").next_event() => {
@@ -349,20 +320,8 @@ impl App {
                         }
                     }
                 }
-                request = super::app_loop::next_subagent_host_input(&mut self.subagent_host_input), if subagent_host_input_bound => {
-                    match request {
-                        Some(request) => queued_interactions.push(
-                            QueuedRunningInteraction::SubagentQuestionnaire(request),
-                        ),
-                        None => self.subagent_host_input = None,
-                    }
+                () = self.subagent_inbox.recv() => {
                     self.draw_running_frame(terminal, &mut frame_scheduler)?;
-                }
-                notice = super::app_loop::next_subagent_notice(&mut self.subagent_notices), if subagent_notices_bound => {
-                    match notice {
-                        Some(notice) => self.queued_subagent_notices.push_back(notice),
-                        None => self.subagent_notices = None,
-                    }
                 }
                 _ = tokio::time::sleep_until(frame_deadline) => {
                     self.drain_stream_tick(terminal)?;
@@ -479,8 +438,8 @@ impl App {
             }
         }
 
-        self.queued_subagent_questionnaires
-            .extend(queued_interactions.into_subagent_questionnaires());
+        self.subagent_inbox
+            .return_questionnaires(queued_interactions.into_subagent_questionnaires());
 
         if pending_input_request.is_some() {
             let completion = pending_input::pending_input_completion(&mut pending_input_request)

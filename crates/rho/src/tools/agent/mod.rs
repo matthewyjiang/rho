@@ -17,7 +17,7 @@ use {
     crate::app::{
         agent_executor::{AgentExecutor, AgentLaunchRequest, AgentRunHandle},
         subagent_host_input::{SubagentHostInputBridge, SubagentHostInputRequest},
-        subagent_notice::{SubagentNotice, SubagentNoticeBridge},
+        subagent_messaging::{SubagentNotice, SubagentNoticeBridge, ValidatedMessage},
     },
     crate::subagent::{self, RunState, RunStatus},
     rho_sdk::tool::{
@@ -371,7 +371,7 @@ impl SubagentManager {
     }
 
     /// Stages a parent plain-text message for a running Rho delegated agent.
-    pub async fn message(&self, id: &str, text: &str) -> anyhow::Result<()> {
+    pub(crate) async fn message(&self, id: &str, message: &ValidatedMessage) -> anyhow::Result<()> {
         let id = crate::subagent::normalize_id(id)?;
         let handle = self
             .inner
@@ -381,7 +381,7 @@ impl SubagentManager {
             .ok_or_else(|| anyhow::anyhow!("unknown delegated run '{id}'"))?
             .handle
             .clone();
-        handle.message_from_parent(text).await
+        handle.message_from_parent(message).await
     }
 
     pub async fn shutdown(&self) {
@@ -709,18 +709,19 @@ impl AgentsTool {
             }
             "message" => {
                 let id = required_id(&args)?;
-                let message = args
-                    .message
-                    .as_deref()
-                    .filter(|text| !text.is_empty())
-                    .ok_or_else(|| {
-                        ToolError::new(
-                            ToolErrorKind::InvalidArguments,
-                            "message action requires non-empty message text",
-                        )
-                    })?;
+                let text = args.message.as_deref().ok_or_else(|| {
+                    ToolError::new(
+                        ToolErrorKind::InvalidArguments,
+                        "message action requires message text",
+                    )
+                })?;
+                // Parse at this argument boundary so an empty or over-budget
+                // body reads as invalid arguments, not an execution failure.
+                let message = ValidatedMessage::parse(text).map_err(|error| {
+                    ToolError::new(ToolErrorKind::InvalidArguments, error.to_string())
+                })?;
                 self.manager
-                    .message(id, message)
+                    .message(id, &message)
                     .await
                     .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
                 format!("queued parent message for delegated run '{id}'")

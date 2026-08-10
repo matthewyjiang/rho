@@ -10,7 +10,7 @@ fn provider_selection_updates_are_shared_with_executor_clones() {
         PathBuf::new(),
         PathBuf::new(),
         SubagentHostInputBridge::new(),
-        crate::app::subagent_notice::SubagentNoticeBridge::new(),
+        crate::app::subagent_messaging::SubagentNoticeBridge::new(),
     );
     let cloned = executor.clone();
 
@@ -35,7 +35,7 @@ fn permission_mode_updates_are_shared_with_executor_clones() {
         PathBuf::new(),
         PathBuf::new(),
         SubagentHostInputBridge::new(),
-        crate::app::subagent_notice::SubagentNoticeBridge::new(),
+        crate::app::subagent_messaging::SubagentNoticeBridge::new(),
     );
     let cloned = executor.clone();
 
@@ -454,7 +454,7 @@ fn update_selection_does_not_alter_bound_claude_runtime() {
         PathBuf::new(),
         PathBuf::new(),
         SubagentHostInputBridge::new(),
-        crate::app::subagent_notice::SubagentNoticeBridge::new(),
+        crate::app::subagent_messaging::SubagentNoticeBridge::new(),
     );
 
     let definition = Arc::new(AgentDefinition {

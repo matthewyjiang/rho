@@ -145,9 +145,9 @@ pub(super) struct Startup<'a> {
     pub herdr: HerdrReporter,
     pub host_input: Option<Arc<dyn HostInputResponder>>,
     /// Non-blocking parent notices for background delegated Rho agents.
-    pub notice_poster: Option<Arc<dyn super::subagent_notice::NoticePoster>>,
+    pub notice_poster: Option<Arc<dyn super::subagent_messaging::NoticePoster>>,
     /// Receives the live steering port once the Rho session starts.
-    pub steering_slot: Option<Arc<std::sync::Mutex<Option<rho_sdk::SteeringHandle>>>>,
+    pub steering_slot: Option<super::subagent_messaging::SteeringSlot>,
     pub approval_session: Option<rho_sdk::ApprovalSession>,
     pub hook_host_labels: rho_sdk::hooks::HookHostLabels,
 }
@@ -599,7 +599,7 @@ async fn complete_run(
     session: &rho_sdk::Session,
     prompt_text: String,
     dependencies: HeadlessRunDeps<'_>,
-    steering_slot: Option<Arc<std::sync::Mutex<Option<rho_sdk::SteeringHandle>>>>,
+    steering_slot: Option<super::subagent_messaging::SteeringSlot>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
     let HeadlessRunDeps {
         reporter,
@@ -609,7 +609,7 @@ async fn complete_run(
     } = dependencies;
     let mut run = session.start(UserInput::text(prompt_text)).await?;
     if let Some(slot) = steering_slot {
-        *slot.lock().expect("delegated steering lock") = Some(run.steering_handle());
+        slot.publish(run.steering_handle());
     }
     let cancellation = run.cancellation_handle();
     let external_cancellation = external_cancellation.unwrap_or_default();

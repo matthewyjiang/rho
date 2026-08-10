@@ -60,7 +60,7 @@ impl ManagerFixture {
                 root.join("rho.toml"),
                 root.to_path_buf(),
                 SubagentHostInputBridge::new(),
-                crate::app::subagent_notice::SubagentNoticeBridge::new(),
+                crate::app::subagent_messaging::SubagentNoticeBridge::new(),
             )),
             _rho_home: rho_home,
         }

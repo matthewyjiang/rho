@@ -2,28 +2,28 @@ use pretty_assertions::assert_eq;
 use rho_sdk::SessionId;
 
 use super::{
-    validate_message_text, MessageValidationError, NoticePostError, SubagentNotice,
-    SubagentNoticeBridge, MAX_NOTICE_BYTES, NOTICE_QUEUE_CAPACITY,
+    MessageValidationError, NoticePostError, SubagentNotice, SubagentNoticeBridge,
+    ValidatedMessage, MAX_MESSAGE_BYTES, NOTICE_QUEUE_CAPACITY,
 };
 
 // Covers: empty and oversized bodies fail with named budgets
-// Owner: app notice policy
+// Owner: app messaging policy
 #[test]
-fn validate_message_text_rejects_empty_and_oversized() {
+fn validated_message_rejects_empty_and_oversized() {
     assert_eq!(
-        validate_message_text("   ", MAX_NOTICE_BYTES),
+        ValidatedMessage::parse("   "),
         Err(MessageValidationError::Empty)
     );
-    let too_big = "x".repeat(MAX_NOTICE_BYTES + 1);
+    let too_big = "x".repeat(MAX_MESSAGE_BYTES + 1);
     assert_eq!(
-        validate_message_text(&too_big, MAX_NOTICE_BYTES),
+        ValidatedMessage::parse(&too_big),
         Err(MessageValidationError::TooLarge {
-            bytes: MAX_NOTICE_BYTES + 1,
-            max_bytes: MAX_NOTICE_BYTES,
+            bytes: MAX_MESSAGE_BYTES + 1,
+            max_bytes: MAX_MESSAGE_BYTES,
         })
     );
     assert_eq!(
-        validate_message_text("  hello  ", MAX_NOTICE_BYTES).unwrap(),
+        ValidatedMessage::parse("  hello  ").unwrap().into_string(),
         "hello"
     );
 }
@@ -49,6 +49,17 @@ fn notice_bridge_fails_closed_when_unbound_or_full() {
         })
     );
     assert_eq!(receiver.try_recv().unwrap().run_id, "n0");
+}
+
+// Covers: the steering slot is closed before publish and after clear, so a
+// parent message outside the live window cannot silently vanish.
+// Owner: app messaging policy
+#[test]
+fn steering_slot_is_closed_outside_the_live_window() {
+    let slot = super::SteeringSlot::new();
+    assert!(slot.handle().is_none());
+    slot.clear();
+    assert!(slot.handle().is_none());
 }
 
 fn sample_notice(run_id: &str) -> SubagentNotice {
