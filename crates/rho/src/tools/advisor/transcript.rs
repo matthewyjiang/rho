@@ -122,24 +122,21 @@ fn push_tool_call(out: &mut String, call: &ToolCall, max_bytes: usize) {
     out.push_str(" (id ");
     out.push_str(&call.id);
     out.push_str(")\n");
-    // Zero-arg / valueless payloads (notably advisor `{}`) omit the line rather
-    // than looking like a missing argument object.
+    // Zero-arg tools (notably advisor) serialize as `{}`. Omit only that empty
+    // object so it does not look like a missing payload. Malformed values such
+    // as null, [], or "" stay visible for advisor diagnostics.
     push_arguments_line(out, &call.arguments.to_string(), max_bytes);
 }
 
-/// Omit empty or valueless argument payloads from the advisor transcript.
+/// Omit only the intended zero-argument payload (`{}`) from the advisor transcript.
 fn push_arguments_line(out: &mut String, rendered: &str, max_bytes: usize) {
     let rendered = rendered.trim();
-    if is_valueless_arguments(rendered) {
+    if rendered == "{}" {
         return;
     }
     out.push_str("arguments: ");
     push_clipped(out, rendered, max_bytes);
     out.push('\n');
-}
-
-fn is_valueless_arguments(rendered: &str) -> bool {
-    matches!(rendered, "" | "{}" | "[]" | "null")
 }
 
 fn push_clipped(out: &mut String, text: &str, max_bytes: usize) {

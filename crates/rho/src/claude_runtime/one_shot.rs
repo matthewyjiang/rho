@@ -79,19 +79,7 @@ pub(crate) async fn run_one_shot(
     }
     let executable = executable::resolve().map_err(|error| error.to_string())?;
 
-    let plan = spawn::build_spawn_plan(&ClaudeSpawnRequest {
-        system_prompt: PromptPolicy::Replace(request.system_prompt.to_string()),
-        model: request.model.clone(),
-        // Parity with the Rho one-shot path, which exposes no tools at all.
-        tools: Vec::new(),
-        inherit_claude_config: false,
-        // Claude-native mode, not Rho PermissionMode. See ONE_SHOT_PERMISSION_MODE.
-        permission_mode: ONE_SHOT_PERMISSION_MODE,
-        cwd: request.cwd.clone(),
-        max_turns: 1,
-        effort: request.effort,
-        session_persistence: SessionPersistence::Discard,
-    });
+    let plan = spawn::build_spawn_plan(&one_shot_spawn_request(&request));
 
     let mut command = executable
         .try_command(spawn::inline_prompt_args(&plan))
@@ -139,6 +127,24 @@ pub(crate) async fn run_one_shot(
             Err(format!("claude code: failed waiting for child: {error}"))
         }
         DrainEnd::Exited(Ok(status)) => finish(text, drained.terminal, &drained.stderr, status),
+    }
+}
+
+/// Spawn contract used by [`run_one_shot`]. Kept as one helper so regression
+/// tests assert the same request shape production builds.
+fn one_shot_spawn_request(request: &ClaudeOneShotRequest) -> ClaudeSpawnRequest {
+    ClaudeSpawnRequest {
+        system_prompt: PromptPolicy::Replace(request.system_prompt.to_string()),
+        model: request.model.clone(),
+        // Parity with the Rho one-shot path, which exposes no tools at all.
+        tools: Vec::new(),
+        inherit_claude_config: false,
+        // Claude-native mode, not Rho PermissionMode. See ONE_SHOT_PERMISSION_MODE.
+        permission_mode: ONE_SHOT_PERMISSION_MODE,
+        cwd: request.cwd.clone(),
+        max_turns: 1,
+        effort: request.effort,
+        session_persistence: SessionPersistence::Discard,
     }
 }
 
