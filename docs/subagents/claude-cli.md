@@ -133,7 +133,7 @@ Spawn flags are fixed and deliberate:
 | Flag | Behaviour |
 | --- | --- |
 | `--output-format stream-json --verbose --include-partial-messages` | NDJSON event stream with partial text |
-| `--permission-mode` | Always set. Plan maps to `plan`, Auto maps to `dontAsk`. Supervised refuses before spawn. Never `bypassPermissions` |
+| `--permission-mode` | Always set from a Claude-native mode. Delegated runs map Rho Plan to Claude `plan` and Rho Auto to Claude `auto` (not Claude `dontAsk`). Advisor one-shots set Claude `dontAsk` directly. Supervised refuses before spawn. Never `bypassPermissions` |
 | `--disallowedTools Task` | Blocks Claude nested subagents so fan-out stays under Rho |
 | `--tools` | Restricts built-in tool availability to the base Claude tool names from `tools:`. Empty allowlist still sets `--tools ""` so ambient tools are not inherited |
 | `--allowedTools` | Every declared non-`Task` tool entry from `tools:` as separate argv values (bare names such as `Read` and patterns such as `Bash(git *)`). `Task` is never listed here |

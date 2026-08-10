@@ -214,6 +214,8 @@ async fn prepare_launch(request: &mut ClaudeSessionRequest) -> Result<Launch, St
     };
 
     let frozen_arguments = request.overrides.frozen_argv.take();
+    let permission_mode =
+        spawn::map_permission_mode(request.permission_mode).map_err(|error| error.to_string())?;
     let mut plan = spawn::build_spawn_plan(&ClaudeSpawnRequest {
         system_prompt: request.system_prompt.clone(),
         model: request.model.clone(),
@@ -223,7 +225,7 @@ async fn prepare_launch(request: &mut ClaudeSessionRequest) -> Result<Launch, St
             request.tools.clone()
         },
         inherit_claude_config: request.inherit_claude_config,
-        permission_mode: request.permission_mode,
+        permission_mode,
         cwd: request.cwd.clone(),
         max_turns: request.max_turns,
         effort: request.effort,

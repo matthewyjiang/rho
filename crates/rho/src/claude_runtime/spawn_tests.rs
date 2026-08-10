@@ -9,7 +9,7 @@ fn request(
     tools: Vec<&str>,
     inherit: bool,
     model: Option<&str>,
-    permission_mode: PermissionMode,
+    permission_mode: ClaudePermissionMode,
     max_turns: u64,
     prompt: PromptPolicy,
 ) -> ClaudeSpawnRequest {
@@ -28,7 +28,7 @@ fn request_with_effort(
     tools: Vec<&str>,
     inherit: bool,
     model: Option<&str>,
-    permission_mode: PermissionMode,
+    permission_mode: ClaudePermissionMode,
     max_turns: u64,
     prompt: PromptPolicy,
     effort: Option<&'static str>,
@@ -84,7 +84,7 @@ fn builds_explicit_safe_spawn_args() {
         vec!["Read", "Edit", "Bash(git *)"],
         false,
         Some("opus"),
-        PermissionMode::Auto,
+        ClaudePermissionMode::Auto,
         8,
         PromptPolicy::Replace("Plan carefully.".into()),
     ))
@@ -97,7 +97,7 @@ fn builds_explicit_safe_spawn_args() {
     assert!(plan
         .args
         .windows(2)
-        .any(|pair| pair == ["--permission-mode", "dontAsk"]));
+        .any(|pair| pair == ["--permission-mode", "auto"]));
     assert!(plan
         .args
         .windows(2)
@@ -157,7 +157,7 @@ fn extend_prompt_uses_append_system_prompt_file() {
         vec!["Read"],
         false,
         None,
-        PermissionMode::Auto,
+        ClaudePermissionMode::Auto,
         4,
         PromptPolicy::Extend("Extra instructions.".into()),
     ))
@@ -193,7 +193,7 @@ fn replace_prompt_uses_system_prompt_file_exactly() {
         vec!["Read"],
         false,
         None,
-        PermissionMode::Auto,
+        ClaudePermissionMode::Auto,
         4,
         PromptPolicy::Replace("Only this.".into()),
     ))
@@ -224,7 +224,7 @@ fn empty_extend_omits_system_prompt_entirely() {
         vec!["Read"],
         false,
         None,
-        PermissionMode::Auto,
+        ClaudePermissionMode::Auto,
         4,
         PromptPolicy::Extend(String::new()),
     ))
@@ -255,7 +255,7 @@ fn multiline_replace_prompt_preserves_bytes_in_file() {
         vec!["Read"],
         false,
         None,
-        PermissionMode::Auto,
+        ClaudePermissionMode::Auto,
         4,
         PromptPolicy::Replace(body.into()),
     ))
@@ -296,7 +296,7 @@ fn non_utf8_system_prompt_path_uses_os_string_argv() {
         vec!["Read"],
         false,
         None,
-        PermissionMode::Auto,
+        ClaudePermissionMode::Auto,
         4,
         PromptPolicy::Replace("secret prompt bytes".into()),
     ))
@@ -336,7 +336,7 @@ fn inherit_config_widens_setting_sources() {
         vec!["Read"],
         true,
         None,
-        PermissionMode::Plan,
+        ClaudePermissionMode::Plan,
         32,
         PromptPolicy::Replace("Plan carefully.".into()),
     ))
@@ -362,7 +362,7 @@ fn model_is_passed_byte_for_byte_without_alias_rewrite() {
         vec!["Read"],
         false,
         Some("claude-opus-4-6"),
-        PermissionMode::Auto,
+        ClaudePermissionMode::Auto,
         16,
         PromptPolicy::Replace("Plan carefully.".into()),
     ))
@@ -374,17 +374,21 @@ fn model_is_passed_byte_for_byte_without_alias_rewrite() {
 }
 
 #[test]
-fn supervised_mode_is_refused() {
-    let error = build_spawn_plan(&request(
-        vec!["Read"],
-        false,
-        None,
-        PermissionMode::Supervised,
-        8,
-        PromptPolicy::Replace("Plan carefully.".into()),
-    ))
-    .unwrap_err();
+fn supervised_rho_mode_is_refused_at_the_mapping_boundary() {
+    let error = map_permission_mode(crate::permission::PermissionMode::Supervised).unwrap_err();
     assert_eq!(error, ClaudeSpawnError::SupervisedUnsupported);
+}
+
+// Covers: Rho Auto maps to Claude auto, not Claude dontAsk.
+// Owner: Claude spawn argv mapping
+#[test]
+fn rho_auto_maps_to_claude_auto_not_dont_ask() {
+    assert_eq!(
+        map_permission_mode(crate::permission::PermissionMode::Auto),
+        Ok(ClaudePermissionMode::Auto)
+    );
+    assert_eq!(ClaudePermissionMode::Auto.as_cli_flag(), "auto");
+    assert_eq!(ClaudePermissionMode::DontAsk.as_cli_flag(), "dontAsk");
 }
 
 #[test]
@@ -393,7 +397,7 @@ fn empty_tools_sets_tools_flag_to_empty_string() {
         Vec::new(),
         false,
         None,
-        PermissionMode::Auto,
+        ClaudePermissionMode::Auto,
         8,
         PromptPolicy::Replace("Plan carefully.".into()),
     ))
@@ -409,7 +413,7 @@ fn task_is_never_made_available_even_if_listed() {
         vec!["Read", "Task", "Task(sub)"],
         false,
         None,
-        PermissionMode::Auto,
+        ClaudePermissionMode::Auto,
         8,
         PromptPolicy::Replace("Plan carefully.".into()),
     ))
@@ -438,7 +442,7 @@ fn reasoning_maps_to_claude_effort_flag() {
             vec!["Read"],
             false,
             None,
-            PermissionMode::Auto,
+            ClaudePermissionMode::Auto,
             8,
             PromptPolicy::Replace("Plan carefully.".into()),
             Some(expected),
@@ -476,7 +480,7 @@ fn session_persistence_decides_the_no_session_persistence_flag() {
             vec!["Read"],
             false,
             None,
-            PermissionMode::Auto,
+            ClaudePermissionMode::Auto,
             8,
             PromptPolicy::Replace("Plan carefully.".into()),
         );
@@ -513,7 +517,7 @@ fn inline_prompt_args_carry_the_prompt_under_the_matching_flag() {
             vec![],
             false,
             None,
-            PermissionMode::Plan,
+            ClaudePermissionMode::Plan,
             1,
             prompt.clone(),
         ))

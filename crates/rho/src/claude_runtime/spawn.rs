@@ -11,6 +11,31 @@ use crate::{agent::PromptPolicy, permission::PermissionMode};
 /// File name for the materialized system prompt inside a run directory.
 pub(crate) const SYSTEM_PROMPT_FILE_NAME: &str = "system-prompt.txt";
 
+/// Claude Code `--permission-mode` values Rho will set on `claude -p`.
+///
+/// This is not Rho's [`PermissionMode`]. Rho Auto is not Claude `dontAsk`;
+/// callers that need `dontAsk` (for example no-tools one-shots) set
+/// [`ClaudePermissionMode::DontAsk`] directly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ClaudePermissionMode {
+    /// Claude `--permission-mode auto`.
+    Auto,
+    /// Claude `--permission-mode plan`.
+    Plan,
+    /// Claude `--permission-mode dontAsk`. Headless runs that must not prompt.
+    DontAsk,
+}
+
+impl ClaudePermissionMode {
+    pub(crate) const fn as_cli_flag(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Plan => "plan",
+            Self::DontAsk => "dontAsk",
+        }
+    }
+}
+
 /// Inputs needed to construct a Claude CLI spawn.
 ///
 /// Model, tools, and inherit config come from the bound runtime contract, not
@@ -25,7 +50,8 @@ pub(crate) struct ClaudeSpawnRequest {
     /// Full Claude tool entries from the definition (`Read`, `Bash(git *)`, …).
     pub(crate) tools: Vec<String>,
     pub(crate) inherit_claude_config: bool,
-    pub(crate) permission_mode: PermissionMode,
+    /// Claude CLI permission mode. Not Rho's permission mode.
+    pub(crate) permission_mode: ClaudePermissionMode,
     pub(crate) cwd: PathBuf,
     /// Soft turn cap emitted as `--max-turns`. Claude's flag is undocumented
     /// surface; callers should treat rejection of the flag as a hard error.
@@ -120,14 +146,18 @@ pub(crate) enum ClaudeSpawnMaterializeError {
     },
 }
 
-/// Map Rho permission mode onto Claude's `--permission-mode`.
+/// Map Rho permission mode onto a Claude CLI permission mode.
 ///
-/// Never maps to `bypassPermissions`. Supervised has no safe non-interactive
-/// counterpart, so spawn is refused.
-pub(crate) fn map_permission_mode(mode: PermissionMode) -> Result<&'static str, ClaudeSpawnError> {
+/// Rho Auto maps to Claude `auto`, not Claude `dontAsk`. Callers that need
+/// `dontAsk` set [`ClaudePermissionMode::DontAsk`] on the spawn request
+/// directly. Never maps to `bypassPermissions`. Supervised has no safe
+/// non-interactive counterpart, so spawn is refused.
+pub(crate) fn map_permission_mode(
+    mode: PermissionMode,
+) -> Result<ClaudePermissionMode, ClaudeSpawnError> {
     match mode {
-        PermissionMode::Plan => Ok("plan"),
-        PermissionMode::Auto => Ok("dontAsk"),
+        PermissionMode::Plan => Ok(ClaudePermissionMode::Plan),
+        PermissionMode::Auto => Ok(ClaudePermissionMode::Auto),
         PermissionMode::Supervised => Err(ClaudeSpawnError::SupervisedUnsupported),
     }
 }
@@ -163,7 +193,7 @@ pub(crate) static CLAUDE_EFFORT_LEVELS: LazyLock<ReasoningLevelSet> = LazyLock::
 pub(crate) fn build_spawn_plan(
     request: &ClaudeSpawnRequest,
 ) -> Result<ClaudeSpawnPlan, ClaudeSpawnError> {
-    let permission_mode = map_permission_mode(request.permission_mode)?;
+    let permission_mode = request.permission_mode.as_cli_flag();
     let system_prompt = system_prompt_plan(&request.system_prompt);
     let setting_sources = if request.inherit_claude_config {
         "user,project,local"

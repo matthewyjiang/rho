@@ -12,31 +12,29 @@ use std::{path::PathBuf, process::Stdio};
 use rho_sdk::{model::ModelUsage, CancellationToken};
 use tokio::sync::watch;
 
-use crate::{
-    agent::{OneShotPhase, OneShotUpdate, PromptPolicy},
-    permission::PermissionMode,
-};
+use crate::agent::{OneShotPhase, OneShotUpdate, PromptPolicy};
 
 use super::{
     auth::{self, ClaudeAuthError},
     child::OwnedChild,
     drain::{self, DrainEnd},
     executable,
-    spawn::{self, ClaudeSpawnRequest, SessionPersistence},
+    spawn::{self, ClaudePermissionMode, ClaudeSpawnRequest, SessionPersistence},
     stream::{StreamEffect, TerminalResult},
     terminal::{assess_terminal, TerminalOutcome},
 };
 
 pub(crate) const CANCELLATION_ERROR: &str = "claude code: cancelled";
 
-/// Permission mode for no-tools Claude one-shots (advisor).
+/// Claude CLI permission mode for no-tools one-shots (advisor).
 ///
-/// Must stay [`PermissionMode::Auto`] (`dontAsk`). [`PermissionMode::Plan`]
-/// maps to Claude `--permission-mode plan`, which injects Claude Code plan
-/// scaffolding (AskUserQuestion / ExitPlanMode / "plan mode just activated")
-/// into the model context. That scaffolding is not part of Rho's transcript
-/// and poisons advisor prose even when tools is empty.
-pub(crate) const ONE_SHOT_PERMISSION_MODE: PermissionMode = PermissionMode::Auto;
+/// This is Claude `dontAsk`, not Rho [`crate::permission::PermissionMode::Auto`].
+/// Rho Auto maps to Claude `auto` at the delegated-agent boundary; one-shots
+/// need a non-prompting CLI mode with no plan scaffolding, so they set
+/// [`ClaudePermissionMode::DontAsk`] directly. [`ClaudePermissionMode::Plan`]
+/// injects AskUserQuestion / ExitPlanMode text and poisons advisor prose even
+/// when tools is empty.
+pub(crate) const ONE_SHOT_PERMISSION_MODE: ClaudePermissionMode = ClaudePermissionMode::DontAsk;
 
 /// A single Claude question with no tools and no follow-up turn.
 pub(crate) struct ClaudeOneShotRequest {
@@ -88,9 +86,7 @@ pub(crate) async fn run_one_shot(
         // Parity with the Rho one-shot path, which exposes no tools at all.
         tools: Vec::new(),
         inherit_claude_config: false,
-        // Fixed, not the session's mode: with no tools there is nothing to
-        // approve, and Supervised would otherwise refuse the spawn outright.
-        // Auto (dontAsk), never Plan - see ONE_SHOT_PERMISSION_MODE.
+        // Claude-native mode, not Rho PermissionMode. See ONE_SHOT_PERMISSION_MODE.
         permission_mode: ONE_SHOT_PERMISSION_MODE,
         cwd: request.cwd.clone(),
         max_turns: 1,

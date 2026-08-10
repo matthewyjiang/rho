@@ -2,14 +2,21 @@ use super::*;
 
 use crate::claude_runtime::spawn::map_permission_mode;
 
-// Covers: Claude one-shot advisor must not spawn with --permission-mode plan,
-// which injects plan-mode scaffolding into Fable/Claude and poisons guidance.
+// Covers: Claude one-shot advisor must spawn with Claude dontAsk, not plan
+// (plan scaffolding poisons guidance) and not via Rho Auto (Auto is Claude auto).
 // Owner: Claude one-shot adapter.
 #[test]
-fn one_shot_permission_mode_is_dont_ask_not_plan() {
-    assert_eq!(ONE_SHOT_PERMISSION_MODE, PermissionMode::Auto);
-    assert_eq!(map_permission_mode(ONE_SHOT_PERMISSION_MODE), Ok("dontAsk"));
-    assert_eq!(map_permission_mode(PermissionMode::Plan), Ok("plan"));
+fn one_shot_permission_mode_is_claude_dont_ask() {
+    assert_eq!(ONE_SHOT_PERMISSION_MODE, ClaudePermissionMode::DontAsk);
+    assert_eq!(ONE_SHOT_PERMISSION_MODE.as_cli_flag(), "dontAsk");
+    assert_eq!(
+        map_permission_mode(crate::permission::PermissionMode::Auto),
+        Ok(ClaudePermissionMode::Auto)
+    );
+    assert_eq!(
+        map_permission_mode(crate::permission::PermissionMode::Plan),
+        Ok(ClaudePermissionMode::Plan)
+    );
 }
 
 fn exit_status() -> std::process::ExitStatus {
