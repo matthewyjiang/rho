@@ -3,6 +3,17 @@ use std::sync::Arc;
 use super::*;
 use crate::app::subagent_host_input::SubagentHostInputBridge;
 
+// Covers: questionnaire routes to any parent-bridged delegated run, not only background.
+// Owner: delegated agent executor.
+#[test]
+fn delegated_questionnaire_requires_parent_bridge_not_background() {
+    let parent = rho_sdk::SessionId::new();
+    assert!(delegated_questionnaire_available(Some(&parent), true));
+    assert!(!delegated_questionnaire_available(Some(&parent), false));
+    assert!(!delegated_questionnaire_available(None, true));
+    assert!(!delegated_questionnaire_available(None, false));
+}
+
 #[test]
 fn provider_selection_updates_are_shared_with_executor_clones() {
     let executor = AgentExecutor::new(

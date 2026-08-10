@@ -46,6 +46,78 @@ fn delegated_role_keeps_questionnaire_when_host_offers_it() {
     );
 }
 
+// Covers: explicit questionnaire allowlists still bind when the host can answer.
+// Owner: delegated agent binding.
+#[test]
+fn delegated_allowlist_keeps_selected_questionnaire_when_host_offers_it() {
+    let bound = AgentBinder::bind(
+        definition(ToolPolicy::Allow(
+            ["read_file", "questionnaire"]
+                .into_iter()
+                .map(|name| ToolCapability::parse(name.to_string()))
+                .collect(),
+        )),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: capabilities(),
+        },
+        &Config::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        bound.rho_capabilities(),
+        Some(&capability_set(&["read_file", "questionnaire"]))
+    );
+}
+
+// Covers: listing questionnaire must not fail bind when this launch has no bridge.
+// Owner: delegated agent binding.
+#[test]
+fn delegated_allowlist_omits_questionnaire_when_host_does_not_offer_it() {
+    let bound = AgentBinder::bind(
+        definition(ToolPolicy::Allow(
+            ["read_file", "questionnaire"]
+                .into_iter()
+                .map(|name| ToolCapability::parse(name.to_string()))
+                .collect(),
+        )),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: capability_set(&["read_file", "write"]),
+        },
+        &Config::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        bound.rho_capabilities(),
+        Some(&capability_set(&["read_file"]))
+    );
+}
+
+// Covers: recursive tools listed on a child definition are ignored, not fatal.
+// Owner: delegated agent binding.
+#[test]
+fn delegated_allowlist_omits_recursive_tools_when_listed() {
+    let bound = AgentBinder::bind(
+        definition(ToolPolicy::Allow(
+            ["read_file", "agent", "agents", "advisor"]
+                .into_iter()
+                .map(|name| ToolCapability::parse(name.to_string()))
+                .collect(),
+        )),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: capability_set(&["read_file", "agent", "agents", "advisor"]),
+        },
+        &Config::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        bound.rho_capabilities(),
+        Some(&capability_set(&["read_file"]))
+    );
+}
+
 #[test]
 fn delegated_role_removes_recursive_capabilities() {
     let bound = AgentBinder::bind(
