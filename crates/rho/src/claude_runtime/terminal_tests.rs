@@ -113,4 +113,95 @@ fn terminal_assessment_matrix() {
         detail,
         "claude code: this claude binary rejected --max-turns; upgrade Claude Code or remove the turn cap"
     );
+
+    // Non-zero exit with empty stderr still carries the API/safeguard reason on
+    // the stream-json result line (Claude Code advisor and subagent path).
+    let safeguard = TerminalResult {
+        classification: TerminalClassification::Failure {
+            subtype: "success".into(),
+            is_error: true,
+        },
+        result_text: Some(
+            "API Error: Fable 5's safeguards flagged this message (https://www.anthropic.com/legal/aup)."
+                .into(),
+        ),
+        error: Some(
+            "API Error: Fable 5's safeguards flagged this message (https://www.anthropic.com/legal/aup)."
+                .into(),
+        ),
+        session_id: None,
+        num_turns: Some(1),
+        usage: None,
+        context: None,
+        total_cost_usd: None,
+        permission_denials: Vec::new(),
+        stop_reason: None,
+    };
+    let TerminalOutcome::Failure { detail, .. } = assess_terminal(Some(safeguard), err_status, "")
+    else {
+        panic!("safeguard stream failure must fail");
+    };
+    assert!(
+        detail.contains("safeguards flagged"),
+        "stream failure text must surface, got: {detail}"
+    );
+    assert!(
+        !detail.contains("process exited"),
+        "empty-stderr protocol failures should not bury the stream reason under exit code: {detail}"
+    );
+
+    // Success stream + non-zero exit keeps the process diagnosis (contradiction).
+    let success_with_text = TerminalResult {
+        classification: TerminalClassification::Success {
+            subtype: "success".into(),
+        },
+        result_text: Some("ok".into()),
+        error: None,
+        session_id: None,
+        num_turns: Some(1),
+        usage: None,
+        context: None,
+        total_cost_usd: None,
+        permission_denials: Vec::new(),
+        stop_reason: None,
+    };
+    let TerminalOutcome::Failure { detail, .. } =
+        assess_terminal(Some(success_with_text), err_status, "")
+    else {
+        panic!("success stream with non-zero exit must fail");
+    };
+    assert!(
+        detail.contains("process exited"),
+        "success stream text must not replace exit diagnosis: {detail}"
+    );
+    assert!(
+        !detail.contains("ok"),
+        "success answer must not be reported as the failure detail: {detail}"
+    );
+
+    // When stderr also explains the crash, keep both lines.
+    let failed_with_stderr = TerminalResult {
+        classification: TerminalClassification::Failure {
+            subtype: "error_during_execution".into(),
+            is_error: true,
+        },
+        result_text: Some("stream said boom".into()),
+        error: Some("stream said boom".into()),
+        session_id: None,
+        num_turns: None,
+        usage: None,
+        context: None,
+        total_cost_usd: None,
+        permission_denials: Vec::new(),
+        stop_reason: None,
+    };
+    let TerminalOutcome::Failure { detail, .. } =
+        assess_terminal(Some(failed_with_stderr), err_status, "segfault nearby")
+    else {
+        panic!("failure with stderr must fail");
+    };
+    assert!(
+        detail.contains("segfault nearby") && detail.contains("stream said boom"),
+        "stderr and stream failure should both surface: {detail}"
+    );
 }

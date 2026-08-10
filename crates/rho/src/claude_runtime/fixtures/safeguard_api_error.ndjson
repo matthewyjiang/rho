@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"sess-safeguard-001"}
+{"type":"result","subtype":"success","is_error":true,"terminal_reason":"api_error","num_turns":1,"result":"API Error: Fable 5's safeguards flagged this message (https://www.anthropic.com/legal/aup). Claude Code can't respond to this message with Fable 5. Try rephrasing the request in a new session or change your model.","session_id":"sess-safeguard-001","usage":{"input_tokens":1,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}
