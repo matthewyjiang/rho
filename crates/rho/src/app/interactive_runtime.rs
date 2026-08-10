@@ -730,9 +730,9 @@ impl InteractiveRuntime {
     /// previous tool. Returns the previous format when the tool list changed.
     pub(crate) async fn set_edit_tool(
         &mut self,
-        edit_tool: crate::config::EditTool,
+        edit_tool: rho_tools::EditFormat,
         max_output_bytes: usize,
-    ) -> anyhow::Result<Option<crate::config::EditTool>> {
+    ) -> anyhow::Result<Option<rho_tools::EditFormat>> {
         if self.runs.is_active() {
             anyhow::bail!("edit tool cannot change while a run is active");
         }
@@ -754,8 +754,8 @@ impl InteractiveRuntime {
     /// the new surface without a system-prompt rewrite.
     pub(crate) fn notify_edit_tool_switch(
         &mut self,
-        previous: crate::config::EditTool,
-        current: crate::config::EditTool,
+        previous: rho_tools::EditFormat,
+        current: rho_tools::EditFormat,
     ) -> anyhow::Result<String> {
         let spec = self
             .tools
@@ -946,8 +946,8 @@ impl InteractiveRuntime {
 /// The system prompt stays fixed for prompt caching. This notice carries the
 /// new tool contract so the model stops using the previous surface.
 fn edit_tool_switch_prompts(
-    previous: crate::config::EditTool,
-    current: crate::config::EditTool,
+    previous: rho_tools::EditFormat,
+    current: rho_tools::EditFormat,
     spec: &rho_sdk::model::ToolSpec,
 ) -> (String, String) {
     let schema = serde_json::to_string_pretty(&spec.input_schema).unwrap_or_else(|_| "{}".into());

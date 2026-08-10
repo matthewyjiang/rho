@@ -337,7 +337,7 @@ impl App {
         Ok(())
     }
 
-    pub(super) fn apply_pending_model_selection(
+    pub(super) async fn apply_pending_model_selection(
         &mut self,
         agent: &mut InteractiveRuntime,
         after_successful_turn: bool,
@@ -347,8 +347,9 @@ impl App {
         };
         if after_successful_turn {
             self.request_model_selection_after_turn(pending, agent)
+                .await
         } else {
-            self.select_model_with_omission_notice(pending, agent)
+            self.select_model_with_omission_notice(pending, agent).await
         }
     }
 

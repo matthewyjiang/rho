@@ -157,7 +157,7 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
                 Some(format!(
                     "{} shell · {} · {}",
                     config.inline_shell,
-                    config.edit_tool.label(),
+                    config.edit_tool.display_label(&info.provider),
                     web_search_summary(config)
                 )),
                 TOOLS_CATEGORY_VALUE,
@@ -322,8 +322,8 @@ pub(super) fn category_picker(
                 ),
                 item(
                     "Edit tool",
-                    "Choose the file edit format exposed to models. Restart Rho to apply changes.",
-                    Some(config.edit_tool.label().into()),
+                    "File edit format exposed to models. Auto follows the active provider.",
+                    Some(config.edit_tool.display_label(&info.provider)),
                     EDIT_TOOL_VALUE,
                 ),
                 item(

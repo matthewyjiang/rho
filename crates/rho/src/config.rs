@@ -81,7 +81,9 @@ pub struct Config {
     pub web_search_hosted: bool,
     /// Client-side backup backend used when hosted search is off or unsupported.
     pub web_search_provider: SearchProvider,
-    /// Selects the one built-in file edit tool exposed to models.
+    /// Selects the preferred built-in file edit tool exposed to models.
+    ///
+    /// [`EditTool::Auto`] resolves a concrete format from the active provider.
     pub edit_tool: EditTool,
     pub check_for_updates: bool,
     pub enable_subagents: bool,
@@ -260,8 +262,150 @@ impl<'de> Deserialize<'de> for SearchProvider {
     }
 }
 
-/// Built-in file edit surface exposed to models.
-pub type EditTool = rho_tools::EditFormat;
+/// Configured file-edit preference.
+///
+/// [`Self::Auto`] picks a built-in preferred format for the active chat
+/// provider. Concrete values pin one format across provider changes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum EditTool {
+    /// Prefer the built-in format for the active provider.
+    #[default]
+    Auto,
+    /// Snapshot-tagged, line-anchored `edit` tool.
+    Hashline,
+    /// Codex-compatible `apply_patch` tool.
+    ApplyPatch,
+    /// Exact string replacement through the `str_replace` tool.
+    StrReplace,
+}
+
+impl EditTool {
+    /// Every supported preference, in UI display order.
+    pub const ALL: &'static [Self] = &[
+        Self::Auto,
+        Self::Hashline,
+        Self::ApplyPatch,
+        Self::StrReplace,
+    ];
+
+    /// Configured value and selector label (`behavior.edit_tool`).
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Hashline => "hashline",
+            Self::ApplyPatch => "apply_patch",
+            Self::StrReplace => "str_replace",
+        }
+    }
+
+    /// Short human-readable preference label.
+    pub const fn label(self) -> &'static str {
+        self.as_str()
+    }
+
+    /// Detail shown when selecting an edit preference.
+    pub const fn detail(self) -> &'static str {
+        match self {
+            Self::Auto => {
+                "Pick the preferred format for the active provider and switch when the provider changes."
+            }
+            Self::Hashline => {
+                "Always expose `edit` with snapshot tags and line-anchored PUT/CUT operations."
+            }
+            Self::ApplyPatch => {
+                "Always expose `apply_patch` with a Codex-style multi-file patch document."
+            }
+            Self::StrReplace => {
+                "Always expose `str_replace` with exact old_string/new_string replacement."
+            }
+        }
+    }
+
+    /// Resolves the model-facing format for `provider`.
+    pub fn resolve(self, provider: &str) -> rho_tools::EditFormat {
+        match self {
+            Self::Auto => preferred_edit_format_for_provider(provider),
+            Self::Hashline => rho_tools::EditFormat::Hashline,
+            Self::ApplyPatch => rho_tools::EditFormat::ApplyPatch,
+            Self::StrReplace => rho_tools::EditFormat::StrReplace,
+        }
+    }
+
+    /// Label for config rows, including the resolved format when Auto.
+    pub fn display_label(self, provider: &str) -> String {
+        match self {
+            Self::Auto => format!("auto ({})", self.resolve(provider).label()),
+            pinned => pinned.label().into(),
+        }
+    }
+}
+
+/// Built-in preferred edit format for a chat provider.
+///
+/// Product defaults, not user config. Pin a concrete [`EditTool`] when a
+/// session should ignore this table. Unknown providers fall back to hashline.
+pub fn preferred_edit_format_for_provider(provider: &str) -> rho_tools::EditFormat {
+    match provider {
+        // Codex was trained on apply_patch documents.
+        "openai-codex" => rho_tools::EditFormat::ApplyPatch,
+        // Claude Code's native surface is exact string replacement.
+        "anthropic" => rho_tools::EditFormat::StrReplace,
+        // Rho's default strength: snapshot-tagged line edits.
+        _ => rho_tools::EditFormat::Hashline,
+    }
+}
+
+impl fmt::Display for EditTool {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl FromStr for EditTool {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let normalized = value.trim().to_ascii_lowercase();
+        match normalized.as_str() {
+            "auto" => Ok(Self::Auto),
+            "hashline" => Ok(Self::Hashline),
+            "apply_patch" => Ok(Self::ApplyPatch),
+            "str_replace" => Ok(Self::StrReplace),
+            _ => {
+                let expected = Self::ALL
+                    .iter()
+                    .copied()
+                    .map(Self::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                Err(format!(
+                    "unknown edit tool {normalized:?}; expected {expected}"
+                ))
+            }
+        }
+    }
+}
+
+impl Serialize for EditTool {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for EditTool {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(serde::de::Error::custom)
+    }
+}
 
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub(crate) struct LegacyWebSearchCredentials {

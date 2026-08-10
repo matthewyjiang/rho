@@ -121,6 +121,7 @@ provider = "unknown"
 #[test]
 fn edit_tool_preferences_load_from_behavior_config() {
     for (value, expected) in [
+        ("auto", super::super::EditTool::Auto),
         ("hashline", super::super::EditTool::Hashline),
         ("apply_patch", super::super::EditTool::ApplyPatch),
         ("str_replace", super::super::EditTool::StrReplace),

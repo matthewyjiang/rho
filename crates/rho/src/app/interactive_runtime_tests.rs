@@ -751,12 +751,12 @@ async fn edit_tool_switch_rebuilds_tools_and_appends_schema_notice() {
 
     let previous = interactive
         .set_edit_tool(
-            crate::config::EditTool::StrReplace,
+            rho_tools::EditFormat::StrReplace,
             Config::default().max_output_bytes,
         )
         .await
         .unwrap();
-    assert_eq!(previous, Some(crate::config::EditTool::Hashline));
+    assert_eq!(previous, Some(rho_tools::EditFormat::Hashline));
     assert_eq!(interactive.system_prompt, system_before);
     assert!(interactive.tools.contains("str_replace"));
     assert!(!interactive.tools.contains("edit"));
@@ -766,8 +766,8 @@ async fn edit_tool_switch_rebuilds_tools_and_appends_schema_notice() {
 
     let display = interactive
         .notify_edit_tool_switch(
-            crate::config::EditTool::Hashline,
-            crate::config::EditTool::StrReplace,
+            rho_tools::EditFormat::Hashline,
+            rho_tools::EditFormat::StrReplace,
         )
         .unwrap();
     assert_eq!(display, "edit tool switched to str_replace");
@@ -787,4 +787,33 @@ async fn edit_tool_switch_rebuilds_tools_and_appends_schema_notice() {
     assert!(text.contains("`str_replace`"));
     assert!(text.contains("input_schema:"));
     assert!(!text.contains("restart"));
+}
+
+// Covers: Auto preference advertises the built-in preferred format for the
+// configured provider at tool-set construction.
+// Owner: application tool registry.
+#[test]
+fn auto_edit_tool_resolves_preferred_format_for_provider() {
+    use crate::config::{preferred_edit_format_for_provider, EditTool};
+
+    assert_eq!(
+        preferred_edit_format_for_provider("openai-codex"),
+        rho_tools::EditFormat::ApplyPatch
+    );
+    assert_eq!(
+        preferred_edit_format_for_provider("anthropic"),
+        rho_tools::EditFormat::StrReplace
+    );
+    assert_eq!(
+        preferred_edit_format_for_provider("openai"),
+        rho_tools::EditFormat::Hashline
+    );
+    assert_eq!(
+        EditTool::Auto.resolve("openai-codex"),
+        rho_tools::EditFormat::ApplyPatch
+    );
+    assert_eq!(
+        EditTool::Auto.display_label("anthropic"),
+        "auto (str_replace)"
+    );
 }

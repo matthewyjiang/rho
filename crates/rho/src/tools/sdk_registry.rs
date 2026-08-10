@@ -188,7 +188,7 @@ impl AppToolSet {
         tool_set.add_bundle(super::coding::sdk_bundle(
             &capabilities,
             config.max_output_bytes,
-            config.edit_tool,
+            config.edit_tool.resolve(&config.provider),
             process_environment.clone(),
             tool_set.checkpoint_tracker.clone(),
         ));
@@ -342,9 +342,9 @@ impl AppToolSet {
     /// run has no edit tool or the selection is already active.
     pub fn set_edit_tool(
         &mut self,
-        edit_tool: crate::config::EditTool,
+        edit_tool: rho_tools::EditFormat,
         max_output_bytes: usize,
-    ) -> Option<crate::config::EditTool> {
+    ) -> Option<rho_tools::EditFormat> {
         let position = self
             .tools
             .iter()
@@ -367,7 +367,7 @@ impl AppToolSet {
     }
 
     /// The currently advertised built-in edit format, when this run exposes one.
-    pub fn edit_tool(&self) -> Option<crate::config::EditTool> {
+    pub fn edit_tool(&self) -> Option<rho_tools::EditFormat> {
         self.tools
             .iter()
             .find_map(|tool| rho_tools::EditFormat::from_tool_name(tool.spec().name.as_str()))

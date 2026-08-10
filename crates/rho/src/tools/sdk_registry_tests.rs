@@ -71,7 +71,11 @@ fn canonical_tool_names_match_the_unfiltered_registry() {
 
     let root = tempfile::tempdir().unwrap();
     let mut model_names = Vec::new();
-    for &edit_tool in rho_tools::EditFormat::ALL {
+    for edit_tool in [
+        crate::config::EditTool::Hashline,
+        crate::config::EditTool::ApplyPatch,
+        crate::config::EditTool::StrReplace,
+    ] {
         let config = Config {
             edit_tool,
             ..Config::default()
@@ -88,7 +92,7 @@ fn canonical_tool_names_match_the_unfiltered_registry() {
         // Advisor mode is off by default; the registry still owns the name.
         tools.set_advisor_registered(true);
         let names = tools.unfiltered_names().collect::<Vec<_>>();
-        let selected = edit_tool.tool_name();
+        let selected = edit_tool.resolve(&config.provider).tool_name();
         // Model-facing names only; legacy `edit_file` is not registered.
         // NEXT_MAJOR(rho-tools): drop edit_file alias recognition entirely in 2.0.
         for name in ["edit", "apply_patch", "str_replace"] {
@@ -605,7 +609,7 @@ fn advisor_registration_toggles_without_rebuilding_the_tool_set() {
 #[test]
 fn edit_tool_selection_swaps_the_advertised_edit_surface() {
     let config = Config {
-        edit_tool: rho_tools::EditFormat::Hashline,
+        edit_tool: crate::config::EditTool::Hashline,
         ..Config::default()
     };
     let mut tools = AppToolSet::new(
@@ -643,4 +647,24 @@ fn edit_tool_selection_swaps_the_advertised_edit_surface() {
         without_edit.set_edit_tool(rho_tools::EditFormat::ApplyPatch, config.max_output_bytes),
         None
     );
+}
+
+// Covers: Auto preference advertises the provider-preferred format at construction.
+// Owner: application tool registry.
+#[test]
+fn auto_edit_tool_constructs_the_preferred_provider_format() {
+    let config = Config {
+        provider: "anthropic".into(),
+        edit_tool: crate::config::EditTool::Auto,
+        ..Config::default()
+    };
+    let tools = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::new(capabilities(&["edit", "read_file"])),
+    );
+    assert_eq!(tools.edit_tool(), Some(rho_tools::EditFormat::StrReplace));
+    assert!(tools.contains("str_replace"));
+    assert!(!tools.contains("edit"));
+    assert!(!tools.contains("apply_patch"));
 }

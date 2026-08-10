@@ -6,7 +6,7 @@ use rho_sdk::ProcessEnvironment;
 pub(super) fn sdk_bundle(
     capabilities: &AgentCapabilities,
     max_output_bytes: usize,
-    config_edit_tool: crate::config::EditTool,
+    config_edit_tool: rho_tools::EditFormat,
     process_environment: ProcessEnvironment,
     mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
 ) -> super::sdk_registry::StaticToolBundle {

@@ -548,20 +548,20 @@ impl App {
         })
     }
 
-    /// Saves the edit-tool choice and applies it to the live session when possible.
+    /// Saves the edit-tool preference and applies the resolved format when possible.
     ///
     /// The system prompt stays fixed. A successful live switch rebuilds the tool
     /// list for the next turn and appends a model-facing schema notice.
+    /// [`crate::config::EditTool::Auto`] keeps `auto` in config and advertises the
+    /// preferred format for the active provider.
     pub(super) async fn apply_edit_tool(
         &mut self,
         edit_tool: crate::config::EditTool,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let config = self.info.services.config_repository.load()?;
-        let previous = match agent
-            .set_edit_tool(edit_tool, config.max_output_bytes)
-            .await
-        {
+        let resolved = edit_tool.resolve(&self.info.runtime.provider);
+        let previous = match agent.set_edit_tool(resolved, config.max_output_bytes).await {
             Ok(previous) => previous,
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!("could not apply edit tool: {error}")));
@@ -594,7 +594,7 @@ impl App {
             .diagnostics
             .update_edit_tool(edit_tool.as_str());
         if let Some(previous) = previous {
-            match agent.notify_edit_tool_switch(previous, edit_tool) {
+            match agent.notify_edit_tool_switch(previous, resolved) {
                 Ok(display) => {
                     self.insert_entry(&Entry::Notice(display));
                     self.info
@@ -604,12 +604,63 @@ impl App {
                 }
                 Err(error) => {
                     self.insert_entry(&Entry::Error(format!(
-                        "edit tool is {edit_tool}, but the session notice could not be added: {error}"
+                        "edit tool is {}, but the session notice could not be added: {error}",
+                        edit_tool.display_label(&self.info.runtime.provider)
                     )));
                 }
             }
         }
-        self.set_status(format!("edit tool: {edit_tool}"));
+        self.set_status(format!(
+            "edit tool: {}",
+            edit_tool.display_label(&self.info.runtime.provider)
+        ));
+        Ok(())
+    }
+
+    /// When edit preference is Auto, advertise the preferred format for
+    /// `provider`. Failures are reported as notices and do not undo a model
+    /// switch.
+    pub(super) async fn apply_auto_edit_tool_for_provider(
+        &mut self,
+        provider: &str,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        let config = self.info.services.config_repository.load()?;
+        if config.edit_tool != crate::config::EditTool::Auto {
+            return Ok(());
+        }
+        let resolved = config.edit_tool.resolve(provider);
+        let previous = match agent.set_edit_tool(resolved, config.max_output_bytes).await {
+            Ok(previous) => previous,
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "model switched, but auto edit tool could not follow the provider: {error}"
+                )));
+                return Ok(());
+            }
+        };
+        let Some(previous) = previous else {
+            return Ok(());
+        };
+        match agent.notify_edit_tool_switch(previous, resolved) {
+            Ok(display) => {
+                self.insert_entry(&Entry::Notice(display));
+                self.info
+                    .services
+                    .diagnostics
+                    .update_tools(&agent.tool_specs());
+                self.set_status(format!(
+                    "edit tool: {}",
+                    config.edit_tool.display_label(provider)
+                ));
+            }
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "auto edit tool is {}, but the session notice could not be added: {error}",
+                    resolved.as_str()
+                )));
+            }
+        }
         Ok(())
     }
 

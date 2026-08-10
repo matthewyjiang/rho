@@ -581,7 +581,7 @@ impl App {
             self.preserve_unapplied_steering_as_follow_ups();
         }
         self.clear_accepted_steering();
-        self.apply_pending_model_selection(agent, completed)?;
+        self.apply_pending_model_selection(agent, completed).await?;
         if self.pending_subagent_questionnaire.is_some() {
             self.set_status(HerdrUserWait::Questionnaire.message());
         }

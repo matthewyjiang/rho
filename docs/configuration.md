@@ -166,22 +166,31 @@ Model aliases work in these entries. Rho keeps reading the old `[title]` section
 
 ## Edit tool
 
-`edit_tool` under `[behavior]` selects the one file edit schema exposed to the model. It defaults to `hashline`. Supported values are:
+`edit_tool` under `[behavior]` selects the file edit preference exposed to the model. It defaults to `auto`. Supported values are:
 
 | Value | Exposed tool | Format |
 | --- | --- | --- |
+| `auto` | preferred for the active provider | Built-in catalog; switches when the provider changes |
 | `hashline` | `edit` | Snapshot-tagged, line-anchored `PUT` and `CUT` operations |
 | `apply_patch` | `apply_patch` | Codex-style, multi-file patch documents |
 | `str_replace` | `str_replace` | Exact `old_string` to `new_string` replacement in one file |
 
-Only the selected tool is registered. Each format keeps its own model-facing name. Change it from **Tools** > **Edit tool** in `/config`, or set it directly:
+Only one edit tool is registered at a time. Each concrete format keeps its own model-facing name. Change it from **Tools** > **Edit tool** in `/config`, or set it directly:
 
 ```toml
 [behavior]
-edit_tool = "apply_patch"
+edit_tool = "auto"
 ```
 
-The change applies on the next Rho startup because the process fixes tool schemas when it starts. Restart Rho after changing it. Use `hashline` when you want stale-file checks, `apply_patch` for models trained on that patch format, or `str_replace` for models that work best with exact string replacement.
+`auto` is a preference, not a tool name. Rho keeps `auto` in config and advertises the preferred concrete format for the active chat provider:
+
+| Provider | Preferred format |
+| --- | --- |
+| `openai-codex` | `apply_patch` |
+| `anthropic` | `str_replace` |
+| all others | `hashline` |
+
+Pinned values (`hashline`, `apply_patch`, `str_replace`) stay fixed across provider changes. From `/config`, the change applies before the next turn: the tool list rebuilds and the session gets a short notice with the new tool schema. Auto mode also applies that live switch when you change providers mid-session. Direct `config.toml` edits still need a restart. Use `hashline` when you want stale-file checks, `apply_patch` for models trained on that patch format, or `str_replace` for models that work best with exact string replacement.
 
 ## Web search
 
