@@ -332,6 +332,42 @@ async fn failure_terminal_result_is_error_even_on_exit_zero() {
     }));
 }
 
+// Covers: Claude Code safeguard / API errors exit 1 with empty stderr and put
+// the reason only on the stream-json result line. Subagent status and Failed
+// attachments must carry that text, not a bare exit code.
+#[tokio::test]
+async fn safeguard_api_error_with_nonzero_exit_surfaces_stream_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("result.json");
+    let fake = dir.path().join("claude");
+    install_streaming_fake(&fake, &fixture("safeguard_api_error.ndjson"), 1);
+    run_with_fake(
+        &output,
+        dir.path(),
+        &fake,
+        8,
+        PermissionMode::Auto,
+        RunCancellation::new(),
+    )
+    .await;
+    let status = subagent::read_status(&output).expect("status");
+    assert_eq!(status.state, RunState::Error);
+    let error = status.error.unwrap_or_default();
+    assert!(
+        error.contains("safeguards flagged") && error.contains("change your model"),
+        "unexpected error: {error}"
+    );
+    assert!(
+        !error.contains("process exited"),
+        "stream API error must not be replaced by exit-only text: {error}"
+    );
+    let events = read_attachment_events(&output);
+    assert_eq!(count_terminal_events(&events), 1);
+    assert!(events.iter().any(|event| {
+        matches!(event, AttachmentEvent::Failed(text) if text.contains("safeguards flagged"))
+    }));
+}
+
 #[tokio::test]
 async fn success_result_with_nonzero_exit_emits_one_failed_not_completed() {
     let dir = tempfile::tempdir().unwrap();
