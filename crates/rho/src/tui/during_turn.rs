@@ -614,6 +614,14 @@ impl App {
                 self.open_child_picker(config_picker::inline_shell_picker(&config));
                 self.set_status("select inline shell");
             }
+            config_picker::EDIT_TOOL_VALUE => {
+                let config = self.info.services.config_repository.load()?;
+                self.open_child_picker(config_picker::edit_tool_picker(config.edit_tool));
+                self.set_status("select edit tool");
+            }
+            value if value.starts_with(config_picker::EDIT_TOOL_PREFIX) => {
+                self.reject_edit_tool_change();
+            }
             value if value.starts_with(config_picker::INLINE_SHELL_PREFIX) => {
                 let shell = value[config_picker::INLINE_SHELL_PREFIX.len()..].to_string();
                 self.info.services.config_repository.update(|config| {

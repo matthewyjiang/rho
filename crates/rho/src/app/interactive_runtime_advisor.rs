@@ -1,10 +1,13 @@
 //! Advisor mode as a runtime state transition.
 //!
-//! Advisor mode changes the tool list and the system prompt, neither of which
-//! the SDK can swap on a live runtime. Turning it on or off therefore rebuilds
-//! the runtime and rebinds the session, the same move a permission-mode change
-//! makes, so the change lands on the next turn and the session ID and history
-//! survive it.
+//! Advisor mode changes the advertised tool list, which the SDK cannot swap on
+//! a live runtime. Turning it on or off therefore rebuilds the runtime and
+//! rebinds the session so the change lands on the next turn. The session ID and
+//! history survive it.
+//!
+//! The system prompt stays fixed for prompt-cache stability. The model learns
+//! about the tool list change from an appended context notice (with the tool
+//! schema when enabling) rather than a rewritten system prompt.
 
 use std::sync::Arc;
 
@@ -20,10 +23,12 @@ use super::super::{
 use super::InteractiveRuntime;
 
 impl InteractiveRuntime {
-    /// The system prompt for the tools this run currently offers.
+    /// Fixed system prompt for this session.
+    ///
+    /// Mid-session tool list changes keep this value stable and tell the model
+    /// through appended context instead.
     pub(super) fn active_system_prompt(&self) -> SystemPrompt {
-        self.system_prompt
-            .for_advisor_mode(self.tools.advisor_registered())
+        self.system_prompt.get()
     }
 
     /// Applies an advisor mode or advisor model change to the next turn.
@@ -31,20 +36,20 @@ impl InteractiveRuntime {
     /// `model` is the advisor model to use, or `None` when advisor mode is off
     /// or has no model yet; those are the same thing to the executor. The live
     /// tool reads the new model at once. Registering or removing the `advisor`
-    /// tool also changes the tool list and the system prompt, so it needs the
-    /// same runtime rebuild as a permission-mode change; the session ID and
-    /// history survive it.
+    /// tool rebuilds the runtime without rewriting the system prompt, then
+    /// appends a context notice. Returns display text for a transcript notice
+    /// when the tool list changed.
     pub(crate) async fn set_advisor(
         &mut self,
         model: Option<InternalAgentModelConfig>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Option<String>> {
         let Some(store) = self.tools.advisor().cloned() else {
-            return Ok(());
+            return Ok(None);
         };
         let registered = model.is_some();
         if registered == self.tools.advisor_registered() {
             store.set_model(model);
-            return Ok(());
+            return Ok(None);
         }
         if self.runs.is_active() {
             anyhow::bail!("advisor mode cannot change while a run is active");
@@ -56,7 +61,8 @@ impl InteractiveRuntime {
         match self.rebind_current_session().await {
             Ok(()) => {
                 store.set_model(model);
-                Ok(())
+                let display = self.append_advisor_switch_notice(registered)?;
+                Ok(Some(display))
             }
             Err(error) => {
                 self.tools.set_advisor_registered(!registered);
@@ -65,10 +71,32 @@ impl InteractiveRuntime {
         }
     }
 
+    fn append_advisor_switch_notice(&mut self, enabled: bool) -> anyhow::Result<String> {
+        let (model, display) = if enabled {
+            let spec = self
+                .tools
+                .specs()
+                .into_iter()
+                .find(|spec| spec.name == crate::tools::advisor::TOOL_NAME)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("advisor tool is missing after it was registered")
+                })?;
+            crate::prompt::advisor_enabled_context(&spec)
+        } else {
+            crate::prompt::advisor_disabled_context()
+        };
+        self.append_user_context_with_display(model, display.clone())?;
+        Ok(display)
+    }
+
     /// Rebuilds the SDK runtime around the current tools and prompt, then
     /// rebinds the live session onto it. The live runtime is replaced only
     /// after the replacement is ready, so a failure leaves the session intact.
-    async fn rebind_current_session(&mut self) -> anyhow::Result<()> {
+    ///
+    /// Callers that change the advertised tool list should keep the system
+    /// prompt fixed for prompt-cache stability and tell the model about the
+    /// change with an appended context message instead.
+    pub(super) async fn rebind_current_session(&mut self) -> anyhow::Result<()> {
         let snapshot = self.sessions.session().snapshot();
         let replacement_runtime = build_runtime(RuntimeBuildOptions {
             provider: Arc::clone(self.provider.provider()),

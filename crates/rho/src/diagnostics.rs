@@ -156,6 +156,12 @@ impl RuntimeDiagnostics {
         self.write().config.advisor_mode = advisor_mode;
     }
 
+    /// Edit tool selection can change mid-session, so the mirror follows the
+    /// live value rather than the process startup snapshot.
+    pub fn update_edit_tool(&self, edit_tool: &str) {
+        self.write().config.edit_tool = edit_tool.into();
+    }
+
     pub fn update_prompt_sources(&self, sources: Vec<crate::prompt::PromptSource>) {
         self.write().prompt_sources = sources;
     }

@@ -239,13 +239,49 @@ fn neutralize_mcp_server_instruction_close_tags(text: &str) -> String {
 
 /// Tells the executor when to consult the `advisor` tool.
 ///
-/// Appended only while advisor mode is active and an advisor model is set, so
-/// the prompt never describes a tool the run does not have.
+/// Used in mid-session / startup context notices rather than the system prompt,
+/// so toggling advisor mode does not rewrite the cached system prompt.
 pub fn append_advisor_instruction(text: &mut String) {
     text.push_str(ADVISOR_INSTRUCTION);
 }
 
+/// Advisor steering text without the leading blank lines used when appending to
+/// a system prompt.
+pub fn advisor_instruction_body() -> &'static str {
+    ADVISOR_INSTRUCTION.trim()
+}
+
 const ADVISOR_INSTRUCTION: &str = "\n\n# Advisor\n\nYou have access to an `advisor` tool backed by a stronger reviewer model. It takes NO parameters. When you call advisor, your entire conversation history is forwarded automatically. The advisor sees the task, every tool call you have made, and every result you have seen.\n\nCall advisor BEFORE substantive work: before writing, before committing to an interpretation, before building on an assumption. If the task needs orientation first (finding files, fetching a source, seeing what is there), do that, then call advisor. Orientation is not substantive work. Writing, editing, and declaring an answer are.\n\nAlso call advisor:\n- When you believe the task is complete. BEFORE this call, make your deliverable durable: write the file, save the result, commit the change.\n- When stuck: errors recurring, approach not converging, results that do not fit.\n- When considering a change of approach.\n\nOn tasks longer than a few steps, call advisor at least once before committing to an approach and once before declaring done. On short reactive tasks where the next action follows from tool output you just read, you do not need to keep calling. The advisor adds most of its value on the first call, before the approach hardens.\n\nGive the advice serious weight. If you follow a step and it fails in practice, or you have primary-source evidence that contradicts a specific claim, adapt. If you have already retrieved data pointing one way and the advisor points another, do not switch silently: surface the conflict in one more advisor call.\n";
+
+/// Model and display text when the `advisor` tool becomes available.
+pub fn advisor_enabled_context(spec: &ToolSpec) -> (String, String) {
+    let schema = serde_json::to_string_pretty(&spec.input_schema).unwrap_or_else(|_| "{}".into());
+    let model = format!(
+        "[advisor mode on]\n\n\
+The `advisor` tool is now available. {instruction}\n\n\
+Tool schema for `advisor`:\n\
+description:\n\
+{description}\n\n\
+input_schema:\n\
+{schema}\n",
+        instruction = advisor_instruction_body(),
+        description = spec.description,
+        schema = schema,
+    );
+    let display = "advisor mode on".into();
+    (model, display)
+}
+
+/// Model and display text when the `advisor` tool is removed.
+pub fn advisor_disabled_context() -> (String, String) {
+    let model = "\
+[advisor mode off]\n\n\
+The `advisor` tool is no longer available. Do not call `advisor`. \
+Any earlier guidance about consulting the advisor is superseded by this notice and the live tool list.\n"
+        .into();
+    let display = "advisor mode off".into();
+    (model, display)
+}
 
 fn push_context_file(out: &mut String, tag: &str, path: &Path, contents: &str) {
     out.push('\n');

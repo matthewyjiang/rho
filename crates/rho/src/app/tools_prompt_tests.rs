@@ -79,7 +79,7 @@ async fn assemble(config: &Config, cwd: &std::path::Path) -> (bool, String) {
     let tools = assembled.tools;
     let prompt = assembled.system_prompt;
     let registered = tools.advisor_registered();
-    let text = match prompt.for_advisor_mode(registered) {
+    let text = match prompt.get() {
         SystemPrompt::Custom(text) => text,
         SystemPrompt::None => String::new(),
         _ => String::new(),
@@ -88,7 +88,7 @@ async fn assemble(config: &Config, cwd: &std::path::Path) -> (bool, String) {
 }
 
 // Covers: the advisor tool must appear only when advisor mode is on and an
-// advisor model is configured, and the steering text must track the tool.
+// advisor model is configured, and startup steering tracks that registration.
 // Owner: root tool/prompt assembly.
 #[tokio::test]
 async fn the_advisor_tool_needs_both_the_mode_and_a_model() {
@@ -112,7 +112,7 @@ async fn the_advisor_tool_needs_both_the_mode_and_a_model() {
         assert_eq!(
             prompt.contains("You have access to an `advisor` tool"),
             expected,
-            "steering text for advisor_mode={advisor_mode} with_model={with_model}"
+            "startup steering for advisor_mode={advisor_mode} with_model={with_model}"
         );
     }
 }
@@ -145,22 +145,23 @@ async fn the_advisor_receives_the_executor_system_prompt() {
     let tools = assembled.tools;
     let prompt = assembled.system_prompt;
 
-    let SystemPrompt::Custom(text) = prompt.for_advisor_mode(true) else {
+    let SystemPrompt::Custom(text) = prompt.get() else {
         panic!("expected a custom system prompt");
     };
     let store = tools.advisor().expect("advisor store");
     assert_eq!(store.system_prompt(), Some(text));
 }
 
-// Covers: both prompt forms are built once so a mid-session /advisor toggle can
-// swap them, and the executor is never told about a tool it does not have.
+// Covers: the executor system prompt is fixed at assembly from the startup
+// advisor registration and is not dual-variant. Mid-session toggles must not
+// rely on swapping prompt forms.
 // Owner: root tool/prompt assembly.
 #[tokio::test]
-async fn both_prompt_variants_are_available_whatever_the_saved_mode_is() {
+async fn system_prompt_is_single_form_locked_to_startup_advisor_state() {
     let cwd = tempfile::tempdir().unwrap();
     let steering = "You have access to an `advisor` tool";
 
-    for advisor_mode in [false, true] {
+    for (advisor_mode, expect_steering) in [(false, false), (true, true)] {
         let config = advisor_config(advisor_mode, /*with_model*/ true);
         let diagnostics = RuntimeDiagnostics::new(&config);
         let agent = bound_agent(&config);
@@ -183,18 +184,14 @@ async fn both_prompt_variants_are_available_whatever_the_saved_mode_is() {
         .unwrap()
         .system_prompt;
 
-        let text = |enabled| match prompt.for_advisor_mode(enabled) {
+        let text = match prompt.get() {
             SystemPrompt::Custom(text) => text,
             SystemPrompt::None => String::new(),
             _ => String::new(),
         };
-
         assert_eq!(
-            (
-                text(/*enabled*/ true).contains(steering),
-                text(/*enabled*/ false).contains(steering)
-            ),
-            (true, false),
+            text.contains(steering),
+            expect_steering,
             "advisor_mode={advisor_mode}"
         );
     }

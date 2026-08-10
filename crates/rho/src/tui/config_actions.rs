@@ -113,11 +113,10 @@ impl App {
                 let selected = &value[config_picker::EDIT_TOOL_PREFIX.len()..];
                 let edit_tool: crate::config::EditTool =
                     selected.parse().map_err(anyhow::Error::msg)?;
-                self.info.services.config_repository.update(|config| {
-                    config.edit_tool = edit_tool;
-                })?;
+                self.apply_edit_tool(edit_tool, agent).await?;
+                let status = self.status().to_string();
                 self.open_main_config_picker_selected(config_picker::EDIT_TOOL_VALUE)?;
-                self.set_status(format!("edit tool: {edit_tool}; restart Rho to apply"));
+                self.set_status(status);
                 Ok(())
             }
             value if value.starts_with(config_picker::INLINE_SHELL_PREFIX) => {
@@ -547,5 +546,74 @@ impl App {
             config.auth = self.info.runtime.auth.clone();
             config.reasoning = self.info.runtime.reasoning;
         })
+    }
+
+    /// Saves the edit-tool choice and applies it to the live session when possible.
+    ///
+    /// The system prompt stays fixed. A successful live switch rebuilds the tool
+    /// list for the next turn and appends a model-facing schema notice.
+    pub(super) async fn apply_edit_tool(
+        &mut self,
+        edit_tool: crate::config::EditTool,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        let config = self.info.services.config_repository.load()?;
+        let previous = match agent
+            .set_edit_tool(edit_tool, config.max_output_bytes)
+            .await
+        {
+            Ok(previous) => previous,
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!("could not apply edit tool: {error}")));
+                self.set_status("edit tool change failed");
+                return Ok(());
+            }
+        };
+
+        if let Err(error) = self.info.services.config_repository.update(|config| {
+            config.edit_tool = edit_tool;
+        }) {
+            if let Some(previous) = previous {
+                if let Err(rollback_error) =
+                    agent.set_edit_tool(previous, config.max_output_bytes).await
+                {
+                    return Err(anyhow::anyhow!(
+                        "could not save edit tool: {error}; runtime rollback failed: {rollback_error}"
+                    ));
+                }
+            }
+            self.insert_entry(&Entry::Error(format!(
+                "could not save edit tool setting: {error}"
+            )));
+            self.set_status("config save failed");
+            return Ok(());
+        }
+
+        self.info
+            .services
+            .diagnostics
+            .update_edit_tool(edit_tool.as_str());
+        if let Some(previous) = previous {
+            match agent.notify_edit_tool_switch(previous, edit_tool) {
+                Ok(display) => {
+                    self.insert_entry(&Entry::Notice(display));
+                    self.info
+                        .services
+                        .diagnostics
+                        .update_tools(&agent.tool_specs());
+                }
+                Err(error) => {
+                    self.insert_entry(&Entry::Error(format!(
+                        "edit tool is {edit_tool}, but the session notice could not be added: {error}"
+                    )));
+                }
+            }
+        }
+        self.set_status(format!("edit tool: {edit_tool}"));
+        Ok(())
+    }
+
+    pub(super) fn reject_edit_tool_change(&mut self) {
+        self.set_status("edit tool cannot change until the current turn finishes");
     }
 }

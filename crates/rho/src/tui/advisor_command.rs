@@ -12,23 +12,36 @@ const SELECT_ADVISOR_MODEL_EDIT_STATUS: &str = "select an advisor model";
 
 /// The runtime side of advisor mode.
 ///
-/// Advisor mode changes the tool list and the system prompt, so the runtime has
-/// to act on it rather than only save it. Implementors apply the change to the
-/// next turn and leave the current session ID and history alone.
+/// Advisor mode changes the tool list, so the runtime has to act on it rather
+/// than only save it. Implementors apply the change to the next turn, keep the
+/// system prompt fixed, append a context notice when the tool list changes, and
+/// leave the current session ID alone.
 pub(super) trait AdvisorRuntime {
     /// Points the advisor at `model`, or turns the advisor off with `None`.
+    ///
+    /// Returns display text for a transcript notice when the advertised tool
+    /// list changed.
     fn set_advisor(
         &mut self,
         model: Option<InternalAgentModelConfig>,
-    ) -> impl Future<Output = anyhow::Result<()>> + Send;
+    ) -> impl Future<Output = anyhow::Result<Option<String>>> + Send;
+
+    /// Live tool specs after an advisor change, for diagnostics mirrors.
+    fn tool_specs_for_diagnostics(&self) -> Vec<rho_sdk::model::ToolSpec> {
+        Vec::new()
+    }
 }
 
 impl AdvisorRuntime for InteractiveRuntime {
     fn set_advisor(
         &mut self,
         model: Option<InternalAgentModelConfig>,
-    ) -> impl Future<Output = anyhow::Result<()>> + Send {
+    ) -> impl Future<Output = anyhow::Result<Option<String>>> + Send {
         InteractiveRuntime::set_advisor(self, model)
+    }
+
+    fn tool_specs_for_diagnostics(&self) -> Vec<rho_sdk::model::ToolSpec> {
+        self.tool_specs()
     }
 }
 
@@ -197,10 +210,20 @@ impl App {
             .services
             .diagnostics
             .update_advisor_mode(self.info.runtime.advisor_mode);
-        if let Err(error) = agent.set_advisor(model.flatten()).await {
-            self.insert_entry(&Entry::Error(format!(
-                "advisor mode could not be applied to this session: {error}"
-            )));
+        match agent.set_advisor(model.flatten()).await {
+            Ok(Some(display)) => {
+                self.insert_entry(&Entry::Notice(display));
+                self.info
+                    .services
+                    .diagnostics
+                    .update_tools(&agent.tool_specs_for_diagnostics());
+            }
+            Ok(None) => {}
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "advisor mode could not be applied to this session: {error}"
+                )));
+            }
         }
     }
 

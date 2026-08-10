@@ -335,6 +335,44 @@ impl AppToolSet {
         true
     }
 
+    /// Replaces the advertised built-in file edit tool.
+    ///
+    /// Returns the previous format when the advertised tool list changed so
+    /// callers can rebuild the runtime and tell the model. No-ops when this
+    /// run has no edit tool or the selection is already active.
+    pub fn set_edit_tool(
+        &mut self,
+        edit_tool: crate::config::EditTool,
+        max_output_bytes: usize,
+    ) -> Option<crate::config::EditTool> {
+        let position = self
+            .tools
+            .iter()
+            .position(|tool| rho_tools::EditFormat::is_edit_tool_name(tool.spec().name.as_str()))?;
+        let previous_name = self.tools[position].spec().name;
+        let previous = rho_tools::EditFormat::from_tool_name(previous_name.as_str())?;
+        if previous == edit_tool {
+            return None;
+        }
+        let mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver> =
+            self.checkpoint_tracker.clone();
+        self.tools[position] = rho_tools::coding_tool(
+            rho_tools::CodingToolKind::Edit,
+            rho_tools::CodingToolOptions::new()
+                .max_output_bytes(max_output_bytes)
+                .edit_tool(edit_tool)
+                .mutation_observer(mutation_observer),
+        );
+        Some(previous)
+    }
+
+    /// The currently advertised built-in edit format, when this run exposes one.
+    pub fn edit_tool(&self) -> Option<crate::config::EditTool> {
+        self.tools
+            .iter()
+            .find_map(|tool| rho_tools::EditFormat::from_tool_name(tool.spec().name.as_str()))
+    }
+
     pub fn subagents(&self) -> Option<&SubagentManager> {
         self.subagents.as_ref()
     }

@@ -598,3 +598,49 @@ fn advisor_registration_toggles_without_rebuilding_the_tool_set() {
     // the model the user already chose.
     assert!(tools.advisor().is_some());
 }
+
+// Covers: /config edit-tool selection must swap the single advertised edit
+// surface without rebuilding the rest of the tool set.
+// Owner: application tool registry.
+#[test]
+fn edit_tool_selection_swaps_the_advertised_edit_surface() {
+    let config = Config {
+        edit_tool: rho_tools::EditFormat::Hashline,
+        ..Config::default()
+    };
+    let mut tools = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::new(capabilities(&["edit", "read_file"])),
+    );
+    let before = tools.unfiltered_names().collect::<Vec<_>>();
+    assert_eq!(tools.edit_tool(), Some(rho_tools::EditFormat::Hashline));
+    assert!(tools.contains("edit"));
+    assert!(!tools.contains("str_replace"));
+
+    assert_eq!(
+        tools.set_edit_tool(rho_tools::EditFormat::Hashline, config.max_output_bytes),
+        None
+    );
+    assert_eq!(
+        tools.set_edit_tool(rho_tools::EditFormat::StrReplace, config.max_output_bytes),
+        Some(rho_tools::EditFormat::Hashline)
+    );
+    assert_eq!(tools.edit_tool(), Some(rho_tools::EditFormat::StrReplace));
+    assert!(!tools.contains("edit"));
+    assert!(tools.contains("str_replace"));
+
+    let after = tools.unfiltered_names().collect::<Vec<_>>();
+    assert_eq!(before.len(), after.len());
+    assert!(after.iter().any(|name| name == "read_file"));
+
+    let mut without_edit = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::new(capabilities(&["read_file"])),
+    );
+    assert_eq!(
+        without_edit.set_edit_tool(rho_tools::EditFormat::ApplyPatch, config.max_output_bytes),
+        None
+    );
+}

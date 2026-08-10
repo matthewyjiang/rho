@@ -101,7 +101,7 @@ pub(super) async fn initialize(
             approval_session: approval_handler
                 .clone()
                 .map(rho_sdk::ApprovalSession::from_shared),
-            system_prompt: system_prompt.for_advisor_mode(tools.advisor_registered()),
+            system_prompt: system_prompt.get(),
             reasoning: sdk_options.runtime.reasoning,
             service_tier: sdk_options.runtime.service_tier,
             compaction: compaction.clone(),

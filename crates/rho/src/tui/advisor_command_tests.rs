@@ -66,9 +66,9 @@ impl AdvisorRuntime for FakeAdvisorRuntime {
     fn set_advisor(
         &mut self,
         model: Option<InternalAgentModelConfig>,
-    ) -> impl std::future::Future<Output = anyhow::Result<()>> + Send {
+    ) -> impl std::future::Future<Output = anyhow::Result<Option<String>>> + Send {
         self.applied.push(model);
-        std::future::ready(Ok(()))
+        std::future::ready(Ok(None))
     }
 }
 

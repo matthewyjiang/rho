@@ -504,7 +504,7 @@ async fn run_session_with_output(
                 workspace,
                 workspace_policy: AppPolicy::for_mode(startup.config.permission_mode),
                 approval_session: startup.approval_session.clone(),
-                system_prompt: system_prompt.for_advisor_mode(tool_set.advisor_registered()),
+                system_prompt: system_prompt.get(),
                 reasoning: sdk_options.runtime.reasoning,
                 service_tier: sdk_options.runtime.service_tier,
                 compaction,
