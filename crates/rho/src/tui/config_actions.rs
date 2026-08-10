@@ -579,13 +579,26 @@ impl App {
             config.edit_tool = edit_tool;
         }) {
             if let Some(change) = change {
-                if let Err(rollback_error) = agent
+                // Forward switch already landed in model-visible and persisted
+                // display history. Rollback records the reverse the same way.
+                // Mirror both into the transcript so UI, model context, and
+                // display history describe the same transition sequence.
+                match agent
                     .set_edit_tool(change.previous, config.max_output_bytes)
                     .await
                 {
-                    return Err(anyhow::anyhow!(
-                        "could not save edit tool: {error}; runtime rollback failed: {rollback_error}"
-                    ));
+                    Ok(rollback) => {
+                        self.insert_entry(&Entry::Notice(change.display.clone()));
+                        if let Some(rollback) = rollback {
+                            self.insert_entry(&Entry::Notice(rollback.display));
+                        }
+                    }
+                    Err(rollback_error) => {
+                        self.insert_entry(&Entry::Notice(change.display.clone()));
+                        return Err(anyhow::anyhow!(
+                            "could not save edit tool: {error}; runtime rollback failed: {rollback_error}"
+                        ));
+                    }
                 }
             }
             self.insert_entry(&Entry::Error(format!(
@@ -674,3 +687,7 @@ impl App {
         self.set_status("edit tool cannot change until the current turn finishes");
     }
 }
+
+#[cfg(test)]
+#[path = "config_actions_tests.rs"]
+mod tests;
