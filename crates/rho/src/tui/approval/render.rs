@@ -19,18 +19,11 @@ const APPROVAL_FIXED_COMPOSER_ROWS: usize = 1 + ApprovalChoice::ALL.len() + 2;
 const APPROVAL_FRAME_ROWS: usize = 6;
 const APPROVAL_DETAIL_CHROME_ROWS: usize = APPROVAL_FIXED_COMPOSER_ROWS + APPROVAL_FRAME_ROWS;
 const MIN_DETAIL_PAGE_LINES: usize = 3;
-const PRIMARY_INDENT: &str = "  ";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum DetailRole {
-    Primary,
-    Meta,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct DetailLine {
-    text: String,
-    role: DetailRole,
+/// Body rows for an approval prompt: the thing being approved, then dim context.
+struct ApprovalDetails {
+    primary: Vec<String>,
+    meta: Vec<String>,
 }
 
 pub(in crate::tui) fn approval_lines(
@@ -153,19 +146,19 @@ fn wrapped_detail_lines(
     reason: &str,
     width: usize,
 ) -> Vec<Line<'static>> {
+    let details = approval_detail_sections(request);
     let mut lines = Vec::new();
-    for detail in approval_detail_lines(request) {
-        let style = match detail.role {
-            DetailRole::Primary => Theme::text(),
-            DetailRole::Meta => Theme::dim(),
-        };
-        push_wrapped_text(&mut lines, &detail.text, width, style, LineFill::Natural);
+    for text in details.primary {
+        push_wrapped_text(&mut lines, &text, width, Theme::text(), LineFill::Natural);
+    }
+    for text in details.meta {
+        push_wrapped_text(&mut lines, &text, width, Theme::dim(), LineFill::Natural);
     }
     let reason = reason.trim();
     if !reason.is_empty() {
         push_wrapped_text(
             &mut lines,
-            &format!("reason: {}", sanitize_controls(reason)),
+            &format!("reason {}", sanitize_controls(reason)),
             width,
             Theme::dim(),
             LineFill::Natural,
@@ -197,116 +190,103 @@ pub(super) fn approval_title(request: &CapabilityRequest) -> String {
 /// Flattened detail strings for security and layout tests.
 #[cfg(test)]
 pub(super) fn approval_details(request: &CapabilityRequest) -> Vec<String> {
-    approval_detail_lines(request)
-        .into_iter()
-        .map(|detail| detail.text)
-        .collect()
+    let details = approval_detail_sections(request);
+    let mut flat = details.primary;
+    flat.extend(details.meta);
+    flat
 }
 
-fn approval_detail_lines(request: &CapabilityRequest) -> Vec<DetailLine> {
+fn approval_detail_sections(request: &CapabilityRequest) -> ApprovalDetails {
     match request.operation() {
         CapabilityOperation::ReadPath { path, scope }
         | CapabilityOperation::WritePath { path, scope }
-        | CapabilityOperation::DiscoverInstructions { path, scope } => vec![
-            primary(sanitize_controls(&path.to_string_lossy())),
-            meta(format_path_scope(scope)),
-        ],
+        | CapabilityOperation::DiscoverInstructions { path, scope } => ApprovalDetails {
+            primary: vec![sanitize_controls(&path.to_string_lossy())],
+            meta: vec![format_path_scope(scope)],
+        },
         CapabilityOperation::ExecuteProcess(execution) => process_details(execution),
-        CapabilityOperation::NetworkAccess(target) => vec![primary(format!(
-            "target: {}",
-            sanitize_controls(target.url().unwrap_or("tool-managed network access"))
-        ))],
+        CapabilityOperation::NetworkAccess(target) => ApprovalDetails {
+            primary: vec![sanitize_controls(
+                target.url().unwrap_or("tool-managed network access"),
+            )],
+            meta: Vec::new(),
+        },
         CapabilityOperation::LoadSkill { name, path } => {
-            let mut details = vec![primary(format!("skill: {}", sanitize_controls(name)))];
+            let mut meta = Vec::new();
             if let Some(path) = path {
-                details.push(meta(format!(
-                    "path: {}",
+                meta.push(format!(
+                    "path {}",
                     sanitize_controls(&path.to_string_lossy())
-                )));
+                ));
             }
-            details
+            ApprovalDetails {
+                primary: vec![sanitize_controls(name)],
+                meta,
+            }
         }
-        _ => Vec::new(),
+        _ => ApprovalDetails {
+            primary: Vec::new(),
+            meta: Vec::new(),
+        },
     }
 }
 
-fn process_details(execution: &ProcessExecution) -> Vec<DetailLine> {
+fn process_details(execution: &ProcessExecution) -> ApprovalDetails {
     let invocation = execution.invocation();
-    let mut details = Vec::new();
-
-    if let Some(command) = invocation.shell_command() {
-        details.push(primary(format!(
-            "{PRIMARY_INDENT}{}",
-            sanitize_controls(command)
-        )));
+    let primary = if let Some(command) = invocation.shell_command() {
+        sanitize_controls(command)
     } else {
-        details.push(primary(format!(
-            "{PRIMARY_INDENT}{}",
-            format_direct_invocation(invocation.executable_path(), invocation.arguments())
-        )));
+        format_direct_invocation(invocation.executable_path(), invocation.arguments())
+    };
+    ApprovalDetails {
+        primary: vec![primary],
+        meta: vec![format_process_meta(execution)],
     }
+}
 
-    details.push(meta(format!(
-        "cwd  {}",
+fn format_process_meta(execution: &ProcessExecution) -> String {
+    let invocation = execution.invocation();
+    let mut parts = vec![format!(
+        "cwd {}",
         sanitize_controls(&execution.working_directory().to_string_lossy())
-    )));
-    details.push(meta(format_process_context(execution)));
-    details
-}
+    )];
 
-fn format_process_context(execution: &ProcessExecution) -> String {
-    let invocation = execution.invocation();
-    let mut parts = Vec::new();
-
+    let lookup = format_executable_lookup(invocation.executable_selection());
     if invocation.shell_command().is_some() {
-        let executable = sanitize_controls(&invocation.executable_path().to_string_lossy());
-        let args = invocation
-            .arguments()
-            .iter()
-            .map(|argument| sanitize_controls(argument))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let via = if args.is_empty() {
-            executable
-        } else {
-            format!("{executable} {args}")
-        };
-        let lookup = match invocation.executable_selection() {
-            ExecutableSelection::ExactPath => "exact path",
-            ExecutableSelection::SearchPath => "PATH",
-            _ => "unspecified",
-        };
-        parts.push(format!("via {via} ({lookup})"));
+        parts.push(format!(
+            "via {} ({lookup})",
+            format_direct_invocation(invocation.executable_path(), invocation.arguments())
+        ));
     } else {
-        let lookup = match invocation.executable_selection() {
-            ExecutableSelection::ExactPath => "exact path",
-            ExecutableSelection::SearchPath => "PATH",
-            _ => "unspecified",
-        };
         parts.push(lookup.into());
     }
 
     parts.push(format_environment_summary(execution.environment()));
 
     let limits = execution.output_limits();
-    parts.push(format!(
-        "{} out",
-        format_byte_count(limits.max_output_bytes())
-    ));
+    parts.push(format!("{} B out", limits.max_output_bytes()));
     parts.push(format_timeout(limits.timeout()));
 
     parts.join(" · ")
 }
 
+fn format_executable_lookup(selection: ExecutableSelection) -> &'static str {
+    match selection {
+        ExecutableSelection::ExactPath => "exact path",
+        ExecutableSelection::SearchPath => "PATH",
+        _ => "unspecified",
+    }
+}
+
 fn format_path_scope(scope: &PathScope) -> String {
     match scope {
-        PathScope::PrimaryWorkspace => "scope: primary workspace".into(),
+        PathScope::PrimaryWorkspace => "scope primary workspace".into(),
         PathScope::GrantedRoot { root } => format!(
-            "scope: granted root {}",
+            "scope granted root {}",
             sanitize_controls(&root.to_string_lossy())
         ),
-        PathScope::UnrestrictedFilesystem => "scope: unrestricted filesystem".into(),
-        _ => "scope: unspecified".into(),
+        PathScope::UnrestrictedFilesystem => "scope unrestricted filesystem".into(),
+        _ => "scope unspecified".into(),
     }
 }
 
@@ -315,20 +295,15 @@ fn format_environment_summary(environment: &ProcessEnvironment) -> String {
         ProcessEnvironment::Empty => "env empty".into(),
         ProcessEnvironment::InheritAll => "env inherit all".into(),
         ProcessEnvironment::InheritExcept { variable_names } => {
-            let count = variable_names.len();
-            if count == 1 {
-                "env inherit (1 var stripped)".into()
-            } else {
-                format!("env inherit ({count} vars stripped)")
-            }
+            // Scrub lists are not decision content; only the count matters.
+            format!("env inherit ({} stripped)", variable_names.len())
         }
         ProcessEnvironment::InheritListed { variable_names } => {
-            let count = variable_names.len();
-            if count == 1 {
-                "env inherit 1 listed var".into()
-            } else {
-                format!("env inherit {count} listed vars")
-            }
+            // Allowlists are the authorization surface; show sanitized names.
+            format!(
+                "env {}",
+                format_json_strings(variable_names.iter().map(String::as_str))
+            )
         }
         _ => "env unspecified".into(),
     }
@@ -338,36 +313,6 @@ fn format_timeout(timeout: Option<Duration>) -> String {
     match timeout {
         None => "no timeout".into(),
         Some(timeout) => format!("timeout {timeout:?}"),
-    }
-}
-
-fn format_byte_count(bytes: usize) -> String {
-    const KB: usize = 1000;
-    const MB: usize = 1000 * 1000;
-    if bytes >= MB && bytes.is_multiple_of(MB) {
-        format!("{} MB", bytes / MB)
-    } else if bytes >= MB {
-        format!("{:.1} MB", bytes as f64 / MB as f64)
-    } else if bytes >= KB && bytes.is_multiple_of(KB) {
-        format!("{} KB", bytes / KB)
-    } else if bytes >= KB {
-        format!("{:.1} KB", bytes as f64 / KB as f64)
-    } else {
-        format!("{bytes} B")
-    }
-}
-
-fn primary(text: impl Into<String>) -> DetailLine {
-    DetailLine {
-        text: text.into(),
-        role: DetailRole::Primary,
-    }
-}
-
-fn meta(text: impl Into<String>) -> DetailLine {
-    DetailLine {
-        text: text.into(),
-        role: DetailRole::Meta,
     }
 }
 
