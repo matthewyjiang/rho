@@ -127,7 +127,7 @@ fn golden_legacy_v1_fingerprints_for_builtin_rho_agents() {
         ),
         (
             "worker",
-            "b89c52ef5f589a6472764151b6baf50640d362a2a69d5d01a81ff1cc744fe5f3",
+            "f4b26831e2bca1c52679cef24bfd530e6b27d1e601513070800fb3a5f028342c",
         ),
     ];
     for (id, expected_legacy) in expected {
