@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.34.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.34.0...rho-coding-agent-v1.34.1) (2026-08-10)
+
+
+### Bug Fixes
+
+* **claude:** surface stream-json API errors on nonzero exit ([#847](https://github.com/matthewyjiang/rho/issues/847)) ([29ac39c](https://github.com/matthewyjiang/rho/commit/29ac39cd3b59e4bd9c7b850488cc108b9a0b41ba))
+* **tui:** lead approval prompts with the command ([#846](https://github.com/matthewyjiang/rho/issues/846)) ([413063c](https://github.com/matthewyjiang/rho/commit/413063c9d169e10ca369d83172fbbb952619f07c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 0.19.0 to 0.19.1
+
 ## [1.34.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.33.1...rho-coding-agent-v1.34.0) (2026-08-10)
 
 
