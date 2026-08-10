@@ -1,9 +1,7 @@
-use std::fs;
-
 use super::*;
 use crate::{
     app::{config_repository::ConfigRepository, interactive_runtime::test_edit_tool_runtime},
-    config::{Config, EditTool},
+    config::EditTool,
     tui::tests::test_app,
 };
 
@@ -13,26 +11,11 @@ use crate::{
 // Owner: tui config edit-tool apply path
 #[tokio::test]
 async fn failed_edit_tool_save_keeps_rollback_histories_aligned() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("config.toml");
-    Config::default().write_settings(path.clone()).unwrap();
-
-    // Atomic config writes rename a temp file into place, so file-level
-    // readonly is not enough. Lock the parent directory against creates.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o555)).unwrap();
-    }
-    #[cfg(not(unix))]
-    {
-        let mut permissions = fs::metadata(directory.path()).unwrap().permissions();
-        permissions.set_readonly(true);
-        fs::set_permissions(directory.path(), permissions).unwrap();
-    }
-
     let mut app = test_app();
-    app.info.services.config_repository = ConfigRepository::new(Some(path));
+    // temporary_for_tests keeps load working; inject the durable-write failure
+    // so this path stays OS-independent (Windows ignores directory readonly).
+    app.info.services.config_repository = ConfigRepository::temporary_for_tests().unwrap();
+    ConfigRepository::fail_next_save_for_tests();
 
     let mut agent = test_edit_tool_runtime(EditTool::Pinned(rho_tools::EditFormat::Hashline)).await;
     assert!(agent.has_tool("edit"));
@@ -51,19 +34,6 @@ async fn failed_edit_tool_save_keeps_rollback_histories_aligned() {
             &mut agent,
         )
         .await;
-
-    // Restore directory writability before TempDir cleanup.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    #[cfg(not(unix))]
-    {
-        let mut permissions = fs::metadata(directory.path()).unwrap().permissions();
-        permissions.set_readonly(false);
-        fs::set_permissions(directory.path(), permissions).unwrap();
-    }
 
     result.expect("save failure should stay Ok after successful runtime rollback");
 

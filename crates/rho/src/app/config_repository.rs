@@ -1,8 +1,15 @@
 use std::path::PathBuf;
 #[cfg(test)]
-use std::sync::Arc;
+use std::{cell::Cell, sync::Arc};
 
 use crate::config::Config;
+
+#[cfg(test)]
+thread_local! {
+    /// When set, the next [`ConfigRepository::save`] fails after load/mutation so
+    /// callers can exercise durable-save rollback without OS-specific FS locks.
+    static FAIL_NEXT_SAVE: Cell<bool> = const { Cell::new(false) };
+}
 
 /// Loads and persists the application configuration at one configured path.
 #[derive(Clone, Debug)]
@@ -30,6 +37,13 @@ impl ConfigRepository {
         })
     }
 
+    /// Fail the next `save` once. Used by tests that need load+mutate to succeed
+    /// and only the durable write to error.
+    #[cfg(test)]
+    pub(crate) fn fail_next_save_for_tests() {
+        FAIL_NEXT_SAVE.with(|flag| flag.set(true));
+    }
+
     pub(crate) fn configured_path(&self) -> anyhow::Result<PathBuf> {
         self.path
             .clone()
@@ -42,6 +56,12 @@ impl ConfigRepository {
     }
 
     pub(crate) fn save(&self, config: &Config) -> anyhow::Result<()> {
+        #[cfg(test)]
+        {
+            if FAIL_NEXT_SAVE.with(|flag| flag.replace(false)) {
+                anyhow::bail!("injected config save failure");
+            }
+        }
         config.save(self.path.clone())
     }
 
