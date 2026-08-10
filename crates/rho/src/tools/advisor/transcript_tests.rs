@@ -67,24 +67,42 @@ fn renders_requests_replies_tool_calls_and_results_in_order() {
     );
 }
 
-// Covers: zero-arg tools (advisor) must not render as `arguments: {}`, which
-// made Claude plan-mode advisor runs invent "empty args failed" guidance.
+// Covers: zero-arg / valueless tool payloads must not render as
+// `arguments: {}`, which made advisor runs invent "empty args failed" guidance.
 // Owner: advisor transcript renderer
 #[test]
 fn omits_empty_tool_arguments() {
-    let messages = vec![Message::assistant(AssistantMessage::from_content(vec![
-        ContentBlock::Text("Checking with the advisor.".into()),
-        ContentBlock::ToolCall(ToolCall {
-            id: "call-a".into(),
-            name: "advisor".into(),
-            arguments: json!({}),
-        }),
-        ContentBlock::ToolCall(ToolCall {
-            id: "call-b".into(),
-            name: "rho".into(),
-            arguments: json!({ "action": "info" }),
-        }),
-    ]))];
+    let messages = vec![
+        Message::assistant(AssistantMessage::from_content(vec![
+            ContentBlock::Text("Checking with the advisor.".into()),
+            ContentBlock::ToolCall(ToolCall {
+                id: "call-a".into(),
+                name: "advisor".into(),
+                arguments: json!({}),
+            }),
+            ContentBlock::ToolCall(ToolCall {
+                id: "call-b".into(),
+                name: "rho".into(),
+                arguments: json!({ "action": "info" }),
+            }),
+        ])),
+        Message::AbortedAssistant(Box::new(AbortedAssistant {
+            content: vec![ContentBlock::Text("Interrupted mid-call.".into())],
+            tool_calls: vec![
+                PartialToolCall {
+                    id: Some("call-c".into()),
+                    name: Some("advisor".into()),
+                    arguments: "{}".into(),
+                },
+                PartialToolCall {
+                    id: Some("call-d".into()),
+                    name: Some("grep".into()),
+                    arguments: "{\"pattern\":".into(),
+                },
+            ],
+            ..AbortedAssistant::default()
+        })),
+    ];
 
     let rendered = render_transcript(None, &messages, generous());
 
@@ -97,7 +115,14 @@ fn omits_empty_tool_arguments() {
          Checking with the advisor.\n\
          tool call: advisor (id call-a)\n\
          tool call: rho (id call-b)\n\
-         arguments: {\"action\":\"info\"}\n"
+         arguments: {\"action\":\"info\"}\n\
+         \n\
+         ## assistant (interrupted)\n\
+         \n\
+         Interrupted mid-call.\n\
+         tool call (incomplete): advisor\n\
+         tool call (incomplete): grep\n\
+         arguments: {\"pattern\":\n"
     );
 }
 

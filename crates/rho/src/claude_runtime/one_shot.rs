@@ -28,10 +28,9 @@ pub(crate) const CANCELLATION_ERROR: &str = "claude code: cancelled";
 
 /// Claude CLI permission mode for no-tools one-shots (advisor).
 ///
-/// This is Claude `dontAsk`, not Rho [`crate::permission::PermissionMode::Auto`].
-/// Rho Auto maps to Claude `auto` at the delegated-agent boundary; one-shots
-/// need a non-prompting CLI mode with no plan scaffolding, so they set
-/// [`ClaudePermissionMode::DontAsk`] directly. [`ClaudePermissionMode::Plan`]
+/// One-shots set Claude `dontAsk` directly. They are not Rho Auto: delegated
+/// Auto maps to Claude `bypassPermissions`, while one-shots need a non-prompting
+/// mode with no plan scaffolding and no broad bypass. [`ClaudePermissionMode::Plan`]
 /// injects AskUserQuestion / ExitPlanMode text and poisons advisor prose even
 /// when tools is empty.
 pub(crate) const ONE_SHOT_PERMISSION_MODE: ClaudePermissionMode = ClaudePermissionMode::DontAsk;
@@ -92,8 +91,7 @@ pub(crate) async fn run_one_shot(
         max_turns: 1,
         effort: request.effort,
         session_persistence: SessionPersistence::Discard,
-    })
-    .map_err(|error| error.to_string())?;
+    });
 
     let mut command = executable
         .try_command(spawn::inline_prompt_args(&plan))

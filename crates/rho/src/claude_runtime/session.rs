@@ -231,8 +231,7 @@ async fn prepare_launch(request: &mut ClaudeSessionRequest) -> Result<Launch, St
         effort: request.effort,
         // Delegated runs publish a resumable Claude session id.
         session_persistence: spawn::SessionPersistence::Keep,
-    })
-    .map_err(|error| error.to_string())?;
+    });
     if let Some(arguments) = frozen_arguments {
         plan.args = arguments;
     }

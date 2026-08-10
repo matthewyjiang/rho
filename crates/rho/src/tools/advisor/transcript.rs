@@ -83,12 +83,7 @@ fn push_message(out: &mut String, message: &Message, budget: TranscriptBudget) {
                 out.push_str("tool call (incomplete): ");
                 out.push_str(name);
                 out.push('\n');
-                let arguments = call.arguments.trim();
-                if !arguments.is_empty() && arguments != "{}" {
-                    out.push_str("arguments: ");
-                    push_clipped(out, &call.arguments, budget.tool_call_bytes);
-                    out.push('\n');
-                }
+                push_arguments_line(out, &call.arguments, budget.tool_call_bytes);
             }
         }
         Message::ToolResult(result) => {
@@ -127,23 +122,24 @@ fn push_tool_call(out: &mut String, call: &ToolCall, max_bytes: usize) {
     out.push_str(" (id ");
     out.push_str(&call.id);
     out.push_str(")\n");
-    // Zero-arg tools (notably advisor) serialize as `{}`. Omit the line rather
-    // than printing an empty object that looks like a missing payload.
-    if !is_empty_tool_arguments(&call.arguments) {
-        out.push_str("arguments: ");
-        push_clipped(out, &call.arguments.to_string(), max_bytes);
-        out.push('\n');
-    }
+    // Zero-arg / valueless payloads (notably advisor `{}`) omit the line rather
+    // than looking like a missing argument object.
+    push_arguments_line(out, &call.arguments.to_string(), max_bytes);
 }
 
-fn is_empty_tool_arguments(arguments: &serde_json::Value) -> bool {
-    match arguments {
-        serde_json::Value::Null => true,
-        serde_json::Value::Object(map) => map.is_empty(),
-        serde_json::Value::Array(items) => items.is_empty(),
-        serde_json::Value::String(text) => text.is_empty(),
-        _ => false,
+/// Omit empty or valueless argument payloads from the advisor transcript.
+fn push_arguments_line(out: &mut String, rendered: &str, max_bytes: usize) {
+    let rendered = rendered.trim();
+    if is_valueless_arguments(rendered) {
+        return;
     }
+    out.push_str("arguments: ");
+    push_clipped(out, rendered, max_bytes);
+    out.push('\n');
+}
+
+fn is_valueless_arguments(rendered: &str) -> bool {
+    matches!(rendered, "" | "{}" | "[]" | "null")
 }
 
 fn push_clipped(out: &mut String, text: &str, max_bytes: usize) {
