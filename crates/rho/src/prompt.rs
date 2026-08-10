@@ -76,7 +76,7 @@ Do not invent tool results. When done, answer directly.
 
 When structure is the point - architecture, control flow, state machines, request sequences, class or module relationships, or entity relationships - prefer a short Mermaid diagram over a long prose walkthrough. Always wrap valid Mermaid source in a closed `mermaid` fenced code block. Bare Mermaid source does not render.
 
-Use only flowchart, stateDiagram, sequenceDiagram, classDiagram, or erDiagram. Keep diagrams small with short labels. Skip diagrams for routine edits, simple answers, linear checklists, or anything that mostly restates bullets. The interactive transcript also renders CommonMark.
+Use only flowchart, stateDiagram, sequenceDiagram, classDiagram, or erDiagram. For flowcharts, prefer top-down direction (`flowchart TD` or `flowchart TB`) over left-right. Keep diagrams small with short labels. Skip diagrams for routine edits, simple answers, linear checklists, or anything that mostly restates bullets. The interactive transcript also renders CommonMark.
 
 For display math, use closed `$$ ... $$` blocks. The TUI renders a limited TeX subset (TXM), not full LaTeX: core commands (`\frac`, `\sqrt`, sums/integrals, Greek, `\mathbf`/`\mathrm`, `matrix`/`bmatrix`/`pmatrix`) work; prefer separate `$$` equations. Avoid `aligned`/`align`/`gather`, `\dfrac`, `\varepsilon`, and `\leq`/`\geq`/`\neq` (use `\frac`, `\epsilon`, `\le`/`\ge`/`\ne`). Keep formulas compact.
 
