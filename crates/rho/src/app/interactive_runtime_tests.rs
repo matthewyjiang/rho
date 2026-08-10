@@ -805,6 +805,10 @@ fn auto_edit_tool_resolves_preferred_format_for_provider() {
         rho_tools::EditFormat::StrReplace
     );
     assert_eq!(
+        preferred_edit_format_for_provider("xai"),
+        rho_tools::EditFormat::StrReplace
+    );
+    assert_eq!(
         preferred_edit_format_for_provider("openai"),
         rho_tools::EditFormat::Hashline
     );

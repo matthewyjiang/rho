@@ -350,7 +350,8 @@ pub fn preferred_edit_format_for_provider(provider: &str) -> rho_tools::EditForm
         // Codex was trained on apply_patch documents.
         "openai-codex" => rho_tools::EditFormat::ApplyPatch,
         // Claude Code's native surface is exact string replacement.
-        "anthropic" => rho_tools::EditFormat::StrReplace,
+        // xAI models also handle str_replace more reliably than hashline.
+        "anthropic" | "xai" => rho_tools::EditFormat::StrReplace,
         // Rho's default strength: snapshot-tagged line edits.
         _ => rho_tools::EditFormat::Hashline,
     }

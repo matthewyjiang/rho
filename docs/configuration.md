@@ -188,6 +188,7 @@ edit_tool = "auto"
 | --- | --- |
 | `openai-codex` | `apply_patch` |
 | `anthropic` | `str_replace` |
+| `xai` | `str_replace` |
 | all others | `hashline` |
 
 Pinned values (`hashline`, `apply_patch`, `str_replace`) stay fixed across provider changes. From `/config`, the change applies before the next turn: the tool list rebuilds and the session gets a short notice with the new tool schema. Auto mode also applies that live switch when you change providers mid-session. Direct `config.toml` edits still need a restart. Use `hashline` when you want stale-file checks, `apply_patch` for models trained on that patch format, or `str_replace` for models that work best with exact string replacement.

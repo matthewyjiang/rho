@@ -29,7 +29,7 @@ Core workspace tools on every platform:
 | `grep` | Search file contents with a regex (in-process) |
 | `glob` | List paths that match a glob (in-process) |
 
-Rho exposes exactly one edit tool at a time. Select it with [`behavior.edit_tool`](/configuration#edit-tool) or `/config` > **Tools** > **Edit tool**. The default is `auto`, which picks a preferred concrete format for the active provider (`hashline` for most providers, `apply_patch` for `openai-codex`, `str_replace` for `anthropic`).
+Rho exposes exactly one edit tool at a time. Select it with [`behavior.edit_tool`](/configuration#edit-tool) or `/config` > **Tools** > **Edit tool**. The default is `auto`, which picks a preferred concrete format for the active provider (`hashline` for most providers, `apply_patch` for `openai-codex`, `str_replace` for `anthropic` and `xai`).
 
 Additional tools:
 
