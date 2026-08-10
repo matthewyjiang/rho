@@ -226,12 +226,13 @@ async fn fixture_stream(
             completed(response)
         }
         "fixture approval long" if tool_result(&request, LONG_APPROVAL_CALL_ID).is_none() => {
-            let command = concat!(
-                "printf 'reviewing harmless fixture'; ",
-                "printf 'segment-01 segment-02 segment-03 segment-04 segment-05 segment-06 ",
-                "segment-07 segment-08 segment-09 segment-10'; ",
-                "echo DANGEROUS_SUFFIX_INSPECTABLE"
-            );
+            // Prefix stays long enough that common PTY widths bury the suffix
+            // below the first approval detail page under command-first layout.
+            let mut command = String::from("printf 'reviewing harmless fixture'; printf '");
+            for index in 1..=40 {
+                command.push_str(&format!("segment-{index:02} "));
+            }
+            command.push_str("'; echo DANGEROUS_SUFFIX_INSPECTABLE");
             completed_tool_call(
                 LONG_APPROVAL_CALL_ID,
                 "bash",

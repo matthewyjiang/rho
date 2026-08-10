@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::time::Duration;
 
 use ratatui::text::Line;
 use rho_sdk::{
@@ -18,6 +19,12 @@ const APPROVAL_FIXED_COMPOSER_ROWS: usize = 1 + ApprovalChoice::ALL.len() + 2;
 const APPROVAL_FRAME_ROWS: usize = 6;
 const APPROVAL_DETAIL_CHROME_ROWS: usize = APPROVAL_FIXED_COMPOSER_ROWS + APPROVAL_FRAME_ROWS;
 const MIN_DETAIL_PAGE_LINES: usize = 3;
+
+/// Body rows for an approval prompt: the thing being approved, then dim context.
+struct ApprovalDetails {
+    primary: Vec<String>,
+    meta: Vec<String>,
+}
 
 pub(in crate::tui) fn approval_lines(
     approval: &ApprovalComposer,
@@ -78,7 +85,7 @@ pub(super) fn approval_lines_for_position(
         ));
     }
 
-    let detail_status = if details.len() > page_lines {
+    if details.len() > page_lines {
         let earlier = if detail_offset > 0 {
             " · ↑ earlier"
         } else {
@@ -89,21 +96,24 @@ pub(super) fn approval_lines_for_position(
         } else {
             ""
         };
-        format!(
-            "PgUp/PgDn details {}-{}/{}{}{}",
-            detail_offset + 1,
-            detail_end,
-            details.len(),
-            earlier,
-            later
-        )
+        lines.push(Line::styled(
+            truncate_one_line(
+                &format!(
+                    "PgUp/PgDn details {}-{}/{}{}{}",
+                    detail_offset + 1,
+                    detail_end,
+                    details.len(),
+                    earlier,
+                    later
+                ),
+                width,
+            ),
+            Theme::dim(),
+        ));
     } else {
-        format!("details 1-{}/{}", detail_end, details.len())
-    };
-    lines.push(Line::styled(
-        truncate_one_line(&detail_status, width),
-        Theme::dim(),
-    ));
+        // Keep a stable slot so choice rows do not jump when paging appears.
+        lines.push(Line::styled(String::new(), Theme::dim()));
+    }
     lines.push(Line::styled(
         truncate_one_line(
             &crate::tui::composer_chrome::join_footer_parts([
@@ -136,29 +146,19 @@ fn wrapped_detail_lines(
     reason: &str,
     width: usize,
 ) -> Vec<Line<'static>> {
+    let details = approval_detail_sections(request);
     let mut lines = Vec::new();
-    push_wrapped_text(
-        &mut lines,
-        &format!("capability: {}", request.kind().label()),
-        width,
-        Theme::dim(),
-        LineFill::Natural,
-    );
-    push_wrapped_text(
-        &mut lines,
-        source_detail(request.source()),
-        width,
-        Theme::dim(),
-        LineFill::Natural,
-    );
-    for detail in approval_details(request) {
-        push_wrapped_text(&mut lines, &detail, width, Theme::text(), LineFill::Natural);
+    for text in details.primary {
+        push_wrapped_text(&mut lines, &text, width, Theme::text(), LineFill::Natural);
+    }
+    for text in details.meta {
+        push_wrapped_text(&mut lines, &text, width, Theme::dim(), LineFill::Natural);
     }
     let reason = reason.trim();
     if !reason.is_empty() {
         push_wrapped_text(
             &mut lines,
-            &format!("reason: {}", sanitize_controls(reason)),
+            &format!("reason {}", sanitize_controls(reason)),
             width,
             Theme::dim(),
             LineFill::Natural,
@@ -168,125 +168,154 @@ fn wrapped_detail_lines(
 }
 
 pub(super) fn approval_title(request: &CapabilityRequest) -> String {
-    let tool = match request.source() {
-        CapabilitySource::BuiltInTool { name } | CapabilitySource::HostProvidedTool { name } => {
-            name.as_str()
+    // Host-provided tools are a different trust boundary from SDK built-ins.
+    // Put the provenance marker first so narrow-title truncation keeps it.
+    let actor = match request.source() {
+        CapabilitySource::BuiltInTool { name } => sanitize_controls(name),
+        CapabilitySource::HostProvidedTool { name } => {
+            format!("host {}", sanitize_controls(name))
         }
-        CapabilitySource::PromptConstruction => "rho",
-        _ => "rho",
+        CapabilitySource::PromptConstruction => "rho".into(),
+        _ => "rho".into(),
     };
     let verb = match request.kind() {
         CapabilityKind::Write => "write",
-        CapabilityKind::Process => "execute",
+        CapabilityKind::Process => "run a command",
         CapabilityKind::Read => "read",
         CapabilityKind::Network => "access the network",
         CapabilityKind::Skill => "load a skill",
         CapabilityKind::InstructionDiscovery => "discover instructions",
         _ => "use a capability",
     };
-    format!("{} wants to {verb}", sanitize_controls(tool))
+    format!("{actor} wants to {verb}")
 }
 
+/// Flattened detail strings for security and layout tests.
+#[cfg(test)]
 pub(super) fn approval_details(request: &CapabilityRequest) -> Vec<String> {
+    let details = approval_detail_sections(request);
+    let mut flat = details.primary;
+    flat.extend(details.meta);
+    flat
+}
+
+fn approval_detail_sections(request: &CapabilityRequest) -> ApprovalDetails {
     match request.operation() {
         CapabilityOperation::ReadPath { path, scope }
         | CapabilityOperation::WritePath { path, scope }
-        | CapabilityOperation::DiscoverInstructions { path, scope } => vec![
-            format!("path: {}", sanitize_controls(&path.to_string_lossy())),
-            format_path_scope(scope),
-        ],
+        | CapabilityOperation::DiscoverInstructions { path, scope } => ApprovalDetails {
+            primary: vec![sanitize_controls(&path.to_string_lossy())],
+            meta: vec![format_path_scope(scope)],
+        },
         CapabilityOperation::ExecuteProcess(execution) => process_details(execution),
-        CapabilityOperation::NetworkAccess(target) => vec![format!(
-            "target: {}",
-            sanitize_controls(target.url().unwrap_or("tool-managed network access"))
-        )],
+        CapabilityOperation::NetworkAccess(target) => ApprovalDetails {
+            primary: vec![sanitize_controls(
+                target.url().unwrap_or("tool-managed network access"),
+            )],
+            meta: Vec::new(),
+        },
         CapabilityOperation::LoadSkill { name, path } => {
-            let mut details = vec![format!("skill: {}", sanitize_controls(name))];
+            let mut meta = Vec::new();
             if let Some(path) = path {
-                details.push(format!(
-                    "path: {}",
+                meta.push(format!(
+                    "path {}",
                     sanitize_controls(&path.to_string_lossy())
                 ));
             }
-            details
+            ApprovalDetails {
+                primary: vec![sanitize_controls(name)],
+                meta,
+            }
         }
-        _ => Vec::new(),
+        _ => ApprovalDetails {
+            primary: Vec::new(),
+            meta: Vec::new(),
+        },
     }
 }
 
-fn process_details(execution: &ProcessExecution) -> Vec<String> {
+fn process_details(execution: &ProcessExecution) -> ApprovalDetails {
     let invocation = execution.invocation();
-    let mut details = vec![format!(
-        "working directory: {}",
+    let primary = if let Some(command) = invocation.shell_command() {
+        sanitize_controls(command)
+    } else {
+        format_direct_invocation(invocation.executable_path(), invocation.arguments())
+    };
+    ApprovalDetails {
+        primary: vec![primary],
+        meta: vec![format_process_meta(execution)],
+    }
+}
+
+fn format_process_meta(execution: &ProcessExecution) -> String {
+    let invocation = execution.invocation();
+    let mut parts = vec![format!(
+        "cwd {}",
         sanitize_controls(&execution.working_directory().to_string_lossy())
     )];
-    let invocation_display =
-        format_direct_invocation(invocation.executable_path(), invocation.arguments());
-    details.push(format!(
-        "executable resolution: {}",
-        match invocation.executable_selection() {
-            ExecutableSelection::ExactPath => "exact path",
-            ExecutableSelection::SearchPath => "PATH search",
-            _ => "unspecified",
-        }
-    ));
-    details.push(format_environment(execution.environment()));
+
+    let lookup = format_executable_lookup(invocation.executable_selection());
+    if invocation.shell_command().is_some() {
+        parts.push(format!(
+            "via {} ({lookup})",
+            format_direct_invocation(invocation.executable_path(), invocation.arguments())
+        ));
+    } else {
+        parts.push(lookup.into());
+    }
+
+    parts.push(format_environment_summary(execution.environment()));
 
     let limits = execution.output_limits();
-    details.push(format!(
-        "output limit: {} bytes; timeout: {}",
-        limits.max_output_bytes(),
-        limits
-            .timeout()
-            .map_or_else(|| "none".into(), |timeout| format!("{timeout:?}"),)
-    ));
-    if let Some(command) = invocation.shell_command() {
-        details.push(format!(
-            "shell invocation (JSON-style args): {invocation_display}"
-        ));
-        details.push(format!("command: {}", sanitize_controls(command)));
-    } else {
-        details.push(format!(
-            "invocation (JSON-style args): {invocation_display}"
-        ));
+    parts.push(format!("{} B out", limits.max_output_bytes()));
+    parts.push(format_timeout(limits.timeout()));
+
+    parts.join(" · ")
+}
+
+fn format_executable_lookup(selection: ExecutableSelection) -> &'static str {
+    match selection {
+        ExecutableSelection::ExactPath => "exact path",
+        ExecutableSelection::SearchPath => "PATH",
+        _ => "unspecified",
     }
-    details
 }
 
 fn format_path_scope(scope: &PathScope) -> String {
     match scope {
-        PathScope::PrimaryWorkspace => "scope: primary workspace".into(),
+        PathScope::PrimaryWorkspace => "scope primary workspace".into(),
         PathScope::GrantedRoot { root } => format!(
-            "scope: granted root {}",
+            "scope granted root {}",
             sanitize_controls(&root.to_string_lossy())
         ),
-        PathScope::UnrestrictedFilesystem => "scope: unrestricted filesystem".into(),
-        _ => "scope: unspecified".into(),
+        PathScope::UnrestrictedFilesystem => "scope unrestricted filesystem".into(),
+        _ => "scope unspecified".into(),
     }
 }
 
-fn format_environment(environment: &ProcessEnvironment) -> String {
+fn format_environment_summary(environment: &ProcessEnvironment) -> String {
     match environment {
-        ProcessEnvironment::Empty => "environment: empty".into(),
-        ProcessEnvironment::InheritAll => "environment: inherit all variables".into(),
-        ProcessEnvironment::InheritExcept { variable_names } => format!(
-            "environment: inherit all except {}",
-            format_json_strings(variable_names.iter().map(String::as_str))
-        ),
-        ProcessEnvironment::InheritListed { variable_names } => format!(
-            "environment: inherit listed variable names {}",
-            format_json_strings(variable_names.iter().map(String::as_str))
-        ),
-        _ => "environment: unspecified".into(),
+        ProcessEnvironment::Empty => "env empty".into(),
+        ProcessEnvironment::InheritAll => "env inherit all".into(),
+        ProcessEnvironment::InheritExcept { variable_names } => {
+            // Scrub lists are not decision content; only the count matters.
+            format!("env inherit ({} stripped)", variable_names.len())
+        }
+        ProcessEnvironment::InheritListed { variable_names } => {
+            // Allowlists are the authorization surface; show sanitized names.
+            format!(
+                "env {}",
+                format_json_strings(variable_names.iter().map(String::as_str))
+            )
+        }
+        _ => "env unspecified".into(),
     }
 }
 
-fn source_detail(source: &CapabilitySource) -> &'static str {
-    match source {
-        CapabilitySource::BuiltInTool { .. } => "source: built-in tool",
-        CapabilitySource::HostProvidedTool { .. } => "source: host-provided tool",
-        CapabilitySource::PromptConstruction => "source: rho prompt construction",
-        _ => "source: unspecified",
+fn format_timeout(timeout: Option<Duration>) -> String {
+    match timeout {
+        None => "no timeout".into(),
+        Some(timeout) => format!("timeout {timeout:?}"),
     }
 }
 

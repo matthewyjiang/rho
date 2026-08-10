@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 use rho_sdk::{
-    ApprovalDecision, CapabilityRequest, CapabilitySource, PathScope, ProcessEnvironment,
-    ProcessExecution, ProcessInvocation, ProcessOutputLimits,
+    ApprovalDecision, CapabilityRequest, CapabilitySource, NetworkTarget, PathScope,
+    ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits,
 };
 
 use super::{
@@ -26,6 +26,22 @@ fn line_text(lines: &[ratatui::text::Line<'_>]) -> Vec<String> {
                 .collect()
         })
         .collect()
+}
+
+fn long_process_request() -> CapabilityRequest {
+    CapabilityRequest::process(
+        ProcessExecution::new(
+            "/work",
+            ProcessInvocation::shell_from_path(
+                "sh",
+                vec!["-c".into()],
+                "printf segment-01; printf segment-02; printf segment-03; printf segment-04; printf segment-05; echo DANGEROUS_SUFFIX_INSPECTABLE",
+            ),
+            ProcessEnvironment::Empty,
+            ProcessOutputLimits::new(1024, None),
+        ),
+        source(),
+    )
 }
 
 #[test]
@@ -102,24 +118,12 @@ fn every_rendered_line_respects_narrow_width() {
     assert!(!line_text(&lines).is_empty());
 }
 
-// Covers: detail window opens at the request head, grows with the terminal, and
-// omits empty policy reasons without a UI denylist.
+// Covers: process approvals lead with the command, keep Deny focused, open at the
+// request head on short viewports, and grow detail with the terminal.
 // Owner: tui approval layout
 #[test]
 fn detail_window_starts_at_head_and_grows_with_viewport() {
-    let request = CapabilityRequest::process(
-        ProcessExecution::new(
-            "/work",
-            ProcessInvocation::shell_from_path(
-                "sh",
-                vec!["-c".into()],
-                "printf segment-01; printf segment-02; printf segment-03; printf segment-04; printf segment-05; echo DANGEROUS_SUFFIX_INSPECTABLE",
-            ),
-            ProcessEnvironment::Empty,
-            ProcessOutputLimits::new(1024, None),
-        ),
-        source(),
-    );
+    let request = long_process_request();
     let width = 40;
     let short = line_text(&approval_lines_for_position(
         &request,
@@ -148,13 +152,27 @@ fn detail_window_starts_at_head_and_grows_with_viewport() {
 
     assert!(
         short
-            .iter()
-            .any(|line| line.contains("capability: process")),
-        "prompt should name the capability class"
+            .first()
+            .is_some_and(|line| line.contains("wants to run a command")),
+        "title should name the process action"
+    );
+    assert!(
+        short
+            .get(1)
+            .is_some_and(|line| line.contains("printf segment-01")),
+        "command must be the first detail row: {short:?}"
     );
     assert!(
         short.iter().any(|line| line.contains("→ Deny")),
         "prompt should focus Deny by default"
+    );
+    assert!(
+        short.iter().all(|line| !line.contains("capability:")),
+        "capability class is already in the title and must not repeat as body chrome"
+    );
+    assert!(
+        short.iter().all(|line| !line.contains("ANTHROPIC_API_KEY")),
+        "environment scrub lists must stay summarized"
     );
     assert!(
         !short
@@ -167,55 +185,232 @@ fn detail_window_starts_at_head_and_grows_with_viewport() {
             .any(|line| line.contains("DANGEROUS_SUFFIX_INSPECTABLE")),
         "tall viewport should expose more of the request without paging"
     );
+    assert!(
+        tall.iter().any(|line| line.contains("cwd /work")),
+        "tall viewport should include compact cwd context on the single meta line"
+    );
     assert!(approval_detail_page_lines(14) >= 3);
     assert!(approval_detail_page_lines(60) > approval_detail_page_lines(14));
     assert!(
-        !short.iter().any(|line| line.contains("reason:")),
+        !short.iter().any(|line| line.contains("reason")),
         "empty policy reasons must not render a reason row"
     );
     assert!(
         with_reason
             .iter()
-            .any(|line| line.contains("reason: custom audit reason")),
+            .any(|line| line.contains("reason custom audit reason")),
         "non-empty reasons should still render"
     );
 }
 
-// Covers: stale offsets after a larger page size must clamp instead of sticking.
+// Covers: env scrub lists collapse to a count; allowlists keep sanitized names;
+// process meta is one packed line with JSON via-args and raw byte limits.
 // Owner: tui approval layout
 #[test]
-fn detail_offset_clamps_when_page_grows() {
-    let request = CapabilityRequest::process(
+fn process_meta_is_one_line_and_summarizes_env_modes() {
+    let scrubbed = CapabilityRequest::process(
         ProcessExecution::new(
             "/work",
-            ProcessInvocation::shell_from_path(
-                "sh",
-                vec!["-c".into()],
-                "printf segment-01; printf segment-02; printf segment-03; printf segment-04; printf segment-05; echo DANGEROUS_SUFFIX_INSPECTABLE",
-            ),
-            ProcessEnvironment::Empty,
+            ProcessInvocation::shell_from_path("bash", vec!["-lc".into()], "echo hi"),
+            ProcessEnvironment::InheritExcept {
+                variable_names: vec![
+                    "ANTHROPIC_API_KEY".into(),
+                    "OPENAI_API_KEY".into(),
+                    "GITHUB_COPILOT_TOKEN".into(),
+                ],
+            },
+            ProcessOutputLimits::new(64_000, None),
+        ),
+        source(),
+    );
+    let scrubbed_details = approval_details(&scrubbed);
+    assert_eq!(scrubbed_details.len(), 2, "{scrubbed_details:?}");
+    assert_eq!(scrubbed_details[0], "echo hi");
+    let scrubbed_meta = &scrubbed_details[1];
+    assert!(scrubbed_meta.contains("cwd /work"), "{scrubbed_meta}");
+    assert!(
+        scrubbed_meta.contains(r#"via ["bash", "-lc"] (PATH)"#),
+        "{scrubbed_meta}"
+    );
+    assert!(
+        scrubbed_meta.contains("env inherit (3 stripped)"),
+        "{scrubbed_meta}"
+    );
+    assert!(scrubbed_meta.contains("64000 B out"), "{scrubbed_meta}");
+    assert!(scrubbed_meta.contains("no timeout"), "{scrubbed_meta}");
+    assert!(!scrubbed_meta.contains("ANTHROPIC_API_KEY"));
+    assert!(!scrubbed_meta.contains("executable resolution:"));
+    assert!(!scrubbed_meta.contains("shell invocation"));
+
+    let allowlisted = CapabilityRequest::process(
+        ProcessExecution::new(
+            "/work",
+            ProcessInvocation::shell_from_path("bash", vec!["-lc".into()], "echo hi"),
+            ProcessEnvironment::InheritListed {
+                variable_names: vec!["PATH".into(), "HOME".into()],
+            },
             ProcessOutputLimits::new(1024, None),
         ),
         source(),
     );
+    let allowlisted_meta = &approval_details(&allowlisted)[1];
+    assert!(
+        allowlisted_meta.contains(r#"env ["PATH", "HOME"]"#),
+        "{allowlisted_meta}"
+    );
+}
+
+// Covers: direct (non-shell) process approvals lead with JSON argv and pack
+// lookup/env/limits onto one meta line without a redundant via-payload.
+// Owner: tui approval layout
+#[test]
+fn direct_process_approval_leads_with_json_argv() {
+    let request = CapabilityRequest::process(
+        ProcessExecution::new(
+            "/work",
+            ProcessInvocation::executable("/usr/bin/git", vec!["status".into(), "--short".into()]),
+            ProcessEnvironment::Empty,
+            ProcessOutputLimits::new(2048, Some(std::time::Duration::from_secs(30))),
+        ),
+        source(),
+    );
+    let details = approval_details(&request);
+    assert_eq!(details.len(), 2, "{details:?}");
+    assert_eq!(details[0], r#"["/usr/bin/git", "status", "--short"]"#);
+    assert!(
+        details[1].contains("cwd /work")
+            && details[1].contains("exact path")
+            && details[1].contains("env empty")
+            && details[1].contains("2048 B out")
+            && details[1].contains("timeout 30s")
+            && !details[1].contains("via "),
+        "direct meta: {}",
+        details[1]
+    );
+}
+
+// Covers: path/network/skill approvals lead with the bare primary target.
+// Owner: tui approval layout
+#[test]
+fn non_process_approvals_lead_with_bare_primary() {
+    let path = CapabilityRequest::write_path("src/main.rs", PathScope::PrimaryWorkspace, source());
+    let path_details = approval_details(&path);
+    assert_eq!(path_details[0], "src/main.rs");
+    assert_eq!(path_details[1], "scope primary workspace");
+
+    let network =
+        CapabilityRequest::network(NetworkTarget::Url("https://example.test".into()), source());
+    let network_details = approval_details(&network);
+    assert_eq!(network_details, vec!["https://example.test".to_string()]);
+
+    let skill = CapabilityRequest::skill(
+        "demo-skill",
+        Some(std::path::PathBuf::from("/skills/demo/SKILL.md")),
+        source(),
+    );
+    let skill_details = approval_details(&skill);
+    assert_eq!(skill_details[0], "demo-skill");
+    assert_eq!(skill_details[1], "path /skills/demo/SKILL.md");
+}
+
+// Covers: host-provided tools are labeled in the title without burying the
+// command/path primary body; built-ins stay unmarked.
+// Owner: tui approval layout
+#[test]
+fn title_marks_host_provided_source_without_changing_primary() {
+    let built_in = CapabilityRequest::write_path(
+        "src/main.rs",
+        PathScope::PrimaryWorkspace,
+        CapabilitySource::built_in_tool("write"),
+    );
+    let host = CapabilityRequest::write_path(
+        "src/main.rs",
+        PathScope::PrimaryWorkspace,
+        CapabilitySource::host_tool("workspace_patch"),
+    );
+    let host_hostile = CapabilityRequest::process(
+        ProcessExecution::new(
+            "/work",
+            ProcessInvocation::shell_from_path("sh", vec!["-c".into()], "echo ok"),
+            ProcessEnvironment::Empty,
+            ProcessOutputLimits::new(1024, None),
+        ),
+        CapabilitySource::host_tool("evil\u{202e}tool"),
+    );
+
+    assert_eq!(approval_title(&built_in), "write wants to write");
+    assert_eq!(approval_title(&host), "host workspace_patch wants to write");
+    assert_eq!(
+        approval_title(&host_hostile),
+        "host evil\\u{202e}tool wants to run a command"
+    );
+
+    // Primary body stays the path/command; provenance lives only in the title.
+    assert_eq!(approval_details(&built_in)[0], "src/main.rs");
+    assert_eq!(approval_details(&host)[0], "src/main.rs");
+    assert_eq!(approval_details(&host_hostile)[0], "echo ok");
+    assert!(approval_details(&host)
+        .iter()
+        .all(|line| !line.contains("host-provided") && !line.contains("source:")));
+}
+
+// Covers: paging can reach a long command suffix and the trailing meta context.
+// Owner: tui approval layout
+#[test]
+fn detail_paging_reaches_command_suffix_and_meta() {
+    let request = long_process_request();
     let width = 40;
-    let lines = line_text(&approval_lines_for_position(
+    let viewport_height = 14;
+
+    let mut saw_suffix = false;
+    let mut saw_cwd = false;
+    let mut saw_earlier = false;
+    for offset in 0..32 {
+        let lines = line_text(&approval_lines_for_position(
+            &request,
+            "",
+            ApprovalChoice::Deny,
+            offset,
+            width,
+            viewport_height,
+        ));
+        saw_suffix |= lines
+            .iter()
+            .any(|line| line.contains("DANGEROUS_SUFFIX_INSPECTABLE"));
+        saw_cwd |= lines.iter().any(|line| line.contains("cwd /work"));
+        saw_earlier |= lines.iter().any(|line| line.contains("↑ earlier"));
+        if saw_suffix && saw_cwd && saw_earlier {
+            break;
+        }
+    }
+
+    assert!(
+        saw_suffix,
+        "PageDown-style offsets must eventually reveal the command suffix"
+    );
+    assert!(
+        saw_cwd,
+        "PageDown-style offsets must eventually reveal compact cwd meta"
+    );
+    assert!(
+        saw_earlier,
+        "once scrolled past the head, the prompt should offer paging back"
+    );
+
+    let end = line_text(&approval_lines_for_position(
         &request,
         "",
         ApprovalChoice::Deny,
         10_000,
         width,
-        14,
+        viewport_height,
     ));
-
     assert!(
-        lines
-            .iter()
-            .any(|line| line.contains("DANGEROUS_SUFFIX_INSPECTABLE")),
-        "oversized offsets should clamp to the final visible window"
+        end.iter().any(|line| line.contains("cwd /work")),
+        "oversized offsets should clamp onto the trailing meta window: {end:?}"
     );
     assert!(
-        lines.iter().any(|line| line.contains("↑ earlier")),
+        end.iter().any(|line| line.contains("↑ earlier")),
         "clamped end window on a short viewport should still offer paging back"
     );
 }
@@ -239,11 +434,16 @@ fn escapes_unicode_format_controls_in_all_security_sensitive_fields() {
     );
     let details = approval_details(&process).join("\n");
 
-    assert_eq!(approval_title(&process), "ba\\u{2066}sh wants to execute");
+    assert_eq!(
+        approval_title(&process),
+        "ba\\u{2066}sh wants to run a command"
+    );
     assert!(details.contains("/work\\u{202e}space"));
     assert!(details.contains("echo safe\\u{200f}danger"));
-    assert!(details.contains(r#"["sh\u{2066}", "-c\u{200f}"]"#));
-    assert!(details.contains(r#"["PA\u{202e}TH"]"#));
+    assert!(details.contains("sh\\u{2066}"));
+    assert!(details.contains("-c\\u{200f}"));
+    // Allowlist names stay visible after sanitize so reviewers can audit them.
+    assert!(details.contains("PA\\u{202e}TH"));
 
     let path =
         CapabilityRequest::write_path("safe\u{202e}txt", PathScope::PrimaryWorkspace, source());

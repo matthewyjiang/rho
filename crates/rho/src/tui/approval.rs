@@ -33,7 +33,7 @@ impl ApprovalChoice {
     pub(super) const fn label(self) -> &'static str {
         match self {
             Self::AllowOnce => "Allow once",
-            Self::AllowForSession => "Allow for session (exact request)",
+            Self::AllowForSession => "Allow for session",
             Self::Deny => "Deny",
         }
     }

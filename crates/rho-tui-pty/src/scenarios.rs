@@ -406,15 +406,15 @@ const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
     Step::Phase("inspect_long_process_approval"),
     Step::SubmitText("fixture approval long"),
     Step::WaitText {
-        text: "bash wants to execute",
+        text: "bash wants to run a command",
         timeout: STREAM,
     },
     Step::WaitText {
-        text: "capability: process",
+        text: "reviewing harmless fixture",
         timeout: SETTLE,
     },
     Step::WaitText {
-        text: "Allow for session (exact request)",
+        text: "Allow for session",
         timeout: SETTLE,
     },
     Step::WaitText {
@@ -432,9 +432,13 @@ const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
     // Page size depends on terminal chrome; scroll until the suffix is visible
     // instead of hard-coding a PageDown count.
     Step::Custom(scroll_approval_detail_until_suffix_visible),
-    Step::Key(Key::PageUp),
     Step::WaitText {
         text: "↑ earlier",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::PageUp),
+    Step::WaitText {
+        text: "reviewing harmless fixture",
         timeout: SETTLE,
     },
     Step::Key(Key::Esc),
