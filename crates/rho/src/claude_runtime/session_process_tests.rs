@@ -60,7 +60,8 @@ fn install_streaming_fake(bin: &Path, ndjson: &str, exit_code: i32) {
     std::fs::write(&payload_path, ndjson).unwrap();
     let script = format!(
         r#"#!/bin/sh
-cat >/dev/null
+# Emit first. Stream-json sessions keep stdin open until a terminal result (or
+# child exit); reading stdin to EOF before emitting would deadlock the drain.
 cat {payload}
 exit {exit_code}
 "#,
@@ -100,6 +101,7 @@ async fn run_with_fake(
         cancellation,
         status_tx: None,
         started_status: None,
+        parent_messages: None,
         overrides: ClaudeSessionOverrides {
             executable: Some(ClaudeExecutable::from_path(fake)),
             frozen_argv: None,
@@ -142,6 +144,7 @@ async fn run_with_fake_prompt(
         cancellation,
         status_tx: None,
         started_status: None,
+        parent_messages: None,
         overrides: ClaudeSessionOverrides {
             executable: Some(ClaudeExecutable::from_path(fake)),
             frozen_argv: None,
@@ -497,7 +500,6 @@ async fn invalid_utf8_stdout_fails_run() {
     std::fs::write(&payload, [0xff, b'\n']).unwrap();
     let script = format!(
         r#"#!/bin/sh
-cat >/dev/null
 cat {}
 exit 0
 "#,
@@ -533,7 +535,6 @@ async fn oversize_line_fails_run() {
     std::fs::write(&payload, bytes).unwrap();
     let script = format!(
         r#"#!/bin/sh
-cat >/dev/null
 cat {}
 exit 0
 "#,
@@ -566,7 +567,6 @@ async fn max_turns_unsupported_stderr_is_diagnosed() {
     write_fake_claude(
         &fake,
         r#"#!/bin/sh
-cat >/dev/null
 echo "error: unknown option '--max-turns'" >&2
 exit 2
 "#,

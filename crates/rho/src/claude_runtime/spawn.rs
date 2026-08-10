@@ -34,6 +34,19 @@ pub(crate) struct ClaudeSpawnRequest {
     pub(crate) effort: Option<&'static str>,
     /// Whether the run leaves a resumable Claude session behind.
     pub(crate) session_persistence: SessionPersistence,
+    /// Stdin framing. Delegated sessions use stream-json so parents can send
+    /// follow-up turns; one-shot keeps plain text.
+    pub(crate) input_format: ClaudeInputFormat,
+}
+
+/// How the Claude child reads its stdin prompt bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ClaudeInputFormat {
+    /// Default `-p` text prompt. Stdin is closed after one write.
+    Text,
+    /// NDJSON user turns (`--input-format stream-json`). Stdin stays open for
+    /// parent course-corrections until the drain closes it after a result.
+    StreamJson,
 }
 
 /// Whether a `claude -p` run is worth keeping in Claude's session store.
@@ -192,6 +205,12 @@ pub(crate) fn build_spawn_plan(
         setting_sources.into(),
         "--strict-mcp-config".into(),
     ];
+    if matches!(request.input_format, ClaudeInputFormat::StreamJson) {
+        // Keep stdin open for parent course-corrections. The drain encodes the
+        // initial prompt and later parent messages as stream-json user turns.
+        args.push("--input-format".into());
+        args.push("stream-json".into());
+    }
     // Bound model is already byte-for-byte; do not resolve aliases here.
     if let Some(model) = &request.model {
         args.push("--model".into());

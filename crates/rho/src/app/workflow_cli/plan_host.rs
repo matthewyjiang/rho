@@ -286,6 +286,7 @@ fn resolve_agent(
                     max_turns: *max_turns,
                     effort: *effort,
                     session_persistence: crate::claude_runtime::spawn::SessionPersistence::Keep,
+                    input_format: crate::claude_runtime::spawn::ClaudeInputFormat::StreamJson,
                 },
             )?;
             ResolvedAgent {

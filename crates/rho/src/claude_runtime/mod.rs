@@ -8,6 +8,7 @@ pub(crate) mod child;
 pub(crate) mod drain;
 pub(crate) mod executable;
 pub(crate) mod line_decoder;
+pub(crate) mod messaging;
 pub(crate) mod models;
 pub(crate) mod one_shot;
 pub(crate) mod persist;

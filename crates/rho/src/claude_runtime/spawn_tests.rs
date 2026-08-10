@@ -43,6 +43,7 @@ fn request_with_effort(
         max_turns,
         effort,
         session_persistence: SessionPersistence::Keep,
+        input_format: ClaudeInputFormat::StreamJson,
     }
 }
 
@@ -121,6 +122,10 @@ fn builds_explicit_safe_spawn_args() {
         .windows(2)
         .any(|pair| pair == ["--setting-sources", "project"]));
     assert!(plan.args.iter().any(|arg| arg == "--strict-mcp-config"));
+    assert!(plan
+        .args
+        .windows(2)
+        .any(|pair| pair == ["--input-format", "stream-json"]));
     assert!(plan
         .args
         .windows(2)

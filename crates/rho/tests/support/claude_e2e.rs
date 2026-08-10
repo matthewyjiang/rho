@@ -120,10 +120,12 @@ if [ "${{1-}}" = "-p" ]; then
     printf '%s\0' "$arg" >> "$argv_path"
   done
   pwd > "$cwd_path"
-  cat > "$stdin_path"
   touch "$spawn_marker"
-  # Replay a committed stream-json sequence on stdout.
+  # Replay stream-json first so the parent can observe a terminal result and
+  # close stdin. With --input-format stream-json Rho keeps stdin open until
+  # that result arrives; reading stdin to EOF first would deadlock.
   cat "$payload"
+  cat > "$stdin_path"
   exit "$exit_code"
 fi
 
@@ -283,6 +285,7 @@ pub fn assert_success_spawn(record: &SpawnRecord, workspace: &Path) {
         "expected -p first, got {args:?}"
     );
     assert_pair(args, "--output-format", "stream-json");
+    assert_pair(args, "--input-format", "stream-json");
     assert_contains(args, "--verbose");
     assert_contains(args, "--include-partial-messages");
     assert_pair(args, "--permission-mode", "dontAsk");
@@ -329,9 +332,20 @@ pub fn assert_success_spawn(record: &SpawnRecord, workspace: &Path) {
         actual_cwd, expected_cwd,
         "claude cwd should be the Rho workspace"
     );
+    let expected_prompt = "Say hello in one short sentence.";
+    let expected_stdin = format!(
+        "{}\n",
+        serde_json::json!({
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": expected_prompt,
+            },
+        })
+    );
     assert_eq!(
-        record.stdin, "Say hello in one short sentence.",
-        "prompt must arrive on stdin verbatim"
+        record.stdin, expected_stdin,
+        "prompt must arrive on stdin as one stream-json user turn"
     );
 }
 

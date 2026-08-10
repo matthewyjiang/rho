@@ -544,3 +544,14 @@ fn update_selection_does_not_alter_bound_claude_runtime() {
     assert_ne!(host_after.model, "opus");
     assert_ne!(host_after.provider, "claude-code");
 }
+
+#[test]
+fn ensure_stream_json_input_is_idempotent() {
+    let bare = vec!["-p".into(), "--output-format".into(), "stream-json".into()];
+    let once = ensure_stream_json_input(bare.clone());
+    assert!(once
+        .windows(2)
+        .any(|w| w == ["--input-format", "stream-json"]));
+    let twice = ensure_stream_json_input(once.clone());
+    assert_eq!(once, twice);
+}

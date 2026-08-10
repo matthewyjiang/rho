@@ -70,8 +70,10 @@ enum MessagingSupport {
     Rho {
         steering: std::sync::Arc<std::sync::Mutex<Option<rho_sdk::SteeringHandle>>>,
     },
-    /// Runtime has no parent messaging path (for example claude-cli).
-    Unsupported { runtime: &'static str },
+    /// Claude-cli runtime: stream-json stdin turns while the child is live.
+    Claude {
+        messages: crate::claude_runtime::messaging::ClaudeMessageHandle,
+    },
 }
 
 #[derive(Clone)]
@@ -109,16 +111,13 @@ impl AgentRunHandle {
         self.status.clone()
     }
 
-    /// Stages a parent message for the next Rho provider turn.
+    /// Stages a parent message for the next Rho provider turn or Claude stdin turn.
     pub(crate) async fn message_from_parent(&self, text: &str) -> anyhow::Result<()> {
         let text = super::subagent_notice::validate_message_text(
             text,
             super::subagent_notice::MAX_PARENT_MESSAGE_BYTES,
         )?;
         match &self.messaging {
-            MessagingSupport::Unsupported { runtime } => anyhow::bail!(
-                "delegated run uses runtime '{runtime}', which cannot receive parent messages yet"
-            ),
             MessagingSupport::Rho { steering } => {
                 if self.is_complete() {
                     anyhow::bail!("delegated run has already finished");
@@ -140,6 +139,15 @@ impl AgentRunHandle {
                     .await
                     .map_err(|error| anyhow::anyhow!("{error}"))
             }
+            MessagingSupport::Claude { messages } => {
+                if self.is_complete() {
+                    anyhow::bail!("delegated run has already finished");
+                }
+                messages
+                    .send(text)
+                    .await
+                    .map_err(|error| anyhow::anyhow!("{error}"))
+            }
         }
     }
 
@@ -147,13 +155,12 @@ impl AgentRunHandle {
     pub(crate) fn completed_for_test(status: RunStatus) -> Self {
         let (_status_tx, status_rx) = tokio::sync::watch::channel(status);
         let (_completion_tx, completion_rx) = tokio::sync::watch::channel(true);
+        let (messages, _rx) = crate::claude_runtime::messaging::message_channel();
         Self {
             cancellation: RunCancellation::new(),
             status: status_rx,
             completion: completion_rx,
-            messaging: MessagingSupport::Unsupported {
-                runtime: "test-complete",
-            },
+            messaging: MessagingSupport::Claude { messages },
         }
     }
 }
@@ -348,10 +355,14 @@ impl AgentExecutor {
         } else {
             Some(Arc::new(std::sync::Mutex::new(None)))
         };
-        let messaging = if is_claude {
-            MessagingSupport::Unsupported {
-                runtime: "claude-cli",
-            }
+        let (claude_message_handle, claude_parent_rx) = if is_claude {
+            let (handle, receiver) = crate::claude_runtime::messaging::message_channel();
+            (Some(handle), Some(receiver))
+        } else {
+            (None, None)
+        };
+        let messaging = if let Some(handle) = claude_message_handle.clone() {
+            MessagingSupport::Claude { messages: handle }
         } else {
             MessagingSupport::Rho {
                 steering: Arc::clone(steering_slot.as_ref().expect("rho steering slot")),
@@ -418,6 +429,7 @@ impl AgentExecutor {
                 Some(task_status_tx.clone()),
                 Some(started_status),
             ) {
+                session.parent_messages = claude_parent_rx;
                 if let Some(frozen) = frozen_claude {
                     let expected_identity = frozen.executable_identity;
                     let verified_executable = frozen._verified_executable;
@@ -426,7 +438,7 @@ impl AgentExecutor {
                             frozen.executable,
                         ),
                     );
-                    session.set_frozen_argv(frozen.arguments);
+                    session.set_frozen_argv(ensure_stream_json_input(frozen.arguments));
                     session.overrides.before_spawn = Some(Box::new(move |command| {
                         crate::workflow::verify_executable_identity(&expected_identity)
                             .map_err(std::io::Error::other)?;
@@ -773,6 +785,18 @@ async fn acquire_permit_or_cancel(
             }
         }
     }
+}
+
+/// Ensures frozen Claude argv can accept parent messages over stream-json stdin.
+fn ensure_stream_json_input(mut arguments: Vec<String>) -> Vec<String> {
+    let has_stream_json = arguments
+        .windows(2)
+        .any(|window| window[0] == "--input-format" && window[1] == "stream-json");
+    if !has_stream_json {
+        arguments.push("--input-format".into());
+        arguments.push("stream-json".into());
+    }
+    arguments
 }
 
 #[cfg(test)]

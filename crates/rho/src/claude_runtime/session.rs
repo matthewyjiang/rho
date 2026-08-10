@@ -50,6 +50,8 @@ pub(crate) struct ClaudeSessionRequest {
     /// When set, the launcher already force-replaced `result.json` with this
     /// Starting status. The sink continues from it instead of rewriting.
     pub(crate) started_status: Option<RunStatus>,
+    /// Parent→child plain-text messages. Present for interactive parent sessions.
+    pub(crate) parent_messages: Option<tokio::sync::mpsc::Receiver<String>>,
     pub(crate) overrides: ClaudeSessionOverrides,
 }
 
@@ -229,6 +231,7 @@ async fn prepare_launch(request: &mut ClaudeSessionRequest) -> Result<Launch, St
         effort: request.effort,
         // Delegated runs publish a resumable Claude session id.
         session_persistence: spawn::SessionPersistence::Keep,
+        input_format: spawn::ClaudeInputFormat::StreamJson,
     })
     .map_err(|error| error.to_string())?;
     if let Some(arguments) = frozen_arguments {
@@ -321,19 +324,24 @@ async fn run_child(
 /// The drain itself is shared with the one-shot path; session only decides what
 /// each end means for the run's status file.
 async fn drain_child(
-    request: &ClaudeSessionRequest,
+    request: &mut ClaudeSessionRequest,
     sink: &mut StatusSink,
     child: &mut OwnedChild,
     log_path: &std::path::Path,
 ) -> SessionOutcome {
     sink.mark_running();
 
+    let parent_messages = request.parent_messages.take();
+
     // Stderr is a log file here, so the drain captures none of it.
     let drained = {
         let mut on_effect = |effect| sink.apply_effect(effect);
         drain::drain_child(
             child,
-            &request.prompt,
+            drain::DrainInput::StreamJson {
+                initial_prompt: request.prompt.clone(),
+                parent_messages,
+            },
             &request.cancellation,
             &mut on_effect,
         )
