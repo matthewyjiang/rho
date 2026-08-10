@@ -133,9 +133,10 @@ impl DiffSyntax {
     fn paint_content(&mut self, side: Side, text: &str) -> Option<Vec<HighlightSegment>> {
         if !self.should_paint_content_line(text) {
             // Soft caps: plain row colors, no more syntect work this pass.
-            // Over-long lines also restart so later rows stay coherent.
+            // Over-long add/remove lines restart only their side so the other
+            // stream keeps multi-line token state.
             if text.len() > MAX_TOOL_SYNTAX_LINE_BYTES {
-                self.restart();
+                self.restart_side(side);
             }
             return None;
         }
@@ -167,6 +168,16 @@ impl DiffSyntax {
         if let Some(path) = self.path.clone() {
             self.old = BlockHighlighter::for_path(&path);
             self.new = BlockHighlighter::for_path(&path);
+        }
+    }
+
+    fn restart_side(&mut self, side: Side) {
+        let Some(path) = self.path.clone() else {
+            return;
+        };
+        match side {
+            Side::Old => self.old = BlockHighlighter::for_path(&path),
+            Side::New => self.new = BlockHighlighter::for_path(&path),
         }
     }
 }

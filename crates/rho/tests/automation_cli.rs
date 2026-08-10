@@ -84,7 +84,8 @@ provider = "disabled"
         "list_dir",
         "read_file",
         "write",
-        "edit",
+        // Auto edit preference for xai resolves to str_replace.
+        "str_replace",
         "grep",
         "glob",
         "process",
@@ -100,6 +101,8 @@ provider = "disabled"
         );
     }
     assert!(!names.contains(&"web_search"));
+    assert!(!names.contains(&"edit"));
+    assert!(!names.contains(&"apply_patch"));
 
     let config = std::fs::read_to_string(root.path().join("config.toml")).unwrap();
     // CLI overrides are session-only unless --save is set.

@@ -42,10 +42,21 @@ impl InteractiveRuntime {
         match self.append_edit_tool_switch_notice(previous, edit_tool) {
             Ok(display) => Ok(Some(EditToolChange { previous, display })),
             Err(error) => {
-                // Best-effort restore so a notice failure does not leave the
-                // session advertising a tool the model was never told about.
-                let _ = self.tools.set_edit_tool(previous, max_output_bytes);
-                let _ = self.rebind_current_session().await;
+                // Restore so a notice failure does not leave the session
+                // advertising a tool the model was never told about. Surface
+                // rollback failures instead of dropping them.
+                if self
+                    .tools
+                    .set_edit_tool(previous, max_output_bytes)
+                    .is_none()
+                {
+                    return Err(anyhow::anyhow!(
+                        "{error}; rollback failed: could not restore previous edit tool"
+                    ));
+                }
+                if let Err(rebind_error) = self.rebind_current_session().await {
+                    return Err(anyhow::anyhow!("{error}; rollback failed: {rebind_error}"));
+                }
                 Err(error)
             }
         }

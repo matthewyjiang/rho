@@ -233,7 +233,7 @@ pub fn advisor_enabled_context(spec: &ToolSpec) -> (String, String) {
         "[advisor mode on]\n\n\
 The `advisor` tool is now available. Do not skip it when the live tool list includes it.\n\n\
 {}\n",
-        tool_schema_block("advisor", spec),
+        tool_schema_block(spec),
     );
     let display = "advisor mode on".into();
     (model, display)
@@ -272,13 +272,13 @@ Current tool: `{current_name}` ({current_label})\n\n\
 {schema}\n",
         previous_label = previous.as_str(),
         current_label = current.as_str(),
-        schema = tool_schema_block(current_name, spec),
+        schema = tool_schema_block(spec),
     );
     let display = format!("edit tool switched to {}", current.as_str());
     (model, display)
 }
 
-fn tool_schema_block(name: &str, spec: &ToolSpec) -> String {
+fn tool_schema_block(spec: &ToolSpec) -> String {
     let schema = serde_json::to_string_pretty(&spec.input_schema).unwrap_or_else(|_| "{}".into());
     format!(
         "Tool schema for `{name}`:\n\
@@ -286,6 +286,7 @@ description:\n\
 {description}\n\n\
 input_schema:\n\
 {schema}",
+        name = spec.name,
         description = spec.description,
         schema = schema,
     )

@@ -294,6 +294,17 @@ fn dismissing_the_advisor_model_prompt_leaves_the_mode_off() {
 // Owner: advisor command
 #[tokio::test]
 async fn advisor_mode_runtime_failure_leaves_mode_unchanged() {
+    #[derive(Debug)]
+    struct ActiveRunError;
+
+    impl std::fmt::Display for ActiveRunError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("advisor mode cannot change while a run is active")
+        }
+    }
+
+    impl std::error::Error for ActiveRunError {}
+
     struct ActiveRunRuntime;
 
     impl AdvisorRuntime for ActiveRunRuntime {
@@ -301,9 +312,7 @@ async fn advisor_mode_runtime_failure_leaves_mode_unchanged() {
             &mut self,
             _model: Option<InternalAgentModelConfig>,
         ) -> impl std::future::Future<Output = anyhow::Result<Option<String>>> + Send {
-            std::future::ready(Err(anyhow::anyhow!(
-                "advisor mode cannot change while a run is active"
-            )))
+            std::future::ready(Err(anyhow::Error::new(ActiveRunError)))
         }
 
         fn tool_specs(&self) -> Vec<rho_sdk::model::ToolSpec> {
@@ -318,10 +327,8 @@ async fn advisor_mode_runtime_failure_leaves_mode_unchanged() {
         .await
         .expect_err("active-run failure should propagate");
     assert!(
-        error
-            .to_string()
-            .contains("cannot change while a run is active"),
-        "unexpected error: {error}"
+        error.downcast_ref::<ActiveRunError>().is_some(),
+        "expected typed ActiveRunError, got: {error:#}"
     );
     assert!(!app.info.runtime.advisor_mode);
     assert!(

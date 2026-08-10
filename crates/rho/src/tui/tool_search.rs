@@ -100,9 +100,18 @@ impl SearchSyntax {
     }
 
     fn highlight_source(&mut self, source: &str) -> Vec<HighlightSegment> {
-        if self.highlighted_lines >= MAX_TOOL_SYNTAX_LINES
-            || source.len() > MAX_TOOL_SYNTAX_LINE_BYTES
-        {
+        if source.len() > MAX_TOOL_SYNTAX_LINE_BYTES {
+            // Match DiffSyntax: overlong rows skip paint and restart so the
+            // next short line does not inherit a desynced stack.
+            if let Some(path) = self.path.clone() {
+                self.highlighter = BlockHighlighter::for_path(&path);
+            }
+            return vec![HighlightSegment {
+                text: source.to_string(),
+                role: None,
+            }];
+        }
+        if self.highlighted_lines >= MAX_TOOL_SYNTAX_LINES {
             return vec![HighlightSegment {
                 text: source.to_string(),
                 role: None,

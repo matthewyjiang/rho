@@ -464,3 +464,20 @@ fn conversation_triple(config: &super::Config, id: &str) -> (String, String, Str
         selection.auth.clone(),
     )
 }
+
+// Covers: Auto preference resolves EditTool and composes display labels for
+// the active provider.
+// Owner: config EditTool preference
+#[test]
+fn auto_edit_tool_resolves_preferred_format_for_provider() {
+    use super::EditTool;
+
+    assert_eq!(
+        EditTool::Auto.resolve("openai-codex"),
+        rho_tools::EditFormat::ApplyPatch
+    );
+    assert_eq!(
+        EditTool::Auto.display_label("anthropic"),
+        "auto (str_replace)"
+    );
+}

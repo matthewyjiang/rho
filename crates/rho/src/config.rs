@@ -279,13 +279,14 @@ pub enum EditTool {
 
 impl EditTool {
     /// Every supported preference, in UI display order.
-    pub const fn all() -> [Self; 4] {
-        [
-            Self::Auto,
-            Self::Pinned(rho_tools::EditFormat::Hashline),
-            Self::Pinned(rho_tools::EditFormat::ApplyPatch),
-            Self::Pinned(rho_tools::EditFormat::StrReplace),
-        ]
+    ///
+    /// Pinned variants track [`rho_tools::EditFormat::ALL`] so newly added
+    /// formats appear here without a second hard-coded list.
+    pub fn all() -> Vec<Self> {
+        let mut all = Vec::with_capacity(1 + rho_tools::EditFormat::ALL.len());
+        all.push(Self::Auto);
+        all.extend(rho_tools::EditFormat::ALL.iter().copied().map(Self::Pinned));
+        all
     }
 
     /// Configured value and selector label (`behavior.edit_tool`).

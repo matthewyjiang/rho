@@ -74,8 +74,18 @@ pub(super) struct HistoryLineCache {
 impl HistoryLineCache {
     pub(super) fn invalidate_from(&mut self, index: usize) {
         self.appended_assistant = None;
+        // Fold pending surgical marks into the suffix rebuild so an earlier
+        // resplice is not lost when a later invalidation starts. Marks at or
+        // after `index` are already covered by rebuilding from `index`.
+        let mut dirty = index;
+        for &resplice_index in &self.resplice {
+            dirty = dirty.min(resplice_index);
+        }
         self.resplice.clear();
-        self.dirty_from = Some(self.dirty_from.map_or(index, |dirty| dirty.min(index)));
+        self.dirty_from = Some(
+            self.dirty_from
+                .map_or(dirty, |existing| existing.min(dirty)),
+        );
     }
 
     /// Re-render these entries on the next paint without dropping the cached
@@ -249,8 +259,11 @@ impl HistoryLineCache {
                 }
             }
         } else if !self.resplice.is_empty() {
-            // Suffix rebuild wins; drop stale resplice marks.
-            self.resplice.clear();
+            // Suffix rebuild wins; fold pending marks into the earliest dirty
+            // index so they are not dropped before the rebuild.
+            for index in self.resplice.drain(..) {
+                self.dirty_from = Some(self.dirty_from.map_or(index, |dirty| dirty.min(index)));
+            }
         }
 
         let Some(dirty_from) = self.dirty_from.take() else {
@@ -313,36 +326,20 @@ impl HistoryLineCache {
             }
 
             let entry = &entries[index];
-            let trailing_blank = if self.open_stream_tail && index + 1 == entries.len() {
-                TrailingBlank::Omit
-            } else {
-                TrailingBlank::Include
-            };
-
-            let (new_lines, new_code_blocks, new_image) = if settings.hides_entry(entry) {
-                (Vec::new(), Vec::new(), None)
-            } else {
-                let mut rendered = render_entry_with_options(
-                    entry,
-                    settings.width,
-                    settings.max_tool_output_lines,
-                    trailing_blank,
-                );
-                if !rendered.image_sources.is_empty() {
-                    let images = image_resolver(index, &rendered.image_sources);
-                    apply_markdown_images(&mut rendered, &images, settings.width);
-                }
-                let code_blocks = rendered
-                    .code_blocks
-                    .into_iter()
-                    .map(|block| CachedCodeBlock {
-                        line: block.top_line, // relocated below
-                        copy_columns: block.copy_columns.start.saturating_add(1)
-                            ..block.copy_columns.end.saturating_add(1),
-                        text: Arc::from(block.text),
-                    })
-                    .collect::<Vec<_>>();
-                (rendered.lines, code_blocks, rendered.image_placement)
+            let (new_lines, new_code_blocks, new_image) = match prepare_cache_entry_render(
+                entry,
+                index,
+                entries.len(),
+                settings,
+                self.open_stream_tail,
+                image_resolver,
+            ) {
+                None => (Vec::new(), Vec::new(), None),
+                Some(rendered) => (
+                    rendered.lines,
+                    rendered.code_blocks,
+                    rendered.image_placement,
+                ),
             };
 
             let start = old_range.start;
@@ -433,42 +430,27 @@ impl HistoryLineCache {
         image_resolver: EntryImageResolver<'_>,
     ) {
         let range_start = self.lines.len();
-        if settings.hides_entry(entry) {
+        let Some(rendered) = prepare_cache_entry_render(
+            entry,
+            entry_index,
+            entries_len,
+            settings,
+            self.open_stream_tail,
+            image_resolver,
+        ) else {
             // Keep a zero-height range so entry indices stay aligned with history.
             self.entry_ranges.push(range_start..range_start);
             self.assistant_caches.push(None);
             return;
-        }
+        };
 
         let entry_start = self.lines.len();
-        let trailing_blank = if self.open_stream_tail && entry_index + 1 == entries_len {
-            TrailingBlank::Omit
-        } else {
-            TrailingBlank::Include
-        };
-        let mut rendered = render_entry_with_options(
-            entry,
-            settings.width,
-            settings.max_tool_output_lines,
-            trailing_blank,
-        );
-        if !rendered.image_sources.is_empty() {
-            let images = image_resolver(entry_index, &rendered.image_sources);
-            apply_markdown_images(&mut rendered, &images, settings.width);
-        }
-        self.code_blocks.extend(
-            rendered
-                .code_blocks
-                .into_iter()
-                .map(|block| CachedCodeBlock {
-                    // Content starts at the first entry row; trailing blank is after.
-                    line: entry_start.saturating_add(block.top_line),
-                    // render_entry also pads markdown by one column on each side.
-                    copy_columns: block.copy_columns.start.saturating_add(1)
-                        ..block.copy_columns.end.saturating_add(1),
-                    text: Arc::from(block.text),
-                }),
-        );
+        self.code_blocks
+            .extend(rendered.code_blocks.into_iter().map(|mut block| {
+                // Content starts at the first entry row; trailing blank is after.
+                block.line = entry_start.saturating_add(block.line);
+                block
+            }));
         if let Some(placement) = rendered.image_placement {
             self.image_placements
                 .push(placement.offset_rows(entry_start));
@@ -594,6 +576,61 @@ fn offset_usize(value: usize, delta: isize) -> usize {
     } else {
         value.saturating_sub((-delta) as usize)
     }
+}
+
+/// Shared entry render for full rebuild and surgical resplice paths.
+///
+/// Returns `None` for hidden entries. Code-block line numbers and image
+/// placements are relative to the entry start; callers relocate them.
+struct PreparedCacheEntry {
+    lines: Vec<Line<'static>>,
+    code_blocks: Vec<CachedCodeBlock>,
+    image_placement: Option<RenderedImagePlacements>,
+}
+
+fn prepare_cache_entry_render(
+    entry: &Entry,
+    entry_index: usize,
+    entries_len: usize,
+    settings: HistoryRenderSettings,
+    open_stream_tail: bool,
+    image_resolver: EntryImageResolver<'_>,
+) -> Option<PreparedCacheEntry> {
+    if settings.hides_entry(entry) {
+        return None;
+    }
+    let trailing_blank = if open_stream_tail && entry_index + 1 == entries_len {
+        TrailingBlank::Omit
+    } else {
+        TrailingBlank::Include
+    };
+    let mut rendered = render_entry_with_options(
+        entry,
+        settings.width,
+        settings.max_tool_output_lines,
+        trailing_blank,
+    );
+    if !rendered.image_sources.is_empty() {
+        let images = image_resolver(entry_index, &rendered.image_sources);
+        apply_markdown_images(&mut rendered, &images, settings.width);
+    }
+    let code_blocks = rendered
+        .code_blocks
+        .into_iter()
+        .map(|block| CachedCodeBlock {
+            // Relative to entry start; callers offset when placing.
+            line: block.top_line,
+            // render_entry also pads markdown by one column on each side.
+            copy_columns: block.copy_columns.start.saturating_add(1)
+                ..block.copy_columns.end.saturating_add(1),
+            text: Arc::from(block.text),
+        })
+        .collect();
+    Some(PreparedCacheEntry {
+        lines: rendered.lines,
+        code_blocks,
+        image_placement: rendered.image_placement,
+    })
 }
 
 /// Drop placements overlapping `[start, end)`, shift those at/after `end` by

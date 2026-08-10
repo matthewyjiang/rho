@@ -595,10 +595,19 @@ impl App {
             return Ok(());
         }
 
+        // UI mirrors only after the preference is durable, so a save failure
+        // cannot leave diagnostics/notices ahead of config.
         self.info
             .services
             .diagnostics
             .update_edit_tool(edit_tool.as_str());
+        if let Some(change) = change.as_ref() {
+            self.info
+                .services
+                .diagnostics
+                .update_tools(&agent.tool_specs());
+            self.insert_entry(&Entry::Notice(change.display.clone()));
+        }
         self.set_status(format!("edit tool: {}", edit_tool.display_label(&provider)));
         Ok(())
     }
@@ -622,11 +631,15 @@ impl App {
             })
             .await
         {
-            Ok(Some(_)) => {
-                self.set_status(format!(
-                    "edit tool: {}",
-                    config.edit_tool.display_label(provider)
-                ));
+            Ok(Some(change)) => {
+                // Auto provider-follow does not persist a preference; mirror
+                // the live tool list and notice immediately. Leave the caller's
+                // status toast alone (model switch should keep its own feedback).
+                self.info
+                    .services
+                    .diagnostics
+                    .update_tools(&agent.tool_specs());
+                self.insert_entry(&Entry::Notice(change.display));
             }
             Ok(None) => {}
             Err(()) => {}
@@ -634,10 +647,13 @@ impl App {
         Ok(())
     }
 
-    /// Applies a concrete edit format on the live runtime and mirrors diagnostics.
+    /// Applies a concrete edit format on the live runtime.
     ///
     /// On runtime failure inserts an error entry built by `on_error` and returns
     /// `Err(())`. `Ok(None)` means the advertised surface did not change.
+    /// Callers that persist a preference must apply diagnostics/notice updates
+    /// only after that save succeeds; the Auto provider-switch path updates UI
+    /// immediately because it does not write config.
     async fn apply_resolved_edit_tool(
         &mut self,
         agent: &mut InteractiveRuntime,
@@ -646,18 +662,7 @@ impl App {
         on_error: impl FnOnce(&anyhow::Error) -> String,
     ) -> Result<Option<crate::app::interactive_runtime::edit_tool::EditToolChange>, ()> {
         match agent.set_edit_tool(resolved, max_output_bytes).await {
-            Ok(change) => {
-                if change.is_some() {
-                    self.info
-                        .services
-                        .diagnostics
-                        .update_tools(&agent.tool_specs());
-                    if let Some(change) = change.as_ref() {
-                        self.insert_entry(&Entry::Notice(change.display.clone()));
-                    }
-                }
-                Ok(change)
-            }
+            Ok(change) => Ok(change),
             Err(error) => {
                 self.insert_entry(&Entry::Error(on_error(&error)));
                 Err(())
