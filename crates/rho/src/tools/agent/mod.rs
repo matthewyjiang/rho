@@ -157,7 +157,6 @@ impl SubagentManager {
             definition: Arc::new(definition.clone()),
             prompt: prompt.to_string(),
             run_id: id.clone(),
-            background,
             parent_session_id,
             output_file,
         };

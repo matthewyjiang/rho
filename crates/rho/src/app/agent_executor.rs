@@ -47,7 +47,6 @@ pub(crate) struct AgentLaunchRequest {
     pub(crate) definition: Arc<AgentDefinition>,
     pub(crate) prompt: String,
     pub(crate) run_id: String,
-    pub(crate) background: bool,
     pub(crate) parent_session_id: Option<rho_sdk::SessionId>,
     pub(crate) output_file: PathBuf,
 }
