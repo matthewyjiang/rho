@@ -179,10 +179,13 @@ impl AgentExecutor {
         capabilities.remove(&ToolCapability::Bash);
         #[cfg(not(windows))]
         capabilities.remove(&ToolCapability::Powershell);
-        // A foreground child runs inside the parent tool call, so waiting for
-        // that parent to present a questionnaire would deadlock both runs.
-        let questionnaire_available =
-            request.background && request.parent_session_id.is_some() && self.host_input.is_bound();
+        // Delegated questionnaires route through the parent session. The parent
+        // TUI can present them while a turn is running (foreground wait) or after
+        // background dispatch, so availability is the live parent bridge only.
+        let questionnaire_available = delegated_questionnaire_available(
+            request.parent_session_id.as_ref(),
+            self.host_input.is_bound(),
+        );
         if !questionnaire_available {
             capabilities.remove(&ToolCapability::Questionnaire);
         }
@@ -565,6 +568,17 @@ fn concurrency_limits_from_env(
 fn parse_positive_concurrency(raw: Option<&str>) -> Option<usize> {
     raw.and_then(|value| value.parse().ok())
         .filter(|limit: &usize| *limit > 0)
+}
+
+/// Whether a delegated Rho run may expose the questionnaire tool.
+///
+/// Needs a parent session id and a bound parent host-input bridge. Foreground
+/// and background launches both qualify; headless or parentless launches do not.
+fn delegated_questionnaire_available(
+    parent_session_id: Option<&rho_sdk::SessionId>,
+    host_input_bound: bool,
+) -> bool {
+    parent_session_id.is_some() && host_input_bound
 }
 
 /// Concurrency capacity held for the lifetime of one delegated run.
