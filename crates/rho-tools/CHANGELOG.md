@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.15.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.14.0...rho-agent-tools-v0.15.0) (2026-08-10)
+
+
+### Features
+
+* **config:** mid-session edit tool, advisor, and auto preference ([#840](https://github.com/matthewyjiang/rho/issues/840)) ([423d026](https://github.com/matthewyjiang/rho/commit/423d02690edee36a6dc692ac25d8fd9013d33139))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.18.0 to 2.0.0
+
 ## [0.14.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.13.0...rho-agent-tools-v0.14.0) (2026-08-08)
 
 

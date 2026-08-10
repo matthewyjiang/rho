@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.34.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.33.1...rho-coding-agent-v1.34.0) (2026-08-10)
+
+
+### Features
+
+* **advisor:** run the advisor on Claude Code from the model picker ([#833](https://github.com/matthewyjiang/rho/issues/833)) ([b663739](https://github.com/matthewyjiang/rho/commit/b6637391a4ade6edcc14bc5b98d7f7790d5a0a68))
+* **config:** mid-session edit tool, advisor, and auto preference ([#840](https://github.com/matthewyjiang/rho/issues/840)) ([423d026](https://github.com/matthewyjiang/rho/commit/423d02690edee36a6dc692ac25d8fd9013d33139))
+* **mcp:** add prompts, resources, elicitation, and sampling ([#837](https://github.com/matthewyjiang/rho/issues/837)) ([29cf0ea](https://github.com/matthewyjiang/rho/commit/29cf0ea8e6179df94826c18b857cf6f20120be3e))
+* **mcp:** answer server-initiated protocol traffic ([#834](https://github.com/matthewyjiang/rho/issues/834)) ([95104ea](https://github.com/matthewyjiang/rho/commit/95104ea6f4bb910604688b69b0724cccc90dde9a))
+* **mcp:** authorize remote servers with OAuth 2.1 ([#838](https://github.com/matthewyjiang/rho/issues/838)) ([1971a19](https://github.com/matthewyjiang/rho/commit/1971a19a0e425f7a2b4887757b2a25c6e250ffca))
+* **mcp:** render tool results by content kind ([#836](https://github.com/matthewyjiang/rho/issues/836)) ([9ac86ea](https://github.com/matthewyjiang/rho/commit/9ac86ead85ce742a1d3567f94000174ca636a0ab))
+* **tui:** make the composer mouse-selectable ([#832](https://github.com/matthewyjiang/rho/issues/832)) ([3cc9490](https://github.com/matthewyjiang/rho/commit/3cc9490f724a077ea69f19fd8599eaefeb7aac11))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 1.18.0 to 2.0.0
+    * rho-providers bumped from 0.18.2 to 0.19.0
+
 ## [1.33.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.33.0...rho-coding-agent-v1.33.1) (2026-08-08)
 
 
