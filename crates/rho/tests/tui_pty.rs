@@ -1353,7 +1353,7 @@ advisor_mode = true
     for pair in [
         ["--model", "opus"],
         ["--max-turns", "1"],
-        ["--permission-mode", "plan"],
+        ["--permission-mode", "dontAsk"],
     ] {
         assert!(
             record.args.windows(2).any(|window| window == pair),
