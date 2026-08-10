@@ -10,6 +10,7 @@ use super::{
     syntax::{
         match_byte_ranges, spans_from_segments_with_matches, spans_plain_with_matches,
         BlockHighlighter, HighlightSegment, MatchQuery, MAX_TOOL_SYNTAX_LINES,
+        MAX_TOOL_SYNTAX_LINE_BYTES,
     },
     theme::Theme,
 };
@@ -99,7 +100,9 @@ impl SearchSyntax {
     }
 
     fn highlight_source(&mut self, source: &str) -> Vec<HighlightSegment> {
-        if self.highlighted_lines >= MAX_TOOL_SYNTAX_LINES {
+        if self.highlighted_lines >= MAX_TOOL_SYNTAX_LINES
+            || source.len() > MAX_TOOL_SYNTAX_LINE_BYTES
+        {
             return vec![HighlightSegment {
                 text: source.to_string(),
                 role: None,

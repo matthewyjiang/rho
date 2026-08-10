@@ -69,18 +69,22 @@ impl App {
 
     pub(super) fn toggle_transcript_tool_output(&mut self, index: usize) {
         let expand = !matches!(self.history.get(index), Some(Entry::Tool(tool)) if tool.expanded);
-        let mut dirty_from = index;
+        let mut changed = Vec::new();
         for (entry_index, entry) in self.history.entries_mut().iter_mut().enumerate() {
             if let Entry::Tool(tool) = entry {
-                if tool.expanded {
-                    dirty_from = dirty_from.min(entry_index);
+                // Accordion: at most one tool body expanded. Only entries whose
+                // expanded bit actually flips need a cache resplice.
+                let next = expand && entry_index == index;
+                if tool.expanded != next {
+                    tool.expanded = next;
+                    changed.push(entry_index);
                 }
-                tool.expanded = false;
             }
         }
-        if let Some(Entry::Tool(tool)) = self.history.get_mut(index) {
-            tool.expanded = expand;
-            self.history.lines_mut().invalidate_from(dirty_from);
+        if !changed.is_empty() {
+            // Surgical height update — do not rebuild assistant markdown (etc.)
+            // after the toggled tool(s).
+            self.history.lines_mut().resplice_entries(changed);
         }
         self.set_status(if expand {
             "tool output expanded"

@@ -100,6 +100,10 @@ impl RenderedImagePlacements {
         }
     }
 
+    pub(super) fn from_placements(placements: Vec<RenderedImagePlacement>) -> Self {
+        Self { placements }
+    }
+
     pub(super) fn iter(&self) -> impl Iterator<Item = &RenderedImagePlacement> {
         self.placements.iter()
     }

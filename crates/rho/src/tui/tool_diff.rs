@@ -1,6 +1,8 @@
 use rho_tools::tool_card::{DiffRow, DiffRowKind, ToolFamily, ToolHeader};
 
-use super::syntax::{BlockHighlighter, HighlightSegment, MAX_TOOL_SYNTAX_LINES};
+use super::syntax::{
+    BlockHighlighter, HighlightSegment, MAX_TOOL_SYNTAX_LINES, MAX_TOOL_SYNTAX_LINE_BYTES,
+};
 
 /// Width of the line-number gutter for a diff body.
 ///
@@ -103,7 +105,12 @@ impl DiffSyntax {
                 if is_diff_chrome(&row.text) {
                     return None;
                 }
-                if !self.should_paint_content() {
+                if !self.should_paint_content_line(&row.text) {
+                    // Long / over-budget lines skip syntect entirely. Restart so
+                    // the next short line does not inherit a desynced stack.
+                    if row.text.len() > MAX_TOOL_SYNTAX_LINE_BYTES {
+                        self.restart();
+                    }
                     return None;
                 }
                 // Advance old without segment alloc; styles come from new.
@@ -119,9 +126,17 @@ impl DiffSyntax {
         self.highlighted_lines < MAX_TOOL_SYNTAX_LINES
     }
 
+    fn should_paint_content_line(&self, text: &str) -> bool {
+        self.should_paint_content() && text.len() <= MAX_TOOL_SYNTAX_LINE_BYTES
+    }
+
     fn paint_content(&mut self, side: Side, text: &str) -> Option<Vec<HighlightSegment>> {
-        if !self.should_paint_content() {
-            // Soft cap: plain row colors, no more syntect work this pass.
+        if !self.should_paint_content_line(text) {
+            // Soft caps: plain row colors, no more syntect work this pass.
+            // Over-long lines also restart so later rows stay coherent.
+            if text.len() > MAX_TOOL_SYNTAX_LINE_BYTES {
+                self.restart();
+            }
             return None;
         }
         let segments = match side {
