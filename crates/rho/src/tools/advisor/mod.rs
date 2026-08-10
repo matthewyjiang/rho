@@ -141,6 +141,11 @@ impl AdvisorSessionStore {
         self.lock().model = model;
     }
 
+    /// Currently configured advisor model, if any.
+    pub fn model(&self) -> Option<InternalAgentModelConfig> {
+        self.lock().model.clone()
+    }
+
     /// Fold provider-reported cost from a finished advisor call into the
     /// unclaimed total.
     ///

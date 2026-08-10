@@ -709,6 +709,75 @@ async fn advisor_mode_changes_the_tool_list_without_replacing_the_session() {
     assert!(disabled_text.contains("no longer available"));
 }
 
+// Covers: notice persistence failure after a successful rebuild must restore
+// the previous advisor registration and model.
+// Owner: interactive runtime advisor state transition.
+#[tokio::test]
+async fn advisor_notice_failure_restores_previous_registration_and_model() {
+    let mut interactive = advisor_test_runtime().await;
+    let store = interactive.tools.advisor().cloned().expect("advisor store");
+    assert!(!interactive.tools.advisor_registered());
+    assert!(store.model().is_none());
+
+    super::advisor::fail_next_advisor_switch_notice_for_tests();
+    let error = interactive
+        .set_advisor(Some(advisor_model()))
+        .await
+        .expect_err("notice failure should abort the transition");
+    assert!(
+        error.to_string().contains("injected advisor switch notice"),
+        "unexpected error: {error}"
+    );
+    assert!(
+        !interactive.tools.advisor_registered(),
+        "registration must roll back"
+    );
+    assert!(store.model().is_none(), "model must roll back");
+    assert!(
+        !interactive
+            .runtime
+            .diagnostics()
+            .tools()
+            .iter()
+            .any(|tool| tool.name() == "advisor"),
+        "runtime must not advertise advisor after rollback"
+    );
+}
+
+// Covers: advisor mode cannot change while a provider run is active.
+// Owner: interactive runtime advisor state transition.
+#[tokio::test]
+async fn advisor_mode_rejects_change_while_a_run_is_active() {
+    let mut interactive = pending_compaction_runtime("still going").await;
+    let config = Config::default();
+    interactive.tools = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::new(AgentCapabilities::new(
+            [ToolCapability::Advisor].into_iter().collect(),
+        ))
+        .advisor(crate::tools::advisor::AdvisorSessionStore::new()),
+    );
+    interactive
+        .start(UserInput::text("keep running"), None)
+        .await
+        .unwrap();
+    assert!(interactive.is_run_active());
+
+    let error = interactive
+        .set_advisor(Some(advisor_model()))
+        .await
+        .expect_err("active run must block advisor transitions");
+    assert!(
+        error
+            .to_string()
+            .contains("cannot change while a run is active"),
+        "unexpected error: {error}"
+    );
+    assert!(!interactive.tools.advisor_registered());
+    interactive.shutdown().await;
+}
+
 async fn edit_tool_test_runtime() -> InteractiveRuntime {
     let mut interactive = pending_compaction_runtime("done").await;
     let config = Config {

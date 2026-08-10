@@ -290,19 +290,49 @@ fn dismissing_the_advisor_model_prompt_leaves_the_mode_off() {
     });
 }
 
-// Covers: an unknown argument reports usage without changing the mode
+// Covers: an active-run runtime error must not flip saved or in-memory mode.
 // Owner: advisor command
 #[tokio::test]
-async fn unknown_advisor_argument_reports_usage() {
+async fn advisor_mode_runtime_failure_leaves_mode_unchanged() {
+    struct ActiveRunRuntime;
+
+    impl AdvisorRuntime for ActiveRunRuntime {
+        fn set_advisor(
+            &mut self,
+            _model: Option<InternalAgentModelConfig>,
+        ) -> impl std::future::Future<Output = anyhow::Result<Option<String>>> + Send {
+            std::future::ready(Err(anyhow::anyhow!(
+                "advisor mode cannot change while a run is active"
+            )))
+        }
+
+        fn tool_specs(&self) -> Vec<rho_sdk::model::ToolSpec> {
+            Vec::new()
+        }
+    }
+
     let mut app = app_with_advisor_model();
-    let mut agent = FakeAdvisorRuntime::default();
-
-    app.execute_advisor_command_with_runtime(invocation("/advisor maybe"), &mut agent)
+    let mut agent = ActiveRunRuntime;
+    let error = app
+        .execute_advisor_command_with_runtime(invocation("/advisor on"), &mut agent)
         .await
-        .unwrap();
-
+        .expect_err("active-run failure should propagate");
+    assert!(
+        error
+            .to_string()
+            .contains("cannot change while a run is active"),
+        "unexpected error: {error}"
+    );
     assert!(!app.info.runtime.advisor_mode);
-    assert_eq!(app.status(), "invalid advisor mode");
+    assert!(
+        !app.info
+            .services
+            .config_repository
+            .load()
+            .unwrap()
+            .advisor_mode
+    );
+    assert_eq!(app.status(), "advisor mode change failed");
 }
 
 // Covers: editing the advisor model from /config does not claim it enables mode.

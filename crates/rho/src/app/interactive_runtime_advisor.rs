@@ -22,6 +22,16 @@ use super::super::{
 
 use super::InteractiveRuntime;
 
+#[cfg(test)]
+thread_local! {
+    static FAIL_NEXT_ADVISOR_NOTICE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+pub(crate) fn fail_next_advisor_switch_notice_for_tests() {
+    FAIL_NEXT_ADVISOR_NOTICE.with(|flag| flag.set(true));
+}
+
 impl InteractiveRuntime {
     /// Fixed system prompt for this session.
     ///
@@ -57,21 +67,38 @@ impl InteractiveRuntime {
 
         // The model lands only after the rebuild succeeds, so a failed
         // transition leaves both the tool list and the store untouched.
+        let previous_registered = self.tools.advisor_registered();
+        let previous_model = store.model();
         self.tools.set_advisor_registered(registered);
         match self.rebind_current_session().await {
             Ok(()) => {
                 store.set_model(model);
-                let display = self.append_advisor_switch_notice(registered)?;
-                Ok(Some(display))
+                match self.append_advisor_switch_notice(registered) {
+                    Ok(display) => Ok(Some(display)),
+                    Err(error) => {
+                        // Mirror edit-tool: a notice failure must not leave the
+                        // session advertising a tool list the model was never
+                        // told about.
+                        store.set_model(previous_model);
+                        self.tools.set_advisor_registered(previous_registered);
+                        let _ = self.rebind_current_session().await;
+                        Err(error)
+                    }
+                }
             }
             Err(error) => {
-                self.tools.set_advisor_registered(!registered);
+                self.tools.set_advisor_registered(previous_registered);
                 Err(error)
             }
         }
     }
 
     fn append_advisor_switch_notice(&mut self, enabled: bool) -> anyhow::Result<String> {
+        #[cfg(test)]
+        if FAIL_NEXT_ADVISOR_NOTICE.with(std::cell::Cell::get) {
+            FAIL_NEXT_ADVISOR_NOTICE.with(|flag| flag.set(false));
+            anyhow::bail!("injected advisor switch notice failure");
+        }
         let (model, display) = if enabled {
             let spec = self
                 .tools
