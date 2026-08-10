@@ -12,22 +12,28 @@ use std::{path::PathBuf, process::Stdio};
 use rho_sdk::{model::ModelUsage, CancellationToken};
 use tokio::sync::watch;
 
-use crate::{
-    agent::{OneShotPhase, OneShotUpdate, PromptPolicy},
-    permission::PermissionMode,
-};
+use crate::agent::{OneShotPhase, OneShotUpdate, PromptPolicy};
 
 use super::{
     auth::{self, ClaudeAuthError},
     child::OwnedChild,
     drain::{self, DrainEnd},
     executable,
-    spawn::{self, ClaudeSpawnRequest, SessionPersistence},
+    spawn::{self, ClaudePermissionMode, ClaudeSpawnRequest, SessionPersistence},
     stream::{StreamEffect, TerminalResult},
     terminal::{assess_terminal, TerminalOutcome},
 };
 
 pub(crate) const CANCELLATION_ERROR: &str = "claude code: cancelled";
+
+/// Claude CLI permission mode for no-tools one-shots (advisor).
+///
+/// One-shots set Claude `dontAsk` directly. They are not Rho Auto: delegated
+/// Auto maps to Claude `bypassPermissions`, while one-shots need a non-prompting
+/// mode with no plan scaffolding and no broad bypass. [`ClaudePermissionMode::Plan`]
+/// injects AskUserQuestion / ExitPlanMode text and poisons advisor prose even
+/// when tools is empty.
+pub(crate) const ONE_SHOT_PERMISSION_MODE: ClaudePermissionMode = ClaudePermissionMode::DontAsk;
 
 /// A single Claude question with no tools and no follow-up turn.
 pub(crate) struct ClaudeOneShotRequest {
@@ -73,21 +79,7 @@ pub(crate) async fn run_one_shot(
     }
     let executable = executable::resolve().map_err(|error| error.to_string())?;
 
-    let plan = spawn::build_spawn_plan(&ClaudeSpawnRequest {
-        system_prompt: PromptPolicy::Replace(request.system_prompt.to_string()),
-        model: request.model.clone(),
-        // Parity with the Rho one-shot path, which exposes no tools at all.
-        tools: Vec::new(),
-        inherit_claude_config: false,
-        // Fixed, not the session's mode: with no tools there is nothing to
-        // approve, and Supervised would otherwise refuse the spawn outright.
-        permission_mode: PermissionMode::Plan,
-        cwd: request.cwd.clone(),
-        max_turns: 1,
-        effort: request.effort,
-        session_persistence: SessionPersistence::Discard,
-    })
-    .map_err(|error| error.to_string())?;
+    let plan = spawn::build_spawn_plan(&one_shot_spawn_request(&request));
 
     let mut command = executable
         .try_command(spawn::inline_prompt_args(&plan))
@@ -135,6 +127,24 @@ pub(crate) async fn run_one_shot(
             Err(format!("claude code: failed waiting for child: {error}"))
         }
         DrainEnd::Exited(Ok(status)) => finish(text, drained.terminal, &drained.stderr, status),
+    }
+}
+
+/// Spawn contract used by [`run_one_shot`]. Kept as one helper so regression
+/// tests assert the same request shape production builds.
+fn one_shot_spawn_request(request: &ClaudeOneShotRequest) -> ClaudeSpawnRequest {
+    ClaudeSpawnRequest {
+        system_prompt: PromptPolicy::Replace(request.system_prompt.to_string()),
+        model: request.model.clone(),
+        // Parity with the Rho one-shot path, which exposes no tools at all.
+        tools: Vec::new(),
+        inherit_claude_config: false,
+        // Claude-native mode, not Rho PermissionMode. See ONE_SHOT_PERMISSION_MODE.
+        permission_mode: ONE_SHOT_PERMISSION_MODE,
+        cwd: request.cwd.clone(),
+        max_turns: 1,
+        effort: request.effort,
+        session_persistence: SessionPersistence::Discard,
     }
 }
 

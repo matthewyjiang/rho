@@ -9,7 +9,7 @@ fn request(
     tools: Vec<&str>,
     inherit: bool,
     model: Option<&str>,
-    permission_mode: PermissionMode,
+    permission_mode: ClaudePermissionMode,
     max_turns: u64,
     prompt: PromptPolicy,
 ) -> ClaudeSpawnRequest {
@@ -28,7 +28,7 @@ fn request_with_effort(
     tools: Vec<&str>,
     inherit: bool,
     model: Option<&str>,
-    permission_mode: PermissionMode,
+    permission_mode: ClaudePermissionMode,
     max_turns: u64,
     prompt: PromptPolicy,
     effort: Option<&'static str>,
@@ -84,11 +84,10 @@ fn builds_explicit_safe_spawn_args() {
         vec!["Read", "Edit", "Bash(git *)"],
         false,
         Some("opus"),
-        PermissionMode::Auto,
+        ClaudePermissionMode::BypassPermissions,
         8,
         PromptPolicy::Replace("Plan carefully.".into()),
-    ))
-    .unwrap();
+    ));
 
     assert_eq!(
         plan.system_prompt,
@@ -97,7 +96,7 @@ fn builds_explicit_safe_spawn_args() {
     assert!(plan
         .args
         .windows(2)
-        .any(|pair| pair == ["--permission-mode", "dontAsk"]));
+        .any(|pair| pair == ["--permission-mode", "bypassPermissions"]));
     assert!(plan
         .args
         .windows(2)
@@ -133,7 +132,12 @@ fn builds_explicit_safe_spawn_args() {
     assert!(!plan.args.iter().any(|arg| arg == "--system-prompt-file"));
     assert!(plan.args.contains(&"--include-partial-messages".into()));
     assert!(plan.args.contains(&"--verbose".into()));
-    assert!(!plan.args.iter().any(|arg| arg.contains("bypass")));
+    // Rho Auto uses Claude bypassPermissions via --permission-mode only; do not
+    // also pass the separate --dangerously-skip-permissions flag.
+    assert!(!plan
+        .args
+        .iter()
+        .any(|arg| arg.contains("dangerously-skip-permissions")));
 
     let dir = tempfile::tempdir().unwrap();
     let output = dir.path().join("result.json");
@@ -157,11 +161,10 @@ fn extend_prompt_uses_append_system_prompt_file() {
         vec!["Read"],
         false,
         None,
-        PermissionMode::Auto,
+        ClaudePermissionMode::BypassPermissions,
         4,
         PromptPolicy::Extend("Extra instructions.".into()),
-    ))
-    .unwrap();
+    ));
     assert_eq!(
         plan.system_prompt,
         SystemPromptPlan::Extend("Extra instructions.".into())
@@ -193,11 +196,10 @@ fn replace_prompt_uses_system_prompt_file_exactly() {
         vec!["Read"],
         false,
         None,
-        PermissionMode::Auto,
+        ClaudePermissionMode::BypassPermissions,
         4,
         PromptPolicy::Replace("Only this.".into()),
-    ))
-    .unwrap();
+    ));
     assert_eq!(
         plan.system_prompt,
         SystemPromptPlan::Replace("Only this.".into())
@@ -224,11 +226,10 @@ fn empty_extend_omits_system_prompt_entirely() {
         vec!["Read"],
         false,
         None,
-        PermissionMode::Auto,
+        ClaudePermissionMode::BypassPermissions,
         4,
         PromptPolicy::Extend(String::new()),
-    ))
-    .unwrap();
+    ));
     assert_eq!(plan.system_prompt, SystemPromptPlan::Omit);
     assert!(plan.system_prompt.file_flag().is_none());
     assert!(plan.system_prompt.text().is_none());
@@ -255,11 +256,10 @@ fn multiline_replace_prompt_preserves_bytes_in_file() {
         vec!["Read"],
         false,
         None,
-        PermissionMode::Auto,
+        ClaudePermissionMode::BypassPermissions,
         4,
         PromptPolicy::Replace(body.into()),
-    ))
-    .unwrap();
+    ));
     let dir = tempfile::tempdir().unwrap();
     let output = dir.path().join("result.json");
     let args = finalized(&plan, &output);
@@ -296,11 +296,10 @@ fn non_utf8_system_prompt_path_uses_os_string_argv() {
         vec!["Read"],
         false,
         None,
-        PermissionMode::Auto,
+        ClaudePermissionMode::BypassPermissions,
         4,
         PromptPolicy::Replace("secret prompt bytes".into()),
-    ))
-    .unwrap();
+    ));
 
     // Construct a non-UTF-8 output path under a valid parent. macOS may reject
     // non-UTF-8 path components at the filesystem boundary (`Illegal byte
@@ -336,11 +335,10 @@ fn inherit_config_widens_setting_sources() {
         vec!["Read"],
         true,
         None,
-        PermissionMode::Plan,
+        ClaudePermissionMode::Plan,
         32,
         PromptPolicy::Replace("Plan carefully.".into()),
-    ))
-    .unwrap();
+    ));
     assert_eq!(
         flag_value(&plan.args, "--permission-mode").as_deref(),
         Some("plan")
@@ -362,11 +360,10 @@ fn model_is_passed_byte_for_byte_without_alias_rewrite() {
         vec!["Read"],
         false,
         Some("claude-opus-4-6"),
-        PermissionMode::Auto,
+        ClaudePermissionMode::BypassPermissions,
         16,
         PromptPolicy::Replace("Plan carefully.".into()),
-    ))
-    .unwrap();
+    ));
     assert!(plan
         .args
         .windows(2)
@@ -374,17 +371,30 @@ fn model_is_passed_byte_for_byte_without_alias_rewrite() {
 }
 
 #[test]
-fn supervised_mode_is_refused() {
-    let error = build_spawn_plan(&request(
-        vec!["Read"],
-        false,
-        None,
-        PermissionMode::Supervised,
-        8,
-        PromptPolicy::Replace("Plan carefully.".into()),
-    ))
-    .unwrap_err();
+fn supervised_rho_mode_is_refused_at_the_mapping_boundary() {
+    let error = map_permission_mode(crate::permission::PermissionMode::Supervised).unwrap_err();
     assert_eq!(error, ClaudeSpawnError::SupervisedUnsupported);
+}
+
+// Covers: Rho Auto maps to Claude bypassPermissions (just run), not dontAsk
+// (allowlist-only) or classifier auto. One-shots set DontAsk separately.
+// Owner: Claude spawn argv mapping
+#[test]
+fn rho_auto_maps_to_claude_bypass_permissions() {
+    assert_eq!(
+        map_permission_mode(crate::permission::PermissionMode::Auto),
+        Ok(ClaudePermissionMode::BypassPermissions)
+    );
+    assert_eq!(
+        map_permission_mode(crate::permission::PermissionMode::Plan),
+        Ok(ClaudePermissionMode::Plan)
+    );
+    assert_eq!(
+        ClaudePermissionMode::BypassPermissions.as_cli_flag(),
+        "bypassPermissions"
+    );
+    assert_eq!(ClaudePermissionMode::DontAsk.as_cli_flag(), "dontAsk");
+    assert_eq!(ClaudePermissionMode::Plan.as_cli_flag(), "plan");
 }
 
 #[test]
@@ -393,11 +403,10 @@ fn empty_tools_sets_tools_flag_to_empty_string() {
         Vec::new(),
         false,
         None,
-        PermissionMode::Auto,
+        ClaudePermissionMode::BypassPermissions,
         8,
         PromptPolicy::Replace("Plan carefully.".into()),
-    ))
-    .unwrap();
+    ));
     assert_eq!(flag_value(&plan.args, "--tools").as_deref(), Some(""));
     assert!(plan.args.windows(2).any(|pair| pair == ["--tools", ""]));
     assert!(!plan.args.iter().any(|arg| arg == "--allowedTools"));
@@ -409,11 +418,10 @@ fn task_is_never_made_available_even_if_listed() {
         vec!["Read", "Task", "Task(sub)"],
         false,
         None,
-        PermissionMode::Auto,
+        ClaudePermissionMode::BypassPermissions,
         8,
         PromptPolicy::Replace("Plan carefully.".into()),
-    ))
-    .unwrap();
+    ));
     assert_eq!(flag_value(&plan.args, "--tools").as_deref(), Some("Read"));
     assert!(plan
         .args
@@ -438,12 +446,11 @@ fn reasoning_maps_to_claude_effort_flag() {
             vec!["Read"],
             false,
             None,
-            PermissionMode::Auto,
+            ClaudePermissionMode::BypassPermissions,
             8,
             PromptPolicy::Replace("Plan carefully.".into()),
             Some(expected),
-        ))
-        .unwrap();
+        ));
         assert!(
             plan.args
                 .windows(2)
@@ -476,12 +483,12 @@ fn session_persistence_decides_the_no_session_persistence_flag() {
             vec!["Read"],
             false,
             None,
-            PermissionMode::Auto,
+            ClaudePermissionMode::BypassPermissions,
             8,
             PromptPolicy::Replace("Plan carefully.".into()),
         );
         spawn_request.session_persistence = persistence;
-        let plan = build_spawn_plan(&spawn_request).unwrap();
+        let plan = build_spawn_plan(&spawn_request);
         assert_eq!(
             plan.args
                 .iter()
@@ -513,11 +520,10 @@ fn inline_prompt_args_carry_the_prompt_under_the_matching_flag() {
             vec![],
             false,
             None,
-            PermissionMode::Plan,
+            ClaudePermissionMode::Plan,
             1,
             prompt.clone(),
-        ))
-        .unwrap();
+        ));
         let args = inline_prompt_args(&plan);
         match expected {
             Some((flag, text)) => {
