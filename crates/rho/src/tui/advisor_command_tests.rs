@@ -70,6 +70,10 @@ impl AdvisorRuntime for FakeAdvisorRuntime {
         self.applied.push(model);
         std::future::ready(Ok(None))
     }
+
+    fn tool_specs(&self) -> Vec<rho_sdk::model::ToolSpec> {
+        Vec::new()
+    }
 }
 
 fn app_with_advisor_model() -> App {

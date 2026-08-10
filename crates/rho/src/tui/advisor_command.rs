@@ -27,9 +27,7 @@ pub(super) trait AdvisorRuntime {
     ) -> impl Future<Output = anyhow::Result<Option<String>>> + Send;
 
     /// Live tool specs after an advisor change, for diagnostics mirrors.
-    fn tool_specs_for_diagnostics(&self) -> Vec<rho_sdk::model::ToolSpec> {
-        Vec::new()
-    }
+    fn tool_specs(&self) -> Vec<rho_sdk::model::ToolSpec>;
 }
 
 impl AdvisorRuntime for InteractiveRuntime {
@@ -40,8 +38,8 @@ impl AdvisorRuntime for InteractiveRuntime {
         InteractiveRuntime::set_advisor(self, model)
     }
 
-    fn tool_specs_for_diagnostics(&self) -> Vec<rho_sdk::model::ToolSpec> {
-        self.tool_specs()
+    fn tool_specs(&self) -> Vec<rho_sdk::model::ToolSpec> {
+        InteractiveRuntime::tool_specs(self)
     }
 }
 
@@ -216,7 +214,7 @@ impl App {
                 self.info
                     .services
                     .diagnostics
-                    .update_tools(&agent.tool_specs_for_diagnostics());
+                    .update_tools(&agent.tool_specs());
             }
             Ok(None) => {}
             Err(error) => {

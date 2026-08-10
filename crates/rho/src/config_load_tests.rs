@@ -122,9 +122,18 @@ provider = "unknown"
 fn edit_tool_preferences_load_from_behavior_config() {
     for (value, expected) in [
         ("auto", super::super::EditTool::Auto),
-        ("hashline", super::super::EditTool::Hashline),
-        ("apply_patch", super::super::EditTool::ApplyPatch),
-        ("str_replace", super::super::EditTool::StrReplace),
+        (
+            "hashline",
+            super::super::EditTool::Pinned(rho_tools::EditFormat::Hashline),
+        ),
+        (
+            "apply_patch",
+            super::super::EditTool::Pinned(rho_tools::EditFormat::ApplyPatch),
+        ),
+        (
+            "str_replace",
+            super::super::EditTool::Pinned(rho_tools::EditFormat::StrReplace),
+        ),
     ] {
         let (config, warnings) =
             parse_settings(&format!("[behavior]\nedit_tool = {value:?}\n")).unwrap();

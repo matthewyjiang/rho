@@ -15,6 +15,8 @@ use {
 
 #[path = "interactive_runtime_advisor.rs"]
 mod advisor;
+#[path = "interactive_runtime_edit_tool.rs"]
+pub(crate) mod edit_tool;
 #[path = "interactive_runtime_hooks.rs"]
 mod session_hooks;
 #[path = "interactive_runtime_startup.rs"]
@@ -29,7 +31,6 @@ use super::{
     policy::AppPolicy,
     provider_controller::ProviderController,
     runtime_builder::{build_compaction, build_runtime, RuntimeBuildOptions},
-    tools_prompt::SystemPromptVariants,
 };
 
 pub(crate) use super::interactive_run_controller::{
@@ -72,7 +73,7 @@ pub(crate) struct InteractiveRuntime {
     mcp_report: crate::tools::mcp::McpSessionReport,
     plugins_report: crate::plugins::PluginLoadReport,
     workspace: Workspace,
-    system_prompt: SystemPromptVariants,
+    system_prompt: rho_sdk::SystemPrompt,
     compaction: CompactionConfig,
     context_window: Option<u64>,
     usage_recording: rho_sdk::ProviderRequestUsageRecording,
@@ -722,61 +723,6 @@ impl InteractiveRuntime {
         Ok(())
     }
 
-    /// Swaps the advertised file edit tool for the next turn.
-    ///
-    /// Keeps the system prompt fixed for prompt-cache stability. Callers should
-    /// append [`Self::notify_edit_tool_switch`] after a successful save so the
-    /// model sees the new surface even when older prompt text mentions the
-    /// previous tool. Returns the previous format when the tool list changed.
-    pub(crate) async fn set_edit_tool(
-        &mut self,
-        edit_tool: rho_tools::EditFormat,
-        max_output_bytes: usize,
-    ) -> anyhow::Result<Option<rho_tools::EditFormat>> {
-        if self.runs.is_active() {
-            anyhow::bail!("edit tool cannot change while a run is active");
-        }
-        let Some(previous) = self.tools.set_edit_tool(edit_tool, max_output_bytes) else {
-            return Ok(None);
-        };
-        match self.rebind_current_session().await {
-            Ok(()) => Ok(Some(previous)),
-            Err(error) => {
-                let _ = self.tools.set_edit_tool(previous, max_output_bytes);
-                Err(error)
-            }
-        }
-    }
-
-    /// Appends a model-facing notice that the edit tool changed mid-session.
-    ///
-    /// Includes the live tool description and input schema so the model can use
-    /// the new surface without a system-prompt rewrite.
-    pub(crate) fn notify_edit_tool_switch(
-        &mut self,
-        previous: rho_tools::EditFormat,
-        current: rho_tools::EditFormat,
-    ) -> anyhow::Result<String> {
-        let spec = self
-            .tools
-            .specs()
-            .into_iter()
-            .find(|spec| spec.name == current.tool_name())
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "edit tool `{}` is missing after the mid-session switch",
-                    current.tool_name()
-                )
-            })?;
-        let (model, display) = edit_tool_switch_prompts(previous, current, &spec);
-        self.append_user_context_with_display(model, display.clone())?;
-        Ok(display)
-    }
-
-    pub(crate) fn tool_specs(&self) -> Vec<rho_sdk::model::ToolSpec> {
-        self.tools.specs()
-    }
-
     pub(crate) async fn shutdown(&mut self) {
         if self.runs.is_active() {
             debug_assert_eq!(
@@ -939,40 +885,6 @@ impl InteractiveRuntime {
         previous_runtime.shutdown();
         Ok(())
     }
-}
-
-/// Model and display text for a mid-session edit-tool switch.
-///
-/// The system prompt stays fixed for prompt caching. This notice carries the
-/// new tool contract so the model stops using the previous surface.
-fn edit_tool_switch_prompts(
-    previous: rho_tools::EditFormat,
-    current: rho_tools::EditFormat,
-    spec: &rho_sdk::model::ToolSpec,
-) -> (String, String) {
-    let schema = serde_json::to_string_pretty(&spec.input_schema).unwrap_or_else(|_| "{}".into());
-    let model = format!(
-        "[edit tool switched]\n\n\
-The file edit tool changed mid-session. Do not call `{previous_name}` anymore.\n\
-Use `{current_name}` for edits to existing UTF-8 files from now on.\n\
-Prefer `write` only to create or fully rewrite a file.\n\
-Any earlier system-prompt guidance about `{previous_name}` is superseded by this notice and the live tool list.\n\n\
-Previous tool: `{previous_name}` ({previous_label})\n\
-Current tool: `{current_name}` ({current_label})\n\n\
-Tool schema for `{current_name}`:\n\
-description:\n\
-{description}\n\n\
-input_schema:\n\
-{schema}\n",
-        previous_name = previous.tool_name(),
-        current_name = current.tool_name(),
-        previous_label = previous.as_str(),
-        current_label = current.as_str(),
-        description = spec.description,
-        schema = schema,
-    );
-    let display = format!("edit tool switched to {}", current.as_str());
-    (model, display)
 }
 
 #[cfg(test)]

@@ -265,37 +265,34 @@ impl<'de> Deserialize<'de> for SearchProvider {
 /// Configured file-edit preference.
 ///
 /// [`Self::Auto`] picks a built-in preferred format for the active chat
-/// provider. Concrete values pin one format across provider changes.
+/// provider. [`Self::Pinned`] freezes one [`rho_tools::EditFormat`] across
+/// provider changes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum EditTool {
     /// Prefer the built-in format for the active provider.
     #[default]
     Auto,
-    /// Snapshot-tagged, line-anchored `edit` tool.
-    Hashline,
-    /// Codex-compatible `apply_patch` tool.
-    ApplyPatch,
-    /// Exact string replacement through the `str_replace` tool.
-    StrReplace,
+    /// Pin one concrete model-facing edit format.
+    Pinned(rho_tools::EditFormat),
 }
 
 impl EditTool {
     /// Every supported preference, in UI display order.
-    pub const ALL: &'static [Self] = &[
-        Self::Auto,
-        Self::Hashline,
-        Self::ApplyPatch,
-        Self::StrReplace,
-    ];
+    pub const fn all() -> [Self; 4] {
+        [
+            Self::Auto,
+            Self::Pinned(rho_tools::EditFormat::Hashline),
+            Self::Pinned(rho_tools::EditFormat::ApplyPatch),
+            Self::Pinned(rho_tools::EditFormat::StrReplace),
+        ]
+    }
 
     /// Configured value and selector label (`behavior.edit_tool`).
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Auto => "auto",
-            Self::Hashline => "hashline",
-            Self::ApplyPatch => "apply_patch",
-            Self::StrReplace => "str_replace",
+            Self::Pinned(format) => format.as_str(),
         }
     }
 
@@ -305,20 +302,23 @@ impl EditTool {
     }
 
     /// Detail shown when selecting an edit preference.
-    pub const fn detail(self) -> &'static str {
+    pub fn detail(self) -> &'static str {
         match self {
             Self::Auto => {
                 "Pick the preferred format for the active provider and switch when the provider changes."
             }
-            Self::Hashline => {
-                "Always expose `edit` with snapshot tags and line-anchored PUT/CUT operations."
-            }
-            Self::ApplyPatch => {
-                "Always expose `apply_patch` with a Codex-style multi-file patch document."
-            }
-            Self::StrReplace => {
-                "Always expose `str_replace` with exact old_string/new_string replacement."
-            }
+            Self::Pinned(format) => match format {
+                rho_tools::EditFormat::Hashline => {
+                    "Always expose `edit` with snapshot tags and line-anchored PUT/CUT operations."
+                }
+                rho_tools::EditFormat::ApplyPatch => {
+                    "Always expose `apply_patch` with a Codex-style multi-file patch document."
+                }
+                rho_tools::EditFormat::StrReplace => {
+                    "Always expose `str_replace` with exact old_string/new_string replacement."
+                }
+                _ => "Always expose this pinned file edit format.",
+            },
         }
     }
 
@@ -326,9 +326,7 @@ impl EditTool {
     pub fn resolve(self, provider: &str) -> rho_tools::EditFormat {
         match self {
             Self::Auto => preferred_edit_format_for_provider(provider),
-            Self::Hashline => rho_tools::EditFormat::Hashline,
-            Self::ApplyPatch => rho_tools::EditFormat::ApplyPatch,
-            Self::StrReplace => rho_tools::EditFormat::StrReplace,
+            Self::Pinned(format) => format,
         }
     }
 
@@ -336,7 +334,7 @@ impl EditTool {
     pub fn display_label(self, provider: &str) -> String {
         match self {
             Self::Auto => format!("auto ({})", self.resolve(provider).label()),
-            pinned => pinned.label().into(),
+            Self::Pinned(format) => format.label().into(),
         }
     }
 }
@@ -369,23 +367,20 @@ impl FromStr for EditTool {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         let normalized = value.trim().to_ascii_lowercase();
-        match normalized.as_str() {
-            "auto" => Ok(Self::Auto),
-            "hashline" => Ok(Self::Hashline),
-            "apply_patch" => Ok(Self::ApplyPatch),
-            "str_replace" => Ok(Self::StrReplace),
-            _ => {
-                let expected = Self::ALL
-                    .iter()
-                    .copied()
-                    .map(Self::as_str)
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                Err(format!(
-                    "unknown edit tool {normalized:?}; expected {expected}"
-                ))
-            }
+        if normalized == "auto" {
+            return Ok(Self::Auto);
         }
+        if let Some(format) = rho_tools::EditFormat::from_config_value(&normalized) {
+            return Ok(Self::Pinned(format));
+        }
+        let expected = Self::all()
+            .into_iter()
+            .map(Self::as_str)
+            .collect::<Vec<_>>()
+            .join(", ");
+        Err(format!(
+            "unknown edit tool {normalized:?}; expected {expected}"
+        ))
     }
 }
 

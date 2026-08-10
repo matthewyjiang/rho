@@ -28,7 +28,7 @@ impl InteractiveRuntime {
     /// Mid-session tool list changes keep this value stable and tell the model
     /// through appended context instead.
     pub(super) fn active_system_prompt(&self) -> SystemPrompt {
-        self.system_prompt.get()
+        self.system_prompt.clone()
     }
 
     /// Applies an advisor mode or advisor model change to the next turn.

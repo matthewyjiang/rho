@@ -480,9 +480,8 @@ pub(super) fn inline_shell_picker(config: &Config) -> UiPicker {
 pub(super) fn edit_tool_picker(selected: EditTool) -> UiPicker {
     UiPicker::new(
         "Edit tool",
-        EditTool::ALL
-            .iter()
-            .copied()
+        EditTool::all()
+            .into_iter()
             .map(|edit_tool| PickerItem {
                 section: None,
                 label: edit_tool.label().into(),

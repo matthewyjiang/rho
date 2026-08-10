@@ -50,31 +50,14 @@ pub(crate) struct StartupInventory {
 
 pub(crate) struct ToolsAndPrompt {
     pub(crate) tools: AppToolSet,
-    pub(crate) system_prompt: SystemPromptVariants,
+    /// Fixed for the session so prompt cache stays stable across mid-session
+    /// tool-list changes (advisor / edit tool). Those changes use context notices.
+    pub(crate) system_prompt: SystemPrompt,
     pub(crate) inventory: StartupInventory,
     /// Late-bound model handle for MCP sampling. Bound once the runtime exists,
     /// and rebound whenever the user changes models. Left unbound, every
     /// sampling request fails closed.
     pub(crate) mcp_sampling: crate::tools::mcp::McpSamplingBridge,
-}
-
-/// Fixed executor system prompt for a session.
-///
-/// Mid-session tool changes keep this prompt fixed for prompt-cache stability
-/// and tell the model about tool list changes with appended context instead.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct SystemPromptVariants {
-    prompt: SystemPrompt,
-}
-
-impl SystemPromptVariants {
-    pub(crate) fn uniform(prompt: SystemPrompt) -> Self {
-        Self { prompt }
-    }
-
-    pub(crate) fn get(&self) -> SystemPrompt {
-        self.prompt.clone()
-    }
 }
 
 /// Capability resolution plus system prompt assembly for root interactive and
@@ -172,7 +155,7 @@ pub(crate) async fn assemble_tools_and_prompt(
     let specs = tools.specs();
     let system_prompt = if options.no_system_prompt {
         options.diagnostics.update_prompt_sources(Vec::new());
-        SystemPromptVariants::uniform(SystemPrompt::None)
+        SystemPrompt::None
     } else {
         let mut text = match options.agent.prompt() {
             PromptPolicy::Replace(text) => text.clone(),
@@ -201,18 +184,14 @@ pub(crate) async fn assemble_tools_and_prompt(
         if text.is_empty() {
             text = "You are a coding agent.".into();
         }
-        // Advisor steering is frozen into the system prompt only when the tool
-        // is already registered at session start. Mid-session /advisor toggles
-        // keep this prompt fixed and announce changes with context notices.
-        if tools.advisor_registered() {
-            prompt::append_advisor_instruction(&mut text);
-        }
-        SystemPromptVariants::uniform(SystemPrompt::Custom(text))
+        // Advisor steering lives on the tool description / enable notice, not
+        // here, so mid-session /advisor toggles never require a prompt rewrite.
+        SystemPrompt::Custom(text)
     };
     if let Some(store) = tools.advisor() {
         // The advisor reviews what the executor was told.
-        store.bind_system_prompt(match system_prompt.get() {
-            SystemPrompt::Custom(text) => Some(text),
+        store.bind_system_prompt(match &system_prompt {
+            SystemPrompt::Custom(text) => Some(text.clone()),
             // `SystemPrompt` is non-exhaustive; only custom text is reviewable.
             _ => None,
         });

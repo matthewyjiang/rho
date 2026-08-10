@@ -208,7 +208,7 @@ async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime {
         mcp_report: Default::default(),
         plugins_report: Default::default(),
         workspace,
-        system_prompt: super::SystemPromptVariants::uniform(SystemPrompt::None),
+        system_prompt: SystemPrompt::None,
         compaction: CompactionConfig::default(),
         context_window: None,
         usage_recording: Default::default(),
@@ -712,7 +712,7 @@ async fn advisor_mode_changes_the_tool_list_without_replacing_the_session() {
 async fn edit_tool_test_runtime() -> InteractiveRuntime {
     let mut interactive = pending_compaction_runtime("done").await;
     let config = Config {
-        edit_tool: crate::config::EditTool::Hashline,
+        edit_tool: crate::config::EditTool::Pinned(rho_tools::EditFormat::Hashline),
         ..Config::default()
     };
     interactive.tools = AppToolSet::new(
@@ -749,28 +749,22 @@ async fn edit_tool_switch_rebuilds_tools_and_appends_schema_notice() {
     assert!(interactive.tools.contains("edit"));
     assert!(!interactive.tools.contains("str_replace"));
 
-    let previous = interactive
+    let change = interactive
         .set_edit_tool(
             rho_tools::EditFormat::StrReplace,
             Config::default().max_output_bytes,
         )
         .await
-        .unwrap();
-    assert_eq!(previous, Some(rho_tools::EditFormat::Hashline));
+        .unwrap()
+        .expect("edit tool should change");
+    assert_eq!(change.previous, rho_tools::EditFormat::Hashline);
+    assert_eq!(change.display, "edit tool switched to str_replace");
     assert_eq!(interactive.system_prompt, system_before);
     assert!(interactive.tools.contains("str_replace"));
     assert!(!interactive.tools.contains("edit"));
     assert!(advertised(&interactive, "str_replace"));
     assert!(!advertised(&interactive, "edit"));
     assert_eq!(interactive.sessions.session().id(), &session_id);
-
-    let display = interactive
-        .notify_edit_tool_switch(
-            rho_tools::EditFormat::Hashline,
-            rho_tools::EditFormat::StrReplace,
-        )
-        .unwrap();
-    assert_eq!(display, "edit tool switched to str_replace");
     assert_eq!(interactive.history().len(), history_before + 1);
     let notice = interactive.history().last().expect("switch notice").clone();
     let Message::User(blocks) = &notice else {

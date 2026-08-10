@@ -79,7 +79,7 @@ async fn assemble(config: &Config, cwd: &std::path::Path) -> (bool, String) {
     let tools = assembled.tools;
     let prompt = assembled.system_prompt;
     let registered = tools.advisor_registered();
-    let text = match prompt.get() {
+    let text = match prompt {
         SystemPrompt::Custom(text) => text,
         SystemPrompt::None => String::new(),
         _ => String::new(),
@@ -88,7 +88,7 @@ async fn assemble(config: &Config, cwd: &std::path::Path) -> (bool, String) {
 }
 
 // Covers: the advisor tool must appear only when advisor mode is on and an
-// advisor model is configured, and startup steering tracks that registration.
+// advisor model is configured. Steering stays off the system prompt.
 // Owner: root tool/prompt assembly.
 #[tokio::test]
 async fn the_advisor_tool_needs_both_the_mode_and_a_model() {
@@ -109,10 +109,9 @@ async fn the_advisor_tool_needs_both_the_mode_and_a_model() {
             registered, expected,
             "advisor_mode={advisor_mode} with_model={with_model}"
         );
-        assert_eq!(
-            prompt.contains("You have access to an `advisor` tool"),
-            expected,
-            "startup steering for advisor_mode={advisor_mode} with_model={with_model}"
+        assert!(
+            !prompt.contains("Call advisor BEFORE substantive work"),
+            "system prompt must stay advisor-agnostic; advisor_mode={advisor_mode} with_model={with_model}"
         );
     }
 }
@@ -145,23 +144,21 @@ async fn the_advisor_receives_the_executor_system_prompt() {
     let tools = assembled.tools;
     let prompt = assembled.system_prompt;
 
-    let SystemPrompt::Custom(text) = prompt.get() else {
+    let SystemPrompt::Custom(text) = prompt else {
         panic!("expected a custom system prompt");
     };
     let store = tools.advisor().expect("advisor store");
     assert_eq!(store.system_prompt(), Some(text));
 }
 
-// Covers: the executor system prompt is fixed at assembly from the startup
-// advisor registration and is not dual-variant. Mid-session toggles must not
-// rely on swapping prompt forms.
+// Covers: the executor system prompt is a single form that does not encode
+// advisor registration. Mid-session toggles must not rely on swapping prompts.
 // Owner: root tool/prompt assembly.
 #[tokio::test]
-async fn system_prompt_is_single_form_locked_to_startup_advisor_state() {
+async fn system_prompt_stays_advisor_agnostic() {
     let cwd = tempfile::tempdir().unwrap();
-    let steering = "You have access to an `advisor` tool";
 
-    for (advisor_mode, expect_steering) in [(false, false), (true, true)] {
+    for advisor_mode in [false, true] {
         let config = advisor_config(advisor_mode, /*with_model*/ true);
         let diagnostics = RuntimeDiagnostics::new(&config);
         let agent = bound_agent(&config);
@@ -184,14 +181,17 @@ async fn system_prompt_is_single_form_locked_to_startup_advisor_state() {
         .unwrap()
         .system_prompt;
 
-        let text = match prompt.get() {
+        let text = match prompt {
             SystemPrompt::Custom(text) => text,
             SystemPrompt::None => String::new(),
             _ => String::new(),
         };
-        assert_eq!(
-            text.contains(steering),
-            expect_steering,
+        assert!(
+            !text.contains("Call advisor BEFORE substantive work"),
+            "advisor_mode={advisor_mode}"
+        );
+        assert!(
+            !text.contains("You have access to an `advisor` tool"),
             "advisor_mode={advisor_mode}"
         );
     }

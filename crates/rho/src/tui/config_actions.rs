@@ -560,11 +560,16 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let config = self.info.services.config_repository.load()?;
-        let resolved = edit_tool.resolve(&self.info.runtime.provider);
-        let previous = match agent.set_edit_tool(resolved, config.max_output_bytes).await {
-            Ok(previous) => previous,
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!("could not apply edit tool: {error}")));
+        let provider = self.info.runtime.provider.clone();
+        let resolved = edit_tool.resolve(&provider);
+        let change = match self
+            .apply_resolved_edit_tool(agent, resolved, config.max_output_bytes, |error| {
+                format!("could not apply edit tool: {error}")
+            })
+            .await
+        {
+            Ok(change) => change,
+            Err(()) => {
                 self.set_status("edit tool change failed");
                 return Ok(());
             }
@@ -573,9 +578,10 @@ impl App {
         if let Err(error) = self.info.services.config_repository.update(|config| {
             config.edit_tool = edit_tool;
         }) {
-            if let Some(previous) = previous {
-                if let Err(rollback_error) =
-                    agent.set_edit_tool(previous, config.max_output_bytes).await
+            if let Some(change) = change {
+                if let Err(rollback_error) = agent
+                    .set_edit_tool(change.previous, config.max_output_bytes)
+                    .await
                 {
                     return Err(anyhow::anyhow!(
                         "could not save edit tool: {error}; runtime rollback failed: {rollback_error}"
@@ -593,27 +599,7 @@ impl App {
             .services
             .diagnostics
             .update_edit_tool(edit_tool.as_str());
-        if let Some(previous) = previous {
-            match agent.notify_edit_tool_switch(previous, resolved) {
-                Ok(display) => {
-                    self.insert_entry(&Entry::Notice(display));
-                    self.info
-                        .services
-                        .diagnostics
-                        .update_tools(&agent.tool_specs());
-                }
-                Err(error) => {
-                    self.insert_entry(&Entry::Error(format!(
-                        "edit tool is {}, but the session notice could not be added: {error}",
-                        edit_tool.display_label(&self.info.runtime.provider)
-                    )));
-                }
-            }
-        }
-        self.set_status(format!(
-            "edit tool: {}",
-            edit_tool.display_label(&self.info.runtime.provider)
-        ));
+        self.set_status(format!("edit tool: {}", edit_tool.display_label(&provider)));
         Ok(())
     }
 
@@ -630,38 +616,53 @@ impl App {
             return Ok(());
         }
         let resolved = config.edit_tool.resolve(provider);
-        let previous = match agent.set_edit_tool(resolved, config.max_output_bytes).await {
-            Ok(previous) => previous,
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "model switched, but auto edit tool could not follow the provider: {error}"
-                )));
-                return Ok(());
-            }
-        };
-        let Some(previous) = previous else {
-            return Ok(());
-        };
-        match agent.notify_edit_tool_switch(previous, resolved) {
-            Ok(display) => {
-                self.insert_entry(&Entry::Notice(display));
-                self.info
-                    .services
-                    .diagnostics
-                    .update_tools(&agent.tool_specs());
+        match self
+            .apply_resolved_edit_tool(agent, resolved, config.max_output_bytes, |error| {
+                format!("model switched, but auto edit tool could not follow the provider: {error}")
+            })
+            .await
+        {
+            Ok(Some(_)) => {
                 self.set_status(format!(
                     "edit tool: {}",
                     config.edit_tool.display_label(provider)
                 ));
             }
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "auto edit tool is {}, but the session notice could not be added: {error}",
-                    resolved.as_str()
-                )));
-            }
+            Ok(None) => {}
+            Err(()) => {}
         }
         Ok(())
+    }
+
+    /// Applies a concrete edit format on the live runtime and mirrors diagnostics.
+    ///
+    /// On runtime failure inserts an error entry built by `on_error` and returns
+    /// `Err(())`. `Ok(None)` means the advertised surface did not change.
+    async fn apply_resolved_edit_tool(
+        &mut self,
+        agent: &mut InteractiveRuntime,
+        resolved: rho_tools::EditFormat,
+        max_output_bytes: usize,
+        on_error: impl FnOnce(&anyhow::Error) -> String,
+    ) -> Result<Option<crate::app::interactive_runtime::edit_tool::EditToolChange>, ()> {
+        match agent.set_edit_tool(resolved, max_output_bytes).await {
+            Ok(change) => {
+                if change.is_some() {
+                    self.info
+                        .services
+                        .diagnostics
+                        .update_tools(&agent.tool_specs());
+                    if let Some(change) = change.as_ref() {
+                        self.insert_entry(&Entry::Notice(change.display.clone()));
+                    }
+                }
+                Ok(change)
+            }
+            Err(error) => {
+                self.insert_entry(&Entry::Error(on_error(&error)));
+                Err(())
+            }
+        }
     }
 
     pub(super) fn reject_edit_tool_change(&mut self) {

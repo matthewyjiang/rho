@@ -72,9 +72,9 @@ fn canonical_tool_names_match_the_unfiltered_registry() {
     let root = tempfile::tempdir().unwrap();
     let mut model_names = Vec::new();
     for edit_tool in [
-        crate::config::EditTool::Hashline,
-        crate::config::EditTool::ApplyPatch,
-        crate::config::EditTool::StrReplace,
+        crate::config::EditTool::Pinned(rho_tools::EditFormat::Hashline),
+        crate::config::EditTool::Pinned(rho_tools::EditFormat::ApplyPatch),
+        crate::config::EditTool::Pinned(rho_tools::EditFormat::StrReplace),
     ] {
         let config = Config {
             edit_tool,
@@ -609,7 +609,7 @@ fn advisor_registration_toggles_without_rebuilding_the_tool_set() {
 #[test]
 fn edit_tool_selection_swaps_the_advertised_edit_surface() {
     let config = Config {
-        edit_tool: crate::config::EditTool::Hashline,
+        edit_tool: crate::config::EditTool::Pinned(rho_tools::EditFormat::Hashline),
         ..Config::default()
     };
     let mut tools = AppToolSet::new(

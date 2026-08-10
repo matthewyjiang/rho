@@ -91,28 +91,15 @@ Prefer the `grep` tool over shell `rg` or `grep` for workspace content search. U
 "#,
         );
     }
-    let selected_edit_tool = tools
+    // Format-agnostic: mid-session edit-tool switches keep this system prompt
+    // fixed, so do not name a concrete edit surface or embed hashline policy.
+    // Concrete contracts live on the live tool description/schema.
+    if tools
         .iter()
-        .find(|tool| rho_tools::EditFormat::is_edit_tool_name(tool.name.as_str()));
-    if let Some(tool) = selected_edit_tool {
-        text.push_str(&format!(
-            "\nPrefer the `{}` tool over shell or script-based rewrites for existing UTF-8 files. Prefer `write` only to create or fully rewrite a file.\n",
-            tool.name
-        ));
-    }
-    // Hashline-only policy: only the hashline `edit` surface needs TAG/PUT guidance.
-    if tools.iter().any(|tool| tool.name == "edit") {
-        if grep_available {
-            text.push_str(
-                r#"
-`grep` content mode returns chainable `[path#TAG]` headers and match line numbers (`N | preview`) for hash-line edit anchors. Match text is preview only and may be truncated - copy TAG and line numbers, not preview bodies, into PUT rows; use `read_file` when you need exact line text.
-"#,
-            );
-        }
+        .any(|tool| rho_tools::EditFormat::is_edit_tool_name(tool.name.as_str()))
+    {
         text.push_str(
-            r#"
-Use `edit` (not shell or Python rewrites) for existing UTF-8 files once you have a fresh `[path#TAG]`. Copy locator forms and the PUT body/span contract from the tool description (`PUT 12:` never `PUT 12.:`). Put every hunk for one path in a single document; do not stack two `edit` calls on the same path in one batch. After a structural edit the tool returns TAG + ops summary without chainable body lines - re-read before further ops on that path. Prefer `write` only to create or fully rewrite a file.
-"#,
+            "\nUse the live file-edit tool from the tool list for existing UTF-8 files. Prefer `write` only to create or fully rewrite a file.\n",
         );
     }
     if tools.iter().any(|tool| tool.name == "agent") {
@@ -237,36 +224,16 @@ fn neutralize_mcp_server_instruction_close_tags(text: &str) -> String {
     text.replace(NEEDLE, REPLACEMENT)
 }
 
-/// Tells the executor when to consult the `advisor` tool.
-///
-/// Used in mid-session / startup context notices rather than the system prompt,
-/// so toggling advisor mode does not rewrite the cached system prompt.
-pub fn append_advisor_instruction(text: &mut String) {
-    text.push_str(ADVISOR_INSTRUCTION);
-}
-
-/// Advisor steering text without the leading blank lines used when appending to
-/// a system prompt.
-pub fn advisor_instruction_body() -> &'static str {
-    ADVISOR_INSTRUCTION.trim()
-}
-
-const ADVISOR_INSTRUCTION: &str = "\n\n# Advisor\n\nYou have access to an `advisor` tool backed by a stronger reviewer model. It takes NO parameters. When you call advisor, your entire conversation history is forwarded automatically. The advisor sees the task, every tool call you have made, and every result you have seen.\n\nCall advisor BEFORE substantive work: before writing, before committing to an interpretation, before building on an assumption. If the task needs orientation first (finding files, fetching a source, seeing what is there), do that, then call advisor. Orientation is not substantive work. Writing, editing, and declaring an answer are.\n\nAlso call advisor:\n- When you believe the task is complete. BEFORE this call, make your deliverable durable: write the file, save the result, commit the change.\n- When stuck: errors recurring, approach not converging, results that do not fit.\n- When considering a change of approach.\n\nOn tasks longer than a few steps, call advisor at least once before committing to an approach and once before declaring done. On short reactive tasks where the next action follows from tool output you just read, you do not need to keep calling. The advisor adds most of its value on the first call, before the approach hardens.\n\nGive the advice serious weight. If you follow a step and it fails in practice, or you have primary-source evidence that contradicts a specific claim, adapt. If you have already retrieved data pointing one way and the advisor points another, do not switch silently: surface the conflict in one more advisor call.\n";
-
 /// Model and display text when the `advisor` tool becomes available.
+///
+/// Steering lives on the tool description so the system prompt stays free of
+/// tool-list-dependent text. This notice only announces availability + schema.
 pub fn advisor_enabled_context(spec: &ToolSpec) -> (String, String) {
-    let schema = serde_json::to_string_pretty(&spec.input_schema).unwrap_or_else(|_| "{}".into());
     let model = format!(
         "[advisor mode on]\n\n\
-The `advisor` tool is now available. {instruction}\n\n\
-Tool schema for `advisor`:\n\
-description:\n\
-{description}\n\n\
-input_schema:\n\
-{schema}\n",
-        instruction = advisor_instruction_body(),
-        description = spec.description,
-        schema = schema,
+The `advisor` tool is now available. Do not skip it when the live tool list includes it.\n\n\
+{}\n",
+        tool_schema_block("advisor", spec),
     );
     let display = "advisor mode on".into();
     (model, display)
@@ -277,10 +244,51 @@ pub fn advisor_disabled_context() -> (String, String) {
     let model = "\
 [advisor mode off]\n\n\
 The `advisor` tool is no longer available. Do not call `advisor`. \
-Any earlier guidance about consulting the advisor is superseded by this notice and the live tool list.\n"
+Follow the live tool list.\n"
         .into();
     let display = "advisor mode off".into();
     (model, display)
+}
+
+/// Model and display text for a mid-session edit-tool switch.
+///
+/// The system prompt stays format-agnostic. This notice carries the new tool
+/// contract so the model stops using the previous surface.
+pub fn edit_tool_switch_context(
+    previous: rho_tools::EditFormat,
+    current: rho_tools::EditFormat,
+    spec: &ToolSpec,
+) -> (String, String) {
+    let previous_name = previous.tool_name();
+    let current_name = current.tool_name();
+    let model = format!(
+        "[edit tool switched]\n\n\
+The file edit tool changed mid-session. Do not call `{previous_name}` anymore.\n\
+Use `{current_name}` for edits to existing UTF-8 files from now on.\n\
+Prefer `write` only to create or fully rewrite a file.\n\
+Follow the live tool list.\n\n\
+Previous tool: `{previous_name}` ({previous_label})\n\
+Current tool: `{current_name}` ({current_label})\n\n\
+{schema}\n",
+        previous_label = previous.as_str(),
+        current_label = current.as_str(),
+        schema = tool_schema_block(current_name, spec),
+    );
+    let display = format!("edit tool switched to {}", current.as_str());
+    (model, display)
+}
+
+fn tool_schema_block(name: &str, spec: &ToolSpec) -> String {
+    let schema = serde_json::to_string_pretty(&spec.input_schema).unwrap_or_else(|_| "{}".into());
+    format!(
+        "Tool schema for `{name}`:\n\
+description:\n\
+{description}\n\n\
+input_schema:\n\
+{schema}",
+        description = spec.description,
+        schema = schema,
+    )
 }
 
 fn push_context_file(out: &mut String, tag: &str, path: &Path, contents: &str) {
@@ -534,13 +542,9 @@ mod tests {
     }
 
     #[test]
-    fn includes_selected_edit_policy_and_hashline_details_only_for_edit() {
+    fn includes_format_agnostic_edit_policy_when_any_edit_tool_is_present() {
         let project = TempDir::new().unwrap();
-        for (config_name, tool_name, expect_hashline) in [
-            ("hashline", "edit", true),
-            ("apply_patch", "apply_patch", false),
-            ("str_replace", "str_replace", false),
-        ] {
+        for tool_name in ["edit", "apply_patch", "str_replace"] {
             let tool = ToolSpec {
                 name: tool_name.into(),
                 description: "edit".into(),
@@ -550,23 +554,22 @@ mod tests {
             let prompt = system_prompt_with_home(&[tool], project.path(), None).text;
 
             assert!(
-                prompt.contains(&format!("Prefer the `{tool_name}` tool")),
-                "config {config_name}"
+                prompt.contains("Use the live file-edit tool from the tool list"),
+                "tool {tool_name}"
             );
-            assert_eq!(
-                prompt.contains("never `PUT 12.:`"),
-                expect_hashline,
-                "config {config_name}"
+            assert!(
+                !prompt.contains(&format!("Prefer the `{tool_name}` tool")),
+                "tool {tool_name}"
             );
-            assert_eq!(
-                prompt.contains("without chainable body lines"),
-                expect_hashline,
-                "config {config_name}"
+            assert!(!prompt.contains("never `PUT 12.:`"), "tool {tool_name}");
+            assert!(
+                !prompt.contains("without chainable body lines"),
+                "tool {tool_name}"
             );
         }
 
         let disabled = system_prompt_with_home(&[], project.path(), None).text;
-        assert!(!disabled.contains("over shell or script-based rewrites"));
+        assert!(!disabled.contains("live file-edit tool from the tool list"));
     }
 
     #[test]
