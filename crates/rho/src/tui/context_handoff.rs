@@ -197,23 +197,25 @@ impl ContextHandoffImpact {
 }
 
 impl App {
-    pub(super) fn request_model_selection(
+    pub(super) async fn request_model_selection(
         &mut self,
         selection: InteractiveModelSelection,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         self.prepare_model_selection(selection, AfterHandoff::None, agent)
+            .await
     }
 
-    pub(super) fn request_model_selection_after_turn(
+    pub(super) async fn request_model_selection_after_turn(
         &mut self,
         selection: InteractiveModelSelection,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         self.prepare_model_selection(selection, AfterHandoff::ContinueTurnWork, agent)
+            .await
     }
 
-    pub(super) fn request_model_selection_from_config_picker(
+    pub(super) async fn request_model_selection_from_config_picker(
         &mut self,
         selection: InteractiveModelSelection,
         picker: UiPicker,
@@ -228,9 +230,10 @@ impl App {
             },
             agent,
         )
+        .await
     }
 
-    fn prepare_model_selection(
+    async fn prepare_model_selection(
         &mut self,
         selection: InteractiveModelSelection,
         after: AfterHandoff,
@@ -241,7 +244,7 @@ impl App {
             && target.model == self.info.runtime.model
             && target.auth == self.info.runtime.auth;
         if same_model {
-            self.select_model(selection, agent)?;
+            self.select_model(selection, agent).await?;
             return self.finish_after_handoff_sync(after);
         }
 
@@ -262,7 +265,8 @@ impl App {
         {
             Ok(identity) => identity,
             Err(_) => {
-                self.select_model_with_omission_notice(selection, agent)?;
+                self.select_model_with_omission_notice(selection, agent)
+                    .await?;
                 return self.finish_after_handoff_sync(after);
             }
         };
@@ -276,7 +280,8 @@ impl App {
             cache_warm: agent.live_context_warm(),
         };
         if !impact.should_prompt() {
-            self.select_model_with_omission_notice(selection, agent)?;
+            self.select_model_with_omission_notice(selection, agent)
+                .await?;
             return self.finish_after_handoff_sync(after);
         }
 
@@ -512,7 +517,7 @@ impl App {
                 let Some(source) = source_selection else {
                     anyhow::bail!("session model is unavailable");
                 };
-                self.select_model(source, agent)?;
+                self.select_model(source, agent).await?;
                 self.materialize_if_needed(materialize, terminal, agent)
                     .await?;
             }
@@ -520,7 +525,7 @@ impl App {
                 let had_source = source_selection.is_some();
                 if let Some(source) = source_selection {
                     if !selection_matches_runtime(self, &source) {
-                        self.select_model(source, agent)?;
+                        self.select_model(source, agent).await?;
                     }
                 }
                 self.materialize_if_needed(materialize, terminal, agent)
@@ -529,7 +534,7 @@ impl App {
                     Ok(true) => {
                         if let Some(target) = target_selection {
                             if !selection_matches_runtime(self, &target) {
-                                self.select_model(target, agent)?;
+                                self.select_model(target, agent).await?;
                             }
                         }
                     }
@@ -550,7 +555,7 @@ impl App {
                     .await?;
                 if let Some(target) = target_selection {
                     if !selection_matches_runtime(self, &target) {
-                        self.select_model(target, agent)?;
+                        self.select_model(target, agent).await?;
                     } else if !materialized {
                         self.set_status("ready");
                     }
@@ -675,12 +680,12 @@ impl App {
         Ok(())
     }
 
-    pub(super) fn select_model_with_omission_notice(
+    pub(super) async fn select_model_with_omission_notice(
         &mut self,
         selection: InteractiveModelSelection,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        let report = self.select_model_report(selection, agent)?;
+        let report = self.select_model_report(selection, agent).await?;
         if let Some(report) = report.filter(HandoffReport::has_omissions) {
             self.insert_entry(&Entry::Notice(format!(
                 "model handoff omitted {} nonportable provider context block(s): {}; assistant text, tool history, and reasoning summaries were preserved",

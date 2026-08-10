@@ -371,3 +371,122 @@ fn zen_mode_hides_tool_and_reasoning_lines_and_restores_them() {
     let restored = cache.line_count(&entries, settings(40), &no_images);
     assert_eq!(restored, full);
 }
+
+// Covers: tool expand/collapse resplices only the toggled card; later assistant
+// markdown is not re-rendered (line identity of the suffix is preserved).
+// Owner: history line cache surgical update
+#[test]
+fn resplice_tool_expand_preserves_later_assistant_lines() {
+    use crate::tui::ToolEntry;
+    use rho_tools::tool_card::{
+        DiffRow, DiffRowKind, ToolBody, ToolCard, ToolFamily, ToolHeader, ToolStatus,
+    };
+
+    // Long body so collapsed vs expanded heights differ under max_tool_output_lines=2.
+    let rows: Vec<_> = (0..20)
+        .map(|i| DiffRow::new(DiffRowKind::Added, Some(i + 1), format!("line_{i}")))
+        .collect();
+    let card = ToolCard::new(
+        ToolStatus::Ok,
+        ToolFamily::FileDiff,
+        ToolHeader::call("str_replace", Some("f.rs".into())),
+    )
+    .with_body(ToolBody::Diff(rows));
+
+    let mut entries = vec![
+        Entry::User("go".into()),
+        Entry::Tool(ToolEntry {
+            card,
+            expanded: false,
+            image: None,
+        }),
+        Entry::Assistant("# big\n\n".to_string() + &"paragraph\n\n".repeat(30)),
+    ];
+
+    let mut cache = HistoryLineCache::default();
+    let width = 40usize;
+    let max_lines = 2usize;
+    let s = settings_with(width, max_lines, false);
+
+    let mut before = Vec::new();
+    cache.extend_visible_lines(
+        &entries,
+        s,
+        HistoryLineSlice {
+            start: 0,
+            count: usize::MAX,
+        },
+        &mut before,
+        &no_images,
+    );
+    let assistant_range = cache.entry_ranges[2].clone();
+    let assistant_before = before[assistant_range.clone()].to_vec();
+    let total_before = before.len();
+
+    // Expand the tool surgically.
+    if let Entry::Tool(tool) = &mut entries[1] {
+        tool.expanded = true;
+    }
+    cache.resplice_entries([1]);
+    let mut after = Vec::new();
+    cache.extend_visible_lines(
+        &entries,
+        s,
+        HistoryLineSlice {
+            start: 0,
+            count: usize::MAX,
+        },
+        &mut after,
+        &no_images,
+    );
+
+    let assistant_range_after = cache.entry_ranges[2].clone();
+    assert!(
+        after.len() > total_before,
+        "expanded tool should grow the transcript"
+    );
+    assert_eq!(
+        &after[assistant_range_after.clone()],
+        &assistant_before[..],
+        "assistant suffix lines must be preserved by content"
+    );
+    // Range must have shifted by the tool height delta.
+    let delta = after.len() as isize - total_before as isize;
+    assert_eq!(
+        assistant_range_after.start as isize,
+        assistant_range.start as isize + delta
+    );
+
+    // Full rebuild must match surgical result (correctness oracle).
+    cache.invalidate_from(0);
+    let mut rebuilt = Vec::new();
+    cache.extend_visible_lines(
+        &entries,
+        s,
+        HistoryLineSlice {
+            start: 0,
+            count: usize::MAX,
+        },
+        &mut rebuilt,
+        &no_images,
+    );
+    assert_eq!(after, rebuilt);
+
+    // Collapse again.
+    if let Entry::Tool(tool) = &mut entries[1] {
+        tool.expanded = false;
+    }
+    cache.resplice_entries([1]);
+    let mut collapsed = Vec::new();
+    cache.extend_visible_lines(
+        &entries,
+        s,
+        HistoryLineSlice {
+            start: 0,
+            count: usize::MAX,
+        },
+        &mut collapsed,
+        &no_images,
+    );
+    assert_eq!(collapsed.len(), total_before);
+}

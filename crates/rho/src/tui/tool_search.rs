@@ -10,6 +10,7 @@ use super::{
     syntax::{
         match_byte_ranges, spans_from_segments_with_matches, spans_plain_with_matches,
         BlockHighlighter, HighlightSegment, MatchQuery, MAX_TOOL_SYNTAX_LINES,
+        MAX_TOOL_SYNTAX_LINE_BYTES,
     },
     theme::Theme,
 };
@@ -99,6 +100,17 @@ impl SearchSyntax {
     }
 
     fn highlight_source(&mut self, source: &str) -> Vec<HighlightSegment> {
+        if source.len() > MAX_TOOL_SYNTAX_LINE_BYTES {
+            // Match DiffSyntax: overlong rows skip paint and restart so the
+            // next short line does not inherit a desynced stack.
+            if let Some(path) = self.path.clone() {
+                self.highlighter = BlockHighlighter::for_path(&path);
+            }
+            return vec![HighlightSegment {
+                text: source.to_string(),
+                role: None,
+            }];
+        }
         if self.highlighted_lines >= MAX_TOOL_SYNTAX_LINES {
             return vec![HighlightSegment {
                 text: source.to_string(),

@@ -64,10 +64,6 @@ impl HistoryUi {
         self.transcript.get(index)
     }
 
-    pub(in crate::tui) fn get_mut(&mut self, index: usize) -> Option<&mut Entry> {
-        self.transcript.get_mut(index)
-    }
-
     pub(in crate::tui) fn lines_mut(&mut self) -> &mut HistoryLineCache {
         &mut self.lines
     }

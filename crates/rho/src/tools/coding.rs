@@ -1,12 +1,27 @@
 use std::sync::Arc;
 
 use crate::agent::{AgentCapabilities, ToolCapability};
-use rho_sdk::ProcessEnvironment;
+use rho_sdk::{tool::Tool, ProcessEnvironment};
+
+/// Build the mid-session/startup edit tool with one shared options policy.
+pub(super) fn edit_tool(
+    edit_format: rho_tools::EditFormat,
+    max_output_bytes: usize,
+    mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
+) -> Arc<dyn Tool> {
+    rho_tools::coding_tool(
+        rho_tools::CodingToolKind::Edit,
+        rho_tools::CodingToolOptions::new()
+            .max_output_bytes(max_output_bytes)
+            .edit_tool(edit_format)
+            .mutation_observer(mutation_observer),
+    )
+}
 
 pub(super) fn sdk_bundle(
     capabilities: &AgentCapabilities,
     max_output_bytes: usize,
-    config_edit_tool: crate::config::EditTool,
+    config_edit_tool: rho_tools::EditFormat,
     process_environment: ProcessEnvironment,
     mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
 ) -> super::sdk_registry::StaticToolBundle {
@@ -14,7 +29,6 @@ pub(super) fn sdk_bundle(
 
     let options = rho_tools::CodingToolOptions::new()
         .max_output_bytes(max_output_bytes)
-        .edit_tool(config_edit_tool)
         .mutation_observer(Arc::clone(&mutation_observer));
     let mut tools = Vec::new();
     for (capability, kind) in [
@@ -25,8 +39,16 @@ pub(super) fn sdk_bundle(
         (ToolCapability::Grep, CodingToolKind::Grep),
         (ToolCapability::Glob, CodingToolKind::Glob),
     ] {
-        if capabilities.contains(&capability) {
-            tools.push(rho_tools::coding_tool(kind, options.clone()));
+        if !capabilities.contains(&capability) {
+            continue;
+        }
+        match kind {
+            CodingToolKind::Edit => tools.push(edit_tool(
+                config_edit_tool,
+                max_output_bytes,
+                Arc::clone(&mutation_observer),
+            )),
+            kind => tools.push(rho_tools::coding_tool(kind, options.clone())),
         }
     }
     #[cfg(unix)]

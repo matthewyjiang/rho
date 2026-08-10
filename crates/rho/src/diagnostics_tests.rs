@@ -59,6 +59,7 @@ fn runtime_updates_do_not_replace_restart_only_config() {
     let diagnostics = RuntimeDiagnostics::new(&config);
     diagnostics.update_max_tool_output_lines(25);
     diagnostics.update_check_for_updates(false);
+    diagnostics.update_edit_tool("str_replace");
     diagnostics.update_compaction_config(&CompactionConfig {
         auto_compact: true,
         threshold_percent: 70,
@@ -81,7 +82,7 @@ fn runtime_updates_do_not_replace_restart_only_config() {
             "check_for_updates": false,
             "enable_subagents": true,
             "advisor_mode": false,
-            "edit_tool": "hashline",
+            "edit_tool": "str_replace",
             "rtk": true,
             "source": "live values used by this process; restart-only settings may differ from saved config"
         })

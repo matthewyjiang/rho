@@ -2,7 +2,7 @@
 
 Parent: [Tools and workspace](/tools-workspace).
 
-This page applies when [`behavior.edit_tool`](/configuration#edit-tool) is `hashline`, the default.
+This page applies when the resolved edit format is `hashline` (the default for most providers under `edit_tool = "auto"`, or when you pin `edit_tool = "hashline"`).
 
 `edit` changes existing UTF-8 files with line-anchored hunks. You pass one
 hashline document in `input`. Each section names a path and a snapshot tag from

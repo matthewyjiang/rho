@@ -12,23 +12,34 @@ const SELECT_ADVISOR_MODEL_EDIT_STATUS: &str = "select an advisor model";
 
 /// The runtime side of advisor mode.
 ///
-/// Advisor mode changes the tool list and the system prompt, so the runtime has
-/// to act on it rather than only save it. Implementors apply the change to the
-/// next turn and leave the current session ID and history alone.
+/// Advisor mode changes the tool list, so the runtime has to act on it rather
+/// than only save it. Implementors apply the change to the next turn, keep the
+/// system prompt fixed, append a context notice when the tool list changes, and
+/// leave the current session ID alone.
 pub(super) trait AdvisorRuntime {
     /// Points the advisor at `model`, or turns the advisor off with `None`.
+    ///
+    /// Returns display text for a transcript notice when the advertised tool
+    /// list changed.
     fn set_advisor(
         &mut self,
         model: Option<InternalAgentModelConfig>,
-    ) -> impl Future<Output = anyhow::Result<()>> + Send;
+    ) -> impl Future<Output = anyhow::Result<Option<String>>> + Send;
+
+    /// Live tool specs after an advisor change, for diagnostics mirrors.
+    fn tool_specs(&self) -> Vec<rho_sdk::model::ToolSpec>;
 }
 
 impl AdvisorRuntime for InteractiveRuntime {
     fn set_advisor(
         &mut self,
         model: Option<InternalAgentModelConfig>,
-    ) -> impl Future<Output = anyhow::Result<()>> + Send {
+    ) -> impl Future<Output = anyhow::Result<Option<String>>> + Send {
         InteractiveRuntime::set_advisor(self, model)
+    }
+
+    fn tool_specs(&self) -> Vec<rho_sdk::model::ToolSpec> {
+        InteractiveRuntime::tool_specs(self)
     }
 }
 
@@ -123,22 +134,65 @@ impl App {
         enabled: bool,
         agent: &mut impl AdvisorRuntime,
     ) -> anyhow::Result<()> {
-        if self.info.runtime.advisor_mode != enabled {
+        let previous_mode = self.info.runtime.advisor_mode;
+        let previous_model = self
+            .info
+            .runtime
+            .internal_agents
+            .get(ADVISOR_AGENT_ID)
+            .cloned();
+
+        // Apply the runtime transition against the *desired* mode before
+        // touching config or in-memory mode, so a failure leaves both alone.
+        let desired_model = enabled.then(|| previous_model.clone()).flatten();
+        let notice = match agent.set_advisor(desired_model).await {
+            Ok(notice) => notice,
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "advisor mode could not be applied to this session: {error}"
+                )));
+                self.set_status("advisor mode change failed");
+                // Surface the runtime error to callers (active run, etc.).
+                return Err(error);
+            }
+        };
+
+        if previous_mode != enabled {
             if let Err(error) = self
                 .info
                 .services
                 .config_repository
                 .update(|config| config.advisor_mode = enabled)
             {
-                self.insert_entry(&Entry::Error(format!(
-                    "could not save advisor mode: {error}"
-                )));
+                // Runtime already moved; best-effort restore so mode and tool
+                // list stay aligned with the failed save.
+                let rollback_model = previous_mode.then_some(previous_model).flatten();
+                if let Err(rollback_error) = agent.set_advisor(rollback_model).await {
+                    self.insert_entry(&Entry::Error(format!(
+                        "could not save advisor mode: {error}; runtime rollback failed: {rollback_error}"
+                    )));
+                } else {
+                    self.insert_entry(&Entry::Error(format!(
+                        "could not save advisor mode: {error}"
+                    )));
+                }
                 self.set_status("config save failed");
                 return Ok(());
             }
             self.info.runtime.advisor_mode = enabled;
         }
-        self.sync_advisor_runtime(agent).await;
+
+        self.info
+            .services
+            .diagnostics
+            .update_advisor_mode(self.info.runtime.advisor_mode);
+        if let Some(display) = notice {
+            self.insert_entry(&Entry::Notice(display));
+            self.info
+                .services
+                .diagnostics
+                .update_tools(&agent.tool_specs());
+        }
         // Mode and model both feed the statusline; refresh before the toast so
         // the bottom row and the status message describe the same state.
         self.statusline.update_model(&self.info.runtime);
@@ -184,7 +238,9 @@ impl App {
     /// Applies the saved advisor state to the live runtime.
     ///
     /// The advisor model and the mode reach the runtime as one value, because
-    /// advisor mode without a model offers the executor nothing.
+    /// advisor mode without a model offers the executor nothing. Callers that
+    /// must keep config and memory aligned with a failed transition should
+    /// prefer [`Self::set_advisor_mode`], which applies the runtime first.
     pub(super) async fn sync_advisor_runtime(&mut self, agent: &mut impl AdvisorRuntime) {
         let model = self.info.runtime.advisor_mode.then(|| {
             self.info
@@ -197,10 +253,20 @@ impl App {
             .services
             .diagnostics
             .update_advisor_mode(self.info.runtime.advisor_mode);
-        if let Err(error) = agent.set_advisor(model.flatten()).await {
-            self.insert_entry(&Entry::Error(format!(
-                "advisor mode could not be applied to this session: {error}"
-            )));
+        match agent.set_advisor(model.flatten()).await {
+            Ok(Some(display)) => {
+                self.insert_entry(&Entry::Notice(display));
+                self.info
+                    .services
+                    .diagnostics
+                    .update_tools(&agent.tool_specs());
+            }
+            Ok(None) => {}
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "advisor mode could not be applied to this session: {error}"
+                )));
+            }
         }
     }
 

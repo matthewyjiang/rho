@@ -167,7 +167,7 @@ impl App {
             &self.info.runtime.provider,
             &self.info.runtime.auth,
         ) {
-            Ok(selection) => self.request_model_selection(selection, agent),
+            Ok(selection) => self.request_model_selection(selection, agent).await,
             Err(err) => {
                 self.insert_entry(&Entry::Error(err.to_string()));
                 self.set_status("model switch failed");
@@ -243,8 +243,9 @@ impl App {
                                 selected_value,
                                 agent,
                             )
+                            .await
                         } else {
-                            self.request_model_selection(selection, agent)
+                            self.request_model_selection(selection, agent).await
                         }
                     }
                     Err(err) => {
@@ -596,16 +597,16 @@ impl App {
             .map(|item| (picker.action, item.value.clone()))
     }
 
-    pub(super) fn select_model(
+    pub(super) async fn select_model(
         &mut self,
         resolved: InteractiveModelSelection,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        let _ = self.select_model_report(resolved, agent)?;
+        let _ = self.select_model_report(resolved, agent).await?;
         Ok(())
     }
 
-    pub(super) fn select_model_report(
+    pub(super) async fn select_model_report(
         &mut self,
         resolved: InteractiveModelSelection,
         agent: &mut InteractiveRuntime,
@@ -677,6 +678,10 @@ impl App {
                 self.set_status("config save failed");
             }
         }
+        // Auto edit preference follows the new provider while the session is
+        // idle (model switches never land mid-run).
+        self.apply_auto_edit_tool_for_provider(&provider, agent)
+            .await?;
         self.finish_setup_screen();
         Ok(Some(handoff))
     }

@@ -113,11 +113,10 @@ impl App {
                 let selected = &value[config_picker::EDIT_TOOL_PREFIX.len()..];
                 let edit_tool: crate::config::EditTool =
                     selected.parse().map_err(anyhow::Error::msg)?;
-                self.info.services.config_repository.update(|config| {
-                    config.edit_tool = edit_tool;
-                })?;
+                self.apply_edit_tool(edit_tool, agent).await?;
+                let status = self.status().to_string();
                 self.open_main_config_picker_selected(config_picker::EDIT_TOOL_VALUE)?;
-                self.set_status(format!("edit tool: {edit_tool}; restart Rho to apply"));
+                self.set_status(status);
                 Ok(())
             }
             value if value.starts_with(config_picker::INLINE_SHELL_PREFIX) => {
@@ -548,4 +547,147 @@ impl App {
             config.reasoning = self.info.runtime.reasoning;
         })
     }
+
+    /// Saves the edit-tool preference and applies the resolved format when possible.
+    ///
+    /// The system prompt stays fixed. A successful live switch rebuilds the tool
+    /// list for the next turn and appends a model-facing schema notice.
+    /// [`crate::config::EditTool::Auto`] keeps `auto` in config and advertises the
+    /// preferred format for the active provider.
+    pub(super) async fn apply_edit_tool(
+        &mut self,
+        edit_tool: crate::config::EditTool,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        let config = self.info.services.config_repository.load()?;
+        let provider = self.info.runtime.provider.clone();
+        let resolved = edit_tool.resolve(&provider);
+        let change = match self
+            .apply_resolved_edit_tool(agent, resolved, config.max_output_bytes, |error| {
+                format!("could not apply edit tool: {error}")
+            })
+            .await
+        {
+            Ok(change) => change,
+            Err(()) => {
+                self.set_status("edit tool change failed");
+                return Ok(());
+            }
+        };
+
+        if let Err(error) = self.info.services.config_repository.update(|config| {
+            config.edit_tool = edit_tool;
+        }) {
+            if let Some(change) = change {
+                // Forward switch already landed in model-visible and persisted
+                // display history. Rollback records the reverse the same way.
+                // Mirror both into the transcript so UI, model context, and
+                // display history describe the same transition sequence.
+                match agent
+                    .set_edit_tool(change.previous, config.max_output_bytes)
+                    .await
+                {
+                    Ok(rollback) => {
+                        self.insert_entry(&Entry::Notice(change.display.clone()));
+                        if let Some(rollback) = rollback {
+                            self.insert_entry(&Entry::Notice(rollback.display));
+                        }
+                    }
+                    Err(rollback_error) => {
+                        self.insert_entry(&Entry::Notice(change.display.clone()));
+                        return Err(anyhow::anyhow!(
+                            "could not save edit tool: {error}; runtime rollback failed: {rollback_error}"
+                        ));
+                    }
+                }
+            }
+            self.insert_entry(&Entry::Error(format!(
+                "could not save edit tool setting: {error}"
+            )));
+            self.set_status("config save failed");
+            return Ok(());
+        }
+
+        // UI mirrors only after the preference is durable, so a save failure
+        // cannot leave diagnostics/notices ahead of config.
+        self.info
+            .services
+            .diagnostics
+            .update_edit_tool(edit_tool.as_str());
+        if let Some(change) = change.as_ref() {
+            self.info
+                .services
+                .diagnostics
+                .update_tools(&agent.tool_specs());
+            self.insert_entry(&Entry::Notice(change.display.clone()));
+        }
+        self.set_status(format!("edit tool: {}", edit_tool.display_label(&provider)));
+        Ok(())
+    }
+
+    /// When edit preference is Auto, advertise the preferred format for
+    /// `provider`. Failures are reported as notices and do not undo a model
+    /// switch.
+    pub(super) async fn apply_auto_edit_tool_for_provider(
+        &mut self,
+        provider: &str,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        let config = self.info.services.config_repository.load()?;
+        if config.edit_tool != crate::config::EditTool::Auto {
+            return Ok(());
+        }
+        let resolved = config.edit_tool.resolve(provider);
+        match self
+            .apply_resolved_edit_tool(agent, resolved, config.max_output_bytes, |error| {
+                format!("model switched, but auto edit tool could not follow the provider: {error}")
+            })
+            .await
+        {
+            Ok(Some(change)) => {
+                // Auto provider-follow does not persist a preference; mirror
+                // the live tool list and notice immediately. Leave the caller's
+                // status toast alone (model switch should keep its own feedback).
+                self.info
+                    .services
+                    .diagnostics
+                    .update_tools(&agent.tool_specs());
+                self.insert_entry(&Entry::Notice(change.display));
+            }
+            Ok(None) => {}
+            Err(()) => {}
+        }
+        Ok(())
+    }
+
+    /// Applies a concrete edit format on the live runtime.
+    ///
+    /// On runtime failure inserts an error entry built by `on_error` and returns
+    /// `Err(())`. `Ok(None)` means the advertised surface did not change.
+    /// Callers that persist a preference must apply diagnostics/notice updates
+    /// only after that save succeeds; the Auto provider-switch path updates UI
+    /// immediately because it does not write config.
+    async fn apply_resolved_edit_tool(
+        &mut self,
+        agent: &mut InteractiveRuntime,
+        resolved: rho_tools::EditFormat,
+        max_output_bytes: usize,
+        on_error: impl FnOnce(&anyhow::Error) -> String,
+    ) -> Result<Option<crate::app::interactive_runtime::edit_tool::EditToolChange>, ()> {
+        match agent.set_edit_tool(resolved, max_output_bytes).await {
+            Ok(change) => Ok(change),
+            Err(error) => {
+                self.insert_entry(&Entry::Error(on_error(&error)));
+                Err(())
+            }
+        }
+    }
+
+    pub(super) fn reject_edit_tool_change(&mut self) {
+        self.set_status("edit tool cannot change until the current turn finishes");
+    }
 }
+
+#[cfg(test)]
+#[path = "config_actions_tests.rs"]
+mod tests;

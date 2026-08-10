@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 #[cfg(test)]
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 use crate::config::Config;
 
@@ -10,6 +13,11 @@ pub(crate) struct ConfigRepository {
     path: Option<PathBuf>,
     #[cfg(test)]
     _temp_dir: Option<Arc<tempfile::TempDir>>,
+    /// When set, the next [`Self::save`] fails once after load/mutation so
+    /// callers can exercise durable-save rollback without OS-specific FS locks.
+    /// Shared across clones so the request is not tied to an OS thread.
+    #[cfg(test)]
+    fail_next_save: Arc<AtomicBool>,
 }
 
 impl ConfigRepository {
@@ -18,6 +26,8 @@ impl ConfigRepository {
             path,
             #[cfg(test)]
             _temp_dir: None,
+            #[cfg(test)]
+            fail_next_save: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -27,7 +37,15 @@ impl ConfigRepository {
         Ok(Self {
             path: Some(temp_dir.path().join("config.toml")),
             _temp_dir: Some(temp_dir),
+            fail_next_save: Arc::new(AtomicBool::new(false)),
         })
+    }
+
+    /// Fail this repository's next `save` once. Shared across clones; not
+    /// thread-local, so Tokio worker hops still observe the request.
+    #[cfg(test)]
+    pub(crate) fn fail_next_save_for_tests(&self) {
+        self.fail_next_save.store(true, Ordering::SeqCst);
     }
 
     pub(crate) fn configured_path(&self) -> anyhow::Result<PathBuf> {
@@ -42,6 +60,12 @@ impl ConfigRepository {
     }
 
     pub(crate) fn save(&self, config: &Config) -> anyhow::Result<()> {
+        #[cfg(test)]
+        {
+            if self.fail_next_save.swap(false, Ordering::SeqCst) {
+                anyhow::bail!("injected config save failure");
+            }
+        }
         config.save(self.path.clone())
     }
 

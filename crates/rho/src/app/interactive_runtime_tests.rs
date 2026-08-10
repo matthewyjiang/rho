@@ -208,7 +208,7 @@ async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime {
         mcp_report: Default::default(),
         plugins_report: Default::default(),
         workspace,
-        system_prompt: super::SystemPromptVariants::uniform(SystemPrompt::None),
+        system_prompt: SystemPrompt::None,
         compaction: CompactionConfig::default(),
         context_window: None,
         usage_recording: Default::default(),
@@ -638,12 +638,15 @@ fn advisor_model() -> crate::config::InternalAgentModelConfig {
 }
 
 // Covers: toggling advisor mode mid-session must add and remove the advisor tool
-// for the next turn while the session ID and history survive the rebuild.
+// for the next turn without rewriting the system prompt, while the session ID
+// survives and a model-facing schema notice is appended.
 // Owner: interactive runtime advisor state transition.
 #[tokio::test]
 async fn advisor_mode_changes_the_tool_list_without_replacing_the_session() {
     let mut interactive = advisor_test_runtime().await;
     let session_id = interactive.sessions.session().id().clone();
+    let history_before = interactive.history().len();
+    let system_before = interactive.system_prompt.clone();
     let advertised = |interactive: &InteractiveRuntime| {
         interactive
             .runtime
@@ -655,18 +658,212 @@ async fn advisor_mode_changes_the_tool_list_without_replacing_the_session() {
 
     assert!(!interactive.tools.advisor_registered());
 
-    interactive
+    let enabled = interactive
         .set_advisor(Some(advisor_model()))
         .await
         .unwrap();
-
+    assert_eq!(enabled.as_deref(), Some("advisor mode on"));
     assert!(interactive.tools.advisor_registered());
     assert!(advertised(&interactive));
     assert_eq!(interactive.sessions.session().id(), &session_id);
+    assert_eq!(interactive.system_prompt, system_before);
+    assert_eq!(interactive.history().len(), history_before + 1);
+    let enabled_notice = interactive.history().last().expect("enable notice").clone();
+    let Message::User(blocks) = &enabled_notice else {
+        panic!("expected user notice, got {enabled_notice:?}");
+    };
+    let enabled_text = blocks
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<String>();
+    assert!(enabled_text.contains("[advisor mode on]"));
+    assert!(enabled_text.contains("input_schema:"));
+    assert!(enabled_text.contains("`advisor`"));
 
-    interactive.set_advisor(None).await.unwrap();
-
+    let disabled = interactive.set_advisor(None).await.unwrap();
+    assert_eq!(disabled.as_deref(), Some("advisor mode off"));
     assert!(!interactive.tools.advisor_registered());
     assert!(!advertised(&interactive));
     assert_eq!(interactive.sessions.session().id(), &session_id);
+    assert_eq!(interactive.system_prompt, system_before);
+    assert_eq!(interactive.history().len(), history_before + 2);
+    let disabled_notice = interactive
+        .history()
+        .last()
+        .expect("disable notice")
+        .clone();
+    let Message::User(blocks) = &disabled_notice else {
+        panic!("expected user notice, got {disabled_notice:?}");
+    };
+    let disabled_text = blocks
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<String>();
+    assert!(disabled_text.contains("[advisor mode off]"));
+    assert!(disabled_text.contains("no longer available"));
+}
+
+// Covers: append-success / snapshot-save-failure after a successful rebuild must
+// restore previous advisor registration, model, and model-visible history.
+// Owner: interactive runtime advisor state transition.
+#[tokio::test]
+async fn advisor_notice_failure_restores_previous_registration_and_model() {
+    let mut interactive = advisor_test_runtime().await;
+    let store = interactive.tools.advisor().cloned().expect("advisor store");
+    assert!(!interactive.tools.advisor_registered());
+    assert!(store.model().is_none());
+    let history_before = interactive.history();
+
+    super::advisor::fail_next_advisor_switch_notice_for_tests();
+    let error = interactive
+        .set_advisor(Some(advisor_model()))
+        .await
+        .expect_err("notice failure should abort the transition");
+    assert!(
+        error
+            .to_string()
+            .contains("injected advisor switch notice snapshot save failure"),
+        "unexpected error: {error}"
+    );
+    assert!(
+        !interactive.tools.advisor_registered(),
+        "registration must roll back"
+    );
+    assert!(store.model().is_none(), "model must roll back");
+    assert_eq!(
+        interactive.history(),
+        history_before,
+        "model-visible history must not keep a notice that never persisted"
+    );
+    assert!(
+        !interactive
+            .runtime
+            .diagnostics()
+            .tools()
+            .iter()
+            .any(|tool| tool.name() == "advisor"),
+        "runtime must not advertise advisor after rollback"
+    );
+}
+
+// Covers: advisor mode cannot change while a provider run is active.
+// Owner: interactive runtime advisor state transition.
+#[tokio::test]
+async fn advisor_mode_rejects_change_while_a_run_is_active() {
+    let mut interactive = pending_compaction_runtime("still going").await;
+    let config = Config::default();
+    interactive.tools = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::new(AgentCapabilities::new(
+            [ToolCapability::Advisor].into_iter().collect(),
+        ))
+        .advisor(crate::tools::advisor::AdvisorSessionStore::new()),
+    );
+    interactive
+        .start(UserInput::text("keep running"), None)
+        .await
+        .unwrap();
+    assert!(interactive.is_run_active());
+
+    let error = interactive
+        .set_advisor(Some(advisor_model()))
+        .await
+        .expect_err("active run must block advisor transitions");
+    assert!(
+        error
+            .to_string()
+            .contains("cannot change while a run is active"),
+        "unexpected error: {error}"
+    );
+    assert!(!interactive.tools.advisor_registered());
+    interactive.shutdown().await;
+}
+
+async fn edit_tool_test_runtime() -> InteractiveRuntime {
+    edit_tool_runtime(crate::config::EditTool::Pinned(
+        rho_tools::EditFormat::Hashline,
+    ))
+    .await
+}
+
+/// Shared factory for TUI tests that exercise Auto edit-tool handoff.
+pub(super) async fn edit_tool_runtime(edit_tool: crate::config::EditTool) -> InteractiveRuntime {
+    let mut interactive = pending_compaction_runtime("done").await;
+    let config = Config {
+        edit_tool,
+        ..Config::default()
+    };
+    interactive.tools = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::new(AgentCapabilities::new(
+            [ToolCapability::Edit, ToolCapability::ReadFile]
+                .into_iter()
+                .collect(),
+        )),
+    );
+    interactive
+}
+
+// Covers: /config edit-tool selection must swap the advertised edit surface for
+// the next turn without rewriting the system prompt, while the session ID
+// survives and a model-facing schema notice is appended.
+// Owner: interactive runtime edit-tool state transition.
+#[tokio::test]
+async fn edit_tool_switch_rebuilds_tools_and_appends_schema_notice() {
+    let mut interactive = edit_tool_test_runtime().await;
+    let session_id = interactive.sessions.session().id().clone();
+    let history_before = interactive.history().len();
+    let system_before = interactive.system_prompt.clone();
+    let advertised = |interactive: &InteractiveRuntime, name: &str| {
+        interactive
+            .runtime
+            .diagnostics()
+            .tools()
+            .iter()
+            .any(|tool| tool.name() == name)
+    };
+
+    assert!(interactive.tools.contains("edit"));
+    assert!(!interactive.tools.contains("str_replace"));
+
+    let change = interactive
+        .set_edit_tool(
+            rho_tools::EditFormat::StrReplace,
+            Config::default().max_output_bytes,
+        )
+        .await
+        .unwrap()
+        .expect("edit tool should change");
+    assert_eq!(change.previous, rho_tools::EditFormat::Hashline);
+    assert_eq!(change.display, "edit tool switched to str_replace");
+    assert_eq!(interactive.system_prompt, system_before);
+    assert!(interactive.tools.contains("str_replace"));
+    assert!(!interactive.tools.contains("edit"));
+    assert!(advertised(&interactive, "str_replace"));
+    assert!(!advertised(&interactive, "edit"));
+    assert_eq!(interactive.sessions.session().id(), &session_id);
+    assert_eq!(interactive.history().len(), history_before + 1);
+    let notice = interactive.history().last().expect("switch notice").clone();
+    let Message::User(blocks) = &notice else {
+        panic!("expected user notice, got {notice:?}");
+    };
+    let text = blocks
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<String>();
+    assert!(text.contains("[edit tool switched]"));
+    assert!(text.contains("`str_replace`"));
+    assert!(text.contains("input_schema:"));
+    assert!(!text.contains("restart"));
 }

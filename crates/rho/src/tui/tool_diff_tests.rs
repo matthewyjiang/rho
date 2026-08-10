@@ -64,6 +64,56 @@ fn highlights_rust_tokens_after_file_row() {
         .any(|s| s.role.is_none() && s.style(plain) == plain));
 }
 
+// Covers: over-long rows skip syntect so expand stays interactive on dense
+// Markdown prose (docs diffs with many inline `code` spans).
+// Owner: pure unit (diff syntax line-byte budget)
+#[test]
+fn skips_language_paint_for_overlong_lines() {
+    use crate::tui::syntax::{
+        reset_highlight_line_calls, take_highlight_line_calls, warm_syntax_set,
+        MAX_TOOL_SYNTAX_LINE_BYTES,
+    };
+
+    warm_syntax_set();
+    let mut syntax = DiffSyntax::new(Some("docs/configuration.md"));
+    let long = format!(
+        "The `x` span. {}",
+        "word ".repeat(MAX_TOOL_SYNTAX_LINE_BYTES)
+    );
+    assert!(long.len() > MAX_TOOL_SYNTAX_LINE_BYTES);
+
+    reset_highlight_line_calls();
+    let removed = DiffRow::new(DiffRowKind::Removed, Some(1), long.clone());
+    assert!(
+        syntax.paint_row(&removed).is_none(),
+        "over-long removed line must stay plain"
+    );
+    let added = DiffRow::new(DiffRowKind::Added, Some(1), long);
+    assert!(
+        syntax.paint_row(&added).is_none(),
+        "over-long added line must stay plain"
+    );
+    assert_eq!(
+        take_highlight_line_calls(),
+        0,
+        "over-long lines must not enter syntect"
+    );
+
+    // Short lines after a skipped long row still highlight (restart kept state sane).
+    let mut rust_syntax = DiffSyntax::new(Some("src/lib.rs"));
+    let long_rs = "a".repeat(MAX_TOOL_SYNTAX_LINE_BYTES + 1);
+    assert!(rust_syntax
+        .paint_row(&DiffRow::new(DiffRowKind::Removed, Some(1), long_rs))
+        .is_none());
+    let short = DiffRow::new(DiffRowKind::Added, Some(2), "let answer = 1;");
+    let segments = rust_syntax
+        .paint_row(&short)
+        .expect("short line after long skip still paints");
+    assert!(segments
+        .iter()
+        .any(|s| s.text.contains("let") && s.role == Some(SyntaxRole::Keyword)));
+}
+
 // Covers: /diff +++ headers switch language without a File row
 // Owner: pure unit (diff header path observe)
 #[test]

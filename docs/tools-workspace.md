@@ -29,7 +29,7 @@ Core workspace tools on every platform:
 | `grep` | Search file contents with a regex (in-process) |
 | `glob` | List paths that match a glob (in-process) |
 
-Rho exposes exactly one edit tool per session. Select it with [`behavior.edit_tool`](/configuration#edit-tool) or `/config` > **Tools** > **Edit tool**. The default is `hashline`, which exposes the hash-line `edit` tool.
+Rho exposes exactly one edit tool at a time. Select it with [`behavior.edit_tool`](/configuration#edit-tool) or `/config` > **Tools** > **Edit tool**. The default is `auto`, which picks the format the active provider's models were trained to use in their first-party harness (`apply_patch` for Codex, `str_replace` for Anthropic and xAI, `hashline` otherwise). See [Edit tool](/configuration#edit-tool) for the full catalog and pin options.
 
 Additional tools:
 

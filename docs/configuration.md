@@ -34,7 +34,7 @@ Unknown keys in `config.toml` are a load error so typos fail loudly. Values that
 
 In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#commands) opens a category browser. **Models & reasoning** contains the conversation model, reasoning level, reasoning-output toggle, zen mode, and theme. **Agent behavior** contains permission mode, delegation, and advisor mode. **Context & limits** contains auto compaction and output limits. **Tools** contains the inline shell, edit tool, and Web search settings. **Providers** contains login, logout, and model-list refresh actions. **Updates** contains the startup update check. Type in the category browser to find a category by any setting it contains, then press `enter` to open it. Press `esc` to return to the category browser.
 
-Settings save as soon as they change. The `permission_mode` row applies the selected policy before the next turn. The `reasoning` row cycles through `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` and applies to the current session. The `show_reasoning_output`, `zen_mode`, and `theme` rows apply immediately, including during the current model turn. The `check_for_updates` row controls startup checks against GitHub releases. The `enable_subagents` row applies to the next session. The `edit_tool` row applies on the next Rho startup. The `advisor_mode` row applies before the next turn; turning it on without an advisor model opens the model picker first. The auto-compaction rows edit its threshold and target percentages. The `max_output_bytes` row saves for the next session.
+Settings save as soon as they change. The `permission_mode` row applies the selected policy before the next turn. The `reasoning` row cycles through `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` and applies to the current session. The `show_reasoning_output`, `zen_mode`, and `theme` rows apply immediately, including during the current model turn. The `check_for_updates` row controls startup checks against GitHub releases. The `enable_subagents` row applies to the next session. The `edit_tool` row applies before the next turn; Auto also follows provider changes mid-session. The `advisor_mode` row applies before the next turn; turning it on without an advisor model opens the model picker first. The auto-compaction rows edit its threshold and target percentages. The `max_output_bytes` row saves for the next session.
 
 [`/login`](/interactive-tui#commands), [`/logout`](/interactive-tui#commands), and [`/model`](/interactive-tui#commands) remain direct shortcuts for provider credentials and conversation-model selection. The corresponding `/config` rows provide the same picker flows. Use `/agents` to inspect reserved internal agents and configure their optional model overrides. Model pickers show entries from Rho's [model catalog](/authentication-and-models#selecting-models) and cached dynamic provider model lists for providers with available auth, and `/model provider/model` can switch explicitly. See the [provider pages](/authentication-and-models#providers) for per-provider auth and model details.
 
@@ -166,22 +166,34 @@ Model aliases work in these entries. Rho keeps reading the old `[title]` section
 
 ## Edit tool
 
-`edit_tool` under `[behavior]` selects the one file edit schema exposed to the model. It defaults to `hashline`. Supported values are:
+`edit_tool` under `[behavior]` selects the file edit preference exposed to the model. It defaults to `auto`. Supported values are:
 
 | Value | Exposed tool | Format |
 | --- | --- | --- |
+| `auto` | preferred for the active provider | Built-in catalog; switches when the provider changes |
 | `hashline` | `edit` | Snapshot-tagged, line-anchored `PUT` and `CUT` operations |
 | `apply_patch` | `apply_patch` | Codex-style, multi-file patch documents |
 | `str_replace` | `str_replace` | Exact `old_string` to `new_string` replacement in one file |
 
-Only the selected tool is registered. Each format keeps its own model-facing name. Change it from **Tools** > **Edit tool** in `/config`, or set it directly:
+Only one edit tool is registered at a time. Each concrete format keeps its own model-facing name. Change it from **Tools** > **Edit tool** in `/config`, or set it directly:
 
 ```toml
 [behavior]
-edit_tool = "apply_patch"
+edit_tool = "auto"
 ```
 
-The change applies on the next Rho startup because the process fixes tool schemas when it starts. Restart Rho after changing it. Use `hashline` when you want stale-file checks, `apply_patch` for models trained on that patch format, or `str_replace` for models that work best with exact string replacement.
+`auto` is a preference, not a tool name. Rho keeps `auto` in config and advertises the preferred concrete format for the active chat provider.
+
+Many models learn to edit files inside a first-party harness that only offers one edit tool. Codex trains with `apply_patch`. Claude Code and several other agent stacks train with exact string replacement. Auto picks that familiar surface so the model uses the format it was trained on. Providers without a clear first-party match fall back to Rho's `hashline` `edit` tool.
+
+| Provider | Preferred format | Why |
+| --- | --- | --- |
+| `openai-codex` | `apply_patch` | Codex harness trains on Codex-style patches |
+| `anthropic` | `str_replace` | Claude Code harness trains on exact string replace |
+| `xai` | `str_replace` | First-party agent tooling favors string replace |
+| all others | `hashline` | Rho default when no first-party match is known |
+
+Pinned values (`hashline`, `apply_patch`, `str_replace`) stay fixed across provider changes. From `/config`, the change applies before the next turn: the tool list rebuilds and the session gets a short notice with the new tool schema. Auto mode also applies that live switch when you change providers mid-session. Direct `config.toml` edits still need a restart. Pin a format when you want one surface for every provider.
 
 ## Web search
 

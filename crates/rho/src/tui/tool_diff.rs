@@ -1,6 +1,8 @@
 use rho_tools::tool_card::{DiffRow, DiffRowKind, ToolFamily, ToolHeader};
 
-use super::syntax::{BlockHighlighter, HighlightSegment, MAX_TOOL_SYNTAX_LINES};
+use super::syntax::{
+    BlockHighlighter, HighlightSegment, MAX_TOOL_SYNTAX_LINES, MAX_TOOL_SYNTAX_LINE_BYTES,
+};
 
 /// Width of the line-number gutter for a diff body.
 ///
@@ -103,7 +105,12 @@ impl DiffSyntax {
                 if is_diff_chrome(&row.text) {
                     return None;
                 }
-                if !self.should_paint_content() {
+                if !self.should_paint_content_line(&row.text) {
+                    // Long / over-budget lines skip syntect entirely. Restart so
+                    // the next short line does not inherit a desynced stack.
+                    if row.text.len() > MAX_TOOL_SYNTAX_LINE_BYTES {
+                        self.restart();
+                    }
                     return None;
                 }
                 // Advance old without segment alloc; styles come from new.
@@ -119,9 +126,18 @@ impl DiffSyntax {
         self.highlighted_lines < MAX_TOOL_SYNTAX_LINES
     }
 
+    fn should_paint_content_line(&self, text: &str) -> bool {
+        self.should_paint_content() && text.len() <= MAX_TOOL_SYNTAX_LINE_BYTES
+    }
+
     fn paint_content(&mut self, side: Side, text: &str) -> Option<Vec<HighlightSegment>> {
-        if !self.should_paint_content() {
-            // Soft cap: plain row colors, no more syntect work this pass.
+        if !self.should_paint_content_line(text) {
+            // Soft caps: plain row colors, no more syntect work this pass.
+            // Over-long add/remove lines restart only their side so the other
+            // stream keeps multi-line token state.
+            if text.len() > MAX_TOOL_SYNTAX_LINE_BYTES {
+                self.restart_side(side);
+            }
             return None;
         }
         let segments = match side {
@@ -152,6 +168,16 @@ impl DiffSyntax {
         if let Some(path) = self.path.clone() {
             self.old = BlockHighlighter::for_path(&path);
             self.new = BlockHighlighter::for_path(&path);
+        }
+    }
+
+    fn restart_side(&mut self, side: Side) {
+        let Some(path) = self.path.clone() else {
+            return;
+        };
+        match side {
+            Side::Old => self.old = BlockHighlighter::for_path(&path),
+            Side::New => self.new = BlockHighlighter::for_path(&path),
         }
     }
 }

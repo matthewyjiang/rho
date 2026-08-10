@@ -15,6 +15,8 @@ use {
 
 #[path = "interactive_runtime_advisor.rs"]
 mod advisor;
+#[path = "interactive_runtime_edit_tool.rs"]
+pub(crate) mod edit_tool;
 #[path = "interactive_runtime_hooks.rs"]
 mod session_hooks;
 #[path = "interactive_runtime_startup.rs"]
@@ -29,7 +31,6 @@ use super::{
     policy::AppPolicy,
     provider_controller::ProviderController,
     runtime_builder::{build_compaction, build_runtime, RuntimeBuildOptions},
-    tools_prompt::SystemPromptVariants,
 };
 
 pub(crate) use super::interactive_run_controller::{
@@ -72,7 +73,7 @@ pub(crate) struct InteractiveRuntime {
     mcp_report: crate::tools::mcp::McpSessionReport,
     plugins_report: crate::plugins::PluginLoadReport,
     workspace: Workspace,
-    system_prompt: SystemPromptVariants,
+    system_prompt: rho_sdk::SystemPrompt,
     compaction: CompactionConfig,
     context_window: Option<u64>,
     usage_recording: rho_sdk::ProviderRequestUsageRecording,
@@ -713,13 +714,45 @@ impl InteractiveRuntime {
         model: String,
         display: String,
     ) -> anyhow::Result<()> {
-        self.sessions
-            .session()
-            .append_message(Message::user_text(model))?;
-        self.sessions
-            .save_snapshot(&[Message::user_text(display)])?;
-        self.refresh_context_usage();
-        Ok(())
+        let session = self.sessions.session();
+        let history_before = session.history();
+        session.append_message(Message::user_text(model))?;
+
+        let save_result = {
+            #[cfg(test)]
+            {
+                if advisor::take_fail_next_advisor_notice_snapshot_save_for_tests() {
+                    Err(anyhow::anyhow!(
+                        "injected advisor switch notice snapshot save failure"
+                    ))
+                } else {
+                    self.sessions.save_snapshot(&[Message::user_text(display)])
+                }
+            }
+            #[cfg(not(test))]
+            {
+                self.sessions.save_snapshot(&[Message::user_text(display)])
+            }
+        };
+
+        match save_result {
+            Ok(()) => {
+                self.refresh_context_usage();
+                Ok(())
+            }
+            Err(error) => {
+                // Append already advanced model-visible history. Roll it back so a
+                // failed durable write cannot leave the live session describing a
+                // notice the host never persisted.
+                if let Err(rollback_error) = self.sessions.session().replace_history(history_before)
+                {
+                    return Err(error.context(format!(
+                        "failed to roll back live history after snapshot save failure: {rollback_error}"
+                    )));
+                }
+                Err(error)
+            }
+        }
     }
 
     pub(crate) async fn shutdown(&mut self) {
@@ -889,3 +922,11 @@ impl InteractiveRuntime {
 #[cfg(test)]
 #[path = "interactive_runtime_tests.rs"]
 mod tests;
+
+/// Test factory for TUI seams that need a live edit-capable runtime.
+#[cfg(test)]
+pub(crate) async fn test_edit_tool_runtime(
+    edit_tool: crate::config::EditTool,
+) -> InteractiveRuntime {
+    tests::edit_tool_runtime(edit_tool).await
+}

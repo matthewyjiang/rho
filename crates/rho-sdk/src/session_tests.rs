@@ -169,3 +169,23 @@ async fn stale_finalization_cannot_clear_a_newer_run_owner() {
     assert!(!session.is_running());
     assert_eq!(session.state(), SessionState::Idle);
 }
+
+#[tokio::test]
+async fn replace_history_restores_model_visible_state_after_a_failed_host_persist() {
+    let runtime = Rho::builder()
+        .provider(ScriptedProvider::new(identity(), []))
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let before = session.history();
+
+    session
+        .append_message(crate::model::Message::user_text(
+            "notice that never persisted",
+        ))
+        .unwrap();
+    assert_eq!(session.history().len(), before.len() + 1);
+
+    session.replace_history(before.clone()).unwrap();
+    assert_eq!(session.history(), before);
+}

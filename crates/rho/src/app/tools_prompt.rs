@@ -50,42 +50,14 @@ pub(crate) struct StartupInventory {
 
 pub(crate) struct ToolsAndPrompt {
     pub(crate) tools: AppToolSet,
-    pub(crate) system_prompt: SystemPromptVariants,
+    /// Fixed for the session so prompt cache stays stable across mid-session
+    /// tool-list changes (advisor / edit tool). Those changes use context notices.
+    pub(crate) system_prompt: SystemPrompt,
     pub(crate) inventory: StartupInventory,
     /// Late-bound model handle for MCP sampling. Bound once the runtime exists,
     /// and rebound whenever the user changes models. Left unbound, every
     /// sampling request fails closed.
     pub(crate) mcp_sampling: crate::tools::mcp::McpSamplingBridge,
-}
-
-/// The system prompt with and without the advisor steering text.
-///
-/// Advisor mode turns on and off mid-session, and the prompt must never
-/// describe a tool the run does not have, so both forms are built once and one
-/// is selected on every runtime build.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct SystemPromptVariants {
-    without_advisor: SystemPrompt,
-    with_advisor: SystemPrompt,
-}
-
-impl SystemPromptVariants {
-    /// One prompt for both modes, for runs whose prompt cannot carry advisor
-    /// steering.
-    pub(crate) fn uniform(prompt: SystemPrompt) -> Self {
-        Self {
-            without_advisor: prompt.clone(),
-            with_advisor: prompt,
-        }
-    }
-
-    pub(crate) fn for_advisor_mode(&self, enabled: bool) -> SystemPrompt {
-        if enabled {
-            self.with_advisor.clone()
-        } else {
-            self.without_advisor.clone()
-        }
-    }
 }
 
 /// Capability resolution plus system prompt assembly for root interactive and
@@ -183,10 +155,10 @@ pub(crate) async fn assemble_tools_and_prompt(
     let specs = tools.specs();
     let system_prompt = if options.no_system_prompt {
         options.diagnostics.update_prompt_sources(Vec::new());
-        SystemPromptVariants::uniform(SystemPrompt::None)
+        SystemPrompt::None
     } else {
-        let (mut text, mut advisor_text) = match options.agent.prompt() {
-            PromptPolicy::Replace(text) => (text.clone(), text.clone()),
+        let mut text = match options.agent.prompt() {
+            PromptPolicy::Replace(text) => text.clone(),
             PromptPolicy::Extend(extra) => {
                 let mut built =
                     prompt::system_prompt_with_plugin_skills(&specs, options.cwd, plugin_skills);
@@ -194,38 +166,32 @@ pub(crate) async fn assemble_tools_and_prompt(
                 if !launch_delegation_enabled {
                     prompt::append_subagents_disabled_instruction(&mut built.text);
                 }
-                // Server guidance describes the MCP tools this run actually has,
-                // so it belongs in both prompt variants.
+                // Server guidance describes the MCP tools this run actually has.
                 let mcp_instructions = mcp_report
                     .servers
                     .iter()
                     .filter_map(|server| Some((server.identity.as_str(), server.instructions()?)))
                     .collect::<Vec<_>>();
                 prompt::append_mcp_instructions(&mut built.text, mcp_instructions.iter().copied());
-                let mut advisor_text = built.text.clone();
-                prompt::append_advisor_instruction(&mut advisor_text);
                 if !extra.is_empty() {
-                    let instructions = format!("\n\n# Agent instructions\n\n{extra}");
-                    built.text.push_str(&instructions);
-                    advisor_text.push_str(&instructions);
+                    built
+                        .text
+                        .push_str(&format!("\n\n# Agent instructions\n\n{extra}"));
                 }
-                (built.text, advisor_text)
+                built.text
             }
         };
         if text.is_empty() {
             text = "You are a coding agent.".into();
-            advisor_text = text.clone();
         }
-        SystemPromptVariants {
-            without_advisor: SystemPrompt::Custom(text),
-            with_advisor: SystemPrompt::Custom(advisor_text),
-        }
+        // Advisor steering lives on the tool description / enable notice, not
+        // here, so mid-session /advisor toggles never require a prompt rewrite.
+        SystemPrompt::Custom(text)
     };
     if let Some(store) = tools.advisor() {
-        // The advisor reviews what the executor was told, and it only ever runs
-        // while advisor mode is on, so it reads the advisor variant.
-        store.bind_system_prompt(match system_prompt.for_advisor_mode(true) {
-            SystemPrompt::Custom(text) => Some(text),
+        // The advisor reviews what the executor was told.
+        store.bind_system_prompt(match &system_prompt {
+            SystemPrompt::Custom(text) => Some(text.clone()),
             // `SystemPrompt` is non-exhaustive; only custom text is reviewable.
             _ => None,
         });

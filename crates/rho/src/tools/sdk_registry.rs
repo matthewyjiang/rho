@@ -188,7 +188,7 @@ impl AppToolSet {
         tool_set.add_bundle(super::coding::sdk_bundle(
             &capabilities,
             config.max_output_bytes,
-            config.edit_tool,
+            config.edit_tool.resolve(&config.provider),
             process_environment.clone(),
             tool_set.checkpoint_tracker.clone(),
         ));
@@ -300,6 +300,12 @@ impl AppToolSet {
         self.unfiltered_names().any(|registered| registered == name)
     }
 
+    /// Test-only: append a tool without capability filtering.
+    #[cfg(test)]
+    pub(crate) fn push_tool_for_tests(&mut self, tool: Arc<dyn Tool>) {
+        self.tools.push(tool);
+    }
+
     /// The advisor's session store, present whenever the run may offer the
     /// advisor, even while advisor mode is off.
     pub fn advisor(&self) -> Option<&AdvisorSessionStore> {
@@ -335,6 +341,47 @@ impl AppToolSet {
         true
     }
 
+    /// Replaces the advertised built-in file edit tool.
+    ///
+    /// Returns the previous format when the advertised tool list changed so
+    /// callers can rebuild the runtime and tell the model. No-ops when this
+    /// run has no edit tool or the selection is already active.
+    ///
+    /// Matches only canonical built-in names (`edit`, `apply_patch`,
+    /// `str_replace`). Legacy aliases such as `edit_file` still classify as
+    /// edit for transcripts via [`rho_tools::EditFormat::is_edit_tool_name`],
+    /// but are never treated as the swappable built-in slot.
+    pub fn set_edit_tool(
+        &mut self,
+        edit_tool: rho_tools::EditFormat,
+        max_output_bytes: usize,
+    ) -> Option<rho_tools::EditFormat> {
+        let previous = self.edit_tool()?;
+        if previous == edit_tool {
+            return None;
+        }
+        let position = self
+            .tools
+            .iter()
+            .position(|tool| is_canonical_edit_tool_name(tool.spec().name.as_str()))?;
+        let mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver> =
+            self.checkpoint_tracker.clone();
+        self.tools[position] =
+            super::coding::edit_tool(edit_tool, max_output_bytes, mutation_observer);
+        Some(previous)
+    }
+
+    /// The currently advertised built-in edit format, when this run exposes one.
+    pub fn edit_tool(&self) -> Option<rho_tools::EditFormat> {
+        self.tools.iter().find_map(|tool| {
+            let name = tool.spec().name;
+            rho_tools::EditFormat::ALL
+                .iter()
+                .copied()
+                .find(|format| format.tool_name() == name.as_str())
+        })
+    }
+
     pub fn subagents(&self) -> Option<&SubagentManager> {
         self.subagents.as_ref()
     }
@@ -358,6 +405,14 @@ impl AppToolSet {
             bundle.shutdown().await;
         }
     }
+}
+
+/// Whether `name` is a canonical built-in edit tool name (`edit`,
+/// `apply_patch`, `str_replace`). Excludes legacy aliases such as `edit_file`.
+fn is_canonical_edit_tool_name(name: &str) -> bool {
+    rho_tools::EditFormat::ALL
+        .iter()
+        .any(|format| format.tool_name() == name)
 }
 
 #[cfg(test)]

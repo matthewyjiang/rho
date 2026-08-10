@@ -121,9 +121,19 @@ provider = "unknown"
 #[test]
 fn edit_tool_preferences_load_from_behavior_config() {
     for (value, expected) in [
-        ("hashline", super::super::EditTool::Hashline),
-        ("apply_patch", super::super::EditTool::ApplyPatch),
-        ("str_replace", super::super::EditTool::StrReplace),
+        ("auto", super::super::EditTool::Auto),
+        (
+            "hashline",
+            super::super::EditTool::Pinned(rho_tools::EditFormat::Hashline),
+        ),
+        (
+            "apply_patch",
+            super::super::EditTool::Pinned(rho_tools::EditFormat::ApplyPatch),
+        ),
+        (
+            "str_replace",
+            super::super::EditTool::Pinned(rho_tools::EditFormat::StrReplace),
+        ),
     ] {
         let (config, warnings) =
             parse_settings(&format!("[behavior]\nedit_tool = {value:?}\n")).unwrap();
@@ -453,4 +463,21 @@ fn conversation_triple(config: &super::Config, id: &str) -> (String, String, Str
         selection.model.clone(),
         selection.auth.clone(),
     )
+}
+
+// Covers: Auto preference resolves EditTool and composes display labels for
+// the active provider.
+// Owner: config EditTool preference
+#[test]
+fn auto_edit_tool_resolves_preferred_format_for_provider() {
+    use super::EditTool;
+
+    assert_eq!(
+        EditTool::Auto.resolve("openai-codex"),
+        rho_tools::EditFormat::ApplyPatch
+    );
+    assert_eq!(
+        EditTool::Auto.display_label("anthropic"),
+        "auto (str_replace)"
+    );
 }

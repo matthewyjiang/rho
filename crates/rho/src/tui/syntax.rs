@@ -23,6 +23,15 @@ static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(two_face::syntax::extra_n
 /// interactive.
 pub(in crate::tui) const MAX_TOOL_SYNTAX_LINES: usize = 2_500;
 
+/// Soft cap on bytes per line for language-aware tool-card paint. Longer rows
+/// keep solid add/remove/context colors.
+///
+/// Syntect's Markdown grammar is pathological on dense inline-code spans: a
+/// single ~800-byte docs prose line with many `` `backticks` `` can take tens
+/// of milliseconds. Expand paints both diff sides on the UI thread, so one
+/// long `.md` edit felt like a stall. Line-count caps alone do not catch this.
+pub(in crate::tui) const MAX_TOOL_SYNTAX_LINE_BYTES: usize = 256;
+
 // Per-thread counter of syntect line parses (highlight + advance). Thread-local
 // so parallel unit tests do not race the measurement.
 thread_local! {
