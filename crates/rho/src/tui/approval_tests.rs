@@ -28,6 +28,22 @@ fn line_text(lines: &[ratatui::text::Line<'_>]) -> Vec<String> {
         .collect()
 }
 
+fn long_process_request() -> CapabilityRequest {
+    CapabilityRequest::process(
+        ProcessExecution::new(
+            "/work",
+            ProcessInvocation::shell_from_path(
+                "sh",
+                vec!["-c".into()],
+                "printf segment-01; printf segment-02; printf segment-03; printf segment-04; printf segment-05; echo DANGEROUS_SUFFIX_INSPECTABLE",
+            ),
+            ProcessEnvironment::Empty,
+            ProcessOutputLimits::new(1024, None),
+        ),
+        source(),
+    )
+}
+
 #[test]
 fn movement_stops_at_choice_boundaries() {
     assert_eq!(
@@ -102,24 +118,12 @@ fn every_rendered_line_respects_narrow_width() {
     assert!(!line_text(&lines).is_empty());
 }
 
-// Covers: detail window opens at the request head, grows with the terminal, and
-// omits empty policy reasons without a UI denylist.
+// Covers: process approvals lead with the command, keep Deny focused, open at the
+// request head on short viewports, and grow detail with the terminal.
 // Owner: tui approval layout
 #[test]
 fn detail_window_starts_at_head_and_grows_with_viewport() {
-    let request = CapabilityRequest::process(
-        ProcessExecution::new(
-            "/work",
-            ProcessInvocation::shell_from_path(
-                "sh",
-                vec!["-c".into()],
-                "printf segment-01; printf segment-02; printf segment-03; printf segment-04; printf segment-05; echo DANGEROUS_SUFFIX_INSPECTABLE",
-            ),
-            ProcessEnvironment::Empty,
-            ProcessOutputLimits::new(1024, None),
-        ),
-        source(),
-    );
+    let request = long_process_request();
     let width = 40;
     let short = line_text(&approval_lines_for_position(
         &request,
@@ -148,13 +152,27 @@ fn detail_window_starts_at_head_and_grows_with_viewport() {
 
     assert!(
         short
-            .iter()
-            .any(|line| line.contains("capability: process")),
-        "prompt should name the capability class"
+            .first()
+            .is_some_and(|line| line.contains("wants to run a command")),
+        "title should name the process action"
+    );
+    assert!(
+        short
+            .get(1)
+            .is_some_and(|line| line.contains("printf segment-01")),
+        "command must be the first detail row: {short:?}"
     );
     assert!(
         short.iter().any(|line| line.contains("→ Deny")),
         "prompt should focus Deny by default"
+    );
+    assert!(
+        short.iter().all(|line| !line.contains("capability:")),
+        "capability class is already in the title and must not repeat as body chrome"
+    );
+    assert!(
+        short.iter().all(|line| !line.contains("ANTHROPIC_API_KEY")),
+        "environment scrub lists must stay summarized"
     );
     assert!(
         !short
@@ -166,6 +184,10 @@ fn detail_window_starts_at_head_and_grows_with_viewport() {
         tall.iter()
             .any(|line| line.contains("DANGEROUS_SUFFIX_INSPECTABLE")),
         "tall viewport should expose more of the request without paging"
+    );
+    assert!(
+        tall.iter().any(|line| line.contains("cwd  /work")),
+        "tall viewport should include compact cwd context"
     );
     assert!(approval_detail_page_lines(14) >= 3);
     assert!(approval_detail_page_lines(60) > approval_detail_page_lines(14));
@@ -181,41 +203,94 @@ fn detail_window_starts_at_head_and_grows_with_viewport() {
     );
 }
 
-// Covers: stale offsets after a larger page size must clamp instead of sticking.
+// Covers: env scrub lists collapse to a count so secrets never dump into the composer.
 // Owner: tui approval layout
 #[test]
-fn detail_offset_clamps_when_page_grows() {
+fn process_environment_summary_hides_variable_names() {
     let request = CapabilityRequest::process(
         ProcessExecution::new(
             "/work",
-            ProcessInvocation::shell_from_path(
-                "sh",
-                vec!["-c".into()],
-                "printf segment-01; printf segment-02; printf segment-03; printf segment-04; printf segment-05; echo DANGEROUS_SUFFIX_INSPECTABLE",
-            ),
-            ProcessEnvironment::Empty,
-            ProcessOutputLimits::new(1024, None),
+            ProcessInvocation::shell_from_path("bash", vec!["-lc".into()], "echo hi"),
+            ProcessEnvironment::InheritExcept {
+                variable_names: vec![
+                    "ANTHROPIC_API_KEY".into(),
+                    "OPENAI_API_KEY".into(),
+                    "GITHUB_COPILOT_TOKEN".into(),
+                ],
+            },
+            ProcessOutputLimits::new(64_000, None),
         ),
         source(),
     );
+    let details = approval_details(&request).join("\n");
+
+    assert!(details.contains("echo hi"));
+    assert!(details.contains("env inherit (3 vars stripped)"));
+    assert!(details.contains("64 KB out"));
+    assert!(!details.contains("ANTHROPIC_API_KEY"));
+    assert!(!details.contains("OPENAI_API_KEY"));
+    assert!(!details.contains("executable resolution:"));
+    assert!(!details.contains("shell invocation"));
+}
+
+// Covers: paging can reach a long command suffix and the trailing meta context.
+// Owner: tui approval layout
+#[test]
+fn detail_paging_reaches_command_suffix_and_meta() {
+    let request = long_process_request();
     let width = 40;
-    let lines = line_text(&approval_lines_for_position(
+    let viewport_height = 14;
+
+    let mut saw_suffix = false;
+    let mut saw_cwd = false;
+    let mut saw_earlier = false;
+    for offset in 0..32 {
+        let lines = line_text(&approval_lines_for_position(
+            &request,
+            "",
+            ApprovalChoice::Deny,
+            offset,
+            width,
+            viewport_height,
+        ));
+        saw_suffix |= lines
+            .iter()
+            .any(|line| line.contains("DANGEROUS_SUFFIX_INSPECTABLE"));
+        saw_cwd |= lines.iter().any(|line| line.contains("cwd  /work"));
+        saw_earlier |= lines.iter().any(|line| line.contains("↑ earlier"));
+        if saw_suffix && saw_cwd && saw_earlier {
+            break;
+        }
+    }
+
+    assert!(
+        saw_suffix,
+        "PageDown-style offsets must eventually reveal the command suffix"
+    );
+    assert!(
+        saw_cwd,
+        "PageDown-style offsets must eventually reveal compact cwd meta"
+    );
+    assert!(
+        saw_earlier,
+        "once scrolled past the head, the prompt should offer paging back"
+    );
+
+    let end = line_text(&approval_lines_for_position(
         &request,
         "",
         ApprovalChoice::Deny,
         10_000,
         width,
-        14,
+        viewport_height,
     ));
-
     assert!(
-        lines
-            .iter()
-            .any(|line| line.contains("DANGEROUS_SUFFIX_INSPECTABLE")),
-        "oversized offsets should clamp to the final visible window"
+        end.iter().any(|line| line.contains("cwd  /work"))
+            || end.iter().any(|line| line.contains("env empty")),
+        "oversized offsets should clamp onto the trailing meta window: {end:?}"
     );
     assert!(
-        lines.iter().any(|line| line.contains("↑ earlier")),
+        end.iter().any(|line| line.contains("↑ earlier")),
         "clamped end window on a short viewport should still offer paging back"
     );
 }
@@ -239,11 +314,17 @@ fn escapes_unicode_format_controls_in_all_security_sensitive_fields() {
     );
     let details = approval_details(&process).join("\n");
 
-    assert_eq!(approval_title(&process), "ba\\u{2066}sh wants to execute");
+    assert_eq!(
+        approval_title(&process),
+        "ba\\u{2066}sh wants to run a command"
+    );
     assert!(details.contains("/work\\u{202e}space"));
     assert!(details.contains("echo safe\\u{200f}danger"));
-    assert!(details.contains(r#"["sh\u{2066}", "-c\u{200f}"]"#));
-    assert!(details.contains(r#"["PA\u{202e}TH"]"#));
+    assert!(details.contains("sh\\u{2066}"));
+    assert!(details.contains("-c\\u{200f}"));
+    // Variable names stay out of the summary; only the count is shown.
+    assert!(details.contains("env inherit 1 listed var"));
+    assert!(!details.contains("PA\\u{202e}TH"));
 
     let path =
         CapabilityRequest::write_path("safe\u{202e}txt", PathScope::PrimaryWorkspace, source());

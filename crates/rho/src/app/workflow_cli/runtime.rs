@@ -83,7 +83,7 @@ fn prompt_for_capability(request: ApprovalRequest) -> ApprovalDecision {
     if !request.reason().is_empty() {
         eprintln!("reason: {}", request.reason());
     }
-    eprint!("allow [o]nce, allow for [s]ession (exact request), or [d]eny? ");
+    eprint!("allow [o]nce, allow for [s]ession, or [d]eny? ");
     if io::stderr().flush().is_err() {
         return ApprovalDecision::Deny {
             reason: "workflow approval prompt could not write to the terminal".into(),

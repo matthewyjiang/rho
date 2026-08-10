@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::time::Duration;
 
 use ratatui::text::Line;
 use rho_sdk::{
@@ -18,6 +19,19 @@ const APPROVAL_FIXED_COMPOSER_ROWS: usize = 1 + ApprovalChoice::ALL.len() + 2;
 const APPROVAL_FRAME_ROWS: usize = 6;
 const APPROVAL_DETAIL_CHROME_ROWS: usize = APPROVAL_FIXED_COMPOSER_ROWS + APPROVAL_FRAME_ROWS;
 const MIN_DETAIL_PAGE_LINES: usize = 3;
+const PRIMARY_INDENT: &str = "  ";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DetailRole {
+    Primary,
+    Meta,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DetailLine {
+    text: String,
+    role: DetailRole,
+}
 
 pub(in crate::tui) fn approval_lines(
     approval: &ApprovalComposer,
@@ -78,7 +92,7 @@ pub(super) fn approval_lines_for_position(
         ));
     }
 
-    let detail_status = if details.len() > page_lines {
+    if details.len() > page_lines {
         let earlier = if detail_offset > 0 {
             " · ↑ earlier"
         } else {
@@ -89,21 +103,24 @@ pub(super) fn approval_lines_for_position(
         } else {
             ""
         };
-        format!(
-            "PgUp/PgDn details {}-{}/{}{}{}",
-            detail_offset + 1,
-            detail_end,
-            details.len(),
-            earlier,
-            later
-        )
+        lines.push(Line::styled(
+            truncate_one_line(
+                &format!(
+                    "PgUp/PgDn details {}-{}/{}{}{}",
+                    detail_offset + 1,
+                    detail_end,
+                    details.len(),
+                    earlier,
+                    later
+                ),
+                width,
+            ),
+            Theme::dim(),
+        ));
     } else {
-        format!("details 1-{}/{}", detail_end, details.len())
-    };
-    lines.push(Line::styled(
-        truncate_one_line(&detail_status, width),
-        Theme::dim(),
-    ));
+        // Keep a stable slot so choice rows do not jump when paging appears.
+        lines.push(Line::styled(String::new(), Theme::dim()));
+    }
     lines.push(Line::styled(
         truncate_one_line(
             &crate::tui::composer_chrome::join_footer_parts([
@@ -137,22 +154,12 @@ fn wrapped_detail_lines(
     width: usize,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    push_wrapped_text(
-        &mut lines,
-        &format!("capability: {}", request.kind().label()),
-        width,
-        Theme::dim(),
-        LineFill::Natural,
-    );
-    push_wrapped_text(
-        &mut lines,
-        source_detail(request.source()),
-        width,
-        Theme::dim(),
-        LineFill::Natural,
-    );
-    for detail in approval_details(request) {
-        push_wrapped_text(&mut lines, &detail, width, Theme::text(), LineFill::Natural);
+    for detail in approval_detail_lines(request) {
+        let style = match detail.role {
+            DetailRole::Primary => Theme::text(),
+            DetailRole::Meta => Theme::dim(),
+        };
+        push_wrapped_text(&mut lines, &detail.text, width, style, LineFill::Natural);
     }
     let reason = reason.trim();
     if !reason.is_empty() {
@@ -177,7 +184,7 @@ pub(super) fn approval_title(request: &CapabilityRequest) -> String {
     };
     let verb = match request.kind() {
         CapabilityKind::Write => "write",
-        CapabilityKind::Process => "execute",
+        CapabilityKind::Process => "run a command",
         CapabilityKind::Read => "read",
         CapabilityKind::Network => "access the network",
         CapabilityKind::Skill => "load a skill",
@@ -187,26 +194,35 @@ pub(super) fn approval_title(request: &CapabilityRequest) -> String {
     format!("{} wants to {verb}", sanitize_controls(tool))
 }
 
+/// Flattened detail strings for security and layout tests.
+#[cfg(test)]
 pub(super) fn approval_details(request: &CapabilityRequest) -> Vec<String> {
+    approval_detail_lines(request)
+        .into_iter()
+        .map(|detail| detail.text)
+        .collect()
+}
+
+fn approval_detail_lines(request: &CapabilityRequest) -> Vec<DetailLine> {
     match request.operation() {
         CapabilityOperation::ReadPath { path, scope }
         | CapabilityOperation::WritePath { path, scope }
         | CapabilityOperation::DiscoverInstructions { path, scope } => vec![
-            format!("path: {}", sanitize_controls(&path.to_string_lossy())),
-            format_path_scope(scope),
+            primary(sanitize_controls(&path.to_string_lossy())),
+            meta(format_path_scope(scope)),
         ],
         CapabilityOperation::ExecuteProcess(execution) => process_details(execution),
-        CapabilityOperation::NetworkAccess(target) => vec![format!(
+        CapabilityOperation::NetworkAccess(target) => vec![primary(format!(
             "target: {}",
             sanitize_controls(target.url().unwrap_or("tool-managed network access"))
-        )],
+        ))],
         CapabilityOperation::LoadSkill { name, path } => {
-            let mut details = vec![format!("skill: {}", sanitize_controls(name))];
+            let mut details = vec![primary(format!("skill: {}", sanitize_controls(name)))];
             if let Some(path) = path {
-                details.push(format!(
+                details.push(meta(format!(
                     "path: {}",
                     sanitize_controls(&path.to_string_lossy())
-                ));
+                )));
             }
             details
         }
@@ -214,43 +230,72 @@ pub(super) fn approval_details(request: &CapabilityRequest) -> Vec<String> {
     }
 }
 
-fn process_details(execution: &ProcessExecution) -> Vec<String> {
+fn process_details(execution: &ProcessExecution) -> Vec<DetailLine> {
     let invocation = execution.invocation();
-    let mut details = vec![format!(
-        "working directory: {}",
+    let mut details = Vec::new();
+
+    if let Some(command) = invocation.shell_command() {
+        details.push(primary(format!(
+            "{PRIMARY_INDENT}{}",
+            sanitize_controls(command)
+        )));
+    } else {
+        details.push(primary(format!(
+            "{PRIMARY_INDENT}{}",
+            format_direct_invocation(invocation.executable_path(), invocation.arguments())
+        )));
+    }
+
+    details.push(meta(format!(
+        "cwd  {}",
         sanitize_controls(&execution.working_directory().to_string_lossy())
-    )];
-    let invocation_display =
-        format_direct_invocation(invocation.executable_path(), invocation.arguments());
-    details.push(format!(
-        "executable resolution: {}",
-        match invocation.executable_selection() {
+    )));
+    details.push(meta(format_process_context(execution)));
+    details
+}
+
+fn format_process_context(execution: &ProcessExecution) -> String {
+    let invocation = execution.invocation();
+    let mut parts = Vec::new();
+
+    if invocation.shell_command().is_some() {
+        let executable = sanitize_controls(&invocation.executable_path().to_string_lossy());
+        let args = invocation
+            .arguments()
+            .iter()
+            .map(|argument| sanitize_controls(argument))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let via = if args.is_empty() {
+            executable
+        } else {
+            format!("{executable} {args}")
+        };
+        let lookup = match invocation.executable_selection() {
             ExecutableSelection::ExactPath => "exact path",
-            ExecutableSelection::SearchPath => "PATH search",
+            ExecutableSelection::SearchPath => "PATH",
             _ => "unspecified",
-        }
-    ));
-    details.push(format_environment(execution.environment()));
+        };
+        parts.push(format!("via {via} ({lookup})"));
+    } else {
+        let lookup = match invocation.executable_selection() {
+            ExecutableSelection::ExactPath => "exact path",
+            ExecutableSelection::SearchPath => "PATH",
+            _ => "unspecified",
+        };
+        parts.push(lookup.into());
+    }
+
+    parts.push(format_environment_summary(execution.environment()));
 
     let limits = execution.output_limits();
-    details.push(format!(
-        "output limit: {} bytes; timeout: {}",
-        limits.max_output_bytes(),
-        limits
-            .timeout()
-            .map_or_else(|| "none".into(), |timeout| format!("{timeout:?}"),)
+    parts.push(format!(
+        "{} out",
+        format_byte_count(limits.max_output_bytes())
     ));
-    if let Some(command) = invocation.shell_command() {
-        details.push(format!(
-            "shell invocation (JSON-style args): {invocation_display}"
-        ));
-        details.push(format!("command: {}", sanitize_controls(command)));
-    } else {
-        details.push(format!(
-            "invocation (JSON-style args): {invocation_display}"
-        ));
-    }
-    details
+    parts.push(format_timeout(limits.timeout()));
+
+    parts.join(" · ")
 }
 
 fn format_path_scope(scope: &PathScope) -> String {
@@ -265,28 +310,64 @@ fn format_path_scope(scope: &PathScope) -> String {
     }
 }
 
-fn format_environment(environment: &ProcessEnvironment) -> String {
+fn format_environment_summary(environment: &ProcessEnvironment) -> String {
     match environment {
-        ProcessEnvironment::Empty => "environment: empty".into(),
-        ProcessEnvironment::InheritAll => "environment: inherit all variables".into(),
-        ProcessEnvironment::InheritExcept { variable_names } => format!(
-            "environment: inherit all except {}",
-            format_json_strings(variable_names.iter().map(String::as_str))
-        ),
-        ProcessEnvironment::InheritListed { variable_names } => format!(
-            "environment: inherit listed variable names {}",
-            format_json_strings(variable_names.iter().map(String::as_str))
-        ),
-        _ => "environment: unspecified".into(),
+        ProcessEnvironment::Empty => "env empty".into(),
+        ProcessEnvironment::InheritAll => "env inherit all".into(),
+        ProcessEnvironment::InheritExcept { variable_names } => {
+            let count = variable_names.len();
+            if count == 1 {
+                "env inherit (1 var stripped)".into()
+            } else {
+                format!("env inherit ({count} vars stripped)")
+            }
+        }
+        ProcessEnvironment::InheritListed { variable_names } => {
+            let count = variable_names.len();
+            if count == 1 {
+                "env inherit 1 listed var".into()
+            } else {
+                format!("env inherit {count} listed vars")
+            }
+        }
+        _ => "env unspecified".into(),
     }
 }
 
-fn source_detail(source: &CapabilitySource) -> &'static str {
-    match source {
-        CapabilitySource::BuiltInTool { .. } => "source: built-in tool",
-        CapabilitySource::HostProvidedTool { .. } => "source: host-provided tool",
-        CapabilitySource::PromptConstruction => "source: rho prompt construction",
-        _ => "source: unspecified",
+fn format_timeout(timeout: Option<Duration>) -> String {
+    match timeout {
+        None => "no timeout".into(),
+        Some(timeout) => format!("timeout {timeout:?}"),
+    }
+}
+
+fn format_byte_count(bytes: usize) -> String {
+    const KB: usize = 1000;
+    const MB: usize = 1000 * 1000;
+    if bytes >= MB && bytes.is_multiple_of(MB) {
+        format!("{} MB", bytes / MB)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB && bytes.is_multiple_of(KB) {
+        format!("{} KB", bytes / KB)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+fn primary(text: impl Into<String>) -> DetailLine {
+    DetailLine {
+        text: text.into(),
+        role: DetailRole::Primary,
+    }
+}
+
+fn meta(text: impl Into<String>) -> DetailLine {
+    DetailLine {
+        text: text.into(),
+        role: DetailRole::Meta,
     }
 }
 
