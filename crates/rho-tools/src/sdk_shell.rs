@@ -8,16 +8,19 @@ use rho_sdk::{
     CapabilityKind, CapabilityRequest, CapabilitySource, ProcessEnvironment, ProcessExecution,
     ProcessInvocation, ProcessOutputLimits, ResolvedWorkspacePath,
 };
-use serde::Deserialize;
 use serde_json::Value;
 
 use crate::{
     cancellation::RunCancellation,
+    shell_process::ShellArgs,
     tool::{Tool as AppTool, ToolError as AppToolError, ToolResult as AppToolResult},
     DEFAULT_MAX_OUTPUT_BYTES,
 };
 
-use super::{sdk_security::authorize_request, sdk_support::check_cancelled};
+use super::{
+    sdk_security::authorize_request,
+    sdk_support::{check_cancelled, map_app_error, map_invalid_app_error},
+};
 
 /// Options for the host-facing shell tool adapter.
 #[derive(Clone)]
@@ -98,12 +101,6 @@ impl SdkShellTool {
     }
 }
 
-#[derive(Deserialize)]
-struct ShellArgs {
-    command: String,
-    timeout_seconds: Option<u64>,
-}
-
 struct ShellPlan {
     execution: ProcessExecution,
     resolved_cwd: ResolvedWorkspacePath,
@@ -117,25 +114,8 @@ impl ShellPlan {
         max_output_bytes: usize,
         environment: ProcessEnvironment,
     ) -> Result<Self, ToolError> {
-        let arguments: ShellArgs = serde_json::from_value(arguments).map_err(|error| {
-            ToolError::new(
-                ToolErrorKind::InvalidArguments,
-                format!("invalid shell arguments: {error}"),
-            )
-        })?;
-        let timeout = arguments
-            .timeout_seconds
-            .map(|seconds| {
-                if seconds == 0 {
-                    Err(ToolError::new(
-                        ToolErrorKind::InvalidArguments,
-                        "timeout_seconds must be greater than zero",
-                    ))
-                } else {
-                    Ok(std::time::Duration::from_secs(seconds))
-                }
-            })
-            .transpose()?;
+        let arguments = ShellArgs::parse(arguments).map_err(map_invalid_app_error)?;
+        let timeout = arguments.timeout().map_err(map_invalid_app_error)?;
         let workspace = context.workspace().ok_or_else(|| {
             ToolError::new(
                 ToolErrorKind::Execution,
@@ -330,18 +310,6 @@ async fn execute_with_progress(
             .await;
     }
     result.map_err(map_app_error)
-}
-
-fn map_app_error(error: AppToolError) -> ToolError {
-    match &error {
-        AppToolError::InvalidArguments(_) => {
-            ToolError::new(ToolErrorKind::InvalidArguments, error.to_string())
-        }
-        AppToolError::Cancelled => ToolError::cancelled(),
-        AppToolError::Io(_) | AppToolError::Utf8(_) | AppToolError::Message(_) => {
-            ToolError::new(ToolErrorKind::Execution, error.to_string())
-        }
-    }
 }
 
 #[cfg(test)]

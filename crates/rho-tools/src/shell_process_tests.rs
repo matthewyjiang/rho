@@ -14,6 +14,33 @@ fn shell_args_reject_invalid_payload() {
     );
 }
 
+// Covers: timeout_seconds 0 must fail at arg validation, not spawn-then-timeout
+// Owner: pure unit (shell process)
+#[test]
+fn shell_args_timeout_rejects_zero() {
+    let cases = [
+        (None, Ok(None)),
+        (Some(1_u64), Ok(Some(Duration::from_secs(1)))),
+        (
+            Some(0_u64),
+            Err("timeout_seconds must be greater than zero"),
+        ),
+    ];
+
+    for (timeout_seconds, expected) in cases {
+        let args = ShellArgs {
+            command: "true".into(),
+            timeout_seconds,
+        };
+        let result = args.timeout().map_err(|error| error.to_string());
+        assert_eq!(
+            result,
+            expected.map_err(str::to_owned),
+            "timeout_seconds={timeout_seconds:?}"
+        );
+    }
+}
+
 // Covers: timeout errors must keep partial streams for diagnosis
 // Owner: pure unit (shell process)
 #[test]

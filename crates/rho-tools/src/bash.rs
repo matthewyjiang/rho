@@ -20,7 +20,14 @@ impl Tool for Bash {
         ToolSpec {
             name: "bash".into(),
             description: "Runs a bash command in the current working directory.".into(),
-            input_schema: json!({"type":"object","properties":{"command":{"type":"string"},"timeout_seconds":{"type":"integer"}},"required":["command"]}),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string"},
+                    "timeout_seconds": {"type": "integer", "minimum": 1}
+                },
+                "required": ["command"]
+            }),
         }
     }
 
@@ -71,7 +78,7 @@ impl Tool for Bash {
                 &ctx.cwd,
                 ProcessInvocation::shell_from_path("bash", vec!["-lc".into()], &args.command),
                 ProcessEnvironment::InheritAll,
-                ProcessOutputLimits::new(ctx.max_output_bytes, args.timeout()),
+                ProcessOutputLimits::new(ctx.max_output_bytes, args.timeout()?),
             );
             let result = execute_process(execution, id, cancellation, on_update).await?;
             if self.rtk_enabled {
