@@ -24,12 +24,20 @@ use super::InteractiveRuntime;
 
 #[cfg(test)]
 thread_local! {
-    static FAIL_NEXT_ADVISOR_NOTICE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// When set, the next advisor notice appends model-visible history, then
+    /// fails snapshot persistence so rollback must cover the partial commit.
+    static FAIL_NEXT_ADVISOR_NOTICE_SNAPSHOT_SAVE: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
 }
 
 #[cfg(test)]
 pub(crate) fn fail_next_advisor_switch_notice_for_tests() {
-    FAIL_NEXT_ADVISOR_NOTICE.with(|flag| flag.set(true));
+    FAIL_NEXT_ADVISOR_NOTICE_SNAPSHOT_SAVE.with(|flag| flag.set(true));
+}
+
+#[cfg(test)]
+pub(super) fn take_fail_next_advisor_notice_snapshot_save_for_tests() -> bool {
+    FAIL_NEXT_ADVISOR_NOTICE_SNAPSHOT_SAVE.with(|flag| flag.replace(false))
 }
 
 impl InteractiveRuntime {
@@ -69,6 +77,7 @@ impl InteractiveRuntime {
         // transition leaves both the tool list and the store untouched.
         let previous_registered = self.tools.advisor_registered();
         let previous_model = store.model();
+        let history_before = self.sessions.history();
         self.tools.set_advisor_registered(registered);
         match self.rebind_current_session().await {
             Ok(()) => {
@@ -78,9 +87,13 @@ impl InteractiveRuntime {
                     Err(error) => {
                         // Mirror edit-tool: a notice failure must not leave the
                         // session advertising a tool list the model was never
-                        // told about.
+                        // told about. Also restore model-visible history when a
+                        // partial append-before-save left a notice in place.
                         store.set_model(previous_model);
                         self.tools.set_advisor_registered(previous_registered);
+                        if self.sessions.history() != history_before {
+                            let _ = self.sessions.session().replace_history(history_before);
+                        }
                         let _ = self.rebind_current_session().await;
                         Err(error)
                     }
@@ -94,11 +107,6 @@ impl InteractiveRuntime {
     }
 
     fn append_advisor_switch_notice(&mut self, enabled: bool) -> anyhow::Result<String> {
-        #[cfg(test)]
-        if FAIL_NEXT_ADVISOR_NOTICE.with(std::cell::Cell::get) {
-            FAIL_NEXT_ADVISOR_NOTICE.with(|flag| flag.set(false));
-            anyhow::bail!("injected advisor switch notice failure");
-        }
         let (model, display) = if enabled {
             let spec = self
                 .tools

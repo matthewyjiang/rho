@@ -648,6 +648,16 @@ impl Session {
         self.core.commit(history)
     }
 
+    /// Replaces committed history while the session is idle.
+    ///
+    /// Hosts use this after durable persistence fails following
+    /// [`Self::append_message`], so model-visible history stays aligned with
+    /// storage instead of remaining one message ahead of a failed snapshot.
+    pub fn replace_history(&self, history: Vec<Message>) -> Result<Revision, Error> {
+        let _inactive = self.core.lock_inactive()?;
+        self.core.commit(history)
+    }
+
     pub fn reset(&self) -> Result<(), Error> {
         let _inactive = self.core.lock_inactive()?;
         let system_prompt = match &self.core.runtime().system_prompt {

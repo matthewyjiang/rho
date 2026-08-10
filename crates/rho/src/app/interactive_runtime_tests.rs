@@ -709,8 +709,8 @@ async fn advisor_mode_changes_the_tool_list_without_replacing_the_session() {
     assert!(disabled_text.contains("no longer available"));
 }
 
-// Covers: notice persistence failure after a successful rebuild must restore
-// the previous advisor registration and model.
+// Covers: append-success / snapshot-save-failure after a successful rebuild must
+// restore previous advisor registration, model, and model-visible history.
 // Owner: interactive runtime advisor state transition.
 #[tokio::test]
 async fn advisor_notice_failure_restores_previous_registration_and_model() {
@@ -718,6 +718,7 @@ async fn advisor_notice_failure_restores_previous_registration_and_model() {
     let store = interactive.tools.advisor().cloned().expect("advisor store");
     assert!(!interactive.tools.advisor_registered());
     assert!(store.model().is_none());
+    let history_before = interactive.history();
 
     super::advisor::fail_next_advisor_switch_notice_for_tests();
     let error = interactive
@@ -725,7 +726,9 @@ async fn advisor_notice_failure_restores_previous_registration_and_model() {
         .await
         .expect_err("notice failure should abort the transition");
     assert!(
-        error.to_string().contains("injected advisor switch notice"),
+        error
+            .to_string()
+            .contains("injected advisor switch notice snapshot save failure"),
         "unexpected error: {error}"
     );
     assert!(
@@ -733,6 +736,11 @@ async fn advisor_notice_failure_restores_previous_registration_and_model() {
         "registration must roll back"
     );
     assert!(store.model().is_none(), "model must roll back");
+    assert_eq!(
+        interactive.history(),
+        history_before,
+        "model-visible history must not keep a notice that never persisted"
+    );
     assert!(
         !interactive
             .runtime

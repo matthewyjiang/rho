@@ -714,13 +714,45 @@ impl InteractiveRuntime {
         model: String,
         display: String,
     ) -> anyhow::Result<()> {
-        self.sessions
-            .session()
-            .append_message(Message::user_text(model))?;
-        self.sessions
-            .save_snapshot(&[Message::user_text(display)])?;
-        self.refresh_context_usage();
-        Ok(())
+        let session = self.sessions.session();
+        let history_before = session.history();
+        session.append_message(Message::user_text(model))?;
+
+        let save_result = {
+            #[cfg(test)]
+            {
+                if advisor::take_fail_next_advisor_notice_snapshot_save_for_tests() {
+                    Err(anyhow::anyhow!(
+                        "injected advisor switch notice snapshot save failure"
+                    ))
+                } else {
+                    self.sessions.save_snapshot(&[Message::user_text(display)])
+                }
+            }
+            #[cfg(not(test))]
+            {
+                self.sessions.save_snapshot(&[Message::user_text(display)])
+            }
+        };
+
+        match save_result {
+            Ok(()) => {
+                self.refresh_context_usage();
+                Ok(())
+            }
+            Err(error) => {
+                // Append already advanced model-visible history. Roll it back so a
+                // failed durable write cannot leave the live session describing a
+                // notice the host never persisted.
+                if let Err(rollback_error) = self.sessions.session().replace_history(history_before)
+                {
+                    return Err(error.context(format!(
+                        "failed to roll back live history after snapshot save failure: {rollback_error}"
+                    )));
+                }
+                Err(error)
+            }
+        }
     }
 
     pub(crate) async fn shutdown(&mut self) {
