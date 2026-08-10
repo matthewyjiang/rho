@@ -343,16 +343,17 @@ impl EditTool {
 
 /// Built-in preferred edit format for a chat provider.
 ///
-/// Product defaults, not user config. Pin a concrete [`EditTool`] when a
-/// session should ignore this table. Unknown providers fall back to hashline.
+/// Product defaults, not user config. Many models train inside a first-party
+/// harness that supplies one edit tool, so Auto picks that familiar surface.
+/// Pin a concrete [`EditTool`] when a session should ignore this table.
+/// Unknown providers fall back to hashline.
 pub fn preferred_edit_format_for_provider(provider: &str) -> rho_tools::EditFormat {
     match provider {
-        // Codex was trained on apply_patch documents.
+        // Codex harness trains on apply_patch documents.
         "openai-codex" => rho_tools::EditFormat::ApplyPatch,
-        // Claude Code's native surface is exact string replacement.
-        // xAI models also handle str_replace more reliably than hashline.
+        // Claude Code and xAI first-party agent tooling train on string replace.
         "anthropic" | "xai" => rho_tools::EditFormat::StrReplace,
-        // Rho's default strength: snapshot-tagged line edits.
+        // Rho default when no first-party match is known.
         _ => rho_tools::EditFormat::Hashline,
     }
 }

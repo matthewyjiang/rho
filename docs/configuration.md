@@ -182,16 +182,18 @@ Only one edit tool is registered at a time. Each concrete format keeps its own m
 edit_tool = "auto"
 ```
 
-`auto` is a preference, not a tool name. Rho keeps `auto` in config and advertises the preferred concrete format for the active chat provider:
+`auto` is a preference, not a tool name. Rho keeps `auto` in config and advertises the preferred concrete format for the active chat provider.
 
-| Provider | Preferred format |
-| --- | --- |
-| `openai-codex` | `apply_patch` |
-| `anthropic` | `str_replace` |
-| `xai` | `str_replace` |
-| all others | `hashline` |
+Many models learn to edit files inside a first-party harness that only offers one edit tool. Codex trains with `apply_patch`. Claude Code and several other agent stacks train with exact string replacement. Auto picks that familiar surface so the model uses the format it was trained on. Providers without a clear first-party match fall back to Rho's `hashline` `edit` tool.
 
-Pinned values (`hashline`, `apply_patch`, `str_replace`) stay fixed across provider changes. From `/config`, the change applies before the next turn: the tool list rebuilds and the session gets a short notice with the new tool schema. Auto mode also applies that live switch when you change providers mid-session. Direct `config.toml` edits still need a restart. Use `hashline` when you want stale-file checks, `apply_patch` for models trained on that patch format, or `str_replace` for models that work best with exact string replacement.
+| Provider | Preferred format | Why |
+| --- | --- | --- |
+| `openai-codex` | `apply_patch` | Codex harness trains on Codex-style patches |
+| `anthropic` | `str_replace` | Claude Code harness trains on exact string replace |
+| `xai` | `str_replace` | First-party agent tooling favors string replace |
+| all others | `hashline` | Rho default when no first-party match is known |
+
+Pinned values (`hashline`, `apply_patch`, `str_replace`) stay fixed across provider changes. From `/config`, the change applies before the next turn: the tool list rebuilds and the session gets a short notice with the new tool schema. Auto mode also applies that live switch when you change providers mid-session. Direct `config.toml` edits still need a restart. Pin a format when you want one surface for every provider.
 
 ## Web search
 
