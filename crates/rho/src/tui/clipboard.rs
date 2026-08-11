@@ -9,7 +9,8 @@ pub(super) use crate::clipboard::{CopyOutcome, SystemClipboard};
 
 use super::{
     media_attach::{MediaAttachOutcome, MediaAttachTask},
-    App, ChatMedia, ChatTextDocument, ComposerMode, MediaAttachId, PendingAttachmentSource,
+    App, ChatMedia, ChatTextDocument, ComposerMode, FeedImage, MediaAttachId,
+    PendingAttachmentSource,
 };
 
 enum PastedImageOutcome {
@@ -74,7 +75,9 @@ impl App {
 
     fn attach_ready_image(&mut self, image: ImageContent) {
         let summary = image_summary(&image);
-        self.input_ui.push_ready_attachment(ChatMedia::Image(image));
+        let preview = self.composer_image_preview(&image);
+        self.input_ui
+            .push_ready_attachment(ChatMedia::Image(image), preview);
         self.notify_status(format!(
             "attached image {} ({summary})",
             self.input_ui.attachments().len()
@@ -83,12 +86,18 @@ impl App {
 
     pub(super) fn finish_pending_image(&mut self, id: MediaAttachId, image: ImageContent) {
         let summary = image_summary(&image);
-        if let Some(index) = self
-            .input_ui
-            .replace_pending_attachment(id, ChatMedia::Image(image))
+        let preview = self.composer_image_preview(&image);
+        if let Some(index) =
+            self.input_ui
+                .replace_pending_attachment(id, ChatMedia::Image(image), preview)
         {
             self.notify_status(format!("attached image {} ({summary})", index + 1));
         }
+    }
+
+    pub(super) fn composer_image_preview(&self, image: &ImageContent) -> Option<FeedImage> {
+        let picker = self.image_picker.as_ref()?;
+        FeedImage::load_base64(&image.data, picker).ok()
     }
 }
 

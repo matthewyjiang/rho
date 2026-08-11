@@ -233,11 +233,13 @@ async fn completion_targets_pending_id_and_pending_attachments_cannot_submit() {
         PendingAttachmentSource::File,
         "first.txt".into(),
     );
-    app.input_ui
-        .push_ready_attachment(ChatMedia::Image(ImageContent {
+    app.input_ui.push_ready_attachment(
+        ChatMedia::Image(ImageContent {
             data: "cmVhZHk=".into(),
             mime_type: "image/png".into(),
-        }));
+        }),
+        None,
+    );
     app.input_ui.push_pending_attachment(
         second_id,
         PendingAttachmentSource::File,

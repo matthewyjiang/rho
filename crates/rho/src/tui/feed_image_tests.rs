@@ -182,3 +182,47 @@ fn tool_entry_history_cache_omits_partially_visible_image_placement() {
         .iter()
         .all(|line| line.to_string().trim().is_empty()));
 }
+
+// Covers: composer image previews reserve aspect-fit rows under the 6-row cap;
+// non-image attachments stay one label row.
+// Owner: pure layout policy
+#[test]
+fn composer_attachment_rows_use_preview_height_or_label() {
+    use super::{composer_attachment_row_heights, COMPOSER_IMAGE_HEIGHT};
+    use crate::tui::{ChatMedia, ChatTextDocument, ComposerAttachment, PendingAttachmentSource};
+    use rho_providers::model::ImageContent;
+
+    let tall = FeedImage::load(&png_asset(300, 600), &kitty_picker()).unwrap();
+    let wide = FeedImage::load(&png_asset(600, 100), &kitty_picker()).unwrap();
+    let attachments = vec![
+        ComposerAttachment::Ready(ChatMedia::Image(ImageContent {
+            data: String::new(),
+            mime_type: "image/png".into(),
+        })),
+        ComposerAttachment::Pending {
+            id: crate::tui::MediaAttachId::new(),
+            source: PendingAttachmentSource::File,
+            name: "doc.pdf".into(),
+        },
+        ComposerAttachment::Ready(ChatMedia::TextDocument(ChatTextDocument {
+            name: "notes.txt".into(),
+            mime: "text/plain".into(),
+            body: "hi".into(),
+            truncated: false,
+            warnings: Vec::new(),
+        })),
+        ComposerAttachment::Ready(ChatMedia::Image(ImageContent {
+            data: String::new(),
+            mime_type: "image/png".into(),
+        })),
+    ];
+    let previews = vec![Some(tall), None, None, Some(wide)];
+    let heights =
+        composer_attachment_row_heights(&attachments, &previews, 40, COMPOSER_IMAGE_HEIGHT);
+    assert_eq!(heights.len(), 4);
+    assert_eq!(heights[0], usize::from(COMPOSER_IMAGE_HEIGHT));
+    assert_eq!(heights[1], 1);
+    assert_eq!(heights[2], 1);
+    assert!(heights[3] < usize::from(COMPOSER_IMAGE_HEIGHT));
+    assert!(heights[3] >= 1);
+}

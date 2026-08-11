@@ -19,6 +19,8 @@ pub(super) const MIN_IMAGE_HEIGHT: u16 = 16;
 pub(super) const MAX_IMAGE_HEIGHT: u16 = 40;
 /// Used when the history viewport is unknown (tests, recovery budgeting).
 pub(super) const DEFAULT_IMAGE_HEIGHT: u16 = 24;
+/// Max rows for an image preview above the composer text.
+pub(super) const COMPOSER_IMAGE_HEIGHT: u16 = 6;
 /// Share of the history content viewport used as the image height budget.
 const IMAGE_HEIGHT_VIEWPORT_NUM: usize = 45;
 const IMAGE_HEIGHT_VIEWPORT_DEN: usize = 100;
@@ -59,6 +61,16 @@ impl fmt::Debug for FeedImage {
 impl FeedImage {
     pub(super) fn load(asset: &ToolAsset, picker: &Picker) -> image::ImageResult<Self> {
         Self::decode(asset.bytes()).map(|image| image.to_feed_image(picker))
+    }
+
+    pub(super) fn load_base64(data: &str, picker: &Picker) -> Result<Self, ComposerImageLoadError> {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let bytes = STANDARD
+            .decode(data.trim())
+            .map_err(|_| ComposerImageLoadError::InvalidBase64)?;
+        Self::decode(&bytes)
+            .map(|image| image.to_feed_image(picker))
+            .map_err(|_| ComposerImageLoadError::Decode)
     }
 
     pub(super) fn decode(bytes: &[u8]) -> image::ImageResult<DecodedFeedImage> {
@@ -107,6 +119,12 @@ impl DecodedFeedImage {
             state: Rc::new(RefCell::new(picker.new_resize_protocol(self.image.clone()))),
         }
     }
+}
+
+#[derive(Debug)]
+pub(super) enum ComposerImageLoadError {
+    InvalidBase64,
+    Decode,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -233,6 +251,53 @@ pub(super) fn reserve_entry_image_rows(
         }),
         _ => None,
     }
+}
+
+/// Row height for each composer attachment: image preview budget or one label.
+pub(super) fn composer_attachment_row_heights(
+    attachments: &[super::ComposerAttachment],
+    previews: &[Option<FeedImage>],
+    width: usize,
+    max_height: u16,
+) -> Vec<usize> {
+    attachments
+        .iter()
+        .enumerate()
+        .map(|(index, _)| {
+            previews
+                .get(index)
+                .and_then(|preview| preview.as_ref())
+                .map(|image| image.height_for_width(width, max_height))
+                .unwrap_or(1)
+        })
+        .collect()
+}
+
+/// Absolute composer-line placements for ready image attachment previews.
+pub(super) fn composer_image_placements(
+    previews: &[Option<FeedImage>],
+    width: usize,
+    max_height: u16,
+) -> Vec<VisibleImagePlacement> {
+    let mut row = 0usize;
+    let mut placements = Vec::new();
+    for preview in previews {
+        match preview {
+            Some(image) => {
+                let height = image.height_for_width(width, max_height);
+                placements.push(VisibleImagePlacement {
+                    image: image.clone(),
+                    row,
+                    height,
+                });
+                row = row.saturating_add(height);
+            }
+            None => {
+                row = row.saturating_add(1);
+            }
+        }
+    }
+    placements
 }
 
 #[derive(Clone, Debug)]

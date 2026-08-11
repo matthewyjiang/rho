@@ -3,6 +3,7 @@
 use std::time::{Duration, Instant};
 
 use crate::tui::{
+    feed_image::FeedImage,
     inline_shell::InlineShellMode,
     paste_burst::{expand_paste_segments, PasteBurst},
     ChatMedia, ComposerAttachment, ComposerMode, FileMatchCache, InputDraft, InputSubmissionMode,
@@ -122,6 +123,9 @@ pub(in crate::tui) struct InputUi {
     composer_view_start: usize,
     shell_mode: Option<InlineShellMode>,
     attachments: Vec<ComposerAttachment>,
+    /// Parallel to `attachments`: Kitty/halfblock preview when the entry is a
+    /// ready image and graphics are available.
+    attachment_image_previews: Vec<Option<FeedImage>>,
     history: Vec<String>,
     history_cursor: Option<usize>,
     history_draft: Option<InputDraft>,
@@ -150,6 +154,7 @@ impl InputUi {
         self.last_pointer_click = None;
         self.composer_view_start = 0;
         self.attachments.clear();
+        self.attachment_image_previews.clear();
     }
 
     pub(in crate::tui) fn expanded_text(&self) -> String {
@@ -400,8 +405,18 @@ impl InputUi {
         &self.attachments
     }
 
-    pub(in crate::tui) fn push_ready_attachment(&mut self, media: ChatMedia) {
+    pub(in crate::tui) fn attachment_image_previews(&self) -> &[Option<FeedImage>] {
+        debug_assert_eq!(self.attachments.len(), self.attachment_image_previews.len());
+        &self.attachment_image_previews
+    }
+
+    pub(in crate::tui) fn push_ready_attachment(
+        &mut self,
+        media: ChatMedia,
+        image_preview: Option<FeedImage>,
+    ) {
         self.attachments.push(ComposerAttachment::Ready(media));
+        self.attachment_image_previews.push(image_preview);
     }
 
     pub(in crate::tui) fn push_pending_attachment(
@@ -412,10 +427,13 @@ impl InputUi {
     ) {
         self.attachments
             .push(ComposerAttachment::Pending { id, source, name });
+        self.attachment_image_previews.push(None);
     }
 
     pub(in crate::tui) fn pop_attachment(&mut self) -> Option<ComposerAttachment> {
-        self.attachments.pop()
+        let attachment = self.attachments.pop()?;
+        let _ = self.attachment_image_previews.pop();
+        Some(attachment)
     }
 
     pub(in crate::tui) fn has_pending_attachments(&self) -> bool {
@@ -437,6 +455,9 @@ impl InputUi {
             .iter()
             .position(|attachment| attachment.pending_id() == Some(id))?;
         self.attachments.remove(index);
+        if index < self.attachment_image_previews.len() {
+            self.attachment_image_previews.remove(index);
+        }
         Some(index)
     }
 
@@ -444,12 +465,18 @@ impl InputUi {
         &mut self,
         id: MediaAttachId,
         media: ChatMedia,
+        image_preview: Option<FeedImage>,
     ) -> Option<usize> {
         let index = self
             .attachments
             .iter()
             .position(|attachment| attachment.pending_id() == Some(id))?;
         self.attachments[index] = ComposerAttachment::Ready(media);
+        if index < self.attachment_image_previews.len() {
+            self.attachment_image_previews[index] = image_preview;
+        } else {
+            self.attachment_image_previews.push(image_preview);
+        }
         Some(index)
     }
 
@@ -459,6 +486,7 @@ impl InputUi {
         if self.has_pending_attachments() {
             return Err(AttachmentsPending);
         }
+        self.attachment_image_previews.clear();
         Ok(std::mem::take(&mut self.attachments)
             .into_iter()
             .map(|attachment| match attachment {
@@ -472,6 +500,7 @@ impl InputUi {
 
     pub(in crate::tui) fn clear_attachments(&mut self) {
         self.attachments.clear();
+        self.attachment_image_previews.clear();
     }
 
     pub(in crate::tui) fn history(&self) -> &[String] {

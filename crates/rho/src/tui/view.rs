@@ -277,6 +277,7 @@ impl App {
             Paragraph::new(composer_visible).style(Style::default()),
             layout.composer,
         );
+        self.render_composer_images(frame, layout.composer, width, layout.composer_start);
         if layout.bottom_divider.height > 0 {
             frame.render_widget(
                 Paragraph::new(vec![self.divider_line(width, /*shell_label*/ false)])
@@ -315,6 +316,49 @@ impl App {
                 overlay,
                 now,
                 /*top_offset*/ copy_offset,
+            );
+        }
+    }
+
+    fn render_composer_images(
+        &self,
+        frame: &mut Frame<'_>,
+        composer_area: Rect,
+        width: usize,
+        composer_start: usize,
+    ) {
+        if composer_area.height == 0 || !matches!(self.input_ui.composer(), ComposerMode::Input) {
+            return;
+        }
+        let placements = super::feed_image::composer_image_placements(
+            self.input_ui.attachment_image_previews(),
+            width,
+            super::feed_image::COMPOSER_IMAGE_HEIGHT,
+        );
+        let visible_end = composer_start.saturating_add(composer_area.height as usize);
+        for placement in placements {
+            if placement.row < composer_start
+                || placement.row.saturating_add(placement.height) > visible_end
+            {
+                // Match history: only paint when the full reserved block fits.
+                continue;
+            }
+            let image_y = composer_area
+                .y
+                .saturating_add((placement.row - composer_start) as u16);
+            let available_height = composer_area.bottom().saturating_sub(image_y);
+            let visible_height = (placement.height as u16).min(available_height);
+            if visible_height == 0 {
+                continue;
+            }
+            placement.image.render(
+                frame,
+                Rect::new(
+                    composer_area.x,
+                    image_y,
+                    composer_area.width,
+                    visible_height,
+                ),
             );
         }
     }

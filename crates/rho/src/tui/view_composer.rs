@@ -8,9 +8,11 @@ use ratatui::{
 use super::{
     approval_lines, char_prefix_display_width,
     composer_layout::{content_width, prompt_width, PROMPT_PREFIX},
-    config_number_input_lines, display_width, file_picker,
+    config_number_input_lines, display_width,
+    feed_image::{composer_attachment_row_heights, COMPOSER_IMAGE_HEIGHT},
+    file_picker,
     inline_choice::inline_choice_lines,
-    inline_shell, input_cursor_position, input_label_lines, input_lines, labeled_divider_line,
+    inline_shell, input_cursor_position, input_lines, labeled_divider_line,
     login::{interactive_pending_lines, secret_input_lines},
     picker_lines, questionnaire_cursor_position, questionnaire_lines, styled_line,
     text_input::text_input_lines,
@@ -64,14 +66,7 @@ impl App {
                     .focused_paste_segment()
                     .map(|segment| segment.start..segment.end());
                 let highlighted = self.input_ui.selection_range().or(focused_paste);
-                let media_labels = self
-                    .input_ui
-                    .attachments()
-                    .iter()
-                    .enumerate()
-                    .map(|(index, media)| media.composer_label(index + 1))
-                    .collect::<Vec<_>>();
-                let mut lines = input_label_lines(&media_labels, width);
+                let mut lines = self.composer_attachment_lines(width);
                 let mut text_lines =
                     input_lines(self.input_ui.text(), content_width(width), highlighted);
                 for (index, line) in text_lines.iter_mut().enumerate() {
@@ -118,7 +113,7 @@ impl App {
                     .min(width.saturating_sub(1) as u16);
                 position.y = position
                     .y
-                    .saturating_add(self.input_ui.attachments().len() as u16);
+                    .saturating_add(self.composer_attachment_row_count(width) as u16);
                 position
             }
             ComposerMode::SecretInput(secret) => Position {
@@ -246,6 +241,50 @@ impl App {
             ));
         }
 
+        lines
+    }
+}
+
+impl App {
+    /// Rows reserved above composer text for attachment labels / image previews.
+    pub(super) fn composer_attachment_row_count(&self, width: usize) -> usize {
+        composer_attachment_row_heights(
+            self.input_ui.attachments(),
+            self.input_ui.attachment_image_previews(),
+            width,
+            COMPOSER_IMAGE_HEIGHT,
+        )
+        .into_iter()
+        .sum()
+    }
+
+    fn composer_attachment_lines(&self, width: usize) -> Vec<Line<'static>> {
+        let heights = composer_attachment_row_heights(
+            self.input_ui.attachments(),
+            self.input_ui.attachment_image_previews(),
+            width,
+            COMPOSER_IMAGE_HEIGHT,
+        );
+        let mut lines = Vec::new();
+        for (index, (attachment, height)) in
+            self.input_ui.attachments().iter().zip(heights).enumerate()
+        {
+            if self
+                .input_ui
+                .attachment_image_previews()
+                .get(index)
+                .is_some_and(|preview| preview.is_some())
+            {
+                lines.extend((0..height).map(|_| Line::raw("")));
+            } else {
+                lines.push(styled_line(
+                    attachment.composer_label(index + 1),
+                    width.max(1),
+                    Theme::dim(),
+                    LineFill::Natural,
+                ));
+            }
+        }
         lines
     }
 }

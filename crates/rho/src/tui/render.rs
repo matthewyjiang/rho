@@ -438,13 +438,6 @@ pub(super) fn input_char_index_at_position(
     input_cursor_index_on_visual_line(input, &visual_lines, row, column)
 }
 
-pub(super) fn input_label_lines(labels: &[String], width: usize) -> Vec<Line<'static>> {
-    labels
-        .iter()
-        .map(|label| styled_line(label.clone(), width.max(1), Theme::dim(), LineFill::Natural))
-        .collect()
-}
-
 pub(super) fn input_lines(
     input: &str,
     width: usize,

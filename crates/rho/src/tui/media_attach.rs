@@ -115,7 +115,7 @@ impl App {
                 let label = media.composer_label(1);
                 if self
                     .input_ui
-                    .replace_pending_attachment(id, media)
+                    .replace_pending_attachment(id, media, None)
                     .is_some()
                 {
                     self.notify_status(format!("attached {label}"));
