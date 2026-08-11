@@ -119,12 +119,17 @@ pub(crate) async fn drain_child(
             result = &mut stdin_write, if !stdin_done => {
                 stdin_done = true;
                 if let Err(error) = result {
-                    // Stdin write failures take precedence over later stream
-                    // noise: the child often exits uncleanly once its stdin pipe
-                    // is dropped mid-protocol.
-                    break Some(DrainEnd::StdinFailed(format!(
-                        "claude code: failed to write prompt to stdin: {error}"
-                    )));
+                    // Broken pipe means the child closed stdin, usually because
+                    // it already exited (flag rejection, early error). Keep
+                    // draining so exit status and stderr diagnosis win over a
+                    // bare pipe error. Other write failures still abort: the
+                    // child often exits uncleanly once its stdin is dropped
+                    // mid-protocol.
+                    if error.kind() != std::io::ErrorKind::BrokenPipe {
+                        break Some(DrainEnd::StdinFailed(format!(
+                            "claude code: failed to write prompt to stdin: {error}"
+                        )));
+                    }
                 }
             }
             captured = &mut read_stderr, if !stderr_done => {

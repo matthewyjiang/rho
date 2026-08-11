@@ -84,3 +84,51 @@ async fn child_exit_closes_pipes_inherited_by_descendants() {
 
     assert!(matches!(drained.end, DrainEnd::Exited(Ok(status)) if status.success()));
 }
+
+/// Covers: a child that exits before consuming stdin must not surface as a bare
+/// broken-pipe write failure; exit status and stderr remain available for
+/// diagnosis (for example unsupported `--max-turns`).
+/// Owner: the shared child drain's stdin concurrent write path.
+#[cfg(unix)]
+#[tokio::test]
+async fn broken_pipe_on_stdin_still_reaps_exit_and_stderr() {
+    let mut command = tokio::process::Command::new("sh");
+    command
+        // Exit without reading stdin so the parent's prompt write hits EPIPE.
+        // A large prompt makes the race reliable across slow CI hosts.
+        .args([
+            "-c",
+            "echo \"error: unknown option '--max-turns'\" >&2; exit 2",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = OwnedChild::spawn(command).expect("spawn early-exit fixture");
+    let cancellation = CancellationToken::new();
+    let mut on_effect = |_| {};
+    let prompt = "P".repeat(256 * 1024);
+
+    let drained = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        drain_child(&mut child, &prompt, &cancellation, &mut on_effect),
+    )
+    .await
+    .expect("early-exit child must not hang the drain");
+
+    assert!(
+        matches!(drained.end, DrainEnd::Exited(Ok(status)) if !status.success()),
+        "expected reaped non-zero exit, got {:?}",
+        match &drained.end {
+            DrainEnd::StdinFailed(error) => format!("StdinFailed({error})"),
+            DrainEnd::StreamFailed(error) => format!("StreamFailed({error})"),
+            DrainEnd::Cancelled => "Cancelled".into(),
+            DrainEnd::Exited(Ok(status)) => format!("Exited(Ok({status}))"),
+            DrainEnd::Exited(Err(error)) => format!("Exited(Err({error}))"),
+        }
+    );
+    assert!(
+        drained.stderr.contains("max-turns"),
+        "stderr diagnosis must still be captured: {:?}",
+        drained.stderr
+    );
+}
