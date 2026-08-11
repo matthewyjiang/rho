@@ -535,8 +535,9 @@ pub(super) fn tool_entry_lines(
     tool: &super::ToolEntry,
     width: usize,
     max_tool_output_lines: usize,
+    max_image_height: u16,
 ) -> Vec<Line<'static>> {
-    super::tool_card_render::tool_entry_lines(tool, width, max_tool_output_lines)
+    super::tool_card_render::tool_entry_lines(tool, width, max_tool_output_lines, max_image_height)
 }
 
 fn render_non_assistant_entry(

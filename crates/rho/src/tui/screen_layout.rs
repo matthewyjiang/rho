@@ -102,6 +102,7 @@ pub(super) struct ScreenLayout {
 impl App {
     pub(super) fn screen_layout(&mut self, area: Rect, now: Instant) -> ScreenLayout {
         let width = area.width as usize;
+        self.sync_feed_image_budget(width, area.height as usize);
         let history_len = self.history_len(width, now);
         let composer_lines = self.composer_lines(width, area.height as usize);
         let command_lines = self.command_suggestion_lines(width);

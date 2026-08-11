@@ -110,6 +110,23 @@ The model-facing tool text is a short summary such as
 a second multimodal upload from the tool path. User-pasted images still use the
 provider multimodal path; see [attachments](/interactive-tui/attachments).
 
+### Feed preview size
+
+The interactive feed fits each image into the history content width and a height
+budget derived from the visible history pane:
+
+| Input | Rule |
+| --- | --- |
+| Width | History content width (same side padding as text) |
+| Height budget | About 45% of the history content height |
+| Floor | 16 rows |
+| Ceiling | 40 rows |
+| Aspect | Preserve; never stretch |
+
+Placement stays inline in transcript order (tool card body or markdown image
+row). Images paint only when their full reserved block is visible, so Kitty
+placements are not cropped mid-scroll.
+
 ### Where thumbnails paint
 
 | Environment | Behavior |

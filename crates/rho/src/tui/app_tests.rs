@@ -215,6 +215,7 @@ fn recovered_history_tail_limits_initial_redraw() {
             max_tool_output_lines: 10,
             zen_mode: false,
             theme_generation: 0,
+            max_image_height: crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT,
         },
     );
 
@@ -260,6 +261,7 @@ fn recovered_history_tail_keeps_oversized_visible_before_hidden_suffix() {
             max_tool_output_lines: 10,
             zen_mode: true,
             theme_generation: 0,
+            max_image_height: crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT,
         },
     );
 

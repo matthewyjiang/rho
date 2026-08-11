@@ -77,6 +77,7 @@ pub(super) fn tool_entry_lines(
     tool: &ToolEntry,
     width: usize,
     max_tool_output_lines: usize,
+    max_image_height: u16,
 ) -> Vec<Line<'static>> {
     let inner_width = padded_content_width(width);
     let mut lines = Vec::new();
@@ -87,7 +88,7 @@ pub(super) fn tool_entry_lines(
         max_tool_output_lines,
         tool.expanded,
     );
-    reserve_optional_image_rows(&mut lines, tool.image.as_ref(), width);
+    reserve_optional_image_rows(&mut lines, tool.image.as_ref(), width, max_image_height);
     // One trailing spacer only. Prior entries own the blank above this card.
     let padding_style = Theme::tool_card_padding();
     let mut padded = Vec::with_capacity(lines.len() + 1);

@@ -332,12 +332,14 @@ impl RuntimeModelView {
     pub(crate) fn history_render_settings(
         &self,
         width: usize,
+        max_image_height: u16,
     ) -> history_cache::HistoryRenderSettings {
         history_cache::HistoryRenderSettings {
             width,
             max_tool_output_lines: self.max_tool_output_lines,
             zen_mode: self.zen_mode,
             theme_generation: theme::Theme::generation(),
+            max_image_height,
         }
     }
 

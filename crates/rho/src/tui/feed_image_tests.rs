@@ -4,7 +4,10 @@ use image::{DynamicImage, ImageFormat};
 use ratatui_image::picker::{Picker, ProtocolType};
 use rho_sdk::tool::ToolAsset;
 
-use super::{kitty_graphics_environment, picker_for_environment, FeedImage, IMAGE_HEIGHT};
+use super::{
+    kitty_graphics_environment, max_feed_image_height, picker_for_environment, FeedImage,
+    DEFAULT_IMAGE_HEIGHT, MAX_IMAGE_HEIGHT, MIN_IMAGE_HEIGHT,
+};
 use crate::tui::{
     history_cache::{HistoryLineCache, HistoryLineSlice, HistoryRenderSettings},
     Entry, ToolEntry,
@@ -50,7 +53,7 @@ fn image_tool() -> Entry {
 fn loads_a_valid_bounded_asset_for_kitty_rendering() {
     let image = FeedImage::load(&png_asset(2, 1), &kitty_picker()).unwrap();
 
-    let backend = ratatui::backend::TestBackend::new(20, IMAGE_HEIGHT);
+    let backend = ratatui::backend::TestBackend::new(20, DEFAULT_IMAGE_HEIGHT);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
     terminal
         .draw(|frame| image.render(frame, frame.area()))
@@ -116,25 +119,42 @@ fn rejects_assets_larger_than_the_thumbnail_dimension_bound() {
     assert!(matches!(error, image::ImageError::Limits(_)));
 }
 
+// Covers: feed image max height tracks viewport then clamps.
+// Owner: pure layout policy
+#[test]
+fn feed_image_height_budget_scales_with_viewport_then_clamps() {
+    assert_eq!(max_feed_image_height(0), MIN_IMAGE_HEIGHT);
+    assert_eq!(max_feed_image_height(20), MIN_IMAGE_HEIGHT);
+    assert_eq!(max_feed_image_height(80), 36);
+    assert_eq!(max_feed_image_height(200), MAX_IMAGE_HEIGHT);
+}
+
+// Covers: reserved rows honor the layout budget and aspect ratio.
+// Owner: pure layout policy
 #[test]
 fn derives_reserved_rows_from_the_thumbnail_aspect_ratio() {
     let wide = FeedImage::load(&png_asset(600, 100), &kitty_picker()).unwrap();
     let tall = FeedImage::load(&png_asset(300, 600), &kitty_picker()).unwrap();
+    let budget = DEFAULT_IMAGE_HEIGHT;
 
-    assert!(wide.height_for_width(40) < IMAGE_HEIGHT as usize);
-    assert_eq!(tall.height_for_width(40), IMAGE_HEIGHT as usize);
+    assert!(wide.height_for_width(40, budget) < usize::from(budget));
+    assert_eq!(tall.height_for_width(40, budget), usize::from(budget));
 }
 
+// Covers: partially scrolled image placements stay blank until fully visible.
+// Owner: history cache image placement
 #[test]
 fn tool_entry_history_cache_omits_partially_visible_image_placement() {
     let entries = vec![image_tool()];
     let mut cache = HistoryLineCache::default();
     let width = 40;
+    let budget = DEFAULT_IMAGE_HEIGHT;
     let settings = HistoryRenderSettings {
         width,
         max_tool_output_lines: 20,
         zen_mode: false,
         theme_generation: 0,
+        max_image_height: budget,
     };
     let line_count = cache.line_count(&entries, settings, &no_images);
 
@@ -142,7 +162,7 @@ fn tool_entry_history_cache_omits_partially_visible_image_placement() {
     let full = cache.visible_image_placements(&entries, settings, 0, line_count, &no_images);
     assert_eq!(full.len(), 1);
     assert_eq!(full[0].row, 1);
-    assert_eq!(full[0].height, IMAGE_HEIGHT as usize);
+    assert_eq!(full[0].height, usize::from(budget));
 
     // Avoid resizing an image into a partial viewport. Reserved rows remain
     // blank until the full image fits in the visible history window.

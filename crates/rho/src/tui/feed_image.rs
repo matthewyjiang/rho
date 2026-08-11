@@ -13,10 +13,30 @@ use ratatui_image::{
 };
 use rho_sdk::tool::ToolAsset;
 
-pub(super) const IMAGE_HEIGHT: u16 = 12;
+/// Floor for reserved feed-image rows so wide images stay readable.
+pub(super) const MIN_IMAGE_HEIGHT: u16 = 16;
+/// Ceiling so one image cannot dominate the transcript.
+pub(super) const MAX_IMAGE_HEIGHT: u16 = 40;
+/// Used when the history viewport is unknown (tests, recovery budgeting).
+pub(super) const DEFAULT_IMAGE_HEIGHT: u16 = 24;
+/// Share of the history content viewport used as the image height budget.
+const IMAGE_HEIGHT_VIEWPORT_NUM: usize = 45;
+const IMAGE_HEIGHT_VIEWPORT_DEN: usize = 100;
+
 const MAX_THUMBNAIL_WIDTH: u32 = 1_024;
 const MAX_THUMBNAIL_HEIGHT: u32 = 768;
 const MAX_THUMBNAIL_ALLOCATION: u64 = 8 * 1024 * 1024;
+
+/// Max rows one feed image may reserve, from the visible history content height.
+///
+/// Scales with the pane so tall terminals get larger previews, then clamps to a
+/// readable floor and a transcript-friendly ceiling.
+pub(super) fn max_feed_image_height(history_content_height: usize) -> u16 {
+    let scaled = history_content_height.saturating_mul(IMAGE_HEIGHT_VIEWPORT_NUM)
+        / IMAGE_HEIGHT_VIEWPORT_DEN;
+    let clamped = scaled.clamp(usize::from(MIN_IMAGE_HEIGHT), usize::from(MAX_IMAGE_HEIGHT));
+    u16::try_from(clamped).unwrap_or(MAX_IMAGE_HEIGHT)
+}
 
 #[derive(Clone)]
 pub(super) struct FeedImage {
@@ -56,12 +76,13 @@ impl FeedImage {
         })
     }
 
-    pub(super) fn height_for_width(&self, width: usize) -> usize {
+    pub(super) fn height_for_width(&self, width: usize, max_height: u16) -> usize {
         let width = u16::try_from(width).unwrap_or(u16::MAX);
+        let max_height = max_height.max(1);
         usize::from(
             self.state
                 .borrow()
-                .size_for(Resize::Fit(None), Size::new(width, IMAGE_HEIGHT))
+                .size_for(Resize::Fit(None), Size::new(width, max_height))
                 .height
                 .max(1),
         )
@@ -149,9 +170,10 @@ pub(super) fn reserve_image_rows(
     lines: &mut Vec<Line<'static>>,
     image: &FeedImage,
     width: usize,
+    max_height: u16,
 ) -> RenderedImagePlacement {
     let start = lines.len();
-    let height = image.height_for_width(width);
+    let height = image.height_for_width(width, max_height);
     lines.extend((0..height).map(|_| Line::raw("")));
     RenderedImagePlacement {
         image: image.clone(),
@@ -163,9 +185,10 @@ pub(super) fn reserve_optional_image_rows(
     lines: &mut Vec<Line<'static>>,
     image: Option<&FeedImage>,
     width: usize,
+    max_height: u16,
 ) {
     if let Some(image) = image {
-        reserve_image_rows(lines, image, width);
+        reserve_image_rows(lines, image, width, max_height);
     }
 }
 
@@ -176,6 +199,7 @@ pub(super) fn reserve_markdown_image_rows(
     placeholder_rows: &[usize],
     images: &[(usize, FeedImage)],
     width: usize,
+    max_height: u16,
 ) -> Option<RenderedImagePlacements> {
     let mut offset = 0usize;
     let mut placements = Vec::new();
@@ -185,7 +209,7 @@ pub(super) fn reserve_markdown_image_rows(
         };
         let start = placeholder_row + offset;
         lines[start] = Line::raw("");
-        let extra_rows = image.height_for_width(width).saturating_sub(1);
+        let extra_rows = image.height_for_width(width, max_height).saturating_sub(1);
         lines.splice(start + 1..start + 1, (0..extra_rows).map(|_| Line::raw("")));
         placements.push(RenderedImagePlacement {
             image: image.clone(),
@@ -200,11 +224,12 @@ pub(super) fn reserve_entry_image_rows(
     lines: &mut Vec<Line<'static>>,
     entry: &super::Entry,
     width: usize,
+    max_height: u16,
 ) -> Option<RenderedImagePlacements> {
     match entry {
         super::Entry::Tool(tool) => tool.image.as_ref().map(|image| {
             // Content starts at row 0; trailing spacer is after the image rows.
-            RenderedImagePlacements::single(reserve_image_rows(lines, image, width))
+            RenderedImagePlacements::single(reserve_image_rows(lines, image, width, max_height))
         }),
         _ => None,
     }
@@ -248,7 +273,7 @@ impl super::App {
         let transcript_start = start.saturating_sub(header_len);
         let transcript_count = count.saturating_sub(visible_header_lines);
         let cwd = self.info.runtime.cwd.clone();
-        let settings = self.info.runtime.history_render_settings(width);
+        let settings = self.history_render_settings(width);
         let mut placements =
             self.history
                 .with_lines_and_images_mut(|history_lines, entries, markdown_images| {

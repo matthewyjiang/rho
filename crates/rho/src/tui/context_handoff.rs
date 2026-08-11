@@ -618,11 +618,13 @@ impl App {
         self.reset_usage();
         self.usage.current_context = None;
         let entries = transcript_entries_from_messages(&display_history, &self.info.runtime.cwd);
-        let width = terminal.size()?.width as usize;
+        let size = terminal.size()?;
+        let width = size.width as usize;
+        self.sync_feed_image_budget(width, size.height as usize);
         let (_omitted, visible_entries) = recovered_history_tail(
             &entries,
             RECOVERED_HISTORY_LINE_LIMIT,
-            self.info.runtime.history_render_settings(width),
+            self.history_render_settings(width),
         );
         self.history.set_entries(visible_entries);
         self.history.images_mut().clear();

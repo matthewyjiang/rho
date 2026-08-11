@@ -22,6 +22,7 @@ use crate::{
 };
 
 use super::super::{
+    feed_image::DEFAULT_IMAGE_HEIGHT,
     mouse_capture,
     provider_attempt::ProviderAttempt,
     render::{entry_lines, truncate_one_line},
@@ -443,7 +444,12 @@ impl AttachmentApp {
     fn history_lines(&self, width: usize, status: Option<&RunStatus>) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
         for entry in &self.transcript {
-            lines.extend(entry_lines(entry, width, MAX_TOOL_OUTPUT_LINES));
+            lines.extend(entry_lines(
+                entry,
+                width,
+                MAX_TOOL_OUTPUT_LINES,
+                DEFAULT_IMAGE_HEIGHT,
+            ));
         }
         for key in &self.pending_order {
             if let Some(tool) = self.pending_tools.get(key) {
@@ -451,6 +457,7 @@ impl AttachmentApp {
                     &Entry::Tool(tool.clone()),
                     width,
                     MAX_TOOL_OUTPUT_LINES,
+                    DEFAULT_IMAGE_HEIGHT,
                 ));
             }
         }
@@ -471,6 +478,7 @@ impl AttachmentApp {
                     &Entry::Assistant(text.to_string()),
                     width,
                     MAX_TOOL_OUTPUT_LINES,
+                    DEFAULT_IMAGE_HEIGHT,
                 ));
             }
         }
@@ -479,6 +487,7 @@ impl AttachmentApp {
                 &Entry::Error(error.to_string()),
                 width,
                 MAX_TOOL_OUTPUT_LINES,
+                DEFAULT_IMAGE_HEIGHT,
             ));
         }
         if let Some(error) = status.and_then(|status| status.attachment_error.as_deref()) {
@@ -486,6 +495,7 @@ impl AttachmentApp {
                 &Entry::Error(error.to_string()),
                 width,
                 MAX_TOOL_OUTPUT_LINES,
+                DEFAULT_IMAGE_HEIGHT,
             ));
         }
         if lines.is_empty() {

@@ -20,16 +20,24 @@ pub(in crate::tui) fn entry_lines(
     entry: &Entry,
     width: usize,
     max_tool_output_lines: usize,
+    max_image_height: u16,
 ) -> Vec<Line<'static>> {
-    render_entry(entry, width, max_tool_output_lines).lines
+    render_entry(entry, width, max_tool_output_lines, max_image_height).lines
 }
 
 pub(in crate::tui) fn render_entry(
     entry: &Entry,
     width: usize,
     max_tool_output_lines: usize,
+    max_image_height: u16,
 ) -> RenderedEntry {
-    render_entry_with_options(entry, width, max_tool_output_lines, TrailingBlank::Include)
+    render_entry_with_options(
+        entry,
+        width,
+        max_tool_output_lines,
+        max_image_height,
+        TrailingBlank::Include,
+    )
 }
 
 /// Render an entry with an optional trailing spacer blank and no leading blank.
@@ -41,6 +49,7 @@ pub(in crate::tui) fn render_entry_with_options(
     entry: &Entry,
     width: usize,
     max_tool_output_lines: usize,
+    max_image_height: u16,
     trailing_blank: TrailingBlank,
 ) -> RenderedEntry {
     let inner_width = padded_content_width(width);
@@ -84,7 +93,7 @@ pub(in crate::tui) fn render_entry_with_options(
         }
     };
 
-    let image_placement = reserve_entry_image_rows(&mut lines, entry, width);
+    let image_placement = reserve_entry_image_rows(&mut lines, entry, width, max_image_height);
     // Trailing spacer separates transcript blocks. User messages keep their
     // background on content rows only so the spacer does not grow an empty
     // highlighted band below the prompt.
@@ -121,6 +130,7 @@ pub(in crate::tui) fn apply_markdown_images(
     rendered: &mut RenderedEntry,
     images: &[(usize, FeedImage)],
     width: usize,
+    max_image_height: u16,
 ) {
     if images.is_empty() {
         return;
@@ -135,16 +145,24 @@ pub(in crate::tui) fn apply_markdown_images(
                     .image_rows
                     .get(*source_index)
                     .filter(|&&row| row < original_top_line)
-                    .map(|_| image.height_for_width(width).saturating_sub(1))
+                    .map(|_| {
+                        image
+                            .height_for_width(width, max_image_height)
+                            .saturating_sub(1)
+                    })
             })
             .sum::<usize>();
         block.top_line = block.top_line.saturating_add(preceding_image_rows);
     }
 
     // Content starts at row 0; the trailing spacer sits after content.
-    if let Some(placements) =
-        reserve_markdown_image_rows(&mut rendered.lines, &rendered.image_rows, images, width)
-    {
+    if let Some(placements) = reserve_markdown_image_rows(
+        &mut rendered.lines,
+        &rendered.image_rows,
+        images,
+        width,
+        max_image_height,
+    ) {
         rendered.image_placement = Some(placements);
     }
 }

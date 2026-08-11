@@ -25,7 +25,13 @@ pub(super) fn recovered_history_tail(
         let entry_line_count = if settings.hides_entry(entry) {
             0
         } else {
-            entry_lines(entry, settings.width, settings.max_tool_output_lines).len()
+            entry_lines(
+                entry,
+                settings.width,
+                settings.max_tool_output_lines,
+                settings.max_image_height,
+            )
+            .len()
         };
         if selected_visible && line_count + entry_line_count > line_limit {
             break;
