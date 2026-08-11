@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.36.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.35.0...rho-coding-agent-v1.36.0) (2026-08-11)
+
+
+### Features
+
+* **prompt:** tell the agent which model runs it, its subagents, and the advisor ([#860](https://github.com/matthewyjiang/rho/issues/860)) ([d18c377](https://github.com/matthewyjiang/rho/commit/d18c3774a20657cc1214e2936251cc993b69dd14))
+
+
+### Bug Fixes
+
+* **prompt:** wait for catalog names before model labels ([#863](https://github.com/matthewyjiang/rho/issues/863)) ([71fa544](https://github.com/matthewyjiang/rho/commit/71fa544e86e5dd046b898be76632996d92915c19))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 0.21.0 to 1.0.0
+
 ## [1.35.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.34.1...rho-coding-agent-v1.35.0) (2026-08-11)
 
 
