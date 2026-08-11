@@ -1063,8 +1063,17 @@ fn fake_claude_runtime_end_to_end_success() {
         .unwrap();
     attach
         .wait_for_text(
-            "claude 11111111-2222-4333-8444-555555555555",
+            // Resolved Claude models lengthen the identity line, so the full
+            // session UUID may ellipsize on a 120-col attach header. The unique
+            // prefix still proves the session id landed.
+            "claude 11111111-2222-4333-8444",
             WaitTimeout::secs(5, "attach session id"),
+        )
+        .unwrap();
+    attach
+        .wait_for_text(
+            "ran as claude-sonnet-5",
+            WaitTimeout::secs(5, "attach resolved model"),
         )
         .unwrap();
     attach
