@@ -72,17 +72,15 @@ provider = "disabled"
     assert_eq!(inspection["reasoning"], "low");
     let system = inspection["messages"][0]["System"].as_str().unwrap();
     assert!(system.contains("project automation rules"));
-    // Prompt assembly injects paths as JSON path data (Windows separators
-    // normalized), not raw Path::display text.
-    let agents_path = root
-        .path()
-        .join("AGENTS.md")
-        .to_string_lossy()
-        .replace('\\', "/");
-    assert!(system.contains(&format!(
-        "path={}",
-        serde_json::to_string(&agents_path).unwrap()
-    )));
+    // Assembly injects AGENTS.md paths as JSON path-data attributes. Do not
+    // require TempDir's lexical path: macOS current_dir is often the
+    // /private/var form while TempDir reports /var.
+    assert!(
+        system.lines().any(|line| {
+            line.contains("<agents_instructions path=") && line.contains("AGENTS.md")
+        }),
+        "expected AGENTS.md path data on agents_instructions open tag"
+    );
 
     let names = inspection["tools"]
         .as_array()
