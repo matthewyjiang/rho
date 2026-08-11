@@ -237,10 +237,9 @@ fn failed_turn_keeps_live_partial_assistant_text_before_error() {
 #[tokio::test]
 async fn committed_idle_boundary_batch_is_not_restored_after_post_start_failure() {
     let mut app = test_app();
-    let mut agent = crate::app::interactive_runtime::test_edit_tool_runtime(
-        crate::config::EditTool::default(),
-    )
-    .await;
+    let mut agent =
+        crate::app::interactive_runtime::test_edit_tool_runtime(crate::config::EditTool::default())
+            .await;
     let session_id = agent.session_id().clone();
     app.subagent_inbox
         .push_notice_for_test(crate::app::subagent_messaging::SubagentNotice {
