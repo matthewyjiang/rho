@@ -27,6 +27,9 @@ pub(crate) enum RunCommand {
 /// Obtain one from [`Run::steering_handle`] before moving the [`Run`] into an
 /// event pump. Hosts that only need to redirect work can keep this handle
 /// without sharing the run or its event stream.
+///
+/// Workspace crates that name this type need a published `rho-sdk` that exports
+/// it. Bump `rho-sdk` together with those consumers when this surface changes.
 #[derive(Clone, Debug)]
 pub struct SteeringHandle {
     commands: mpsc::Sender<RunCommand>,
