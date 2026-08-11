@@ -33,6 +33,33 @@ fn deprecated_provider_models_only_returns_exact_deprecation_flags() {
 }
 
 #[test]
+fn models_dev_parses_the_catalog_name_and_rejects_blank_ones() {
+    for (name, expected) in [
+        (json!("GPT-5.6 Sol"), Some("GPT-5.6 Sol".to_string())),
+        (json!("  GPT-5.6 Sol  "), Some("GPT-5.6 Sol".to_string())),
+        (json!("   "), None),
+        (json!(null), None),
+        (json!(7), None),
+    ] {
+        let api = json!({
+            "openai": { "models": { "gpt-5.6-sol": { "name": name } } }
+        });
+
+        let metadata = model_metadata_from_api(&api, "openai", "gpt-5.6-sol").unwrap();
+
+        assert_eq!(metadata.display_name, expected);
+    }
+
+    let nameless = json!({ "openai": { "models": { "gpt-5.6-sol": {} } } });
+    assert_eq!(
+        model_metadata_from_api(&nameless, "openai", "gpt-5.6-sol")
+            .unwrap()
+            .display_name,
+        None
+    );
+}
+
+#[test]
 fn provider_facing_cache_keys_are_order_independent() {
     let api = json!({
         "anthropic": {
@@ -571,6 +598,7 @@ fn models_dev_parses_long_context_cost_tiers() {
     assert_eq!(
         metadata,
         ModelMetadata {
+            display_name: None,
             advertised_context_window: Some(500_000),
             effective_context_window: Some(500_000),
             usable_context_window: None,
@@ -841,4 +869,82 @@ fn known_reasoning_capabilities_prefers_current_then_stale_known() {
             ReasoningCapabilities::Unknown
         );
     });
+}
+
+// Covers: a provider whose models live under a different models.dev key still
+// resolves names. `openai-codex` sells OpenAI models through Codex OAuth and
+// has no models.dev entry of its own; it reads `openai` upstream.
+#[test]
+fn providers_that_read_another_upstream_catalog_still_get_names() {
+    let api = json!({
+        "openai": {
+            "models": {
+                "gpt-5.6-luna": {
+                    "name": "GPT-5.6 Luna",
+                    "reasoning": true,
+                    "reasoning_options": [{"type": "effort", "values": ["low", "high"]}]
+                }
+            }
+        }
+    });
+
+    let metadata = upstream_metadata_from_api(&api, "openai-codex", "gpt-5.6-luna")
+        .expect("openai-codex reads the openai catalog");
+
+    assert_eq!(metadata.display_name.as_deref(), Some("GPT-5.6 Luna"));
+    assert!(metadata.reasoning_metadata_complete);
+
+    // The row is cached and read back under the Rho provider name, not the
+    // upstream one, so a lookup for `openai-codex` finds it.
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        write_cached_upstream_model_metadata("openai-codex", "gpt-5.6-luna", &metadata);
+
+        assert_eq!(
+            cached_model_metadata("openai-codex", "gpt-5.6-luna")
+                .and_then(|metadata| metadata.display_name)
+                .as_deref(),
+            Some("GPT-5.6 Luna")
+        );
+        // A model with no cached row has no name, even though provider
+        // capability fallbacks still give it other metadata.
+        assert_eq!(
+            cached_model_metadata("openai-codex", "gpt-5.6-terra")
+                .and_then(|metadata| metadata.display_name),
+            None
+        );
+    });
+}
+
+// Covers: the prefetch must skip rows that are already current, so a warm cache
+// costs no network. Startup calls it on every launch.
+// Owner: models.dev catalog prefetch
+#[tokio::test]
+async fn prefetch_does_nothing_when_every_target_is_current() {
+    let cache = tempfile::tempdir().unwrap();
+    let current = ModelMetadata {
+        display_name: Some("GPT-5.6 Luna".into()),
+        supported_reasoning_levels: Some(vec![ReasoningLevel::Low, ReasoningLevel::High]),
+        reasoning_capabilities_known: true,
+        reasoning_metadata_complete: true,
+        ..ModelMetadata::default()
+    };
+
+    // The cache dir is thread-local, so the write and the check share a thread.
+    // A network call would be the only way this could fail offline.
+    let written = with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        write_cached_upstream_model_metadata("openai-codex", "gpt-5.6-luna", &current);
+        // Duplicates collapse before any freshness check.
+        let targets = vec![
+            ("openai-codex".to_string(), "gpt-5.6-luna".to_string()),
+            ("openai-codex".to_string(), "gpt-5.6-luna".to_string()),
+        ];
+        futures_util::future::FutureExt::now_or_never(prefetch_model_metadata(targets))
+    });
+
+    assert_eq!(
+        written,
+        Some(0),
+        "a fully current target list must resolve without awaiting the network"
+    );
 }

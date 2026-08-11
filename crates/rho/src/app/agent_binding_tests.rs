@@ -623,3 +623,109 @@ fn provider_switch_without_auth_uses_provider_default() {
     assert_eq!(config.provider, "xai");
     assert_eq!(config.auth, "xai-api-key");
 }
+
+// Covers: the model a description predicts is the model binding actually picks.
+// Owner: agent binding.
+//
+// `ModelIdentity::for_agent` answers "which model would this agent launch on"
+// before any launch, so startup can prefetch that model's catalog name. Binding
+// answers the same question at launch. They are separate code paths on purpose
+// - binding also settles auth, reasoning, and tools - so this pins them to one
+// answer. Drift means prefetching one model's name and running another.
+#[test]
+fn predicted_agent_model_matches_the_model_binding_picks() {
+    use crate::model_identity::ModelIdentity;
+
+    let host = Config {
+        provider: "openai".into(),
+        model: "gpt-5.5".into(),
+        auth: "api-key".into(),
+        model_aliases: aliases(&[("fast", "xai/grok-4.5"), ("bare", "gpt-5.6-sol")]),
+        ..Config::default()
+    };
+
+    let policies = [
+        ("inherit", ModelPolicy::Inherit),
+        (
+            "model only",
+            ModelPolicy::Select(ModelSelection {
+                provider: None,
+                model: "gpt-5.6-sol".into(),
+                auth: None,
+            }),
+        ),
+        (
+            "provider and model",
+            ModelPolicy::Require(ModelSelection {
+                provider: Some("xai".into()),
+                model: "grok-4.5".into(),
+                auth: None,
+            }),
+        ),
+        (
+            "alias that carries a provider",
+            ModelPolicy::Prefer(ModelSelection {
+                provider: None,
+                model: "@fast".into(),
+                auth: None,
+            }),
+        ),
+        (
+            "alias that keeps the host provider",
+            ModelPolicy::Select(ModelSelection {
+                provider: None,
+                model: "@bare".into(),
+                auth: None,
+            }),
+        ),
+    ];
+
+    for (name, policy) in policies {
+        let definition = definition_with_model(policy);
+        let predicted = ModelIdentity::for_agent(&definition, &host);
+        let bound = AgentBinder::bind(
+            Arc::clone(&definition),
+            AgentInvocation {
+                role: AgentRole::Delegated,
+                available_tools: capabilities(),
+            },
+            &host,
+        )
+        .unwrap();
+
+        assert_eq!(predicted, bound.model_identity(), "{name}");
+    }
+}
+
+// Covers: a claude-cli agent reports its pass-through `--model`, not a Rho one.
+// Owner: agent binding.
+#[test]
+fn predicted_claude_agent_model_is_the_pass_through_value() {
+    use crate::model_identity::ModelIdentity;
+
+    for model in [Some("opus".to_string()), None] {
+        let definition = Arc::new(AgentDefinition {
+            runtime: AgentRuntimeSpec::ClaudeCli(crate::agent::ClaudeAgentConfig {
+                tools: crate::agent::ClaudeToolPolicy::None,
+                inherit_claude_config: false,
+                model: model.clone(),
+                reasoning: None,
+            }),
+            ..definition(ToolPolicy::All).as_ref().clone()
+        });
+
+        let predicted = ModelIdentity::for_agent(&definition, &Config::default());
+        let bound = AgentBinder::bind(
+            Arc::clone(&definition),
+            AgentInvocation {
+                role: AgentRole::Delegated,
+                available_tools: capabilities(),
+            },
+            &Config::default(),
+        )
+        .unwrap();
+
+        assert_eq!(predicted, ModelIdentity::ClaudeCli { model });
+        assert_eq!(predicted, bound.model_identity());
+    }
+}

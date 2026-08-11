@@ -232,6 +232,10 @@ impl AdvisorTool {
 
 impl SdkTool for AdvisorTool {
     fn spec(&self) -> ToolSpec {
+        // Deliberately model-agnostic. A `/advisor` model change lands on the
+        // store without rebuilding the tool set, so naming the reviewer here
+        // would rewrite what the executor was already told, or go stale. The
+        // reviewer is named in the system prompt and in switch notices instead.
         ToolSpec {
             name: TOOL_NAME.into(),
             description: TOOL_DESCRIPTION.into(),

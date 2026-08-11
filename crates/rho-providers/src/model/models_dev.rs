@@ -10,6 +10,11 @@ use crate::{
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ModelMetadata {
+    /// Catalog name for people, such as `GPT-5.6 Sol`. Absent when the catalog
+    /// has no name for the model; callers then show the model id alone rather
+    /// than inventing a name from it.
+    #[serde(default)]
+    pub display_name: Option<String>,
     pub advertised_context_window: Option<u64>,
     pub effective_context_window: Option<u64>,
     pub usable_context_window: Option<u64>,
@@ -172,6 +177,39 @@ pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMe
     override_metadata(provider, model)
 }
 
+/// Fills catalog rows for several models with one models.dev download.
+///
+/// [`fetch_model_metadata`] downloads the whole catalog per call, so asking it
+/// for a list would download the same document once per model. This exists for
+/// callers that need rows for models the session only *names* - the models
+/// behind subagents and internal agents - which no selection would ever fetch.
+///
+/// Returns the number of rows written. Nothing reaches the network when every
+/// target is already current, so a warm cache costs one sqlite read per target.
+pub async fn prefetch_model_metadata(targets: impl IntoIterator<Item = (String, String)>) -> usize {
+    let stale = targets
+        .into_iter()
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .filter(|(provider, model)| model_metadata_needs_refresh(provider, model))
+        .collect::<Vec<_>>();
+    if stale.is_empty() {
+        return 0;
+    }
+    let Some(response) = fetch_models_dev_api().await else {
+        return 0;
+    };
+    stale
+        .into_iter()
+        .filter(|(provider, model)| {
+            upstream_metadata_from_api(&response, provider, model)
+                .filter(|metadata| metadata.reasoning_metadata_complete)
+                .inspect(|metadata| write_cached_upstream_model_metadata(provider, model, metadata))
+                .is_some()
+        })
+        .count()
+}
+
 fn upstream_metadata_from_api(api: &Value, provider: &str, model: &str) -> Option<ModelMetadata> {
     let descriptor = crate::provider::provider_descriptor(provider)?;
     model_metadata_from_api_with_policy(
@@ -230,7 +268,8 @@ fn override_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
 }
 
 fn metadata_has_values(metadata: &ModelMetadata) -> bool {
-    metadata.advertised_context_window.is_some()
+    metadata.display_name.is_some()
+        || metadata.advertised_context_window.is_some()
         || metadata.effective_context_window.is_some()
         || metadata.usable_context_window.is_some()
         || metadata.long_context_threshold.is_some()
@@ -283,7 +322,10 @@ async fn fetch_models_dev_api() -> Option<Value> {
 /// v7: Qwen Token Plan switched from Unknown to ExactAdvertised. Rows written
 /// under Unknown stored `reasoning_metadata_complete = true` with no levels, so
 /// fetch short-circuited forever. Bump forces rehydrate from models.dev.
-const MODEL_METADATA_CACHE_VERSION: i64 = 7;
+///
+/// v8: `display_name` added. Older rows are complete without it, so only a bump
+/// makes them refetch and pick up the catalog name.
+const MODEL_METADATA_CACHE_VERSION: i64 = 8;
 
 fn cached_upstream_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
     cached_upstream_model_metadata_with_freshness(provider, model, CacheFreshness::AllowStale)
@@ -457,6 +499,12 @@ fn model_metadata_from_api_with_policy(
     let cost = model.get("cost");
     let (long_context_threshold, cost_long_context) = long_context_cost_from_api(cost);
     Some(ModelMetadata {
+        display_name: model
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string),
         advertised_context_window: limit
             .and_then(|limit| limit.get("context"))
             .and_then(|value| value.as_u64()),
@@ -743,6 +791,13 @@ fn merge_toml_override(
     mut metadata: ModelMetadata,
     table: &toml::map::Map<String, toml::Value>,
 ) -> ModelMetadata {
+    metadata.display_name = table
+        .get("display_name")
+        .and_then(toml::Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .or(metadata.display_name);
     metadata.advertised_context_window =
         toml_u64(table, "advertised_context_window").or(metadata.advertised_context_window);
     metadata.effective_context_window =

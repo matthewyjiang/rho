@@ -69,7 +69,9 @@ impl BoundRuntime {
         match self {
             Self::ClaudeCli { model, .. } => ArtifactLabels {
                 provider: "claude-code".into(),
-                model: model.clone().unwrap_or_else(|| "claude-cli".into()),
+                model: model
+                    .clone()
+                    .unwrap_or_else(|| CLAUDE_CLI_MODEL_UNSET.to_string()),
                 runtime: crate::agent::AgentRuntime::ClaudeCli,
             },
             Self::Rho { config, .. } => ArtifactLabels {
@@ -80,6 +82,13 @@ impl BoundRuntime {
         }
     }
 }
+
+/// Stands in for the model on a Claude run that pinned none.
+///
+/// The artifact identity needs a `String`, and Claude Code chooses the model
+/// itself in this case. Readers must treat it as "no model pinned" rather than
+/// as a model name.
+pub(crate) const CLAUDE_CLI_MODEL_UNSET: &str = "claude-cli";
 
 /// Named provider/model/runtime labels from a bound runtime.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -119,6 +128,21 @@ impl BoundAgent {
         match &self.runtime {
             BoundRuntime::Rho { config, .. } => Some(config.as_ref()),
             BoundRuntime::ClaudeCli { .. } => None,
+        }
+    }
+
+    /// The model this launch will actually run on.
+    ///
+    /// Taken from the bound runtime rather than the definition, so a pinned
+    /// model, an inherited one, and a Claude pass-through all report what this
+    /// launch settled on.
+    pub(crate) fn model_identity(&self) -> crate::model_identity::ModelIdentity {
+        use crate::model_identity::ModelIdentity;
+        match &self.runtime {
+            BoundRuntime::Rho { config, .. } => ModelIdentity::from_config(config),
+            BoundRuntime::ClaudeCli { model, .. } => ModelIdentity::ClaudeCli {
+                model: model.clone(),
+            },
         }
     }
 

@@ -66,8 +66,22 @@ impl InteractiveRuntime {
         };
         let registered = model.is_some();
         if registered == self.tools.advisor_registered() {
+            // The tool list is unchanged, so nothing rebuilds and nothing else
+            // would say the reviewer behind `advisor` is a different model.
+            let changed = model
+                .as_ref()
+                .filter(|model| store.model().as_ref() != Some(*model));
+            let notice = changed.map(|model| {
+                crate::prompt::advisor_model_switch_context(
+                    &crate::model_identity::ModelIdentity::from_internal_agent(model),
+                )
+            });
             store.set_model(model);
-            return Ok(None);
+            let Some((context, display)) = notice else {
+                return Ok(None);
+            };
+            self.append_user_context_with_display(context, display.clone())?;
+            return Ok(Some(display));
         }
         if self.runs.is_active() {
             anyhow::bail!("advisor mode cannot change while a run is active");
@@ -82,6 +96,8 @@ impl InteractiveRuntime {
         match self.rebind_current_session().await {
             Ok(()) => {
                 store.set_model(model);
+                // After `set_model`, so the enable notice names the model the
+                // tool will actually consult.
                 match self.append_advisor_switch_notice(registered) {
                     Ok(display) => Ok(Some(display)),
                     Err(error) => {
@@ -116,7 +132,17 @@ impl InteractiveRuntime {
                 .ok_or_else(|| {
                     anyhow::anyhow!("advisor tool is missing after it was registered")
                 })?;
-            crate::prompt::advisor_enabled_context(&spec)
+            let reviewer = self
+                .tools
+                .advisor()
+                .and_then(crate::tools::advisor::AdvisorSessionStore::model)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("advisor tool is registered without an advisor model")
+                })?;
+            crate::prompt::advisor_enabled_context(
+                &spec,
+                &crate::model_identity::ModelIdentity::from_internal_agent(&reviewer),
+            )
         } else {
             crate::prompt::advisor_disabled_context()
         };

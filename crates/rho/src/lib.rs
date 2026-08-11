@@ -17,6 +17,7 @@ mod herdr;
 mod hooks;
 mod keybindings;
 mod model_aliases;
+mod model_identity;
 mod paths;
 mod permission;
 mod plugins;

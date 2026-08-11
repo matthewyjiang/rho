@@ -3,6 +3,7 @@ use rho_tools::tool::truncate;
 
 use {
     super::agent::SubagentSnapshot,
+    crate::app::agent_binding::CLAUDE_CLI_MODEL_UNSET,
     crate::subagent::{self, RunState},
 };
 
@@ -60,6 +61,7 @@ pub(super) fn format_snapshot(snapshot: &SubagentSnapshot, format: SnapshotForma
             }
         }
     }
+    lines.extend(run_model_line(&snapshot.status));
     push_claude_metadata(&mut lines, snapshot);
     if matches!(format, SnapshotFormat::Completion) {
         if let Some(error) = &snapshot.status.error {
@@ -182,6 +184,7 @@ fn completion_summary(snapshot: &SubagentSnapshot) -> Vec<String> {
         format_token_count(snapshot.status.input_tokens),
         format_token_count(snapshot.status.output_tokens)
     ));
+    lines.extend(run_model_line(&snapshot.status));
     push_claude_metadata(&mut lines, snapshot);
     if let Some(error) = &snapshot.status.error {
         lines.push(format!(
@@ -199,6 +202,38 @@ fn completion_summary(snapshot: &SubagentSnapshot) -> Vec<String> {
         ));
     }
     lines
+}
+
+/// Which model a run used, from what the run recorded.
+///
+/// The agent list stays model-free on purpose: which model an agent runs on can
+/// change after that list is written. A run reports its own model instead, where
+/// the answer is settled and cannot go stale.
+pub(super) fn run_model_identity(
+    status: &crate::subagent::RunStatus,
+) -> Option<crate::model_identity::ModelIdentity> {
+    use crate::{agent::AgentRuntime, model_identity::ModelIdentity};
+
+    Some(match status.runtime {
+        Some(AgentRuntime::ClaudeCli) => ModelIdentity::ClaudeCli {
+            // What the run reported binding beats what Rho asked for: `--model`
+            // takes aliases, and the parent wants the model, not the pointer.
+            model: status.claude_model.clone().or_else(|| {
+                status
+                    .model
+                    .clone()
+                    .filter(|model| model != CLAUDE_CLI_MODEL_UNSET)
+            }),
+        },
+        Some(AgentRuntime::Rho) | None => ModelIdentity::Rho {
+            provider: status.provider.clone()?,
+            model: status.model.clone()?,
+        },
+    })
+}
+
+fn run_model_line(status: &crate::subagent::RunStatus) -> Option<String> {
+    Some(format!("model: {}", run_model_identity(status)?.describe()))
 }
 
 fn push_claude_metadata(lines: &mut Vec<String>, snapshot: &SubagentSnapshot) {

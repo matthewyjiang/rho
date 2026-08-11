@@ -288,3 +288,112 @@ async fn select_model_report_auto_edit_tool_follows_provider_change() {
     );
     assert!(!agent.has_tool("str_replace"));
 }
+
+// Covers: a mid-session model switch must reach the model as an appended line,
+// because the system prompt names the starting model and then stays fixed. The
+// line names only the new model. A first selection on an empty session is not a
+// switch and must stay silent.
+// Owner: model switch context notice
+#[tokio::test]
+async fn select_model_report_tells_the_model_about_a_mid_session_switch() {
+    use std::sync::Arc;
+
+    use rho_providers::credentials::{save_provider_api_key, MemoryCredentialStore};
+
+    use crate::{
+        app::interactive_runtime::test_edit_tool_runtime,
+        config::EditTool,
+        tui::{tests::test_bootstrap, App, InteractiveRuntime},
+    };
+
+    async fn switch_to_anthropic(app: &mut App, agent: &mut InteractiveRuntime) {
+        app.select_model_report(
+            InteractiveModelSelection {
+                selection: ModelSelection {
+                    provider: "anthropic".into(),
+                    model: "claude-fable-5".into(),
+                    auth: "api-key".into(),
+                    from_catalog: true,
+                },
+                alias: None,
+            },
+            agent,
+        )
+        .await
+        .expect("model switch should succeed");
+    }
+
+    /// Model-visible history as one string. A provider change also swaps the
+    /// Auto edit tool, so the switch notice is not reliably the last message.
+    fn history_text(agent: &InteractiveRuntime) -> String {
+        agent
+            .history()
+            .iter()
+            .filter_map(|message| match message {
+                rho_sdk::model::Message::User(blocks) => Some(
+                    blocks
+                        .iter()
+                        .filter_map(|block| match block {
+                            rho_sdk::model::ContentBlock::Text(text) => Some(text.as_str()),
+                            _ => None,
+                        })
+                        .collect::<String>(),
+                ),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn app_on_openai() -> App {
+        let store = Arc::new(MemoryCredentialStore::default());
+        save_provider_api_key(store.as_ref(), "openai", "sk-test").unwrap();
+        save_provider_api_key(store.as_ref(), "anthropic", "sk-ant-test").unwrap();
+        let app = App::new_with_credentials(
+            test_bootstrap(),
+            store,
+            crate::herdr::HerdrGraphicsCapability::NotHerdr,
+            crate::tools::mcp::McpSessionReport::default(),
+            crate::tools::mcp::McpCatalog::default(),
+            crate::plugins::PluginLoadReport::default(),
+        );
+        app.info
+            .services
+            .config_repository
+            .update(|config| {
+                config.provider = "openai".into();
+                config.model = "gpt-5.5".into();
+                config.auth = "api-key".into();
+            })
+            .unwrap();
+        app
+    }
+
+    // --- A started session is told, naming both ends ---
+    let mut app = app_on_openai();
+    let mut agent = test_edit_tool_runtime(EditTool::Auto).await;
+    agent
+        .append_user_context_with_display("first turn".into(), "first turn".into())
+        .unwrap();
+
+    switch_to_anthropic(&mut app, &mut agent).await;
+
+    let text = history_text(&agent);
+    assert!(text.contains("anthropic/claude-fable-5"), "{text}");
+    // The model the session started on stays readable in the system prompt, so
+    // the notice does not restate it.
+    assert!(!text.contains("openai/gpt-5.5"), "{text}");
+
+    // --- A first selection on an empty session stays silent ---
+    let mut app = app_on_openai();
+    let mut agent = test_edit_tool_runtime(EditTool::Auto).await;
+    assert!(agent.history().is_empty());
+
+    switch_to_anthropic(&mut app, &mut agent).await;
+
+    let text = history_text(&agent);
+    assert!(
+        !text.contains("conversation model switched"),
+        "a first model choice is not a switch: {text}"
+    );
+}

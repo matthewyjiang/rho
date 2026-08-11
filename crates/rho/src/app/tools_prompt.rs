@@ -160,8 +160,22 @@ pub(crate) async fn assemble_tools_and_prompt(
         let mut text = match options.agent.prompt() {
             PromptPolicy::Replace(text) => text.clone(),
             PromptPolicy::Extend(extra) => {
-                let mut built =
-                    prompt::system_prompt_with_plugin_skills(&specs, options.cwd, plugin_skills);
+                // The bound model, not the host one: a delegated agent that
+                // pins its own model must be told the model it is running on.
+                let running = options.agent.model_identity();
+                let advisor = advisor_capable
+                    .then(|| crate::tools::advisor::advisor_model(options.config))
+                    .flatten()
+                    .map(crate::model_identity::ModelIdentity::from_internal_agent);
+                let mut built = prompt::system_prompt_with_plugin_skills(
+                    &specs,
+                    options.cwd,
+                    prompt::PromptModels {
+                        running: &running,
+                        advisor: advisor.as_ref(),
+                    },
+                    plugin_skills,
+                );
                 options.diagnostics.update_prompt_sources(built.sources);
                 if !launch_delegation_enabled {
                     prompt::append_subagents_disabled_instruction(&mut built.text);

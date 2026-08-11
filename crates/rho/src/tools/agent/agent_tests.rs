@@ -16,19 +16,29 @@ use crate::{
     tools::agent_output::MODEL_NOTIFICATION_BYTES,
 };
 
-/// Isolates delegated-run storage from other tests that mutate `RHO_HOME`.
+/// Isolates delegated-run storage and agent discovery from the developer's own
+/// home, so these tests see the same catalog everywhere they run.
 struct IsolatedRhoHome {
     _dir: tempfile::TempDir,
     _guard: MutexGuard<'static, ()>,
-    previous: Option<OsString>,
+    previous: Vec<(&'static str, Option<OsString>)>,
 }
 
 impl IsolatedRhoHome {
     fn new() -> Self {
         let guard = crate::paths::process_env_lock();
         let dir = tempfile::tempdir().expect("rho home tempdir");
-        let previous = std::env::var_os("RHO_HOME");
-        std::env::set_var("RHO_HOME", dir.path());
+        // `HOME` too: agent discovery reads `~/.rho/agents` and
+        // `~/.agents/agents`, so a developer's own agents would otherwise
+        // change what the catalog holds.
+        let previous = ["RHO_HOME", "HOME"]
+            .into_iter()
+            .map(|name| {
+                let previous = std::env::var_os(name);
+                std::env::set_var(name, dir.path());
+                (name, previous)
+            })
+            .collect();
         Self {
             _dir: dir,
             _guard: guard,
@@ -39,9 +49,11 @@ impl IsolatedRhoHome {
 
 impl Drop for IsolatedRhoHome {
     fn drop(&mut self) {
-        match &self.previous {
-            Some(value) => std::env::set_var("RHO_HOME", value),
-            None => std::env::remove_var("RHO_HOME"),
+        for (name, previous) in &self.previous {
+            match previous {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
         }
     }
 }
@@ -410,4 +422,134 @@ async fn concurrent_background_launches_register_together() {
     let ids = runs.iter().map(|run| run.id.as_str()).collect::<Vec<_>>();
     assert!(ids.iter().any(|id| first.content().contains(id)));
     assert!(ids.iter().any(|id| second.content().contains(id)));
+}
+
+// Covers: the agent list must not name any agent's model. The conversation
+// model can switch and a catalog name can arrive after this list is written, and
+// rewriting it would change what the caller was already told. Each run reports
+// its own model instead.
+// Owner: agent tool description.
+#[test]
+fn agent_list_never_names_an_agent_model() {
+    let root = tempfile::tempdir().unwrap();
+    let fixture = manager(root.path());
+    let manager = fixture.manager();
+    let tool = AgentTool::new(manager.clone(), root.path(), BackgroundSubagents::Enabled);
+    let baseline = tool.spec().description;
+
+    let agents = baseline
+        .split_once("\n\nAgents:\n")
+        .expect("the description lists agents")
+        .1;
+    assert_eq!(
+        agents
+            .lines()
+            .map(|line| line.split_once(": ").expect("id then description").0)
+            .collect::<Vec<_>>(),
+        vec!["explorer", "reviewer", "worker"]
+    );
+    assert!(!agents.contains("openai/gpt-5.5"), "{agents}");
+
+    manager.update_selection(
+        "anthropic",
+        "claude-fable-5",
+        rho_sdk::ReasoningLevel::High,
+        "anthropic-api-key",
+    );
+
+    assert_eq!(
+        tool.spec().description,
+        baseline,
+        "a model switch must not rewrite the agent list"
+    );
+}
+
+// Covers: a run must report the model it actually used. The agent list stays
+// model-free, so this is the only place a caller learns which model did the
+// work - including what a Claude `--model` alias resolved to.
+// Owner: delegated run output.
+//
+// Asserts the identity rather than the rendered line: rendering is owned by
+// `model_identity`, and catalog names resolve through a process-wide cache that
+// other tests also fill.
+#[test]
+fn a_run_reports_the_model_it_used() {
+    use crate::{agent::AgentRuntime, model_identity::ModelIdentity};
+
+    struct Case {
+        name: &'static str,
+        runtime: Option<AgentRuntime>,
+        provider: Option<&'static str>,
+        model: Option<&'static str>,
+        claude_model: Option<&'static str>,
+        expected: Option<ModelIdentity>,
+    }
+
+    let cases = [
+        Case {
+            name: "a Rho run names its provider and model",
+            runtime: Some(AgentRuntime::Rho),
+            provider: Some("openai-codex"),
+            model: Some("gpt-5.6-luna"),
+            claude_model: None,
+            expected: Some(ModelIdentity::Rho {
+                provider: "openai-codex".into(),
+                model: "gpt-5.6-luna".into(),
+            }),
+        },
+        Case {
+            name: "a Claude run prefers the model it reported over the alias asked for",
+            runtime: Some(AgentRuntime::ClaudeCli),
+            provider: Some("claude-code"),
+            model: Some("opus"),
+            claude_model: Some("claude-opus-4-6"),
+            expected: Some(ModelIdentity::ClaudeCli {
+                model: Some("claude-opus-4-6".into()),
+            }),
+        },
+        Case {
+            name: "a Claude run that reported nothing yet names the pass-through value",
+            runtime: Some(AgentRuntime::ClaudeCli),
+            provider: Some("claude-code"),
+            model: Some("opus"),
+            claude_model: None,
+            expected: Some(ModelIdentity::ClaudeCli {
+                model: Some("opus".into()),
+            }),
+        },
+        Case {
+            name: "an unpinned Claude run does not report the placeholder as a model",
+            runtime: Some(AgentRuntime::ClaudeCli),
+            provider: Some("claude-code"),
+            model: Some("claude-cli"),
+            claude_model: None,
+            expected: Some(ModelIdentity::ClaudeCli { model: None }),
+        },
+        Case {
+            name: "a run with no recorded model reports nothing",
+            runtime: Some(AgentRuntime::Rho),
+            provider: None,
+            model: None,
+            claude_model: None,
+            expected: None,
+        },
+    ];
+
+    for case in cases {
+        let status = crate::subagent::RunStatus {
+            state: RunState::Ok,
+            runtime: case.runtime,
+            provider: case.provider.map(str::to_string),
+            model: case.model.map(str::to_string),
+            claude_model: case.claude_model.map(str::to_string),
+            ..crate::subagent::RunStatus::default()
+        };
+
+        assert_eq!(
+            crate::tools::agent_output::run_model_identity(&status),
+            case.expected,
+            "{}",
+            case.name
+        );
+    }
 }

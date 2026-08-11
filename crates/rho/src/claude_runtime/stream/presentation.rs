@@ -311,8 +311,15 @@ pub(super) fn map_system(message: SystemMessage) -> Vec<StreamEffect> {
         Some("status" | "thinking_tokens")
     );
     let is_init = message.subtype.as_deref() == Some("init");
+    // Only the init frame states which model the run bound. A model named on
+    // any other system frame would not describe the run as a whole.
+    let claude_model = message
+        .model
+        .filter(|_| is_init)
+        .map(|model| model.trim().to_string())
+        .filter(|model| !model.is_empty());
 
-    if let Some(session_id) = message.session_id {
+    if message.session_id.is_some() || claude_model.is_some() {
         let last_activity = if is_quiet_subtype {
             None
         } else if is_init {
@@ -321,7 +328,8 @@ pub(super) fn map_system(message: SystemMessage) -> Vec<StreamEffect> {
             Some("claude system".into())
         };
         effects.push(StreamEffect::Status(StatusPatch {
-            claude_session_id: Some(session_id),
+            claude_session_id: message.session_id,
+            claude_model,
             state: Some(RunState::Running),
             last_activity,
             ..StatusPatch::default()
@@ -529,6 +537,9 @@ pub(crate) fn apply_status_patch(status: &mut RunStatus, patch: StatusPatch) {
     }
     if let Some(session_id) = patch.claude_session_id {
         status.claude_session_id = Some(session_id);
+    }
+    if let Some(model) = patch.claude_model {
+        status.claude_model = Some(model);
     }
     if let Some(cost) = patch.total_cost_usd {
         status.total_cost_usd = Some(cost);

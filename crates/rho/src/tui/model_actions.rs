@@ -648,9 +648,30 @@ impl App {
             }
         };
 
+        let previous_identity = crate::model_identity::ModelIdentity::Rho {
+            provider: self.info.runtime.provider.clone(),
+            model: self.info.runtime.model.clone(),
+        };
+        // A first selection on an empty session is not a switch: the system
+        // prompt has yet to be built and will name the chosen model itself.
+        let session_started = !agent.history().is_empty();
         let handoff = agent.replace_provider(new_provider, reasoning.effective, &auth)?;
         self.info.runtime.provider = provider.clone();
         self.info.runtime.model = model.clone();
+        // The system prompt named the model this session started on and then
+        // stayed fixed, so a later switch has to reach the model as context.
+        let current_identity = crate::model_identity::ModelIdentity::Rho {
+            provider: provider.clone(),
+            model: model.clone(),
+        };
+        if session_started && current_identity != previous_identity {
+            let (context, display) = crate::prompt::model_switch_context(&current_identity);
+            if let Err(error) = agent.append_user_context_with_display(context, display) {
+                self.insert_entry(&Entry::Error(format!(
+                    "switched to {provider_model}, but could not record the switch for the model: {error}"
+                )));
+            }
+        }
         self.info
             .set_reasoning(reasoning.effective, reasoning.source);
         self.info.runtime.auth = auth.clone();

@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use {crate::skills, rho_tools::tool::ToolSpec};
+use {crate::model_identity::ModelIdentity, crate::skills, rho_tools::tool::ToolSpec};
 
 pub const BASE_SYSTEM_PROMPT: &str = r#"You are a coding agent in the rho coding-agent harness, working with the user in a shared workspace. Use available tools to inspect files, run commands, and edit or create files.
 
@@ -42,14 +42,44 @@ pub(crate) enum PluginSkills {
     Provided(Vec<skills::Skill>),
 }
 
+/// The models a session names in its system prompt.
+///
+/// `advisor` is `None` unless advisor mode is on with a model chosen. It is
+/// stated here because the `advisor` tool description must stay fixed once
+/// written, while `/advisor` can swap the reviewer at any time.
+pub(crate) struct PromptModels<'a> {
+    pub(crate) running: &'a ModelIdentity,
+    pub(crate) advisor: Option<&'a ModelIdentity>,
+}
+
+/// Assembles with a fixed model, for tests about everything except the models.
 #[cfg(test)]
 fn system_prompt_with_home(tools: &[ToolSpec], cwd: &Path, home: Option<&Path>) -> SystemPrompt {
-    system_prompt_with_home_and_plugin_skills(tools, cwd, home, PluginSkills::Discover)
+    system_prompt_with_home_and_models(
+        tools,
+        cwd,
+        home,
+        PromptModels {
+            running: &tests::TEST_MODEL,
+            advisor: None,
+        },
+    )
+}
+
+#[cfg(test)]
+fn system_prompt_with_home_and_models(
+    tools: &[ToolSpec],
+    cwd: &Path,
+    home: Option<&Path>,
+    models: PromptModels<'_>,
+) -> SystemPrompt {
+    system_prompt_with_home_and_plugin_skills(tools, cwd, home, models, PluginSkills::Discover)
 }
 
 pub(crate) fn system_prompt_with_plugin_skills(
     tools: &[ToolSpec],
     cwd: &Path,
+    models: PromptModels<'_>,
     plugin_skills: Vec<skills::Skill>,
 ) -> SystemPrompt {
     let home = crate::paths::home_dir();
@@ -57,6 +87,7 @@ pub(crate) fn system_prompt_with_plugin_skills(
         tools,
         cwd,
         home.as_deref(),
+        models,
         PluginSkills::Provided(plugin_skills),
     )
 }
@@ -65,6 +96,7 @@ fn system_prompt_with_home_and_plugin_skills(
     tools: &[ToolSpec],
     cwd: &Path,
     home: Option<&Path>,
+    PromptModels { running, advisor }: PromptModels<'_>,
     plugin_skills: PluginSkills,
 ) -> SystemPrompt {
     let mut text = BASE_SYSTEM_PROMPT.to_string();
@@ -75,6 +107,21 @@ fn system_prompt_with_home_and_plugin_skills(
     text.push_str(CWD_PROMPT_LABEL);
     text.push_str(&crate::paths::prompt_data(cwd));
     text.push('\n');
+    // The running model is a fact about this session that the model cannot read
+    // off its own weights: the user chose it, and Rho can change it mid-session.
+    text.push_str(&format!(
+        "You are running on {}. Rho can switch this mid-session and tells you when it does.\n",
+        running.describe(),
+    ));
+    // The advisor's model belongs here rather than on the `advisor` tool
+    // description, which must stay fixed once written: `/advisor` can change the
+    // reviewer without rebuilding the tool list.
+    if let Some(advisor) = advisor {
+        text.push_str(&format!(
+            "The `advisor` tool consults {}.\n",
+            advisor.describe(),
+        ));
+    }
     text.push_str(
         r#"
 Use tools only when needed. For questions answerable from context, reply directly.
@@ -234,15 +281,38 @@ fn neutralize_mcp_server_instruction_close_tags(text: &str) -> String {
     text.replace(NEEDLE, REPLACEMENT)
 }
 
+/// Model and display text for a mid-session conversation model switch.
+///
+/// Everything already written stays as it was: the system prompt names the model
+/// this session started on, and the tool list keeps whatever it said. A switch
+/// only appends this line. It names the new model alone, because the old one is
+/// still readable in the system prompt.
+pub(crate) fn model_switch_context(current: &ModelIdentity) -> (String, String) {
+    let display = format!("conversation model switched to {}", current.describe());
+    (format!("[{display}]\n"), display)
+}
+
+/// Model and display text when the advisor's own model changes.
+///
+/// Advisor mode staying on is not a tool list change, so nothing else would
+/// tell the executor that the reviewer behind `advisor` is a different model.
+pub(crate) fn advisor_model_switch_context(current: &ModelIdentity) -> (String, String) {
+    let display = format!("advisor model switched to {}", current.describe());
+    (format!("[{display}]\n"), display)
+}
+
 /// Model and display text when the `advisor` tool becomes available.
 ///
 /// Steering lives on the tool description so the system prompt stays free of
-/// tool-list-dependent text. This notice only announces availability + schema.
-pub fn advisor_enabled_context(spec: &ToolSpec) -> (String, String) {
+/// tool-list-dependent text. This notice announces availability, the reviewer
+/// model, and the schema.
+pub(crate) fn advisor_enabled_context(spec: &ToolSpec, model: &ModelIdentity) -> (String, String) {
     let model = format!(
         "[advisor mode on]\n\n\
-The `advisor` tool is now available. Do not skip it when the live tool list includes it.\n\n\
+The `advisor` tool is now available and consults {}. \
+Do not skip it when the live tool list includes it.\n\n\
 {}\n",
+        model.describe(),
         tool_schema_block(spec),
     );
     let display = "advisor mode on".into();
@@ -346,9 +416,106 @@ fn read_existing_files(paths: Vec<PathBuf>) -> Vec<(PathBuf, String)> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::LazyLock;
+
     use tempfile::TempDir;
 
     use super::*;
+
+    /// Stand-in model for prompt tests that are not about the model line.
+    pub(super) static TEST_MODEL: LazyLock<ModelIdentity> = LazyLock::new(|| ModelIdentity::Rho {
+        provider: "test-provider".into(),
+        model: "test-model".into(),
+    });
+
+    #[test]
+    fn names_the_running_model_and_the_advisor_model() {
+        let project = TempDir::new().unwrap();
+        let running = ModelIdentity::Rho {
+            provider: "openai".into(),
+            model: "gpt-5.6-sol".into(),
+        };
+        let advisor = ModelIdentity::Rho {
+            provider: "anthropic".into(),
+            model: "claude-fable-5".into(),
+        };
+
+        let without_advisor = system_prompt_with_home_and_models(
+            &[],
+            project.path(),
+            None,
+            PromptModels {
+                running: &running,
+                advisor: None,
+            },
+        )
+        .text;
+
+        // Assert the seam, not the wording: the running model is always named,
+        // and the advisor is named only when there is one.
+        assert!(without_advisor.contains("openai/gpt-5.6-sol"));
+        assert!(!without_advisor.contains("anthropic/claude-fable-5"));
+
+        let with_advisor = system_prompt_with_home_and_models(
+            &[],
+            project.path(),
+            None,
+            PromptModels {
+                running: &running,
+                advisor: Some(&advisor),
+            },
+        )
+        .text;
+
+        assert!(with_advisor.contains("openai/gpt-5.6-sol"));
+        assert!(with_advisor.contains("anthropic/claude-fable-5"));
+    }
+
+    // Covers: a switch appends one bracketed line naming only the new model.
+    // Anything longer, or any restatement of the model the session started on,
+    // duplicates what the system prompt already says.
+    // Owner: mid-session switch notices.
+    #[test]
+    fn switch_notices_are_one_bracketed_line_naming_only_the_new_model() {
+        let previous = ModelIdentity::Rho {
+            provider: "openai".into(),
+            model: "gpt-5.6-sol".into(),
+        };
+        let current = ModelIdentity::Rho {
+            provider: "anthropic".into(),
+            model: "claude-fable-5".into(),
+        };
+
+        for (context, display) in [
+            model_switch_context(&current),
+            advisor_model_switch_context(&current),
+        ] {
+            assert_eq!(context.lines().count(), 1, "{context:?}");
+            assert_eq!(context.trim(), format!("[{display}]"));
+            assert!(display.contains(&current.describe()), "{display}");
+            assert!(!context.contains(&previous.describe()), "{context}");
+        }
+    }
+
+    #[test]
+    fn the_advisor_enable_notice_names_the_reviewer_model() {
+        let spec = ToolSpec {
+            name: "advisor".into(),
+            description: "consult".into(),
+            input_schema: serde_json::json!({}),
+        };
+
+        let (context, _) = advisor_enabled_context(
+            &spec,
+            &ModelIdentity::Rho {
+                provider: "anthropic".into(),
+                model: "claude-fable-5".into(),
+            },
+        );
+
+        assert!(context.contains("[advisor mode on]"));
+        assert!(context.contains("consults anthropic/claude-fable-5"));
+    }
 
     #[test]
     fn includes_home_and_project_agents_files_in_order() {
