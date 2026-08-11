@@ -877,18 +877,29 @@ pub(super) fn padded_content_width(width: usize) -> usize {
     width.saturating_sub(2).max(1)
 }
 
-/// Indent a rendered line by one column on each side, keeping the leading style.
+/// Indent a rendered line by one column on each side.
+///
+/// Edge spaces keep the leading span's colors (so user-message backgrounds
+/// still fill the gutter) but drop underline. Sampling the content style with
+/// underline left bare URLs and other link lines drawing a one-cell underline
+/// past the real text.
 pub(super) fn pad_display_line(line: Line<'static>) -> Line<'static> {
     let edge_style = line
         .spans
         .first()
-        .map(|span| span.style)
+        .map(|span| chrome_edge_style(span.style))
         .unwrap_or_default();
     let mut spans = Vec::with_capacity(line.spans.len() + 2);
     spans.push(Span::styled(" ", edge_style));
     spans.extend(line.spans);
     spans.push(Span::styled(" ", edge_style));
     Line::from(spans)
+}
+
+/// Gutter / spacer chrome may borrow content colors but must not carry
+/// underline into empty cells next to links.
+pub(super) fn chrome_edge_style(style: Style) -> Style {
+    style.remove_modifier(Modifier::UNDERLINED)
 }
 
 #[cfg(test)]

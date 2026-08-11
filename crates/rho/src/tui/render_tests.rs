@@ -1,7 +1,8 @@
 use super::*;
 use crate::tui::{PickerAction, PickerItem, UiPicker};
 use pretty_assertions::assert_eq;
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
+use ratatui::text::Span;
 
 fn line_text(line: &Line<'_>) -> String {
     line.spans
@@ -377,4 +378,50 @@ fn picker_lists_more_items_on_a_taller_viewport() {
     assert_eq!(item_rows(40), 30);
     // A viewport with no room left still shows the selected item.
     assert_eq!(item_rows(4), 1);
+}
+
+// Covers: side gutters must not extend link underlines past the URL text.
+// Owner: pure TUI layout policy.
+#[test]
+fn pad_display_line_strips_underline_from_edge_spaces() {
+    let link = Theme::markdown_link();
+    let padded = pad_display_line(Line::from(Span::styled("https://example.com", link)));
+
+    assert_eq!(
+        padded
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<Vec<_>>(),
+        [" ", "https://example.com", " "]
+    );
+    assert_eq!(
+        padded.spans[0].style,
+        chrome_edge_style(link),
+        "leading gutter keeps colors without underline"
+    );
+    assert_eq!(padded.spans[1].style, link, "link body keeps underline");
+    assert_eq!(
+        padded.spans[2].style,
+        chrome_edge_style(link),
+        "trailing gutter keeps colors without underline"
+    );
+    assert!(!padded.spans[0]
+        .style
+        .add_modifier
+        .contains(Modifier::UNDERLINED));
+    assert!(!padded.spans[2]
+        .style
+        .add_modifier
+        .contains(Modifier::UNDERLINED));
+}
+
+// Covers: user-message side gutters still carry the message background band.
+// Owner: pure TUI layout policy.
+#[test]
+fn pad_display_line_keeps_user_message_background() {
+    let style = Theme::user_message();
+    let padded = pad_display_line(Line::from(Span::styled("hi", style)));
+    assert_eq!(padded.spans[0].style.bg, style.bg);
+    assert_eq!(padded.spans[2].style.bg, style.bg);
 }
