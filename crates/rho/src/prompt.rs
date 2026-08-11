@@ -65,8 +65,8 @@ fn system_prompt_with_home_and_plugin_skills(
     plugin_skills: PluginSkills,
 ) -> SystemPrompt {
     let mut text = BASE_SYSTEM_PROMPT.to_string();
-    // Absolute path so the model need not probe with `pwd` or cd before tools.
-    // Shell tools spawn with this as current_dir; each call starts here fresh.
+    // Absolute path so the model need not probe with `pwd`. Shell tools spawn with
+    // this as current_dir; each call starts here fresh.
     text.push_str("\n\nYour current working directory: ");
     text.push_str(&crate::paths::display(cwd));
     text.push('\n');
@@ -74,7 +74,7 @@ fn system_prompt_with_home_and_plugin_skills(
         .iter()
         .any(|tool| tool.name == "bash" || tool.name == "powershell")
     {
-        text.push_str("Shell tool commands start in this directory. Do not cd there first.\n");
+        text.push_str("Shell tool commands start in this directory.\n");
     }
     text.push_str(
         r#"
