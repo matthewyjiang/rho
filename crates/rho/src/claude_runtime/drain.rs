@@ -20,6 +20,9 @@ use super::{
 /// file, so a failure has to explain itself from memory.
 const MAX_STDERR_BYTES: usize = 8 * 1024;
 const READ_CHUNK_BYTES: usize = 8 * 1024;
+/// Child closed stdin early (flag rejection, quick exit). Non-fatal for the
+/// drain so exit status and stderr diagnosis still win.
+const STDIN_BROKEN_PIPE: &str = "claude code: stdin closed by child (broken pipe)";
 
 /// How the drain feeds the child's stdin.
 pub(crate) enum DrainInput {
@@ -149,10 +152,15 @@ pub(crate) async fn drain_child(
             result = &mut stdin_write, if !stdin_done => {
                 stdin_done = true;
                 if let Ok(Err(error)) = result {
-                    // Stdin write failures take precedence over later stream
-                    // noise: the child often exits uncleanly once its stdin pipe
-                    // is dropped mid-protocol.
-                    break Some(DrainEnd::StdinFailed(error));
+                    // Broken pipe means the child closed stdin, usually because
+                    // it already exited (flag rejection, early error). Keep
+                    // draining so exit status and stderr diagnosis win over a
+                    // bare pipe error. Other write failures still abort: the
+                    // child often exits uncleanly once its stdin is dropped
+                    // mid-protocol.
+                    if error != STDIN_BROKEN_PIPE {
+                        break Some(DrainEnd::StdinFailed(error));
+                    }
                 }
             }
             captured = &mut read_stderr, if !stderr_done => {
@@ -236,10 +244,7 @@ pub(crate) async fn drain_child(
 
 async fn write_text_stdin(mut stdin: ChildStdin, prompt: String) -> Result<(), String> {
     write_all(&mut stdin, prompt.as_bytes()).await?;
-    stdin
-        .shutdown()
-        .await
-        .map_err(|error| format!("claude code: failed to write prompt to stdin: {error}"))
+    shutdown_stdin(&mut stdin).await
 }
 
 async fn write_stream_json_stdin(
@@ -304,10 +309,7 @@ async fn write_stream_json_stdin(
         }
     }
 
-    stdin
-        .shutdown()
-        .await
-        .map_err(|error| format!("claude code: failed to write prompt to stdin: {error}"))
+    shutdown_stdin(&mut stdin).await
 }
 
 async fn write_parent_turn(stdin: &mut ChildStdin, text: &str) -> Result<(), String> {
@@ -325,14 +327,25 @@ async fn write_all(stdin: &mut ChildStdin, mut bytes: &[u8]) -> Result<(), Strin
                 return Err("claude code: failed to write prompt to stdin: wrote 0 bytes".into());
             }
             Ok(count) => bytes = &bytes[count..],
-            Err(error) => {
-                return Err(format!(
-                    "claude code: failed to write prompt to stdin: {error}"
-                ));
-            }
+            Err(error) => return Err(map_stdin_io_error(error)),
         }
     }
     Ok(())
+}
+
+async fn shutdown_stdin(stdin: &mut ChildStdin) -> Result<(), String> {
+    match stdin.shutdown().await {
+        Ok(()) => Ok(()),
+        Err(error) => Err(map_stdin_io_error(error)),
+    }
+}
+
+fn map_stdin_io_error(error: std::io::Error) -> String {
+    if error.kind() == std::io::ErrorKind::BrokenPipe {
+        STDIN_BROKEN_PIPE.into()
+    } else {
+        format!("claude code: failed to write prompt to stdin: {error}")
+    }
 }
 
 /// Waits for the next parent message when a receiver is still installed.

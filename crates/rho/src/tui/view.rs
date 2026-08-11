@@ -11,10 +11,11 @@ use ratatui::{
 };
 
 use super::{
-    activity, history_cache::HistoryLineSlice, App, CachedCodeBlock, CodeBlockCopyTarget,
-    ComposerMode, Entry, GoalStatus, HistoryScrollbar, LineFill, ReasoningChrome,
-    SessionHeaderCache, StreamKind, Theme, HISTORY_SCROLLBAR_REVEAL_DURATION,
-    RECOVERED_HISTORY_LINE_LIMIT,
+    activity,
+    history_cache::{HistoryLineSlice, HistoryRenderSettings},
+    App, CachedCodeBlock, CodeBlockCopyTarget, ComposerMode, Entry, GoalStatus, HistoryScrollbar,
+    LineFill, ReasoningChrome, SessionHeaderCache, StreamKind, Theme,
+    HISTORY_SCROLLBAR_REVEAL_DURATION, RECOVERED_HISTORY_LINE_LIMIT,
 };
 use super::{
     highlight_selection,
@@ -75,9 +76,12 @@ impl App {
             return;
         }
         let width = area.width as usize;
+        let height = area.height as usize;
+        self.note_terminal_geometry(width, height);
+        self.refresh_composer_attachment_layout_cache(width);
         let live_history = self.history_live_lines(width, now);
         let history_len = self.history_len_with_live(width, &live_history);
-        let composer_lines = self.composer_lines(width, area.height as usize);
+        let composer_lines = self.composer_lines(width, height);
         let command_lines = self.command_suggestion_lines(width);
         let layout = self.screen_layout_for_history_len(
             area,
@@ -274,6 +278,7 @@ impl App {
             Paragraph::new(composer_visible).style(Style::default()),
             layout.composer,
         );
+        self.render_composer_images(frame, layout.composer, width, layout.composer_start);
         if layout.bottom_divider.height > 0 {
             frame.render_widget(
                 Paragraph::new(vec![self.divider_line(width, /*shell_label*/ false)])
@@ -490,6 +495,44 @@ impl App {
         self.history_static_len(width).saturating_add(live.len())
     }
 
+    /// History layout inputs, including the current feed-image row budget.
+    pub(super) fn history_render_settings(&self, width: usize) -> HistoryRenderSettings {
+        self.info
+            .runtime
+            .history_render_settings(width, self.feed_image_row_budget(width))
+    }
+
+    /// Record terminal size for discrete feed-image budgets and layout caches.
+    pub(super) fn note_terminal_geometry(&mut self, width: usize, terminal_height: usize) {
+        let _ = width;
+        if terminal_height > 0 {
+            self.terminal_height = terminal_height;
+        }
+    }
+
+    /// Feed-image row budget: preferred terminal-height band, capped by the live
+    /// history content viewport so composer chrome cannot make placements
+    /// permanently unpaintable.
+    pub(super) fn feed_image_row_budget(&self, width: usize) -> u16 {
+        let content_height = self.history_content_height_for_feed_budget(width);
+        super::feed_image::ImageRowBudget::feed(self.terminal_height, content_height).get()
+    }
+
+    /// History content rows available after bottom chrome and the current
+    /// composer (including attachment strips). Independent of transcript length
+    /// so it cannot cycle through the history line cache.
+    fn history_content_height_for_feed_budget(&self, width: usize) -> usize {
+        let height = self.terminal_height;
+        if height == 0 {
+            return 0;
+        }
+        self.history_content_height(self.history_height_from_line_counts(
+            height,
+            self.composer_lines(width, height).len(),
+            self.command_suggestion_lines(width).len(),
+        ))
+    }
+
     pub(super) fn visible_history_lines(
         &mut self,
         width: usize,
@@ -524,12 +567,13 @@ impl App {
             let transcript_start = start.saturating_sub(header_len);
             let transcript_count = count - lines.len();
             let cwd = self.info.runtime.cwd.clone();
+            let settings = self.history_render_settings(width);
             self.sync_open_stream_tail();
             self.history
                 .with_lines_and_images_mut(|history_lines, entries, markdown_images| {
                     history_lines.extend_visible_lines(
                         entries,
-                        self.info.runtime.history_render_settings(width),
+                        settings,
                         HistoryLineSlice {
                             start: transcript_start,
                             count: transcript_count,
@@ -580,7 +624,7 @@ impl App {
     pub(super) fn cached_transcript_line_count(&mut self, width: usize) -> usize {
         self.sync_open_stream_tail();
         let cwd = self.info.runtime.cwd.clone();
-        let settings = self.info.runtime.history_render_settings(width);
+        let settings = self.history_render_settings(width);
         self.history
             .with_lines_and_images_mut(|history_lines, entries, markdown_images| {
                 history_lines.line_count(entries, settings, &|entry_index, sources| {
@@ -593,7 +637,7 @@ impl App {
         self.sync_open_stream_tail();
         let header_len = self.session_header_lines(width).len();
         let cwd = self.info.runtime.cwd.clone();
-        let settings = self.info.runtime.history_render_settings(width);
+        let settings = self.history_render_settings(width);
         self.history
             .with_lines_and_images_mut(|history_lines, entries, markdown_images| {
                 history_lines
@@ -629,12 +673,14 @@ impl App {
         if has_pending_tools && self.open_stream_tail_active() {
             lines.push(Line::raw(""));
         }
+        let max_image_height = self.feed_image_row_budget(width);
         for pending in &shells {
             // tool_entry_lines owns the trailing spacer under each card.
             lines.extend(tool_entry_lines(
                 pending,
                 width,
                 self.info.runtime.max_tool_output_lines,
+                max_image_height,
             ));
         }
         for pending in tools {
@@ -642,6 +688,7 @@ impl App {
                 pending,
                 width,
                 self.info.runtime.max_tool_output_lines,
+                max_image_height,
             ));
         }
         if let Some(preview) = &self.streams.live_stream_preview {
@@ -779,6 +826,7 @@ impl App {
         terminal: &mut Terminal<B>,
     ) -> Result<(), B::Error> {
         let size = terminal.size()?;
+        self.note_terminal_geometry(size.width as usize, size.height as usize);
         self.clamp_history_scroll(size.width as usize, size.height as usize, Instant::now());
         Ok(())
     }
@@ -817,6 +865,7 @@ impl App {
         let size = terminal.size()?;
         let width = size.width as usize;
         let height = size.height as usize;
+        self.note_terminal_geometry(width, height);
         let now = Instant::now();
         match (key.modifiers, key.code) {
             (_, KeyCode::PageUp) => {
@@ -898,11 +947,13 @@ impl App {
             return Ok(());
         }
 
-        let width = terminal.size()?.width as usize;
+        let size = terminal.size()?;
+        let width = size.width as usize;
+        self.note_terminal_geometry(width, size.height as usize);
         let (omitted, visible_entries) = recovered_history_tail(
             &entries,
             RECOVERED_HISTORY_LINE_LIMIT,
-            self.info.runtime.history_render_settings(width),
+            self.history_render_settings(width),
         );
         let mut transcript = Vec::new();
         if omitted > 0 {

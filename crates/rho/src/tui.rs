@@ -29,6 +29,7 @@ mod command_block;
 mod command_palette;
 mod compaction_display;
 mod composer;
+mod composer_attachments;
 mod composer_chrome;
 mod config_actions;
 mod config_editor;
@@ -208,9 +209,9 @@ use questionnaire::{
     QuestionAnswerRequest, QuestionnaireReply, QuestionnaireResponseChannel,
 };
 use render::{
-    char_prefix_display_width, display_width, input_cursor_position, input_label_lines,
-    input_lines, labeled_divider_line, picker_lines, session_header_lines, styled_line,
-    tool_entry_lines, truncate_one_line, LineFill,
+    char_prefix_display_width, display_width, input_cursor_position, input_lines,
+    labeled_divider_line, picker_lines, session_header_lines, styled_line, tool_entry_lines,
+    truncate_one_line, LineFill,
 };
 use scrollbar::HistoryScrollbar;
 use session_title::PendingSessionTitle;
@@ -333,12 +334,14 @@ impl RuntimeModelView {
     pub(crate) fn history_render_settings(
         &self,
         width: usize,
+        max_image_height: u16,
     ) -> history_cache::HistoryRenderSettings {
         history_cache::HistoryRenderSettings {
             width,
             max_tool_output_lines: self.max_tool_output_lines,
             zen_mode: self.zen_mode,
             theme_generation: theme::Theme::generation(),
+            max_image_height,
         }
     }
 
@@ -476,6 +479,10 @@ struct App {
     session_title_locked: bool,
     clipboard: Box<dyn ClipboardWriter + Send>,
     media_attach_tasks: Vec<media_attach::MediaAttachTask>,
+    /// Last known terminal height for discrete feed-image row budgets.
+    terminal_height: usize,
+    /// Shared composer attachment layout for the current frame/width.
+    composer_attachment_layout_cache: Option<composer_attachments::ComposerAttachmentLayoutCache>,
     pending_subagent_attaches: Vec<PendingSubagentAttach>,
     last_mouse_position: Option<(u16, u16)>,
     /// Screen-space drag selection for text outside the history area.

@@ -43,6 +43,8 @@ pub(crate) struct HistoryRenderSettings {
     pub zen_mode: bool,
     /// Active theme generation so palette switches rebuild styled lines.
     pub theme_generation: u64,
+    /// Max rows one feed image may reserve inside this layout.
+    pub max_image_height: u16,
 }
 
 impl HistoryRenderSettings {
@@ -608,11 +610,17 @@ fn prepare_cache_entry_render(
         entry,
         settings.width,
         settings.max_tool_output_lines,
+        settings.max_image_height,
         trailing_blank,
     );
     if !rendered.image_sources.is_empty() {
         let images = image_resolver(entry_index, &rendered.image_sources);
-        apply_markdown_images(&mut rendered, &images, settings.width);
+        apply_markdown_images(
+            &mut rendered,
+            &images,
+            settings.width,
+            settings.max_image_height,
+        );
     }
     let code_blocks = rendered
         .code_blocks

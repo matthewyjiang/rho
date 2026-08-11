@@ -438,13 +438,6 @@ pub(super) fn input_char_index_at_position(
     input_cursor_index_on_visual_line(input, &visual_lines, row, column)
 }
 
-pub(super) fn input_label_lines(labels: &[String], width: usize) -> Vec<Line<'static>> {
-    labels
-        .iter()
-        .map(|label| styled_line(label.clone(), width.max(1), Theme::dim(), LineFill::Natural))
-        .collect()
-}
-
 pub(super) fn input_lines(
     input: &str,
     width: usize,
@@ -535,8 +528,9 @@ pub(super) fn tool_entry_lines(
     tool: &super::ToolEntry,
     width: usize,
     max_tool_output_lines: usize,
+    max_image_height: u16,
 ) -> Vec<Line<'static>> {
-    super::tool_card_render::tool_entry_lines(tool, width, max_tool_output_lines)
+    super::tool_card_render::tool_entry_lines(tool, width, max_tool_output_lines, max_image_height)
 }
 
 fn render_non_assistant_entry(

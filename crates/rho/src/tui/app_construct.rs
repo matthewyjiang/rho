@@ -109,6 +109,8 @@ impl App {
             session_title_locked: false,
             clipboard: Box::new(SystemClipboard::default()),
             media_attach_tasks: Vec::new(),
+            terminal_height: 0,
+            composer_attachment_layout_cache: None,
             pending_subagent_attaches: Vec::new(),
             last_mouse_position: None,
             screen_selection: None,

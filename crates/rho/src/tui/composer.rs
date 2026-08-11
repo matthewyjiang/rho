@@ -572,11 +572,11 @@ impl App {
             row
         };
 
-        let attachment_rows = self.input_ui.attachments().len();
+        let attachment_rows = self.composer_attachment_row_count(composer.width as usize);
         let visible_row = row.saturating_sub(composer.y) as usize;
         let absolute_row = layout.composer_start.saturating_add(visible_row);
         if absolute_row < attachment_rows {
-            // Attachment labels are not part of the text buffer.
+            // Attachment labels / image previews are not part of the text buffer.
             return None;
         }
         let text_row = absolute_row.saturating_sub(attachment_rows);

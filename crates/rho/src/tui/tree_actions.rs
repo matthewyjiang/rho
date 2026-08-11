@@ -106,11 +106,13 @@ impl App {
             .ok_or_else(|| anyhow::anyhow!("active session storage is unavailable"))?;
         let histories = storage.histories_for_node(&target_id)?;
         let entries = transcript_entries_from_messages(&histories.display, &self.info.runtime.cwd);
-        let width = terminal.size()?.width as usize;
+        let size = terminal.size()?;
+        let width = size.width as usize;
+        self.note_terminal_geometry(width, size.height as usize);
         let (_, visible_entries) = recovered_history_tail(
             &entries,
             RECOVERED_HISTORY_LINE_LIMIT,
-            self.info.runtime.history_render_settings(width),
+            self.history_render_settings(width),
         );
         agent.select_tree_node(storage, &target_id).await?;
 

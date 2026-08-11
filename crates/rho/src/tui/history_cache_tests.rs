@@ -13,6 +13,7 @@ fn settings(width: usize) -> HistoryRenderSettings {
         max_tool_output_lines: 10,
         zen_mode: false,
         theme_generation: 0,
+        max_image_height: crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT,
     }
 }
 
@@ -26,6 +27,7 @@ fn settings_with(
         max_tool_output_lines,
         zen_mode,
         theme_generation: 0,
+        max_image_height: crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT,
     }
 }
 
@@ -48,7 +50,12 @@ fn caches_code_block_copy_target_and_raw_contents() {
 fn caches_unicode_wrapped_lines_and_code_copy_target_without_rendering_drift() {
     let mut cache = HistoryLineCache::default();
     let entries = vec![Entry::Assistant("你好你好你好\n```text\nλ🙂\n```".into())];
-    let expected_lines = entry_lines(&entries[0], 12, 10);
+    let expected_lines = entry_lines(
+        &entries[0],
+        12,
+        10,
+        crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT,
+    );
 
     let mut cached_lines = Vec::new();
     cache.extend_visible_lines(
@@ -106,7 +113,15 @@ fn incrementally_extends_assistant_markdown_without_rendering_drift() {
         &mut cached_lines,
         &no_images,
     );
-    assert_eq!(cached_lines, entry_lines(&entries[0], 32, 10));
+    assert_eq!(
+        cached_lines,
+        entry_lines(
+            &entries[0],
+            32,
+            10,
+            crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT
+        )
+    );
 
     let Entry::Assistant(text) = &mut entries[0] else {
         unreachable!();
@@ -124,7 +139,15 @@ fn incrementally_extends_assistant_markdown_without_rendering_drift() {
         &mut cached_lines,
         &no_images,
     );
-    assert_eq!(cached_lines, entry_lines(&entries[0], 32, 10));
+    assert_eq!(
+        cached_lines,
+        entry_lines(
+            &entries[0],
+            32,
+            10,
+            crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT
+        )
+    );
 
     let Entry::Assistant(text) = &mut entries[0] else {
         unreachable!();
@@ -142,7 +165,15 @@ fn incrementally_extends_assistant_markdown_without_rendering_drift() {
         &mut cached_lines,
         &no_images,
     );
-    assert_eq!(cached_lines, entry_lines(&entries[0], 32, 10));
+    assert_eq!(
+        cached_lines,
+        entry_lines(
+            &entries[0],
+            32,
+            10,
+            crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT
+        )
+    );
 
     let Entry::Assistant(text) = &mut entries[0] else {
         unreachable!();
@@ -161,7 +192,15 @@ fn incrementally_extends_assistant_markdown_without_rendering_drift() {
         &no_images,
     );
 
-    assert_eq!(cached_lines, entry_lines(&entries[0], 32, 10));
+    assert_eq!(
+        cached_lines,
+        entry_lines(
+            &entries[0],
+            32,
+            10,
+            crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT
+        )
+    );
     assert_eq!(
         cache.code_blocks(&entries, settings(32), &no_images).len(),
         1
@@ -187,7 +226,15 @@ fn streams_mermaid_as_source_then_caches_the_closed_diagram_by_width() {
         &mut cached_lines,
         &no_images,
     );
-    assert_eq!(cached_lines, entry_lines(&entries[0], 80, 10));
+    assert_eq!(
+        cached_lines,
+        entry_lines(
+            &entries[0],
+            80,
+            10,
+            crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT
+        )
+    );
 
     let Entry::Assistant(text) = &mut entries[0] else {
         unreachable!();
@@ -206,7 +253,15 @@ fn streams_mermaid_as_source_then_caches_the_closed_diagram_by_width() {
         &no_images,
     );
 
-    assert_eq!(cached_lines, entry_lines(&entries[0], 80, 10));
+    assert_eq!(
+        cached_lines,
+        entry_lines(
+            &entries[0],
+            80,
+            10,
+            crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT
+        )
+    );
     assert_eq!(
         cache.code_blocks(&entries, settings(80), &no_images)[0]
             .text
@@ -225,7 +280,15 @@ fn streams_mermaid_as_source_then_caches_the_closed_diagram_by_width() {
         &mut narrow_lines,
         &no_images,
     );
-    assert_eq!(narrow_lines, entry_lines(&entries[0], 36, 10));
+    assert_eq!(
+        narrow_lines,
+        entry_lines(
+            &entries[0],
+            36,
+            10,
+            crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT
+        )
+    );
     assert_ne!(cached_lines, narrow_lines);
 }
 
@@ -259,8 +322,24 @@ fn resizing_keeps_mermaid_code_block_source_stable() {
     );
 
     assert_ne!(wide, narrow);
-    assert_eq!(wide, entry_lines(&entries[0], 100, 10));
-    assert_eq!(narrow, entry_lines(&entries[0], 40, 10));
+    assert_eq!(
+        wide,
+        entry_lines(
+            &entries[0],
+            100,
+            10,
+            crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT
+        )
+    );
+    assert_eq!(
+        narrow,
+        entry_lines(
+            &entries[0],
+            40,
+            10,
+            crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT
+        )
+    );
     for width in [100, 40] {
         assert_eq!(
             cache.code_blocks(&entries, settings(width), &no_images)[0]
@@ -316,7 +395,14 @@ fn open_stream_tail_omits_trailing_blank_until_closed() {
     assert_eq!(open_lines.len(), open_count);
     assert_eq!(
         open_lines,
-        render_entry_with_options(&entries[0], 60, 10, TrailingBlank::Omit).lines
+        render_entry_with_options(
+            &entries[0],
+            60,
+            10,
+            crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT,
+            TrailingBlank::Omit
+        )
+        .lines
     );
 
     cache.set_open_stream_tail(false);
@@ -333,7 +419,15 @@ fn open_stream_tail_omits_trailing_blank_until_closed() {
         &mut closed_lines,
         &no_images,
     );
-    assert_eq!(closed_lines, entry_lines(&entries[0], 60, 10));
+    assert_eq!(
+        closed_lines,
+        entry_lines(
+            &entries[0],
+            60,
+            10,
+            crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT
+        )
+    );
 }
 
 // Covers: zen mode suppresses tool/reasoning lines while keeping entry indices stable.
@@ -363,8 +457,20 @@ fn zen_mode_hides_tool_and_reasoning_lines_and_restores_them() {
     assert!(full > 2);
 
     let zen_count = cache.line_count(&entries, settings_with(40, 10, true), &no_images);
-    let user_lines = entry_lines(&entries[0], 40, 10).len();
-    let assistant_lines = entry_lines(&entries[3], 40, 10).len();
+    let user_lines = entry_lines(
+        &entries[0],
+        40,
+        10,
+        crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT,
+    )
+    .len();
+    let assistant_lines = entry_lines(
+        &entries[3],
+        40,
+        10,
+        crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT,
+    )
+    .len();
     assert_eq!(zen_count, user_lines + assistant_lines);
 
     // Toggling zen off rebuilds the suppressed entries.

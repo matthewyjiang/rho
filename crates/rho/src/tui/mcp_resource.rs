@@ -76,7 +76,25 @@ async fn read_resource_attachment(
     max_output_bytes: usize,
 ) -> MediaAttachOutcome {
     match catalog.read_resource(&server, &uri).await {
-        Ok(contents) => resource_attachment(&uri, &contents, max_output_bytes),
+        Ok(contents) => {
+            let outcome = resource_attachment(&uri, &contents, max_output_bytes);
+            match outcome {
+                MediaAttachOutcome::Ready {
+                    media: ChatMedia::Image(image),
+                    decoded_preview: None,
+                } => {
+                    let data = image.data.clone();
+                    let decoded_preview = tokio::task::spawn_blocking(move || {
+                        super::feed_image::FeedImage::decode_composer_base64(&data).ok()
+                    })
+                    .await
+                    .ok()
+                    .flatten();
+                    MediaAttachOutcome::ready_image(image, decoded_preview)
+                }
+                other => other,
+            }
+        }
         Err(error) => resource_failure(error),
     }
 }
@@ -127,7 +145,7 @@ pub(super) fn resource_attachment(
                     };
                 }
                 Some(_) => {
-                    return MediaAttachOutcome::Ready(ChatMedia::Image(ImageContent {
+                    return MediaAttachOutcome::ready(ChatMedia::Image(ImageContent {
                         data: blob.clone(),
                         mime_type: mime_type.clone(),
                     }));
@@ -142,7 +160,7 @@ pub(super) fn resource_attachment(
         .collect::<Vec<_>>()
         .join("\n\n");
     let truncated_body = rho_tools::tool::truncate(body.clone(), max_output_bytes);
-    MediaAttachOutcome::Ready(ChatMedia::TextDocument(ChatTextDocument {
+    MediaAttachOutcome::ready(ChatMedia::TextDocument(ChatTextDocument {
         name: uri.to_string(),
         mime: resource_mime(contents),
         truncated: truncated_body.len() != body.len(),

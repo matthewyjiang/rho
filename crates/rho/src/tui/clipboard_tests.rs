@@ -212,7 +212,7 @@ async fn completion_targets_pending_id_and_pending_attachments_cannot_submit() {
     let second_id = MediaAttachId::new();
     let first_task = tokio::spawn(std::future::pending::<media_attach::MediaAttachOutcome>());
     let second_task = tokio::spawn(async {
-        media_attach::MediaAttachOutcome::Ready(ChatMedia::Image(ImageContent {
+        media_attach::MediaAttachOutcome::ready(ChatMedia::Image(ImageContent {
             data: "Y29tcGxldGVk".into(),
             mime_type: "image/webp".into(),
         }))
@@ -233,11 +233,13 @@ async fn completion_targets_pending_id_and_pending_attachments_cannot_submit() {
         PendingAttachmentSource::File,
         "first.txt".into(),
     );
-    app.input_ui
-        .push_ready_attachment(ChatMedia::Image(ImageContent {
+    app.input_ui.push_ready_attachment(
+        ChatMedia::Image(ImageContent {
             data: "cmVhZHk=".into(),
             mime_type: "image/png".into(),
-        }));
+        }),
+        None,
+    );
     app.input_ui.push_pending_attachment(
         second_id,
         PendingAttachmentSource::File,

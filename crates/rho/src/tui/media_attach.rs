@@ -29,13 +29,37 @@ impl MediaAttachTask {
 /// How one attach ended.
 pub(super) enum MediaAttachOutcome {
     /// Media to put in place of the pending entry.
-    Ready(ChatMedia),
+    Ready {
+        media: ChatMedia,
+        /// Composer preview decoded off the UI thread; converted with the picker
+        /// when the attach settles.
+        decoded_preview: Option<super::feed_image::DecodedFeedImage>,
+    },
     /// Nothing was attachable. The source's original text goes back into the
     /// composer so the user does not lose what they pasted.
     Unsupported { original_text: String },
     /// The attach failed. `kind` names the thing that failed, so the status
     /// reads as a sentence.
     Failed { kind: &'static str, message: String },
+}
+
+impl MediaAttachOutcome {
+    pub(super) fn ready(media: ChatMedia) -> Self {
+        Self::Ready {
+            media,
+            decoded_preview: None,
+        }
+    }
+
+    pub(super) fn ready_image(
+        image: rho_providers::model::ImageContent,
+        decoded_preview: Option<super::feed_image::DecodedFeedImage>,
+    ) -> Self {
+        Self::Ready {
+            media: ChatMedia::Image(image),
+            decoded_preview,
+        }
+    }
 }
 
 pub(super) struct CompletedMediaAttach {
@@ -74,9 +98,9 @@ impl App {
     pub(super) fn cancel_all_pending_attachments(&mut self) {
         let ids = self
             .input_ui
-            .attachments()
+            .attachment_slots()
             .iter()
-            .filter_map(|attachment| attachment.pending_id())
+            .filter_map(|slot| slot.attachment.pending_id())
             .collect::<Vec<_>>();
         for id in ids {
             self.input_ui.remove_pending_attachment(id);
@@ -108,14 +132,20 @@ impl App {
     pub(super) fn finish_media_attach(&mut self, completion: CompletedMediaAttach) {
         let CompletedMediaAttach { id, outcome } = completion;
         match outcome {
-            MediaAttachOutcome::Ready(ChatMedia::Image(image)) => {
-                self.finish_pending_image(id, image);
+            MediaAttachOutcome::Ready {
+                media: ChatMedia::Image(image),
+                decoded_preview,
+            } => {
+                self.finish_pending_image(id, image, decoded_preview);
             }
-            MediaAttachOutcome::Ready(media @ ChatMedia::TextDocument(_)) => {
+            MediaAttachOutcome::Ready {
+                media: media @ ChatMedia::TextDocument(_),
+                ..
+            } => {
                 let label = media.composer_label(1);
                 if self
                     .input_ui
-                    .replace_pending_attachment(id, media)
+                    .replace_pending_attachment(id, media, None)
                     .is_some()
                 {
                     self.notify_status(format!("attached {label}"));

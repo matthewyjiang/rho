@@ -8,6 +8,7 @@ use crate::clipboard::{
 pub(super) use crate::clipboard::{CopyOutcome, SystemClipboard};
 
 use super::{
+    feed_image::{DecodedFeedImage, FeedImage},
     media_attach::{MediaAttachOutcome, MediaAttachTask},
     App, ChatMedia, ChatTextDocument, ComposerMode, MediaAttachId, PendingAttachmentSource,
 };
@@ -74,22 +75,48 @@ impl App {
 
     fn attach_ready_image(&mut self, image: ImageContent) {
         let summary = image_summary(&image);
-        self.input_ui.push_ready_attachment(ChatMedia::Image(image));
-        self.notify_status(format!(
-            "attached image {} ({summary})",
-            self.input_ui.attachments().len()
-        ));
+        let id = MediaAttachId::new();
+        self.input_ui
+            .push_pending_attachment(id, PendingAttachmentSource::Image, summary.clone());
+        let wants_preview = self.image_picker.is_some();
+        let task = tokio::spawn(async move {
+            let decoded_preview = if wants_preview {
+                decode_composer_preview_async(image.data.clone()).await
+            } else {
+                None
+            };
+            MediaAttachOutcome::ready_image(image, decoded_preview)
+        });
+        self.media_attach_tasks.push(MediaAttachTask { id, task });
+        self.notify_status(format!("decoding image ({summary})"));
     }
 
-    pub(super) fn finish_pending_image(&mut self, id: MediaAttachId, image: ImageContent) {
+    pub(super) fn finish_pending_image(
+        &mut self,
+        id: MediaAttachId,
+        image: ImageContent,
+        decoded_preview: Option<DecodedFeedImage>,
+    ) {
         let summary = image_summary(&image);
-        if let Some(index) = self
-            .input_ui
-            .replace_pending_attachment(id, ChatMedia::Image(image))
+        let preview = decoded_preview.and_then(|decoded| {
+            self.image_picker
+                .as_ref()
+                .map(|picker| decoded.to_feed_image(picker))
+        });
+        if let Some(index) =
+            self.input_ui
+                .replace_pending_attachment(id, ChatMedia::Image(image), preview)
         {
             self.notify_status(format!("attached image {} ({summary})", index + 1));
         }
     }
+}
+
+async fn decode_composer_preview_async(data: String) -> Option<DecodedFeedImage> {
+    tokio::task::spawn_blocking(move || FeedImage::decode_composer_base64(&data).ok())
+        .await
+        .ok()
+        .flatten()
 }
 
 async fn classify_pasted_path(path: PathBuf, original_text: String) -> MediaAttachOutcome {
@@ -105,13 +132,16 @@ async fn classify_pasted_path(path: PathBuf, original_text: String) -> MediaAtta
     let image_outcome =
         tokio::task::spawn_blocking(move || classify_pasted_image(image_path)).await;
     match image_outcome {
-        Ok(PastedImageOutcome::Image(image)) => MediaAttachOutcome::Ready(ChatMedia::Image(image)),
+        Ok(PastedImageOutcome::Image(image)) => {
+            let decoded_preview = decode_composer_preview_async(image.data.clone()).await;
+            MediaAttachOutcome::ready_image(image, decoded_preview)
+        }
         Ok(PastedImageOutcome::Failed { kind, message }) => {
             MediaAttachOutcome::Failed { kind, message }
         }
         Ok(PastedImageOutcome::NotImage) => {
             match rho_tools::document::extract_document_from_path_async(path).await {
-                Ok(document) => MediaAttachOutcome::Ready(ChatMedia::TextDocument(
+                Ok(document) => MediaAttachOutcome::ready(ChatMedia::TextDocument(
                     ChatTextDocument::from(document),
                 )),
                 Err(rho_tools::document::DocumentExtractionError::UnsupportedFormat { .. }) => {

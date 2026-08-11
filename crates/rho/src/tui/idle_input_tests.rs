@@ -12,7 +12,8 @@ fn attached_document() -> ChatMedia {
 
 fn assert_goal_command_takes_media(command: &str) {
     let mut app = test_app();
-    app.input_ui.push_ready_attachment(attached_document());
+    app.input_ui
+        .push_ready_attachment(attached_document(), None);
     app.input_ui.with_text_mut(|text| text.push_str(command));
     let invocation = commands::parse_command(command).unwrap().unwrap();
 

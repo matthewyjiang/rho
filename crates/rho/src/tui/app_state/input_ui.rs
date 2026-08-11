@@ -3,6 +3,8 @@
 use std::time::{Duration, Instant};
 
 use crate::tui::{
+    composer_attachments::ComposerAttachmentSlot,
+    feed_image::FeedImage,
     inline_shell::InlineShellMode,
     paste_burst::{expand_paste_segments, PasteBurst},
     ChatMedia, ComposerAttachment, ComposerMode, FileMatchCache, InputDraft, InputSubmissionMode,
@@ -121,7 +123,9 @@ pub(in crate::tui) struct InputUi {
     last_pointer_click: Option<ComposerClick>,
     composer_view_start: usize,
     shell_mode: Option<InlineShellMode>,
-    attachments: Vec<ComposerAttachment>,
+    attachments: Vec<ComposerAttachmentSlot>,
+    /// Bumped on every attachment mutation so composer layout caches invalidate.
+    attachment_epoch: u64,
     history: Vec<String>,
     history_cursor: Option<usize>,
     history_draft: Option<InputDraft>,
@@ -150,6 +154,7 @@ impl InputUi {
         self.last_pointer_click = None;
         self.composer_view_start = 0;
         self.attachments.clear();
+        self.attachment_epoch = self.attachment_epoch.wrapping_add(1);
     }
 
     pub(in crate::tui) fn expanded_text(&self) -> String {
@@ -396,12 +401,35 @@ impl InputUi {
         self.shell_mode.take()
     }
 
-    pub(in crate::tui) fn attachments(&self) -> &[ComposerAttachment] {
+    pub(in crate::tui) fn attachment_slots(&self) -> &[ComposerAttachmentSlot] {
         &self.attachments
     }
 
-    pub(in crate::tui) fn push_ready_attachment(&mut self, media: ChatMedia) {
-        self.attachments.push(ComposerAttachment::Ready(media));
+    pub(in crate::tui) fn attachment_epoch(&self) -> u64 {
+        self.attachment_epoch
+    }
+
+    fn bump_attachments(&mut self) {
+        self.attachment_epoch = self.attachment_epoch.wrapping_add(1);
+    }
+
+    /// Domain attachment list without render previews (tests and equality checks).
+    pub(in crate::tui) fn attachments(&self) -> Vec<ComposerAttachment> {
+        self.attachments
+            .iter()
+            .map(|slot| slot.attachment.clone())
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub(in crate::tui) fn push_ready_attachment(
+        &mut self,
+        media: ChatMedia,
+        image_preview: Option<FeedImage>,
+    ) {
+        self.attachments
+            .push(ComposerAttachmentSlot::ready(media, image_preview));
+        self.bump_attachments();
     }
 
     pub(in crate::tui) fn push_pending_attachment(
@@ -411,23 +439,26 @@ impl InputUi {
         name: String,
     ) {
         self.attachments
-            .push(ComposerAttachment::Pending { id, source, name });
+            .push(ComposerAttachmentSlot::pending(id, source, name));
+        self.bump_attachments();
     }
 
     pub(in crate::tui) fn pop_attachment(&mut self) -> Option<ComposerAttachment> {
-        self.attachments.pop()
+        let slot = self.attachments.pop()?;
+        self.bump_attachments();
+        Some(slot.attachment)
     }
 
     pub(in crate::tui) fn has_pending_attachments(&self) -> bool {
         self.attachments
             .iter()
-            .any(|attachment| attachment.pending_id().is_some())
+            .any(|slot| slot.attachment.pending_id().is_some())
     }
 
     pub(in crate::tui) fn pending_attachment_count(&self) -> usize {
         self.attachments
             .iter()
-            .filter(|attachment| attachment.pending_id().is_some())
+            .filter(|slot| slot.attachment.pending_id().is_some())
             .count()
     }
 
@@ -435,8 +466,9 @@ impl InputUi {
         let index = self
             .attachments
             .iter()
-            .position(|attachment| attachment.pending_id() == Some(id))?;
+            .position(|slot| slot.attachment.pending_id() == Some(id))?;
         self.attachments.remove(index);
+        self.bump_attachments();
         Some(index)
     }
 
@@ -444,12 +476,14 @@ impl InputUi {
         &mut self,
         id: MediaAttachId,
         media: ChatMedia,
+        image_preview: Option<FeedImage>,
     ) -> Option<usize> {
         let index = self
             .attachments
             .iter()
-            .position(|attachment| attachment.pending_id() == Some(id))?;
-        self.attachments[index] = ComposerAttachment::Ready(media);
+            .position(|slot| slot.attachment.pending_id() == Some(id))?;
+        self.attachments[index] = ComposerAttachmentSlot::ready(media, image_preview);
+        self.bump_attachments();
         Some(index)
     }
 
@@ -459,9 +493,10 @@ impl InputUi {
         if self.has_pending_attachments() {
             return Err(AttachmentsPending);
         }
+        self.bump_attachments();
         Ok(std::mem::take(&mut self.attachments)
             .into_iter()
-            .map(|attachment| match attachment {
+            .map(|slot| match slot.attachment {
                 ComposerAttachment::Ready(media) => media,
                 ComposerAttachment::Pending { .. } => {
                     unreachable!("pending attachments checked before submission")
@@ -472,6 +507,7 @@ impl InputUi {
 
     pub(in crate::tui) fn clear_attachments(&mut self) {
         self.attachments.clear();
+        self.bump_attachments();
     }
 
     pub(in crate::tui) fn history(&self) -> &[String] {

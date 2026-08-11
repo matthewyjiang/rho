@@ -39,11 +39,17 @@ enum Attached {
 
 fn attached(outcome: MediaAttachOutcome) -> Attached {
     match outcome {
-        MediaAttachOutcome::Ready(super::ChatMedia::Image(image)) => Attached::Image {
+        MediaAttachOutcome::Ready {
+            media: super::ChatMedia::Image(image),
+            ..
+        } => Attached::Image {
             data: image.data,
             mime_type: image.mime_type,
         },
-        MediaAttachOutcome::Ready(super::ChatMedia::TextDocument(document)) => Attached::Document {
+        MediaAttachOutcome::Ready {
+            media: super::ChatMedia::TextDocument(document),
+            ..
+        } => Attached::Document {
             mime: document.mime,
             body: document.body,
             truncated: document.truncated,
@@ -167,7 +173,7 @@ fn oversized_image_resource_is_rejected() {
             assert_eq!(kind, "resource read");
             assert!(message.contains("attachment limit"), "{message}");
         }
-        MediaAttachOutcome::Ready(_) => panic!("expected failure, got Ready"),
+        MediaAttachOutcome::Ready { .. } => panic!("expected failure, got Ready"),
         MediaAttachOutcome::Unsupported { .. } => panic!("expected failure, got Unsupported"),
     }
 }

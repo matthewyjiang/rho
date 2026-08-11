@@ -41,6 +41,7 @@ impl App {
         let screen = Rect::new(0, 0, size.width, size.height);
         let width = size.width as usize;
         let height = size.height as usize;
+        self.note_terminal_geometry(width, height);
         let now = Instant::now();
         match kind {
             MouseEventKind::ScrollUp => {
@@ -419,7 +420,7 @@ impl App {
         let header_len = self.session_header_lines(width).len();
         if let Some(transcript_line) = line.checked_sub(header_len) {
             let cwd = self.info.runtime.cwd.clone();
-            let settings = self.info.runtime.history_render_settings(width);
+            let settings = self.history_render_settings(width);
             self.sync_open_stream_tail();
             let index = self.history.with_lines_and_images_mut(
                 |history_lines, entries, markdown_images| {
@@ -455,7 +456,13 @@ impl App {
         }
         for shell in &shells {
             pending_start = pending_start.saturating_add(
-                tool_entry_lines(shell, width, self.info.runtime.max_tool_output_lines).len(),
+                tool_entry_lines(
+                    shell,
+                    width,
+                    self.info.runtime.max_tool_output_lines,
+                    self.feed_image_row_budget(width),
+                )
+                .len(),
             );
         }
         enum PendingToolKey {
@@ -478,7 +485,13 @@ impl App {
             );
         for (key, pending) in entries {
             let pending_end = pending_start.saturating_add(
-                tool_entry_lines(pending, width, self.info.runtime.max_tool_output_lines).len(),
+                tool_entry_lines(
+                    pending,
+                    width,
+                    self.info.runtime.max_tool_output_lines,
+                    self.feed_image_row_budget(width),
+                )
+                .len(),
             );
             if (pending_start..pending_end).contains(&line)
                 && tool_output_toggleable(pending, self.info.runtime.max_tool_output_lines, width)

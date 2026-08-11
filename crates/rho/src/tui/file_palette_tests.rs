@@ -33,7 +33,7 @@ fn select(entry: FilePaletteEntry) -> SelectionEffect {
     app.insert_pasted_input_text("look at @doc");
     app.apply_file_palette_selection(&entry).unwrap();
 
-    match app.input_ui.attachments() {
+    match app.input_ui.attachments().as_slice() {
         [] => SelectionEffect::Reference(app.input_ui.text().to_string()),
         [ComposerAttachment::Pending {
             source: PendingAttachmentSource::McpResource,

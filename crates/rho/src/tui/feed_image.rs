@@ -13,10 +13,88 @@ use ratatui_image::{
 };
 use rho_sdk::tool::ToolAsset;
 
-pub(super) const IMAGE_HEIGHT: u16 = 12;
+/// Compact-terminal floor so reserved images stay paintable in short panes.
+pub(super) const COMPACT_IMAGE_HEIGHT: u16 = 12;
+/// Floor for reserved feed-image rows so wide images stay readable.
+pub(super) const MIN_IMAGE_HEIGHT: u16 = 16;
+/// Ceiling so one image cannot dominate the transcript.
+pub(super) const MAX_IMAGE_HEIGHT: u16 = 40;
+/// Mid band and default when terminal height is unknown (tests, recovery).
+pub(super) const DEFAULT_IMAGE_HEIGHT: u16 = 24;
+/// Tall-but-not-max band between default and ceiling.
+pub(super) const TALL_IMAGE_HEIGHT: u16 = 32;
+/// Max rows for an image preview above the composer text.
+pub(super) const COMPOSER_IMAGE_HEIGHT: u16 = 6;
+
 const MAX_THUMBNAIL_WIDTH: u32 = 1_024;
 const MAX_THUMBNAIL_HEIGHT: u32 = 768;
 const MAX_THUMBNAIL_ALLOCATION: u64 = 8 * 1024 * 1024;
+/// Pasted composer images are often full-resolution; decode under the same
+/// bound `read_file` uses before shrinking to the feed thumbnail box.
+const MAX_COMPOSER_DECODE_DIMENSION: u32 = 4_096;
+const MAX_COMPOSER_DECODE_ALLOCATION: u64 = 80 * 1024 * 1024;
+
+/// Max rows one feed image may reserve, from terminal height bands.
+///
+/// Discrete tiers keep the preferred budget stable across small layout shifts.
+/// Call [`feed_image_height_budget`] to also cap by the live history content
+/// viewport so a reservation never exceeds what can fully paint.
+pub(super) fn max_feed_image_height(terminal_height: usize) -> u16 {
+    match terminal_height {
+        0..=24 => COMPACT_IMAGE_HEIGHT,
+        25..=36 => MIN_IMAGE_HEIGHT,
+        37..=52 => DEFAULT_IMAGE_HEIGHT,
+        53..=68 => TALL_IMAGE_HEIGHT,
+        _ => MAX_IMAGE_HEIGHT,
+    }
+}
+
+/// Preferred terminal-height band, capped by the live history content viewport.
+///
+/// When `history_content_height` is zero (unknown geometry), the preferred band
+/// is kept so tests and recovery budgeting stay deterministic. A nonzero content
+/// height never allows a reservation taller than the visible content rows, so
+/// [`visible_image_placements`] can still return a fully paintable block after
+/// composer chrome shrinks the pane.
+pub(super) fn feed_image_height_budget(
+    terminal_height: usize,
+    history_content_height: usize,
+) -> u16 {
+    let preferred = if terminal_height == 0 {
+        DEFAULT_IMAGE_HEIGHT
+    } else {
+        max_feed_image_height(terminal_height)
+    };
+    if history_content_height == 0 {
+        preferred
+    } else {
+        let cap = u16::try_from(history_content_height)
+            .unwrap_or(u16::MAX)
+            .max(1);
+        preferred.min(cap)
+    }
+}
+
+/// Row budget for fitting a feed or composer image into the terminal grid.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct ImageRowBudget(u16);
+
+impl ImageRowBudget {
+    pub(super) fn get(self) -> u16 {
+        self.0.max(1)
+    }
+
+    pub(super) fn feed(terminal_height: usize, history_content_height: usize) -> Self {
+        Self(feed_image_height_budget(
+            terminal_height,
+            history_content_height,
+        ))
+    }
+
+    pub(super) fn composer() -> Self {
+        Self(COMPOSER_IMAGE_HEIGHT)
+    }
+}
 
 #[derive(Clone)]
 pub(super) struct FeedImage {
@@ -41,14 +119,35 @@ impl FeedImage {
         Self::decode(asset.bytes()).map(|image| image.to_feed_image(picker))
     }
 
+    /// Decode a feed/tool asset that is already within the thumbnail box.
     pub(super) fn decode(bytes: &[u8]) -> image::ImageResult<DecodedFeedImage> {
-        let mut reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
-        let mut limits = Limits::default();
-        limits.max_image_width = Some(MAX_THUMBNAIL_WIDTH);
-        limits.max_image_height = Some(MAX_THUMBNAIL_HEIGHT);
-        limits.max_alloc = Some(MAX_THUMBNAIL_ALLOCATION);
-        reader.limits(limits);
-        let image = reader.decode()?;
+        decode_bounded_image(
+            bytes,
+            MAX_THUMBNAIL_WIDTH,
+            MAX_THUMBNAIL_HEIGHT,
+            MAX_THUMBNAIL_ALLOCATION,
+        )
+    }
+
+    /// Decode a full-resolution composer paste under the larger bound, then
+    /// shrink to the feed thumbnail box. Safe to run on a worker thread.
+    pub(super) fn decode_composer_base64(
+        data: &str,
+    ) -> Result<DecodedFeedImage, ComposerImageLoadError> {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let bytes = STANDARD
+            .decode(data.trim())
+            .map_err(|_| ComposerImageLoadError::InvalidBase64)?;
+        let decoded = decode_bounded_image(
+            &bytes,
+            MAX_COMPOSER_DECODE_DIMENSION,
+            MAX_COMPOSER_DECODE_DIMENSION,
+            MAX_COMPOSER_DECODE_ALLOCATION,
+        )
+        .map_err(|_| ComposerImageLoadError::Decode)?;
+        let image = decoded
+            .image
+            .thumbnail(MAX_THUMBNAIL_WIDTH, MAX_THUMBNAIL_HEIGHT);
         let estimated_bytes = image.as_bytes().len();
         Ok(DecodedFeedImage {
             image,
@@ -56,15 +155,16 @@ impl FeedImage {
         })
     }
 
-    pub(super) fn height_for_width(&self, width: usize) -> usize {
-        let width = u16::try_from(width).unwrap_or(u16::MAX);
-        usize::from(
-            self.state
-                .borrow()
-                .size_for(Resize::Fit(None), Size::new(width, IMAGE_HEIGHT))
-                .height
-                .max(1),
-        )
+    pub(super) fn height_for_width(&self, width: usize, max_height: u16) -> usize {
+        usize::from(self.size_for(width, max_height).height.max(1))
+    }
+
+    pub(super) fn size_for(&self, width: usize, max_height: u16) -> Size {
+        let width = u16::try_from(width).unwrap_or(u16::MAX).max(1);
+        let max_height = max_height.max(1);
+        self.state
+            .borrow()
+            .size_for(Resize::Fit(None), Size::new(width, max_height))
     }
 
     pub(super) fn render(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -86,6 +186,32 @@ impl DecodedFeedImage {
             state: Rc::new(RefCell::new(picker.new_resize_protocol(self.image.clone()))),
         }
     }
+}
+
+fn decode_bounded_image(
+    bytes: &[u8],
+    max_width: u32,
+    max_height: u32,
+    max_alloc: u64,
+) -> image::ImageResult<DecodedFeedImage> {
+    let mut reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(max_width);
+    limits.max_image_height = Some(max_height);
+    limits.max_alloc = Some(max_alloc);
+    reader.limits(limits);
+    let image = reader.decode()?;
+    let estimated_bytes = image.as_bytes().len();
+    Ok(DecodedFeedImage {
+        image,
+        estimated_bytes,
+    })
+}
+
+#[derive(Debug)]
+pub(super) enum ComposerImageLoadError {
+    InvalidBase64,
+    Decode,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -149,9 +275,10 @@ pub(super) fn reserve_image_rows(
     lines: &mut Vec<Line<'static>>,
     image: &FeedImage,
     width: usize,
+    max_height: u16,
 ) -> RenderedImagePlacement {
     let start = lines.len();
-    let height = image.height_for_width(width);
+    let height = image.height_for_width(width, max_height);
     lines.extend((0..height).map(|_| Line::raw("")));
     RenderedImagePlacement {
         image: image.clone(),
@@ -163,9 +290,10 @@ pub(super) fn reserve_optional_image_rows(
     lines: &mut Vec<Line<'static>>,
     image: Option<&FeedImage>,
     width: usize,
+    max_height: u16,
 ) {
     if let Some(image) = image {
-        reserve_image_rows(lines, image, width);
+        reserve_image_rows(lines, image, width, max_height);
     }
 }
 
@@ -176,6 +304,7 @@ pub(super) fn reserve_markdown_image_rows(
     placeholder_rows: &[usize],
     images: &[(usize, FeedImage)],
     width: usize,
+    max_height: u16,
 ) -> Option<RenderedImagePlacements> {
     let mut offset = 0usize;
     let mut placements = Vec::new();
@@ -185,7 +314,7 @@ pub(super) fn reserve_markdown_image_rows(
         };
         let start = placeholder_row + offset;
         lines[start] = Line::raw("");
-        let extra_rows = image.height_for_width(width).saturating_sub(1);
+        let extra_rows = image.height_for_width(width, max_height).saturating_sub(1);
         lines.splice(start + 1..start + 1, (0..extra_rows).map(|_| Line::raw("")));
         placements.push(RenderedImagePlacement {
             image: image.clone(),
@@ -200,11 +329,12 @@ pub(super) fn reserve_entry_image_rows(
     lines: &mut Vec<Line<'static>>,
     entry: &super::Entry,
     width: usize,
+    max_height: u16,
 ) -> Option<RenderedImagePlacements> {
     match entry {
         super::Entry::Tool(tool) => tool.image.as_ref().map(|image| {
             // Content starts at row 0; trailing spacer is after the image rows.
-            RenderedImagePlacements::single(reserve_image_rows(lines, image, width))
+            RenderedImagePlacements::single(reserve_image_rows(lines, image, width, max_height))
         }),
         _ => None,
     }
@@ -248,7 +378,7 @@ impl super::App {
         let transcript_start = start.saturating_sub(header_len);
         let transcript_count = count.saturating_sub(visible_header_lines);
         let cwd = self.info.runtime.cwd.clone();
-        let settings = self.info.runtime.history_render_settings(width);
+        let settings = self.history_render_settings(width);
         let mut placements =
             self.history
                 .with_lines_and_images_mut(|history_lines, entries, markdown_images| {
