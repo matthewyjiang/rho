@@ -14,9 +14,7 @@
 //! Named [`PromptModel`] rather than `ModelIdentity` so it is not confused with
 //! the SDK's replay identity (`provider` / `api` / `model`).
 
-use rho_providers::model::display_name::{
-    ensure_model_catalog_names, model_display_name, model_reference_with_display_name,
-};
+use rho_providers::model::display_name::{model_display_name, model_reference_with_display_name};
 use rho_sdk::model::ModelIdentity;
 
 use crate::{
@@ -120,55 +118,15 @@ impl PromptModel {
         }
     }
 
-    /// Provider/model pair when this label is a Rho model, for catalog prefetch.
-    pub(crate) fn rho_catalog_key(&self) -> Option<(String, String)> {
-        match self {
-            Self::Rho { provider, model } => Some((provider.clone(), model.clone())),
-            Self::ClaudeCli { .. } => None,
-        }
-    }
-
-    /// Catalog keys [`Self::describe`] may look up for a name.
-    ///
-    /// Claude Code aliases are included as Anthropic ids: a miss is free, and a
-    /// concrete id (or a resolved run id) can pick up a catalog name.
-    pub(crate) fn catalog_name_keys(&self) -> Vec<(String, String)> {
-        match self {
-            Self::Rho { provider, model } => vec![(provider.clone(), model.clone())],
-            Self::ClaudeCli {
-                requested,
-                resolved,
-            } => [requested.as_ref(), resolved.as_ref()]
-                .into_iter()
-                .flatten()
-                .map(|model| (CLAUDE_CATALOG_PROVIDER.to_string(), model.clone()))
-                .collect(),
-        }
-    }
-
-    /// Wait for catalog names this label may print, then return.
-    ///
-    /// Use before [`Self::describe`] when the resulting text will not be
-    /// rewritten (system prompt, switch notices).
-    pub(crate) async fn ensure_catalog_names(models: impl IntoIterator<Item = &Self>) {
-        let keys = models
-            .into_iter()
-            .flat_map(Self::catalog_name_keys)
-            .collect::<Vec<_>>();
-        if keys.is_empty() {
-            return;
-        }
-        ensure_model_catalog_names(keys).await;
-    }
-
     /// How the identity reads in prompt or status text.
     ///
     /// Rho models read as `provider/model (Catalog Name)`. Claude Code models
     /// read as `claude-code/<--model value>`, plus what a run resolved when that
     /// is carried on the value.
     ///
-    /// Always one line; see [`one_line`]. Prefer
-    /// [`Self::ensure_catalog_names`] first when this text will not be rewritten.
+    /// Always one line; see [`one_line`]. Catalog names come from the models.dev
+    /// snapshot interactive startup hydrates before the system prompt is built;
+    /// mid-session switch notices read the same cache.
     pub(crate) fn describe(&self) -> String {
         one_line(match self {
             Self::Rho { provider, model } => model_reference_with_display_name(provider, model),

@@ -35,18 +35,16 @@ impl App {
         )?)
     }
 
-    pub(super) async fn activate_provider(
+    pub(super) fn activate_provider(
         &mut self,
         activation: ProviderActivation,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<ProviderActivationOutcome> {
-        agent
-            .replace_provider(
-                activation.replacement,
-                activation.reasoning.effective,
-                &activation.auth,
-            )
-            .await?;
+        agent.replace_provider(
+            activation.replacement,
+            activation.reasoning.effective,
+            &activation.auth,
+        )?;
         self.info.runtime.provider = activation.provider;
         self.info.runtime.model = activation.model;
         self.info
@@ -61,7 +59,7 @@ impl App {
         })
     }
 
-    pub(super) async fn switch_active_auth_mode(
+    pub(super) fn switch_active_auth_mode(
         &mut self,
         auth: &str,
         agent: &mut InteractiveRuntime,
@@ -119,7 +117,7 @@ impl App {
             auth: mode.id.into(),
             replacement: new_provider,
         };
-        let outcome = self.activate_provider(activation, agent).await?;
+        let outcome = self.activate_provider(activation, agent)?;
         self.refresh_available_auths();
         match outcome {
             ProviderActivationOutcome::Saved => {

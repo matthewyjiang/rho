@@ -273,7 +273,7 @@ impl App {
         Ok(true)
     }
 
-    pub(super) async fn handle_reasoning_cycle_key(
+    pub(super) fn handle_reasoning_cycle_key(
         &mut self,
         key: KeyEvent,
         agent: &mut InteractiveRuntime,
@@ -284,7 +284,7 @@ impl App {
             return Ok(false);
         }
 
-        self.cycle_reasoning(agent).await?;
+        self.cycle_reasoning(agent)?;
         self.clear_transient_key_state();
         Ok(true)
     }

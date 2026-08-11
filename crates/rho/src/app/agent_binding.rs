@@ -549,7 +549,8 @@ fn apply_rho_model_policy(
 /// Uses the same policy application as bind so prefetch names the target launch
 /// will actually settle on. Returns `None` when the policy cannot bind (bad
 /// alias, auth pin, …): nothing is invented for a launch that will not happen.
-pub(crate) fn prompt_model_for_definition(
+#[cfg(test)]
+fn prompt_model_for_definition(
     definition: &AgentDefinition,
     host: &Config,
 ) -> Option<crate::model_identity::PromptModel> {
@@ -566,34 +567,6 @@ pub(crate) fn prompt_model_for_definition(
             Some(PromptModel::from_config(&config))
         }
     }
-}
-
-/// Rho catalog keys whose display names this process may need to print.
-///
-/// Names come from a cache that only a model *selection* fills, so a model that
-/// is only ever named on a delegated run or in a child system prompt would never
-/// get one. This lists bindable targets - the conversation model, every agent
-/// whose policy resolves, and every internal agent - so one prefetch can cover
-/// them. Broken agent policies are skipped rather than inventing a key.
-///
-/// Claude Code models are absent: Rho has no catalog key for a `--model` alias
-/// until a run reports a concrete id.
-pub(crate) fn describable_models(
-    config: &Config,
-    catalog: &crate::agent::AgentCatalog,
-) -> Vec<(String, String)> {
-    let agents = catalog
-        .iter()
-        .filter_map(|entry| prompt_model_for_definition(&entry.definition, config));
-    let internal_agents = config
-        .internal_agents
-        .values()
-        .map(crate::model_identity::PromptModel::from_internal_agent);
-    std::iter::once(crate::model_identity::PromptModel::from_config(config))
-        .chain(agents)
-        .chain(internal_agents)
-        .filter_map(|identity| identity.rho_catalog_key())
-        .collect()
 }
 
 /// Applies optional provider/auth pins from an agent definition onto a host clone.

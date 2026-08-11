@@ -531,7 +531,7 @@ impl App {
         self.refresh_model_list_after_login(&target, terminal)
             .await?;
         if self.using_unavailable_provider {
-            if self.activate_provider_after_login(&target, agent).await? {
+            if self.activate_provider_after_login(&target, agent)? {
                 self.set_status(format!(
                     "stored credentials for {} and selected {}",
                     target.provider,
@@ -542,10 +542,7 @@ impl App {
                 ));
             }
         } else if target.provider == self.info.runtime.provider {
-            if self
-                .reload_active_provider_after_login(&target, agent)
-                .await?
-            {
+            if self.reload_active_provider_after_login(&target, agent)? {
                 self.set_status(format!(
                     "stored credentials for {} and refreshed the active provider. Switch models with /model when you want to use another provider.",
                     target.provider
@@ -632,7 +629,7 @@ impl App {
         }
     }
 
-    async fn reload_active_provider_after_login(
+    fn reload_active_provider_after_login(
         &mut self,
         target: &LoginTarget,
         agent: &mut InteractiveRuntime,
@@ -666,7 +663,7 @@ impl App {
             auth: target.auth.clone(),
             replacement: new_provider,
         };
-        match self.activate_provider(activation, agent).await? {
+        match self.activate_provider(activation, agent)? {
             ProviderActivationOutcome::Saved => self.set_status("login saved"),
             ProviderActivationOutcome::ConfigSaveFailed(err) => {
                 self.insert_entry(&Entry::Error(format!(
@@ -678,7 +675,7 @@ impl App {
         Ok(true)
     }
 
-    async fn activate_provider_after_login(
+    fn activate_provider_after_login(
         &mut self,
         target: &LoginTarget,
         agent: &mut InteractiveRuntime,
@@ -717,7 +714,7 @@ impl App {
             auth: target.auth.clone(),
             replacement: new_provider,
         };
-        match self.activate_provider(activation, agent).await? {
+        match self.activate_provider(activation, agent)? {
             ProviderActivationOutcome::Saved => {
                 self.set_status(format!(
                     "model: {}",
@@ -780,10 +777,7 @@ impl App {
                     format!("no stored credentials for {} were present", target.provider)
                 };
                 self.insert_entry(&Entry::Notice(message));
-                if self
-                    .invalidate_active_provider_if_needed(&target, agent)
-                    .await
-                {
+                if self.invalidate_active_provider_if_needed(&target, agent) {
                     self.insert_entry(&Entry::Notice(
                             "the active provider no longer has credentials. Run /login or switch with /model."
                                 .into(),
@@ -801,7 +795,7 @@ impl App {
         }
     }
 
-    async fn invalidate_active_provider_if_needed(
+    fn invalidate_active_provider_if_needed(
         &mut self,
         target: &LoginTarget,
         agent: &mut InteractiveRuntime,
@@ -821,14 +815,11 @@ impl App {
         // Credentials are gone either way; only claim the stub is active after
         // replace_provider succeeds (it rolls back on post-replace failures).
         self.info.services.auth_unavailable = Some(error.to_string());
-        match agent
-            .replace_provider(
-                std::sync::Arc::new(UnavailableProvider::new(error)),
-                self.info.runtime.reasoning,
-                &self.info.runtime.auth,
-            )
-            .await
-        {
+        match agent.replace_provider(
+            std::sync::Arc::new(UnavailableProvider::new(error)),
+            self.info.runtime.reasoning,
+            &self.info.runtime.auth,
+        ) {
             Ok(_) => {
                 self.using_unavailable_provider = true;
                 self.set_status("no providers configured; run /login");

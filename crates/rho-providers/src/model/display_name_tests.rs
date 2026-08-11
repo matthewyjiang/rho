@@ -150,56 +150,30 @@ fn prefers_the_catalog_name_then_the_provider_name_then_nothing() {
     }
 }
 
-// Covers: ensure must not hit the network when a name is already known, or when
-// the catalog has already described the model without one. Call sites that wait
-// on ensure before rewriting-never text rely on that short-circuit.
+// Covers: ensure must not hit the network when a full catalog snapshot is already
+// current on disk. Interactive startup awaits ensure before permanent prompt text.
 // Owner: pure unit
 #[tokio::test]
-async fn ensure_is_a_no_op_when_a_name_is_settled() {
-    struct Case {
-        name: &'static str,
-        catalog: Option<ModelMetadata>,
-        target: (&'static str, &'static str),
-    }
+async fn ensure_is_a_no_op_when_the_catalog_snapshot_is_current() {
+    use models_dev::mark_catalog_snapshot_current_for_tests;
 
-    let cases = [
-        Case {
-            name: "already has a catalog name",
-            catalog: Some(named_metadata("Claude Fable 5")),
-            target: ("anthropic", "claude-fable-5"),
-        },
-        Case {
-            name: "complete row with no name is a settled miss",
-            catalog: Some(ModelMetadata {
-                display_name: None,
-                reasoning_metadata_complete: true,
-                reasoning_capabilities_known: true,
-                ..ModelMetadata::default()
-            }),
-            target: ("anthropic", "claude-fable-5"),
-        },
-    ];
-
-    for case in cases {
-        let catalog = tempfile::tempdir().unwrap();
-        let provider = tempfile::tempdir().unwrap();
-        let written = with_models_dev_cache_dir_for_tests(catalog.path().to_path_buf(), || {
-            with_provider_models_cache_dir_for_tests(provider.path().to_path_buf(), || {
-                clear_model_display_name_cache_for_tests();
-                if let Some(metadata) = &case.catalog {
-                    write_cached_model_metadata_for_tests(case.target.0, case.target.1, metadata);
-                }
-                futures_util::future::FutureExt::now_or_never(ensure_model_catalog_names([(
-                    case.target.0.to_string(),
-                    case.target.1.to_string(),
-                )]))
-            })
-        });
-        assert_eq!(
-            written,
-            Some(0),
-            "{}: ensure must finish without awaiting the network",
-            case.name
-        );
-    }
+    let catalog = tempfile::tempdir().unwrap();
+    let provider = tempfile::tempdir().unwrap();
+    let written = with_models_dev_cache_dir_for_tests(catalog.path().to_path_buf(), || {
+        with_provider_models_cache_dir_for_tests(provider.path().to_path_buf(), || {
+            clear_model_display_name_cache_for_tests();
+            write_cached_model_metadata_for_tests(
+                "anthropic",
+                "claude-fable-5",
+                &named_metadata("Claude Fable 5"),
+            );
+            mark_catalog_snapshot_current_for_tests();
+            futures_util::future::FutureExt::now_or_never(ensure_model_catalog_names())
+        })
+    });
+    assert_eq!(
+        written,
+        Some(0),
+        "ensure must finish without awaiting the network when the snapshot is current"
+    );
 }

@@ -77,19 +77,16 @@ impl InteractiveRuntime {
             let previous_identity = previous_model
                 .as_ref()
                 .map(crate::model_identity::PromptModel::from_internal_agent);
-            let next_identity = model
+            let notice = model
                 .as_ref()
                 .map(crate::model_identity::PromptModel::from_internal_agent)
-                .filter(|identity| previous_identity.as_ref() != Some(identity));
-            if let Some(identity) = next_identity.as_ref() {
-                crate::model_identity::PromptModel::ensure_catalog_names([identity]).await;
-            }
-            let notice = next_identity.map(|identity| {
-                crate::prompt::model_switch_context(
-                    crate::prompt::ModelSwitchKind::Advisor,
-                    &identity,
-                )
-            });
+                .filter(|identity| previous_identity.as_ref() != Some(identity))
+                .map(|identity| {
+                    crate::prompt::model_switch_context(
+                        crate::prompt::ModelSwitchKind::Advisor,
+                        &identity,
+                    )
+                });
             store.set_model(model);
             let Some((context, display)) = notice else {
                 return Ok(None);
@@ -116,15 +113,7 @@ impl InteractiveRuntime {
             Ok(()) => {
                 store.set_model(model);
                 // After `set_model`, so the enable notice names the model the
-                // tool will actually consult. Warm the catalog first: the
-                // notice is never rewritten.
-                if registered {
-                    if let Some(reviewer) = store.model() {
-                        let identity =
-                            crate::model_identity::PromptModel::from_internal_agent(&reviewer);
-                        crate::model_identity::PromptModel::ensure_catalog_names([&identity]).await;
-                    }
-                }
+                // tool will actually consult.
                 match self.append_advisor_switch_notice(registered) {
                     Ok(display) => Ok(Some(display)),
                     Err(error) => {

@@ -158,7 +158,6 @@ async fn replace_provider_rebuilds_compactor_with_current_context_window() {
             rho_sdk::ReasoningLevel::Low,
             "test-auth",
         )
-        .await
         .unwrap();
 
     assert_eq!(

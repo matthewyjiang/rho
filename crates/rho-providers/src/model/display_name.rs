@@ -107,30 +107,16 @@ pub fn model_reference_with_display_name(provider: &str, model: &str) -> String 
     }
 }
 
-/// Downloads catalog rows when a name may still arrive.
+/// Waits for one full models.dev catalog hydrate when names can still arrive.
 ///
 /// Call this before text that will call [`model_display_name`] or
 /// [`model_reference_with_display_name`] and will not be rewritten (system
-/// prompt lines, switch notices). A warm cache is free. When metadata is still
-/// missing or stale, this waits on one models.dev download shared across the
-/// targets. Models the catalog has already described without a name are not
-/// refetched.
+/// prompt lines). A warm snapshot is free. Mid-session switch notices rely on
+/// the hydrate that interactive startup already awaited; they do not call this.
 ///
-/// Returns how many rows [`models_dev::prefetch_model_metadata`] wrote.
-pub async fn ensure_model_catalog_names(
-    targets: impl IntoIterator<Item = (String, String)>,
-) -> usize {
-    let pending = targets
-        .into_iter()
-        .filter(|(provider, model)| {
-            model_display_name(provider, model).is_none()
-                && models_dev::model_metadata_needs_refresh(provider, model)
-        })
-        .collect::<Vec<_>>();
-    if pending.is_empty() {
-        return 0;
-    }
-    models_dev::prefetch_model_metadata(pending).await
+/// Returns how many rows the hydrate wrote.
+pub async fn ensure_model_catalog_names() -> usize {
+    models_dev::ensure_models_dev_catalog().await
 }
 
 #[cfg(test)]

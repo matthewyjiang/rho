@@ -218,12 +218,10 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
     let provider_refresh = cli_config::refresh_model_cache(&cli, &config, &store).await?;
     let config_changed = cli_config::apply_overrides(&mut config, &cli)?;
     cli_config::prepare_model_metadata(&config, &store, &provider_refresh).await;
-    // Catalog names for models this session only *names* (subagents, internal
-    // agents) fill in the background. The system prompt awaits names for the
-    // models it prints itself; see `PromptModel::ensure_catalog_names`.
-    tokio::spawn(rho_providers::model::models_dev::prefetch_model_metadata(
-        super::agent_binding::describable_models(&config, &catalog),
-    ));
+    // Full models.dev snapshot fills in the background for subagent and status
+    // labels. The interactive system prompt awaits the same hydrate before it
+    // prints permanent model lines; see `await_catalog_names` on tools assembly.
+    tokio::spawn(rho_providers::model::models_dev::ensure_models_dev_catalog());
     cli_config::normalize_reasoning_for_cli(
         &mut config,
         if cli.reasoning.is_some() {

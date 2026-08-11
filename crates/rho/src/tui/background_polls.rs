@@ -67,7 +67,7 @@ impl App {
         }));
     }
 
-    pub(super) async fn poll_model_metadata_fetch(&mut self, agent: &mut InteractiveRuntime) {
+    pub(super) fn poll_model_metadata_fetch(&mut self, agent: &mut InteractiveRuntime) {
         let Some(handle) = self.pending_model_metadata.as_mut() else {
             return;
         };
@@ -101,10 +101,7 @@ impl App {
                     &self.info.runtime.auth,
                 ) {
                     Ok(provider) => {
-                        match agent
-                            .replace_provider(provider, reasoning, &self.info.runtime.auth)
-                            .await
-                        {
+                        match agent.replace_provider(provider, reasoning, &self.info.runtime.auth) {
                             Ok(_) => true,
                             Err(err) => {
                                 self.insert_entry(&Entry::Error(format!(

@@ -56,7 +56,7 @@ impl App {
                     .pending_changelog
                     .as_ref()
                     .is_some_and(|handle| handle.is_finished());
-            self.poll_model_metadata_fetch(agent).await;
+            self.poll_model_metadata_fetch(agent);
             self.poll_update_notice();
             needs_redraw |= self.poll_pending_session_title()?;
             self.poll_pending_interactive_login(terminal, agent).await?;

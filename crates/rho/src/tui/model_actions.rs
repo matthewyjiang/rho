@@ -338,7 +338,7 @@ impl App {
                     }
                 }
             }
-            PickerAction::SwitchAuthMode => self.switch_active_auth_mode(&value, agent).await,
+            PickerAction::SwitchAuthMode => self.switch_active_auth_mode(&value, agent),
             PickerAction::RefreshModelList => self.refresh_model_lists(&value, terminal).await,
             PickerAction::InsertSkillCommand => {
                 self.input_ui.set_shell_mode(None);
@@ -648,9 +648,7 @@ impl App {
             }
         };
 
-        let handoff = agent
-            .replace_provider(new_provider, reasoning.effective, &auth)
-            .await?;
+        let handoff = agent.replace_provider(new_provider, reasoning.effective, &auth)?;
         self.info.runtime.provider = provider.clone();
         self.info.runtime.model = model.clone();
         self.info
