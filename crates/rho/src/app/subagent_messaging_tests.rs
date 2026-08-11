@@ -49,6 +49,12 @@ fn notice_bridge_fails_closed_when_unbound_or_full() {
         })
     );
     assert_eq!(receiver.try_recv().unwrap().run_id, "n0");
+    // Reading from the transport alone must not free budget: delivery/discards do.
+    assert_eq!(bridge.permits().outstanding(), NOTICE_QUEUE_CAPACITY);
+    bridge.permits().release(NOTICE_QUEUE_CAPACITY);
+    bridge
+        .post(sample_notice("after-release"))
+        .expect("release frees a slot");
 }
 
 // Covers: the steering slot is closed before publish and after clear, so a

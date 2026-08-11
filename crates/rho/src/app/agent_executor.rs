@@ -257,10 +257,14 @@ impl AgentExecutor {
         // Delegated questionnaires route through the parent session. The parent
         // TUI can present them while a turn is running (foreground wait) or after
         // background dispatch, so availability is the live parent bridge only.
-        let questionnaire_target = request
-            .parent_session_id
-            .clone()
-            .filter(|_| self.host_input.is_bound());
+        let questionnaire_target = if delegated_questionnaire_available(
+            request.parent_session_id.as_ref(),
+            self.host_input.is_bound(),
+        ) {
+            request.parent_session_id.clone()
+        } else {
+            None
+        };
         // Notices share the parent-session binding, not the questionnaire one.
         // They are non-blocking, so foreground and background both qualify.
         let notice_target = request

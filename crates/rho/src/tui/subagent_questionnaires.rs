@@ -318,22 +318,17 @@ impl App {
             return Ok(None);
         };
         // The whole drained batch is one message and one model request, no
-        // matter how many runs finished while the parent was busy.
-        match self
-            .run_prompt_turn(
-                TurnPrompt::standard(delivery.model, delivery.display),
-                Vec::new(),
-                terminal,
-                agent,
-            )
-            .await
-        {
-            Ok(outcome) => Ok(Some(outcome)),
-            Err(error) => {
-                self.restore_turn_boundary_batch(agent, delivery.batch);
-                Err(error)
-            }
-        }
+        // matter how many runs finished while the parent was busy. Restore is
+        // owned by the provider-start lifecycle so post-start failures do not
+        // redeliver work the provider already accepted.
+        self.run_turn_boundary_prompt_turn(
+            TurnPrompt::standard(delivery.model, delivery.display),
+            delivery.batch,
+            terminal,
+            agent,
+        )
+        .await
+        .map(Some)
     }
 
     pub(super) fn should_deliver_idle_subagent_completions(&self) -> bool {
@@ -356,6 +351,12 @@ pub(super) struct TurnBoundaryBatch {
     subagent_notifications: Vec<crate::tools::agent::SubagentNotification>,
     notices: Vec<crate::app::subagent_messaging::SubagentNotice>,
     workflow_notifications: Vec<crate::tools::workflow_tracker::WorkflowNotification>,
+}
+
+impl TurnBoundaryBatch {
+    pub(super) fn notice_count(&self) -> usize {
+        self.notices.len()
+    }
 }
 
 /// Joined prompts plus the restorable drained batch for one turn boundary.

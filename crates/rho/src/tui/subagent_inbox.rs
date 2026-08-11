@@ -6,7 +6,8 @@ use rho_sdk::SessionId;
 use tokio::sync::mpsc::Receiver;
 
 use crate::app::{
-    subagent_host_input::SubagentHostInputRequest, subagent_messaging::SubagentNotice,
+    subagent_host_input::SubagentHostInputRequest,
+    subagent_messaging::{NoticePermits, SubagentNotice},
 };
 
 /// Every channel a delegated child can push at its parent session.
@@ -20,6 +21,8 @@ use crate::app::{
 pub(super) struct SubagentInbox {
     questionnaires: Option<Receiver<SubagentHostInputRequest>>,
     notices: Option<Receiver<SubagentNotice>>,
+    /// Releases end-to-end notice budget when the parent delivers or discards.
+    notice_permits: Option<NoticePermits>,
     queued_questionnaires: VecDeque<SubagentHostInputRequest>,
     queued_notices: VecDeque<SubagentNotice>,
 }
@@ -37,6 +40,7 @@ impl SubagentInbox {
     pub(super) fn bind(&mut self, manager: &crate::tools::agent::SubagentManager) {
         self.questionnaires = Some(manager.bind_host_input());
         self.notices = Some(manager.bind_notices());
+        self.notice_permits = Some(manager.notice_permits());
     }
 
     /// Waits for the next child message on any bound channel and queues it.
@@ -114,7 +118,9 @@ impl SubagentInbox {
         let notices_before = self.queued_notices.len();
         self.queued_notices
             .retain(|notice| &notice.parent_session_id == session_id);
-        changed |= self.queued_notices.len() != notices_before;
+        let dropped = notices_before - self.queued_notices.len();
+        self.release_notice_permits(dropped);
+        changed |= dropped > 0;
         changed
     }
 
@@ -123,10 +129,17 @@ impl SubagentInbox {
     /// Notices addressed to a session the parent has left can never be
     /// delivered, so they are dropped rather than queued forever.
     pub(super) fn take_notices(&mut self, session_id: &SessionId) -> Vec<SubagentNotice> {
-        self.queued_notices
-            .drain(..)
-            .filter(|notice| &notice.parent_session_id == session_id)
-            .collect()
+        let mut kept = Vec::new();
+        let mut dropped = 0usize;
+        for notice in self.queued_notices.drain(..) {
+            if &notice.parent_session_id == session_id {
+                kept.push(notice);
+            } else {
+                dropped += 1;
+            }
+        }
+        self.release_notice_permits(dropped);
+        kept
     }
 
     /// Returns drained notices to the front of the queue so a failed turn
@@ -135,6 +148,18 @@ impl SubagentInbox {
         let notices = notices.into_iter().collect::<Vec<_>>();
         for notice in notices.into_iter().rev() {
             self.queued_notices.push_front(notice);
+        }
+    }
+
+    /// Frees end-to-end notice budget after the parent delivered notices to the
+    /// model. Restored batches must not call this.
+    pub(super) fn commit_delivered_notices(&self, count: usize) {
+        self.release_notice_permits(count);
+    }
+
+    fn release_notice_permits(&self, count: usize) {
+        if let Some(permits) = &self.notice_permits {
+            permits.release(count);
         }
     }
 
@@ -179,6 +204,21 @@ impl SubagentInbox {
     #[cfg(test)]
     pub(super) fn push_notice_for_test(&mut self, notice: SubagentNotice) {
         self.queued_notices.push_back(notice);
+    }
+
+    #[cfg(test)]
+    pub(super) fn bind_notices_for_test(
+        &mut self,
+        receiver: Receiver<SubagentNotice>,
+        permits: NoticePermits,
+    ) {
+        self.notices = Some(receiver);
+        self.notice_permits = Some(permits);
+    }
+
+    #[cfg(test)]
+    pub(super) fn queued_notice_count(&self) -> usize {
+        self.queued_notices.len()
     }
 }
 

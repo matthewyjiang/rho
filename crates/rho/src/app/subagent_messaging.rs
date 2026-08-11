@@ -7,7 +7,10 @@
 //! parent stages text into the child's steering queue through [`SteeringSlot`],
 //! applied at the child's next provider turn.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Mutex,
+};
 
 use rho_sdk::SessionId;
 use tokio::sync::mpsc;
@@ -17,7 +20,9 @@ use super::parent_bridge::ParentBridge;
 /// Queue depth for child->parent notices waiting on the parent session.
 ///
 /// Enough for a burst of parallel children; fail loud when a child floods the
-/// parent instead of growing without bound.
+/// parent instead of growing without bound. The budget is end-to-end: accepted
+/// notices still count after the TUI drains them out of the transport channel
+/// until the parent delivers or discards them.
 pub(crate) const NOTICE_QUEUE_CAPACITY: usize = 32;
 
 /// Soft cap on one plain-text message body, in either direction.
@@ -78,9 +83,66 @@ pub(crate) struct SubagentNotice {
     pub(crate) message: String,
 }
 
+/// Shared end-to-end budget for accepted but undelivered child notices.
+///
+/// [`SubagentNoticeBridge::post`] reserves a slot before enqueue. The parent
+/// releases slots only when a notice is delivered to the model or discarded,
+/// so draining the transport into a TUI pending queue cannot bypass the bound.
+#[derive(Clone)]
+pub(crate) struct NoticePermits {
+    outstanding: Arc<AtomicUsize>,
+}
+
+impl Default for NoticePermits {
+    fn default() -> Self {
+        Self {
+            outstanding: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+}
+
+impl NoticePermits {
+    /// Returns slots for notices the parent no longer owes a delivery for.
+    pub(crate) fn release(&self, count: usize) {
+        if count == 0 {
+            return;
+        }
+        self.outstanding
+            .fetch_sub(count, Ordering::AcqRel)
+            .checked_sub(count)
+            .expect("notice permit release exceeds outstanding reservations");
+    }
+
+    fn try_reserve(&self) -> bool {
+        let mut current = self.outstanding.load(Ordering::Acquire);
+        while current < NOTICE_QUEUE_CAPACITY {
+            match self.outstanding.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(observed) => current = observed,
+            }
+        }
+        false
+    }
+
+    fn reset(&self) {
+        self.outstanding.store(0, Ordering::Release);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn outstanding(&self) -> usize {
+        self.outstanding.load(Ordering::Acquire)
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct SubagentNoticeBridge {
     bridge: ParentBridge<SubagentNotice>,
+    permits: NoticePermits,
 }
 
 impl Default for SubagentNoticeBridge {
@@ -93,11 +155,14 @@ impl SubagentNoticeBridge {
     pub(crate) fn new() -> Self {
         Self {
             bridge: ParentBridge::new(NOTICE_QUEUE_CAPACITY),
+            permits: NoticePermits::default(),
         }
     }
 
     /// Installs the parent receiver. Replaces any previous binding.
     pub(crate) fn bind_parent(&self) -> mpsc::Receiver<SubagentNotice> {
+        // A new receiver abandons anything still queued on the previous one.
+        self.permits.reset();
         self.bridge.bind_parent()
     }
 
@@ -111,14 +176,27 @@ impl SubagentNoticeBridge {
         self.bridge.is_bound()
     }
 
+    /// Handle used by the parent inbox to free slots on deliver or discard.
+    pub(crate) fn permits(&self) -> NoticePermits {
+        self.permits.clone()
+    }
+
     /// Posts a notice for the parent. Fails when unbound or the queue is full.
     pub(crate) fn post(&self, notice: SubagentNotice) -> Result<(), NoticePostError> {
         let sender = self.bridge.sender().ok_or(NoticePostError::Unbound)?;
-        sender.try_send(notice).map_err(|error| match error {
-            mpsc::error::TrySendError::Full(_) => NoticePostError::QueueFull {
+        if !self.permits.try_reserve() {
+            return Err(NoticePostError::QueueFull {
                 capacity: NOTICE_QUEUE_CAPACITY,
-            },
-            mpsc::error::TrySendError::Closed(_) => NoticePostError::Unbound,
+            });
+        }
+        sender.try_send(notice).map_err(|error| {
+            self.permits.release(1);
+            match error {
+                mpsc::error::TrySendError::Full(_) => NoticePostError::QueueFull {
+                    capacity: NOTICE_QUEUE_CAPACITY,
+                },
+                mpsc::error::TrySendError::Closed(_) => NoticePostError::Unbound,
+            }
         })
     }
 }

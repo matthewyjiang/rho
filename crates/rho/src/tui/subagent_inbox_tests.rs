@@ -2,7 +2,9 @@ use pretty_assertions::assert_eq;
 use rho_sdk::SessionId;
 
 use super::SubagentInbox;
-use crate::app::subagent_messaging::SubagentNotice;
+use crate::app::subagent_messaging::{
+    NoticePostError, SubagentNotice, SubagentNoticeBridge, NOTICE_QUEUE_CAPACITY,
+};
 
 // Covers: a notice addressed to a session the parent has left is dropped, not
 // requeued. A retained one would keep the parent looking busy for the rest of
@@ -62,6 +64,49 @@ fn returned_notices_preserve_order_at_the_front() {
         ordered,
         vec!["a1".to_owned(), "b2".to_owned(), "c3".to_owned()]
     );
+}
+
+// Covers: draining the transport into the TUI pending queue must not bypass
+// NOTICE_QUEUE_CAPACITY. message_parent keeps failing loud until delivery or
+// discard frees an end-to-end slot.
+// Owner: tui subagent inbox + notice bridge
+#[test]
+fn draining_into_pending_queue_keeps_end_to_end_notice_capacity() {
+    let bridge = SubagentNoticeBridge::new();
+    let receiver = bridge.bind_parent();
+    let mut inbox = SubagentInbox::default();
+    inbox.bind_notices_for_test(receiver, bridge.permits());
+    let session = SessionId::from_string("session-1").unwrap();
+
+    for index in 0..NOTICE_QUEUE_CAPACITY {
+        bridge
+            .post(notice(&format!("n{index}"), &session))
+            .expect("queue should accept up to capacity");
+    }
+    assert!(inbox.drain(), "channel notices move into the pending queue");
+    assert_eq!(inbox.queued_notice_count(), NOTICE_QUEUE_CAPACITY);
+    assert_eq!(
+        bridge.post(notice("overflow", &session)),
+        Err(NoticePostError::QueueFull {
+            capacity: NOTICE_QUEUE_CAPACITY,
+        }),
+        "pending TUI queue must still count against the shared budget"
+    );
+
+    let delivered = inbox.take_notices(&session);
+    assert_eq!(delivered.len(), NOTICE_QUEUE_CAPACITY);
+    assert_eq!(
+        bridge.post(notice("still-full", &session)),
+        Err(NoticePostError::QueueFull {
+            capacity: NOTICE_QUEUE_CAPACITY,
+        }),
+        "taken-but-uncommitted notices remain undelivered"
+    );
+
+    inbox.commit_delivered_notices(delivered.len());
+    bridge
+        .post(notice("after-delivery", &session))
+        .expect("delivery frees budget for a new notice");
 }
 
 fn notice(run_id: &str, parent_session_id: &SessionId) -> SubagentNotice {
