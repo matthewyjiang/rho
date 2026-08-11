@@ -93,12 +93,36 @@ impl ModelIdentity {
     /// Rho models read as `provider/model (Catalog Name)`. Claude Code models
     /// read as `claude-code/<--model value>`, plus what that value resolved to
     /// when a run has reported it.
+    ///
+    /// Always one line; see [`one_line`].
     pub(crate) fn describe(&self) -> String {
-        match self {
+        one_line(match self {
             Self::Rho { provider, model } => model_reference_with_display_name(provider, model),
             Self::ClaudeCli { model } => describe_claude_cli(model.as_deref()),
-        }
+        })
     }
+}
+
+/// Replaces control characters with spaces.
+///
+/// Every part of a description comes from outside Rho: provider and model ids
+/// from config, catalog names from the models.dev download. Callers write one
+/// prompt line or one bracketed notice around this text, and a newline in any
+/// part would turn the rest into a line of its own that the executor reads as
+/// instructions.
+fn one_line(text: String) -> String {
+    if !text.contains(char::is_control) {
+        return text;
+    }
+    text.chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect()
 }
 
 /// Every model this session can name, as catalog lookup keys.

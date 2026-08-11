@@ -23,11 +23,18 @@ use crate::model::{models_dev, provider_models};
 /// a name that arrives during a session reaches the next text that names the
 /// model. Text already produced is never revisited: an entry only changes when
 /// the catalog underneath it does.
-type NameCache = HashMap<(String, String), Option<String>>;
+#[derive(Default)]
+struct NameCache {
+    names: HashMap<(String, String), Option<String>>,
+    /// Bumped by every catalog write. A lookup reads it before touching sqlite
+    /// and caches its answer only if it still holds, so a write that lands
+    /// while a lookup is in flight cannot be overwritten by the older answer.
+    generation: u64,
+}
 
 fn cache() -> &'static RwLock<NameCache> {
     static CACHE: OnceLock<RwLock<NameCache>> = OnceLock::new();
-    CACHE.get_or_init(|| RwLock::new(NameCache::new()))
+    CACHE.get_or_init(|| RwLock::new(NameCache::default()))
 }
 
 /// Catalog name for `provider/model`, or `None` when no catalog carries one.
@@ -41,14 +48,18 @@ fn cache() -> &'static RwLock<NameCache> {
 /// Resolved once per process; see [`NameCache`].
 pub fn model_display_name(provider: &str, model: &str) -> Option<String> {
     let key = (provider.to_string(), model.to_string());
-    if let Some(name) = cache().read().expect("model name cache").get(&key) {
-        return name.clone();
-    }
+    let generation = {
+        let cache = cache().read().expect("model name cache");
+        if let Some(name) = cache.names.get(&key) {
+            return name.clone();
+        }
+        cache.generation
+    };
     let name = read_model_display_name(provider, model);
-    cache()
-        .write()
-        .expect("model name cache")
-        .insert(key, name.clone());
+    let mut cache = cache().write().expect("model name cache");
+    if cache.generation == generation {
+        cache.names.insert(key, name.clone());
+    }
     name
 }
 
@@ -70,16 +81,19 @@ fn read_model_display_name(provider: &str, model: &str) -> Option<String> {
 /// launch that needs it: the system prompt asks for every name it wants before
 /// a download can finish, so the names would first appear on the next launch.
 pub(crate) fn forget_provider_display_names(provider: &str) {
-    cache()
-        .write()
-        .expect("model name cache")
+    let mut cache = cache().write().expect("model name cache");
+    cache
+        .names
         .retain(|(cached_provider, _), _| cached_provider != provider);
+    cache.generation += 1;
 }
 
 /// Drops resolved names so a test can write a catalog row and read it back.
 #[doc(hidden)]
 pub fn clear_model_display_name_cache_for_tests() {
-    cache().write().expect("model name cache").clear();
+    let mut cache = cache().write().expect("model name cache");
+    cache.names.clear();
+    cache.generation += 1;
 }
 
 /// `provider/model (Catalog Name)`, or `provider/model` when no name is known.

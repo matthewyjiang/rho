@@ -68,19 +68,29 @@ impl InteractiveRuntime {
         if registered == self.tools.advisor_registered() {
             // The tool list is unchanged, so nothing rebuilds and nothing else
             // would say the reviewer behind `advisor` is a different model.
-            let changed = model
+            //
+            // Compare what the notice reports, not the whole selection: a
+            // reasoning-only change would otherwise announce a switch to the
+            // model the advisor already used.
+            let previous_model = store.model();
+            let previous_identity = previous_model
                 .as_ref()
-                .filter(|model| store.model().as_ref() != Some(*model));
-            let notice = changed.map(|model| {
-                crate::prompt::advisor_model_switch_context(
-                    &crate::model_identity::ModelIdentity::from_internal_agent(model),
-                )
-            });
+                .map(crate::model_identity::ModelIdentity::from_internal_agent);
+            let notice = model
+                .as_ref()
+                .map(crate::model_identity::ModelIdentity::from_internal_agent)
+                .filter(|identity| previous_identity.as_ref() != Some(identity))
+                .map(|identity| crate::prompt::advisor_model_switch_context(&identity));
             store.set_model(model);
             let Some((context, display)) = notice else {
                 return Ok(None);
             };
-            self.append_user_context_with_display(context, display.clone())?;
+            if let Err(error) = self.append_user_context_with_display(context, display.clone()) {
+                // Same rule as the transition below: the store must not hold a
+                // reviewer the executor was never told about.
+                store.set_model(previous_model);
+                return Err(error);
+            }
             return Ok(Some(display));
         }
         if self.runs.is_active() {

@@ -916,13 +916,16 @@ async fn advisor_notices_name_the_reviewer_model_including_a_model_only_change()
     assert_eq!(notice.lines().count(), 1, "{notice:?}");
     assert!(notice.contains("openai/gpt-5.6-sol"), "{notice}");
 
-    // Setting the same model again is not a change and adds no notice.
+    // The notice reports the model, so only the model decides whether there was
+    // a switch. Changing the reasoning level alone must add no notice.
+    let mut same_model_new_reasoning = crate::config::InternalAgentModelConfig::new(
+        "openai".into(),
+        "gpt-5.6-sol".into(),
+        "api-key".into(),
+    );
+    same_model_new_reasoning.reasoning = Some(rho_providers::reasoning::ReasoningLevel::High);
     let unchanged = interactive
-        .set_advisor(Some(crate::config::InternalAgentModelConfig::new(
-            "openai".into(),
-            "gpt-5.6-sol".into(),
-            "api-key".into(),
-        )))
+        .set_advisor(Some(same_model_new_reasoning))
         .await
         .unwrap();
     assert_eq!(unchanged, None);
