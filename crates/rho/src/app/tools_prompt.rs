@@ -167,6 +167,14 @@ pub(crate) async fn assemble_tools_and_prompt(
                     .then(|| crate::tools::advisor::advisor_model(options.config))
                     .flatten()
                     .map(crate::model_identity::PromptModel::from_internal_agent);
+                // System prompt lines are never rewritten. Wait for catalog
+                // names that can still arrive so the session is not stuck on
+                // bare ids for its whole life.
+                let mut to_warm = vec![&running];
+                if let Some(advisor) = advisor.as_ref() {
+                    to_warm.push(advisor);
+                }
+                crate::model_identity::PromptModel::ensure_catalog_names(to_warm).await;
                 let mut built = prompt::system_prompt_with_plugin_skills(
                     &specs,
                     options.cwd,

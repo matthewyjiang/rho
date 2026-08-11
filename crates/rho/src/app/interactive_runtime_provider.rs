@@ -15,7 +15,7 @@ use super::{
 };
 
 impl InteractiveRuntime {
-    pub(crate) fn replace_provider(
+    pub(crate) async fn replace_provider(
         &mut self,
         provider: Arc<dyn ModelProvider>,
         reasoning: rho_sdk::ReasoningLevel,
@@ -66,6 +66,9 @@ impl InteractiveRuntime {
         // Owned here (not in the TUI) so every conversation model change is
         // honest, and a failed notice rolls the provider back.
         if session_started && current_prompt_model != previous_prompt_model {
+            // Notices are never rewritten. Wait for a catalog name when one can
+            // still arrive so the line is not stuck on the bare id.
+            crate::model_identity::PromptModel::ensure_catalog_names([&current_prompt_model]).await;
             let (context, display) = crate::prompt::model_switch_context(
                 crate::prompt::ModelSwitchKind::Conversation,
                 &current_prompt_model,

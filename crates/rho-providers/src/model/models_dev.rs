@@ -463,6 +463,32 @@ pub fn with_models_dev_cache_dir_for_tests<T>(path: PathBuf, f: impl FnOnce() ->
     })
 }
 
+/// Holds the models.dev cache dir for the current thread across awaits.
+///
+/// Prefer [`with_models_dev_cache_dir_for_tests`] for sync work. Use this when a
+/// test must keep the path set while awaiting on a `current_thread` runtime.
+#[doc(hidden)]
+pub struct ModelsDevCacheDirGuard {
+    previous: Option<PathBuf>,
+}
+
+impl ModelsDevCacheDirGuard {
+    #[doc(hidden)]
+    pub fn new(path: PathBuf) -> Self {
+        let previous = TEST_CACHE_DIR.with(|cache_dir| cache_dir.replace(Some(path)));
+        Self { previous }
+    }
+}
+
+impl Drop for ModelsDevCacheDirGuard {
+    fn drop(&mut self) {
+        let previous = self.previous.take();
+        TEST_CACHE_DIR.with(|cache_dir| {
+            cache_dir.replace(previous);
+        });
+    }
+}
+
 #[doc(hidden)]
 pub fn write_cached_model_metadata_for_tests(
     provider: &str,

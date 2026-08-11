@@ -39,7 +39,7 @@ impl App {
                 self.apply_permission_mode(mode, agent).await?;
                 self.open_main_config_picker_selected(config_picker::PERMISSION_MODE_VALUE)
             }
-            config_picker::REASONING_VALUE => self.cycle_reasoning(agent),
+            config_picker::REASONING_VALUE => self.cycle_reasoning(agent).await,
             config_picker::SHOW_REASONING_OUTPUT_VALUE => self.toggle_reasoning_output(),
             config_picker::ZEN_MODE_VALUE => self.toggle_zen_mode(),
             config_picker::THEME_VALUE => self.open_theme_picker_from_config(),

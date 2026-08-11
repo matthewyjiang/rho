@@ -218,11 +218,9 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
     let provider_refresh = cli_config::refresh_model_cache(&cli, &config, &store).await?;
     let config_changed = cli_config::apply_overrides(&mut config, &cli)?;
     cli_config::prepare_model_metadata(&config, &store, &provider_refresh).await;
-    // Catalog names for every model this session can name, filled in the
-    // background. Startup must not wait on it: a missing name only costs the
-    // bracketed text beside a model id, and nothing depends on it. A model that
-    // is only ever a subagent target is never selected, so no other fetch would
-    // reach it.
+    // Catalog names for models this session only *names* (subagents, internal
+    // agents) fill in the background. The system prompt awaits names for the
+    // models it prints itself; see `PromptModel::ensure_catalog_names`.
     tokio::spawn(rho_providers::model::models_dev::prefetch_model_metadata(
         super::agent_binding::describable_models(&config, &catalog),
     ));

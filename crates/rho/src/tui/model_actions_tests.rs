@@ -291,14 +291,23 @@ async fn select_model_report_auto_edit_tool_follows_provider_change() {
 
 // Covers: a mid-session model switch must reach the model as an appended line,
 // because the system prompt names the starting model and then stays fixed. The
-// line names only the new model. A first selection on an empty session is not a
-// switch and must stay silent.
+// line names only the new model, and includes the catalog name when one is
+// already known (ensure is a no-op on a warm cache). A first selection on an
+// empty session is not a switch and must stay silent.
 // Owner: model switch context notice
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn select_model_report_tells_the_model_about_a_mid_session_switch() {
     use std::sync::Arc;
 
-    use rho_providers::credentials::{save_provider_api_key, MemoryCredentialStore};
+    use rho_providers::{
+        credentials::{save_provider_api_key, MemoryCredentialStore},
+        model::{
+            display_name::clear_model_display_name_cache_for_tests,
+            models_dev::{
+                write_cached_model_metadata_for_tests, ModelMetadata, ModelsDevCacheDirGuard,
+            },
+        },
+    };
 
     use crate::{
         app::interactive_runtime::test_edit_tool_runtime,
@@ -369,7 +378,21 @@ async fn select_model_report_tells_the_model_about_a_mid_session_switch() {
         app
     }
 
-    // --- A started session is told, naming both ends ---
+    let catalog = tempfile::tempdir().unwrap();
+    // current_thread keeps this guard's path on the worker that builds the notice.
+    let _cache = ModelsDevCacheDirGuard::new(catalog.path().to_path_buf());
+    clear_model_display_name_cache_for_tests();
+    write_cached_model_metadata_for_tests(
+        "anthropic",
+        "claude-fable-5",
+        &ModelMetadata {
+            display_name: Some("Claude Fable 5".into()),
+            reasoning_metadata_complete: true,
+            ..ModelMetadata::default()
+        },
+    );
+
+    // --- A started session is told, naming the new model with its catalog name ---
     let mut app = app_on_openai();
     let mut agent = test_edit_tool_runtime(EditTool::Auto).await;
     agent
@@ -379,7 +402,10 @@ async fn select_model_report_tells_the_model_about_a_mid_session_switch() {
     switch_to_anthropic(&mut app, &mut agent).await;
 
     let text = history_text(&agent);
-    assert!(text.contains("anthropic/claude-fable-5"), "{text}");
+    assert!(
+        text.contains("anthropic/claude-fable-5 (Claude Fable 5)"),
+        "{text}"
+    );
     // The model the session started on stays readable in the system prompt, so
     // the notice does not restate it.
     assert!(!text.contains("openai/gpt-5.5"), "{text}");

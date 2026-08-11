@@ -89,7 +89,10 @@ pub(super) fn resolve_fetched_reasoning(
 }
 
 impl App {
-    pub(super) fn cycle_reasoning(&mut self, agent: &mut InteractiveRuntime) -> anyhow::Result<()> {
+    pub(super) async fn cycle_reasoning(
+        &mut self,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
         let capabilities = models_dev::current_reasoning_capabilities(
             &self.info.runtime.provider,
             &self.info.runtime.model,
@@ -113,7 +116,9 @@ impl App {
                 return Ok(());
             }
         };
-        agent.replace_provider(provider, reasoning, &self.info.runtime.auth)?;
+        agent
+            .replace_provider(provider, reasoning, &self.info.runtime.auth)
+            .await?;
         self.info
             .set_reasoning(reasoning, ReasoningRequestSource::Explicit);
         let save_result = self.info.services.config_repository.update(|config| {
