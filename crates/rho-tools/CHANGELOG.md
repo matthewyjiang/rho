@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.16.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.15.1...rho-agent-tools-v0.16.0) (2026-08-11)
+
+
+### Features
+
+* **subagents:** add parent-child plain-text messaging for Rho runtime ([#852](https://github.com/matthewyjiang/rho/issues/852)) ([dd25d8e](https://github.com/matthewyjiang/rho/commit/dd25d8e3e48fd531e777e31fcad9c948a2a9ebfe))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 2.1.0 to 3.0.0
+
 ## [0.15.1](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.15.0...rho-agent-tools-v0.15.1) (2026-08-10)
 
 
