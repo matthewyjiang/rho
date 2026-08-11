@@ -5,9 +5,10 @@ use ratatui_image::picker::{Picker, ProtocolType};
 use rho_sdk::tool::ToolAsset;
 
 use super::{
-    kitty_graphics_environment, max_feed_image_height, picker_for_environment, FeedImage,
-    COMPACT_IMAGE_HEIGHT, COMPOSER_IMAGE_HEIGHT, DEFAULT_IMAGE_HEIGHT, MAX_IMAGE_HEIGHT,
-    MIN_IMAGE_HEIGHT, TALL_IMAGE_HEIGHT,
+    feed_image_height_budget, kitty_graphics_environment, max_feed_image_height,
+    picker_for_environment, reserve_image_rows, FeedImage, COMPACT_IMAGE_HEIGHT,
+    COMPOSER_IMAGE_HEIGHT, DEFAULT_IMAGE_HEIGHT, MAX_IMAGE_HEIGHT, MIN_IMAGE_HEIGHT,
+    TALL_IMAGE_HEIGHT,
 };
 use crate::tui::{
     history_cache::{HistoryLineCache, HistoryLineSlice, HistoryRenderSettings},
@@ -168,6 +169,76 @@ fn feed_image_height_budget_uses_terminal_height_bands() {
     // Compact reservation must stay at or below a short history content pane
     // (terminal 24 minus statusline/composer/dividers leaves ~16 content rows).
     assert!(usize::from(COMPACT_IMAGE_HEIGHT) <= 16);
+}
+
+// Covers: when composer chrome shrinks history content below the preferred band,
+// the reservation caps to the content viewport so a full placement can paint.
+// Owner: pure layout policy
+#[test]
+fn feed_image_height_budget_caps_to_history_content_viewport() {
+    // Terminal 40 → preferred DEFAULT (24).
+    assert_eq!(max_feed_image_height(40), DEFAULT_IMAGE_HEIGHT);
+    // Unknown content keeps the preferred band (tests / recovery).
+    assert_eq!(feed_image_height_budget(40, 0), DEFAULT_IMAGE_HEIGHT);
+    // Content taller than preferred keeps preferred.
+    assert_eq!(feed_image_height_budget(40, 30), DEFAULT_IMAGE_HEIGHT);
+    // Composer attachment strips reduced content below preferred → cap.
+    assert_eq!(feed_image_height_budget(40, 10), 10);
+    assert_eq!(feed_image_height_budget(40, 1), 1);
+}
+
+// Covers: a tall feed image reserved under a content-capped budget is fully
+// visible inside that content viewport (paintable under full-block paint rules).
+// Owner: history cache image placement
+#[test]
+fn content_capped_budget_keeps_tall_image_paintable_in_shrunken_viewport() {
+    let entries = vec![image_tool()];
+    let mut cache = HistoryLineCache::default();
+    let width = 40;
+    // Preferred band for a tall terminal would be 24+, but composer image rows
+    // left only 10 history content rows.
+    let content_height = 10usize;
+    let budget = feed_image_height_budget(48, content_height);
+    assert_eq!(budget, 10);
+    assert!(
+        usize::from(budget) <= content_height,
+        "reservation must not exceed the content viewport"
+    );
+    let settings = HistoryRenderSettings {
+        width,
+        max_tool_output_lines: 20,
+        zen_mode: false,
+        theme_generation: 0,
+        max_image_height: budget,
+    };
+    let line_count = cache.line_count(&entries, settings, &no_images);
+    let full = cache.visible_image_placements(&entries, settings, 0, line_count, &no_images);
+    assert_eq!(full.len(), 1);
+    assert_eq!(full[0].height, usize::from(budget));
+    // Tool header sits above the image; scroll so the reserved block is fully
+    // inside a content_height window.
+    let image_start = full[0].row;
+    let image_end = image_start + full[0].height;
+    let scroll = image_start.min(line_count.saturating_sub(content_height));
+    let placements =
+        cache.visible_image_placements(&entries, settings, scroll, content_height, &no_images);
+    assert_eq!(
+        placements.len(),
+        1,
+        "capped reservation must fully fit some content_height window (scroll={scroll}, image={image_start}..{image_end}, lines={line_count})"
+    );
+
+    // Same image without the cap would reserve the preferred band and never
+    // fully fit a 10-row content pane at any scroll.
+    let uncapped = max_feed_image_height(48);
+    assert!(usize::from(uncapped) > content_height);
+    let mut lines = Vec::new();
+    let tall = FeedImage::load(&png_asset(300, 600), &kitty_picker()).unwrap();
+    let placement = reserve_image_rows(&mut lines, &tall, width, uncapped);
+    assert!(
+        placement.rows.end - placement.rows.start > content_height,
+        "uncapped reservation must exceed the shrunken content pane"
+    );
 }
 
 // Covers: reserved rows honor the layout budget and aspect ratio.

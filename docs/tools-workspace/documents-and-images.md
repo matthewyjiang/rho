@@ -120,7 +120,8 @@ reflow every transcript image):
 | --- | --- |
 | Width | History content width (same side padding as text) |
 | Height budget | 12 / 16 / 24 / 32 / 40 rows from terminal height bands |
-| Compact floor | 12 rows (short terminals; stays paintable after chrome) |
+| Content cap | Never exceed the live history content row count |
+| Compact floor | 12 rows preferred on short terminals (still content-capped) |
 | Ceiling | 40 rows |
 | Aspect | Preserve; never stretch |
 

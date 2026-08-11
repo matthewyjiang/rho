@@ -499,7 +499,7 @@ impl App {
     pub(super) fn history_render_settings(&self, width: usize) -> HistoryRenderSettings {
         self.info
             .runtime
-            .history_render_settings(width, self.feed_image_row_budget())
+            .history_render_settings(width, self.feed_image_row_budget(width))
     }
 
     /// Record terminal size for discrete feed-image budgets and layout caches.
@@ -510,8 +510,27 @@ impl App {
         }
     }
 
-    pub(super) fn feed_image_row_budget(&self) -> u16 {
-        super::feed_image::ImageRowBudget::feed_from_terminal_height(self.terminal_height).get()
+    /// Feed-image row budget: preferred terminal-height band, capped by the live
+    /// history content viewport so composer chrome cannot make placements
+    /// permanently unpaintable.
+    pub(super) fn feed_image_row_budget(&self, width: usize) -> u16 {
+        let content_height = self.history_content_height_for_feed_budget(width);
+        super::feed_image::ImageRowBudget::feed(self.terminal_height, content_height).get()
+    }
+
+    /// History content rows available after bottom chrome and the current
+    /// composer (including attachment strips). Independent of transcript length
+    /// so it cannot cycle through the history line cache.
+    fn history_content_height_for_feed_budget(&self, width: usize) -> usize {
+        let height = self.terminal_height;
+        if height == 0 {
+            return 0;
+        }
+        self.history_content_height(self.history_height_from_line_counts(
+            height,
+            self.composer_lines(width, height).len(),
+            self.command_suggestion_lines(width).len(),
+        ))
     }
 
     pub(super) fn visible_history_lines(
@@ -654,7 +673,7 @@ impl App {
         if has_pending_tools && self.open_stream_tail_active() {
             lines.push(Line::raw(""));
         }
-        let max_image_height = self.feed_image_row_budget();
+        let max_image_height = self.feed_image_row_budget(width);
         for pending in &shells {
             // tool_entry_lines owns the trailing spacer under each card.
             lines.extend(tool_entry_lines(

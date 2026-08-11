@@ -460,7 +460,7 @@ impl App {
                     shell,
                     width,
                     self.info.runtime.max_tool_output_lines,
-                    self.feed_image_row_budget(),
+                    self.feed_image_row_budget(width),
                 )
                 .len(),
             );
@@ -489,7 +489,7 @@ impl App {
                     pending,
                     width,
                     self.info.runtime.max_tool_output_lines,
-                    self.feed_image_row_budget(),
+                    self.feed_image_row_budget(width),
                 )
                 .len(),
             );

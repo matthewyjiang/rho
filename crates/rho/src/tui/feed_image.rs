@@ -36,10 +36,9 @@ const MAX_COMPOSER_DECODE_ALLOCATION: u64 = 80 * 1024 * 1024;
 
 /// Max rows one feed image may reserve, from terminal height bands.
 ///
-/// Discrete tiers keep the history line cache stable when the composer grows
-/// (wraps, attachment strips) without changing the terminal size. The compact
-/// band stays at the pre-scaling 12-row cap so short terminals still get a fully
-/// visible placement after chrome (statusline, composer, dividers).
+/// Discrete tiers keep the preferred budget stable across small layout shifts.
+/// Call [`feed_image_height_budget`] to also cap by the live history content
+/// viewport so a reservation never exceeds what can fully paint.
 pub(super) fn max_feed_image_height(terminal_height: usize) -> u16 {
     match terminal_height {
         0..=24 => COMPACT_IMAGE_HEIGHT,
@@ -47,6 +46,32 @@ pub(super) fn max_feed_image_height(terminal_height: usize) -> u16 {
         37..=52 => DEFAULT_IMAGE_HEIGHT,
         53..=68 => TALL_IMAGE_HEIGHT,
         _ => MAX_IMAGE_HEIGHT,
+    }
+}
+
+/// Preferred terminal-height band, capped by the live history content viewport.
+///
+/// When `history_content_height` is zero (unknown geometry), the preferred band
+/// is kept so tests and recovery budgeting stay deterministic. A nonzero content
+/// height never allows a reservation taller than the visible content rows, so
+/// [`visible_image_placements`] can still return a fully paintable block after
+/// composer chrome shrinks the pane.
+pub(super) fn feed_image_height_budget(
+    terminal_height: usize,
+    history_content_height: usize,
+) -> u16 {
+    let preferred = if terminal_height == 0 {
+        DEFAULT_IMAGE_HEIGHT
+    } else {
+        max_feed_image_height(terminal_height)
+    };
+    if history_content_height == 0 {
+        preferred
+    } else {
+        let cap = u16::try_from(history_content_height)
+            .unwrap_or(u16::MAX)
+            .max(1);
+        preferred.min(cap)
     }
 }
 
@@ -59,20 +84,15 @@ impl ImageRowBudget {
         self.0.max(1)
     }
 
-    pub(super) fn feed_from_terminal_height(terminal_height: usize) -> Self {
-        if terminal_height == 0 {
-            Self::default_feed()
-        } else {
-            Self(max_feed_image_height(terminal_height))
-        }
+    pub(super) fn feed(terminal_height: usize, history_content_height: usize) -> Self {
+        Self(feed_image_height_budget(
+            terminal_height,
+            history_content_height,
+        ))
     }
 
     pub(super) fn composer() -> Self {
         Self(COMPOSER_IMAGE_HEIGHT)
-    }
-
-    pub(super) const fn default_feed() -> Self {
-        Self(DEFAULT_IMAGE_HEIGHT)
     }
 }
 
