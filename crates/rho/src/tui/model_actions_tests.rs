@@ -302,7 +302,7 @@ async fn select_model_report_tells_the_model_about_a_mid_session_switch() {
     use rho_providers::{
         credentials::{save_provider_api_key, MemoryCredentialStore},
         model::{
-            display_name::clear_model_display_name_cache_for_tests,
+            display_name::ModelDisplayNameCacheGuard,
             models_dev::{
                 with_models_dev_cache_dir_for_tests, write_cached_model_metadata_for_tests,
                 ModelMetadata,
@@ -313,6 +313,8 @@ async fn select_model_report_tells_the_model_about_a_mid_session_switch() {
     use crate::{
         app::interactive_runtime::test_edit_tool_runtime,
         config::EditTool,
+        model_identity::PromptModel,
+        prompt::{model_switch_context, ModelSwitchKind},
         tui::{tests::test_bootstrap, App, InteractiveRuntime},
     };
 
@@ -381,7 +383,7 @@ async fn select_model_report_tells_the_model_about_a_mid_session_switch() {
 
     let catalog = tempfile::tempdir().unwrap();
     with_models_dev_cache_dir_for_tests(catalog.path().to_path_buf(), || {
-        clear_model_display_name_cache_for_tests();
+        let _names = ModelDisplayNameCacheGuard::new();
         write_cached_model_metadata_for_tests(
             "anthropic",
             "claude-fable-5",
@@ -403,13 +405,20 @@ async fn select_model_report_tells_the_model_about_a_mid_session_switch() {
     // Keep the test cache dir for the switch so describe() reads the seeded name.
     let _cache =
         rho_providers::model::models_dev::ModelsDevCacheDirGuard::new(catalog.path().to_path_buf());
-    clear_model_display_name_cache_for_tests();
+    let _names = ModelDisplayNameCacheGuard::new();
     switch_to_anthropic(&mut app, &mut agent).await;
 
     let text = history_text(&agent);
+    let (stored, _) = model_switch_context(
+        ModelSwitchKind::Conversation,
+        &PromptModel::Rho {
+            provider: "anthropic".into(),
+            model: "claude-fable-5".into(),
+        },
+    );
     assert!(
-        text.contains("anthropic/claude-fable-5 (Claude Fable 5)"),
-        "{text}"
+        text.contains(stored.trim()),
+        "expected switch notice {stored:?} in history:\n{text}"
     );
     // The model the session started on stays readable in the system prompt, so
     // the notice does not restate it.

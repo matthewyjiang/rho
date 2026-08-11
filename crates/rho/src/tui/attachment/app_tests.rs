@@ -247,7 +247,7 @@ fn status_token_fallback_uses_run_status_totals() {
 #[test]
 fn identity_line_includes_provider_model_runtime_elapsed_and_cost() {
     use rho_providers::model::{
-        display_name::clear_model_display_name_cache_for_tests,
+        display_name::ModelDisplayNameCacheGuard,
         models_dev::{
             with_models_dev_cache_dir_for_tests, write_cached_model_metadata_for_tests,
             ModelMetadata,
@@ -256,7 +256,7 @@ fn identity_line_includes_provider_model_runtime_elapsed_and_cost() {
 
     let catalog = tempfile::tempdir().unwrap();
     with_models_dev_cache_dir_for_tests(catalog.path().to_path_buf(), || {
-        clear_model_display_name_cache_for_tests();
+        let _names = ModelDisplayNameCacheGuard::new();
         write_cached_model_metadata_for_tests(
             "openai",
             "gpt-5.5",

@@ -96,6 +96,34 @@ pub fn clear_model_display_name_cache_for_tests() {
     cache.generation += 1;
 }
 
+/// Clears the process-global display-name cache on enter and drop.
+///
+/// Catalog fixtures swap the sqlite path for the duration of a test; without a
+/// teardown clear, a name resolved against that fixture can leak into later
+/// tests that never touch the fixture path.
+#[doc(hidden)]
+pub struct ModelDisplayNameCacheGuard;
+
+impl Default for ModelDisplayNameCacheGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ModelDisplayNameCacheGuard {
+    #[doc(hidden)]
+    pub fn new() -> Self {
+        clear_model_display_name_cache_for_tests();
+        Self
+    }
+}
+
+impl Drop for ModelDisplayNameCacheGuard {
+    fn drop(&mut self) {
+        clear_model_display_name_cache_for_tests();
+    }
+}
+
 /// `provider/model (Catalog Name)`, or `provider/model` when no name is known.
 ///
 /// The id stays first and always present: it is the part a caller can act on.

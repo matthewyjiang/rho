@@ -510,6 +510,26 @@ pub fn mark_catalog_snapshot_current_for_tests() {
     hydrate::apply_in_memory_catalog_ready();
 }
 
+/// Ages the on-disk catalog snapshot past the freshness window for tests.
+///
+/// Leaves `cache_version` at the current binary value so only timestamp
+/// staleness forces another hydrate.
+#[doc(hidden)]
+pub fn age_catalog_snapshot_for_tests() {
+    hydrate::set_catalog_ready(false);
+    let Ok(connection) = open_models_dev_cache() else {
+        return;
+    };
+    let _ = connection.execute(
+        "insert into catalog_snapshot (id, cache_version, updated_at)
+         values (1, ?1, 0)
+         on conflict(id) do update set
+           cache_version = excluded.cache_version,
+           updated_at = excluded.updated_at",
+        params![MODEL_METADATA_CACHE_VERSION],
+    );
+}
+
 /// Clears process-local hydrate readiness so a test can force another download path.
 #[doc(hidden)]
 pub fn reset_catalog_hydrate_state_for_tests() {

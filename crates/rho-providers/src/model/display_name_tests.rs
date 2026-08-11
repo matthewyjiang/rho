@@ -18,8 +18,8 @@ fn with_empty_caches<T>(f: impl FnOnce() -> T) -> T {
     let provider = tempfile::tempdir().unwrap();
     with_models_dev_cache_dir_for_tests(catalog.path().to_path_buf(), || {
         with_provider_models_cache_dir_for_tests(provider.path().to_path_buf(), || {
-            // Names resolve once per process; each case needs a fresh read.
-            clear_model_display_name_cache_for_tests();
+            // Names resolve once per process; isolate each case on enter and drop.
+            let _names = ModelDisplayNameCacheGuard::new();
             f()
         })
     })
@@ -161,7 +161,7 @@ async fn ensure_is_a_no_op_when_the_catalog_snapshot_is_current() {
     let provider = tempfile::tempdir().unwrap();
     let written = with_models_dev_cache_dir_for_tests(catalog.path().to_path_buf(), || {
         with_provider_models_cache_dir_for_tests(provider.path().to_path_buf(), || {
-            clear_model_display_name_cache_for_tests();
+            let _names = ModelDisplayNameCacheGuard::new();
             write_cached_model_metadata_for_tests(
                 "anthropic",
                 "claude-fable-5",
@@ -175,5 +175,34 @@ async fn ensure_is_a_no_op_when_the_catalog_snapshot_is_current() {
         written,
         Some(0),
         "ensure must finish without awaiting the network when the snapshot is current"
+    );
+}
+
+// Covers: a same-version snapshot that is older than the freshness window must
+// not permanently suppress hydrate. Later launches need new or completed rows
+// without a binary cache-version bump.
+// Owner: pure unit
+#[tokio::test]
+async fn ensure_awaits_when_the_catalog_snapshot_is_stale() {
+    use models_dev::age_catalog_snapshot_for_tests;
+
+    let catalog = tempfile::tempdir().unwrap();
+    let provider = tempfile::tempdir().unwrap();
+    let pending = with_models_dev_cache_dir_for_tests(catalog.path().to_path_buf(), || {
+        with_provider_models_cache_dir_for_tests(provider.path().to_path_buf(), || {
+            let _names = ModelDisplayNameCacheGuard::new();
+            write_cached_model_metadata_for_tests(
+                "anthropic",
+                "claude-fable-5",
+                &named_metadata("Claude Fable 5"),
+            );
+            // Same version as this binary, but updated_at is past the window.
+            age_catalog_snapshot_for_tests();
+            futures_util::future::FutureExt::now_or_never(ensure_model_catalog_names())
+        })
+    });
+    assert_eq!(
+        pending, None,
+        "a stale same-version snapshot must not short-circuit ensure"
     );
 }

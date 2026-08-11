@@ -8,6 +8,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         OnceLock,
     },
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use rusqlite::params;
@@ -22,6 +23,13 @@ use super::{
     MODEL_METADATA_CACHE_VERSION,
 };
 
+/// How long a successful full-catalog snapshot stays current across launches.
+///
+/// A version match alone is not enough: models.dev gains rows without a Rho
+/// binary bump. Within one process the in-memory ready flag still suppresses
+/// duplicate downloads; later launches recheck this window.
+const CATALOG_SNAPSHOT_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+
 /// Ensures the models.dev snapshot is on disk for this process.
 ///
 /// The models.dev document is one full catalog. Writing only the caller's
@@ -30,8 +38,8 @@ use super::{
 /// row for every registered Rho provider instead.
 ///
 /// Concurrent callers share one in-flight download. A current on-disk snapshot
-/// (same cache version as this binary) is free. Returns how many rows the
-/// hydrate wrote, or `0` when the network was skipped or failed.
+/// (same cache version and fresh `updated_at`) is free. Returns how many rows
+/// the hydrate wrote, or `0` when the network was skipped or failed.
 pub async fn ensure_models_dev_catalog() -> usize {
     if catalog_snapshot_is_ready() {
         return 0;
@@ -149,14 +157,28 @@ fn is_catalog_snapshot_current() -> bool {
     let Ok(connection) = open_models_dev_cache() else {
         return false;
     };
-    connection
-        .query_row(
-            "select cache_version from catalog_snapshot where id = 1",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
+    let Ok((version, updated_at)) = connection.query_row(
+        "select cache_version, updated_at from catalog_snapshot where id = 1",
+        [],
+        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+    ) else {
+        return false;
+    };
+    version == MODEL_METADATA_CACHE_VERSION && catalog_snapshot_timestamp_is_fresh(updated_at)
+}
+
+fn catalog_snapshot_timestamp_is_fresh(updated_at: i64) -> bool {
+    let Ok(max_age) = i64::try_from(CATALOG_SNAPSHOT_MAX_AGE.as_secs()) else {
+        return false;
+    };
+    let Some(now) = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .ok()
-        .is_some_and(|version| version == MODEL_METADATA_CACHE_VERSION)
+        .and_then(|duration| i64::try_from(duration.as_secs()).ok())
+    else {
+        return false;
+    };
+    updated_at <= now && now - updated_at <= max_age
 }
 
 pub(super) fn mark_catalog_snapshot_current() {
