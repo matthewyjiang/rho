@@ -330,13 +330,9 @@ impl App {
         if composer_area.height == 0 || !matches!(self.input_ui.composer(), ComposerMode::Input) {
             return;
         }
-        let placements = super::feed_image::composer_image_placements(
-            self.input_ui.attachment_image_previews(),
-            width,
-            super::feed_image::COMPOSER_IMAGE_HEIGHT,
-        );
+        let layout = self.composer_attachment_layout(width);
         let visible_end = composer_start.saturating_add(composer_area.height as usize);
-        for placement in placements {
+        for placement in layout.images {
             if placement.row < composer_start
                 || placement.row.saturating_add(placement.height) > visible_end
             {
@@ -348,15 +344,22 @@ impl App {
                 .saturating_add((placement.row - composer_start) as u16);
             let available_height = composer_area.bottom().saturating_sub(image_y);
             let visible_height = (placement.height as u16).min(available_height);
-            if visible_height == 0 {
+            if visible_height == 0 || placement.width == 0 {
+                continue;
+            }
+            let max_width = composer_area
+                .width
+                .saturating_sub(placement.column.min(composer_area.width));
+            let paint_width = placement.width.min(max_width);
+            if paint_width == 0 {
                 continue;
             }
             placement.image.render(
                 frame,
                 Rect::new(
-                    composer_area.x,
+                    composer_area.x.saturating_add(placement.column),
                     image_y,
-                    composer_area.width,
+                    paint_width,
                     visible_height,
                 ),
             );

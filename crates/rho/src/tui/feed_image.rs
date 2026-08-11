@@ -127,15 +127,15 @@ impl FeedImage {
     }
 
     pub(super) fn height_for_width(&self, width: usize, max_height: u16) -> usize {
-        let width = u16::try_from(width).unwrap_or(u16::MAX);
+        usize::from(self.size_for(width, max_height).height.max(1))
+    }
+
+    fn size_for(&self, width: usize, max_height: u16) -> Size {
+        let width = u16::try_from(width).unwrap_or(u16::MAX).max(1);
         let max_height = max_height.max(1);
-        usize::from(
-            self.state
-                .borrow()
-                .size_for(Resize::Fit(None), Size::new(width, max_height))
-                .height
-                .max(1),
-        )
+        self.state
+            .borrow()
+            .size_for(Resize::Fit(None), Size::new(width, max_height))
     }
 
     pub(super) fn render(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -291,51 +291,113 @@ pub(super) fn reserve_entry_image_rows(
     }
 }
 
-/// Row height for each composer attachment: image preview budget or one label.
-pub(super) fn composer_attachment_row_heights(
+/// Gap in columns between side-by-side composer image previews.
+const COMPOSER_IMAGE_GAP: usize = 1;
+
+/// One painted composer image cell inside the attachment band.
+#[derive(Clone, Debug)]
+pub(super) struct ComposerImagePlacement {
+    pub(super) image: FeedImage,
+    /// Absolute row inside the composer attachment block (starts at 0).
+    pub(super) row: usize,
+    pub(super) column: u16,
+    pub(super) width: u16,
+    pub(super) height: usize,
+}
+
+#[derive(Clone, Debug)]
+pub(super) enum ComposerAttachmentSegment {
+    /// Consecutive ready image previews sharing one horizontal strip.
+    ImageStrip {
+        /// Attachment indices in this strip, left to right.
+        indices: Vec<usize>,
+        height: usize,
+        slot_width: usize,
+    },
+    /// Full-width document / pending label.
+    Label { index: usize },
+}
+
+/// Reserved composer attachment chrome: horizontal image strips and labels.
+#[derive(Clone, Debug, Default)]
+pub(super) struct ComposerAttachmentLayout {
+    pub(super) total_rows: usize,
+    pub(super) segments: Vec<ComposerAttachmentSegment>,
+    pub(super) images: Vec<ComposerImagePlacement>,
+}
+
+/// Layout composer attachments: consecutive image previews share a horizontal
+/// strip; documents and pending items stay full-width rows.
+pub(super) fn layout_composer_attachments(
     attachments: &[super::ComposerAttachment],
     previews: &[Option<FeedImage>],
     width: usize,
     max_height: u16,
-) -> Vec<usize> {
-    attachments
-        .iter()
-        .enumerate()
-        .map(|(index, _)| {
-            previews
-                .get(index)
-                .and_then(|preview| preview.as_ref())
-                .map(|image| image.height_for_width(width, max_height))
-                .unwrap_or(1)
-        })
-        .collect()
-}
+) -> ComposerAttachmentLayout {
+    let width = width.max(1);
+    let mut layout = ComposerAttachmentLayout::default();
+    let mut index = 0usize;
+    while index < attachments.len() {
+        if previews
+            .get(index)
+            .and_then(|preview| preview.as_ref())
+            .is_some()
+        {
+            let run_start = index;
+            while index < attachments.len()
+                && previews
+                    .get(index)
+                    .and_then(|preview| preview.as_ref())
+                    .is_some()
+            {
+                index += 1;
+            }
+            let indices: Vec<usize> = (run_start..index).collect();
+            let count = indices.len();
+            let gap_total = COMPOSER_IMAGE_GAP.saturating_mul(count.saturating_sub(1));
+            let slot_width = (width.saturating_sub(gap_total) / count.max(1)).max(1);
 
-/// Absolute composer-line placements for ready image attachment previews.
-pub(super) fn composer_image_placements(
-    previews: &[Option<FeedImage>],
-    width: usize,
-    max_height: u16,
-) -> Vec<VisibleImagePlacement> {
-    let mut row = 0usize;
-    let mut placements = Vec::new();
-    for preview in previews {
-        match preview {
-            Some(image) => {
-                let height = image.height_for_width(width, max_height);
-                placements.push(VisibleImagePlacement {
+            let mut strip_height = 1usize;
+            let mut images = Vec::with_capacity(count);
+            let image_row = layout.total_rows;
+            for (offset, &attachment_index) in indices.iter().enumerate() {
+                let image = previews[attachment_index]
+                    .as_ref()
+                    .expect("run only contains preview images");
+                let fitted = image.size_for(slot_width, max_height);
+                let cell_height = usize::from(fitted.height).max(1);
+                strip_height = strip_height.max(cell_height);
+                let column = offset.saturating_mul(slot_width.saturating_add(COMPOSER_IMAGE_GAP));
+                images.push(ComposerImagePlacement {
                     image: image.clone(),
-                    row,
-                    height,
+                    row: image_row,
+                    column: u16::try_from(column).unwrap_or(u16::MAX),
+                    width: fitted.width.max(1),
+                    height: cell_height,
                 });
-                row = row.saturating_add(height);
             }
-            None => {
-                row = row.saturating_add(1);
-            }
+
+            // Image rows + one label row under the strip.
+            layout.total_rows = layout
+                .total_rows
+                .saturating_add(strip_height)
+                .saturating_add(1);
+            layout.images.extend(images);
+            layout.segments.push(ComposerAttachmentSegment::ImageStrip {
+                indices,
+                height: strip_height,
+                slot_width,
+            });
+            continue;
         }
+
+        layout
+            .segments
+            .push(ComposerAttachmentSegment::Label { index });
+        layout.total_rows = layout.total_rows.saturating_add(1);
+        index += 1;
     }
-    placements
+    layout
 }
 
 #[derive(Clone, Debug)]

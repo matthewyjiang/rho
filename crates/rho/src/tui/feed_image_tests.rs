@@ -216,18 +216,22 @@ fn tool_entry_history_cache_omits_partially_visible_image_placement() {
         .all(|line| line.to_string().trim().is_empty()));
 }
 
-// Covers: composer image previews reserve aspect-fit rows under the 6-row cap;
-// non-image attachments stay one label row.
+// Covers: consecutive image previews share one horizontal strip with labels
+// beneath; non-preview attachments stay full-width rows.
 // Owner: pure layout policy
 #[test]
-fn composer_attachment_rows_use_preview_height_or_label() {
-    use super::{composer_attachment_row_heights, COMPOSER_IMAGE_HEIGHT};
+fn composer_attachments_stack_image_previews_sideways_with_labels() {
+    use super::{layout_composer_attachments, ComposerAttachmentSegment, COMPOSER_IMAGE_HEIGHT};
     use crate::tui::{ChatMedia, ChatTextDocument, ComposerAttachment, PendingAttachmentSource};
     use rho_providers::model::ImageContent;
 
     let tall = FeedImage::load(&png_asset(300, 600), &kitty_picker()).unwrap();
     let wide = FeedImage::load(&png_asset(600, 100), &kitty_picker()).unwrap();
     let attachments = vec![
+        ComposerAttachment::Ready(ChatMedia::Image(ImageContent {
+            data: String::new(),
+            mime_type: "image/png".into(),
+        })),
         ComposerAttachment::Ready(ChatMedia::Image(ImageContent {
             data: String::new(),
             mime_type: "image/png".into(),
@@ -244,18 +248,35 @@ fn composer_attachment_rows_use_preview_height_or_label() {
             truncated: false,
             warnings: Vec::new(),
         })),
-        ComposerAttachment::Ready(ChatMedia::Image(ImageContent {
-            data: String::new(),
-            mime_type: "image/png".into(),
-        })),
     ];
-    let previews = vec![Some(tall), None, None, Some(wide)];
-    let heights =
-        composer_attachment_row_heights(&attachments, &previews, 40, COMPOSER_IMAGE_HEIGHT);
-    assert_eq!(heights.len(), 4);
-    assert_eq!(heights[0], usize::from(COMPOSER_IMAGE_HEIGHT));
-    assert_eq!(heights[1], 1);
-    assert_eq!(heights[2], 1);
-    assert!(heights[3] < usize::from(COMPOSER_IMAGE_HEIGHT));
-    assert!(heights[3] >= 1);
+    let previews = vec![Some(tall), Some(wide), None, None];
+    let layout = layout_composer_attachments(&attachments, &previews, 41, COMPOSER_IMAGE_HEIGHT);
+
+    assert_eq!(layout.segments.len(), 3);
+    match &layout.segments[0] {
+        ComposerAttachmentSegment::ImageStrip {
+            indices,
+            height,
+            slot_width,
+        } => {
+            assert_eq!(indices, &[0, 1]);
+            assert_eq!(*slot_width, 20); // (41 - 1 gap) / 2
+            assert!(*height <= usize::from(COMPOSER_IMAGE_HEIGHT));
+            // strip rows + label row
+            assert_eq!(layout.total_rows, height + 1 + 1 + 1); // strip+label + pending + doc
+        }
+        other => panic!("expected image strip first, got {other:?}"),
+    }
+    assert!(matches!(
+        layout.segments[1],
+        ComposerAttachmentSegment::Label { index: 2 }
+    ));
+    assert!(matches!(
+        layout.segments[2],
+        ComposerAttachmentSegment::Label { index: 3 }
+    ));
+    assert_eq!(layout.images.len(), 2);
+    assert_eq!(layout.images[0].column, 0);
+    assert_eq!(layout.images[1].column, 21);
+    assert_eq!(layout.images[0].row, layout.images[1].row);
 }
