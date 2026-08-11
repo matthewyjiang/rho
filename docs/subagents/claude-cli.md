@@ -133,6 +133,7 @@ Spawn flags are fixed and deliberate:
 | Flag | Behaviour |
 | --- | --- |
 | `--output-format stream-json --verbose --include-partial-messages` | NDJSON event stream with partial text |
+| `--input-format stream-json` | NDJSON user turns on stdin so the parent can course-correct a live child |
 | `--permission-mode` | Always set from a Claude-native mode. Delegated runs map Rho Plan to Claude `plan` and Rho Auto to Claude `bypassPermissions` (just run; not Claude classifier `auto`, not `dontAsk`). Advisor one-shots set Claude `dontAsk` directly so they stay non-prompting without plan scaffolding. Supervised refuses before spawn. |
 | `--disallowedTools Task` | Blocks Claude nested subagents so fan-out stays under Rho |
 | `--tools` | Restricts built-in tool availability to the base Claude tool names from `tools:`. Empty allowlist still sets `--tools ""` so ambient tools are not inherited |
@@ -145,7 +146,9 @@ Spawn flags are fixed and deliberate:
 | `--max-turns` | Exact configured step/turn cap from the bound launch data. If the installed binary rejects the flag, the run fails with a clear error |
 | `--no-session-persistence` | Delegated agent runs omit it, so `claude --resume <session-id>` works. Rho's own one-shot calls, such as a Claude Code advisor, set it and leave no session behind |
 | cwd | Explicit project directory |
-| prompt | Written on stdin, not argv |
+| prompt | First stream-json user turn on stdin, not argv |
+
+Parents can message a running Claude-cli child with the `agents` action `message`. Rho keeps stdin open, writes each body as another stream-json user turn (Claude queues it until the current turn ends), and closes stdin after the terminal `result` when no parent messages remain. Each parent message counts against `--max-turns`. Claude children do not get `message_parent` yet.
 
 Stderr goes to `log.txt` in the run directory. Cancel kills the child. Terminal success or failure comes from the stream `result` message (`subtype` / `is_error`), not exit code alone.
 

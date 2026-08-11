@@ -179,6 +179,7 @@ impl BoundAgent {
             status_tx,
             started_status,
             overrides: Default::default(),
+            parent_messages: None,
         })
     }
 }

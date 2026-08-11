@@ -6,10 +6,13 @@
 
 use rho_sdk::CancellationToken;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::process::ChildStdin;
+use tokio::sync::{mpsc, oneshot};
 
 use super::{
     child::OwnedChild,
     line_decoder::{claude_ndjson_line_decoder, LineDecodeError},
+    messaging,
     stream::{StreamEffect, StreamMapper, TerminalResult},
 };
 
@@ -17,6 +20,19 @@ use super::{
 /// file, so a failure has to explain itself from memory.
 const MAX_STDERR_BYTES: usize = 8 * 1024;
 const READ_CHUNK_BYTES: usize = 8 * 1024;
+
+/// How the drain feeds the child's stdin.
+pub(crate) enum DrainInput {
+    /// One plain-text prompt, then close stdin (one-shot path).
+    Text { prompt: String },
+    /// stream-json user turns. Writes the initial prompt, keeps stdin open for
+    /// parent follow-ups, and closes after a terminal `result` once the parent
+    /// queue is empty.
+    StreamJson {
+        initial_prompt: String,
+        parent_messages: Option<messaging::ClaudeMessageInbox>,
+    },
+}
 
 /// How a drained child stopped.
 pub(crate) enum DrainEnd {
@@ -40,13 +56,13 @@ pub(crate) struct Drained {
     pub(crate) end: DrainEnd,
 }
 
-/// Write `prompt` to the child, map its stream-json stdout, and wait for exit.
+/// Write stdin according to [`DrainInput`], map stream-json stdout, and wait.
 ///
 /// Every mapped effect reaches `on_effect`; terminal results are also recorded
 /// on the returned [`Drained`], because both callers judge them after exit.
 pub(crate) async fn drain_child(
     child: &mut OwnedChild,
-    prompt: &str,
+    input: DrainInput,
     cancellation: &CancellationToken,
     on_effect: &mut (dyn FnMut(StreamEffect) + Send),
 ) -> Drained {
@@ -58,19 +74,33 @@ pub(crate) async fn drain_child(
         };
     };
 
-    // Prompt on stdin so shell metacharacters cannot break the command line.
-    // Write stdin concurrently with the stdout drain: a child that emits enough
-    // output before consuming stdin would otherwise fill the pipe and deadlock
-    // if we awaited the full prompt write first.
-    let stdin = child.stdin();
-    let prompt = prompt.to_string();
-    let stdin_write = async move {
-        let Some(mut stdin) = stdin else {
-            return Ok(());
+    let Some(stdin) = child.stdin() else {
+        return Drained {
+            terminal: None,
+            stderr: String::new(),
+            end: DrainEnd::StdinFailed("claude code: child stdin was not captured".into()),
         };
-        stdin.write_all(prompt.as_bytes()).await?;
-        stdin.shutdown().await
     };
+
+    let (close_tx, stdin_write) = match input {
+        DrainInput::Text { prompt } => {
+            let write = tokio::spawn(async move { write_text_stdin(stdin, prompt).await });
+            (None, write)
+        }
+        DrainInput::StreamJson {
+            initial_prompt,
+            parent_messages,
+        } => {
+            let (close_tx, close_rx) = oneshot::channel::<()>();
+            let write = tokio::spawn(async move {
+                write_stream_json_stdin(stdin, initial_prompt, parent_messages, close_rx).await
+            });
+            (Some(close_tx), write)
+        }
+    };
+    tokio::pin!(stdin_write);
+
+    // Stderr is optional: session redirects it to a log file.
     let stderr = child.stderr();
     let read_stderr = async move {
         let mut tail = StderrTail::default();
@@ -87,7 +117,6 @@ pub(crate) async fn drain_child(
             }
         }
     };
-    tokio::pin!(stdin_write);
     tokio::pin!(read_stderr);
 
     let mut stdout = BufReader::new(stdout);
@@ -95,10 +124,11 @@ pub(crate) async fn drain_child(
     let mut mapper = StreamMapper::new();
     let mut terminal: Option<TerminalResult> = None;
     let mut stderr_text = String::new();
-    let mut stdin_done = false;
-    let mut stdout_done = false;
     let mut stderr_done = false;
+    let mut stdout_done = false;
+    let mut stdin_done = false;
     let mut exit_result = None;
+    let mut close_tx = close_tx;
     let mut chunk = vec![0_u8; READ_CHUNK_BYTES];
 
     // `None` means every pipe closed and the child was reaped. Observe exit in
@@ -112,19 +142,17 @@ pub(crate) async fn drain_child(
         tokio::select! {
             biased;
             () = cancellation.cancelled() => {
-                // Dropping the pinned stdin future closes ChildStdin; the caller
+                // Dropping the stdin task closes ChildStdin; the caller
                 // terminates the tree so nothing is left orphaned.
                 break Some(DrainEnd::Cancelled);
             }
             result = &mut stdin_write, if !stdin_done => {
                 stdin_done = true;
-                if let Err(error) = result {
+                if let Ok(Err(error)) = result {
                     // Stdin write failures take precedence over later stream
                     // noise: the child often exits uncleanly once its stdin pipe
                     // is dropped mid-protocol.
-                    break Some(DrainEnd::StdinFailed(format!(
-                        "claude code: failed to write prompt to stdin: {error}"
-                    )));
+                    break Some(DrainEnd::StdinFailed(error));
                 }
             }
             captured = &mut read_stderr, if !stderr_done => {
@@ -133,6 +161,8 @@ pub(crate) async fn drain_child(
             }
             status = child.wait(), if exit_result.is_none() => {
                 exit_result = Some(status);
+                // Child is gone; stop waiting on stdin writes.
+                drop(close_tx.take());
             }
             read = stdout.read(&mut chunk), if !stdout_done => {
                 match read {
@@ -144,7 +174,19 @@ pub(crate) async fn drain_child(
                             match decoder.next_line() {
                                 Ok(Some(line)) => {
                                     let line = line.to_string();
-                                    apply_line(&mut mapper, &mut terminal, on_effect, &line);
+                                    for effect in mapper.push_line(&line) {
+                                        if let StreamEffect::Terminal(result) = &effect {
+                                            // Later terminals replace earlier
+                                            // pending protocol-error metadata.
+                                            terminal = Some(result.clone());
+                                            // Ask the stdin writer to close once
+                                            // its parent queue is idle.
+                                            if let Some(tx) = close_tx.take() {
+                                                let _ = tx.send(());
+                                            }
+                                        }
+                                        on_effect(effect);
+                                    }
                                 }
                                 Ok(None) => break,
                                 Err(error) => {
@@ -173,8 +215,12 @@ pub(crate) async fn drain_child(
             Err(error) => DrainEnd::StreamFailed(format_line_error(&error)),
             Ok(tail) => {
                 if let Some(line) = tail {
-                    let line = line.to_string();
-                    apply_line(&mut mapper, &mut terminal, on_effect, &line);
+                    for effect in mapper.push_line(line) {
+                        if let StreamEffect::Terminal(result) = &effect {
+                            terminal = Some(result.clone());
+                        }
+                        on_effect(effect);
+                    }
                 }
                 DrainEnd::Exited(exit_result.expect("completed drain reaped the child"))
             }
@@ -188,19 +234,123 @@ pub(crate) async fn drain_child(
     }
 }
 
-fn apply_line(
-    mapper: &mut StreamMapper,
-    terminal: &mut Option<TerminalResult>,
-    on_effect: &mut (dyn FnMut(StreamEffect) + Send),
-    line: &str,
-) {
-    for effect in mapper.push_line(line) {
-        if let StreamEffect::Terminal(result) = &effect {
-            // Later terminals (for example a final `result`) replace earlier
-            // pending protocol-error metadata.
-            *terminal = Some(result.clone());
+async fn write_text_stdin(mut stdin: ChildStdin, prompt: String) -> Result<(), String> {
+    write_all(&mut stdin, prompt.as_bytes()).await?;
+    stdin
+        .shutdown()
+        .await
+        .map_err(|error| format!("claude code: failed to write prompt to stdin: {error}"))
+}
+
+async fn write_stream_json_stdin(
+    mut stdin: ChildStdin,
+    initial_prompt: String,
+    mut parent_messages: Option<messaging::ClaudeMessageInbox>,
+    close_rx: oneshot::Receiver<()>,
+) -> Result<(), String> {
+    write_all(
+        &mut stdin,
+        messaging::encode_user_turn(&initial_prompt).as_bytes(),
+    )
+    .await?;
+
+    let mut close_rx = Some(close_rx);
+    loop {
+        // Drain any parent messages already queued, then wait for either a new
+        // parent turn or the close signal from the stream side.
+        if let Some(inbox) = parent_messages.as_mut() {
+            match inbox.try_recv() {
+                Ok(text) => {
+                    write_parent_turn(&mut stdin, &text).await?;
+                    continue;
+                }
+                Err(mpsc::error::TryRecvError::Empty) => {}
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    parent_messages = None;
+                }
+            }
         }
-        on_effect(effect);
+
+        let Some(close) = close_rx.as_mut() else {
+            break;
+        };
+
+        tokio::select! {
+            biased;
+            result = close => {
+                let _ = result;
+                close_rx = None;
+                // Stop acknowledging new parent sends before the final drain so
+                // a concurrent `agents message` cannot succeed and then vanish.
+                if let Some(inbox) = parent_messages.as_ref() {
+                    inbox.seal();
+                }
+            }
+            maybe_text = recv_parent(&mut parent_messages), if parent_messages.is_some() => {
+                if let Some(text) = maybe_text {
+                    write_parent_turn(&mut stdin, &text).await?;
+                }
+            }
+        }
+    }
+
+    // After seal, wait until every accepted (including in-flight) body is
+    // written. `recv` ends only when all sender clones are gone.
+    if let Some(mut inbox) = parent_messages.take() {
+        // Seal is idempotent; covers paths that broke without a close signal.
+        inbox.seal();
+        while let Some(text) = inbox.recv().await {
+            write_parent_turn(&mut stdin, &text).await?;
+        }
+    }
+
+    stdin
+        .shutdown()
+        .await
+        .map_err(|error| format!("claude code: failed to write prompt to stdin: {error}"))
+}
+
+async fn write_parent_turn(stdin: &mut ChildStdin, text: &str) -> Result<(), String> {
+    write_all(
+        stdin,
+        messaging::encode_user_turn(&messaging::frame_parent_message(text)).as_bytes(),
+    )
+    .await
+}
+
+async fn write_all(stdin: &mut ChildStdin, mut bytes: &[u8]) -> Result<(), String> {
+    while !bytes.is_empty() {
+        match stdin.write(bytes).await {
+            Ok(0) => {
+                return Err("claude code: failed to write prompt to stdin: wrote 0 bytes".into());
+            }
+            Ok(count) => bytes = &bytes[count..],
+            Err(error) => {
+                return Err(format!(
+                    "claude code: failed to write prompt to stdin: {error}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Waits for the next parent message when a receiver is still installed.
+///
+/// Returns `None` when the parent handle is dropped (channel closed).
+async fn recv_parent(
+    parent_messages: &mut Option<messaging::ClaudeMessageInbox>,
+) -> Option<String> {
+    let Some(inbox) = parent_messages.as_mut() else {
+        std::future::pending::<()>().await;
+        unreachable!("pending future resolved");
+    };
+    match inbox.recv().await {
+        Some(text) => Some(text),
+        None => {
+            *parent_messages = None;
+            None
+        }
     }
 }
 

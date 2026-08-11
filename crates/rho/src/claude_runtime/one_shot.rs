@@ -109,7 +109,9 @@ pub(crate) async fn run_one_shot(
         let mut on_effect = |effect| apply_effect(effect, &mut text, &mut stream);
         drain::drain_child(
             &mut child,
-            &request.input,
+            drain::DrainInput::Text {
+                prompt: request.input.clone(),
+            },
             &request.cancellation,
             &mut on_effect,
         )
@@ -145,6 +147,8 @@ fn one_shot_spawn_request(request: &ClaudeOneShotRequest) -> ClaudeSpawnRequest 
         max_turns: 1,
         effort: request.effort,
         session_persistence: SessionPersistence::Discard,
+        // One-shot has no parent messaging path; keep plain-text stdin.
+        input_format: spawn::ClaudeInputFormat::Text,
     }
 }
 

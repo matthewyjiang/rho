@@ -70,29 +70,41 @@ pub(crate) struct FrozenAgentLaunchRequest {
 enum MessagingSupport {
     /// Rho runtime: steering port is published once the session starts.
     Rho { steering: SteeringSlot },
-    /// Runtime has no parent messaging path (for example claude-cli).
-    Unsupported { runtime: &'static str },
+    /// Claude-cli runtime: stream-json stdin turns while the child is live.
+    Claude {
+        messages: crate::claude_runtime::messaging::ClaudeMessageHandle,
+    },
+}
+
+/// Messaging ports created with the run handle, before the session task starts.
+struct CapacityMessagingPorts {
+    messaging: MessagingSupport,
+    steering_slot: Option<SteeringSlot>,
+    claude_parent_rx: Option<crate::claude_runtime::messaging::ClaudeMessageInbox>,
 }
 
 impl MessagingSupport {
-    /// Decides messaging support and the run's steering slot together, so the
-    /// two can never disagree about whether a slot exists.
-    fn for_capacity(capacity_class: CapacityClass) -> (Self, Option<SteeringSlot>) {
+    /// Decides messaging support and the run's ports together, so the
+    /// handle and session task cannot disagree about which path is live.
+    fn for_capacity(capacity_class: CapacityClass) -> CapacityMessagingPorts {
         match capacity_class {
-            CapacityClass::Claude => (
-                Self::Unsupported {
-                    runtime: "claude-cli",
-                },
-                None,
-            ),
+            CapacityClass::Claude => {
+                let (handle, inbox) = crate::claude_runtime::messaging::message_channel();
+                CapacityMessagingPorts {
+                    messaging: Self::Claude { messages: handle },
+                    steering_slot: None,
+                    claude_parent_rx: Some(inbox),
+                }
+            }
             CapacityClass::Rho => {
                 let steering = SteeringSlot::new();
-                (
-                    Self::Rho {
+                CapacityMessagingPorts {
+                    messaging: Self::Rho {
                         steering: steering.clone(),
                     },
-                    Some(steering),
-                )
+                    steering_slot: Some(steering),
+                    claude_parent_rx: None,
+                }
             }
         }
     }
@@ -133,15 +145,12 @@ impl AgentRunHandle {
         self.status.clone()
     }
 
-    /// Stages a parent message for the next Rho provider turn.
+    /// Stages a parent message for the next Rho provider turn or Claude stdin turn.
     pub(crate) async fn message_from_parent(
         &self,
         message: &ValidatedMessage,
     ) -> anyhow::Result<()> {
         match &self.messaging {
-            MessagingSupport::Unsupported { runtime } => anyhow::bail!(
-                "delegated run uses runtime '{runtime}', which cannot receive parent messages yet"
-            ),
             MessagingSupport::Rho { steering } => {
                 if self.is_complete() {
                     anyhow::bail!("delegated run has already finished");
@@ -158,6 +167,16 @@ impl AgentRunHandle {
                     .await
                     .map_err(|error| anyhow::anyhow!("{error}"))
             }
+            MessagingSupport::Claude { messages } => {
+                if self.is_complete() {
+                    anyhow::bail!("delegated run has already finished");
+                }
+                // Drain frames the body the same way Rho steering does.
+                messages
+                    .send(message.as_str().to_string())
+                    .await
+                    .map_err(|error| anyhow::anyhow!("{error}"))
+            }
         }
     }
 
@@ -165,13 +184,14 @@ impl AgentRunHandle {
     pub(crate) fn completed_for_test(status: RunStatus) -> Self {
         let (_status_tx, status_rx) = tokio::sync::watch::channel(status);
         let (_completion_tx, completion_rx) = tokio::sync::watch::channel(true);
+        let (messages, inbox) = crate::claude_runtime::messaging::message_channel();
+        // Drop the inbox so late parent messages fail closed like a finished run.
+        drop(inbox);
         Self {
             cancellation: RunCancellation::new(),
             status: status_rx,
             completion: completion_rx,
-            messaging: MessagingSupport::Unsupported {
-                runtime: "test-complete",
-            },
+            messaging: MessagingSupport::Claude { messages },
         }
     }
 }
@@ -370,7 +390,11 @@ impl AgentExecutor {
 
         let labels = bound.runtime().artifact_labels();
         let capacity_class = bound.runtime().capacity_class();
-        let (messaging, steering_slot) = MessagingSupport::for_capacity(capacity_class);
+        let CapacityMessagingPorts {
+            messaging,
+            steering_slot,
+            claude_parent_rx,
+        } = MessagingSupport::for_capacity(capacity_class);
 
         let initial = RunStatus {
             state: RunState::Starting,
@@ -432,6 +456,7 @@ impl AgentExecutor {
                 Some(task_status_tx.clone()),
                 Some(started_status),
             ) {
+                session.parent_messages = claude_parent_rx;
                 if let Some(frozen) = frozen_claude {
                     let expected_identity = frozen.executable_identity;
                     let verified_executable = frozen._verified_executable;
@@ -440,7 +465,7 @@ impl AgentExecutor {
                             frozen.executable,
                         ),
                     );
-                    session.set_frozen_argv(frozen.arguments);
+                    session.set_frozen_argv(ensure_stream_json_input(frozen.arguments));
                     session.overrides.before_spawn = Some(Box::new(move |command| {
                         crate::workflow::verify_executable_identity(&expected_identity)
                             .map_err(std::io::Error::other)?;
@@ -798,6 +823,18 @@ async fn acquire_permit_or_cancel(
             }
         }
     }
+}
+
+/// Ensures frozen Claude argv can accept parent messages over stream-json stdin.
+fn ensure_stream_json_input(mut arguments: Vec<String>) -> Vec<String> {
+    let has_stream_json = arguments
+        .windows(2)
+        .any(|window| window[0] == "--input-format" && window[1] == "stream-json");
+    if !has_stream_json {
+        arguments.push("--input-format".into());
+        arguments.push("stream-json".into());
+    }
+    arguments
 }
 
 #[cfg(test)]
