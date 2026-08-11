@@ -28,6 +28,10 @@ const IMAGE_HEIGHT_VIEWPORT_DEN: usize = 100;
 const MAX_THUMBNAIL_WIDTH: u32 = 1_024;
 const MAX_THUMBNAIL_HEIGHT: u32 = 768;
 const MAX_THUMBNAIL_ALLOCATION: u64 = 8 * 1024 * 1024;
+/// Pasted composer images are often full-resolution; decode under the same
+/// bound `read_file` uses before shrinking to the feed thumbnail box.
+const MAX_COMPOSER_DECODE_DIMENSION: u32 = 4_096;
+const MAX_COMPOSER_DECODE_ALLOCATION: u64 = 80 * 1024 * 1024;
 
 /// Max rows one feed image may reserve, from the visible history content height.
 ///
@@ -68,19 +72,53 @@ impl FeedImage {
         let bytes = STANDARD
             .decode(data.trim())
             .map_err(|_| ComposerImageLoadError::InvalidBase64)?;
-        Self::decode(&bytes)
+        // Composer pastes are full camera/screenshot resolution. The feed
+        // decode path rejects anything over the thumbnail box, so shrink here
+        // the same way `read_file` does before paint.
+        Self::decode_composer_preview(&bytes)
             .map(|image| image.to_feed_image(picker))
             .map_err(|_| ComposerImageLoadError::Decode)
     }
 
     pub(super) fn decode(bytes: &[u8]) -> image::ImageResult<DecodedFeedImage> {
+        Self::decode_with_limits(
+            bytes,
+            MAX_THUMBNAIL_WIDTH,
+            MAX_THUMBNAIL_HEIGHT,
+            MAX_THUMBNAIL_ALLOCATION,
+            /*thumbnail*/ false,
+        )
+    }
+
+    fn decode_composer_preview(bytes: &[u8]) -> image::ImageResult<DecodedFeedImage> {
+        Self::decode_with_limits(
+            bytes,
+            MAX_COMPOSER_DECODE_DIMENSION,
+            MAX_COMPOSER_DECODE_DIMENSION,
+            MAX_COMPOSER_DECODE_ALLOCATION,
+            /*thumbnail*/ true,
+        )
+    }
+
+    fn decode_with_limits(
+        bytes: &[u8],
+        max_width: u32,
+        max_height: u32,
+        max_alloc: u64,
+        thumbnail: bool,
+    ) -> image::ImageResult<DecodedFeedImage> {
         let mut reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
         let mut limits = Limits::default();
-        limits.max_image_width = Some(MAX_THUMBNAIL_WIDTH);
-        limits.max_image_height = Some(MAX_THUMBNAIL_HEIGHT);
-        limits.max_alloc = Some(MAX_THUMBNAIL_ALLOCATION);
+        limits.max_image_width = Some(max_width);
+        limits.max_image_height = Some(max_height);
+        limits.max_alloc = Some(max_alloc);
         reader.limits(limits);
         let image = reader.decode()?;
+        let image = if thumbnail {
+            image.thumbnail(MAX_THUMBNAIL_WIDTH, MAX_THUMBNAIL_HEIGHT)
+        } else {
+            image
+        };
         let estimated_bytes = image.as_bytes().len();
         Ok(DecodedFeedImage {
             image,
