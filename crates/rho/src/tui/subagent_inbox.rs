@@ -7,8 +7,11 @@ use tokio::sync::mpsc::Receiver;
 
 use crate::app::{
     subagent_host_input::SubagentHostInputRequest,
-    subagent_messaging::{NoticePermits, SubagentNotice},
+    subagent_messaging::{NoticePermits, NoticeRebind, SubagentNotice},
 };
+
+#[cfg(test)]
+use crate::app::subagent_messaging::SubagentNoticeBridge;
 
 /// Every channel a delegated child can push at its parent session.
 ///
@@ -21,10 +24,23 @@ use crate::app::{
 pub(super) struct SubagentInbox {
     questionnaires: Option<Receiver<SubagentHostInputRequest>>,
     notices: Option<Receiver<SubagentNotice>>,
-    /// Releases end-to-end notice budget when the parent delivers or discards.
+    /// Permit generation installed with the live notice receiver. New arrivals
+    /// from that receiver are tagged with this handle.
     notice_permits: Option<NoticePermits>,
     queued_questionnaires: VecDeque<SubagentHostInputRequest>,
-    queued_notices: VecDeque<SubagentNotice>,
+    queued_notices: VecDeque<QueuedNotice>,
+    /// Permit handles for notices taken for turn-boundary delivery, in the same
+    /// order as the returned `Vec`. Committed on successful provider start or
+    /// re-attached by [`Self::return_notices`].
+    pending_delivery_permits: Vec<Option<NoticePermits>>,
+}
+
+/// One accepted notice plus the generation that owns its end-to-end budget slot.
+struct QueuedNotice {
+    notice: SubagentNotice,
+    /// Generation that accepted this notice. Released on deliver or discard.
+    /// `None` only for test inserts that never reserved a slot.
+    permits: Option<NoticePermits>,
 }
 
 /// What [`SubagentInbox::recv`] observed, resolved before any queue is touched.
@@ -39,15 +55,8 @@ impl SubagentInbox {
     /// Binds both channels to the delegated-run manager.
     pub(super) fn bind(&mut self, manager: &crate::tools::agent::SubagentManager) {
         self.questionnaires = Some(manager.bind_host_input());
-        // Retire the previous notice receiver before installing a replacement.
-        // Leaving it installed until assignment keeps the retired channel open
-        // after `bind_notices` swaps the bridge binding, so a concurrent post
-        // that still holds the old sender can enqueue and return Ok for a
-        // notice this rebind then drops.
-        drop(self.notices.take());
-        let (notices, notice_permits) = manager.bind_notices();
-        self.notices = Some(notices);
-        self.notice_permits = Some(notice_permits);
+        let rebind = manager.rebind_notices(self.notices.take());
+        self.install_notice_rebind(rebind);
     }
 
     /// Waits for the next child message on any bound channel and queues it.
@@ -75,7 +84,9 @@ impl SubagentInbox {
         };
         match incoming {
             Incoming::Questionnaire(request) => self.queued_questionnaires.push_back(request),
-            Incoming::Notice(notice) => self.queued_notices.push_back(notice),
+            Incoming::Notice(notice) => {
+                self.push_accepted_notice(notice, self.notice_permits.clone())
+            }
             Incoming::QuestionnairesClosed => self.questionnaires = None,
             Incoming::NoticesClosed => self.notices = None,
         }
@@ -90,11 +101,18 @@ impl SubagentInbox {
                 changed = true;
             }
         }
+        let mut drained_notices = Vec::new();
         if let Some(receiver) = self.notices.as_mut() {
             while let Ok(notice) = receiver.try_recv() {
-                self.queued_notices.push_back(notice);
-                changed = true;
+                drained_notices.push(notice);
             }
+        }
+        if !drained_notices.is_empty() {
+            let current_permits = self.notice_permits.clone();
+            for notice in drained_notices {
+                self.push_accepted_notice(notice, current_permits.clone());
+            }
+            changed = true;
         }
         changed
     }
@@ -122,30 +140,40 @@ impl SubagentInbox {
             }
             self.queued_questionnaires.push_back(pending);
         }
-        let notices_before = self.queued_notices.len();
-        self.queued_notices
-            .retain(|notice| &notice.parent_session_id == session_id);
-        let dropped = notices_before - self.queued_notices.len();
-        self.release_notice_permits(dropped);
-        changed |= dropped > 0;
+        let mut kept = VecDeque::new();
+        for queued in self.queued_notices.drain(..) {
+            if &queued.notice.parent_session_id == session_id {
+                kept.push_back(queued);
+            } else {
+                release_one(queued.permits);
+                changed = true;
+            }
+        }
+        self.queued_notices = kept;
         changed
     }
 
     /// Takes queued notices for this parent session in arrival order.
     ///
     /// Notices addressed to a session the parent has left can never be
-    /// delivered, so they are dropped rather than queued forever.
+    /// delivered, so they are dropped rather than queued forever. Permit
+    /// handles for kept notices stay with the inbox until
+    /// [`Self::commit_delivered_notices`] or [`Self::return_notices`].
     pub(super) fn take_notices(&mut self, session_id: &SessionId) -> Vec<SubagentNotice> {
+        debug_assert!(
+            self.pending_delivery_permits.is_empty(),
+            "previous take_notices was neither committed nor returned"
+        );
+        self.pending_delivery_permits.clear();
         let mut kept = Vec::new();
-        let mut dropped = 0usize;
-        for notice in self.queued_notices.drain(..) {
-            if &notice.parent_session_id == session_id {
-                kept.push(notice);
+        for queued in self.queued_notices.drain(..) {
+            if &queued.notice.parent_session_id == session_id {
+                self.pending_delivery_permits.push(queued.permits);
+                kept.push(queued.notice);
             } else {
-                dropped += 1;
+                release_one(queued.permits);
             }
         }
-        self.release_notice_permits(dropped);
         kept
     }
 
@@ -153,20 +181,28 @@ impl SubagentInbox {
     /// setup preserves arrival order ahead of any newer arrivals.
     pub(super) fn return_notices(&mut self, notices: impl IntoIterator<Item = SubagentNotice>) {
         let notices = notices.into_iter().collect::<Vec<_>>();
-        for notice in notices.into_iter().rev() {
-            self.queued_notices.push_front(notice);
+        let mut permits = std::mem::take(&mut self.pending_delivery_permits);
+        // Test helpers may return notices that never went through take_notices.
+        if permits.len() != notices.len() {
+            permits.resize_with(notices.len(), || None);
+        }
+        for (notice, permits) in notices.into_iter().zip(permits).rev() {
+            self.queued_notices
+                .push_front(QueuedNotice { notice, permits });
         }
     }
 
     /// Frees end-to-end notice budget after the parent delivered notices to the
     /// model. Restored batches must not call this.
-    pub(super) fn commit_delivered_notices(&self, count: usize) {
-        self.release_notice_permits(count);
-    }
-
-    fn release_notice_permits(&self, count: usize) {
-        if let Some(permits) = &self.notice_permits {
-            permits.release(count);
+    pub(super) fn commit_delivered_notices(&mut self, count: usize) {
+        debug_assert_eq!(
+            self.pending_delivery_permits.len(),
+            count,
+            "commit count must match the last take_notices batch"
+        );
+        let _ = count;
+        for permits in self.pending_delivery_permits.drain(..) {
+            release_one(permits);
         }
     }
 
@@ -199,6 +235,22 @@ impl SubagentInbox {
     }
 
     #[cfg(test)]
+    pub(super) fn push_notice_for_test(&mut self, notice: SubagentNotice) {
+        self.push_accepted_notice(notice, /*permits*/ None);
+    }
+
+    #[cfg(test)]
+    pub(super) fn bind_notices_for_test(&mut self, bridge: &SubagentNoticeBridge) {
+        let rebind = bridge.rebind_parent(self.notices.take());
+        self.install_notice_rebind(rebind);
+    }
+
+    #[cfg(test)]
+    pub(super) fn queued_notice_count(&self) -> usize {
+        self.queued_notices.len()
+    }
+
+    #[cfg(test)]
     pub(super) fn push_questionnaire_for_test(&mut self, request: SubagentHostInputRequest) {
         self.queued_questionnaires.push_back(request);
     }
@@ -208,26 +260,25 @@ impl SubagentInbox {
         self.queued_questionnaires.len()
     }
 
-    #[cfg(test)]
-    pub(super) fn push_notice_for_test(&mut self, notice: SubagentNotice) {
-        self.queued_notices.push_back(notice);
+    fn install_notice_rebind(&mut self, rebind: NoticeRebind) {
+        // Retained channel notices keep the retired generation. Already-queued
+        // notices already carry their own handles and must not be retagged.
+        for notice in rebind.retained {
+            self.push_accepted_notice(notice, rebind.retired_permits.clone());
+        }
+        self.notices = Some(rebind.receiver);
+        self.notice_permits = Some(rebind.permits);
     }
 
-    #[cfg(test)]
-    pub(super) fn bind_notices_for_test(
-        &mut self,
-        receiver: Receiver<SubagentNotice>,
-        permits: NoticePermits,
-    ) {
-        // Match [`Self::bind`]: retire the previous receiver before installing.
-        drop(self.notices.take());
-        self.notices = Some(receiver);
-        self.notice_permits = Some(permits);
+    fn push_accepted_notice(&mut self, notice: SubagentNotice, permits: Option<NoticePermits>) {
+        self.queued_notices
+            .push_back(QueuedNotice { notice, permits });
     }
+}
 
-    #[cfg(test)]
-    pub(super) fn queued_notice_count(&self) -> usize {
-        self.queued_notices.len()
+fn release_one(permits: Option<NoticePermits>) {
+    if let Some(permits) = permits {
+        permits.release(1);
     }
 }
 

@@ -73,9 +73,8 @@ fn returned_notices_preserve_order_at_the_front() {
 #[test]
 fn draining_into_pending_queue_keeps_end_to_end_notice_capacity() {
     let bridge = SubagentNoticeBridge::new();
-    let (receiver, permits) = bridge.bind_parent();
     let mut inbox = SubagentInbox::default();
-    inbox.bind_notices_for_test(receiver, permits);
+    inbox.bind_notices_for_test(&bridge);
     let session = SessionId::from_string("session-1").unwrap();
 
     for index in 0..NOTICE_QUEUE_CAPACITY {
@@ -107,6 +106,71 @@ fn draining_into_pending_queue_keeps_end_to_end_notice_capacity() {
     bridge
         .post(notice("after-delivery", &session))
         .expect("delivery frees budget for a new notice");
+}
+
+// Covers: inbox rebind keeps channel + already-queued notices deliverable on
+// their original permit generation. Delivering the retired batch must not free
+// slots on the replacement generation.
+// Owner: tui subagent inbox + notice bridge
+#[test]
+fn rebind_retains_notices_without_crossing_permit_generations() {
+    let bridge = SubagentNoticeBridge::new();
+    let mut inbox = SubagentInbox::default();
+    inbox.bind_notices_for_test(&bridge);
+    let session = SessionId::from_string("session-1").unwrap();
+
+    bridge
+        .post(notice("drained", &session))
+        .expect("accepted before drain");
+    assert!(inbox.drain());
+    bridge
+        .post(notice("in-channel", &session))
+        .expect("accepted before rebind");
+
+    // Production install path: drain+drop the prior receiver under the bridge
+    // lock, retain in-flight notices, and install a fresh generation.
+    inbox.bind_notices_for_test(&bridge);
+
+    assert_eq!(inbox.queued_notice_count(), 2);
+    let retained = inbox
+        .take_notices(&session)
+        .into_iter()
+        .map(|notice| notice.run_id)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        retained,
+        vec!["drained".to_owned(), "in-channel".to_owned()]
+    );
+
+    for index in 0..NOTICE_QUEUE_CAPACITY {
+        bridge
+            .post(notice(&format!("new{index}"), &session))
+            .expect("replacement generation has a full fresh budget");
+    }
+    assert_eq!(
+        bridge.post(notice("new-overflow", &session)),
+        Err(NoticePostError::QueueFull {
+            capacity: NOTICE_QUEUE_CAPACITY,
+        })
+    );
+
+    // Committing the retired batch must not free the active generation.
+    inbox.commit_delivered_notices(2);
+    assert_eq!(
+        bridge.post(notice("still-full-after-old-commit", &session)),
+        Err(NoticePostError::QueueFull {
+            capacity: NOTICE_QUEUE_CAPACITY,
+        }),
+        "retired-generation delivery must not release the active budget"
+    );
+
+    assert!(inbox.drain());
+    let active = inbox.take_notices(&session);
+    assert_eq!(active.len(), NOTICE_QUEUE_CAPACITY);
+    inbox.commit_delivered_notices(active.len());
+    bridge
+        .post(notice("after-active-delivery", &session))
+        .expect("active delivery frees the replacement generation");
 }
 
 fn notice(run_id: &str, parent_session_id: &SessionId) -> SubagentNotice {

@@ -104,14 +104,15 @@ impl SubagentManager {
         self.executor.host_input().unbind_parent();
     }
 
-    /// Binds the notice receiver and its permit generation together.
-    pub(crate) fn bind_notices(
+    /// Atomically replaces the notice binding, retaining in-flight channel notices.
+    ///
+    /// Pass `None` for the first bind. When rebinding, pass the prior receiver so
+    /// posts that already returned `Ok` stay deliverable on the retired generation.
+    pub(crate) fn rebind_notices(
         &self,
-    ) -> (
-        tokio::sync::mpsc::Receiver<SubagentNotice>,
-        crate::app::subagent_messaging::NoticePermits,
-    ) {
-        self.executor.notices().bind_parent()
+        old_receiver: Option<tokio::sync::mpsc::Receiver<SubagentNotice>>,
+    ) -> crate::app::subagent_messaging::NoticeRebind {
+        self.executor.notices().rebind_parent(old_receiver)
     }
 
     pub(crate) fn unbind_notices(&self) {

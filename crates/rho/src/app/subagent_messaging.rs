@@ -100,19 +100,23 @@ impl NoticePermits {
     }
 
     /// Returns slots for notices the parent no longer owes a delivery for.
+    ///
+    /// Validates the outstanding count before mutating so a bad release cannot
+    /// wrap the counter even briefly before panicking.
     pub(crate) fn release(&self, count: usize) {
         if count == 0 {
             return;
         }
         self.outstanding
-            .fetch_sub(count, Ordering::AcqRel)
-            .checked_sub(count)
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                current.checked_sub(count)
+            })
             .expect("notice permit release exceeds outstanding reservations");
     }
 
-    fn try_reserve(&self) -> bool {
+    fn try_reserve(&self, capacity: usize) -> bool {
         let mut current = self.outstanding.load(Ordering::Acquire);
-        while current < NOTICE_QUEUE_CAPACITY {
+        while current < capacity {
             match self.outstanding.compare_exchange_weak(
                 current,
                 current + 1,
@@ -157,6 +161,18 @@ impl Default for SubagentNoticeBridge {
     }
 }
 
+/// Result of replacing the parent notice binding.
+pub(crate) struct NoticeRebind {
+    pub(crate) receiver: mpsc::Receiver<SubagentNotice>,
+    pub(crate) permits: NoticePermits,
+    /// Notices drained from the retired receiver under the binding lock.
+    pub(crate) retained: Vec<SubagentNotice>,
+    /// Permit generation that accepted [`Self::retained`] and any notices the
+    /// inbox already held from the prior binding. `None` when there was no
+    /// previous binding.
+    pub(crate) retired_permits: Option<NoticePermits>,
+}
+
 impl SubagentNoticeBridge {
     pub(crate) fn new() -> Self {
         Self {
@@ -167,16 +183,48 @@ impl SubagentNoticeBridge {
 
     /// Installs the parent receiver and a fresh permit generation.
     ///
-    /// Replaces any previous binding. The returned permits are the only handle
-    /// that should free budget for notices accepted on this binding.
+    /// Replaces any previous binding. Prefer [`Self::rebind_parent`] when the
+    /// caller still holds the prior receiver so in-flight notices are retained.
     pub(crate) fn bind_parent(&self) -> (mpsc::Receiver<SubagentNotice>, NoticePermits) {
+        let rebind = self.rebind_parent(None);
+        (rebind.receiver, rebind.permits)
+    }
+
+    /// Atomically drains `old_receiver`, retires it, and installs a new binding.
+    ///
+    /// Holds the binding lock for the whole swap so a concurrent [`Self::post`]
+    /// cannot return `Ok` for a notice that this replacement would discard.
+    /// Callers must keep [`NoticeRebind::retained`] deliverable against
+    /// [`NoticeRebind::retired_permits`].
+    pub(crate) fn rebind_parent(
+        &self,
+        mut old_receiver: Option<mpsc::Receiver<SubagentNotice>>,
+    ) -> NoticeRebind {
+        let mut guard = self.binding_slot();
+        let retired_permits = guard.as_ref().map(|binding| binding.permits.clone());
+
+        let mut retained = Vec::new();
+        if let Some(receiver) = old_receiver.as_mut() {
+            while let Ok(notice) = receiver.try_recv() {
+                retained.push(notice);
+            }
+        }
+        // Drop the retired receiver while the lock is held so no post can still
+        // target it after we install the replacement.
+        drop(old_receiver);
+
         let (sender, receiver) = mpsc::channel(self.capacity);
         let permits = NoticePermits::new();
-        *self.binding_slot() = Some(NoticeBinding {
+        *guard = Some(NoticeBinding {
             sender,
             permits: permits.clone(),
         });
-        (receiver, permits)
+        NoticeRebind {
+            receiver,
+            permits,
+            retained,
+            retired_permits,
+        }
     }
 
     /// Drops the parent binding so later child notices fail closed.
@@ -209,12 +257,11 @@ impl SubagentNoticeBridge {
         notice: SubagentNotice,
         gap: &dyn Fn(),
     ) -> Result<(), NoticePostError> {
+        let capacity = self.capacity;
         let guard = self.binding_slot();
         let binding = guard.as_ref().ok_or(NoticePostError::Unbound)?;
-        if !binding.permits.try_reserve() {
-            return Err(NoticePostError::QueueFull {
-                capacity: NOTICE_QUEUE_CAPACITY,
-            });
+        if !binding.permits.try_reserve(capacity) {
+            return Err(NoticePostError::QueueFull { capacity });
         }
         // Hold the binding lock across the gap and enqueue. Releasing it after
         // reserve and before try_send lets rebind install a replacement while
@@ -224,9 +271,7 @@ impl SubagentNoticeBridge {
         binding.sender.try_send(notice).map_err(|error| {
             binding.permits.release(1);
             match error {
-                mpsc::error::TrySendError::Full(_) => NoticePostError::QueueFull {
-                    capacity: NOTICE_QUEUE_CAPACITY,
-                },
+                mpsc::error::TrySendError::Full(_) => NoticePostError::QueueFull { capacity },
                 mpsc::error::TrySendError::Closed(_) => NoticePostError::Unbound,
             }
         })

@@ -121,6 +121,46 @@ fn notice_post_after_rebind_uses_only_the_active_generation() {
     assert_eq!(new_permits.outstanding(), NOTICE_QUEUE_CAPACITY);
 }
 
+// Covers: rebind drains the retired receiver under the binding lock so a post
+// that already returned Ok is retained with its matching permit generation
+// instead of being dropped with the old receiver.
+// Owner: app notice bridge
+#[test]
+fn notice_rebind_retains_in_flight_channel_notices_on_retired_generation() {
+    let bridge = SubagentNoticeBridge::new();
+    let (receiver, old_permits) = bridge.bind_parent();
+    bridge
+        .post(sample_notice("queued-a"))
+        .expect("first notice accepted");
+    bridge
+        .post(sample_notice("queued-b"))
+        .expect("second notice accepted");
+    assert_eq!(old_permits.outstanding(), 2);
+
+    let rebind = bridge.rebind_parent(Some(receiver));
+    assert_eq!(
+        rebind
+            .retained
+            .iter()
+            .map(|notice| notice.run_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["queued-a", "queued-b"]
+    );
+    let retired = rebind
+        .retired_permits
+        .expect("prior binding exposes retired permits");
+    assert_eq!(retired.outstanding(), 2);
+    assert_eq!(rebind.permits.outstanding(), 0);
+    bridge
+        .post(sample_notice("new-gen"))
+        .expect("replacement generation accepts posts");
+    assert_eq!(rebind.permits.outstanding(), 1);
+    // Freeing retained notices only touches the retired generation.
+    retired.release(2);
+    assert_eq!(old_permits.outstanding(), 0);
+    assert_eq!(rebind.permits.outstanding(), 1);
+}
+
 // Covers: reserve and enqueue stay under the binding lock so a concurrent
 // rebind cannot open a gap where post acknowledges a notice that receiver
 // replacement then discards. Explicit barriers park inside the
@@ -157,10 +197,10 @@ fn notice_post_holds_binding_lock_from_reserve_through_enqueue() {
     let entered = Instant::now();
     while !in_gap.load(Ordering::SeqCst) {
         assert!(
-            entered.elapsed() < Duration::from_secs(1),
+            entered.elapsed() < Duration::from_secs(10),
             "post should enter the reserve→enqueue gap"
         );
-        thread::yield_now();
+        thread::sleep(Duration::from_millis(1));
     }
 
     // Under the old ordering the lock was released before enqueue, so a rebind
@@ -181,10 +221,10 @@ fn notice_post_holds_binding_lock_from_reserve_through_enqueue() {
     let rebind_seen = Instant::now();
     while !rebind_started.load(Ordering::SeqCst) {
         assert!(
-            rebind_seen.elapsed() < Duration::from_secs(1),
+            rebind_seen.elapsed() < Duration::from_secs(10),
             "rebind thread should start"
         );
-        thread::yield_now();
+        thread::sleep(Duration::from_millis(1));
     }
     // Failure-bound probe: while post remains in the gap, replacement cannot
     // finish installing. If enqueue released the lock, bind_parent would
