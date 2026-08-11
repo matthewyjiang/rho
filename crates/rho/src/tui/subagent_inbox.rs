@@ -39,8 +39,9 @@ impl SubagentInbox {
     /// Binds both channels to the delegated-run manager.
     pub(super) fn bind(&mut self, manager: &crate::tools::agent::SubagentManager) {
         self.questionnaires = Some(manager.bind_host_input());
-        self.notices = Some(manager.bind_notices());
-        self.notice_permits = Some(manager.notice_permits());
+        let (notices, notice_permits) = manager.bind_notices();
+        self.notices = Some(notices);
+        self.notice_permits = Some(notice_permits);
     }
 
     /// Waits for the next child message on any bound channel and queues it.

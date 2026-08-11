@@ -104,17 +104,18 @@ impl SubagentManager {
         self.executor.host_input().unbind_parent();
     }
 
-    pub(crate) fn bind_notices(&self) -> tokio::sync::mpsc::Receiver<SubagentNotice> {
+    /// Binds the notice receiver and its permit generation together.
+    pub(crate) fn bind_notices(
+        &self,
+    ) -> (
+        tokio::sync::mpsc::Receiver<SubagentNotice>,
+        crate::app::subagent_messaging::NoticePermits,
+    ) {
         self.executor.notices().bind_parent()
     }
 
     pub(crate) fn unbind_notices(&self) {
         self.executor.notices().unbind_parent();
-    }
-
-    /// End-to-end notice budget handle for the parent inbox.
-    pub(crate) fn notice_permits(&self) -> crate::app::subagent_messaging::NoticePermits {
-        self.executor.notices().permits()
     }
 
     pub fn bind_parent_session(&self, placement: subagent::RunPlacement) {

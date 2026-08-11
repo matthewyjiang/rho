@@ -73,9 +73,9 @@ fn returned_notices_preserve_order_at_the_front() {
 #[test]
 fn draining_into_pending_queue_keeps_end_to_end_notice_capacity() {
     let bridge = SubagentNoticeBridge::new();
-    let receiver = bridge.bind_parent();
+    let (receiver, permits) = bridge.bind_parent();
     let mut inbox = SubagentInbox::default();
-    inbox.bind_notices_for_test(receiver, bridge.permits());
+    inbox.bind_notices_for_test(receiver, permits);
     let session = SessionId::from_string("session-1").unwrap();
 
     for index in 0..NOTICE_QUEUE_CAPACITY {

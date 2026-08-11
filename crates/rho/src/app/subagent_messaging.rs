@@ -15,8 +15,6 @@ use std::sync::{
 use rho_sdk::SessionId;
 use tokio::sync::mpsc;
 
-use super::parent_bridge::ParentBridge;
-
 /// Queue depth for child->parent notices waiting on the parent session.
 ///
 /// Enough for a burst of parallel children; fail loud when a child floods the
@@ -83,25 +81,24 @@ pub(crate) struct SubagentNotice {
     pub(crate) message: String,
 }
 
-/// Shared end-to-end budget for accepted but undelivered child notices.
+/// End-to-end budget for accepted but undelivered notices in one parent binding.
 ///
-/// [`SubagentNoticeBridge::post`] reserves a slot before enqueue. The parent
-/// releases slots only when a notice is delivered to the model or discarded,
-/// so draining the transport into a TUI pending queue cannot bypass the bound.
+/// Each [`SubagentNoticeBridge::bind_parent`] installs a fresh generation. A
+/// handle cloned from an older binding only mutates that generation's counter,
+/// so a late discard after rebind cannot panic or free slots owned by the new
+/// parent receiver.
 #[derive(Clone)]
 pub(crate) struct NoticePermits {
     outstanding: Arc<AtomicUsize>,
 }
 
-impl Default for NoticePermits {
-    fn default() -> Self {
+impl NoticePermits {
+    fn new() -> Self {
         Self {
             outstanding: Arc::new(AtomicUsize::new(0)),
         }
     }
-}
 
-impl NoticePermits {
     /// Returns slots for notices the parent no longer owes a delivery for.
     pub(crate) fn release(&self, count: usize) {
         if count == 0 {
@@ -129,20 +126,28 @@ impl NoticePermits {
         false
     }
 
-    fn reset(&self) {
-        self.outstanding.store(0, Ordering::Release);
-    }
-
     #[cfg(test)]
     pub(crate) fn outstanding(&self) -> usize {
         self.outstanding.load(Ordering::Acquire)
     }
 }
 
+/// Live parent binding: the sender and the permit generation that owns its budget.
+struct NoticeBinding {
+    sender: mpsc::Sender<SubagentNotice>,
+    permits: NoticePermits,
+}
+
+/// Child→parent notice transport with a generation-scoped end-to-end budget.
+///
+/// Sender selection, reservation, and rebinding share one mutex so a post
+/// never pairs a stale sender with a replacement generation's permits (or the
+/// reverse). Dropping a binding retires its sender; outstanding permits on that
+/// generation remain valid for the inbox that accepted those notices.
 #[derive(Clone)]
 pub(crate) struct SubagentNoticeBridge {
-    bridge: ParentBridge<SubagentNotice>,
-    permits: NoticePermits,
+    binding: Arc<Mutex<Option<NoticeBinding>>>,
+    capacity: usize,
 }
 
 impl Default for SubagentNoticeBridge {
@@ -154,43 +159,52 @@ impl Default for SubagentNoticeBridge {
 impl SubagentNoticeBridge {
     pub(crate) fn new() -> Self {
         Self {
-            bridge: ParentBridge::new(NOTICE_QUEUE_CAPACITY),
-            permits: NoticePermits::default(),
+            binding: Arc::new(Mutex::new(None)),
+            capacity: NOTICE_QUEUE_CAPACITY,
         }
     }
 
-    /// Installs the parent receiver. Replaces any previous binding.
-    pub(crate) fn bind_parent(&self) -> mpsc::Receiver<SubagentNotice> {
-        // A new receiver abandons anything still queued on the previous one.
-        self.permits.reset();
-        self.bridge.bind_parent()
+    /// Installs the parent receiver and a fresh permit generation.
+    ///
+    /// Replaces any previous binding. The returned permits are the only handle
+    /// that should free budget for notices accepted on this binding.
+    pub(crate) fn bind_parent(&self) -> (mpsc::Receiver<SubagentNotice>, NoticePermits) {
+        let (sender, receiver) = mpsc::channel(self.capacity);
+        let permits = NoticePermits::new();
+        *self.binding_slot() = Some(NoticeBinding {
+            sender,
+            permits: permits.clone(),
+        });
+        (receiver, permits)
     }
 
     /// Drops the parent binding so later child notices fail closed.
+    ///
+    /// Outstanding permits on the retired generation stay usable by any inbox
+    /// still holding accepted notices from that binding.
     pub(crate) fn unbind_parent(&self) {
-        self.bridge.unbind_parent();
+        *self.binding_slot() = None;
     }
 
     /// True while an interactive parent is listening.
     pub(crate) fn is_bound(&self) -> bool {
-        self.bridge.is_bound()
-    }
-
-    /// Handle used by the parent inbox to free slots on deliver or discard.
-    pub(crate) fn permits(&self) -> NoticePermits {
-        self.permits.clone()
+        self.binding_slot().is_some()
     }
 
     /// Posts a notice for the parent. Fails when unbound or the queue is full.
     pub(crate) fn post(&self, notice: SubagentNotice) -> Result<(), NoticePostError> {
-        let sender = self.bridge.sender().ok_or(NoticePostError::Unbound)?;
-        if !self.permits.try_reserve() {
-            return Err(NoticePostError::QueueFull {
-                capacity: NOTICE_QUEUE_CAPACITY,
-            });
-        }
+        let (sender, permits) = {
+            let guard = self.binding_slot();
+            let binding = guard.as_ref().ok_or(NoticePostError::Unbound)?;
+            if !binding.permits.try_reserve() {
+                return Err(NoticePostError::QueueFull {
+                    capacity: NOTICE_QUEUE_CAPACITY,
+                });
+            }
+            (binding.sender.clone(), binding.permits.clone())
+        };
         sender.try_send(notice).map_err(|error| {
-            self.permits.release(1);
+            permits.release(1);
             match error {
                 mpsc::error::TrySendError::Full(_) => NoticePostError::QueueFull {
                     capacity: NOTICE_QUEUE_CAPACITY,
@@ -198,6 +212,12 @@ impl SubagentNoticeBridge {
                 mpsc::error::TrySendError::Closed(_) => NoticePostError::Unbound,
             }
         })
+    }
+
+    fn binding_slot(&self) -> std::sync::MutexGuard<'_, Option<NoticeBinding>> {
+        self.binding
+            .lock()
+            .expect("subagent notice bridge binding lock")
     }
 }
 
