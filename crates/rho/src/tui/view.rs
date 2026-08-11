@@ -77,7 +77,8 @@ impl App {
         }
         let width = area.width as usize;
         let height = area.height as usize;
-        self.sync_feed_image_budget(width, height);
+        self.note_terminal_geometry(width, height);
+        self.refresh_composer_attachment_layout_cache(width);
         let live_history = self.history_live_lines(width, now);
         let history_len = self.history_len_with_live(width, &live_history);
         let composer_lines = self.composer_lines(width, height);
@@ -320,52 +321,6 @@ impl App {
         }
     }
 
-    fn render_composer_images(
-        &self,
-        frame: &mut Frame<'_>,
-        composer_area: Rect,
-        width: usize,
-        composer_start: usize,
-    ) {
-        if composer_area.height == 0 || !matches!(self.input_ui.composer(), ComposerMode::Input) {
-            return;
-        }
-        let layout = self.composer_attachment_layout(width);
-        let visible_end = composer_start.saturating_add(composer_area.height as usize);
-        for placement in layout.images {
-            if placement.row < composer_start
-                || placement.row.saturating_add(placement.height) > visible_end
-            {
-                // Match history: only paint when the full reserved block fits.
-                continue;
-            }
-            let image_y = composer_area
-                .y
-                .saturating_add((placement.row - composer_start) as u16);
-            let available_height = composer_area.bottom().saturating_sub(image_y);
-            let visible_height = (placement.height as u16).min(available_height);
-            if visible_height == 0 || placement.width == 0 {
-                continue;
-            }
-            let max_width = composer_area
-                .width
-                .saturating_sub(placement.column.min(composer_area.width));
-            let paint_width = placement.width.min(max_width);
-            if paint_width == 0 {
-                continue;
-            }
-            placement.image.render(
-                frame,
-                Rect::new(
-                    composer_area.x.saturating_add(placement.column),
-                    image_y,
-                    paint_width,
-                    visible_height,
-                ),
-            );
-        }
-    }
-
     fn draw_cursor(&self, frame: &mut Frame<'_>, surface: DrawSurface<'_>) {
         let DrawSurface {
             area,
@@ -544,15 +499,19 @@ impl App {
     pub(super) fn history_render_settings(&self, width: usize) -> HistoryRenderSettings {
         self.info
             .runtime
-            .history_render_settings(width, self.history.max_image_height())
+            .history_render_settings(width, self.feed_image_row_budget())
     }
 
-    /// Updates the feed-image row budget from the current history content height.
-    pub(super) fn sync_feed_image_budget(&mut self, width: usize, terminal_height: usize) {
-        let content_height =
-            self.history_content_height_for_screen(width, terminal_height, Instant::now());
-        self.history
-            .set_max_image_height(super::feed_image::max_feed_image_height(content_height));
+    /// Record terminal size for discrete feed-image budgets and layout caches.
+    pub(super) fn note_terminal_geometry(&mut self, width: usize, terminal_height: usize) {
+        let _ = width;
+        if terminal_height > 0 {
+            self.terminal_height = terminal_height;
+        }
+    }
+
+    pub(super) fn feed_image_row_budget(&self) -> u16 {
+        super::feed_image::ImageRowBudget::feed_from_terminal_height(self.terminal_height).get()
     }
 
     pub(super) fn visible_history_lines(
@@ -695,7 +654,7 @@ impl App {
         if has_pending_tools && self.open_stream_tail_active() {
             lines.push(Line::raw(""));
         }
-        let max_image_height = self.history.max_image_height();
+        let max_image_height = self.feed_image_row_budget();
         for pending in &shells {
             // tool_entry_lines owns the trailing spacer under each card.
             lines.extend(tool_entry_lines(
@@ -848,7 +807,7 @@ impl App {
         terminal: &mut Terminal<B>,
     ) -> Result<(), B::Error> {
         let size = terminal.size()?;
-        self.sync_feed_image_budget(size.width as usize, size.height as usize);
+        self.note_terminal_geometry(size.width as usize, size.height as usize);
         self.clamp_history_scroll(size.width as usize, size.height as usize, Instant::now());
         Ok(())
     }
@@ -887,7 +846,7 @@ impl App {
         let size = terminal.size()?;
         let width = size.width as usize;
         let height = size.height as usize;
-        self.sync_feed_image_budget(width, height);
+        self.note_terminal_geometry(width, height);
         let now = Instant::now();
         match (key.modifiers, key.code) {
             (_, KeyCode::PageUp) => {
@@ -971,7 +930,7 @@ impl App {
 
         let size = terminal.size()?;
         let width = size.width as usize;
-        self.sync_feed_image_budget(width, size.height as usize);
+        self.note_terminal_geometry(width, size.height as usize);
         let (omitted, visible_entries) = recovered_history_tail(
             &entries,
             RECOVERED_HISTORY_LINE_LIMIT,

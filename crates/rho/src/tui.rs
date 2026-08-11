@@ -29,6 +29,7 @@ mod command_block;
 mod command_palette;
 mod compaction_display;
 mod composer;
+mod composer_attachments;
 mod composer_chrome;
 mod config_actions;
 mod config_editor;
@@ -480,6 +481,10 @@ struct App {
     session_title_locked: bool,
     clipboard: Box<dyn ClipboardWriter + Send>,
     media_attach_tasks: Vec<media_attach::MediaAttachTask>,
+    /// Last known terminal height for discrete feed-image row budgets.
+    terminal_height: usize,
+    /// Shared composer attachment layout for the current frame/width.
+    composer_attachment_layout_cache: Option<composer_attachments::ComposerAttachmentLayoutCache>,
     pending_subagent_attaches: Vec<PendingSubagentAttach>,
     last_mouse_position: Option<(u16, u16)>,
     /// Screen-space drag selection for text outside the history area.

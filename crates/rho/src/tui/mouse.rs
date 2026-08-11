@@ -41,7 +41,7 @@ impl App {
         let screen = Rect::new(0, 0, size.width, size.height);
         let width = size.width as usize;
         let height = size.height as usize;
-        self.sync_feed_image_budget(width, height);
+        self.note_terminal_geometry(width, height);
         let now = Instant::now();
         match kind {
             MouseEventKind::ScrollUp => {
@@ -460,7 +460,7 @@ impl App {
                     shell,
                     width,
                     self.info.runtime.max_tool_output_lines,
-                    self.history.max_image_height(),
+                    self.feed_image_row_budget(),
                 )
                 .len(),
             );
@@ -489,7 +489,7 @@ impl App {
                     pending,
                     width,
                     self.info.runtime.max_tool_output_lines,
-                    self.history.max_image_height(),
+                    self.feed_image_row_budget(),
                 )
                 .len(),
             );

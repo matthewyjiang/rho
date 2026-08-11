@@ -26,6 +26,8 @@ pub(super) enum PendingAttachmentSource {
     File,
     /// A resource being read from an MCP server.
     McpResource,
+    /// An image paste decoding a composer preview off the UI thread.
+    Image,
 }
 
 /// Stable identity shared by a pending composer item and its extraction task.
@@ -78,6 +80,7 @@ impl ComposerAttachment {
             Self::Pending { source, name, .. } => match source {
                 PendingAttachmentSource::File => format!("[file: {name} · extracting]"),
                 PendingAttachmentSource::McpResource => format!("[resource: {name} · reading]"),
+                PendingAttachmentSource::Image => format!("[image: {name} · decoding]"),
             },
         }
     }

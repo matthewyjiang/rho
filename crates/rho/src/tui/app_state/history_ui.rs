@@ -3,7 +3,6 @@
 use std::time::{Duration, Instant};
 
 use crate::tui::{
-    feed_image::DEFAULT_IMAGE_HEIGHT,
     history_cache::HistoryLineCache,
     markdown_image,
     scrollbar::{HistoryScrollChrome, HistoryScrollbarDrag},
@@ -15,6 +14,7 @@ use crate::tui::{
 ///
 /// Fields stay private so transcript and cache updates go through methods that
 /// keep line/image invalidation consistent.
+#[derive(Default)]
 pub(in crate::tui) struct HistoryUi {
     transcript: Vec<Entry>,
     lines: HistoryLineCache,
@@ -25,26 +25,6 @@ pub(in crate::tui) struct HistoryUi {
     text_selection: Option<TextSelection>,
     copy_notice: Option<CopyNotice>,
     session_header_cache: Option<SessionHeaderCache>,
-    /// Latest feed-image row budget from the history viewport. Defaults until
-    /// layout syncs it from the terminal size.
-    max_image_height: u16,
-}
-
-impl Default for HistoryUi {
-    fn default() -> Self {
-        Self {
-            transcript: Vec::new(),
-            lines: HistoryLineCache::default(),
-            images: markdown_image::MarkdownImageCache::default(),
-            images_dirty_from: None,
-            scroll: HistoryScrollChrome::default(),
-            hovered_code_block_copy: None,
-            text_selection: None,
-            copy_notice: None,
-            session_header_cache: None,
-            max_image_height: DEFAULT_IMAGE_HEIGHT,
-        }
-    }
 }
 
 impl HistoryUi {
@@ -203,13 +183,5 @@ impl HistoryUi {
 
     pub(in crate::tui) fn set_session_header_cache(&mut self, cache: Option<SessionHeaderCache>) {
         self.session_header_cache = cache;
-    }
-
-    pub(in crate::tui) fn max_image_height(&self) -> u16 {
-        self.max_image_height
-    }
-
-    pub(in crate::tui) fn set_max_image_height(&mut self, height: u16) {
-        self.max_image_height = height.max(1);
     }
 }

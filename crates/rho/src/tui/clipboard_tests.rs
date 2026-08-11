@@ -212,7 +212,7 @@ async fn completion_targets_pending_id_and_pending_attachments_cannot_submit() {
     let second_id = MediaAttachId::new();
     let first_task = tokio::spawn(std::future::pending::<media_attach::MediaAttachOutcome>());
     let second_task = tokio::spawn(async {
-        media_attach::MediaAttachOutcome::Ready(ChatMedia::Image(ImageContent {
+        media_attach::MediaAttachOutcome::ready(ChatMedia::Image(ImageContent {
             data: "Y29tcGxldGVk".into(),
             mime_type: "image/webp".into(),
         }))

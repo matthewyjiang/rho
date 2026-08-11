@@ -620,7 +620,7 @@ impl App {
         let entries = transcript_entries_from_messages(&display_history, &self.info.runtime.cwd);
         let size = terminal.size()?;
         let width = size.width as usize;
-        self.sync_feed_image_budget(width, size.height as usize);
+        self.note_terminal_geometry(width, size.height as usize);
         let (_omitted, visible_entries) = recovered_history_tail(
             &entries,
             RECOVERED_HISTORY_LINE_LIMIT,

@@ -7,6 +7,7 @@ use rho_sdk::tool::ToolAsset;
 use super::{
     kitty_graphics_environment, max_feed_image_height, picker_for_environment, FeedImage,
     COMPOSER_IMAGE_HEIGHT, DEFAULT_IMAGE_HEIGHT, MAX_IMAGE_HEIGHT, MIN_IMAGE_HEIGHT,
+    TALL_IMAGE_HEIGHT,
 };
 use crate::tui::{
     history_cache::{HistoryLineCache, HistoryLineSlice, HistoryRenderSettings},
@@ -144,8 +145,9 @@ fn composer_base64_preview_accepts_oversized_source_images() {
         Err(image::ImageError::Limits(_))
     ));
 
-    let image = FeedImage::load_base64(&STANDARD.encode(bytes), &kitty_picker())
+    let decoded = FeedImage::decode_composer_base64(&STANDARD.encode(bytes))
         .expect("composer preview should thumbnail oversized pastes");
+    let image = decoded.to_feed_image(&kitty_picker());
     assert_eq!(
         image.height_for_width(40, COMPOSER_IMAGE_HEIGHT),
         usize::from(COMPOSER_IMAGE_HEIGHT)
@@ -155,11 +157,12 @@ fn composer_base64_preview_accepts_oversized_source_images() {
 // Covers: feed image max height tracks viewport then clamps.
 // Owner: pure layout policy
 #[test]
-fn feed_image_height_budget_scales_with_viewport_then_clamps() {
+fn feed_image_height_budget_uses_terminal_height_bands() {
     assert_eq!(max_feed_image_height(0), MIN_IMAGE_HEIGHT);
-    assert_eq!(max_feed_image_height(20), MIN_IMAGE_HEIGHT);
-    assert_eq!(max_feed_image_height(80), 36);
-    assert_eq!(max_feed_image_height(200), MAX_IMAGE_HEIGHT);
+    assert_eq!(max_feed_image_height(28), MIN_IMAGE_HEIGHT);
+    assert_eq!(max_feed_image_height(29), DEFAULT_IMAGE_HEIGHT);
+    assert_eq!(max_feed_image_height(45), TALL_IMAGE_HEIGHT);
+    assert_eq!(max_feed_image_height(65), MAX_IMAGE_HEIGHT);
 }
 
 // Covers: reserved rows honor the layout budget and aspect ratio.
@@ -214,89 +217,4 @@ fn tool_entry_history_cache_omits_partially_visible_image_placement() {
     assert!(visible_lines
         .iter()
         .all(|line| line.to_string().trim().is_empty()));
-}
-
-// Covers: consecutive image previews pack left-to-right at natural width with
-// labels beneath; non-preview attachments stay full-width rows.
-// Owner: pure layout policy
-#[test]
-fn composer_attachments_stack_image_previews_sideways_with_labels() {
-    use super::{
-        layout_composer_attachments, ComposerAttachmentSegment, COMPOSER_IMAGE_GAP,
-        COMPOSER_IMAGE_HEIGHT,
-    };
-    use crate::tui::{ChatMedia, ChatTextDocument, ComposerAttachment, PendingAttachmentSource};
-    use rho_providers::model::ImageContent;
-
-    let tall = FeedImage::load(&png_asset(300, 600), &kitty_picker()).unwrap();
-    let wide = FeedImage::load(&png_asset(600, 100), &kitty_picker()).unwrap();
-    let attachments = vec![
-        ComposerAttachment::Ready(ChatMedia::Image(ImageContent {
-            data: String::new(),
-            mime_type: "image/png".into(),
-        })),
-        ComposerAttachment::Ready(ChatMedia::Image(ImageContent {
-            data: String::new(),
-            mime_type: "image/png".into(),
-        })),
-        ComposerAttachment::Pending {
-            id: crate::tui::MediaAttachId::new(),
-            source: PendingAttachmentSource::File,
-            name: "doc.pdf".into(),
-        },
-        ComposerAttachment::Ready(ChatMedia::TextDocument(ChatTextDocument {
-            name: "notes.txt".into(),
-            mime: "text/plain".into(),
-            body: "hi".into(),
-            truncated: false,
-            warnings: Vec::new(),
-        })),
-    ];
-    let previews = vec![Some(tall), Some(wide), None, None];
-    let layout = layout_composer_attachments(&attachments, &previews, 80, COMPOSER_IMAGE_HEIGHT);
-
-    assert_eq!(layout.segments.len(), 3);
-    match &layout.segments[0] {
-        ComposerAttachmentSegment::ImageStrip {
-            indices,
-            height,
-            cell_widths,
-        } => {
-            assert_eq!(indices, &[0, 1]);
-            assert_eq!(cell_widths.len(), 2);
-            assert!(*height <= usize::from(COMPOSER_IMAGE_HEIGHT));
-            // Packed left: second image starts right after first + gap, not mid-screen.
-            let packed_end = cell_widths[0] + COMPOSER_IMAGE_GAP + cell_widths[1];
-            assert!(
-                packed_end < 80,
-                "strip should not stretch across the full width ({packed_end} < 80)"
-            );
-            assert_eq!(layout.total_rows, height + 1 + 1 + 1); // strip+label + pending + doc
-        }
-        other => panic!("expected image strip first, got {other:?}"),
-    }
-    assert!(matches!(
-        layout.segments[1],
-        ComposerAttachmentSegment::Label { index: 2 }
-    ));
-    assert!(matches!(
-        layout.segments[2],
-        ComposerAttachmentSegment::Label { index: 3 }
-    ));
-    assert_eq!(layout.images.len(), 2);
-    assert_eq!(layout.images[0].column, 0);
-    assert_eq!(
-        usize::from(layout.images[1].column),
-        usize::from(layout.images[0].width) + COMPOSER_IMAGE_GAP
-    );
-    assert_eq!(layout.images[0].row, layout.images[1].row);
-    // Shared strip height for every cell.
-    assert_eq!(layout.images[0].height, layout.images[1].height);
-    assert_eq!(
-        layout.images[0].height,
-        match &layout.segments[0] {
-            ComposerAttachmentSegment::ImageStrip { height, .. } => *height,
-            _ => unreachable!(),
-        }
-    );
 }

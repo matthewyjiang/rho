@@ -17,13 +17,12 @@ use rho_sdk::tool::ToolAsset;
 pub(super) const MIN_IMAGE_HEIGHT: u16 = 16;
 /// Ceiling so one image cannot dominate the transcript.
 pub(super) const MAX_IMAGE_HEIGHT: u16 = 40;
-/// Used when the history viewport is unknown (tests, recovery budgeting).
+/// Mid band and default when terminal height is unknown (tests, recovery).
 pub(super) const DEFAULT_IMAGE_HEIGHT: u16 = 24;
+/// Tall-but-not-max band between default and ceiling.
+pub(super) const TALL_IMAGE_HEIGHT: u16 = 32;
 /// Max rows for an image preview above the composer text.
 pub(super) const COMPOSER_IMAGE_HEIGHT: u16 = 6;
-/// Share of the history content viewport used as the image height budget.
-const IMAGE_HEIGHT_VIEWPORT_NUM: usize = 45;
-const IMAGE_HEIGHT_VIEWPORT_DEN: usize = 100;
 
 const MAX_THUMBNAIL_WIDTH: u32 = 1_024;
 const MAX_THUMBNAIL_HEIGHT: u32 = 768;
@@ -33,15 +32,43 @@ const MAX_THUMBNAIL_ALLOCATION: u64 = 8 * 1024 * 1024;
 const MAX_COMPOSER_DECODE_DIMENSION: u32 = 4_096;
 const MAX_COMPOSER_DECODE_ALLOCATION: u64 = 80 * 1024 * 1024;
 
-/// Max rows one feed image may reserve, from the visible history content height.
+/// Max rows one feed image may reserve, from terminal height bands.
 ///
-/// Scales with the pane so tall terminals get larger previews, then clamps to a
-/// readable floor and a transcript-friendly ceiling.
-pub(super) fn max_feed_image_height(history_content_height: usize) -> u16 {
-    let scaled = history_content_height.saturating_mul(IMAGE_HEIGHT_VIEWPORT_NUM)
-        / IMAGE_HEIGHT_VIEWPORT_DEN;
-    let clamped = scaled.clamp(usize::from(MIN_IMAGE_HEIGHT), usize::from(MAX_IMAGE_HEIGHT));
-    u16::try_from(clamped).unwrap_or(MAX_IMAGE_HEIGHT)
+/// Discrete tiers keep the history line cache stable when the composer grows
+/// (wraps, attachment strips) without changing the terminal size.
+pub(super) fn max_feed_image_height(terminal_height: usize) -> u16 {
+    match terminal_height {
+        0..=28 => MIN_IMAGE_HEIGHT,
+        29..=44 => DEFAULT_IMAGE_HEIGHT,
+        45..=64 => TALL_IMAGE_HEIGHT,
+        _ => MAX_IMAGE_HEIGHT,
+    }
+}
+
+/// Row budget for fitting a feed or composer image into the terminal grid.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct ImageRowBudget(u16);
+
+impl ImageRowBudget {
+    pub(super) fn get(self) -> u16 {
+        self.0.max(1)
+    }
+
+    pub(super) fn feed_from_terminal_height(terminal_height: usize) -> Self {
+        if terminal_height == 0 {
+            Self::default_feed()
+        } else {
+            Self(max_feed_image_height(terminal_height))
+        }
+    }
+
+    pub(super) fn composer() -> Self {
+        Self(COMPOSER_IMAGE_HEIGHT)
+    }
+
+    pub(super) const fn default_feed() -> Self {
+        Self(DEFAULT_IMAGE_HEIGHT)
+    }
 }
 
 #[derive(Clone)]
@@ -67,58 +94,35 @@ impl FeedImage {
         Self::decode(asset.bytes()).map(|image| image.to_feed_image(picker))
     }
 
-    pub(super) fn load_base64(data: &str, picker: &Picker) -> Result<Self, ComposerImageLoadError> {
-        use base64::{engine::general_purpose::STANDARD, Engine as _};
-        let bytes = STANDARD
-            .decode(data.trim())
-            .map_err(|_| ComposerImageLoadError::InvalidBase64)?;
-        // Composer pastes are full camera/screenshot resolution. The feed
-        // decode path rejects anything over the thumbnail box, so shrink here
-        // the same way `read_file` does before paint.
-        Self::decode_composer_preview(&bytes)
-            .map(|image| image.to_feed_image(picker))
-            .map_err(|_| ComposerImageLoadError::Decode)
-    }
-
+    /// Decode a feed/tool asset that is already within the thumbnail box.
     pub(super) fn decode(bytes: &[u8]) -> image::ImageResult<DecodedFeedImage> {
-        Self::decode_with_limits(
+        decode_bounded_image(
             bytes,
             MAX_THUMBNAIL_WIDTH,
             MAX_THUMBNAIL_HEIGHT,
             MAX_THUMBNAIL_ALLOCATION,
-            /*thumbnail*/ false,
         )
     }
 
-    fn decode_composer_preview(bytes: &[u8]) -> image::ImageResult<DecodedFeedImage> {
-        Self::decode_with_limits(
-            bytes,
+    /// Decode a full-resolution composer paste under the larger bound, then
+    /// shrink to the feed thumbnail box. Safe to run on a worker thread.
+    pub(super) fn decode_composer_base64(
+        data: &str,
+    ) -> Result<DecodedFeedImage, ComposerImageLoadError> {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let bytes = STANDARD
+            .decode(data.trim())
+            .map_err(|_| ComposerImageLoadError::InvalidBase64)?;
+        let decoded = decode_bounded_image(
+            &bytes,
             MAX_COMPOSER_DECODE_DIMENSION,
             MAX_COMPOSER_DECODE_DIMENSION,
             MAX_COMPOSER_DECODE_ALLOCATION,
-            /*thumbnail*/ true,
         )
-    }
-
-    fn decode_with_limits(
-        bytes: &[u8],
-        max_width: u32,
-        max_height: u32,
-        max_alloc: u64,
-        thumbnail: bool,
-    ) -> image::ImageResult<DecodedFeedImage> {
-        let mut reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
-        let mut limits = Limits::default();
-        limits.max_image_width = Some(max_width);
-        limits.max_image_height = Some(max_height);
-        limits.max_alloc = Some(max_alloc);
-        reader.limits(limits);
-        let image = reader.decode()?;
-        let image = if thumbnail {
-            image.thumbnail(MAX_THUMBNAIL_WIDTH, MAX_THUMBNAIL_HEIGHT)
-        } else {
-            image
-        };
+        .map_err(|_| ComposerImageLoadError::Decode)?;
+        let image = decoded
+            .image
+            .thumbnail(MAX_THUMBNAIL_WIDTH, MAX_THUMBNAIL_HEIGHT);
         let estimated_bytes = image.as_bytes().len();
         Ok(DecodedFeedImage {
             image,
@@ -130,7 +134,7 @@ impl FeedImage {
         usize::from(self.size_for(width, max_height).height.max(1))
     }
 
-    fn size_for(&self, width: usize, max_height: u16) -> Size {
+    pub(super) fn size_for(&self, width: usize, max_height: u16) -> Size {
         let width = u16::try_from(width).unwrap_or(u16::MAX).max(1);
         let max_height = max_height.max(1);
         self.state
@@ -157,6 +161,26 @@ impl DecodedFeedImage {
             state: Rc::new(RefCell::new(picker.new_resize_protocol(self.image.clone()))),
         }
     }
+}
+
+fn decode_bounded_image(
+    bytes: &[u8],
+    max_width: u32,
+    max_height: u32,
+    max_alloc: u64,
+) -> image::ImageResult<DecodedFeedImage> {
+    let mut reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(max_width);
+    limits.max_image_height = Some(max_height);
+    limits.max_alloc = Some(max_alloc);
+    reader.limits(limits);
+    let image = reader.decode()?;
+    let estimated_bytes = image.as_bytes().len();
+    Ok(DecodedFeedImage {
+        image,
+        estimated_bytes,
+    })
 }
 
 #[derive(Debug)]
@@ -289,156 +313,6 @@ pub(super) fn reserve_entry_image_rows(
         }),
         _ => None,
     }
-}
-
-/// Gap in columns between side-by-side composer image previews.
-pub(super) const COMPOSER_IMAGE_GAP: usize = 2;
-
-/// One painted composer image cell inside the attachment band.
-#[derive(Clone, Debug)]
-pub(super) struct ComposerImagePlacement {
-    pub(super) image: FeedImage,
-    /// Absolute row inside the composer attachment block (starts at 0).
-    pub(super) row: usize,
-    pub(super) column: u16,
-    pub(super) width: u16,
-    pub(super) height: usize,
-}
-
-#[derive(Clone, Debug)]
-pub(super) enum ComposerAttachmentSegment {
-    /// Consecutive ready image previews sharing one horizontal strip.
-    ImageStrip {
-        /// Attachment indices in this strip, left to right.
-        indices: Vec<usize>,
-        height: usize,
-        /// Cell width under each preview, left to right (packed, not full-bleed).
-        cell_widths: Vec<usize>,
-    },
-    /// Full-width document / pending label.
-    Label { index: usize },
-}
-
-/// Reserved composer attachment chrome: horizontal image strips and labels.
-#[derive(Clone, Debug, Default)]
-pub(super) struct ComposerAttachmentLayout {
-    pub(super) total_rows: usize,
-    pub(super) segments: Vec<ComposerAttachmentSegment>,
-    pub(super) images: Vec<ComposerImagePlacement>,
-}
-
-/// Layout composer attachments: consecutive image previews share a horizontal
-/// strip packed left-to-right; documents and pending items stay full-width rows.
-pub(super) fn layout_composer_attachments(
-    attachments: &[super::ComposerAttachment],
-    previews: &[Option<FeedImage>],
-    width: usize,
-    max_height: u16,
-) -> ComposerAttachmentLayout {
-    let width = width.max(1);
-    let mut layout = ComposerAttachmentLayout::default();
-    let mut index = 0usize;
-    while index < attachments.len() {
-        if previews
-            .get(index)
-            .and_then(|preview| preview.as_ref())
-            .is_some()
-        {
-            let run_start = index;
-            while index < attachments.len()
-                && previews
-                    .get(index)
-                    .and_then(|preview| preview.as_ref())
-                    .is_some()
-            {
-                index += 1;
-            }
-            let indices: Vec<usize> = (run_start..index).collect();
-            let count = indices.len();
-            let images_in_run: Vec<&FeedImage> = indices
-                .iter()
-                .map(|&attachment_index| {
-                    previews[attachment_index]
-                        .as_ref()
-                        .expect("run only contains preview images")
-                })
-                .collect();
-
-            // Shared strip height = tallest natural fit under the max budget.
-            let mut strip_height = 1usize;
-            for image in &images_in_run {
-                let fitted = image.size_for(width, max_height);
-                strip_height = strip_height.max(usize::from(fitted.height).max(1));
-            }
-            strip_height = strip_height.min(usize::from(max_height.max(1)));
-            let strip_height_u16 = u16::try_from(strip_height).unwrap_or(u16::MAX).max(1);
-
-            // Preferred width at that shared height (aspect preserved).
-            let mut cell_widths: Vec<usize> = images_in_run
-                .iter()
-                .map(|image| {
-                    usize::from(image.size_for(width, strip_height_u16).width.max(1)).min(width)
-                })
-                .collect();
-
-            // If the packed row overflows, shrink cells proportionally.
-            let gap_total = COMPOSER_IMAGE_GAP.saturating_mul(count.saturating_sub(1));
-            let content_budget = width.saturating_sub(gap_total).max(count);
-            let preferred_total: usize = cell_widths.iter().sum();
-            if preferred_total > content_budget && preferred_total > 0 {
-                let mut assigned = 0usize;
-                for (i, cell) in cell_widths.iter_mut().enumerate() {
-                    if i + 1 == count {
-                        *cell = content_budget.saturating_sub(assigned).max(1);
-                    } else {
-                        let scaled = (*cell)
-                            .saturating_mul(content_budget)
-                            .saturating_div(preferred_total)
-                            .max(1);
-                        *cell = scaled;
-                        assigned = assigned.saturating_add(scaled);
-                    }
-                }
-            }
-
-            let mut images = Vec::with_capacity(count);
-            let image_row = layout.total_rows;
-            let mut column = 0usize;
-            for (offset, image) in images_in_run.into_iter().enumerate() {
-                let cell_width = cell_widths[offset].max(1);
-                images.push(ComposerImagePlacement {
-                    image: image.clone(),
-                    row: image_row,
-                    column: u16::try_from(column).unwrap_or(u16::MAX),
-                    width: u16::try_from(cell_width).unwrap_or(u16::MAX).max(1),
-                    height: strip_height,
-                });
-                column = column
-                    .saturating_add(cell_width)
-                    .saturating_add(COMPOSER_IMAGE_GAP);
-            }
-
-            // Image rows + one label row under the strip.
-            layout.total_rows = layout
-                .total_rows
-                .saturating_add(strip_height)
-                .saturating_add(1);
-            layout.images.extend(images);
-            layout.segments.push(ComposerAttachmentSegment::ImageStrip {
-                indices,
-                height: strip_height,
-                cell_widths,
-            });
-            continue;
-        }
-
-        layout
-            .segments
-            .push(ComposerAttachmentSegment::Label { index });
-        layout.total_rows = layout.total_rows.saturating_add(1);
-        index += 1;
-    }
-    layout
 }
 
 #[derive(Clone, Debug)]

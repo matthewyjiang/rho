@@ -8,12 +8,7 @@ use ratatui::{
 use super::{
     approval_lines, char_prefix_display_width,
     composer_layout::{content_width, prompt_width, PROMPT_PREFIX},
-    config_number_input_lines, display_width,
-    feed_image::{
-        layout_composer_attachments, ComposerAttachmentLayout, ComposerAttachmentSegment,
-        COMPOSER_IMAGE_GAP, COMPOSER_IMAGE_HEIGHT,
-    },
-    file_picker,
+    config_number_input_lines, display_width, file_picker,
     inline_choice::inline_choice_lines,
     inline_shell, input_cursor_position, input_lines, labeled_divider_line,
     login::{interactive_pending_lines, secret_input_lines},
@@ -244,71 +239,6 @@ impl App {
             ));
         }
 
-        lines
-    }
-}
-
-impl App {
-    /// Rows reserved above composer text for attachment labels / image previews.
-    pub(super) fn composer_attachment_row_count(&self, width: usize) -> usize {
-        self.composer_attachment_layout(width).total_rows
-    }
-
-    pub(super) fn composer_attachment_layout(&self, width: usize) -> ComposerAttachmentLayout {
-        layout_composer_attachments(
-            self.input_ui.attachments(),
-            self.input_ui.attachment_image_previews(),
-            width,
-            COMPOSER_IMAGE_HEIGHT,
-        )
-    }
-
-    fn composer_attachment_lines(&self, width: usize) -> Vec<Line<'static>> {
-        let width = width.max(1);
-        let layout = self.composer_attachment_layout(width);
-        let mut lines = Vec::with_capacity(layout.total_rows);
-        for segment in &layout.segments {
-            match segment {
-                ComposerAttachmentSegment::ImageStrip {
-                    indices,
-                    height,
-                    cell_widths,
-                } => {
-                    lines.extend((0..*height).map(|_| Line::raw("")));
-                    let mut spans = Vec::new();
-                    for (offset, &attachment_index) in indices.iter().enumerate() {
-                        if offset > 0 {
-                            spans.push(Span::raw(" ".repeat(COMPOSER_IMAGE_GAP)));
-                        }
-                        let cell_width = cell_widths.get(offset).copied().unwrap_or(1).max(1);
-                        let label = self.input_ui.attachments()[attachment_index]
-                            .composer_label(attachment_index + 1);
-                        let truncated = truncate_one_line(&label, cell_width);
-                        let pad = cell_width.saturating_sub(display_width(&truncated));
-                        spans.push(Span::styled(truncated, Theme::dim()));
-                        if pad > 0 {
-                            spans.push(Span::raw(" ".repeat(pad)));
-                        }
-                    }
-                    let used = spans
-                        .iter()
-                        .map(|span| display_width(span.content.as_ref()))
-                        .sum::<usize>();
-                    if used < width {
-                        spans.push(Span::raw(" ".repeat(width - used)));
-                    }
-                    lines.push(Line::from(spans));
-                }
-                ComposerAttachmentSegment::Label { index } => {
-                    lines.push(styled_line(
-                        self.input_ui.attachments()[*index].composer_label(index + 1),
-                        width,
-                        Theme::dim(),
-                        LineFill::Natural,
-                    ));
-                }
-            }
-        }
         lines
     }
 }
