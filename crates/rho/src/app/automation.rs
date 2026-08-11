@@ -144,6 +144,10 @@ pub(super) struct Startup<'a> {
     pub diagnostics: RuntimeDiagnostics,
     pub herdr: HerdrReporter,
     pub host_input: Option<Arc<dyn HostInputResponder>>,
+    /// Non-blocking parent notices for background delegated Rho agents.
+    pub notice_poster: Option<Arc<dyn super::subagent_messaging::NoticePoster>>,
+    /// Receives the live steering port once the Rho session starts.
+    pub steering_slot: Option<super::subagent_messaging::SteeringSlot>,
     pub approval_session: Option<rho_sdk::ApprovalSession>,
     pub hook_host_labels: rho_sdk::hooks::HookHostLabels,
 }
@@ -460,7 +464,7 @@ async fn run_session_with_output(
     let workspace_root = sdk_options.workspace.root.clone();
     let workspace = sdk_options.workspace.build_workspace()?;
     let ToolsAndPrompt {
-        tools: tool_set,
+        tools: mut tool_set,
         system_prompt,
         ..
     } = assemble_tools_and_prompt(ToolsAndPromptOptions {
@@ -487,6 +491,9 @@ async fn run_session_with_output(
         agent: &startup.agent,
     })
     .await?;
+    if let Some(poster) = startup.notice_poster.clone() {
+        tool_set.add_bundle(crate::tools::message_parent_bundle(poster));
+    }
 
     let context_window = configured_context_window(startup.config);
     let compaction = sdk_options.runtime.compaction.clone();
@@ -556,6 +563,7 @@ async fn run_session_with_output(
             jsonl,
             host_input: startup.host_input.as_deref(),
         },
+        startup.steering_slot.clone(),
     )
     .await;
 
@@ -591,6 +599,7 @@ async fn complete_run(
     session: &rho_sdk::Session,
     prompt_text: String,
     dependencies: HeadlessRunDeps<'_>,
+    steering_slot: Option<super::subagent_messaging::SteeringSlot>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
     let HeadlessRunDeps {
         reporter,
@@ -599,6 +608,9 @@ async fn complete_run(
         host_input,
     } = dependencies;
     let mut run = session.start(UserInput::text(prompt_text)).await?;
+    if let Some(slot) = steering_slot {
+        slot.publish(run.steering_handle());
+    }
     let cancellation = run.cancellation_handle();
     let external_cancellation = external_cancellation.unwrap_or_default();
     tokio::select! {

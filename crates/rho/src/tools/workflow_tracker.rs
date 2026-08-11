@@ -195,6 +195,23 @@ impl WorkflowRunTracker {
             .map(|(_, notification)| notification)
             .collect()
     }
+
+    /// Returns drained notifications so a failed turn setup can deliver them
+    /// again. Only terminal entries still present are reopened.
+    pub fn restore_notifications(&self, notifications: &[WorkflowNotification]) {
+        if notifications.is_empty() {
+            return;
+        }
+        let mut inner = self.inner.lock().expect("workflow tracker lock");
+        for notification in notifications {
+            let Some(entry) = inner.runs.get_mut(&notification.run_id) else {
+                continue;
+            };
+            if entry.finished.is_some() && entry.observed {
+                entry.observed = false;
+            }
+        }
+    }
 }
 
 pub(crate) fn start_context_prompts(

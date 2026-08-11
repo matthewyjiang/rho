@@ -6,6 +6,7 @@ pub(crate) mod mcp;
 pub(crate) mod process;
 pub mod rho;
 mod sdk_features;
+pub(crate) use sdk_features::message_parent_bundle;
 pub mod sdk_registry;
 pub mod skill;
 #[cfg(debug_assertions)]
@@ -32,6 +33,7 @@ pub(crate) fn canonical_tool_names() -> &'static [&'static str] {
             "glob",
             "grep",
             "list_dir",
+            "message_parent",
             "powershell",
             "process",
             "questionnaire",
@@ -63,7 +65,7 @@ pub(crate) fn canonical_tool_is_mutating(name: &str) -> Option<bool> {
         | "workflow_command" | "write" => Some(true),
         name if rho_tools::EditFormat::is_edit_tool_name(name) => Some(true),
         "advisor" | "fetch_content" | "get_search_content" | "glob" | "grep" | "list_dir"
-        | "questionnaire" | "read_file" | "skill" | "web_search" => Some(false),
+        | "message_parent" | "questionnaire" | "read_file" | "skill" | "web_search" => Some(false),
         _ => None,
     }
 }
@@ -71,6 +73,10 @@ pub(crate) fn canonical_tool_is_mutating(name: &str) -> Option<bool> {
 /// Built-ins registered only on provider-free host tool registries.
 #[cfg(test)]
 pub(crate) const HOST_ONLY_TOOL_NAMES: &[&str] = &["workflow_command"];
+
+/// Model-facing built-ins registered only when a parent notice channel is bound.
+#[cfg(test)]
+pub(crate) const DELEGATED_OPT_IN_TOOL_NAMES: &[&str] = &["message_parent"];
 
 #[cfg(test)]
 #[path = "app_owned_opt_in_tests.rs"]

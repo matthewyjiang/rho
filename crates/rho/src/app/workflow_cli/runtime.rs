@@ -296,6 +296,7 @@ impl WorkflowRuntime {
                 config_path,
                 cwd.clone(),
                 SubagentHostInputBridge::new(),
+                crate::app::subagent_messaging::SubagentNoticeBridge::new(),
             )
             .with_approval_session(approvals),
         );

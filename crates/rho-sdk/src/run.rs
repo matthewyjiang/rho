@@ -22,6 +22,91 @@ pub(crate) enum RunCommand {
     },
 }
 
+/// Cloneable port for staging steering into an active run.
+///
+/// Obtain one from [`Run::steering_handle`] before moving the [`Run`] into an
+/// event pump. Hosts that only need to redirect work can keep this handle
+/// without sharing the run or its event stream.
+///
+/// Workspace crates that name this type need a published `rho-sdk` that exports
+/// it. Bump `rho-sdk` together with those consumers when this surface changes.
+#[derive(Clone, Debug)]
+pub struct SteeringHandle {
+    commands: mpsc::Sender<RunCommand>,
+}
+
+impl SteeringHandle {
+    /// Stages steering input for the next provider turn.
+    pub async fn steer(&self, input: crate::UserInput) -> Result<(), Error> {
+        self.steer_retractable(input).await.map(drop)
+    }
+
+    /// Stages steering input and returns an ID that can retract it before application.
+    pub async fn steer_retractable(&self, input: crate::UserInput) -> Result<SteeringId, Error> {
+        let (accepted, receipt) = tokio::sync::oneshot::channel();
+        self.commands
+            .send(RunCommand::Steer { input, accepted })
+            .await
+            .map_err(|_| Error::InvalidHostResponse {
+                message: "run no longer accepts steering input".into(),
+            })?;
+        receipt.await.map_err(|_| Error::InvalidHostResponse {
+            message: "run completed before accepting steering input".into(),
+        })
+    }
+
+    /// Starts staging steering without waiting for the runtime acknowledgement.
+    pub fn request_steer_retractable(
+        &self,
+        input: crate::UserInput,
+    ) -> Result<impl Future<Output = Result<SteeringId, Error>> + Send + 'static, Error> {
+        let (accepted, receipt) = tokio::sync::oneshot::channel();
+        self.commands
+            .try_send(RunCommand::Steer { input, accepted })
+            .map_err(|error| Error::InvalidHostResponse {
+                message: format!("run cannot queue steering input: {error}"),
+            })?;
+        Ok(async move {
+            receipt.await.map_err(|_| Error::InvalidHostResponse {
+                message: "run completed before accepting steering input".into(),
+            })
+        })
+    }
+
+    /// Atomically retracts previously accepted steering if it is still staged.
+    pub async fn retract_steering(&self, id: SteeringId) -> Result<SteeringRetraction, Error> {
+        let (completed, receipt) = tokio::sync::oneshot::channel();
+        self.commands
+            .send(RunCommand::RetractSteering { id, completed })
+            .await
+            .map_err(|_| Error::InvalidHostResponse {
+                message: "run no longer accepts steering retractions".into(),
+            })?;
+        receipt.await.map_err(|_| Error::InvalidHostResponse {
+            message: "run completed before processing steering retraction".into(),
+        })
+    }
+
+    /// Starts a retraction request without waiting for its runtime-decided outcome.
+    pub fn request_steering_retraction(
+        &self,
+        id: SteeringId,
+    ) -> Result<impl Future<Output = Result<SteeringRetraction, Error>> + Send + 'static, Error>
+    {
+        let (completed, receipt) = tokio::sync::oneshot::channel();
+        self.commands
+            .try_send(RunCommand::RetractSteering { id, completed })
+            .map_err(|error| Error::InvalidHostResponse {
+                message: format!("run cannot queue steering retraction: {error}"),
+            })?;
+        Ok(async move {
+            receipt.await.map_err(|_| Error::InvalidHostResponse {
+                message: "run completed before processing steering retraction".into(),
+            })
+        })
+    }
+}
+
 /// Handle for one active SDK run and its ordered event stream.
 pub struct Run {
     id: RunId,
@@ -62,9 +147,16 @@ impl Run {
         self.cancellation.cancel();
     }
 
+    /// Cloneable port for steering this run after the [`Run`] moves into a pump.
+    pub fn steering_handle(&self) -> SteeringHandle {
+        SteeringHandle {
+            commands: self.commands.clone(),
+        }
+    }
+
     /// Stages steering input for the next provider turn.
     pub async fn steer(&self, input: crate::UserInput) -> Result<(), Error> {
-        self.steer_retractable(input).await.map(drop)
+        self.steering_handle().steer(input).await
     }
 
     /// Stages steering input and returns an ID that can retract it before application.
@@ -72,16 +164,7 @@ impl Run {
     /// The returned opaque identifier remains stable and can be passed to
     /// [`Run::retract_steering`] while the input has not reached history.
     pub async fn steer_retractable(&self, input: crate::UserInput) -> Result<SteeringId, Error> {
-        let (accepted, receipt) = tokio::sync::oneshot::channel();
-        self.commands
-            .send(RunCommand::Steer { input, accepted })
-            .await
-            .map_err(|_| Error::InvalidHostResponse {
-                message: "run no longer accepts steering input".into(),
-            })?;
-        receipt.await.map_err(|_| Error::InvalidHostResponse {
-            message: "run completed before accepting steering input".into(),
-        })
+        self.steering_handle().steer_retractable(input).await
     }
 
     /// Starts staging steering without waiting for the runtime acknowledgement.
@@ -92,17 +175,7 @@ impl Run {
         &self,
         input: crate::UserInput,
     ) -> Result<impl Future<Output = Result<SteeringId, Error>> + Send + 'static, Error> {
-        let (accepted, receipt) = tokio::sync::oneshot::channel();
-        self.commands
-            .try_send(RunCommand::Steer { input, accepted })
-            .map_err(|error| Error::InvalidHostResponse {
-                message: format!("run cannot queue steering input: {error}"),
-            })?;
-        Ok(async move {
-            receipt.await.map_err(|_| Error::InvalidHostResponse {
-                message: "run completed before accepting steering input".into(),
-            })
-        })
+        self.steering_handle().request_steer_retractable(input)
     }
 
     /// Atomically retracts previously accepted steering if it is still staged.
@@ -111,16 +184,7 @@ impl Run {
     /// when it processes this command. See [`SteeringRetraction`] for all
     /// possible outcomes.
     pub async fn retract_steering(&self, id: SteeringId) -> Result<SteeringRetraction, Error> {
-        let (completed, receipt) = tokio::sync::oneshot::channel();
-        self.commands
-            .send(RunCommand::RetractSteering { id, completed })
-            .await
-            .map_err(|_| Error::InvalidHostResponse {
-                message: "run no longer accepts steering retractions".into(),
-            })?;
-        receipt.await.map_err(|_| Error::InvalidHostResponse {
-            message: "run completed before processing steering retraction".into(),
-        })
+        self.steering_handle().retract_steering(id).await
     }
 
     /// Starts a retraction request without waiting for its runtime-decided outcome.
@@ -132,17 +196,7 @@ impl Run {
         id: SteeringId,
     ) -> Result<impl Future<Output = Result<SteeringRetraction, Error>> + Send + 'static, Error>
     {
-        let (completed, receipt) = tokio::sync::oneshot::channel();
-        self.commands
-            .try_send(RunCommand::RetractSteering { id, completed })
-            .map_err(|error| Error::InvalidHostResponse {
-                message: format!("run cannot queue steering retraction: {error}"),
-            })?;
-        Ok(async move {
-            receipt.await.map_err(|_| Error::InvalidHostResponse {
-                message: "run completed before processing steering retraction".into(),
-            })
-        })
+        self.steering_handle().request_steering_retraction(id)
     }
 
     pub async fn respond(

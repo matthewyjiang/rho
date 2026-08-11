@@ -183,7 +183,7 @@ pub use persistence::{
     MIN_SESSION_SNAPSHOT_SCHEMA_VERSION, SESSION_SNAPSHOT_SCHEMA_VERSION,
 };
 pub use reasoning::{ParseReasoningLevelError, ReasoningLevel};
-pub use run::Run;
+pub use run::{Run, SteeringHandle};
 pub use secret::SecretString;
 pub use session::{Session, SessionState, UserInput};
 pub use steering::SteeringRetraction;

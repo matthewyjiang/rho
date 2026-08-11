@@ -60,6 +60,7 @@ impl ManagerFixture {
                 root.join("rho.toml"),
                 root.to_path_buf(),
                 SubagentHostInputBridge::new(),
+                crate::app::subagent_messaging::SubagentNoticeBridge::new(),
             )),
             _rho_home: rho_home,
         }
@@ -241,6 +242,30 @@ async fn unobserved_terminal_runs_drain_as_one_batch() {
     assert!(
         manager.take_notifications("session-1").is_empty(),
         "a drained batch is observed and never redelivered"
+    );
+}
+
+#[tokio::test]
+async fn restored_notifications_can_drain_again() {
+    let root = tempfile::tempdir().unwrap();
+    let fixture = manager(root.path());
+    let manager = fixture.manager();
+    manager.bind_parent_session(crate::subagent::RunPlacement::for_parent_session(
+        "session-1",
+        None,
+    ));
+    let id = spawn_background_run(&manager, root.path()).await;
+    manager.wait_done(&id).await.unwrap();
+    let batch = manager.take_notifications("session-1");
+    assert_eq!(batch.len(), 1);
+    manager.restore_notifications(&batch);
+    let again = manager.take_notifications("session-1");
+    assert_eq!(
+        again
+            .iter()
+            .map(|notification| notification.snapshot.id.clone())
+            .collect::<Vec<_>>(),
+        vec![id]
     );
 }
 

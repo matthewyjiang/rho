@@ -21,6 +21,7 @@ fn provider_selection_updates_are_shared_with_executor_clones() {
         PathBuf::new(),
         PathBuf::new(),
         SubagentHostInputBridge::new(),
+        crate::app::subagent_messaging::SubagentNoticeBridge::new(),
     );
     let cloned = executor.clone();
 
@@ -45,6 +46,7 @@ fn permission_mode_updates_are_shared_with_executor_clones() {
         PathBuf::new(),
         PathBuf::new(),
         SubagentHostInputBridge::new(),
+        crate::app::subagent_messaging::SubagentNoticeBridge::new(),
     );
     let cloned = executor.clone();
 
@@ -463,6 +465,7 @@ fn update_selection_does_not_alter_bound_claude_runtime() {
         PathBuf::new(),
         PathBuf::new(),
         SubagentHostInputBridge::new(),
+        crate::app::subagent_messaging::SubagentNoticeBridge::new(),
     );
 
     let definition = Arc::new(AgentDefinition {
@@ -551,4 +554,15 @@ fn update_selection_does_not_alter_bound_claude_runtime() {
     }
     assert_ne!(host_after.model, "opus");
     assert_ne!(host_after.provider, "claude-code");
+}
+
+#[test]
+fn ensure_stream_json_input_is_idempotent() {
+    let bare = vec!["-p".into(), "--output-format".into(), "stream-json".into()];
+    let once = ensure_stream_json_input(bare.clone());
+    assert!(once
+        .windows(2)
+        .any(|w| w == ["--input-format", "stream-json"]));
+    let twice = ensure_stream_json_input(once.clone());
+    assert_eq!(once, twice);
 }

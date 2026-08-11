@@ -444,7 +444,6 @@ impl App {
             {
                 terminal.draw(|frame| self.draw(frame))?;
             }
-            let subagent_host_input_bound = self.subagent_host_input.is_some();
             tokio::select! {
                 terminal_event = self.terminal_session.as_mut().expect("terminal session initialized").next_event() => {
                     let control = self.handle_running_terminal_events(
@@ -461,11 +460,7 @@ impl App {
                         break;
                     }
                 }
-                request = super::app_loop::next_subagent_host_input(&mut self.subagent_host_input), if subagent_host_input_bound => {
-                    match request {
-                        Some(request) => self.queued_subagent_questionnaires.push_back(request),
-                        None => self.subagent_host_input = None,
-                    }
+                () = self.subagent_inbox.recv() => {
                     self.poll_waiting_subagent_questionnaires(agent.session_id()).await?;
                 }
                 _ = tokio::time::sleep(Duration::from_millis(100)) => {

@@ -879,6 +879,47 @@ async fn steering_during_provider_stream_is_accepted_and_applied_in_order() {
     );
 }
 
+// Covers: SteeringHandle clones the command port so hosts can steer after
+// moving Run into an event pump.
+// Owner: sdk run surface
+#[tokio::test]
+async fn steering_handle_stages_input_after_run_moves_into_pump() {
+    let release_first = Arc::new(Notify::new());
+    let provider = Arc::new(SteeringProvider::new(Arc::clone(&release_first)));
+    let runtime = Rho::builder()
+        .provider_shared(provider.clone())
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let mut run = session.start(UserInput::text("initial")).await.unwrap();
+    let handle = run.steering_handle();
+    while let Some(event) = run.next_event().await {
+        if matches!(event, RunEvent::AssistantTextDelta { ref text } if text == "draft") {
+            break;
+        }
+    }
+
+    handle.steer(UserInput::text("via handle")).await.unwrap();
+    release_first.notify_one();
+    while run.next_event().await.is_some() {}
+    let outcome = run.outcome().await.unwrap();
+    assert_eq!(outcome.text(), "final");
+    let requests = provider
+        .requests
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    assert_eq!(requests.len(), 2);
+    assert!(requests[1].iter().any(|message| {
+        matches!(
+            message,
+            Message::User(blocks)
+                if blocks.iter().any(|block| {
+                    matches!(block, ContentBlock::Text(text) if text == "via handle")
+                })
+        )
+    }));
+}
+
 #[tokio::test]
 async fn steering_request_receipt_can_be_polled_while_draining_backpressured_events() {
     let release_first = Arc::new(Notify::new());
