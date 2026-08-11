@@ -29,6 +29,11 @@ pub(crate) struct ToolsAndPromptOptions<'a> {
     pub(crate) mcp_elicitation: crate::tools::mcp::McpElicitationSupport,
     /// Whether this run will bind a model that opted-in MCP servers may sample.
     pub(crate) mcp_sampling: McpSamplingSupport,
+    /// Whether permanent system-prompt model labels should wait on a models.dev
+    /// catalog hydrate. Interactive sessions await so names are not frozen as
+    /// bare ids. Automation stays cache-only so cold/offline launches do not
+    /// block on an unrelated network request.
+    pub(crate) await_catalog_names: bool,
     pub(crate) background_subagents: BackgroundSubagents,
     pub(crate) diagnostics: &'a RuntimeDiagnostics,
     pub(crate) agent: &'a BoundAgent,
@@ -167,6 +172,12 @@ pub(crate) async fn assemble_tools_and_prompt(
                     .then(|| crate::tools::advisor::advisor_model(options.config))
                     .flatten()
                     .map(crate::model_identity::PromptModel::from_internal_agent);
+                // System prompt lines are never rewritten. Interactive sessions
+                // await one full catalog hydrate so names are not frozen as bare
+                // ids for the whole session. Automation stays cache-only.
+                if options.await_catalog_names {
+                    rho_providers::model::ensure_model_catalog_names().await;
+                }
                 let mut built = prompt::system_prompt_with_plugin_skills(
                     &specs,
                     options.cwd,

@@ -916,8 +916,8 @@ fn providers_that_read_another_upstream_catalog_still_get_names() {
     });
 }
 
-// Covers: the prefetch must skip rows that are already current, so a warm cache
-// costs no network. Startup calls it on every launch.
+// Covers: the prefetch must skip the network when a full snapshot is already
+// current. Startup calls it on every launch.
 // Owner: models.dev catalog prefetch
 #[tokio::test]
 async fn prefetch_does_nothing_when_every_target_is_current() {
@@ -934,6 +934,7 @@ async fn prefetch_does_nothing_when_every_target_is_current() {
     // A network call would be the only way this could fail offline.
     let written = with_models_dev_cache_dir(cache.path().to_path_buf(), || {
         write_cached_upstream_model_metadata("openai-codex", "gpt-5.6-luna", &current);
+        mark_catalog_snapshot_current_for_tests();
         // Duplicates collapse before any freshness check.
         let targets = vec![
             ("openai-codex".to_string(), "gpt-5.6-luna".to_string()),
@@ -947,4 +948,81 @@ async fn prefetch_does_nothing_when_every_target_is_current() {
         Some(0),
         "a fully current target list must resolve without awaiting the network"
     );
+}
+
+// Covers: one models.dev document hydrates every registered provider that
+// reads that upstream, including provider-facing aliases (openai-codex) and
+// NotConfigurable providers that still have catalog names.
+// Owner: models.dev full catalog hydrate
+#[test]
+fn hydrate_writes_complete_rows_for_every_registered_provider() {
+    let api = json!({
+        "openai": {
+            "models": {
+                "gpt-hydrate": {
+                    "name": "GPT Hydrate",
+                    "reasoning": false
+                }
+            }
+        },
+        "github-copilot": {
+            "models": {
+                "copilot-hydrate": {
+                    "name": "Copilot Hydrate",
+                    "reasoning": true,
+                    "reasoning_options": [{
+                        "type": "effort",
+                        "values": ["none", "low", "high"]
+                    }]
+                }
+            }
+        },
+        "moonshotai": {
+            "models": {
+                "kimi-k3": {
+                    "name": "Kimi K3",
+                    "reasoning": true,
+                    "reasoning_options": [{
+                        "type": "effort",
+                        "values": ["low", "high", "max"]
+                    }]
+                }
+            }
+        }
+    });
+
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        let written = hydrate::hydrate_catalog_from_api(&api);
+        assert!(
+            written >= 3,
+            "expected multiple provider-facing rows, wrote {written}"
+        );
+
+        assert_eq!(
+            cached_model_metadata("openai", "gpt-hydrate")
+                .and_then(|metadata| metadata.display_name)
+                .as_deref(),
+            Some("GPT Hydrate")
+        );
+        assert_eq!(
+            cached_model_metadata("openai-codex", "gpt-hydrate")
+                .and_then(|metadata| metadata.display_name)
+                .as_deref(),
+            Some("GPT Hydrate")
+        );
+        assert_eq!(
+            cached_model_metadata("github-copilot", "copilot-hydrate")
+                .and_then(|metadata| metadata.display_name)
+                .as_deref(),
+            Some("Copilot Hydrate")
+        );
+        // Provider-facing Kimi alias beside the upstream catalog id.
+        assert_eq!(
+            cached_model_metadata("kimi-code", "k3")
+                .and_then(|metadata| metadata.display_name)
+                .as_deref(),
+            Some("Kimi K3")
+        );
+    });
 }

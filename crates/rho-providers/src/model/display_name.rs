@@ -96,6 +96,34 @@ pub fn clear_model_display_name_cache_for_tests() {
     cache.generation += 1;
 }
 
+/// Clears the process-global display-name cache on enter and drop.
+///
+/// Catalog fixtures swap the sqlite path for the duration of a test; without a
+/// teardown clear, a name resolved against that fixture can leak into later
+/// tests that never touch the fixture path.
+#[doc(hidden)]
+pub struct ModelDisplayNameCacheGuard;
+
+impl Default for ModelDisplayNameCacheGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ModelDisplayNameCacheGuard {
+    #[doc(hidden)]
+    pub fn new() -> Self {
+        clear_model_display_name_cache_for_tests();
+        Self
+    }
+}
+
+impl Drop for ModelDisplayNameCacheGuard {
+    fn drop(&mut self) {
+        clear_model_display_name_cache_for_tests();
+    }
+}
+
 /// `provider/model (Catalog Name)`, or `provider/model` when no name is known.
 ///
 /// The id stays first and always present: it is the part a caller can act on.
@@ -105,6 +133,18 @@ pub fn model_reference_with_display_name(provider: &str, model: &str) -> String 
         Some(name) => format!("{reference} ({name})"),
         None => reference,
     }
+}
+
+/// Waits for one full models.dev catalog hydrate when names can still arrive.
+///
+/// Call this before text that will call [`model_display_name`] or
+/// [`model_reference_with_display_name`] and will not be rewritten (system
+/// prompt lines). A warm snapshot is free. Mid-session switch notices rely on
+/// the hydrate that interactive startup already awaited; they do not call this.
+///
+/// Returns how many rows the hydrate wrote.
+pub async fn ensure_model_catalog_names() -> usize {
+    models_dev::ensure_models_dev_catalog().await
 }
 
 #[cfg(test)]

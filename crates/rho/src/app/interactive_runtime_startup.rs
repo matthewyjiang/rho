@@ -75,6 +75,8 @@ pub(super) async fn initialize(
         // Interactive sessions bind a model below, so opted-in servers may ask
         // for completions.
         mcp_sampling: crate::app::tools_prompt::McpSamplingSupport::Available,
+        // Permanent system-prompt labels never rewrite; wait for catalog names.
+        await_catalog_names: true,
         background_subagents: BackgroundSubagents::Enabled,
         diagnostics: &diagnostics,
         agent: &agent,

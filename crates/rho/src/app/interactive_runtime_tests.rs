@@ -907,8 +907,11 @@ async fn advisor_notices_name_the_reviewer_model_including_a_model_only_change()
         .unwrap();
 
     assert_eq!(
-        switched.as_deref(),
-        Some("advisor model switched to openai/gpt-5.6-sol")
+        switched
+            .as_deref()
+            .map(|text| text.starts_with("advisor model switched to openai/gpt-5.6-sol")),
+        Some(true),
+        "{switched:?}"
     );
     assert!(interactive.tools.advisor_registered());
     assert_eq!(interactive.history().len(), history_after_enable + 1);

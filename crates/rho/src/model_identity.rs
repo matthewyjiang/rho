@@ -118,21 +118,15 @@ impl PromptModel {
         }
     }
 
-    /// Provider/model pair when this label is a Rho model, for catalog prefetch.
-    pub(crate) fn rho_catalog_key(&self) -> Option<(String, String)> {
-        match self {
-            Self::Rho { provider, model } => Some((provider.clone(), model.clone())),
-            Self::ClaudeCli { .. } => None,
-        }
-    }
-
     /// How the identity reads in prompt or status text.
     ///
     /// Rho models read as `provider/model (Catalog Name)`. Claude Code models
     /// read as `claude-code/<--model value>`, plus what a run resolved when that
     /// is carried on the value.
     ///
-    /// Always one line; see [`one_line`].
+    /// Always one line; see [`one_line`]. Catalog names come from the models.dev
+    /// snapshot interactive startup hydrates before the system prompt is built;
+    /// mid-session switch notices read the same cache.
     pub(crate) fn describe(&self) -> String {
         one_line(match self {
             Self::Rho { provider, model } => model_reference_with_display_name(provider, model),

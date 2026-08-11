@@ -8,6 +8,10 @@ use crate::{
     model::ReasoningCapabilities, provider::CatalogReasoningPolicy, reasoning::ReasoningLevel,
 };
 
+#[path = "models_dev_hydrate.rs"]
+mod hydrate;
+pub use hydrate::{ensure_models_dev_catalog, prefetch_model_metadata};
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ModelMetadata {
     /// Catalog name for people, such as `GPT-5.6 Sol`. Absent when the catalog
@@ -165,52 +169,21 @@ pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMe
         return Some(apply_overrides(provider, model, metadata));
     }
 
-    if let Some(response) = fetch_models_dev_api().await {
-        if let Some(metadata) = upstream_metadata_from_api(&response, provider, model) {
-            if metadata.reasoning_metadata_complete {
-                write_cached_upstream_model_metadata(provider, model, &metadata);
-            }
-            return Some(apply_overrides(provider, model, metadata));
-        }
+    // One full catalog hydrate fills every provider-facing row. After that, the
+    // requested model is either current in sqlite or genuinely absent.
+    ensure_models_dev_catalog().await;
+    if let Some(metadata) = current_cached_upstream_model_metadata(provider, model) {
+        return Some(apply_overrides(provider, model, metadata));
     }
 
     override_metadata(provider, model)
 }
 
-/// Fills catalog rows for several models with one models.dev download.
-///
-/// [`fetch_model_metadata`] downloads the whole catalog per call, so asking it
-/// for a list would download the same document once per model. This exists for
-/// callers that need rows for models the session only *names* - the models
-/// behind subagents and internal agents - which no selection would ever fetch.
-///
-/// Returns the number of rows written. Nothing reaches the network when every
-/// target is already current, so a warm cache costs one sqlite read per target.
-pub async fn prefetch_model_metadata(targets: impl IntoIterator<Item = (String, String)>) -> usize {
-    let stale = targets
-        .into_iter()
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .filter(|(provider, model)| model_metadata_needs_refresh(provider, model))
-        .collect::<Vec<_>>();
-    if stale.is_empty() {
-        return 0;
-    }
-    let Some(response) = fetch_models_dev_api().await else {
-        return 0;
-    };
-    stale
-        .into_iter()
-        .filter(|(provider, model)| {
-            upstream_metadata_from_api(&response, provider, model)
-                .filter(|metadata| metadata.reasoning_metadata_complete)
-                .inspect(|metadata| write_cached_upstream_model_metadata(provider, model, metadata))
-                .is_some()
-        })
-        .count()
-}
-
-fn upstream_metadata_from_api(api: &Value, provider: &str, model: &str) -> Option<ModelMetadata> {
+pub(super) fn upstream_metadata_from_api(
+    api: &Value,
+    provider: &str,
+    model: &str,
+) -> Option<ModelMetadata> {
     let descriptor = crate::provider::provider_descriptor(provider)?;
     model_metadata_from_api_with_policy(
         api,
@@ -284,6 +257,16 @@ fn metadata_has_values(metadata: &ModelMetadata) -> bool {
 
 pub(crate) async fn fetch_deprecated_provider_models(provider: &str) -> Option<HashSet<String>> {
     let response = fetch_models_dev_api().await?;
+    // Reuse the document for a full hydrate when this process has not already
+    // marked the snapshot current, so a deprecation check also warms names.
+    if !hydrate::catalog_snapshot_is_ready() {
+        let _guard = hydrate::catalog_hydrate_lock_for_parent().lock().await;
+        if !hydrate::catalog_snapshot_is_ready() {
+            let _ = hydrate::hydrate_catalog_from_api(&response);
+            hydrate::mark_catalog_snapshot_current();
+            hydrate::apply_in_memory_catalog_ready();
+        }
+    }
     Some(deprecated_provider_models_from_api(&response, provider))
 }
 
@@ -298,7 +281,7 @@ fn deprecated_provider_models_from_api(api: &Value, provider: &str) -> HashSet<S
         .collect()
 }
 
-async fn fetch_models_dev_api() -> Option<Value> {
+pub(super) async fn fetch_models_dev_api() -> Option<Value> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()
@@ -325,7 +308,7 @@ async fn fetch_models_dev_api() -> Option<Value> {
 ///
 /// v8: `display_name` added. Older rows are complete without it, so only a bump
 /// makes them refetch and pick up the catalog name.
-const MODEL_METADATA_CACHE_VERSION: i64 = 8;
+pub(super) const MODEL_METADATA_CACHE_VERSION: i64 = 8;
 
 fn cached_upstream_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
     cached_upstream_model_metadata_with_freshness(provider, model, CacheFreshness::AllowStale)
@@ -372,6 +355,19 @@ fn should_rehydrate_cached_metadata(cache_version: i64, cached: &ModelMetadata) 
 }
 
 fn write_cached_upstream_model_metadata(provider: &str, model: &str, metadata: &ModelMetadata) {
+    write_cached_upstream_model_metadata_raw(provider, model, metadata);
+    super::display_name::forget_provider_display_names(provider);
+}
+
+/// Writes a row without invalidating the display-name cache.
+///
+/// Full hydrate touches many providers; callers invalidate each touched
+/// provider once at the end instead of once per row.
+pub(super) fn write_cached_upstream_model_metadata_raw(
+    provider: &str,
+    model: &str,
+    metadata: &ModelMetadata,
+) {
     let cache_provider = provider;
     let cache_model = model;
     let Ok(connection) = open_models_dev_cache() else {
@@ -394,10 +390,9 @@ fn write_cached_upstream_model_metadata(provider: &str, model: &str, metadata: &
             MODEL_METADATA_CACHE_VERSION
         ],
     );
-    super::display_name::forget_provider_display_names(provider);
 }
 
-fn open_models_dev_cache() -> rusqlite::Result<Connection> {
+pub(super) fn open_models_dev_cache() -> rusqlite::Result<Connection> {
     let path = models_dev_sqlite_path();
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
@@ -411,6 +406,11 @@ fn open_models_dev_cache() -> rusqlite::Result<Connection> {
             updated_at integer not null,
             cache_version integer not null default 1,
             primary key (provider, model)
+        );
+        create table if not exists catalog_snapshot (
+            id integer primary key check (id = 1),
+            cache_version integer not null,
+            updated_at integer not null
         );",
     )?;
     let _ = connection.execute(
@@ -455,12 +455,43 @@ thread_local! {
 
 #[doc(hidden)]
 pub fn with_models_dev_cache_dir_for_tests<T>(path: PathBuf, f: impl FnOnce() -> T) -> T {
+    // Process-level ready must not leak across tests that swap the sqlite path.
+    reset_catalog_hydrate_state_for_tests();
     TEST_CACHE_DIR.with(|cache_dir| {
         let previous = cache_dir.replace(Some(path));
         let result = f();
         cache_dir.replace(previous);
+        reset_catalog_hydrate_state_for_tests();
         result
     })
+}
+
+/// Holds the models.dev cache dir for the current thread across awaits.
+///
+/// Prefer [`with_models_dev_cache_dir_for_tests`] for sync work. Use this when a
+/// test must keep the path set while awaiting on a `current_thread` runtime.
+#[doc(hidden)]
+pub struct ModelsDevCacheDirGuard {
+    previous: Option<PathBuf>,
+}
+
+impl ModelsDevCacheDirGuard {
+    #[doc(hidden)]
+    pub fn new(path: PathBuf) -> Self {
+        reset_catalog_hydrate_state_for_tests();
+        let previous = TEST_CACHE_DIR.with(|cache_dir| cache_dir.replace(Some(path)));
+        Self { previous }
+    }
+}
+
+impl Drop for ModelsDevCacheDirGuard {
+    fn drop(&mut self) {
+        let previous = self.previous.take();
+        TEST_CACHE_DIR.with(|cache_dir| {
+            cache_dir.replace(previous);
+        });
+        reset_catalog_hydrate_state_for_tests();
+    }
 }
 
 #[doc(hidden)]
@@ -470,6 +501,39 @@ pub fn write_cached_model_metadata_for_tests(
     metadata: &ModelMetadata,
 ) {
     write_cached_upstream_model_metadata(provider, model, metadata);
+}
+
+/// Marks the on-disk catalog snapshot current for tests that pre-seed rows.
+#[doc(hidden)]
+pub fn mark_catalog_snapshot_current_for_tests() {
+    hydrate::mark_catalog_snapshot_current();
+    hydrate::apply_in_memory_catalog_ready();
+}
+
+/// Ages the on-disk catalog snapshot past the freshness window for tests.
+///
+/// Leaves `cache_version` at the current binary value so only timestamp
+/// staleness forces another hydrate.
+#[doc(hidden)]
+pub fn age_catalog_snapshot_for_tests() {
+    hydrate::set_catalog_ready(false);
+    let Ok(connection) = open_models_dev_cache() else {
+        return;
+    };
+    let _ = connection.execute(
+        "insert into catalog_snapshot (id, cache_version, updated_at)
+         values (1, ?1, 0)
+         on conflict(id) do update set
+           cache_version = excluded.cache_version,
+           updated_at = excluded.updated_at",
+        params![MODEL_METADATA_CACHE_VERSION],
+    );
+}
+
+/// Clears process-local hydrate readiness so a test can force another download path.
+#[doc(hidden)]
+pub fn reset_catalog_hydrate_state_for_tests() {
+    hydrate::set_catalog_ready(false);
 }
 
 #[cfg(test)]

@@ -291,18 +291,30 @@ async fn select_model_report_auto_edit_tool_follows_provider_change() {
 
 // Covers: a mid-session model switch must reach the model as an appended line,
 // because the system prompt names the starting model and then stays fixed. The
-// line names only the new model. A first selection on an empty session is not a
-// switch and must stay silent.
+// line names only the new model, and includes the catalog name when the snapshot
+// already has one. A first selection on an empty session is not a switch and
+// must stay silent.
 // Owner: model switch context notice
 #[tokio::test]
 async fn select_model_report_tells_the_model_about_a_mid_session_switch() {
     use std::sync::Arc;
 
-    use rho_providers::credentials::{save_provider_api_key, MemoryCredentialStore};
+    use rho_providers::{
+        credentials::{save_provider_api_key, MemoryCredentialStore},
+        model::{
+            display_name::ModelDisplayNameCacheGuard,
+            models_dev::{
+                with_models_dev_cache_dir_for_tests, write_cached_model_metadata_for_tests,
+                ModelMetadata,
+            },
+        },
+    };
 
     use crate::{
         app::interactive_runtime::test_edit_tool_runtime,
         config::EditTool,
+        model_identity::PromptModel,
+        prompt::{model_switch_context, ModelSwitchKind},
         tui::{tests::test_bootstrap, App, InteractiveRuntime},
     };
 
@@ -369,17 +381,45 @@ async fn select_model_report_tells_the_model_about_a_mid_session_switch() {
         app
     }
 
-    // --- A started session is told, naming both ends ---
+    let catalog = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir_for_tests(catalog.path().to_path_buf(), || {
+        let _names = ModelDisplayNameCacheGuard::new();
+        write_cached_model_metadata_for_tests(
+            "anthropic",
+            "claude-fable-5",
+            &ModelMetadata {
+                display_name: Some("Claude Fable 5".into()),
+                reasoning_metadata_complete: true,
+                ..ModelMetadata::default()
+            },
+        );
+    });
+
+    // --- A started session is told, naming the new model with its catalog name ---
     let mut app = app_on_openai();
     let mut agent = test_edit_tool_runtime(EditTool::Auto).await;
     agent
         .append_user_context_with_display("first turn".into(), "first turn".into())
         .unwrap();
 
+    // Keep the test cache dir for the switch so describe() reads the seeded name.
+    let _cache =
+        rho_providers::model::models_dev::ModelsDevCacheDirGuard::new(catalog.path().to_path_buf());
+    let _names = ModelDisplayNameCacheGuard::new();
     switch_to_anthropic(&mut app, &mut agent).await;
 
     let text = history_text(&agent);
-    assert!(text.contains("anthropic/claude-fable-5"), "{text}");
+    let (stored, _) = model_switch_context(
+        ModelSwitchKind::Conversation,
+        &PromptModel::Rho {
+            provider: "anthropic".into(),
+            model: "claude-fable-5".into(),
+        },
+    );
+    assert!(
+        text.contains(stored.trim()),
+        "expected switch notice {stored:?} in history:\n{text}"
+    );
     // The model the session started on stays readable in the system prompt, so
     // the notice does not restate it.
     assert!(!text.contains("openai/gpt-5.5"), "{text}");

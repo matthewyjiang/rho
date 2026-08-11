@@ -486,6 +486,8 @@ async fn run_session_with_output(
         // Automation binds no model for sampling, so it never declares the
         // capability and rejects any request that arrives anyway.
         mcp_sampling: crate::app::tools_prompt::McpSamplingSupport::Unavailable,
+        // Do not block automation startup on models.dev; use whatever cache is warm.
+        await_catalog_names: false,
         background_subagents: BackgroundSubagents::Disabled,
         diagnostics: &startup.diagnostics,
         agent: &startup.agent,

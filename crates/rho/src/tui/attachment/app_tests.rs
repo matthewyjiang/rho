@@ -246,26 +246,47 @@ fn status_token_fallback_uses_run_status_totals() {
 
 #[test]
 fn identity_line_includes_provider_model_runtime_elapsed_and_cost() {
-    let line = identity_line(
-        Some(&RunStatus {
-            agent_id: Some("explorer".into()),
-            provider: Some("openai".into()),
-            model: Some("gpt-5.5".into()),
-            runtime: Some(crate::agent::AgentRuntime::Rho),
-            started_at: Some(1_000),
-            finished_at: Some(1_065),
-            turns: 3,
-            total_cost_usd: Some(0.0388),
-            claude_session_id: Some("sess-1".into()),
-            ..RunStatus::default()
-        }),
-        None,
-        /* now_unix_secs */ 9_999,
-    );
-    assert_eq!(
-        line,
-        "openai/gpt-5.5 · rho · turn 3 · 1m 05s · claude sess-1 · $0.039"
-    );
+    use rho_providers::model::{
+        display_name::ModelDisplayNameCacheGuard,
+        models_dev::{
+            with_models_dev_cache_dir_for_tests, write_cached_model_metadata_for_tests,
+            ModelMetadata,
+        },
+    };
+
+    let catalog = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir_for_tests(catalog.path().to_path_buf(), || {
+        let _names = ModelDisplayNameCacheGuard::new();
+        write_cached_model_metadata_for_tests(
+            "openai",
+            "gpt-5.5",
+            &ModelMetadata {
+                display_name: Some("GPT-5.5".into()),
+                reasoning_metadata_complete: true,
+                ..ModelMetadata::default()
+            },
+        );
+        let line = identity_line(
+            Some(&RunStatus {
+                agent_id: Some("explorer".into()),
+                provider: Some("openai".into()),
+                model: Some("gpt-5.5".into()),
+                runtime: Some(crate::agent::AgentRuntime::Rho),
+                started_at: Some(1_000),
+                finished_at: Some(1_065),
+                turns: 3,
+                total_cost_usd: Some(0.0388),
+                claude_session_id: Some("sess-1".into()),
+                ..RunStatus::default()
+            }),
+            None,
+            /* now_unix_secs */ 9_999,
+        );
+        assert_eq!(
+            line,
+            "openai/gpt-5.5 (GPT-5.5) · rho · turn 3 · 1m 05s · claude sess-1 · $0.039"
+        );
+    });
 }
 
 #[test]
