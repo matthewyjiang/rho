@@ -308,6 +308,8 @@ async fn run_automation_startup(startup: AutomationStartup<'_>) -> anyhow::Resul
             diagnostics,
             herdr: startup.herdr,
             host_input: None,
+            notice_poster: None,
+            steering_slot: None,
             approval_session: None,
             hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
         },

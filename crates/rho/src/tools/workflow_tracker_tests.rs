@@ -64,6 +64,29 @@ fn observe_suppresses_automatic_delivery() {
 }
 
 #[test]
+fn restored_notifications_can_drain_again() {
+    let tracker = WorkflowRunTracker::new();
+    tracker.bind_parent_session("session-1");
+    tracker.register_start("run-a", "review", "digest-a", None);
+    tracker.mark_finished(
+        "run-a",
+        WorkflowFinishedSnapshot {
+            lifecycle: "completed".into(),
+            outcome: Some("success".into()),
+            nodes: Vec::new(),
+            error: None,
+            outputs: Vec::new(),
+        },
+    );
+    let batch = tracker.take_notifications("session-1");
+    assert_eq!(batch.len(), 1);
+    tracker.restore_notifications(&batch);
+    let again = tracker.take_notifications("session-1");
+    assert_eq!(again.len(), 1);
+    assert_eq!(again[0].run_id, "run-a");
+}
+
+#[test]
 fn start_and_notification_prompts_include_run_identity() {
     let (start_model, start_display) =
         start_context_prompts("abc-123", "thermo", "sha256:deadbeef");

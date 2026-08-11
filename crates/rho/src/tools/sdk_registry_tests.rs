@@ -107,9 +107,11 @@ fn canonical_tool_names_match_the_unfiltered_registry() {
     }
 
     assert!(!model_names.iter().any(|name| name == "workflow_command"));
+    assert!(!model_names.iter().any(|name| name == "message_parent"));
     let registry_names = model_names.into_iter().chain(
         super::super::HOST_ONLY_TOOL_NAMES
             .iter()
+            .chain(super::super::DELEGATED_OPT_IN_TOOL_NAMES.iter())
             .map(|name| (*name).to_owned()),
     );
 

@@ -89,7 +89,8 @@ impl App {
                 .workflow_tracker()
                 .has_active_or_pending_notification(agent.session_id().as_str())
                 || self.pending_subagent_questionnaire.is_some()
-                || !self.queued_subagent_questionnaires.is_empty();
+                || self.subagent_inbox.has_queued_questionnaires()
+                || self.subagent_inbox.has_pending_notices();
             let idle_timeout = if self.pending_model_metadata.is_some()
                 || self.pending_update_notice.is_some()
                 || self.pending_session_title.is_some()
@@ -109,7 +110,6 @@ impl App {
             };
             let redraw_on_timeout = self.animation_active(Instant::now());
             let timeout = self.event_poll_timeout(idle_timeout);
-            let subagent_host_input_bound = self.subagent_host_input.is_some();
             let media_attach_pending = !self.media_attach_tasks.is_empty();
             tokio::select! {
                 biased;
@@ -118,11 +118,7 @@ impl App {
                     needs_redraw = true;
                     needs_redraw |= self.flush_due_paste_burst();
                 }
-                request = next_subagent_host_input(&mut self.subagent_host_input), if subagent_host_input_bound => {
-                    match request {
-                        Some(request) => self.queued_subagent_questionnaires.push_back(request),
-                        None => self.subagent_host_input = None,
-                    }
+                () = self.subagent_inbox.recv() => {
                     needs_redraw = true;
                 }
                 outcome = media_attach::next_media_attach_completion(&mut self.media_attach_tasks), if media_attach_pending => {
@@ -376,16 +372,4 @@ impl App {
             .as_ref()
             .map(|session_id| format!("rho session saved: {session_id}"))
     }
-}
-
-pub(super) async fn next_subagent_host_input(
-    receiver: &mut Option<
-        tokio::sync::mpsc::Receiver<crate::app::subagent_host_input::SubagentHostInputRequest>,
-    >,
-) -> Option<crate::app::subagent_host_input::SubagentHostInputRequest> {
-    receiver
-        .as_mut()
-        .expect("subagent host-input receiver checked before polling")
-        .recv()
-        .await
 }

@@ -47,6 +47,7 @@ mod first_run;
 mod frame_scheduler;
 mod goal;
 mod line_editor;
+mod subagent_inbox;
 mod subagent_questionnaires;
 mod text_input;
 
@@ -408,11 +409,12 @@ pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::
                 );
                 app.terminal_session = Some(TerminalSession::acquire());
                 if let Some(manager) = agent.subagents() {
-                    app.subagent_host_input = Some(manager.bind_host_input());
+                    app.subagent_inbox.bind(manager);
                 }
                 let result = app.run(&mut terminal, agent).await;
                 if let Some(manager) = agent.subagents() {
                     manager.unbind_host_input();
+                    manager.unbind_notices();
                 }
                 result
             }
@@ -432,11 +434,7 @@ struct App {
     terminal_session: Option<TerminalSession>,
     statusline: StatusLine,
     subagent_panel: SubagentPanel,
-    subagent_host_input: Option<
-        tokio::sync::mpsc::Receiver<crate::app::subagent_host_input::SubagentHostInputRequest>,
-    >,
-    queued_subagent_questionnaires:
-        VecDeque<crate::app::subagent_host_input::SubagentHostInputRequest>,
+    subagent_inbox: subagent_inbox::SubagentInbox,
     pending_subagent_questionnaire: Option<PendingSubagentQuestionnaire>,
     input_ui: InputUi,
     /// Tiny disappearing feedback toast. Write only through [`App::set_status`]
