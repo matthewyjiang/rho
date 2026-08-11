@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.35.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.34.1...rho-coding-agent-v1.35.0) (2026-08-11)
+
+
+### Features
+
+* **prompt:** prefer top-down mermaid flowcharts ([#849](https://github.com/matthewyjiang/rho/issues/849)) ([ed7d59a](https://github.com/matthewyjiang/rho/commit/ed7d59ae39d24ddc7a08a69f441309c126ca0981))
+* **prompt:** put session cwd in the system prompt ([#857](https://github.com/matthewyjiang/rho/issues/857)) ([e614d9b](https://github.com/matthewyjiang/rho/commit/e614d9b942869caa6cd36139bc08ad038c63b982))
+* **subagents:** add parent-child plain-text messaging for Rho runtime ([#852](https://github.com/matthewyjiang/rho/issues/852)) ([dd25d8e](https://github.com/matthewyjiang/rho/commit/dd25d8e3e48fd531e777e31fcad9c948a2a9ebfe))
+* **subagents:** enable parent messaging for claude-cli children ([#854](https://github.com/matthewyjiang/rho/issues/854)) ([22caf60](https://github.com/matthewyjiang/rho/commit/22caf6070f32b5152913255bbdd050091eba90cc))
+* **tui:** scale feed image height with the history viewport ([#856](https://github.com/matthewyjiang/rho/issues/856)) ([3bee525](https://github.com/matthewyjiang/rho/commit/3bee5251f7f2e61e19cbdf7cfd8c85d32b891ac8))
+
+
+### Bug Fixes
+
+* **advisor:** stop Claude plan mode from poisoning guidance ([#853](https://github.com/matthewyjiang/rho/issues/853)) ([5209474](https://github.com/matthewyjiang/rho/commit/52094742d99a2f53fa2bafb377f4df44abba0f39))
+* **subagents:** allow questionnaire on parent-bridged delegated runs ([#851](https://github.com/matthewyjiang/rho/issues/851)) ([127510b](https://github.com/matthewyjiang/rho/commit/127510bd0a7098233f5d46ee7b7a13f82e754f87))
+* **tui:** stop link underlines from spilling into gutters ([#858](https://github.com/matthewyjiang/rho/issues/858)) ([fdde28c](https://github.com/matthewyjiang/rho/commit/fdde28cd28eb5913e4a1b5dea2ca742fa29e552c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 2.1.0 to 3.0.0
+    * rho-providers bumped from 0.19.1 to 0.20.0
+
 ## [1.34.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.34.0...rho-coding-agent-v1.34.1) (2026-08-10)
 
 
