@@ -551,7 +551,7 @@ fn a_run_reports_the_model_it_used() {
         };
 
         assert_eq!(
-            crate::tools::agent_output::run_prompt_model(&status),
+            PromptModel::from_run_status(&status),
             case.expected,
             "{}",
             case.name

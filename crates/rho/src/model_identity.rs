@@ -15,6 +15,7 @@
 //! the SDK's replay identity (`provider` / `api` / `model`).
 
 use rho_providers::model::display_name::{model_display_name, model_reference_with_display_name};
+use rho_sdk::model::ModelIdentity;
 
 use crate::{
     claude_runtime::models::CLAUDE_CODE_SOURCE_LABEL,
@@ -46,21 +47,20 @@ pub(crate) enum PromptModel {
     },
 }
 
-/// Why a mid-session model notice is being appended.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ModelSwitchKind {
-    /// The conversation's own model changed.
-    Conversation,
-    /// The reviewer behind `advisor` changed while advisor mode stayed on.
-    Advisor,
-}
-
 impl PromptModel {
     /// The model the conversation itself runs on.
     pub(crate) fn from_config(config: &Config) -> Self {
         Self::Rho {
             provider: config.provider.clone(),
             model: config.model.clone(),
+        }
+    }
+
+    /// The model a live provider reports it is driving.
+    pub(crate) fn from_sdk_identity(identity: &ModelIdentity) -> Self {
+        Self::Rho {
+            provider: identity.provider.clone(),
+            model: identity.model.clone(),
         }
     }
 
@@ -142,21 +142,6 @@ impl PromptModel {
             } => describe_claude_cli(requested.as_deref(), resolved.as_deref()),
         })
     }
-}
-
-/// Model and display text for a mid-session model notice.
-///
-/// Everything already written stays as it was: the system prompt names the model
-/// this session started on, and the tool list keeps whatever it said. A switch
-/// only appends this line. It names the new model alone, because the old one is
-/// still readable earlier in the transcript or system prompt.
-pub(crate) fn switch_context(kind: ModelSwitchKind, current: &PromptModel) -> (String, String) {
-    let label = match kind {
-        ModelSwitchKind::Conversation => "conversation model switched to",
-        ModelSwitchKind::Advisor => "advisor model switched to",
-    };
-    let display = format!("{label} {}", current.describe());
-    (format!("[{display}]\n"), display)
 }
 
 /// Replaces control characters with spaces.

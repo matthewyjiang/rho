@@ -156,18 +156,40 @@ fn claude_cli_models_describe_requested_and_resolved_without_ambient_state() {
 // Covers: run status is the only place a finished run's model is reconstructed.
 // Owner: pure unit
 #[test]
-fn from_run_status_keeps_claude_requested_and_resolved_distinct() {
-    let status = RunStatus {
-        state: crate::subagent::RunState::Ok,
-        runtime: Some(AgentRuntime::ClaudeCli),
-        provider: Some("claude-code".into()),
-        model: Some("opus".into()),
-        claude_model: Some("claude-opus-4-6".into()),
-        ..RunStatus::default()
-    };
+fn from_run_status_reconstructs_rho_and_claude_labels() {
+    assert_eq!(
+        PromptModel::from_run_status(&RunStatus {
+            state: crate::subagent::RunState::Ok,
+            runtime: Some(AgentRuntime::Rho),
+            provider: Some("openai-codex".into()),
+            model: Some("gpt-5.6-luna".into()),
+            ..RunStatus::default()
+        }),
+        Some(PromptModel::Rho {
+            provider: "openai-codex".into(),
+            model: "gpt-5.6-luna".into(),
+        })
+    );
+    assert_eq!(
+        PromptModel::from_run_status(&RunStatus {
+            state: crate::subagent::RunState::Ok,
+            runtime: Some(AgentRuntime::Rho),
+            provider: None,
+            model: None,
+            ..RunStatus::default()
+        }),
+        None
+    );
 
     assert_eq!(
-        PromptModel::from_run_status(&status),
+        PromptModel::from_run_status(&RunStatus {
+            state: crate::subagent::RunState::Ok,
+            runtime: Some(AgentRuntime::ClaudeCli),
+            provider: Some("claude-code".into()),
+            model: Some("opus".into()),
+            claude_model: Some("claude-opus-4-6".into()),
+            ..RunStatus::default()
+        }),
         Some(PromptModel::ClaudeCli {
             requested: Some("opus".into()),
             resolved: Some("claude-opus-4-6".into()),
@@ -188,5 +210,17 @@ fn from_run_status_keeps_claude_requested_and_resolved_distinct() {
             requested: None,
             resolved: None,
         })
+    );
+}
+
+#[test]
+fn from_sdk_identity_uses_provider_and_model() {
+    let identity = rho_sdk::model::ModelIdentity::new("openai", "responses", "gpt-5.6-sol");
+    assert_eq!(
+        PromptModel::from_sdk_identity(&identity),
+        PromptModel::Rho {
+            provider: "openai".into(),
+            model: "gpt-5.6-sol".into(),
+        }
     );
 }

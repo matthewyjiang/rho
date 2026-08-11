@@ -546,47 +546,35 @@ fn apply_rho_model_policy(
 
 /// The model an agent definition will run on under `host`, before any launch.
 ///
-/// Uses the same policy application as bind so prefetch and descriptions cannot
-/// name one target while launch settles another. An unresolved alias or bad auth
-/// pin is a bind-time error; for description only, the selection text is kept
-/// rather than inventing a host fallback that will not launch.
+/// Uses the same policy application as bind so prefetch names the target launch
+/// will actually settle on. Returns `None` when the policy cannot bind (bad
+/// alias, auth pin, …): nothing is invented for a launch that will not happen.
 pub(crate) fn prompt_model_for_definition(
     definition: &AgentDefinition,
     host: &Config,
-) -> crate::model_identity::PromptModel {
+) -> Option<crate::model_identity::PromptModel> {
     use crate::model_identity::PromptModel;
 
     match &definition.runtime {
-        AgentRuntimeSpec::ClaudeCli(claude) => PromptModel::ClaudeCli {
+        AgentRuntimeSpec::ClaudeCli(claude) => Some(PromptModel::ClaudeCli {
             requested: claude.model.clone(),
             resolved: None,
-        },
+        }),
         AgentRuntimeSpec::Rho { model, .. } => {
             let mut config = host.clone();
-            match apply_rho_model_policy(definition.id.as_str(), model, &mut config) {
-                Ok(()) => PromptModel::from_config(&config),
-                Err(_) => match model.selection() {
-                    // Soft description only: state what the definition asked for.
-                    Some(selection) => PromptModel::Rho {
-                        provider: selection
-                            .provider
-                            .clone()
-                            .unwrap_or_else(|| host.provider.clone()),
-                        model: selection.model.clone(),
-                    },
-                    None => PromptModel::from_config(host),
-                },
-            }
+            apply_rho_model_policy(definition.id.as_str(), model, &mut config).ok()?;
+            Some(PromptModel::from_config(&config))
         }
     }
 }
 
-/// Every Rho model this session can name, as catalog lookup keys.
+/// Rho catalog keys whose display names this process may need to print.
 ///
 /// Names come from a cache that only a model *selection* fills, so a model that
-/// is only ever a subagent target would never get one. This lists what a session
-/// will describe - the conversation model, every agent in the catalog, and every
-/// internal agent - so one prefetch can cover them all.
+/// is only ever named on a delegated run or in a child system prompt would never
+/// get one. This lists bindable targets - the conversation model, every agent
+/// whose policy resolves, and every internal agent - so one prefetch can cover
+/// them. Broken agent policies are skipped rather than inventing a key.
 ///
 /// Claude Code models are absent: Rho has no catalog key for a `--model` alias
 /// until a run reports a concrete id.
@@ -596,7 +584,7 @@ pub(crate) fn describable_models(
 ) -> Vec<(String, String)> {
     let agents = catalog
         .iter()
-        .map(|entry| prompt_model_for_definition(&entry.definition, config));
+        .filter_map(|entry| prompt_model_for_definition(&entry.definition, config));
     let internal_agents = config
         .internal_agents
         .values()

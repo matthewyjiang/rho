@@ -624,7 +624,7 @@ fn provider_switch_without_auth_uses_provider_default() {
     assert_eq!(config.auth, "xai-api-key");
 }
 
-// Covers: the model a description predicts is the model binding actually picks.
+// Covers: the model prediction matches the model binding actually picks.
 // Owner: agent binding.
 //
 // `prompt_model_for_definition` answers "which model would this agent launch on"
@@ -689,7 +689,8 @@ fn predicted_agent_model_matches_the_model_binding_picks() {
 
     for (name, policy) in policies {
         let definition = definition_with_model(policy);
-        let predicted = prompt_model_for_definition(&definition, &host);
+        let predicted = prompt_model_for_definition(&definition, &host)
+            .expect("bindable policy should predict a model");
         let bound = AgentBinder::bind(
             Arc::clone(&definition),
             AgentInvocation {
@@ -714,6 +715,34 @@ fn predicted_agent_model_matches_the_model_binding_picks() {
     }
 }
 
+// Covers: a policy that cannot bind is not inventing a prefetch key.
+// Owner: agent binding.
+#[test]
+fn unbindable_agent_policy_predicts_no_model() {
+    let host = Config {
+        provider: "openai".into(),
+        model: "gpt-5.5".into(),
+        auth: "api-key".into(),
+        ..Config::default()
+    };
+    let definition = definition_with_model(ModelPolicy::Select(ModelSelection {
+        provider: None,
+        model: "@missing-alias".into(),
+        auth: None,
+    }));
+
+    assert_eq!(prompt_model_for_definition(&definition, &host), None);
+    assert!(AgentBinder::bind(
+        Arc::clone(&definition),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: capabilities(),
+        },
+        &host,
+    )
+    .is_err());
+}
+
 // Covers: a claude-cli agent reports its pass-through `--model`, not a Rho one.
 // Owner: agent binding.
 #[test]
@@ -731,7 +760,8 @@ fn predicted_claude_agent_model_is_the_pass_through_value() {
             ..definition(ToolPolicy::All).as_ref().clone()
         });
 
-        let predicted = prompt_model_for_definition(&definition, &Config::default());
+        let predicted = prompt_model_for_definition(&definition, &Config::default())
+            .expect("claude-cli agents always predict");
         let bound = AgentBinder::bind(
             Arc::clone(&definition),
             AgentInvocation {

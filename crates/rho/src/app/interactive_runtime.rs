@@ -641,13 +641,8 @@ impl InteractiveRuntime {
         // `Err` meaning "active provider unchanged" for callers.
         let previous_provider = Arc::clone(self.provider.provider());
         let previous_reasoning = self.provider.reasoning();
-        let previous_prompt_model = {
-            let identity = previous_provider.identity();
-            crate::model_identity::PromptModel::Rho {
-                provider: identity.provider.clone(),
-                model: identity.model.clone(),
-            }
-        };
+        let previous_prompt_model =
+            crate::model_identity::PromptModel::from_sdk_identity(&previous_provider.identity());
         // A first selection on an empty session is not a switch: the system
         // prompt has yet to be built and will name the chosen model itself.
         let session_started = !self.history().is_empty();
@@ -662,57 +657,51 @@ impl InteractiveRuntime {
             }
         };
         if let Err(error) = self.refresh_compaction() {
-            if let Err(rollback_error) = self.provider.replace(
-                self.sessions.session(),
+            let error = match self.restore_provider_after_failed_switch(
                 previous_provider,
                 previous_reasoning,
+                &error,
             ) {
-                self.runs.finish_transition();
-                return Err(Error::InvalidConfiguration {
-                    message: format!(
-                        "{error}; also failed to restore the previous provider: {rollback_error}"
-                    ),
-                });
-            }
+                Ok(()) => error,
+                Err(dual) => dual,
+            };
             self.runs.finish_transition();
             return Err(error);
         }
 
         let identity = self.provider.provider().identity();
-        let current_prompt_model = crate::model_identity::PromptModel::Rho {
-            provider: identity.provider.clone(),
-            model: identity.model.clone(),
-        };
+        let current_prompt_model =
+            crate::model_identity::PromptModel::from_sdk_identity(&identity);
         // The system prompt named the model this session started on and then
         // stayed fixed, so a later switch has to reach the model as context.
         // Owned here (not in the TUI) so every conversation model change is
         // honest, and a failed notice rolls the provider back.
         if session_started && current_prompt_model != previous_prompt_model {
             let (context, display) = crate::prompt::model_switch_context(
-                crate::model_identity::ModelSwitchKind::Conversation,
+                crate::prompt::ModelSwitchKind::Conversation,
                 &current_prompt_model,
             );
             if let Err(error) = self.append_user_context_with_display(context, display) {
-                if let Err(rollback_error) = self.provider.replace(
-                    self.sessions.session(),
-                    previous_provider,
-                    previous_reasoning,
-                ) {
-                    self.runs.finish_transition();
-                    return Err(Error::InvalidConfiguration {
-                        message: format!(
-                            "switched model but could not record the switch ({error}); \
-also failed to restore the previous provider: {rollback_error}"
-                        ),
-                    });
-                }
-                let _ = self.refresh_compaction();
-                self.runs.finish_transition();
-                return Err(Error::InvalidConfiguration {
+                let error = Error::InvalidConfiguration {
                     message: format!(
                         "could not record the conversation model switch for the model: {error}"
                     ),
-                });
+                };
+                let error = match self.restore_provider_after_failed_switch(
+                    previous_provider,
+                    previous_reasoning,
+                    &error,
+                ) {
+                    Ok(()) => {
+                        // Compaction was rebuilt for the new provider; put it
+                        // back now that the provider itself is restored.
+                        let _ = self.refresh_compaction();
+                        error
+                    }
+                    Err(dual) => dual,
+                };
+                self.runs.finish_transition();
+                return Err(error);
             }
         }
 
@@ -730,6 +719,31 @@ also failed to restore the previous provider: {rollback_error}"
         self.invalidate_live_context();
         self.runs.finish_transition();
         Ok(report)
+    }
+
+    /// Rolls the live provider back after a post-replace step failed.
+    ///
+    /// `Ok(())` means the previous provider is active again so the caller can
+    /// surface `primary` with "active provider unchanged". `Err` is a combined
+    /// failure when restore itself fails.
+    fn restore_provider_after_failed_switch(
+        &mut self,
+        previous_provider: Arc<dyn ModelProvider>,
+        previous_reasoning: rho_sdk::ReasoningLevel,
+        primary: &Error,
+    ) -> Result<(), Error> {
+        self.provider
+            .replace(
+                self.sessions.session(),
+                previous_provider,
+                previous_reasoning,
+            )
+            .map(|_| ())
+            .map_err(|rollback_error| Error::InvalidConfiguration {
+                message: format!(
+                    "{primary}; also failed to restore the previous provider: {rollback_error}"
+                ),
+            })
     }
 
     fn refresh_compaction(&mut self) -> Result<(), Error> {

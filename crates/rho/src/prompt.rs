@@ -281,6 +281,15 @@ fn neutralize_mcp_server_instruction_close_tags(text: &str) -> String {
     text.replace(NEEDLE, REPLACEMENT)
 }
 
+/// Why a mid-session model notice is being appended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ModelSwitchKind {
+    /// The conversation's own model changed.
+    Conversation,
+    /// The reviewer behind `advisor` changed while advisor mode stayed on.
+    Advisor,
+}
+
 /// Model and display text for a mid-session model notice.
 ///
 /// Everything already written stays as it was: the system prompt names the model
@@ -288,10 +297,15 @@ fn neutralize_mcp_server_instruction_close_tags(text: &str) -> String {
 /// only appends this line. It names the new model alone, because the old one is
 /// still readable earlier in the transcript or system prompt.
 pub(crate) fn model_switch_context(
-    kind: crate::model_identity::ModelSwitchKind,
+    kind: ModelSwitchKind,
     current: &PromptModel,
 ) -> (String, String) {
-    crate::model_identity::switch_context(kind, current)
+    let label = match kind {
+        ModelSwitchKind::Conversation => "conversation model switched to",
+        ModelSwitchKind::Advisor => "advisor model switched to",
+    };
+    let display = format!("{label} {}", current.describe());
+    (format!("[{display}]\n"), display)
 }
 
 /// Model and display text when the `advisor` tool becomes available.
@@ -470,8 +484,6 @@ mod tests {
     // Owner: mid-session switch notices.
     #[test]
     fn switch_notices_are_one_bracketed_line_naming_only_the_new_model() {
-        use crate::model_identity::ModelSwitchKind;
-
         let previous = PromptModel::Rho {
             provider: "openai".into(),
             model: "gpt-5.6-sol".into(),

@@ -83,7 +83,7 @@ impl InteractiveRuntime {
                 .filter(|identity| previous_identity.as_ref() != Some(identity))
                 .map(|identity| {
                     crate::prompt::model_switch_context(
-                        crate::model_identity::ModelSwitchKind::Advisor,
+                        crate::prompt::ModelSwitchKind::Advisor,
                         &identity,
                     )
                 });

@@ -208,14 +208,11 @@ fn completion_summary(snapshot: &SubagentSnapshot) -> Vec<String> {
 /// The agent list stays model-free on purpose: which model an agent runs on can
 /// change after that list is written. A run reports its own model instead, where
 /// the answer is settled and cannot go stale.
-pub(super) fn run_prompt_model(
-    status: &crate::subagent::RunStatus,
-) -> Option<crate::model_identity::PromptModel> {
-    crate::model_identity::PromptModel::from_run_status(status)
-}
-
 fn run_model_line(status: &crate::subagent::RunStatus) -> Option<String> {
-    Some(format!("model: {}", run_prompt_model(status)?.describe()))
+    Some(format!(
+        "model: {}",
+        crate::model_identity::PromptModel::from_run_status(status)?.describe()
+    ))
 }
 
 fn push_claude_metadata(lines: &mut Vec<String>, snapshot: &SubagentSnapshot) {
