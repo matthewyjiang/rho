@@ -357,23 +357,34 @@ pub(super) fn layout_composer_attachments(
             let gap_total = COMPOSER_IMAGE_GAP.saturating_mul(count.saturating_sub(1));
             let slot_width = (width.saturating_sub(gap_total) / count.max(1)).max(1);
 
+            // First pass: natural fit height inside each slot under the max.
+            // The strip uses the tallest so every cell is the same height.
             let mut strip_height = 1usize;
-            let mut images = Vec::with_capacity(count);
-            let image_row = layout.total_rows;
-            for (offset, &attachment_index) in indices.iter().enumerate() {
+            for &attachment_index in &indices {
                 let image = previews[attachment_index]
                     .as_ref()
                     .expect("run only contains preview images");
                 let fitted = image.size_for(slot_width, max_height);
-                let cell_height = usize::from(fitted.height).max(1);
-                strip_height = strip_height.max(cell_height);
+                strip_height = strip_height.max(usize::from(fitted.height).max(1));
+            }
+            strip_height = strip_height.min(usize::from(max_height.max(1)));
+
+            let mut images = Vec::with_capacity(count);
+            let image_row = layout.total_rows;
+            let slot_width_u16 = u16::try_from(slot_width).unwrap_or(u16::MAX).max(1);
+            for (offset, &attachment_index) in indices.iter().enumerate() {
+                let image = previews[attachment_index]
+                    .as_ref()
+                    .expect("run only contains preview images");
                 let column = offset.saturating_mul(slot_width.saturating_add(COMPOSER_IMAGE_GAP));
+                // Equal-size cells. Fit scales each image into the shared box so
+                // the strip reads as one uniform height.
                 images.push(ComposerImagePlacement {
                     image: image.clone(),
                     row: image_row,
                     column: u16::try_from(column).unwrap_or(u16::MAX),
-                    width: fitted.width.max(1),
-                    height: cell_height,
+                    width: slot_width_u16,
+                    height: strip_height,
                 });
             }
 

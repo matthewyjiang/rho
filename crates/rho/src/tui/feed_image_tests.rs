@@ -279,4 +279,21 @@ fn composer_attachments_stack_image_previews_sideways_with_labels() {
     assert_eq!(layout.images[0].column, 0);
     assert_eq!(layout.images[1].column, 21);
     assert_eq!(layout.images[0].row, layout.images[1].row);
+    // Every preview in the strip paints in an equal-size cell.
+    assert_eq!(layout.images[0].height, layout.images[1].height);
+    assert_eq!(layout.images[0].width, layout.images[1].width);
+    assert_eq!(
+        layout.images[0].height,
+        match &layout.segments[0] {
+            ComposerAttachmentSegment::ImageStrip { height, .. } => *height,
+            _ => unreachable!(),
+        }
+    );
+    assert_eq!(
+        usize::from(layout.images[0].width),
+        match &layout.segments[0] {
+            ComposerAttachmentSegment::ImageStrip { slot_width, .. } => *slot_width,
+            _ => unreachable!(),
+        }
+    );
 }
