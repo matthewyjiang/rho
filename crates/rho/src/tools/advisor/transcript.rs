@@ -82,9 +82,8 @@ fn push_message(out: &mut String, message: &Message, budget: TranscriptBudget) {
                 let name = call.name.as_deref().unwrap_or("unknown");
                 out.push_str("tool call (incomplete): ");
                 out.push_str(name);
-                out.push_str("\narguments: ");
-                push_clipped(out, &call.arguments, budget.tool_call_bytes);
                 out.push('\n');
+                push_arguments_line(out, &call.arguments, budget.tool_call_bytes);
             }
         }
         Message::ToolResult(result) => {
@@ -122,8 +121,22 @@ fn push_tool_call(out: &mut String, call: &ToolCall, max_bytes: usize) {
     out.push_str(&call.name);
     out.push_str(" (id ");
     out.push_str(&call.id);
-    out.push_str(")\narguments: ");
-    push_clipped(out, &call.arguments.to_string(), max_bytes);
+    out.push_str(")\n");
+    // Zero-arg tools (notably advisor) serialize as `{}`. Incomplete calls may
+    // also arrive with no argument bytes yet. Omit both so they do not look like
+    // a missing payload. Malformed values such as null, [], or "" stay visible
+    // for advisor diagnostics.
+    push_arguments_line(out, &call.arguments.to_string(), max_bytes);
+}
+
+/// Omit empty buffers and the intended zero-argument payload (`{}`).
+fn push_arguments_line(out: &mut String, rendered: &str, max_bytes: usize) {
+    let rendered = rendered.trim();
+    if rendered.is_empty() || rendered == "{}" {
+        return;
+    }
+    out.push_str("arguments: ");
+    push_clipped(out, rendered, max_bytes);
     out.push('\n');
 }
 

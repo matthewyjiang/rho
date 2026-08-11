@@ -370,9 +370,8 @@ fn bind_rho_capabilities(
 ) -> anyhow::Result<AgentCapabilities> {
     let mut capabilities = invocation.available_tools.clone();
     if matches!(invocation.role, AgentRole::Delegated | AgentRole::Workflow) {
-        // Keep questionnaire when the host offers it. The executor gates it to
-        // background runs with a live parent bridge; foreground and headless
-        // paths strip it before bind.
+        // Keep questionnaire when the host offers it. The executor strips it
+        // before bind when no parent bridge can answer.
         capabilities.remove(&ToolCapability::Agent);
         capabilities.remove(&ToolCapability::Agents);
         // The advisor reviews the root session. A child run has its own
@@ -416,6 +415,9 @@ fn bind_rho_capabilities(
                     }
                 } else if capabilities.contains(tool) {
                     resolved.insert(tool.clone());
+                } else if may_omit_unavailable_tool(tool, invocation.role) {
+                    // Role and host gates strip some built-ins for this launch.
+                    // Definitions may still list them for other invocations.
                 } else {
                     unavailable.push(tool.to_string());
                 }
@@ -430,6 +432,22 @@ fn bind_rho_capabilities(
             }
             Ok(AgentCapabilities::new(resolved))
         }
+    }
+}
+
+/// Built-ins that a definition may list even when this launch cannot offer them.
+///
+/// Host and role policy remove these before bind (no parent questionnaire bridge,
+/// no nested agents, workflow isolation). Soft-omit keeps the allowlist valid so
+/// the same definition still binds when those tools are present.
+fn may_omit_unavailable_tool(tool: &ToolCapability, role: AgentRole) -> bool {
+    match tool {
+        ToolCapability::Questionnaire => true,
+        ToolCapability::Agent | ToolCapability::Agents | ToolCapability::Advisor => {
+            matches!(role, AgentRole::Delegated | AgentRole::Workflow)
+        }
+        ToolCapability::Rho | ToolCapability::Workflow => matches!(role, AgentRole::Workflow),
+        _ => false,
     }
 }
 

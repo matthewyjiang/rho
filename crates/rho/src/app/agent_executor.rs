@@ -52,7 +52,6 @@ pub(crate) struct AgentLaunchRequest {
     pub(crate) definition: Arc<AgentDefinition>,
     pub(crate) prompt: String,
     pub(crate) run_id: String,
-    pub(crate) background: bool,
     pub(crate) parent_session_id: Option<rho_sdk::SessionId>,
     pub(crate) output_file: PathBuf,
 }
@@ -255,17 +254,19 @@ impl AgentExecutor {
         capabilities.remove(&ToolCapability::Bash);
         #[cfg(not(windows))]
         capabilities.remove(&ToolCapability::Powershell);
-        // A foreground child runs inside the parent tool call, so waiting for
-        // that parent to present a questionnaire would deadlock both runs.
-        let reachable_parent = request
-            .background
-            .then(|| request.parent_session_id.clone())
-            .flatten();
-        let questionnaire_target = reachable_parent
+        // Delegated questionnaires route through the parent session. The parent
+        // TUI can present them while a turn is running (foreground wait) or after
+        // background dispatch, so availability is the live parent bridge only.
+        let questionnaire_target = request
+            .parent_session_id
             .clone()
             .filter(|_| self.host_input.is_bound());
         // Notices share the parent-session binding, not the questionnaire one.
-        let notice_target = reachable_parent.filter(|_| self.notices.is_bound());
+        // They are non-blocking, so foreground and background both qualify.
+        let notice_target = request
+            .parent_session_id
+            .clone()
+            .filter(|_| self.notices.is_bound());
         if questionnaire_target.is_none() {
             capabilities.remove(&ToolCapability::Questionnaire);
         }
@@ -701,6 +702,17 @@ fn concurrency_limits_from_env(
 fn parse_positive_concurrency(raw: Option<&str>) -> Option<usize> {
     raw.and_then(|value| value.parse().ok())
         .filter(|limit: &usize| *limit > 0)
+}
+
+/// Whether a delegated Rho run may expose the questionnaire tool.
+///
+/// Needs a parent session id and a bound parent host-input bridge. Foreground
+/// and background launches both qualify; headless or parentless launches do not.
+fn delegated_questionnaire_available(
+    parent_session_id: Option<&rho_sdk::SessionId>,
+    host_input_bound: bool,
+) -> bool {
+    parent_session_id.is_some() && host_input_bound
 }
 
 /// Concurrency capacity held for the lifetime of one delegated run.

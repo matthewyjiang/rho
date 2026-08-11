@@ -285,7 +285,7 @@ pub fn assert_success_spawn(record: &SpawnRecord, workspace: &Path) {
     assert_pair(args, "--output-format", "stream-json");
     assert_contains(args, "--verbose");
     assert_contains(args, "--include-partial-messages");
-    assert_pair(args, "--permission-mode", "dontAsk");
+    assert_pair(args, "--permission-mode", "bypassPermissions");
     assert_pair(args, "--disallowedTools", "Task");
     assert_pair(args, "--setting-sources", "project");
     assert_contains(args, "--strict-mcp-config");

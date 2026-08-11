@@ -275,19 +275,21 @@ fn resolve_agent(
             effort,
         } => {
             let (executable, executable_identity) = host.resolve_executable("claude")?;
+            let permission_mode =
+                crate::claude_runtime::spawn::map_permission_mode(*permission_mode)?;
             let plan = crate::claude_runtime::spawn::build_spawn_plan(
                 &crate::claude_runtime::spawn::ClaudeSpawnRequest {
                     system_prompt: entry.definition.prompt.clone(),
                     model: model.clone(),
                     tools: tools.clone(),
                     inherit_claude_config: *inherit_claude_config,
-                    permission_mode: *permission_mode,
+                    permission_mode,
                     cwd: host.workspace().to_path_buf(),
                     max_turns: *max_turns,
                     effort: *effort,
                     session_persistence: crate::claude_runtime::spawn::SessionPersistence::Keep,
                 },
-            )?;
+            );
             ResolvedAgent {
                 model: model.clone(),
                 reasoning: effort.map(str::to_owned),
