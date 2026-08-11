@@ -11,7 +11,7 @@ use super::{
     config_number_input_lines, display_width,
     feed_image::{
         layout_composer_attachments, ComposerAttachmentLayout, ComposerAttachmentSegment,
-        COMPOSER_IMAGE_HEIGHT,
+        COMPOSER_IMAGE_GAP, COMPOSER_IMAGE_HEIGHT,
     },
     file_picker,
     inline_choice::inline_choice_lines,
@@ -272,19 +272,19 @@ impl App {
                 ComposerAttachmentSegment::ImageStrip {
                     indices,
                     height,
-                    slot_width,
-                    ..
+                    cell_widths,
                 } => {
                     lines.extend((0..*height).map(|_| Line::raw("")));
                     let mut spans = Vec::new();
                     for (offset, &attachment_index) in indices.iter().enumerate() {
                         if offset > 0 {
-                            spans.push(Span::raw(" "));
+                            spans.push(Span::raw(" ".repeat(COMPOSER_IMAGE_GAP)));
                         }
+                        let cell_width = cell_widths.get(offset).copied().unwrap_or(1).max(1);
                         let label = self.input_ui.attachments()[attachment_index]
                             .composer_label(attachment_index + 1);
-                        let truncated = truncate_one_line(&label, *slot_width);
-                        let pad = slot_width.saturating_sub(display_width(&truncated));
+                        let truncated = truncate_one_line(&label, cell_width);
+                        let pad = cell_width.saturating_sub(display_width(&truncated));
                         spans.push(Span::styled(truncated, Theme::dim()));
                         if pad > 0 {
                             spans.push(Span::raw(" ".repeat(pad)));

@@ -292,7 +292,7 @@ pub(super) fn reserve_entry_image_rows(
 }
 
 /// Gap in columns between side-by-side composer image previews.
-const COMPOSER_IMAGE_GAP: usize = 1;
+pub(super) const COMPOSER_IMAGE_GAP: usize = 2;
 
 /// One painted composer image cell inside the attachment band.
 #[derive(Clone, Debug)]
@@ -312,7 +312,8 @@ pub(super) enum ComposerAttachmentSegment {
         /// Attachment indices in this strip, left to right.
         indices: Vec<usize>,
         height: usize,
-        slot_width: usize,
+        /// Cell width under each preview, left to right (packed, not full-bleed).
+        cell_widths: Vec<usize>,
     },
     /// Full-width document / pending label.
     Label { index: usize },
@@ -327,7 +328,7 @@ pub(super) struct ComposerAttachmentLayout {
 }
 
 /// Layout composer attachments: consecutive image previews share a horizontal
-/// strip; documents and pending items stay full-width rows.
+/// strip packed left-to-right; documents and pending items stay full-width rows.
 pub(super) fn layout_composer_attachments(
     attachments: &[super::ComposerAttachment],
     previews: &[Option<FeedImage>],
@@ -354,38 +355,67 @@ pub(super) fn layout_composer_attachments(
             }
             let indices: Vec<usize> = (run_start..index).collect();
             let count = indices.len();
-            let gap_total = COMPOSER_IMAGE_GAP.saturating_mul(count.saturating_sub(1));
-            let slot_width = (width.saturating_sub(gap_total) / count.max(1)).max(1);
+            let images_in_run: Vec<&FeedImage> = indices
+                .iter()
+                .map(|&attachment_index| {
+                    previews[attachment_index]
+                        .as_ref()
+                        .expect("run only contains preview images")
+                })
+                .collect();
 
-            // First pass: natural fit height inside each slot under the max.
-            // The strip uses the tallest so every cell is the same height.
+            // Shared strip height = tallest natural fit under the max budget.
             let mut strip_height = 1usize;
-            for &attachment_index in &indices {
-                let image = previews[attachment_index]
-                    .as_ref()
-                    .expect("run only contains preview images");
-                let fitted = image.size_for(slot_width, max_height);
+            for image in &images_in_run {
+                let fitted = image.size_for(width, max_height);
                 strip_height = strip_height.max(usize::from(fitted.height).max(1));
             }
             strip_height = strip_height.min(usize::from(max_height.max(1)));
+            let strip_height_u16 = u16::try_from(strip_height).unwrap_or(u16::MAX).max(1);
+
+            // Preferred width at that shared height (aspect preserved).
+            let mut cell_widths: Vec<usize> = images_in_run
+                .iter()
+                .map(|image| {
+                    usize::from(image.size_for(width, strip_height_u16).width.max(1)).min(width)
+                })
+                .collect();
+
+            // If the packed row overflows, shrink cells proportionally.
+            let gap_total = COMPOSER_IMAGE_GAP.saturating_mul(count.saturating_sub(1));
+            let content_budget = width.saturating_sub(gap_total).max(count);
+            let preferred_total: usize = cell_widths.iter().sum();
+            if preferred_total > content_budget && preferred_total > 0 {
+                let mut assigned = 0usize;
+                for (i, cell) in cell_widths.iter_mut().enumerate() {
+                    if i + 1 == count {
+                        *cell = content_budget.saturating_sub(assigned).max(1);
+                    } else {
+                        let scaled = (*cell)
+                            .saturating_mul(content_budget)
+                            .saturating_div(preferred_total)
+                            .max(1);
+                        *cell = scaled;
+                        assigned = assigned.saturating_add(scaled);
+                    }
+                }
+            }
 
             let mut images = Vec::with_capacity(count);
             let image_row = layout.total_rows;
-            let slot_width_u16 = u16::try_from(slot_width).unwrap_or(u16::MAX).max(1);
-            for (offset, &attachment_index) in indices.iter().enumerate() {
-                let image = previews[attachment_index]
-                    .as_ref()
-                    .expect("run only contains preview images");
-                let column = offset.saturating_mul(slot_width.saturating_add(COMPOSER_IMAGE_GAP));
-                // Equal-size cells. Fit scales each image into the shared box so
-                // the strip reads as one uniform height.
+            let mut column = 0usize;
+            for (offset, image) in images_in_run.into_iter().enumerate() {
+                let cell_width = cell_widths[offset].max(1);
                 images.push(ComposerImagePlacement {
                     image: image.clone(),
                     row: image_row,
                     column: u16::try_from(column).unwrap_or(u16::MAX),
-                    width: slot_width_u16,
+                    width: u16::try_from(cell_width).unwrap_or(u16::MAX).max(1),
                     height: strip_height,
                 });
+                column = column
+                    .saturating_add(cell_width)
+                    .saturating_add(COMPOSER_IMAGE_GAP);
             }
 
             // Image rows + one label row under the strip.
@@ -397,7 +427,7 @@ pub(super) fn layout_composer_attachments(
             layout.segments.push(ComposerAttachmentSegment::ImageStrip {
                 indices,
                 height: strip_height,
-                slot_width,
+                cell_widths,
             });
             continue;
         }
