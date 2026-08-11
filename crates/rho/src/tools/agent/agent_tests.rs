@@ -245,6 +245,30 @@ async fn unobserved_terminal_runs_drain_as_one_batch() {
     );
 }
 
+#[tokio::test]
+async fn restored_notifications_can_drain_again() {
+    let root = tempfile::tempdir().unwrap();
+    let fixture = manager(root.path());
+    let manager = fixture.manager();
+    manager.bind_parent_session(crate::subagent::RunPlacement::for_parent_session(
+        "session-1",
+        None,
+    ));
+    let id = spawn_background_run(&manager, root.path()).await;
+    manager.wait_done(&id).await.unwrap();
+    let batch = manager.take_notifications("session-1");
+    assert_eq!(batch.len(), 1);
+    manager.restore_notifications(&batch);
+    let again = manager.take_notifications("session-1");
+    assert_eq!(
+        again
+            .iter()
+            .map(|notification| notification.snapshot.id.clone())
+            .collect::<Vec<_>>(),
+        vec![id]
+    );
+}
+
 #[test]
 fn claim_terminal_costs_is_idempotent_and_session_scoped() {
     let root = tempfile::tempdir().unwrap();

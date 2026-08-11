@@ -165,14 +165,21 @@ impl App {
 
         // Background completions pending at this turn boundary ride in the
         // same model request. This runs after retry delays too, while the
-        // persisted display remains the real user-visible prompt.
-        if let Some((model, display)) = self.collect_turn_boundary_prompts(agent) {
-            self.insert_entry(&Entry::Notice(format!(
-                "delivered with this message:\n{display}"
-            )));
-            failed_turn.attach_notification_context(model);
+        // persisted display remains the real user-visible prompt. The drained
+        // batch stays restorable until provider start commits delivery.
+        let mut pending_boundary = self.collect_turn_boundary_prompts(agent);
+        if let Some(delivery) = pending_boundary.as_ref() {
+            failed_turn.attach_notification_context(delivery.model.clone());
         }
-        let model_input = failed_turn.model_input()?;
+        let model_input = match failed_turn.model_input() {
+            Ok(input) => input,
+            Err(error) => {
+                if let Some(delivery) = pending_boundary.take() {
+                    self.restore_turn_boundary_batch(agent, delivery.batch);
+                }
+                return Err(error.into());
+            }
+        };
         self.turn.set_current_turn_start(Some(self.history.len()));
         self.reset_streams();
         self.turn.reasoning_phase_mut().begin_step();
@@ -181,8 +188,14 @@ impl App {
         self.turn.set_activity_phase(ActivityPhase::Starting);
         self.report_herdr_working().await;
         self.turn.start_loading();
-        self.clamp_history_scroll_for_terminal(terminal)?;
-        terminal.draw(|frame| self.draw(frame))?;
+        if let Err(error) = self.clamp_history_scroll_for_terminal(terminal) {
+            self.abandon_provider_turn_start(agent, &mut pending_boundary);
+            return Err(error.into());
+        }
+        if let Err(error) = terminal.draw(|frame| self.draw(frame)) {
+            self.abandon_provider_turn_start(agent, &mut pending_boundary);
+            return Err(error.into());
+        }
 
         self.turn.clear_tool_calls();
         let start_result = match failed_turn.initial_tool_call.clone() {
@@ -198,15 +211,15 @@ impl App {
             }
         };
         if let Err(error) = start_result {
-            self.end_busy_ui();
-            self.turn.stop_loading();
-            // begin_step() already opened the stretch; drop it so idle draws
-            // do not keep a stale Thinking... line after a failed provider start.
-            self.turn.reasoning_phase_mut().reset();
-            self.turn.set_current_turn_start(None);
-            self.turn.set_activity_phase(ActivityPhase::default());
-            self.set_status("ready");
+            self.abandon_provider_turn_start(agent, &mut pending_boundary);
             return Err(error.into());
+        }
+        // Provider start accepted the input; commit drained boundary delivery.
+        if let Some(delivery) = pending_boundary.take() {
+            self.insert_entry(&Entry::Notice(format!(
+                "delivered with this message:\n{}",
+                delivery.display
+            )));
         }
         self.debug_assert_provider_turn_sync(agent);
         self.insert_runtime_notices(agent);
@@ -609,6 +622,26 @@ impl App {
         self.insert_entry(&Entry::Error(message));
         self.set_status("error");
         TurnOutcome::Failed(failed_turn)
+    }
+
+    /// Clears start-time busy chrome and returns drained turn-boundary work
+    /// when provider start never accepted the input.
+    fn abandon_provider_turn_start(
+        &mut self,
+        agent: &mut InteractiveRuntime,
+        pending_boundary: &mut Option<super::subagent_questionnaires::TurnBoundaryDelivery>,
+    ) {
+        self.end_busy_ui();
+        self.turn.stop_loading();
+        // begin_step() already opened the stretch; drop it so idle draws
+        // do not keep a stale Thinking... line after a failed provider start.
+        self.turn.reasoning_phase_mut().reset();
+        self.turn.set_current_turn_start(None);
+        self.turn.set_activity_phase(ActivityPhase::default());
+        self.set_status("ready");
+        if let Some(delivery) = pending_boundary.take() {
+            self.restore_turn_boundary_batch(agent, delivery.batch);
+        }
     }
 }
 

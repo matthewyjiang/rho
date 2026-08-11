@@ -323,6 +323,24 @@ impl SubagentManager {
             .collect()
     }
 
+    /// Returns drained notifications so a failed turn setup can deliver them
+    /// again. Only terminal background entries still present are reopened.
+    pub fn restore_notifications(&self, notifications: &[SubagentNotification]) {
+        if notifications.is_empty() {
+            return;
+        }
+        let mut entries = self.inner.lock().expect("delegated registry lock");
+        for notification in notifications {
+            let Some(entry) = entries.get_mut(&notification.snapshot.id) else {
+                continue;
+            };
+            let snapshot = entry.snapshot(&notification.snapshot.id);
+            if entry.background && snapshot.done && entry.observed {
+                entry.observed = false;
+            }
+        }
+    }
+
     /// Returns the run snapshot; a terminal snapshot counts as delivered, so
     /// automatic notification will not repeat a result the parent already
     /// read through `status` or `stop`.

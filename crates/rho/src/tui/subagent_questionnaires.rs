@@ -90,42 +90,68 @@ impl App {
     /// Collects everything owed to the model at a turn boundary: background
     /// completions, delegated-child notices, and workflow notifications.
     ///
-    /// Returns the joined model prompt and its display summary, or `None` when
-    /// nothing is pending. Real prompt turns fold this into the outgoing
-    /// message; an idle parent sends it as a turn of its own.
+    /// Returns the joined model prompt, display summary, and the drained batch
+    /// so callers can restore on setup failure, or `None` when nothing is
+    /// pending. Real prompt turns fold this into the outgoing message; an idle
+    /// parent sends it as a turn of its own. Removal is committed only after
+    /// the provider turn starts successfully.
     pub(super) fn collect_turn_boundary_prompts(
         &mut self,
         agent: &mut InteractiveRuntime,
-    ) -> Option<(String, String)> {
+    ) -> Option<TurnBoundaryDelivery> {
         let mut model_parts = Vec::new();
         let mut display_parts = Vec::new();
         let mut push = |(model, display): (String, String)| {
             model_parts.push(model);
             display_parts.push(display);
         };
+        let mut batch = TurnBoundaryBatch::default();
         if let Some(manager) = agent.subagents().cloned() {
-            let notifications = manager.take_notifications(agent.session_id().as_str());
-            if !notifications.is_empty() {
-                push(crate::tools::agent::notification_prompts(&notifications));
+            batch.subagent_notifications = manager.take_notifications(agent.session_id().as_str());
+            if !batch.subagent_notifications.is_empty() {
+                push(crate::tools::agent::notification_prompts(
+                    &batch.subagent_notifications,
+                ));
             }
         }
         self.subagent_inbox.drain();
-        let notices = self.subagent_inbox.take_notices(agent.session_id());
-        if !notices.is_empty() {
-            push(crate::app::subagent_messaging::notice_prompts(&notices));
+        batch.notices = self.subagent_inbox.take_notices(agent.session_id());
+        if !batch.notices.is_empty() {
+            push(crate::app::subagent_messaging::notice_prompts(
+                &batch.notices,
+            ));
         }
-        let workflow_notifications = agent
+        batch.workflow_notifications = agent
             .workflow_tracker()
             .take_notifications(agent.session_id().as_str());
-        if !workflow_notifications.is_empty() {
+        if !batch.workflow_notifications.is_empty() {
             push(crate::tools::workflow_tracker::notification_prompts(
-                &workflow_notifications,
+                &batch.workflow_notifications,
             ));
         }
         if model_parts.is_empty() {
             return None;
         }
-        Some((model_parts.join("\n\n"), display_parts.join("\n")))
+        Some(TurnBoundaryDelivery {
+            model: model_parts.join("\n\n"),
+            display: display_parts.join("\n"),
+            batch,
+        })
+    }
+
+    /// Puts a drained turn-boundary batch back when provider start never began.
+    pub(super) fn restore_turn_boundary_batch(
+        &mut self,
+        agent: &mut InteractiveRuntime,
+        batch: TurnBoundaryBatch,
+    ) {
+        if let Some(manager) = agent.subagents() {
+            manager.restore_notifications(&batch.subagent_notifications);
+        }
+        self.subagent_inbox.return_notices(batch.notices);
+        agent
+            .workflow_tracker()
+            .restore_notifications(&batch.workflow_notifications);
     }
 
     async fn finish_pending_subagent_questionnaire(
@@ -288,19 +314,26 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<Option<TurnOutcome>> {
-        let Some((model_prompt, display_prompt)) = self.collect_turn_boundary_prompts(agent) else {
+        let Some(delivery) = self.collect_turn_boundary_prompts(agent) else {
             return Ok(None);
         };
         // The whole drained batch is one message and one model request, no
         // matter how many runs finished while the parent was busy.
-        self.run_prompt_turn(
-            TurnPrompt::standard(model_prompt, display_prompt),
-            Vec::new(),
-            terminal,
-            agent,
-        )
-        .await
-        .map(Some)
+        match self
+            .run_prompt_turn(
+                TurnPrompt::standard(delivery.model, delivery.display),
+                Vec::new(),
+                terminal,
+                agent,
+            )
+            .await
+        {
+            Ok(outcome) => Ok(Some(outcome)),
+            Err(error) => {
+                self.restore_turn_boundary_batch(agent, delivery.batch);
+                Err(error)
+            }
+        }
     }
 
     pub(super) fn should_deliver_idle_subagent_completions(&self) -> bool {
@@ -316,3 +349,18 @@ impl App {
 #[cfg(test)]
 #[path = "subagent_questionnaires_tests.rs"]
 mod tests;
+
+/// Drained turn-boundary work held until provider start commits delivery.
+#[derive(Default)]
+pub(super) struct TurnBoundaryBatch {
+    subagent_notifications: Vec<crate::tools::agent::SubagentNotification>,
+    notices: Vec<crate::app::subagent_messaging::SubagentNotice>,
+    workflow_notifications: Vec<crate::tools::workflow_tracker::WorkflowNotification>,
+}
+
+/// Joined prompts plus the restorable drained batch for one turn boundary.
+pub(super) struct TurnBoundaryDelivery {
+    pub(super) model: String,
+    pub(super) display: String,
+    pub(super) batch: TurnBoundaryBatch,
+}

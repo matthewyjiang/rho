@@ -129,6 +129,15 @@ impl SubagentInbox {
             .collect()
     }
 
+    /// Returns drained notices to the front of the queue so a failed turn
+    /// setup preserves arrival order ahead of any newer arrivals.
+    pub(super) fn return_notices(&mut self, notices: impl IntoIterator<Item = SubagentNotice>) {
+        let notices = notices.into_iter().collect::<Vec<_>>();
+        for notice in notices.into_iter().rev() {
+            self.queued_notices.push_front(notice);
+        }
+    }
+
     /// Hands the queued questionnaires to a turn's own interaction queue.
     pub(super) fn take_questionnaires(
         &mut self,

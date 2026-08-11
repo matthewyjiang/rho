@@ -134,6 +134,10 @@ pub(crate) enum NoticePostError {
 }
 
 /// Posts a short plain-text notice from a delegated child to its parent.
+///
+/// `message_parent` relies on this to stay non-blocking: implementors must not
+/// wait on the parent session, and must return [`NoticePostError`] whenever the
+/// notice cannot be accepted (unbound parent, full queue, or equivalent).
 pub(crate) trait NoticePoster: Send + Sync {
     fn post(&self, message: ValidatedMessage) -> Result<(), NoticePostError>;
 }

@@ -41,6 +41,29 @@ fn taking_notices_drops_the_ones_it_cannot_deliver() {
     assert!(!inbox.has_pending_notices());
 }
 
+// Covers: a failed provider start can put taken notices back ahead of newer
+// arrivals so turn-boundary delivery keeps original order.
+// Owner: tui subagent inbox
+#[test]
+fn returned_notices_preserve_order_at_the_front() {
+    let current = SessionId::from_string("session-current").unwrap();
+    let mut inbox = SubagentInbox::default();
+    inbox.push_notice_for_test(notice("a1", &current));
+    inbox.push_notice_for_test(notice("b2", &current));
+    let taken = inbox.take_notices(&current);
+    inbox.push_notice_for_test(notice("c3", &current));
+    inbox.return_notices(taken);
+    let ordered = inbox
+        .take_notices(&current)
+        .into_iter()
+        .map(|notice| notice.run_id)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ordered,
+        vec!["a1".to_owned(), "b2".to_owned(), "c3".to_owned()]
+    );
+}
+
 fn notice(run_id: &str, parent_session_id: &SessionId) -> SubagentNotice {
     SubagentNotice {
         run_id: run_id.into(),
