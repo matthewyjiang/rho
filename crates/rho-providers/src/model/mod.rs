@@ -1,6 +1,7 @@
 pub mod catalog;
 pub mod context;
 mod contract;
+pub mod display_name;
 pub mod favorites;
 pub mod handoff;
 pub mod image;
@@ -17,6 +18,7 @@ pub use contract::{
     ModelRequest, ModelResponse, ModelUsage, PartialToolCall, ProviderContextBlock,
     ProviderReportedErrorKind, ToolCall, ToolResult, ToolSpec,
 };
+pub use display_name::{model_display_name, model_reference_with_display_name};
 pub use image::image_summary;
 pub use models_dev::ModelMetadata;
 pub use reasoning_capabilities::{

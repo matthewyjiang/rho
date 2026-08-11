@@ -270,6 +270,7 @@ fn identity_line_includes_provider_model_runtime_elapsed_and_cost() {
 
 #[test]
 fn identity_line_handles_partial_model_fields() {
+    // A Rho status needs both provider and model before it can name one.
     assert_eq!(
         identity_line(
             Some(&RunStatus {
@@ -280,12 +281,13 @@ fn identity_line_handles_partial_model_fields() {
             None,
             /* now_unix_secs */ 0,
         ),
-        "gpt-5.5 · turn 1"
+        "turn 1"
     );
+    // An unpinned Claude run still names the runtime honestly.
     assert_eq!(
         identity_line(
             Some(&RunStatus {
-                provider: Some("anthropic".into()),
+                provider: Some("claude-code".into()),
                 runtime: Some(crate::agent::AgentRuntime::ClaudeCli),
                 turns: 2,
                 ..RunStatus::default()
@@ -293,7 +295,7 @@ fn identity_line_handles_partial_model_fields() {
             None,
             /* now_unix_secs */ 0,
         ),
-        "anthropic · claude-cli · turn 2"
+        "claude-code (no model pinned; Claude Code chooses) · claude-cli · turn 2"
     );
     assert_eq!(identity_line(None, None, 0), "");
 }

@@ -241,6 +241,7 @@ fn replace_cached_provider_models(
     )
     .map_err(model_cache_error)?;
     tx.commit().map_err(model_cache_error)?;
+    super::display_name::forget_provider_display_names(provider);
     Ok(())
 }
 

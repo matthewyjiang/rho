@@ -2,7 +2,6 @@ use std::{path::PathBuf, sync::Arc};
 
 use rho_sdk::{
     model::{Message, ToolCall},
-    provider::ModelProvider,
     ApprovalHandler, ApprovalRequestReceiver, Error, HostInputId, HostInputResponse, Rho, RunEvent,
     RunOutcome, SessionId, SessionOptions, UserInput, Workspace,
 };
@@ -17,6 +16,8 @@ use {
 mod advisor;
 #[path = "interactive_runtime_edit_tool.rs"]
 pub(crate) mod edit_tool;
+#[path = "interactive_runtime_provider.rs"]
+mod provider;
 #[path = "interactive_runtime_hooks.rs"]
 mod session_hooks;
 #[path = "interactive_runtime_startup.rs"]
@@ -621,67 +622,6 @@ impl InteractiveRuntime {
         self.invalidate_live_context();
         self.refresh_context_usage();
         Ok(())
-    }
-
-    pub(crate) fn replace_provider(
-        &mut self,
-        provider: Arc<dyn ModelProvider>,
-        reasoning: rho_sdk::ReasoningLevel,
-        auth: &str,
-    ) -> Result<rho_sdk::model::handoff::HandoffReport, Error> {
-        if self.runs.is_active() {
-            debug_assert_eq!(
-                active_run_disposition(ActiveRunCommand::ReplaceProvider),
-                ActiveRunDisposition::DeferUntilFinished
-            );
-            return Err(Error::SessionBusy);
-        }
-        self.runs.begin_provider_switch()?;
-        // Capture prior identity so post-replace failures can roll back and keep
-        // `Err` meaning "active provider unchanged" for callers.
-        let previous_provider = Arc::clone(self.provider.provider());
-        let previous_reasoning = self.provider.reasoning();
-        let report = match self
-            .provider
-            .replace(self.sessions.session(), provider, reasoning)
-        {
-            Ok(report) => report,
-            Err(error) => {
-                self.runs.finish_transition();
-                return Err(error);
-            }
-        };
-        if let Err(error) = self.refresh_compaction() {
-            if let Err(rollback_error) = self.provider.replace(
-                self.sessions.session(),
-                previous_provider,
-                previous_reasoning,
-            ) {
-                self.runs.finish_transition();
-                return Err(Error::InvalidConfiguration {
-                    message: format!(
-                        "{error}; also failed to restore the previous provider: {rollback_error}"
-                    ),
-                });
-            }
-            self.runs.finish_transition();
-            return Err(error);
-        }
-        let identity = self.provider.provider().identity();
-        if let Some(manager) = self.tools.subagents() {
-            manager.update_selection(&identity.provider, &identity.model, reasoning, auth);
-        }
-        // MCP sampling must follow the user's current model, never the one that
-        // happened to be selected when the servers connected.
-        startup::bind_mcp_sampling(
-            &self.mcp_sampling,
-            self.provider.provider(),
-            self.sessions.session().id(),
-            self.workspace.root(),
-        );
-        self.invalidate_live_context();
-        self.runs.finish_transition();
-        Ok(report)
     }
 
     fn refresh_compaction(&mut self) -> Result<(), Error> {

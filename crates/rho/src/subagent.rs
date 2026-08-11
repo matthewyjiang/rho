@@ -106,6 +106,11 @@ pub struct RunStatus {
     /// `claude --resume <id>`. Absent for Rho runtime runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_session_id: Option<String>,
+    /// Model a `runtime: claude-cli` run reported binding. Rho passes `--model`
+    /// through untouched, so this is what an alias such as `opus` resolved to.
+    /// Absent for Rho runtime runs and until the run reports its init frame.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_model: Option<String>,
     /// Terminal `total_cost_usd` from Claude's result message when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total_cost_usd: Option<f64>,

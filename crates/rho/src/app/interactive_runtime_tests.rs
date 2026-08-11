@@ -867,3 +867,67 @@ async fn edit_tool_switch_rebuilds_tools_and_appends_schema_notice() {
     assert!(text.contains("input_schema:"));
     assert!(!text.contains("restart"));
 }
+
+// Covers: the enable notice names the reviewer, and swapping the advisor model
+// while advisor mode stays on still tells the executor. That swap changes no
+// tool list, so nothing else in the session would report it.
+// Owner: interactive runtime advisor state transition.
+#[tokio::test]
+async fn advisor_notices_name_the_reviewer_model_including_a_model_only_change() {
+    fn last_notice_text(interactive: &InteractiveRuntime) -> String {
+        let last = interactive.history().last().expect("notice").clone();
+        let Message::User(blocks) = &last else {
+            panic!("expected user notice, got {last:?}");
+        };
+        blocks
+            .iter()
+            .filter_map(|block| match block {
+                ContentBlock::Text(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    let mut interactive = advisor_test_runtime().await;
+
+    interactive
+        .set_advisor(Some(advisor_model()))
+        .await
+        .unwrap();
+    assert!(last_notice_text(&interactive).contains("anthropic/claude-fable-5"));
+
+    let history_after_enable = interactive.history().len();
+    let switched = interactive
+        .set_advisor(Some(crate::config::InternalAgentModelConfig::new(
+            "openai".into(),
+            "gpt-5.6-sol".into(),
+            "api-key".into(),
+        )))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        switched.as_deref(),
+        Some("advisor model switched to openai/gpt-5.6-sol")
+    );
+    assert!(interactive.tools.advisor_registered());
+    assert_eq!(interactive.history().len(), history_after_enable + 1);
+    let notice = last_notice_text(&interactive);
+    assert_eq!(notice.lines().count(), 1, "{notice:?}");
+    assert!(notice.contains("openai/gpt-5.6-sol"), "{notice}");
+
+    // The notice reports the model, so only the model decides whether there was
+    // a switch. Changing the reasoning level alone must add no notice.
+    let mut same_model_new_reasoning = crate::config::InternalAgentModelConfig::new(
+        "openai".into(),
+        "gpt-5.6-sol".into(),
+        "api-key".into(),
+    );
+    same_model_new_reasoning.reasoning = Some(rho_providers::reasoning::ReasoningLevel::High);
+    let unchanged = interactive
+        .set_advisor(Some(same_model_new_reasoning))
+        .await
+        .unwrap();
+    assert_eq!(unchanged, None);
+    assert_eq!(interactive.history().len(), history_after_enable + 1);
+}

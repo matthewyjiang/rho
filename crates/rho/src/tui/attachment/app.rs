@@ -515,7 +515,9 @@ fn identity_line(
         return String::new();
     };
     let mut parts = Vec::new();
-    if let Some(model) = format_model_identity(status) {
+    if let Some(model) =
+        crate::model_identity::PromptModel::from_run_status(status).map(|model| model.describe())
+    {
         parts.push(model);
     }
     if let Some(runtime) = status.runtime {
@@ -583,27 +585,6 @@ fn header_title_line(
         Span::styled(format!(" · {agent_id}"), Theme::dim()),
         Span::styled(format!(" · {state}"), state_style(status)),
     ])
-}
-
-fn format_model_identity(status: &RunStatus) -> Option<String> {
-    let provider = status
-        .provider
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let model = status
-        .model
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    match (provider, model) {
-        (Some(provider), Some(model)) => {
-            Some(rho_providers::provider::model_reference(provider, model))
-        }
-        (None, Some(model)) => Some(model.to_string()),
-        (Some(provider), None) => Some(provider.to_string()),
-        (None, None) => None,
-    }
 }
 
 fn join_fields(parts: Vec<String>) -> String {

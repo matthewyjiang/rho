@@ -331,3 +331,25 @@ fn progress_message_keeps_phase_out_of_body() {
         Some("responding")
     );
 }
+
+// Covers: the `advisor` description must not name the reviewer. A `/advisor`
+// model change lands on the store without rebuilding the tool set, so a named
+// reviewer here would rewrite what the executor was already told, or go stale.
+// The system prompt and the switch notices carry the reviewer instead.
+// Owner: advisor tool description.
+#[test]
+fn the_description_never_names_the_reviewer_model() {
+    let store = AdvisorSessionStore::new();
+    let tool = AdvisorTool::new(store.clone(), DEFAULT_TRANSCRIPT_BUDGET);
+    let baseline = tool.spec().description;
+
+    store.set_model(Some(advisor_selection()));
+    assert_eq!(tool.spec().description, baseline);
+
+    store.set_model(Some(InternalAgentModelConfig::claude_cli(Some(
+        "opus".into(),
+    ))));
+    assert_eq!(tool.spec().description, baseline);
+    assert!(!baseline.contains("claude-test"));
+    assert!(!baseline.contains("claude-code/"));
+}

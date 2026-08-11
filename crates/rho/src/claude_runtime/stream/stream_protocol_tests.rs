@@ -518,3 +518,40 @@ fn system_heartbeats_are_quiet_and_init_is_noticed() {
         StreamEffect::Attachment(AttachmentEvent::Notice(text)) if text.contains("claude system: init")
     )));
 }
+
+// Covers: `init` is the only system frame that states which model the run bound.
+// Owner: Claude stream protocol.
+#[test]
+fn only_the_init_frame_reports_the_model_the_run_bound() {
+    fn reported_model(line: &str) -> Option<String> {
+        map_line(line).into_iter().find_map(|effect| match effect {
+            StreamEffect::Status(patch) => patch.claude_model,
+            _ => None,
+        })
+    }
+
+    assert_eq!(
+        reported_model(
+            r#"{"type":"system","subtype":"init","session_id":"s","model":"claude-sonnet-5"}"#
+        )
+        .as_deref(),
+        Some("claude-sonnet-5")
+    );
+    // A model named on any other system frame does not describe the whole run.
+    assert_eq!(
+        reported_model(
+            r#"{"type":"system","subtype":"status","session_id":"s","model":"claude-haiku-5"}"#
+        ),
+        None
+    );
+    assert_eq!(
+        reported_model(r#"{"type":"system","subtype":"init","session_id":"s"}"#),
+        None
+    );
+    // A frame that carries only the model still reports it.
+    assert_eq!(
+        reported_model(r#"{"type":"system","subtype":"init","model":"claude-sonnet-5"}"#)
+            .as_deref(),
+        Some("claude-sonnet-5")
+    );
+}

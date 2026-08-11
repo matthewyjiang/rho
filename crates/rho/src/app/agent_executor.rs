@@ -401,7 +401,7 @@ impl AgentExecutor {
             agent_id: Some(bound.id().to_string()),
             agent_fingerprint: Some(bound.fingerprint().to_string()),
             provider: Some(labels.provider.clone()),
-            model: Some(labels.model.clone()),
+            model: labels.model.clone(),
             runtime: Some(labels.runtime),
             started_at: Some(subagent::unix_now_secs()),
             parent_session_id: parent_session_id.as_ref().map(ToString::to_string),

@@ -55,8 +55,9 @@ impl InteractiveRuntime {
     /// or has no model yet; those are the same thing to the executor. The live
     /// tool reads the new model at once. Registering or removing the `advisor`
     /// tool rebuilds the runtime without rewriting the system prompt, then
-    /// appends a context notice. Returns display text for a transcript notice
-    /// when the tool list changed.
+    /// appends a context notice. A model-only change while advisor stays on
+    /// appends a switch notice without rebuilding. Returns display text for a
+    /// transcript notice when one was appended.
     pub(crate) async fn set_advisor(
         &mut self,
         model: Option<InternalAgentModelConfig>,
@@ -66,8 +67,37 @@ impl InteractiveRuntime {
         };
         let registered = model.is_some();
         if registered == self.tools.advisor_registered() {
+            // The tool list is unchanged, so nothing rebuilds and nothing else
+            // would say the reviewer behind `advisor` is a different model.
+            //
+            // Compare what the notice reports, not the whole selection: a
+            // reasoning-only change would otherwise announce a switch to the
+            // model the advisor already used.
+            let previous_model = store.model();
+            let previous_identity = previous_model
+                .as_ref()
+                .map(crate::model_identity::PromptModel::from_internal_agent);
+            let notice = model
+                .as_ref()
+                .map(crate::model_identity::PromptModel::from_internal_agent)
+                .filter(|identity| previous_identity.as_ref() != Some(identity))
+                .map(|identity| {
+                    crate::prompt::model_switch_context(
+                        crate::prompt::ModelSwitchKind::Advisor,
+                        &identity,
+                    )
+                });
             store.set_model(model);
-            return Ok(None);
+            let Some((context, display)) = notice else {
+                return Ok(None);
+            };
+            if let Err(error) = self.append_user_context_with_display(context, display.clone()) {
+                // Same rule as the transition below: the store must not hold a
+                // reviewer the executor was never told about.
+                store.set_model(previous_model);
+                return Err(error);
+            }
+            return Ok(Some(display));
         }
         if self.runs.is_active() {
             anyhow::bail!("advisor mode cannot change while a run is active");
@@ -82,6 +112,8 @@ impl InteractiveRuntime {
         match self.rebind_current_session().await {
             Ok(()) => {
                 store.set_model(model);
+                // After `set_model`, so the enable notice names the model the
+                // tool will actually consult.
                 match self.append_advisor_switch_notice(registered) {
                     Ok(display) => Ok(Some(display)),
                     Err(error) => {
@@ -116,7 +148,17 @@ impl InteractiveRuntime {
                 .ok_or_else(|| {
                     anyhow::anyhow!("advisor tool is missing after it was registered")
                 })?;
-            crate::prompt::advisor_enabled_context(&spec)
+            let reviewer = self
+                .tools
+                .advisor()
+                .and_then(crate::tools::advisor::AdvisorSessionStore::model)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("advisor tool is registered without an advisor model")
+                })?;
+            crate::prompt::advisor_enabled_context(
+                &spec,
+                &crate::model_identity::PromptModel::from_internal_agent(&reviewer),
+            )
         } else {
             crate::prompt::advisor_disabled_context()
         };

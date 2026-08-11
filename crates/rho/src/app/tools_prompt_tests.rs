@@ -196,3 +196,21 @@ async fn system_prompt_stays_advisor_agnostic() {
         );
     }
 }
+
+// Covers: the assembled system prompt names the model this run actually bound,
+// so an agent that pins its own model is told that model, not the host's.
+// Owner: root tool/prompt assembly.
+#[tokio::test]
+async fn the_assembled_prompt_names_the_bound_model() {
+    let cwd = tempfile::tempdir().unwrap();
+    let config = Config {
+        provider: "openai".into(),
+        model: "gpt-5.6-sol".into(),
+        ..Config::default()
+    };
+
+    let (_, prompt) = assemble(&config, cwd.path()).await;
+
+    // The seam, not the wording: the bound model reaches the assembled prompt.
+    assert!(prompt.contains("openai/gpt-5.6-sol"), "{prompt}");
+}

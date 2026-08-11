@@ -610,6 +610,10 @@ impl Tool for AgentTool {
             .iter()
             .map(|(name, _)| name.as_str())
             .collect();
+        // Deliberately model-free. Which model an agent runs on can change after
+        // this list is written - the conversation model switches, a catalog name
+        // arrives - and rewriting the list would change what the caller was
+        // already told. Each run reports its own model when it starts instead.
         let summaries = self
             .agent_summaries
             .iter()

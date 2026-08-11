@@ -69,12 +69,14 @@ impl BoundRuntime {
         match self {
             Self::ClaudeCli { model, .. } => ArtifactLabels {
                 provider: "claude-code".into(),
-                model: model.clone().unwrap_or_else(|| "claude-cli".into()),
+                // `None` means no `--model` pin; Claude Code chooses. Do not
+                // invent a placeholder model id for status readers.
+                model: model.clone(),
                 runtime: crate::agent::AgentRuntime::ClaudeCli,
             },
             Self::Rho { config, .. } => ArtifactLabels {
                 provider: config.provider.clone(),
-                model: config.model.clone(),
+                model: Some(config.model.clone()),
                 runtime: crate::agent::AgentRuntime::Rho,
             },
         }
@@ -85,7 +87,8 @@ impl BoundRuntime {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ArtifactLabels {
     pub(crate) provider: String,
-    pub(crate) model: String,
+    /// Requested model id. `None` for a Claude run that pinned none.
+    pub(crate) model: Option<String>,
     pub(crate) runtime: crate::agent::AgentRuntime,
 }
 
@@ -119,6 +122,22 @@ impl BoundAgent {
         match &self.runtime {
             BoundRuntime::Rho { config, .. } => Some(config.as_ref()),
             BoundRuntime::ClaudeCli { .. } => None,
+        }
+    }
+
+    /// The model this launch will actually run on.
+    ///
+    /// Taken from the bound runtime rather than the definition, so a pinned
+    /// model, an inherited one, and a Claude pass-through all report what this
+    /// launch settled on.
+    pub(crate) fn prompt_model(&self) -> crate::model_identity::PromptModel {
+        use crate::model_identity::PromptModel;
+        match &self.runtime {
+            BoundRuntime::Rho { config, .. } => PromptModel::from_config(config),
+            BoundRuntime::ClaudeCli { model, .. } => PromptModel::ClaudeCli {
+                requested: model.clone(),
+                resolved: None,
+            },
         }
     }
 
@@ -475,8 +494,24 @@ fn bind_rho_config(
     host_config: &Config,
 ) -> anyhow::Result<Config> {
     let mut config = host_config.clone();
+    apply_rho_model_policy(agent_id, model, &mut config)?;
+    if let Some(reasoning) = reasoning {
+        config.reasoning = reasoning;
+    }
+    Ok(config)
+}
+
+/// Applies an agent's Rho model policy onto a host config clone.
+///
+/// Shared by bind and by pre-launch prompt/prefetch prediction so both paths
+/// settle on the same provider and model, including auth-driven provider pins.
+fn apply_rho_model_policy(
+    agent_id: &str,
+    model: &ModelPolicy,
+    config: &mut Config,
+) -> anyhow::Result<()> {
     match model {
-        ModelPolicy::Inherit => {}
+        ModelPolicy::Inherit => Ok(()),
         ModelPolicy::Prefer(selection)
         | ModelPolicy::Require(selection)
         | ModelPolicy::Select(selection) => {
@@ -499,17 +534,66 @@ fn bind_rho_config(
             let provider = resolved.provider.or_else(|| selection.provider.clone());
             apply_bound_provider_auth(
                 agent_id,
-                &mut config,
+                config,
                 provider.as_deref(),
                 selection.auth.as_deref(),
             )?;
             config.model = resolved.model;
+            Ok(())
         }
     }
-    if let Some(reasoning) = reasoning {
-        config.reasoning = reasoning;
+}
+
+/// The model an agent definition will run on under `host`, before any launch.
+///
+/// Uses the same policy application as bind so prefetch names the target launch
+/// will actually settle on. Returns `None` when the policy cannot bind (bad
+/// alias, auth pin, …): nothing is invented for a launch that will not happen.
+pub(crate) fn prompt_model_for_definition(
+    definition: &AgentDefinition,
+    host: &Config,
+) -> Option<crate::model_identity::PromptModel> {
+    use crate::model_identity::PromptModel;
+
+    match &definition.runtime {
+        AgentRuntimeSpec::ClaudeCli(claude) => Some(PromptModel::ClaudeCli {
+            requested: claude.model.clone(),
+            resolved: None,
+        }),
+        AgentRuntimeSpec::Rho { model, .. } => {
+            let mut config = host.clone();
+            apply_rho_model_policy(definition.id.as_str(), model, &mut config).ok()?;
+            Some(PromptModel::from_config(&config))
+        }
     }
-    Ok(config)
+}
+
+/// Rho catalog keys whose display names this process may need to print.
+///
+/// Names come from a cache that only a model *selection* fills, so a model that
+/// is only ever named on a delegated run or in a child system prompt would never
+/// get one. This lists bindable targets - the conversation model, every agent
+/// whose policy resolves, and every internal agent - so one prefetch can cover
+/// them. Broken agent policies are skipped rather than inventing a key.
+///
+/// Claude Code models are absent: Rho has no catalog key for a `--model` alias
+/// until a run reports a concrete id.
+pub(crate) fn describable_models(
+    config: &Config,
+    catalog: &crate::agent::AgentCatalog,
+) -> Vec<(String, String)> {
+    let agents = catalog
+        .iter()
+        .filter_map(|entry| prompt_model_for_definition(&entry.definition, config));
+    let internal_agents = config
+        .internal_agents
+        .values()
+        .map(crate::model_identity::PromptModel::from_internal_agent);
+    std::iter::once(crate::model_identity::PromptModel::from_config(config))
+        .chain(agents)
+        .chain(internal_agents)
+        .filter_map(|identity| identity.rho_catalog_key())
+        .collect()
 }
 
 /// Applies optional provider/auth pins from an agent definition onto a host clone.

@@ -75,6 +75,10 @@ pub(super) struct SystemMessage {
     pub(super) subtype: Option<String>,
     #[serde(default)]
     pub(super) session_id: Option<String>,
+    /// Model Claude chose for the run. The `init` frame is the only place a
+    /// `--model` alias such as `opus` is reported as a concrete id.
+    #[serde(default)]
+    pub(super) model: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

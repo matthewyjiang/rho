@@ -60,6 +60,7 @@ pub(super) fn format_snapshot(snapshot: &SubagentSnapshot, format: SnapshotForma
             }
         }
     }
+    lines.extend(run_model_line(&snapshot.status));
     push_claude_metadata(&mut lines, snapshot);
     if matches!(format, SnapshotFormat::Completion) {
         if let Some(error) = &snapshot.status.error {
@@ -182,6 +183,7 @@ fn completion_summary(snapshot: &SubagentSnapshot) -> Vec<String> {
         format_token_count(snapshot.status.input_tokens),
         format_token_count(snapshot.status.output_tokens)
     ));
+    lines.extend(run_model_line(&snapshot.status));
     push_claude_metadata(&mut lines, snapshot);
     if let Some(error) = &snapshot.status.error {
         lines.push(format!(
@@ -199,6 +201,18 @@ fn completion_summary(snapshot: &SubagentSnapshot) -> Vec<String> {
         ));
     }
     lines
+}
+
+/// Which model a run used, from what the run recorded.
+///
+/// The agent list stays model-free on purpose: which model an agent runs on can
+/// change after that list is written. A run reports its own model instead, where
+/// the answer is settled and cannot go stale.
+fn run_model_line(status: &crate::subagent::RunStatus) -> Option<String> {
+    Some(format!(
+        "model: {}",
+        crate::model_identity::PromptModel::from_run_status(status)?.describe()
+    ))
 }
 
 fn push_claude_metadata(lines: &mut Vec<String>, snapshot: &SubagentSnapshot) {
