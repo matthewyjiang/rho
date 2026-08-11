@@ -267,8 +267,13 @@ async fn committed_idle_boundary_batch_is_not_restored_after_post_start_failure(
         .collect_turn_boundary_prompts(&mut agent)
         .expect("restored notice should drain again");
     let mut pending = Some(RestorableTurnBoundary::Standalone(delivery.batch));
-    // Provider start accepted the input: commit by taking the restorable batch.
-    let _committed = pending.take();
+    // Provider start accepted the input: drop the restorable batch and free the
+    // end-to-end notice budget, matching the production commit path.
+    if let Some(boundary) = pending.take() {
+        let delivered_notices = boundary.notice_count();
+        app.subagent_inbox
+            .commit_delivered_notices(delivered_notices);
+    }
     // Post-start failure path calls the same abandon helper; with nothing left
     // pending it must not resurrect the delivery.
     app.abandon_provider_turn_start(&mut agent, &mut pending);

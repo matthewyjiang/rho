@@ -83,7 +83,7 @@ pub(crate) struct SubagentNotice {
 
 /// End-to-end budget for accepted but undelivered notices in one parent binding.
 ///
-/// Each [`SubagentNoticeBridge::bind_parent`] installs a fresh generation. A
+/// Each [`SubagentNoticeBridge::rebind_parent`] installs a fresh generation. A
 /// handle cloned from an older binding only mutates that generation's counter,
 /// so a late discard after rebind cannot panic or free slots owned by the new
 /// parent receiver.
@@ -183,8 +183,10 @@ impl SubagentNoticeBridge {
 
     /// Installs the parent receiver and a fresh permit generation.
     ///
-    /// Replaces any previous binding. Prefer [`Self::rebind_parent`] when the
-    /// caller still holds the prior receiver so in-flight notices are retained.
+    /// Test convenience over [`Self::rebind_parent`] with no prior receiver.
+    /// Production rebinds must pass the old receiver so in-flight notices are
+    /// retained under the binding lock.
+    #[cfg(test)]
     pub(crate) fn bind_parent(&self) -> (mpsc::Receiver<SubagentNotice>, NoticePermits) {
         let rebind = self.rebind_parent(None);
         (rebind.receiver, rebind.permits)
