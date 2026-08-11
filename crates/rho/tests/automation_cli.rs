@@ -72,7 +72,15 @@ provider = "disabled"
     assert_eq!(inspection["reasoning"], "low");
     let system = inspection["messages"][0]["System"].as_str().unwrap();
     assert!(system.contains("project automation rules"));
-    assert!(system.contains(&root.path().join("AGENTS.md").display().to_string()));
+    // Assembly injects AGENTS.md paths as JSON path-data attributes. Do not
+    // require TempDir's lexical path: macOS current_dir is often the
+    // /private/var form while TempDir reports /var.
+    assert!(
+        system.lines().any(|line| {
+            line.contains("<agents_instructions path=") && line.contains("AGENTS.md")
+        }),
+        "expected AGENTS.md path data on agents_instructions open tag"
+    );
 
     let names = inspection["tools"]
         .as_array()
