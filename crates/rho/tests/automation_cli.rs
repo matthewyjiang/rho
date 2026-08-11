@@ -72,7 +72,17 @@ provider = "disabled"
     assert_eq!(inspection["reasoning"], "low");
     let system = inspection["messages"][0]["System"].as_str().unwrap();
     assert!(system.contains("project automation rules"));
-    assert!(system.contains(&root.path().join("AGENTS.md").display().to_string()));
+    // Prompt assembly injects paths as JSON path data (Windows separators
+    // normalized), not raw Path::display text.
+    let agents_path = root
+        .path()
+        .join("AGENTS.md")
+        .to_string_lossy()
+        .replace('\\', "/");
+    assert!(system.contains(&format!(
+        "path={}",
+        serde_json::to_string(&agents_path).unwrap()
+    )));
 
     let names = inspection["tools"]
         .as_array()
