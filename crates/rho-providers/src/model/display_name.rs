@@ -15,15 +15,14 @@ use crate::model::{models_dev, provider_models};
 
 /// Names resolved this process, including the models that have none.
 ///
-/// Two reasons, and both matter. Every lookup otherwise opens a fresh sqlite
-/// connection and runs its schema statements, and these lookups sit on hot
-/// paths: every delegated run listing formats one. And a name that changed
-/// mid-session would rewrite text a caller was already given, which the prompt
-/// surfaces must never do. Resolving once per process fixes both.
+/// Every lookup otherwise opens a fresh sqlite connection and runs its schema
+/// statements, and these lookups sit on hot paths: every delegated run listing
+/// formats one.
 ///
-/// The cost is that a name arriving later - the startup prefetch landing, a
-/// model refresh - is not picked up until the next launch. That is the intended
-/// trade: a stable id beats a name that appears halfway through a session.
+/// A cached answer is dropped when a catalog write lands for that provider, so
+/// a name that arrives during a session reaches the next text that names the
+/// model. Text already produced is never revisited: an entry only changes when
+/// the catalog underneath it does.
 type NameCache = HashMap<(String, String), Option<String>>;
 
 fn cache() -> &'static RwLock<NameCache> {
@@ -62,6 +61,19 @@ fn read_model_display_name(provider: &str, model: &str) -> Option<String> {
     provider_models::cached_provider_model(provider, model)
         .map(|entry| entry.display_name)
         .filter(|name| name != model)
+}
+
+/// Drops this provider's resolved names so the next lookup reads the catalog.
+///
+/// Every catalog write calls this. Without it a lookup that missed keeps its
+/// `None` for the rest of the process, which defeats the startup prefetch on the
+/// launch that needs it: the system prompt asks for every name it wants before
+/// a download can finish, so the names would first appear on the next launch.
+pub(crate) fn forget_provider_display_names(provider: &str) {
+    cache()
+        .write()
+        .expect("model name cache")
+        .retain(|(cached_provider, _), _| cached_provider != provider);
 }
 
 /// Drops resolved names so a test can write a catalog row and read it back.

@@ -44,6 +44,48 @@ fn provider_model(model: &str, display_name: &str) -> ProviderModel {
     }
 }
 
+/// Covers: a name that lands mid-session must reach the next text that names
+/// the model. Pinning the first miss for the process would strand the startup
+/// prefetch, which cannot beat the system prompt to the first lookup.
+/// Owner: pure unit
+#[test]
+fn a_catalog_write_reaches_a_lookup_that_already_missed() {
+    let writers: [(&str, fn()); 2] = [
+        ("models.dev row", || {
+            write_cached_model_metadata_for_tests(
+                "anthropic",
+                "claude-fable-5",
+                &named_metadata("Claude Fable 5"),
+            );
+        }),
+        ("provider model list", || {
+            replace_cached_provider_models_for_tests(
+                "anthropic",
+                &[provider_model("claude-fable-5", "Claude Fable 5")],
+            )
+            .unwrap();
+        }),
+    ];
+
+    for (writer, write) in writers {
+        with_empty_caches(|| {
+            assert_eq!(
+                model_display_name("anthropic", "claude-fable-5"),
+                None,
+                "{writer}: no name before the write"
+            );
+
+            write();
+
+            assert_eq!(
+                model_display_name("anthropic", "claude-fable-5").as_deref(),
+                Some("Claude Fable 5"),
+                "{writer}: name after the write"
+            );
+        });
+    }
+}
+
 #[test]
 fn prefers_the_catalog_name_then_the_provider_name_then_nothing() {
     struct Case {

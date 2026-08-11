@@ -394,6 +394,7 @@ fn write_cached_upstream_model_metadata(provider: &str, model: &str, metadata: &
             MODEL_METADATA_CACHE_VERSION
         ],
     );
+    super::display_name::forget_provider_display_names(provider);
 }
 
 fn open_models_dev_cache() -> rusqlite::Result<Connection> {
