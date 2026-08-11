@@ -65,6 +65,17 @@ fn system_prompt_with_home_and_plugin_skills(
     plugin_skills: PluginSkills,
 ) -> SystemPrompt {
     let mut text = BASE_SYSTEM_PROMPT.to_string();
+    // Absolute path so the model need not probe with `pwd` or cd before tools.
+    // Shell tools spawn with this as current_dir; each call starts here fresh.
+    text.push_str("\n\nYour current working directory: ");
+    text.push_str(&crate::paths::display(cwd));
+    text.push('\n');
+    if tools
+        .iter()
+        .any(|tool| tool.name == "bash" || tool.name == "powershell")
+    {
+        text.push_str("Shell tool commands start in this directory. Do not cd there first.\n");
+    }
     text.push_str(
         r#"
 Use tools only when needed. For questions answerable from context, reply directly.
@@ -500,6 +511,52 @@ mod tests {
             .sources
             .iter()
             .any(|source| source.kind == PromptSourceKind::Skills));
+    }
+
+    // Covers: system prompt assembly must surface the session cwd path, and must
+    // tell the model shell tools already start there when a shell tool is live.
+    // Owner: prompt assembly (pure unit).
+    #[test]
+    fn includes_cwd_path_and_shell_start_policy() {
+        let project = TempDir::new().unwrap();
+        let cwd = crate::paths::display(project.path());
+        let bash = ToolSpec {
+            name: "bash".into(),
+            description: "run".into(),
+            input_schema: serde_json::json!({}),
+        };
+        let powershell = ToolSpec {
+            name: "powershell".into(),
+            description: "run".into(),
+            input_schema: serde_json::json!({}),
+        };
+        let cases: &[(&[_], bool)] = &[
+            (&[], false),
+            (std::slice::from_ref(&bash), true),
+            (std::slice::from_ref(&powershell), true),
+        ];
+
+        for (tools, expect_shell_policy) in cases {
+            let prompt = system_prompt_with_home(tools, project.path(), None).text;
+
+            assert!(
+                prompt.contains(&cwd),
+                "tools={:?} expect cwd path",
+                tools
+                    .iter()
+                    .map(|tool| tool.name.as_str())
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                prompt.contains("Shell tool commands start in this directory"),
+                *expect_shell_policy,
+                "tools={:?}",
+                tools
+                    .iter()
+                    .map(|tool| tool.name.as_str())
+                    .collect::<Vec<_>>()
+            );
+        }
     }
 
     #[test]
