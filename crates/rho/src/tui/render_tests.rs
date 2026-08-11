@@ -425,3 +425,41 @@ fn pad_display_line_keeps_user_message_background() {
     assert_eq!(padded.spans[0].style.bg, style.bg);
     assert_eq!(padded.spans[2].style.bg, style.bg);
 }
+
+// Covers: Entry::Error must stay distinguishable from Notice without color.
+// Owner: pure TUI render policy.
+#[test]
+fn error_entries_include_text_severity_marker() {
+    let _theme_lock = crate::tui::theme::theme_test_lock();
+    Theme::apply_committed("monochrome-dark");
+
+    let message = "could not save theme";
+    let error_lines = entry_lines(
+        &crate::tui::Entry::Error(message.into()),
+        40,
+        /*max_tool_output_lines*/ 0,
+        /*max_image_height*/ 0,
+    );
+    let notice_lines = entry_lines(
+        &crate::tui::Entry::Notice(message.into()),
+        40,
+        /*max_tool_output_lines*/ 0,
+        /*max_image_height*/ 0,
+    );
+
+    let error_text = line_text(&error_lines[0]);
+    let notice_text = line_text(&notice_lines[0]);
+    assert_eq!(
+        error_text.trim(),
+        format!("{ERROR_ENTRY_MARKER}{message}"),
+        "errors keep a stable text marker under monochrome"
+    );
+    assert_eq!(notice_text.trim(), message, "notices stay unmarked");
+    assert_ne!(
+        error_text.trim(),
+        notice_text.trim(),
+        "same body text must not collide once color is gone"
+    );
+
+    Theme::apply_committed("terminal");
+}
