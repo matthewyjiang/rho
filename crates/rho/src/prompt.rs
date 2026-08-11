@@ -307,9 +307,9 @@ fn push_context_file(out: &mut String, tag: &str, path: &Path, contents: &str) {
     out.push('<');
     out.push_str(tag);
     out.push_str(" path=");
-    // JSON string: keeps the attribute one token even when the path holds
-    // quotes, newlines, or other controls (same encoder as session cwd).
-    out.push_str(&crate::paths::prompt_data(path));
+    // Attribute grammar, not JSON: quotes and angle brackets must stay inside
+    // the attribute so they cannot close the tag early.
+    out.push_str(&crate::paths::prompt_attr(path));
     out.push_str(">\n");
     out.push_str(contents.trim_end());
     out.push_str("\n</");
@@ -365,12 +365,42 @@ mod tests {
         assert!(home_index < project_index);
         assert!(prompt.contains(&format!(
             "path={}",
-            crate::paths::prompt_data(&home.path().join(".rho").join("AGENTS.md"))
+            crate::paths::prompt_attr(&home.path().join(".rho").join("AGENTS.md"))
         )));
         assert!(prompt.contains(&format!(
             "path={}",
-            crate::paths::prompt_data(&project.path().join("AGENTS.md"))
+            crate::paths::prompt_attr(&project.path().join("AGENTS.md"))
         )));
+    }
+
+    // Covers: context-file path attributes must keep quote/angle-bracket paths
+    // inert so assembled tags cannot be rewritten by the path bytes.
+    // Owner: prompt assembly (pure unit).
+    #[test]
+    fn context_file_path_attribute_preserves_tag_structure() {
+        let path = Path::new(r#"/tmp/evil"path<angle>quote"#);
+        let mut out = String::new();
+        push_context_file(&mut out, "agents_instructions", path, "body rules");
+
+        let open = out
+            .lines()
+            .find(|line| line.starts_with("<agents_instructions path="))
+            .expect("open tag line");
+        assert_eq!(
+            open,
+            format!(
+                "<agents_instructions path={}>",
+                crate::paths::prompt_attr(path)
+            )
+        );
+        assert!(open.contains("&quot;"));
+        assert!(open.contains("&lt;"));
+        assert!(open.contains("&gt;"));
+        assert!(!open.contains(r#"/tmp/evil""#));
+        assert!(!open.contains("<angle>"));
+        assert_eq!(out.matches("<agents_instructions").count(), 1);
+        assert_eq!(out.matches("</agents_instructions>").count(), 1);
+        assert!(out.contains("\nbody rules\n</agents_instructions>\n"));
     }
 
     #[test]

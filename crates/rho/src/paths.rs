@@ -25,6 +25,31 @@ pub(crate) fn prompt_data(path: &Path) -> String {
     serde_json::to_string(&display(path)).expect("path display is a string")
 }
 
+/// Encodes a path as a double-quoted XML-like attribute value for prompt tags.
+///
+/// Markup specials and control characters are entity-escaped so the path stays
+/// inert attribute data and cannot change surrounding tag structure. Built on
+/// [`display`] for the same separator normalization as other path rendering.
+pub(crate) fn prompt_attr(path: &Path) -> String {
+    let mut out = String::from('"');
+    for ch in display(path).chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            ch if ch.is_control() => {
+                use std::fmt::Write as _;
+                let _ = write!(out, "&#x{:X};", u32::from(ch));
+            }
+            ch => out.push(ch),
+        }
+    }
+    out.push('"');
+    out
+}
+
 /// Returns the user's home directory using platform-appropriate environment variables.
 pub(crate) fn home_dir() -> Option<PathBuf> {
     home_dir_from_env(|name| std::env::var_os(name))
@@ -139,10 +164,32 @@ mod tests {
         );
     }
 
+    // Covers: attribute encoding must entity-escape markup specials and
+    // controls so path bytes cannot rewrite surrounding prompt tags.
+    // Owner: paths (pure unit).
+    #[test]
+    fn prompt_attr_escapes_markup_and_controls() {
+        assert_eq!(prompt_attr(Path::new("/home/rho")), "\"/home/rho\"");
+        assert_eq!(
+            prompt_attr(Path::new(r#"/tmp/evil"path<angle>&quote"#)),
+            "\"/tmp/evil&quot;path&lt;angle&gt;&amp;quote\""
+        );
+        assert_eq!(
+            prompt_attr(Path::new("/tmp/evil\nline")),
+            "\"/tmp/evil&#xA;line\""
+        );
+    }
+
     #[cfg(windows)]
     #[test]
     fn prompt_data_normalizes_windows_separators_before_json_encode() {
         assert_eq!(prompt_data(Path::new(r"C:\Users\rho")), "\"C:/Users/rho\"");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn prompt_attr_normalizes_windows_separators_before_entity_encode() {
+        assert_eq!(prompt_attr(Path::new(r"C:\Users\rho")), "\"C:/Users/rho\"");
     }
 
     #[cfg(windows)]
