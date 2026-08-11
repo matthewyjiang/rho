@@ -55,8 +55,9 @@ impl InteractiveRuntime {
     /// or has no model yet; those are the same thing to the executor. The live
     /// tool reads the new model at once. Registering or removing the `advisor`
     /// tool rebuilds the runtime without rewriting the system prompt, then
-    /// appends a context notice. Returns display text for a transcript notice
-    /// when the tool list changed.
+    /// appends a context notice. A model-only change while advisor stays on
+    /// appends a switch notice without rebuilding. Returns display text for a
+    /// transcript notice when one was appended.
     pub(crate) async fn set_advisor(
         &mut self,
         model: Option<InternalAgentModelConfig>,
@@ -75,12 +76,17 @@ impl InteractiveRuntime {
             let previous_model = store.model();
             let previous_identity = previous_model
                 .as_ref()
-                .map(crate::model_identity::ModelIdentity::from_internal_agent);
+                .map(crate::model_identity::PromptModel::from_internal_agent);
             let notice = model
                 .as_ref()
-                .map(crate::model_identity::ModelIdentity::from_internal_agent)
+                .map(crate::model_identity::PromptModel::from_internal_agent)
                 .filter(|identity| previous_identity.as_ref() != Some(identity))
-                .map(|identity| crate::prompt::advisor_model_switch_context(&identity));
+                .map(|identity| {
+                    crate::prompt::model_switch_context(
+                        crate::model_identity::ModelSwitchKind::Advisor,
+                        &identity,
+                    )
+                });
             store.set_model(model);
             let Some((context, display)) = notice else {
                 return Ok(None);
@@ -151,7 +157,7 @@ impl InteractiveRuntime {
                 })?;
             crate::prompt::advisor_enabled_context(
                 &spec,
-                &crate::model_identity::ModelIdentity::from_internal_agent(&reviewer),
+                &crate::model_identity::PromptModel::from_internal_agent(&reviewer),
             )
         } else {
             crate::prompt::advisor_disabled_context()

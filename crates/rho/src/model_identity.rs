@@ -1,39 +1,61 @@
-//! Which model runs a piece of work, in the words a prompt states it.
+//! Which model runs a piece of work, in the words a prompt or status line states it.
 //!
 //! Rho knows this in several shapes already: the conversation config, an agent
-//! definition's model policy, an internal agent's selection. Every prompt that
-//! names a model routes through this one type, so the executor, its subagents,
-//! and the advisor all read the same form and one change fixes them all.
+//! definition's model policy, an internal agent's selection, a finished run's
+//! status. Every surface that names a model for a reader routes through this one
+//! type, so the executor, its subagents, and the advisor all read the same form.
 //!
 //! The model id always leads. It is the part a reader can act on: it picks the
 //! provider route, it is what `/model` takes back, and it matches what provider
 //! documentation calls the model. The catalog name follows in brackets when a
 //! catalog carries one, because a model can be newer than whatever is reading
-//! the prompt, and a guessed name is worse than none.
+//! the text, and a guessed name is worse than none.
+//!
+//! Named [`PromptModel`] rather than `ModelIdentity` so it is not confused with
+//! the SDK's replay identity (`provider` / `api` / `model`).
 
 use rho_providers::model::display_name::{model_display_name, model_reference_with_display_name};
 
 use crate::{
-    agent::{AgentDefinition, AgentRuntimeSpec},
-    claude_runtime::{models::CLAUDE_CODE_SOURCE_LABEL, resolved_models},
+    claude_runtime::models::CLAUDE_CODE_SOURCE_LABEL,
     config::{Config, InternalAgentModelConfig, InternalAgentTarget},
+    subagent::RunStatus,
 };
 
-/// The model behind one piece of work, named for a prompt.
+/// The model behind one piece of work, named for prompt and status text.
+///
+/// Values are complete: [`Self::describe`] reads only fields on `self` and the
+/// process catalog-name cache. It does not consult ambient "last run" state.
 ///
 /// The runtime axis travels with the model, mirroring `InternalAgentTarget` and
-/// `AgentRuntimeSpec`: Claude Code resolves its own model names, so its
-/// identity cannot be described in Rho's provider vocabulary.
+/// `AgentRuntimeSpec`: Claude Code resolves its own model names, so its label
+/// cannot be described in Rho's provider vocabulary alone.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ModelIdentity {
+pub(crate) enum PromptModel {
     /// A model Rho drives through one of its providers.
     Rho { provider: String, model: String },
-    /// The Claude Code CLI. `model` is the `--model` value Rho passes through,
-    /// or `None` when Rho omits the flag and Claude Code chooses.
-    ClaudeCli { model: Option<String> },
+    /// The Claude Code CLI.
+    ///
+    /// `requested` is the `--model` value Rho passes through, or `None` when Rho
+    /// omits the flag and Claude Code chooses. `resolved` is the concrete id a
+    /// run reported, when one has. Config and bind paths leave `resolved` empty;
+    /// run status fills it from the init frame.
+    ClaudeCli {
+        requested: Option<String>,
+        resolved: Option<String>,
+    },
 }
 
-impl ModelIdentity {
+/// Why a mid-session model notice is being appended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ModelSwitchKind {
+    /// The conversation's own model changed.
+    Conversation,
+    /// The reviewer behind `advisor` changed while advisor mode stayed on.
+    Advisor,
+}
+
+impl PromptModel {
     /// The model the conversation itself runs on.
     pub(crate) fn from_config(config: &Config) -> Self {
         Self::Rho {
@@ -50,57 +72,91 @@ impl ModelIdentity {
                 model: rho.model.clone(),
             },
             InternalAgentTarget::ClaudeCli { model } => Self::ClaudeCli {
-                model: model.clone(),
+                requested: model.clone(),
+                resolved: None,
             },
         }
     }
 
-    /// The model an agent definition will run on under `host`.
+    /// The model a finished or in-flight run recorded on its status.
     ///
-    /// This predicts what binding will choose, for descriptions written before
-    /// any launch. It answers provider and model only; binding also settles
-    /// auth, reasoning, and tools. `agent_binding_tests` holds the two paths to
-    /// the same answer.
-    pub(crate) fn for_agent(definition: &AgentDefinition, host: &Config) -> Self {
-        let policy = match &definition.runtime {
-            AgentRuntimeSpec::ClaudeCli(claude) => {
-                return Self::ClaudeCli {
-                    model: claude.model.clone(),
-                }
-            }
-            AgentRuntimeSpec::Rho { model, .. } => model,
-        };
-        let Some(selection) = policy.selection() else {
-            return Self::from_config(host);
-        };
-        // An alias that does not resolve is a bind-time error with its own
-        // message. A description states what the definition asked for rather
-        // than inventing a target.
-        let resolved = host.model_aliases.resolve(&selection.model).ok();
-        let provider = resolved
-            .as_ref()
-            .and_then(|resolved| resolved.provider.clone())
-            .or_else(|| selection.provider.clone())
-            .unwrap_or_else(|| host.provider.clone());
-        let model = resolved
-            .map(|resolved| resolved.model)
-            .unwrap_or_else(|| selection.model.clone());
-        Self::Rho { provider, model }
+    /// Returns `None` when the status has no provider/model pair for a Rho run.
+    /// Claude runs always yield a value: even with nothing pinned and nothing
+    /// resolved yet, the label still says Claude Code chooses.
+    pub(crate) fn from_run_status(status: &RunStatus) -> Option<Self> {
+        use crate::agent::AgentRuntime;
+
+        match status.runtime {
+            Some(AgentRuntime::ClaudeCli) => Some(Self::ClaudeCli {
+                requested: status
+                    .model
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|model| !model.is_empty())
+                    .map(str::to_string),
+                resolved: status
+                    .claude_model
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|model| !model.is_empty())
+                    .map(str::to_string),
+            }),
+            Some(AgentRuntime::Rho) | None => Some(Self::Rho {
+                provider: status
+                    .provider
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|provider| !provider.is_empty())
+                    .map(str::to_string)?,
+                model: status
+                    .model
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|model| !model.is_empty())
+                    .map(str::to_string)?,
+            }),
+        }
     }
 
-    /// How the identity reads in prompt text.
+    /// Provider/model pair when this label is a Rho model, for catalog prefetch.
+    pub(crate) fn rho_catalog_key(&self) -> Option<(String, String)> {
+        match self {
+            Self::Rho { provider, model } => Some((provider.clone(), model.clone())),
+            Self::ClaudeCli { .. } => None,
+        }
+    }
+
+    /// How the identity reads in prompt or status text.
     ///
     /// Rho models read as `provider/model (Catalog Name)`. Claude Code models
-    /// read as `claude-code/<--model value>`, plus what that value resolved to
-    /// when a run has reported it.
+    /// read as `claude-code/<--model value>`, plus what a run resolved when that
+    /// is carried on the value.
     ///
     /// Always one line; see [`one_line`].
     pub(crate) fn describe(&self) -> String {
         one_line(match self {
             Self::Rho { provider, model } => model_reference_with_display_name(provider, model),
-            Self::ClaudeCli { model } => describe_claude_cli(model.as_deref()),
+            Self::ClaudeCli {
+                requested,
+                resolved,
+            } => describe_claude_cli(requested.as_deref(), resolved.as_deref()),
         })
     }
+}
+
+/// Model and display text for a mid-session model notice.
+///
+/// Everything already written stays as it was: the system prompt names the model
+/// this session started on, and the tool list keeps whatever it said. A switch
+/// only appends this line. It names the new model alone, because the old one is
+/// still readable earlier in the transcript or system prompt.
+pub(crate) fn switch_context(kind: ModelSwitchKind, current: &PromptModel) -> (String, String) {
+    let label = match kind {
+        ModelSwitchKind::Conversation => "conversation model switched to",
+        ModelSwitchKind::Advisor => "advisor model switched to",
+    };
+    let display = format!("{label} {}", current.describe());
+    (format!("[{display}]\n"), display)
 }
 
 /// Replaces control characters with spaces.
@@ -125,36 +181,6 @@ fn one_line(text: String) -> String {
         .collect()
 }
 
-/// Every model this session can name, as catalog lookup keys.
-///
-/// Names come from a cache that only a model *selection* fills, so a model that
-/// is only ever a subagent target would never get one. This lists what a session
-/// will describe - the conversation model, every agent in the catalog, and every
-/// internal agent - so one prefetch can cover them all.
-///
-/// Claude Code models are absent. Rho cannot resolve `--model opus` to an id
-/// before a run reports one, and an unresolved alias has nothing to look up.
-pub(crate) fn describable_models(
-    config: &Config,
-    catalog: &crate::agent::AgentCatalog,
-) -> Vec<(String, String)> {
-    let agents = catalog
-        .iter()
-        .map(|entry| ModelIdentity::for_agent(&entry.definition, config));
-    let internal_agents = config
-        .internal_agents
-        .values()
-        .map(ModelIdentity::from_internal_agent);
-    std::iter::once(ModelIdentity::from_config(config))
-        .chain(agents)
-        .chain(internal_agents)
-        .filter_map(|identity| match identity {
-            ModelIdentity::Rho { provider, model } => Some((provider, model)),
-            ModelIdentity::ClaudeCli { .. } => None,
-        })
-        .collect()
-}
-
 /// Provider whose catalog names Claude Code's models.
 ///
 /// Claude Code runs Anthropic models whatever it bills against, so its resolved
@@ -162,24 +188,21 @@ pub(crate) fn describable_models(
 /// shows as the source.
 const CLAUDE_CATALOG_PROVIDER: &str = "anthropic";
 
-fn describe_claude_cli(requested: Option<&str>) -> String {
-    let resolved = resolved_models::last_resolved(requested);
-    match (requested, resolved.as_deref()) {
-        // A pinned id that ran as itself needs no resolution clause, only its
-        // name. The same holds before any run reports one.
+fn describe_claude_cli(requested: Option<&str>, resolved: Option<&str>) -> String {
+    match (requested, resolved) {
+        // A pinned id that is also the resolved id needs no resolution clause.
         (Some(requested), Some(resolved)) if requested == resolved => {
             claude_reference_with_name(requested)
         }
         (Some(requested), None) => claude_reference_with_name(requested),
-        // An alias points at whichever model is current, so what a run reported
-        // is the last answer rather than a standing one.
+        // Requested alias (or other pointer) plus what the run bound.
         (Some(requested), Some(resolved)) => format!(
-            "{}, last ran as {}",
+            "{}, ran as {}",
             rho_providers::provider::model_reference(CLAUDE_CODE_SOURCE_LABEL, requested),
             claude_model_with_name(resolved),
         ),
         (None, Some(resolved)) => format!(
-            "{CLAUDE_CODE_SOURCE_LABEL} (no model pinned; last ran as {})",
+            "{CLAUDE_CODE_SOURCE_LABEL} (no model pinned; ran as {})",
             claude_model_with_name(resolved),
         ),
         (None, None) => {

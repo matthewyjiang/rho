@@ -162,11 +162,11 @@ pub(crate) async fn assemble_tools_and_prompt(
             PromptPolicy::Extend(extra) => {
                 // The bound model, not the host one: a delegated agent that
                 // pins its own model must be told the model it is running on.
-                let running = options.agent.model_identity();
+                let running = options.agent.prompt_model();
                 let advisor = advisor_capable
                     .then(|| crate::tools::advisor::advisor_model(options.config))
                     .flatten()
-                    .map(crate::model_identity::ModelIdentity::from_internal_agent);
+                    .map(crate::model_identity::PromptModel::from_internal_agent);
                 let mut built = prompt::system_prompt_with_plugin_skills(
                     &specs,
                     options.cwd,

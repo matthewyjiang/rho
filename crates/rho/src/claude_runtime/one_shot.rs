@@ -106,10 +106,7 @@ pub(crate) async fn run_one_shot(
 
     let mut text = String::new();
     let drained = {
-        let mut on_effect = |effect| {
-            super::resolved_models::note_stream_effect(request.model.as_deref(), &effect);
-            apply_effect(effect, &mut text, &mut stream);
-        };
+        let mut on_effect = |effect| apply_effect(effect, &mut text, &mut stream);
         drain::drain_child(
             &mut child,
             drain::DrainInput::Text {

@@ -470,11 +470,11 @@ fn agent_list_never_names_an_agent_model() {
 // Owner: delegated run output.
 //
 // Asserts the identity rather than the rendered line: rendering is owned by
-// `model_identity`, and catalog names resolve through a process-wide cache that
+// `PromptModel`, and catalog names resolve through a process-wide cache that
 // other tests also fill.
 #[test]
 fn a_run_reports_the_model_it_used() {
-    use crate::{agent::AgentRuntime, model_identity::ModelIdentity};
+    use crate::{agent::AgentRuntime, model_identity::PromptModel};
 
     struct Case {
         name: &'static str,
@@ -482,7 +482,7 @@ fn a_run_reports_the_model_it_used() {
         provider: Option<&'static str>,
         model: Option<&'static str>,
         claude_model: Option<&'static str>,
-        expected: Option<ModelIdentity>,
+        expected: Option<PromptModel>,
     }
 
     let cases = [
@@ -492,19 +492,20 @@ fn a_run_reports_the_model_it_used() {
             provider: Some("openai-codex"),
             model: Some("gpt-5.6-luna"),
             claude_model: None,
-            expected: Some(ModelIdentity::Rho {
+            expected: Some(PromptModel::Rho {
                 provider: "openai-codex".into(),
                 model: "gpt-5.6-luna".into(),
             }),
         },
         Case {
-            name: "a Claude run prefers the model it reported over the alias asked for",
+            name: "a Claude run keeps the requested alias and the resolved id",
             runtime: Some(AgentRuntime::ClaudeCli),
             provider: Some("claude-code"),
             model: Some("opus"),
             claude_model: Some("claude-opus-4-6"),
-            expected: Some(ModelIdentity::ClaudeCli {
-                model: Some("claude-opus-4-6".into()),
+            expected: Some(PromptModel::ClaudeCli {
+                requested: Some("opus".into()),
+                resolved: Some("claude-opus-4-6".into()),
             }),
         },
         Case {
@@ -513,17 +514,21 @@ fn a_run_reports_the_model_it_used() {
             provider: Some("claude-code"),
             model: Some("opus"),
             claude_model: None,
-            expected: Some(ModelIdentity::ClaudeCli {
-                model: Some("opus".into()),
+            expected: Some(PromptModel::ClaudeCli {
+                requested: Some("opus".into()),
+                resolved: None,
             }),
         },
         Case {
-            name: "an unpinned Claude run does not report the placeholder as a model",
+            name: "an unpinned Claude run reports no requested model",
             runtime: Some(AgentRuntime::ClaudeCli),
             provider: Some("claude-code"),
-            model: Some("claude-cli"),
+            model: None,
             claude_model: None,
-            expected: Some(ModelIdentity::ClaudeCli { model: None }),
+            expected: Some(PromptModel::ClaudeCli {
+                requested: None,
+                resolved: None,
+            }),
         },
         Case {
             name: "a run with no recorded model reports nothing",
@@ -546,7 +551,7 @@ fn a_run_reports_the_model_it_used() {
         };
 
         assert_eq!(
-            crate::tools::agent_output::run_model_identity(&status),
+            crate::tools::agent_output::run_prompt_model(&status),
             case.expected,
             "{}",
             case.name

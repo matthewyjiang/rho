@@ -335,12 +335,8 @@ async fn drain_child(
     let parent_messages = request.parent_messages.take();
 
     // Stderr is a log file here, so the drain captures none of it.
-    let requested_model = request.model.clone();
     let drained = {
-        let mut on_effect = |effect| {
-            super::resolved_models::note_stream_effect(requested_model.as_deref(), &effect);
-            sink.apply_effect(effect);
-        };
+        let mut on_effect = |effect| sink.apply_effect(effect);
         drain::drain_child(
             child,
             drain::DrainInput::StreamJson {

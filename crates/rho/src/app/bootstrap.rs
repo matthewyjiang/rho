@@ -224,7 +224,7 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
     // is only ever a subagent target is never selected, so no other fetch would
     // reach it.
     tokio::spawn(rho_providers::model::models_dev::prefetch_model_metadata(
-        crate::model_identity::describable_models(&config, &catalog),
+        super::agent_binding::describable_models(&config, &catalog),
     ));
     cli_config::normalize_reasoning_for_cli(
         &mut config,

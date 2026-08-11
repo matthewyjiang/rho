@@ -627,14 +627,13 @@ fn provider_switch_without_auth_uses_provider_default() {
 // Covers: the model a description predicts is the model binding actually picks.
 // Owner: agent binding.
 //
-// `ModelIdentity::for_agent` answers "which model would this agent launch on"
+// `prompt_model_for_definition` answers "which model would this agent launch on"
 // before any launch, so startup can prefetch that model's catalog name. Binding
-// answers the same question at launch. They are separate code paths on purpose
-// - binding also settles auth, reasoning, and tools - so this pins them to one
-// answer. Drift means prefetching one model's name and running another.
+// answers the same question at launch through the shared policy applicator.
+// Drift means prefetching one model's name and running another.
 #[test]
 fn predicted_agent_model_matches_the_model_binding_picks() {
-    use crate::model_identity::ModelIdentity;
+    use crate::model_identity::PromptModel;
 
     let host = Config {
         provider: "openai".into(),
@@ -678,11 +677,19 @@ fn predicted_agent_model_matches_the_model_binding_picks() {
                 auth: None,
             }),
         ),
+        (
+            "auth pin without provider",
+            ModelPolicy::Select(ModelSelection {
+                provider: None,
+                model: "claude-fable-5".into(),
+                auth: Some("anthropic-api-key".into()),
+            }),
+        ),
     ];
 
     for (name, policy) in policies {
         let definition = definition_with_model(policy);
-        let predicted = ModelIdentity::for_agent(&definition, &host);
+        let predicted = prompt_model_for_definition(&definition, &host);
         let bound = AgentBinder::bind(
             Arc::clone(&definition),
             AgentInvocation {
@@ -693,7 +700,17 @@ fn predicted_agent_model_matches_the_model_binding_picks() {
         )
         .unwrap();
 
-        assert_eq!(predicted, bound.model_identity(), "{name}");
+        assert_eq!(predicted, bound.prompt_model(), "{name}");
+        if name == "auth pin without provider" {
+            assert_eq!(
+                predicted,
+                PromptModel::Rho {
+                    provider: "anthropic".into(),
+                    model: "claude-fable-5".into(),
+                },
+                "{name}"
+            );
+        }
     }
 }
 
@@ -701,7 +718,7 @@ fn predicted_agent_model_matches_the_model_binding_picks() {
 // Owner: agent binding.
 #[test]
 fn predicted_claude_agent_model_is_the_pass_through_value() {
-    use crate::model_identity::ModelIdentity;
+    use crate::model_identity::PromptModel;
 
     for model in [Some("opus".to_string()), None] {
         let definition = Arc::new(AgentDefinition {
@@ -714,7 +731,7 @@ fn predicted_claude_agent_model_is_the_pass_through_value() {
             ..definition(ToolPolicy::All).as_ref().clone()
         });
 
-        let predicted = ModelIdentity::for_agent(&definition, &Config::default());
+        let predicted = prompt_model_for_definition(&definition, &Config::default());
         let bound = AgentBinder::bind(
             Arc::clone(&definition),
             AgentInvocation {
@@ -725,7 +742,13 @@ fn predicted_claude_agent_model_is_the_pass_through_value() {
         )
         .unwrap();
 
-        assert_eq!(predicted, ModelIdentity::ClaudeCli { model });
-        assert_eq!(predicted, bound.model_identity());
+        assert_eq!(
+            predicted,
+            PromptModel::ClaudeCli {
+                requested: model,
+                resolved: None,
+            }
+        );
+        assert_eq!(predicted, bound.prompt_model());
     }
 }

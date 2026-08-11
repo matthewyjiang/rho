@@ -641,6 +641,16 @@ impl InteractiveRuntime {
         // `Err` meaning "active provider unchanged" for callers.
         let previous_provider = Arc::clone(self.provider.provider());
         let previous_reasoning = self.provider.reasoning();
+        let previous_prompt_model = {
+            let identity = previous_provider.identity();
+            crate::model_identity::PromptModel::Rho {
+                provider: identity.provider.clone(),
+                model: identity.model.clone(),
+            }
+        };
+        // A first selection on an empty session is not a switch: the system
+        // prompt has yet to be built and will name the chosen model itself.
+        let session_started = !self.history().is_empty();
         let report = match self
             .provider
             .replace(self.sessions.session(), provider, reasoning)
@@ -667,7 +677,45 @@ impl InteractiveRuntime {
             self.runs.finish_transition();
             return Err(error);
         }
+
         let identity = self.provider.provider().identity();
+        let current_prompt_model = crate::model_identity::PromptModel::Rho {
+            provider: identity.provider.clone(),
+            model: identity.model.clone(),
+        };
+        // The system prompt named the model this session started on and then
+        // stayed fixed, so a later switch has to reach the model as context.
+        // Owned here (not in the TUI) so every conversation model change is
+        // honest, and a failed notice rolls the provider back.
+        if session_started && current_prompt_model != previous_prompt_model {
+            let (context, display) = crate::prompt::model_switch_context(
+                crate::model_identity::ModelSwitchKind::Conversation,
+                &current_prompt_model,
+            );
+            if let Err(error) = self.append_user_context_with_display(context, display) {
+                if let Err(rollback_error) = self.provider.replace(
+                    self.sessions.session(),
+                    previous_provider,
+                    previous_reasoning,
+                ) {
+                    self.runs.finish_transition();
+                    return Err(Error::InvalidConfiguration {
+                        message: format!(
+                            "switched model but could not record the switch ({error}); \
+also failed to restore the previous provider: {rollback_error}"
+                        ),
+                    });
+                }
+                let _ = self.refresh_compaction();
+                self.runs.finish_transition();
+                return Err(Error::InvalidConfiguration {
+                    message: format!(
+                        "could not record the conversation model switch for the model: {error}"
+                    ),
+                });
+            }
+        }
+
         if let Some(manager) = self.tools.subagents() {
             manager.update_selection(&identity.provider, &identity.model, reasoning, auth);
         }

@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use {crate::model_identity::ModelIdentity, crate::skills, rho_tools::tool::ToolSpec};
+use {crate::model_identity::PromptModel, crate::skills, rho_tools::tool::ToolSpec};
 
 pub const BASE_SYSTEM_PROMPT: &str = r#"You are a coding agent in the rho coding-agent harness, working with the user in a shared workspace. Use available tools to inspect files, run commands, and edit or create files.
 
@@ -48,8 +48,8 @@ pub(crate) enum PluginSkills {
 /// stated here because the `advisor` tool description must stay fixed once
 /// written, while `/advisor` can swap the reviewer at any time.
 pub(crate) struct PromptModels<'a> {
-    pub(crate) running: &'a ModelIdentity,
-    pub(crate) advisor: Option<&'a ModelIdentity>,
+    pub(crate) running: &'a PromptModel,
+    pub(crate) advisor: Option<&'a PromptModel>,
 }
 
 /// Assembles with a fixed model, for tests about everything except the models.
@@ -281,24 +281,17 @@ fn neutralize_mcp_server_instruction_close_tags(text: &str) -> String {
     text.replace(NEEDLE, REPLACEMENT)
 }
 
-/// Model and display text for a mid-session conversation model switch.
+/// Model and display text for a mid-session model notice.
 ///
 /// Everything already written stays as it was: the system prompt names the model
 /// this session started on, and the tool list keeps whatever it said. A switch
 /// only appends this line. It names the new model alone, because the old one is
-/// still readable in the system prompt.
-pub(crate) fn model_switch_context(current: &ModelIdentity) -> (String, String) {
-    let display = format!("conversation model switched to {}", current.describe());
-    (format!("[{display}]\n"), display)
-}
-
-/// Model and display text when the advisor's own model changes.
-///
-/// Advisor mode staying on is not a tool list change, so nothing else would
-/// tell the executor that the reviewer behind `advisor` is a different model.
-pub(crate) fn advisor_model_switch_context(current: &ModelIdentity) -> (String, String) {
-    let display = format!("advisor model switched to {}", current.describe());
-    (format!("[{display}]\n"), display)
+/// still readable earlier in the transcript or system prompt.
+pub(crate) fn model_switch_context(
+    kind: crate::model_identity::ModelSwitchKind,
+    current: &PromptModel,
+) -> (String, String) {
+    crate::model_identity::switch_context(kind, current)
 }
 
 /// Model and display text when the `advisor` tool becomes available.
@@ -306,7 +299,7 @@ pub(crate) fn advisor_model_switch_context(current: &ModelIdentity) -> (String, 
 /// Steering lives on the tool description so the system prompt stays free of
 /// tool-list-dependent text. This notice announces availability, the reviewer
 /// model, and the schema.
-pub(crate) fn advisor_enabled_context(spec: &ToolSpec, model: &ModelIdentity) -> (String, String) {
+pub(crate) fn advisor_enabled_context(spec: &ToolSpec, model: &PromptModel) -> (String, String) {
     let model = format!(
         "[advisor mode on]\n\n\
 The `advisor` tool is now available and consults {}. \
@@ -423,7 +416,7 @@ mod tests {
     use super::*;
 
     /// Stand-in model for prompt tests that are not about the model line.
-    pub(super) static TEST_MODEL: LazyLock<ModelIdentity> = LazyLock::new(|| ModelIdentity::Rho {
+    pub(super) static TEST_MODEL: LazyLock<PromptModel> = LazyLock::new(|| PromptModel::Rho {
         provider: "test-provider".into(),
         model: "test-model".into(),
     });
@@ -431,11 +424,11 @@ mod tests {
     #[test]
     fn names_the_running_model_and_the_advisor_model() {
         let project = TempDir::new().unwrap();
-        let running = ModelIdentity::Rho {
+        let running = PromptModel::Rho {
             provider: "openai".into(),
             model: "gpt-5.6-sol".into(),
         };
-        let advisor = ModelIdentity::Rho {
+        let advisor = PromptModel::Rho {
             provider: "anthropic".into(),
             model: "claude-fable-5".into(),
         };
@@ -477,18 +470,20 @@ mod tests {
     // Owner: mid-session switch notices.
     #[test]
     fn switch_notices_are_one_bracketed_line_naming_only_the_new_model() {
-        let previous = ModelIdentity::Rho {
+        use crate::model_identity::ModelSwitchKind;
+
+        let previous = PromptModel::Rho {
             provider: "openai".into(),
             model: "gpt-5.6-sol".into(),
         };
-        let current = ModelIdentity::Rho {
+        let current = PromptModel::Rho {
             provider: "anthropic".into(),
             model: "claude-fable-5".into(),
         };
 
         for (context, display) in [
-            model_switch_context(&current),
-            advisor_model_switch_context(&current),
+            model_switch_context(ModelSwitchKind::Conversation, &current),
+            model_switch_context(ModelSwitchKind::Advisor, &current),
         ] {
             assert_eq!(context.lines().count(), 1, "{context:?}");
             assert_eq!(context.trim(), format!("[{display}]"));
@@ -507,7 +502,7 @@ mod tests {
 
         let (context, _) = advisor_enabled_context(
             &spec,
-            &ModelIdentity::Rho {
+            &PromptModel::Rho {
                 provider: "anthropic".into(),
                 model: "claude-fable-5".into(),
             },
