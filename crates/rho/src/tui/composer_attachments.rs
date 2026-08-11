@@ -1,7 +1,8 @@
 //! Composer attachment chrome: slots, strip layout, labels, and paint.
 //!
 //! Ready images may carry a Kitty/halfblock preview. Consecutive previews share
-//! one horizontal strip; documents and pending items stay full-width label rows.
+//! width-bounded horizontal strips (wrapping when gaps would overflow); documents
+//! and pending items stay full-width label rows.
 
 use ratatui::{
     layout::Rect,
@@ -67,8 +68,10 @@ pub(super) struct ComposerAttachmentLayout {
 
 /// Layout composer attachments into label/image chrome for one width.
 ///
-/// Consecutive slots with previews share a horizontal strip packed left-to-right
-/// under a shared height. Documents and pending items stay full-width rows.
+/// Consecutive slots with previews share horizontal strips packed left-to-right
+/// under a shared height. When gaps plus one column per image exceed `width`,
+/// the run wraps onto additional strips so every preview stays visible.
+/// Documents and pending items stay full-width rows.
 pub(super) fn layout_composer_attachments(
     slots: &[ComposerAttachmentSlot],
     width: usize,
@@ -84,99 +87,20 @@ pub(super) fn layout_composer_attachments(
             while index < slots.len() && slots[index].image_preview.is_some() {
                 index += 1;
             }
-            let run = &slots[run_start..index];
-            let count = run.len();
-            let images_in_run: Vec<&FeedImage> = run
-                .iter()
-                .map(|slot| {
-                    slot.image_preview
-                        .as_ref()
-                        .expect("run only contains preview images")
-                })
-                .collect();
-
-            // Shared strip height = tallest natural fit under the max budget.
-            let mut strip_height = 1usize;
-            for image in &images_in_run {
-                let fitted = image.size_for(width, max_height);
-                strip_height = strip_height.max(usize::from(fitted.height).max(1));
+            let mut offset = 0usize;
+            let run_len = index - run_start;
+            while offset < run_len {
+                let strip_count = max_images_per_strip(width).min(run_len - offset);
+                append_image_strip(
+                    &mut layout,
+                    slots,
+                    run_start + offset,
+                    strip_count,
+                    width,
+                    max_height,
+                );
+                offset += strip_count;
             }
-            strip_height = strip_height.min(usize::from(max_height.max(1)));
-            let strip_height_u16 = u16::try_from(strip_height).unwrap_or(u16::MAX).max(1);
-
-            // Preferred width at that shared height (aspect preserved).
-            let mut cell_widths: Vec<usize> = images_in_run
-                .iter()
-                .map(|image| {
-                    usize::from(image.size_for(width, strip_height_u16).width.max(1)).min(width)
-                })
-                .collect();
-
-            // If the packed row overflows, shrink cells proportionally.
-            let gap_total = COMPOSER_IMAGE_GAP.saturating_mul(count.saturating_sub(1));
-            let content_budget = width.saturating_sub(gap_total).max(count);
-            let preferred_total: usize = cell_widths.iter().sum();
-            if preferred_total > content_budget && preferred_total > 0 {
-                let mut assigned = 0usize;
-                for (i, cell) in cell_widths.iter_mut().enumerate() {
-                    if i + 1 == count {
-                        *cell = content_budget.saturating_sub(assigned).max(1);
-                    } else {
-                        let scaled = (*cell)
-                            .saturating_mul(content_budget)
-                            .saturating_div(preferred_total)
-                            .max(1);
-                        *cell = scaled;
-                        assigned = assigned.saturating_add(scaled);
-                    }
-                }
-            }
-
-            let image_row = layout.total_rows;
-            layout
-                .lines
-                .extend((0..strip_height).map(|_| Line::raw("")));
-
-            let mut spans = Vec::new();
-            let mut column = 0usize;
-            for (offset, image) in images_in_run.into_iter().enumerate() {
-                let cell_width = cell_widths[offset].max(1);
-                let attachment_index = run_start + offset;
-                if offset > 0 {
-                    spans.push(Span::raw(" ".repeat(COMPOSER_IMAGE_GAP)));
-                }
-                let label = slots[attachment_index]
-                    .attachment
-                    .composer_label(attachment_index + 1);
-                let truncated = truncate_one_line(&label, cell_width);
-                let pad = cell_width.saturating_sub(display_width(&truncated));
-                spans.push(Span::styled(truncated, Theme::dim()));
-                if pad > 0 {
-                    spans.push(Span::raw(" ".repeat(pad)));
-                }
-                layout.images.push(ComposerImagePlacement {
-                    image: image.clone(),
-                    row: image_row,
-                    column: u16::try_from(column).unwrap_or(u16::MAX),
-                    width: u16::try_from(cell_width).unwrap_or(u16::MAX).max(1),
-                    height: strip_height,
-                });
-                column = column
-                    .saturating_add(cell_width)
-                    .saturating_add(COMPOSER_IMAGE_GAP);
-            }
-            let used = spans
-                .iter()
-                .map(|span| display_width(span.content.as_ref()))
-                .sum::<usize>();
-            if used < width {
-                spans.push(Span::raw(" ".repeat(width - used)));
-            }
-            layout.lines.push(Line::from(spans));
-            layout.total_rows = layout
-                .total_rows
-                .saturating_add(strip_height)
-                .saturating_add(1);
             continue;
         }
 
@@ -191,6 +115,119 @@ pub(super) fn layout_composer_attachments(
     }
     debug_assert_eq!(layout.total_rows, layout.lines.len());
     layout
+}
+
+/// Max images that fit in one strip at `width` with a 1-column minimum cell.
+fn max_images_per_strip(width: usize) -> usize {
+    // count + GAP*(count-1) <= width  =>  count <= (width + GAP) / (1 + GAP)
+    ((width + COMPOSER_IMAGE_GAP) / (1 + COMPOSER_IMAGE_GAP)).max(1)
+}
+
+fn append_image_strip(
+    layout: &mut ComposerAttachmentLayout,
+    slots: &[ComposerAttachmentSlot],
+    run_start: usize,
+    count: usize,
+    width: usize,
+    max_height: u16,
+) {
+    debug_assert!(count >= 1);
+    let images_in_run: Vec<&FeedImage> = (0..count)
+        .map(|offset| {
+            slots[run_start + offset]
+                .image_preview
+                .as_ref()
+                .expect("run only contains preview images")
+        })
+        .collect();
+
+    // Shared strip height = tallest natural fit under the max budget.
+    let mut strip_height = 1usize;
+    for image in &images_in_run {
+        let fitted = image.size_for(width, max_height);
+        strip_height = strip_height.max(usize::from(fitted.height).max(1));
+    }
+    strip_height = strip_height.min(usize::from(max_height.max(1)));
+    let strip_height_u16 = u16::try_from(strip_height).unwrap_or(u16::MAX).max(1);
+
+    // Preferred width at that shared height (aspect preserved).
+    let mut cell_widths: Vec<usize> = images_in_run
+        .iter()
+        .map(|image| usize::from(image.size_for(width, strip_height_u16).width.max(1)).min(width))
+        .collect();
+
+    // If the packed row overflows, shrink cells proportionally.
+    let gap_total = COMPOSER_IMAGE_GAP.saturating_mul(count.saturating_sub(1));
+    let content_budget = width.saturating_sub(gap_total).max(count);
+    // Guarantee the packed columns fit: with strip partitioning, gap_total + count
+    // is always <= width, so content_budget + gap_total <= width.
+    debug_assert!(content_budget.saturating_add(gap_total) <= width || count == 1);
+    let preferred_total: usize = cell_widths.iter().sum();
+    if preferred_total > content_budget && preferred_total > 0 {
+        let mut assigned = 0usize;
+        for (i, cell) in cell_widths.iter_mut().enumerate() {
+            if i + 1 == count {
+                *cell = content_budget.saturating_sub(assigned).max(1);
+            } else {
+                let scaled = (*cell)
+                    .saturating_mul(content_budget)
+                    .saturating_div(preferred_total)
+                    .max(1);
+                *cell = scaled;
+                assigned = assigned.saturating_add(scaled);
+            }
+        }
+    }
+
+    let image_row = layout.total_rows;
+    layout
+        .lines
+        .extend((0..strip_height).map(|_| Line::raw("")));
+
+    let mut spans = Vec::new();
+    let mut column = 0usize;
+    for (offset, image) in images_in_run.into_iter().enumerate() {
+        let cell_width = cell_widths[offset].max(1);
+        let attachment_index = run_start + offset;
+        if offset > 0 {
+            spans.push(Span::raw(" ".repeat(COMPOSER_IMAGE_GAP)));
+        }
+        let label = slots[attachment_index]
+            .attachment
+            .composer_label(attachment_index + 1);
+        let truncated = truncate_one_line(&label, cell_width);
+        let pad = cell_width.saturating_sub(display_width(&truncated));
+        spans.push(Span::styled(truncated, Theme::dim()));
+        if pad > 0 {
+            spans.push(Span::raw(" ".repeat(pad)));
+        }
+        layout.images.push(ComposerImagePlacement {
+            image: image.clone(),
+            row: image_row,
+            column: u16::try_from(column).unwrap_or(u16::MAX),
+            width: u16::try_from(cell_width).unwrap_or(u16::MAX).max(1),
+            height: strip_height,
+        });
+        column = column
+            .saturating_add(cell_width)
+            .saturating_add(COMPOSER_IMAGE_GAP);
+    }
+    debug_assert!(
+        column.saturating_sub(COMPOSER_IMAGE_GAP) <= width,
+        "strip must not overflow width ({column} vs {width})"
+    );
+    let used = spans
+        .iter()
+        .map(|span| display_width(span.content.as_ref()))
+        .sum::<usize>();
+    if used < width {
+        spans.push(Span::raw(" ".repeat(width - used)));
+    }
+    layout.lines.push(Line::from(spans));
+    layout.total_rows = layout
+        .total_rows
+        .saturating_add(strip_height)
+        .saturating_add(1);
 }
 
 impl App {

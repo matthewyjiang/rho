@@ -120,12 +120,15 @@ if [ "${{1-}}" = "-p" ]; then
     printf '%s\0' "$arg" >> "$argv_path"
   done
   pwd > "$cwd_path"
+  # Ignore SIGPIPE if the parent stops reading the payload after a terminal
+  # result. Replay stream-json first so Rho can finish its concurrent prompt
+  # write into the pipe buffer; reading stdin to EOF first would deadlock.
+  # Mark spawn complete only after stdin is drained so the harness never reads
+  # a missing stdin.txt under CI load.
+  trap '' PIPE
+  cat "$payload" || true
+  cat > "$stdin_path" || true
   touch "$spawn_marker"
-  # Replay stream-json first so the parent can observe a terminal result and
-  # close stdin. With --input-format stream-json Rho keeps stdin open until
-  # that result arrives; reading stdin to EOF first would deadlock.
-  cat "$payload"
-  cat > "$stdin_path"
   exit "$exit_code"
 fi
 
@@ -229,9 +232,14 @@ exit 1
     }
 }
 
-/// Wait until the fake Claude `-p` spawn has been recorded.
+/// Wait until the fake Claude `-p` spawn has a complete record.
+///
+/// Requires the spawn marker (set after stdin capture finishes) and the stdin
+/// path so callers never read a partial record under load.
 pub fn wait_for_spawn(paths: &FakeClaudePaths, timeout: Duration) {
-    wait_until(timeout, "fake claude spawn", || paths.spawn_marker.exists());
+    wait_until(timeout, "fake claude spawn", || {
+        paths.spawn_marker.exists() && paths.stdin_path.exists() && paths.argv_path.exists()
+    });
 }
 
 /// Poll until `predicate` is true or `timeout` elapses.

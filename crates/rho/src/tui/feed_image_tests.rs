@@ -6,8 +6,8 @@ use rho_sdk::tool::ToolAsset;
 
 use super::{
     kitty_graphics_environment, max_feed_image_height, picker_for_environment, FeedImage,
-    COMPOSER_IMAGE_HEIGHT, DEFAULT_IMAGE_HEIGHT, MAX_IMAGE_HEIGHT, MIN_IMAGE_HEIGHT,
-    TALL_IMAGE_HEIGHT,
+    COMPACT_IMAGE_HEIGHT, COMPOSER_IMAGE_HEIGHT, DEFAULT_IMAGE_HEIGHT, MAX_IMAGE_HEIGHT,
+    MIN_IMAGE_HEIGHT, TALL_IMAGE_HEIGHT,
 };
 use crate::tui::{
     history_cache::{HistoryLineCache, HistoryLineSlice, HistoryRenderSettings},
@@ -154,15 +154,20 @@ fn composer_base64_preview_accepts_oversized_source_images() {
     );
 }
 
-// Covers: feed image max height tracks viewport then clamps.
+// Covers: feed image max height tracks terminal height bands, with a compact
+// floor that stays paintable after typical chrome on short terminals.
 // Owner: pure layout policy
 #[test]
 fn feed_image_height_budget_uses_terminal_height_bands() {
-    assert_eq!(max_feed_image_height(0), MIN_IMAGE_HEIGHT);
-    assert_eq!(max_feed_image_height(28), MIN_IMAGE_HEIGHT);
-    assert_eq!(max_feed_image_height(29), DEFAULT_IMAGE_HEIGHT);
-    assert_eq!(max_feed_image_height(45), TALL_IMAGE_HEIGHT);
-    assert_eq!(max_feed_image_height(65), MAX_IMAGE_HEIGHT);
+    assert_eq!(max_feed_image_height(0), COMPACT_IMAGE_HEIGHT);
+    assert_eq!(max_feed_image_height(24), COMPACT_IMAGE_HEIGHT);
+    assert_eq!(max_feed_image_height(25), MIN_IMAGE_HEIGHT);
+    assert_eq!(max_feed_image_height(37), DEFAULT_IMAGE_HEIGHT);
+    assert_eq!(max_feed_image_height(53), TALL_IMAGE_HEIGHT);
+    assert_eq!(max_feed_image_height(69), MAX_IMAGE_HEIGHT);
+    // Compact reservation must stay at or below a short history content pane
+    // (terminal 24 minus statusline/composer/dividers leaves ~16 content rows).
+    assert!(usize::from(COMPACT_IMAGE_HEIGHT) <= 16);
 }
 
 // Covers: reserved rows honor the layout budget and aspect ratio.

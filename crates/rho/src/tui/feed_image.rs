@@ -13,6 +13,8 @@ use ratatui_image::{
 };
 use rho_sdk::tool::ToolAsset;
 
+/// Compact-terminal floor so reserved images stay paintable in short panes.
+pub(super) const COMPACT_IMAGE_HEIGHT: u16 = 12;
 /// Floor for reserved feed-image rows so wide images stay readable.
 pub(super) const MIN_IMAGE_HEIGHT: u16 = 16;
 /// Ceiling so one image cannot dominate the transcript.
@@ -35,12 +37,15 @@ const MAX_COMPOSER_DECODE_ALLOCATION: u64 = 80 * 1024 * 1024;
 /// Max rows one feed image may reserve, from terminal height bands.
 ///
 /// Discrete tiers keep the history line cache stable when the composer grows
-/// (wraps, attachment strips) without changing the terminal size.
+/// (wraps, attachment strips) without changing the terminal size. The compact
+/// band stays at the pre-scaling 12-row cap so short terminals still get a fully
+/// visible placement after chrome (statusline, composer, dividers).
 pub(super) fn max_feed_image_height(terminal_height: usize) -> u16 {
     match terminal_height {
-        0..=28 => MIN_IMAGE_HEIGHT,
-        29..=44 => DEFAULT_IMAGE_HEIGHT,
-        45..=64 => TALL_IMAGE_HEIGHT,
+        0..=24 => COMPACT_IMAGE_HEIGHT,
+        25..=36 => MIN_IMAGE_HEIGHT,
+        37..=52 => DEFAULT_IMAGE_HEIGHT,
+        53..=68 => TALL_IMAGE_HEIGHT,
         _ => MAX_IMAGE_HEIGHT,
     }
 }

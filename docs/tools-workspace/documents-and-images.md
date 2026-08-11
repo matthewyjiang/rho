@@ -119,8 +119,8 @@ reflow every transcript image):
 | Input | Rule |
 | --- | --- |
 | Width | History content width (same side padding as text) |
-| Height budget | 16 / 24 / 32 / 40 rows from terminal height bands |
-| Floor | 16 rows |
+| Height budget | 12 / 16 / 24 / 32 / 40 rows from terminal height bands |
+| Compact floor | 12 rows (short terminals; stays paintable after chrome) |
 | Ceiling | 40 rows |
 | Aspect | Preserve; never stretch |
 
