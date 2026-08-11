@@ -39,6 +39,12 @@ impl SubagentInbox {
     /// Binds both channels to the delegated-run manager.
     pub(super) fn bind(&mut self, manager: &crate::tools::agent::SubagentManager) {
         self.questionnaires = Some(manager.bind_host_input());
+        // Retire the previous notice receiver before installing a replacement.
+        // Leaving it installed until assignment keeps the retired channel open
+        // after `bind_notices` swaps the bridge binding, so a concurrent post
+        // that still holds the old sender can enqueue and return Ok for a
+        // notice this rebind then drops.
+        drop(self.notices.take());
         let (notices, notice_permits) = manager.bind_notices();
         self.notices = Some(notices);
         self.notice_permits = Some(notice_permits);
@@ -213,6 +219,8 @@ impl SubagentInbox {
         receiver: Receiver<SubagentNotice>,
         permits: NoticePermits,
     ) {
+        // Match [`Self::bind`]: retire the previous receiver before installing.
+        drop(self.notices.take());
         self.notices = Some(receiver);
         self.notice_permits = Some(permits);
     }

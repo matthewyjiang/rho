@@ -90,12 +90,13 @@ fn notice_permit_release_is_scoped_to_binding_generation() {
 
 // Covers: posts that reserved against a binding which is then replaced fail
 // closed when the old receiver is dropped, without corrupting the new budget.
+// Keeps the retired receiver alive across rebind (inbox ordering) so a stale
+// enqueue path would still be open if post released the lock too early.
 // Owner: app notice bridge
 #[test]
 fn notice_post_after_rebind_uses_only_the_active_generation() {
     let bridge = SubagentNoticeBridge::new();
-    let (old_receiver, old_permits) = bridge.bind_parent();
-    drop(old_receiver);
+    let (_old_receiver, old_permits) = bridge.bind_parent();
 
     let (mut new_receiver, new_permits) = bridge.bind_parent();
     bridge
@@ -118,6 +119,95 @@ fn notice_post_after_rebind_uses_only_the_active_generation() {
         })
     );
     assert_eq!(new_permits.outstanding(), NOTICE_QUEUE_CAPACITY);
+}
+
+// Covers: reserve and enqueue stay under the binding lock so a concurrent
+// rebind cannot open a gap where post acknowledges a notice that receiver
+// replacement then discards. Explicit barriers park inside the
+// reservation-to-enqueue window; under the old unlock-before-enqueue ordering
+// the binding lock probe succeeds and this test fails.
+// Owner: app notice bridge
+#[test]
+fn notice_post_holds_binding_lock_from_reserve_through_enqueue() {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Barrier,
+    };
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    let bridge = SubagentNoticeBridge::new();
+    let (mut receiver, permits) = bridge.bind_parent();
+
+    let in_gap = Arc::new(AtomicBool::new(false));
+    // Released by the main thread once lock/rebind probes finish so enqueue
+    // can complete under the same binding lock acquisition.
+    let leave_gap = Arc::new(Barrier::new(2));
+    let post_bridge = bridge.clone();
+    let post_in_gap = Arc::clone(&in_gap);
+    let post_leave_gap = Arc::clone(&leave_gap);
+
+    let poster = thread::spawn(move || {
+        post_bridge.post_with_enqueue_gap(sample_notice("locked"), &|| {
+            post_in_gap.store(true, Ordering::SeqCst);
+            post_leave_gap.wait();
+        })
+    });
+
+    let entered = Instant::now();
+    while !in_gap.load(Ordering::SeqCst) {
+        assert!(
+            entered.elapsed() < Duration::from_secs(1),
+            "post should enter the reserve→enqueue gap"
+        );
+        thread::yield_now();
+    }
+
+    // Under the old ordering the lock was released before enqueue, so a rebind
+    // could install here while the retired receiver was still live.
+    assert!(
+        bridge.binding_lock_held(),
+        "binding lock must stay held from reserve through enqueue"
+    );
+
+    let rebind_bridge = bridge.clone();
+    let rebind_started = Arc::new(AtomicBool::new(false));
+    let rebind_flag = Arc::clone(&rebind_started);
+    let rebind = thread::spawn(move || {
+        rebind_flag.store(true, Ordering::SeqCst);
+        rebind_bridge.bind_parent()
+    });
+
+    let rebind_seen = Instant::now();
+    while !rebind_started.load(Ordering::SeqCst) {
+        assert!(
+            rebind_seen.elapsed() < Duration::from_secs(1),
+            "rebind thread should start"
+        );
+        thread::yield_now();
+    }
+    // Failure-bound probe: while post remains in the gap, replacement cannot
+    // finish installing. If enqueue released the lock, bind_parent would
+    // complete and this assertion would fire.
+    let blocked_until = Instant::now() + Duration::from_millis(50);
+    while Instant::now() < blocked_until {
+        assert!(
+            !rebind.is_finished(),
+            "rebind must wait for post to finish enqueue before replacing the binding"
+        );
+        thread::yield_now();
+    }
+
+    leave_gap.wait();
+    let post_result = poster.join().expect("post thread");
+    let (mut new_receiver, new_permits) = rebind.join().expect("rebind thread");
+    assert_eq!(post_result, Ok(()));
+    assert_eq!(receiver.try_recv().unwrap().run_id, "locked");
+    assert_eq!(permits.outstanding(), 1);
+    // Acknowledged notice stayed on the receiver it targeted; the replacement
+    // binding is empty and does not inherit the old generation's budget.
+    assert!(new_receiver.try_recv().is_err());
+    assert_eq!(new_permits.outstanding(), 0);
 }
 
 // Covers: the steering slot is closed before publish and after clear, so a

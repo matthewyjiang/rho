@@ -140,10 +140,11 @@ struct NoticeBinding {
 
 /// Child→parent notice transport with a generation-scoped end-to-end budget.
 ///
-/// Sender selection, reservation, and rebinding share one mutex so a post
-/// never pairs a stale sender with a replacement generation's permits (or the
-/// reverse). Dropping a binding retires its sender; outstanding permits on that
-/// generation remain valid for the inbox that accepted those notices.
+/// Sender selection, reservation, enqueue, and rebinding share one mutex so a
+/// post never pairs a stale sender with a replacement generation's permits (or
+/// the reverse), and never enqueues on a binding that a concurrent rebind has
+/// already replaced. Dropping a binding retires its sender; outstanding permits
+/// on that generation remain valid for the inbox that accepted those notices.
 #[derive(Clone)]
 pub(crate) struct SubagentNoticeBridge {
     binding: Arc<Mutex<Option<NoticeBinding>>>,
@@ -193,18 +194,35 @@ impl SubagentNoticeBridge {
 
     /// Posts a notice for the parent. Fails when unbound or the queue is full.
     pub(crate) fn post(&self, notice: SubagentNotice) -> Result<(), NoticePostError> {
-        let (sender, permits) = {
-            let guard = self.binding_slot();
-            let binding = guard.as_ref().ok_or(NoticePostError::Unbound)?;
-            if !binding.permits.try_reserve() {
-                return Err(NoticePostError::QueueFull {
-                    capacity: NOTICE_QUEUE_CAPACITY,
-                });
-            }
-            (binding.sender.clone(), binding.permits.clone())
-        };
-        sender.try_send(notice).map_err(|error| {
-            permits.release(1);
+        self.post_with_enqueue_gap(notice, &|| {})
+    }
+
+    /// Like [`Self::post`], but runs `gap` after reserving a slot on the live
+    /// binding and before enqueueing.
+    ///
+    /// Reservation and enqueue share the binding lock so a concurrent rebind
+    /// cannot install a replacement (and let the caller drop the retired
+    /// receiver) between them. Tests pass a non-empty `gap` to force that
+    /// interleaving point with explicit synchronization.
+    pub(crate) fn post_with_enqueue_gap(
+        &self,
+        notice: SubagentNotice,
+        gap: &dyn Fn(),
+    ) -> Result<(), NoticePostError> {
+        let guard = self.binding_slot();
+        let binding = guard.as_ref().ok_or(NoticePostError::Unbound)?;
+        if !binding.permits.try_reserve() {
+            return Err(NoticePostError::QueueFull {
+                capacity: NOTICE_QUEUE_CAPACITY,
+            });
+        }
+        // Hold the binding lock across the gap and enqueue. Releasing it after
+        // reserve and before try_send lets rebind install a replacement while
+        // the old receiver is still live; try_send then returns Ok for a notice
+        // receiver replacement is about to discard.
+        gap();
+        binding.sender.try_send(notice).map_err(|error| {
+            binding.permits.release(1);
             match error {
                 mpsc::error::TrySendError::Full(_) => NoticePostError::QueueFull {
                     capacity: NOTICE_QUEUE_CAPACITY,
@@ -218,6 +236,18 @@ impl SubagentNoticeBridge {
         self.binding
             .lock()
             .expect("subagent notice bridge binding lock")
+    }
+
+    /// True when another thread holds the binding lock (reserve/enqueue or rebind).
+    #[cfg(test)]
+    fn binding_lock_held(&self) -> bool {
+        match self.binding.try_lock() {
+            Ok(_) => false,
+            Err(std::sync::TryLockError::WouldBlock) => true,
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+                panic!("subagent notice bridge binding lock poisoned: {poisoned}")
+            }
+        }
     }
 }
 
