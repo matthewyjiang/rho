@@ -96,7 +96,8 @@ pub(in crate::tui) fn render_entry_with_options(
     let image_placement = reserve_entry_image_rows(&mut lines, entry, width, max_image_height);
     // Trailing spacer separates transcript blocks. User messages keep their
     // background on content rows only so the spacer does not grow an empty
-    // highlighted band below the prompt.
+    // highlighted band below the prompt. Strip underline so a lead-in link
+    // does not paint a full-width rule under the blank row.
     let spacer_style = match entry {
         crate::tui::Entry::Tool(_) => Theme::tool_card_padding(),
         crate::tui::Entry::User(_) => Style::default(),
@@ -109,7 +110,7 @@ pub(in crate::tui) fn render_entry_with_options(
         | crate::tui::Entry::Error(_) => lines
             .first()
             .and_then(|line| line.spans.first())
-            .map(|span| span.style)
+            .map(|span| chrome_edge_style(span.style))
             .unwrap_or_default(),
     };
     let mut padded = Vec::with_capacity(lines.len() + usize::from(trailing_blank.is_included()));
