@@ -30,7 +30,7 @@ pub(crate) enum DrainInput {
     /// queue is empty.
     StreamJson {
         initial_prompt: String,
-        parent_messages: Option<mpsc::Receiver<String>>,
+        parent_messages: Option<messaging::ClaudeMessageInbox>,
     },
 }
 
@@ -245,7 +245,7 @@ async fn write_text_stdin(mut stdin: ChildStdin, prompt: String) -> Result<(), S
 async fn write_stream_json_stdin(
     mut stdin: ChildStdin,
     initial_prompt: String,
-    mut parent_messages: Option<mpsc::Receiver<String>>,
+    mut parent_messages: Option<messaging::ClaudeMessageInbox>,
     close_rx: oneshot::Receiver<()>,
 ) -> Result<(), String> {
     write_all(
@@ -258,15 +258,10 @@ async fn write_stream_json_stdin(
     loop {
         // Drain any parent messages already queued, then wait for either a new
         // parent turn or the close signal from the stream side.
-        if let Some(receiver) = parent_messages.as_mut() {
-            match receiver.try_recv() {
+        if let Some(inbox) = parent_messages.as_mut() {
+            match inbox.try_recv() {
                 Ok(text) => {
-                    write_all(
-                        &mut stdin,
-                        messaging::encode_user_turn(&messaging::frame_parent_message(&text))
-                            .as_bytes(),
-                    )
-                    .await?;
+                    write_parent_turn(&mut stdin, &text).await?;
                     continue;
                 }
                 Err(mpsc::error::TryRecvError::Empty) => {}
@@ -285,28 +280,27 @@ async fn write_stream_json_stdin(
             result = close => {
                 let _ = result;
                 close_rx = None;
+                // Stop acknowledging new parent sends before the final drain so
+                // a concurrent `agents message` cannot succeed and then vanish.
+                if let Some(inbox) = parent_messages.as_ref() {
+                    inbox.seal();
+                }
             }
             maybe_text = recv_parent(&mut parent_messages), if parent_messages.is_some() => {
                 if let Some(text) = maybe_text {
-                    write_all(
-                        &mut stdin,
-                        messaging::encode_user_turn(&messaging::frame_parent_message(&text))
-                            .as_bytes(),
-                    )
-                    .await?;
+                    write_parent_turn(&mut stdin, &text).await?;
                 }
             }
         }
     }
 
-    // Final drain in case a parent message raced the close signal.
-    if let Some(receiver) = parent_messages.as_mut() {
-        while let Ok(text) = receiver.try_recv() {
-            write_all(
-                &mut stdin,
-                messaging::encode_user_turn(&messaging::frame_parent_message(&text)).as_bytes(),
-            )
-            .await?;
+    // After seal, wait until every accepted (including in-flight) body is
+    // written. `recv` ends only when all sender clones are gone.
+    if let Some(mut inbox) = parent_messages.take() {
+        // Seal is idempotent; covers paths that broke without a close signal.
+        inbox.seal();
+        while let Some(text) = inbox.recv().await {
+            write_parent_turn(&mut stdin, &text).await?;
         }
     }
 
@@ -314,6 +308,14 @@ async fn write_stream_json_stdin(
         .shutdown()
         .await
         .map_err(|error| format!("claude code: failed to write prompt to stdin: {error}"))
+}
+
+async fn write_parent_turn(stdin: &mut ChildStdin, text: &str) -> Result<(), String> {
+    write_all(
+        stdin,
+        messaging::encode_user_turn(&messaging::frame_parent_message(text)).as_bytes(),
+    )
+    .await
 }
 
 async fn write_all(stdin: &mut ChildStdin, mut bytes: &[u8]) -> Result<(), String> {
@@ -336,12 +338,14 @@ async fn write_all(stdin: &mut ChildStdin, mut bytes: &[u8]) -> Result<(), Strin
 /// Waits for the next parent message when a receiver is still installed.
 ///
 /// Returns `None` when the parent handle is dropped (channel closed).
-async fn recv_parent(parent_messages: &mut Option<mpsc::Receiver<String>>) -> Option<String> {
-    let Some(receiver) = parent_messages.as_mut() else {
+async fn recv_parent(
+    parent_messages: &mut Option<messaging::ClaudeMessageInbox>,
+) -> Option<String> {
+    let Some(inbox) = parent_messages.as_mut() else {
         std::future::pending::<()>().await;
         unreachable!("pending future resolved");
     };
-    match receiver.recv().await {
+    match inbox.recv().await {
         Some(text) => Some(text),
         None => {
             *parent_messages = None;

@@ -17,7 +17,7 @@ use {
     crate::app::{
         agent_executor::{AgentExecutor, AgentLaunchRequest, AgentRunHandle},
         subagent_host_input::{SubagentHostInputBridge, SubagentHostInputRequest},
-        subagent_notice::{SubagentNotice, SubagentNoticeBridge},
+        subagent_messaging::{SubagentNotice, SubagentNoticeBridge, ValidatedMessage},
     },
     crate::subagent::{self, RunState, RunStatus},
     rho_sdk::tool::{
@@ -104,8 +104,15 @@ impl SubagentManager {
         self.executor.host_input().unbind_parent();
     }
 
-    pub(crate) fn bind_notices(&self) -> tokio::sync::mpsc::Receiver<SubagentNotice> {
-        self.executor.notices().bind_parent()
+    /// Atomically replaces the notice binding, retaining in-flight channel notices.
+    ///
+    /// Pass `None` for the first bind. When rebinding, pass the prior receiver so
+    /// posts that already returned `Ok` stay deliverable on the retired generation.
+    pub(crate) fn rebind_notices(
+        &self,
+        old_receiver: Option<tokio::sync::mpsc::Receiver<SubagentNotice>>,
+    ) -> crate::app::subagent_messaging::NoticeRebind {
+        self.executor.notices().rebind_parent(old_receiver)
     }
 
     pub(crate) fn unbind_notices(&self) {
@@ -166,7 +173,6 @@ impl SubagentManager {
             definition: Arc::new(definition.clone()),
             prompt: prompt.to_string(),
             run_id: id.clone(),
-            background,
             parent_session_id,
             output_file,
         };
@@ -323,6 +329,24 @@ impl SubagentManager {
             .collect()
     }
 
+    /// Returns drained notifications so a failed turn setup can deliver them
+    /// again. Only terminal background entries still present are reopened.
+    pub fn restore_notifications(&self, notifications: &[SubagentNotification]) {
+        if notifications.is_empty() {
+            return;
+        }
+        let mut entries = self.inner.lock().expect("delegated registry lock");
+        for notification in notifications {
+            let Some(entry) = entries.get_mut(&notification.snapshot.id) else {
+                continue;
+            };
+            let snapshot = entry.snapshot(&notification.snapshot.id);
+            if entry.background && snapshot.done && entry.observed {
+                entry.observed = false;
+            }
+        }
+    }
+
     /// Returns the run snapshot; a terminal snapshot counts as delivered, so
     /// automatic notification will not repeat a result the parent already
     /// read through `status` or `stop`.
@@ -370,8 +394,8 @@ impl SubagentManager {
             .ok_or_else(|| anyhow::anyhow!("delegated run '{id}' disappeared"))
     }
 
-    /// Stages a parent plain-text message for a running Rho delegated agent.
-    pub async fn message(&self, id: &str, text: &str) -> anyhow::Result<()> {
+    /// Stages a parent plain-text message for a running delegated agent.
+    pub(crate) async fn message(&self, id: &str, message: &ValidatedMessage) -> anyhow::Result<()> {
         let id = crate::subagent::normalize_id(id)?;
         let handle = self
             .inner
@@ -381,7 +405,7 @@ impl SubagentManager {
             .ok_or_else(|| anyhow::anyhow!("unknown delegated run '{id}'"))?
             .handle
             .clone();
-        handle.message_from_parent(text).await
+        handle.message_from_parent(message).await
     }
 
     pub async fn shutdown(&self) {
@@ -709,18 +733,19 @@ impl AgentsTool {
             }
             "message" => {
                 let id = required_id(&args)?;
-                let message = args
-                    .message
-                    .as_deref()
-                    .filter(|text| !text.is_empty())
-                    .ok_or_else(|| {
-                        ToolError::new(
-                            ToolErrorKind::InvalidArguments,
-                            "message action requires non-empty message text",
-                        )
-                    })?;
+                let text = args.message.as_deref().ok_or_else(|| {
+                    ToolError::new(
+                        ToolErrorKind::InvalidArguments,
+                        "message action requires message text",
+                    )
+                })?;
+                // Parse at this argument boundary so an empty or over-budget
+                // body reads as invalid arguments, not an execution failure.
+                let message = ValidatedMessage::parse(text).map_err(|error| {
+                    ToolError::new(ToolErrorKind::InvalidArguments, error.to_string())
+                })?;
                 self.manager
-                    .message(id, message)
+                    .message(id, &message)
                     .await
                     .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
                 format!("queued parent message for delegated run '{id}'")
@@ -749,7 +774,7 @@ impl Tool for AgentsTool {
     fn spec(&self) -> rho_sdk::model::ToolSpec {
         rho_sdk::model::ToolSpec {
             name: AGENTS_TOOL.into(),
-            description: "Check on, stop, or message a delegated background run. Completions and child notices are delivered automatically at the next turn boundary (batched into one notification when several finish), so waiting for a result means ending your turn, not calling status. While a run is in progress, status reports progress only and never partial output - do not act on a run's result before it finishes. Once a run has finished, status or stop returns its final result and counts as delivery, so it will not be redelivered automatically. Use action=message to steer a running Rho-runtime child with plain text; claude-cli children reject message.".into(),
+            description: "Check on, stop, or message a delegated background run. Completions and child notices are delivered automatically at the next turn boundary (batched into one notification when several finish), so waiting for a result means ending your turn, not calling status. While a run is in progress, status reports progress only and never partial output - do not act on a run's result before it finishes. Once a run has finished, status or stop returns its final result and counts as delivery, so it will not be redelivered automatically. Use action=message to steer a running child with plain text: Rho-runtime children apply it at the next provider turn; claude-cli children receive it as a queued stream-json user turn.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -764,7 +789,7 @@ impl Tool for AgentsTool {
                     },
                     "message": {
                         "type": "string",
-                        "description": "Plain-text parent message (required for message). Applied at the child's next provider turn."
+                        "description": "Plain-text parent message (required for message). Rho children apply it at the next provider turn; Claude-cli children queue it as the next stdin user turn."
                     }
                 },
                 "required": ["action"],

@@ -229,3 +229,60 @@ fn failed_turn_keeps_live_partial_assistant_text_before_error() {
     assert!(app.streams.assistant_stream.is_empty());
     assert_eq!(app.status(), "error");
 }
+
+// Covers: idle completion batches stay restorable only until provider start
+// accepts the input. A later failure must not put the batch back, or the next
+// turn boundary would redeliver the same notice.
+// Owner: TUI turn-boundary delivery
+#[tokio::test]
+async fn committed_idle_boundary_batch_is_not_restored_after_post_start_failure() {
+    let mut app = test_app();
+    let mut agent =
+        crate::app::interactive_runtime::test_edit_tool_runtime(crate::config::EditTool::default())
+            .await;
+    let session_id = agent.session_id().clone();
+    app.subagent_inbox
+        .push_notice_for_test(crate::app::subagent_messaging::SubagentNotice {
+            run_id: "abc123".into(),
+            agent_id: "worker".into(),
+            parent_session_id: session_id.clone(),
+            message: "child is blocked on schema".into(),
+        });
+
+    let delivery = app
+        .collect_turn_boundary_prompts(&mut agent)
+        .expect("pending notice should drain");
+    assert!(!app.subagent_inbox.has_pending_notices());
+
+    // Pre-start abandon restores so a later turn can deliver again.
+    let mut pending = Some(RestorableTurnBoundary::Standalone(delivery.batch));
+    app.abandon_provider_turn_start(&mut agent, &mut pending);
+    assert!(pending.is_none());
+    assert!(
+        app.subagent_inbox.has_pending_notices(),
+        "failed provider start must restore the drained batch"
+    );
+
+    let delivery = app
+        .collect_turn_boundary_prompts(&mut agent)
+        .expect("restored notice should drain again");
+    let mut pending = Some(RestorableTurnBoundary::Standalone(delivery.batch));
+    // Provider start accepted the input: drop the restorable batch and free the
+    // end-to-end notice budget, matching the production commit path.
+    if let Some(boundary) = pending.take() {
+        let delivered_notices = boundary.notice_count();
+        app.subagent_inbox
+            .commit_delivered_notices(delivered_notices);
+    }
+    // Post-start failure path calls the same abandon helper; with nothing left
+    // pending it must not resurrect the delivery.
+    app.abandon_provider_turn_start(&mut agent, &mut pending);
+    assert!(
+        !app.subagent_inbox.has_pending_notices(),
+        "committed delivery must not return after a post-start failure"
+    );
+    assert!(
+        app.collect_turn_boundary_prompts(&mut agent).is_none(),
+        "next turn boundary must not repeat the committed delivery"
+    );
+}

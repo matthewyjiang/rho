@@ -1,5 +1,56 @@
 use super::*;
 
+use std::path::PathBuf;
+
+use rho_sdk::CancellationToken;
+
+// Covers: Claude one-shot advisor must spawn with Claude dontAsk, not plan
+// (plan scaffolding poisons guidance). Asserts the spawn-plan argv that
+// run_one_shot builds, not only the constant, so a production wiring drift
+// fails this test.
+// Owner: Claude one-shot adapter.
+#[test]
+fn one_shot_spawn_plan_uses_claude_dont_ask() {
+    let request = ClaudeOneShotRequest {
+        system_prompt: "rho advisor prompt",
+        input: "session transcript".into(),
+        model: Some("opus".into()),
+        effort: None,
+        cwd: PathBuf::from("/tmp/project"),
+        cancellation: CancellationToken::new(),
+    };
+    let plan = spawn::build_spawn_plan(&one_shot_spawn_request(&request));
+
+    assert_eq!(ONE_SHOT_PERMISSION_MODE, ClaudePermissionMode::DontAsk);
+    assert!(
+        plan.args
+            .windows(2)
+            .any(|pair| pair == ["--permission-mode", "dontAsk"]),
+        "one-shot argv must use dontAsk: {:?}",
+        plan.args
+    );
+    assert!(
+        !plan
+            .args
+            .windows(2)
+            .any(|pair| pair == ["--permission-mode", "plan"]),
+        "one-shot argv must not use plan: {:?}",
+        plan.args
+    );
+    assert!(
+        plan.args.windows(2).any(|pair| pair == ["--tools", ""]),
+        "one-shot argv must expose no tools: {:?}",
+        plan.args
+    );
+    assert!(
+        plan.args
+            .iter()
+            .any(|arg| arg == "--no-session-persistence"),
+        "one-shot argv must discard the session: {:?}",
+        plan.args
+    );
+}
+
 fn exit_status() -> std::process::ExitStatus {
     #[cfg(unix)]
     {

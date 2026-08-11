@@ -67,6 +67,95 @@ fn renders_requests_replies_tool_calls_and_results_in_order() {
     );
 }
 
+// Covers: zero-arg tool payloads must not render as `arguments: {}`, and
+// interrupted calls with no argument bytes must not render a blank
+// `arguments:` line. Both made advisor runs invent "empty args failed"
+// guidance. Only `{}` and empty buffers are omitted; null/[]/"" and non-empty
+// incomplete JSON stay visible as diagnostic evidence.
+// Owner: advisor transcript renderer
+#[test]
+fn omits_empty_object_tool_arguments_but_renders_other_emptyish_values() {
+    let messages = vec![
+        Message::assistant(AssistantMessage::from_content(vec![
+            ContentBlock::Text("Checking with the advisor.".into()),
+            ContentBlock::ToolCall(ToolCall {
+                id: "call-a".into(),
+                name: "advisor".into(),
+                arguments: json!({}),
+            }),
+            ContentBlock::ToolCall(ToolCall {
+                id: "call-b".into(),
+                name: "rho".into(),
+                arguments: json!({ "action": "info" }),
+            }),
+            ContentBlock::ToolCall(ToolCall {
+                id: "call-null".into(),
+                name: "broken".into(),
+                arguments: json!(null),
+            }),
+            ContentBlock::ToolCall(ToolCall {
+                id: "call-array".into(),
+                name: "broken".into(),
+                arguments: json!([]),
+            }),
+            ContentBlock::ToolCall(ToolCall {
+                id: "call-string".into(),
+                name: "broken".into(),
+                arguments: json!(""),
+            }),
+        ])),
+        Message::AbortedAssistant(Box::new(AbortedAssistant {
+            content: vec![ContentBlock::Text("Interrupted mid-call.".into())],
+            tool_calls: vec![
+                PartialToolCall {
+                    id: Some("call-c".into()),
+                    name: Some("advisor".into()),
+                    arguments: "{}".into(),
+                },
+                PartialToolCall {
+                    id: Some("call-empty".into()),
+                    name: Some("advisor".into()),
+                    arguments: "".into(),
+                },
+                PartialToolCall {
+                    id: Some("call-d".into()),
+                    name: Some("grep".into()),
+                    arguments: "{\"pattern\":".into(),
+                },
+            ],
+            ..AbortedAssistant::default()
+        })),
+    ];
+
+    let rendered = render_transcript(None, &messages, generous());
+
+    assert_eq!(
+        rendered,
+        "# Session transcript\n\
+         \n\
+         ## assistant\n\
+         \n\
+         Checking with the advisor.\n\
+         tool call: advisor (id call-a)\n\
+         tool call: rho (id call-b)\n\
+         arguments: {\"action\":\"info\"}\n\
+         tool call: broken (id call-null)\n\
+         arguments: null\n\
+         tool call: broken (id call-array)\n\
+         arguments: []\n\
+         tool call: broken (id call-string)\n\
+         arguments: \"\"\n\
+         \n\
+         ## assistant (interrupted)\n\
+         \n\
+         Interrupted mid-call.\n\
+         tool call (incomplete): advisor\n\
+         tool call (incomplete): advisor\n\
+         tool call (incomplete): grep\n\
+         arguments: {\"pattern\":\n"
+    );
+}
+
 #[test]
 fn renders_system_messages_and_interrupted_replies() {
     let messages = vec![

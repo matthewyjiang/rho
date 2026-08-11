@@ -71,14 +71,14 @@ async fn questionnaire_from_another_parent_session_is_rejected() {
     let mut app = test_app();
     let current_session = SessionId::new();
     let (request, response) = pending_request(SessionId::new());
-    app.queued_subagent_questionnaires.push_back(request);
+    app.subagent_inbox.push_questionnaire_for_test(request);
 
     assert!(app
         .poll_subagent_questionnaires(&current_session)
         .await
         .unwrap());
     assert!(matches!(app.input_ui.composer(), ComposerMode::Input));
-    assert!(app.queued_subagent_questionnaires.is_empty());
+    assert_eq!(app.subagent_inbox.queued_questionnaire_count(), 0);
     let error = response.await.unwrap().unwrap_err();
     assert!(error.to_string().contains("parent session changed"));
 }
@@ -89,11 +89,11 @@ async fn cancelled_queued_questionnaire_is_not_presented() {
     let session_id = SessionId::new();
     let (request, response) = pending_request(session_id.clone());
     drop(response);
-    app.queued_subagent_questionnaires.push_back(request);
+    app.subagent_inbox.push_questionnaire_for_test(request);
 
     assert!(app.poll_subagent_questionnaires(&session_id).await.unwrap());
     assert!(matches!(app.input_ui.composer(), ComposerMode::Input));
-    assert!(app.queued_subagent_questionnaires.is_empty());
+    assert_eq!(app.subagent_inbox.queued_questionnaire_count(), 0);
 }
 
 #[tokio::test]
@@ -102,14 +102,14 @@ async fn queued_questionnaire_waits_without_clearing_parent_draft() {
     let session_id = SessionId::new();
     let (request, _response) = pending_request(session_id.clone());
     app.input_ui.set_text_and_cursor("unsent draft".into(), 12);
-    app.queued_subagent_questionnaires.push_back(request);
+    app.subagent_inbox.push_questionnaire_for_test(request);
 
     assert!(!app.poll_subagent_questionnaires(&session_id).await.unwrap());
 
     assert_eq!(app.input_ui.text(), "unsent draft");
     assert_eq!(app.input_ui.cursor(), 12);
     assert!(app.pending_subagent_questionnaire.is_none());
-    assert_eq!(app.queued_subagent_questionnaires.len(), 1);
+    assert_eq!(app.subagent_inbox.queued_questionnaire_count(), 1);
 }
 
 #[cfg(unix)]
@@ -125,7 +125,7 @@ async fn answered_running_questionnaire_reports_parent_working_again() {
     app.info.session.session_id = Some("parent-session".into());
     let session_id = SessionId::new();
     let (request, response) = pending_request(session_id.clone());
-    app.queued_subagent_questionnaires.push_back(request);
+    app.subagent_inbox.push_questionnaire_for_test(request);
 
     app.poll_subagent_questionnaires(&session_id).await.unwrap();
     let blocked = server.next_request().await;
@@ -150,7 +150,7 @@ async fn answered_goal_questionnaire_restores_wait_status() {
     let mut app = test_app();
     let session_id = SessionId::new();
     let (request, response) = pending_request(session_id.clone());
-    app.queued_subagent_questionnaires.push_back(request);
+    app.subagent_inbox.push_questionnaire_for_test(request);
 
     app.poll_waiting_subagent_questionnaires(&session_id)
         .await
@@ -170,7 +170,7 @@ async fn cancelled_visible_questionnaire_restores_input_composer() {
     let mut app = test_app();
     let session_id = SessionId::new();
     let (request, response) = pending_request(session_id.clone());
-    app.queued_subagent_questionnaires.push_back(request);
+    app.subagent_inbox.push_questionnaire_for_test(request);
     app.present_next_subagent_questionnaire(&session_id)
         .await
         .unwrap();

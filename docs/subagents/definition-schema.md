@@ -110,7 +110,8 @@ Notes:
 
 - `shell` resolves at bind time to the platform shell (`bash` or `powershell`) when that capability is available
 - unknown names become extension capabilities and still fail bind unless the host supplies them
-- delegated agents never receive `agent` / `agents` even if listed
+- delegated agents never receive `agent` / `agents` / `advisor` even if listed
+- `questionnaire` is offered on delegated Rho runs when a parent session can answer; if the host cannot offer it for that launch, bind omits it instead of failing
 
 **`runtime: claude-cli`**
 

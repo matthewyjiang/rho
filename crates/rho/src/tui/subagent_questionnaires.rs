@@ -1,7 +1,5 @@
 //! Delegated-agent questionnaire and completion coordination.
 
-use std::collections::VecDeque;
-
 use futures_util::FutureExt;
 use ratatui::DefaultTerminal;
 use tokio::sync::oneshot;
@@ -27,7 +25,7 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
-        self.drain_subagent_notices();
+        self.subagent_inbox.drain();
         if !self.should_deliver_idle_subagent_completions() {
             return Ok(false);
         }
@@ -43,9 +41,8 @@ impl App {
         &mut self,
         session_id: &rho_sdk::SessionId,
     ) -> anyhow::Result<bool> {
-        let mut changed = self.drain_subagent_host_input();
-        changed |= self.drain_subagent_notices();
-        changed |= self.discard_stale_subagent_questionnaires(session_id);
+        let mut changed = self.subagent_inbox.drain();
+        changed |= self.subagent_inbox.discard_stale(session_id);
         changed |= self
             .finish_pending_subagent_questionnaire(ParentActivity::Idle)
             .await?;
@@ -61,9 +58,8 @@ impl App {
         &mut self,
         session_id: &rho_sdk::SessionId,
     ) -> anyhow::Result<bool> {
-        let mut changed = self.drain_subagent_host_input();
-        changed |= self.drain_subagent_notices();
-        changed |= self.discard_stale_subagent_questionnaires(session_id);
+        let mut changed = self.subagent_inbox.drain();
+        changed |= self.subagent_inbox.discard_stale(session_id);
         changed |= self
             .finish_pending_subagent_questionnaire(ParentActivity::Working("running"))
             .await?;
@@ -75,9 +71,8 @@ impl App {
         &mut self,
         session_id: &rho_sdk::SessionId,
     ) -> anyhow::Result<bool> {
-        let mut changed = self.drain_subagent_host_input();
-        changed |= self.drain_subagent_notices();
-        changed |= self.discard_stale_subagent_questionnaires(session_id);
+        let mut changed = self.subagent_inbox.drain();
+        changed |= self.subagent_inbox.discard_stale(session_id);
         changed |= self
             .finish_pending_subagent_questionnaire(ParentActivity::Working(
                 "waiting for delegated agents",
@@ -92,88 +87,71 @@ impl App {
         Ok(changed)
     }
 
-    fn drain_subagent_host_input(&mut self) -> bool {
-        let Some(receiver) = self.subagent_host_input.as_mut() else {
-            return false;
-        };
-        let mut changed = false;
-        while let Ok(request) = receiver.try_recv() {
-            self.queued_subagent_questionnaires.push_back(request);
-            changed = true;
-        }
-        changed
-    }
-
-    pub(super) fn drain_subagent_notices(&mut self) -> bool {
-        let Some(receiver) = self.subagent_notices.as_mut() else {
-            return false;
-        };
-        let mut changed = false;
-        while let Ok(notice) = receiver.try_recv() {
-            self.queued_subagent_notices.push_back(notice);
-            changed = true;
-        }
-        changed
-    }
-
-    /// Takes queued child notices for this parent session in arrival order.
-    pub(super) fn take_subagent_notices(
+    /// Collects everything owed to the model at a turn boundary: background
+    /// completions, delegated-child notices, and workflow notifications.
+    ///
+    /// Returns the joined model prompt, display summary, and the drained batch
+    /// so callers can restore on setup failure, or `None` when nothing is
+    /// pending. Real prompt turns fold this into the outgoing message; an idle
+    /// parent sends it as a turn of its own. Removal is committed only after
+    /// the provider turn starts successfully.
+    pub(super) fn collect_turn_boundary_prompts(
         &mut self,
-        session_id: &rho_sdk::SessionId,
-    ) -> Vec<crate::app::subagent_notice::SubagentNotice> {
-        let mut kept = VecDeque::new();
-        let mut taken = Vec::new();
-        for notice in self.queued_subagent_notices.drain(..) {
-            if &notice.parent_session_id == session_id {
-                taken.push(notice);
-            } else {
-                kept.push_back(notice);
+        agent: &mut InteractiveRuntime,
+    ) -> Option<TurnBoundaryDelivery> {
+        let mut model_parts = Vec::new();
+        let mut display_parts = Vec::new();
+        let mut push = |(model, display): (String, String)| {
+            model_parts.push(model);
+            display_parts.push(display);
+        };
+        let mut batch = TurnBoundaryBatch::default();
+        if let Some(manager) = agent.subagents().cloned() {
+            batch.subagent_notifications = manager.take_notifications(agent.session_id().as_str());
+            if !batch.subagent_notifications.is_empty() {
+                push(crate::tools::agent::notification_prompts(
+                    &batch.subagent_notifications,
+                ));
             }
         }
-        self.queued_subagent_notices = kept;
-        taken
-    }
-
-    pub(super) fn format_subagent_notice_prompts(
-        notices: &[crate::app::subagent_notice::SubagentNotice],
-    ) -> (String, String) {
-        let model = notices
-            .iter()
-            .map(|notice| {
-                format!(
-                    "Message from delegated agent {} ({}):\n{}",
-                    notice.run_id, notice.agent_id, notice.message
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n\n");
-        let display = notices
-            .iter()
-            .map(|notice| format!("agent {} ({}) notice", notice.run_id, notice.agent_id))
-            .collect::<Vec<_>>()
-            .join("\n");
-        (model, display)
-    }
-
-    fn discard_stale_subagent_questionnaires(&mut self, session_id: &rho_sdk::SessionId) -> bool {
-        let mut changed = false;
-        let queued = std::mem::take(&mut self.queued_subagent_questionnaires);
-        for pending in queued {
-            if pending.response.is_closed() {
-                changed = true;
-                continue;
-            }
-            if &pending.parent_session_id != session_id {
-                let _ = pending.response.send(Err(rho_sdk::Error::Interrupted {
-                    message: "parent session changed before the delegated questionnaire was shown"
-                        .into(),
-                }));
-                changed = true;
-                continue;
-            }
-            self.queued_subagent_questionnaires.push_back(pending);
+        self.subagent_inbox.drain();
+        batch.notices = self.subagent_inbox.take_notices(agent.session_id());
+        if !batch.notices.is_empty() {
+            push(crate::app::subagent_messaging::notice_prompts(
+                &batch.notices,
+            ));
         }
-        changed
+        batch.workflow_notifications = agent
+            .workflow_tracker()
+            .take_notifications(agent.session_id().as_str());
+        if !batch.workflow_notifications.is_empty() {
+            push(crate::tools::workflow_tracker::notification_prompts(
+                &batch.workflow_notifications,
+            ));
+        }
+        if model_parts.is_empty() {
+            return None;
+        }
+        Some(TurnBoundaryDelivery {
+            model: model_parts.join("\n\n"),
+            display: display_parts.join("\n"),
+            batch,
+        })
+    }
+
+    /// Puts a drained turn-boundary batch back when provider start never began.
+    pub(super) fn restore_turn_boundary_batch(
+        &mut self,
+        agent: &mut InteractiveRuntime,
+        batch: TurnBoundaryBatch,
+    ) {
+        if let Some(manager) = agent.subagents() {
+            manager.restore_notifications(&batch.subagent_notifications);
+        }
+        self.subagent_inbox.return_notices(batch.notices);
+        agent
+            .workflow_tracker()
+            .restore_notifications(&batch.workflow_notifications);
     }
 
     async fn finish_pending_subagent_questionnaire(
@@ -297,7 +275,7 @@ impl App {
     ) -> anyhow::Result<bool> {
         let mut changed = false;
         let pending = loop {
-            let Some(pending) = self.queued_subagent_questionnaires.pop_front() else {
+            let Some(pending) = self.subagent_inbox.next_questionnaire() else {
                 return Ok(changed);
             };
             if pending.response.is_closed() {
@@ -336,42 +314,16 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<Option<TurnOutcome>> {
-        let mut model_parts = Vec::new();
-        let mut display_parts = Vec::new();
-        if let Some(manager) = agent.subagents().cloned() {
-            let notifications = manager.take_notifications(agent.session_id().as_str());
-            if !notifications.is_empty() {
-                let (model, display) = crate::tools::agent::notification_prompts(&notifications);
-                model_parts.push(model);
-                display_parts.push(display);
-            }
-        }
-        self.drain_subagent_notices();
-        let notices = self.take_subagent_notices(agent.session_id());
-        if !notices.is_empty() {
-            let (model, display) = Self::format_subagent_notice_prompts(&notices);
-            model_parts.push(model);
-            display_parts.push(display);
-        }
-        let workflow_notifications = agent
-            .workflow_tracker()
-            .take_notifications(agent.session_id().as_str());
-        if !workflow_notifications.is_empty() {
-            let (model, display) =
-                crate::tools::workflow_tracker::notification_prompts(&workflow_notifications);
-            model_parts.push(model);
-            display_parts.push(display);
-        }
-        if model_parts.is_empty() {
+        let Some(delivery) = self.collect_turn_boundary_prompts(agent) else {
             return Ok(None);
-        }
+        };
         // The whole drained batch is one message and one model request, no
-        // matter how many runs finished while the parent was busy.
-        let model_prompt = model_parts.join("\n\n");
-        let display_prompt = display_parts.join("\n");
-        self.run_prompt_turn(
-            TurnPrompt::standard(model_prompt, display_prompt),
-            Vec::new(),
+        // matter how many runs finished while the parent was busy. Restore is
+        // owned by the provider-start lifecycle so post-start failures do not
+        // redeliver work the provider already accepted.
+        self.run_turn_boundary_prompt_turn(
+            TurnPrompt::standard(delivery.model, delivery.display),
+            delivery.batch,
             terminal,
             agent,
         )
@@ -385,18 +337,31 @@ impl App {
             && self.pending.queued_prompts().is_empty()
             && self.pending_subagent_questionnaire.is_none()
             && !matches!(self.input_ui.composer(), ComposerMode::Questionnaire(_))
-            && self.queued_subagent_questionnaires.is_empty()
-    }
-
-    pub(super) fn has_pending_subagent_notices(&self) -> bool {
-        !self.queued_subagent_notices.is_empty()
-            || self
-                .subagent_notices
-                .as_ref()
-                .is_some_and(|receiver| !receiver.is_empty())
+            && !self.subagent_inbox.has_queued_questionnaires()
     }
 }
 
 #[cfg(test)]
 #[path = "subagent_questionnaires_tests.rs"]
 mod tests;
+
+/// Drained turn-boundary work held until provider start commits delivery.
+#[derive(Default)]
+pub(super) struct TurnBoundaryBatch {
+    subagent_notifications: Vec<crate::tools::agent::SubagentNotification>,
+    notices: Vec<crate::app::subagent_messaging::SubagentNotice>,
+    workflow_notifications: Vec<crate::tools::workflow_tracker::WorkflowNotification>,
+}
+
+impl TurnBoundaryBatch {
+    pub(super) fn notice_count(&self) -> usize {
+        self.notices.len()
+    }
+}
+
+/// Joined prompts plus the restorable drained batch for one turn boundary.
+pub(super) struct TurnBoundaryDelivery {
+    pub(super) model: String,
+    pub(super) display: String,
+    pub(super) batch: TurnBoundaryBatch,
+}
