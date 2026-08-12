@@ -189,7 +189,7 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | `--provider <PROVIDER>` | Select the provider for the current session or run. |
 | `--model <MODEL>` | Select a model. A provider/model name can be used when switching providers. |
 | `--config <CONFIG>` | Read and save configuration at a specific path instead of `~/.rho/config.toml`. |
-| `--auth <AUTH>` | Select an auth profile and its matching provider profile: `api-key`, `codex`, `anthropic-api-key`, `google-api-key`, `github-copilot`, `xai-api-key`, `xai-oauth`, `moonshot-api-key`, `ollama-cloud-api-key`, `ollama-cloud-device`, `poolside-api-key`, `openrouter-api-key`, `openrouter-oauth`, `kimi-oauth`, `qwen-token-plan-api-key`, or `meta-api-key`. |
+| `--auth <AUTH>` | Select an auth profile and its matching provider profile: `api-key`, `codex`, `anthropic-api-key`, `google-api-key`, `github-copilot`, `cursor-oauth`, `xai-api-key`, `xai-oauth`, `moonshot-api-key`, `ollama-cloud-api-key`, `ollama-cloud-device`, `poolside-api-key`, `openrouter-api-key`, `openrouter-oauth`, `kimi-oauth`, `qwen-token-plan-api-key`, or `meta-api-key`. |
 | `--reasoning <LEVEL>` | Select a reasoning level: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. |
 | `--save` | Persist `--provider`/`--model`/`--auth`/`--reasoning` overrides to the config file. |
 | `--agent <ID>` | Select the agent definition for this session or automation run. See [subagents](/subagents). |

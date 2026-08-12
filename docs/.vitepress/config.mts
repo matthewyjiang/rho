@@ -55,6 +55,7 @@ const providerItems: DefaultTheme.SidebarItem[] = [
   { text: 'Anthropic', link: '/providers/anthropic' },
   { text: 'Google Gemini', link: '/providers/google-gemini' },
   { text: 'GitHub Copilot', link: '/providers/github-copilot' },
+  { text: 'Cursor', link: '/providers/cursor' },
   { text: 'Ollama', link: '/providers/ollama' },
   { text: 'Ollama Cloud', link: '/providers/ollama-cloud' },
   { text: 'OpenRouter', link: '/providers/openrouter' },

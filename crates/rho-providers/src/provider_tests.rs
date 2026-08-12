@@ -149,6 +149,25 @@ fn meta_is_openai_compatible_with_api_key_auth() {
     );
 }
 
+// Covers: cursor must resolve as its own Connect runtime with OAuth and default auto
+// Owner: provider registry
+#[test]
+fn cursor_uses_oauth_and_agent_run_runtime() {
+    use super::{CatalogReasoningPolicy, ProviderId, ProviderRuntime};
+    use crate::model::registry::provider_runtime;
+
+    let descriptor = super::provider_descriptor_by_id(ProviderId::Cursor);
+    assert_eq!(descriptor.name, "cursor");
+    assert_eq!(descriptor.display_name, "Cursor");
+    assert_eq!(descriptor.default_model, Some("auto"));
+    assert_eq!(
+        descriptor.catalog_reasoning,
+        CatalogReasoningPolicy::NotConfigurable
+    );
+    assert!(descriptor.auth_mode("cursor-oauth").is_some());
+    assert_eq!(provider_runtime("cursor"), Some(ProviderRuntime::Cursor));
+}
+
 // Covers: openai api-key and codex share a runtime family for auth resolution
 // Owner: provider registry
 #[test]

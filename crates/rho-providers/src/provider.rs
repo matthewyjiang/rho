@@ -17,6 +17,7 @@ pub const POOLSIDE_API_KEY_ACCOUNT: &str = "provider:poolside:api-key";
 pub const OPENROUTER_API_KEY_ACCOUNT: &str = "provider:openrouter:api-key";
 pub const OPENROUTER_OAUTH_KEY_ACCOUNT: &str = "provider:openrouter:oauth-key";
 pub const KIMI_TOKENS_ACCOUNT: &str = "provider:kimi-code:tokens";
+pub const CURSOR_TOKENS_ACCOUNT: &str = "provider:cursor:tokens";
 pub const QWEN_TOKEN_PLAN_API_KEY_ACCOUNT: &str = "provider:qwen-token-plan:api-key";
 pub const META_API_KEY_ACCOUNT: &str = "provider:meta:api-key";
 
@@ -26,6 +27,7 @@ pub const MOONSHOT_API_BASE: &str = "https://api.moonshot.ai/v1";
 pub const POOLSIDE_API_BASE: &str = "https://inference.poolside.ai/v1";
 pub const OPENROUTER_API_BASE: &str = "https://openrouter.ai/api/v1";
 pub const KIMI_CODE_API_BASE: &str = "https://api.kimi.com/coding/v1";
+pub const CURSOR_API_BASE: &str = "https://api2.cursor.sh";
 /// Default OpenAI-compatible Token Plan base (Singapore / international).
 pub const QWEN_TOKEN_PLAN_API_BASE: &str =
     "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1";
@@ -56,6 +58,7 @@ pub enum ProviderRuntime {
     Google,
     GithubCopilot,
     Xai,
+    Cursor,
 }
 
 impl ProviderRuntime {
@@ -116,6 +119,7 @@ pub enum ProviderId {
     KimiCode,
     QwenTokenPlan,
     Meta,
+    Cursor,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -166,6 +170,7 @@ pub enum ProviderModelRefreshKind {
     Google,
     GithubCopilot,
     OpenAiCompatible,
+    Cursor,
 }
 
 /// How a provider encodes model IDs on the wire versus in Rho cache/config.
@@ -213,6 +218,11 @@ pub enum ProviderAuthKind {
         acquisition: BearerCredentialAcquisition,
     },
     KimiOAuth {
+        env_var: &'static str,
+        account: &'static str,
+        missing_message: &'static str,
+    },
+    CursorOAuth {
         env_var: &'static str,
         account: &'static str,
         missing_message: &'static str,
@@ -299,7 +309,8 @@ impl ProviderAuthKind {
             | Self::GithubCopilotDevice { env_var, .. }
             | Self::XaiOAuth { env_var, .. }
             | Self::BearerCredential { env_var, .. }
-            | Self::KimiOAuth { env_var, .. } => Some(env_var),
+            | Self::KimiOAuth { env_var, .. }
+            | Self::CursorOAuth { env_var, .. } => Some(env_var),
         }
     }
 
@@ -311,7 +322,8 @@ impl ProviderAuthKind {
             | Self::GithubCopilotDevice { account, .. }
             | Self::XaiOAuth { account, .. }
             | Self::BearerCredential { account, .. }
-            | Self::KimiOAuth { account, .. } => Some(account),
+            | Self::KimiOAuth { account, .. }
+            | Self::CursorOAuth { account, .. } => Some(account),
         }
     }
 
@@ -335,6 +347,9 @@ impl ProviderAuthKind {
                 missing_message, ..
             }
             | Self::KimiOAuth {
+                missing_message, ..
+            }
+            | Self::CursorOAuth {
                 missing_message, ..
             }
             | Self::OllamaDeviceKey {

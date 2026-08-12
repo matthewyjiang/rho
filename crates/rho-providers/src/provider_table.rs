@@ -8,12 +8,13 @@ use super::{
     AuthMode, BearerCredentialAcquisition, BrowserOAuthFlow, CatalogReasoningPolicy, ModelIdCodec,
     OpenAiRuntimeAuth, ProviderAuthKind, ProviderDescriptor, ProviderId, ProviderModelRefreshKind,
     ProviderModelSource, ProviderRuntime, ANTHROPIC_API_KEY_ACCOUNT, CODEX_TOKENS_ACCOUNT,
-    GITHUB_COPILOT_TOKENS_ACCOUNT, GOOGLE_API_KEY_ACCOUNT, KIMI_CODE_API_BASE, KIMI_TOKENS_ACCOUNT,
-    META_API_BASE, META_API_KEY_ACCOUNT, MOONSHOT_API_BASE, MOONSHOT_API_KEY_ACCOUNT,
-    OLLAMA_API_BASE, OLLAMA_CLOUD_API_BASE, OLLAMA_CLOUD_API_KEY_ACCOUNT, OPENAI_API_KEY_ACCOUNT,
-    OPENROUTER_API_BASE, OPENROUTER_API_KEY_ACCOUNT, OPENROUTER_OAUTH_KEY_ACCOUNT,
-    POOLSIDE_API_BASE, POOLSIDE_API_KEY_ACCOUNT, QWEN_TOKEN_PLAN_API_BASE,
-    QWEN_TOKEN_PLAN_API_KEY_ACCOUNT, XAI_API_KEY_ACCOUNT, XAI_TOKENS_ACCOUNT,
+    CURSOR_TOKENS_ACCOUNT, GITHUB_COPILOT_TOKENS_ACCOUNT, GOOGLE_API_KEY_ACCOUNT,
+    KIMI_CODE_API_BASE, KIMI_TOKENS_ACCOUNT, META_API_BASE, META_API_KEY_ACCOUNT,
+    MOONSHOT_API_BASE, MOONSHOT_API_KEY_ACCOUNT, OLLAMA_API_BASE, OLLAMA_CLOUD_API_BASE,
+    OLLAMA_CLOUD_API_KEY_ACCOUNT, OPENAI_API_KEY_ACCOUNT, OPENROUTER_API_BASE,
+    OPENROUTER_API_KEY_ACCOUNT, OPENROUTER_OAUTH_KEY_ACCOUNT, POOLSIDE_API_BASE,
+    POOLSIDE_API_KEY_ACCOUNT, QWEN_TOKEN_PLAN_API_BASE, QWEN_TOKEN_PLAN_API_KEY_ACCOUNT,
+    XAI_API_KEY_ACCOUNT, XAI_TOKENS_ACCOUNT,
 };
 use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
 
@@ -401,5 +402,28 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         metadata_upstream: "xai",
         catalog_reasoning: CatalogReasoningPolicy::OffByAdvertisedToggle,
         default_model: None,
+    },
+    ProviderDescriptor {
+        id: ProviderId::Cursor,
+        runtime: ProviderRuntime::Cursor,
+        name: "cursor",
+        display_name: "Cursor",
+        auth_modes: &[
+        AuthMode {
+            id: "cursor-oauth",
+            login_label: "Cursor OAuth",
+            auth_kind: ProviderAuthKind::CursorOAuth {
+            env_var: "CURSOR_ACCESS_TOKEN",
+            account: CURSOR_TOKENS_ACCOUNT,
+            missing_message: "missing Cursor OAuth credentials; run /login cursor or set CURSOR_ACCESS_TOKEN as a CI/dev override",
+        },
+        }
+        ],
+        model_source: ProviderModelSource::CachedProviderModels,
+        model_refresh: Some(ProviderModelRefreshKind::Cursor),
+        model_id_codec: ModelIdCodec::Plain,
+        metadata_upstream: "cursor",
+        catalog_reasoning: CatalogReasoningPolicy::NotConfigurable,
+        default_model: Some("auto"),
     },
 ];

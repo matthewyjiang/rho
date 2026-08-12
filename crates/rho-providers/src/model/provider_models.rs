@@ -181,6 +181,9 @@ pub async fn refresh_provider_models_with_store(
         Some(ProviderModelRefreshKind::GithubCopilot) => {
             fetch_github_copilot_models(provider, store).await?
         }
+        Some(ProviderModelRefreshKind::Cursor) => {
+            crate::providers::cursor::fetch_usable_models(provider, store).await?
+        }
         Some(ProviderModelRefreshKind::OpenAiCompatible) => {
             let ProviderModelEndpoint::OpenAiCompatible(api_base) = endpoint else {
                 return Err(ModelError::InvalidResponse(format!(

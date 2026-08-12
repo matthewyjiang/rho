@@ -43,12 +43,19 @@ fn dispatches_registered_providers_to_typed_authentication_methods() {
         }
     );
     assert_eq!(
+        ProviderAuthentication::method("cursor").unwrap(),
+        AuthenticationMethod::Interactive {
+            provider_label: "Cursor",
+        }
+    );
+    assert_eq!(
         ProviderAuthentication::method("ollama-cloud-device").unwrap(),
         AuthenticationMethod::Interactive {
             provider_label: "Ollama Cloud",
         }
     );
     assert!(ProviderAuthentication::supports_device_login("xai-oauth"));
+    assert!(ProviderAuthentication::supports_device_login("cursor"));
     assert!(ProviderAuthentication::supports_device_login(
         "ollama-cloud-device"
     ));

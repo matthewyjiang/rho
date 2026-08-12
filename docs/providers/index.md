@@ -9,6 +9,7 @@ This index lists every first-party provider Rho ships. Shared concepts such as c
 | `anthropic` | `anthropic-api-key` | [Anthropic](/providers/anthropic) |
 | `google` | `google-api-key` | [Google Gemini](/providers/google-gemini) |
 | `github-copilot` | `github-copilot` | [GitHub Copilot](/providers/github-copilot) |
+| `cursor` | `cursor-oauth` | [Cursor](/providers/cursor) |
 | `xai` | `xai-api-key`, `xai-oauth` | [xAI](/providers/xai) |
 | `poolside` | `poolside-api-key` | [Poolside](/providers/poolside) |
 | `openrouter` | `openrouter-api-key`, `openrouter-oauth` | [OpenRouter](/providers/openrouter) |

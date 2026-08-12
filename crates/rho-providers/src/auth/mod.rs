@@ -1,4 +1,6 @@
 pub mod codex_oauth;
+pub mod cursor_oauth;
+pub mod cursor_token;
 pub mod github_copilot_device;
 pub mod github_copilot_token;
 pub mod kimi_oauth;

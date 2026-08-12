@@ -92,6 +92,13 @@ fn default_bearer_token_type() -> String {
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct CursorTokens {
+    pub access_token: String,
+    pub refresh_token: Option<String>,
+    pub expires_at_unix: Option<i64>,
+}
+
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct XaiTokens {
     pub access_token: String,
     pub refresh_token: Option<String>,
@@ -124,6 +131,7 @@ redacted_token_debug!(
 );
 redacted_token_debug!(KimiTokens, expires_at_unix);
 redacted_token_debug!(XaiTokens, expires_at_unix);
+redacted_token_debug!(CursorTokens, expires_at_unix);
 
 #[derive(Clone, Debug, Error)]
 pub enum CredentialError {
@@ -314,6 +322,24 @@ pub fn save_kimi_tokens(store: &dyn CredentialStore, tokens: &KimiTokens) -> Cre
     store.set_secret(crate::provider::KIMI_TOKENS_ACCOUNT, &secret)
 }
 
+pub fn load_cursor_tokens(store: &dyn CredentialStore) -> CredentialResult<Option<CursorTokens>> {
+    let Some(secret) = store.get_secret(crate::provider::CURSOR_TOKENS_ACCOUNT)? else {
+        return Ok(None);
+    };
+    serde_json::from_str(&secret).map(Some).map_err(|err| {
+        CredentialError::InvalidData(format!("invalid stored Cursor token JSON: {err}"))
+    })
+}
+
+pub fn save_cursor_tokens(
+    store: &dyn CredentialStore,
+    tokens: &CursorTokens,
+) -> CredentialResult<()> {
+    let secret = serde_json::to_string(tokens)
+        .map_err(|err| CredentialError::InvalidData(format!("could not encode tokens: {err}")))?;
+    store.set_secret(crate::provider::CURSOR_TOKENS_ACCOUNT, &secret)
+}
+
 pub fn load_xai_tokens(store: &dyn CredentialStore) -> CredentialResult<Option<XaiTokens>> {
     let Some(secret) = store.get_secret(XAI_TOKENS_ACCOUNT)? else {
         return Ok(None);
@@ -498,6 +524,15 @@ fn auth_mode_has_credentials(
                     .as_deref()
                     .is_some_and(credential_value_is_usable)
         })),
+        ProviderAuthKind::CursorOAuth { .. } => {
+            Ok(load_cursor_tokens(store)?.is_some_and(|tokens| {
+                credential_value_is_usable(&tokens.access_token)
+                    || tokens
+                        .refresh_token
+                        .as_deref()
+                        .is_some_and(credential_value_is_usable)
+            }))
+        }
         ProviderAuthKind::OllamaDeviceKey { .. } => {
             Ok(crate::auth::ollama_device::ollama_device_credentials_available())
         }

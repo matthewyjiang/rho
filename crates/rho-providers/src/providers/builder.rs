@@ -4,12 +4,16 @@ use rho_sdk::SecretString;
 use url::Url;
 
 use crate::{
-    auth::{github_copilot_token::GitHubCopilotAuthManager, xai_token::XaiAuthManager},
+    auth::{
+        cursor_token::CursorAuthManager, github_copilot_token::GitHubCopilotAuthManager,
+        xai_token::XaiAuthManager,
+    },
     credentials::CredentialStore,
     model::{registry::provider_runtime, ModelError},
     provider::{self, OpenAiRuntimeAuth, ProviderAuthKind, ProviderRuntime},
     providers::{
         anthropic::AnthropicProvider,
+        cursor::CursorProvider,
         github_copilot::GitHubCopilotProvider,
         google::{GoogleProvider, API_BASE as GOOGLE_API_BASE},
         openai::{auth::Auth, OpenAiProvider},
@@ -138,6 +142,7 @@ pub enum ProviderCredential {
     GoogleApiKey(SecretString),
     GitHubCopilot(GitHubCopilotAuthManager),
     Xai(XaiAuthManager),
+    Cursor(CursorAuthManager),
     OpenAiCompatible(CompatibleAuth),
 }
 
@@ -149,6 +154,7 @@ impl fmt::Debug for ProviderCredential {
             Self::GoogleApiKey(_) => "google-api-key",
             Self::GitHubCopilot(_) => "github-copilot",
             Self::Xai(_) => "xai",
+            Self::Cursor(_) => "cursor",
             Self::OpenAiCompatible(_) => "openai-compatible",
         };
         formatter
@@ -266,6 +272,14 @@ impl ProviderBuilder {
                     client,
                     endpoint.unwrap_or_else(|| XAI_API_BASE.into()),
                     self.options.hosted_web_search,
+                )))
+            }
+            (ProviderRuntime::Cursor, ProviderCredential::Cursor(auth)) => {
+                Ok(Arc::new(CursorProvider::new_with_transport(
+                    self.options.model,
+                    auth,
+                    client,
+                    endpoint.unwrap_or_else(|| crate::provider::CURSOR_API_BASE.into()),
                 )))
             }
             _ => Err(ModelError::InvalidResponse(format!(

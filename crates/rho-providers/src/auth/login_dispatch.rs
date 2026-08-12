@@ -2,11 +2,12 @@ use std::{future::Future, pin::Pin};
 
 use crate::{
     auth::{
-        codex_oauth, github_copilot_device, kimi_oauth, ollama_device, openrouter_oauth, xai_oauth,
+        codex_oauth, cursor_oauth, github_copilot_device, kimi_oauth, ollama_device,
+        openrouter_oauth, xai_oauth,
     },
     credentials::{
-        self, CodexTokens, CredentialResult, CredentialStore, GitHubCopilotTokens, KimiTokens,
-        XaiTokens,
+        self, CodexTokens, CredentialResult, CredentialStore, CursorTokens, GitHubCopilotTokens,
+        KimiTokens, XaiTokens,
     },
     provider::{
         self, BearerCredentialAcquisition, BrowserOAuthFlow, ProviderAuthKind,
@@ -113,6 +114,7 @@ impl CompletedAuthentication {
                 credentials::save_github_copilot_tokens(store, &tokens)
             }
             LoginCredentials::Kimi(tokens) => credentials::save_kimi_tokens(store, &tokens),
+            LoginCredentials::Cursor(tokens) => credentials::save_cursor_tokens(store, &tokens),
             LoginCredentials::OpenRouter(key) => {
                 credentials::save_openrouter_oauth_key(store, &key)
             }
@@ -131,6 +133,7 @@ enum LoginCredentials {
     Codex(CodexTokens),
     GithubCopilot(GitHubCopilotTokens),
     Kimi(KimiTokens),
+    Cursor(CursorTokens),
     OpenRouter(String),
     Xai(XaiTokens),
 }
@@ -155,6 +158,9 @@ impl ProviderAuthentication {
             ProviderAuthKind::KimiOAuth { .. } => AuthenticationMethod::Interactive {
                 provider_label: "Kimi",
             },
+            ProviderAuthKind::CursorOAuth { .. } => AuthenticationMethod::Interactive {
+                provider_label: "Cursor",
+            },
             ProviderAuthKind::XaiOAuth { .. } => AuthenticationMethod::Interactive {
                 provider_label: "xAI",
             },
@@ -178,6 +184,7 @@ impl ProviderAuthentication {
                 ProviderAuthKind::CodexOAuth { .. }
                     | ProviderAuthKind::GithubCopilotDevice { .. }
                     | ProviderAuthKind::KimiOAuth { .. }
+                    | ProviderAuthKind::CursorOAuth { .. }
                     | ProviderAuthKind::XaiOAuth { .. }
                     | ProviderAuthKind::OllamaDeviceKey { .. }
             )
@@ -196,6 +203,7 @@ impl ProviderAuthentication {
             ProviderAuthKind::CodexOAuth { .. } => start_codex(mode).await,
             ProviderAuthKind::GithubCopilotDevice { .. } => start_github_copilot().await,
             ProviderAuthKind::KimiOAuth { .. } => start_kimi().await,
+            ProviderAuthKind::CursorOAuth { .. } => start_cursor(mode).await,
             ProviderAuthKind::XaiOAuth { .. } => start_xai(mode).await,
             ProviderAuthKind::OllamaDeviceKey { .. } => start_ollama_device(mode).await,
             ProviderAuthKind::BearerCredential { acquisition, .. } => match acquisition {
@@ -372,6 +380,36 @@ async fn start_kimi() -> Result<InteractiveLogin, AuthenticationError> {
                 .await
                 .map(|tokens| CompletedAuthentication {
                     credentials: LoginCredentials::Kimi(tokens),
+                })
+                .map_err(flow_error)
+        })),
+    })
+}
+
+async fn start_cursor(mode: InteractiveLoginMode) -> Result<InteractiveLogin, AuthenticationError> {
+    let login = cursor_oauth::start_cursor_login();
+    let open_browser = mode == InteractiveLoginMode::Browser;
+    if open_browser {
+        webbrowser::open(&login.login_url).map_err(|_| {
+            AuthenticationError::Flow(cursor_oauth::CursorOAuthError::Browser.to_string())
+        })?;
+    }
+    let user_action = if open_browser {
+        InteractiveUserAction::BrowserOpened
+    } else {
+        InteractiveUserAction::OpenUrl {
+            url: login.login_url.clone(),
+            instruction: "Open this URL and approve Cursor login.".into(),
+        }
+    };
+    Ok(InteractiveLogin {
+        provider_label: "Cursor",
+        user_action,
+        completion: InteractiveLoginCompletion::Confirm(Box::pin(async move {
+            cursor_oauth::complete_cursor_login(login)
+                .await
+                .map(|tokens| CompletedAuthentication {
+                    credentials: LoginCredentials::Cursor(tokens),
                 })
                 .map_err(flow_error)
         })),

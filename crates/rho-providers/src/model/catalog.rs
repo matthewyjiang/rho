@@ -181,7 +181,8 @@ fn login_method_prompt(auth_kind: ProviderAuthKind) -> &'static str {
         | ProviderAuthKind::GithubCopilotDevice { .. }
         | ProviderAuthKind::XaiOAuth { .. }
         | ProviderAuthKind::BearerCredential { .. }
-        | ProviderAuthKind::KimiOAuth { .. } => "OAuth",
+        | ProviderAuthKind::KimiOAuth { .. }
+        | ProviderAuthKind::CursorOAuth { .. } => "OAuth",
     }
 }
 

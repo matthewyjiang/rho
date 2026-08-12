@@ -520,4 +520,12 @@ fn login_groups_include_meta_and_merge_openai_codex() {
     assert_eq!(openai_auths, vec!["api-key", "codex"]);
     assert!(groups.iter().all(|group| group.id != "openai-codex"));
     assert!(groups.iter().all(|group| group.id != "kimi-code"));
+
+    let cursor = groups
+        .iter()
+        .find(|group| group.id == "cursor")
+        .expect("cursor login group");
+    assert_eq!(cursor.prompt, "Cursor");
+    assert_eq!(cursor.methods.len(), 1);
+    assert_eq!(cursor.methods[0].target.auth, "cursor-oauth");
 }

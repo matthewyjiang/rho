@@ -4,14 +4,15 @@ use rho_sdk::SecretString;
 
 use crate::{
     auth::{
+        cursor_token::{CursorAuthManager, CursorAuthSource},
         github_copilot_token::GitHubCopilotAuthManager,
         kimi_token::{KimiAuthManager, KimiAuthSource},
         ollama_device::OllamaDeviceKey,
         xai_token::{XaiAuthManager, XaiAuthSource},
     },
     credentials::{
-        load_codex_tokens, load_kimi_tokens, load_provider_api_key, load_xai_tokens, CodexTokens,
-        CredentialStore, KimiTokens, XaiTokens,
+        load_codex_tokens, load_cursor_tokens, load_kimi_tokens, load_provider_api_key,
+        load_xai_tokens, CodexTokens, CredentialStore, CursorTokens, KimiTokens, XaiTokens,
     },
     model::{
         registry::{
@@ -130,7 +131,8 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
                     }
                     ProviderAuthKind::CodexOAuth { .. }
                     | ProviderAuthKind::GithubCopilotDevice { .. }
-                    | ProviderAuthKind::XaiOAuth { .. } => {
+                    | ProviderAuthKind::XaiOAuth { .. }
+                    | ProviderAuthKind::CursorOAuth { .. } => {
                         return Err(ModelError::UnsupportedProvider(provider.into()));
                     }
                 };
@@ -170,6 +172,30 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
                     _ => return Err(ModelError::UnsupportedProvider(provider.into())),
                 };
                 Ok(ProviderCredential::Xai(XaiAuthManager::from_tokens(
+                    self.store.clone(),
+                    source,
+                    tokens,
+                )))
+            }
+            ProviderRuntime::Cursor => {
+                let env_var = selected
+                    .auth_kind
+                    .env_var()
+                    .expect("Cursor OAuth must declare an environment variable");
+                let missing = missing_credentials_error("cursor");
+                let (source, tokens) = env_or_stored(
+                    env_var,
+                    |access_token| CursorTokens {
+                        access_token,
+                        refresh_token: None,
+                        expires_at_unix: None,
+                    },
+                    || Ok(load_cursor_tokens(self.store.as_ref())?),
+                    missing,
+                    CursorAuthSource::Env,
+                    CursorAuthSource::Store,
+                )?;
+                Ok(ProviderCredential::Cursor(CursorAuthManager::from_tokens(
                     self.store.clone(),
                     source,
                     tokens,

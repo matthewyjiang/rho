@@ -29,6 +29,7 @@ The runtime registry includes:
 - `openai-codex`
 - `anthropic`
 - `github-copilot`
+- `cursor`
 - `xai` and `xai-oauth`
 - `moonshot`
 - `ollama`

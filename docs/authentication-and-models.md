@@ -24,6 +24,7 @@ Rho's implemented providers are:
 | `anthropic` | `anthropic-api-key` | [Anthropic](/providers/anthropic) |
 | `google` | `google-api-key` | [Google Gemini](/providers/google-gemini) |
 | `github-copilot` | `github-copilot` | [GitHub Copilot](/providers/github-copilot) |
+| `cursor` | `cursor-oauth` | [Cursor](/providers/cursor) |
 | `xai` | `xai-api-key`, `xai-oauth` | [xAI](/providers/xai) |
 | `poolside` | `poolside-api-key` | [Poolside](/providers/poolside) |
 | `openrouter` | `openrouter-api-key`, `openrouter-oauth` | [OpenRouter](/providers/openrouter) |
@@ -34,7 +35,7 @@ Rho's implemented providers are:
 | `qwen-token-plan` | `qwen-token-plan-api-key` | [Qwen Token Plan](/providers/qwen-token-plan) |
 | `meta` | `meta-api-key` | [Meta Model API](/providers/meta) |
 
-OpenAI, Anthropic, Google Gemini, GitHub Copilot, Ollama, Ollama Cloud, Poolside, OpenRouter, Moonshot, Kimi Code, Qwen Token Plan, and Meta Model API expose refreshable API model lists. Local Ollama needs no login; the other providers refresh after authentication. OpenAI Codex OAuth and xAI OAuth use static allowlists, so their available models are maintained by Rho rather than fetched through **Refresh model lists** in `/config`.
+OpenAI, Anthropic, Google Gemini, GitHub Copilot, Cursor, Ollama, Ollama Cloud, Poolside, OpenRouter, Moonshot, Kimi Code, Qwen Token Plan, and Meta Model API expose refreshable API model lists. Local Ollama needs no login; the other providers refresh after authentication. OpenAI Codex OAuth and xAI OAuth use static allowlists, so their available models are maintained by Rho rather than fetched through **Refresh model lists** in `/config`.
 
 Each provider page documents whether authentication is required, how to select models, and any provider-specific setup.
 

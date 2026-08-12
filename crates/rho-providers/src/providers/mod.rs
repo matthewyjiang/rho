@@ -11,6 +11,7 @@ pub mod anthropic;
 #[cfg(debug_assertions)]
 mod automation_fixture;
 pub mod builder;
+pub mod cursor;
 pub mod factory;
 pub mod github_copilot;
 pub mod google;
