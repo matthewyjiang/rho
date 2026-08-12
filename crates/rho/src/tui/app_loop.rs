@@ -34,6 +34,7 @@ impl App {
         // Afterwards the header and statusline carry setup state, so a
         // signed-out session needs no history entry that would scroll away.
         self.start_setup_screen(terminal);
+        self.reconcile_auto_classifier_gate(agent).await?;
         let mut needs_redraw = true;
         while !self.should_quit {
             let background_ready = self

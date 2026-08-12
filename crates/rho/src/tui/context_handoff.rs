@@ -500,7 +500,12 @@ impl App {
                 ContextHandoffKind::LoadedSession => "ready",
             });
         }
-        self.finish_after_handoff(after, terminal, agent).await
+        self.finish_after_handoff(after, terminal, agent).await?;
+        // Loaded-session handoff opens before the startup Auto gate and owns the
+        // composer until resolved. Reconcile once the modal is gone so Auto
+        // without a classifier cannot remain fail-closed.
+        self.reconcile_auto_classifier_gate(agent).await?;
+        Ok(())
     }
 
     async fn execute_context_handoff(
@@ -637,6 +642,7 @@ impl App {
             .herdr
             .report_session(self.info.session.session_id.as_deref())
             .await;
+        self.reconcile_auto_classifier_gate(agent).await?;
         Ok(())
     }
 

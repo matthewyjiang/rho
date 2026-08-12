@@ -2,6 +2,7 @@
 
 mod activity_anchor;
 mod advisor;
+mod assert_helpers;
 mod background_agents;
 mod changelog;
 mod command_palette;
@@ -38,7 +39,10 @@ use background_agents::{
 };
 use changelog::CHANGELOG_STEPS;
 use command_palette::{HELP_OVERLAY_SCENARIO, SLASH_COMMAND_PALETTE_SCENARIO};
-use config::{AUTO_PERMISSION_MODE_CONFIG_STEPS, OPEN_CONFIG_PICKER_STEPS};
+use config::{
+    setup_auto_without_classifier, AUTO_PERMISSION_MODE_CONFIG_STEPS,
+    AUTO_PERMISSION_MODE_STARTUP_STEPS, OPEN_CONFIG_PICKER_STEPS,
+};
 use conversation_tree::CONVERSATION_TREE_STEPS;
 use document_attachment::DOCUMENT_ATTACHMENT_SCENARIO;
 use edit_diff::EDIT_DIFF_SCENARIO;
@@ -680,6 +684,29 @@ const ALL_SCENARIOS: &[Scenario] = &[
     )
     .with_env(OPENAI_KEY_ENV),
     Scenario::new(
+        "auto_permission_mode_startup",
+        "Start in Auto without a classifier and force a model pick before tools run",
+        PtySize {
+            rows: 14,
+            cols: 100,
+        },
+        AUTO_PERMISSION_MODE_STARTUP_STEPS,
+        /*smoke*/ false,
+    )
+    .with_setup(setup_auto_without_classifier)
+    .with_env(OPENAI_KEY_ENV),
+    // Custom multi-process scenario: see config::run_auto_recovered_handoff.
+    Scenario::new(
+        config::AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID,
+        "Resume a session under Auto without a classifier and force the model pick",
+        PtySize {
+            rows: 16,
+            cols: 100,
+        },
+        &[],
+        /*smoke*/ false,
+    ),
+    Scenario::new(
         "progress_tool",
         "Run the fixture progress tool to completion",
         DEFAULT_SIZE,
@@ -797,6 +824,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
         size: DEFAULT_SIZE,
         setup: Some(setup_edit_user_agent),
         env: &[],
+        args: &[],
         steps: EDIT_USER_AGENT_STEPS,
         smoke: false,
     },
@@ -901,6 +929,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
         size: DEFAULT_SIZE,
         setup: Some(setup_advisor_without_model),
         env: XAI_KEY_ENV,
+        args: &[],
         steps: ADVISOR_MISSING_MODEL_STEPS,
         smoke: false,
     },
@@ -910,6 +939,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
         size: DEFAULT_SIZE,
         setup: Some(setup_advisor_ready),
         env: XAI_KEY_ENV,
+        args: &[],
         steps: ADVISOR_REVIEW_STEPS,
         smoke: false,
     },
@@ -942,32 +972,12 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
     if workflow::is_workflow_scenario(name) {
         return workflow::run(runner, name);
     }
+    if config::is_auto_recovered_handoff_scenario(name) {
+        return config::run_auto_recovered_handoff(runner);
+    }
     runner.run(scenario)
 }
 
-fn assert_inline_shell_cancelled(harness: &mut crate::harness::PtyHarness) -> Result<()> {
-    if harness.screen().contains_text("cancel-escaped-output") {
-        anyhow::bail!("inline shell produced output after Escape cancelled it");
-    }
-    Ok(())
-}
-
-fn assert_idle_shell_still_streaming(harness: &mut crate::harness::PtyHarness) -> Result<()> {
-    if harness.screen().contains_text("idle-stream-end") {
-        anyhow::bail!("idle shell output was not rendered until the command completed");
-    }
-    Ok(())
-}
-
-fn assert_terminal_restored(harness: &mut crate::harness::PtyHarness) -> Result<()> {
-    // After a clean exit, ratatui/crossterm must leave the alternate screen.
-    // Mouse disable alone is not enough: a regression that skips ESC[?1049l
-    // would leave the user stuck in the alternate screen.
-    let raw = harness.raw_output();
-    let left = raw.windows(8).any(|window| window == b"\x1b[?1049l")
-        || String::from_utf8_lossy(raw).contains("?1049l");
-    if !left {
-        anyhow::bail!("did not observe alternate-screen leave sequence (ESC[?1049l)");
-    }
-    Ok(())
-}
+use assert_helpers::{
+    assert_idle_shell_still_streaming, assert_inline_shell_cancelled, assert_terminal_restored,
+};

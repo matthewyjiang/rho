@@ -692,6 +692,7 @@ impl App {
         self.apply_auto_edit_tool_for_provider(&provider, agent)
             .await?;
         self.finish_setup_screen();
+        self.reconcile_auto_classifier_gate(agent).await?;
         Ok(Some(handoff))
     }
 
@@ -812,12 +813,19 @@ impl App {
                 self.set_status(status);
             }
             InternalAgentModelPickerOrigin::PermissionModeConfigRow => {
+                let origin = target.origin;
                 self.internal_agent_model_target = None;
-                self.finish_permission_classifier_model_selection(selected, agent)
+                self.finish_permission_classifier_model_selection(selected, origin, agent)
                     .await?;
                 let status = self.status().to_string();
                 self.open_main_config_picker_selected(config_picker::PERMISSION_MODE_VALUE)?;
                 self.set_status(status);
+            }
+            InternalAgentModelPickerOrigin::PermissionModeStartup => {
+                let origin = target.origin;
+                self.internal_agent_model_target = None;
+                self.finish_permission_classifier_model_selection(selected, origin, agent)
+                    .await?;
             }
             InternalAgentModelPickerOrigin::PermissionClassifierModelConfigRow => {
                 self.internal_agent_model_target = None;

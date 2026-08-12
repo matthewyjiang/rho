@@ -475,6 +475,10 @@ struct App {
     pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
     pending_model_selection: Option<InteractiveModelSelection>,
     internal_agent_model_target: Option<agent_picker::InternalAgentModelTarget>,
+    /// Set when the user dismisses the startup Auto classifier picker. The next
+    /// idle reconcile demotes Auto → Supervised so cancel stays sync and never
+    /// needs an optional runtime handle on shared picker Esc paths.
+    pending_auto_classifier_demote: bool,
     agent_editor_session: Option<agent_editor::AgentEditSession>,
     sessions_hub_state: sessions_hub::SessionsHubState,
     pending_session_title: Option<PendingSessionTitle>,
