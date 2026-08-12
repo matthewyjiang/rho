@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.1.0...rho-providers-v1.1.1) (2026-08-12)
+
+
+### Bug Fixes
+
+* **xai:** add grok-4.6 to the static model allowlist ([#882](https://github.com/matthewyjiang/rho/issues/882)) ([52ebd71](https://github.com/matthewyjiang/rho/commit/52ebd716456edcd9bd41d44d35afc7fc283cb31c))
+* **xai:** keep optional grok Off as wire none ([#883](https://github.com/matthewyjiang/rho/issues/883)) ([e92f0a9](https://github.com/matthewyjiang/rho/commit/e92f0a96d5d53e61d295f8ac5be4a887fcb0a8f5))
+
 ## [1.1.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.0.0...rho-providers-v1.1.0) (2026-08-12)
 
 
