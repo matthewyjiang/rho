@@ -216,6 +216,7 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
 
     let store = AppCredentialStore;
     let provider_refresh = cli_config::refresh_model_cache(&cli, &config, &store).await?;
+    let permission_mode_before_override = config.permission_mode;
     let config_changed = cli_config::apply_overrides(&mut config, &cli)?;
     cli_config::prepare_model_metadata(&config, &store, &provider_refresh).await;
     // Full models.dev snapshot fills in the background for subagent and status
@@ -235,7 +236,10 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
     // file and dropped comments. Bare --save, no-op identical overrides, and
     // reasoning auto-normalization alone must not rewrite config.
     if cli.save && config_changed {
+        let session_permission_mode = config.permission_mode;
+        config.permission_mode = permission_mode_before_override;
         config_repository.save(&config)?;
+        config.permission_mode = session_permission_mode;
     }
     let reasoning_before_binding = config.reasoning;
     let role = if automation_prompt.is_some() {
