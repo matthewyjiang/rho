@@ -9,7 +9,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use history_cache::CachedCodeBlock;
 use questionnaire::QuestionnaireCancelReason;
 use ratatui::DefaultTerminal;
 use tokio::sync::oneshot;
@@ -100,6 +99,8 @@ mod mouse;
 mod mouse_capture;
 mod paste_burst;
 mod pending_input;
+#[cfg(test)]
+mod performance_benchmarks;
 mod permission_mode;
 mod picker;
 mod picker_input;
@@ -161,6 +162,7 @@ mod turn_prompt;
 mod usage_cost;
 mod view;
 mod view_composer;
+mod view_scroll;
 mod workflow_discover;
 mod workflow_hub;
 // Separate full-screen mode for an active workflow run. The chat hub hands off

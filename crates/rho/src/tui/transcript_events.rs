@@ -386,7 +386,7 @@ impl App {
                 match self.history.last_mut() {
                     Some(Entry::Assistant(previous)) => {
                         previous.push_str(&text);
-                        self.history.lines_mut().assistant_appended(index);
+                        self.history.lines_mut().entry_appended(index);
                     }
                     _ => {
                         self.history.lines_mut().invalidate_from(index);
@@ -398,11 +398,21 @@ impl App {
             Entry::Reasoning(reasoning) => match self.history.last_mut() {
                 Some(Entry::Reasoning(previous)) if previous.thought_for.is_none() => {
                     previous.text.push_str(&reasoning.text);
-                    if reasoning.thought_for.is_some() {
+                    let closes_thought = reasoning.thought_for.is_some();
+                    if closes_thought {
                         previous.thought_for = reasoning.thought_for;
                     }
                     let index = self.history.len().saturating_sub(1);
-                    self.history.lines_mut().invalidate_from(index);
+                    if closes_thought {
+                        // The thought summary appends a suffix line the
+                        // incremental path cannot produce; re-render the entry.
+                        self.history.lines_mut().invalidate_from(index);
+                    } else {
+                        // Streamed reasoning text extends in place like
+                        // assistant text; re-rendering the whole entry per
+                        // delta made long thoughts quadratic.
+                        self.history.lines_mut().entry_appended(index);
+                    }
                 }
                 _ => {
                     let index = self.history.len();

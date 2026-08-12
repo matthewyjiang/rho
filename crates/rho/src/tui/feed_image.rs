@@ -360,6 +360,7 @@ impl super::App {
     pub(super) fn visible_history_image_placements(
         &mut self,
         width: usize,
+        settings: super::history_cache::HistoryRenderSettings,
         start: usize,
         count: usize,
     ) -> Vec<VisibleImagePlacement> {
@@ -376,7 +377,6 @@ impl super::App {
         let transcript_start = start.saturating_sub(header_len);
         let transcript_count = count.saturating_sub(visible_header_lines);
         let cwd = self.info.runtime.cwd.clone();
-        let settings = self.history_render_settings(width);
         let mut placements =
             self.history
                 .with_lines_and_images_mut(|history_lines, entries, markdown_images| {

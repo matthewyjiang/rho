@@ -65,6 +65,10 @@ struct ThemeState {
     active_scheme: Option<ColorScheme>,
     /// Bumps when active colors change so history cache rebuilds.
     generation: u64,
+    /// Derived palette for the active colors. Style accessors run per span on
+    /// render hot paths, so the blend/luminance work happens once per theme
+    /// change instead of once per call.
+    palette: Option<Palette>,
     /// Schemes retained from the open theme picker so preview/apply do not
     /// re-read custom theme files while browsing.
     picker_catalog: Option<HashMap<String, ColorScheme>>,
@@ -77,6 +81,7 @@ impl ThemeState {
             active_id: String::new(),
             active_scheme: None,
             generation: 0,
+            palette: None,
             picker_catalog: None,
         }
     }
@@ -184,13 +189,18 @@ struct Palette {
 
 impl Palette {
     fn current() -> Self {
-        let state = THEME_STATE
+        let mut state = THEME_STATE
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        match state.active_scheme.as_ref() {
+        if let Some(palette) = state.palette {
+            return palette;
+        }
+        let palette = match state.active_scheme.as_ref() {
             Some(scheme) => Self::from_scheme(scheme),
             None => Self::from_terminal(TERMINAL_SAMPLE.get()),
-        }
+        };
+        state.palette = Some(palette);
+        palette
     }
 
     fn from_terminal(terminal: Option<&TerminalPalette>) -> Self {
@@ -357,6 +367,12 @@ impl Theme {
     pub(super) fn initialize_from_terminal() {
         if let Some(palette) = query_terminal_palette() {
             let _ = TERMINAL_SAMPLE.set(palette);
+            // The sample feeds the terminal-mode palette; drop any derived
+            // palette computed before the sample landed.
+            THEME_STATE
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .palette = None;
         }
     }
 
@@ -786,6 +802,7 @@ fn apply_theme_id(id: &str, commit: bool) {
         state.active_id = resolved_id;
         state.active_scheme = scheme;
         state.generation = state.generation.saturating_add(1);
+        state.palette = None;
     }
 }
 

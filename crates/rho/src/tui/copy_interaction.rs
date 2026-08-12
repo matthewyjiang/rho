@@ -11,24 +11,6 @@ pub(super) struct CodeBlockCopyTarget {
     pub(super) text: Arc<str>,
 }
 
-pub(super) fn code_block_copy_target_at(
-    targets: &[CodeBlockCopyTarget],
-    history: Rect,
-    history_start: usize,
-    column: u16,
-    row: u16,
-) -> Option<CodeBlockCopyTarget> {
-    if !history.contains(Position { x: column, y: row }) {
-        return None;
-    }
-    let line = history_start.saturating_add(row.saturating_sub(history.y) as usize);
-    let relative_column = column.saturating_sub(history.x) as usize;
-    targets
-        .iter()
-        .find(|target| target.line == line && target.columns.contains(&relative_column))
-        .cloned()
-}
-
 pub(super) fn selection_position(
     history: Rect,
     history_start: usize,
