@@ -694,6 +694,17 @@ const ALL_SCENARIOS: &[Scenario] = &[
     )
     .with_setup(setup_auto_without_classifier)
     .with_env(OPENAI_KEY_ENV),
+    // Custom multi-process scenario: see config::run_auto_recovered_handoff.
+    Scenario::new(
+        config::AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID,
+        "Resume a session under Auto without a classifier and force the model pick",
+        PtySize {
+            rows: 16,
+            cols: 100,
+        },
+        &[],
+        /*smoke*/ false,
+    ),
     Scenario::new(
         "progress_tool",
         "Run the fixture progress tool to completion",
@@ -812,6 +823,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
         size: DEFAULT_SIZE,
         setup: Some(setup_edit_user_agent),
         env: &[],
+        args: &[],
         steps: EDIT_USER_AGENT_STEPS,
         smoke: false,
     },
@@ -916,6 +928,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
         size: DEFAULT_SIZE,
         setup: Some(setup_advisor_without_model),
         env: XAI_KEY_ENV,
+        args: &[],
         steps: ADVISOR_MISSING_MODEL_STEPS,
         smoke: false,
     },
@@ -925,6 +938,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
         size: DEFAULT_SIZE,
         setup: Some(setup_advisor_ready),
         env: XAI_KEY_ENV,
+        args: &[],
         steps: ADVISOR_REVIEW_STEPS,
         smoke: false,
     },
@@ -956,6 +970,9 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
         .ok_or_else(|| anyhow::anyhow!("unknown scenario '{name}'"))?;
     if workflow::is_workflow_scenario(name) {
         return workflow::run(runner, name);
+    }
+    if config::is_auto_recovered_handoff_scenario(name) {
+        return config::run_auto_recovered_handoff(runner);
     }
     runner.run(scenario)
 }

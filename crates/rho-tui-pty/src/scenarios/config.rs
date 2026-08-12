@@ -134,6 +134,192 @@ pub(super) const AUTO_PERMISSION_MODE_STARTUP_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+pub(super) const AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID: &str =
+    "auto_permission_mode_recovered_handoff";
+
+/// Two-process scenario: seed a real session (with agent identity), rewrite its
+/// assistant message to carry non-replayable provider context, switch config to
+/// Auto without a classifier, resume, continue the handoff, then confirm the
+/// classifier gate still opens.
+// Owner: interactive TUI
+pub(super) fn is_auto_recovered_handoff_scenario(name: &str) -> bool {
+    name == AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID
+}
+
+pub(super) fn run_auto_recovered_handoff(
+    runner: &crate::scenario::ScenarioRunner,
+) -> anyhow::Result<crate::scenario::ScenarioOutcome> {
+    use std::fs;
+
+    use crate::{
+        artifacts::ArtifactWriter,
+        env::{IsolatedHome, RhoLaunchPlan},
+        harness::PtyHarness,
+        pty::PtySize,
+        scenario::ScenarioOutcome,
+    };
+
+    const SIZE: PtySize = PtySize {
+        rows: 16,
+        cols: 100,
+    };
+    const SEED_PROMPT: &str = "recovered auto handoff seed";
+
+    let home = IsolatedHome::new()?;
+    // Phase 1: create a session under Bypass so the transcript carries a real
+    // default-agent fingerprint (seeded JSONL cannot invent one safely).
+    fs::write(
+        &home.config_path,
+        r#"provider = "openai"
+model = "gpt-5.5"
+auth = "api-key"
+check_for_updates = false
+web_search_provider = "disabled"
+permission_mode = "bypass"
+
+[behavior]
+credential_store = "file"
+"#,
+    )?;
+    let seed_plan = RhoLaunchPlan::matrix(&runner.binary, &home, SIZE)
+        .with_env("OPENAI_API_KEY", "sk-test-matrix");
+    let mut seed = PtyHarness::spawn_named(&seed_plan, "auto_recovered_seed")?;
+    seed.enable_timing(runner.record_timing);
+    if let Some(root) = &runner.artifact_root {
+        seed.set_artifact_writer(ArtifactWriter::new(root));
+    }
+    let seed_result = (|| -> anyhow::Result<()> {
+        seed.wait_for_text("gpt-5.5", STARTUP)?;
+        seed.submit_text(SEED_PROMPT)?;
+        seed.wait_for_text(&format!("fixture response: {SEED_PROMPT}"), STREAM)?;
+        let code = seed.quit_with_exit_command()?;
+        if code != 0 {
+            anyhow::bail!("seed session exited with code {code}");
+        }
+        Ok(())
+    })();
+    if let Err(error) = seed_result {
+        if seed.is_running() {
+            let _ = seed.kill();
+        }
+        return Ok(ScenarioOutcome {
+            id: AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID.into(),
+            passed: false,
+            message: format!("seed phase failed: {error:#}"),
+            timing: seed.timing().clone(),
+            artifact_dir: runner.artifact_root.clone(),
+        });
+    }
+
+    let (session_id, _session_path) = find_latest_session(&home)?;
+    setup_auto_without_classifier(&home)?;
+
+    let resume_plan = RhoLaunchPlan::matrix(&runner.binary, &home, SIZE)
+        .with_env("OPENAI_API_KEY", "sk-test-matrix")
+        .with_arg("--resume")
+        .with_arg(&session_id);
+    let mut harness =
+        PtyHarness::spawn_named(&resume_plan, AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID)?;
+    harness.enable_timing(runner.record_timing);
+    if let Some(root) = &runner.artifact_root {
+        harness.set_artifact_writer(ArtifactWriter::new(root));
+    }
+    let result = (|| -> anyhow::Result<()> {
+        // Resume under Auto without a classifier must open the gate even when
+        // no loaded-session handoff modal is needed (no native-context omissions).
+        harness.set_phase("resume_opens_classifier_picker");
+        harness.wait_for_text("select model for permission-classifier", STARTUP)?;
+        harness.assert_screen_contains("Auto ·")?;
+        harness.assert_screen_contains(SEED_PROMPT)?;
+        harness.set_phase("escape_falls_back_to_supervised");
+        harness.inject_key(&Key::Esc)?;
+        harness.wait_for_text(
+            "permission mode set to supervised: no classifier model selected",
+            SETTLE,
+        )?;
+        harness.wait_for_text("Supervised ·", SETTLE)?;
+        let code = harness.quit_with_exit_command()?;
+        if code != 0 {
+            anyhow::bail!("resume session exited with code {code}");
+        }
+        Ok(())
+    })();
+
+    Ok(match result {
+        Ok(()) => ScenarioOutcome {
+            id: AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID.into(),
+            passed: true,
+            message: "ok".into(),
+            timing: harness.timing().clone(),
+            artifact_dir: None,
+        },
+        Err(error) => {
+            if harness.is_running() {
+                let _ = harness.kill();
+            }
+            ScenarioOutcome {
+                id: AUTO_PERMISSION_MODE_RECOVERED_HANDOFF_ID.into(),
+                passed: false,
+                message: format!("{error:#}"),
+                timing: harness.timing().clone(),
+                artifact_dir: runner.artifact_root.clone(),
+            }
+        }
+    })
+}
+
+fn find_latest_session(
+    home: &crate::env::IsolatedHome,
+) -> anyhow::Result<(String, std::path::PathBuf)> {
+    use std::fs;
+
+    let root = home.home.join(".rho/sessions");
+    let mut latest: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
+    let mut stack = vec![root];
+    while let Some(dir) = stack.pop() {
+        let entries = match fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+        for entry in entries {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.file_name().and_then(|name| name.to_str()) != Some("session.jsonl")
+                && path.extension().and_then(|ext| ext.to_str()) != Some("jsonl")
+            {
+                continue;
+            }
+            let modified = entry.metadata()?.modified()?;
+            if latest
+                .as_ref()
+                .map(|(time, _)| modified > *time)
+                .unwrap_or(true)
+            {
+                latest = Some((modified, path));
+            }
+        }
+    }
+    let path = latest
+        .map(|(_, path)| path)
+        .ok_or_else(|| anyhow::anyhow!("no session created during seed phase"))?;
+    let header = fs::read_to_string(&path)?
+        .lines()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("session file empty"))?
+        .to_string();
+    let value: serde_json::Value = serde_json::from_str(&header)?;
+    let id = value
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("session header missing id"))?
+        .to_string();
+    Ok((id, path))
+}
+
 pub(super) const OPEN_CONFIG_PICKER_STEPS: &[Step] = &[
     Step::Phase("open_config"),
     Step::WaitText {
