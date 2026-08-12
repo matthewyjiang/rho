@@ -192,6 +192,36 @@ fn fixed_light_scheme_uses_rgb_dim_and_surface() {
     Theme::apply_committed("terminal");
 }
 
+// Covers: add/remove chrome uses role fg signs, soft wash, base content text
+// Owner: tui theme palette mapping
+#[test]
+fn scheme_diff_chrome_washes_row_with_fg_signs() {
+    let _guard = theme_test_lock();
+    Theme::apply_committed("terminal");
+    Theme::apply_committed("one-half-dark");
+    let palette = Palette::current();
+    let add_wash = palette.diff_add_wash.expect("add wash").color;
+    let del_wash = palette.diff_del_wash.expect("del wash").color;
+    assert_ne!(add_wash, del_wash);
+
+    let add = Theme::tool_diff_chrome(rho_tools::tool_card::DiffRowKind::Added);
+    let del = Theme::tool_diff_chrome(rho_tools::tool_card::DiffRowKind::Removed);
+    // Signs: role foreground on the same soft wash as the row (not a solid gutter).
+    assert_eq!(add.sign.fg, Some(palette.success));
+    assert_eq!(del.sign.fg, Some(palette.error));
+    assert_eq!(add.sign.bg, Some(add_wash));
+    assert_eq!(del.sign.bg, Some(del_wash));
+    // washed() carries the row wash onto column bases (content uses Theme::text).
+    assert_eq!(add.washed(Theme::tool_diff_gutter()).bg, Some(add_wash));
+    assert_eq!(del.washed(Theme::text()).bg, Some(del_wash));
+    // Context has no wash or role sign.
+    let ctx = Theme::tool_diff_chrome(rho_tools::tool_card::DiffRowKind::Context);
+    assert_eq!(ctx.sign, Theme::text());
+    assert_eq!(ctx.washed(Theme::text()).bg, None);
+
+    Theme::apply_committed("terminal");
+}
+
 // Covers: brand/version roles use sampled terminal RGB, not bare Color::Cyan/Green
 // Owner: tui theme palette mapping
 #[test]
@@ -215,10 +245,17 @@ fn terminal_palette_drives_brand_and_success_rgb() {
     assert_eq!(palette.error, Color::Rgb(100, 110, 120));
     assert_eq!(palette.skill, Color::Rgb(130, 140, 150));
 
+    // Sampled green/red also drive optional diff row washes.
+    assert!(palette.diff_add_wash.is_some());
+    assert!(palette.diff_del_wash.is_some());
+
     // Without a sample, keep named ANSI so the host can still paint them.
+    // Skip harsh named-ANSI backgrounds for diff chrome.
     let fallback = Palette::from_terminal(None);
     assert_eq!(fallback.accent, Color::Cyan);
     assert_eq!(fallback.success, Color::Green);
+    assert!(fallback.diff_add_wash.is_none());
+    assert!(fallback.diff_del_wash.is_none());
 }
 
 // Covers: bright warning yellow is darkened on light surfaces for Auto/status text

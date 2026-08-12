@@ -15,6 +15,9 @@ use super::{
     theme_terminal::{query_terminal_palette, AnsiColor, TerminalPalette},
 };
 
+#[path = "theme_diff.rs"]
+mod theme_diff;
+
 const USER_BACKGROUND_ALPHA: f32 = 0.10;
 const NEUTRAL_TOOL_BACKGROUND_ALPHA: f32 = 0.10;
 // Light/dark split for palette-derived chrome. Matches the existing block
@@ -173,6 +176,10 @@ struct Palette {
     skill: Color,
     user_background: BlockColor,
     neutral_tool_background: BlockColor,
+    /// Add-side row wash. Absent without sampled RGB.
+    diff_add_wash: Option<BlockColor>,
+    /// Delete-side row wash. Absent without sampled RGB.
+    diff_del_wash: Option<BlockColor>,
 }
 
 impl Palette {
@@ -188,6 +195,7 @@ impl Palette {
 
     fn from_terminal(terminal: Option<&TerminalPalette>) -> Self {
         let surface = terminal.map(|palette| palette.background);
+        let (diff_add_wash, diff_del_wash) = theme_diff::terminal_diff_washes(terminal);
         Self {
             text: None,
             surface: None,
@@ -214,12 +222,15 @@ impl Palette {
                 NEUTRAL_TOOL_BACKGROUND_ALPHA,
                 BlockColor::from_color(Color::DarkGray),
             ),
+            diff_add_wash,
+            diff_del_wash,
         }
     }
 
     fn from_scheme(scheme: &ColorScheme) -> Self {
         let panel = scheme_panel_background(scheme);
         let surface = scheme.background;
+        let (diff_add_wash, diff_del_wash) = theme_diff::scheme_diff_washes(scheme);
         Self {
             text: Some(scheme.foreground.color()),
             surface: Some(scheme.background.color()),
@@ -237,6 +248,8 @@ impl Palette {
             ),
             user_background: panel,
             neutral_tool_background: panel,
+            diff_add_wash,
+            diff_del_wash,
         }
     }
 }
@@ -704,19 +717,6 @@ impl Theme {
         Style::default().fg(Palette::current().error)
     }
 
-    /// Text color for one diff row. Context stays plain so changes stand out.
-    pub(super) fn tool_diff_text(kind: rho_tools::tool_card::DiffRowKind) -> Style {
-        use rho_tools::tool_card::DiffRowKind;
-        let palette = Palette::current();
-        match kind {
-            DiffRowKind::Added => Style::default().fg(palette.success),
-            DiffRowKind::Removed => Style::default().fg(palette.error),
-            DiffRowKind::Context | DiffRowKind::File | DiffRowKind::Skip | DiffRowKind::Meta => {
-                Self::text()
-            }
-        }
-    }
-
     /// Line-number gutter. The sign carries the change, so numbers stay chrome.
     pub(super) fn tool_diff_gutter() -> Style {
         Self::dim()
@@ -832,9 +832,15 @@ fn blended_or_fallback(
     alpha: f32,
     fallback: BlockColor,
 ) -> BlockColor {
-    terminal
-        .and_then(|palette| palette.blended_background(color, alpha))
-        .unwrap_or(fallback)
+    optional_blended(terminal, color, alpha).unwrap_or(fallback)
+}
+
+fn optional_blended(
+    terminal: Option<&TerminalPalette>,
+    color: AnsiColor,
+    alpha: f32,
+) -> Option<BlockColor> {
+    terminal.and_then(|palette| palette.blended_background(color, alpha))
 }
 
 #[cfg(test)]
