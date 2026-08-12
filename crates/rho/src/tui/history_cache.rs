@@ -53,6 +53,63 @@ impl HistoryRenderSettings {
     pub(super) fn hides_entry(self, entry: &Entry) -> bool {
         self.zen_mode && matches!(entry, Entry::Tool(_) | Entry::Reasoning(_))
     }
+
+    /// Width or theme changes reflow or restyle every cached line.
+    fn requires_full_rebuild(self, previous: Self) -> bool {
+        self.width != previous.width || self.theme_generation != previous.theme_generation
+    }
+}
+
+/// Soft layout knobs that can update discrete entries without dropping the
+/// whole transcript suffix.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SoftSettingsDelta {
+    image_height: bool,
+    tool_output: bool,
+    zen: bool,
+}
+
+impl SoftSettingsDelta {
+    fn between(previous: HistoryRenderSettings, next: HistoryRenderSettings) -> Option<Self> {
+        if previous.requires_full_rebuild(next) || previous == next {
+            return None;
+        }
+        let delta = Self {
+            image_height: previous.max_image_height != next.max_image_height,
+            tool_output: previous.max_tool_output_lines != next.max_tool_output_lines,
+            zen: previous.zen_mode != next.zen_mode,
+        };
+        (delta.image_height || delta.tool_output || delta.zen).then_some(delta)
+    }
+
+    fn resplice_indices(self, entries: &[Entry]) -> Vec<usize> {
+        entries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entry)| {
+                let needed = match entry {
+                    Entry::Tool(tool) => {
+                        self.tool_output || self.zen || (self.image_height && tool.image.is_some())
+                    }
+                    Entry::Reasoning(reasoning) => {
+                        self.zen
+                            || (self.image_height
+                                && !super::markdown_image::collect_markdown_image_sources(
+                                    &reasoning.text,
+                                )
+                                .is_empty())
+                    }
+                    Entry::Assistant(text) => {
+                        self.image_height
+                            && !super::markdown_image::collect_markdown_image_sources(text)
+                                .is_empty()
+                    }
+                    _ => false,
+                };
+                needed.then_some(index)
+            })
+            .collect()
+    }
 }
 
 #[derive(Default)]
@@ -71,6 +128,10 @@ pub(super) struct HistoryLineCache {
     appended_assistant: Option<usize>,
     /// When set, the last entry is still being streamed and must not own a trailing blank.
     open_stream_tail: bool,
+    /// Test-only: counts `push_rendered_entry` calls so soft settings updates
+    /// can prove they skipped work on text-only transcripts.
+    #[cfg(test)]
+    entry_renders: u64,
 }
 
 impl HistoryLineCache {
@@ -167,9 +228,18 @@ impl HistoryLineCache {
         image_resolver: EntryImageResolver<'_>,
     ) -> Option<usize> {
         self.ensure_current(entries, settings, image_resolver);
+        // Ranges are contiguous and sorted by start; binary search scales with
+        // long transcripts where linear scan showed up in mouse hit-testing.
+        let index = self.entry_ranges.partition_point(|range| range.end <= line);
         self.entry_ranges
-            .iter()
-            .position(|range| range.contains(&line))
+            .get(index)
+            .filter(|range| range.contains(&line))
+            .map(|_| index)
+    }
+
+    #[cfg(test)]
+    pub(super) fn entry_render_count(&self) -> u64 {
+        self.entry_renders
     }
 
     pub(super) fn extend_visible_lines(
@@ -229,15 +299,34 @@ impl HistoryLineCache {
         image_resolver: EntryImageResolver<'_>,
     ) {
         if self.settings != Some(settings) {
-            self.settings = Some(settings);
-            self.lines.clear();
-            self.entry_ranges.clear();
-            self.assistant_caches.clear();
-            self.code_blocks.clear();
-            self.image_placements.clear();
-            self.appended_assistant = None;
-            self.resplice.clear();
-            self.dirty_from = Some(0);
+            let soft = self
+                .settings
+                .and_then(|previous| SoftSettingsDelta::between(previous, settings));
+            if let Some(delta) = soft {
+                // Soft knobs (image budget, tool collapse height, zen) only
+                // touch discrete entries. Keep the warm suffix so long
+                // transcripts do not re-markdown on every composer resize.
+                self.settings = Some(settings);
+                let indices = delta.resplice_indices(entries);
+                if !indices.is_empty() {
+                    if let Some(dirty) = self.dirty_from {
+                        let min = indices.iter().copied().min().unwrap_or(dirty);
+                        self.dirty_from = Some(dirty.min(min));
+                    } else {
+                        self.resplice_entries(indices);
+                    }
+                }
+            } else {
+                self.settings = Some(settings);
+                self.lines.clear();
+                self.entry_ranges.clear();
+                self.assistant_caches.clear();
+                self.code_blocks.clear();
+                self.image_placements.clear();
+                self.appended_assistant = None;
+                self.resplice.clear();
+                self.dirty_from = Some(0);
+            }
         }
 
         match entries.len().cmp(&self.entry_ranges.len()) {
@@ -431,6 +520,10 @@ impl HistoryLineCache {
         settings: HistoryRenderSettings,
         image_resolver: EntryImageResolver<'_>,
     ) {
+        #[cfg(test)]
+        {
+            self.entry_renders = self.entry_renders.saturating_add(1);
+        }
         let range_start = self.lines.len();
         let Some(rendered) = prepare_cache_entry_render(
             entry,

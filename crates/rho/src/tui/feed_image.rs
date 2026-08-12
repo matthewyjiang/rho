@@ -56,6 +56,11 @@ pub(super) fn max_feed_image_height(terminal_height: usize) -> u16 {
 /// height never allows a reservation taller than the visible content rows, so
 /// [`visible_image_placements`] can still return a fully paintable block after
 /// composer chrome shrinks the pane.
+///
+/// The content cap snaps down to the same discrete bands as
+/// [`max_feed_image_height`] (or the raw height when below the compact floor).
+/// Without that snap, a one-row composer or activity change rewrites
+/// `max_image_height` and forces a full transcript line-cache rebuild.
 pub(super) fn feed_image_height_budget(
     terminal_height: usize,
     history_content_height: usize,
@@ -68,11 +73,30 @@ pub(super) fn feed_image_height_budget(
     if history_content_height == 0 {
         preferred
     } else {
-        let cap = u16::try_from(history_content_height)
-            .unwrap_or(u16::MAX)
-            .max(1);
-        preferred.min(cap)
+        preferred.min(quantize_content_image_cap(history_content_height))
     }
+}
+
+/// Largest feed-image band that still fits in `history_content_height`.
+///
+/// Heights below [`COMPACT_IMAGE_HEIGHT`] stay exact so tiny panes keep a tight
+/// paintable cap. Larger panes jump between the stable terminal bands.
+pub(super) fn quantize_content_image_cap(history_content_height: usize) -> u16 {
+    let height = u16::try_from(history_content_height)
+        .unwrap_or(u16::MAX)
+        .max(1);
+    for band in [
+        MAX_IMAGE_HEIGHT,
+        TALL_IMAGE_HEIGHT,
+        DEFAULT_IMAGE_HEIGHT,
+        MIN_IMAGE_HEIGHT,
+        COMPACT_IMAGE_HEIGHT,
+    ] {
+        if height >= band {
+            return band;
+        }
+    }
+    height
 }
 
 /// Row budget for fitting a feed or composer image into the terminal grid.

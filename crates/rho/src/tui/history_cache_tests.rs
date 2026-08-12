@@ -596,3 +596,72 @@ fn resplice_tool_expand_preserves_later_assistant_lines() {
     );
     assert_eq!(collapsed.len(), total_before);
 }
+
+// Covers: composer/activity height changes must not re-render a text-only
+// transcript when only the feed image budget moved.
+// Owner: history line cache
+#[test]
+fn image_height_only_change_skips_text_only_entry_renders() {
+    let mut cache = HistoryLineCache::default();
+    let entries = vec![
+        Entry::User("prompt".into()),
+        Entry::Assistant("reply with `code` and **bold**".into()),
+        Entry::Reasoning(crate::tui::ReasoningEntry::new("plan")),
+    ];
+    let mut base = settings(80);
+    let _ = cache.line_count(&entries, base, &no_images);
+    let renders_after_cold = cache.entry_render_count();
+    assert!(renders_after_cold >= 3);
+
+    base.max_image_height = base.max_image_height.saturating_add(8);
+    let mut lines = Vec::new();
+    cache.extend_visible_lines(
+        &entries,
+        base,
+        HistoryLineSlice {
+            start: 0,
+            count: usize::MAX,
+        },
+        &mut lines,
+        &no_images,
+    );
+    assert_eq!(
+        cache.entry_render_count(),
+        renders_after_cold,
+        "text-only soft image-budget updates must not re-render entries"
+    );
+    assert!(!lines.is_empty());
+}
+
+// Covers: mouse hit-testing still maps lines to entries after binary search.
+// Owner: history line cache
+#[test]
+fn entry_index_at_line_finds_ranges_across_transcript() {
+    let mut cache = HistoryLineCache::default();
+    let entries = vec![
+        Entry::User("one".into()),
+        Entry::Assistant("two\nthree".into()),
+        Entry::Notice("four".into()),
+    ];
+    let s = settings(40);
+    let total = cache.line_count(&entries, s, &no_images);
+    assert!(total > 3);
+    assert_eq!(
+        cache.entry_index_at_line(&entries, s, 0, &no_images),
+        Some(0)
+    );
+    let assistant_start = cache.entry_ranges[1].start;
+    assert_eq!(
+        cache.entry_index_at_line(&entries, s, assistant_start, &no_images),
+        Some(1)
+    );
+    let last_line = total.saturating_sub(1);
+    assert_eq!(
+        cache.entry_index_at_line(&entries, s, last_line, &no_images),
+        Some(2)
+    );
+    assert_eq!(
+        cache.entry_index_at_line(&entries, s, total + 5, &no_images),
+        None
+    );
+}
