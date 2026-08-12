@@ -1,6 +1,6 @@
 # Cursor
 
-Cursor uses Cursor's PKCE login and talks to Cursor's AgentService over Connect/protobuf. Rho owns tools; Cursor native tools are rejected so the model uses Rho MCP tools. For shared concepts such as credential storage and model selection, see [authentication and models](/authentication-and-models).
+Cursor uses Cursor's PKCE login and talks to Cursor's AgentService over Connect/protobuf. Rho owns tools; Cursor native tools are rejected so the model uses Rho MCP tools. Bash accepts Cursor's `block_until_ms` timeout. Whole numbers on MCP calls become integers, so `timeout_seconds` parses instead of failing. For shared concepts such as credential storage and model selection, see [authentication and models](/authentication-and-models).
 
 ## At a glance
 
@@ -9,7 +9,8 @@ Cursor uses Cursor's PKCE login and talks to Cursor's AgentService over Connect/
 | Provider | `cursor` |
 | Auth | `cursor-oauth` |
 | Environment override | `CURSOR_ACCESS_TOKEN` |
-| API base | `https://api2.cursor.sh` |
+| Login / token | `https://api2.cursor.sh` |
+| AgentService | `https://agentn.global.api5.cursor.sh` (HTTP/2) |
 | Model list | Refreshable after authentication |
 | Default model | `auto` |
 
@@ -52,6 +53,8 @@ Cursor exposes `cursor/<model>` names from GetUsableModels, including `auto` for
 ```
 
 Fast variants are not separate picker rows. Cursor encodes Fast as a trailing `-fast` model id. Use `/fast on` or `/fast off` (or `/fast` to toggle). Rho saves the choice as `model.fast_mode`, shows `(fast)` after the active model name, and sends the `-fast` id on later turns. `auto` and product names such as `grok-code-fast-1` do not support the switch.
+
+Reasoning works the same way. Cursor encodes effort as a trailing `-low`, `-medium`, `-high`, or `-xhigh` model id. Rho collapses those variants into one catalog row and puts only the levels it actually saw in `/config` → **Models & reasoning**. Grok 4.6 advertises `xhigh` when Cursor returns a `-xhigh` id. The selected level is written back onto the wire id, so Fast plus extra-high Grok is `grok-4.6-xhigh-fast`.
 
 For a non-interactive run, pass the matching provider, auth mode, and model. These flags also update the persistent default:
 

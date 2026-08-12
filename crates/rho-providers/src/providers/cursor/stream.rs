@@ -96,7 +96,14 @@ pub(super) async fn run_turn(
     } else {
         CursorSpeed::Standard
     };
-    let turn = build_cursor_turn(&provider.model_identity(), &provider.model, request, speed)?;
+    let effort = super::models::run_effort(&provider.model, request.reasoning_level);
+    let turn = build_cursor_turn(
+        &provider.model_identity(),
+        &provider.model,
+        request,
+        speed,
+        effort,
+    )?;
     let token = provider.auth.access_token().await?;
     let (tx, response) = send_run(provider, &turn.request_bytes, &token).await?;
     let response = if response.status() == StatusCode::UNAUTHORIZED {
@@ -116,6 +123,9 @@ pub(super) async fn run_turn(
     };
     if response.status() == StatusCode::UNAUTHORIZED {
         return Err(missing_credentials_error("cursor"));
+    }
+    if let Some(error) = super::incompatible_protocol(response.status()) {
+        return Err(error);
     }
     let response = http_error::error_for_status(response).await?;
     read_run_stream(response, turn, tx, on_event).await

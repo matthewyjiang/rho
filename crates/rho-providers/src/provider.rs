@@ -27,7 +27,10 @@ pub const MOONSHOT_API_BASE: &str = "https://api.moonshot.ai/v1";
 pub const POOLSIDE_API_BASE: &str = "https://inference.poolside.ai/v1";
 pub const OPENROUTER_API_BASE: &str = "https://openrouter.ai/api/v1";
 pub const KIMI_CODE_API_BASE: &str = "https://api.kimi.com/coding/v1";
+/// Login, token poll, and refresh host. AgentService is not served here.
 pub const CURSOR_API_BASE: &str = "https://api2.cursor.sh";
+/// Cursor AgentService host for `Run` and `GetUsableModels`. Requires HTTP/2.
+pub const CURSOR_AGENT_API_BASE: &str = "https://agentn.global.api5.cursor.sh";
 /// Default OpenAI-compatible Token Plan base (Singapore / international).
 pub const QWEN_TOKEN_PLAN_API_BASE: &str =
     "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1";
@@ -237,8 +240,8 @@ impl ProviderDescriptor {
     ///
     /// For [`ModelIdCodec::ProviderPrefixed`], strips leading `{name}/` segments
     /// so legacy wire ids and double-prefixed favorites collapse to one internal id.
-    /// Cursor also strips a trailing `-fast` variant so Fast is a `/fast` switch
-    /// rather than a distinct catalog id.
+    /// Cursor also strips trailing `-fast` and effort suffixes so Fast and
+    /// reasoning are picker switches rather than distinct catalog ids.
     pub fn canonicalize_model_id(&self, model: &str) -> String {
         let model = match self.model_id_codec {
             ModelIdCodec::Plain => model.to_string(),

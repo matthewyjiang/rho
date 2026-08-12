@@ -279,7 +279,7 @@ impl ProviderBuilder {
                     self.options.model,
                     auth,
                     client,
-                    endpoint.unwrap_or_else(|| crate::provider::CURSOR_API_BASE.into()),
+                    endpoint.unwrap_or_else(|| crate::provider::CURSOR_AGENT_API_BASE.into()),
                 )))
             }
             _ => Err(ModelError::InvalidResponse(format!(

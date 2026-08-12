@@ -49,13 +49,14 @@ fn poolside_model_id_codec_canonicalizes_and_expands_wire_ids() {
 fn cursor_canonicalizes_trailing_fast_variant_ids() {
     let cursor = super::provider_descriptor_by_id(super::ProviderId::Cursor);
 
-    assert_eq!(
-        cursor.canonicalize_model_id("grok-4.6-high"),
-        "grok-4.6-high"
-    );
+    assert_eq!(cursor.canonicalize_model_id("grok-4.6-high"), "grok-4.6");
     assert_eq!(
         cursor.canonicalize_model_id("grok-4.6-high-fast"),
-        "grok-4.6-high"
+        "grok-4.6"
+    );
+    assert_eq!(
+        cursor.canonicalize_model_id("grok-4.6-xhigh-fast"),
+        "grok-4.6"
     );
     assert_eq!(
         cursor.canonicalize_model_id("grok-code-fast-1"),
@@ -181,7 +182,7 @@ fn cursor_uses_oauth_and_agent_run_runtime() {
     assert_eq!(descriptor.default_model, Some("auto"));
     assert_eq!(
         descriptor.catalog_reasoning,
-        CatalogReasoningPolicy::NotConfigurable
+        CatalogReasoningPolicy::ExactAdvertised
     );
     assert!(descriptor.auth_mode("cursor-oauth").is_some());
     assert_eq!(provider_runtime("cursor"), Some(ProviderRuntime::Cursor));

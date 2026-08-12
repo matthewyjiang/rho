@@ -71,7 +71,7 @@ fn enabling_fast_mode_updates_the_runtime_and_config() {
 fn cursor_models_can_enable_fast_mode() {
     let mut app = test_app();
     app.info.runtime.provider = "cursor".into();
-    app.info.runtime.model = "grok-4.6-high".into();
+    app.info.runtime.model = "grok-4.6".into();
     let runtime = FakeRuntime::default();
 
     app.execute_fast_command_with_runtime(invocation("/fast on"), &runtime)

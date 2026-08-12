@@ -5,11 +5,16 @@ use rand::RngCore;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use crate::model::{ModelError, ModelIdentity, ModelRequest, ToolCall, ToolSpec};
+use crate::model::{
+    ModelError, ModelIdentity, ModelRequest, ReasoningCapabilities, ReasoningLevelSet, ToolCall,
+    ToolSpec,
+};
 use crate::protocol::openai_chat::{to_openai_message_for_target, OpenAiMessage};
+use crate::reasoning::ReasoningLevel;
 
 use super::connect::encode_connect_frame;
-use super::fast::{catalog_model_id, wire_model_id, CursorSpeed};
+use super::effort::{split_effort, strip_effort_display_suffix, CursorEffort};
+use super::fast::{catalog_model_id, strip_fast_suffix, wire_model_id, CursorSpeed};
 use super::proto::{
     agent_client_message, conversation_action, conversation_step, conversation_turn_structure,
     exec_client_message, exec_server_message, kv_client_message, AgentClientMessage,
@@ -22,7 +27,7 @@ use super::proto::{
     SetBlobResult, ShellRejected, ShellResult, UserMessage, UserMessageAction, WriteResult,
     WriteShellStdinError, WriteShellStdinResult,
 };
-use super::value::{json_from_protobuf_value, protobuf_value_from_json};
+use super::value::{canonicalize_json_numbers, json_from_protobuf_value, protobuf_value_from_json};
 
 pub(crate) const DEFAULT_CONTEXT_WINDOW: u64 = 200_000;
 pub(crate) const DEFAULT_MAX_OUTPUT_TOKENS: u64 = 64_000;
@@ -34,9 +39,19 @@ const NATIVE_REJECT_REASON: &str =
 pub(crate) struct CursorModel {
     pub id: String,
     pub name: String,
-    pub reasoning: bool,
+    pub reasoning_levels: Vec<ReasoningLevel>,
     pub context_window: u64,
     pub max_tokens: u64,
+}
+
+impl CursorModel {
+    pub(crate) fn reasoning_capabilities(&self) -> ReasoningCapabilities {
+        if self.reasoning_levels.is_empty() {
+            ReasoningCapabilities::NotConfigurable
+        } else {
+            ReasoningCapabilities::Levels(ReasoningLevelSet::new(self.reasoning_levels.clone()))
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -86,94 +101,101 @@ struct ParsedMessages {
     history: Vec<HistoryEntry>,
 }
 
+struct DiscoveredCursorModel {
+    id: String,
+    name: String,
+    context_window: u64,
+    max_tokens: u64,
+}
+
 pub(crate) fn fallback_models() -> Vec<CursorModel> {
-    ensure_auto_model(
-        [
-            (
-                "composer-1",
-                "Composer 1",
-                true,
-                DEFAULT_CONTEXT_WINDOW,
-                DEFAULT_MAX_OUTPUT_TOKENS,
-            ),
-            (
-                "composer-1.5",
-                "Composer 1.5",
-                true,
-                DEFAULT_CONTEXT_WINDOW,
-                DEFAULT_MAX_OUTPUT_TOKENS,
-            ),
-            (
-                "claude-4.6-opus-high",
-                "Claude 4.6 Opus",
-                true,
-                DEFAULT_CONTEXT_WINDOW,
-                128_000,
-            ),
-            (
-                "claude-4.6-sonnet-medium",
-                "Claude 4.6 Sonnet",
-                true,
-                DEFAULT_CONTEXT_WINDOW,
-                DEFAULT_MAX_OUTPUT_TOKENS,
-            ),
-            (
-                "claude-4.5-sonnet",
-                "Claude 4.5 Sonnet",
-                true,
-                DEFAULT_CONTEXT_WINDOW,
-                DEFAULT_MAX_OUTPUT_TOKENS,
-            ),
-            ("gpt-5.4-medium", "GPT-5.4", true, 272_000, 128_000),
-            ("gpt-5.2", "GPT-5.2", true, 400_000, 128_000),
-            ("gpt-5.2-codex", "GPT-5.2 Codex", true, 400_000, 128_000),
-            ("gpt-5.3-codex", "GPT-5.3 Codex", true, 400_000, 128_000),
-            (
-                "gpt-5.3-codex-spark-preview",
-                "GPT-5.3 Codex Spark",
-                true,
-                128_000,
-                128_000,
-            ),
-            (
-                "gemini-3.1-pro",
-                "Gemini 3.1 Pro",
-                true,
-                1_000_000,
-                DEFAULT_MAX_OUTPUT_TOKENS,
-            ),
-            (
-                "grok-code-fast-1",
-                "Grok Code Fast 1",
-                false,
-                128_000,
-                DEFAULT_MAX_OUTPUT_TOKENS,
-            ),
-        ]
-        .into_iter()
-        .map(
-            |(id, name, reasoning, context_window, max_tokens)| CursorModel {
-                id: id.into(),
-                name: name.into(),
-                reasoning,
-                context_window,
-                max_tokens,
-            },
-        )
-        .collect(),
-    )
+    collapse_models([
+        discovered(
+            "composer-1",
+            "Composer 1",
+            DEFAULT_CONTEXT_WINDOW,
+            DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        discovered(
+            "composer-1.5",
+            "Composer 1.5",
+            DEFAULT_CONTEXT_WINDOW,
+            DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        discovered(
+            "claude-4.6-opus-high",
+            "Claude 4.6 Opus",
+            DEFAULT_CONTEXT_WINDOW,
+            128_000,
+        ),
+        discovered(
+            "claude-4.6-sonnet-medium",
+            "Claude 4.6 Sonnet",
+            DEFAULT_CONTEXT_WINDOW,
+            DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        discovered(
+            "claude-4.5-sonnet",
+            "Claude 4.5 Sonnet",
+            DEFAULT_CONTEXT_WINDOW,
+            DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        discovered("gpt-5.4-medium", "GPT-5.4", 272_000, 128_000),
+        discovered("gpt-5.2", "GPT-5.2", 400_000, 128_000),
+        discovered("gpt-5.2-codex", "GPT-5.2 Codex", 400_000, 128_000),
+        discovered("gpt-5.3-codex", "GPT-5.3 Codex", 400_000, 128_000),
+        discovered(
+            "gpt-5.3-codex-spark-preview",
+            "GPT-5.3 Codex Spark",
+            128_000,
+            128_000,
+        ),
+        discovered(
+            "gemini-3.1-pro",
+            "Gemini 3.1 Pro",
+            1_000_000,
+            DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        discovered(
+            "grok-4.6-low",
+            "Grok 4.6",
+            DEFAULT_CONTEXT_WINDOW,
+            DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        discovered(
+            "grok-4.6-medium",
+            "Grok 4.6",
+            DEFAULT_CONTEXT_WINDOW,
+            DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        discovered(
+            "grok-4.6-high",
+            "Grok 4.6",
+            DEFAULT_CONTEXT_WINDOW,
+            DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        discovered(
+            "grok-4.6-xhigh",
+            "Grok 4.6",
+            DEFAULT_CONTEXT_WINDOW,
+            DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        discovered(
+            "grok-code-fast-1",
+            "Grok Code Fast 1",
+            128_000,
+            DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+    ])
 }
 
 pub(crate) fn models_from_details(details: &[ModelDetails]) -> Vec<CursorModel> {
-    let mut by_id = BTreeMap::new();
-    for details in details {
-        let raw_id = details.model_id.trim();
-        if raw_id.is_empty() {
-            continue;
+    collapse_models(details.iter().filter_map(|details| {
+        let id = details.model_id.trim();
+        if id.is_empty() {
+            return None;
         }
-        let id = catalog_model_id(raw_id).to_string();
-        let collapsed_from_fast = id.as_str() != raw_id;
-        let raw_name = [
+        let name = [
             details.display_name.as_str(),
             details.display_name_short.as_str(),
             details.display_model_id.as_str(),
@@ -181,36 +203,86 @@ pub(crate) fn models_from_details(details: &[ModelDetails]) -> Vec<CursorModel> 
         .into_iter()
         .map(str::trim)
         .find(|value| !value.is_empty())
-        .unwrap_or(raw_id);
-        let name = if collapsed_from_fast {
-            raw_name
-                .strip_suffix(" Fast")
-                .unwrap_or(raw_name)
-                .to_string()
-        } else {
-            raw_name.to_string()
-        };
-        let candidate = CursorModel {
-            id: id.clone(),
+        .unwrap_or(id);
+        Some(discovered(
+            id,
             name,
-            reasoning: details.thinking_details.is_some(),
-            context_window: DEFAULT_CONTEXT_WINDOW,
-            max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
-        };
-        match by_id.entry(id) {
+            DEFAULT_CONTEXT_WINDOW,
+            DEFAULT_MAX_OUTPUT_TOKENS,
+        ))
+    }))
+}
+
+fn discovered(id: &str, name: &str, context_window: u64, max_tokens: u64) -> DiscoveredCursorModel {
+    DiscoveredCursorModel {
+        id: id.into(),
+        name: name.into(),
+        context_window,
+        max_tokens,
+    }
+}
+
+/// Collapse Fast and effort suffixes into one catalog row per stem.
+///
+/// Detected effort tokens become the only reasoning levels the picker exposes.
+fn collapse_models(rows: impl IntoIterator<Item = DiscoveredCursorModel>) -> Vec<CursorModel> {
+    let mut by_id = BTreeMap::new();
+    for row in rows {
+        let raw_id = row.id.trim();
+        if raw_id.is_empty() {
+            continue;
+        }
+        let (without_fast, from_fast) = strip_fast_suffix(raw_id);
+        let (catalog, effort) = split_effort(without_fast);
+        let mut name = row.name.trim().to_string();
+        if from_fast {
+            name = name.strip_suffix(" Fast").unwrap_or(&name).to_string();
+        }
+        if effort.is_some() {
+            name = strip_effort_display_suffix(&name).to_string();
+        }
+        match by_id.entry(catalog.to_string()) {
             Entry::Vacant(entry) => {
-                entry.insert(candidate);
+                entry.insert((
+                    CursorModel {
+                        id: catalog.to_string(),
+                        name,
+                        reasoning_levels: effort.into_iter().collect(),
+                        context_window: row.context_window,
+                        max_tokens: row.max_tokens,
+                    },
+                    from_fast,
+                ));
             }
             Entry::Occupied(mut entry) => {
-                let existing = entry.get_mut();
-                existing.reasoning |= candidate.reasoning;
-                if !collapsed_from_fast {
-                    existing.name = candidate.name;
+                let (existing, existing_from_fast) = entry.get_mut();
+                if let Some(level) = effort {
+                    if !existing.reasoning_levels.contains(&level) {
+                        existing.reasoning_levels.push(level);
+                    }
+                }
+                if !from_fast {
+                    existing.name = name;
+                    *existing_from_fast = false;
+                } else if *existing_from_fast {
+                    existing.name = name;
                 }
             }
         }
     }
-    ensure_auto_model(by_id.into_values().collect())
+    ensure_auto_model(
+        by_id
+            .into_values()
+            .map(|(mut model, _)| {
+                if !model.reasoning_levels.is_empty() {
+                    model.reasoning_levels =
+                        ReasoningLevelSet::new(std::mem::take(&mut model.reasoning_levels))
+                            .into_levels();
+                }
+                model
+            })
+            .collect(),
+    )
 }
 
 fn ensure_auto_model(mut models: Vec<CursorModel>) -> Vec<CursorModel> {
@@ -220,7 +292,7 @@ fn ensure_auto_model(mut models: Vec<CursorModel>) -> Vec<CursorModel> {
             CursorModel {
                 id: "auto".into(),
                 name: "Auto".into(),
-                reasoning: false,
+                reasoning_levels: Vec::new(),
                 context_window: DEFAULT_CONTEXT_WINDOW,
                 max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
             },
@@ -234,6 +306,7 @@ pub(crate) fn build_cursor_turn(
     model: &str,
     request: ModelRequest<'_>,
     speed: CursorSpeed,
+    effort: CursorEffort,
 ) -> Result<CursorTurn, ModelError> {
     let messages = request
         .messages
@@ -255,8 +328,14 @@ pub(crate) fn build_cursor_turn(
         .unwrap_or(parsed.user_text.as_str());
     let conversation_id = deterministic_uuid(&format!("cursor-conv-id:{first_user}"));
     let mut blob_store = BlobStore::default();
-    let request_bytes =
-        encode_run_request(model, speed, &parsed, &conversation_id, &mut blob_store)?;
+    let request_bytes = encode_run_request(
+        model,
+        speed,
+        effort,
+        &parsed,
+        &conversation_id,
+        &mut blob_store,
+    )?;
     let cloud_rule = parsed
         .system_prompts
         .iter()
@@ -430,6 +509,10 @@ pub(crate) fn decode_mcp_args(args: &McpArgs) -> Result<ToolCall, ModelError> {
 }
 
 fn decode_mcp_arg_value(bytes: &[u8]) -> Value {
+    canonicalize_json_numbers(decode_mcp_arg_value_raw(bytes))
+}
+
+fn decode_mcp_arg_value_raw(bytes: &[u8]) -> Value {
     if let Ok(parsed) = prost_types::Value::decode(bytes) {
         return json_from_protobuf_value(&parsed);
     }
@@ -445,6 +528,7 @@ fn decode_mcp_arg_value(bytes: &[u8]) -> Value {
 fn encode_run_request(
     model: &str,
     speed: CursorSpeed,
+    effort: CursorEffort,
     parsed: &ParsedMessages,
     conversation_id: &str,
     blob_store: &mut BlobStore,
@@ -537,7 +621,7 @@ fn encode_run_request(
     }
     flush_turn(blob_store, &mut turn_blob_ids, &mut current_turn);
 
-    let cursor_model_id = wire_model_id(model, speed);
+    let cursor_model_id = wire_model_id(model, speed, effort);
     let display_name = if model == "auto" {
         "Auto".to_string()
     } else {

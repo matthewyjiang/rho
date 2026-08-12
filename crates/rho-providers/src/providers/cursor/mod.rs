@@ -1,4 +1,9 @@
 //! Cursor AgentService provider (OAuth + Connect/protobuf Run).
+//!
+//! Login stays on `api2.cursor.sh`. AgentService (`Run`, `GetUsableModels`)
+//! lives on `agentn.global.api5.cursor.sh` and only accepts HTTP/2. The shared
+//! reqwest client negotiates h2 through TLS ALPN (`native-tls-alpn`); HTTP/1.1
+//! is rejected by the load balancer with 464.
 
 use crate::{
     auth::cursor_token::CursorAuthManager,
@@ -59,6 +64,7 @@ impl CursorProvider {
         streaming: bool,
     ) -> reqwest::RequestBuilder {
         let mut builder = builder
+            .version(reqwest::Version::HTTP_2)
             .bearer_auth(access_token)
             .header("User-Agent", crate::rho_user_agent())
             .header("x-ghost-mode", "true")
@@ -113,6 +119,16 @@ impl CursorProvider {
 }
 
 crate::impl_sdk_model_provider!(CursorProvider, request_options);
+
+/// AWS ALBs return 464 when the client speaks HTTP/1.1 to an HTTP/2 target.
+fn incompatible_protocol(status: reqwest::StatusCode) -> Option<ModelError> {
+    (status.as_u16() == 464).then(|| {
+        ModelError::InvalidResponse(
+            "Cursor AgentService requires HTTP/2; the load balancer rejected HTTP/1.1 (HTTP 464)"
+                .into(),
+        )
+    })
+}
 
 fn request_id() -> String {
     let mut bytes = [0u8; 16];

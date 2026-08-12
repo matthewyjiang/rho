@@ -423,7 +423,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_refresh: Some(ProviderModelRefreshKind::Cursor),
         model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "cursor",
-        catalog_reasoning: CatalogReasoningPolicy::NotConfigurable,
+        catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
         default_model: Some("auto"),
     },
 ];

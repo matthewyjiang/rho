@@ -9,11 +9,12 @@ use super::proto::{
 use crate::model::{
     Message as ChatMessage, ModelIdentity, ModelRequest, ToolCall, ToolResult, ToolSpec,
 };
+use crate::reasoning::ReasoningLevel;
 
 use super::value::protobuf_value_from_json;
 use super::{
-    build_cursor_turn, decode_mcp_args, models_from_details, native_exec_reject,
-    ConnectFrameParser, CursorSpeed,
+    build_cursor_turn, decode_mcp_args, fallback_models, models_from_details, native_exec_reject,
+    ConnectFrameParser, CursorEffort, CursorSpeed,
 };
 
 fn identity() -> ModelIdentity {
@@ -61,6 +62,7 @@ fn trailing_user_message_uses_user_action_and_maps_auto_model() {
         "auto",
         request(&messages, &[]),
         CursorSpeed::Standard,
+        CursorEffort::Unspecified,
     )
     .unwrap();
 
@@ -90,6 +92,7 @@ fn trailing_tool_result_uses_resume_action() {
         "composer-1",
         request(&messages, &[]),
         CursorSpeed::Standard,
+        CursorEffort::Unspecified,
     )
     .unwrap();
 
@@ -124,6 +127,34 @@ fn mcp_args_decode_protobuf_values_into_tool_call_object() {
             arguments: json!({ "path": "/tmp/a.rs" }),
         }
     );
+}
+
+// Covers: protobuf NumberValue is always f64; bash timeout_seconds must decode as u64
+// Owner: cursor protocol
+#[test]
+fn mcp_args_decode_whole_numbers_as_json_integers() {
+    let mut args = McpArgs {
+        name: "bash".into(),
+        tool_name: String::new(),
+        tool_call_id: "call-timeout".into(),
+        provider_identifier: "rho".into(),
+        args: Default::default(),
+    };
+    args.args.insert(
+        "timeout_seconds".into(),
+        protobuf_value_from_json(&serde_json::Value::Number(
+            serde_json::Number::from_f64(30.0).expect("finite"),
+        ))
+        .encode_to_vec(),
+    );
+    args.args.insert(
+        "command".into(),
+        protobuf_value_from_json(&json!("true")).encode_to_vec(),
+    );
+
+    let call = decode_mcp_args(&args).unwrap();
+    assert_eq!(call.arguments["timeout_seconds"].as_u64(), Some(30));
+    assert_eq!(call.arguments["command"], json!("true"));
 }
 
 // Covers: native Cursor tools must be rejected so the model falls back to Rho MCP tools
@@ -163,7 +194,7 @@ fn discovered_models_always_include_auto() {
 
     assert_eq!(models[0].id, "auto");
     assert_eq!(models[1].id, "composer-1");
-    assert!(models[1].reasoning);
+    assert!(models[1].reasoning_levels.is_empty());
 }
 
 // Covers: Fast variants must collapse to the base catalog id so /fast is the switch
@@ -195,13 +226,73 @@ fn discovered_fast_variants_collapse_to_the_base_model() {
     ]);
 
     let ids: Vec<_> = models.iter().map(|model| model.id.as_str()).collect();
-    assert_eq!(ids, ["auto", "grok-4.6-high", "grok-code-fast-1"]);
-    let grok = models
-        .iter()
-        .find(|model| model.id == "grok-4.6-high")
-        .unwrap();
+    assert_eq!(ids, ["auto", "grok-4.6", "grok-code-fast-1"]);
+    let grok = models.iter().find(|model| model.id == "grok-4.6").unwrap();
     assert_eq!(grok.name, "Grok 4.6");
-    assert!(grok.reasoning);
+    assert_eq!(grok.reasoning_levels, vec![ReasoningLevel::High]);
+}
+
+// Covers: detected effort suffixes are the only picker levels, including xhigh when present
+// Owner: cursor protocol
+#[test]
+fn discovered_effort_suffixes_become_picker_levels() {
+    let cases: &[(&[&str], &str, &[ReasoningLevel])] = &[
+        (
+            &[
+                "grok-4.6-low",
+                "grok-4.6-high",
+                "grok-4.6-xhigh",
+                "grok-4.6-xhigh-fast",
+            ],
+            "grok-4.6",
+            &[
+                ReasoningLevel::Low,
+                ReasoningLevel::High,
+                ReasoningLevel::Xhigh,
+            ],
+        ),
+        (
+            &["grok-4.6-high", "grok-4.6-medium"],
+            "grok-4.6",
+            &[ReasoningLevel::Medium, ReasoningLevel::High],
+        ),
+        (&["composer-1"], "composer-1", &[]),
+    ];
+
+    for (ids, catalog, levels) in cases {
+        let models = models_from_details(
+            &ids.iter()
+                .map(|id| ModelDetails {
+                    model_id: (*id).into(),
+                    display_model_id: String::new(),
+                    display_name: catalog.to_string(),
+                    display_name_short: String::new(),
+                    thinking_details: None,
+                })
+                .collect::<Vec<_>>(),
+        );
+        let model = models.iter().find(|model| model.id == *catalog).unwrap();
+        assert_eq!(model.reasoning_levels.as_slice(), *levels, "ids={ids:?}");
+    }
+}
+
+// Covers: fallback raw ids go through the same suffix detector, so grok 4.6 xhigh is pickable offline
+// Owner: cursor protocol
+#[test]
+fn fallback_detects_grok_46_xhigh_from_suffixed_ids() {
+    let grok = fallback_models()
+        .into_iter()
+        .find(|model| model.id == "grok-4.6")
+        .unwrap();
+    assert_eq!(
+        grok.reasoning_levels,
+        vec![
+            ReasoningLevel::Low,
+            ReasoningLevel::Medium,
+            ReasoningLevel::High,
+            ReasoningLevel::Xhigh,
+        ]
+    );
 }
 
 // Covers: /fast must land as a trailing -fast wire id, not a service-tier field
@@ -214,8 +305,26 @@ fn fast_speed_appends_trailing_fast_suffix_on_run() {
         "grok-4.6-high",
         request(&messages, &[]),
         CursorSpeed::Fast,
+        CursorEffort::Unspecified,
     )
     .unwrap();
 
     assert_eq!(run_model_id(&turn.request_bytes), "grok-4.6-high-fast");
+}
+
+// Covers: selected xhigh must compose with Fast as grok-4.6-xhigh-fast
+// Owner: cursor protocol
+#[test]
+fn xhigh_fast_composes_effort_then_speed_on_run() {
+    let messages = [ChatMessage::user_text("hello")];
+    let turn = build_cursor_turn(
+        &identity(),
+        "grok-4.6",
+        request(&messages, &[]),
+        CursorSpeed::Fast,
+        CursorEffort::Level(ReasoningLevel::Xhigh),
+    )
+    .unwrap();
+
+    assert_eq!(run_model_id(&turn.request_bytes), "grok-4.6-xhigh-fast");
 }

@@ -26,7 +26,7 @@ rho-sdk = { version = "4.0.0", path = "../rho-sdk" }
 rho-providers = { version = "1.1.1", path = "../rho-providers", default-features = false }
 rho-tools = { version = "0.17.0", path = "../rho-tools", package = "rho-agent-tools" }
 tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.12", features = ["json", "native-tls", "stream"] }
+reqwest = { version = "0.12", features = ["json", "native-tls", "native-tls-alpn", "stream"] }
 native-tls = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

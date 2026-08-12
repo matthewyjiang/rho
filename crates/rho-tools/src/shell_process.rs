@@ -25,7 +25,7 @@ pub(crate) struct ShellArgs {
 
 impl ShellArgs {
     pub(crate) fn parse(args: serde_json::Value) -> Result<Self, ToolError> {
-        Ok(serde_json::from_value(args)?)
+        Ok(serde_json::from_value(normalize_shell_timeout_args(args))?)
     }
 
     /// Returns the optional run timeout.
@@ -41,6 +41,54 @@ impl ShellArgs {
             Some(seconds) => Ok(Some(Duration::from_secs(seconds))),
         }
     }
+}
+
+/// Cursor-trained models send `block_until_ms` and protobuf-encoded floats.
+/// Map those onto `timeout_seconds` before serde so bash does not reject the call.
+fn normalize_shell_timeout_args(mut args: serde_json::Value) -> serde_json::Value {
+    let Some(object) = args.as_object_mut() else {
+        return args;
+    };
+    coerce_whole_u64_field(object, "timeout_seconds");
+    coerce_whole_u64_field(object, "block_until_ms");
+    if !matches!(
+        object.get("timeout_seconds"),
+        None | Some(serde_json::Value::Null)
+    ) {
+        object.remove("block_until_ms");
+        return args;
+    }
+    if let Some(seconds) = object
+        .get("block_until_ms")
+        .and_then(serde_json::Value::as_u64)
+        .filter(|ms| *ms > 0)
+        .map(|ms| ms.div_ceil(1000))
+    {
+        object.insert("timeout_seconds".into(), seconds.into());
+    }
+    object.remove("block_until_ms");
+    args
+}
+
+fn coerce_whole_u64_field(object: &mut serde_json::Map<String, serde_json::Value>, key: &str) {
+    let Some(value) = object.get(key) else {
+        return;
+    };
+    let Some(number) = whole_u64_from_json(value) else {
+        return;
+    };
+    object.insert(key.to_string(), number.into());
+}
+
+fn whole_u64_from_json(value: &serde_json::Value) -> Option<u64> {
+    value.as_u64().or_else(|| {
+        let float = value.as_f64()?;
+        if !float.is_finite() || !(0.0..=u64::MAX as f64).contains(&float) {
+            return None;
+        }
+        let as_u64 = float as u64;
+        (as_u64 as f64 == float).then_some(as_u64)
+    })
 }
 
 /// Platform-specific child supervision (process groups, job objects).

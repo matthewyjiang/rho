@@ -236,26 +236,41 @@ fn shell_start_card_includes_timeout_fact() {
     use rho_tools::tool_card::{ToolFact, ToolHeader, ToolStatus};
 
     let dir = tempfile::TempDir::new().unwrap();
-    let with_timeout = ToolView {
-        kind: ToolKind::Bash,
-        name: "bash".into(),
-        arguments: serde_json::json!({
-            "command": "sleep 1",
-            "timeout_seconds": 30
-        }),
-        metadata: Default::default(),
-    };
-    let card = start_card(&with_timeout, dir.path());
-    assert_eq!(card.status, ToolStatus::Running);
-    assert_eq!(card.header, ToolHeader::shell("$", Some("sleep 1".into())));
-    assert_eq!(card.facts, vec![ToolFact::Timeout { seconds: Some(30) }]);
+    let cases = [
+        (
+            serde_json::json!({"command": "sleep 1", "timeout_seconds": 30}),
+            Some(30_u64),
+        ),
+        (
+            serde_json::json!({
+                "command": "sleep 1",
+                "timeout_seconds": serde_json::Number::from_f64(30.0).expect("finite")
+            }),
+            Some(30),
+        ),
+        (
+            serde_json::json!({"command": "sleep 1", "block_until_ms": 45_000}),
+            Some(45),
+        ),
+        (serde_json::json!({"command": "true"}), None),
+    ];
 
-    let no_timeout = ToolView {
-        kind: ToolKind::Bash,
-        name: "bash".into(),
-        arguments: serde_json::json!({ "command": "true" }),
-        metadata: Default::default(),
-    };
-    let card = start_card(&no_timeout, dir.path());
-    assert_eq!(card.facts, vec![ToolFact::Timeout { seconds: None }]);
+    for (arguments, seconds) in cases {
+        let view = ToolView {
+            kind: ToolKind::Bash,
+            name: "bash".into(),
+            arguments,
+            metadata: Default::default(),
+        };
+        let card = start_card(&view, dir.path());
+        assert_eq!(card.status, ToolStatus::Running);
+        assert_eq!(
+            card.header,
+            ToolHeader::shell(
+                "$",
+                Some(view.arguments["command"].as_str().unwrap().into())
+            )
+        );
+        assert_eq!(card.facts, vec![ToolFact::Timeout { seconds }]);
+    }
 }

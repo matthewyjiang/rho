@@ -7,14 +7,16 @@ use crate::{
     },
     credentials::{load_cursor_tokens, save_cursor_tokens, CredentialStore},
     model::{
-        provider_models::ProviderModel, registry::missing_credentials_error, ModelError,
-        ReasoningCapabilities,
+        provider_models::{self, ProviderModel},
+        registry::missing_credentials_error,
+        ModelError, ReasoningCapabilities, ReasoningRequestSource,
     },
     protocol::cursor::{
-        decode_connect_unary_body, fallback_models, models_from_details, CursorModel,
-        GetUsableModelsRequest, GetUsableModelsResponse,
+        catalog_model_id, decode_connect_unary_body, fallback_models, models_from_details,
+        CursorEffort, CursorModel, GetUsableModelsRequest, GetUsableModelsResponse,
     },
-    provider::{self, CURSOR_API_BASE},
+    provider::{self, CURSOR_AGENT_API_BASE},
+    reasoning::ReasoningLevel,
 };
 
 use super::{CursorProvider, MODELS_PATH};
@@ -27,7 +29,7 @@ pub(crate) async fn fetch_usable_models(
         .timeout(std::time::Duration::from_secs(15))
         .build()?;
     let token = cursor_access_token(store, &client).await?;
-    let models = match get_usable_models(&client, &token, CURSOR_API_BASE).await {
+    let models = match get_usable_models(&client, &token, CURSOR_AGENT_API_BASE).await {
         Ok(models) if !models.is_empty() => models,
         _ => fallback_models(),
     };
@@ -76,6 +78,9 @@ async fn get_usable_models(
             .body(GetUsableModelsRequest {}.encode_to_vec())
             .send()
             .await?;
+    if let Some(error) = super::incompatible_protocol(response.status()) {
+        return Err(error);
+    }
     if !response.status().is_success() {
         return Err(http_status(response).await);
     }
@@ -99,12 +104,37 @@ async fn http_status(response: reqwest::Response) -> ModelError {
 }
 
 fn to_provider_model(provider: &str, model: CursorModel) -> ProviderModel {
+    let reasoning_capabilities = model.reasoning_capabilities();
     ProviderModel {
         provider: provider.to_string(),
         display_name: model.name,
         model: model.id,
         context_window: Some(model.context_window),
         max_output_tokens: Some(model.max_tokens),
-        reasoning_capabilities: ReasoningCapabilities::NotConfigurable,
+        reasoning_capabilities,
+    }
+}
+
+/// Map a requested reasoning level onto a Cursor effort suffix when discovery
+/// advertised that model as having effort variants.
+pub(crate) fn run_effort(model: &str, requested: ReasoningLevel) -> CursorEffort {
+    let capabilities = provider_models::cached_provider_model("cursor", model)
+        .map(|entry| entry.reasoning_capabilities)
+        .or_else(|| {
+            fallback_models()
+                .into_iter()
+                .find(|entry| entry.id == catalog_model_id(model))
+                .map(|entry| entry.reasoning_capabilities())
+        })
+        .unwrap_or(ReasoningCapabilities::NotConfigurable);
+    match &capabilities {
+        ReasoningCapabilities::Levels(_) => capabilities
+            .resolve(requested, ReasoningRequestSource::PersistedOrDefault)
+            .effective()
+            .map(CursorEffort::Level)
+            .unwrap_or(CursorEffort::Unspecified),
+        ReasoningCapabilities::NotConfigurable | ReasoningCapabilities::Unknown => {
+            CursorEffort::Unspecified
+        }
     }
 }

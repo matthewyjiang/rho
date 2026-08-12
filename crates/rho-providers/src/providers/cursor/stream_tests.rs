@@ -28,6 +28,7 @@ fn turn() -> crate::protocol::cursor::CursorTurn {
             prompt_cache_key: None,
         },
         crate::protocol::cursor::CursorSpeed::Standard,
+        crate::protocol::cursor::CursorEffort::Unspecified,
     )
     .unwrap()
 }
@@ -174,4 +175,32 @@ fn kv_set_then_get_uses_the_turn_blob_store() {
     assert!(matches!(stored, CursorHandle::Reply(_)));
     assert!(matches!(hit, CursorHandle::Reply(_)));
     assert_eq!(session.blob_store.get(b"blob-1"), Some(b"data".as_slice()));
+}
+
+// Covers: AgentService requests must advertise HTTP/2 or Cursor's ALB returns 464
+// Owner: cursor runtime
+#[test]
+fn agent_requests_advertise_http2() {
+    for streaming in [true, false] {
+        let request = super::CursorProvider::apply_headers(
+            reqwest::Client::new().post("https://example.test/agent.v1.AgentService/Run"),
+            "token",
+            streaming,
+        )
+        .build()
+        .unwrap();
+        assert_eq!(request.version(), reqwest::Version::HTTP_2);
+    }
+}
+
+// Covers: ALB protocol mismatch must name the HTTP/2 requirement, not a bare 464
+// Owner: cursor runtime
+#[test]
+fn http_464_names_the_http2_requirement() {
+    let error = super::incompatible_protocol(reqwest::StatusCode::from_u16(464).unwrap()).unwrap();
+    assert!(matches!(
+        error,
+        crate::model::ModelError::InvalidResponse(_)
+    ));
+    assert!(super::incompatible_protocol(reqwest::StatusCode::BAD_GATEWAY).is_none());
 }
