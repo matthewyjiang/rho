@@ -4,7 +4,9 @@ use prost::Message;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-use crate::model::{ContentBlock, Message as ChatMessage, ModelError, ModelRequest};
+use crate::model::{
+    ContentBlock, Message as ChatMessage, ModelError, ModelRequest, ToolCall, ToolResult,
+};
 
 use super::connect::encode_client_message;
 use super::effort::CursorEffort;
@@ -15,8 +17,14 @@ use super::proto::{
     agent_client_message, conversation_action, conversation_step, conversation_turn_structure,
     AgentClientMessage, AgentConversationTurnStructure, AgentRunRequest, AssistantMessage,
     ConversationAction, ConversationStateStructure, ConversationStep, ConversationTurnStructure,
-    McpToolDefinition, ModelDetails, RequestedModel, ResumeAction, UserMessage, UserMessageAction,
+    McpToolDefinition, ModelDetails, RequestedModel, UserMessage, UserMessageAction,
 };
+
+/// Fresh-user-turn text when Rho history ends on assistant output, not a tool result.
+///
+/// Tool follow-ups do not use this: trailing tool results become the action so
+/// Cursor cannot `ResumeAction` a stream that died mid-MCP call.
+const CONTINUE_ACTION: &str = "Continue.";
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct BlobStore {
@@ -72,17 +80,14 @@ pub(crate) fn build_cursor_turn(
     effort: CursorEffort,
 ) -> Result<CursorTurn, ModelError> {
     let parsed = parse_messages(request.messages);
-    if parsed.user_text.is_empty() && parsed.history.is_empty() {
+    if parsed.user_text.is_empty() {
         return Err(ModelError::InvalidResponse(
             "Cursor request has no user message".into(),
         ));
     }
-    let conversation_id = request
-        .prompt_cache_key
-        .map(str::trim)
-        .filter(|key| !key.is_empty())
-        .map(|key| deterministic_uuid(&format!("cursor-conv-id:{key}")))
-        .unwrap_or_else(random_uuid);
+    // New id every Run. Reusing prompt_cache_key made ResumeAction replay the
+    // MCP call we just tore the stream down on.
+    let conversation_id = random_uuid();
     let mut blob_store = BlobStore::default();
     let request_bytes = encode_run_request(
         model,
@@ -169,15 +174,19 @@ fn encode_run_request(
                 current_turn = Some((blob_store.store(&user.encode_to_vec()), Vec::new()));
             }
             HistoryKind::Assistant | HistoryKind::Tool => {
-                if let Some((_, steps)) = current_turn.as_mut() {
-                    let text = if entry.kind == HistoryKind::Tool {
-                        format!("[Tool Result]\n{}", entry.text)
-                    } else {
-                        entry.text.clone()
+                if current_turn.is_none() {
+                    let user = UserMessage {
+                        text: String::new(),
+                        message_id: deterministic_uuid(&format!("u:{}:", turn_blob_ids.len())),
                     };
+                    current_turn = Some((blob_store.store(&user.encode_to_vec()), Vec::new()));
+                }
+                if let Some((_, steps)) = current_turn.as_mut() {
                     let step = ConversationStep {
                         message: Some(conversation_step::Message::AssistantMessage(
-                            AssistantMessage { text },
+                            AssistantMessage {
+                                text: entry.text.clone(),
+                            },
                         )),
                     };
                     steps.push(blob_store.store(&step.encode_to_vec()));
@@ -193,21 +202,15 @@ fn encode_run_request(
     } else {
         catalog_model_id(model).to_string()
     };
-    let action = if parsed.user_text.is_empty() {
-        ConversationAction {
-            action: Some(conversation_action::Action::ResumeAction(ResumeAction {})),
-        }
-    } else {
-        ConversationAction {
-            action: Some(conversation_action::Action::UserMessageAction(
-                UserMessageAction {
-                    user_message: Some(UserMessage {
-                        text: parsed.user_text.clone(),
-                        message_id: random_uuid(),
-                    }),
-                },
-            )),
-        }
+    let action = ConversationAction {
+        action: Some(conversation_action::Action::UserMessageAction(
+            UserMessageAction {
+                user_message: Some(UserMessage {
+                    text: parsed.user_text.clone(),
+                    message_id: random_uuid(),
+                }),
+            },
+        )),
     };
     let run = AgentRunRequest {
         conversation_state: Some(ConversationStateStructure {
@@ -234,24 +237,18 @@ fn encode_run_request(
 }
 
 fn store_prompt_blob(blob_store: &mut BlobStore, entry: &HistoryEntry) -> Vec<u8> {
-    let blob = match entry.kind {
-        HistoryKind::Assistant => json!({
-            "role": "assistant",
-            "content": [{ "type": "text", "text": entry.text }],
-        }),
-        HistoryKind::User | HistoryKind::Tool => {
-            let text = if entry.kind == HistoryKind::Tool {
-                format!("[Tool Result]\n{}", entry.text)
-            } else {
-                entry.text.clone()
-            };
-            json!({
-                "role": "user",
-                "content": [{ "type": "text", "text": text }],
-            })
-        }
+    let role = match entry.kind {
+        HistoryKind::Assistant => "assistant",
+        HistoryKind::User | HistoryKind::Tool => "user",
     };
-    blob_store.store(blob.to_string().as_bytes())
+    blob_store.store(
+        json!({
+            "role": role,
+            "content": [{ "type": "text", "text": entry.text }],
+        })
+        .to_string()
+        .as_bytes(),
+    )
 }
 
 fn parse_messages(messages: &[ChatMessage]) -> ParsedMessages {
@@ -267,7 +264,7 @@ fn parse_messages(messages: &[ChatMessage]) -> ParsedMessages {
             }
             ChatMessage::User(blocks) => history.push(HistoryEntry {
                 kind: HistoryKind::User,
-                text: text_from_blocks(blocks),
+                text: text_from_user_blocks(blocks),
             }),
             ChatMessage::Assistant(blocks) => push_assistant(&mut history, blocks),
             ChatMessage::EnrichedAssistant(message) => {
@@ -276,20 +273,13 @@ fn parse_messages(messages: &[ChatMessage]) -> ParsedMessages {
             ChatMessage::AbortedAssistant(message) => {
                 push_assistant(&mut history, &message.content)
             }
-            ChatMessage::ToolResult(result) => {
-                if !result.content.is_empty() {
-                    history.push(HistoryEntry {
-                        kind: HistoryKind::Tool,
-                        text: result.content.clone(),
-                    });
-                }
-            }
+            ChatMessage::ToolResult(result) => history.push(HistoryEntry {
+                kind: HistoryKind::Tool,
+                text: format_tool_result(result),
+            }),
         }
     }
-    let mut user_text = String::new();
-    if matches!(history.last(), Some(entry) if entry.kind == HistoryKind::User) {
-        user_text = history.pop().expect("checked last is user").text;
-    }
+    let user_text = take_action_text(&mut history);
     ParsedMessages {
         system_prompts,
         user_text,
@@ -297,8 +287,27 @@ fn parse_messages(messages: &[ChatMessage]) -> ParsedMessages {
     }
 }
 
+fn take_action_text(history: &mut Vec<HistoryEntry>) -> String {
+    if matches!(history.last(), Some(entry) if entry.kind == HistoryKind::User) {
+        return history.pop().expect("checked last is user").text;
+    }
+    let mut trailing = Vec::new();
+    while matches!(history.last(), Some(entry) if entry.kind == HistoryKind::Tool) {
+        trailing.push(history.pop().expect("checked last is tool").text);
+    }
+    trailing.reverse();
+    if !trailing.is_empty() {
+        return trailing.join("\n\n");
+    }
+    if history.is_empty() {
+        String::new()
+    } else {
+        CONTINUE_ACTION.to_string()
+    }
+}
+
 fn push_assistant(history: &mut Vec<HistoryEntry>, blocks: &[ContentBlock]) {
-    let text = text_from_blocks(blocks);
+    let text = transcript_from_blocks(blocks);
     if !text.is_empty() {
         history.push(HistoryEntry {
             kind: HistoryKind::Assistant,
@@ -307,7 +316,7 @@ fn push_assistant(history: &mut Vec<HistoryEntry>, blocks: &[ContentBlock]) {
     }
 }
 
-fn text_from_blocks(blocks: &[ContentBlock]) -> String {
+fn text_from_user_blocks(blocks: &[ContentBlock]) -> String {
     blocks
         .iter()
         .filter_map(|block| match block {
@@ -316,6 +325,36 @@ fn text_from_blocks(blocks: &[ContentBlock]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn transcript_from_blocks(blocks: &[ContentBlock]) -> String {
+    blocks
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text(text) if !text.trim().is_empty() => Some(text.clone()),
+            ContentBlock::ToolCall(call) => Some(format_tool_call(call)),
+            ContentBlock::Text(_) | ContentBlock::Image(_) => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn format_tool_call(call: &ToolCall) -> String {
+    let args = serde_json::to_string_pretty(&call.arguments)
+        .unwrap_or_else(|_| call.arguments.to_string());
+    format!("[Called {} id={}]\n{args}", call.name, call.id)
+}
+
+fn format_tool_result(result: &ToolResult) -> String {
+    let status = if result.ok { "ok" } else { "error" };
+    if result.content.is_empty() {
+        format!("[Tool Result id={} {status}]", result.id)
+    } else {
+        format!(
+            "[Tool Result id={} {status}]\n{}",
+            result.id, result.content
+        )
+    }
 }
 
 #[cfg(test)]

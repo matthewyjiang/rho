@@ -14,6 +14,10 @@ Cursor uses Cursor's PKCE login and talks to Cursor's AgentService over Connect/
 | Model list | Refreshable after authentication |
 | Default model | `auto` |
 
+## Conversation
+
+Each Rho model request is a new AgentService conversation. Rho rebuilds the transcript — including tool names, arguments, and results — and always sends a `UserMessageAction`. It does not reuse Cursor conversation ids or `ResumeAction`. Resuming a stream that ended on an MCP tool replayed the same read or edit.
+
 ## Sign in
 
 ```text
