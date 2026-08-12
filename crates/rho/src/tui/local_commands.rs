@@ -36,6 +36,7 @@ impl App {
             .with_body(body),
             expanded: true,
             image: None,
+            started_at: None,
         }));
         self.set_status(if diff.has_changes {
             "worktree diff"

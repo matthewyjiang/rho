@@ -373,7 +373,9 @@ pub struct TuiResult {
     pub resume_session_id: Option<String>,
     exit_summary: Option<String>,
 }
-pub(crate) use attachment::{run as run_attachment, translate_run_event};
+pub(crate) use attachment::{
+    run as run_attachment, translate_run_event, AttachmentDisplaySettings,
+};
 
 pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::Result<TuiResult> {
     let mut terminal = ratatui::init();

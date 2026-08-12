@@ -445,6 +445,7 @@ fn zen_mode_hides_tool_and_reasoning_lines_and_restores_them() {
         ),
         expanded: false,
         image: None,
+        started_at: None,
     });
     let entries = vec![
         Entry::User("hi".into()),
@@ -506,6 +507,7 @@ fn resplice_tool_expand_preserves_later_assistant_lines() {
             card,
             expanded: false,
             image: None,
+            started_at: None,
         }),
         Entry::Assistant("# big\n\n".to_string() + &"paragraph\n\n".repeat(30)),
     ];

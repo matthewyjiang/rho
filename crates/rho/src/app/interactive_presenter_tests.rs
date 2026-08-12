@@ -228,3 +228,34 @@ fn advisor_cards_use_status_first_headers() {
     assert_eq!(failed.status, ToolStatus::Error);
     assert_eq!(failed.header, ToolHeader::status_first("advisor", "failed"));
 }
+
+// Covers: shell start cards must expose the typed timeout budget fact
+// Owner: interactive presenter
+#[test]
+fn shell_start_card_includes_timeout_fact() {
+    use rho_tools::tool_card::{ToolFact, ToolHeader, ToolStatus};
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let with_timeout = ToolView {
+        kind: ToolKind::Bash,
+        name: "bash".into(),
+        arguments: serde_json::json!({
+            "command": "sleep 1",
+            "timeout_seconds": 30
+        }),
+        metadata: Default::default(),
+    };
+    let card = start_card(&with_timeout, dir.path());
+    assert_eq!(card.status, ToolStatus::Running);
+    assert_eq!(card.header, ToolHeader::shell("$", Some("sleep 1".into())));
+    assert_eq!(card.facts, vec![ToolFact::Timeout { seconds: Some(30) }]);
+
+    let no_timeout = ToolView {
+        kind: ToolKind::Bash,
+        name: "bash".into(),
+        arguments: serde_json::json!({ "command": "true" }),
+        metadata: Default::default(),
+    };
+    let card = start_card(&no_timeout, dir.path());
+    assert_eq!(card.facts, vec![ToolFact::Timeout { seconds: None }]);
+}

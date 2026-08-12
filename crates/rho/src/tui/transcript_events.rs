@@ -369,6 +369,7 @@ impl App {
                     card,
                     expanded,
                     image,
+                    started_at: None,
                 }))
             }
         }
