@@ -6,6 +6,7 @@ use {
     crate::config::Config,
     crate::diagnostics::RuntimeDiagnostics,
     crate::herdr::HerdrReporter,
+    crate::permission_classifier_handler::ClassifierApprovalHandler,
     crate::subagent::{self, RunState, RunStatus},
     rho_tools::cancellation::RunCancellation,
 };
@@ -46,6 +47,7 @@ pub(crate) struct AgentExecutor {
     host_input: SubagentHostInputBridge,
     notices: SubagentNoticeBridge,
     approval_session: Option<rho_sdk::ApprovalSession>,
+    approval_classifier: Option<Arc<ClassifierApprovalHandler>>,
 }
 
 pub(crate) struct AgentLaunchRequest {
@@ -214,6 +216,7 @@ impl AgentExecutor {
             host_input,
             notices,
             approval_session: None,
+            approval_classifier: None,
         }
     }
 
@@ -221,6 +224,17 @@ impl AgentExecutor {
     /// host and exact-request approval memory.
     pub(crate) fn with_approval_session(mut self, session: rho_sdk::ApprovalSession) -> Self {
         self.approval_session = Some(session);
+        self
+    }
+
+    /// Supplies a classifier template that each Rho agent run isolates so deny
+    /// streaks stay per-run. History and cancellation arrive on each
+    /// [`rho_sdk::ApprovalRequest::context`].
+    pub(crate) fn with_classifier_template(
+        mut self,
+        classifier: Arc<ClassifierApprovalHandler>,
+    ) -> Self {
+        self.approval_classifier = Some(classifier);
         self
     }
 
@@ -421,7 +435,11 @@ impl AgentExecutor {
         let persisted_output = output_file.clone();
         let total_permits = Arc::clone(&self.total_permits);
         let claude_permits = Arc::clone(&self.claude_permits);
+        // Auto resolves the classifier template (or builds a fresh one) inside
+        // automation; non-Auto keeps approval_session. Both may be set; Auto
+        // ignores the session.
         let approval_session = self.approval_session.clone();
+        let approval_classifier = self.approval_classifier.clone();
         let task_steering_slot = steering_slot.clone();
 
         let task_status_tx = status_tx.clone();
@@ -502,6 +520,7 @@ impl AgentExecutor {
                 status_tx: task_status_tx,
                 hook_host_labels,
                 approval_session,
+                approval_classifier,
             })
             .await
         });
@@ -583,6 +602,7 @@ struct RhoAgentRun {
     status_tx: tokio::sync::watch::Sender<RunStatus>,
     hook_host_labels: rho_sdk::hooks::HookHostLabels,
     approval_session: Option<rho_sdk::ApprovalSession>,
+    approval_classifier: Option<Arc<ClassifierApprovalHandler>>,
 }
 
 /// Drive a delegated run through Rho's own automation loop.
@@ -605,6 +625,7 @@ async fn run_rho_agent(run: RhoAgentRun) -> anyhow::Result<()> {
         status_tx,
         hook_host_labels,
         approval_session,
+        approval_classifier,
     } = run;
 
     super::cli_config::prepare_model_metadata(
@@ -668,6 +689,7 @@ async fn run_rho_agent(run: RhoAgentRun) -> anyhow::Result<()> {
         notice_poster,
         steering_slot,
         approval_session,
+        approval_classifier,
         hook_host_labels,
     };
     let result =

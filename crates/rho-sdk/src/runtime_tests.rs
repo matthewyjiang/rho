@@ -1575,3 +1575,97 @@ async fn live_history_stays_committed_unless_a_tool_declares_the_need() {
         observed[0]
     );
 }
+
+// Covers: an approval handler that reads live history publishes the turn in
+// flight without a host force-publish flag or a declaring tool.
+// Owner: session/orchestration conversation state.
+#[tokio::test]
+async fn approval_handler_reads_live_history_exposes_the_turn_in_flight() {
+    let session_slot = Arc::new(Mutex::new(None));
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let runtime = Rho::builder()
+        .provider(ScriptedProvider::new(
+            identity(),
+            [
+                scripted_tool_call("call-1"),
+                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+                    "done".into(),
+                )])),
+            ],
+        ))
+        .approval_handler(LiveHistoryApprovals)
+        .tool(LiveHistoryTool {
+            session: Arc::clone(&session_slot),
+            observed: Arc::clone(&observed),
+            declares: false,
+        })
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    *session_slot.lock().unwrap() = Some(session.clone());
+
+    session.complete("hi").await.unwrap();
+
+    let observed = observed.lock().unwrap().clone();
+    assert_eq!(
+        observed,
+        vec![vec![
+            Message::user_text("hi"),
+            assistant_tool_call("call-1")
+        ]]
+    );
+    assert_eq!(session.live_history(), session.history());
+}
+
+struct LiveHistoryApprovals;
+
+impl crate::ApprovalHandler for LiveHistoryApprovals {
+    fn request<'a>(&'a self, _request: crate::ApprovalRequest) -> crate::ApprovalFuture<'a> {
+        Box::pin(async { crate::ApprovalDecision::AllowOnce })
+    }
+
+    fn reads_live_history(&self) -> bool {
+        true
+    }
+}
+
+// Covers: hosts that need live approval context must be able to publish the
+// turn in flight even when no registered tool declares live-history reads.
+// Owner: session/orchestration conversation state.
+#[tokio::test]
+async fn force_publish_live_history_exposes_the_turn_in_flight() {
+    let session_slot = Arc::new(Mutex::new(None));
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let runtime = Rho::builder()
+        .provider(ScriptedProvider::new(
+            identity(),
+            [
+                scripted_tool_call("call-1"),
+                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+                    "done".into(),
+                )])),
+            ],
+        ))
+        .force_publish_live_history(true)
+        .tool(LiveHistoryTool {
+            session: Arc::clone(&session_slot),
+            observed: Arc::clone(&observed),
+            declares: false,
+        })
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    *session_slot.lock().unwrap() = Some(session.clone());
+
+    session.complete("hi").await.unwrap();
+
+    let observed = observed.lock().unwrap().clone();
+    assert_eq!(
+        observed,
+        vec![vec![
+            Message::user_text("hi"),
+            assistant_tool_call("call-1")
+        ]]
+    );
+    assert_eq!(session.live_history(), session.history());
+}

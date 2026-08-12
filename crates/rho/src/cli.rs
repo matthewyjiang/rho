@@ -4,7 +4,14 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use rho_providers::{credentials::CredentialStoreBackend, reasoning::ReasoningLevel};
 
-use crate::app::automation_protocol::parse_duration;
+use crate::{
+    app::automation_protocol::parse_duration,
+    permission::{PermissionMode, PermissionModeParseError},
+};
+
+fn parse_permission_mode(value: &str) -> Result<PermissionMode, PermissionModeParseError> {
+    value.parse()
+}
 
 fn parse_credential_store_backend(value: &str) -> Result<CredentialStoreBackend, String> {
     CredentialStoreBackend::parse(value).map_err(|error| error.to_string())
@@ -76,6 +83,9 @@ pub struct Cli {
     /// Override reasoning level: off, minimal, low, medium, high, xhigh, or max.
     #[arg(long)]
     pub reasoning: Option<ReasoningLevel>,
+    /// Override permission mode: bypass, auto, plan, or supervised.
+    #[arg(long, value_name = "MODE", value_parser = parse_permission_mode)]
+    pub(crate) permission_mode: Option<PermissionMode>,
     /// Persist --provider/--model/--auth/--reasoning overrides to the config file.
     ///
     /// Without this flag, those overrides apply only to the current invocation.

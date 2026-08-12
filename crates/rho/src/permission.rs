@@ -9,6 +9,10 @@ use rho_sdk::{CapabilityKind, CapabilityRequest, PolicyDecision, WorkspacePolicy
 pub(crate) enum PermissionMode {
     /// Current behavior: no policy checks; all capabilities are allowed.
     #[default]
+    Bypass,
+    /// Known reads, network access, skills, and instruction discovery are free;
+    /// writes, process execution, and unrecognized capability classes require
+    /// classifier approval.
     Auto,
     /// Model may investigate but cannot change state. Known read, network,
     /// skill, and instruction-discovery capabilities are allowed; writes,
@@ -23,6 +27,7 @@ pub(crate) enum PermissionMode {
 impl PermissionMode {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Bypass => "bypass",
             Self::Auto => "auto",
             Self::Plan => "plan",
             Self::Supervised => "supervised",
@@ -32,6 +37,7 @@ impl PermissionMode {
     /// Human-facing label shown in settings and TUI pickers.
     pub const fn label(self) -> &'static str {
         match self {
+            Self::Bypass => "Bypass",
             Self::Auto => "Auto",
             Self::Plan => "Plan",
             Self::Supervised => "Supervised",
@@ -44,7 +50,7 @@ impl PermissionMode {
     /// classified yet.
     pub fn decision_for(self, kind: CapabilityKind) -> PolicyDecision {
         match self {
-            Self::Auto => PolicyDecision::Allow,
+            Self::Bypass => PolicyDecision::Allow,
             Self::Plan => match kind {
                 CapabilityKind::Write | CapabilityKind::Process => PolicyDecision::Deny {
                     reason: "capability is not allowed in plan mode".into(),
@@ -57,7 +63,7 @@ impl PermissionMode {
                     reason: "unknown capability is not allowed in plan mode".into(),
                 },
             },
-            Self::Supervised => match kind {
+            Self::Auto | Self::Supervised => match kind {
                 // Empty reason: the approval prompt itself is the signal. Keep a
                 // specific reason only when it adds information the chrome lacks.
                 CapabilityKind::Write | CapabilityKind::Process => {
@@ -77,18 +83,18 @@ impl PermissionMode {
     }
 
     /// Builds the SDK policy that enforces this mode. Returns `None` for
-    /// [`Self::Auto`] so the caller can preserve its existing allow-everything
+    /// [`Self::Bypass`] so the caller can preserve its existing allow-everything
     /// path.
     ///
     /// The returned policy delegates every request to [`Self::decision_for`], so
     /// it allows network access freely. `ScopedWorkspacePolicy` is not used here
     /// because it deny-defaults network destinations behind a per-host allowlist,
     /// which would break the "reads and network are free" contract of both
-    /// non-auto modes.
+    /// checked modes.
     pub fn workspace_policy(self) -> Option<ModePolicy> {
         match self {
-            Self::Auto => None,
-            Self::Plan | Self::Supervised => Some(ModePolicy { mode: self }),
+            Self::Bypass => None,
+            Self::Auto | Self::Plan | Self::Supervised => Some(ModePolicy { mode: self }),
         }
     }
 }
@@ -115,7 +121,7 @@ impl fmt::Display for PermissionModeParseError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "unknown permission mode {:?}; expected auto, plan, or supervised",
+            "unknown permission mode {:?}; expected bypass, auto, plan, or supervised",
             self.value
         )
     }
@@ -128,6 +134,7 @@ impl FromStr for PermissionMode {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value.trim().to_ascii_lowercase().as_str() {
+            "bypass" => Ok(Self::Bypass),
             "auto" => Ok(Self::Auto),
             "plan" => Ok(Self::Plan),
             "supervised" => Ok(Self::Supervised),

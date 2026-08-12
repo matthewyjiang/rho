@@ -212,9 +212,11 @@ async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime {
         compaction: CompactionConfig::default(),
         context_window: None,
         usage_recording: Default::default(),
+        config: Config::default(),
         permission_mode: PermissionMode::Auto,
         approval_handler: None,
         approval_receiver: None,
+        classifier_approval_handler: None,
         agent: test_bound_agent(),
         agent_id: "default".into(),
         agent_fingerprint: "test-fingerprint".into(),
@@ -337,12 +339,35 @@ async fn permission_mode_switch_rebuilds_runtime_and_updates_future_delegated_po
     ));
 
     interactive
+        .set_permission_mode(PermissionMode::Bypass)
+        .await
+        .unwrap();
+    assert_eq!(interactive.permission_mode(), PermissionMode::Bypass);
+    assert!(interactive.approval_handler.is_none());
+    assert!(interactive.approval_receiver().is_none());
+    assert!(interactive.classifier_approval_handler.is_none());
+    assert_eq!(interactive.sessions.session().id(), &session_id);
+    assert_eq!(interactive.sessions.session().history(), history);
+
+    interactive
         .set_permission_mode(PermissionMode::Auto)
         .await
         .unwrap();
     assert_eq!(interactive.permission_mode(), PermissionMode::Auto);
+    assert!(interactive.approval_handler.is_some());
+    assert!(interactive.approval_receiver().is_some());
+    assert!(interactive.classifier_approval_handler.is_some());
+    assert_eq!(interactive.sessions.session().id(), &session_id);
+    assert_eq!(interactive.sessions.session().history(), history);
+
+    interactive
+        .set_permission_mode(PermissionMode::Bypass)
+        .await
+        .unwrap();
+    assert_eq!(interactive.permission_mode(), PermissionMode::Bypass);
     assert!(interactive.approval_handler.is_none());
     assert!(interactive.approval_receiver().is_none());
+    assert!(interactive.classifier_approval_handler.is_none());
     assert_eq!(interactive.sessions.session().id(), &session_id);
     assert_eq!(interactive.sessions.session().history(), history);
 }

@@ -128,6 +128,34 @@ fn parses_sessions_list_and_rm() {
 }
 
 #[test]
+fn parses_permission_mode_override() {
+    for (flag, expected) in [
+        ("bypass", crate::permission::PermissionMode::Bypass),
+        ("auto", crate::permission::PermissionMode::Auto),
+        ("plan", crate::permission::PermissionMode::Plan),
+        ("supervised", crate::permission::PermissionMode::Supervised),
+    ] {
+        let cli = Cli::try_parse_from(["rho", "--permission-mode", flag]).unwrap();
+        assert_eq!(cli.permission_mode, Some(expected));
+    }
+
+    let run = Cli::try_parse_from(["rho", "--permission-mode", "auto", "run", "ship it"]).unwrap();
+    assert_eq!(
+        run.permission_mode,
+        Some(crate::permission::PermissionMode::Auto)
+    );
+}
+
+#[test]
+fn rejects_unknown_permission_mode() {
+    let error = Cli::try_parse_from(["rho", "--permission-mode", "paranoid"]).unwrap_err();
+    assert!(error.to_string().contains("paranoid"));
+    assert!(error
+        .to_string()
+        .contains("bypass, auto, plan, or supervised"));
+}
+
+#[test]
 fn agent_selection_is_global() {
     let root = Cli::try_parse_from(["rho", "--agent", "reviewer"]).unwrap();
     assert_eq!(root.agent.as_deref(), Some("reviewer"));

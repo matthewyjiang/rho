@@ -1,9 +1,15 @@
 use super::*;
 use crate::{
+    agent::PERMISSION_CLASSIFIER_AGENT_ID,
     app::{config_repository::ConfigRepository, interactive_runtime::test_edit_tool_runtime},
-    config::EditTool,
+    config::{EditTool, InternalAgentModelConfig},
     tui::tests::test_app,
 };
+use pretty_assertions::assert_eq;
+
+fn classifier_model() -> InternalAgentModelConfig {
+    InternalAgentModelConfig::new("openai".into(), "gpt-5.5".into(), "api-key".into())
+}
 
 // Covers: a failed edit-tool config save must roll runtime back and leave the
 // transcript describing the same forward+reverse transition sequence already
@@ -107,4 +113,55 @@ async fn failed_edit_tool_save_keeps_rollback_histories_aligned() {
     assert_eq!(diagnostics_before, diagnostics_after);
 
     agent.shutdown().await;
+}
+
+// Covers: Agent behavior exposes the classifier model row, and exposes
+// classifier reasoning only after a model exists.
+// Owner: tui config picker rows
+#[test]
+fn agent_behavior_config_rows_include_classifier_model_and_optional_reasoning() {
+    let mut app = test_app();
+    let config = app.info.services.config_repository.load().unwrap();
+
+    let picker = config_picker::category_picker(
+        config_picker::AGENT_CATEGORY_VALUE,
+        &app.info.runtime,
+        &config,
+    )
+    .unwrap();
+    assert!(picker
+        .items
+        .iter()
+        .any(|item| item.value == config_picker::PERMISSION_CLASSIFIER_MODEL_VALUE));
+    assert!(!picker
+        .items
+        .iter()
+        .any(|item| item.value == config_picker::PERMISSION_CLASSIFIER_REASONING_VALUE));
+
+    app.info
+        .runtime
+        .internal_agents
+        .insert(PERMISSION_CLASSIFIER_AGENT_ID.into(), classifier_model());
+    let picker = config_picker::category_picker(
+        config_picker::AGENT_CATEGORY_VALUE,
+        &app.info.runtime,
+        &config,
+    )
+    .unwrap();
+    let classifier_model_row = picker
+        .items
+        .iter()
+        .find(|item| item.value == config_picker::PERMISSION_CLASSIFIER_MODEL_VALUE)
+        .expect("classifier model row");
+    assert_eq!(
+        classifier_model_row
+            .badge
+            .as_ref()
+            .map(|badge| badge.text.as_str()),
+        Some("openai/gpt-5.5")
+    );
+    assert!(picker
+        .items
+        .iter()
+        .any(|item| item.value == config_picker::PERMISSION_CLASSIFIER_REASONING_VALUE));
 }

@@ -18,19 +18,35 @@ use crate::hooks::{
 
 use super::{
     approval::{
-        ApprovalAuditDecision, ApprovalAuditLog, ApprovalDecision, ApprovalHandler,
-        ApprovalRequest, AuthorizationDenialKind, AuthorizationError, AuthorizationOutcome,
-        DenyApprovals, SessionApprovals,
+        ApprovalAuditDecision, ApprovalAuditLog, ApprovalContext, ApprovalDecision,
+        ApprovalHandler, ApprovalRequest, AuthorizationDenialKind, AuthorizationError,
+        AuthorizationOutcome, DenyApprovals, SessionApprovals,
     },
     CapabilityRequest, PolicyDecision, WorkspacePolicy,
 };
 
+/// Lazily reads the conversation available to approval handlers for this run.
+pub(crate) type LiveHistorySource = Arc<dyn Fn() -> Vec<crate::model::Message> + Send + Sync>;
+
 /// Where one authorization happened, for hook envelope identity.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub(crate) struct AuthorizationScope {
     pub(crate) session_id: Option<crate::SessionId>,
     pub(crate) run_id: Option<crate::RunId>,
     pub(crate) workspace_root: Option<PathBuf>,
+    pub(crate) live_history: Option<LiveHistorySource>,
+}
+
+impl fmt::Debug for AuthorizationScope {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AuthorizationScope")
+            .field("session_id", &self.session_id)
+            .field("run_id", &self.run_id)
+            .field("workspace_root", &self.workspace_root)
+            .field("live_history", &self.live_history.is_some())
+            .finish()
+    }
 }
 
 impl AuthorizationScope {
@@ -95,6 +111,23 @@ impl AuthorizationServices {
             Arc::clone(&self.audit),
         )
     }
+
+    fn approval_context(&self, cancellation: crate::CancellationToken) -> ApprovalContext {
+        // Supervised and other context-blind handlers must not pay for a
+        // conversation copy on every prompt.
+        let history = if self.approvals.reads_live_history() {
+            self.scope
+                .live_history
+                .as_ref()
+                .map_or_else(Vec::new, |source| source())
+        } else {
+            Vec::new()
+        };
+        match self.scope.session_id.clone() {
+            Some(session_id) => ApprovalContext::new(session_id, cancellation, history),
+            None => ApprovalContext::anonymous(cancellation, history),
+        }
+    }
 }
 
 impl fmt::Debug for AuthorizationServices {
@@ -113,7 +146,7 @@ pub(crate) async fn authorize(
     services: &AuthorizationServices,
     request: CapabilityRequest,
 ) -> Result<AuthorizationOutcome, AuthorizationError> {
-    authorize_for_call(services, request, None).await
+    authorize_for_call(services, request, None, crate::CancellationToken::new()).await
 }
 
 /// Resolves one capability request through policy, hooks, and host approval.
@@ -126,6 +159,7 @@ pub(crate) async fn authorize_for_call(
     services: &AuthorizationServices,
     request: CapabilityRequest,
     tool_call_id: Option<&crate::ToolCallId>,
+    cancellation: crate::CancellationToken,
 ) -> Result<AuthorizationOutcome, AuthorizationError> {
     let capability = request.kind();
     let audit = &services.audit;
@@ -152,7 +186,15 @@ pub(crate) async fn authorize_for_call(
         }
         PolicyDecision::RequireApproval { reason } => {
             deny_if_hooked(services, &request, hook_policy, tool_call_id).await?;
-            prompt_for_approval(services, request, capability, reason, tool_call_id).await
+            prompt_for_approval(
+                services,
+                request,
+                capability,
+                reason,
+                tool_call_id,
+                cancellation,
+            )
+            .await
         }
     }
 }
@@ -184,6 +226,7 @@ async fn prompt_for_approval(
     capability: super::CapabilityKind,
     reason: String,
     tool_call_id: Option<&crate::ToolCallId>,
+    cancellation: crate::CancellationToken,
 ) -> Result<AuthorizationOutcome, AuthorizationError> {
     let remembered = &services.remembered;
     let audit = &services.audit;
@@ -208,13 +251,10 @@ async fn prompt_for_approval(
         );
         return Ok(AuthorizationOutcome::AllowedByRememberedApproval);
     }
-    match services
-        .approvals
-        .request(
-            ApprovalRequest::new(request.clone(), reason).with_tool_call_id(tool_call_id.cloned()),
-        )
-        .await
-    {
+    let approval_request = ApprovalRequest::new(request.clone(), reason)
+        .with_tool_call_id(tool_call_id.cloned())
+        .with_context(services.approval_context(cancellation));
+    match services.approvals.request(approval_request).await {
         ApprovalDecision::AllowOnce => {
             audit.record(capability, ApprovalAuditDecision::AllowedOnce);
             Ok(AuthorizationOutcome::AllowedOnce)

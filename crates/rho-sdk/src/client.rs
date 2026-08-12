@@ -182,6 +182,7 @@ pub struct RhoBuilder {
     hook_payload_bounds: crate::hooks::HookPayloadBounds,
     hook_delegation: crate::hooks::HookDelegation,
     hook_host_labels: crate::hooks::HookHostLabels,
+    force_publish_live_history: bool,
 }
 
 impl RhoBuilder {
@@ -360,11 +361,23 @@ impl RhoBuilder {
         self
     }
 
+    /// Publishes the turn in flight for [`crate::Session::live_history`] even
+    /// when no registered tool declares [`crate::Tool::reads_live_history`] and
+    /// the approval handler does not declare
+    /// [`crate::ApprovalHandler::reads_live_history`].
+    ///
+    /// Prefer [`crate::ApprovalHandler::reads_live_history`] when the consumer is
+    /// an approval handler. Keep this escape hatch for non-handler host logic.
+    pub fn force_publish_live_history(mut self, force: bool) -> Self {
+        self.force_publish_live_history = force;
+        self
+    }
+
     pub fn build(self) -> Result<Rho, Error> {
         let provider = self.provider.ok_or_else(|| Error::InvalidConfiguration {
             message: "a model provider is required".into(),
         })?;
-        let publish_live_history = self.tools.iter().any(|tool| tool.reads_live_history());
+        let tool_reads_live_history = self.tools.iter().any(|tool| tool.reads_live_history());
         let mut tools = ToolRegistry::new();
         for tool in self.tools {
             tools
@@ -397,6 +410,9 @@ impl RhoBuilder {
                 Arc::default(),
             ),
         };
+        let publish_live_history = self.force_publish_live_history
+            || approval_handler.reads_live_history()
+            || tool_reads_live_history;
         Ok(Rho {
             provider,
             tools,
@@ -459,8 +475,9 @@ pub struct Rho {
     pub(crate) usage_parent_session_id: Option<crate::SessionId>,
     pub(crate) approval_audit: Arc<crate::workspace::ApprovalAuditLog>,
     pub(crate) hooks: crate::hooks::HookWiring,
-    /// True when a registered tool declared [`crate::tool::Tool::reads_live_history`],
-    /// so runs publish the turn in flight for [`crate::Session::live_history`].
+    /// True when a registered tool or approval handler declared live-history
+    /// reads, or the host forced publication, so runs publish the turn in flight
+    /// for [`crate::Session::live_history`].
     pub(crate) publish_live_history: bool,
     pub(crate) lifecycle: Arc<RuntimeLifecycle>,
 }

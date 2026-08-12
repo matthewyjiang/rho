@@ -28,6 +28,13 @@ pub(super) enum InternalAgentModelPickerOrigin {
     /// Opened from the config picker's advisor model row; returns to config
     /// without forcing advisor mode on.
     AdvisorModelConfigRow,
+    /// Opened from the config picker's permission mode row when enabling Auto
+    /// without a classifier model; selection also applies Auto and returns to
+    /// config.
+    PermissionModeConfigRow,
+    /// Opened from the config picker's classifier model row; returns to config
+    /// without forcing Auto on.
+    PermissionClassifierModelConfigRow,
 }
 
 /// The internal agent an open model or reasoning picker configures.
@@ -343,7 +350,9 @@ impl super::App {
         match origin {
             InternalAgentModelPickerOrigin::AgentsPicker
             | InternalAgentModelPickerOrigin::AdvisorConfigRow
-            | InternalAgentModelPickerOrigin::AdvisorModelConfigRow => {
+            | InternalAgentModelPickerOrigin::AdvisorModelConfigRow
+            | InternalAgentModelPickerOrigin::PermissionModeConfigRow
+            | InternalAgentModelPickerOrigin::PermissionClassifierModelConfigRow => {
                 self.open_child_picker(picker)
             }
             InternalAgentModelPickerOrigin::AdvisorCommand => {

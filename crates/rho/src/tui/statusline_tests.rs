@@ -69,26 +69,28 @@ fn context_usage_style_escalates_with_fill() {
 }
 
 #[test]
-fn permission_style_marks_auto_as_warning() {
-    // Covers: Auto (no checks) must not render like safer permission modes
+fn permission_style_marks_bypass_as_warning() {
+    // Covers: Bypass (no checks) must not render like checked permission modes
     // Owner: statusline severity policy
-    assert_eq!(permission_style(PermissionMode::Auto), Theme::warning());
+    assert_eq!(permission_style(PermissionMode::Bypass), Theme::warning());
+    assert_eq!(permission_style(PermissionMode::Auto), Theme::dim());
     assert_eq!(permission_style(PermissionMode::Plan), Theme::dim());
     assert_eq!(permission_style(PermissionMode::Supervised), Theme::dim());
 }
 
 #[test]
-fn auto_permission_and_high_context_use_warning_styles() {
+fn bypass_permission_and_high_context_use_warning_styles() {
     // Covers: painted spans carry severity, not only plain text
     // Owner: statusline render
     let mut statusline = StatusLine::new(&test_info(PathBuf::from("/tmp/project")));
+    statusline.state.permission_mode = PermissionMode::Bypass;
     statusline.update_usage(None, Some(&ContextUsage::estimated(9_500, Some(10_000))), 0);
 
     let line = statusline.lines(80, None)[1].clone();
     assert_eq!(
-        span_style(&line, "Auto"),
+        span_style(&line, "Bypass"),
         Some(Theme::warning()),
-        "Auto permission must warn: {line:?}"
+        "Bypass permission must warn: {line:?}"
     );
     assert_eq!(
         span_style(&line, "9.5K (95.0%)"),

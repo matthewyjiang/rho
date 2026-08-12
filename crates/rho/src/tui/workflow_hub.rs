@@ -656,9 +656,7 @@ impl App {
         let workflow_name = run.graph.graph.name.as_str().to_owned();
         let graph_digest = run.manifest.graph_digest.0.clone();
         let config_path = self.info.services.config_repository.configured_path().ok();
-        // Background runs keep the chat TUI. Approvals for rare supervised needs
-        // are denied; auto/plan modes are the intended path for /workflow starts.
-        let approvals = rho_sdk::ApprovalSession::new(rho_sdk::DenyApprovals);
+        // Background runs keep the chat TUI, so workflow approvals are headless.
         let tracker = agent.workflow_tracker().clone();
         tracker.register_start(
             run_id.to_string(),
@@ -666,15 +664,7 @@ impl App {
             graph_digest.clone(),
             Some(agent.session_id().to_string()),
         );
-        match workflow_cli::spawn_background_run(
-            run,
-            recovery,
-            config_path,
-            approvals,
-            Some(tracker),
-        )
-        .await
-        {
+        match workflow_cli::spawn_background_run(run, recovery, config_path, Some(tracker)).await {
             Ok(_) => {
                 let (model, display) = crate::tools::workflow_tracker::start_context_prompts(
                     &run_id.to_string(),

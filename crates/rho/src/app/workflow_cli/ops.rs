@@ -351,6 +351,7 @@ fn permission_rank(value: &str) -> Option<u8> {
         "plan" => Some(0),
         "supervised" => Some(1),
         "auto" => Some(2),
+        "bypass" => Some(3),
         _ => None,
     }
 }

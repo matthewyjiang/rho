@@ -324,11 +324,11 @@ fn field(
     }
 }
 
-/// Permission mode style. Auto skips every check, so it must not look ambient.
+/// Permission mode style. Bypass skips every check, so it must not look ambient.
 fn permission_style(mode: PermissionMode) -> Style {
     match mode {
-        PermissionMode::Auto => Theme::warning(),
-        PermissionMode::Plan | PermissionMode::Supervised => Theme::dim(),
+        PermissionMode::Bypass => Theme::warning(),
+        PermissionMode::Auto | PermissionMode::Plan | PermissionMode::Supervised => Theme::dim(),
     }
 }
 
@@ -390,7 +390,7 @@ fn statusline_lines(
 /// 6. model id
 /// 7. permission mode (kept last)
 ///
-/// Severity is independent of drop rank: high context fill and Auto permission
+/// Severity is independent of drop rank: high context fill and Bypass permission
 /// use warning/error styles so they stay visible while they remain on screen.
 fn pack_bottom_status(
     state: &StatusLineState,

@@ -146,6 +146,10 @@ pub(super) fn apply_overrides(config: &mut Config, cli: &Cli) -> anyhow::Result<
         config.reasoning = reasoning;
         flags_present = true;
     }
+    if let Some(permission_mode) = cli.permission_mode {
+        config.permission_mode = permission_mode;
+        flags_present = true;
+    }
     config.normalize_provider_profiles()?;
     Ok(flags_present && CliSelection::capture(config) != before)
 }

@@ -27,18 +27,21 @@ use tokio::{
 };
 
 use super::{
-    classify_error, classify_run_terminal, complete_run, prompt_from_reader,
-    terminal_error_message, AutomationExit, RunArtifactIdentity, RunReporter, RunTerminal,
-    MAX_STEPS_MESSAGE,
+    classify_error, classify_run_terminal, complete_run, ensure_headless_auto_classifier_model,
+    headless_approval_session, prompt_from_reader, terminal_error_message, AutomationExit,
+    RunArtifactIdentity, RunReporter, RunTerminal, MAX_STEPS_MESSAGE,
 };
 use crate::app::headless_run::{HeadlessRunDeps, HostInputRespondFuture, HostInputResponder};
+use crate::permission_classifier_handler::ClassifierApprovalHandler;
 use crate::{
+    agent::PERMISSION_CLASSIFIER_AGENT_ID,
     app::{
         automation_protocol::TerminalReason,
         policy::AppPolicy,
         runtime_builder::{build_runtime, RuntimeBuildOptions},
     },
     compaction::CompactionConfig,
+    config::{Config, InternalAgentModelConfig},
     permission::PermissionMode,
 };
 
@@ -144,6 +147,89 @@ fn classifies_fatal_tool_host_errors() {
     )));
 
     assert_eq!(classify_error(&error), (TerminalReason::ToolHostError, 1));
+}
+
+// Covers: headless Auto must fail before runtime construction when no classifier model is configured.
+// Owner: automation startup permission gating.
+#[test]
+fn headless_auto_requires_configured_permission_classifier_model() {
+    let mut config = Config {
+        permission_mode: PermissionMode::Auto,
+        ..Config::default()
+    };
+
+    let error = ensure_headless_auto_classifier_model(&config).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "permission mode auto requires a configured permission-classifier model (set via /config or config.toml [internal_agents.permission-classifier])"
+    );
+
+    config.set_internal_agent_model_config(
+        PERMISSION_CLASSIFIER_AGENT_ID,
+        InternalAgentModelConfig::new("openai".into(), "gpt-5.5".into(), "api-key".into()),
+    );
+    ensure_headless_auto_classifier_model(&config).unwrap();
+}
+
+// Covers: workflow Auto templates must isolate so concurrent runs do not share
+// deny streaks on the original handler.
+// Owner: automation startup approval wiring.
+#[test]
+fn supplied_auto_classifier_template_isolates_handler() {
+    let mut config = Config {
+        permission_mode: PermissionMode::Auto,
+        ..Config::default()
+    };
+    config.set_internal_agent_model_config(
+        PERMISSION_CLASSIFIER_AGENT_ID,
+        InternalAgentModelConfig::new("openai".into(), "gpt-5.5".into(), "api-key".into()),
+    );
+    let root = tempfile::tempdir().unwrap();
+    let classifier = Arc::new(ClassifierApprovalHandler::new(
+        config.clone(),
+        root.path().to_path_buf(),
+        Default::default(),
+        None,
+    ));
+
+    let approval_session = headless_approval_session(
+        &config,
+        None,
+        Some(classifier),
+        root.path().to_path_buf(),
+        Default::default(),
+    )
+    .unwrap();
+
+    assert!(approval_session.is_some());
+}
+
+// Covers: Auto ignores a stray non-classifier session and still installs a
+// classifier so callers need not clear approval_session first.
+// Owner: automation startup approval wiring.
+#[test]
+fn auto_ignores_stray_approval_session_and_builds_classifier() {
+    let mut config = Config {
+        permission_mode: PermissionMode::Auto,
+        ..Config::default()
+    };
+    config.set_internal_agent_model_config(
+        PERMISSION_CLASSIFIER_AGENT_ID,
+        InternalAgentModelConfig::new("openai".into(), "gpt-5.5".into(), "api-key".into()),
+    );
+    let root = tempfile::tempdir().unwrap();
+    let approval_session = rho_sdk::ApprovalSession::new(rho_sdk::DenyApprovals);
+
+    let resolved = headless_approval_session(
+        &config,
+        Some(approval_session),
+        None,
+        root.path().to_path_buf(),
+        Default::default(),
+    )
+    .unwrap();
+
+    assert!(resolved.is_some());
 }
 
 #[test]

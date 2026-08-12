@@ -64,7 +64,7 @@
   <text x="24.0" y="759.6" fill="#6e7681" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">&gt; Type a message</text>
   <text x="24.0" y="779.6" fill="#3fb950" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">────────────────────────────────────────────────────────────────────────────────────────────────────</text>
   <text x="24.0" y="799.6" fill="#6e7681" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">~/rho</text>
-  <text x="24.0" y="819.6" fill="#6e7681" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">6.0K (0.6%)                                                     </text>
-  <text x="638.4" y="819.6" fill="#e3b341" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none" font-weight="700">Auto</text>
+  <text x="24.0" y="819.6" fill="#6e7681" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">6.0K (0.6%)                                                   </text>
+  <text x="619.2" y="819.6" fill="#e3b341" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none" font-weight="700">Bypass</text>
   <text x="676.8" y="819.6" fill="#6e7681" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none"> · OpenAI · gpt-5.6-sol · medium</text>
 </svg>

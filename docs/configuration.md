@@ -62,24 +62,35 @@ rho --config ~/.rho/config.toml
 
 ## Permission modes
 
-`permission_mode` must be `auto`, `plan`, or `supervised`. Missing values default to `auto`; an unrecognized value is a configuration error. The setting controls whether Rho allows, denies, or asks before security-sensitive tool capabilities:
+`permission_mode` must be `bypass`, `auto`, `plan`, or `supervised`. Missing values default to `bypass`; an unrecognized value is a configuration error. The setting controls whether Rho allows, denies, classifies, or asks before security-sensitive tool capabilities:
 
 ```mermaid
 flowchart LR
-    auto[auto: allow] --> tools[Sensitive tools]
+    bypass[bypass: allow all] --> tools[Sensitive tools]
+    auto[auto: classifier] --> tools
     plan[plan: deny writes and process] --> tools
     supervised[supervised: ask first] --> tools
 ```
 
-- `auto` is the default and preserves unrestricted tool behavior.
+| Mode | Config string | Default? | Behavior |
+| --- | --- | --- | --- |
+| Bypass | `bypass` | yes (new installs / unset) | No policy checks. Every capability allowed. |
+| Auto | `auto` | no | Same require-approval set as Supervised. A configured classifier model decides allow or deny. |
+| Plan | `plan` | no | Investigation only. File writes and process execution are denied. |
+| Supervised | `supervised` | no | Human approval for writes, processes, and unknown capabilities. |
+
+- `bypass` is the default and preserves unrestricted tool behavior. The status line shows **Bypass** in warning style so the open posture stays visible.
+- `auto` uses the same capability gate as `supervised`. A permission-classifier model reviews gated requests instead of opening the approval UI. Denied calls return a tool error and the run continues. After three consecutive classifier denials, Rho escalates to the human approval prompt in the TUI or fails closed in headless runs. Auto requires a configured classifier model; choosing it from `/config` opens the model picker when none is set, and headless `rho run` fails at startup without one.
 - `plan` allows investigation but denies file writes and process execution.
 - `supervised` asks for confirmation before file writes and process execution. Reads, network access, skills, and instruction discovery do not prompt.
+
+Configure the classifier under **Agent behavior** in `/config`, or in config as `[internal_agents.permission-classifier]`. Rho does not pick a default classifier model. Override the mode for one invocation with `--permission-mode bypass|auto|plan|supervised` (not persisted).
 
 Change the mode from **Agent behavior** > **Permission mode** in `/config`. An interactive mode change applies before the next turn and preserves the current session ID and history, but clears every remembered **Allow for session** approval. In a supervised approval prompt, the default focus is **Deny**. Choose **Allow once**, **Allow for session**, or **Deny**. A session approval remembers only the exact structured capability request for the current session. Pressing Escape denies the request and cancels the current run; choosing **Deny** with Enter rejects only that operation so the run can continue.
 
 Non-interactive `rho run` sessions cannot display approval prompts. Supervised operations that require approval therefore fail closed instead of being approved automatically.
 
-Permission modes are application policy checks, not an operating-system sandbox. Rho and its tools still run with the current user's permissions, and tools must correctly declare and authorize their capabilities for the policy to cover them. In restricted modes, capability classes that this Rho version does not recognize fail closed: Plan denies them and Supervised requires approval.
+Permission modes are application policy checks, not an operating-system sandbox. Rho and its tools still run with the current user's permissions, and tools must correctly declare and authorize their capabilities for the policy to cover them. In restricted modes, capability classes that this Rho version does not recognize fail closed: Plan denies them, Supervised requires approval, and Auto sends them to the classifier.
 
 ## Reasoning options
 
@@ -149,9 +160,9 @@ Rho resolves aliases to concrete ids before any model-specific behavior, holds n
 
 ## Internal agent models
 
-Rho uses reserved internal agents to generate session titles, evaluate `/goal` completion, and answer the [`advisor`](/configuration/advisor-mode) tool. Most roles follow the active conversation provider, model, and auth by default. Run `/agents`, select the role, and press Enter to choose a separate model. The picker includes **Use conversation model**, which removes that role's override. Changes apply to the next invocation and save at once.
+Rho uses reserved internal agents to generate session titles, evaluate `/goal` completion, answer the [`advisor`](/configuration/advisor-mode) tool, and classify permission requests in Auto mode. Most roles follow the active conversation provider, model, and auth by default. Run `/agents`, select the role, and press Enter to choose a separate model. The picker includes **Use conversation model**, which removes that role's override. Changes apply to the next invocation and save at once.
 
-The `advisor` role is the exception: it has no default and no conversation-model fallback, because an advisor that mirrors the executor adds nothing. Its picker omits the **Use conversation model** row, and advisor mode stays inactive until a model is chosen. Its picker also lists `claude-code/…` rows when the `claude` binary is installed; choosing one runs the advisor on [Claude Code](/configuration/advisor-mode#claude-code-as-the-advisor) instead of a Rho provider. When the advisor model supports configurable reasoning, Rho carries the previous level (or the advisor default) onto the new model. `/config` under **Agent behavior** exposes **Advisor model** and **Advisor reasoning** next to **Advisor mode**.
+The `advisor` and `permission-classifier` roles have no default and no conversation-model fallback. The advisor picker omits the **Use conversation model** row, and advisor mode stays inactive until a model is chosen. Auto mode opens the permission-classifier picker when no model is set and stays on the previous mode if you cancel. The permission-classifier role defaults to low reasoning when a model is first selected. The advisor picker also lists `claude-code/…` rows when the `claude` binary is installed; choosing one runs the advisor on [Claude Code](/configuration/advisor-mode#claude-code-as-the-advisor) instead of a Rho provider. When the advisor model supports configurable reasoning, Rho carries the previous level (or the advisor default) onto the new model. `/config` under **Agent behavior** exposes **Advisor model**, **Advisor reasoning**, **Permission classifier model**, and **Permission classifier reasoning** next to **Permission mode** and **Advisor mode**.
 
 Overrides are stored by stable internal agent ID:
 

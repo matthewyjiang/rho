@@ -56,6 +56,10 @@ pub(super) async fn prepare_batch<'a>(
                     .workspace
                     .as_ref()
                     .map(|workspace| workspace.root().to_path_buf()),
+                live_history: {
+                    let core = Arc::clone(core);
+                    Some(Arc::new(move || core.live_history()))
+                },
             },
         )),
         cancellation,

@@ -430,6 +430,7 @@ impl ToolHost {
                     .workspace
                     .as_ref()
                     .map(|workspace| workspace.root().to_path_buf()),
+                live_history: None,
             },
         ));
         let context = ToolContext::with_security(

@@ -74,6 +74,7 @@ fn test_cli() -> Cli {
         no_subagents: false,
         agent: None,
         reasoning: None,
+        permission_mode: None,
         save: false,
         resume: None,
         command: None,
@@ -160,6 +161,17 @@ fn identical_cli_overrides_do_not_report_change() {
 
     assert!(!apply_overrides(&mut cfg, &cli).unwrap());
     assert_eq!(cfg.reasoning, reasoning);
+}
+
+// Covers: --permission-mode overrides config for the invocation without counting as --save change
+// Owner: cli config overrides
+#[test]
+fn cli_permission_mode_override_applies_without_reporting_change() {
+    let mut cfg = Config::default();
+    let cli = Cli::try_parse_from(["rho", "--permission-mode", "auto"]).unwrap();
+
+    assert!(!apply_overrides(&mut cfg, &cli).unwrap());
+    assert_eq!(cfg.permission_mode, crate::permission::PermissionMode::Auto);
 }
 
 #[test]

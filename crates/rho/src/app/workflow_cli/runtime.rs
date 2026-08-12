@@ -2,17 +2,19 @@
 
 use std::{
     io::{self, IsTerminal, Write},
+    path::PathBuf,
     sync::Arc,
 };
 
 use rho_sdk::{
     ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, ApprovalSession,
-    CapabilityOperation, ProcessEnvironment, ToolHost, Workspace,
+    CapabilityOperation, ProcessEnvironment, ProviderRequestUsageRecording, ToolHost, Workspace,
 };
 
 use crate::{
     app::{
         agent_executor::AgentExecutor,
+        automation::ensure_headless_auto_classifier_model,
         bootstrap::absolute_config_path,
         config_repository::ConfigRepository,
         policy::AppPolicy,
@@ -23,6 +25,9 @@ use crate::{
         },
     },
     cli::WorkflowRunFormat,
+    config::Config,
+    permission::PermissionMode,
+    permission_classifier_handler::ClassifierApprovalHandler,
     workflow::{ResolvedNode, StoredRun},
 };
 
@@ -50,6 +55,56 @@ impl ApprovalHandler for TerminalWorkflowApprovals {
                 })
         })
     }
+}
+
+pub(super) enum WorkflowApprovalMode {
+    InteractiveTerminal {
+        can_prompt: bool,
+        usage_recording: ProviderRequestUsageRecording,
+    },
+    NonInteractive {
+        usage_recording: ProviderRequestUsageRecording,
+    },
+}
+
+impl WorkflowApprovalMode {
+    fn interactive_terminal(
+        can_prompt: bool,
+        usage_recording: ProviderRequestUsageRecording,
+    ) -> Self {
+        Self::InteractiveTerminal {
+            can_prompt,
+            usage_recording,
+        }
+    }
+
+    fn non_interactive(usage_recording: ProviderRequestUsageRecording) -> Self {
+        Self::NonInteractive { usage_recording }
+    }
+
+    fn can_prompt(&self) -> bool {
+        matches!(
+            self,
+            Self::InteractiveTerminal {
+                can_prompt: true,
+                ..
+            }
+        )
+    }
+
+    fn usage_recording(&self) -> ProviderRequestUsageRecording {
+        match self {
+            Self::InteractiveTerminal {
+                usage_recording, ..
+            }
+            | Self::NonInteractive { usage_recording } => usage_recording.clone(),
+        }
+    }
+}
+
+struct WorkflowApprovalChannel {
+    session: ApprovalSession,
+    classifier: Option<Arc<ClassifierApprovalHandler>>,
 }
 
 fn prompt_for_capability(request: ApprovalRequest) -> ApprovalDecision {
@@ -104,6 +159,46 @@ fn prompt_for_capability(request: ApprovalRequest) -> ApprovalDecision {
     }
 }
 
+fn workflow_approval_channel(
+    config: &Config,
+    permission_mode: PermissionMode,
+    workspace_path: PathBuf,
+    approval_mode: WorkflowApprovalMode,
+) -> anyhow::Result<WorkflowApprovalChannel> {
+    match permission_mode {
+        PermissionMode::Auto => {
+            ensure_headless_auto_classifier_model(config)?;
+            let human = approval_mode.can_prompt().then(|| {
+                Arc::new(TerminalWorkflowApprovals { interactive: true })
+                    as Arc<dyn ApprovalHandler>
+            });
+            let classifier = ClassifierApprovalHandler::shared(
+                config.clone(),
+                workspace_path,
+                approval_mode.usage_recording(),
+                human,
+            );
+            let handler: Arc<dyn ApprovalHandler> = classifier.clone();
+            Ok(WorkflowApprovalChannel {
+                session: ApprovalSession::from_shared(handler),
+                classifier: Some(classifier),
+            })
+        }
+        PermissionMode::Supervised => Ok(WorkflowApprovalChannel {
+            session: ApprovalSession::new(TerminalWorkflowApprovals {
+                interactive: approval_mode.can_prompt(),
+            }),
+            classifier: None,
+        }),
+        PermissionMode::Bypass | PermissionMode::Plan => Ok(WorkflowApprovalChannel {
+            session: ApprovalSession::new(TerminalWorkflowApprovals {
+                interactive: approval_mode.can_prompt(),
+            }),
+            classifier: None,
+        }),
+    }
+}
+
 struct WorkflowCommandHosts {
     workspace: Workspace,
     policy: AppPolicy,
@@ -146,10 +241,11 @@ pub(crate) async fn execute_run(
         Some(WorkflowRunFormat::Text) | None => RuntimePresentation::Text,
     };
     let rho_home = crate::paths::rho_dir()?;
-    let approvals = ApprovalSession::new(TerminalWorkflowApprovals {
-        interactive: interactive_input && interactive_display,
-    });
-    let runtime = WorkflowRuntime::build(&run, config_path, approvals)?;
+    let approval_mode = WorkflowApprovalMode::interactive_terminal(
+        interactive_input && interactive_display,
+        crate::usage::default_recording().await,
+    );
+    let runtime = WorkflowRuntime::build(&run, config_path, approval_mode)?;
     let use_tui = output.is_none()
         && interactive_terminal
         && interactive_display
@@ -186,11 +282,14 @@ pub(crate) async fn spawn_background_run(
     run: StoredRun,
     recovery: RecoveryDecision,
     config_path: Option<std::path::PathBuf>,
-    approvals: ApprovalSession,
     tracker: Option<crate::tools::workflow_tracker::WorkflowRunTracker>,
 ) -> anyhow::Result<StoredRun> {
     let run_id = run.manifest.run_id;
-    let runtime = WorkflowRuntime::build(&run, config_path, approvals)?;
+    let runtime = WorkflowRuntime::build(
+        &run,
+        config_path,
+        WorkflowApprovalMode::non_interactive(crate::usage::default_recording().await),
+    )?;
     let runner = Arc::clone(&runtime.runner);
     tokio::spawn(async move {
         let result = runner.drive(run_id, recovery, None).await;
@@ -260,7 +359,7 @@ impl WorkflowRuntime {
     fn build(
         run: &StoredRun,
         config_path: Option<std::path::PathBuf>,
-        approvals: ApprovalSession,
+        approval_mode: WorkflowApprovalMode,
     ) -> anyhow::Result<Self> {
         let cwd = std::env::current_dir()?.canonicalize()?;
         let repository = ConfigRepository::new(config_path);
@@ -268,6 +367,8 @@ impl WorkflowRuntime {
         let mut config = repository.load()?;
         let permission_mode = effective_permission_mode(run, config.permission_mode)?;
         config.permission_mode = permission_mode;
+        let approvals =
+            workflow_approval_channel(&config, permission_mode, cwd.clone(), approval_mode)?;
         let needs_provider_credentials = run.graph.resolved_nodes.values().any(|node| {
             matches!(
                 node,
@@ -281,25 +382,46 @@ impl WorkflowRuntime {
         let workspace = Workspace::new(&cwd)?.with_unrestricted_file_access();
         let hooks = crate::hooks::start_for_cwd(&cwd);
         let hook_engine = hooks.as_ref().map(|pipeline| Arc::clone(pipeline.engine()));
+        let command_classifier = approvals
+            .classifier
+            .as_ref()
+            .map(ClassifierApprovalHandler::isolate);
+        let command_approvals = match &command_classifier {
+            // Commands get an isolated streak counter so agent denials cannot
+            // escalate command approvals (and vice versa).
+            Some(handler) => {
+                let erased: Arc<dyn ApprovalHandler> = handler.clone();
+                ApprovalSession::from_shared(erased)
+            }
+            None => approvals.session.clone(),
+        };
         let hosts = Arc::new(WorkflowCommandHosts {
             workspace,
             policy: AppPolicy::for_mode(permission_mode),
-            approvals: approvals.clone(),
+            approvals: command_approvals,
             hooks,
         });
         let process_environment = ProcessEnvironment::inherit_except(
             rho_providers::credential_env_vars().iter().copied(),
         );
-        let app_agent_executor = Arc::new(
-            AgentExecutor::new(
+        let app_agent_executor = Arc::new(match approvals.classifier.clone() {
+            Some(classifier) => AgentExecutor::new(
                 config.clone(),
                 config_path,
                 cwd.clone(),
                 SubagentHostInputBridge::new(),
                 crate::app::subagent_messaging::SubagentNoticeBridge::new(),
             )
-            .with_approval_session(approvals),
-        );
+            .with_classifier_template(classifier),
+            None => AgentExecutor::new(
+                config.clone(),
+                config_path,
+                cwd.clone(),
+                SubagentHostInputBridge::new(),
+                crate::app::subagent_messaging::SubagentNoticeBridge::new(),
+            )
+            .with_approval_session(approvals.session),
+        });
         let agent_executor: Arc<dyn WorkflowNodeExecutor> =
             Arc::new(WorkflowAgentExecutor::new(app_agent_executor));
         let command_executor: Arc<dyn WorkflowNodeExecutor> =

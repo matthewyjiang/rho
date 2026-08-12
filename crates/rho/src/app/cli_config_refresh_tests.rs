@@ -21,6 +21,7 @@ fn test_cli() -> Cli {
         no_subagents: false,
         agent: None,
         reasoning: None,
+        permission_mode: None,
         save: false,
         resume: None,
         command: None,

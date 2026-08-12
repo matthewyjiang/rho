@@ -44,7 +44,7 @@ fn assert_runtime_info_stacked(harness: &mut PtyHarness) -> Result<()> {
     let permissions_row = rows.iter().position(|row| row.trim() == "Permissions");
     let stacked = permissions_row
         .and_then(|index| rows.get(index + 1))
-        .is_some_and(|row| row.trim() == "auto");
+        .is_some_and(|row| row.trim() == "bypass");
     ensure!(
         stacked,
         "runtime info did not stack the Permissions field after resize:\n{}",

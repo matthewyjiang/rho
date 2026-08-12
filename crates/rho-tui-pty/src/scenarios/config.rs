@@ -1,5 +1,96 @@
 use super::*;
 
+// Covers: enabling Auto without a classifier model asks for one, Esc keeps the
+// prior mode, and selecting a classifier completes Auto.
+// Owner: interactive TUI
+pub(super) const AUTO_PERMISSION_MODE_CONFIG_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::WaitText {
+        text: "Bypass",
+        timeout: STARTUP,
+    },
+    Step::Phase("auto_without_classifier_opens_model_picker"),
+    Step::SubmitText("/config"),
+    Step::WaitText {
+        text: "Agent behavior",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Down),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "Config / Agent behavior",
+        timeout: SETTLE,
+    },
+    Step::AssertText("Permission mode"),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "No permission checks",
+        timeout: SETTLE,
+    },
+    Step::AssertText("Auto"),
+    // Bypass → Auto. Short terminals hide the status toast under the picker
+    // chrome, so the classifier picker title is the durable wait target.
+    Step::Key(Key::Down),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "select model for permission-classifier",
+        timeout: SETTLE,
+    },
+    Step::AssertText("openai/gpt-5.5"),
+    // Mode must not commit until a classifier is chosen.
+    Step::AssertText("Bypass ·"),
+    Step::Phase("escape_keeps_bypass"),
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "permission mode stays bypass: no classifier model selected",
+        timeout: SETTLE,
+    },
+    Step::AssertText("Permission mode"),
+    // Auto stays highlighted after cancel, so the detail line describes Auto
+    // while Bypass remains the selected/runtime mode.
+    Step::AssertText("selected"),
+    Step::AssertText("Classifier reviews writes and processes."),
+    Step::AssertText("Bypass ·"),
+    Step::Phase("select_classifier_applies_auto"),
+    // Cancel returns to the permission-mode list with Auto still highlighted.
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "select model for permission-classifier",
+        timeout: SETTLE,
+    },
+    Step::TypeText("gpt-5.5"),
+    Step::WaitText {
+        text: "openai/gpt-5.5",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "Config / Agent behavior",
+        timeout: SETTLE,
+    },
+    Step::AssertText("Permission mode"),
+    Step::AssertText("Auto"),
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "Models & reasoning",
+        timeout: SETTLE,
+    },
+    Step::WaitText {
+        text: "permissions: auto",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "Auto ·",
+        timeout: SETTLE,
+    },
+    Step::ExitCommand,
+];
+
 pub(super) const OPEN_CONFIG_PICKER_STEPS: &[Step] = &[
     Step::Phase("open_config"),
     Step::WaitText {

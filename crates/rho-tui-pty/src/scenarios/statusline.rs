@@ -15,7 +15,7 @@ pub(super) const STATUSLINE_HIERARCHY_STEPS: &[Step] = &[
         timeout: STARTUP,
     },
     Step::WaitText {
-        text: "Auto",
+        text: "Bypass",
         timeout: STARTUP,
     },
     Step::Custom(assert_wide_hierarchy),
@@ -45,7 +45,7 @@ fn bottom_status_row(harness: &PtyHarness) -> Result<String> {
         .find(|row| {
             let trimmed = row.trim();
             !trimmed.is_empty()
-                && (trimmed.contains("Auto")
+                && (trimmed.contains("Bypass")
                     || trimmed.contains("gpt-5.5")
                     || trimmed.contains("OpenAI"))
         })
@@ -61,7 +61,7 @@ fn bottom_status_row(harness: &PtyHarness) -> Result<String> {
 fn assert_wide_hierarchy(harness: &mut PtyHarness) -> Result<()> {
     let row = bottom_status_row(harness)?;
     ensure!(
-        row.contains("Auto") && row.contains("OpenAI") && row.contains("gpt-5.5"),
+        row.contains("Bypass") && row.contains("OpenAI") && row.contains("gpt-5.5"),
         "wide statusline lost the ranked identity fields:\n{row}\n{}",
         harness.screen().debug_dump()
     );
@@ -71,7 +71,7 @@ fn assert_wide_hierarchy(harness: &mut PtyHarness) -> Result<()> {
 fn assert_provider_dropped_model_kept(harness: &mut PtyHarness) -> Result<()> {
     let row = bottom_status_row(harness)?;
     ensure!(
-        row.contains("Auto") && row.contains("gpt-5.5"),
+        row.contains("Bypass") && row.contains("gpt-5.5"),
         "medium statusline should keep permission and model:\n{row}\n{}",
         harness.screen().debug_dump()
     );
@@ -86,7 +86,7 @@ fn assert_provider_dropped_model_kept(harness: &mut PtyHarness) -> Result<()> {
 fn assert_permission_kept(harness: &mut PtyHarness) -> Result<()> {
     let row = bottom_status_row(harness)?;
     ensure!(
-        row.contains("Auto"),
+        row.contains("Bypass"),
         "narrow statusline should keep permission:\n{row}\n{}",
         harness.screen().debug_dump()
     );

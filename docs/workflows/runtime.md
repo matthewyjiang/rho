@@ -154,7 +154,8 @@ Permission modes map a `workflow_command` process request as follows:
 
 | Permission mode | Policy decision | Host prompt |
 | --- | --- | --- |
-| `auto` | allow | no |
+| `bypass` | allow | no |
+| `auto` | require approval (classifier) | classifier, then human after three consecutive denials when a responder is available |
 | `plan` | deny | no |
 | `supervised` | require approval | yes, when a responder is available |
 
