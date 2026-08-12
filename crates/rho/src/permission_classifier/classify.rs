@@ -27,7 +27,6 @@ pub(crate) struct ClassifyRequest<'a> {
     pub usage_recording: ProviderRequestUsageRecording,
 }
 
-#[allow(dead_code)]
 pub(crate) async fn classify_capability_request(
     config: &Config,
     request: ClassifyRequest<'_>,

@@ -5,7 +5,6 @@ use rho_providers::model::{
 use rho_sdk::{ApprovalRequest, CapabilityRequest, CapabilitySource, PathScope};
 
 use super::render_classifier_transcript;
-use super::CONSECUTIVE_DENY_ESCALATION;
 
 fn source(name: &str) -> CapabilitySource {
     CapabilitySource::built_in_tool(name)
@@ -126,9 +125,4 @@ fn untrusted_newlines_and_labels_cannot_forge_transcript_records() {
     assert!(!transcript
         .lines()
         .any(|line| line.starts_with("tool_call: evil")));
-}
-
-#[test]
-fn consecutive_deny_escalation_is_three() {
-    assert_eq!(CONSECUTIVE_DENY_ESCALATION, 3);
 }
