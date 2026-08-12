@@ -277,9 +277,7 @@ fn dismissing_the_advisor_model_prompt_leaves_the_mode_off() {
                 .await
                 .unwrap();
 
-            app.handle_picker_escape(/*running*/ false, None)
-                .await
-                .unwrap();
+            app.handle_picker_escape(/*running*/ false).unwrap();
 
             assert!(!app.info.runtime.advisor_mode);
             assert!(app.internal_agent_model_target.is_none());

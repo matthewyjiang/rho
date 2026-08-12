@@ -94,12 +94,9 @@ impl App {
                 InternalAgentModelPickerOrigin::AdvisorModelConfigRow => {
                     SELECT_ADVISOR_MODEL_EDIT_STATUS
                 }
-                InternalAgentModelPickerOrigin::AdvisorCommand
-                | InternalAgentModelPickerOrigin::AdvisorConfigRow
-                | InternalAgentModelPickerOrigin::PermissionModeConfigRow
-                | InternalAgentModelPickerOrigin::PermissionModeStartup
-                | InternalAgentModelPickerOrigin::PermissionClassifierModelConfigRow
-                | InternalAgentModelPickerOrigin::AgentsPicker => SELECT_ADVISOR_MODEL_STATUS,
+                // Only advisor origins open this prompt; other variants exist for
+                // exhaustiveness of the shared origin enum.
+                _ => SELECT_ADVISOR_MODEL_STATUS,
             };
             self.set_status(status);
         }

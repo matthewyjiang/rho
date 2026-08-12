@@ -66,13 +66,25 @@ impl App {
             .contains_key(PERMISSION_CLASSIFIER_AGENT_ID)
     }
 
-    /// Opens the classifier model picker when Auto is active (or being enabled)
-    /// without a model. No-op when another picker or the first-run setup screen
-    /// already owns the composer.
-    pub(super) async fn maybe_prompt_auto_classifier_model(
+    /// Keeps interactive Auto consistent with a configured classifier model.
+    ///
+    /// Call from idle transitions that land on a free composer (startup, resume,
+    /// setup finish, full picker dismiss). Drains a pending startup-dismiss
+    /// demote first, then opens the classifier picker when Auto is active
+    /// without a model. No-op while setup or another picker owns the composer.
+    pub(super) async fn reconcile_auto_classifier_gate(
         &mut self,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        if self.pending_auto_classifier_demote {
+            self.pending_auto_classifier_demote = false;
+            if self.info.runtime.permission_mode == PermissionMode::Auto
+                && !self.permission_classifier_model_configured()
+            {
+                self.fallback_auto_without_classifier(agent).await?;
+            }
+            return Ok(());
+        }
         if self.setup_screen.is_some() {
             return Ok(());
         }
@@ -132,18 +144,21 @@ impl App {
         origin: InternalAgentModelPickerOrigin,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        // `selected == false` means model resolve failed after confirm, not Esc.
+        // Cancel/demote lives only in cancel_permission_classifier_model_prompt.
+        if !selected {
+            return Ok(());
+        }
         match origin {
-            InternalAgentModelPickerOrigin::PermissionModeConfigRow if selected => {
+            InternalAgentModelPickerOrigin::PermissionModeConfigRow => {
                 self.apply_permission_mode(PermissionMode::Auto, agent)
                     .await?;
             }
-            InternalAgentModelPickerOrigin::PermissionModeStartup if selected => {
+            InternalAgentModelPickerOrigin::PermissionModeStartup => {
                 // Auto is already active; the picker only stored the model.
+                self.pending_auto_classifier_demote = false;
                 self.sync_permission_classifier_runtime_config(agent);
                 self.set_status("permission mode: auto");
-            }
-            InternalAgentModelPickerOrigin::PermissionModeStartup => {
-                self.fallback_auto_without_classifier(agent).await?;
             }
             _ => {}
         }
@@ -162,11 +177,13 @@ impl App {
         Ok(())
     }
 
-    pub(super) async fn cancel_permission_classifier_model_prompt(
+    /// Dismisses a pending classifier prompt opened to enable or repair Auto.
+    /// Startup dismiss only marks a demote; [`Self::reconcile_auto_classifier_gate`]
+    /// applies it once an idle path has a runtime handle.
+    pub(super) fn cancel_permission_classifier_model_prompt(
         &mut self,
         restore_input: bool,
-        agent: Option<&mut InteractiveRuntime>,
-    ) -> anyhow::Result<bool> {
+    ) -> bool {
         let origin = match self.internal_agent_model_target.as_ref() {
             Some(target)
                 if target.id == PERMISSION_CLASSIFIER_AGENT_ID
@@ -178,7 +195,7 @@ impl App {
             {
                 target.origin
             }
-            _ => return Ok(false),
+            _ => return false,
         };
         self.internal_agent_model_target = None;
         if restore_input {
@@ -192,17 +209,12 @@ impl App {
                 ));
             }
             InternalAgentModelPickerOrigin::PermissionModeStartup => {
-                if let Some(agent) = agent {
-                    self.fallback_auto_without_classifier(agent).await?;
-                } else {
-                    self.set_status(
-                        "permission mode stays auto: select a classifier model before gated tools run",
-                    );
-                }
+                self.pending_auto_classifier_demote = true;
+                self.set_status("permission mode set to supervised: no classifier model selected");
             }
             _ => {}
         }
-        Ok(true)
+        true
     }
 
     pub(super) fn cycle_permission_classifier_reasoning(
@@ -263,3 +275,7 @@ impl App {
         self.set_status("permission mode cannot change until the current turn finishes");
     }
 }
+
+#[cfg(test)]
+#[path = "permission_mode_tests.rs"]
+mod tests;

@@ -429,8 +429,10 @@ impl App {
                 Ok(true)
             }
             PickerKeyEffect::Escape => {
-                self.handle_picker_escape(/*running*/ false, Some(agent))
-                    .await?;
+                self.handle_picker_escape(/*running*/ false)?;
+                if matches!(self.input_ui.composer(), super::ComposerMode::Input) {
+                    self.reconcile_auto_classifier_gate(agent).await?;
+                }
                 self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 Ok(true)
@@ -461,7 +463,7 @@ impl App {
         }
     }
 
-    pub(super) async fn handle_running_picker_key(
+    pub(super) fn handle_running_picker_key(
         &mut self,
         key: KeyEvent,
         terminal: &DefaultTerminal,
@@ -490,9 +492,9 @@ impl App {
                 Ok(true)
             }
             PickerKeyEffect::Escape => {
-                // Startup Auto classifier prompts only open while idle, so the
-                // running path never needs a runtime handle for that fallback.
-                self.handle_picker_escape(/*running*/ true, None).await?;
+                // Startup Auto classifier repair is idle-only. Cancel may mark a
+                // pending demote; the next idle reconcile applies it with a runtime.
+                self.handle_picker_escape(/*running*/ true)?;
                 Ok(true)
             }
             PickerKeyEffect::ToggleFavorite => {

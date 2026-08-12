@@ -81,7 +81,7 @@ impl App {
         if self.handle_running_text_input_key(key)? {
             return Ok(false);
         }
-        if self.handle_running_picker_key(key, terminal).await? {
+        if self.handle_running_picker_key(key, terminal)? {
             return Ok(false);
         }
         if self

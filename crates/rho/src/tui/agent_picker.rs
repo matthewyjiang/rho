@@ -41,6 +41,13 @@ pub(super) enum InternalAgentModelPickerOrigin {
     PermissionModeStartup,
 }
 
+impl InternalAgentModelPickerOrigin {
+    /// True when the picker replaces the composer alone (no parent to return to).
+    pub(super) fn opens_standalone(self) -> bool {
+        matches!(self, Self::AdvisorCommand | Self::PermissionModeStartup)
+    }
+}
+
 /// The internal agent an open model or reasoning picker configures.
 #[derive(Clone, Debug)]
 pub(super) struct InternalAgentModelTarget {
@@ -351,18 +358,10 @@ impl super::App {
             self.set_status("no cached provider models. use Config > Refresh model lists.");
             return false;
         }
-        match origin {
-            InternalAgentModelPickerOrigin::AgentsPicker
-            | InternalAgentModelPickerOrigin::AdvisorConfigRow
-            | InternalAgentModelPickerOrigin::AdvisorModelConfigRow
-            | InternalAgentModelPickerOrigin::PermissionModeConfigRow
-            | InternalAgentModelPickerOrigin::PermissionClassifierModelConfigRow => {
-                self.open_child_picker(picker)
-            }
-            InternalAgentModelPickerOrigin::AdvisorCommand
-            | InternalAgentModelPickerOrigin::PermissionModeStartup => {
-                self.input_ui.set_composer(ComposerMode::Picker(picker));
-            }
+        if origin.opens_standalone() {
+            self.input_ui.set_composer(ComposerMode::Picker(picker));
+        } else {
+            self.open_child_picker(picker)
         }
         true
     }

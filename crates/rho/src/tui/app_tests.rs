@@ -13,14 +13,6 @@ use rho_providers::credentials::{
 };
 use std::sync::atomic::AtomicBool;
 
-fn block_on<T>(f: impl std::future::Future<Output = T>) -> T {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("test runtime")
-        .block_on(f)
-}
-
 #[path = "tests/activity_phase_tests.rs"]
 mod activity_phase_tests;
 #[path = "tests/input_editing_tests.rs"]
@@ -771,7 +763,7 @@ fn esc_from_nested_web_search_config_returns_to_tools_category() {
     let child = config_picker::web_search_config_picker(&config, app.credential_store.as_ref());
     app.open_child_picker(child);
 
-    block_on(app.handle_picker_escape(/*running*/ false, None)).unwrap();
+    app.handle_picker_escape(/*running*/ false).unwrap();
 
     let ComposerMode::Picker(picker) = app.input_ui.composer() else {
         panic!("expected picker after nested config escape");
@@ -796,7 +788,7 @@ fn esc_from_main_config_still_closes_picker() {
             &config,
         )));
 
-    block_on(app.handle_picker_escape(/*running*/ false, None)).unwrap();
+    app.handle_picker_escape(/*running*/ false).unwrap();
 
     assert!(matches!(app.input_ui.composer(), ComposerMode::Input));
 }

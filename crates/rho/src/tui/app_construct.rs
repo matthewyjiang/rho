@@ -103,6 +103,7 @@ impl App {
             pending_update_notice,
             pending_model_selection: None,
             internal_agent_model_target: None,
+            pending_auto_classifier_demote: false,
             agent_editor_session: None,
             sessions_hub_state: super::sessions_hub::SessionsHubState::default(),
             pending_session_title: None,
