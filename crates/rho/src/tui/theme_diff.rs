@@ -1,7 +1,8 @@
-//! Diff-row palette fills and the chrome package consumed by tool-card render.
+//! Diff-row wash and the chrome package consumed by tool-card render.
 //!
 //! Added/removed rows get a soft green/red wash. Change kind on the sign is
 //! foreground only (`+`/`-`); content stays base text plus syntax roles.
+//! Theme owns wash + sign; render derives each column with [`DiffRowChrome::washed`].
 
 use ratatui::{style::Style, text::Span};
 use rho_tools::tool_card::DiffRowKind;
@@ -14,45 +15,28 @@ use super::{
 // Diff row wash matches the panel wash strength so syntax stays readable.
 const DIFF_ROW_WASH_ALPHA: f32 = USER_BACKGROUND_ALPHA;
 
-/// Soft row wash for one diff side (add or delete).
+/// Theme facts for one diff body row: content base, sign role, optional wash.
 ///
-/// Absent without sampled RGB so terminals never get harsh named-ANSI
-/// backgrounds; signs keep role foreground instead.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct DiffSideFill {
-    pub(super) wash: Option<BlockColor>,
-}
-
-impl DiffSideFill {
-    fn from_terminal(terminal: Option<&TerminalPalette>, color: AnsiColor) -> Self {
-        Self {
-            wash: optional_blended(terminal, color, DIFF_ROW_WASH_ALPHA),
-        }
-    }
-
-    fn from_scheme(scheme: &ColorScheme, color: AnsiColor) -> Self {
-        Self {
-            wash: Some(scheme_diff_background(scheme, color, DIFF_ROW_WASH_ALPHA)),
-        }
-    }
-}
-
-/// Layout styles for one diff body row. Theme owns wash policy; render only lays out.
+/// Render patches column bases through [`Self::washed`]; content syntax is
+/// washed after highlight via [`Self::paint_content`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::tui) struct DiffRowChrome {
-    /// Content / syntax base (role foreground only; wash applied via [`Self::paint_content`]).
+    /// Content / syntax base (role foreground only).
     pub(in crate::tui) text: Style,
+    /// `+`/`-` role foreground (+ wash when present).
     pub(in crate::tui) sign: Style,
-    pub(in crate::tui) number: Style,
-    pub(in crate::tui) gap: Style,
-    pub(in crate::tui) continuation: Style,
-    pub(in crate::tui) pad: Style,
-    /// Fallback style for empty wrap chunks (includes wash when present).
-    pub(in crate::tui) empty_wrap: Style,
     wash: Option<Style>,
 }
 
 impl DiffRowChrome {
+    /// Apply the row wash to a column's base style.
+    pub(in crate::tui) fn washed(self, base: Style) -> Style {
+        match self.wash {
+            Some(wash) => base.patch(wash),
+            None => base,
+        }
+    }
+
     /// Syntax roles replace the plain style; re-apply the row wash after.
     pub(in crate::tui) fn paint_content(self, spans: &mut [Span<'static>]) {
         let Some(wash) = self.wash else {
@@ -68,62 +52,45 @@ impl Theme {
     /// Chrome for one diff body row: fg `+`/`-`, soft row wash, plain content.
     pub(in crate::tui) fn tool_diff_chrome(kind: DiffRowKind) -> DiffRowChrome {
         let palette = Palette::current();
-        let text = Self::tool_diff_text(kind);
-        let side = match kind {
-            DiffRowKind::Added => Some((palette.diff_add, palette.success)),
-            DiffRowKind::Removed => Some((palette.diff_del, palette.error)),
+        let text = Self::text();
+        let (wash_fill, sign_fg) = match kind {
+            DiffRowKind::Added => (palette.diff_add_wash, Some(palette.success)),
+            DiffRowKind::Removed => (palette.diff_del_wash, Some(palette.error)),
             DiffRowKind::Context | DiffRowKind::File | DiffRowKind::Skip | DiffRowKind::Meta => {
-                None
+                (None, None)
             }
         };
-        let wash =
-            side.and_then(|(fill, _)| fill.wash.map(|block| Style::default().bg(block.color)));
+        let wash = wash_fill.map(|block| Style::default().bg(block.color));
         // Sign is role foreground only - the wash carries add/remove, not a solid gutter.
-        let sign = match side {
-            Some((_, fallback_fg)) => patch_optional(Style::default().fg(fallback_fg), wash),
-            None => text,
+        let sign = match (sign_fg, wash) {
+            (Some(fg), Some(wash)) => Style::default().fg(fg).patch(wash),
+            (Some(fg), None) => Style::default().fg(fg),
+            (None, _) => text,
         };
-        let washed_text = patch_optional(text, wash);
-        DiffRowChrome {
-            text,
-            sign,
-            number: patch_optional(Self::tool_diff_gutter(), wash),
-            gap: washed_text,
-            continuation: patch_optional(Self::tool_tree(), wash),
-            pad: wash.unwrap_or_else(Self::text),
-            empty_wrap: washed_text,
-            wash,
-        }
+        DiffRowChrome { text, sign, wash }
     }
 }
 
-fn patch_optional(base: Style, wash: Option<Style>) -> Style {
-    match wash {
-        Some(wash) => base.patch(wash),
-        None => base,
-    }
-}
-
-pub(super) fn terminal_diff_fills(
+pub(super) fn terminal_diff_washes(
     terminal: Option<&TerminalPalette>,
-) -> (DiffSideFill, DiffSideFill) {
+) -> (Option<BlockColor>, Option<BlockColor>) {
     (
-        DiffSideFill::from_terminal(terminal, AnsiColor::Green),
-        DiffSideFill::from_terminal(terminal, AnsiColor::Red),
+        optional_blended(terminal, AnsiColor::Green, DIFF_ROW_WASH_ALPHA),
+        optional_blended(terminal, AnsiColor::Red, DIFF_ROW_WASH_ALPHA),
     )
 }
 
-pub(super) fn scheme_diff_fills(scheme: &ColorScheme) -> (DiffSideFill, DiffSideFill) {
+pub(super) fn scheme_diff_washes(scheme: &ColorScheme) -> (Option<BlockColor>, Option<BlockColor>) {
     (
-        DiffSideFill::from_scheme(scheme, AnsiColor::Green),
-        DiffSideFill::from_scheme(scheme, AnsiColor::Red),
+        Some(scheme_diff_background(scheme, AnsiColor::Green)),
+        Some(scheme_diff_background(scheme, AnsiColor::Red)),
     )
 }
 
-fn scheme_diff_background(scheme: &ColorScheme, color: AnsiColor, alpha: f32) -> BlockColor {
+fn scheme_diff_background(scheme: &ColorScheme, color: AnsiColor) -> BlockColor {
     BlockColor::from_rgb(
         scheme
             .background
-            .blend_toward(scheme_ansi(scheme, color), alpha),
+            .blend_toward(scheme_ansi(scheme, color), DIFF_ROW_WASH_ALPHA),
     )
 }

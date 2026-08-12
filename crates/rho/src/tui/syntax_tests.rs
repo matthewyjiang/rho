@@ -121,7 +121,7 @@ fn path_extension_resolves_highlighter() {
 // Owner: pure unit (highlight segment style)
 #[test]
 fn highlight_segment_style_uses_caller_plain() {
-    let plain = Theme::tool_diff_text(rho_tools::tool_card::DiffRowKind::Added);
+    let plain = Theme::text();
     let keyword = HighlightSegment {
         text: "let".into(),
         role: Some(SyntaxRole::Keyword),

@@ -200,8 +200,8 @@ fn scheme_diff_chrome_washes_row_with_fg_signs() {
     Theme::apply_committed("terminal");
     Theme::apply_committed("one-half-dark");
     let palette = Palette::current();
-    let add_wash = palette.diff_add.wash.expect("add wash").color;
-    let del_wash = palette.diff_del.wash.expect("del wash").color;
+    let add_wash = palette.diff_add_wash.expect("add wash").color;
+    let del_wash = palette.diff_del_wash.expect("del wash").color;
     assert_ne!(add_wash, del_wash);
 
     let add = Theme::tool_diff_chrome(rho_tools::tool_card::DiffRowKind::Added);
@@ -211,15 +211,14 @@ fn scheme_diff_chrome_washes_row_with_fg_signs() {
     assert_eq!(del.sign.fg, Some(palette.error));
     assert_eq!(add.sign.bg, Some(add_wash));
     assert_eq!(del.sign.bg, Some(del_wash));
-    assert_eq!(add.number.bg, Some(add_wash));
-    assert_eq!(del.number.bg, Some(del_wash));
-    assert_eq!(add.pad.bg, Some(add_wash));
-    assert_eq!(del.pad.bg, Some(del_wash));
     // Content base stays unwashed until paint_content; fg is plain text.
     assert_eq!(add.text.fg, Theme::text().fg);
     assert_eq!(del.text.fg, Theme::text().fg);
     assert_eq!(add.text.bg, None);
     assert_eq!(del.text.bg, None);
+    // washed() carries the row wash onto column bases without mutating text.
+    assert_eq!(add.washed(Theme::tool_diff_gutter()).bg, Some(add_wash));
+    assert_eq!(del.washed(Theme::text()).bg, Some(del_wash));
 
     Theme::apply_committed("terminal");
 }
@@ -248,16 +247,16 @@ fn terminal_palette_drives_brand_and_success_rgb() {
     assert_eq!(palette.skill, Color::Rgb(130, 140, 150));
 
     // Sampled green/red also drive optional diff row washes.
-    assert!(palette.diff_add.wash.is_some());
-    assert!(palette.diff_del.wash.is_some());
+    assert!(palette.diff_add_wash.is_some());
+    assert!(palette.diff_del_wash.is_some());
 
     // Without a sample, keep named ANSI so the host can still paint them.
     // Skip harsh named-ANSI backgrounds for diff chrome.
     let fallback = Palette::from_terminal(None);
     assert_eq!(fallback.accent, Color::Cyan);
     assert_eq!(fallback.success, Color::Green);
-    assert!(fallback.diff_add.wash.is_none());
-    assert!(fallback.diff_del.wash.is_none());
+    assert!(fallback.diff_add_wash.is_none());
+    assert!(fallback.diff_del_wash.is_none());
 }
 
 // Covers: bright warning yellow is darkened on light surfaces for Auto/status text

@@ -177,9 +177,9 @@ struct Palette {
     user_background: BlockColor,
     neutral_tool_background: BlockColor,
     /// Add-side row wash. Absent without sampled RGB.
-    diff_add: theme_diff::DiffSideFill,
+    diff_add_wash: Option<BlockColor>,
     /// Delete-side row wash. Absent without sampled RGB.
-    diff_del: theme_diff::DiffSideFill,
+    diff_del_wash: Option<BlockColor>,
 }
 
 impl Palette {
@@ -195,7 +195,7 @@ impl Palette {
 
     fn from_terminal(terminal: Option<&TerminalPalette>) -> Self {
         let surface = terminal.map(|palette| palette.background);
-        let (diff_add, diff_del) = theme_diff::terminal_diff_fills(terminal);
+        let (diff_add_wash, diff_del_wash) = theme_diff::terminal_diff_washes(terminal);
         Self {
             text: None,
             surface: None,
@@ -222,15 +222,15 @@ impl Palette {
                 NEUTRAL_TOOL_BACKGROUND_ALPHA,
                 BlockColor::from_color(Color::DarkGray),
             ),
-            diff_add,
-            diff_del,
+            diff_add_wash,
+            diff_del_wash,
         }
     }
 
     fn from_scheme(scheme: &ColorScheme) -> Self {
         let panel = scheme_panel_background(scheme);
         let surface = scheme.background;
-        let (diff_add, diff_del) = theme_diff::scheme_diff_fills(scheme);
+        let (diff_add_wash, diff_del_wash) = theme_diff::scheme_diff_washes(scheme);
         Self {
             text: Some(scheme.foreground.color()),
             surface: Some(scheme.background.color()),
@@ -248,8 +248,8 @@ impl Palette {
             ),
             user_background: panel,
             neutral_tool_background: panel,
-            diff_add,
-            diff_del,
+            diff_add_wash,
+            diff_del_wash,
         }
     }
 }
@@ -715,11 +715,6 @@ impl Theme {
 
     pub(super) fn tool_stat_del() -> Style {
         Style::default().fg(Palette::current().error)
-    }
-
-    /// Content color for one diff row. Always base text; wash and `+`/`-` carry kind.
-    pub(super) fn tool_diff_text(_kind: rho_tools::tool_card::DiffRowKind) -> Style {
-        Self::text()
     }
 
     /// Line-number gutter. The sign carries the change, so numbers stay chrome.

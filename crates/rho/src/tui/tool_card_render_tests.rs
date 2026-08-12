@@ -271,8 +271,8 @@ fn file_diff_rows_apply_soft_wash_with_fg_signs() {
 
     let add = Theme::tool_diff_chrome(DiffRowKind::Added);
     let del = Theme::tool_diff_chrome(DiffRowKind::Removed);
-    let add_wash = add.pad.bg.expect("add wash");
-    let del_wash = del.pad.bg.expect("del wash");
+    let add_wash = add.sign.bg.expect("add wash");
+    let del_wash = del.sign.bg.expect("del wash");
 
     assert!(
         removed

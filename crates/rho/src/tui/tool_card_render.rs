@@ -694,7 +694,7 @@ fn push_diff_row(
     // Op locators and other annotations are not content lines; drop the sign
     // column so they read as headers rather than gap markers.
     if row.kind == DiffRowKind::Meta {
-        push_body_line(lines, &row.text, width, Theme::tool_diff_text(row.kind));
+        push_body_line(lines, &row.text, width, Theme::text());
         return;
     }
 
@@ -720,16 +720,20 @@ fn push_diff_row(
     };
     chrome.paint_content(&mut content_spans);
 
-    let wrapped =
-        hard_wrap_styled_spans(&row.text, &content_spans, content_width, chrome.empty_wrap);
+    let wrapped = hard_wrap_styled_spans(
+        &row.text,
+        &content_spans,
+        content_width,
+        chrome.washed(chrome.text),
+    );
     let indent_width = display_width(CHILD_CONTENT_INDENT);
     for (index, chunk) in wrapped.into_iter().enumerate() {
         let mut spans = if index == 0 {
             vec![
                 Span::styled(CHILD_CONTENT_INDENT.to_string(), Theme::tool_tree()),
-                Span::styled(number.clone(), chrome.number),
+                Span::styled(number.clone(), chrome.washed(Theme::tool_diff_gutter())),
                 Span::styled(sign.to_string(), chrome.sign),
-                Span::styled(sign_gap.to_string(), chrome.gap),
+                Span::styled(sign_gap.to_string(), chrome.washed(chrome.text)),
             ]
         } else {
             // Continuations keep tree indent clear; wash covers number+sign columns.
@@ -739,12 +743,19 @@ fn push_diff_row(
             )];
             let rest = prefix_width.saturating_sub(indent_width);
             if rest > 0 {
-                cont.push(Span::styled(" ".repeat(rest), chrome.continuation));
+                cont.push(Span::styled(
+                    " ".repeat(rest),
+                    chrome.washed(Theme::tool_tree()),
+                ));
             }
             cont
         };
         spans.extend(chunk);
-        lines.push(pad_spans_line_with(spans, width, chrome.pad));
+        lines.push(pad_spans_line_with(
+            spans,
+            width,
+            chrome.washed(Theme::text()),
+        ));
     }
 }
 
