@@ -3,7 +3,8 @@ use std::{ops::Range, sync::Arc};
 use ratatui::text::Line;
 
 use super::{
-    feed_image::{FeedImage, RenderedImagePlacement, RenderedImagePlacements},
+    feed_image::{FeedImage, RenderedImagePlacements},
+    history_soft_settings::SoftSettingsDelta,
     markdown::incremental_markdown_tail_start,
     markdown_image::MarkdownImageSource,
     message_render::render_assistant_content,
@@ -22,6 +23,18 @@ pub(super) struct CachedCodeBlock {
 struct IncrementalAssistantCache {
     stable_source_len: usize,
     stable_line_count: usize,
+}
+
+/// One history entry's rendered payload. Code-block lines and image rows are
+/// relative to this entry's first transcript row so surgical resplices never
+/// shift absolute metadata for later entries.
+#[derive(Clone, Debug, Default)]
+struct CachedEntry {
+    lines: Arc<[Line<'static>]>,
+    code_blocks: Vec<CachedCodeBlock>,
+    image_placement: Option<RenderedImagePlacements>,
+    assistant: Option<IncrementalAssistantCache>,
+    depends_on_image_height: bool,
 }
 
 /// Resolves loaded `FeedImage`s for the image references of one entry.
@@ -53,16 +66,20 @@ impl HistoryRenderSettings {
     pub(super) fn hides_entry(self, entry: &Entry) -> bool {
         self.zen_mode && matches!(entry, Entry::Tool(_) | Entry::Reasoning(_))
     }
+
+    /// Width or theme changes reflow or restyle every cached line.
+    pub(super) fn requires_full_rebuild(self, previous: Self) -> bool {
+        self.width != previous.width || self.theme_generation != previous.theme_generation
+    }
 }
 
 #[derive(Default)]
 pub(super) struct HistoryLineCache {
     settings: Option<HistoryRenderSettings>,
-    lines: Vec<Line<'static>>,
+    /// Per-entry rendered payload (lines + relative metadata).
+    entries: Vec<CachedEntry>,
+    /// Prefix ranges derived from [`CachedEntry::lines`] lengths.
     entry_ranges: Vec<Range<usize>>,
-    assistant_caches: Vec<Option<IncrementalAssistantCache>>,
-    code_blocks: Vec<CachedCodeBlock>,
-    image_placements: Vec<RenderedImagePlacements>,
     dirty_from: Option<usize>,
     /// Entry indices to re-render in place (height may change). Applied on the
     /// next `ensure_current` without rebuilding the history suffix when the
@@ -71,6 +88,10 @@ pub(super) struct HistoryLineCache {
     appended_assistant: Option<usize>,
     /// When set, the last entry is still being streamed and must not own a trailing blank.
     open_stream_tail: bool,
+    /// Test-only: counts entry renders so soft settings updates can prove they
+    /// skipped work on text-only transcripts.
+    #[cfg(test)]
+    entry_renders: u64,
 }
 
 impl HistoryLineCache {
@@ -128,9 +149,9 @@ impl HistoryLineCache {
             && self.dirty_from.is_none()
             && self.resplice.is_empty()
             && self
-                .assistant_caches
+                .entries
                 .get(index)
-                .is_some_and(Option::is_some);
+                .is_some_and(|entry| entry.assistant.is_some());
         if can_extend {
             self.appended_assistant = Some(index);
             self.dirty_from = Some(index);
@@ -146,7 +167,7 @@ impl HistoryLineCache {
         image_resolver: EntryImageResolver<'_>,
     ) -> usize {
         self.ensure_current(entries, settings, image_resolver);
-        self.lines.len()
+        self.total_lines()
     }
 
     pub(super) fn code_blocks(
@@ -154,9 +175,9 @@ impl HistoryLineCache {
         entries: &[Entry],
         settings: HistoryRenderSettings,
         image_resolver: EntryImageResolver<'_>,
-    ) -> &[CachedCodeBlock] {
+    ) -> Vec<CachedCodeBlock> {
         self.ensure_current(entries, settings, image_resolver);
-        &self.code_blocks
+        self.project_code_blocks()
     }
 
     pub(super) fn entry_index_at_line(
@@ -167,9 +188,18 @@ impl HistoryLineCache {
         image_resolver: EntryImageResolver<'_>,
     ) -> Option<usize> {
         self.ensure_current(entries, settings, image_resolver);
+        // Ranges are contiguous and sorted by start; binary search scales with
+        // long transcripts where linear scan showed up in mouse hit-testing.
+        let index = self.entry_ranges.partition_point(|range| range.end <= line);
         self.entry_ranges
-            .iter()
-            .position(|range| range.contains(&line))
+            .get(index)
+            .filter(|range| range.contains(&line))
+            .map(|_| index)
+    }
+
+    #[cfg(test)]
+    pub(super) fn entry_render_count(&self) -> u64 {
+        self.entry_renders
     }
 
     pub(super) fn extend_visible_lines(
@@ -188,11 +218,32 @@ impl HistoryLineCache {
         let end = slice
             .start
             .saturating_add(slice.count)
-            .min(self.lines.len());
+            .min(self.total_lines());
         if slice.start >= end {
             return;
         }
-        target.extend(self.lines[slice.start..end].iter().cloned());
+
+        // Walk only entries that intersect the viewport instead of slicing a
+        // flat transcript buffer.
+        let mut entry_index = self
+            .entry_ranges
+            .partition_point(|range| range.end <= slice.start);
+        let mut line = slice.start;
+        while line < end && entry_index < self.entries.len() {
+            let range = &self.entry_ranges[entry_index];
+            if range.start >= end {
+                break;
+            }
+            let local_start = line.saturating_sub(range.start);
+            let local_end = end.min(range.end).saturating_sub(range.start);
+            target.extend(
+                self.entries[entry_index].lines[local_start..local_end]
+                    .iter()
+                    .cloned(),
+            );
+            line = range.start.saturating_add(local_end);
+            entry_index += 1;
+        }
     }
 
     pub(super) fn visible_image_placements(
@@ -205,21 +256,91 @@ impl HistoryLineCache {
     ) -> Vec<super::feed_image::VisibleImagePlacement> {
         self.ensure_current(entries, settings, image_resolver);
         let end = start.saturating_add(count);
-        self.image_placements
-            .iter()
-            .flat_map(|placements| placements.iter())
-            .filter_map(|placement| {
-                let visible_start = placement.rows.start.max(start);
-                let visible_end = placement.rows.end.min(end);
-                (visible_start == placement.rows.start && visible_end == placement.rows.end).then(
-                    || super::feed_image::VisibleImagePlacement {
+        let mut visible = Vec::new();
+        for (entry, range) in self.entries.iter().zip(self.entry_ranges.iter()) {
+            let Some(placements) = &entry.image_placement else {
+                continue;
+            };
+            for placement in placements.iter() {
+                let abs_start = range.start.saturating_add(placement.rows.start);
+                let abs_end = range.start.saturating_add(placement.rows.end);
+                let visible_start = abs_start.max(start);
+                let visible_end = abs_end.min(end);
+                if visible_start == abs_start && visible_end == abs_end {
+                    visible.push(super::feed_image::VisibleImagePlacement {
                         image: placement.image.clone(),
                         row: visible_start - start,
                         height: visible_end - visible_start,
-                    },
-                )
-            })
-            .collect()
+                    });
+                }
+            }
+        }
+        visible
+    }
+
+    fn total_lines(&self) -> usize {
+        self.entry_ranges.last().map_or(0, |range| range.end)
+    }
+
+    fn clear_rendered(&mut self) {
+        self.entries.clear();
+        self.entry_ranges.clear();
+        self.appended_assistant = None;
+        self.resplice.clear();
+    }
+
+    fn truncate_entries_to(&mut self, rebuild_from: usize) {
+        self.entries.truncate(rebuild_from);
+        self.entry_ranges.truncate(rebuild_from);
+    }
+
+    /// Rebuild absolute ranges from per-entry line lengths (source of truth).
+    fn recompute_ranges(&mut self) {
+        self.entry_ranges.clear();
+        self.entry_ranges.reserve(self.entries.len());
+        let mut start = 0usize;
+        for entry in &self.entries {
+            let end = start.saturating_add(entry.lines.len());
+            self.entry_ranges.push(start..end);
+            start = end;
+        }
+    }
+
+    fn project_code_blocks(&self) -> Vec<CachedCodeBlock> {
+        let mut blocks = Vec::new();
+        for (entry, range) in self.entries.iter().zip(self.entry_ranges.iter()) {
+            blocks.extend(entry.code_blocks.iter().map(|block| CachedCodeBlock {
+                line: range.start.saturating_add(block.line),
+                copy_columns: block.copy_columns.clone(),
+                text: Arc::clone(&block.text),
+            }));
+        }
+        blocks
+    }
+
+    fn soft_resplice_indices(&self, delta: SoftSettingsDelta, entries: &[Entry]) -> Vec<usize> {
+        let mut indices = Vec::new();
+        if delta.image_height {
+            indices.extend(
+                self.entries
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, entry)| entry.depends_on_image_height.then_some(index)),
+            );
+            if delta.image_only() {
+                return indices;
+            }
+        }
+        if delta.tool_output || delta.zen {
+            for (index, entry) in entries.iter().enumerate() {
+                if delta.needs_entry(entry) {
+                    indices.push(index);
+                }
+            }
+            indices.sort_unstable();
+            indices.dedup();
+        }
+        indices
     }
 
     fn ensure_current(
@@ -229,15 +350,21 @@ impl HistoryLineCache {
         image_resolver: EntryImageResolver<'_>,
     ) {
         if self.settings != Some(settings) {
-            self.settings = Some(settings);
-            self.lines.clear();
-            self.entry_ranges.clear();
-            self.assistant_caches.clear();
-            self.code_blocks.clear();
-            self.image_placements.clear();
-            self.appended_assistant = None;
-            self.resplice.clear();
-            self.dirty_from = Some(0);
+            let soft = self
+                .settings
+                .and_then(|previous| SoftSettingsDelta::between(previous, settings));
+            if let Some(delta) = soft {
+                // Soft knobs (image budget, tool collapse height, zen) only
+                // touch discrete entries. Keep the warm suffix so long
+                // transcripts do not re-markdown on every composer resize.
+                self.settings = Some(settings);
+                let indices = self.soft_resplice_indices(delta, entries);
+                self.resplice_entries(indices);
+            } else {
+                self.settings = Some(settings);
+                self.clear_rendered();
+                self.dirty_from = Some(0);
+            }
         }
 
         match entries.len().cmp(&self.entry_ranges.len()) {
@@ -277,28 +404,15 @@ impl HistoryLineCache {
         {
             return;
         }
-        let line_start = if rebuild_from == 0 {
-            0
-        } else {
-            self.entry_ranges[rebuild_from - 1].end
-        };
-        self.lines.truncate(line_start);
-        self.entry_ranges.truncate(rebuild_from);
-        self.assistant_caches.truncate(rebuild_from);
-        self.code_blocks.retain(|block| block.line < line_start);
-        self.image_placements = self
-            .image_placements
-            .iter()
-            .filter_map(|placements| placements.retain_starting_before(line_start))
-            .collect();
+        self.truncate_entries_to(rebuild_from);
 
         for (entry_index, entry) in entries.iter().enumerate().skip(rebuild_from) {
             self.push_rendered_entry(entry_index, entry, entries.len(), settings, image_resolver);
         }
     }
 
-    /// Re-render `indices` in place and shift later line offsets by the height
-    /// delta. Returns false when the cache cannot support a surgical update.
+    /// Re-render `indices` in place. Returns false when the cache cannot support
+    /// a surgical update.
     fn try_resplice_entries(
         &mut self,
         entries: &[Entry],
@@ -309,117 +423,40 @@ impl HistoryLineCache {
         if indices.is_empty() {
             return true;
         }
-        if self.entry_ranges.len() != entries.len()
-            || self.assistant_caches.len() != entries.len()
+        if self.entries.len() != entries.len()
+            || self.entry_ranges.len() != entries.len()
             || self.settings != Some(settings)
         {
             return false;
         }
         for &index in indices {
-            if index >= entries.len() || index >= self.entry_ranges.len() {
+            if index >= entries.len() {
                 return false;
             }
         }
 
         for &index in indices {
-            let old_range = self.entry_ranges[index].clone();
-            if old_range.end > self.lines.len() || old_range.start > old_range.end {
-                return false;
+            #[cfg(test)]
+            {
+                self.entry_renders = self.entry_renders.saturating_add(1);
             }
-
             let entry = &entries[index];
-            let (new_lines, new_code_blocks, new_image) = match prepare_cache_entry_render(
-                entry,
-                index,
-                entries.len(),
-                settings,
-                self.open_stream_tail,
-                image_resolver,
-            ) {
-                None => (Vec::new(), Vec::new(), None),
-                Some(rendered) => (
-                    rendered.lines,
-                    rendered.code_blocks,
-                    rendered.image_placement,
+            self.entries[index] = cached_entry_from_render(
+                prepare_cache_entry_render(
+                    entry,
+                    index,
+                    entries.len(),
+                    settings,
+                    self.open_stream_tail,
+                    image_resolver,
                 ),
-            };
-
-            let start = old_range.start;
-            let end = old_range.end;
-            let old_len = end - start;
-            let new_len = new_lines.len();
-            let delta = new_len as isize - old_len as isize;
-
-            self.lines.splice(start..end, new_lines);
-
-            // Code blocks inside the old span are replaced; later ones shift.
-            self.code_blocks
-                .retain(|block| block.line < start || block.line >= end);
-            for block in &mut self.code_blocks {
-                if block.line >= end {
-                    block.line = offset_usize(block.line, delta);
-                }
-            }
-            self.code_blocks
-                .extend(new_code_blocks.into_iter().map(|mut block| {
-                    block.line = start.saturating_add(block.line);
-                    block
-                }));
-            // Keep code_blocks ordered by line for stable hit-testing.
-            self.code_blocks.sort_by_key(|block| block.line);
-
-            self.image_placements = shift_image_placements_for_splice(
-                &self.image_placements,
-                start,
-                end,
-                delta,
-                new_image.map(|placement| placement.offset_rows(start)),
+                entry,
+                index + 1 == entries.len(),
+                settings.width,
             );
-
-            self.entry_ranges[index] = start..start + new_len;
-            for range in self.entry_ranges.iter_mut().skip(index + 1) {
-                range.start = offset_usize(range.start, delta);
-                range.end = offset_usize(range.end, delta);
-            }
-
-            // Tool/reasoning toggles never own incremental assistant state.
-            // Last-assistant open-stream blank changes also clear it; rebuild
-            // only if this is still the last assistant entry.
-            self.assistant_caches[index] = None;
-            if index + 1 == entries.len() {
-                if let Entry::Assistant(text) = entry {
-                    let stable_source_len = incremental_markdown_tail_start(text);
-                    let stable_line_count = if stable_source_len == 0 {
-                        0
-                    } else {
-                        render_assistant_content(&text[..stable_source_len], settings.width)
-                            .lines
-                            .len()
-                    };
-                    self.assistant_caches[index] = Some(IncrementalAssistantCache {
-                        stable_source_len,
-                        stable_line_count,
-                    });
-                }
-            }
         }
 
-        // Sanity: flat line buffer length matches last range end.
-        let ok = match self.entry_ranges.last() {
-            Some(last) => last.end == self.lines.len(),
-            None => self.lines.is_empty(),
-        };
-        if !ok {
-            // Should be unreachable if ranges stayed coherent; force a full
-            // rebuild rather than paint a torn cache.
-            self.lines.clear();
-            self.entry_ranges.clear();
-            self.assistant_caches.clear();
-            self.code_blocks.clear();
-            self.image_placements.clear();
-            self.dirty_from = Some(0);
-            return false;
-        }
+        self.recompute_ranges();
         true
     }
 
@@ -431,70 +468,41 @@ impl HistoryLineCache {
         settings: HistoryRenderSettings,
         image_resolver: EntryImageResolver<'_>,
     ) {
-        let range_start = self.lines.len();
-        let Some(rendered) = prepare_cache_entry_render(
-            entry,
-            entry_index,
-            entries_len,
-            settings,
-            self.open_stream_tail,
-            image_resolver,
-        ) else {
-            // Keep a zero-height range so entry indices stay aligned with history.
-            self.entry_ranges.push(range_start..range_start);
-            self.assistant_caches.push(None);
-            return;
-        };
-
-        let entry_start = self.lines.len();
-        self.code_blocks
-            .extend(rendered.code_blocks.into_iter().map(|mut block| {
-                // Content starts at the first entry row; trailing blank is after.
-                block.line = entry_start.saturating_add(block.line);
-                block
-            }));
-        if let Some(placement) = rendered.image_placement {
-            self.image_placements
-                .push(placement.offset_rows(entry_start));
+        #[cfg(test)]
+        {
+            self.entry_renders = self.entry_renders.saturating_add(1);
         }
-        self.lines.extend(rendered.lines);
-        self.entry_ranges.push(range_start..self.lines.len());
-        // Only the last entry can be appended to, so only its cache is ever
-        // read (see `assistant_appended`). Building one for every entry would
-        // re-render each assistant message's stable prefix a second time,
-        // doubling the markdown work on every resize.
-        let is_last = entry_index + 1 == entries_len;
-        self.assistant_caches.push(match entry {
-            Entry::Assistant(text) if is_last => {
-                let stable_source_len = incremental_markdown_tail_start(text);
-                let stable_line_count = if stable_source_len == 0 {
-                    0
-                } else {
-                    render_assistant_content(&text[..stable_source_len], settings.width)
-                        .lines
-                        .len()
-                };
-                Some(IncrementalAssistantCache {
-                    stable_source_len,
-                    stable_line_count,
-                })
-            }
-            _ => None,
-        });
+        let range_start = self.total_lines();
+        let cached = cached_entry_from_render(
+            prepare_cache_entry_render(
+                entry,
+                entry_index,
+                entries_len,
+                settings,
+                self.open_stream_tail,
+                image_resolver,
+            ),
+            entry,
+            entry_index + 1 == entries_len,
+            settings.width,
+        );
+        let line_count = cached.lines.len();
+        self.entries.push(cached);
+        self.entry_ranges
+            .push(range_start..range_start.saturating_add(line_count));
     }
 
     fn try_extend_last_assistant(&mut self, entries: &[Entry], index: usize, width: usize) -> bool {
         let Some(Entry::Assistant(text)) = entries.get(index) else {
             return false;
         };
-        let Some(cache) = self
-            .assistant_caches
-            .get_mut(index)
-            .and_then(Option::as_mut)
-        else {
+        let Some(range) = self.entry_ranges.get(index).cloned() else {
             return false;
         };
-        let Some(range) = self.entry_ranges.get(index).cloned() else {
+        let Some(cached) = self.entries.get(index) else {
+            return false;
+        };
+        let Some(cache) = cached.assistant else {
             return false;
         };
         if cache.stable_source_len > text.len() {
@@ -513,81 +521,135 @@ impl HistoryLineCache {
 
         // Open stream tails omit the trailing separator; closed entries keep it.
         let has_trailing_blank = !(self.open_stream_tail && index + 1 == entries.len());
+        let content_len = range.end.saturating_sub(range.start);
         let content_end = if has_trailing_blank {
-            range.end.saturating_sub(1)
+            content_len.saturating_sub(1)
         } else {
-            range.end
+            content_len
         };
         // Content starts at range.start; there is no leading spacer.
-        let preserve_end = range.start.saturating_add(cache.stable_line_count);
-        if preserve_end >= content_end || preserve_end > self.lines.len() {
+        let preserve_end = cache.stable_line_count;
+        if preserve_end >= content_end || preserve_end > cached.lines.len() {
             return false;
         }
-        if self
-            .image_placements
-            .iter()
-            .flat_map(|placements| placements.iter())
-            .any(|placement| placement.rows.start < range.end && range.start < placement.rows.end)
-        {
+        if cached.image_placement.as_ref().is_some_and(|placements| {
+            placements
+                .iter()
+                .any(|placement| placement.rows.start < content_end && 0 < placement.rows.end)
+        }) {
             return false;
         }
-        let trailing_blank = has_trailing_blank.then(|| self.lines[range.end - 1].clone());
-        self.lines.truncate(preserve_end);
-        self.code_blocks.retain(|block| block.line < preserve_end);
 
+        let mut lines = cached.lines[..preserve_end].to_vec();
+        let trailing_blank = has_trailing_blank.then(|| cached.lines[content_len - 1].clone());
         let previous_stable_source_len = cache.stable_source_len;
-        self.append_assistant_segment(&text[previous_stable_source_len..new_tail_start], width);
-        let cache = self.assistant_caches[index]
-            .as_mut()
-            .expect("assistant cache exists");
-        cache.stable_line_count = self.lines.len().saturating_sub(range.start);
-        cache.stable_source_len = new_tail_start;
-        self.append_assistant_segment(&text[new_tail_start..], width);
-        if let Some(trailing_blank) = trailing_blank {
-            self.lines.push(trailing_blank);
-        }
-        self.entry_ranges[index].end = self.lines.len();
-        true
-    }
 
-    fn append_assistant_segment(&mut self, text: &str, width: usize) {
-        if text.is_empty() {
-            return;
-        }
-        let line_start = self.lines.len();
-        let rendered = render_assistant_content(text, width);
-        self.code_blocks.extend(
-            rendered
-                .code_blocks
-                .into_iter()
-                .map(|block| CachedCodeBlock {
-                    line: line_start + block.top_line,
-                    copy_columns: block.copy_columns.start.saturating_add(1)
-                        ..block.copy_columns.end.saturating_add(1),
-                    text: Arc::from(block.text),
-                }),
+        let entry = &mut self.entries[index];
+        entry.code_blocks.retain(|block| block.line < preserve_end);
+        append_assistant_segment_into(
+            &mut lines,
+            &mut entry.code_blocks,
+            &text[previous_stable_source_len..new_tail_start],
+            width,
         );
-        self.lines
-            .extend(rendered.lines.into_iter().map(pad_display_line));
+        let assistant = entry.assistant.as_mut().expect("assistant cache exists");
+        assistant.stable_line_count = lines.len();
+        assistant.stable_source_len = new_tail_start;
+        append_assistant_segment_into(
+            &mut lines,
+            &mut entry.code_blocks,
+            &text[new_tail_start..],
+            width,
+        );
+        if let Some(trailing_blank) = trailing_blank {
+            lines.push(trailing_blank);
+        }
+        entry.lines = Arc::from(lines);
+        self.recompute_ranges();
+        true
     }
 }
 
-fn offset_usize(value: usize, delta: isize) -> usize {
-    if delta >= 0 {
-        value.saturating_add(delta as usize)
-    } else {
-        value.saturating_sub((-delta) as usize)
+fn append_assistant_segment_into(
+    lines: &mut Vec<Line<'static>>,
+    code_blocks: &mut Vec<CachedCodeBlock>,
+    text: &str,
+    width: usize,
+) {
+    if text.is_empty() {
+        return;
     }
+    let local_start = lines.len();
+    let rendered = render_assistant_content(text, width);
+    code_blocks.extend(
+        rendered
+            .code_blocks
+            .into_iter()
+            .map(|block| CachedCodeBlock {
+                line: local_start + block.top_line,
+                copy_columns: block.copy_columns.start.saturating_add(1)
+                    ..block.copy_columns.end.saturating_add(1),
+                text: Arc::from(block.text),
+            }),
+    );
+    lines.extend(rendered.lines.into_iter().map(pad_display_line));
 }
 
 /// Shared entry render for full rebuild and surgical resplice paths.
 ///
 /// Returns `None` for hidden entries. Code-block line numbers and image
-/// placements are relative to the entry start; callers relocate them.
+/// placements are relative to the entry start.
 struct PreparedCacheEntry {
     lines: Vec<Line<'static>>,
     code_blocks: Vec<CachedCodeBlock>,
     image_placement: Option<RenderedImagePlacements>,
+    depends_on_image_height: bool,
+}
+
+fn cached_entry_from_render(
+    prepared: Option<PreparedCacheEntry>,
+    entry: &Entry,
+    is_last: bool,
+    width: usize,
+) -> CachedEntry {
+    let Some(rendered) = prepared else {
+        return CachedEntry::default();
+    };
+    CachedEntry {
+        lines: Arc::from(rendered.lines),
+        code_blocks: rendered.code_blocks,
+        image_placement: rendered.image_placement,
+        assistant: assistant_cache_for(entry, is_last, width),
+        depends_on_image_height: rendered.depends_on_image_height,
+    }
+}
+
+fn assistant_cache_for(
+    entry: &Entry,
+    is_last: bool,
+    width: usize,
+) -> Option<IncrementalAssistantCache> {
+    // Only the last entry can be appended to, so only its cache is ever read
+    // (see `assistant_appended`). Building one for every entry would re-render
+    // each assistant message's stable prefix a second time.
+    let Entry::Assistant(text) = entry else {
+        return None;
+    };
+    if !is_last {
+        return None;
+    }
+    let stable_source_len = incremental_markdown_tail_start(text);
+    let stable_line_count = if stable_source_len == 0 {
+        0
+    } else {
+        render_assistant_content(&text[..stable_source_len], width)
+            .lines
+            .len()
+    };
+    Some(IncrementalAssistantCache {
+        stable_source_len,
+        stable_line_count,
+    })
 }
 
 fn prepare_cache_entry_render(
@@ -622,11 +684,24 @@ fn prepare_cache_entry_render(
             settings.max_image_height,
         );
     }
+    // Height only moves with the budget when a real placement (or tool image)
+    // is reserved. Unloaded markdown placeholders stay one row tall.
+    let depends_on_image_height = match entry {
+        Entry::Tool(tool) => tool.image.is_some(),
+        Entry::User(_)
+        | Entry::Assistant(_)
+        | Entry::Reasoning(_)
+        | Entry::Notice(_)
+        | Entry::RuntimeInfo(_)
+        | Entry::Changelog(_)
+        | Entry::UsageLimits(_)
+        | Entry::Error(_) => rendered.image_placement.is_some(),
+    };
     let code_blocks = rendered
         .code_blocks
         .into_iter()
         .map(|block| CachedCodeBlock {
-            // Relative to entry start; callers offset when placing.
+            // Relative to entry start; absolute projection happens on read.
             line: block.top_line,
             // render_entry also pads markdown by one column on each side.
             copy_columns: block.copy_columns.start.saturating_add(1)
@@ -638,45 +713,8 @@ fn prepare_cache_entry_render(
         lines: rendered.lines,
         code_blocks,
         image_placement: rendered.image_placement,
+        depends_on_image_height,
     })
-}
-
-/// Drop placements overlapping `[start, end)`, shift those at/after `end` by
-/// `delta`, then append any replacement placement for the respliced entry.
-fn shift_image_placements_for_splice(
-    existing: &[RenderedImagePlacements],
-    start: usize,
-    end: usize,
-    delta: isize,
-    replacement: Option<RenderedImagePlacements>,
-) -> Vec<RenderedImagePlacements> {
-    let mut out = Vec::with_capacity(existing.len() + usize::from(replacement.is_some()));
-    for group in existing {
-        let placements: Vec<_> = group
-            .iter()
-            .filter_map(|placement| {
-                if placement.rows.end <= start {
-                    Some(placement.clone())
-                } else if placement.rows.start >= end {
-                    let offset_start = offset_usize(placement.rows.start, delta);
-                    let offset_end = offset_usize(placement.rows.end, delta);
-                    Some(RenderedImagePlacement {
-                        image: placement.image.clone(),
-                        rows: offset_start..offset_end,
-                    })
-                } else {
-                    None
-                }
-            })
-            .collect();
-        if !placements.is_empty() {
-            out.push(RenderedImagePlacements::from_placements(placements));
-        }
-    }
-    if let Some(replacement) = replacement {
-        out.push(replacement);
-    }
-    out
 }
 
 #[cfg(test)]

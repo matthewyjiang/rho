@@ -556,11 +556,14 @@ impl App {
             return lines;
         }
 
-        let header_lines = self.session_header_lines(width).to_vec();
-        let header_len = header_lines.len();
+        let header_len = self.session_header_lines(width).len();
         if start < header_len {
             let header_count = count.min(header_len - start);
-            lines.extend(header_lines[start..start + header_count].iter().cloned());
+            lines.extend(
+                self.session_header_lines(width)[start..start + header_count]
+                    .iter()
+                    .cloned(),
+            );
         }
 
         if lines.len() < count {

@@ -6,9 +6,9 @@ use rho_sdk::tool::ToolAsset;
 
 use super::{
     feed_image_height_budget, kitty_graphics_environment, max_feed_image_height,
-    picker_for_environment, reserve_image_rows, FeedImage, COMPACT_IMAGE_HEIGHT,
-    COMPOSER_IMAGE_HEIGHT, DEFAULT_IMAGE_HEIGHT, MAX_IMAGE_HEIGHT, MIN_IMAGE_HEIGHT,
-    TALL_IMAGE_HEIGHT,
+    picker_for_environment, quantize_content_image_cap, reserve_image_rows, FeedImage,
+    COMPACT_IMAGE_HEIGHT, COMPOSER_IMAGE_HEIGHT, DEFAULT_IMAGE_HEIGHT, MAX_IMAGE_HEIGHT,
+    MIN_IMAGE_HEIGHT, TALL_IMAGE_HEIGHT,
 };
 use crate::tui::{
     history_cache::{HistoryLineCache, HistoryLineSlice, HistoryRenderSettings},
@@ -184,8 +184,30 @@ fn feed_image_height_budget_caps_to_history_content_viewport() {
     // Content taller than preferred keeps preferred.
     assert_eq!(feed_image_height_budget(40, 30), DEFAULT_IMAGE_HEIGHT);
     // Composer attachment strips reduced content below preferred → cap.
+    // Heights below the compact band stay exact; larger panes snap to bands.
     assert_eq!(feed_image_height_budget(40, 10), 10);
     assert_eq!(feed_image_height_budget(40, 1), 1);
+    assert_eq!(feed_image_height_budget(40, 20), MIN_IMAGE_HEIGHT);
+    assert_eq!(quantize_content_image_cap(20), MIN_IMAGE_HEIGHT);
+    assert_eq!(quantize_content_image_cap(15), COMPACT_IMAGE_HEIGHT);
+}
+
+// Covers: one-row content-height jitter must not rewrite the image budget once
+// the pane sits inside a discrete band (avoids long-transcript cache thrash).
+// Owner: pure layout policy
+#[test]
+fn feed_image_height_budget_stable_across_one_row_content_jitter() {
+    let terminal = 80usize; // preferred MAX (40)
+    let budget_a = feed_image_height_budget(terminal, 37);
+    let budget_b = feed_image_height_budget(terminal, 36);
+    let budget_c = feed_image_height_budget(terminal, 33);
+    assert_eq!(budget_a, TALL_IMAGE_HEIGHT);
+    assert_eq!(budget_b, TALL_IMAGE_HEIGHT);
+    assert_eq!(budget_c, TALL_IMAGE_HEIGHT);
+    assert_ne!(
+        feed_image_height_budget(terminal, 32),
+        feed_image_height_budget(terminal, 31)
+    );
 }
 
 // Covers: a tall feed image reserved under a content-capped budget is fully

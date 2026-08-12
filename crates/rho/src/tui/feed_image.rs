@@ -26,6 +26,18 @@ pub(super) const TALL_IMAGE_HEIGHT: u16 = 32;
 /// Max rows for an image preview above the composer text.
 pub(super) const COMPOSER_IMAGE_HEIGHT: u16 = 6;
 
+/// Terminal-height floors and the feed-image band each floor unlocks.
+///
+/// One table owns both preferred terminal budgeting and content-cap
+/// quantization so the tiers cannot drift apart.
+const FEED_IMAGE_HEIGHT_TIERS: [(usize, u16); 5] = [
+    (0, COMPACT_IMAGE_HEIGHT),
+    (25, MIN_IMAGE_HEIGHT),
+    (37, DEFAULT_IMAGE_HEIGHT),
+    (53, TALL_IMAGE_HEIGHT),
+    (69, MAX_IMAGE_HEIGHT),
+];
+
 const MAX_THUMBNAIL_WIDTH: u32 = 1_024;
 const MAX_THUMBNAIL_HEIGHT: u32 = 768;
 const MAX_THUMBNAIL_ALLOCATION: u64 = 8 * 1024 * 1024;
@@ -40,13 +52,15 @@ const MAX_COMPOSER_DECODE_ALLOCATION: u64 = 80 * 1024 * 1024;
 /// Call [`feed_image_height_budget`] to also cap by the live history content
 /// viewport so a reservation never exceeds what can fully paint.
 pub(super) fn max_feed_image_height(terminal_height: usize) -> u16 {
-    match terminal_height {
-        0..=24 => COMPACT_IMAGE_HEIGHT,
-        25..=36 => MIN_IMAGE_HEIGHT,
-        37..=52 => DEFAULT_IMAGE_HEIGHT,
-        53..=68 => TALL_IMAGE_HEIGHT,
-        _ => MAX_IMAGE_HEIGHT,
+    let mut band = COMPACT_IMAGE_HEIGHT;
+    for &(min_terminal_height, next_band) in &FEED_IMAGE_HEIGHT_TIERS {
+        if terminal_height >= min_terminal_height {
+            band = next_band;
+        } else {
+            break;
+        }
     }
+    band
 }
 
 /// Preferred terminal-height band, capped by the live history content viewport.
@@ -56,6 +70,11 @@ pub(super) fn max_feed_image_height(terminal_height: usize) -> u16 {
 /// height never allows a reservation taller than the visible content rows, so
 /// [`visible_image_placements`] can still return a fully paintable block after
 /// composer chrome shrinks the pane.
+///
+/// The content cap snaps down to the same discrete bands as
+/// [`max_feed_image_height`] (or the raw height when below the compact floor).
+/// Without that snap, a one-row composer or activity change rewrites
+/// `max_image_height` and forces a full transcript line-cache rebuild.
 pub(super) fn feed_image_height_budget(
     terminal_height: usize,
     history_content_height: usize,
@@ -68,11 +87,24 @@ pub(super) fn feed_image_height_budget(
     if history_content_height == 0 {
         preferred
     } else {
-        let cap = u16::try_from(history_content_height)
-            .unwrap_or(u16::MAX)
-            .max(1);
-        preferred.min(cap)
+        preferred.min(quantize_content_image_cap(history_content_height))
     }
+}
+
+/// Largest feed-image band that still fits in `history_content_height`.
+///
+/// Heights below [`COMPACT_IMAGE_HEIGHT`] stay exact so tiny panes keep a tight
+/// paintable cap. Larger panes jump between the stable terminal bands.
+pub(super) fn quantize_content_image_cap(history_content_height: usize) -> u16 {
+    let height = u16::try_from(history_content_height)
+        .unwrap_or(u16::MAX)
+        .max(1);
+    for &(_, band) in FEED_IMAGE_HEIGHT_TIERS.iter().rev() {
+        if height >= band {
+            return band;
+        }
+    }
+    height
 }
 
 /// Row budget for fitting a feed or composer image into the terminal grid.
@@ -226,35 +258,8 @@ impl RenderedImagePlacements {
         }
     }
 
-    pub(super) fn from_placements(placements: Vec<RenderedImagePlacement>) -> Self {
-        Self { placements }
-    }
-
     pub(super) fn iter(&self) -> impl Iterator<Item = &RenderedImagePlacement> {
         self.placements.iter()
-    }
-
-    pub(super) fn offset_rows(&self, offset: usize) -> Self {
-        Self {
-            placements: self
-                .placements
-                .iter()
-                .cloned()
-                .map(|placement| placement.offset_rows(offset))
-                .collect(),
-        }
-    }
-
-    /// Keeps only placements that start before `line`, used when the cache
-    /// truncates rendered history.
-    pub(super) fn retain_starting_before(&self, line: usize) -> Option<Self> {
-        let placements: Vec<_> = self
-            .placements
-            .iter()
-            .filter(|placement| placement.rows.start < line)
-            .cloned()
-            .collect();
-        (!placements.is_empty()).then_some(Self { placements })
     }
 }
 
@@ -262,13 +267,6 @@ impl RenderedImagePlacements {
 pub(super) struct RenderedImagePlacement {
     pub(super) image: FeedImage,
     pub(super) rows: Range<usize>,
-}
-
-impl RenderedImagePlacement {
-    pub(super) fn offset_rows(mut self, offset: usize) -> Self {
-        self.rows = self.rows.start + offset..self.rows.end + offset;
-        self
-    }
 }
 
 pub(super) fn reserve_image_rows(

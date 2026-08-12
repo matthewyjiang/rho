@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 
 use super::*;
-use crate::tui::render::entry_lines;
+use crate::tui::{feed_image::FeedImage, render::entry_lines};
 
 fn no_images(_: usize, _: &[MarkdownImageSource]) -> Vec<(usize, FeedImage)> {
     Vec::new()
@@ -205,7 +205,8 @@ fn incrementally_extends_assistant_markdown_without_rendering_drift() {
         cache.code_blocks(&entries, settings(32), &no_images).len(),
         1
     );
-    assert!(cache.assistant_caches[0]
+    assert!(cache.entries[0]
+        .assistant
         .is_some_and(|cached| cached.stable_source_len > "intro\n\n".len()));
 }
 
@@ -597,4 +598,135 @@ fn resplice_tool_expand_preserves_later_assistant_lines() {
         &no_images,
     );
     assert_eq!(collapsed.len(), total_before);
+}
+
+// Covers: per-entry image-height flags keep soft image-budget updates from
+// re-rendering text-only entries.
+// Owner: history line cache
+#[test]
+fn image_height_only_change_uses_cached_dependency_flags() {
+    use image::{DynamicImage, ImageFormat};
+    use ratatui_image::picker::{Picker, ProtocolType};
+    use std::io::Cursor;
+
+    let image = {
+        let rgba = DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            300,
+            600,
+            image::Rgba([20, 40, 60, 255]),
+        ));
+        let mut bytes = Cursor::new(Vec::new());
+        rgba.write_to(&mut bytes, ImageFormat::Png).unwrap();
+        let mut picker = Picker::halfblocks();
+        picker.set_protocol_type(ProtocolType::Kitty);
+        FeedImage::load(
+            &rho_sdk::tool::ToolAsset::new("image/png", bytes.into_inner()),
+            &picker,
+        )
+        .unwrap()
+    };
+    let tool = Entry::Tool(crate::tui::ToolEntry {
+        card: rho_tools::tool_card::ToolCard::new(
+            rho_tools::tool_card::ToolStatus::Ok,
+            rho_tools::tool_card::ToolFamily::Default,
+            rho_tools::tool_card::ToolHeader::call("read_file photo.png", None),
+        ),
+        expanded: false,
+        image: Some(image),
+        started_at: None,
+    });
+    let mut cache = HistoryLineCache::default();
+    let entries = vec![
+        Entry::User("prompt".into()),
+        Entry::Assistant("text only".into()),
+        tool,
+    ];
+    let mut base = settings(80);
+    let _ = cache.line_count(&entries, base, &no_images);
+    assert_eq!(
+        cache
+            .entries
+            .iter()
+            .map(|entry| entry.depends_on_image_height)
+            .collect::<Vec<_>>(),
+        vec![false, false, true]
+    );
+
+    let renders_before = cache.entry_render_count();
+    base.max_image_height = base.max_image_height.saturating_add(8);
+    let _ = cache.line_count(&entries, base, &no_images);
+    assert_eq!(
+        cache.entry_render_count(),
+        renders_before + 1,
+        "only the image-bearing entry must resplice when the budget moves"
+    );
+}
+
+// Covers: composer/activity height changes must not re-render a text-only
+// transcript when only the feed image budget moved.
+// Owner: history line cache
+#[test]
+fn image_height_only_change_skips_text_only_entry_renders() {
+    let mut cache = HistoryLineCache::default();
+    let entries = vec![
+        Entry::User("prompt".into()),
+        Entry::Assistant("reply with `code` and **bold**".into()),
+        Entry::Reasoning(crate::tui::ReasoningEntry::new("plan")),
+    ];
+    let mut base = settings(80);
+    let _ = cache.line_count(&entries, base, &no_images);
+    let renders_after_cold = cache.entry_render_count();
+    assert!(renders_after_cold >= 3);
+
+    base.max_image_height = base.max_image_height.saturating_add(8);
+    let mut lines = Vec::new();
+    cache.extend_visible_lines(
+        &entries,
+        base,
+        HistoryLineSlice {
+            start: 0,
+            count: usize::MAX,
+        },
+        &mut lines,
+        &no_images,
+    );
+    assert_eq!(
+        cache.entry_render_count(),
+        renders_after_cold,
+        "text-only soft image-budget updates must not re-render entries"
+    );
+    assert!(!lines.is_empty());
+}
+
+// Covers: mouse hit-testing still maps lines to entries after binary search.
+// Owner: history line cache
+#[test]
+fn entry_index_at_line_finds_ranges_across_transcript() {
+    let mut cache = HistoryLineCache::default();
+    let entries = vec![
+        Entry::User("one".into()),
+        Entry::Assistant("two\nthree".into()),
+        Entry::Notice("four".into()),
+    ];
+    let s = settings(40);
+    let total = cache.line_count(&entries, s, &no_images);
+    assert!(total > 3);
+    assert_eq!(
+        cache.entry_index_at_line(&entries, s, 0, &no_images),
+        Some(0)
+    );
+    let assistant_start = cache.entry_ranges[1].start;
+    assert_eq!(
+        cache.entry_index_at_line(&entries, s, assistant_start, &no_images),
+        Some(1)
+    );
+    let last_line = total.saturating_sub(1);
+    assert_eq!(
+        cache.entry_index_at_line(&entries, s, last_line, &no_images),
+        Some(2)
+    );
+    assert_eq!(
+        cache.entry_index_at_line(&entries, s, total + 5, &no_images),
+        None
+    );
 }
