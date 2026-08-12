@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.38.2](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.38.1...rho-coding-agent-v1.38.2) (2026-08-12)
+
+
+### Bug Fixes
+
+* **xai:** add grok-4.6 to the static model allowlist ([#882](https://github.com/matthewyjiang/rho/issues/882)) ([52ebd71](https://github.com/matthewyjiang/rho/commit/52ebd716456edcd9bd41d44d35afc7fc283cb31c))
+
+
+### Performance Improvements
+
+* **tui:** scale render hot paths for long transcripts ([#876](https://github.com/matthewyjiang/rho/issues/876)) ([62d2500](https://github.com/matthewyjiang/rho/commit/62d25006e104887654962c821578c4e1158b1425))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 1.1.0 to 1.1.1
+
 ## [1.38.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.38.0...rho-coding-agent-v1.38.1) (2026-08-12)
 
 
