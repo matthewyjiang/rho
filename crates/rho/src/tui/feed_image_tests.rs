@@ -48,6 +48,7 @@ fn image_tool() -> Entry {
         ),
         expanded: false,
         image: Some(FeedImage::load(&png_asset(300, 600), &kitty_picker()).unwrap()),
+        started_at: None,
     })
 }
 

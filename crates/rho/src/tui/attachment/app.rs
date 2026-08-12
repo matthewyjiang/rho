@@ -23,7 +23,7 @@ use crate::{
 
 use super::super::{
     feed_image::DEFAULT_IMAGE_HEIGHT,
-    mouse_capture,
+    live_started_at, mouse_capture,
     provider_attempt::ProviderAttempt,
     render::{entry_lines, truncate_one_line},
     scrollbar::{HistoryScrollChrome, HistoryScrollbar, ScrollbarMouseInput},
@@ -329,10 +329,9 @@ impl AttachmentApp {
 
     fn upsert_pending_tool(&mut self, key: Option<String>, card: ToolCard) {
         let key = attachment_tool_key(key);
-        let expanded = self
-            .pending_tools
-            .get(&key)
-            .is_some_and(|entry| entry.expanded);
+        let previous = self.pending_tools.get(&key);
+        let expanded = previous.is_some_and(|entry| entry.expanded);
+        let started_at = live_started_at(previous, card.status);
         if !self.pending_tools.contains_key(&key) {
             self.pending_order.push(key.clone());
         }
@@ -342,6 +341,7 @@ impl AttachmentApp {
                 card,
                 expanded,
                 image: None,
+                started_at,
             },
         );
     }
@@ -354,6 +354,7 @@ impl AttachmentApp {
             card,
             expanded: false,
             image: None,
+            started_at: None,
         }));
     }
 

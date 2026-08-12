@@ -272,12 +272,27 @@ pub(super) enum CommandChoiceKind {
     },
 }
 
+/// Clock for the live elapsed decoration: preserved across card replacement,
+/// started when a card is first seen running, absent otherwise.
+pub(super) fn live_started_at(
+    previous: Option<&ToolEntry>,
+    status: rho_tools::tool_card::ToolStatus,
+) -> Option<Instant> {
+    previous
+        .and_then(|entry| entry.started_at)
+        .or_else(|| matches!(status, rho_tools::tool_card::ToolStatus::Running).then(Instant::now))
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct ToolEntry {
     /// Structured Call + Children card. Sole render input for tool rows.
     pub(in crate::tui) card: rho_tools::tool_card::ToolCard,
     pub(in crate::tui) expanded: bool,
     pub(in crate::tui) image: Option<FeedImage>,
+    /// Wall clock for live shell elapsed (`timeout … · 1.2s`) while a shell
+    /// call runs. Set when a tool starts running; preserved across card
+    /// updates; absent on historical, finished, interrupted, and preview rows.
+    pub(in crate::tui) started_at: Option<Instant>,
 }
 
 #[derive(Clone, Debug)]

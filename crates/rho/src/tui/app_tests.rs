@@ -114,6 +114,7 @@ fn test_tool_entry(ok: bool, display_lines: &[&str]) -> Entry {
         card,
         expanded: false,
         image: None,
+        started_at: None,
     })
 }
 
@@ -245,6 +246,7 @@ fn recovered_history_tail_keeps_oversized_visible_before_hidden_suffix() {
         ),
         expanded: false,
         image: None,
+        started_at: None,
     });
     let entries = vec![
         Entry::User("earlier".into()),

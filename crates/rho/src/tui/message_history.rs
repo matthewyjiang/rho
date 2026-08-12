@@ -130,6 +130,7 @@ pub(super) fn transcript_entries_from_messages(
                         card: presented.card,
                         expanded: false,
                         image: None,
+                        started_at: None,
                     }));
                 }
                 entries.push(Entry::Notice("model interrupted".into()));
@@ -145,6 +146,7 @@ pub(super) fn transcript_entries_from_messages(
                     card: presented.card,
                     expanded: false,
                     image: None,
+                    started_at: None,
                 }));
             }
         }

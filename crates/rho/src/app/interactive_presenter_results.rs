@@ -27,11 +27,13 @@ pub(super) fn shell_card(
     status: ToolStatus,
 ) -> ToolCard {
     let command = string_arg(arguments, "command").filter(|command| !command.trim().is_empty());
-    draft_card(
+    let mut card = draft_card(
         status,
         ToolFamily::FileCommand,
         ToolHeader::shell(prompt, command),
-    )
+    );
+    push_shell_timeout_fact(&mut card, arguments);
+    card
 }
 
 pub(super) fn shell_result_card(
@@ -46,18 +48,7 @@ pub(super) fn shell_result_card(
         ToolFamily::FileCommand,
         ToolHeader::shell(prompt, command),
     );
-    if let Some(seconds) = arguments
-        .get("timeout_seconds")
-        .and_then(|value| value.as_u64())
-    {
-        card.push_fact(ToolFact::Meta {
-            text: format!("timeout {seconds}s"),
-        });
-    } else {
-        card.push_fact(ToolFact::Meta {
-            text: "timeout none".into(),
-        });
-    }
+    push_shell_timeout_fact(&mut card, arguments);
 
     let parsed = parse_shell_content(content);
     let notice = parsed
@@ -661,4 +652,13 @@ pub(super) fn count_nonempty_lines(content: &str) -> Option<u64> {
         .filter(|line| !line.trim().is_empty())
         .count() as u64;
     (count > 0).then_some(count)
+}
+
+/// Timeout budget fact for shell cards. The TUI decorates it with a live
+/// elapsed clock while the call runs (`timeout none · 1.2s`).
+fn push_shell_timeout_fact(card: &mut ToolCard, arguments: &serde_json::Value) {
+    let seconds = arguments
+        .get("timeout_seconds")
+        .and_then(|value| value.as_u64());
+    card.push_fact(ToolFact::Timeout { seconds });
 }

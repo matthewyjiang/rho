@@ -1,12 +1,16 @@
+use std::borrow::Cow;
+use std::time::Duration;
+
 use pretty_assertions::assert_eq;
 use rho_tools::tool_card::{
     DiffRow, DiffRowKind, ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus,
 };
 
-use super::{card_is_toggleable, push_tool_card};
+use super::{card_is_toggleable, live_shell_elapsed, push_tool_card, with_live_shell_elapsed};
 use crate::tui::{
     syntax::{reset_highlight_line_calls, take_highlight_line_calls, warm_syntax_set},
     theme::{SyntaxRole, Theme},
+    ToolEntry,
 };
 
 fn line_text(line: &ratatui::text::Line<'_>) -> String {
@@ -457,4 +461,108 @@ fn grep_body_highlights_language_and_match() {
             .map(|s| (s.content.as_ref(), s.style))
             .collect::<Vec<_>>()
     );
+}
+
+// Covers: running shell cards fold the live elapsed clock into the timeout fact
+// Owner: pure unit (tool card elapsed rewrite)
+#[test]
+fn with_live_shell_elapsed_folds_clock_into_timeout_fact() {
+    let started = std::time::Instant::now() - Duration::from_millis(1_200);
+    let mut entry = ToolEntry {
+        card: ToolCard::new(
+            ToolStatus::Running,
+            ToolFamily::FileCommand,
+            ToolHeader::shell("$", Some("sleep 1".into())),
+        ),
+        expanded: false,
+        image: None,
+        started_at: Some(started),
+    };
+    entry
+        .card
+        .push_fact(ToolFact::Timeout { seconds: Some(30) });
+    entry.card.push_fact(ToolFact::Timeout { seconds: None });
+
+    let rewritten = with_live_shell_elapsed(&entry);
+    assert!(
+        matches!(&rewritten, Cow::Owned(_)),
+        "running shell must rewrite the card"
+    );
+    assert_eq!(
+        rewritten.facts,
+        vec![
+            ToolFact::Meta {
+                text: "timeout 30s · 1.2s".into()
+            },
+            ToolFact::Meta {
+                text: "timeout none · 1.2s".into()
+            },
+        ]
+    );
+}
+
+// Covers: finished, non-shell, and clockless entries keep their card untouched
+// Owner: pure unit (tool card elapsed rewrite)
+#[test]
+fn with_live_shell_elapsed_borrows_when_no_live_clock() {
+    let cases = [
+        (
+            "finished shell",
+            ToolStatus::Ok,
+            ToolHeader::shell("$", Some("true".into())),
+            Some(std::time::Instant::now()),
+        ),
+        (
+            "non-shell running",
+            ToolStatus::Running,
+            ToolHeader::call("read_file", Some("a.rs".into())),
+            Some(std::time::Instant::now()),
+        ),
+        (
+            "running shell without clock",
+            ToolStatus::Running,
+            ToolHeader::shell("$", Some("sleep 1".into())),
+            None,
+        ),
+    ];
+    for (label, status, header, started_at) in cases {
+        let entry = ToolEntry {
+            card: ToolCard::new(status, ToolFamily::FileCommand, header),
+            expanded: false,
+            image: None,
+            started_at,
+        };
+        assert!(
+            matches!(with_live_shell_elapsed(&entry), Cow::Borrowed(_)),
+            "{label} must borrow the card unchanged"
+        );
+    }
+}
+
+// Covers: only running shell cards expose a live elapsed clock
+// Owner: pure unit (tool entry elapsed gate)
+#[test]
+fn live_shell_elapsed_requires_shell_header_and_running_status() {
+    let started = std::time::Instant::now() - Duration::from_millis(250);
+    let mut entry = ToolEntry {
+        card: ToolCard::new(
+            ToolStatus::Running,
+            ToolFamily::FileCommand,
+            ToolHeader::shell("$", Some("sleep 1".into())),
+        ),
+        expanded: false,
+        image: None,
+        started_at: Some(started),
+    };
+    assert!(live_shell_elapsed(&entry).is_some());
+
+    entry.card.status = ToolStatus::Ok;
+    assert!(live_shell_elapsed(&entry).is_none());
+
+    entry.card.status = ToolStatus::Error;
+    assert!(live_shell_elapsed(&entry).is_none());
+
+    entry.card.status = ToolStatus::Running;
+    entry.card.header = ToolHeader::call("read_file", Some("a.rs".into()));
+    assert!(live_shell_elapsed(&entry).is_none());
 }

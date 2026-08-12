@@ -1,5 +1,8 @@
 //! Multi-span Call + Children rendering for structured tool cards.
 
+use std::borrow::Cow;
+use std::time::Duration;
+
 use ratatui::{
     style::Style,
     text::{Line, Span},
@@ -81,9 +84,10 @@ pub(super) fn tool_entry_lines(
 ) -> Vec<Line<'static>> {
     let inner_width = padded_content_width(width);
     let mut lines = Vec::new();
+    let card = with_live_shell_elapsed(tool);
     push_tool_card(
         &mut lines,
-        &tool.card,
+        &card,
         inner_width,
         max_tool_output_lines,
         tool.expanded,
@@ -95,6 +99,42 @@ pub(super) fn tool_entry_lines(
     padded.extend(lines.into_iter().map(pad_display_line));
     padded.push(styled_blank_line(width, padding_style));
     padded
+}
+
+/// Live elapsed for shell timeout facts while the call is still running.
+pub(super) fn live_shell_elapsed(tool: &ToolEntry) -> Option<Duration> {
+    if !matches!(tool.card.header, ToolHeader::Shell { .. }) {
+        return None;
+    }
+    match tool.card.status {
+        ToolStatus::Running => tool.started_at.map(|started_at| started_at.elapsed()),
+        ToolStatus::Interrupted | ToolStatus::Ok | ToolStatus::Error => None,
+    }
+}
+
+/// Card view with the live elapsed clock folded into the shell timeout fact.
+/// Borrows unless the entry is a running shell with a started clock.
+pub(super) fn with_live_shell_elapsed(tool: &ToolEntry) -> Cow<'_, ToolCard> {
+    let Some(elapsed) = live_shell_elapsed(tool) else {
+        return Cow::Borrowed(&tool.card);
+    };
+    let mut card = tool.card.clone();
+    for fact in &mut card.facts {
+        if let ToolFact::Timeout { seconds } = fact {
+            *fact = ToolFact::Meta {
+                text: format!("{} · {:.1}s", timeout_text(*seconds), elapsed.as_secs_f64()),
+            };
+        }
+    }
+    Cow::Owned(card)
+}
+
+/// Timeout budget text shared by the typed fact and its live elapsed suffix.
+fn timeout_text(seconds: Option<u64>) -> String {
+    match seconds {
+        Some(seconds) => format!("timeout {seconds}s"),
+        None => "timeout none".into(),
+    }
 }
 
 pub(super) fn push_tool_card(
@@ -196,7 +236,7 @@ pub(super) fn card_is_toggleable(
     _expanded: bool,
 ) -> bool {
     let budget = max_tool_output_lines.max(1);
-    // Wrap math only — no syntect. Highlight does not change display width.
+    // Wrap math only, no syntect. Highlight does not change display width.
     estimate_child_terminal_rows(card, width) > budget
 }
 
@@ -646,6 +686,9 @@ fn fact_spans(fact: &ToolFact) -> Vec<Span<'static>> {
                 spans.push(Span::styled(format!(" · {secs:.1}s"), Theme::tool_meta()));
             }
             spans
+        }
+        ToolFact::Timeout { seconds } => {
+            vec![Span::styled(timeout_text(*seconds), Theme::tool_meta())]
         }
         ToolFact::Count {
             label,
