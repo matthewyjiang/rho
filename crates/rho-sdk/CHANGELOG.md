@@ -1,5 +1,73 @@
 # Changelog
 
+## [4.0.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v3.1.0...rho-sdk-v4.0.0) (2026-08-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* **hooks:** `AuthorizationDenialKind` and `ApprovalAuditDecision` gain a hook variant. Both are `#[non_exhaustive]`, so only exhaustive matches written before this change need updating.
+* **xai:** ModelEvent::WebSearch and RunEvent::WebSearch now carry a name field so hosts can distinguish web_search from x_search.
+
+### Features
+
+* add advisor mode with a selectable advisor model ([#752](https://github.com/matthewyjiang/rho/issues/752)) ([13c1ebb](https://github.com/matthewyjiang/rho/commit/13c1ebb89edfde2924ee760c7621b099fd510708))
+* **config:** mid-session edit tool, advisor, and auto preference ([#840](https://github.com/matthewyjiang/rho/issues/840)) ([423d026](https://github.com/matthewyjiang/rho/commit/423d02690edee36a6dc692ac25d8fd9013d33139))
+* **hooks:** add typed lifecycle hooks ([#668](https://github.com/matthewyjiang/rho/issues/668)) ([4a69c3d](https://github.com/matthewyjiang/rho/commit/4a69c3dfbc2136a8c23dff515909e23886b8651f))
+* **openai:** add fast mode ([#610](https://github.com/matthewyjiang/rho/issues/610)) ([8c5cd6d](https://github.com/matthewyjiang/rho/commit/8c5cd6d19e1758b85fc25c345769e49426f10ad0))
+* **permission:** rename Auto to Bypass and add classifier Auto ([#870](https://github.com/matthewyjiang/rho/issues/870)) ([3192daa](https://github.com/matthewyjiang/rho/commit/3192daa713f7202f44727ec4acb83d0c646d1286))
+* **providers:** add native Google Gemini support ([#430](https://github.com/matthewyjiang/rho/issues/430)) ([34ef307](https://github.com/matthewyjiang/rho/commit/34ef3076d08afb9b1261973318e2173a7d14a613))
+* **providers:** add Qwen Token Plan OpenAI-compatible provider ([#738](https://github.com/matthewyjiang/rho/issues/738)) ([6aa6df2](https://github.com/matthewyjiang/rho/commit/6aa6df2e812674b721bedd3b65c7c2cdb359a1e4))
+* **providers:** use OpenAI server-side compaction for codex and api-key ([#514](https://github.com/matthewyjiang/rho/issues/514)) ([b18eadd](https://github.com/matthewyjiang/rho/commit/b18eadd6752de2945361cd59a60ffc4cc7b807ad))
+* **questionnaire:** add focused default selection ([#530](https://github.com/matthewyjiang/rho/issues/530)) ([47d1853](https://github.com/matthewyjiang/rho/commit/47d185377a68881c96db18ee186b3173215e39ee))
+* **questionnaire:** support choice descriptions ([#510](https://github.com/matthewyjiang/rho/issues/510)) ([066899c](https://github.com/matthewyjiang/rho/commit/066899c2ad12ca23c2b7772de4b0a6a3c6161497))
+* **sdk:** add embeddable Rho runtime ([#262](https://github.com/matthewyjiang/rho/issues/262)) ([6fdac81](https://github.com/matthewyjiang/rho/commit/6fdac81b2a2d68331b72ecf768ad7631dada9d72))
+* **sdk:** execute independent tool calls concurrently ([#459](https://github.com/matthewyjiang/rho/issues/459)) ([0bb5a83](https://github.com/matthewyjiang/rho/commit/0bb5a830adc191d09ab40726577483c72cecf74f))
+* **sessions:** add conversation tree navigation ([#474](https://github.com/matthewyjiang/rho/issues/474)) ([8abb138](https://github.com/matthewyjiang/rho/commit/8abb1387a0c96dcf3142166d27b4db108d1c5181))
+* **subagents:** add parent-child plain-text messaging for Rho runtime ([#852](https://github.com/matthewyjiang/rho/issues/852)) ([dd25d8e](https://github.com/matthewyjiang/rho/commit/dd25d8e3e48fd531e777e31fcad9c948a2a9ebfe))
+* **subagents:** route background questionnaires to parent ([#539](https://github.com/matthewyjiang/rho/issues/539)) ([e0cab31](https://github.com/matthewyjiang/rho/commit/e0cab3182e9fc833fbf304c7dad5714f73b89952))
+* **tui:** add retractable pending input ([#334](https://github.com/matthewyjiang/rho/issues/334)) ([5f293a2](https://github.com/matthewyjiang/rho/commit/5f293a2221e0dcd5457eccbc8675eed2463d878e))
+* **tui:** redesign questionnaire with tabbed question layout ([#369](https://github.com/matthewyjiang/rho/issues/369)) ([a90135a](https://github.com/matthewyjiang/rho/commit/a90135a494409cfc1c99ffd2226bee9075788d41))
+* **tui:** render read file image previews ([#393](https://github.com/matthewyjiang/rho/issues/393)) ([52165ec](https://github.com/matthewyjiang/rho/commit/52165eccb9429cbfe80c6ec1390aa5e97be19df8))
+* **tui:** show detailed activity stages ([#403](https://github.com/matthewyjiang/rho/issues/403)) ([267a47b](https://github.com/matthewyjiang/rho/commit/267a47bd3894f7a6ed64c82d98920a2c2d585e91))
+* **tui:** show model output token rate ([#623](https://github.com/matthewyjiang/rho/issues/623)) ([a5aa688](https://github.com/matthewyjiang/rho/commit/a5aa688686d9f4f08d064462ccfa4fd542aa979d))
+* **usage:** add durable request ledger ([#381](https://github.com/matthewyjiang/rho/issues/381)) ([0502b99](https://github.com/matthewyjiang/rho/commit/0502b9987be74a8922f675ab941eadb23bc88b12))
+* **workflow:** add deterministic DAG workflows ([#680](https://github.com/matthewyjiang/rho/issues/680)) ([77f36f9](https://github.com/matthewyjiang/rho/commit/77f36f9cc6992f78ab59ac481a1f2dc4e00350a0))
+* **xai:** support hosted x_search tool ([#647](https://github.com/matthewyjiang/rho/issues/647)) ([cd0c897](https://github.com/matthewyjiang/rho/commit/cd0c897570376cf39d2d99b40c58c55b22fc6133))
+
+
+### Bug Fixes
+
+* exclude reasoning tokens from throughput ([#819](https://github.com/matthewyjiang/rho/issues/819)) ([d261b5b](https://github.com/matthewyjiang/rho/commit/d261b5b35bfb119f49a81d83b33ca06b62b383e7))
+* **kimi:** use provider-native K3 reasoning ([#402](https://github.com/matthewyjiang/rho/issues/402)) ([5453cdc](https://github.com/matthewyjiang/rho/commit/5453cdc5c78df2b11b3e5bbab4ea96c5fba635d9))
+* **metrics:** include reasoning latency in output rate ([#632](https://github.com/matthewyjiang/rho/issues/632)) ([7f7fa39](https://github.com/matthewyjiang/rho/commit/7f7fa39d88e3032a4433a105e07a785989406944))
+* **openai:** align Codex Responses wire contracts ([#644](https://github.com/matthewyjiang/rho/issues/644)) ([76cf855](https://github.com/matthewyjiang/rho/commit/76cf8554c390dfa112801016f2c05bd929c35eee))
+* **poolside:** publish final stream usage snapshot ([#516](https://github.com/matthewyjiang/rho/issues/516)) ([d51ebab](https://github.com/matthewyjiang/rho/commit/d51ebabcc4823ef11b21b8fadecd6625956146d2))
+* **providers:** show bounded error diagnostics ([#344](https://github.com/matthewyjiang/rho/issues/344)) ([e3fc489](https://github.com/matthewyjiang/rho/commit/e3fc48984590d34e19238e157e2479fa3c9d0d20))
+* **providers:** surface rate-limit reset time and /limits pointer ([#733](https://github.com/matthewyjiang/rho/issues/733)) ([b9371fc](https://github.com/matthewyjiang/rho/commit/b9371fc69fb9b195f9f400d872195c91f031a6b2))
+* **sdk:** commit turn history on provider failure ([#739](https://github.com/matthewyjiang/rho/issues/739)) ([b4158ab](https://github.com/matthewyjiang/rho/commit/b4158ab1a58974dd29e43f6970dbe2fd08f714b5))
+* **sdk:** recover failed 1.17.1 release packaging ([#587](https://github.com/matthewyjiang/rho/issues/587)) ([224189e](https://github.com/matthewyjiang/rho/commit/224189e2d4fc2ec5f23cb88d80065d82c91ef40b))
+* **sdk:** recover failed 1.32.0 release packaging ([#792](https://github.com/matthewyjiang/rho/issues/792)) ([a782145](https://github.com/matthewyjiang/rho/commit/a782145820f2924a47140f9e8cd8e3cbd13be8a3))
+* **sdk:** retry retryable provider failures instead of failing the run ([#401](https://github.com/matthewyjiang/rho/issues/401)) ([b2867da](https://github.com/matthewyjiang/rho/commit/b2867da58eab9636c5e9691fe1de25e669a36dc3))
+* **sdk:** serialize identical concurrent approval requests to prompt once ([#469](https://github.com/matthewyjiang/rho/issues/469)) ([45b2b0a](https://github.com/matthewyjiang/rho/commit/45b2b0a34fd3a2482f515a4a4e613fd18ffa103f))
+* **sdk:** stabilize compaction release benchmark ([#561](https://github.com/matthewyjiang/rho/issues/561)) ([8364edc](https://github.com/matthewyjiang/rho/commit/8364edc7f8d1acb3967a061b0da02fd4a102a787))
+* **skills:** enforce manual skill invocation ([#453](https://github.com/matthewyjiang/rho/issues/453)) ([4f6f043](https://github.com/matthewyjiang/rho/commit/4f6f043026622fc46a8d93e4ee8b743ccb2a36ea))
+* **subagents:** run multi-agent batches in parallel ([#544](https://github.com/matthewyjiang/rho/issues/544)) ([7dd6706](https://github.com/matthewyjiang/rho/commit/7dd6706f6aade0a45d70336a42d259b4a3c12a4f))
+* **tools:** allow file paths outside workspace ([#537](https://github.com/matthewyjiang/rho/issues/537)) ([8a3cc24](https://github.com/matthewyjiang/rho/commit/8a3cc24468e89bb509fefbefced738b706b1e43d))
+* **tools:** scrub provider credential env vars from child processes ([#502](https://github.com/matthewyjiang/rho/issues/502)) ([6d66913](https://github.com/matthewyjiang/rho/commit/6d669135caa7aa160f8c81c109f0c99736b70e63))
+* **tui:** open approval prompts at the start and default to deny ([#636](https://github.com/matthewyjiang/rho/issues/636)) ([59efc07](https://github.com/matthewyjiang/rho/commit/59efc07b26bf67597ebbe05551cd22f3affedc96))
+* **tui:** report generation token throughput ([#803](https://github.com/matthewyjiang/rho/issues/803)) ([4772f68](https://github.com/matthewyjiang/rho/commit/4772f68ccad3fc1edf65aa666d9a49f74bfab960))
+* **tui:** report herdr blocked during questionnaire ([#500](https://github.com/matthewyjiang/rho/issues/500)) ([1dcdbe9](https://github.com/matthewyjiang/rho/commit/1dcdbe9e86bb61cf0cd55a705c28941d9dfcb241))
+* **tui:** show codex fast mode and report tier fallback ([#663](https://github.com/matthewyjiang/rho/issues/663)) ([177043f](https://github.com/matthewyjiang/rho/commit/177043f5022a1798ae45b0d987e6c6ceaf470d1c))
+* **tui:** show hosted x_search tool cards ([#662](https://github.com/matthewyjiang/rho/issues/662)) ([4381667](https://github.com/matthewyjiang/rho/commit/438166754b79645d31b4fcefd92b3ea665567c94))
+* **tui:** stabilize live stream tool cards and markdown previews ([#595](https://github.com/matthewyjiang/rho/issues/595)) ([752794f](https://github.com/matthewyjiang/rho/commit/752794f407d65533e97924d6e89ceeba443886c0))
+
+
+### Performance Improvements
+
+* optimize orchestration and session hot paths ([#603](https://github.com/matthewyjiang/rho/issues/603)) ([62aa8f5](https://github.com/matthewyjiang/rho/commit/62aa8f50358fc82f1e6bef5bf0d2348fc6c0aaac))
+* reduce hot-path allocations and redundant I/O ([#280](https://github.com/matthewyjiang/rho/issues/280)) ([c18e582](https://github.com/matthewyjiang/rho/commit/c18e5823156254dccf59080864e775990c1b89cb))
+* **sdk:** avoid duplicate history clone during compaction ([#276](https://github.com/matthewyjiang/rho/issues/276)) ([79e3926](https://github.com/matthewyjiang/rho/commit/79e3926f2de855860c3418baa67a3dc78aa20870))
+
 ## [3.0.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v2.1.0...rho-sdk-v3.0.0) (2026-08-11)
 
 

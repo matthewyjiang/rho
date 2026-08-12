@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.0.0...rho-providers-v1.1.0) (2026-08-12)
+
+
+### Features
+
+* **permission:** rename Auto to Bypass and add classifier Auto ([#870](https://github.com/matthewyjiang/rho/issues/870)) ([3192daa](https://github.com/matthewyjiang/rho/commit/3192daa713f7202f44727ec4acb83d0c646d1286))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 3.1.0 to 4.0.0
+
 ## [1.0.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v0.21.0...rho-providers-v1.0.0) (2026-08-11)
 
 
