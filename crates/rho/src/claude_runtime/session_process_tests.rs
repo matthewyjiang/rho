@@ -576,7 +576,7 @@ exit 2
         dir.path(),
         &fake,
         8,
-        PermissionMode::Auto,
+        PermissionMode::Bypass,
         RunCancellation::new(),
     )
     .await;

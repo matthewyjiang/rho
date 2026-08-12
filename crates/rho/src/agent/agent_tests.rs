@@ -228,10 +228,10 @@ fn internal_agents_are_visible_but_not_selectable() {
         .all(|origin| *origin != AgentOrigin::Internal));
 }
 
-// Covers: the advisor agent stays unconfigured until a model is chosen
+// Covers: model-required internal agents stay unconfigured until a model is chosen
 // Owner: internal agent definitions
 #[test]
-fn only_the_advisor_internal_agent_requires_its_own_model() {
+fn model_required_internal_agents_require_their_own_model() {
     let requires = internal_definitions()
         .iter()
         .map(|definition| {
@@ -248,6 +248,7 @@ fn only_the_advisor_internal_agent_requires_its_own_model() {
             (SESSION_TITLE_AGENT_ID, false),
             (GOAL_JUDGE_AGENT_ID, false),
             (ADVISOR_AGENT_ID, true),
+            (PERMISSION_CLASSIFIER_AGENT_ID, true),
         ]
     );
 }

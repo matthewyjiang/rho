@@ -312,6 +312,7 @@ fn discovery_capability_paths_are_exact() {
         vec![
             Path::new("/home/test/.agents/agents").to_path_buf(),
             Path::new("/home/test/.rho/agents").to_path_buf(),
+            Path::new("/workspace/.agents/agents").to_path_buf(),
             Path::new("/workspace/project/.agents/agents").to_path_buf(),
         ]
     );
