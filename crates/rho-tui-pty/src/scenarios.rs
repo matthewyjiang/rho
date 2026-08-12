@@ -38,7 +38,7 @@ use background_agents::{
 };
 use changelog::CHANGELOG_STEPS;
 use command_palette::{HELP_OVERLAY_SCENARIO, SLASH_COMMAND_PALETTE_SCENARIO};
-use config::OPEN_CONFIG_PICKER_STEPS;
+use config::{AUTO_PERMISSION_MODE_CONFIG_STEPS, OPEN_CONFIG_PICKER_STEPS};
 use conversation_tree::CONVERSATION_TREE_STEPS;
 use document_attachment::DOCUMENT_ATTACHMENT_SCENARIO;
 use edit_diff::EDIT_DIFF_SCENARIO;
@@ -668,6 +668,17 @@ const ALL_SCENARIOS: &[Scenario] = &[
         SUPERVISED_APPROVAL_STEPS,
         true,
     ),
+    Scenario::new(
+        "auto_permission_mode_config",
+        "Gate Auto behind a classifier model picker, cancel safely, then enable it",
+        PtySize {
+            rows: 14,
+            cols: 100,
+        },
+        AUTO_PERMISSION_MODE_CONFIG_STEPS,
+        /*smoke*/ false,
+    )
+    .with_env(OPENAI_KEY_ENV),
     Scenario::new(
         "progress_tool",
         "Run the fixture progress tool to completion",

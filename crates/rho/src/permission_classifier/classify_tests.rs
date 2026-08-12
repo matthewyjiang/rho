@@ -180,8 +180,5 @@ fn assert_classifier_unavailable(verdict: ClassifierVerdict) {
     let ClassifierVerdict::Deny { reason } = verdict else {
         panic!("expected deny verdict");
     };
-    assert!(
-        reason.starts_with("classifier unavailable: "),
-        "unexpected reason: {reason}"
-    );
+    assert_eq!(reason, "classifier unavailable");
 }

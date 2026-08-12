@@ -200,10 +200,9 @@ impl ApprovalHandler for ClassifierApprovalHandler {
                 }
                 Err(error) => {
                     *consecutive_denials += 1;
+                    tracing::warn!(error = %error, "permission classifier unavailable");
                     ApprovalDecision::Deny {
-                        reason: deny_and_continue_reason(format!(
-                            "classifier unavailable: {error}"
-                        )),
+                        reason: deny_and_continue_reason("classifier unavailable"),
                     }
                 }
             }

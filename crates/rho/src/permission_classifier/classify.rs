@@ -99,7 +99,10 @@ async fn try_classify_capability_request_with_provider(
 }
 
 fn classifier_unavailable(error: impl std::fmt::Display) -> ClassifierVerdict {
+    // Keep details out of the executor-facing deny reason; credential and
+    // provider response bodies can show up in Display output.
+    tracing::warn!(error = %error, "permission classifier unavailable");
     ClassifierVerdict::Deny {
-        reason: format!("classifier unavailable: {error}"),
+        reason: "classifier unavailable".into(),
     }
 }
