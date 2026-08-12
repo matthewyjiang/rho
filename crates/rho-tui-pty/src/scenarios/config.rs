@@ -211,7 +211,8 @@ credential_store = "file"
         });
     }
 
-    let (session_id, _session_path) = find_latest_session(&home)?;
+    let (session_id, session_path) = find_latest_session(&home)?;
+    inject_non_replayable_provider_context(&session_path)?;
     setup_auto_without_classifier(&home)?;
 
     let resume_plan = RhoLaunchPlan::matrix(&runner.binary, &home, SIZE)
@@ -225,12 +226,15 @@ credential_store = "file"
         harness.set_artifact_writer(ArtifactWriter::new(root));
     }
     let result = (|| -> anyhow::Result<()> {
-        // Resume under Auto without a classifier must open the gate even when
-        // no loaded-session handoff modal is needed (no native-context omissions).
-        harness.set_phase("resume_opens_classifier_picker");
-        harness.wait_for_text("select model for permission-classifier", STARTUP)?;
+        harness.set_phase("loaded_session_handoff_opens");
+        harness.wait_for_text("How should Rho continue", STARTUP)?;
         harness.assert_screen_contains("Auto ·")?;
-        harness.assert_screen_contains(SEED_PROMPT)?;
+        harness.set_phase("continue_handoff_then_classifier_gate");
+        // Prefer Enter on the highlighted Continue option; number shortcuts vary
+        // when use-source/compact rows are present.
+        harness.inject_key(&Key::Enter)?;
+        harness.wait_for_text("select model for permission-classifier", SETTLE)?;
+        harness.assert_screen_contains("Auto ·")?;
         harness.set_phase("escape_falls_back_to_supervised");
         harness.inject_key(&Key::Esc)?;
         harness.wait_for_text(
@@ -318,6 +322,102 @@ fn find_latest_session(
         .ok_or_else(|| anyhow::anyhow!("session header missing id"))?
         .to_string();
     Ok((id, path))
+}
+
+fn inject_non_replayable_provider_context(path: &std::path::Path) -> anyhow::Result<()> {
+    use std::fs;
+
+    let raw = fs::read_to_string(path)?;
+    let mut out = Vec::new();
+    let mut rewritten = 0usize;
+    for line in raw.lines() {
+        let mut value: serde_json::Value = serde_json::from_str(line)?;
+        rewritten += rewrite_history_tree(&mut value);
+        out.push(serde_json::to_string(&value)?);
+    }
+    if rewritten == 0 {
+        anyhow::bail!(
+            "could not rewrite any assistant messages in {} for handoff omissions",
+            path.display()
+        );
+    }
+    fs::write(path, out.join("\n") + "\n")?;
+    Ok(())
+}
+
+fn rewrite_history_tree(value: &mut serde_json::Value) -> usize {
+    let mut count = 0;
+    match value {
+        serde_json::Value::Object(map) => {
+            if let Some(history) = map.get_mut("history").and_then(|h| h.as_array_mut()) {
+                for item in history.iter_mut() {
+                    if rewrite_message_value(item) {
+                        count += 1;
+                    }
+                }
+            }
+            if let Some(provider) = map.get_mut("provider") {
+                if provider.get("provider").and_then(|v| v.as_str()) == Some("openai")
+                    || provider.get("api").and_then(|v| v.as_str()) == Some("tui-test-fixture")
+                {
+                    *provider = serde_json::json!({
+                        "provider": "anthropic",
+                        "api": "messages",
+                        "model": "claude-fable-5"
+                    });
+                }
+            }
+            if let Some(display) = map
+                .get_mut("display_messages")
+                .and_then(|h| h.as_array_mut())
+            {
+                for item in display.iter_mut() {
+                    if let Some(message) = item.get_mut("message") {
+                        if rewrite_message_value(message) {
+                            count += 1;
+                        }
+                    }
+                }
+            }
+            for child in map.values_mut() {
+                count += rewrite_history_tree(child);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items.iter_mut() {
+                count += rewrite_history_tree(item);
+            }
+        }
+        _ => {}
+    }
+    count
+}
+
+fn rewrite_message_value(value: &mut serde_json::Value) -> bool {
+    let is_assistant = value.get("Assistant").is_some() || value.get("EnrichedAssistant").is_some();
+    if !is_assistant {
+        return false;
+    }
+    *value = serde_json::json!({
+        "EnrichedAssistant": {
+            "content": [{"Text": "prior answer"}],
+            "provenance": {
+                "provider": "anthropic",
+                "api": "messages",
+                "model": "claude-fable-5"
+            },
+            "provider_context": [{
+                "identity": {
+                    "provider": "anthropic",
+                    "api": "messages",
+                    "model": "claude-fable-5"
+                },
+                "kind": "anthropic_message",
+                "data": {"opaque": true}
+            }]
+        }
+    });
+    true
 }
 
 pub(super) const OPEN_CONFIG_PICKER_STEPS: &[Step] = &[

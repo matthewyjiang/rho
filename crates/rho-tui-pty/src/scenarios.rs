@@ -2,6 +2,7 @@
 
 mod activity_anchor;
 mod advisor;
+mod assert_helpers;
 mod background_agents;
 mod changelog;
 mod command_palette;
@@ -977,29 +978,6 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
     runner.run(scenario)
 }
 
-fn assert_inline_shell_cancelled(harness: &mut crate::harness::PtyHarness) -> Result<()> {
-    if harness.screen().contains_text("cancel-escaped-output") {
-        anyhow::bail!("inline shell produced output after Escape cancelled it");
-    }
-    Ok(())
-}
-
-fn assert_idle_shell_still_streaming(harness: &mut crate::harness::PtyHarness) -> Result<()> {
-    if harness.screen().contains_text("idle-stream-end") {
-        anyhow::bail!("idle shell output was not rendered until the command completed");
-    }
-    Ok(())
-}
-
-fn assert_terminal_restored(harness: &mut crate::harness::PtyHarness) -> Result<()> {
-    // After a clean exit, ratatui/crossterm must leave the alternate screen.
-    // Mouse disable alone is not enough: a regression that skips ESC[?1049l
-    // would leave the user stuck in the alternate screen.
-    let raw = harness.raw_output();
-    let left = raw.windows(8).any(|window| window == b"\x1b[?1049l")
-        || String::from_utf8_lossy(raw).contains("?1049l");
-    if !left {
-        anyhow::bail!("did not observe alternate-screen leave sequence (ESC[?1049l)");
-    }
-    Ok(())
-}
+use assert_helpers::{
+    assert_idle_shell_still_streaming, assert_inline_shell_cancelled, assert_terminal_restored,
+};
