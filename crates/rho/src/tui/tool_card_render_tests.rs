@@ -484,7 +484,10 @@ fn with_live_shell_elapsed_folds_clock_into_timeout_fact() {
     entry.card.push_fact(ToolFact::Timeout { seconds: None });
 
     let rewritten = with_live_shell_elapsed(&entry);
-    assert!(matches!(&rewritten, Cow::Owned(_)), "running shell must rewrite the card");
+    assert!(
+        matches!(&rewritten, Cow::Owned(_)),
+        "running shell must rewrite the card"
+    );
     assert_eq!(
         rewritten.facts,
         vec![
