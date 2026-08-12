@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.38.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.38.0...rho-coding-agent-v1.38.1) (2026-08-12)
+
+
+### Bug Fixes
+
+* **tui:** prompt for Auto classifier model at startup ([#877](https://github.com/matthewyjiang/rho/issues/877)) ([c8cba48](https://github.com/matthewyjiang/rho/commit/c8cba4879f6e7b698412ee098ee86ea506deed85))
+
 ## [1.38.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.37.0...rho-coding-agent-v1.38.0) (2026-08-12)
 
 
