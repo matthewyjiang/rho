@@ -34,7 +34,13 @@ impl SoftSettingsDelta {
         match entry {
             Entry::Tool(_) => self.tool_output || self.zen,
             Entry::Reasoning(_) => self.zen,
-            _ => false,
+            Entry::User(_)
+            | Entry::Assistant(_)
+            | Entry::Notice(_)
+            | Entry::RuntimeInfo(_)
+            | Entry::Changelog(_)
+            | Entry::UsageLimits(_)
+            | Entry::Error(_) => false,
         }
     }
 }

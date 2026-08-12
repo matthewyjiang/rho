@@ -688,7 +688,14 @@ fn prepare_cache_entry_render(
     // is reserved. Unloaded markdown placeholders stay one row tall.
     let depends_on_image_height = match entry {
         Entry::Tool(tool) => tool.image.is_some(),
-        _ => rendered.image_placement.is_some(),
+        Entry::User(_)
+        | Entry::Assistant(_)
+        | Entry::Reasoning(_)
+        | Entry::Notice(_)
+        | Entry::RuntimeInfo(_)
+        | Entry::Changelog(_)
+        | Entry::UsageLimits(_)
+        | Entry::Error(_) => rendered.image_placement.is_some(),
     };
     let code_blocks = rendered
         .code_blocks
