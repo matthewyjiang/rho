@@ -705,32 +705,66 @@ fn push_diff_row(
         (_, Some(line)) => format!("{line:>gutter$} "),
         (_, None) => " ".repeat(gutter + 1),
     };
-    let sign = format!("{} ", row.kind.sign());
-    let prefix_width = display_width(CHILD_CONTENT_INDENT) + display_width(&number) + sign.len();
+    // Sign cell is one character; a trailing space separates it from content
+    // and sits in the row wash rather than the filled gutter.
+    let sign = row.kind.sign();
+    let sign_gap = " ";
+    let prefix_width =
+        display_width(CHILD_CONTENT_INDENT) + display_width(&number) + sign.len() + sign_gap.len();
     let content_width = width.saturating_sub(prefix_width).max(1);
     let text_style = Theme::tool_diff_text(row.kind);
-    let sign_style = text_style;
+    let sign_style = Theme::tool_diff_sign(row.kind);
+    let row_wash = Theme::tool_diff_row(row.kind);
+    let number_style = match row_wash {
+        Some(wash) => Theme::tool_diff_gutter().patch(wash),
+        None => Theme::tool_diff_gutter(),
+    };
+    let gap_style = match row_wash {
+        Some(wash) => text_style.patch(wash),
+        None => text_style,
+    };
+    let pad_style = row_wash.unwrap_or_else(Theme::text);
 
-    let content_spans = match highlighted {
+    let mut content_spans = match highlighted {
         Some(segments) => spans_from_segments_with_matches(&segments, text_style, &[]),
         None => vec![Span::styled(row.text.clone(), text_style)],
     };
+    if let Some(wash) = row_wash {
+        for span in &mut content_spans {
+            span.style = span.style.patch(wash);
+        }
+    }
 
     let wrapped = hard_wrap_styled_spans(&row.text, &content_spans, content_width, text_style);
+    let indent_width = display_width(CHILD_CONTENT_INDENT);
     for (index, chunk) in wrapped.into_iter().enumerate() {
         let mut spans = if index == 0 {
             vec![
-                Span::styled(
-                    format!("{CHILD_CONTENT_INDENT}{number}"),
-                    Theme::tool_diff_gutter(),
-                ),
-                Span::styled(sign.clone(), sign_style),
+                Span::styled(CHILD_CONTENT_INDENT.to_string(), Theme::tool_tree()),
+                Span::styled(number.clone(), number_style),
+                Span::styled(sign.to_string(), sign_style),
+                Span::styled(sign_gap.to_string(), gap_style),
             ]
         } else {
-            vec![Span::styled(" ".repeat(prefix_width), Theme::tool_tree())]
+            // Continuations keep tree indent clear; wash covers number+sign columns.
+            let mut cont = vec![Span::styled(
+                CHILD_CONTENT_INDENT.to_string(),
+                Theme::tool_tree(),
+            )];
+            let rest = prefix_width.saturating_sub(indent_width);
+            if rest > 0 {
+                cont.push(Span::styled(
+                    " ".repeat(rest),
+                    match row_wash {
+                        Some(wash) => Theme::tool_tree().patch(wash),
+                        None => Theme::tool_tree(),
+                    },
+                ));
+            }
+            cont
         };
         spans.extend(chunk);
-        lines.push(pad_spans_line(spans, width));
+        lines.push(pad_spans_line_with(spans, width, pad_style));
     }
 }
 
@@ -784,13 +818,21 @@ fn diff_stat_spans(added: u64, removed: u64, path: Option<&str>) -> Vec<Span<'st
     spans
 }
 
-fn pad_spans_line(mut spans: Vec<Span<'static>>, width: usize) -> Line<'static> {
+fn pad_spans_line(spans: Vec<Span<'static>>, width: usize) -> Line<'static> {
+    pad_spans_line_with(spans, width, Theme::text())
+}
+
+fn pad_spans_line_with(
+    mut spans: Vec<Span<'static>>,
+    width: usize,
+    pad_style: Style,
+) -> Line<'static> {
     let used = spans
         .iter()
         .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
         .sum::<usize>();
     if used < width {
-        spans.push(Span::styled(" ".repeat(width - used), Theme::text()));
+        spans.push(Span::styled(" ".repeat(width - used), pad_style));
     }
     Line::from(spans)
 }

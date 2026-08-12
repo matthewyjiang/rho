@@ -192,6 +192,35 @@ fn fixed_light_scheme_uses_rgb_dim_and_surface() {
     Theme::apply_committed("terminal");
 }
 
+// Covers: fixed schemes expose distinct add/del diff gutter and wash blends
+// Owner: tui theme palette mapping
+#[test]
+fn scheme_diff_gutter_and_wash_differ_from_surface() {
+    let _guard = theme_test_lock();
+    Theme::apply_committed("terminal");
+    Theme::apply_committed("one-half-dark");
+    let palette = Palette::current();
+    let surface = palette.surface.expect("scheme surface");
+    let add_gutter = palette.diff_add_gutter.expect("add gutter").color;
+    let del_gutter = palette.diff_del_gutter.expect("del gutter").color;
+    let add_wash = palette.diff_add_wash.expect("add wash").color;
+    let del_wash = palette.diff_del_wash.expect("del wash").color;
+
+    assert_ne!(add_gutter, surface);
+    assert_ne!(del_gutter, surface);
+    assert_ne!(add_gutter, del_gutter);
+    assert_ne!(add_wash, del_wash);
+    assert_ne!(add_gutter, add_wash);
+    assert_ne!(del_gutter, del_wash);
+
+    let add_sign = Theme::tool_diff_sign(rho_tools::tool_card::DiffRowKind::Added);
+    let del_sign = Theme::tool_diff_sign(rho_tools::tool_card::DiffRowKind::Removed);
+    assert_eq!(add_sign.bg, Some(add_gutter));
+    assert_eq!(del_sign.bg, Some(del_gutter));
+
+    Theme::apply_committed("terminal");
+}
+
 // Covers: brand/version roles use sampled terminal RGB, not bare Color::Cyan/Green
 // Owner: tui theme palette mapping
 #[test]
@@ -215,10 +244,21 @@ fn terminal_palette_drives_brand_and_success_rgb() {
     assert_eq!(palette.error, Color::Rgb(100, 110, 120));
     assert_eq!(palette.skill, Color::Rgb(130, 140, 150));
 
+    // Sampled green/red also drive optional diff gutter/wash blends.
+    assert!(palette.diff_add_gutter.is_some());
+    assert!(palette.diff_del_gutter.is_some());
+    assert!(palette.diff_add_wash.is_some());
+    assert!(palette.diff_del_wash.is_some());
+
     // Without a sample, keep named ANSI so the host can still paint them.
+    // Skip harsh named-ANSI backgrounds for diff chrome.
     let fallback = Palette::from_terminal(None);
     assert_eq!(fallback.accent, Color::Cyan);
     assert_eq!(fallback.success, Color::Green);
+    assert!(fallback.diff_add_gutter.is_none());
+    assert!(fallback.diff_del_gutter.is_none());
+    assert!(fallback.diff_add_wash.is_none());
+    assert!(fallback.diff_del_wash.is_none());
 }
 
 // Covers: bright warning yellow is darkened on light surfaces for Auto/status text

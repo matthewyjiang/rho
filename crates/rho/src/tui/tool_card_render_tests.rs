@@ -175,6 +175,10 @@ fn fact_wrap_breaks_on_whitespace() {
 // Owner: pure TUI (tool card diff highlighting)
 #[test]
 fn file_diff_body_highlights_rust_from_header_path() {
+    // Theme is process-global; hold the lock so a parallel scheme test cannot
+    // inject row-wash backgrounds into exact style comparisons.
+    let _guard = crate::tui::theme::theme_test_lock();
+    Theme::apply_committed("terminal");
     let card = ToolCard::new(
         ToolStatus::Ok,
         ToolFamily::FileDiff,
@@ -208,14 +212,113 @@ fn file_diff_body_highlights_rust_from_header_path() {
     );
     assert!(
         body.spans.iter().any(|span| {
-            span.content.contains('+') && span.style == Theme::tool_diff_text(DiffRowKind::Added)
+            span.content.contains('+') && span.style == Theme::tool_diff_sign(DiffRowKind::Added)
         }),
-        "expected green add sign: {:?}",
+        "expected add sign gutter style: {:?}",
         body.spans
             .iter()
             .map(|s| (s.content.as_ref(), s.style))
             .collect::<Vec<_>>()
     );
+}
+
+// Covers: scheme themes paint add/remove sign gutters and row washes; context stays clear
+// Owner: pure TUI (tool card diff chrome)
+#[test]
+fn file_diff_rows_use_theme_sign_gutter_and_row_wash() {
+    let _guard = crate::tui::theme::theme_test_lock();
+    Theme::apply_committed("terminal");
+    Theme::apply_committed("one-half-dark");
+
+    let card = ToolCard::new(
+        ToolStatus::Ok,
+        ToolFamily::FileDiff,
+        ToolHeader::call("edit", Some("src/lib.rs".into())),
+    )
+    .with_body(ToolBody::Diff(vec![
+        DiffRow::new(DiffRowKind::Removed, Some(1), "old_line();"),
+        DiffRow::new(DiffRowKind::Added, Some(1), "new_line();"),
+        DiffRow::new(DiffRowKind::Context, Some(2), "keep();"),
+    ]));
+
+    let mut lines = Vec::new();
+    push_tool_card(
+        &mut lines, &card, /*width*/ 80, /*max_tool_output_lines*/ 32,
+        /*expanded*/ true,
+    );
+
+    let removed = lines
+        .iter()
+        .find(|line| {
+            line.spans
+                .iter()
+                .any(|span| span.content.contains("old_line"))
+        })
+        .expect("removed row");
+    let added = lines
+        .iter()
+        .find(|line| {
+            line.spans
+                .iter()
+                .any(|span| span.content.contains("new_line"))
+        })
+        .expect("added row");
+    let context = lines
+        .iter()
+        .find(|line| line.spans.iter().any(|span| span.content.contains("keep")))
+        .expect("context row");
+
+    let add_sign = Theme::tool_diff_sign(DiffRowKind::Added);
+    let del_sign = Theme::tool_diff_sign(DiffRowKind::Removed);
+    let add_wash = Theme::tool_diff_row(DiffRowKind::Added).expect("add wash");
+    let del_wash = Theme::tool_diff_row(DiffRowKind::Removed).expect("del wash");
+
+    assert!(
+        add_sign.bg.is_some() && del_sign.bg.is_some(),
+        "scheme must provide filled sign gutters"
+    );
+    assert_ne!(add_sign.bg, del_sign.bg);
+    assert_ne!(add_wash.bg, del_wash.bg);
+
+    assert!(
+        removed
+            .spans
+            .iter()
+            .any(|span| span.content.as_ref() == "-" && span.style == del_sign),
+        "removed sign gutter: {:?}",
+        removed.spans
+    );
+    assert!(
+        added
+            .spans
+            .iter()
+            .any(|span| span.content.as_ref() == "+" && span.style == add_sign),
+        "added sign gutter: {:?}",
+        added.spans
+    );
+    assert!(
+        removed
+            .spans
+            .iter()
+            .any(|span| span.content.contains("old_line") && span.style.bg == del_wash.bg),
+        "removed row wash: {:?}",
+        removed.spans
+    );
+    assert!(
+        added
+            .spans
+            .iter()
+            .any(|span| span.content.contains("new_line") && span.style.bg == add_wash.bg),
+        "added row wash: {:?}",
+        added.spans
+    );
+    assert!(
+        context.spans.iter().all(|span| span.style.bg.is_none()),
+        "context must not wash: {:?}",
+        context.spans
+    );
+
+    Theme::apply_committed("terminal");
 }
 
 fn large_rust_diff_card(lines: usize) -> ToolCard {

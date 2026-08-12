@@ -17,6 +17,10 @@ use super::{
 
 const USER_BACKGROUND_ALPHA: f32 = 0.10;
 const NEUTRAL_TOOL_BACKGROUND_ALPHA: f32 = 0.10;
+// Diff row wash matches the panel wash strength so syntax stays readable.
+const DIFF_ROW_WASH_ALPHA: f32 = USER_BACKGROUND_ALPHA;
+// Sign gutter is a stronger blend of the same green/red so +/- reads as a block.
+const DIFF_SIGN_GUTTER_ALPHA: f32 = 0.35;
 // Light/dark split for palette-derived chrome. Matches the existing block
 // contrast threshold used by block_foreground.
 const LIGHT_BACKGROUND_LUMINANCE: f32 = 0.55;
@@ -173,6 +177,12 @@ struct Palette {
     skill: Color,
     user_background: BlockColor,
     neutral_tool_background: BlockColor,
+    /// Strong green/red cells behind diff `+`/`-`. Absent without sampled RGB.
+    diff_add_gutter: Option<BlockColor>,
+    diff_del_gutter: Option<BlockColor>,
+    /// Soft green/red wash across added/removed diff rows. Absent without RGB.
+    diff_add_wash: Option<BlockColor>,
+    diff_del_wash: Option<BlockColor>,
 }
 
 impl Palette {
@@ -214,6 +224,12 @@ impl Palette {
                 NEUTRAL_TOOL_BACKGROUND_ALPHA,
                 BlockColor::from_color(Color::DarkGray),
             ),
+            // Skip washes without sampled green/red so we never paint harsh
+            // named-ANSI backgrounds; sign/text keep role fg instead.
+            diff_add_gutter: optional_blended(terminal, AnsiColor::Green, DIFF_SIGN_GUTTER_ALPHA),
+            diff_del_gutter: optional_blended(terminal, AnsiColor::Red, DIFF_SIGN_GUTTER_ALPHA),
+            diff_add_wash: optional_blended(terminal, AnsiColor::Green, DIFF_ROW_WASH_ALPHA),
+            diff_del_wash: optional_blended(terminal, AnsiColor::Red, DIFF_ROW_WASH_ALPHA),
         }
     }
 
@@ -237,6 +253,26 @@ impl Palette {
             ),
             user_background: panel,
             neutral_tool_background: panel,
+            diff_add_gutter: Some(scheme_diff_background(
+                scheme,
+                AnsiColor::Green,
+                DIFF_SIGN_GUTTER_ALPHA,
+            )),
+            diff_del_gutter: Some(scheme_diff_background(
+                scheme,
+                AnsiColor::Red,
+                DIFF_SIGN_GUTTER_ALPHA,
+            )),
+            diff_add_wash: Some(scheme_diff_background(
+                scheme,
+                AnsiColor::Green,
+                DIFF_ROW_WASH_ALPHA,
+            )),
+            diff_del_wash: Some(scheme_diff_background(
+                scheme,
+                AnsiColor::Red,
+                DIFF_ROW_WASH_ALPHA,
+            )),
         }
     }
 }
@@ -250,6 +286,15 @@ fn scheme_panel_background(scheme: &ColorScheme) -> BlockColor {
         scheme_ansi(scheme, AnsiColor::White)
     };
     BlockColor::from_rgb(background.blend_toward(wash, USER_BACKGROUND_ALPHA))
+}
+
+/// Blend a role ANSI color into the scheme surface for diff gutter/wash cells.
+fn scheme_diff_background(scheme: &ColorScheme, color: AnsiColor, alpha: f32) -> BlockColor {
+    BlockColor::from_rgb(
+        scheme
+            .background
+            .blend_toward(scheme_ansi(scheme, color), alpha),
+    )
 }
 
 fn scheme_ansi(scheme: &ColorScheme, color: AnsiColor) -> Rgb {
@@ -717,6 +762,35 @@ impl Theme {
         }
     }
 
+    /// Sign-column style: filled green/red gutter when RGB is available, else
+    /// role foreground so color-stripped terminals still read `+`/`-`.
+    pub(super) fn tool_diff_sign(kind: rho_tools::tool_card::DiffRowKind) -> Style {
+        use rho_tools::tool_card::DiffRowKind;
+        let palette = Palette::current();
+        match kind {
+            DiffRowKind::Added => diff_sign_style(palette.diff_add_gutter, palette.success),
+            DiffRowKind::Removed => diff_sign_style(palette.diff_del_gutter, palette.error),
+            DiffRowKind::Context | DiffRowKind::File | DiffRowKind::Skip | DiffRowKind::Meta => {
+                Self::tool_diff_text(kind)
+            }
+        }
+    }
+
+    /// Soft row wash behind added/removed content. Absent without sampled RGB
+    /// or for context/chrome rows.
+    pub(super) fn tool_diff_row(kind: rho_tools::tool_card::DiffRowKind) -> Option<Style> {
+        use rho_tools::tool_card::DiffRowKind;
+        let palette = Palette::current();
+        let wash = match kind {
+            DiffRowKind::Added => palette.diff_add_wash?,
+            DiffRowKind::Removed => palette.diff_del_wash?,
+            DiffRowKind::Context | DiffRowKind::File | DiffRowKind::Skip | DiffRowKind::Meta => {
+                return None
+            }
+        };
+        Some(Style::default().bg(wash.color))
+    }
+
     /// Line-number gutter. The sign carries the change, so numbers stay chrome.
     pub(super) fn tool_diff_gutter() -> Style {
         Self::dim()
@@ -832,9 +906,24 @@ fn blended_or_fallback(
     alpha: f32,
     fallback: BlockColor,
 ) -> BlockColor {
-    terminal
-        .and_then(|palette| palette.blended_background(color, alpha))
-        .unwrap_or(fallback)
+    optional_blended(terminal, color, alpha).unwrap_or(fallback)
+}
+
+fn optional_blended(
+    terminal: Option<&TerminalPalette>,
+    color: AnsiColor,
+    alpha: f32,
+) -> Option<BlockColor> {
+    terminal.and_then(|palette| palette.blended_background(color, alpha))
+}
+
+fn diff_sign_style(gutter: Option<BlockColor>, fallback_fg: Color) -> Style {
+    match gutter {
+        Some(background) => Style::default()
+            .fg(block_foreground(background.rgb))
+            .bg(background.color),
+        None => Style::default().fg(fallback_fg),
+    }
 }
 
 #[cfg(test)]

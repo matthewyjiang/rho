@@ -133,8 +133,9 @@ Not supported yet: block ops (`N*`), registers, `REM`, and `MV`.
 | Failed `edit` | Error plus a bounded live snapshot focused on the op anchors |
 
 Unified diffs are tool metadata for UI cards. They are not repeated in
-model-facing content. In the interactive TUI, added lines are green, removed
-lines red, and diff headers use the accent color.
+model-facing content. In the interactive TUI, added and removed lines use
+theme-colored `+`/`-` gutters and a soft row wash, and diff headers use the
+accent color.
 
 ### Cards while the edit runs
 

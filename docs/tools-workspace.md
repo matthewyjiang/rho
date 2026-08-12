@@ -75,7 +75,7 @@ Rho supports three edit formats and registers only the selected tool:
 - `apply_patch` applies Codex-style add, delete, update, and move sections across one or more files. Patch paths must be workspace-relative, must not contain `..`, and `Add File` targets must not exist.
 - `str_replace` replaces an exact string in one existing file, with an optional `replace_all` flag.
 
-Use `write` for a complete create-or-replace operation. Successful file mutations return model-facing snapshots for chaining, while unified diffs stay in tool metadata for UI cards. In the interactive TUI, added lines are highlighted in green, removed lines in red, and diff headers use the accent color.
+Use `write` for a complete create-or-replace operation. Successful file mutations return model-facing snapshots for chaining, while unified diffs stay in tool metadata for UI cards. In the interactive TUI, added and removed lines use theme-colored `+`/`-` gutters and a soft row wash, and diff headers use the accent color.
 
 Details for the default format: [Hash-line edit format](/tools-workspace/edit-format).
 
