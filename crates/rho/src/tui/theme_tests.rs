@@ -211,14 +211,13 @@ fn scheme_diff_chrome_washes_row_with_fg_signs() {
     assert_eq!(del.sign.fg, Some(palette.error));
     assert_eq!(add.sign.bg, Some(add_wash));
     assert_eq!(del.sign.bg, Some(del_wash));
-    // Content base stays unwashed until paint_content; fg is plain text.
-    assert_eq!(add.text.fg, Theme::text().fg);
-    assert_eq!(del.text.fg, Theme::text().fg);
-    assert_eq!(add.text.bg, None);
-    assert_eq!(del.text.bg, None);
-    // washed() carries the row wash onto column bases without mutating text.
+    // washed() carries the row wash onto column bases (content uses Theme::text).
     assert_eq!(add.washed(Theme::tool_diff_gutter()).bg, Some(add_wash));
     assert_eq!(del.washed(Theme::text()).bg, Some(del_wash));
+    // Context has no wash or role sign.
+    let ctx = Theme::tool_diff_chrome(rho_tools::tool_card::DiffRowKind::Context);
+    assert_eq!(ctx.sign, Theme::text());
+    assert_eq!(ctx.washed(Theme::text()).bg, None);
 
     Theme::apply_committed("terminal");
 }

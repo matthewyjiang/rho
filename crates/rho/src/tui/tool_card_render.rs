@@ -713,10 +713,13 @@ fn push_diff_row(
         display_width(CHILD_CONTENT_INDENT) + display_width(&number) + sign.len() + sign_gap.len();
     let content_width = width.saturating_sub(prefix_width).max(1);
     let chrome = Theme::tool_diff_chrome(row.kind);
+    let plain = Theme::text();
+    // Empty cells only need the wash; foreground is irrelevant on spaces.
+    let pad = chrome.washed(Style::default());
 
     let mut content_spans = match highlighted {
-        Some(segments) => spans_from_segments_with_matches(&segments, chrome.text, &[]),
-        None => vec![Span::styled(row.text.clone(), chrome.text)],
+        Some(segments) => spans_from_segments_with_matches(&segments, plain, &[]),
+        None => vec![Span::styled(row.text.clone(), plain)],
     };
     chrome.paint_content(&mut content_spans);
 
@@ -724,7 +727,7 @@ fn push_diff_row(
         &row.text,
         &content_spans,
         content_width,
-        chrome.washed(chrome.text),
+        chrome.washed(plain),
     );
     let indent_width = display_width(CHILD_CONTENT_INDENT);
     for (index, chunk) in wrapped.into_iter().enumerate() {
@@ -733,7 +736,7 @@ fn push_diff_row(
                 Span::styled(CHILD_CONTENT_INDENT.to_string(), Theme::tool_tree()),
                 Span::styled(number.clone(), chrome.washed(Theme::tool_diff_gutter())),
                 Span::styled(sign.to_string(), chrome.sign),
-                Span::styled(sign_gap.to_string(), chrome.washed(chrome.text)),
+                Span::styled(sign_gap.to_string(), pad),
             ]
         } else {
             // Continuations keep tree indent clear; wash covers number+sign columns.
@@ -743,19 +746,12 @@ fn push_diff_row(
             )];
             let rest = prefix_width.saturating_sub(indent_width);
             if rest > 0 {
-                cont.push(Span::styled(
-                    " ".repeat(rest),
-                    chrome.washed(Theme::tool_tree()),
-                ));
+                cont.push(Span::styled(" ".repeat(rest), pad));
             }
             cont
         };
         spans.extend(chunk);
-        lines.push(pad_spans_line_with(
-            spans,
-            width,
-            chrome.washed(Theme::text()),
-        ));
+        lines.push(pad_spans_line_with(spans, width, chrome.washed(plain)));
     }
 }
 

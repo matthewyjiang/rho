@@ -223,8 +223,8 @@ fn file_diff_body_highlights_rust_from_header_path() {
     );
 }
 
-// Covers: add/remove rows wash number+sign+content; signs stay role fg; context clear
-// Owner: pure TUI (tool card diff layout)
+// Covers: wash reaches number/content/pad; sign uses chrome.sign; context clear
+// Owner: pure TUI (tool card diff layout). Chrome mapping lives in theme_tests.
 #[test]
 fn file_diff_rows_apply_soft_wash_with_fg_signs() {
     let _guard = crate::tui::theme::theme_test_lock();
@@ -290,18 +290,13 @@ fn file_diff_rows_apply_soft_wash_with_fg_signs() {
         "added sign: {:?}",
         added.spans
     );
-    // Sign uses role fg on the soft wash (same bg as content, not a solid gutter).
-    assert_eq!(del.sign.fg, Theme::tool_stat_del().fg);
-    assert_eq!(add.sign.fg, Theme::tool_stat_add().fg);
-    assert_eq!(del.sign.bg, Some(del_wash));
-    assert_eq!(add.sign.bg, Some(add_wash));
     assert!(
         removed.spans.iter().any(|span| {
             span.content.contains("old_line")
                 && span.style.bg == Some(del_wash)
                 && span.style.fg == Theme::text().fg
         }),
-        "removed content wash + base fg: {:?}",
+        "removed content wash: {:?}",
         removed.spans
     );
     assert!(
@@ -310,7 +305,7 @@ fn file_diff_rows_apply_soft_wash_with_fg_signs() {
                 && span.style.bg == Some(add_wash)
                 && span.style.fg == Theme::text().fg
         }),
-        "added content wash + base fg: {:?}",
+        "added content wash: {:?}",
         added.spans
     );
     assert!(
