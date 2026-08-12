@@ -5,12 +5,12 @@ use crate::{
 
 /// Immutable xAI reasoning behavior resolved once when the provider is built.
 ///
-/// Advertised levels and Off encoding come from models.dev when that row is
-/// known. The model-id table only answers whether to send a reasoning field at
-/// all while the catalog is still silent.
+/// Advertised levels come from models.dev when that row is known. Off encodes
+/// as `"none"` when the catalog lists it; otherwise it clamps. The model-id
+/// table only answers whether to send a reasoning field while the catalog is
+/// silent.
 #[derive(Clone, Debug)]
 pub(super) struct XaiReasoningProfile {
-    metadata: Option<ModelMetadata>,
     capabilities: ReasoningCapabilities,
     offline_wire_behavior: OfflineWireBehavior,
 }
@@ -33,13 +33,10 @@ impl XaiReasoningProfile {
             // Do not guess the wire contract of newly introduced models.
             _ => OfflineWireBehavior::Omit,
         };
-        let capabilities = metadata
-            .as_ref()
-            .map(ModelMetadata::reasoning_capabilities)
-            .unwrap_or_default();
         Self {
-            metadata,
-            capabilities,
+            capabilities: metadata
+                .map(|metadata| metadata.reasoning_capabilities())
+                .unwrap_or_default(),
             offline_wire_behavior,
         }
     }
@@ -49,7 +46,6 @@ impl XaiReasoningProfile {
         use crate::model::ReasoningLevelSet;
 
         Self {
-            metadata: None,
             capabilities: ReasoningCapabilities::Levels(ReasoningLevelSet::new(
                 levels.into_iter().collect(),
             )),
@@ -60,7 +56,6 @@ impl XaiReasoningProfile {
     #[cfg(test)]
     pub(super) fn not_configurable() -> Self {
         Self {
-            metadata: None,
             capabilities: ReasoningCapabilities::NotConfigurable,
             offline_wire_behavior: OfflineWireBehavior::Omit,
         }
@@ -78,14 +73,12 @@ impl XaiReasoningProfile {
                 .capabilities
                 .resolve(requested, ReasoningRequestSource::PersistedOrDefault)
                 .effective()
-                .and_then(|effective| match &self.metadata {
-                    Some(metadata) => metadata.reasoning_effort(effective),
-                    None if effective == ReasoningLevel::Off
-                        && levels.levels().contains(&effective) =>
-                    {
+                .and_then(|effective| {
+                    if effective == ReasoningLevel::Off && levels.levels().contains(&effective) {
                         Some("none")
+                    } else {
+                        effective.effort()
                     }
-                    None => effective.effort(),
                 }),
         }
     }
