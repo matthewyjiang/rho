@@ -148,7 +148,7 @@ impl Default for Config {
             enable_subagents: true,
             advisor_mode: false,
             experimental_workspace_rewind: false,
-            permission_mode: PermissionMode::Auto,
+            permission_mode: PermissionMode::Bypass,
             credential_store: None,
             legacy_web_search_credentials: LegacyWebSearchCredentials::default(),
             rtk: true,

@@ -375,6 +375,7 @@ pub(crate) fn narrower_permission_mode(
         PermissionMode::Plan => 0,
         PermissionMode::Supervised => 1,
         PermissionMode::Auto => 2,
+        PermissionMode::Bypass => 3,
     };
     if rank(current) < rank(frozen) {
         current

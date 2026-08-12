@@ -39,19 +39,42 @@ fn config_value_parsing_trims_and_rejects_unknown_values() {
     let error = "paranoid".parse::<PermissionMode>().unwrap_err();
     assert_eq!(
         error.to_string(),
-        "unknown permission mode \"paranoid\"; expected auto, plan, or supervised"
+        "unknown permission mode \"paranoid\"; expected bypass, auto, plan, or supervised"
     );
     assert!("".parse::<PermissionMode>().is_err());
 }
 
 #[test]
-fn decision_for_auto_allows_everything() {
+fn decision_for_bypass_allows_everything() {
     for kind in all_capability_kinds() {
         assert_eq!(
-            PermissionMode::Auto.decision_for(kind),
+            PermissionMode::Bypass.decision_for(kind),
             PolicyDecision::Allow
         );
     }
+}
+
+#[test]
+fn decision_for_auto_matches_supervised() {
+    for kind in all_capability_kinds() {
+        assert_eq!(
+            PermissionMode::Auto.decision_for(kind),
+            PermissionMode::Supervised.decision_for(kind)
+        );
+    }
+}
+
+#[test]
+fn parse_auto_is_classifier_mode_and_bypass_is_no_checks() {
+    assert_eq!(
+        "auto".parse::<PermissionMode>().unwrap(),
+        PermissionMode::Auto
+    );
+    assert_eq!(
+        "bypass".parse::<PermissionMode>().unwrap(),
+        PermissionMode::Bypass
+    );
+    assert_eq!(PermissionMode::default(), PermissionMode::Bypass);
 }
 
 #[test]
@@ -105,10 +128,14 @@ fn workspace_policy_agrees_with_decision_for() {
     );
     let process = process_request("cargo test");
 
-    for mode in [PermissionMode::Plan, PermissionMode::Supervised] {
+    for mode in [
+        PermissionMode::Auto,
+        PermissionMode::Plan,
+        PermissionMode::Supervised,
+    ] {
         let policy = mode
             .workspace_policy()
-            .expect("policy exists for non-auto modes");
+            .expect("policy exists for checked modes");
         for request in [
             &read_request,
             &write_request,
@@ -127,7 +154,7 @@ fn workspace_policy_agrees_with_decision_for() {
         }
     }
 
-    assert!(PermissionMode::Auto.workspace_policy().is_none());
+    assert!(PermissionMode::Bypass.workspace_policy().is_none());
 }
 
 fn all_capability_kinds() -> [CapabilityKind; 6] {

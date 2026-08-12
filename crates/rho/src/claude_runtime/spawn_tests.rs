@@ -379,15 +379,17 @@ fn model_is_passed_byte_for_byte_without_alias_rewrite() {
 fn supervised_rho_mode_is_refused_at_the_mapping_boundary() {
     let error = map_permission_mode(crate::permission::PermissionMode::Supervised).unwrap_err();
     assert_eq!(error, ClaudeSpawnError::SupervisedUnsupported);
+    let error = map_permission_mode(crate::permission::PermissionMode::Auto).unwrap_err();
+    assert_eq!(error, ClaudeSpawnError::SupervisedUnsupported);
 }
 
-// Covers: Rho Auto maps to Claude bypassPermissions (just run), not dontAsk
+// Covers: Rho Bypass maps to Claude bypassPermissions (just run), not dontAsk
 // (allowlist-only) or classifier auto. One-shots set DontAsk separately.
 // Owner: Claude spawn argv mapping
 #[test]
-fn rho_auto_maps_to_claude_bypass_permissions() {
+fn rho_bypass_maps_to_claude_bypass_permissions() {
     assert_eq!(
-        map_permission_mode(crate::permission::PermissionMode::Auto),
+        map_permission_mode(crate::permission::PermissionMode::Bypass),
         Ok(ClaudePermissionMode::BypassPermissions)
     );
     assert_eq!(

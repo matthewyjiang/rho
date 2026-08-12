@@ -16,12 +16,12 @@ pub(crate) const SYSTEM_PROMPT_FILE_NAME: &str = "system-prompt.txt";
 /// This is not Rho's [`PermissionMode`]. The names collide across products;
 /// each variant is a deliberate Claude CLI contract:
 /// - [`Self::Plan`] — Rho Plan (investigation / plan scaffolding)
-/// - [`Self::BypassPermissions`] — Rho Auto ("just run", no Claude prompts)
+/// - [`Self::BypassPermissions`] — Rho Bypass ("just run", no Claude prompts)
 /// - [`Self::DontAsk`] — headless no-tools one-shots (advisor); never prompt,
 ///   never inject plan scaffolding, deny anything not already allowed
 ///
-/// Claude classifier `auto` is intentionally absent: it is a different product
-/// mode, not the spelling of Rho Auto.
+/// Claude classifier `auto` is intentionally absent because Rho's classifier
+/// mode needs its own approval handler.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ClaudePermissionMode {
     /// Claude `--permission-mode plan`.
@@ -148,8 +148,8 @@ pub(crate) struct ClaudeSpawnPlan {
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum ClaudeSpawnError {
     #[error(
-        "claude-cli agents cannot run in Supervised permission mode: \
-claude -p cannot prompt for approval. Switch to Plan or Auto, or change the agent."
+        "claude-cli agents cannot run in Auto or Supervised permission mode: \
+claude -p cannot prompt for approval. Switch to Plan or Bypass, or change the agent."
     )]
     SupervisedUnsupported,
 }
@@ -167,18 +167,20 @@ pub(crate) enum ClaudeSpawnMaterializeError {
 
 /// Map Rho permission mode onto a Claude CLI permission mode.
 ///
-/// Rho Auto means "do not gate capabilities," so it maps to Claude
+/// Rho Bypass means "do not gate capabilities," so it maps to Claude
 /// `bypassPermissions`, not Claude `auto` (classifier) or `dontAsk`
 /// (allowlist-only deny). Callers that need `dontAsk` (no-tools one-shots) set
-/// [`ClaudePermissionMode::DontAsk`] on the spawn request directly. Supervised
-/// has no safe non-interactive counterpart, so spawn is refused.
+/// [`ClaudePermissionMode::DontAsk`] on the spawn request directly. Auto and
+/// Supervised have no safe non-interactive counterpart, so spawn is refused.
 pub(crate) fn map_permission_mode(
     mode: PermissionMode,
 ) -> Result<ClaudePermissionMode, ClaudeSpawnError> {
     match mode {
+        PermissionMode::Bypass => Ok(ClaudePermissionMode::BypassPermissions),
         PermissionMode::Plan => Ok(ClaudePermissionMode::Plan),
-        PermissionMode::Auto => Ok(ClaudePermissionMode::BypassPermissions),
-        PermissionMode::Supervised => Err(ClaudeSpawnError::SupervisedUnsupported),
+        PermissionMode::Auto | PermissionMode::Supervised => {
+            Err(ClaudeSpawnError::SupervisedUnsupported)
+        }
     }
 }
 

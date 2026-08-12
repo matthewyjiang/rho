@@ -425,6 +425,7 @@ pub(super) fn permission_mode_picker(mode: PermissionMode) -> UiPicker {
     UiPicker::new(
         "Permission mode",
         [
+            PermissionMode::Bypass,
             PermissionMode::Auto,
             PermissionMode::Plan,
             PermissionMode::Supervised,
@@ -449,7 +450,8 @@ pub(super) fn permission_mode_picker(mode: PermissionMode) -> UiPicker {
 
 fn permission_mode_description(mode: PermissionMode) -> &'static str {
     match mode {
-        PermissionMode::Auto => "No permission checks.",
+        PermissionMode::Bypass => "No permission checks.",
+        PermissionMode::Auto => "Classifier reviews writes and processes.",
         PermissionMode::Plan => "Investigate only; writes and processes are denied.",
         PermissionMode::Supervised => "Ask before writes and processes.",
     }

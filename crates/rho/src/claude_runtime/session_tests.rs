@@ -43,7 +43,7 @@ async fn cancelled_before_start_writes_stopped_status() {
         prompt: "hi".into(),
         output_file: output.clone(),
         cwd: dir.path().to_path_buf(),
-        permission_mode: PermissionMode::Auto,
+        permission_mode: PermissionMode::Bypass,
         cancellation,
         status_tx: None,
         started_status: None,

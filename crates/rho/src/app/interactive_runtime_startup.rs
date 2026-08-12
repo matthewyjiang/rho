@@ -278,12 +278,12 @@ pub(super) fn approval_channel_for(
     Option<ApprovalRequestReceiver>,
 ) {
     match mode {
-        PermissionMode::Supervised => {
+        PermissionMode::Auto | PermissionMode::Supervised => {
             let capacity = NonZeroUsize::new(16).expect("approval channel capacity is non-zero");
             let (handler, receiver) = rho_sdk::approval_channel(capacity);
             (Some(Arc::new(handler)), Some(receiver))
         }
-        PermissionMode::Auto | PermissionMode::Plan => (None, None),
+        PermissionMode::Bypass | PermissionMode::Plan => (None, None),
     }
 }
 

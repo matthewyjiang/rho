@@ -337,10 +337,10 @@ async fn permission_mode_switch_rebuilds_runtime_and_updates_future_delegated_po
     ));
 
     interactive
-        .set_permission_mode(PermissionMode::Auto)
+        .set_permission_mode(PermissionMode::Bypass)
         .await
         .unwrap();
-    assert_eq!(interactive.permission_mode(), PermissionMode::Auto);
+    assert_eq!(interactive.permission_mode(), PermissionMode::Bypass);
     assert!(interactive.approval_handler.is_none());
     assert!(interactive.approval_receiver().is_none());
     assert_eq!(interactive.sessions.session().id(), &session_id);

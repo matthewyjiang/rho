@@ -140,7 +140,7 @@ async fn run_with_fake_prompt(
         prompt: prompt.into(),
         output_file: output.to_path_buf(),
         cwd: cwd.to_path_buf(),
-        permission_mode: PermissionMode::Auto,
+        permission_mode: PermissionMode::Bypass,
         cancellation,
         status_tx: None,
         started_status: None,
@@ -193,7 +193,7 @@ async fn success_stream_and_exit_zero_writes_ok() {
         dir.path(),
         &fake,
         8,
-        PermissionMode::Auto,
+        PermissionMode::Bypass,
         RunCancellation::new(),
     )
     .await;
@@ -229,7 +229,7 @@ async fn live_tool_roundtrip_stream_writes_session_and_tool_events() {
         dir.path(),
         &fake,
         8,
-        PermissionMode::Auto,
+        PermissionMode::Bypass,
         RunCancellation::new(),
     )
     .await;
@@ -289,7 +289,7 @@ async fn success_stream_with_nonzero_exit_is_error() {
         dir.path(),
         &fake,
         8,
-        PermissionMode::Auto,
+        PermissionMode::Bypass,
         RunCancellation::new(),
     )
     .await;
@@ -313,7 +313,7 @@ async fn failure_terminal_result_is_error_even_on_exit_zero() {
         dir.path(),
         &fake,
         8,
-        PermissionMode::Auto,
+        PermissionMode::Bypass,
         RunCancellation::new(),
     )
     .await;
@@ -349,7 +349,7 @@ async fn safeguard_api_error_with_nonzero_exit_surfaces_stream_text() {
         dir.path(),
         &fake,
         8,
-        PermissionMode::Auto,
+        PermissionMode::Bypass,
         RunCancellation::new(),
     )
     .await;
@@ -382,7 +382,7 @@ async fn success_result_with_nonzero_exit_emits_one_failed_not_completed() {
         dir.path(),
         &fake,
         8,
-        PermissionMode::Auto,
+        PermissionMode::Bypass,
         RunCancellation::new(),
     )
     .await;
@@ -415,7 +415,7 @@ async fn protocol_type_error_emits_one_failed_overall() {
         dir.path(),
         &fake,
         8,
-        PermissionMode::Auto,
+        PermissionMode::Bypass,
         RunCancellation::new(),
     )
     .await;
@@ -449,7 +449,7 @@ async fn missing_terminal_result_is_error() {
         dir.path(),
         &fake,
         8,
-        PermissionMode::Auto,
+        PermissionMode::Bypass,
         RunCancellation::new(),
     )
     .await;
@@ -478,7 +478,7 @@ async fn invalid_terminal_fields_are_error() {
         dir.path(),
         &fake,
         8,
-        PermissionMode::Auto,
+        PermissionMode::Bypass,
         RunCancellation::new(),
     )
     .await;
@@ -511,7 +511,7 @@ exit 0
         dir.path(),
         &fake,
         8,
-        PermissionMode::Auto,
+        PermissionMode::Bypass,
         RunCancellation::new(),
     )
     .await;
@@ -546,7 +546,7 @@ exit 0
         dir.path(),
         &fake,
         8,
-        PermissionMode::Auto,
+        PermissionMode::Bypass,
         RunCancellation::new(),
     )
     .await;
