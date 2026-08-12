@@ -31,6 +31,8 @@ pub(super) const ENABLE_SUBAGENTS_VALUE: &str = "enable_subagents";
 pub(super) const ADVISOR_MODE_VALUE: &str = "advisor_mode";
 pub(super) const ADVISOR_MODEL_VALUE: &str = "advisor_model";
 pub(super) const ADVISOR_REASONING_VALUE: &str = "advisor_reasoning";
+pub(super) const PERMISSION_CLASSIFIER_MODEL_VALUE: &str = "permission_classifier_model";
+pub(super) const PERMISSION_CLASSIFIER_REASONING_VALUE: &str = "permission_classifier_reasoning";
 pub(super) const AUTO_COMPACT_VALUE: &str = "auto_compact";
 pub(super) const COMPACT_THRESHOLD_PERCENT_VALUE: &str = "compact_threshold_percent";
 pub(super) const COMPACT_TARGET_PERCENT_VALUE: &str = "compact_target_percent";
@@ -110,6 +112,38 @@ fn advisor_reasoning_row(info: &super::RuntimeModelView) -> Option<(String, Stri
     ))
 }
 
+fn permission_classifier_model_badge(info: &super::RuntimeModelView) -> String {
+    match info
+        .internal_agents
+        .get(crate::agent::PERMISSION_CLASSIFIER_AGENT_ID)
+    {
+        Some(selection) => selection.display_reference(),
+        None => "not selected".into(),
+    }
+}
+
+fn permission_classifier_reasoning_row(
+    info: &super::RuntimeModelView,
+) -> Option<(String, String, String)> {
+    let selection = info
+        .internal_agents
+        .get(crate::agent::PERMISSION_CLASSIFIER_AGENT_ID)?;
+    let capabilities = crate::agent::internal_agent_reasoning_capabilities(selection);
+    if capabilities == rho_providers::model::ReasoningCapabilities::NotConfigurable {
+        return None;
+    }
+    let current = crate::agent::effective_internal_agent_reasoning(
+        crate::agent::PERMISSION_CLASSIFIER_AGENT_ID,
+        selection,
+    );
+    let next = capabilities.next_level(current);
+    Some((
+        "Permission classifier reasoning".into(),
+        format!("Controls the Auto permission classifier model reasoning. Enter cycles to {next}."),
+        current.to_string(),
+    ))
+}
+
 /// Badge for the conversation model, shown as `alias → provider/model` when
 /// the selection came from a user-defined alias so the mapping is never hidden.
 fn conversation_model_badge(info: &super::RuntimeModelView, config: &Config) -> String {
@@ -134,7 +168,7 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
             ),
             item(
                 "Agent behavior",
-                "Permission mode and delegation.",
+                    "Permission mode, classifier model, advisor, and delegation.",
                 Some(format!(
                     "permissions: {}",
                     info.permission_mode.as_str()
@@ -248,6 +282,12 @@ pub(super) fn category_picker(
                     PERMISSION_MODE_VALUE,
                 ),
                 item(
+                    "Permission classifier model",
+                    "Model used by Auto permission mode to review writes and processes. Enter opens a picker.",
+                    Some(permission_classifier_model_badge(info)),
+                    PERMISSION_CLASSIFIER_MODEL_VALUE,
+                ),
+                item(
                     "Delegation",
                     "Make agent tools available. Changes apply to the next session. Space toggles.",
                     Some(on_off(config.enable_subagents)),
@@ -272,6 +312,14 @@ pub(super) fn category_picker(
                     detail,
                     Some(badge_text),
                     ADVISOR_REASONING_VALUE,
+                ));
+            }
+            if let Some((label, detail, badge_text)) = permission_classifier_reasoning_row(info) {
+                items.push(item(
+                    &label,
+                    detail,
+                    Some(badge_text),
+                    PERMISSION_CLASSIFIER_REASONING_VALUE,
                 ));
             }
             ("Config / Agent behavior", items)
@@ -402,6 +450,8 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
         | ZEN_MODE_VALUE
         | THEME_VALUE => Some(MODELS_CATEGORY_VALUE),
         PERMISSION_MODE_VALUE
+        | PERMISSION_CLASSIFIER_MODEL_VALUE
+        | PERMISSION_CLASSIFIER_REASONING_VALUE
         | ENABLE_SUBAGENTS_VALUE
         | ADVISOR_MODE_VALUE
         | ADVISOR_MODEL_VALUE

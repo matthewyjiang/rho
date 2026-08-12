@@ -5,7 +5,9 @@ use rho_providers::model::provider_models::{
     refresh_provider_models_with_store, ProviderModelEndpoint,
 };
 
-use crate::agent::{carry_internal_agent_reasoning, ADVISOR_AGENT_ID};
+use crate::agent::{
+    carry_internal_agent_reasoning, ADVISOR_AGENT_ID, PERMISSION_CLASSIFIER_AGENT_ID,
+};
 
 use super::{
     agent_picker::InternalAgentModelPickerOrigin, catalog, config_picker, favorites, model_picker,
@@ -416,16 +418,23 @@ impl App {
             self.cancel_theme_preview_if_leaving(action);
         }
         let sessions_picker = matches!(leaving_action, Some(PickerAction::ManageSessions));
+        let internal_agent_model_picker =
+            matches!(leaving_action, Some(PickerAction::SelectInternalAgentModel));
         if self.pop_picker_level() {
             if sessions_picker {
                 self.sessions_hub_state.navigate_back();
+            }
+            if internal_agent_model_picker {
+                self.cancel_permission_classifier_model_prompt(/*restore_input*/ false);
             }
         } else {
             if sessions_picker {
                 self.sessions_hub_state.clear();
             }
             self.input_ui.set_composer(ComposerMode::Input);
-            if !self.cancel_advisor_model_prompt() {
+            if !self.cancel_advisor_model_prompt()
+                && !self.cancel_permission_classifier_model_prompt(/*restore_input*/ true)
+            {
                 self.set_status(if running { "running" } else { "ready" });
             }
             // Backing all the way out of a setup picker leaves setup too,
@@ -775,6 +784,8 @@ impl App {
             InternalAgentModelPickerOrigin::AgentsPicker => {
                 if id == ADVISOR_AGENT_ID {
                     self.sync_advisor_runtime(agent).await;
+                } else if id == PERMISSION_CLASSIFIER_AGENT_ID {
+                    self.sync_permission_classifier_runtime_config(agent);
                 }
                 let status = self.status().to_string();
                 self.execute_agents_command()?;
@@ -798,6 +809,27 @@ impl App {
                 }
                 let status = self.status().to_string();
                 self.open_main_config_picker_selected(config_picker::ADVISOR_MODEL_VALUE)?;
+                self.set_status(status);
+            }
+            InternalAgentModelPickerOrigin::PermissionModeConfigRow => {
+                self.internal_agent_model_target = None;
+                self.finish_permission_classifier_model_selection(selected, agent)
+                    .await?;
+                let status = self.status().to_string();
+                self.open_main_config_picker_selected(config_picker::PERMISSION_MODE_VALUE)?;
+                self.set_status(status);
+            }
+            InternalAgentModelPickerOrigin::PermissionClassifierModelConfigRow => {
+                self.internal_agent_model_target = None;
+                if selected
+                    && self.info.runtime.permission_mode == crate::permission::PermissionMode::Auto
+                {
+                    self.sync_permission_classifier_runtime_config(agent);
+                }
+                let status = self.status().to_string();
+                self.open_main_config_picker_selected(
+                    config_picker::PERMISSION_CLASSIFIER_MODEL_VALUE,
+                )?;
                 self.set_status(status);
             }
         }

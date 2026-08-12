@@ -36,8 +36,7 @@ impl App {
             }
             value if value.starts_with(config_picker::PERMISSION_MODE_PREFIX) => {
                 let mode = value[config_picker::PERMISSION_MODE_PREFIX.len()..].parse()?;
-                self.apply_permission_mode(mode, agent).await?;
-                self.open_main_config_picker_selected(config_picker::PERMISSION_MODE_VALUE)
+                self.select_permission_mode_from_config(mode, agent).await
             }
             config_picker::REASONING_VALUE => self.cycle_reasoning(agent),
             config_picker::SHOW_REASONING_OUTPUT_VALUE => self.toggle_reasoning_output(),
@@ -53,6 +52,21 @@ impl App {
                 Ok(())
             }
             config_picker::ADVISOR_REASONING_VALUE => self.cycle_advisor_reasoning(agent).await,
+            config_picker::PERMISSION_CLASSIFIER_MODEL_VALUE => {
+                self.open_permission_classifier_model_prompt(
+                    super::agent_picker::InternalAgentModelPickerOrigin::PermissionClassifierModelConfigRow,
+                );
+                Ok(())
+            }
+            config_picker::PERMISSION_CLASSIFIER_REASONING_VALUE => {
+                self.cycle_permission_classifier_reasoning(agent)?;
+                let status = self.status().to_string();
+                self.refresh_main_config_picker_if_open(
+                    config_picker::PERMISSION_CLASSIFIER_REASONING_VALUE,
+                )?;
+                self.set_status(status);
+                Ok(())
+            }
             config_picker::AUTO_COMPACT_VALUE => self.toggle_auto_compact(),
             config_picker::COMPACT_THRESHOLD_PERCENT_VALUE => {
                 let config = self.info.services.config_repository.load()?;
