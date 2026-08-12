@@ -21,7 +21,8 @@ impl XaiReasoningProfile {
     pub(super) fn from_metadata(model: &str, metadata: Option<ModelMetadata>) -> Self {
         let offline_wire_behavior = match model {
             "grok-4.3" => OfflineWireBehavior::Optional,
-            "grok-4.5" => OfflineWireBehavior::Mandatory,
+            // Flagship Grok models require reasoning_effort and do not accept "none".
+            "grok-4.5" | "grok-4.6" => OfflineWireBehavior::Mandatory,
             // These agent models do not accept the Responses API reasoning field.
             "grok-build-0.1" | "grok-composer-2.5-fast" => OfflineWireBehavior::Omit,
             // Do not guess the wire contract of newly introduced models.

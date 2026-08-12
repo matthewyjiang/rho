@@ -50,17 +50,17 @@ XAI_ACCESS_TOKEN=...
 
 ## Models
 
-xAI uses a static allowlist rather than a refreshable API list: `grok-4.5`, `grok-build-0.1`, `grok-composer-2.5-fast`, and `grok-4.3`. Both auth modes use the same provider model reference:
+xAI uses a static allowlist rather than a refreshable API list: `grok-4.6`, `grok-4.5`, `grok-build-0.1`, `grok-composer-2.5-fast`, and `grok-4.3`. Both auth modes use the same provider model reference:
 
 ```text
-/model xai/grok-4.5
+/model xai/grok-4.6
 ```
 
 For a non-interactive run, pass the provider, matching auth mode, and model. These flags also update the persistent default:
 
 ```bash
-rho --provider xai --auth xai-api-key --model grok-4.5 run "hello"
-rho --provider xai --auth xai-oauth --model grok-4.5 run "hello"
+rho --provider xai --auth xai-api-key --model grok-4.6 run "hello"
+rho --provider xai --auth xai-oauth --model grok-4.6 run "hello"
 ```
 
 The retired `xai-oauth` provider value remains a compatibility alias. Config, CLI flags, favorites, and model references normalize it to `provider = "xai"` with `auth = "xai-oauth"`.

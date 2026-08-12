@@ -37,9 +37,11 @@ fn exact_optional_reasoning_encodes_off_as_none() {
 
 #[test]
 fn unknown_metadata_does_not_synthesize_reasoning_and_non_configurable_omits_it() {
-    let unknown = XaiReasoningProfile::from_metadata("grok-4.5", None);
-    assert_eq!(unknown.effort(ReasoningLevel::Off), None);
-    assert_eq!(unknown.effort(ReasoningLevel::High), Some("high"));
+    for model in ["grok-4.5", "grok-4.6"] {
+        let mandatory = XaiReasoningProfile::from_metadata(model, None);
+        assert_eq!(mandatory.effort(ReasoningLevel::Off), None);
+        assert_eq!(mandatory.effort(ReasoningLevel::High), Some("high"));
+    }
 
     let optional = XaiReasoningProfile::from_metadata("grok-4.3", None);
     assert_eq!(optional.effort(ReasoningLevel::Off), Some("none"));
