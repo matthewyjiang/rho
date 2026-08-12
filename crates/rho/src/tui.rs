@@ -71,6 +71,7 @@ mod during_turn;
 mod goal_command;
 mod help_picker;
 mod history_cache;
+mod history_soft_settings;
 mod hook_actions;
 mod info_command;
 mod inline_choice;

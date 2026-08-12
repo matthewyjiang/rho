@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 
 use super::*;
-use crate::tui::render::entry_lines;
+use crate::tui::{feed_image::FeedImage, render::entry_lines};
 
 fn no_images(_: usize, _: &[MarkdownImageSource]) -> Vec<(usize, FeedImage)> {
     Vec::new()
@@ -598,30 +598,56 @@ fn resplice_tool_expand_preserves_later_assistant_lines() {
 }
 
 // Covers: tracked image-height deps keep soft image-budget updates O(deps),
-// not a markdown re-parse of every assistant entry.
+// not a re-render of every assistant entry.
 // Owner: history line cache
 #[test]
-fn image_height_only_change_uses_cached_dependency_flags() {
+fn image_height_only_change_uses_cached_dependency_indices() {
+    use image::{DynamicImage, ImageFormat};
+    use ratatui_image::picker::{Picker, ProtocolType};
+    use std::io::Cursor;
+
+    let image = {
+        let rgba = DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            300,
+            600,
+            image::Rgba([20, 40, 60, 255]),
+        ));
+        let mut bytes = Cursor::new(Vec::new());
+        rgba.write_to(&mut bytes, ImageFormat::Png).unwrap();
+        let mut picker = Picker::halfblocks();
+        picker.set_protocol_type(ProtocolType::Kitty);
+        FeedImage::load(
+            &rho_sdk::tool::ToolAsset::new("image/png", bytes.into_inner()),
+            &picker,
+        )
+        .unwrap()
+    };
+    let tool = Entry::Tool(crate::tui::ToolEntry {
+        card: rho_tools::tool_card::ToolCard::new(
+            rho_tools::tool_card::ToolStatus::Ok,
+            rho_tools::tool_card::ToolFamily::Default,
+            rho_tools::tool_card::ToolHeader::call("read_file photo.png", None),
+        ),
+        expanded: false,
+        image: Some(image),
+    });
     let mut cache = HistoryLineCache::default();
     let entries = vec![
         Entry::User("prompt".into()),
         Entry::Assistant("text only".into()),
-        Entry::Assistant("has an image\n\n![shot](./a.png)\n".into()),
+        tool,
     ];
     let mut base = settings(80);
     let _ = cache.line_count(&entries, base, &no_images);
-    assert_eq!(cache.image_height_dep_count, 1);
-    assert_eq!(cache.image_height_deps, vec![false, false, true]);
+    assert_eq!(cache.image_height_dep_entries, vec![2]);
 
     let renders_before = cache.entry_render_count();
     base.max_image_height = base.max_image_height.saturating_add(8);
-    // Force resplice path; only the image entry should render again.
-    // Without a resolver the markdown image stays a placeholder, but the
-    // entry still depends on max_image_height.
     let _ = cache.line_count(&entries, base, &no_images);
-    assert!(
-        cache.entry_render_count() > renders_before,
-        "image-bearing entries must resplice when the budget moves"
+    assert_eq!(
+        cache.entry_render_count(),
+        renders_before + 1,
+        "only the image-bearing entry must resplice when the budget moves"
     );
 }
 

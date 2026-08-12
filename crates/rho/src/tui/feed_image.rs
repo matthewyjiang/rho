@@ -26,6 +26,15 @@ pub(super) const TALL_IMAGE_HEIGHT: u16 = 32;
 /// Max rows for an image preview above the composer text.
 pub(super) const COMPOSER_IMAGE_HEIGHT: u16 = 6;
 
+/// Descending feed-image bands shared by terminal preference and content caps.
+const FEED_IMAGE_HEIGHT_BANDS: [u16; 5] = [
+    MAX_IMAGE_HEIGHT,
+    TALL_IMAGE_HEIGHT,
+    DEFAULT_IMAGE_HEIGHT,
+    MIN_IMAGE_HEIGHT,
+    COMPACT_IMAGE_HEIGHT,
+];
+
 const MAX_THUMBNAIL_WIDTH: u32 = 1_024;
 const MAX_THUMBNAIL_HEIGHT: u32 = 768;
 const MAX_THUMBNAIL_ALLOCATION: u64 = 8 * 1024 * 1024;
@@ -85,13 +94,7 @@ pub(super) fn quantize_content_image_cap(history_content_height: usize) -> u16 {
     let height = u16::try_from(history_content_height)
         .unwrap_or(u16::MAX)
         .max(1);
-    for band in [
-        MAX_IMAGE_HEIGHT,
-        TALL_IMAGE_HEIGHT,
-        DEFAULT_IMAGE_HEIGHT,
-        MIN_IMAGE_HEIGHT,
-        COMPACT_IMAGE_HEIGHT,
-    ] {
+    for band in FEED_IMAGE_HEIGHT_BANDS {
         if height >= band {
             return band;
         }
