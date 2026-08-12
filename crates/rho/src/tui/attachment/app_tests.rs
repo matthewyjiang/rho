@@ -4,14 +4,32 @@ use tempfile::TempDir;
 
 use super::*;
 
-#[test]
-fn parallel_pending_tools_keep_independent_slots() {
+fn test_app() -> (TempDir, AttachmentApp) {
     let directory = TempDir::new().unwrap();
-    let mut app = AttachmentApp::new(
+    let app = AttachmentApp::new(
         "abc123",
         directory.path().to_path_buf(),
+        AttachmentDisplaySettings::default(),
         HerdrReporter::default(),
     );
+    (directory, app)
+}
+
+fn line_text(lines: &[Line<'static>]) -> Vec<String> {
+    lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect()
+}
+
+#[test]
+fn parallel_pending_tools_keep_independent_slots() {
+    let (_directory, mut app) = test_app();
     let card_a = rho_tools::tool_card::ToolCard::new(
         rho_tools::tool_card::ToolStatus::Running,
         rho_tools::tool_card::ToolFamily::FileCommand,
@@ -57,20 +75,17 @@ fn parallel_pending_tools_keep_independent_slots() {
     assert_eq!(app.pending_order, vec!["call-a".to_string()]);
     assert!(app.pending_tools.contains_key("call-a"));
     assert!(!app.pending_tools.contains_key("call-b"));
-    assert!(matches!(
-        app.transcript.last(),
-        Some(Entry::Tool(tool)) if tool.card.header_text() == "● read_file(b.rs)"
-    ));
+    match app.transcript.last() {
+        Some(Entry::Tool(tool)) => {
+            assert_eq!(tool.card.header_text(), "● read_file(b.rs)");
+        }
+        other => panic!("unexpected transcript tail: {other:?}"),
+    }
 }
 
 #[test]
 fn provider_retry_replaces_output_but_preserves_presented_events() {
-    let directory = TempDir::new().unwrap();
-    let mut app = AttachmentApp::new(
-        "abc123",
-        directory.path().to_path_buf(),
-        HerdrReporter::default(),
-    );
+    let (_directory, mut app) = test_app();
     app.apply_event(AttachmentEvent::Prompt("delegated task".into()));
     app.apply_event(AttachmentEvent::StepStarted);
     app.apply_event(AttachmentEvent::AssistantTextDelta("discard me".into()));
@@ -103,12 +118,7 @@ fn provider_retry_replaces_output_but_preserves_presented_events() {
 
 #[test]
 fn attached_view_ignores_prompt_input() {
-    let directory = TempDir::new().unwrap();
-    let mut app = AttachmentApp::new(
-        "abc123",
-        directory.path().to_path_buf(),
-        HerdrReporter::default(),
-    );
+    let (_directory, mut app) = test_app();
     app.apply_event(AttachmentEvent::Prompt("delegated task".into()));
 
     app.handle_event(Event::Key(KeyEvent::new(
@@ -130,12 +140,7 @@ fn attached_view_ignores_prompt_input() {
 
 #[test]
 fn provider_retry_preserves_failed_attempt_usage() {
-    let directory = TempDir::new().unwrap();
-    let mut app = AttachmentApp::new(
-        "abc123",
-        directory.path().to_path_buf(),
-        HerdrReporter::default(),
-    );
+    let (_directory, mut app) = test_app();
 
     app.apply_event(AttachmentEvent::StepStarted);
     app.apply_event(AttachmentEvent::Usage(ModelUsage {
@@ -166,12 +171,7 @@ fn provider_retry_preserves_failed_attempt_usage() {
 
 #[test]
 fn multi_step_usage_replaces_live_run_snapshot() {
-    let directory = TempDir::new().unwrap();
-    let mut app = AttachmentApp::new(
-        "abc123",
-        directory.path().to_path_buf(),
-        HerdrReporter::default(),
-    );
+    let (_directory, mut app) = test_app();
 
     app.apply_event(AttachmentEvent::StepStarted);
     app.apply_event(AttachmentEvent::Usage(ModelUsage {
@@ -197,6 +197,95 @@ fn multi_step_usage_replaces_live_run_snapshot() {
             ..ModelUsage::default()
         })
     );
+}
+
+// Covers: attach render policy mirrors interactive show_reasoning_output + zen_mode.
+// Owner: AttachmentDisplaySettings + history_lines.
+#[test]
+fn history_lines_follow_display_settings() {
+    let directory = TempDir::new().unwrap();
+    let mut app = AttachmentApp::new(
+        "abc123",
+        directory.path().to_path_buf(),
+        AttachmentDisplaySettings::default(),
+        HerdrReporter::default(),
+    );
+    app.apply_event(AttachmentEvent::Prompt("task".into()));
+    app.apply_event(AttachmentEvent::ReasoningDelta("secret plan".into()));
+    app.apply_event(AttachmentEvent::AssistantTextDelta("answer".into()));
+    app.apply_event(AttachmentEvent::ToolFinished {
+        key: None,
+        card: rho_tools::tool_card::ToolCard::new(
+            rho_tools::tool_card::ToolStatus::Ok,
+            rho_tools::tool_card::ToolFamily::Default,
+            rho_tools::tool_card::ToolHeader::call("read_file", Some("a.rs".into())),
+        ),
+    });
+
+    let visible = |app: &AttachmentApp| line_text(&app.history_lines(80, None));
+
+    let full = visible(&app);
+    assert!(full.iter().any(|line| line.contains("secret plan")));
+    assert!(full.iter().any(|line| line.contains("answer")));
+    assert!(full.iter().any(|line| line.contains("read_file")));
+
+    app.display.show_reasoning_output = false;
+    let hidden_reasoning = visible(&app);
+    assert!(hidden_reasoning
+        .iter()
+        .all(|line| !line.contains("secret plan")));
+    assert!(hidden_reasoning.iter().any(|line| line.contains("answer")));
+    assert!(hidden_reasoning
+        .iter()
+        .any(|line| line.contains("read_file")));
+    // Ingest stays complete so journal bookkeeping is unchanged.
+    assert!(matches!(
+        app.transcript.as_slice(),
+        [
+            Entry::User(_),
+            Entry::Reasoning(_),
+            Entry::Assistant(_),
+            Entry::Tool(_)
+        ]
+    ));
+
+    app.display.zen_mode = true;
+    app.display.show_reasoning_output = true;
+    let zen = visible(&app);
+    assert!(zen.iter().all(|line| !line.contains("secret plan")));
+    assert!(zen.iter().all(|line| !line.contains("read_file")));
+    assert!(zen.iter().any(|line| line.contains("answer")));
+    assert!(zen.iter().any(|line| line.contains("task")));
+}
+
+// Covers: max_tool_output_lines comes from display settings, not a local constant.
+// Owner: AttachmentDisplaySettings + history_lines.
+#[test]
+fn history_lines_honor_max_tool_output_lines() {
+    let directory = TempDir::new().unwrap();
+    let mut app = AttachmentApp::new(
+        "abc123",
+        directory.path().to_path_buf(),
+        AttachmentDisplaySettings {
+            max_tool_output_lines: 1,
+            ..AttachmentDisplaySettings::default()
+        },
+        HerdrReporter::default(),
+    );
+    let body = (0..5).map(|i| format!("line-{i}")).collect::<Vec<_>>();
+    app.apply_event(AttachmentEvent::ToolFinished {
+        key: None,
+        card: rho_tools::tool_card::ToolCard::new(
+            rho_tools::tool_card::ToolStatus::Ok,
+            rho_tools::tool_card::ToolFamily::Default,
+            rho_tools::tool_card::ToolHeader::call("bash", None),
+        )
+        .with_body(rho_tools::tool_card::ToolBody::Lines(body)),
+    });
+
+    let lines = line_text(&app.history_lines(80, None));
+    assert!(lines.iter().any(|line| line.contains("line-0")));
+    assert!(lines.iter().all(|line| !line.contains("line-4")));
 }
 
 #[test]

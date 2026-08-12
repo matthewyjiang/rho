@@ -147,8 +147,14 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
         return Ok(EarlyDispatch::Handled(plugins_cli::run(command, cli)));
     }
     if let Some(Command::Attach { id }) = &cli.command {
+        // Attach is early-dispatched, so load display settings here the way the
+        // interactive TUI gets them through RuntimeModelView. Propagate load
+        // failures instead of failing open to full reasoning / work chrome.
+        let display = crate::tui::AttachmentDisplaySettings::from_config(
+            &ConfigRepository::new(cli.config.clone()).load()?,
+        );
         return Ok(EarlyDispatch::Handled(
-            crate::tui::run_attachment(id, HerdrReporter::from_env()).await,
+            crate::tui::run_attachment(id, display, HerdrReporter::from_env()).await,
         ));
     }
     if matches!(cli.command, Some(Command::Update)) {
