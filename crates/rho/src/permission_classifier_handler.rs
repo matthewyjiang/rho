@@ -37,6 +37,7 @@ pub(crate) struct ClassifierApprovalHandler {
     usage_recording: ProviderRequestUsageRecording,
     classifier: ClassifyFn,
     inner: Option<Arc<dyn ApprovalHandler>>,
+    cancellation: Mutex<Option<CancellationToken>>,
     consecutive_denials: tokio::sync::Mutex<u32>,
 }
 
@@ -54,6 +55,7 @@ impl ClassifierApprovalHandler {
             usage_recording,
             classifier: default_classifier(),
             inner,
+            cancellation: Mutex::new(None),
             consecutive_denials: tokio::sync::Mutex::new(0),
         }
     }
@@ -70,6 +72,7 @@ impl ClassifierApprovalHandler {
             usage_recording: ProviderRequestUsageRecording::default(),
             classifier,
             inner,
+            cancellation: Mutex::new(None),
             consecutive_denials: tokio::sync::Mutex::new(0),
         }
     }
@@ -79,6 +82,13 @@ impl ClassifierApprovalHandler {
             .session
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(session);
+    }
+
+    pub(crate) fn bind_cancellation(&self, cancellation: CancellationToken) {
+        *self
+            .cancellation
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(cancellation);
     }
 
     pub(crate) fn update_config(&self, config: Config) {
@@ -115,6 +125,14 @@ impl ClassifierApprovalHandler {
 
     async fn escalate_or_deny_headless(&self, request: ApprovalRequest) -> ApprovalDecision {
         let Some(inner) = &self.inner else {
+            if let Some(cancellation) = self
+                .cancellation
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .as_ref()
+            {
+                cancellation.cancel();
+            }
             return ApprovalDecision::Deny {
                 reason: format!(
                     "permission classifier denied {CONSECUTIVE_DENY_ESCALATION} consecutive requests and no human approval handler is available"

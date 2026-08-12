@@ -264,6 +264,7 @@ async fn headless_run_compacts_at_configured_threshold_and_completes() {
         usage_parent_session_id: None,
         usage_recording: Default::default(),
         hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
+        force_publish_live_history: true,
         hooks: None,
     })
     .unwrap();
@@ -279,6 +280,7 @@ async fn headless_run_compacts_at_configured_threshold_and_completes() {
             jsonl: None,
             host_input: None,
         },
+        None,
         /* steering_slot */ None,
     )
     .await
@@ -480,6 +482,7 @@ async fn headless_run_fails_closed_without_host_input_responder() {
                 jsonl: None,
                 host_input: None,
             },
+            None,
             /* steering_slot */ None,
         ),
     )
@@ -529,6 +532,7 @@ async fn headless_run_answers_host_input_through_generic_responder() {
                 jsonl: None,
                 host_input: Some(&responder as &dyn HostInputResponder),
             },
+            None,
             /* steering_slot */ None,
         ),
     )
@@ -589,6 +593,7 @@ async fn headless_run_drains_events_while_waiting_for_parent_host_input() {
                     jsonl: None,
                     host_input: Some(&responder as &dyn HostInputResponder),
                 },
+                None,
                 /* steering_slot */ None,
             )
             .await
@@ -689,6 +694,7 @@ async fn headless_run_drains_events_while_waiting_for_respond_ack() {
                 jsonl: None,
                 host_input: Some(&responder as &dyn HostInputResponder),
             },
+            None,
             /* steering_slot */ None,
         )
         .await

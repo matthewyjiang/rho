@@ -188,6 +188,7 @@ impl InteractiveRuntime {
             usage_parent_session_id: None,
             usage_recording: self.usage_recording.clone(),
             hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
+            force_publish_live_history: mode == PermissionMode::Auto,
             hooks: self.hooks.as_ref(),
         })?;
         let replacement_session = replacement_runtime
@@ -629,6 +630,7 @@ impl InteractiveRuntime {
             usage_parent_session_id: None,
             usage_recording: self.usage_recording.clone(),
             hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
+            force_publish_live_history: self.permission_mode == PermissionMode::Auto,
             hooks: self.hooks.as_ref(),
         })?;
         let replacement_session = replacement_runtime
@@ -872,6 +874,7 @@ impl InteractiveRuntime {
             usage_parent_session_id: None,
             usage_recording: self.usage_recording.clone(),
             hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
+            force_publish_live_history: self.permission_mode == PermissionMode::Auto,
             hooks: self.hooks.as_ref(),
         })?;
         let replacement_session = match lifecycle {

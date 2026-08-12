@@ -533,6 +533,7 @@ async fn run_session_with_output(
                 usage_parent_session_id: startup.parent_session_id.clone(),
                 usage_recording,
                 hook_host_labels: startup.hook_host_labels.clone(),
+                force_publish_live_history: startup.config.permission_mode == PermissionMode::Auto,
                 hooks: hooks.as_ref(),
             },
             startup.max_steps,
@@ -579,6 +580,7 @@ async fn run_session_with_output(
             jsonl,
             host_input: startup.host_input.as_deref(),
         },
+        classifier_handler.as_deref(),
         startup.steering_slot.clone(),
     )
     .await;
@@ -611,7 +613,7 @@ async fn run_session_with_output(
     result
 }
 
-pub(super) fn ensure_headless_auto_classifier_model(config: &Config) -> anyhow::Result<()> {
+pub(crate) fn ensure_headless_auto_classifier_model(config: &Config) -> anyhow::Result<()> {
     if config.permission_mode == PermissionMode::Auto
         && config
             .internal_agent_model(PERMISSION_CLASSIFIER_AGENT_ID)
@@ -654,6 +656,7 @@ async fn complete_run(
     session: &rho_sdk::Session,
     prompt_text: String,
     dependencies: HeadlessRunDeps<'_>,
+    classifier_handler: Option<&ClassifierApprovalHandler>,
     steering_slot: Option<super::subagent_messaging::SteeringSlot>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
     let HeadlessRunDeps {
@@ -667,6 +670,9 @@ async fn complete_run(
         slot.publish(run.steering_handle());
     }
     let cancellation = run.cancellation_handle();
+    if let Some(classifier) = classifier_handler {
+        classifier.bind_cancellation(cancellation.clone());
+    }
     let external_cancellation = external_cancellation.unwrap_or_default();
     tokio::select! {
         outcome = headless_run::drive(&mut run, reporter, jsonl, host_input) => outcome,

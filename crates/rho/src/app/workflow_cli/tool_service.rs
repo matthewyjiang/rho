@@ -295,7 +295,6 @@ impl AppWorkflowToolService {
                     run,
                     RecoveryDecision::NormalResume,
                     self.config_path.clone(),
-                    context.child_approval_session(),
                     Some(self.tracker.clone()),
                 )
                 .await
@@ -367,7 +366,6 @@ impl AppWorkflowToolService {
                     run,
                     recovery,
                     self.config_path.clone(),
-                    context.child_approval_session(),
                     Some(self.tracker.clone()),
                 )
                 .await

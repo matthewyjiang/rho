@@ -121,6 +121,7 @@ pub(super) async fn initialize(
             usage_parent_session_id: None,
             usage_recording: usage_recording.clone(),
             hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
+            force_publish_live_history: permission_mode == PermissionMode::Auto,
             hooks: hooks.as_ref(),
         })?;
         let session_options = match resolve_session_options(

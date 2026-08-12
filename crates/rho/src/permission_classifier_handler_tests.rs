@@ -5,8 +5,8 @@ use std::{
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
-    ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, CapabilityRequest,
-    CapabilitySource, PathScope,
+    ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, CancellationToken,
+    CapabilityRequest, CapabilitySource, PathScope,
 };
 
 use super::{ClassificationInput, ClassifierApprovalHandler, ClassifyFn};
@@ -208,5 +208,42 @@ async fn classifier_errors_deny_and_headless_escalation_does_not_call_classifier
     };
     assert!(reason.contains("permission classifier denied 3 consecutive requests"));
 
+    assert_eq!(classifier.call_count(), 3);
+}
+
+// Covers: headless Auto must fail the run after repeated classifier denials
+// instead of denying forever while automation keeps running.
+// Owner: permission classifier approval handler.
+#[tokio::test]
+async fn headless_escalation_cancels_bound_run_token() {
+    let classifier = ScriptedClassifier::new([
+        Ok(ClassifierVerdict::Deny {
+            reason: "one".into(),
+        }),
+        Ok(ClassifierVerdict::Deny {
+            reason: "two".into(),
+        }),
+        Ok(ClassifierVerdict::Deny {
+            reason: "three".into(),
+        }),
+    ]);
+    let handler = handler_with(&classifier, None);
+    let cancellation = CancellationToken::new();
+    handler.bind_cancellation(cancellation.clone());
+
+    for _ in 0..CONSECUTIVE_DENY_ESCALATION {
+        assert!(matches!(
+            handler.request(request()).await,
+            ApprovalDecision::Deny { .. }
+        ));
+        assert!(!cancellation.is_cancelled());
+    }
+
+    let decision = handler.request(request()).await;
+    let ApprovalDecision::Deny { reason } = decision else {
+        panic!("headless escalation must deny");
+    };
+    assert!(reason.contains("permission classifier denied 3 consecutive requests"));
+    assert!(cancellation.is_cancelled());
     assert_eq!(classifier.call_count(), 3);
 }
