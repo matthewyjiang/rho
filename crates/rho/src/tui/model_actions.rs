@@ -387,7 +387,11 @@ impl App {
         result
     }
 
-    pub(super) fn handle_picker_escape(&mut self, running: bool) -> anyhow::Result<()> {
+    pub(super) async fn handle_picker_escape(
+        &mut self,
+        running: bool,
+        mut agent: Option<&mut InteractiveRuntime>,
+    ) -> anyhow::Result<()> {
         let leaving_action = match self.input_ui.composer() {
             ComposerMode::Picker(picker) => Some(picker.action),
             _ => None,
@@ -425,7 +429,8 @@ impl App {
                 self.sessions_hub_state.navigate_back();
             }
             if internal_agent_model_picker {
-                self.cancel_permission_classifier_model_prompt(/*restore_input*/ false);
+                self.cancel_permission_classifier_model_prompt(/*restore_input*/ false, agent)
+                    .await?;
             }
         } else {
             if sessions_picker {
@@ -433,13 +438,21 @@ impl App {
             }
             self.input_ui.set_composer(ComposerMode::Input);
             if !self.cancel_advisor_model_prompt()
-                && !self.cancel_permission_classifier_model_prompt(/*restore_input*/ true)
+                && !self
+                    .cancel_permission_classifier_model_prompt(
+                        /*restore_input*/ true,
+                        agent.as_deref_mut(),
+                    )
+                    .await?
             {
                 self.set_status(if running { "running" } else { "ready" });
             }
             // Backing all the way out of a setup picker leaves setup too,
             // rather than stranding an empty full-screen shell.
             self.dismiss_setup_screen();
+            if let Some(agent) = agent {
+                self.maybe_prompt_auto_classifier_model(agent).await?;
+            }
         }
         Ok(())
     }
@@ -692,6 +705,7 @@ impl App {
         self.apply_auto_edit_tool_for_provider(&provider, agent)
             .await?;
         self.finish_setup_screen();
+        self.maybe_prompt_auto_classifier_model(agent).await?;
         Ok(Some(handoff))
     }
 
@@ -813,11 +827,24 @@ impl App {
             }
             InternalAgentModelPickerOrigin::PermissionModeConfigRow => {
                 self.internal_agent_model_target = None;
-                self.finish_permission_classifier_model_selection(selected, agent)
-                    .await?;
+                self.finish_permission_classifier_model_selection(
+                    selected,
+                    InternalAgentModelPickerOrigin::PermissionModeConfigRow,
+                    agent,
+                )
+                .await?;
                 let status = self.status().to_string();
                 self.open_main_config_picker_selected(config_picker::PERMISSION_MODE_VALUE)?;
                 self.set_status(status);
+            }
+            InternalAgentModelPickerOrigin::PermissionModeStartup => {
+                self.internal_agent_model_target = None;
+                self.finish_permission_classifier_model_selection(
+                    selected,
+                    InternalAgentModelPickerOrigin::PermissionModeStartup,
+                    agent,
+                )
+                .await?;
             }
             InternalAgentModelPickerOrigin::PermissionClassifierModelConfigRow => {
                 self.internal_agent_model_target = None;

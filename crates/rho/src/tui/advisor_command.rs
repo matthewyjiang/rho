@@ -97,6 +97,7 @@ impl App {
                 InternalAgentModelPickerOrigin::AdvisorCommand
                 | InternalAgentModelPickerOrigin::AdvisorConfigRow
                 | InternalAgentModelPickerOrigin::PermissionModeConfigRow
+                | InternalAgentModelPickerOrigin::PermissionModeStartup
                 | InternalAgentModelPickerOrigin::PermissionClassifierModelConfigRow
                 | InternalAgentModelPickerOrigin::AgentsPicker => SELECT_ADVISOR_MODEL_STATUS,
             };

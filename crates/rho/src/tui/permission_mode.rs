@@ -7,6 +7,8 @@ use crate::{
 const SELECT_CLASSIFIER_MODEL_STATUS: &str =
     "select a permission classifier model to turn Auto mode on";
 const SELECT_CLASSIFIER_MODEL_EDIT_STATUS: &str = "select a permission classifier model";
+const SELECT_CLASSIFIER_MODEL_STARTUP_STATUS: &str =
+    "select a permission classifier model for Auto mode";
 
 impl App {
     pub(super) async fn select_permission_mode_from_config(
@@ -64,60 +66,143 @@ impl App {
             .contains_key(PERMISSION_CLASSIFIER_AGENT_ID)
     }
 
+    /// Opens the classifier model picker when Auto is active (or being enabled)
+    /// without a model. No-op when another picker or the first-run setup screen
+    /// already owns the composer.
+    pub(super) async fn maybe_prompt_auto_classifier_model(
+        &mut self,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        if self.setup_screen.is_some() {
+            return Ok(());
+        }
+        if !matches!(self.input_ui.composer(), ComposerMode::Input) {
+            return Ok(());
+        }
+        if self.info.runtime.permission_mode != PermissionMode::Auto {
+            return Ok(());
+        }
+        if self.permission_classifier_model_configured() {
+            return Ok(());
+        }
+        if self.open_permission_classifier_model_prompt(
+            InternalAgentModelPickerOrigin::PermissionModeStartup,
+        ) {
+            return Ok(());
+        }
+        // Empty model catalog: Auto would fail closed on every gated tool.
+        // Drop to Supervised so the session can still ask a human.
+        self.apply_permission_mode(PermissionMode::Supervised, agent)
+            .await?;
+        self.set_status(
+            "permission mode set to supervised: no classifier model available; use Config > Refresh model lists",
+        );
+        Ok(())
+    }
+
     pub(super) fn open_permission_classifier_model_prompt(
         &mut self,
         origin: InternalAgentModelPickerOrigin,
-    ) {
-        if self.open_internal_agent_model_picker(PERMISSION_CLASSIFIER_AGENT_ID, origin) {
-            let status = match origin {
-                InternalAgentModelPickerOrigin::PermissionClassifierModelConfigRow => {
-                    SELECT_CLASSIFIER_MODEL_EDIT_STATUS
-                }
-                InternalAgentModelPickerOrigin::AgentsPicker
-                | InternalAgentModelPickerOrigin::AdvisorCommand
-                | InternalAgentModelPickerOrigin::AdvisorConfigRow
-                | InternalAgentModelPickerOrigin::AdvisorModelConfigRow
-                | InternalAgentModelPickerOrigin::PermissionModeConfigRow => {
-                    SELECT_CLASSIFIER_MODEL_STATUS
-                }
-            };
-            self.set_status(status);
+    ) -> bool {
+        if !self.open_internal_agent_model_picker(PERMISSION_CLASSIFIER_AGENT_ID, origin) {
+            return false;
         }
+        let status = match origin {
+            InternalAgentModelPickerOrigin::PermissionClassifierModelConfigRow => {
+                SELECT_CLASSIFIER_MODEL_EDIT_STATUS
+            }
+            InternalAgentModelPickerOrigin::PermissionModeStartup => {
+                SELECT_CLASSIFIER_MODEL_STARTUP_STATUS
+            }
+            InternalAgentModelPickerOrigin::AgentsPicker
+            | InternalAgentModelPickerOrigin::AdvisorCommand
+            | InternalAgentModelPickerOrigin::AdvisorConfigRow
+            | InternalAgentModelPickerOrigin::AdvisorModelConfigRow
+            | InternalAgentModelPickerOrigin::PermissionModeConfigRow => {
+                SELECT_CLASSIFIER_MODEL_STATUS
+            }
+        };
+        self.set_status(status);
+        true
     }
 
     pub(super) async fn finish_permission_classifier_model_selection(
         &mut self,
         selected: bool,
+        origin: InternalAgentModelPickerOrigin,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        if selected {
-            self.apply_permission_mode(PermissionMode::Auto, agent)
-                .await?;
+        match origin {
+            InternalAgentModelPickerOrigin::PermissionModeConfigRow if selected => {
+                self.apply_permission_mode(PermissionMode::Auto, agent)
+                    .await?;
+            }
+            InternalAgentModelPickerOrigin::PermissionModeStartup if selected => {
+                // Auto is already active; the picker only stored the model.
+                self.sync_permission_classifier_runtime_config(agent);
+                self.set_status("permission mode: auto");
+            }
+            InternalAgentModelPickerOrigin::PermissionModeStartup => {
+                self.fallback_auto_without_classifier(agent).await?;
+            }
+            _ => {}
         }
         Ok(())
     }
 
-    pub(super) fn cancel_permission_classifier_model_prompt(
+    /// Startup Auto without a classifier cannot run gated tools. Supervised keeps
+    /// the same capability gate and asks a human instead.
+    pub(super) async fn fallback_auto_without_classifier(
+        &mut self,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        self.apply_permission_mode(PermissionMode::Supervised, agent)
+            .await?;
+        self.set_status("permission mode set to supervised: no classifier model selected");
+        Ok(())
+    }
+
+    pub(super) async fn cancel_permission_classifier_model_prompt(
         &mut self,
         restore_input: bool,
-    ) -> bool {
-        let pending = matches!(
-            self.internal_agent_model_target.as_ref(),
+        agent: Option<&mut InteractiveRuntime>,
+    ) -> anyhow::Result<bool> {
+        let origin = match self.internal_agent_model_target.as_ref() {
             Some(target)
                 if target.id == PERMISSION_CLASSIFIER_AGENT_ID
-                    && target.origin == InternalAgentModelPickerOrigin::PermissionModeConfigRow
-        );
-        if pending {
-            self.internal_agent_model_target = None;
-            if restore_input {
-                self.input_ui.set_composer(ComposerMode::Input);
+                    && matches!(
+                        target.origin,
+                        InternalAgentModelPickerOrigin::PermissionModeConfigRow
+                            | InternalAgentModelPickerOrigin::PermissionModeStartup
+                    ) =>
+            {
+                target.origin
             }
-            self.set_status(format!(
-                "permission mode stays {}: no classifier model selected",
-                self.info.runtime.permission_mode.as_str()
-            ));
+            _ => return Ok(false),
+        };
+        self.internal_agent_model_target = None;
+        if restore_input {
+            self.input_ui.set_composer(ComposerMode::Input);
         }
-        pending
+        match origin {
+            InternalAgentModelPickerOrigin::PermissionModeConfigRow => {
+                self.set_status(format!(
+                    "permission mode stays {}: no classifier model selected",
+                    self.info.runtime.permission_mode.as_str()
+                ));
+            }
+            InternalAgentModelPickerOrigin::PermissionModeStartup => {
+                if let Some(agent) = agent {
+                    self.fallback_auto_without_classifier(agent).await?;
+                } else {
+                    self.set_status(
+                        "permission mode stays auto: select a classifier model before gated tools run",
+                    );
+                }
+            }
+            _ => {}
+        }
+        Ok(true)
     }
 
     pub(super) fn cycle_permission_classifier_reasoning(

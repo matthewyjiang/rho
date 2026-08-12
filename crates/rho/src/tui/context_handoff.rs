@@ -637,6 +637,7 @@ impl App {
             .herdr
             .report_session(self.info.session.session_id.as_deref())
             .await;
+        self.maybe_prompt_auto_classifier_model(agent).await?;
         Ok(())
     }
 

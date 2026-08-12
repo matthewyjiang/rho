@@ -91,6 +91,49 @@ pub(super) const AUTO_PERMISSION_MODE_CONFIG_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+// Covers: launching with Auto and no classifier opens a blocking model picker;
+// Esc falls back to Supervised so gated tools still ask a human.
+// Owner: interactive TUI
+pub(super) fn setup_auto_without_classifier(home: &crate::env::IsolatedHome) -> anyhow::Result<()> {
+    std::fs::write(
+        &home.config_path,
+        r#"provider = "openai"
+model = "gpt-5.5"
+auth = "api-key"
+check_for_updates = false
+web_search_provider = "disabled"
+permission_mode = "auto"
+
+[behavior]
+credential_store = "file"
+"#,
+    )?;
+    Ok(())
+}
+
+pub(super) const AUTO_PERMISSION_MODE_STARTUP_STEPS: &[Step] = &[
+    Step::Phase("startup_opens_classifier_picker"),
+    Step::WaitText {
+        text: "select model for permission-classifier",
+        timeout: STARTUP,
+    },
+    Step::AssertText("openai/gpt-5.5"),
+    // Auto is already the configured mode; the picker blocks until a model is
+    // chosen or the user backs out.
+    Step::AssertText("Auto ·"),
+    Step::Phase("escape_falls_back_to_supervised"),
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "permission mode set to supervised: no classifier model selected",
+        timeout: SETTLE,
+    },
+    Step::WaitText {
+        text: "Supervised ·",
+        timeout: SETTLE,
+    },
+    Step::ExitCommand,
+];
+
 pub(super) const OPEN_CONFIG_PICKER_STEPS: &[Step] = &[
     Step::Phase("open_config"),
     Step::WaitText {

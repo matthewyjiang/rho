@@ -38,7 +38,10 @@ use background_agents::{
 };
 use changelog::CHANGELOG_STEPS;
 use command_palette::{HELP_OVERLAY_SCENARIO, SLASH_COMMAND_PALETTE_SCENARIO};
-use config::{AUTO_PERMISSION_MODE_CONFIG_STEPS, OPEN_CONFIG_PICKER_STEPS};
+use config::{
+    setup_auto_without_classifier, AUTO_PERMISSION_MODE_CONFIG_STEPS,
+    AUTO_PERMISSION_MODE_STARTUP_STEPS, OPEN_CONFIG_PICKER_STEPS,
+};
 use conversation_tree::CONVERSATION_TREE_STEPS;
 use document_attachment::DOCUMENT_ATTACHMENT_SCENARIO;
 use edit_diff::EDIT_DIFF_SCENARIO;
@@ -678,6 +681,18 @@ const ALL_SCENARIOS: &[Scenario] = &[
         AUTO_PERMISSION_MODE_CONFIG_STEPS,
         /*smoke*/ false,
     )
+    .with_env(OPENAI_KEY_ENV),
+    Scenario::new(
+        "auto_permission_mode_startup",
+        "Start in Auto without a classifier and force a model pick before tools run",
+        PtySize {
+            rows: 14,
+            cols: 100,
+        },
+        AUTO_PERMISSION_MODE_STARTUP_STEPS,
+        /*smoke*/ false,
+    )
+    .with_setup(setup_auto_without_classifier)
     .with_env(OPENAI_KEY_ENV),
     Scenario::new(
         "progress_tool",
