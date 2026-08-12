@@ -155,10 +155,13 @@ impl App {
                 selection,
             );
         }
-        if let Some(hovered_line) = self.history.hovered_code_block_copy() {
-            if let Some(target) = self
-                .code_block_copy_target_at_line(width, hovered_line)
-                .filter(|_| (history_start..history_start + history_count).contains(&hovered_line))
+        if let Some(hovered_line) = self
+            .history
+            .hovered_code_block_copy()
+            .filter(|line| (history_start..history_start + history_count).contains(line))
+        {
+            if let Some(target) =
+                self.code_block_copy_target_at_line_with_settings(width, settings, hovered_line)
             {
                 let row = layout
                     .history_content
@@ -524,15 +527,11 @@ impl App {
         command_line_count: usize,
     ) -> HistoryRenderSettings {
         let height = self.terminal_height;
-        let content_height = if height == 0 {
-            0
-        } else {
-            self.history_content_height(self.history_height_from_line_counts(
-                height,
-                composer_line_count,
-                command_line_count,
-            ))
-        };
+        let content_height = self.history_content_height_from_counts(
+            height,
+            composer_line_count,
+            command_line_count,
+        );
         let budget = super::feed_image::ImageRowBudget::feed(height, content_height).get();
         self.info.runtime.history_render_settings(width, budget)
     }
@@ -549,22 +548,28 @@ impl App {
     /// history content viewport so composer chrome cannot make placements
     /// permanently unpaintable.
     pub(super) fn feed_image_row_budget(&self, width: usize) -> u16 {
-        let content_height = self.history_content_height_for_feed_budget(width);
-        super::feed_image::ImageRowBudget::feed(self.terminal_height, content_height).get()
+        let height = self.terminal_height;
+        let content_height = self.history_content_height_from_counts(
+            height,
+            self.composer_lines(width, height).len(),
+            self.command_suggestion_lines(width).len(),
+        );
+        super::feed_image::ImageRowBudget::feed(height, content_height).get()
     }
 
-    /// History content rows available after bottom chrome and the current
-    /// composer (including attachment strips). Independent of transcript length
-    /// so it cannot cycle through the history line cache.
-    fn history_content_height_for_feed_budget(&self, width: usize) -> usize {
-        let height = self.terminal_height;
+    fn history_content_height_from_counts(
+        &self,
+        height: usize,
+        composer_line_count: usize,
+        command_line_count: usize,
+    ) -> usize {
         if height == 0 {
             return 0;
         }
         self.history_content_height(self.history_height_from_line_counts(
             height,
-            self.composer_lines(width, height).len(),
-            self.command_suggestion_lines(width).len(),
+            composer_line_count,
+            command_line_count,
         ))
     }
 
@@ -693,11 +698,20 @@ impl App {
         width: usize,
         line: usize,
     ) -> Option<CodeBlockCopyTarget> {
+        let settings = self.history_render_settings(width);
+        self.code_block_copy_target_at_line_with_settings(width, settings, line)
+    }
+
+    fn code_block_copy_target_at_line_with_settings(
+        &mut self,
+        width: usize,
+        settings: HistoryRenderSettings,
+        line: usize,
+    ) -> Option<CodeBlockCopyTarget> {
         self.sync_open_stream_tail();
         let header_len = self.session_header_lines(width).len();
         let transcript_line = line.checked_sub(header_len)?;
         let cwd = self.info.runtime.cwd.clone();
-        let settings = self.history_render_settings(width);
         self.history
             .with_lines_and_images_mut(|history_lines, entries, markdown_images| {
                 let block = history_lines.code_block_at_line(
@@ -722,14 +736,13 @@ impl App {
         width: usize,
         history: Rect,
         history_start: usize,
-        column: u16,
-        row: u16,
+        position: Position,
     ) -> Option<CodeBlockCopyTarget> {
-        if !history.contains(Position { x: column, y: row }) {
+        if !history.contains(position) {
             return None;
         }
-        let line = history_start.saturating_add(row.saturating_sub(history.y) as usize);
-        let relative_column = column.saturating_sub(history.x) as usize;
+        let line = history_start.saturating_add(position.y.saturating_sub(history.y) as usize);
+        let relative_column = position.x.saturating_sub(history.x) as usize;
         self.code_block_copy_target_at_line(width, line)
             .filter(|target| target.columns.contains(&relative_column))
     }

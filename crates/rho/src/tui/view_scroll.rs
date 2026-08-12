@@ -26,13 +26,7 @@ impl App {
         delta: isize,
     ) {
         let history_len = self.history_len(width, now);
-        let composer_line_count = self.composer_lines(width, height).len();
-        let command_line_count = self.command_suggestion_lines(width).len();
-        let content_height = self.history_content_height(self.history_height_from_line_counts(
-            height,
-            composer_line_count,
-            command_line_count,
-        ));
+        let content_height = self.history_content_height_for_screen(width, height, now);
         self.history
             .scroll_chrome_mut()
             .scroll_by(history_len, content_height, delta);
@@ -64,13 +58,7 @@ impl App {
 
     pub(super) fn clamp_history_scroll(&mut self, width: usize, height: usize, now: Instant) {
         let history_len = self.history_len(width, now);
-        let composer_line_count = self.composer_lines(width, height).len();
-        let command_line_count = self.command_suggestion_lines(width).len();
-        let content_height = self.history_content_height(self.history_height_from_line_counts(
-            height,
-            composer_line_count,
-            command_line_count,
-        ));
+        let content_height = self.history_content_height_for_screen(width, height, now);
         self.history
             .scroll_chrome_mut()
             .clamp(history_len, content_height);

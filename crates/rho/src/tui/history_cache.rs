@@ -622,7 +622,14 @@ impl HistoryLineCache {
         // Extend in place: keep the already-rendered stable prefix and replace
         // only the mutable tail, so an append costs the new lines rather than a
         // clone of everything rendered so far.
-        let trailing_blank = has_trailing_blank.then(|| entry.lines[content_len - 1].clone());
+        let trailing_blank = if has_trailing_blank {
+            let Some(last) = entry.lines.last() else {
+                return false;
+            };
+            Some(last.clone())
+        } else {
+            None
+        };
         entry.lines.truncate(preserve_end);
         entry.code_blocks.retain(|block| block.line < preserve_end);
         append_entry_segment_into(

@@ -1,7 +1,11 @@
 use std::time::{Duration, Instant};
 
 use crossterm::event::{MouseButton, MouseEventKind};
-use ratatui::{backend::Backend, layout::Rect, Terminal};
+use ratatui::{
+    backend::Backend,
+    layout::{Position, Rect},
+    Terminal,
+};
 
 use super::{
     copy_interaction::{selection_position, selection_position_clamped},
@@ -110,8 +114,7 @@ impl App {
                     width,
                     history,
                     history_start,
-                    column,
-                    row,
+                    Position { x: column, y: row },
                 );
                 let scrollbar = layout
                     .history_scrollbar
@@ -256,8 +259,7 @@ impl App {
                             width,
                             history,
                             history_start,
-                            column,
-                            row,
+                            Position { x: column, y: row },
                         )
                         .map(|target| target.line);
                     self.history.set_hovered_code_block_copy(hovered);
@@ -302,7 +304,12 @@ impl App {
                 let (history, history_start) =
                     self.mouse_history_view(layout.history_content, layout.history_len);
                 let hovered = self
-                    .code_block_copy_target_at_position(width, history, history_start, column, row)
+                    .code_block_copy_target_at_position(
+                        width,
+                        history,
+                        history_start,
+                        Position { x: column, y: row },
+                    )
                     .map(|target| target.line);
                 self.history.set_hovered_code_block_copy(hovered);
                 if let Some(target) = activate_subagent {
@@ -386,7 +393,12 @@ impl App {
                 let (history, history_start) =
                     self.mouse_history_view(layout.history_content, layout.history_len);
                 let hovered = self
-                    .code_block_copy_target_at_position(width, history, history_start, column, row)
+                    .code_block_copy_target_at_position(
+                        width,
+                        history,
+                        history_start,
+                        Position { x: column, y: row },
+                    )
                     .map(|target| target.line);
                 self.history.set_hovered_code_block_copy(hovered);
                 let subagent_hover = matches!(self.input_ui.composer(), ComposerMode::Input)

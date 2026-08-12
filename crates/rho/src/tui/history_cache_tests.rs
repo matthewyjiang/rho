@@ -265,7 +265,9 @@ fn incrementally_extends_reasoning_text_without_rendering_drift() {
             crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT
         )
     );
-    assert!(cache.entries[0].incremental.is_some());
+    assert!(cache.entries[0]
+        .incremental
+        .is_some_and(|cached| { cached.stable_source_len > "weighing the first option\n".len() }));
 
     // Closing the thought appends the summary line, which the incremental path
     // cannot produce; the entry re-renders whole and must still match.
