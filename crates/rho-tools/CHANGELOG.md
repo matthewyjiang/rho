@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.17.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.16.0...rho-agent-tools-v0.17.0) (2026-08-12)
+
+
+### Features
+
+* **permission:** rename Auto to Bypass and add classifier Auto ([#870](https://github.com/matthewyjiang/rho/issues/870)) ([3192daa](https://github.com/matthewyjiang/rho/commit/3192daa713f7202f44727ec4acb83d0c646d1286))
+* **tui:** count up shell runtime next to timeout ([#871](https://github.com/matthewyjiang/rho/issues/871)) ([7c55124](https://github.com/matthewyjiang/rho/commit/7c55124aa43fb40db414c7be01ab68e36dfb0441))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 3.1.0 to 4.0.0
+
 ## [0.16.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.15.1...rho-agent-tools-v0.16.0) (2026-08-11)
 
 

@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.38.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.37.0...rho-coding-agent-v1.38.0) (2026-08-12)
+
+
+### Features
+
+* **attach:** honor hide-reasoning and other display config ([#873](https://github.com/matthewyjiang/rho/issues/873)) ([813f22f](https://github.com/matthewyjiang/rho/commit/813f22ff4651da1c716ad13dcb6e4553ca3f117d))
+* **permission:** rename Auto to Bypass and add classifier Auto ([#870](https://github.com/matthewyjiang/rho/issues/870)) ([3192daa](https://github.com/matthewyjiang/rho/commit/3192daa713f7202f44727ec4acb83d0c646d1286))
+* **tui:** count up shell runtime next to timeout ([#871](https://github.com/matthewyjiang/rho/issues/871)) ([7c55124](https://github.com/matthewyjiang/rho/commit/7c55124aa43fb40db414c7be01ab68e36dfb0441))
+
+
+### Performance Improvements
+
+* **tui:** stop long transcripts rebuilding on image-budget jitter ([#874](https://github.com/matthewyjiang/rho/issues/874)) ([c888e94](https://github.com/matthewyjiang/rho/commit/c888e946599dba4f9afcf01d1d4f4927772f8249))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 3.1.0 to 4.0.0
+    * rho-providers bumped from 1.0.0 to 1.1.0
+
 ## [1.37.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.36.0...rho-coding-agent-v1.37.0) (2026-08-12)
 
 
