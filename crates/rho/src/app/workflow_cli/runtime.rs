@@ -391,8 +391,16 @@ impl WorkflowRuntime {
         let process_environment = ProcessEnvironment::inherit_except(
             rho_providers::credential_env_vars().iter().copied(),
         );
-        let app_agent_executor = Arc::new(
-            AgentExecutor::new(
+        let app_agent_executor = Arc::new(match approvals.classifier.clone() {
+            Some(classifier) => AgentExecutor::new(
+                config.clone(),
+                config_path,
+                cwd.clone(),
+                SubagentHostInputBridge::new(),
+                crate::app::subagent_messaging::SubagentNoticeBridge::new(),
+            )
+            .with_classifier_approval_session(approvals.session, classifier),
+            None => AgentExecutor::new(
                 config.clone(),
                 config_path,
                 cwd.clone(),
@@ -400,7 +408,7 @@ impl WorkflowRuntime {
                 crate::app::subagent_messaging::SubagentNoticeBridge::new(),
             )
             .with_approval_session(approvals.session),
-        );
+        });
         let agent_executor: Arc<dyn WorkflowNodeExecutor> =
             Arc::new(WorkflowAgentExecutor::new(app_agent_executor));
         let command_executor: Arc<dyn WorkflowNodeExecutor> =

@@ -5,8 +5,10 @@ use std::{
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
+    model::{Message, ModelIdentity},
+    provider::{ScriptedProvider, ScriptedTurn},
     ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, CancellationToken,
-    CapabilityRequest, CapabilitySource, PathScope,
+    CapabilityRequest, CapabilitySource, PathScope, Rho, SessionOptions,
 };
 
 use super::{ClassificationInput, ClassifierApprovalHandler, ClassifyFn};
@@ -93,6 +95,70 @@ fn handler_with(
     inner: Option<Arc<dyn ApprovalHandler>>,
 ) -> ClassifierApprovalHandler {
     ClassifierApprovalHandler::for_tests(classifier.classify(), inner)
+}
+
+// Covers: workflow Auto agent classifiers need the child session history instead of empty context.
+// Owner: permission classifier approval handler.
+#[tokio::test]
+async fn bound_session_history_reaches_classifier_input() {
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let classifier: ClassifyFn = {
+        let observed = Arc::clone(&observed);
+        Arc::new(move |input: ClassificationInput| {
+            observed.lock().unwrap().push(input.history.clone());
+            Box::pin(std::future::ready(Ok(ClassifierVerdict::Allow)))
+        })
+    };
+    let handler = ClassifierApprovalHandler::for_tests(classifier, None);
+    let history = vec![Message::user_text("prior workflow context")];
+    let runtime = Rho::builder()
+        .provider(ScriptedProvider::new(
+            ModelIdentity::new("test", "test", "unused"),
+            Vec::<ScriptedTurn>::new(),
+        ))
+        .build()
+        .unwrap();
+    let session = runtime
+        .session(SessionOptions::default().history(history.clone()))
+        .await
+        .unwrap();
+    handler.bind_session(session);
+
+    assert_eq!(
+        handler.request(request()).await,
+        ApprovalDecision::AllowOnce
+    );
+
+    assert_eq!(*observed.lock().unwrap(), vec![history]);
+    runtime.shutdown();
+}
+
+// Covers: in-flight classifier calls must share the bound run cancellation token.
+// Owner: permission classifier approval handler.
+#[tokio::test]
+async fn classifier_input_uses_bound_cancellation_token() {
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let classifier: ClassifyFn = {
+        let observed = Arc::clone(&observed);
+        Arc::new(move |input: ClassificationInput| {
+            observed
+                .lock()
+                .unwrap()
+                .push(input.cancellation.is_cancelled());
+            Box::pin(std::future::ready(Ok(ClassifierVerdict::Allow)))
+        })
+    };
+    let handler = ClassifierApprovalHandler::for_tests(classifier, None);
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    handler.bind_cancellation(cancellation);
+
+    assert_eq!(
+        handler.request(request()).await,
+        ApprovalDecision::AllowOnce
+    );
+
+    assert_eq!(*observed.lock().unwrap(), vec![true]);
 }
 
 // Covers: classifier allows should not grant session-wide approval and should clear deny streaks.

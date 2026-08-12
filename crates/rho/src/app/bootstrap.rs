@@ -319,6 +319,7 @@ async fn run_automation_startup(startup: AutomationStartup<'_>) -> anyhow::Resul
             notice_poster: None,
             steering_slot: None,
             approval_session: None,
+            approval_classifier: None,
             hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
         },
     )

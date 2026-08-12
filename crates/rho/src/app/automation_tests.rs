@@ -28,10 +28,11 @@ use tokio::{
 
 use super::{
     classify_error, classify_run_terminal, complete_run, ensure_headless_auto_classifier_model,
-    prompt_from_reader, terminal_error_message, AutomationExit, RunArtifactIdentity, RunReporter,
-    RunTerminal, MAX_STEPS_MESSAGE,
+    headless_approval_session, prompt_from_reader, terminal_error_message, AutomationExit,
+    RunArtifactIdentity, RunReporter, RunTerminal, MAX_STEPS_MESSAGE,
 };
 use crate::app::headless_run::{HeadlessRunDeps, HostInputRespondFuture, HostInputResponder};
+use crate::permission_classifier_handler::ClassifierApprovalHandler;
 use crate::{
     agent::PERMISSION_CLASSIFIER_AGENT_ID,
     app::{
@@ -168,6 +169,44 @@ fn headless_auto_requires_configured_permission_classifier_model() {
         InternalAgentModelConfig::new("openai".into(), "gpt-5.5".into(), "api-key".into()),
     );
     ensure_headless_auto_classifier_model(&config).unwrap();
+}
+
+// Covers: workflow Auto supplies a classifier-backed approval session that automation must bind.
+// Owner: automation startup approval wiring.
+#[test]
+fn supplied_auto_approval_session_returns_classifier_handler_for_binding() {
+    let mut config = Config {
+        permission_mode: PermissionMode::Auto,
+        ..Config::default()
+    };
+    config.set_internal_agent_model_config(
+        PERMISSION_CLASSIFIER_AGENT_ID,
+        InternalAgentModelConfig::new("openai".into(), "gpt-5.5".into(), "api-key".into()),
+    );
+    let root = tempfile::tempdir().unwrap();
+    let classifier = Arc::new(ClassifierApprovalHandler::new(
+        config.clone(),
+        root.path().to_path_buf(),
+        Default::default(),
+        None,
+    ));
+    let handler: Arc<dyn rho_sdk::ApprovalHandler> = classifier.clone();
+    let approval_session = rho_sdk::ApprovalSession::from_shared(handler);
+
+    let (_approval_session, returned) = headless_approval_session(
+        &config,
+        Some(approval_session),
+        Some(classifier.clone()),
+        root.path().to_path_buf(),
+        Default::default(),
+    );
+
+    assert!(Arc::ptr_eq(
+        returned
+            .as_ref()
+            .expect("supplied classifier should return"),
+        &classifier
+    ));
 }
 
 #[test]

@@ -26,6 +26,7 @@ pub(crate) struct ClassificationInput {
     pub(crate) config: Config,
     pub(crate) history: Vec<Message>,
     pub(crate) request: ApprovalRequest,
+    pub(crate) cancellation: CancellationToken,
     pub(crate) session_id: SessionId,
     pub(crate) workspace_path: PathBuf,
     pub(crate) usage_recording: ProviderRequestUsageRecording,
@@ -114,10 +115,17 @@ impl ClassifierApprovalHandler {
             || (Vec::new(), SessionId::new()),
             |session| (session.live_history(), session.id().clone()),
         );
+        let cancellation = self
+            .cancellation
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+            .unwrap_or_else(CancellationToken::new);
         ClassificationInput {
             config,
             history,
             request,
+            cancellation,
             session_id,
             workspace_path: self.workspace_path.clone(),
             usage_recording: self.usage_recording.clone(),
@@ -189,7 +197,7 @@ fn default_classifier() -> ClassifyFn {
                 ClassifyRequest {
                     history: &input.history,
                     pending: &input.request,
-                    cancellation: CancellationToken::new(),
+                    cancellation: input.cancellation,
                     session_id: &input.session_id,
                     workspace_path: &input.workspace_path,
                     usage_recording: input.usage_recording,

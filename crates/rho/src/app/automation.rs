@@ -152,6 +152,7 @@ pub(super) struct Startup<'a> {
     /// Receives the live steering port once the Rho session starts.
     pub steering_slot: Option<super::subagent_messaging::SteeringSlot>,
     pub approval_session: Option<rho_sdk::ApprovalSession>,
+    pub approval_classifier: Option<Arc<ClassifierApprovalHandler>>,
     pub hook_host_labels: rho_sdk::hooks::HookHostLabels,
 }
 
@@ -509,6 +510,7 @@ async fn run_session_with_output(
     let (approval_session, classifier_handler) = headless_approval_session(
         startup.config,
         startup.approval_session.clone(),
+        startup.approval_classifier.clone(),
         workspace_root.clone(),
         usage_recording.clone(),
     );
@@ -629,14 +631,18 @@ pub(crate) fn ensure_headless_auto_classifier_model(config: &Config) -> anyhow::
 fn headless_approval_session(
     config: &Config,
     approval_session: Option<rho_sdk::ApprovalSession>,
+    approval_classifier: Option<Arc<ClassifierApprovalHandler>>,
     workspace_root: PathBuf,
     usage_recording: rho_sdk::ProviderRequestUsageRecording,
 ) -> (
     Option<rho_sdk::ApprovalSession>,
     Option<Arc<ClassifierApprovalHandler>>,
 ) {
-    if config.permission_mode != PermissionMode::Auto || approval_session.is_some() {
+    if config.permission_mode != PermissionMode::Auto {
         return (approval_session, None);
+    }
+    if approval_session.is_some() {
+        return (approval_session, approval_classifier);
     }
 
     let handler = Arc::new(ClassifierApprovalHandler::new(
