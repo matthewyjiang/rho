@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.37.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.36.0...rho-coding-agent-v1.37.0) (2026-08-12)
+
+
+### Features
+
+* **tui:** keep Entry::Error readable without color ([#866](https://github.com/matthewyjiang/rho/issues/866)) ([1cf70d2](https://github.com/matthewyjiang/rho/commit/1cf70d2f13b85651131864f22cc2b06f1755ea02))
+* **tui:** soft-wash diff add/remove rows with readable content ([#867](https://github.com/matthewyjiang/rho/issues/867)) ([bfccb02](https://github.com/matthewyjiang/rho/commit/bfccb02516e71d187f4799d3692c9750a19e9c09))
+
 ## [1.36.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.35.0...rho-coding-agent-v1.36.0) (2026-08-11)
 
 
