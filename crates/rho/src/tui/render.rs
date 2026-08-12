@@ -29,6 +29,9 @@ use ratatui::{
 /// composer divider, and the statusline.
 const PICKER_RESERVED_FEED_ROWS: usize = 5;
 
+/// Stable text prefix for [`Entry::Error`] so severity survives without color.
+pub(super) const ERROR_ENTRY_MARKER: &str = "error: ";
+
 /// Rows the inline list picker spends on its own chrome, matching what
 /// `list_picker_lines` emits around the item rows.
 fn list_picker_chrome_rows(picker: &UiPicker) -> usize {
@@ -566,7 +569,10 @@ fn render_non_assistant_entry(
         Entry::Changelog(display) => lines.extend(changelog_lines(display, width)),
         Entry::UsageLimits(limits) => lines.extend(usage_limit_lines(limits, width)),
         Entry::Error(text) => {
-            push_wrapped_text(lines, text, width, Theme::error(), LineFill::Natural)
+            // Text marker keeps severity readable when color is flattened
+            // (monochrome themes, colorblind setups, NO_COLOR-like terminals).
+            let marked = format!("{ERROR_ENTRY_MARKER}{text}");
+            push_wrapped_text(lines, &marked, width, Theme::error(), LineFill::Natural)
         }
     }
 }
