@@ -75,7 +75,7 @@ fn caches_unicode_wrapped_lines_and_code_copy_target_without_rendering_drift() {
 
     assert_eq!(cached_lines, expected_lines);
     assert_eq!(
-        blocks.as_ref(),
+        blocks,
         &[CachedCodeBlock {
             line: 2,
             copy_columns: 4..10,

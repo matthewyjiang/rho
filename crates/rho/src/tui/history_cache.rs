@@ -114,7 +114,7 @@ pub(super) struct HistoryLineCache {
     /// Absolute-line projection of every entry's code blocks. Mouse hover and
     /// click hit-testing read this on every pointer event, so the projection is
     /// rebuilt lazily after entry mutations instead of on each call.
-    projected_code_blocks: Option<Arc<[CachedCodeBlock]>>,
+    projected_code_blocks: Option<Vec<CachedCodeBlock>>,
     /// When set, the last entry is still being streamed and must not own a trailing blank.
     open_stream_tail: bool,
     /// Test-only: counts entry renders so soft settings updates can prove they
@@ -201,21 +201,44 @@ impl HistoryLineCache {
         self.total_lines()
     }
 
-    /// Absolute-line code-block projection, sorted by line. Shared and cached:
-    /// pointer events hit-test against it without rebuilding per event.
+    /// Absolute-line code-block projection, sorted by line. Test helper for
+    /// projection contents; production hit-testing uses [`Self::code_block_at_line`].
+    #[cfg(test)]
     pub(super) fn code_blocks(
         &mut self,
         entries: &[Entry],
         settings: HistoryRenderSettings,
         image_resolver: EntryImageResolver<'_>,
-    ) -> Arc<[CachedCodeBlock]> {
+    ) -> &[CachedCodeBlock] {
+        self.ensure_projected_code_blocks(entries, settings, image_resolver)
+    }
+
+    /// Code block whose header row sits at absolute transcript `line`.
+    pub(super) fn code_block_at_line(
+        &mut self,
+        entries: &[Entry],
+        settings: HistoryRenderSettings,
+        line: usize,
+        image_resolver: EntryImageResolver<'_>,
+    ) -> Option<CachedCodeBlock> {
+        let blocks = self.ensure_projected_code_blocks(entries, settings, image_resolver);
+        let index = blocks
+            .binary_search_by(|block| block.line.cmp(&line))
+            .ok()?;
+        Some(blocks[index].clone())
+    }
+
+    fn ensure_projected_code_blocks(
+        &mut self,
+        entries: &[Entry],
+        settings: HistoryRenderSettings,
+        image_resolver: EntryImageResolver<'_>,
+    ) -> &[CachedCodeBlock] {
         self.ensure_current(entries, settings, image_resolver);
-        if let Some(blocks) = &self.projected_code_blocks {
-            return Arc::clone(blocks);
+        if self.projected_code_blocks.is_none() {
+            self.projected_code_blocks = Some(self.project_code_blocks());
         }
-        let blocks: Arc<[CachedCodeBlock]> = self.project_code_blocks().into();
-        self.projected_code_blocks = Some(Arc::clone(&blocks));
-        blocks
+        self.projected_code_blocks.as_deref().unwrap_or(&[])
     }
 
     pub(super) fn entry_index_at_line(

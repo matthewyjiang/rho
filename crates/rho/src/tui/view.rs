@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Instant};
+use std::time::Instant;
 
 use ratatui::{
     layout::{Position, Rect},
@@ -19,8 +19,8 @@ use super::{
 };
 use super::{
     history_cache::{HistoryLineSlice, HistoryRenderSettings},
-    App, CachedCodeBlock, CodeBlockCopyTarget, ComposerMode, Entry, GoalStatus, LineFill,
-    ReasoningChrome, SessionHeaderCache, StreamKind, Theme, RECOVERED_HISTORY_LINE_LIMIT,
+    App, CodeBlockCopyTarget, ComposerMode, Entry, GoalStatus, LineFill, ReasoningChrome,
+    SessionHeaderCache, StreamKind, Theme, RECOVERED_HISTORY_LINE_LIMIT,
 };
 #[cfg(test)]
 use super::{ActiveFrame, DEFAULT_TUI_HEIGHT};
@@ -686,8 +686,8 @@ impl App {
 
     /// Code-block copy button whose header row sits at absolute history `line`.
     ///
-    /// Reads the cached projection and binary-searches it, so pointer events on
-    /// long transcripts do not rebuild a target list per event.
+    /// Hits the history-cache projection, so pointer events on long transcripts
+    /// do not rebuild a target list per event.
     pub(super) fn code_block_copy_target_at_line(
         &mut self,
         width: usize,
@@ -700,19 +700,18 @@ impl App {
         let settings = self.history_render_settings(width);
         self.history
             .with_lines_and_images_mut(|history_lines, entries, markdown_images| {
-                let blocks =
-                    history_lines.code_blocks(entries, settings, &|entry_index, sources| {
+                let block = history_lines.code_block_at_line(
+                    entries,
+                    settings,
+                    transcript_line,
+                    &|entry_index, sources| {
                         markdown_images.ready_images(entry_index, sources, &cwd)
-                    });
-                // Projection is sorted by line; each block owns one header row.
-                let index = blocks
-                    .binary_search_by(|block: &CachedCodeBlock| block.line.cmp(&transcript_line))
-                    .ok()?;
-                let block = &blocks[index];
+                    },
+                )?;
                 Some(CodeBlockCopyTarget {
                     line,
-                    columns: block.copy_columns.clone(),
-                    text: Arc::clone(&block.text),
+                    columns: block.copy_columns,
+                    text: block.text,
                 })
             })
     }

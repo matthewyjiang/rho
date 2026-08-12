@@ -9,7 +9,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use history_cache::CachedCodeBlock;
 use questionnaire::QuestionnaireCancelReason;
 use ratatui::DefaultTerminal;
 use tokio::sync::oneshot;

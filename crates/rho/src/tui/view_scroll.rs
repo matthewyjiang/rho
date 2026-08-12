@@ -18,20 +18,6 @@ impl App {
         self.history.scroll_to_bottom();
     }
 
-    pub(super) fn scroll_history_page_up(&mut self, width: usize, height: usize, now: Instant) {
-        let page = self
-            .history_content_height_for_screen(width, height, now)
-            .max(1);
-        self.scroll_history_lines(width, height, now, -(page as isize));
-    }
-
-    fn scroll_history_page_down(&mut self, width: usize, height: usize, now: Instant) {
-        let page = self
-            .history_content_height_for_screen(width, height, now)
-            .max(1);
-        self.scroll_history_lines(width, height, now, page as isize);
-    }
-
     pub(super) fn scroll_history_lines(
         &mut self,
         width: usize,
@@ -140,7 +126,10 @@ impl App {
             (_, KeyCode::PageUp) => {
                 self.reveal_history_scrollbar(now);
                 self.history.set_scrollbar_drag(None);
-                self.scroll_history_page_up(width, height, now);
+                let page = self
+                    .history_content_height_for_screen(width, height, now)
+                    .max(1);
+                self.scroll_history_lines(width, height, now, -(page as isize));
                 self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 Ok(true)
@@ -148,7 +137,10 @@ impl App {
             (_, KeyCode::PageDown) => {
                 self.reveal_history_scrollbar(now);
                 self.history.set_scrollbar_drag(None);
-                self.scroll_history_page_down(width, height, now);
+                let page = self
+                    .history_content_height_for_screen(width, height, now)
+                    .max(1);
+                self.scroll_history_lines(width, height, now, page as isize);
                 self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 Ok(true)
