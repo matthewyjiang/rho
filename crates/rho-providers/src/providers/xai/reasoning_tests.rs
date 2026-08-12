@@ -1,6 +1,7 @@
 use pretty_assertions::assert_eq;
 
 use super::*;
+use crate::model::ModelMetadata;
 
 #[test]
 fn exact_mandatory_reasoning_clamps_requests_and_never_emits_none() {
@@ -37,9 +38,11 @@ fn exact_optional_reasoning_encodes_off_as_none() {
 
 #[test]
 fn unknown_metadata_does_not_synthesize_reasoning_and_non_configurable_omits_it() {
-    let unknown = XaiReasoningProfile::from_metadata("grok-4.5", None);
-    assert_eq!(unknown.effort(ReasoningLevel::Off), None);
-    assert_eq!(unknown.effort(ReasoningLevel::High), Some("high"));
+    for model in ["grok-4.5", "grok-4.6"] {
+        let mandatory = XaiReasoningProfile::from_metadata(model, None);
+        assert_eq!(mandatory.effort(ReasoningLevel::Off), None);
+        assert_eq!(mandatory.effort(ReasoningLevel::High), Some("high"));
+    }
 
     let optional = XaiReasoningProfile::from_metadata("grok-4.3", None);
     assert_eq!(optional.effort(ReasoningLevel::Off), Some("none"));
@@ -51,4 +54,30 @@ fn unknown_metadata_does_not_synthesize_reasoning_and_non_configurable_omits_it(
 
     let fixed = XaiReasoningProfile::not_configurable();
     assert_eq!(fixed.effort(ReasoningLevel::High), None);
+}
+
+// Covers: models.dev levels clamp generic Rho values; the offline Mandatory
+// fallback must not emit minimal/max once a catalog row is known.
+// Owner: xAI reasoning profile
+#[test]
+fn catalog_metadata_clamps_flagship_grok_generic_levels() {
+    let metadata = ModelMetadata {
+        supported_reasoning_levels: Some(vec![
+            ReasoningLevel::Low,
+            ReasoningLevel::Medium,
+            ReasoningLevel::High,
+        ]),
+        reasoning_capabilities_known: true,
+        reasoning_metadata_complete: true,
+        ..ModelMetadata::default()
+    };
+
+    for model in ["grok-4.5", "grok-4.6"] {
+        let profile = XaiReasoningProfile::from_metadata(model, Some(metadata.clone()));
+        assert_eq!(profile.effort(ReasoningLevel::Minimal), Some("low"));
+        assert_eq!(profile.effort(ReasoningLevel::Max), Some("high"));
+        assert_eq!(profile.effort(ReasoningLevel::Xhigh), Some("high"));
+        assert_eq!(profile.effort(ReasoningLevel::Off), Some("low"));
+        assert_eq!(profile.effort(ReasoningLevel::High), Some("high"));
+    }
 }

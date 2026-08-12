@@ -127,7 +127,7 @@ fn legacy_xai_provider_override_normalizes_to_oauth_mode() {
 
     assert!(apply_overrides(&mut config, &cli).unwrap());
     assert_eq!(config.provider, "xai");
-    assert_eq!(config.model, "grok-4.5");
+    assert_eq!(config.model, "grok-4.6");
     assert_eq!(config.auth, "xai-oauth");
 }
 
