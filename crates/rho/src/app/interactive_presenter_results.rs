@@ -654,20 +654,11 @@ pub(super) fn count_nonempty_lines(content: &str) -> Option<u64> {
     (count > 0).then_some(count)
 }
 
-/// Timeout budget fact for shell cards. The TUI appends live elapsed while the
-/// call is running (`timeout none · 1.2s`).
+/// Timeout budget fact for shell cards. The TUI decorates it with a live
+/// elapsed clock while the call runs (`timeout none · 1.2s`).
 fn push_shell_timeout_fact(card: &mut ToolCard, arguments: &serde_json::Value) {
-    card.push_fact(ToolFact::Meta {
-        text: shell_timeout_fact_text(arguments),
-    });
-}
-
-fn shell_timeout_fact_text(arguments: &serde_json::Value) -> String {
-    match arguments
+    let seconds = arguments
         .get("timeout_seconds")
-        .and_then(|value| value.as_u64())
-    {
-        Some(seconds) => format!("timeout {seconds}s"),
-        None => "timeout none".into(),
-    }
+        .and_then(|value| value.as_u64());
+    card.push_fact(ToolFact::Timeout { seconds });
 }

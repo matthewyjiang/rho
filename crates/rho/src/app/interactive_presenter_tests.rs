@@ -229,7 +229,7 @@ fn advisor_cards_use_status_first_headers() {
     assert_eq!(failed.header, ToolHeader::status_first("advisor", "failed"));
 }
 
-// Covers: shell start cards must expose timeout so the live elapsed suffix has a home
+// Covers: shell start cards must expose the typed timeout budget fact
 // Owner: interactive presenter
 #[test]
 fn shell_start_card_includes_timeout_fact() {
@@ -248,12 +248,7 @@ fn shell_start_card_includes_timeout_fact() {
     let card = start_card(&with_timeout, dir.path());
     assert_eq!(card.status, ToolStatus::Running);
     assert_eq!(card.header, ToolHeader::shell("$", Some("sleep 1".into())));
-    assert_eq!(
-        card.facts,
-        vec![ToolFact::Meta {
-            text: "timeout 30s".into()
-        }]
-    );
+    assert_eq!(card.facts, vec![ToolFact::Timeout { seconds: Some(30) }]);
 
     let no_timeout = ToolView {
         kind: ToolKind::Bash,
@@ -262,10 +257,5 @@ fn shell_start_card_includes_timeout_fact() {
         metadata: Default::default(),
     };
     let card = start_card(&no_timeout, dir.path());
-    assert_eq!(
-        card.facts,
-        vec![ToolFact::Meta {
-            text: "timeout none".into()
-        }]
-    );
+    assert_eq!(card.facts, vec![ToolFact::Timeout { seconds: None }]);
 }

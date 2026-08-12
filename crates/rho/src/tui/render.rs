@@ -554,13 +554,13 @@ fn render_non_assistant_entry(
             unreachable!("assistant and reasoning entries are rendered as markdown")
         }
         Entry::Tool(tool) => {
+            let card = super::tool_card_render::with_live_shell_elapsed(tool);
             super::tool_card_render::push_tool_card(
                 lines,
-                &tool.card,
+                &card,
                 width,
                 max_tool_output_lines,
                 tool.expanded,
-                super::tool_card_render::live_shell_elapsed(tool),
             );
         }
         Entry::Notice(text) => {

@@ -105,6 +105,13 @@ pub enum ToolFact {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         duration_ms: Option<u64>,
     },
+    /// Shell timeout budget in seconds; `None` when the call has no timeout.
+    /// Structured so hosts can decorate it live (elapsed clock) without
+    /// parsing display text.
+    Timeout {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        seconds: Option<u64>,
+    },
     Count {
         label: String,
         value: u64,
@@ -455,6 +462,10 @@ impl ToolFact {
                 Some(_) | None => format!("{value} {label}"),
             },
             Self::Meta { text } | Self::Error { text } | Self::Text { text } => text.clone(),
+            Self::Timeout { seconds } => match seconds {
+                Some(seconds) => format!("timeout {seconds}s"),
+                None => "timeout none".into(),
+            },
             Self::Progress { completed, total } => match total {
                 Some(total) => format!("{completed}/{total}"),
                 None => format!("{completed}"),

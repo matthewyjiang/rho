@@ -178,3 +178,17 @@ fn previews_do_not_start_elapsed_until_started() {
     batch.started(call.clone(), card("running"));
     assert!(batch.running[&call].started_at.is_some());
 }
+
+// Covers: interrupted rows must not carry a live clock into the retained feed
+// Owner: pure unit (tool call batch)
+#[test]
+fn interrupted_entries_drop_the_live_clock() {
+    let mut batch = ToolCallBatch::default();
+    let call = call_id("call-shell");
+    batch.started(call.clone(), card("running"));
+    let interrupted = batch.interrupted_entries();
+    assert!(interrupted.iter().all(|entry| entry.started_at.is_none()));
+    assert!(interrupted
+        .iter()
+        .all(|entry| entry.card.status == ToolStatus::Interrupted));
+}

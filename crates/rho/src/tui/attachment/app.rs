@@ -23,7 +23,7 @@ use crate::{
 
 use super::super::{
     feed_image::DEFAULT_IMAGE_HEIGHT,
-    mouse_capture,
+    live_started_at, mouse_capture,
     provider_attempt::ProviderAttempt,
     render::{entry_lines, truncate_one_line},
     scrollbar::{HistoryScrollChrome, HistoryScrollbar, ScrollbarMouseInput},
@@ -253,10 +253,7 @@ impl AttachmentApp {
         let key = attachment_tool_key(key);
         let previous = self.pending_tools.get(&key);
         let expanded = previous.is_some_and(|entry| entry.expanded);
-        let started_at = previous.and_then(|entry| entry.started_at).or_else(|| {
-            matches!(card.status, rho_tools::tool_card::ToolStatus::Running)
-                .then(std::time::Instant::now)
-        });
+        let started_at = live_started_at(previous, card.status);
         if !self.pending_tools.contains_key(&key) {
             self.pending_order.push(key.clone());
         }
