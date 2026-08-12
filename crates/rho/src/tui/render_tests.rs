@@ -430,7 +430,15 @@ fn pad_display_line_keeps_user_message_background() {
 // Owner: pure TUI render policy.
 #[test]
 fn error_entries_include_text_severity_marker() {
+    struct RestoreTheme(String);
+    impl Drop for RestoreTheme {
+        fn drop(&mut self) {
+            Theme::apply_committed(&self.0);
+        }
+    }
+
     let _theme_lock = crate::tui::theme::theme_test_lock();
+    let _restore_theme = RestoreTheme(Theme::committed_id());
     Theme::apply_committed("monochrome-dark");
 
     let message = "could not save theme";
@@ -451,7 +459,7 @@ fn error_entries_include_text_severity_marker() {
     let notice_text = line_text(&notice_lines[0]);
     assert_eq!(
         error_text.trim(),
-        format!("{ERROR_ENTRY_MARKER}{message}"),
+        format!("error: {message}"),
         "errors keep a stable text marker under monochrome"
     );
     assert_eq!(notice_text.trim(), message, "notices stay unmarked");
@@ -460,6 +468,4 @@ fn error_entries_include_text_severity_marker() {
         notice_text.trim(),
         "same body text must not collide once color is gone"
     );
-
-    Theme::apply_committed("terminal");
 }
