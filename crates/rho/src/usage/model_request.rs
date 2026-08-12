@@ -2,7 +2,10 @@ use std::num::NonZeroUsize;
 
 use rho_sdk::{
     model::{ModelEvent, ModelRequest, ModelResponse, ModelUsage},
-    provider::{provider_event_channel, ModelProvider, ProviderRequestEvent, ProviderStreamEvent},
+    provider::{
+        provider_event_channel, ModelProvider, ModelRequestOptions, ProviderRequestEvent,
+        ProviderStreamEvent,
+    },
     ProviderError, ProviderRequestOutcome, ProviderRequestUsageContext, ProviderRequestUsageEvent,
     ProviderRequestUsageRecording,
 };
@@ -10,16 +13,17 @@ use rho_sdk::{
 const EVENT_CAPACITY: usize = 16;
 
 /// Executes and durably accounts for a provider request outside the agent loop.
-pub(crate) async fn send_recorded(
+pub(crate) async fn send_recorded_with_options(
     provider: &dyn ModelProvider,
     request: ModelRequest<'_>,
+    options: ModelRequestOptions,
     context: ProviderRequestUsageContext,
     recording: ProviderRequestUsageRecording,
 ) -> Result<(ModelResponse, ModelUsage), ProviderError> {
-    send_recorded_from_attempt(provider, request, context, recording, 1).await
+    send_recorded_from_attempt_with_options(provider, request, options, context, recording, 1).await
 }
 
-/// Like [`send_recorded`], but continues attempt indexes after earlier physical requests.
+/// Continues attempt indexes after earlier physical requests.
 pub(crate) async fn send_recorded_from_attempt(
     provider: &dyn ModelProvider,
     request: ModelRequest<'_>,
@@ -27,9 +31,30 @@ pub(crate) async fn send_recorded_from_attempt(
     recording: ProviderRequestUsageRecording,
     first_attempt_index: usize,
 ) -> Result<(ModelResponse, ModelUsage), ProviderError> {
-    send_recorded_observing(
+    send_recorded_from_attempt_with_options(
         provider,
         request,
+        ModelRequestOptions::default(),
+        context,
+        recording,
+        first_attempt_index,
+    )
+    .await
+}
+
+/// Like [`send_recorded_from_attempt`], with additive provider request options.
+async fn send_recorded_from_attempt_with_options(
+    provider: &dyn ModelProvider,
+    request: ModelRequest<'_>,
+    options: ModelRequestOptions,
+    context: ProviderRequestUsageContext,
+    recording: ProviderRequestUsageRecording,
+    first_attempt_index: usize,
+) -> Result<(ModelResponse, ModelUsage), ProviderError> {
+    send_recorded_observing_with_options(
+        provider,
+        request,
+        options,
         context,
         recording,
         first_attempt_index,
@@ -38,14 +63,15 @@ pub(crate) async fn send_recorded_from_attempt(
     .await
 }
 
-/// Like [`send_recorded_from_attempt`], with a live observer for stream events.
+/// Executes a provider request with a live observer for stream events.
 ///
 /// The observer runs on the usage-collection task as each provider event arrives.
 /// It must stay cheap: heavy work belongs outside this path. Dropping or ignoring
 /// events is fine; the final response and durable usage accounting stay unchanged.
-pub(crate) async fn send_recorded_observing(
+pub(crate) async fn send_recorded_observing_with_options(
     provider: &dyn ModelProvider,
     request: ModelRequest<'_>,
+    options: ModelRequestOptions,
     context: ProviderRequestUsageContext,
     recording: ProviderRequestUsageRecording,
     first_attempt_index: usize,
@@ -54,7 +80,7 @@ pub(crate) async fn send_recorded_observing(
     let cancellation = request.cancellation.clone();
     let (events, mut receiver) =
         provider_event_channel(NonZeroUsize::new(EVENT_CAPACITY).expect("capacity is nonzero"));
-    let provider_call = provider.send_turn_stream(request, events);
+    let provider_call = provider.send_turn_stream_with_options(request, options, events);
     let collect_usage = async {
         let mut usage = ModelUsage::default();
         let mut failed_attempts = Vec::new();

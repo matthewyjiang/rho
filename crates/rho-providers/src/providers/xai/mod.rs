@@ -86,6 +86,7 @@ impl XaiProvider {
     async fn send_request(
         &self,
         request: ModelRequest<'_>,
+        max_output_tokens: Option<u32>,
         on_request_event: Option<
             &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                       + Send),
@@ -97,6 +98,7 @@ impl XaiProvider {
             &self.model,
             &self.reasoning,
             request,
+            max_output_tokens,
             self.hosted_web_search,
         )?;
         let mut on_request_event = on_request_event;
@@ -119,13 +121,16 @@ impl XaiProvider {
     async fn send_responses_turn(
         &self,
         request: ModelRequest<'_>,
+        max_output_tokens: Option<u32>,
         mut on_event: Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
         on_request_event: Option<
             &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                       + Send),
         >,
     ) -> Result<ModelResponse, ModelError> {
-        let response = self.send_request(request, on_request_event).await?;
+        let response = self
+            .send_request(request, max_output_tokens, on_request_event)
+            .await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
         collect_codex_sse_response(response, &mut on_event)
             .await
@@ -141,7 +146,9 @@ impl XaiProvider {
         &self,
         request: ModelRequest<'_>,
     ) -> Result<ModelResponse, ModelError> {
-        let response = self.send_request(request, None).await?;
+        let response = self
+            .send_request(request, /*max_output_tokens*/ None, None)
+            .await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
         crate::providers::send_stream::collect_codex_model_response_silent(response).await
     }
@@ -154,9 +161,31 @@ impl XaiProvider {
         on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                   + Send),
     ) -> Result<ModelResponse, ModelError> {
-        self.send_responses_turn(request, Some(on_event), Some(on_request_event))
-            .await
+        self.send_responses_turn(
+            request,
+            /*max_output_tokens*/ None,
+            Some(on_event),
+            Some(on_request_event),
+        )
+        .await
+    }
+
+    pub(crate) async fn stream_turn_with_options(
+        &self,
+        request: ModelRequest<'_>,
+        options: rho_sdk::provider::ModelRequestOptions,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+        on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
+                  + Send),
+    ) -> Result<ModelResponse, ModelError> {
+        self.send_responses_turn(
+            request,
+            options.max_output_tokens(),
+            Some(on_event),
+            Some(on_request_event),
+        )
+        .await
     }
 }
 
-crate::impl_sdk_model_provider!(XaiProvider, native_compact);
+crate::impl_sdk_model_provider!(XaiProvider, native_compact, request_options);

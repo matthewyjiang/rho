@@ -161,6 +161,7 @@ pub(super) fn build_responses_create_body(
     reasoning_profile: &OpenAiReasoningProfile,
     request: ModelRequest<'_>,
     service_tier: Option<ServiceTier>,
+    max_output_tokens: Option<u32>,
     hosted_web_search: bool,
 ) -> Result<Value, ModelError> {
     let contract = profile.contract();
@@ -192,6 +193,9 @@ pub(super) fn build_responses_create_body(
     }
     if let Some(parallel_tool_calls) = contract.parallel_tool_calls() {
         body["parallel_tool_calls"] = json!(parallel_tool_calls);
+    }
+    if let Some(max_output_tokens) = max_output_tokens {
+        body["max_output_tokens"] = json!(max_output_tokens);
     }
     attach_prompt_cache_and_reasoning(&mut body, prompt_cache_key, reasoning);
     body["include"] = json!(["reasoning.encrypted_content"]);
@@ -253,6 +257,7 @@ fn build_codex_responses_body_with_tier(
         &OpenAiReasoningProfile::unknown(),
         request,
         service_tier,
+        /*max_output_tokens*/ None,
         hosted_web_search,
     )
 }

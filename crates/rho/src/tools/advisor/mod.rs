@@ -396,6 +396,7 @@ async fn consult_advisor_with_provider(
             definition: internal_definition(ADVISOR_AGENT_ID),
             usage_purpose: USAGE_PURPOSE,
             reasoning: Some(reasoning),
+            request_options: Default::default(),
             input: transcript,
             cancellation,
             session_id,

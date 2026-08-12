@@ -84,7 +84,7 @@ flowchart LR
 - `plan` allows investigation but denies file writes and process execution.
 - `supervised` asks for confirmation before file writes and process execution. Reads, network access, skills, and instruction discovery do not prompt.
 
-Configure the classifier under **Agent behavior** in `/config`, or in config as `[internal_agents.permission-classifier]`. Rho does not pick a default classifier model. Override the mode for one invocation with `--permission-mode bypass|auto|plan|supervised` (not persisted).
+Configure the classifier under **Agent behavior** in `/config`, or in config as `[internal_agents.permission-classifier]`. Rho does not pick a default classifier model. The classifier defaults to reasoning off, caps output tokens for the JSON verdict, and sends a trimmed transcript (all user messages, recent tool calls, truncated large arguments) so Auto-mode approvals stay fast. Override the mode for one invocation with `--permission-mode bypass|auto|plan|supervised` (not persisted).
 
 Change the mode from **Agent behavior** > **Permission mode** in `/config`. An interactive mode change applies before the next turn and preserves the current session ID and history, but clears every remembered **Allow for session** approval. In a supervised approval prompt, the default focus is **Deny**. Choose **Allow once**, **Allow for session**, or **Deny**. A session approval remembers only the exact structured capability request for the current session. Pressing Escape denies the request and cancels the current run; choosing **Deny** with Enter rejects only that operation so the run can continue.
 

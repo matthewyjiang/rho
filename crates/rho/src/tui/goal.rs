@@ -200,6 +200,7 @@ pub(super) async fn evaluate(
             definition: internal_definition(GOAL_JUDGE_AGENT_ID),
             usage_purpose: "goal",
             reasoning: Some(reasoning),
+            request_options: Default::default(),
             input: format!(
                 "Completion condition:\n{condition}\n\nConversation transcript:\n{transcript}"
             ),

@@ -96,6 +96,57 @@ fn transcript_appends_pending_capability_details_at_end() {
     );
 }
 
+// Covers: large tool arguments are truncated so classifier latency stays bounded
+// Owner: permission classifier transcript rendering
+#[test]
+fn transcript_truncates_large_tool_arguments() {
+    let huge = "x".repeat(2_000);
+    let history = vec![Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
+        id: "call-1".into(),
+        name: "write_file".into(),
+        arguments: serde_json::json!({"path": "big.rs", "content": huge}),
+    })])];
+    let pending = ApprovalRequest::new(
+        CapabilityRequest::write_path("big.rs", PathScope::PrimaryWorkspace, source("write_file")),
+        "write",
+    );
+    let transcript = render_classifier_transcript(&history, &pending).unwrap();
+    let args = transcript
+        .lines()
+        .find(|line| line.contains("tool_call"))
+        .expect("tool call line");
+    assert!(args.contains('…'));
+    assert!(args.len() < 800);
+}
+
+// Covers: old tool calls drop while every user intent anchor remains
+// Owner: permission classifier transcript rendering
+#[test]
+fn transcript_keeps_all_users_and_only_recent_tool_calls() {
+    let mut history = vec![Message::User(vec![ContentBlock::Text(
+        "do the work".into(),
+    )])];
+    for index in 0..50 {
+        history.push(Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
+            id: format!("call-{index}"),
+            name: "read_file".into(),
+            arguments: serde_json::json!({"path": format!("f{index}.rs")}),
+        })]));
+    }
+    history.push(Message::User(vec![ContentBlock::Text(
+        "and then ship".into(),
+    )]));
+    let pending = ApprovalRequest::new(
+        CapabilityRequest::write_path("ship.rs", PathScope::PrimaryWorkspace, source("write_file")),
+        "write",
+    );
+    let transcript = render_classifier_transcript(&history, &pending).unwrap();
+    assert!(transcript.contains("do the work"));
+    assert!(transcript.contains("and then ship"));
+    assert!(!transcript.contains("f0.rs"));
+    assert!(transcript.contains("f49.rs"));
+}
+
 // Covers: untrusted newlines and reserved labels stay inside JSON fields and
 // cannot forge additional transcript records or a second pending section.
 // Owner: permission classifier transcript rendering.

@@ -73,7 +73,7 @@ async fn recorded_model_request_writes_accumulated_usage() {
     let context = rho_sdk::ProviderRequestUsageContext::for_purpose(provider.identity(), "title")
         .with_session_id(session_id)
         .with_workspace_path("/workspace/title");
-    let (response, usage) = send_recorded(
+    let (response, usage) = send_recorded_with_options(
         &provider,
         ModelRequest {
             messages: &messages,
@@ -82,6 +82,7 @@ async fn recorded_model_request_writes_accumulated_usage() {
             reasoning_level: Default::default(),
             prompt_cache_key: None,
         },
+        rho_sdk::provider::ModelRequestOptions::default(),
         context,
         rho_sdk::ProviderRequestUsageRecording::new(recorder.clone()),
     )
@@ -167,7 +168,7 @@ async fn recorded_non_agent_request_persists_each_physical_attempt() {
     );
     let messages = [Message::user_text("request")];
 
-    send_recorded(
+    send_recorded_with_options(
         &provider,
         ModelRequest {
             messages: &messages,
@@ -176,6 +177,7 @@ async fn recorded_non_agent_request_persists_each_physical_attempt() {
             reasoning_level: Default::default(),
             prompt_cache_key: None,
         },
+        rho_sdk::provider::ModelRequestOptions::default(),
         rho_sdk::ProviderRequestUsageContext::for_purpose(provider.identity(), "compaction")
             .with_parent_session_id(rho_sdk::SessionId::from_string("parent-agent").unwrap()),
         rho_sdk::ProviderRequestUsageRecording::new(recorder),
@@ -236,7 +238,7 @@ async fn non_agent_recorder_failures_are_non_fatal_bounded_diagnostics() {
     let messages = [Message::user_text("request")];
     let recording = rho_sdk::ProviderRequestUsageRecording::new(FailingSdkRecorder);
 
-    let (response, _) = send_recorded(
+    let (response, _) = send_recorded_with_options(
         &provider,
         ModelRequest {
             messages: &messages,
@@ -245,6 +247,7 @@ async fn non_agent_recorder_failures_are_non_fatal_bounded_diagnostics() {
             reasoning_level: Default::default(),
             prompt_cache_key: None,
         },
+        rho_sdk::provider::ModelRequestOptions::default(),
         rho_sdk::ProviderRequestUsageContext::for_purpose(provider.identity(), "title"),
         recording.clone(),
     )

@@ -59,9 +59,10 @@ impl AnthropicProvider {
         &self,
         request: ModelRequest<'_>,
         stream: bool,
+        max_output_tokens: Option<u32>,
     ) -> Result<AnthropicRequest, ModelError> {
         let target = self.model_identity();
-        let max_tokens = (self.max_tokens)(&self.model);
+        let max_tokens = max_output_tokens.unwrap_or_else(|| (self.max_tokens)(&self.model));
         let (thinking, output_config) =
             thinking_config(&self.model, request.reasoning_level, max_tokens)?;
         let (system, mut messages) = split_system_and_messages(
@@ -106,7 +107,8 @@ impl AnthropicProvider {
         &self,
         request: ModelRequest<'_>,
     ) -> Result<ModelResponse, ModelError> {
-        self.send_messages(request).await
+        self.send_messages(request, /*max_output_tokens*/ None)
+            .await
     }
 
     /// Streams one turn through a `Send` callback for the public SDK adapter.
@@ -117,11 +119,28 @@ impl AnthropicProvider {
         _on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                   + Send),
     ) -> Result<ModelResponse, ModelError> {
-        self.send_messages_stream(request, on_event).await
+        self.send_messages_stream(request, /*max_output_tokens*/ None, on_event)
+            .await
     }
 
-    async fn send_messages(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
-        let body = self.request_body(request, false)?;
+    pub(crate) async fn stream_turn_with_options(
+        &self,
+        request: ModelRequest<'_>,
+        options: rho_sdk::provider::ModelRequestOptions,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+        _on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
+                  + Send),
+    ) -> Result<ModelResponse, ModelError> {
+        self.send_messages_stream(request, options.max_output_tokens(), on_event)
+            .await
+    }
+
+    async fn send_messages(
+        &self,
+        request: ModelRequest<'_>,
+        max_output_tokens: Option<u32>,
+    ) -> Result<ModelResponse, ModelError> {
+        let body = self.request_body(request, false, max_output_tokens)?;
         let response = self
             .client
             .post(self.messages_url())
@@ -138,9 +157,10 @@ impl AnthropicProvider {
     async fn send_messages_stream(
         &self,
         request: ModelRequest<'_>,
+        max_output_tokens: Option<u32>,
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
-        let body = self.request_body(request, true)?;
+        let body = self.request_body(request, true, max_output_tokens)?;
         let response = self
             .client
             .post(self.messages_url())
@@ -323,7 +343,7 @@ fn mark_cache_control_points(messages: &mut [AnthropicMessage]) {
     }
 }
 
-crate::impl_sdk_model_provider!(AnthropicProvider);
+crate::impl_sdk_model_provider!(AnthropicProvider, request_options);
 
 #[cfg(test)]
 #[path = "provider_tests.rs"]

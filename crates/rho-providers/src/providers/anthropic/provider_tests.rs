@@ -25,6 +25,7 @@ fn request_body(
             prompt_cache_key: None,
         },
         false,
+        /*max_output_tokens*/ None,
     )
 }
 
@@ -53,6 +54,7 @@ fn request_body_serializes_messages_tools_and_stream_flag() {
                 prompt_cache_key: Some("ignored"),
             },
             true,
+            /*max_output_tokens*/ None,
         )
         .unwrap();
 
@@ -210,6 +212,7 @@ fn request_body_removes_top_level_schema_composition_from_tools() {
                 prompt_cache_key: None,
             },
             false,
+            /*max_output_tokens*/ None,
         )
         .unwrap();
 
@@ -259,6 +262,7 @@ fn request_body_types_pure_composition_tool_schemas_for_anthropic() {
                 prompt_cache_key: None,
             },
             false,
+            /*max_output_tokens*/ None,
         )
         .unwrap();
 
@@ -292,6 +296,7 @@ fn request_body_forces_non_object_root_schema_type_to_object() {
                 prompt_cache_key: None,
             },
             false,
+            /*max_output_tokens*/ None,
         )
         .unwrap();
 

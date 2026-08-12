@@ -195,6 +195,7 @@ fn kimi_code_k3_serializes_an_unnormalized_effort_as_is() {
                 prompt_cache_key: None,
             },
             /*stream*/ false,
+            /*max_output_tokens*/ None,
         )
         .unwrap();
 
@@ -344,6 +345,7 @@ fn ollama_cloud_metadata_drives_top_level_reasoning_effort() {
                     prompt_cache_key: None,
                 },
                 /*stream*/ false,
+                /*max_output_tokens*/ None,
             )
             .unwrap(),
     )
@@ -372,6 +374,7 @@ fn ollama_cloud_metadata_drives_top_level_reasoning_effort() {
                     prompt_cache_key: None,
                 },
                 /*stream*/ false,
+                /*max_output_tokens*/ None,
             )
             .unwrap(),
     )
@@ -420,6 +423,7 @@ fn request_body(
                 prompt_cache_key: None,
             },
             /*stream*/ false,
+            /*max_output_tokens*/ None,
         )
         .unwrap();
     serde_json::to_value(request).unwrap()
@@ -446,6 +450,7 @@ fn poolside_request_body_uses_namespaced_model_and_thinking_control() {
                 prompt_cache_key: None,
             },
             /*stream*/ false,
+            /*max_output_tokens*/ None,
         )
         .unwrap();
 
@@ -463,6 +468,7 @@ fn poolside_request_body_uses_namespaced_model_and_thinking_control() {
                 prompt_cache_key: None,
             },
             /*stream*/ false,
+            /*max_output_tokens*/ None,
         )
         .unwrap();
     assert_eq!(

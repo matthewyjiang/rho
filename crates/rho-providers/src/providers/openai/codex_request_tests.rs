@@ -55,6 +55,7 @@ async fn priority_service_tier_is_limited_to_codex_auth() {
         &OpenAiReasoningProfile::unknown(),
         request,
         Some(ServiceTier::Priority),
+        /*max_output_tokens*/ None,
         /*hosted_web_search*/ true,
     )
     .unwrap();
@@ -221,6 +222,7 @@ async fn standard_create_wire_contract_is_auth_flavor_specific() {
                 prompt_cache_key: None,
             },
             /* service_tier */ None,
+            /*max_output_tokens*/ None,
             /*hosted_web_search*/ true,
         )
         .unwrap();
@@ -286,6 +288,28 @@ async fn compact_body_omits_stream_tools_and_tool_policy_fields() {
         .get("reasoning")
         .and_then(|value| value.get("context"))
         .is_none());
+}
+
+#[tokio::test]
+async fn max_output_tokens_is_forwarded_on_create_bodies() {
+    let profile = ResponsesProfile::from_auth(&Auth::ApiKey("key".into()), "gpt-5.5");
+    let body = build_responses_create_body(
+        &profile,
+        &OpenAiReasoningProfile::unknown(),
+        ModelRequest {
+            messages: &[Message::user_text("hello")],
+            tools: &[],
+            cancellation: Default::default(),
+            reasoning_level: Default::default(),
+            prompt_cache_key: None,
+        },
+        /*service_tier*/ None,
+        Some(128),
+        /*hosted_web_search*/ true,
+    )
+    .unwrap();
+
+    assert_eq!(body["max_output_tokens"], 128);
 }
 
 fn assert_compact_body_omits_tool_fields(body: &Value) {

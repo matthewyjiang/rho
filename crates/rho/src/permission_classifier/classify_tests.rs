@@ -61,7 +61,7 @@ async fn sends_classifier_prompt_transcript_and_parses_verdict() {
 
     let verdict = classify_capability_request_with_provider(
         &provider,
-        ReasoningLevel::Low,
+        ReasoningLevel::Off,
         ClassifyRequest {
             history: &history,
             pending: &pending,
@@ -88,7 +88,11 @@ async fn sends_classifier_prompt_transcript_and_parses_verdict() {
             Message::user_text(render_classifier_transcript(&history, &pending).unwrap())
         ]
     );
-    assert_eq!(requests[0].reasoning_level, ReasoningLevel::Low);
+    assert_eq!(requests[0].reasoning_level, ReasoningLevel::Off);
+    assert_eq!(
+        requests[0].max_output_tokens,
+        Some(super::classify::CLASSIFIER_MAX_OUTPUT_TOKENS)
+    );
     assert!(requests[0].tools.is_empty());
 }
 
@@ -108,7 +112,7 @@ async fn invalid_classifier_response_fails_closed() {
 
     let verdict = classify_capability_request_with_provider(
         &provider,
-        ReasoningLevel::Low,
+        ReasoningLevel::Off,
         ClassifyRequest {
             history: &history,
             pending: &pending,

@@ -64,7 +64,7 @@ impl OpenAiCompatibleProvider {
         &self,
         request: ModelRequest<'_>,
     ) -> Result<ModelResponse, ModelError> {
-        let body = self.request_body(request, false)?;
+        let body = self.request_body(request, false, /*max_output_tokens*/ None)?;
         let response = self.send(&body, None).await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
         // `ModelResponse` cannot carry ProviderContext. Reasoning replay for
@@ -83,17 +83,41 @@ impl OpenAiCompatibleProvider {
         on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                   + Send),
     ) -> Result<ModelResponse, ModelError> {
-        self.stream_inner(request, on_event, on_request_event).await
+        self.stream_inner(
+            request,
+            /*max_output_tokens*/ None,
+            on_event,
+            on_request_event,
+        )
+        .await
+    }
+
+    pub(crate) async fn stream_turn_with_options(
+        &self,
+        request: ModelRequest<'_>,
+        options: rho_sdk::provider::ModelRequestOptions,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+        on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
+                  + Send),
+    ) -> Result<ModelResponse, ModelError> {
+        self.stream_inner(
+            request,
+            options.max_output_tokens(),
+            on_event,
+            on_request_event,
+        )
+        .await
     }
 
     async fn stream_inner(
         &self,
         request: ModelRequest<'_>,
+        max_output_tokens: Option<u32>,
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
         on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                   + Send),
     ) -> Result<ModelResponse, ModelError> {
-        let body = self.request_body(request, true)?;
+        let body = self.request_body(request, true, max_output_tokens)?;
         let response = self.send(&body, Some(on_request_event)).await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
         let mut chat_stream = ChatStreamAccumulator::new(self.dialect.chat_tool_call_policy());
@@ -135,6 +159,7 @@ impl OpenAiCompatibleProvider {
         &self,
         request: ModelRequest<'_>,
         stream: bool,
+        max_output_tokens: Option<u32>,
     ) -> Result<ChatRequest, ModelError> {
         let target = self.model_identity();
         let messages = request
@@ -165,6 +190,7 @@ impl OpenAiCompatibleProvider {
             stream_options: stream.then_some(ChatStreamOptions {
                 include_usage: true,
             }),
+            max_tokens: max_output_tokens,
             reasoning: reasoning_fields.reasoning,
             reasoning_effort: reasoning_fields.reasoning_effort,
             thinking: reasoning_fields.thinking,
@@ -251,7 +277,7 @@ enum RequestAuth<'a> {
     OllamaDevice(&'a OllamaDeviceKey),
 }
 
-crate::impl_sdk_model_provider!(OpenAiCompatibleProvider);
+crate::impl_sdk_model_provider!(OpenAiCompatibleProvider, request_options);
 
 #[cfg(test)]
 #[path = "openai_compatible_tests.rs"]

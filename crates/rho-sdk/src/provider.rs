@@ -305,6 +305,7 @@ pub enum ProviderCancellationMode {
 #[non_exhaustive]
 pub struct ModelRequestOptions {
     service_tier: Option<ServiceTier>,
+    max_output_tokens: Option<u32>,
 }
 
 impl ModelRequestOptions {
@@ -314,9 +315,23 @@ impl ModelRequestOptions {
         self
     }
 
+    /// Caps generated output tokens for this turn when the provider supports it.
+    ///
+    /// Providers that cannot honor the budget ignore it. Callers that need a
+    /// hard ceiling should still fail closed on truncated or invalid output.
+    pub fn with_max_output_tokens(mut self, max_output_tokens: u32) -> Self {
+        self.max_output_tokens = Some(max_output_tokens);
+        self
+    }
+
     /// Returns the requested provider service class, if any.
     pub fn service_tier(&self) -> Option<ServiceTier> {
         self.service_tier
+    }
+
+    /// Returns the requested output-token budget, if any.
+    pub fn max_output_tokens(&self) -> Option<u32> {
+        self.max_output_tokens
     }
 }
 
@@ -402,6 +417,7 @@ pub struct RecordedModelRequest {
     pub tools: Vec<crate::model::ToolSpec>,
     pub reasoning_level: crate::ReasoningLevel,
     pub service_tier: Option<crate::model::ServiceTier>,
+    pub max_output_tokens: Option<u32>,
     pub prompt_cache_key: Option<String>,
 }
 
@@ -495,7 +511,7 @@ impl ScriptedProvider {
     fn take_turn(
         &self,
         request: &ModelRequest<'_>,
-        service_tier: Option<ServiceTier>,
+        options: ModelRequestOptions,
     ) -> Result<ScriptedTurn, ProviderError> {
         self.requests
             .lock()
@@ -504,7 +520,8 @@ impl ScriptedProvider {
                 messages: request.messages.to_vec(),
                 tools: request.tools.to_vec(),
                 reasoning_level: request.reasoning_level,
-                service_tier,
+                service_tier: options.service_tier(),
+                max_output_tokens: options.max_output_tokens(),
                 prompt_cache_key: request.prompt_cache_key.map(str::to_owned),
             });
         self.turns
@@ -539,6 +556,7 @@ impl ScriptedProvider {
                 tools: request.tools.to_vec(),
                 reasoning_level: request.reasoning_level,
                 service_tier: None,
+                max_output_tokens: None,
                 prompt_cache_key: request.prompt_cache_key.map(str::to_owned),
             });
         queue.pop_front()
@@ -547,7 +565,7 @@ impl ScriptedProvider {
     fn stream_turn<'a>(
         &'a self,
         request: ModelRequest<'a>,
-        service_tier: Option<ServiceTier>,
+        options: ModelRequestOptions,
         events: ProviderEventSender,
     ) -> ProviderFuture<'a> {
         Box::pin(async move {
@@ -555,7 +573,7 @@ impl ScriptedProvider {
                 return Err(ProviderError::interrupted("provider request cancelled"));
             }
             let cancellation = request.cancellation.clone();
-            let turn = self.take_turn(&request, service_tier)?;
+            let turn = self.take_turn(&request, options)?;
             for event in turn.events {
                 tokio::select! {
                     result = async {
@@ -595,7 +613,8 @@ impl ModelProvider for ScriptedProvider {
             if request.cancellation.is_cancelled() {
                 return Err(ProviderError::interrupted("provider request cancelled"));
             }
-            self.take_turn(&request, None)?.result
+            self.take_turn(&request, ModelRequestOptions::default())?
+                .result
         })
     }
 
@@ -628,7 +647,7 @@ impl ModelProvider for ScriptedProvider {
         request: ModelRequest<'a>,
         events: ProviderEventSender,
     ) -> ProviderFuture<'a> {
-        self.stream_turn(request, None, events)
+        self.stream_turn(request, ModelRequestOptions::default(), events)
     }
 
     fn send_turn_stream_with_options<'a>(
@@ -637,7 +656,7 @@ impl ModelProvider for ScriptedProvider {
         options: ModelRequestOptions,
         events: ProviderEventSender,
     ) -> ProviderFuture<'a> {
-        self.stream_turn(request, options.service_tier(), events)
+        self.stream_turn(request, options, events)
     }
 }
 

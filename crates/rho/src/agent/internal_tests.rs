@@ -41,13 +41,13 @@ fn effective_reasoning_defaults_to_the_definition_level() {
 // Covers: the permission classifier cannot fall back to executor model or Claude runtime
 // Owner: internal agent registry
 #[test]
-fn permission_classifier_requires_own_rho_model_with_low_reasoning() {
+fn permission_classifier_requires_own_rho_model_with_off_reasoning() {
     let id = "permission-classifier";
     assert!(internal_agent_requires_model(id));
     assert!(!internal_agent_accepts_claude_runtime(id));
     assert_eq!(
         effective_internal_agent_reasoning(id, &selection("openai", "gpt-test", None)),
-        ReasoningLevel::Low
+        ReasoningLevel::Off
     );
 }
 

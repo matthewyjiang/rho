@@ -116,6 +116,7 @@ impl OpenAiProvider {
             &self.reasoning,
             request,
             options.service_tier(),
+            options.max_output_tokens(),
             self.hosted_web_search,
         )
     }

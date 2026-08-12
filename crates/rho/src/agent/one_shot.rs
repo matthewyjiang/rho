@@ -3,7 +3,7 @@ use std::{future::Future, path::Path, sync::Arc};
 use anyhow::bail;
 use rho_sdk::{
     model::{ContentBlock, Message, ModelEvent, ModelRequest, ModelResponse, ModelUsage},
-    provider::{ModelProvider, ProviderRequestEvent, ProviderStreamEvent},
+    provider::{ModelProvider, ModelRequestOptions, ProviderRequestEvent, ProviderStreamEvent},
     CancellationToken, ProviderRequestUsageContext, ProviderRequestUsageRecording, SessionId,
 };
 use tokio::sync::watch;
@@ -17,6 +17,8 @@ pub(crate) struct OneShotAgentRequest<'a> {
     pub usage_purpose: &'static str,
     /// When set, overrides the definition's reasoning level.
     pub reasoning: Option<rho_providers::reasoning::ReasoningLevel>,
+    /// Additive provider settings for this one-shot turn.
+    pub request_options: ModelRequestOptions,
     pub input: String,
     pub cancellation: CancellationToken,
     pub session_id: &'a SessionId,
@@ -124,9 +126,10 @@ pub(crate) async fn run_one_shot_with_provider(
         prompt_cache_key: None,
     };
     let (response, usage) = if stream.has_updates() {
-        crate::usage::send_recorded_observing(
+        crate::usage::send_recorded_observing_with_options(
             provider,
             model_request,
+            request.request_options,
             usage_context,
             usage_recording,
             1,
@@ -134,7 +137,14 @@ pub(crate) async fn run_one_shot_with_provider(
         )
         .await
     } else {
-        crate::usage::send_recorded(provider, model_request, usage_context, usage_recording).await
+        crate::usage::send_recorded_with_options(
+            provider,
+            model_request,
+            request.request_options,
+            usage_context,
+            usage_recording,
+        )
+        .await
     }
     .map_err(|error| anyhow::anyhow!(error))?;
     let ModelResponse::Assistant(blocks) = response;

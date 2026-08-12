@@ -79,6 +79,7 @@ pub(super) async fn generate_session_title(
             definition: internal_definition(SESSION_TITLE_AGENT_ID),
             usage_purpose: "title",
             reasoning: Some(reasoning),
+            request_options: Default::default(),
             input: format!(
                 "First turn:\n\nUser:\n{first_user_message}\n\nAssistant:\n{first_assistant_message}"
             ),

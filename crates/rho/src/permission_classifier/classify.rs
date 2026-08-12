@@ -3,8 +3,8 @@ use std::path::Path;
 use anyhow::{anyhow, bail, Context};
 use rho_providers::{model::Message, reasoning::ReasoningLevel};
 use rho_sdk::{
-    provider::ModelProvider, ApprovalRequest, CancellationToken, ProviderRequestUsageRecording,
-    SessionId,
+    provider::{ModelProvider, ModelRequestOptions},
+    ApprovalRequest, CancellationToken, ProviderRequestUsageRecording, SessionId,
 };
 
 use crate::{
@@ -17,6 +17,12 @@ use crate::{
 };
 
 use super::{parse_classifier_verdict, render_classifier_transcript, ClassifierVerdict};
+
+/// Output-token ceiling for the permission classifier JSON verdict.
+///
+/// Sized as a tripwire above measured short replies: allow is ~10 tokens and a
+/// one-line deny is typically under ~40. Truncated or invalid JSON fails closed.
+pub(crate) const CLASSIFIER_MAX_OUTPUT_TOKENS: u32 = 128;
 
 pub(crate) struct ClassifyRequest<'a> {
     pub history: &'a [Message],
@@ -85,6 +91,9 @@ async fn try_classify_capability_request_with_provider(
             definition: internal_definition(PERMISSION_CLASSIFIER_AGENT_ID),
             usage_purpose: "permission-classifier",
             reasoning: Some(reasoning),
+            // Tight answer budget only with reasoning off so thinking-capable
+            // providers still have room when a user raises classifier effort.
+            request_options: classifier_request_options(reasoning),
             input: render_classifier_transcript(request.history, request.pending)?,
             cancellation: request.cancellation,
             session_id: request.session_id,
@@ -96,6 +105,15 @@ async fn try_classify_capability_request_with_provider(
     .await?;
     parse_classifier_verdict(&result.texts.join("\n"))
         .context("permission classifier returned an invalid response")
+}
+
+pub(super) fn classifier_request_options(reasoning: ReasoningLevel) -> ModelRequestOptions {
+    let options = ModelRequestOptions::default();
+    if reasoning == ReasoningLevel::Off {
+        options.with_max_output_tokens(CLASSIFIER_MAX_OUTPUT_TOKENS)
+    } else {
+        options
+    }
 }
 
 fn classifier_unavailable(error: impl std::fmt::Display) -> ClassifierVerdict {

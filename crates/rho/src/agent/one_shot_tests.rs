@@ -49,6 +49,7 @@ fn request<'a>(
         definition,
         usage_purpose: "test-purpose",
         reasoning: None,
+        request_options: Default::default(),
         input: "user input".into(),
         cancellation: CancellationToken::new(),
         session_id,

@@ -97,7 +97,7 @@ static INTERNAL_AGENTS: LazyLock<Vec<InternalAgent>> = LazyLock::new(|| {
                     // Unused: the permission classifier requires its own model
                     // and must not fall back to the executor.
                     model: ModelPolicy::Inherit,
-                    reasoning: Some(ReasoningLevel::Low),
+                    reasoning: Some(ReasoningLevel::Off),
                 },
             },
             requires_own_model: true,

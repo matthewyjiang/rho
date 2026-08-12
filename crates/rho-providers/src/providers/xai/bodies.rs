@@ -83,6 +83,7 @@ pub(super) fn build_xai_responses_body(
     model: &str,
     reasoning: &reasoning::XaiReasoningProfile,
     request: ModelRequest<'_>,
+    max_output_tokens: Option<u32>,
     hosted_web_search: bool,
 ) -> Result<Value, ModelError> {
     let tools = xai_responses_tools(request.tools, hosted_web_search);
@@ -110,6 +111,9 @@ pub(super) fn build_xai_responses_body(
     }
     if let Some(effort) = reasoning_effort {
         body["reasoning"] = json!({ "effort": effort });
+    }
+    if let Some(max_output_tokens) = max_output_tokens {
+        body["max_output_tokens"] = json!(max_output_tokens);
     }
     Ok(body)
 }

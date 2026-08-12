@@ -95,6 +95,7 @@ impl GitHubCopilotProvider {
             stream_options: stream.then_some(ChatStreamOptions {
                 include_usage: true,
             }),
+            max_tokens: None,
             reasoning: None,
             reasoning_effort: None,
             thinking: None,

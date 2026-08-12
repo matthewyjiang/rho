@@ -220,6 +220,7 @@ impl McpSamplingService {
             definition: &definition,
             usage_purpose: SAMPLING_USAGE_PURPOSE,
             reasoning: None,
+            request_options: Default::default(),
             input,
             cancellation: caller.cancellation().clone(),
             session_id: &model.session_id,
