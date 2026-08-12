@@ -212,7 +212,8 @@ fn file_diff_body_highlights_rust_from_header_path() {
     );
     assert!(
         body.spans.iter().any(|span| {
-            span.content.contains('+') && span.style == Theme::tool_diff_sign(DiffRowKind::Added)
+            span.content.contains('+')
+                && span.style == Theme::tool_diff_chrome(DiffRowKind::Added).sign
         }),
         "expected add sign gutter style: {:?}",
         body.spans
@@ -222,10 +223,10 @@ fn file_diff_body_highlights_rust_from_header_path() {
     );
 }
 
-// Covers: scheme themes paint add/remove sign gutters and row washes; context stays clear
-// Owner: pure TUI (tool card diff chrome)
+// Covers: render applies theme chrome wash to add/remove content; context stays clear
+// Owner: pure TUI (tool card diff layout)
 #[test]
-fn file_diff_rows_use_theme_sign_gutter_and_row_wash() {
+fn file_diff_rows_apply_chrome_wash_to_changed_content() {
     let _guard = crate::tui::theme::theme_test_lock();
     Theme::apply_committed("terminal");
     Theme::apply_committed("one-half-dark");
@@ -268,23 +269,16 @@ fn file_diff_rows_use_theme_sign_gutter_and_row_wash() {
         .find(|line| line.spans.iter().any(|span| span.content.contains("keep")))
         .expect("context row");
 
-    let add_sign = Theme::tool_diff_sign(DiffRowKind::Added);
-    let del_sign = Theme::tool_diff_sign(DiffRowKind::Removed);
-    let add_wash = Theme::tool_diff_row(DiffRowKind::Added).expect("add wash");
-    let del_wash = Theme::tool_diff_row(DiffRowKind::Removed).expect("del wash");
-
-    assert!(
-        add_sign.bg.is_some() && del_sign.bg.is_some(),
-        "scheme must provide filled sign gutters"
-    );
-    assert_ne!(add_sign.bg, del_sign.bg);
-    assert_ne!(add_wash.bg, del_wash.bg);
+    let add = Theme::tool_diff_chrome(DiffRowKind::Added);
+    let del = Theme::tool_diff_chrome(DiffRowKind::Removed);
+    let add_wash = add.pad.bg.expect("add wash");
+    let del_wash = del.pad.bg.expect("del wash");
 
     assert!(
         removed
             .spans
             .iter()
-            .any(|span| span.content.as_ref() == "-" && span.style == del_sign),
+            .any(|span| span.content.as_ref() == "-" && span.style == del.sign),
         "removed sign gutter: {:?}",
         removed.spans
     );
@@ -292,7 +286,7 @@ fn file_diff_rows_use_theme_sign_gutter_and_row_wash() {
         added
             .spans
             .iter()
-            .any(|span| span.content.as_ref() == "+" && span.style == add_sign),
+            .any(|span| span.content.as_ref() == "+" && span.style == add.sign),
         "added sign gutter: {:?}",
         added.spans
     );
@@ -300,7 +294,7 @@ fn file_diff_rows_use_theme_sign_gutter_and_row_wash() {
         removed
             .spans
             .iter()
-            .any(|span| span.content.contains("old_line") && span.style.bg == del_wash.bg),
+            .any(|span| span.content.contains("old_line") && span.style.bg == Some(del_wash)),
         "removed row wash: {:?}",
         removed.spans
     );
@@ -308,7 +302,7 @@ fn file_diff_rows_use_theme_sign_gutter_and_row_wash() {
         added
             .spans
             .iter()
-            .any(|span| span.content.contains("new_line") && span.style.bg == add_wash.bg),
+            .any(|span| span.content.contains("new_line") && span.style.bg == Some(add_wash)),
         "added row wash: {:?}",
         added.spans
     );
