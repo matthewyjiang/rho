@@ -706,7 +706,7 @@ fn push_diff_row(
         (_, None) => " ".repeat(gutter + 1),
     };
     // Sign cell is one character; a trailing space separates it from content
-    // and sits in the row wash rather than the filled gutter.
+    // and sits in the row wash with the rest of the line.
     let sign = row.kind.sign();
     let sign_gap = " ";
     let prefix_width =

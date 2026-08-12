@@ -176,9 +176,9 @@ struct Palette {
     skill: Color,
     user_background: BlockColor,
     neutral_tool_background: BlockColor,
-    /// Add-side gutter/wash fills. Absent without sampled RGB.
+    /// Add-side row wash. Absent without sampled RGB.
     diff_add: theme_diff::DiffSideFill,
-    /// Delete-side gutter/wash fills. Absent without sampled RGB.
+    /// Delete-side row wash. Absent without sampled RGB.
     diff_del: theme_diff::DiffSideFill,
 }
 
@@ -717,17 +717,9 @@ impl Theme {
         Style::default().fg(Palette::current().error)
     }
 
-    /// Text color for one diff row. Context stays plain so changes stand out.
-    pub(super) fn tool_diff_text(kind: rho_tools::tool_card::DiffRowKind) -> Style {
-        use rho_tools::tool_card::DiffRowKind;
-        let palette = Palette::current();
-        match kind {
-            DiffRowKind::Added => Style::default().fg(palette.success),
-            DiffRowKind::Removed => Style::default().fg(palette.error),
-            DiffRowKind::Context | DiffRowKind::File | DiffRowKind::Skip | DiffRowKind::Meta => {
-                Self::text()
-            }
-        }
+    /// Content color for one diff row. Always base text; wash and `+`/`-` carry kind.
+    pub(super) fn tool_diff_text(_kind: rho_tools::tool_card::DiffRowKind) -> Style {
+        Self::text()
     }
 
     /// Line-number gutter. The sign carries the change, so numbers stay chrome.

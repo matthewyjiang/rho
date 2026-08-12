@@ -215,7 +215,7 @@ fn file_diff_body_highlights_rust_from_header_path() {
             span.content.contains('+')
                 && span.style == Theme::tool_diff_chrome(DiffRowKind::Added).sign
         }),
-        "expected add sign gutter style: {:?}",
+        "expected add sign style: {:?}",
         body.spans
             .iter()
             .map(|s| (s.content.as_ref(), s.style))
@@ -223,10 +223,10 @@ fn file_diff_body_highlights_rust_from_header_path() {
     );
 }
 
-// Covers: render applies theme chrome wash to add/remove content; context stays clear
+// Covers: add/remove rows wash number+sign+content; signs stay role fg; context clear
 // Owner: pure TUI (tool card diff layout)
 #[test]
-fn file_diff_rows_apply_chrome_wash_to_changed_content() {
+fn file_diff_rows_apply_soft_wash_with_fg_signs() {
     let _guard = crate::tui::theme::theme_test_lock();
     Theme::apply_committed("terminal");
     Theme::apply_committed("one-half-dark");
@@ -234,7 +234,7 @@ fn file_diff_rows_apply_chrome_wash_to_changed_content() {
     let card = ToolCard::new(
         ToolStatus::Ok,
         ToolFamily::FileDiff,
-        ToolHeader::call("edit", Some("src/lib.rs".into())),
+        ToolHeader::call("edit", Some("notes.txt".into())),
     )
     .with_body(ToolBody::Diff(vec![
         DiffRow::new(DiffRowKind::Removed, Some(1), "old_line();"),
@@ -279,7 +279,7 @@ fn file_diff_rows_apply_chrome_wash_to_changed_content() {
             .spans
             .iter()
             .any(|span| span.content.as_ref() == "-" && span.style == del.sign),
-        "removed sign gutter: {:?}",
+        "removed sign: {:?}",
         removed.spans
     );
     assert!(
@@ -287,23 +287,46 @@ fn file_diff_rows_apply_chrome_wash_to_changed_content() {
             .spans
             .iter()
             .any(|span| span.content.as_ref() == "+" && span.style == add.sign),
-        "added sign gutter: {:?}",
+        "added sign: {:?}",
+        added.spans
+    );
+    // Sign uses role fg on the soft wash (same bg as content, not a solid gutter).
+    assert_eq!(del.sign.fg, Theme::tool_stat_del().fg);
+    assert_eq!(add.sign.fg, Theme::tool_stat_add().fg);
+    assert_eq!(del.sign.bg, Some(del_wash));
+    assert_eq!(add.sign.bg, Some(add_wash));
+    assert!(
+        removed.spans.iter().any(|span| {
+            span.content.contains("old_line")
+                && span.style.bg == Some(del_wash)
+                && span.style.fg == Theme::text().fg
+        }),
+        "removed content wash + base fg: {:?}",
+        removed.spans
+    );
+    assert!(
+        added.spans.iter().any(|span| {
+            span.content.contains("new_line")
+                && span.style.bg == Some(add_wash)
+                && span.style.fg == Theme::text().fg
+        }),
+        "added content wash + base fg: {:?}",
         added.spans
     );
     assert!(
         removed
             .spans
             .iter()
-            .any(|span| span.content.contains("old_line") && span.style.bg == Some(del_wash)),
-        "removed row wash: {:?}",
+            .any(|span| span.content.contains('1') && span.style.bg == Some(del_wash)),
+        "removed number wash: {:?}",
         removed.spans
     );
     assert!(
         added
             .spans
             .iter()
-            .any(|span| span.content.contains("new_line") && span.style.bg == Some(add_wash)),
-        "added row wash: {:?}",
+            .any(|span| span.content.contains('1') && span.style.bg == Some(add_wash)),
+        "added number wash: {:?}",
         added.spans
     );
     assert!(

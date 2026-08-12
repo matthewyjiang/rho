@@ -1,46 +1,37 @@
 //! Diff-row palette fills and the chrome package consumed by tool-card render.
+//!
+//! Added/removed rows get a soft green/red wash. Change kind on the sign is
+//! foreground only (`+`/`-`); content stays base text plus syntax roles.
 
-use ratatui::{
-    style::{Color, Style},
-    text::Span,
-};
+use ratatui::{style::Style, text::Span};
 use rho_tools::tool_card::DiffRowKind;
 
 use super::{
-    block_foreground, optional_blended, scheme_ansi, AnsiColor, BlockColor, ColorScheme, Palette,
-    TerminalPalette, Theme, USER_BACKGROUND_ALPHA,
+    optional_blended, scheme_ansi, AnsiColor, BlockColor, ColorScheme, Palette, TerminalPalette,
+    Theme, USER_BACKGROUND_ALPHA,
 };
 
 // Diff row wash matches the panel wash strength so syntax stays readable.
 const DIFF_ROW_WASH_ALPHA: f32 = USER_BACKGROUND_ALPHA;
-// Sign gutter is a stronger blend of the same green/red so +/- reads as a block.
-const DIFF_SIGN_GUTTER_ALPHA: f32 = 0.35;
 
-/// Strong gutter + soft wash for one diff side (add or delete).
+/// Soft row wash for one diff side (add or delete).
 ///
-/// Both are absent without sampled RGB so terminals never get harsh named-ANSI
-/// backgrounds; sign/text keep role foreground instead.
+/// Absent without sampled RGB so terminals never get harsh named-ANSI
+/// backgrounds; signs keep role foreground instead.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct DiffSideFill {
-    pub(super) gutter: Option<BlockColor>,
     pub(super) wash: Option<BlockColor>,
 }
 
 impl DiffSideFill {
     fn from_terminal(terminal: Option<&TerminalPalette>, color: AnsiColor) -> Self {
         Self {
-            gutter: optional_blended(terminal, color, DIFF_SIGN_GUTTER_ALPHA),
             wash: optional_blended(terminal, color, DIFF_ROW_WASH_ALPHA),
         }
     }
 
     fn from_scheme(scheme: &ColorScheme, color: AnsiColor) -> Self {
         Self {
-            gutter: Some(scheme_diff_background(
-                scheme,
-                color,
-                DIFF_SIGN_GUTTER_ALPHA,
-            )),
             wash: Some(scheme_diff_background(scheme, color, DIFF_ROW_WASH_ALPHA)),
         }
     }
@@ -74,7 +65,7 @@ impl DiffRowChrome {
 }
 
 impl Theme {
-    /// Chrome for one diff body row: sign gutter, row wash, and padded columns.
+    /// Chrome for one diff body row: fg `+`/`-`, soft row wash, plain content.
     pub(in crate::tui) fn tool_diff_chrome(kind: DiffRowKind) -> DiffRowChrome {
         let palette = Palette::current();
         let text = Self::tool_diff_text(kind);
@@ -87,8 +78,9 @@ impl Theme {
         };
         let wash =
             side.and_then(|(fill, _)| fill.wash.map(|block| Style::default().bg(block.color)));
+        // Sign is role foreground only - the wash carries add/remove, not a solid gutter.
         let sign = match side {
-            Some((fill, fallback_fg)) => diff_sign_style(fill.gutter, fallback_fg),
+            Some((_, fallback_fg)) => patch_optional(Style::default().fg(fallback_fg), wash),
             None => text,
         };
         let washed_text = patch_optional(text, wash);
@@ -134,13 +126,4 @@ fn scheme_diff_background(scheme: &ColorScheme, color: AnsiColor, alpha: f32) ->
             .background
             .blend_toward(scheme_ansi(scheme, color), alpha),
     )
-}
-
-fn diff_sign_style(gutter: Option<BlockColor>, fallback_fg: Color) -> Style {
-    match gutter {
-        Some(background) => Style::default()
-            .fg(block_foreground(background.rgb))
-            .bg(background.color),
-        None => Style::default().fg(fallback_fg),
-    }
 }
