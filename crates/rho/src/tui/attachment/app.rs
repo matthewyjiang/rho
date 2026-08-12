@@ -251,10 +251,12 @@ impl AttachmentApp {
 
     fn upsert_pending_tool(&mut self, key: Option<String>, card: ToolCard) {
         let key = attachment_tool_key(key);
-        let expanded = self
-            .pending_tools
-            .get(&key)
-            .is_some_and(|entry| entry.expanded);
+        let previous = self.pending_tools.get(&key);
+        let expanded = previous.is_some_and(|entry| entry.expanded);
+        let started_at = previous.and_then(|entry| entry.started_at).or_else(|| {
+            matches!(card.status, rho_tools::tool_card::ToolStatus::Running)
+                .then(std::time::Instant::now)
+        });
         if !self.pending_tools.contains_key(&key) {
             self.pending_order.push(key.clone());
         }
@@ -264,6 +266,7 @@ impl AttachmentApp {
                 card,
                 expanded,
                 image: None,
+                started_at,
             },
         );
     }
@@ -276,6 +279,7 @@ impl AttachmentApp {
             card,
             expanded: false,
             image: None,
+            started_at: None,
         }));
     }
 

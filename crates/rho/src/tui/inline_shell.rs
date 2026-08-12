@@ -427,6 +427,7 @@ impl super::App {
                 card: display_card(&output, task.mode.included_in_context()),
                 expanded: true,
                 image: None,
+                started_at: None,
             }));
         }
         self.set_status("inline shell cancelled");
@@ -560,6 +561,7 @@ impl super::App {
             card: display_card(&output, task.mode.included_in_context()),
             expanded: true,
             image: None,
+            started_at: None,
         }));
         self.statusline.refresh_git_branch();
         self.set_status(if output.ok {
@@ -637,6 +639,7 @@ impl PendingShellTask {
             card: display_card(&output, self.mode.included_in_context()),
             expanded: true,
             image: None,
+            started_at: None,
         }
     }
 }

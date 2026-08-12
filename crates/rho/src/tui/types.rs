@@ -278,6 +278,10 @@ pub(super) struct ToolEntry {
     pub(in crate::tui) card: rho_tools::tool_card::ToolCard,
     pub(in crate::tui) expanded: bool,
     pub(in crate::tui) image: Option<FeedImage>,
+    /// Wall clock for live shell elapsed (`timeout … · 1.2s`) while running.
+    /// Set when a tool becomes running; preserved across card updates; absent on
+    /// historical/finished rows and argument-stream previews.
+    pub(in crate::tui) started_at: Option<std::time::Instant>,
 }
 
 #[derive(Clone, Debug)]

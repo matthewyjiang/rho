@@ -18,6 +18,7 @@ fn retry_removes_only_replaceable_provider_output() {
             ),
             expanded: false,
             image: None,
+            started_at: None,
         }),
         Entry::Reasoning(ReasoningEntry {
             text: "discard reasoning".into(),

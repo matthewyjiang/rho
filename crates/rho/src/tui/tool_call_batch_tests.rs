@@ -149,3 +149,32 @@ fn identity_only_preview_binds_call_id_without_replacing_card() {
     assert_eq!(live_labels(&batch), ["● running"]);
     assert!(batch.previews.is_empty());
 }
+
+// Covers: shell elapsed clock must not reset when progress replaces the card
+// Owner: pure unit (tool call batch)
+#[test]
+fn updates_preserve_started_at_from_the_first_running_card() {
+    let mut batch = ToolCallBatch::default();
+    let call = call_id("call-shell");
+    batch.started(call.clone(), card("running"));
+    let started_at = batch.running[&call]
+        .started_at
+        .expect("timer starts on start");
+    batch.updated(call.clone(), card("still running"));
+    assert_eq!(batch.running[&call].started_at, Some(started_at));
+}
+
+// Covers: argument-stream previews must not start the shell elapsed clock
+// Owner: pure unit (tool call batch)
+#[test]
+fn previews_do_not_start_elapsed_until_started() {
+    let mut batch = ToolCallBatch::default();
+    let call = call_id("call-shell");
+    batch.preview_call(call.clone(), card("preview"));
+    assert!(batch
+        .previews
+        .values()
+        .all(|entry| entry.started_at.is_none()));
+    batch.started(call.clone(), card("running"));
+    assert!(batch.running[&call].started_at.is_some());
+}

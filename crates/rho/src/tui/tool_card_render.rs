@@ -1,5 +1,7 @@
 //! Multi-span Call + Children rendering for structured tool cards.
 
+use std::time::Duration;
+
 use ratatui::{
     style::Style,
     text::{Line, Span},
@@ -87,6 +89,7 @@ pub(super) fn tool_entry_lines(
         inner_width,
         max_tool_output_lines,
         tool.expanded,
+        live_shell_elapsed(tool),
     );
     reserve_optional_image_rows(&mut lines, tool.image.as_ref(), width, max_image_height);
     // One trailing spacer only. Prior entries own the blank above this card.
@@ -97,12 +100,26 @@ pub(super) fn tool_entry_lines(
     padded
 }
 
+/// Live elapsed for shell timeout facts while the call is still open.
+pub(super) fn live_shell_elapsed(tool: &ToolEntry) -> Option<Duration> {
+    if !matches!(tool.card.header, ToolHeader::Shell { .. }) {
+        return None;
+    }
+    match tool.card.status {
+        ToolStatus::Running | ToolStatus::Interrupted => {
+            tool.started_at.map(|started_at| started_at.elapsed())
+        }
+        ToolStatus::Ok | ToolStatus::Error => None,
+    }
+}
+
 pub(super) fn push_tool_card(
     lines: &mut Vec<Line<'static>>,
     card: &ToolCard,
     width: usize,
     max_tool_output_lines: usize,
     expanded: bool,
+    live_shell_elapsed: Option<Duration>,
 ) {
     push_header_line(lines, card, card.status, width);
 
@@ -110,7 +127,7 @@ pub(super) fn push_tool_card(
     // Collapsed: paint only the visible budget (syntax is the costly part).
     // Expanded: paint the full body. Toggle checks never full-paint.
     let paint_budget = if expanded { None } else { Some(budget) };
-    let rendered = render_child_groups(card, width, paint_budget);
+    let rendered = render_child_groups(card, width, paint_budget, live_shell_elapsed);
     let total_rows = rendered.total_terminal_rows;
     let show_collapse_prompt = expanded && total_rows > budget;
     let mut remaining = if expanded { usize::MAX } else { budget };
@@ -209,14 +226,19 @@ struct ChildRender {
 /// Render fact/body groups. When `paint_budget` is `Some(n)`, only the first
 /// `n` terminal rows are language-painted; the remainder is wrap-estimated so
 /// collapse stays cheap and expand still shows an accurate "... N more" count.
-fn render_child_groups(card: &ToolCard, width: usize, paint_budget: Option<usize>) -> ChildRender {
+fn render_child_groups(
+    card: &ToolCard,
+    width: usize,
+    paint_budget: Option<usize>,
+    live_shell_elapsed: Option<Duration>,
+) -> ChildRender {
     let mut groups = Vec::new();
     let mut total_rows = 0usize;
     let mut paint_remaining = paint_budget.unwrap_or(usize::MAX);
 
     for fact in &card.facts {
         // Always mid trunk here; last-child └ / hang is rewritten after clip.
-        let fact_lines = push_wrapped_tree_fact(fact_spans(fact), width);
+        let fact_lines = push_wrapped_tree_fact(fact_spans(fact, live_shell_elapsed), width);
         take_group(
             &mut groups,
             &mut total_rows,
@@ -359,7 +381,10 @@ fn estimate_child_terminal_rows(card: &ToolCard, width: usize) -> usize {
 }
 
 fn estimate_fact_rows(fact: &ToolFact, width: usize) -> usize {
-    push_wrapped_tree_fact(fact_spans(fact), width).len().max(1)
+    // Elapsed suffix is short and does not change wrap for timeout facts.
+    push_wrapped_tree_fact(fact_spans(fact, None), width)
+        .len()
+        .max(1)
 }
 
 fn estimate_plain_body_rows(line: &str, width: usize) -> usize {
@@ -624,7 +649,7 @@ fn push_wrapped_tree_fact(wrappable: Vec<Span<'static>>, width: usize) -> Vec<Li
     lines
 }
 
-fn fact_spans(fact: &ToolFact) -> Vec<Span<'static>> {
+fn fact_spans(fact: &ToolFact, live_shell_elapsed: Option<Duration>) -> Vec<Span<'static>> {
     match fact {
         ToolFact::DiffStat {
             added,
@@ -659,7 +684,10 @@ fn fact_spans(fact: &ToolFact) -> Vec<Span<'static>> {
             }
             vec![Span::styled(text, Theme::text())]
         }
-        ToolFact::Meta { text } => vec![Span::styled(text.clone(), Theme::tool_meta())],
+        ToolFact::Meta { text } => {
+            let text = append_live_shell_elapsed(text, live_shell_elapsed);
+            vec![Span::styled(text, Theme::tool_meta())]
+        }
         ToolFact::Error { text } => vec![Span::styled(text.clone(), Theme::tool_error_text())],
         ToolFact::Progress { completed, total } => {
             let text = match total {
@@ -669,6 +697,20 @@ fn fact_spans(fact: &ToolFact) -> Vec<Span<'static>> {
             vec![Span::styled(text, Theme::tool_meta())]
         }
         ToolFact::Text { text } => vec![Span::styled(text.clone(), Theme::text())],
+    }
+}
+
+/// Shell presenters emit Meta facts that start with `timeout `; append the live
+/// elapsed clock while the call is open.
+pub(super) fn append_live_shell_elapsed(
+    text: &str,
+    live_shell_elapsed: Option<Duration>,
+) -> String {
+    match live_shell_elapsed {
+        Some(elapsed) if text.starts_with("timeout ") => {
+            format!("{text} · {:.1}s", elapsed.as_secs_f64())
+        }
+        Some(_) | None => text.to_string(),
     }
 }
 

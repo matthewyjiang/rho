@@ -195,6 +195,7 @@ impl App {
             card: outcome.card(),
             expanded,
             image: None,
+            started_at: None,
         }));
         self.set_status(status);
         Ok(succeeded)

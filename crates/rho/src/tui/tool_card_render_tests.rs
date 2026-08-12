@@ -1,12 +1,15 @@
+use std::time::Duration;
+
 use pretty_assertions::assert_eq;
 use rho_tools::tool_card::{
     DiffRow, DiffRowKind, ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus,
 };
 
-use super::{card_is_toggleable, push_tool_card};
+use super::{append_live_shell_elapsed, card_is_toggleable, live_shell_elapsed, push_tool_card};
 use crate::tui::{
     syntax::{reset_highlight_line_calls, take_highlight_line_calls, warm_syntax_set},
     theme::{SyntaxRole, Theme},
+    ToolEntry,
 };
 
 fn line_text(line: &ratatui::text::Line<'_>) -> String {
@@ -21,7 +24,7 @@ fn line_text(line: &ratatui::text::Line<'_>) -> String {
 fn render(card: &ToolCard, width: usize) -> Vec<String> {
     let mut lines = Vec::new();
     push_tool_card(
-        &mut lines, card, width, /*max_tool_output_lines*/ 32, /*expanded*/ true,
+        &mut lines, card, width, /*max_tool_output_lines*/ 32, /*expanded*/ true, None,
     );
     lines.into_iter().map(|line| line_text(&line)).collect()
 }
@@ -193,7 +196,7 @@ fn file_diff_body_highlights_rust_from_header_path() {
     let mut lines = Vec::new();
     push_tool_card(
         &mut lines, &card, /*width*/ 80, /*max_tool_output_lines*/ 32,
-        /*expanded*/ true,
+        /*expanded*/ true, None,
     );
     let body = lines
         .iter()
@@ -245,7 +248,7 @@ fn file_diff_rows_apply_soft_wash_with_fg_signs() {
     let mut lines = Vec::new();
     push_tool_card(
         &mut lines, &card, /*width*/ 80, /*max_tool_output_lines*/ 32,
-        /*expanded*/ true,
+        /*expanded*/ true, None,
     );
 
     let removed = lines
@@ -367,6 +370,7 @@ fn collapsed_diff_paint_highlights_only_budget_rows() {
         /*width*/ 100,
         budget,
         /*expanded*/ false,
+        None,
     );
     let collapsed_calls = take_highlight_line_calls();
 
@@ -378,6 +382,7 @@ fn collapsed_diff_paint_highlights_only_budget_rows() {
         /*width*/ 100,
         budget,
         /*expanded*/ true,
+        None,
     );
     let expanded_calls = take_highlight_line_calls();
 
@@ -431,7 +436,7 @@ fn grep_body_highlights_language_and_match() {
     let mut lines = Vec::new();
     push_tool_card(
         &mut lines, &card, /*width*/ 80, /*max_tool_output_lines*/ 32,
-        /*expanded*/ true,
+        /*expanded*/ true, None,
     );
     let body = lines
         .iter()
@@ -457,4 +462,56 @@ fn grep_body_highlights_language_and_match() {
             .map(|s| (s.content.as_ref(), s.style))
             .collect::<Vec<_>>()
     );
+}
+
+// Covers: running shell timeout facts must grow a 0.1s elapsed suffix
+// Owner: pure unit (tool card elapsed format)
+#[test]
+fn shell_timeout_meta_appends_tenths_elapsed() {
+    let cases = [
+        (
+            "timeout none",
+            Some(Duration::from_millis(1_240)),
+            "timeout none · 1.2s",
+        ),
+        (
+            "timeout 30s",
+            Some(Duration::from_millis(100)),
+            "timeout 30s · 0.1s",
+        ),
+        ("timeout none", None, "timeout none"),
+        ("running", Some(Duration::from_secs(2)), "running"),
+    ];
+    for (text, elapsed, expected) in cases {
+        assert_eq!(
+            append_live_shell_elapsed(text, elapsed),
+            expected,
+            "text={text:?} elapsed={elapsed:?}"
+        );
+    }
+}
+
+// Covers: only open shell cards expose a live elapsed clock
+// Owner: pure unit (tool entry elapsed gate)
+#[test]
+fn live_shell_elapsed_requires_shell_header_and_open_status() {
+    let started = std::time::Instant::now() - Duration::from_millis(250);
+    let mut entry = ToolEntry {
+        card: ToolCard::new(
+            ToolStatus::Running,
+            ToolFamily::FileCommand,
+            ToolHeader::shell("$", Some("sleep 1".into())),
+        ),
+        expanded: false,
+        image: None,
+        started_at: Some(started),
+    };
+    assert!(live_shell_elapsed(&entry).is_some());
+
+    entry.card.status = ToolStatus::Ok;
+    assert!(live_shell_elapsed(&entry).is_none());
+
+    entry.card.status = ToolStatus::Running;
+    entry.card.header = ToolHeader::call("read_file", Some("a.rs".into()));
+    assert!(live_shell_elapsed(&entry).is_none());
 }

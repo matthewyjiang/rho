@@ -560,6 +560,7 @@ fn render_non_assistant_entry(
                 width,
                 max_tool_output_lines,
                 tool.expanded,
+                super::tool_card_render::live_shell_elapsed(tool),
             );
         }
         Entry::Notice(text) => {

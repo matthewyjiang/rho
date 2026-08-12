@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::time::Instant;
 
 use rho_sdk::ToolCallId;
 
@@ -86,19 +87,28 @@ impl ToolCallBatch {
         } else if !self.running.contains_key(&call_id) {
             self.unindexed_running_order.push(call_id.clone());
         }
-        self.running
-            .insert(call_id, running_entry(card, /*expanded*/ false));
+        let started_at = self
+            .running
+            .get(&call_id)
+            .and_then(|entry| entry.started_at)
+            .unwrap_or_else(Instant::now);
+        self.running.insert(
+            call_id,
+            running_entry(card, /*expanded*/ false, Some(started_at)),
+        );
     }
 
     pub(super) fn updated(&mut self, call_id: ToolCallId, card: ToolCard) {
-        let expanded = self
-            .running
-            .get(&call_id)
-            .is_some_and(|entry| entry.expanded);
+        let previous = self.running.get(&call_id);
+        let expanded = previous.is_some_and(|entry| entry.expanded);
+        let started_at = previous
+            .and_then(|entry| entry.started_at)
+            .unwrap_or_else(Instant::now);
         if !self.running.contains_key(&call_id) {
             self.unindexed_running_order.push(call_id.clone());
         }
-        self.running.insert(call_id, running_entry(card, expanded));
+        self.running
+            .insert(call_id, running_entry(card, expanded, Some(started_at)));
     }
 
     /// Stream preview addressed by provider output index.
@@ -181,7 +191,10 @@ impl ToolCallBatch {
 
     fn write_preview(&mut self, slot: usize, card: ToolCard) {
         let expanded = self.previews.get(&slot).is_some_and(|entry| entry.expanded);
-        self.previews.insert(slot, running_entry(card, expanded));
+        // Previews are argument streaming only; the elapsed clock starts on
+        // [`Self::started`].
+        self.previews
+            .insert(slot, running_entry(card, expanded, None));
         self.model_order.insert(slot, LiveToolKey::Preview(slot));
     }
 
@@ -195,11 +208,12 @@ impl ToolCallBatch {
     }
 }
 
-fn running_entry(card: ToolCard, expanded: bool) -> ToolEntry {
+fn running_entry(card: ToolCard, expanded: bool, started_at: Option<Instant>) -> ToolEntry {
     ToolEntry {
         card,
         expanded,
         image: None,
+        started_at,
     }
 }
 
