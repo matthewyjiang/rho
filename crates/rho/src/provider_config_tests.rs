@@ -67,11 +67,19 @@ fn set_endpoint_updates_supported_providers_and_rejects_others() {
         "http://10.0.0.5:11434/v1"
     );
 
+    providers
+        .set_endpoint("composer", "http://127.0.0.1:8787/v1")
+        .unwrap();
+    assert_eq!(
+        providers.custom["composer"].base_url.as_str(),
+        "http://127.0.0.1:8787/v1"
+    );
+
     let unsupported = providers
         .set_endpoint("openai", "https://api.openai.com/v1")
         .unwrap_err();
     assert!(
-        format!("{unsupported:#}").contains("has no configurable base URL"),
+        format!("{unsupported:#}").contains("conflicts with a built-in provider"),
         "{unsupported:#}"
     );
 
@@ -108,5 +116,34 @@ fn meta_resolves_default_endpoint_without_config() {
     assert_eq!(
         config.resolved_provider_endpoint("meta").unwrap().as_str(),
         rho_providers::model::registry::META_API_BASE
+    );
+}
+
+// Covers: user-defined OpenAI-compatible hosts keep their configured base URL
+// Owner: provider config
+#[test]
+fn custom_openai_compatible_resolves_configured_endpoint() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        "provider = \"composer\"\nmodel = \"composer-2.5\"\n[providers.custom.composer]\nbase_url = \"http://127.0.0.1:8787/v1\"\n",
+    )
+    .unwrap();
+
+    let config = Config::load_with_store(
+        path,
+        &rho_providers::credentials::MemoryCredentialStore::default(),
+    )
+    .unwrap();
+
+    assert_eq!(config.provider, "composer");
+    assert_eq!(config.auth, "none");
+    assert_eq!(
+        config
+            .resolved_provider_endpoint("composer")
+            .unwrap()
+            .as_str(),
+        "http://127.0.0.1:8787/v1"
     );
 }

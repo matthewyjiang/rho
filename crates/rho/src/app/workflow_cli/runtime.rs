@@ -365,6 +365,7 @@ impl WorkflowRuntime {
         let repository = ConfigRepository::new(config_path);
         let config_path = absolute_config_path(&repository)?;
         let mut config = repository.load()?;
+        config.providers.activate()?;
         let permission_mode = effective_permission_mode(run, config.permission_mode)?;
         config.permission_mode = permission_mode;
         let approvals =

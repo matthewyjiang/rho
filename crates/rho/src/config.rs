@@ -549,7 +549,9 @@ impl Config {
             let Some(provider) = target.provider.as_deref() else {
                 continue;
             };
-            if !implemented_providers.contains(&provider) {
+            if !implemented_providers.contains(&provider)
+                && !self.providers.custom.contains_key(provider)
+            {
                 anyhow::bail!("model alias '{name}' targets unknown provider '{provider}'");
             }
         }

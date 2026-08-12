@@ -760,31 +760,32 @@ fn empty_legacy_title_section_remains_conversation_fallback() {
 }
 
 #[test]
-fn ollama_base_url_rejects_invalid_or_unsupported_urls() {
-    for base_url in [
-        "not a URL",
-        "file:///tmp/ollama",
-        "http://user:secret@localhost:11434/v1",
-        "http://localhost:11434/v1?token=secret",
+fn provider_base_url_rejects_invalid_or_unsupported_urls() {
+    for (section, field) in [
+        ("[providers.ollama]", "providers.ollama.base_url"),
+        (
+            "[providers.custom.composer]",
+            "providers.custom.composer.base_url",
+        ),
     ] {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            format!("[providers.ollama]\nbase_url = {base_url:?}\n"),
-        )
-        .unwrap();
+        for base_url in [
+            "not a URL",
+            "file:///tmp/models",
+            "http://user:secret@localhost:11434/v1",
+            "http://localhost:11434/v1?token=secret",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config.toml");
+            std::fs::write(&path, format!("{section}\nbase_url = {base_url:?}\n")).unwrap();
 
-        let error = Config::load_with_store(
-            path,
-            &rho_providers::credentials::MemoryCredentialStore::default(),
-        )
-        .unwrap_err();
+            let error = Config::load_with_store(
+                path,
+                &rho_providers::credentials::MemoryCredentialStore::default(),
+            )
+            .unwrap_err();
 
-        assert!(
-            format!("{error:#}").contains("providers.ollama.base_url"),
-            "{error:#}"
-        );
+            assert!(format!("{error:#}").contains(field), "{error:#}");
+        }
     }
 }
 

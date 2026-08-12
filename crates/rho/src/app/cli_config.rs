@@ -107,6 +107,25 @@ pub(super) async fn refresh_model_cache(
     })
 }
 
+/// Fetches `/v1/models` for every user-defined OpenAI-compatible host.
+///
+/// Failures are ignored so a down host does not block startup. The picker
+/// stays empty until the host is reachable or the user refreshes by hand.
+pub(super) async fn refresh_custom_provider_models(
+    config: &Config,
+    store: &dyn credentials::CredentialStore,
+) {
+    for (name, endpoint) in &config.providers.custom {
+        let _ = refresh_provider_models_with_store(
+            name,
+            "none",
+            store,
+            ProviderModelEndpoint::OpenAiCompatible(&endpoint.base_url),
+        )
+        .await;
+    }
+}
+
 /// Apply CLI provider/model/auth/reasoning overrides in memory.
 ///
 /// Returns whether those overrides changed the effective selection after

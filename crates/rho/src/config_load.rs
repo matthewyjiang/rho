@@ -55,6 +55,10 @@ pub(super) fn parse_settings(text: &str) -> anyhow::Result<(Config, Vec<ConfigWa
     let mut cfg = Config::default();
     let mut warnings = Vec::new();
 
+    if let Some(providers) = file.providers {
+        cfg.providers.apply(providers)?;
+    }
+
     if let Some(v) = file.prompt_templates {
         crate::prompt_templates::validate(&v)?;
         cfg.prompt_templates = v;
@@ -202,9 +206,6 @@ pub(super) fn parse_settings(text: &str) -> anyhow::Result<(Config, Vec<ConfigWa
             exa: group.exa_api_key.and_then(non_empty_secret),
             brave: group.brave_api_key.and_then(non_empty_secret),
         };
-    }
-    if let Some(providers) = file.providers {
-        cfg.providers.apply(providers)?;
     }
     if let Some(group) = file.behavior {
         if let Some(value) = group.check_for_updates {

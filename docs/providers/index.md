@@ -19,6 +19,8 @@ This index lists every first-party provider Rho ships. Shared concepts such as c
 | `qwen-token-plan` | `qwen-token-plan-api-key` | [Qwen Token Plan](/providers/qwen-token-plan) |
 | `meta` | `meta-api-key` | [Meta Model API](/providers/meta) |
 
+User-defined Chat Completions hosts are not login providers. Add `[providers.custom.<name>]` with a `base_url`. See [Custom OpenAI-compatible hosts](/providers/openai-compatible).
+
 ## Recommended next steps
 
 1. Read [authentication and models](/authentication-and-models) for credential storage and model selection.

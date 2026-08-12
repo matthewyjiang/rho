@@ -40,7 +40,7 @@ Rho stores persistent config at `~/.rho/config.toml` by default. `RHO_HOME` over
 
 1. **Interactive TUI**: `/config` opens a category browser (Models & reasoning, Agent behavior, Context & limits, Tools, Providers, Updates). Type to filter, press `enter` to open a category, press `space` to toggle an on/off setting, and `esc` to return. `/login`, `/logout`, `/model`, and `/agents` are direct shortcuts. This is the easiest path for a user already in the TUI.
 2. **Command line**: `--provider`, `--model`, `--auth`, and `--reasoning` update the config file and become the future default. `rho credential-store` shows or sets the credential backend.
-3. **Direct file edit**: edit `~/.rho/config.toml` by hand. Group settings by purpose. Use this for settings the TUI does not expose, such as `[model.aliases]`, `[internal_agents]` overrides, `[prompt_templates]`, `[keybindings]`, and `[providers.ollama].base_url`.
+3. **Direct file edit**: edit `~/.rho/config.toml` by hand. Group settings by purpose. Use this for settings the TUI does not expose, such as `[model.aliases]`, `[internal_agents]` overrides, `[prompt_templates]`, `[keybindings]`, `[providers.ollama].base_url`, and `[providers.custom.<name>].base_url`.
 4. **Environment**: `RHO_CREDENTIAL_STORE=os|file` overrides the saved credential backend; `RHO_MODELS_PATH` selects a custom models file; `RHO_TRUST_PROJECT_AGENTS=1` and `RHO_TRUST_PROJECT_HOOKS=1` trust project agent definitions and hooks.
 
 ## Inspect the current live config

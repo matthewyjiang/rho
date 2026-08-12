@@ -202,6 +202,7 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
     // Ask before loading; loading writes the default config when none exists.
     let first_run = detect_first_run(&config_repository);
     let mut config = config_repository.load()?;
+    config.providers.activate()?;
     let absolute_config = absolute_config_path(&config_repository)?;
     crate::credential_store::initialize_from_config(&mut config, &absolute_config)?;
     let cwd = std::env::current_dir()?;
@@ -221,6 +222,7 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
     let definition = Arc::new(catalog.find(selected_agent)?.definition.clone());
 
     let store = AppCredentialStore;
+    cli_config::refresh_custom_provider_models(&config, &store).await;
     let provider_refresh = cli_config::refresh_model_cache(&cli, &config, &store).await?;
     let permission_mode_before_override = config.permission_mode;
     let config_changed = cli_config::apply_overrides(&mut config, &cli)?;

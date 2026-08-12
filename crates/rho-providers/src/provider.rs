@@ -31,6 +31,8 @@ pub const QWEN_TOKEN_PLAN_API_BASE: &str =
     "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1";
 /// Meta Model API OpenAI-compatible base (Chat Completions and `/models`).
 pub const META_API_BASE: &str = "https://api.meta.ai/v1";
+/// Fallback API base for user-defined OpenAI-compatible hosts. Config supplies the real URL.
+pub const OPENAI_COMPATIBLE_API_BASE: &str = "http://127.0.0.1:8000/v1";
 
 /// OpenAI API-key vs Codex OAuth runtime auth selection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -116,6 +118,7 @@ pub enum ProviderId {
     KimiCode,
     QwenTokenPlan,
     Meta,
+    OpenAiCompatible,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -413,9 +416,21 @@ impl ProviderDescriptor {
 #[path = "provider_table.rs"]
 mod provider_table;
 
+#[path = "custom_openai_compatible.rs"]
+mod custom_openai_compatible;
+
+pub use custom_openai_compatible::{
+    install_custom_openai_compatible_providers, validate_custom_provider_name,
+};
 pub use provider_table::PROVIDERS;
 
-pub fn providers() -> &'static [ProviderDescriptor] {
+pub fn providers() -> Vec<&'static ProviderDescriptor> {
+    let mut providers = PROVIDERS.iter().collect::<Vec<_>>();
+    providers.extend(custom_openai_compatible::custom_openai_compatible_providers());
+    providers
+}
+
+pub fn builtin_providers() -> &'static [ProviderDescriptor] {
     PROVIDERS
 }
 
@@ -430,7 +445,7 @@ pub fn credential_env_vars() -> &'static [&'static str] {
 
     static VARS: OnceLock<Vec<&'static str>> = OnceLock::new();
     VARS.get_or_init(|| {
-        let mut vars: Vec<&'static str> = PROVIDERS
+        let mut vars: Vec<&'static str> = builtin_providers()
             .iter()
             .flat_map(|descriptor| descriptor.auth_modes())
             .filter_map(|mode| mode.auth_kind.env_var())
@@ -481,7 +496,7 @@ pub fn legacy_provider_alias(provider: &str) -> Option<(&'static str, &'static s
 /// rather than discarding that choice here.
 pub fn provider_descriptor(provider: &str) -> Option<&'static ProviderDescriptor> {
     providers()
-        .iter()
+        .into_iter()
         .find(|descriptor| descriptor.name == provider)
 }
 
@@ -492,7 +507,7 @@ pub fn model_reference(provider: &str, model: &str) -> String {
 
 pub fn provider_descriptor_for_auth(auth: &str) -> Option<&'static ProviderDescriptor> {
     providers()
-        .iter()
+        .into_iter()
         .find(|descriptor| descriptor.auth_mode(auth).is_some())
 }
 
@@ -609,10 +624,10 @@ pub enum ProfileResolutionError {
 }
 
 pub fn provider_descriptor_by_id(id: ProviderId) -> &'static ProviderDescriptor {
-    providers()
+    builtin_providers()
         .iter()
         .find(|descriptor| descriptor.id == id)
-        .expect("every provider ID must have a descriptor")
+        .expect("every built-in provider ID must have a descriptor")
 }
 
 #[cfg(test)]

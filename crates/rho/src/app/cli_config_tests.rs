@@ -9,16 +9,17 @@ use {
     },
     rho_providers::model::{
         provider_models::{
-            replace_cached_provider_models_for_tests, set_provider_models_cache_dir_for_tests,
-            with_provider_models_cache_dir_for_tests, ProviderModel,
+            cached_provider_models, replace_cached_provider_models_for_tests,
+            set_provider_models_cache_dir_for_tests, with_provider_models_cache_dir_for_tests,
+            ProviderModel,
         },
         ReasoningCapabilities, ReasoningLevelSet,
     },
 };
 
 use super::{
-    apply_overrides, normalize_reasoning, normalize_reasoning_for_cli, refresh_model_cache,
-    validate,
+    apply_overrides, normalize_reasoning, normalize_reasoning_for_cli,
+    refresh_custom_provider_models, refresh_model_cache, validate,
 };
 
 fn unique_cache_dir(name: &str) -> std::path::PathBuf {
@@ -616,4 +617,50 @@ fn cli_auth_profile_normalizes_compatible_provider() {
         assert_eq!(cfg.provider, "openrouter");
         assert_eq!(cfg.auth, "openrouter-oauth");
     });
+}
+
+// Covers: custom hosts must populate the picker from /v1/models without a manual refresh
+// Owner: app startup
+#[tokio::test]
+async fn custom_hosts_fetch_models_from_the_openai_compatible_endpoint() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api_base = format!("http://{}/v1", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut buffer = [0; 2048];
+        let bytes = tokio::io::AsyncReadExt::read(&mut stream, &mut buffer)
+            .await
+            .unwrap();
+        let request = String::from_utf8_lossy(&buffer[..bytes]);
+        assert!(request.starts_with("GET /v1/models HTTP/1.1"));
+        assert!(!request.to_ascii_lowercase().contains("authorization:"));
+        let body = r#"{"data":[{"id":"composer-2.5"},{"id":"composer-2.5-fast"}]}"#;
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        tokio::io::AsyncWriteExt::write_all(&mut stream, reply.as_bytes())
+            .await
+            .unwrap();
+    });
+
+    let cache_dir = unique_cache_dir("custom-host-refresh");
+    set_provider_models_cache_dir_for_tests(Some(cache_dir.clone()));
+    let mut cfg = Config::default();
+    cfg.providers.set_endpoint("composer", &api_base).unwrap();
+    cfg.providers.activate().unwrap();
+    let store = MemoryCredentialStore::default();
+
+    refresh_custom_provider_models(&cfg, &store).await;
+    let models = cached_provider_models("composer");
+    set_provider_models_cache_dir_for_tests(None);
+    let _ = std::fs::remove_dir_all(cache_dir);
+
+    assert_eq!(
+        models
+            .iter()
+            .map(|model| model.model.as_str())
+            .collect::<Vec<_>>(),
+        ["composer-2.5", "composer-2.5-fast"]
+    );
 }

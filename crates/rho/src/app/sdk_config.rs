@@ -43,6 +43,10 @@ pub(crate) struct SdkBootstrapOptions {
 
 impl SdkBootstrapOptions {
     pub(crate) fn from_config(config: &Config, workspace_root: &Path) -> Result<Self, ModelError> {
+        config
+            .providers
+            .activate()
+            .map_err(|error| ModelError::InvalidResponse(error.to_string()))?;
         Self::from_config_with_provider_transport(
             config,
             workspace_root,
@@ -87,6 +91,10 @@ impl SdkBootstrapOptions {
 pub(crate) fn provider_options_from_config(
     config: &Config,
 ) -> Result<ProviderBuildOptions, ModelError> {
+    config
+        .providers
+        .activate()
+        .map_err(|error| ModelError::InvalidResponse(error.to_string()))?;
     provider_options_with_transport(
         config,
         config.resolved_provider_endpoint(&config.provider),
