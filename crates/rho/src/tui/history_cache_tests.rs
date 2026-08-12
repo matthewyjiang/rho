@@ -633,6 +633,7 @@ fn image_height_only_change_uses_cached_dependency_flags() {
         ),
         expanded: false,
         image: Some(image),
+        started_at: None,
     });
     let mut cache = HistoryLineCache::default();
     let entries = vec![
