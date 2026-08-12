@@ -115,11 +115,12 @@ pub fn cached_reasoning_capabilities(provider: &str, model: &str) -> ReasoningCa
         .unwrap_or_default()
 }
 
-/// Prefer a current-known catalog row; fall back to a stale-but-known cache row.
+/// Prefer a current row with known reasoning; fall back to a stale-but-known cache row.
 ///
 /// Wire encoding and UI pickers use this so a previously fetched models.dev
 /// entry still constrains levels when the current row is missing or incomplete.
-pub fn known_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
+/// Preference is reasoning-known-ness, not freshness of other metadata fields.
+pub fn known_reasoning_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
     let current = current_model_metadata(provider, model);
     if current
         .as_ref()
@@ -145,7 +146,7 @@ pub fn known_reasoning_capabilities(provider: &str, model: &str) -> ReasoningCap
     if let Some(capabilities) = provider_fixed_reasoning_capabilities(provider) {
         return capabilities;
     }
-    known_model_metadata(provider, model)
+    known_reasoning_metadata(provider, model)
         .map(|metadata| metadata.reasoning_capabilities())
         .unwrap_or_default()
 }

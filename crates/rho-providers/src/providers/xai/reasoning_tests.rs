@@ -81,3 +81,24 @@ fn catalog_metadata_clamps_flagship_grok_generic_levels() {
         assert_eq!(profile.effort(ReasoningLevel::High), Some("high"));
     }
 }
+
+// Covers: optional Grok catalog Off stays wire "none"; Omit off-behavior must
+// not drop the field once a models.dev row is present.
+// Owner: xAI reasoning profile
+#[test]
+fn catalog_optional_grok_encodes_off_as_none() {
+    let metadata = ModelMetadata {
+        supported_reasoning_levels: Some(vec![
+            ReasoningLevel::Off,
+            ReasoningLevel::Low,
+            ReasoningLevel::High,
+        ]),
+        reasoning_capabilities_known: true,
+        reasoning_metadata_complete: true,
+        ..ModelMetadata::default()
+    };
+
+    let profile = XaiReasoningProfile::from_metadata("grok-4.3", Some(metadata));
+    assert_eq!(profile.effort(ReasoningLevel::Off), Some("none"));
+    assert_eq!(profile.effort(ReasoningLevel::High), Some("high"));
+}

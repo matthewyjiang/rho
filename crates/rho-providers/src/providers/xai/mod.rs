@@ -54,7 +54,7 @@ impl XaiProvider {
     ) -> Self {
         let reasoning = reasoning::XaiReasoningProfile::from_metadata(
             &model,
-            crate::model::models_dev::known_model_metadata(provider, &model),
+            crate::model::models_dev::known_reasoning_metadata(provider, &model),
         );
         Self {
             client,

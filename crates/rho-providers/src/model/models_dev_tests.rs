@@ -864,7 +864,7 @@ fn known_reasoning_capabilities_prefers_current_then_stale_known() {
             stale_exact.reasoning_capabilities()
         );
         assert_eq!(
-            known_model_metadata("xai", "stale-exact")
+            known_reasoning_metadata("xai", "stale-exact")
                 .map(|metadata| metadata.supported_reasoning_levels),
             Some(stale_exact.supported_reasoning_levels.clone())
         );
@@ -889,7 +889,7 @@ fn known_reasoning_capabilities_prefers_current_then_stale_known() {
             known_reasoning_capabilities("xai", "missing-model"),
             ReasoningCapabilities::Unknown
         );
-        assert_eq!(known_model_metadata("xai", "missing-model"), None);
+        assert_eq!(known_reasoning_metadata("xai", "missing-model"), None);
     });
 }
 
