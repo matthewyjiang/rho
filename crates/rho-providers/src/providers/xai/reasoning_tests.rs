@@ -1,6 +1,7 @@
 use pretty_assertions::assert_eq;
 
 use super::*;
+use crate::model::ModelMetadata;
 
 #[test]
 fn exact_mandatory_reasoning_clamps_requests_and_never_emits_none() {
@@ -53,4 +54,30 @@ fn unknown_metadata_does_not_synthesize_reasoning_and_non_configurable_omits_it(
 
     let fixed = XaiReasoningProfile::not_configurable();
     assert_eq!(fixed.effort(ReasoningLevel::High), None);
+}
+
+// Covers: models.dev levels clamp generic Rho values; the offline Mandatory
+// fallback must not emit minimal/max once a catalog row is known.
+// Owner: xAI reasoning profile
+#[test]
+fn catalog_metadata_clamps_flagship_grok_generic_levels() {
+    let metadata = ModelMetadata {
+        supported_reasoning_levels: Some(vec![
+            ReasoningLevel::Low,
+            ReasoningLevel::Medium,
+            ReasoningLevel::High,
+        ]),
+        reasoning_capabilities_known: true,
+        reasoning_metadata_complete: true,
+        ..ModelMetadata::default()
+    };
+
+    for model in ["grok-4.5", "grok-4.6"] {
+        let profile = XaiReasoningProfile::from_metadata(model, Some(metadata.clone()));
+        assert_eq!(profile.effort(ReasoningLevel::Minimal), Some("low"));
+        assert_eq!(profile.effort(ReasoningLevel::Max), Some("high"));
+        assert_eq!(profile.effort(ReasoningLevel::Xhigh), Some("high"));
+        assert_eq!(profile.effort(ReasoningLevel::Off), Some("low"));
+        assert_eq!(profile.effort(ReasoningLevel::High), Some("high"));
+    }
 }

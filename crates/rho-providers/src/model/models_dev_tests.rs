@@ -292,6 +292,12 @@ fn exact_catalog_toggle_does_not_imply_off() {
                         {"type": "effort", "values": ["low", "medium", "high"]}
                     ]
                 },
+                "grok-4.6": {
+                    "reasoning": true,
+                    "reasoning_options": [
+                        {"type": "effort", "values": ["low", "medium", "high"]}
+                    ]
+                },
                 "grok-4.3": {
                     "reasoning": true,
                     "reasoning_options": [
@@ -315,6 +321,16 @@ fn exact_catalog_toggle_does_not_imply_off() {
     );
     assert_eq!(
         model_metadata_from_api(&api, "xai", "grok-4.5")
+            .unwrap()
+            .supported_reasoning_levels,
+        Some(vec![
+            ReasoningLevel::Low,
+            ReasoningLevel::Medium,
+            ReasoningLevel::High,
+        ])
+    );
+    assert_eq!(
+        model_metadata_from_api(&api, "xai", "grok-4.6")
             .unwrap()
             .supported_reasoning_levels,
         Some(vec![
@@ -847,6 +863,11 @@ fn known_reasoning_capabilities_prefers_current_then_stale_known() {
             known_reasoning_capabilities("xai", "stale-exact"),
             stale_exact.reasoning_capabilities()
         );
+        assert_eq!(
+            known_model_metadata("xai", "stale-exact")
+                .map(|metadata| metadata.supported_reasoning_levels),
+            Some(stale_exact.supported_reasoning_levels.clone())
+        );
 
         let current_exact = ModelMetadata {
             supported_reasoning_levels: Some(vec![
@@ -868,6 +889,7 @@ fn known_reasoning_capabilities_prefers_current_then_stale_known() {
             known_reasoning_capabilities("xai", "missing-model"),
             ReasoningCapabilities::Unknown
         );
+        assert_eq!(known_model_metadata("xai", "missing-model"), None);
     });
 }
 

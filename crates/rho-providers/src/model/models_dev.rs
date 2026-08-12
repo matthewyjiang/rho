@@ -74,7 +74,7 @@ impl ModelMetadata {
         )
     }
 
-    pub fn reasoning_effort(&self, reasoning: ReasoningLevel) -> Option<&str> {
+    pub fn reasoning_effort(&self, reasoning: ReasoningLevel) -> Option<&'static str> {
         match (reasoning, self.reasoning_off_behavior) {
             (ReasoningLevel::Off, ReasoningOffBehavior::Omit) => None,
             (ReasoningLevel::Off, ReasoningOffBehavior::EffortNone) => Some("none"),
@@ -115,17 +115,39 @@ pub fn cached_reasoning_capabilities(provider: &str, model: &str) -> ReasoningCa
         .unwrap_or_default()
 }
 
+/// Prefer a current-known catalog row; fall back to a stale-but-known cache row.
+///
+/// Wire encoding and UI pickers use this so a previously fetched models.dev
+/// entry still constrains levels when the current row is missing or incomplete.
+pub fn known_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
+    let current = current_model_metadata(provider, model);
+    if current
+        .as_ref()
+        .is_some_and(|metadata| metadata.reasoning_capabilities().is_known())
+    {
+        return current;
+    }
+    let cached = cached_model_metadata(provider, model);
+    if cached
+        .as_ref()
+        .is_some_and(|metadata| metadata.reasoning_capabilities().is_known())
+    {
+        return cached;
+    }
+    current.or(cached)
+}
+
 /// Prefer current-known capabilities; fall back to a stale-but-known cache row.
 ///
 /// UI surfaces use this so a previously fetched catalog entry still constrains
 /// pickers when the current row is missing or incomplete.
 pub fn known_reasoning_capabilities(provider: &str, model: &str) -> ReasoningCapabilities {
-    let current = current_reasoning_capabilities(provider, model);
-    if current.is_known() {
-        current
-    } else {
-        cached_reasoning_capabilities(provider, model)
+    if let Some(capabilities) = provider_fixed_reasoning_capabilities(provider) {
+        return capabilities;
     }
+    known_model_metadata(provider, model)
+        .map(|metadata| metadata.reasoning_capabilities())
+        .unwrap_or_default()
 }
 
 fn provider_fixed_reasoning_capabilities(provider: &str) -> Option<ReasoningCapabilities> {
