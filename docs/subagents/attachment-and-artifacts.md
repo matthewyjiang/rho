@@ -36,6 +36,8 @@ Run IDs stay globally unique. `rho attach` first checks the global run index, th
 
 Detaching does not cancel execution. [Herdr](/integrations/herdr) panes also run `rho attach <id>` and never own the delegated task. Artifacts remain available for post-run inspection and may contain prompts or workspace content.
 
+Attach uses the same display settings as the interactive TUI from config: `show_reasoning_output`, `zen_mode`, `max_tool_output_lines`, and `theme`. Reasoning and tool events stay in the journal; the view filters them when painting so hide-reasoning and zen match the main session.
+
 A direct automation run can persist the same status contract:
 
 ```bash

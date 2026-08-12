@@ -147,8 +147,18 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
         return Ok(EarlyDispatch::Handled(plugins_cli::run(command, cli)));
     }
     if let Some(Command::Attach { id }) = &cli.command {
+        // Attach is early-dispatched, so load display settings here the way the
+        // interactive TUI gets them through RuntimeModelView.
+        let display = match ConfigRepository::new(cli.config.clone()).load() {
+            Ok(config) => crate::tui::AttachmentDisplaySettings::from_config(&config),
+            Err(error) => {
+                // Stay out of the alternate screen so the warning is visible.
+                eprintln!("warning: failed to load config for attach display settings: {error:#}");
+                crate::tui::AttachmentDisplaySettings::default()
+            }
+        };
         return Ok(EarlyDispatch::Handled(
-            crate::tui::run_attachment(id, HerdrReporter::from_env()).await,
+            crate::tui::run_attachment(id, display, HerdrReporter::from_env()).await,
         ));
     }
     if matches!(cli.command, Some(Command::Update)) {

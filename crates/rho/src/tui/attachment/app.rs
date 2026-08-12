@@ -33,14 +33,84 @@ use super::super::{
         format_token_count, format_usage_token_summary, format_usd, resolved_usage_cost_usd_micros,
         AttemptAwareRunUsage,
     },
-    Entry, HistoryScroll, ReasoningEntry, ToolEntry, HISTORY_MOUSE_SCROLL_LINES,
+    Entry, HistoryScroll, ReasoningChrome, ReasoningEntry, ToolEntry, HISTORY_MOUSE_SCROLL_LINES,
     HISTORY_SCROLLBAR_REVEAL_DURATION,
 };
 
 const REFRESH_INTERVAL: Duration = Duration::from_millis(100);
-const MAX_TOOL_OUTPUT_LINES: usize = 20;
 
-pub(crate) async fn run(id: &str, herdr: HerdrReporter) -> anyhow::Result<()> {
+/// Display policy for `rho attach`, mirrored from interactive config.
+///
+/// Keep ingest complete (including hidden reasoning) so journal replay and
+/// provider-attempt bookkeeping stay stable; filter at render time.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AttachmentDisplaySettings {
+    pub show_reasoning_output: bool,
+    pub zen_mode: bool,
+    pub max_tool_output_lines: usize,
+    pub theme: String,
+}
+
+impl Default for AttachmentDisplaySettings {
+    fn default() -> Self {
+        Self::from_config(&crate::config::Config::default())
+    }
+}
+
+impl AttachmentDisplaySettings {
+    pub(crate) fn from_config(config: &crate::config::Config) -> Self {
+        Self {
+            show_reasoning_output: config.show_reasoning_output,
+            zen_mode: config.zen_mode,
+            max_tool_output_lines: config.max_tool_output_lines.max(1),
+            theme: config.theme.clone(),
+        }
+    }
+
+    /// Exclusive reasoning display policy; matches interactive TUI chrome.
+    ///
+    /// Attach has no live `Thinking...` stretch, so
+    /// [`ReasoningChrome::ThinkingPlaceholder`] hides reasoning text the same
+    /// way as [`ReasoningChrome::Hidden`]. Full text still requires
+    /// `show_reasoning_output` with zen off.
+    fn reasoning_chrome(&self) -> ReasoningChrome {
+        if self.zen_mode {
+            ReasoningChrome::Hidden
+        } else if self.show_reasoning_output {
+            ReasoningChrome::FullText
+        } else {
+            ReasoningChrome::ThinkingPlaceholder
+        }
+    }
+
+    fn displays_reasoning_output(&self) -> bool {
+        matches!(self.reasoning_chrome(), ReasoningChrome::FullText)
+    }
+
+    /// Tool cards stay visible outside zen mode.
+    fn shows_work_chrome(&self) -> bool {
+        !self.zen_mode
+    }
+
+    fn max_tool_output_lines(&self) -> usize {
+        self.max_tool_output_lines.max(1)
+    }
+
+    /// Zen hides tools and reasoning. Hide-reasoning alone suppresses reasoning text.
+    fn hides_entry(&self, entry: &Entry) -> bool {
+        match entry {
+            Entry::Reasoning(_) => !self.displays_reasoning_output(),
+            Entry::Tool(_) => !self.shows_work_chrome(),
+            _ => false,
+        }
+    }
+}
+
+pub(crate) async fn run(
+    id: &str,
+    display: AttachmentDisplaySettings,
+    herdr: HerdrReporter,
+) -> anyhow::Result<()> {
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
         anyhow::bail!("rho attach requires an interactive terminal");
     }
@@ -54,11 +124,12 @@ pub(crate) async fn run(id: &str, herdr: HerdrReporter) -> anyhow::Result<()> {
         mouse_capture: mouse_capture::Guard::acquire(),
     };
     Theme::initialize_from_terminal();
+    Theme::apply_committed(&display.theme);
     let message = format!("attached to agent run {id}");
     herdr
         .report_state(HerdrState::Working, Some(&message), Some(&id))
         .await;
-    let result = AttachmentApp::new(&id, directory, herdr.clone())
+    let result = AttachmentApp::new(&id, directory, display, herdr.clone())
         .run(&mut terminal)
         .await;
     herdr.release().await;
@@ -81,6 +152,7 @@ struct AttachmentApp {
     id: String,
     directory: PathBuf,
     reader: AttachmentReader,
+    display: AttachmentDisplaySettings,
     transcript: Vec<Entry>,
     /// Live tools keyed by call id (or a legacy singleton key for old journals).
     pending_tools: std::collections::BTreeMap<String, ToolEntry>,
@@ -103,12 +175,18 @@ struct AttachmentApp {
 }
 
 impl AttachmentApp {
-    fn new(id: &str, directory: PathBuf, herdr: HerdrReporter) -> Self {
+    fn new(
+        id: &str,
+        directory: PathBuf,
+        display: AttachmentDisplaySettings,
+        herdr: HerdrReporter,
+    ) -> Self {
         let reader = AttachmentReader::new(directory.join(subagent::ATTACHMENT_FILE_NAME));
         Self {
             id: id.to_string(),
             directory,
             reader,
+            display,
             transcript: Vec::new(),
             pending_tools: std::collections::BTreeMap::new(),
             pending_order: Vec::new(),
@@ -443,22 +521,28 @@ impl AttachmentApp {
 
     fn history_lines(&self, width: usize, status: Option<&RunStatus>) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
+        let max_tool_output_lines = self.display.max_tool_output_lines();
         for entry in &self.transcript {
+            if self.display.hides_entry(entry) {
+                continue;
+            }
             lines.extend(entry_lines(
                 entry,
                 width,
-                MAX_TOOL_OUTPUT_LINES,
+                max_tool_output_lines,
                 DEFAULT_IMAGE_HEIGHT,
             ));
         }
-        for key in &self.pending_order {
-            if let Some(tool) = self.pending_tools.get(key) {
-                lines.extend(entry_lines(
-                    &Entry::Tool(tool.clone()),
-                    width,
-                    MAX_TOOL_OUTPUT_LINES,
-                    DEFAULT_IMAGE_HEIGHT,
-                ));
+        if self.display.shows_work_chrome() {
+            for key in &self.pending_order {
+                if let Some(tool) = self.pending_tools.get(key) {
+                    lines.extend(entry_lines(
+                        &Entry::Tool(tool.clone()),
+                        width,
+                        max_tool_output_lines,
+                        DEFAULT_IMAGE_HEIGHT,
+                    ));
+                }
             }
         }
         let has_assistant = self
@@ -477,7 +561,7 @@ impl AttachmentApp {
                 lines.extend(entry_lines(
                     &Entry::Assistant(text.to_string()),
                     width,
-                    MAX_TOOL_OUTPUT_LINES,
+                    max_tool_output_lines,
                     DEFAULT_IMAGE_HEIGHT,
                 ));
             }
@@ -486,7 +570,7 @@ impl AttachmentApp {
             lines.extend(entry_lines(
                 &Entry::Error(error.to_string()),
                 width,
-                MAX_TOOL_OUTPUT_LINES,
+                max_tool_output_lines,
                 DEFAULT_IMAGE_HEIGHT,
             ));
         }
@@ -494,7 +578,7 @@ impl AttachmentApp {
             lines.extend(entry_lines(
                 &Entry::Error(error.to_string()),
                 width,
-                MAX_TOOL_OUTPUT_LINES,
+                max_tool_output_lines,
                 DEFAULT_IMAGE_HEIGHT,
             ));
         }
