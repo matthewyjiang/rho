@@ -20,6 +20,7 @@ mod model_aliases;
 mod model_identity;
 mod paths;
 mod permission;
+mod permission_classifier;
 mod plugins;
 mod prompt;
 mod prompt_templates;
