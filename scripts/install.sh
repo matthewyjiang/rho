@@ -162,8 +162,22 @@ need_cmd chmod
 
 if command -v curl >/dev/null 2>&1; then
   download() { curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error "$1" --output "$2"; }
+  download_archive() {
+    if [ -t 2 ]; then
+      curl --fail --location --proto '=https' --tlsv1.2 --progress-bar --show-error "$1" --output "$2"
+    else
+      download "$1" "$2"
+    fi
+  }
 elif command -v wget >/dev/null 2>&1; then
   download() { wget -q "$1" -O "$2"; }
+  download_archive() {
+    if [ -t 2 ]; then
+      wget -O "$2" "$1"
+    else
+      download "$1" "$2"
+    fi
+  }
 else
   echo "error: required command not found: curl or wget" >&2
   exit 1
@@ -176,7 +190,7 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 
 archive="$tmp/rho.tar.gz"
 echo "downloading rho for $target..."
-download "$url" "$archive"
+download_archive "$url" "$archive"
 
 checksum="$tmp/rho.tar.gz.sha256"
 download "$url.sha256" "$checksum" || {
