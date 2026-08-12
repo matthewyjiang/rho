@@ -25,7 +25,7 @@ pub(super) fn setup_prompt_template(home: &IsolatedHome) -> Result<()> {
 /// Setup owns the whole screen, so nothing a session draws may show through.
 fn assert_session_chrome_hidden(harness: &mut PtyHarness) -> Result<()> {
     let screen = harness.screen().contents();
-    for chrome in ["Type a message", "shift+tab", "Auto ·"] {
+    for chrome in ["Type a message", "shift+tab", "Bypass ·", "Auto ·"] {
         if screen.contains(chrome) {
             anyhow::bail!("setup screen leaked session chrome {chrome:?}:\n{screen}");
         }

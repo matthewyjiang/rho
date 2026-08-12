@@ -62,7 +62,7 @@ fn status_row(harness: &PtyHarness) -> Result<String> {
         .rows_text()
         .iter()
         .rev()
-        .find(|row| row.contains("Auto"))
+        .find(|row| row.contains("Bypass"))
         .map(|row| row.trim().to_string())
         .ok_or_else(|| {
             anyhow::anyhow!(
