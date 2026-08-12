@@ -205,7 +205,8 @@ fn incrementally_extends_assistant_markdown_without_rendering_drift() {
         cache.code_blocks(&entries, settings(32), &no_images).len(),
         1
     );
-    assert!(cache.assistant_caches[0]
+    assert!(cache.entries[0]
+        .assistant
         .is_some_and(|cached| cached.stable_source_len > "intro\n\n".len()));
 }
 
@@ -597,11 +598,11 @@ fn resplice_tool_expand_preserves_later_assistant_lines() {
     assert_eq!(collapsed.len(), total_before);
 }
 
-// Covers: tracked image-height deps keep soft image-budget updates O(deps),
-// not a re-render of every assistant entry.
+// Covers: per-entry image-height flags keep soft image-budget updates from
+// re-rendering text-only entries.
 // Owner: history line cache
 #[test]
-fn image_height_only_change_uses_cached_dependency_indices() {
+fn image_height_only_change_uses_cached_dependency_flags() {
     use image::{DynamicImage, ImageFormat};
     use ratatui_image::picker::{Picker, ProtocolType};
     use std::io::Cursor;
@@ -639,7 +640,14 @@ fn image_height_only_change_uses_cached_dependency_indices() {
     ];
     let mut base = settings(80);
     let _ = cache.line_count(&entries, base, &no_images);
-    assert_eq!(cache.image_height_dep_entries, vec![2]);
+    assert_eq!(
+        cache
+            .entries
+            .iter()
+            .map(|entry| entry.depends_on_image_height)
+            .collect::<Vec<_>>(),
+        vec![false, false, true]
+    );
 
     let renders_before = cache.entry_render_count();
     base.max_image_height = base.max_image_height.saturating_add(8);
