@@ -13,7 +13,8 @@ use rho_sdk::{
 use crate::{
     config::Config,
     permission_classifier::{
-        classify_capability_request, ClassifierVerdict, CONSECUTIVE_DENY_ESCALATION,
+        classify_capability_request, ClassifierVerdict, ClassifyRequest,
+        CONSECUTIVE_DENY_ESCALATION,
     },
 };
 
@@ -185,12 +186,14 @@ fn default_classifier() -> ClassifyFn {
         Box::pin(async move {
             Ok(classify_capability_request(
                 &input.config,
-                &input.history,
-                &input.request,
-                CancellationToken::new(),
-                &input.session_id,
-                &input.workspace_path,
-                input.usage_recording,
+                ClassifyRequest {
+                    history: &input.history,
+                    pending: &input.request,
+                    cancellation: CancellationToken::new(),
+                    session_id: &input.session_id,
+                    workspace_path: &input.workspace_path,
+                    usage_recording: input.usage_recording,
+                },
             )
             .await)
         })

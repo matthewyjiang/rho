@@ -10,8 +10,9 @@ use rho_sdk::{
 };
 
 use super::{
-    classify::classify_capability_request_with_provider, classify_capability_request,
-    render_classifier_transcript, ClassifierVerdict, CLASSIFIER_PROMPT,
+    classify::{classify_capability_request_with_provider, ClassifyRequest},
+    classify_capability_request, render_classifier_transcript, ClassifierVerdict,
+    CLASSIFIER_PROMPT,
 };
 use crate::{
     agent::PERMISSION_CLASSIFIER_AGENT_ID,
@@ -61,12 +62,14 @@ async fn sends_classifier_prompt_transcript_and_parses_verdict() {
     let verdict = classify_capability_request_with_provider(
         &provider,
         ReasoningLevel::Low,
-        &history,
-        &pending,
-        CancellationToken::new(),
-        &session_id,
-        Path::new("/test/workspace"),
-        ProviderRequestUsageRecording::default(),
+        ClassifyRequest {
+            history: &history,
+            pending: &pending,
+            cancellation: CancellationToken::new(),
+            session_id: &session_id,
+            workspace_path: Path::new("/test/workspace"),
+            usage_recording: ProviderRequestUsageRecording::default(),
+        },
     )
     .await;
 
@@ -106,12 +109,14 @@ async fn invalid_classifier_response_fails_closed() {
     let verdict = classify_capability_request_with_provider(
         &provider,
         ReasoningLevel::Low,
-        &history,
-        &pending,
-        CancellationToken::new(),
-        &session_id,
-        Path::new("/test/workspace"),
-        ProviderRequestUsageRecording::default(),
+        ClassifyRequest {
+            history: &history,
+            pending: &pending,
+            cancellation: CancellationToken::new(),
+            session_id: &session_id,
+            workspace_path: Path::new("/test/workspace"),
+            usage_recording: ProviderRequestUsageRecording::default(),
+        },
     )
     .await;
 
@@ -128,12 +133,14 @@ async fn missing_classifier_model_fails_closed() {
 
     let verdict = classify_capability_request(
         &Config::default(),
-        &history,
-        &pending,
-        CancellationToken::new(),
-        &session_id,
-        Path::new("/test/workspace"),
-        ProviderRequestUsageRecording::default(),
+        ClassifyRequest {
+            history: &history,
+            pending: &pending,
+            cancellation: CancellationToken::new(),
+            session_id: &session_id,
+            workspace_path: Path::new("/test/workspace"),
+            usage_recording: ProviderRequestUsageRecording::default(),
+        },
     )
     .await;
 
@@ -155,12 +162,14 @@ async fn claude_runtime_selection_fails_closed() {
 
     let verdict = classify_capability_request(
         &config,
-        &history,
-        &pending,
-        CancellationToken::new(),
-        &session_id,
-        Path::new("/test/workspace"),
-        ProviderRequestUsageRecording::default(),
+        ClassifyRequest {
+            history: &history,
+            pending: &pending,
+            cancellation: CancellationToken::new(),
+            session_id: &session_id,
+            workspace_path: Path::new("/test/workspace"),
+            usage_recording: ProviderRequestUsageRecording::default(),
+        },
     )
     .await;
 

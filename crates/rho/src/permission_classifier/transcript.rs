@@ -44,11 +44,7 @@ fn append_tool_calls(lines: &mut Vec<String>, blocks: &[ContentBlock]) {
         let ContentBlock::ToolCall(call) = block else {
             continue;
         };
-        lines.push(format!(
-            "tool_call: {} {}",
-            call.name,
-            call.arguments.to_string()
-        ));
+        lines.push(format!("tool_call: {} {}", call.name, call.arguments));
     }
 }
 

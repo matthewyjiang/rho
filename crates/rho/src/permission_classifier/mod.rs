@@ -3,7 +3,7 @@ mod transcript;
 mod verdict;
 
 #[allow(unused_imports)] // consumed by the handler task in the permission classifier rollout
-pub(crate) use classify::classify_capability_request;
+pub(crate) use classify::{classify_capability_request, ClassifyRequest};
 pub(crate) use transcript::render_classifier_transcript;
 pub(crate) use verdict::{parse_classifier_verdict, ClassifierVerdict, CLASSIFIER_PROMPT};
 

@@ -18,27 +18,21 @@ use crate::{
 
 use super::{parse_classifier_verdict, render_classifier_transcript, ClassifierVerdict};
 
+pub(crate) struct ClassifyRequest<'a> {
+    pub history: &'a [Message],
+    pub pending: &'a ApprovalRequest,
+    pub cancellation: CancellationToken,
+    pub session_id: &'a SessionId,
+    pub workspace_path: &'a Path,
+    pub usage_recording: ProviderRequestUsageRecording,
+}
+
 #[allow(dead_code)]
 pub(crate) async fn classify_capability_request(
     config: &Config,
-    history: &[Message],
-    pending: &ApprovalRequest,
-    cancellation: CancellationToken,
-    session_id: &SessionId,
-    workspace_path: &Path,
-    usage_recording: ProviderRequestUsageRecording,
+    request: ClassifyRequest<'_>,
 ) -> ClassifierVerdict {
-    match try_classify_capability_request(
-        config,
-        history,
-        pending,
-        cancellation,
-        session_id,
-        workspace_path,
-        usage_recording,
-    )
-    .await
-    {
+    match try_classify_capability_request(config, request).await {
         Ok(verdict) => verdict,
         Err(error) => classifier_unavailable(error),
     }
@@ -46,12 +40,7 @@ pub(crate) async fn classify_capability_request(
 
 async fn try_classify_capability_request(
     config: &Config,
-    history: &[Message],
-    pending: &ApprovalRequest,
-    cancellation: CancellationToken,
-    session_id: &SessionId,
-    workspace_path: &Path,
-    usage_recording: ProviderRequestUsageRecording,
+    request: ClassifyRequest<'_>,
 ) -> anyhow::Result<ClassifierVerdict> {
     let model = config
         .internal_agent_model(PERMISSION_CLASSIFIER_AGENT_ID)
@@ -66,42 +55,16 @@ async fn try_classify_capability_request(
         reasoning,
         &selection.auth,
     )?;
-    try_classify_capability_request_with_provider(
-        provider.as_ref(),
-        reasoning,
-        history,
-        pending,
-        cancellation,
-        session_id,
-        workspace_path,
-        usage_recording,
-    )
-    .await
+    try_classify_capability_request_with_provider(provider.as_ref(), reasoning, request).await
 }
 
 #[cfg(test)]
 pub(super) async fn classify_capability_request_with_provider(
     provider: &dyn ModelProvider,
     reasoning: ReasoningLevel,
-    history: &[Message],
-    pending: &ApprovalRequest,
-    cancellation: CancellationToken,
-    session_id: &SessionId,
-    workspace_path: &Path,
-    usage_recording: ProviderRequestUsageRecording,
+    request: ClassifyRequest<'_>,
 ) -> ClassifierVerdict {
-    match try_classify_capability_request_with_provider(
-        provider,
-        reasoning,
-        history,
-        pending,
-        cancellation,
-        session_id,
-        workspace_path,
-        usage_recording,
-    )
-    .await
-    {
+    match try_classify_capability_request_with_provider(provider, reasoning, request).await {
         Ok(verdict) => verdict,
         Err(error) => classifier_unavailable(error),
     }
@@ -110,12 +73,7 @@ pub(super) async fn classify_capability_request_with_provider(
 async fn try_classify_capability_request_with_provider(
     provider: &dyn ModelProvider,
     reasoning: ReasoningLevel,
-    history: &[Message],
-    pending: &ApprovalRequest,
-    cancellation: CancellationToken,
-    session_id: &SessionId,
-    workspace_path: &Path,
-    usage_recording: ProviderRequestUsageRecording,
+    request: ClassifyRequest<'_>,
 ) -> anyhow::Result<ClassifierVerdict> {
     let result = run_one_shot_with_provider(
         provider,
@@ -123,12 +81,12 @@ async fn try_classify_capability_request_with_provider(
             definition: internal_definition(PERMISSION_CLASSIFIER_AGENT_ID),
             usage_purpose: "permission-classifier",
             reasoning: Some(reasoning),
-            input: render_classifier_transcript(history, pending),
-            cancellation,
-            session_id,
-            workspace_path,
+            input: render_classifier_transcript(request.history, request.pending),
+            cancellation: request.cancellation,
+            session_id: request.session_id,
+            workspace_path: request.workspace_path,
         },
-        usage_recording,
+        request.usage_recording,
         /*updates*/ None,
     )
     .await?;
