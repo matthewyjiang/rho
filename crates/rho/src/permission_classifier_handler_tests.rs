@@ -5,14 +5,14 @@ use std::{
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
-    model::{Message, ModelIdentity},
-    provider::{ScriptedProvider, ScriptedTurn},
-    ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, CancellationToken,
-    CapabilityRequest, CapabilitySource, PathScope, Rho, SessionOptions,
+    ApprovalContext, ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest,
+    CancellationToken, CapabilityRequest, CapabilitySource, PathScope, SessionId,
 };
 
-use super::{ClassificationInput, ClassifierApprovalHandler, ClassifyFn};
-use crate::permission_classifier::{ClassifierVerdict, CONSECUTIVE_DENY_ESCALATION};
+use super::{
+    ClassificationInput, ClassifierApprovalHandler, ClassifyFn, CONSECUTIVE_DENY_ESCALATION,
+};
+use crate::permission_classifier::ClassifierVerdict;
 
 fn request() -> ApprovalRequest {
     ApprovalRequest::new(
@@ -25,25 +25,43 @@ fn request() -> ApprovalRequest {
     )
 }
 
+fn context_with(
+    history: Vec<rho_sdk::model::Message>,
+    cancellation: CancellationToken,
+) -> ApprovalContext {
+    ApprovalContext::new(SessionId::new(), cancellation, history)
+}
+
 #[derive(Clone)]
 struct ScriptedClassifier {
-    outcomes: Arc<Mutex<VecDeque<anyhow::Result<ClassifierVerdict>>>>,
+    outcomes: Arc<Mutex<VecDeque<ClassifierVerdict>>>,
     calls: Arc<Mutex<Vec<ApprovalRequest>>>,
+    histories: Arc<Mutex<Vec<Vec<rho_sdk::model::Message>>>>,
+    cancelled: Arc<Mutex<Vec<bool>>>,
 }
 
 impl ScriptedClassifier {
-    fn new(outcomes: impl IntoIterator<Item = anyhow::Result<ClassifierVerdict>>) -> Self {
+    fn new(outcomes: impl IntoIterator<Item = ClassifierVerdict>) -> Self {
         Self {
             outcomes: Arc::new(Mutex::new(outcomes.into_iter().collect())),
             calls: Arc::default(),
+            histories: Arc::default(),
+            cancelled: Arc::default(),
         }
     }
 
     fn classify(&self) -> ClassifyFn {
         let outcomes = Arc::clone(&self.outcomes);
         let calls = Arc::clone(&self.calls);
+        let histories = Arc::clone(&self.histories);
+        let cancelled = Arc::clone(&self.cancelled);
         Arc::new(move |input: ClassificationInput| {
             calls.lock().unwrap().push(input.request.clone());
+            histories.lock().unwrap().push(input.history.clone());
+            cancelled
+                .lock()
+                .unwrap()
+                .push(input.cancellation.is_cancelled());
             let outcome = outcomes
                 .lock()
                 .unwrap()
@@ -97,115 +115,78 @@ fn handler_with(
     ClassifierApprovalHandler::for_tests(classifier.classify(), inner)
 }
 
-// Covers: forked handlers keep distinct session bindings so parallel workflow
-// agents cannot overwrite each other's classifier transcript.
+// Covers: isolated handlers keep distinct deny streaks for parallel workflow agents.
 // Owner: permission classifier approval handler.
 #[tokio::test]
-async fn fork_unbound_isolates_session_bindings() {
-    let observed = Arc::new(Mutex::new(Vec::new()));
-    let classifier: ClassifyFn = {
-        let observed = Arc::clone(&observed);
-        Arc::new(move |input: ClassificationInput| {
-            observed.lock().unwrap().push(input.history.clone());
-            Box::pin(std::future::ready(Ok(ClassifierVerdict::Allow)))
-        })
-    };
-    let template = Arc::new(ClassifierApprovalHandler::for_tests(classifier, None));
-    let first = template.fork_unbound();
-    let second = template.fork_unbound();
+async fn isolate_resets_deny_streak_without_sharing_counters() {
+    let classifier = ScriptedClassifier::new([
+        ClassifierVerdict::Deny {
+            reason: "one".into(),
+        },
+        ClassifierVerdict::Deny {
+            reason: "two".into(),
+        },
+        ClassifierVerdict::Deny {
+            reason: "three".into(),
+        },
+        ClassifierVerdict::Allow,
+    ]);
+    let template = Arc::new(ClassifierApprovalHandler::for_tests(
+        classifier.classify(),
+        None,
+    ));
+    let first = template.isolate();
+    let second = template.isolate();
 
-    let runtime = Rho::builder()
-        .provider(ScriptedProvider::new(
-            ModelIdentity::new("test", "test", "unused"),
-            Vec::<ScriptedTurn>::new(),
-        ))
-        .build()
-        .unwrap();
-    let first_history = vec![Message::user_text("first agent")];
-    let second_history = vec![Message::user_text("second agent")];
-    let first_session = runtime
-        .session(SessionOptions::default().history(first_history.clone()))
-        .await
-        .unwrap();
-    let second_session = runtime
-        .session(SessionOptions::default().history(second_history.clone()))
-        .await
-        .unwrap();
-    first.bind_session(first_session);
-    second.bind_session(second_session);
-
-    assert_eq!(first.request(request()).await, ApprovalDecision::AllowOnce);
+    for _ in 0..CONSECUTIVE_DENY_ESCALATION {
+        assert!(matches!(
+            first.request(request()).await,
+            ApprovalDecision::Deny { .. }
+        ));
+    }
+    // First is escalated; second still has a fresh streak and can allow.
     assert_eq!(second.request(request()).await, ApprovalDecision::AllowOnce);
-
-    assert_eq!(
-        *observed.lock().unwrap(),
-        vec![first_history, second_history]
-    );
-    runtime.shutdown();
+    assert_eq!(classifier.call_count(), 4);
 }
 
-// Covers: workflow Auto agent classifiers need the child session history instead of empty context.
+// Covers: workflow Auto agent classifiers need the child session history from ApprovalContext.
 // Owner: permission classifier approval handler.
 #[tokio::test]
-async fn bound_session_history_reaches_classifier_input() {
-    let observed = Arc::new(Mutex::new(Vec::new()));
-    let classifier: ClassifyFn = {
-        let observed = Arc::clone(&observed);
-        Arc::new(move |input: ClassificationInput| {
-            observed.lock().unwrap().push(input.history.clone());
-            Box::pin(std::future::ready(Ok(ClassifierVerdict::Allow)))
-        })
-    };
-    let handler = ClassifierApprovalHandler::for_tests(classifier, None);
-    let history = vec![Message::user_text("prior workflow context")];
-    let runtime = Rho::builder()
-        .provider(ScriptedProvider::new(
-            ModelIdentity::new("test", "test", "unused"),
-            Vec::<ScriptedTurn>::new(),
-        ))
-        .build()
-        .unwrap();
-    let session = runtime
-        .session(SessionOptions::default().history(history.clone()))
-        .await
-        .unwrap();
-    handler.bind_session(session);
+async fn approval_context_history_reaches_classifier_input() {
+    let classifier = ScriptedClassifier::new([ClassifierVerdict::Allow]);
+    let handler = ClassifierApprovalHandler::for_tests(classifier.classify(), None);
+    let history = vec![rho_sdk::model::Message::user_text("prior workflow context")];
 
     assert_eq!(
-        handler.request(request()).await,
+        handler
+            .request_with_context(
+                request(),
+                context_with(history.clone(), CancellationToken::new()),
+            )
+            .await,
         ApprovalDecision::AllowOnce
     );
 
-    assert_eq!(*observed.lock().unwrap(), vec![history]);
-    runtime.shutdown();
+    assert_eq!(*classifier.histories.lock().unwrap(), vec![history]);
 }
 
-// Covers: in-flight classifier calls must share the bound run cancellation token.
+// Covers: in-flight classifier calls must share the run cancellation token from ApprovalContext.
 // Owner: permission classifier approval handler.
 #[tokio::test]
-async fn classifier_input_uses_bound_cancellation_token() {
-    let observed = Arc::new(Mutex::new(Vec::new()));
-    let classifier: ClassifyFn = {
-        let observed = Arc::clone(&observed);
-        Arc::new(move |input: ClassificationInput| {
-            observed
-                .lock()
-                .unwrap()
-                .push(input.cancellation.is_cancelled());
-            Box::pin(std::future::ready(Ok(ClassifierVerdict::Allow)))
-        })
-    };
-    let handler = ClassifierApprovalHandler::for_tests(classifier, None);
+async fn approval_context_cancellation_reaches_classifier_input() {
+    let classifier = ScriptedClassifier::new([ClassifierVerdict::Allow]);
+    let handler = ClassifierApprovalHandler::for_tests(classifier.classify(), None);
     let cancellation = CancellationToken::new();
     cancellation.cancel();
-    handler.bind_cancellation(cancellation);
 
     assert_eq!(
-        handler.request(request()).await,
+        handler
+            .request_with_context(request(), context_with(Vec::new(), cancellation))
+            .await,
         ApprovalDecision::AllowOnce
     );
 
-    assert_eq!(*observed.lock().unwrap(), vec![true]);
+    assert_eq!(*classifier.cancelled.lock().unwrap(), vec![true]);
 }
 
 // Covers: classifier allows should not grant session-wide approval and should clear deny streaks.
@@ -213,22 +194,22 @@ async fn classifier_input_uses_bound_cancellation_token() {
 #[tokio::test]
 async fn allow_returns_allow_once_and_resets_consecutive_denials() {
     let classifier = ScriptedClassifier::new([
-        Ok(ClassifierVerdict::Deny {
+        ClassifierVerdict::Deny {
             reason: "too broad".into(),
-        }),
-        Ok(ClassifierVerdict::Deny {
+        },
+        ClassifierVerdict::Deny {
             reason: "still too broad".into(),
-        }),
-        Ok(ClassifierVerdict::Allow),
-        Ok(ClassifierVerdict::Deny {
+        },
+        ClassifierVerdict::Allow,
+        ClassifierVerdict::Deny {
             reason: "new streak one".into(),
-        }),
-        Ok(ClassifierVerdict::Deny {
+        },
+        ClassifierVerdict::Deny {
             reason: "new streak two".into(),
-        }),
-        Ok(ClassifierVerdict::Deny {
+        },
+        ClassifierVerdict::Deny {
             reason: "new streak three".into(),
-        }),
+        },
     ]);
     let inner = Arc::new(ScriptedApprovals::new([ApprovalDecision::AllowOnce]));
     let handler = handler_with(&classifier, Some(inner.clone()));
@@ -261,18 +242,18 @@ async fn allow_returns_allow_once_and_resets_consecutive_denials() {
 #[tokio::test]
 async fn after_three_denials_next_request_escalates_to_inner_handler_and_resets() {
     let classifier = ScriptedClassifier::new([
-        Ok(ClassifierVerdict::Deny {
+        ClassifierVerdict::Deny {
             reason: "one".into(),
-        }),
-        Ok(ClassifierVerdict::Deny {
+        },
+        ClassifierVerdict::Deny {
             reason: "two".into(),
-        }),
-        Ok(ClassifierVerdict::Deny {
+        },
+        ClassifierVerdict::Deny {
             reason: "three".into(),
-        }),
-        Ok(ClassifierVerdict::Deny {
+        },
+        ClassifierVerdict::Deny {
             reason: "after reset".into(),
-        }),
+        },
     ]);
     let inner = Arc::new(ScriptedApprovals::new([ApprovalDecision::AllowOnce]));
     let handler = handler_with(&classifier, Some(inner.clone()));
@@ -296,14 +277,20 @@ async fn after_three_denials_next_request_escalates_to_inner_handler_and_resets(
     assert_eq!(inner.request_count(), 1);
 }
 
-// Covers: classifier transport/parse failures fail closed and count toward headless escalation.
+// Covers: classifier unavailable denials count toward headless escalation.
 // Owner: permission classifier approval handler.
 #[tokio::test]
-async fn classifier_errors_deny_and_headless_escalation_does_not_call_classifier() {
+async fn unavailable_denials_escalate_headless_without_further_classifier_calls() {
     let classifier = ScriptedClassifier::new([
-        Err(anyhow::anyhow!("timeout")),
-        Err(anyhow::anyhow!("malformed verdict")),
-        Err(anyhow::anyhow!("provider unavailable")),
+        ClassifierVerdict::Deny {
+            reason: "classifier unavailable".into(),
+        },
+        ClassifierVerdict::Deny {
+            reason: "classifier unavailable".into(),
+        },
+        ClassifierVerdict::Deny {
+            reason: "classifier unavailable".into(),
+        },
     ]);
     let handler = handler_with(&classifier, None);
 
@@ -328,35 +315,50 @@ async fn classifier_errors_deny_and_headless_escalation_does_not_call_classifier
 // instead of denying forever while automation keeps running.
 // Owner: permission classifier approval handler.
 #[tokio::test]
-async fn headless_escalation_cancels_bound_run_token() {
+async fn headless_escalation_cancels_context_run_token() {
     let classifier = ScriptedClassifier::new([
-        Ok(ClassifierVerdict::Deny {
+        ClassifierVerdict::Deny {
             reason: "one".into(),
-        }),
-        Ok(ClassifierVerdict::Deny {
+        },
+        ClassifierVerdict::Deny {
             reason: "two".into(),
-        }),
-        Ok(ClassifierVerdict::Deny {
+        },
+        ClassifierVerdict::Deny {
             reason: "three".into(),
-        }),
+        },
     ]);
     let handler = handler_with(&classifier, None);
     let cancellation = CancellationToken::new();
-    handler.bind_cancellation(cancellation.clone());
 
     for _ in 0..CONSECUTIVE_DENY_ESCALATION {
         assert!(matches!(
-            handler.request(request()).await,
+            handler
+                .request_with_context(request(), context_with(Vec::new(), cancellation.clone()),)
+                .await,
             ApprovalDecision::Deny { .. }
         ));
         assert!(!cancellation.is_cancelled());
     }
 
-    let decision = handler.request(request()).await;
+    let decision = handler
+        .request_with_context(request(), context_with(Vec::new(), cancellation.clone()))
+        .await;
     let ApprovalDecision::Deny { reason } = decision else {
         panic!("headless escalation must deny");
     };
     assert!(reason.contains("permission classifier denied 3 consecutive requests"));
     assert!(cancellation.is_cancelled());
     assert_eq!(classifier.call_count(), 3);
+}
+
+// Covers: Auto classifier must declare live-history reads so the SDK publishes
+// in-flight transcript without a host force-publish flag.
+// Owner: permission classifier approval handler.
+#[test]
+fn classifier_handler_reads_live_history() {
+    let handler = ClassifierApprovalHandler::for_tests(
+        Arc::new(|_: ClassificationInput| Box::pin(async { ClassifierVerdict::Allow })),
+        None,
+    );
+    assert!(handler.reads_live_history());
 }

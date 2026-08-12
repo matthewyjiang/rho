@@ -2,23 +2,27 @@ use std::{
     future::Future,
     path::PathBuf,
     pin::Pin,
-    sync::{Arc, Mutex, RwLock},
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc, RwLock,
+    },
 };
 
 use rho_sdk::{
-    model::Message, ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest,
-    CancellationToken, ProviderRequestUsageRecording, Session, SessionId,
+    model::Message, ApprovalContext, ApprovalDecision, ApprovalFuture, ApprovalHandler,
+    ApprovalRequest, CancellationToken, ProviderRequestUsageRecording, SessionId,
 };
 
 use crate::{
     config::Config,
-    permission_classifier::{
-        classify_capability_request, ClassifierVerdict, ClassifyRequest,
-        CONSECUTIVE_DENY_ESCALATION,
-    },
+    permission_classifier::{classify_capability_request, ClassifierVerdict, ClassifyRequest},
 };
 
-type ClassifyFuture = Pin<Box<dyn Future<Output = anyhow::Result<ClassifierVerdict>> + Send>>;
+/// Consecutive classifier denials before Auto escalates to a human (or cancels
+/// headless). Lives next to the streak counter that enforces it.
+pub(crate) const CONSECUTIVE_DENY_ESCALATION: u32 = 3;
+
+type ClassifyFuture = Pin<Box<dyn Future<Output = ClassifierVerdict> + Send>>;
 pub(crate) type ClassifyFn =
     Arc<dyn Fn(ClassificationInput) -> ClassifyFuture + Send + Sync + 'static>;
 
@@ -32,15 +36,18 @@ pub(crate) struct ClassificationInput {
     pub(crate) usage_recording: ProviderRequestUsageRecording,
 }
 
+/// Approval handler that classifies Auto-mode capability requests.
+///
+/// History and cancellation come from [`ApprovalContext`] on each request. The
+/// only mutable run state is the consecutive-deny streak, which
+/// [`Self::isolate`] resets so concurrent workflow agents do not share it.
 pub(crate) struct ClassifierApprovalHandler {
     config: RwLock<Config>,
-    session: Mutex<Option<Session>>,
     workspace_path: PathBuf,
     usage_recording: ProviderRequestUsageRecording,
     classifier: ClassifyFn,
     inner: Option<Arc<dyn ApprovalHandler>>,
-    cancellation: Mutex<Option<CancellationToken>>,
-    consecutive_denials: tokio::sync::Mutex<u32>,
+    consecutive_denials: AtomicU32,
 }
 
 impl ClassifierApprovalHandler {
@@ -52,13 +59,11 @@ impl ClassifierApprovalHandler {
     ) -> Self {
         Self {
             config: RwLock::new(config),
-            session: Mutex::new(None),
             workspace_path,
             usage_recording,
             classifier: default_classifier(),
             inner,
-            cancellation: Mutex::new(None),
-            consecutive_denials: tokio::sync::Mutex::new(0),
+            consecutive_denials: AtomicU32::new(0),
         }
     }
 
@@ -69,28 +74,12 @@ impl ClassifierApprovalHandler {
     ) -> Self {
         Self {
             config: RwLock::new(Config::default()),
-            session: Mutex::new(None),
             workspace_path: PathBuf::from("/workspace"),
             usage_recording: ProviderRequestUsageRecording::default(),
             classifier,
             inner,
-            cancellation: Mutex::new(None),
-            consecutive_denials: tokio::sync::Mutex::new(0),
+            consecutive_denials: AtomicU32::new(0),
         }
-    }
-
-    pub(crate) fn bind_session(&self, session: Session) {
-        *self
-            .session
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(session);
-    }
-
-    pub(crate) fn bind_cancellation(&self, cancellation: CancellationToken) {
-        *self
-            .cancellation
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(cancellation);
     }
 
     pub(crate) fn update_config(&self, config: Config) {
@@ -100,43 +89,12 @@ impl ClassifierApprovalHandler {
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = config;
     }
 
-    fn input_for(&self, request: ApprovalRequest) -> ClassificationInput {
-        let config = self
-            .config
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone();
-        let session = self
-            .session
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone();
-        let (history, session_id) = session.map_or_else(
-            || (Vec::new(), SessionId::new()),
-            |session| (session.live_history(), session.id().clone()),
-        );
-        let cancellation = self
-            .cancellation
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-            .unwrap_or_default();
-        ClassificationInput {
-            config,
-            history,
-            request,
-            cancellation,
-            session_id,
-            workspace_path: self.workspace_path.clone(),
-            usage_recording: self.usage_recording.clone(),
-        }
-    }
-
     /// Clones classifier config for an isolated agent/command run.
     ///
-    /// Session, cancellation, and consecutive-deny streak stay unbound so
-    /// concurrent workflow nodes cannot overwrite each other's transcript.
-    pub(crate) fn fork_unbound(self: &Arc<Self>) -> Arc<Self> {
+    /// The deny streak resets so concurrent workflow nodes cannot escalate each
+    /// other. History and cancellation stay request-scoped via
+    /// [`ApprovalContext`].
+    pub(crate) fn isolate(self: &Arc<Self>) -> Arc<Self> {
         let config = self
             .config
             .read()
@@ -144,76 +102,93 @@ impl ClassifierApprovalHandler {
             .clone();
         Arc::new(Self {
             config: RwLock::new(config),
-            session: Mutex::new(None),
             workspace_path: self.workspace_path.clone(),
             usage_recording: self.usage_recording.clone(),
             classifier: Arc::clone(&self.classifier),
             inner: self.inner.clone(),
-            cancellation: Mutex::new(None),
-            consecutive_denials: tokio::sync::Mutex::new(0),
+            consecutive_denials: AtomicU32::new(0),
         })
     }
 
-    async fn escalate_or_deny_headless(&self, request: ApprovalRequest) -> ApprovalDecision {
+    fn input_for(&self, request: ApprovalRequest, context: ApprovalContext) -> ClassificationInput {
+        let config = self
+            .config
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        ClassificationInput {
+            config,
+            history: context.history().to_vec(),
+            request,
+            cancellation: context.cancellation().clone(),
+            session_id: context.session_id().clone(),
+            workspace_path: self.workspace_path.clone(),
+            usage_recording: self.usage_recording.clone(),
+        }
+    }
+
+    async fn escalate_or_deny_headless(
+        &self,
+        request: ApprovalRequest,
+        context: &ApprovalContext,
+    ) -> ApprovalDecision {
         let Some(inner) = &self.inner else {
-            if let Some(cancellation) = self
-                .cancellation
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .as_ref()
-            {
-                cancellation.cancel();
-            }
+            context.cancellation().cancel();
             return ApprovalDecision::Deny {
                 reason: format!(
                     "permission classifier denied {CONSECUTIVE_DENY_ESCALATION} consecutive requests and no human approval handler is available"
                 ),
             };
         };
-        inner.request(request).await
+        inner.request_with_context(request, context.clone()).await
     }
 }
 
 impl ApprovalHandler for ClassifierApprovalHandler {
     fn request<'a>(&'a self, request: ApprovalRequest) -> ApprovalFuture<'a> {
+        self.request_with_context(request, ApprovalContext::detached(SessionId::new()))
+    }
+
+    fn request_with_context<'a>(
+        &'a self,
+        request: ApprovalRequest,
+        context: ApprovalContext,
+    ) -> ApprovalFuture<'a> {
         Box::pin(async move {
-            let mut consecutive_denials = self.consecutive_denials.lock().await;
-            if *consecutive_denials >= CONSECUTIVE_DENY_ESCALATION {
-                let decision = self.escalate_or_deny_headless(request).await;
+            let streak = self.consecutive_denials.load(Ordering::Relaxed);
+            if streak >= CONSECUTIVE_DENY_ESCALATION {
+                let decision = self.escalate_or_deny_headless(request, &context).await;
                 if self.inner.is_some() {
-                    *consecutive_denials = 0;
+                    self.consecutive_denials.store(0, Ordering::Relaxed);
                 }
                 return decision;
             }
 
-            let verdict = (self.classifier)(self.input_for(request)).await;
+            let verdict = (self.classifier)(self.input_for(request, context)).await;
             match verdict {
-                Ok(ClassifierVerdict::Allow) => {
-                    *consecutive_denials = 0;
+                ClassifierVerdict::Allow => {
+                    self.consecutive_denials.store(0, Ordering::Relaxed);
                     ApprovalDecision::AllowOnce
                 }
-                Ok(ClassifierVerdict::Deny { reason }) => {
-                    *consecutive_denials += 1;
+                ClassifierVerdict::Deny { reason } => {
+                    self.consecutive_denials.fetch_add(1, Ordering::Relaxed);
                     ApprovalDecision::Deny {
                         reason: deny_and_continue_reason(reason),
                     }
                 }
-                Err(error) => {
-                    *consecutive_denials += 1;
-                    tracing::warn!(error = %error, "permission classifier unavailable");
-                    ApprovalDecision::Deny {
-                        reason: deny_and_continue_reason("classifier unavailable"),
-                    }
-                }
             }
         })
+    }
+
+    fn reads_live_history(&self) -> bool {
+        true
     }
 }
 
 fn default_classifier() -> ClassifyFn {
     Arc::new(|input: ClassificationInput| {
         Box::pin(async move {
-            Ok(classify_capability_request(
+            classify_capability_request(
                 &input.config,
                 ClassifyRequest {
                     history: &input.history,
@@ -224,7 +199,7 @@ fn default_classifier() -> ClassifyFn {
                     usage_recording: input.usage_recording,
                 },
             )
-            .await)
+            .await
         })
     })
 }

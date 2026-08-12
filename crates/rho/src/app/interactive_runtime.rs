@@ -188,13 +188,11 @@ impl InteractiveRuntime {
             usage_parent_session_id: None,
             usage_recording: self.usage_recording.clone(),
             hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
-            force_publish_live_history: mode == PermissionMode::Auto,
             hooks: self.hooks.as_ref(),
         })?;
         let replacement_session = replacement_runtime
             .rebind_session(SessionOptions::from_snapshot(snapshot))
             .await?;
-        approval_channel.bind_session(&replacement_session);
 
         let previous_runtime = std::mem::replace(&mut self.runtime, replacement_runtime);
         self.sessions.replace_runtime_session(replacement_session);
@@ -630,14 +628,11 @@ impl InteractiveRuntime {
             usage_parent_session_id: None,
             usage_recording: self.usage_recording.clone(),
             hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
-            force_publish_live_history: self.permission_mode == PermissionMode::Auto,
             hooks: self.hooks.as_ref(),
         })?;
         let replacement_session = replacement_runtime
             .rebind_session(SessionOptions::from_snapshot(snapshot))
             .await?;
-        self.bind_classifier_session(&replacement_session);
-
         // Do not change the live runtime until the selected leaf is durable.
         if let Err(error) = storage.set_leaf(target_id) {
             replacement_runtime.shutdown();
@@ -874,25 +869,17 @@ impl InteractiveRuntime {
             usage_parent_session_id: None,
             usage_recording: self.usage_recording.clone(),
             hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
-            force_publish_live_history: self.permission_mode == PermissionMode::Auto,
             hooks: self.hooks.as_ref(),
         })?;
         let replacement_session = match lifecycle {
             ReplacementLifecycle::Started => replacement_runtime.session(options).await?,
             ReplacementLifecycle::Rebound => replacement_runtime.rebind_session(options).await?,
         };
-        self.bind_classifier_session(&replacement_session);
         let previous_runtime = std::mem::replace(&mut self.runtime, replacement_runtime);
         self.sessions
             .replace_session(replacement_session, resume_omission);
         previous_runtime.shutdown();
         Ok(())
-    }
-
-    pub(super) fn bind_classifier_session(&self, session: &rho_sdk::Session) {
-        if let Some(classifier) = &self.classifier_approval_handler {
-            classifier.bind_session(session.clone());
-        }
     }
 }
 

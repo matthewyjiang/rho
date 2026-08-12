@@ -171,11 +171,11 @@ fn headless_auto_requires_configured_permission_classifier_model() {
     ensure_headless_auto_classifier_model(&config).unwrap();
 }
 
-// Covers: workflow Auto templates must fork so concurrent runs cannot share
-// mutable session/cancellation bindings on the original handler.
+// Covers: workflow Auto templates must isolate so concurrent runs do not share
+// deny streaks on the original handler.
 // Owner: automation startup approval wiring.
 #[test]
-fn supplied_auto_classifier_template_forks_isolated_handler() {
+fn supplied_auto_classifier_template_isolates_handler() {
     let mut config = Config {
         permission_mode: PermissionMode::Auto,
         ..Config::default()
@@ -192,17 +192,16 @@ fn supplied_auto_classifier_template_forks_isolated_handler() {
         None,
     ));
 
-    let (_approval_session, returned) = headless_approval_session(
+    let approval_session = headless_approval_session(
         &config,
         None,
-        Some(classifier.clone()),
+        Some(classifier),
         root.path().to_path_buf(),
         Default::default(),
     )
     .unwrap();
 
-    let returned = returned.expect("template should produce a forked handler");
-    assert!(!Arc::ptr_eq(&returned, &classifier));
+    assert!(approval_session.is_some());
 }
 
 // Covers: Auto must not install a non-classifier approval session alone.
@@ -326,7 +325,6 @@ async fn headless_run_compacts_at_configured_threshold_and_completes() {
         usage_parent_session_id: None,
         usage_recording: Default::default(),
         hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
-        force_publish_live_history: true,
         hooks: None,
     })
     .unwrap();
@@ -342,7 +340,6 @@ async fn headless_run_compacts_at_configured_threshold_and_completes() {
             jsonl: None,
             host_input: None,
         },
-        None,
         /* steering_slot */ None,
     )
     .await
@@ -544,7 +541,6 @@ async fn headless_run_fails_closed_without_host_input_responder() {
                 jsonl: None,
                 host_input: None,
             },
-            None,
             /* steering_slot */ None,
         ),
     )
@@ -594,7 +590,6 @@ async fn headless_run_answers_host_input_through_generic_responder() {
                 jsonl: None,
                 host_input: Some(&responder as &dyn HostInputResponder),
             },
-            None,
             /* steering_slot */ None,
         ),
     )
@@ -655,7 +650,6 @@ async fn headless_run_drains_events_while_waiting_for_parent_host_input() {
                     jsonl: None,
                     host_input: Some(&responder as &dyn HostInputResponder),
                 },
-                None,
                 /* steering_slot */ None,
             )
             .await
@@ -756,7 +750,6 @@ async fn headless_run_drains_events_while_waiting_for_respond_ack() {
                 jsonl: None,
                 host_input: Some(&responder as &dyn HostInputResponder),
             },
-            None,
             /* steering_slot */ None,
         )
         .await

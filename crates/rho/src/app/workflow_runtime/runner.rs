@@ -55,10 +55,6 @@ impl WorkflowRunner {
         self
     }
 
-    pub(crate) fn cancellation_handle(&self) -> rho_sdk::CancellationToken {
-        self.cancellation.clone()
-    }
-
     /// Ask the drive loop to re-read the durable cancellation request file now.
     #[cfg(test)]
     pub(crate) fn wake_cancel_check(&self) {

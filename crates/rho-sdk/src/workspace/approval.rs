@@ -10,7 +10,52 @@ use std::{
 
 use tokio::sync::{mpsc, oneshot};
 
+use crate::{model::Message, CancellationToken, SessionId};
+
 use super::{CapabilityKind, CapabilityRequest};
+
+/// Run-scoped context supplied with an approval prompt.
+///
+/// Authorization builds this from the active tool call so handlers that need
+/// transcript or cancellation do not keep late-bound session state.
+#[derive(Clone, Debug)]
+pub struct ApprovalContext {
+    session_id: SessionId,
+    cancellation: CancellationToken,
+    history: Vec<Message>,
+}
+
+impl ApprovalContext {
+    pub fn new(
+        session_id: SessionId,
+        cancellation: CancellationToken,
+        history: Vec<Message>,
+    ) -> Self {
+        Self {
+            session_id,
+            cancellation,
+            history,
+        }
+    }
+
+    /// Empty history and a fresh cancellation token. Used when a caller has no
+    /// active run context (tests, or `ApprovalHandler::request` fallbacks).
+    pub fn detached(session_id: SessionId) -> Self {
+        Self::new(session_id, CancellationToken::new(), Vec::new())
+    }
+
+    pub fn session_id(&self) -> &SessionId {
+        &self.session_id
+    }
+
+    pub fn cancellation(&self) -> &CancellationToken {
+        &self.cancellation
+    }
+
+    pub fn history(&self) -> &[Message] {
+        &self.history
+    }
+}
 
 /// Host decision for one approval request.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -79,6 +124,27 @@ pub type ApprovalFuture<'a> = Pin<Box<dyn Future<Output = ApprovalDecision> + Se
 /// Host extension point for interactive or remote approval decisions.
 pub trait ApprovalHandler: Send + Sync {
     fn request<'a>(&'a self, request: ApprovalRequest) -> ApprovalFuture<'a>;
+
+    /// Approval prompt with run-scoped transcript and cancellation.
+    ///
+    /// The default ignores context and calls [`Self::request`]. Handlers that
+    /// classify against live history should override this instead of binding a
+    /// session onto the handler after construction.
+    fn request_with_context<'a>(
+        &'a self,
+        request: ApprovalRequest,
+        context: ApprovalContext,
+    ) -> ApprovalFuture<'a> {
+        let _ = context;
+        self.request(request)
+    }
+
+    /// When true, the runtime publishes the turn in flight for
+    /// [`crate::Session::live_history`] even if no registered tool declares
+    /// [`crate::tool::Tool::reads_live_history`].
+    fn reads_live_history(&self) -> bool {
+        false
+    }
 }
 
 /// Shared approval state for one host-owned authorization session.

@@ -507,7 +507,7 @@ async fn run_session_with_output(
     let compaction = sdk_options.runtime.compaction.clone();
     startup.diagnostics.update_compaction_config(&compaction);
     let usage_recording = crate::usage::default_recording().await;
-    let (approval_session, classifier_handler) = headless_approval_session(
+    let approval_session = headless_approval_session(
         startup.config,
         startup.approval_session.clone(),
         startup.approval_classifier.clone(),
@@ -535,7 +535,6 @@ async fn run_session_with_output(
                 usage_parent_session_id: startup.parent_session_id.clone(),
                 usage_recording,
                 hook_host_labels: startup.hook_host_labels.clone(),
-                force_publish_live_history: startup.config.permission_mode == PermissionMode::Auto,
                 hooks: hooks.as_ref(),
             },
             startup.max_steps,
@@ -547,9 +546,6 @@ async fn run_session_with_output(
                 return Err(error.into());
             }
         };
-        if let Some(classifier) = &classifier_handler {
-            classifier.bind_session(session.clone());
-        }
         anyhow::Ok((runtime, session))
     }
     .await;
@@ -582,7 +578,6 @@ async fn run_session_with_output(
             jsonl,
             host_input: startup.host_input.as_deref(),
         },
-        classifier_handler.as_deref(),
         startup.steering_slot.clone(),
     )
     .await;
@@ -634,27 +629,21 @@ fn headless_approval_session(
     approval_classifier: Option<Arc<ClassifierApprovalHandler>>,
     workspace_root: PathBuf,
     usage_recording: rho_sdk::ProviderRequestUsageRecording,
-) -> anyhow::Result<(
-    Option<rho_sdk::ApprovalSession>,
-    Option<Arc<ClassifierApprovalHandler>>,
-)> {
+) -> anyhow::Result<Option<rho_sdk::ApprovalSession>> {
     if config.permission_mode != PermissionMode::Auto {
-        return Ok((approval_session, None));
+        return Ok(approval_session);
     }
     match (approval_session.is_some(), approval_classifier) {
         (true, None) => anyhow::bail!(
             "permission mode auto requires a classifier approval handler paired with the approval session"
         ),
         (_, Some(template)) => {
-            // Always fork from the template. Concurrent workflow/subagent runs
-            // must not share mutable session or cancellation bindings.
+            // Isolate deny streaks across concurrent workflow/subagent runs.
+            // History and cancellation arrive per request via ApprovalContext.
             let _ = approval_session;
-            let handler = template.fork_unbound();
-            let erased: Arc<dyn rho_sdk::ApprovalHandler> = handler.clone();
-            Ok((
-                Some(rho_sdk::ApprovalSession::from_shared(erased)),
-                Some(handler),
-            ))
+            let handler = template.isolate();
+            let erased: Arc<dyn rho_sdk::ApprovalHandler> = handler;
+            Ok(Some(rho_sdk::ApprovalSession::from_shared(erased)))
         }
         (false, None) => {
             let handler = Arc::new(ClassifierApprovalHandler::new(
@@ -663,11 +652,8 @@ fn headless_approval_session(
                 usage_recording,
                 None,
             ));
-            let erased: Arc<dyn rho_sdk::ApprovalHandler> = handler.clone();
-            Ok((
-                Some(rho_sdk::ApprovalSession::from_shared(erased)),
-                Some(handler),
-            ))
+            let erased: Arc<dyn rho_sdk::ApprovalHandler> = handler;
+            Ok(Some(rho_sdk::ApprovalSession::from_shared(erased)))
         }
     }
 }
@@ -676,7 +662,6 @@ async fn complete_run(
     session: &rho_sdk::Session,
     prompt_text: String,
     dependencies: HeadlessRunDeps<'_>,
-    classifier_handler: Option<&ClassifierApprovalHandler>,
     steering_slot: Option<super::subagent_messaging::SteeringSlot>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
     let HeadlessRunDeps {
@@ -690,9 +675,6 @@ async fn complete_run(
         slot.publish(run.steering_handle());
     }
     let cancellation = run.cancellation_handle();
-    if let Some(classifier) = classifier_handler {
-        classifier.bind_cancellation(cancellation.clone());
-    }
     let external_cancellation = external_cancellation.unwrap_or_default();
     tokio::select! {
         outcome = headless_run::drive(&mut run, reporter, jsonl, host_input) => outcome,

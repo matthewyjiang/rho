@@ -227,8 +227,8 @@ impl AgentExecutor {
         self
     }
 
-    /// Supplies a classifier template that each Rho agent run forks before
-    /// binding its own session history and cancellation token.
+    /// Supplies a classifier template that each Rho agent run isolates so deny
+    /// streaks stay per-run. History and cancellation arrive via ApprovalContext.
     pub(crate) fn with_classifier_template(
         mut self,
         classifier: Arc<ClassifierApprovalHandler>,

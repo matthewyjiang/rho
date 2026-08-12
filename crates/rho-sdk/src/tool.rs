@@ -432,6 +432,7 @@ impl ToolContext {
                 &self.authorization,
                 request,
                 self.call_id.as_ref(),
+                self.cancellation.clone(),
             ) => result,
             () = self.cancellation.cancelled() => {
                 self.authorization.audit().record(

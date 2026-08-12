@@ -121,7 +121,6 @@ pub(super) async fn initialize(
             usage_parent_session_id: None,
             usage_recording: usage_recording.clone(),
             hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
-            force_publish_live_history: permission_mode == PermissionMode::Auto,
             hooks: hooks.as_ref(),
         })?;
         let session_options = match resolve_session_options(
@@ -156,7 +155,6 @@ pub(super) async fn initialize(
             return Err(error);
         }
     };
-    approval_channel.bind_session(&session);
     bind_subagent_parent(&tools, session.id(), storage.as_ref());
     bind_mcp_sampling(&mcp_sampling, &provider, session.id(), &cwd);
     Ok(InteractiveRuntime {
@@ -294,14 +292,6 @@ pub(super) struct ApprovalChannel {
     pub(super) handler: Option<Arc<dyn ApprovalHandler>>,
     pub(super) receiver: Option<ApprovalRequestReceiver>,
     pub(super) classifier: Option<Arc<ClassifierApprovalHandler>>,
-}
-
-impl ApprovalChannel {
-    pub(super) fn bind_session(&self, session: &rho_sdk::Session) {
-        if let Some(classifier) = &self.classifier {
-            classifier.bind_session(session.clone());
-        }
-    }
 }
 
 pub(super) fn approval_channel_for(

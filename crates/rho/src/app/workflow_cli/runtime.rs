@@ -385,10 +385,10 @@ impl WorkflowRuntime {
         let command_classifier = approvals
             .classifier
             .as_ref()
-            .map(ClassifierApprovalHandler::fork_unbound);
+            .map(ClassifierApprovalHandler::isolate);
         let command_approvals = match &command_classifier {
-            // Commands get an unbound fork so they never inherit an agent
-            // transcript from shared mutable classifier state.
+            // Commands get an isolated streak counter so agent denials cannot
+            // escalate command approvals (and vice versa).
             Some(handler) => {
                 let erased: Arc<dyn ApprovalHandler> = handler.clone();
                 ApprovalSession::from_shared(erased)
@@ -443,9 +443,6 @@ impl WorkflowRuntime {
         );
         if let Some(engine) = hook_engine {
             runner = runner.with_hooks(engine);
-        }
-        if let Some(classifier) = &command_classifier {
-            classifier.bind_cancellation(runner.cancellation_handle());
         }
         Ok(Self {
             runner: Arc::new(runner),

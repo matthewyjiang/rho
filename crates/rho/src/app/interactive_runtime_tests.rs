@@ -62,7 +62,6 @@ async fn configured_token_threshold_installs_sdk_automatic_compaction_policy() {
         usage_parent_session_id: None,
         usage_recording: Default::default(),
         hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
-        force_publish_live_history: true,
         hooks: None,
     })
     .unwrap();

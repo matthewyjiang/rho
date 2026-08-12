@@ -201,14 +201,14 @@ pub use usage::{
     ProviderRequestUsageRecorderFuture, ProviderRequestUsageRecording, UsageRecorderDiagnostic,
 };
 pub use workspace::{
-    approval_channel, ApprovalAuditDecision, ApprovalAuditRecord, ApprovalDecision, ApprovalFuture,
-    ApprovalHandler, ApprovalRequest, ApprovalRequestReceiver, ApprovalSession,
-    AuthorizationDenialKind, AuthorizationError, AuthorizationOutcome, CapabilityKind,
-    CapabilityOperation, CapabilityRequest, CapabilitySource, ChannelApprovalHandler,
-    DenyAllPolicy, DenyApprovals, ExecutableSelection, NetworkTarget, PathScope, PendingApproval,
-    PolicyDecision, ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits,
-    ResolvedWorkspacePath, ScopedWorkspacePolicy, Workspace, WorkspacePathError,
-    WorkspacePathErrorKind, WorkspacePathState, WorkspacePolicy,
+    approval_channel, ApprovalAuditDecision, ApprovalAuditRecord, ApprovalContext,
+    ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, ApprovalRequestReceiver,
+    ApprovalSession, AuthorizationDenialKind, AuthorizationError, AuthorizationOutcome,
+    CapabilityKind, CapabilityOperation, CapabilityRequest, CapabilitySource,
+    ChannelApprovalHandler, DenyAllPolicy, DenyApprovals, ExecutableSelection, NetworkTarget,
+    PathScope, PendingApproval, PolicyDecision, ProcessEnvironment, ProcessExecution,
+    ProcessInvocation, ProcessOutputLimits, ResolvedWorkspacePath, ScopedWorkspacePolicy,
+    Workspace, WorkspacePathError, WorkspacePathErrorKind, WorkspacePathState, WorkspacePolicy,
 };
 
 #[cfg(test)]

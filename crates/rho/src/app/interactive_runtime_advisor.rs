@@ -193,15 +193,11 @@ impl InteractiveRuntime {
             usage_parent_session_id: None,
             usage_recording: self.usage_recording.clone(),
             hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
-            force_publish_live_history: self.permission_mode
-                == crate::permission::PermissionMode::Auto,
             hooks: self.hooks.as_ref(),
         })?;
         let replacement_session = replacement_runtime
             .rebind_session(SessionOptions::from_snapshot(snapshot))
             .await?;
-        self.bind_classifier_session(&replacement_session);
-
         let previous_runtime = std::mem::replace(&mut self.runtime, replacement_runtime);
         self.sessions.replace_runtime_session(replacement_session);
         previous_runtime.shutdown();

@@ -17,6 +17,11 @@ use super::{
     ProcessInvocation, ProcessOutputLimits, ScopedWorkspacePolicy, SessionApprovals, Workspace,
     WorkspacePathErrorKind, WorkspacePathState, WorkspacePolicy,
 };
+use crate::CancellationToken;
+
+fn open_cancellation() -> CancellationToken {
+    CancellationToken::new()
+}
 
 /// Bundles the collaborators an authorization needs, with hooks left out so
 /// these tests exercise policy and approval composition on its own.
@@ -402,6 +407,7 @@ async fn remembered_approval_matches_only_the_exact_session_request() {
         &services(&policy, &erased, &remembered, &audit),
         request.clone(),
         Some(&call_id),
+        open_cancellation(),
     )
     .await
     .unwrap();
@@ -583,8 +589,8 @@ async fn concurrent_identical_requests_prompt_the_host_once() {
     let services = services(&policy, &erased, &remembered, &audit);
 
     let (first, second, ()) = tokio::join!(
-        authorize_for_call(&services, request.clone(), None),
-        authorize_for_call(&services, request.clone(), None),
+        authorize_for_call(&services, request.clone(), None, open_cancellation()),
+        authorize_for_call(&services, request.clone(), None, open_cancellation()),
         async {
             wait_until_prompts(&approvals, 1).await;
             // First caller is parked in the host prompt and holds the session
@@ -632,7 +638,7 @@ async fn remembered_approval_stays_concurrent_while_unrelated_prompt_is_held() {
     let services = services(&policy, &erased, &remembered, &audit);
 
     let (seeded, ()) = tokio::join!(
-        authorize_for_call(&services, approved.clone(), None),
+        authorize_for_call(&services, approved.clone(), None, open_cancellation()),
         async {
             wait_until_prompts(&approvals, 1).await;
             approvals.release.notify_one();
@@ -647,13 +653,16 @@ async fn remembered_approval_stays_concurrent_while_unrelated_prompt_is_held() {
     // If the remembered hit took the session gate, this join would deadlock:
     // the unrelated miss holds the gate while parked on the prompt, and the
     // release only runs after the remembered hit completes.
-    let (held, remembered_hit) =
-        tokio::join!(authorize_for_call(&services, unrelated, None), async {
+    let (held, remembered_hit) = tokio::join!(
+        authorize_for_call(&services, unrelated, None, open_cancellation()),
+        async {
             wait_until_prompts(&approvals, 2).await;
-            let remembered_hit = authorize_for_call(&services, approved, None).await;
+            let remembered_hit =
+                authorize_for_call(&services, approved, None, open_cancellation()).await;
             approvals.release.notify_one();
             remembered_hit
-        },);
+        },
+    );
 
     assert_eq!(
         remembered_hit.unwrap(),
@@ -683,8 +692,18 @@ async fn distinct_approval_misses_both_prompt_under_the_session_gate() {
     let services = services(&policy, &erased, &remembered, &audit);
 
     let (first, second, ()) = tokio::join!(
-        authorize_for_call(&services, process_request("cargo test"), None),
-        authorize_for_call(&services, process_request("cargo clippy"), None),
+        authorize_for_call(
+            &services,
+            process_request("cargo test"),
+            None,
+            open_cancellation()
+        ),
+        authorize_for_call(
+            &services,
+            process_request("cargo clippy"),
+            None,
+            open_cancellation()
+        ),
         async {
             wait_until_prompts(&approvals, 1).await;
             // Distinct misses still each prompt; the session gate only orders

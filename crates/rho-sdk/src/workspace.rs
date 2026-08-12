@@ -6,10 +6,10 @@ mod capability;
 mod path;
 
 pub use approval::{
-    approval_channel, ApprovalAuditDecision, ApprovalAuditRecord, ApprovalDecision, ApprovalFuture,
-    ApprovalHandler, ApprovalRequest, ApprovalRequestReceiver, ApprovalSession,
-    AuthorizationDenialKind, AuthorizationError, AuthorizationOutcome, ChannelApprovalHandler,
-    DenyApprovals, PendingApproval,
+    approval_channel, ApprovalAuditDecision, ApprovalAuditRecord, ApprovalContext,
+    ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, ApprovalRequestReceiver,
+    ApprovalSession, AuthorizationDenialKind, AuthorizationError, AuthorizationOutcome,
+    ChannelApprovalHandler, DenyApprovals, PendingApproval,
 };
 pub(crate) use approval::{ApprovalAuditLog, SessionApprovals};
 #[cfg(test)]
