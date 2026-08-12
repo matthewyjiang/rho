@@ -12,6 +12,7 @@ use super::{AgentDefinition, AgentId, AgentRuntimeSpec, ModelPolicy, PromptPolic
 pub(crate) const SESSION_TITLE_AGENT_ID: &str = "session-title";
 pub(crate) const GOAL_JUDGE_AGENT_ID: &str = "goal-judge";
 pub(crate) const ADVISOR_AGENT_ID: &str = "advisor";
+pub(crate) const PERMISSION_CLASSIFIER_AGENT_ID: &str = "permission-classifier";
 
 pub(crate) const ADVISOR_PROMPT: &str = "You are a senior advisor reviewing another AI coding agent's live work session. You receive the full session transcript: the agent's system prompt, the user's requests, every tool call and result, and the agent's reasoning so far.\n\nProvide strategic guidance for the agent's next steps:\n- Identify the core difficulty or the decision the agent is facing.\n- Recommend a concrete plan or course correction.\n- Flag risks, failure modes, or wrong assumptions the agent has not ruled out.\n\nBe direct and specific. Reference concrete files, commands, and evidence from the transcript. Do not restate the transcript. Do not write large code blocks; describe the approach. Keep your guidance under 500 words.";
 
@@ -81,6 +82,26 @@ static INTERNAL_AGENTS: LazyLock<Vec<InternalAgent>> = LazyLock::new(|| {
             // The advisor returns prose, so Claude Code's harness can produce
             // it as well as Rho's own loop can.
             accepts_claude_runtime: true,
+        },
+        InternalAgent {
+            definition: AgentDefinition {
+                id: AgentId::new(PERMISSION_CLASSIFIER_AGENT_ID)
+                    .expect("valid internal agent ID"),
+                description: "Internal agent that classifies pending permission requests. Reserved; cannot be overridden or delegated."
+                    .to_string(),
+                prompt: PromptPolicy::Replace(
+                    crate::permission_classifier::CLASSIFIER_PROMPT.into(),
+                ),
+                runtime: AgentRuntimeSpec::Rho {
+                    tools: ToolPolicy::Allow(BTreeSet::new()),
+                    // Unused: the permission classifier requires its own model
+                    // and must not fall back to the executor.
+                    model: ModelPolicy::Inherit,
+                    reasoning: Some(ReasoningLevel::Low),
+                },
+            },
+            requires_own_model: true,
+            accepts_claude_runtime: false,
         },
     ]
 });

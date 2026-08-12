@@ -2,7 +2,8 @@ use pretty_assertions::assert_eq;
 use rho_providers::reasoning::ReasoningLevel;
 
 use super::{
-    carry_internal_agent_reasoning, effective_internal_agent_reasoning, ADVISOR_AGENT_ID,
+    carry_internal_agent_reasoning, effective_internal_agent_reasoning,
+    internal_agent_accepts_claude_runtime, internal_agent_requires_model, ADVISOR_AGENT_ID,
     SESSION_TITLE_AGENT_ID,
 };
 use crate::config::InternalAgentModelConfig;
@@ -33,6 +34,19 @@ fn effective_reasoning_defaults_to_the_definition_level() {
             SESSION_TITLE_AGENT_ID,
             &selection("openai", "gpt-test", None)
         ),
+        ReasoningLevel::Low
+    );
+}
+
+// Covers: the permission classifier cannot fall back to executor model or Claude runtime
+// Owner: internal agent registry
+#[test]
+fn permission_classifier_requires_own_rho_model_with_low_reasoning() {
+    let id = "permission-classifier";
+    assert!(internal_agent_requires_model(id));
+    assert!(!internal_agent_accepts_claude_runtime(id));
+    assert_eq!(
+        effective_internal_agent_reasoning(id, &selection("openai", "gpt-test", None)),
         ReasoningLevel::Low
     );
 }

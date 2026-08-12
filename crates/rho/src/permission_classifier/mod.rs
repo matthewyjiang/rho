@@ -1,9 +1,9 @@
+mod classify;
 mod transcript;
 mod verdict;
 
-#[allow(dead_code)] // consumed by classify/handler tasks in the permission classifier rollout
+pub(crate) use classify::classify_capability_request;
 pub(crate) use transcript::render_classifier_transcript;
-#[allow(dead_code)]
 pub(crate) use verdict::{parse_classifier_verdict, ClassifierVerdict, CLASSIFIER_PROMPT};
 
 #[allow(dead_code)]
@@ -16,3 +16,7 @@ mod transcript_tests;
 #[cfg(test)]
 #[path = "verdict_tests.rs"]
 mod verdict_tests;
+
+#[cfg(test)]
+#[path = "classify_tests.rs"]
+mod classify_tests;
