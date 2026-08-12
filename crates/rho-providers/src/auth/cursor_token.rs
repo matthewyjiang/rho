@@ -7,8 +7,9 @@ use tokio::sync::Mutex;
 
 use crate::{
     auth::cursor_oauth::{refresh_cursor_tokens, CursorOAuthError},
-    credentials::{save_cursor_tokens, CredentialStore, CursorTokens},
+    credentials::{load_cursor_tokens, save_cursor_tokens, CredentialStore, CursorTokens},
     model::ModelError,
+    provider,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -60,6 +61,27 @@ impl CursorAuthManager {
         refresh_locked(&self.client, self.store.as_ref(), &mut tokens).await?;
         Ok(Some(tokens.access_token.clone()))
     }
+}
+
+/// One-shot env-or-store token for discovery. Live turns use [`CursorAuthManager`].
+pub(crate) async fn resolve_cursor_access_token(
+    store: &dyn CredentialStore,
+    client: &reqwest::Client,
+) -> Result<String, ModelError> {
+    let env_var = provider::provider_descriptor("cursor")
+        .and_then(|descriptor| descriptor.default_auth().auth_kind.env_var())
+        .expect("Cursor OAuth must declare an environment variable");
+    if let Ok(token) = std::env::var(env_var) {
+        if !token.trim().is_empty() {
+            return Ok(token);
+        }
+    }
+    let missing = || crate::model::registry::missing_credentials_error("cursor");
+    let mut tokens = load_cursor_tokens(store)?.ok_or_else(missing)?;
+    if token_is_expiring(&tokens) {
+        refresh_locked(client, store, &mut tokens).await?;
+    }
+    Ok(tokens.access_token)
 }
 
 async fn refresh_locked(

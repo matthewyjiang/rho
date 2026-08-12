@@ -657,22 +657,8 @@ pub(super) fn count_nonempty_lines(content: &str) -> Option<u64> {
 /// Timeout budget fact for shell cards. The TUI decorates it with a live
 /// elapsed clock while the call runs (`timeout none · 1.2s`).
 fn push_shell_timeout_fact(card: &mut ToolCard, arguments: &serde_json::Value) {
-    let seconds = json_u64(arguments.get("timeout_seconds")).or_else(|| {
-        json_u64(arguments.get("block_until_ms"))
-            .filter(|ms| *ms > 0)
-            .map(|ms| ms.div_ceil(1000))
-    });
+    let seconds = arguments
+        .get("timeout_seconds")
+        .and_then(serde_json::Value::as_u64);
     card.push_fact(ToolFact::Timeout { seconds });
-}
-
-fn json_u64(value: Option<&serde_json::Value>) -> Option<u64> {
-    let value = value?;
-    value.as_u64().or_else(|| {
-        let float = value.as_f64()?;
-        if !float.is_finite() || !(0.0..=u64::MAX as f64).contains(&float) {
-            return None;
-        }
-        let as_u64 = float as u64;
-        (as_u64 as f64 == float).then_some(as_u64)
-    })
 }

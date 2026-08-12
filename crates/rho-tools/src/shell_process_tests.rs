@@ -6,10 +6,6 @@ use tokio::io::AsyncWriteExt;
 
 use super::*;
 
-fn json_float(value: f64) -> serde_json::Value {
-    serde_json::Value::Number(serde_json::Number::from_f64(value).expect("finite"))
-}
-
 #[test]
 fn shell_args_reject_invalid_payload() {
     assert!(
@@ -41,45 +37,6 @@ fn shell_args_timeout_rejects_zero() {
             result,
             expected.map_err(str::to_owned),
             "timeout_seconds={timeout_seconds:?}"
-        );
-    }
-}
-
-// Covers: Cursor-style bash args must parse instead of failing as invalid number
-// Owner: pure unit (shell process)
-#[test]
-fn shell_args_parse_cursor_timeout_aliases() {
-    let cases = [
-        (
-            json!({"command": "true", "timeout_seconds": 30}),
-            Some(Duration::from_secs(30)),
-        ),
-        (
-            json!({"command": "true", "timeout_seconds": json_float(30.0)}),
-            Some(Duration::from_secs(30)),
-        ),
-        (
-            json!({"command": "true", "block_until_ms": 45_000}),
-            Some(Duration::from_secs(45)),
-        ),
-        (
-            json!({"command": "true", "block_until_ms": json_float(500.0)}),
-            Some(Duration::from_secs(1)),
-        ),
-        (
-            json!({"command": "true", "timeout_seconds": 10, "block_until_ms": 45_000}),
-            Some(Duration::from_secs(10)),
-        ),
-        (json!({"command": "true", "block_until_ms": 0}), None),
-        (json!({"command": "true"}), None),
-    ];
-
-    for (input, expected) in cases {
-        let args = ShellArgs::parse(input.clone()).expect("shell args should parse");
-        assert_eq!(
-            args.timeout().expect("timeout should be valid"),
-            expected,
-            "{input}"
         );
     }
 }

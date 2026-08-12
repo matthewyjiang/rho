@@ -23,6 +23,10 @@ pub(crate) fn encode_connect_frame(payload: &[u8], flags: u8) -> Vec<u8> {
     frame
 }
 
+pub(crate) fn encode_client_message(message: &impl prost::Message) -> Vec<u8> {
+    encode_connect_frame(&message.encode_to_vec(), 0)
+}
+
 /// Incremental parser for Connect data frames.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ConnectFrameParser {

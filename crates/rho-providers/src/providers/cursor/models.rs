@@ -1,21 +1,17 @@
 use prost::Message;
 
 use crate::{
-    auth::{
-        cursor_oauth::{refresh_cursor_tokens, CursorOAuthError},
-        cursor_token::token_is_expiring,
-    },
-    credentials::{load_cursor_tokens, save_cursor_tokens, CredentialStore},
+    auth::cursor_token::resolve_cursor_access_token,
+    credentials::CredentialStore,
     model::{
         provider_models::{self, ProviderModel},
-        registry::missing_credentials_error,
         ModelError, ReasoningCapabilities, ReasoningRequestSource,
     },
     protocol::cursor::{
         catalog_model_id, decode_connect_unary_body, fallback_models, models_from_details,
         CursorEffort, CursorModel, GetUsableModelsRequest, GetUsableModelsResponse,
     },
-    provider::{self, CURSOR_AGENT_API_BASE},
+    provider::CURSOR_AGENT_API_BASE,
     reasoning::ReasoningLevel,
 };
 
@@ -28,43 +24,17 @@ pub(crate) async fn fetch_usable_models(
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .build()?;
-    let token = cursor_access_token(store, &client).await?;
-    let models = match get_usable_models(&client, &token, CURSOR_AGENT_API_BASE).await {
-        Ok(models) if !models.is_empty() => models,
-        _ => fallback_models(),
+    let token = resolve_cursor_access_token(store, &client).await?;
+    let models = get_usable_models(&client, &token, CURSOR_AGENT_API_BASE).await?;
+    let models = if models.is_empty() {
+        fallback_models()
+    } else {
+        models
     };
     Ok(models
         .into_iter()
         .map(|model| to_provider_model(provider, model))
         .collect())
-}
-
-async fn cursor_access_token(
-    store: &dyn CredentialStore,
-    client: &reqwest::Client,
-) -> Result<String, ModelError> {
-    let env_var = provider::provider_descriptor("cursor")
-        .and_then(|descriptor| descriptor.default_auth().auth_kind.env_var())
-        .expect("Cursor OAuth must declare an environment variable");
-    if let Ok(token) = std::env::var(env_var) {
-        if !token.trim().is_empty() {
-            return Ok(token);
-        }
-    }
-    let missing = || missing_credentials_error("cursor");
-    let mut tokens = load_cursor_tokens(store)?.ok_or_else(missing)?;
-    if token_is_expiring(&tokens) {
-        let refresh_token = tokens.refresh_token.as_deref().ok_or_else(missing)?;
-        tokens =
-            refresh_cursor_tokens(client, refresh_token)
-                .await
-                .map_err(|error| match error {
-                    CursorOAuthError::Unauthorized(_) => missing(),
-                    error => ModelError::InvalidResponse(error.to_string()),
-                })?;
-        save_cursor_tokens(store, &tokens)?;
-    }
-    Ok(tokens.access_token)
 }
 
 async fn get_usable_models(

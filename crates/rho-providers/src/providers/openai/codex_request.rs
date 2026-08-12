@@ -180,7 +180,7 @@ pub(super) fn build_responses_create_body(
     let mut body = base_responses_body(profile);
     body["stream"] = json!(true);
     if service_tier == Some(ServiceTier::Priority)
-        && super::supports_fast_mode(profile.provider(), profile.model())
+        && crate::providers::supports_fast_mode(profile.provider(), profile.model())
     {
         body["service_tier"] = json!("priority");
     }

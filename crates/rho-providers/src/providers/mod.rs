@@ -32,6 +32,11 @@ pub use factory::{
 
 /// Returns whether `/fast` can request this provider's faster tier.
 pub fn supports_fast_mode(provider: &str, model: &str) -> bool {
-    openai::supports_fast_mode(provider, model)
-        || (provider == "cursor" && cursor::supports_fast_mode(model))
+    match crate::provider::provider_descriptor(provider).map(|descriptor| descriptor.fast_mode) {
+        Some(crate::provider::FastModePolicy::CodexPriority) => {
+            openai::model_supports_fast_mode(model)
+        }
+        Some(crate::provider::FastModePolicy::CursorSuffix) => cursor::supports_fast_mode(model),
+        Some(crate::provider::FastModePolicy::None) | None => false,
+    }
 }

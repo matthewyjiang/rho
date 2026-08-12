@@ -61,7 +61,9 @@ pub(crate) fn handle_server_message(
                 .ok_or_else(|| {
                     ModelError::InvalidResponse("unsupported Cursor exec message".into())
                 }),
-            None => Ok(CursorHandle::Ignore),
+            None => Err(ModelError::InvalidResponse(
+                "unsupported Cursor exec message".into(),
+            )),
         },
         Some(agent_server_message::Message::KvServerMessage(kv)) => match kv.message.as_ref() {
             Some(kv_server_message::Message::GetBlobArgs(args)) => {
@@ -97,13 +99,7 @@ pub(super) async fn run_turn(
         CursorSpeed::Standard
     };
     let effort = super::models::run_effort(&provider.model, request.reasoning_level);
-    let turn = build_cursor_turn(
-        &provider.model_identity(),
-        &provider.model,
-        request,
-        speed,
-        effort,
-    )?;
+    let turn = build_cursor_turn(&provider.model, request, speed, effort)?;
     let token = provider.auth.access_token().await?;
     let (tx, response) = send_run(provider, &turn.request_bytes, &token).await?;
     let response = if response.status() == StatusCode::UNAUTHORIZED {
@@ -190,7 +186,11 @@ async fn read_run_stream(
                         .map_err(|error| ModelError::InvalidResponse(error.to_string()))?;
                     match handle_server_message(&message, &mut turn)? {
                         CursorHandle::Reply(bytes) => {
-                            let _ = tx.send(Bytes::from(bytes)).await;
+                            tx.send(Bytes::from(bytes)).await.map_err(|_| {
+                                ModelError::InvalidResponse(
+                                    "Cursor run stream closed before a reply could be sent".into(),
+                                )
+                            })?;
                             idle.record_activity();
                         }
                         CursorHandle::TextDelta(delta) => {
@@ -218,7 +218,11 @@ async fn read_run_stream(
                 }
             }
             _ = heartbeat.tick() => {
-                let _ = tx.send(Bytes::from(heartbeat_frame())).await;
+                tx.send(Bytes::from(heartbeat_frame())).await.map_err(|_| {
+                    ModelError::InvalidResponse(
+                        "Cursor run stream closed before a heartbeat could be sent".into(),
+                    )
+                })?;
             }
         }
     }

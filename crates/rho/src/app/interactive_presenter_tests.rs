@@ -241,17 +241,6 @@ fn shell_start_card_includes_timeout_fact() {
             serde_json::json!({"command": "sleep 1", "timeout_seconds": 30}),
             Some(30_u64),
         ),
-        (
-            serde_json::json!({
-                "command": "sleep 1",
-                "timeout_seconds": serde_json::Number::from_f64(30.0).expect("finite")
-            }),
-            Some(30),
-        ),
-        (
-            serde_json::json!({"command": "sleep 1", "block_until_ms": 45_000}),
-            Some(45),
-        ),
         (serde_json::json!({"command": "true"}), None),
     ];
 

@@ -1,6 +1,6 @@
 # Cursor
 
-Cursor uses Cursor's PKCE login and talks to Cursor's AgentService over Connect/protobuf. Rho owns tools; Cursor native tools are rejected so the model uses Rho MCP tools. Bash accepts Cursor's `block_until_ms` timeout. Whole numbers on MCP calls become integers, so `timeout_seconds` parses instead of failing. For shared concepts such as credential storage and model selection, see [authentication and models](/authentication-and-models).
+Cursor uses Cursor's PKCE login and talks to Cursor's AgentService over Connect/protobuf. Rho owns tools; Cursor native tools are rejected so the model uses Rho MCP tools. MCP decode remaps Cursor-trained `block_until_ms` onto `timeout_seconds` and turns whole protobuf numbers into integers so bash parses. For shared concepts such as credential storage and model selection, see [authentication and models](/authentication-and-models).
 
 ## At a glance
 
@@ -62,7 +62,7 @@ For a non-interactive run, pass the matching provider, auth mode, and model. The
 rho --provider cursor --auth cursor-oauth --model auto run "hello"
 ```
 
-If discovery fails, Rho falls back to a built-in Cursor model list and still exposes `auto`.
+If discovery fails with an empty model list, Rho falls back to a built-in Cursor model list and still exposes `auto`. Auth and transport errors from GetUsableModels are surfaced instead of looking like a healthy catalog.
 
 ## Automation
 

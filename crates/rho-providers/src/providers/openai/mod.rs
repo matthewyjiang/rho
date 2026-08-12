@@ -15,11 +15,14 @@ pub use cache::prompt_cache_key_from_session_id;
 
 /// Returns whether a Codex model offers OpenAI's faster priority tier.
 pub fn supports_fast_mode(provider: &str, model: &str) -> bool {
-    provider == "openai-codex"
-        && (matches!(model, "gpt-5.4" | "gpt-5.5" | "gpt-5.6")
-            || model
-                .strip_prefix("gpt-5.6-")
-                .is_some_and(|suffix| !suffix.is_empty()))
+    provider == "openai-codex" && model_supports_fast_mode(model)
+}
+
+pub(crate) fn model_supports_fast_mode(model: &str) -> bool {
+    matches!(model, "gpt-5.4" | "gpt-5.5" | "gpt-5.6")
+        || model
+            .strip_prefix("gpt-5.6-")
+            .is_some_and(|suffix| !suffix.is_empty())
 }
 
 use crate::protocol::openai_responses::collect_codex_sse_response;

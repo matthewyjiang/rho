@@ -49,6 +49,8 @@ fn poolside_model_id_codec_canonicalizes_and_expands_wire_ids() {
 fn cursor_canonicalizes_trailing_fast_variant_ids() {
     let cursor = super::provider_descriptor_by_id(super::ProviderId::Cursor);
 
+    assert_eq!(cursor.model_id_codec, super::ModelIdCodec::CursorVariants);
+    assert_eq!(cursor.fast_mode, super::FastModePolicy::CursorSuffix);
     assert_eq!(cursor.canonicalize_model_id("grok-4.6-high"), "grok-4.6");
     assert_eq!(
         cursor.canonicalize_model_id("grok-4.6-high-fast"),

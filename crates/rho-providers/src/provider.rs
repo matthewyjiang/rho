@@ -188,6 +188,21 @@ pub enum ModelIdCodec {
     /// Wire IDs are `{provider_name}/{internal_id}`; cache and config store the
     /// internal id only. User-facing references remain `provider/internal_id`.
     ProviderPrefixed,
+    /// Cache and config store the catalog stem. Trailing `-fast` and effort
+    /// suffixes are picker switches, not distinct ids.
+    CursorVariants,
+}
+
+/// Whether `/fast` can request a faster tier for models on this provider.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum FastModePolicy {
+    /// This provider has no faster tier switch.
+    #[default]
+    None,
+    /// OpenAI Codex `service_tier=priority` on selected GPT-5.x models.
+    CodexPriority,
+    /// Cursor trailing `-fast` model-id suffix.
+    CursorSuffix,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -240,10 +255,10 @@ impl ProviderDescriptor {
     ///
     /// For [`ModelIdCodec::ProviderPrefixed`], strips leading `{name}/` segments
     /// so legacy wire ids and double-prefixed favorites collapse to one internal id.
-    /// Cursor also strips trailing `-fast` and effort suffixes so Fast and
-    /// reasoning are picker switches rather than distinct catalog ids.
+    /// [`ModelIdCodec::CursorVariants`] strips trailing `-fast` and effort suffixes
+    /// so Fast and reasoning are picker switches rather than distinct catalog ids.
     pub fn canonicalize_model_id(&self, model: &str) -> String {
-        let model = match self.model_id_codec {
+        match self.model_id_codec {
             ModelIdCodec::Plain => model.to_string(),
             ModelIdCodec::ProviderPrefixed => {
                 let prefix = format!("{}/", self.name);
@@ -256,18 +271,16 @@ impl ProviderDescriptor {
                 }
                 model.to_string()
             }
-        };
-        if self.id == ProviderId::Cursor {
-            crate::protocol::cursor::catalog_model_id(&model).to_string()
-        } else {
-            model
+            ModelIdCodec::CursorVariants => {
+                crate::protocol::cursor::catalog_model_id(model).to_string()
+            }
         }
     }
 
     /// Expands an internal model id to the id sent on this provider's HTTP API.
     pub fn wire_model_id(&self, model: &str) -> String {
         match self.model_id_codec {
-            ModelIdCodec::Plain => model.to_string(),
+            ModelIdCodec::Plain | ModelIdCodec::CursorVariants => model.to_string(),
             ModelIdCodec::ProviderPrefixed => {
                 let internal = self.canonicalize_model_id(model);
                 format!("{}/{internal}", self.name)
@@ -388,6 +401,7 @@ pub struct ProviderDescriptor {
     pub model_source: ProviderModelSource,
     pub model_refresh: Option<ProviderModelRefreshKind>,
     pub model_id_codec: ModelIdCodec,
+    pub fast_mode: FastModePolicy,
     pub metadata_upstream: &'static str,
     pub catalog_reasoning: CatalogReasoningPolicy,
     /// Preferred model when the cache is empty or contains this id.

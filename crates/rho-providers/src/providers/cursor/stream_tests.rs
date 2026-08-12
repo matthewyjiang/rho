@@ -2,8 +2,7 @@ use pretty_assertions::assert_eq;
 use prost::Message;
 use serde_json::json;
 
-use crate::model::ToolCall;
-use crate::model::{Message as ChatMessage, ModelIdentity, ModelRequest};
+use crate::model::{Message as ChatMessage, ModelRequest, ToolCall};
 use crate::protocol::cursor::build_cursor_turn;
 use crate::protocol::cursor::proto::{
     agent_server_message, exec_server_message, interaction_update, kv_server_message,
@@ -15,10 +14,8 @@ use crate::protocol::cursor::value::protobuf_value_from_json;
 use super::stream::{handle_server_message, CursorHandle};
 
 fn turn() -> crate::protocol::cursor::CursorTurn {
-    let identity = ModelIdentity::new("cursor", "cursor-agent", "auto");
     let messages = [ChatMessage::user_text("hello")];
     build_cursor_turn(
-        &identity,
         "auto",
         ModelRequest {
             messages: &messages,
