@@ -46,6 +46,25 @@ fn poolside_model_id_codec_canonicalizes_and_expands_wire_ids() {
 }
 
 #[test]
+fn cursor_canonicalizes_trailing_fast_variant_ids() {
+    let cursor = super::provider_descriptor_by_id(super::ProviderId::Cursor);
+
+    assert_eq!(
+        cursor.canonicalize_model_id("grok-4.6-high"),
+        "grok-4.6-high"
+    );
+    assert_eq!(
+        cursor.canonicalize_model_id("grok-4.6-high-fast"),
+        "grok-4.6-high"
+    );
+    assert_eq!(
+        cursor.canonicalize_model_id("grok-code-fast-1"),
+        "grok-code-fast-1"
+    );
+    assert_eq!(cursor.canonicalize_model_id("auto"), "auto");
+}
+
+#[test]
 fn openrouter_auth_modes_share_one_provider_and_legacy_aliases_normalize() {
     use super::ProviderId;
 

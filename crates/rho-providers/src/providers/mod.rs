@@ -29,3 +29,9 @@ pub use factory::{
     build_automation_provider, build_sdk_provider, build_sdk_provider_with_source,
     UnavailableProvider,
 };
+
+/// Returns whether `/fast` can request this provider's faster tier.
+pub fn supports_fast_mode(provider: &str, model: &str) -> bool {
+    openai::supports_fast_mode(provider, model)
+        || (provider == "cursor" && cursor::supports_fast_mode(model))
+}

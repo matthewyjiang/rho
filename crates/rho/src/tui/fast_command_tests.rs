@@ -65,6 +65,25 @@ fn enabling_fast_mode_updates_the_runtime_and_config() {
     );
 }
 
+// Covers: /fast must accept Cursor models, not only Codex
+// Owner: interactive command
+#[test]
+fn cursor_models_can_enable_fast_mode() {
+    let mut app = test_app();
+    app.info.runtime.provider = "cursor".into();
+    app.info.runtime.model = "grok-4.6-high".into();
+    let runtime = FakeRuntime::default();
+
+    app.execute_fast_command_with_runtime(invocation("/fast on"), &runtime)
+        .unwrap();
+
+    assert!(runtime.fast_mode());
+    assert_eq!(
+        app.info.runtime.service_tier,
+        Some(rho_sdk::model::ServiceTier::Priority)
+    );
+}
+
 #[test]
 fn unsupported_models_reject_fast_mode_without_mutation() {
     let mut app = supported_app();

@@ -10,6 +10,11 @@ mod stream;
 
 pub(crate) use models::fetch_usable_models;
 
+/// Returns whether `/fast` can request Cursor's trailing `-fast` model variant.
+pub fn supports_fast_mode(model: &str) -> bool {
+    crate::protocol::cursor::supports_fast_mode(model)
+}
+
 const CURSOR_CLIENT_VERSION: &str = "cli-2026.01.09-231024f";
 const RUN_PATH: &str = "/agent.v1.AgentService/Run";
 const MODELS_PATH: &str = "/agent.v1.AgentService/GetUsableModels";
@@ -86,11 +91,28 @@ impl CursorProvider {
         on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                   + Send),
     ) -> Result<ModelResponse, ModelError> {
-        stream::run_turn(self, request, on_event, on_request_event).await
+        self.stream_turn_with_options(
+            request,
+            rho_sdk::provider::ModelRequestOptions::default(),
+            on_event,
+            on_request_event,
+        )
+        .await
+    }
+
+    pub(crate) async fn stream_turn_with_options(
+        &self,
+        request: ModelRequest<'_>,
+        options: rho_sdk::provider::ModelRequestOptions,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+        on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
+                  + Send),
+    ) -> Result<ModelResponse, ModelError> {
+        stream::run_turn(self, request, options, on_event, on_request_event).await
     }
 }
 
-crate::impl_sdk_model_provider!(CursorProvider);
+crate::impl_sdk_model_provider!(CursorProvider, request_options);
 
 fn request_id() -> String {
     let mut bytes = [0u8; 16];

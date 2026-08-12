@@ -92,12 +92,12 @@ const FAST_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
     CommandArgumentChoice {
         completion: "/fast on",
         usage: "/fast on",
-        description: "enable faster Codex responses at higher credit cost",
+        description: "enable faster responses at higher credit cost",
     },
     CommandArgumentChoice {
         completion: "/fast off",
         usage: "/fast off",
-        description: "use standard Codex response speed",
+        description: "use standard response speed",
     },
 ];
 
@@ -176,7 +176,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         id: CommandId::Fast,
         name: "fast",
         usage: "/fast [on|off]",
-        description: "toggle faster Codex responses at higher credit cost",
+        description: "toggle faster responses at higher credit cost",
         argument_choices: FAST_ARGUMENT_CHOICES,
     },
     CommandSpec {

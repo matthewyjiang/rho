@@ -27,6 +27,7 @@ fn turn() -> crate::protocol::cursor::CursorTurn {
             reasoning_level: Default::default(),
             prompt_cache_key: None,
         },
+        crate::protocol::cursor::CursorSpeed::Standard,
     )
     .unwrap()
 }

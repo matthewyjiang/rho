@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{btree_map::Entry, BTreeMap};
 
 use prost::Message;
 use rand::RngCore;
@@ -9,6 +9,7 @@ use crate::model::{ModelError, ModelIdentity, ModelRequest, ToolCall, ToolSpec};
 use crate::protocol::openai_chat::{to_openai_message_for_target, OpenAiMessage};
 
 use super::connect::encode_connect_frame;
+use super::fast::{catalog_model_id, wire_model_id, CursorSpeed};
 use super::proto::{
     agent_client_message, conversation_action, conversation_step, conversation_turn_structure,
     exec_client_message, exec_server_message, kv_client_message, AgentClientMessage,
@@ -164,34 +165,52 @@ pub(crate) fn fallback_models() -> Vec<CursorModel> {
 }
 
 pub(crate) fn models_from_details(details: &[ModelDetails]) -> Vec<CursorModel> {
-    let mut models = details
-        .iter()
-        .filter_map(|details| {
-            let id = details.model_id.trim();
-            if id.is_empty() {
-                return None;
+    let mut by_id = BTreeMap::new();
+    for details in details {
+        let raw_id = details.model_id.trim();
+        if raw_id.is_empty() {
+            continue;
+        }
+        let id = catalog_model_id(raw_id).to_string();
+        let collapsed_from_fast = id.as_str() != raw_id;
+        let raw_name = [
+            details.display_name.as_str(),
+            details.display_name_short.as_str(),
+            details.display_model_id.as_str(),
+        ]
+        .into_iter()
+        .map(str::trim)
+        .find(|value| !value.is_empty())
+        .unwrap_or(raw_id);
+        let name = if collapsed_from_fast {
+            raw_name
+                .strip_suffix(" Fast")
+                .unwrap_or(raw_name)
+                .to_string()
+        } else {
+            raw_name.to_string()
+        };
+        let candidate = CursorModel {
+            id: id.clone(),
+            name,
+            reasoning: details.thinking_details.is_some(),
+            context_window: DEFAULT_CONTEXT_WINDOW,
+            max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
+        };
+        match by_id.entry(id) {
+            Entry::Vacant(entry) => {
+                entry.insert(candidate);
             }
-            let name = [
-                &details.display_name,
-                &details.display_name_short,
-                &details.display_model_id,
-            ]
-            .into_iter()
-            .map(|value| value.trim())
-            .find(|value| !value.is_empty())
-            .unwrap_or(id);
-            Some(CursorModel {
-                id: id.to_string(),
-                name: name.to_string(),
-                reasoning: details.thinking_details.is_some(),
-                context_window: DEFAULT_CONTEXT_WINDOW,
-                max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
-            })
-        })
-        .collect::<Vec<_>>();
-    models.sort_by(|left, right| left.id.cmp(&right.id));
-    models.dedup_by(|left, right| left.id == right.id);
-    ensure_auto_model(models)
+            Entry::Occupied(mut entry) => {
+                let existing = entry.get_mut();
+                existing.reasoning |= candidate.reasoning;
+                if !collapsed_from_fast {
+                    existing.name = candidate.name;
+                }
+            }
+        }
+    }
+    ensure_auto_model(by_id.into_values().collect())
 }
 
 fn ensure_auto_model(mut models: Vec<CursorModel>) -> Vec<CursorModel> {
@@ -214,6 +233,7 @@ pub(crate) fn build_cursor_turn(
     identity: &ModelIdentity,
     model: &str,
     request: ModelRequest<'_>,
+    speed: CursorSpeed,
 ) -> Result<CursorTurn, ModelError> {
     let messages = request
         .messages
@@ -235,7 +255,8 @@ pub(crate) fn build_cursor_turn(
         .unwrap_or(parsed.user_text.as_str());
     let conversation_id = deterministic_uuid(&format!("cursor-conv-id:{first_user}"));
     let mut blob_store = BlobStore::default();
-    let request_bytes = encode_run_request(model, &parsed, &conversation_id, &mut blob_store)?;
+    let request_bytes =
+        encode_run_request(model, speed, &parsed, &conversation_id, &mut blob_store)?;
     let cloud_rule = parsed
         .system_prompts
         .iter()
@@ -423,6 +444,7 @@ fn decode_mcp_arg_value(bytes: &[u8]) -> Value {
 
 fn encode_run_request(
     model: &str,
+    speed: CursorSpeed,
     parsed: &ParsedMessages,
     conversation_id: &str,
     blob_store: &mut BlobStore,
@@ -515,8 +537,12 @@ fn encode_run_request(
     }
     flush_turn(blob_store, &mut turn_blob_ids, &mut current_turn);
 
-    let cursor_model_id = if model == "auto" { "default" } else { model };
-    let display_name = if model == "auto" { "Auto" } else { model };
+    let cursor_model_id = wire_model_id(model, speed);
+    let display_name = if model == "auto" {
+        "Auto".to_string()
+    } else {
+        catalog_model_id(model).to_string()
+    };
     let action = if parsed.user_text.is_empty() {
         ConversationAction {
             action: Some(conversation_action::Action::ResumeAction(ResumeAction {})),
@@ -541,15 +567,15 @@ fn encode_run_request(
         }),
         action: Some(action),
         model_details: Some(ModelDetails {
-            model_id: cursor_model_id.into(),
-            display_model_id: cursor_model_id.into(),
-            display_name: display_name.into(),
-            display_name_short: display_name.into(),
+            model_id: cursor_model_id.clone(),
+            display_model_id: cursor_model_id.clone(),
+            display_name: display_name.clone(),
+            display_name_short: display_name,
             thinking_details: None,
         }),
         conversation_id: Some(conversation_id.to_string()),
         requested_model: Some(RequestedModel {
-            model_id: cursor_model_id.into(),
+            model_id: cursor_model_id,
         }),
     };
     Ok(encode_client_message(&AgentClientMessage {

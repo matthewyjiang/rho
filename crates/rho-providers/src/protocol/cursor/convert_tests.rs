@@ -12,7 +12,8 @@ use crate::model::{
 
 use super::value::protobuf_value_from_json;
 use super::{
-    build_cursor_turn, decode_mcp_args, models_from_details, native_exec_reject, ConnectFrameParser,
+    build_cursor_turn, decode_mcp_args, models_from_details, native_exec_reject,
+    ConnectFrameParser, CursorSpeed,
 };
 
 fn identity() -> ModelIdentity {
@@ -55,7 +56,13 @@ fn run_model_id(bytes: &[u8]) -> String {
 #[test]
 fn trailing_user_message_uses_user_action_and_maps_auto_model() {
     let messages = [ChatMessage::user_text("hello")];
-    let turn = build_cursor_turn(&identity(), "auto", request(&messages, &[])).unwrap();
+    let turn = build_cursor_turn(
+        &identity(),
+        "auto",
+        request(&messages, &[]),
+        CursorSpeed::Standard,
+    )
+    .unwrap();
 
     assert!(matches!(
         run_action(&turn.request_bytes),
@@ -78,7 +85,13 @@ fn trailing_tool_result_uses_resume_action() {
             content: "src/lib.rs".into(),
         }),
     ];
-    let turn = build_cursor_turn(&identity(), "composer-1", request(&messages, &[])).unwrap();
+    let turn = build_cursor_turn(
+        &identity(),
+        "composer-1",
+        request(&messages, &[]),
+        CursorSpeed::Standard,
+    )
+    .unwrap();
 
     assert!(matches!(
         run_action(&turn.request_bytes),
@@ -151,4 +164,58 @@ fn discovered_models_always_include_auto() {
     assert_eq!(models[0].id, "auto");
     assert_eq!(models[1].id, "composer-1");
     assert!(models[1].reasoning);
+}
+
+// Covers: Fast variants must collapse to the base catalog id so /fast is the switch
+// Owner: cursor protocol
+#[test]
+fn discovered_fast_variants_collapse_to_the_base_model() {
+    let models = models_from_details(&[
+        ModelDetails {
+            model_id: "grok-4.6-high-fast".into(),
+            display_model_id: String::new(),
+            display_name: "Grok 4.6 Fast".into(),
+            display_name_short: String::new(),
+            thinking_details: None,
+        },
+        ModelDetails {
+            model_id: "grok-4.6-high".into(),
+            display_model_id: String::new(),
+            display_name: "Grok 4.6".into(),
+            display_name_short: String::new(),
+            thinking_details: Some(ThinkingDetails {}),
+        },
+        ModelDetails {
+            model_id: "grok-code-fast-1".into(),
+            display_model_id: String::new(),
+            display_name: "Grok Code Fast 1".into(),
+            display_name_short: String::new(),
+            thinking_details: None,
+        },
+    ]);
+
+    let ids: Vec<_> = models.iter().map(|model| model.id.as_str()).collect();
+    assert_eq!(ids, ["auto", "grok-4.6-high", "grok-code-fast-1"]);
+    let grok = models
+        .iter()
+        .find(|model| model.id == "grok-4.6-high")
+        .unwrap();
+    assert_eq!(grok.name, "Grok 4.6");
+    assert!(grok.reasoning);
+}
+
+// Covers: /fast must land as a trailing -fast wire id, not a service-tier field
+// Owner: cursor protocol
+#[test]
+fn fast_speed_appends_trailing_fast_suffix_on_run() {
+    let messages = [ChatMessage::user_text("hello")];
+    let turn = build_cursor_turn(
+        &identity(),
+        "grok-4.6-high",
+        request(&messages, &[]),
+        CursorSpeed::Fast,
+    )
+    .unwrap();
+
+    assert_eq!(run_model_id(&turn.request_bytes), "grok-4.6-high-fast");
 }

@@ -13,7 +13,7 @@ use crate::{
         agent_server_message, build_cursor_turn, decode_mcp_args, exec_server_message,
         heartbeat_frame, interaction_update, kv_get_blob_response, kv_server_message,
         kv_set_blob_response, native_exec_reject, request_context_success, AgentServerMessage,
-        ConnectFrameParser, CursorTurn, CONNECT_END_STREAM_FLAG,
+        ConnectFrameParser, CursorSpeed, CursorTurn, CONNECT_END_STREAM_FLAG,
     },
     provider_backend::{http_error, stream_timeout::StreamIdleDeadline},
 };
@@ -84,11 +84,19 @@ pub(crate) fn handle_server_message(
 pub(super) async fn run_turn(
     provider: &CursorProvider,
     request: ModelRequest<'_>,
+    options: rho_sdk::provider::ModelRequestOptions,
     on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
               + Send),
 ) -> Result<ModelResponse, ModelError> {
-    let turn = build_cursor_turn(&provider.model_identity(), &provider.model, request)?;
+    let speed = if options.service_tier() == Some(rho_sdk::model::ServiceTier::Priority)
+        && crate::protocol::cursor::supports_fast_mode(&provider.model)
+    {
+        CursorSpeed::Fast
+    } else {
+        CursorSpeed::Standard
+    };
+    let turn = build_cursor_turn(&provider.model_identity(), &provider.model, request, speed)?;
     let token = provider.auth.access_token().await?;
     let (tx, response) = send_run(provider, &turn.request_bytes, &token).await?;
     let response = if response.status() == StatusCode::UNAUTHORIZED {

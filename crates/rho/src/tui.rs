@@ -350,7 +350,7 @@ impl RuntimeModelView {
 
     fn fast_mode_active(&self) -> bool {
         self.service_tier == Some(rho_sdk::model::ServiceTier::Priority)
-            && rho_providers::providers::openai::supports_fast_mode(&self.provider, &self.model)
+            && rho_providers::providers::supports_fast_mode(&self.provider, &self.model)
     }
 }
 

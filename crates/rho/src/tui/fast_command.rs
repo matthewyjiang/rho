@@ -31,7 +31,7 @@ impl App {
     ) -> anyhow::Result<()> {
         let provider = &self.info.runtime.provider;
         let model = &self.info.runtime.model;
-        let supported = rho_providers::providers::openai::supports_fast_mode(provider, model);
+        let supported = rho_providers::providers::supports_fast_mode(provider, model);
         let current = agent.fast_mode();
         let requested = match invocation.args.trim().to_ascii_lowercase().as_str() {
             "" => !current,

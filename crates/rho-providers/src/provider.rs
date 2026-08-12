@@ -237,8 +237,10 @@ impl ProviderDescriptor {
     ///
     /// For [`ModelIdCodec::ProviderPrefixed`], strips leading `{name}/` segments
     /// so legacy wire ids and double-prefixed favorites collapse to one internal id.
+    /// Cursor also strips a trailing `-fast` variant so Fast is a `/fast` switch
+    /// rather than a distinct catalog id.
     pub fn canonicalize_model_id(&self, model: &str) -> String {
-        match self.model_id_codec {
+        let model = match self.model_id_codec {
             ModelIdCodec::Plain => model.to_string(),
             ModelIdCodec::ProviderPrefixed => {
                 let prefix = format!("{}/", self.name);
@@ -251,6 +253,11 @@ impl ProviderDescriptor {
                 }
                 model.to_string()
             }
+        };
+        if self.id == ProviderId::Cursor {
+            crate::protocol::cursor::catalog_model_id(&model).to_string()
+        } else {
+            model
         }
     }
 

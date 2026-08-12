@@ -51,6 +51,8 @@ Cursor exposes `cursor/<model>` names from GetUsableModels, including `auto` for
 /model cursor/auto
 ```
 
+Fast variants are not separate picker rows. Cursor encodes Fast as a trailing `-fast` model id. Use `/fast on` or `/fast off` (or `/fast` to toggle). Rho saves the choice as `model.fast_mode`, shows `(fast)` after the active model name, and sends the `-fast` id on later turns. `auto` and product names such as `grok-code-fast-1` do not support the switch.
+
 For a non-interactive run, pass the matching provider, auth mode, and model. These flags also update the persistent default:
 
 ```bash

@@ -64,7 +64,7 @@ pub struct Config {
     pub max_tool_output_lines: usize,
     pub auth: String,
     pub reasoning: ReasoningLevel,
-    /// Use the low-latency priority tier for supported Codex models.
+    /// Use the provider's faster tier when the current model supports it.
     pub fast_mode: bool,
     pub show_reasoning_output: bool,
     /// Hide tool cards, reasoning, and activity chrome so only message text remains.
