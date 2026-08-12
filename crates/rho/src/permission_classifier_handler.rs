@@ -120,7 +120,7 @@ impl ClassifierApprovalHandler {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
-            .unwrap_or_else(CancellationToken::new);
+            .unwrap_or_default();
         ClassificationInput {
             config,
             history,
@@ -130,6 +130,28 @@ impl ClassifierApprovalHandler {
             workspace_path: self.workspace_path.clone(),
             usage_recording: self.usage_recording.clone(),
         }
+    }
+
+    /// Clones classifier config for an isolated agent/command run.
+    ///
+    /// Session, cancellation, and consecutive-deny streak stay unbound so
+    /// concurrent workflow nodes cannot overwrite each other's transcript.
+    pub(crate) fn fork_unbound(self: &Arc<Self>) -> Arc<Self> {
+        let config = self
+            .config
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        Arc::new(Self {
+            config: RwLock::new(config),
+            session: Mutex::new(None),
+            workspace_path: self.workspace_path.clone(),
+            usage_recording: self.usage_recording.clone(),
+            classifier: Arc::clone(&self.classifier),
+            inner: self.inner.clone(),
+            cancellation: Mutex::new(None),
+            consecutive_denials: tokio::sync::Mutex::new(0),
+        })
     }
 
     async fn escalate_or_deny_headless(&self, request: ApprovalRequest) -> ApprovalDecision {

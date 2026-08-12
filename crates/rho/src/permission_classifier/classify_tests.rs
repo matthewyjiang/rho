@@ -85,7 +85,7 @@ async fn sends_classifier_prompt_transcript_and_parses_verdict() {
         requests[0].messages,
         [
             Message::System(CLASSIFIER_PROMPT.into()),
-            Message::user_text(render_classifier_transcript(&history, &pending))
+            Message::user_text(render_classifier_transcript(&history, &pending).unwrap())
         ]
     );
     assert_eq!(requests[0].reasoning_level, ReasoningLevel::Low);

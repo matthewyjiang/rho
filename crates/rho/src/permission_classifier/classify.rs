@@ -54,7 +54,12 @@ async fn try_classify_capability_request(
         &selection.model,
         reasoning,
         &selection.auth,
-    )?;
+    )
+    .map_err(|_| {
+        anyhow!(
+            "failed to build {PERMISSION_CLASSIFIER_AGENT_ID} provider; check configured credentials"
+        )
+    })?;
     try_classify_capability_request_with_provider(provider.as_ref(), reasoning, request).await
 }
 
@@ -81,7 +86,7 @@ async fn try_classify_capability_request_with_provider(
             definition: internal_definition(PERMISSION_CLASSIFIER_AGENT_ID),
             usage_purpose: "permission-classifier",
             reasoning: Some(reasoning),
-            input: render_classifier_transcript(request.history, request.pending),
+            input: render_classifier_transcript(request.history, request.pending)?,
             cancellation: request.cancellation,
             session_id: request.session_id,
             workspace_path: request.workspace_path,

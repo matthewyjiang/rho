@@ -150,9 +150,6 @@ impl App {
             config.set_internal_agent_model_config(PERMISSION_CLASSIFIER_AGENT_ID, selection);
         }) {
             Ok(()) => {
-                if self.info.runtime.permission_mode == PermissionMode::Auto {
-                    self.sync_permission_classifier_runtime_config(agent);
-                }
                 self.set_status(format!("permission classifier reasoning: {reasoning}"));
             }
             Err(err) => {
@@ -161,6 +158,9 @@ impl App {
                 )));
                 self.set_status("config save failed");
             }
+        }
+        if self.info.runtime.permission_mode == PermissionMode::Auto {
+            self.sync_permission_classifier_runtime_config(agent);
         }
         Ok(())
     }

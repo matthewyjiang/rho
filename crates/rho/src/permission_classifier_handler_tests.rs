@@ -97,6 +97,53 @@ fn handler_with(
     ClassifierApprovalHandler::for_tests(classifier.classify(), inner)
 }
 
+// Covers: forked handlers keep distinct session bindings so parallel workflow
+// agents cannot overwrite each other's classifier transcript.
+// Owner: permission classifier approval handler.
+#[tokio::test]
+async fn fork_unbound_isolates_session_bindings() {
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let classifier: ClassifyFn = {
+        let observed = Arc::clone(&observed);
+        Arc::new(move |input: ClassificationInput| {
+            observed.lock().unwrap().push(input.history.clone());
+            Box::pin(std::future::ready(Ok(ClassifierVerdict::Allow)))
+        })
+    };
+    let template = Arc::new(ClassifierApprovalHandler::for_tests(classifier, None));
+    let first = template.fork_unbound();
+    let second = template.fork_unbound();
+
+    let runtime = Rho::builder()
+        .provider(ScriptedProvider::new(
+            ModelIdentity::new("test", "test", "unused"),
+            Vec::<ScriptedTurn>::new(),
+        ))
+        .build()
+        .unwrap();
+    let first_history = vec![Message::user_text("first agent")];
+    let second_history = vec![Message::user_text("second agent")];
+    let first_session = runtime
+        .session(SessionOptions::default().history(first_history.clone()))
+        .await
+        .unwrap();
+    let second_session = runtime
+        .session(SessionOptions::default().history(second_history.clone()))
+        .await
+        .unwrap();
+    first.bind_session(first_session);
+    second.bind_session(second_session);
+
+    assert_eq!(first.request(request()).await, ApprovalDecision::AllowOnce);
+    assert_eq!(second.request(request()).await, ApprovalDecision::AllowOnce);
+
+    assert_eq!(
+        *observed.lock().unwrap(),
+        vec![first_history, second_history]
+    );
+    runtime.shutdown();
+}
+
 // Covers: workflow Auto agent classifiers need the child session history instead of empty context.
 // Owner: permission classifier approval handler.
 #[tokio::test]

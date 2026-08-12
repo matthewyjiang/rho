@@ -513,7 +513,7 @@ async fn run_session_with_output(
         startup.approval_classifier.clone(),
         workspace_root.clone(),
         usage_recording.clone(),
-    );
+    )?;
     let hooks = crate::hooks::start_for_cwd(&workspace_root);
     if let Some(hooks) = hooks.as_ref() {
         startup.diagnostics.attach_hooks(hooks);
@@ -634,28 +634,42 @@ fn headless_approval_session(
     approval_classifier: Option<Arc<ClassifierApprovalHandler>>,
     workspace_root: PathBuf,
     usage_recording: rho_sdk::ProviderRequestUsageRecording,
-) -> (
+) -> anyhow::Result<(
     Option<rho_sdk::ApprovalSession>,
     Option<Arc<ClassifierApprovalHandler>>,
-) {
+)> {
     if config.permission_mode != PermissionMode::Auto {
-        return (approval_session, None);
+        return Ok((approval_session, None));
     }
-    if approval_session.is_some() {
-        return (approval_session, approval_classifier);
+    match (approval_session.is_some(), approval_classifier) {
+        (true, None) => anyhow::bail!(
+            "permission mode auto requires a classifier approval handler paired with the approval session"
+        ),
+        (_, Some(template)) => {
+            // Always fork from the template. Concurrent workflow/subagent runs
+            // must not share mutable session or cancellation bindings.
+            let _ = approval_session;
+            let handler = template.fork_unbound();
+            let erased: Arc<dyn rho_sdk::ApprovalHandler> = handler.clone();
+            Ok((
+                Some(rho_sdk::ApprovalSession::from_shared(erased)),
+                Some(handler),
+            ))
+        }
+        (false, None) => {
+            let handler = Arc::new(ClassifierApprovalHandler::new(
+                config.clone(),
+                workspace_root,
+                usage_recording,
+                None,
+            ));
+            let erased: Arc<dyn rho_sdk::ApprovalHandler> = handler.clone();
+            Ok((
+                Some(rho_sdk::ApprovalSession::from_shared(erased)),
+                Some(handler),
+            ))
+        }
     }
-
-    let handler = Arc::new(ClassifierApprovalHandler::new(
-        config.clone(),
-        workspace_root,
-        usage_recording,
-        None,
-    ));
-    let erased: Arc<dyn rho_sdk::ApprovalHandler> = handler.clone();
-    (
-        Some(rho_sdk::ApprovalSession::from_shared(erased)),
-        Some(handler),
-    )
 }
 
 async fn complete_run(

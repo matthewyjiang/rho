@@ -227,14 +227,12 @@ impl AgentExecutor {
         self
     }
 
-    /// Routes workflow-agent Auto classifications through the same classifier
-    /// handler so automation can bind child session history and run cancellation.
-    pub(crate) fn with_classifier_approval_session(
+    /// Supplies a classifier template that each Rho agent run forks before
+    /// binding its own session history and cancellation token.
+    pub(crate) fn with_classifier_template(
         mut self,
-        session: rho_sdk::ApprovalSession,
         classifier: Arc<ClassifierApprovalHandler>,
     ) -> Self {
-        self.approval_session = Some(session);
         self.approval_classifier = Some(classifier);
         self
     }
@@ -436,7 +434,13 @@ impl AgentExecutor {
         let persisted_output = output_file.clone();
         let total_permits = Arc::clone(&self.total_permits);
         let claude_permits = Arc::clone(&self.claude_permits);
-        let approval_session = self.approval_session.clone();
+        // Auto classifiers are templates: automation forks a per-run handler so
+        // concurrent agents never share bound session/cancellation state.
+        let approval_session = if self.approval_classifier.is_some() {
+            None
+        } else {
+            self.approval_session.clone()
+        };
         let approval_classifier = self.approval_classifier.clone();
         let task_steering_slot = steering_slot.clone();
 

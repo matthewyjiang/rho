@@ -382,10 +382,23 @@ impl WorkflowRuntime {
         let workspace = Workspace::new(&cwd)?.with_unrestricted_file_access();
         let hooks = crate::hooks::start_for_cwd(&cwd);
         let hook_engine = hooks.as_ref().map(|pipeline| Arc::clone(pipeline.engine()));
+        let command_classifier = approvals
+            .classifier
+            .as_ref()
+            .map(ClassifierApprovalHandler::fork_unbound);
+        let command_approvals = match &command_classifier {
+            // Commands get an unbound fork so they never inherit an agent
+            // transcript from shared mutable classifier state.
+            Some(handler) => {
+                let erased: Arc<dyn ApprovalHandler> = handler.clone();
+                ApprovalSession::from_shared(erased)
+            }
+            None => approvals.session.clone(),
+        };
         let hosts = Arc::new(WorkflowCommandHosts {
             workspace,
             policy: AppPolicy::for_mode(permission_mode),
-            approvals: approvals.session.clone(),
+            approvals: command_approvals,
             hooks,
         });
         let process_environment = ProcessEnvironment::inherit_except(
@@ -399,7 +412,7 @@ impl WorkflowRuntime {
                 SubagentHostInputBridge::new(),
                 crate::app::subagent_messaging::SubagentNoticeBridge::new(),
             )
-            .with_classifier_approval_session(approvals.session, classifier),
+            .with_classifier_template(classifier),
             None => AgentExecutor::new(
                 config.clone(),
                 config_path,
@@ -431,7 +444,7 @@ impl WorkflowRuntime {
         if let Some(engine) = hook_engine {
             runner = runner.with_hooks(engine);
         }
-        if let Some(classifier) = &approvals.classifier {
+        if let Some(classifier) = &command_classifier {
             classifier.bind_cancellation(runner.cancellation_handle());
         }
         Ok(Self {

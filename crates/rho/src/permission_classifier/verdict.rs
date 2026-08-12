@@ -38,6 +38,9 @@ pub(crate) fn parse_classifier_verdict(text: &str) -> anyhow::Result<ClassifierV
         let end = trimmed
             .rfind('}')
             .ok_or_else(|| anyhow::anyhow!("missing JSON object"))?;
+        if start > end {
+            anyhow::bail!("missing JSON object");
+        }
         &trimmed[start..=end]
     };
 

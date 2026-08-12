@@ -171,10 +171,11 @@ fn headless_auto_requires_configured_permission_classifier_model() {
     ensure_headless_auto_classifier_model(&config).unwrap();
 }
 
-// Covers: workflow Auto supplies a classifier-backed approval session that automation must bind.
+// Covers: workflow Auto templates must fork so concurrent runs cannot share
+// mutable session/cancellation bindings on the original handler.
 // Owner: automation startup approval wiring.
 #[test]
-fn supplied_auto_approval_session_returns_classifier_handler_for_binding() {
+fn supplied_auto_classifier_template_forks_isolated_handler() {
     let mut config = Config {
         permission_mode: PermissionMode::Auto,
         ..Config::default()
@@ -190,23 +191,45 @@ fn supplied_auto_approval_session_returns_classifier_handler_for_binding() {
         Default::default(),
         None,
     ));
-    let handler: Arc<dyn rho_sdk::ApprovalHandler> = classifier.clone();
-    let approval_session = rho_sdk::ApprovalSession::from_shared(handler);
 
     let (_approval_session, returned) = headless_approval_session(
         &config,
-        Some(approval_session),
+        None,
         Some(classifier.clone()),
         root.path().to_path_buf(),
         Default::default(),
-    );
+    )
+    .unwrap();
 
-    assert!(Arc::ptr_eq(
-        returned
-            .as_ref()
-            .expect("supplied classifier should return"),
-        &classifier
-    ));
+    let returned = returned.expect("template should produce a forked handler");
+    assert!(!Arc::ptr_eq(&returned, &classifier));
+}
+
+// Covers: Auto must not install a non-classifier approval session alone.
+// Owner: automation startup approval wiring.
+#[test]
+fn auto_rejects_approval_session_without_classifier_handler() {
+    let config = Config {
+        permission_mode: PermissionMode::Auto,
+        ..Config::default()
+    };
+    let root = tempfile::tempdir().unwrap();
+    let approval_session = rho_sdk::ApprovalSession::new(rho_sdk::DenyApprovals);
+
+    let error = match headless_approval_session(
+        &config,
+        Some(approval_session),
+        None,
+        root.path().to_path_buf(),
+        Default::default(),
+    ) {
+        Ok(_) => panic!("session-only Auto setup must fail"),
+        Err(error) => error,
+    };
+
+    assert!(error
+        .to_string()
+        .contains("requires a classifier approval handler"));
 }
 
 #[test]
