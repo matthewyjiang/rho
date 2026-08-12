@@ -21,6 +21,7 @@ mod model_identity;
 mod paths;
 mod permission;
 mod permission_classifier;
+mod permission_classifier_handler;
 mod plugins;
 mod prompt;
 mod prompt_templates;

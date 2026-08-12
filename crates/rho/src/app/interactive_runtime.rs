@@ -9,6 +9,7 @@ use rho_sdk::{
 use {
     crate::compaction::CompactionConfig, crate::config::Config,
     crate::diagnostics::RuntimeDiagnostics, crate::permission::PermissionMode,
+    crate::permission_classifier_handler::ClassifierApprovalHandler,
     crate::session::Session as StoredSession, crate::tools::sdk_registry::AppToolSet,
 };
 
@@ -42,6 +43,7 @@ use super::interactive_state::{
 };
 use startup::{
     approval_channel_for, bind_subagent_parent, prompt_cache_key, resume_omissions_report,
+    ApprovalChannelOptions,
 };
 
 pub(crate) struct InteractiveRuntimeOptions<'a> {
@@ -78,10 +80,12 @@ pub(crate) struct InteractiveRuntime {
     compaction: CompactionConfig,
     context_window: Option<u64>,
     usage_recording: rho_sdk::ProviderRequestUsageRecording,
+    config: Config,
     permission_mode: PermissionMode,
     experimental_workspace_rewind: bool,
     approval_handler: Option<Arc<dyn ApprovalHandler>>,
     approval_receiver: Option<ApprovalRequestReceiver>,
+    classifier_approval_handler: Option<Arc<ClassifierApprovalHandler>>,
     agent: BoundAgent,
     agent_id: String,
     agent_fingerprint: String,
@@ -111,6 +115,17 @@ impl InteractiveRuntime {
 
     pub(crate) fn permission_mode(&self) -> PermissionMode {
         self.permission_mode
+    }
+
+    pub(crate) fn update_config(&mut self, config: Config) {
+        self.config = config.clone();
+        if let Some(classifier) = &self.classifier_approval_handler {
+            classifier.update_config(config);
+        }
+    }
+
+    pub(crate) fn config_snapshot(&self) -> Config {
+        self.config.clone()
     }
 
     pub(crate) fn workspace_rewind_enabled(&self) -> bool {
@@ -147,13 +162,21 @@ impl InteractiveRuntime {
         }
 
         let snapshot = self.sessions.session().snapshot();
-        let (approval_handler, approval_receiver) = approval_channel_for(mode);
+        let approval_channel = approval_channel_for(
+            mode,
+            ApprovalChannelOptions {
+                config: self.config.clone(),
+                workspace_path: self.workspace.root().to_path_buf(),
+                usage_recording: self.usage_recording.clone(),
+            },
+        );
         let replacement_runtime = build_runtime(RuntimeBuildOptions {
             provider: Arc::clone(self.provider.provider()),
             tools: self.tools.tools(),
             workspace: self.workspace.clone(),
             workspace_policy: AppPolicy::for_mode(mode),
-            approval_session: approval_handler
+            approval_session: approval_channel
+                .handler
                 .clone()
                 .map(rho_sdk::ApprovalSession::from_shared),
             system_prompt: self.active_system_prompt(),
@@ -170,12 +193,15 @@ impl InteractiveRuntime {
         let replacement_session = replacement_runtime
             .rebind_session(SessionOptions::from_snapshot(snapshot))
             .await?;
+        approval_channel.bind_session(&replacement_session);
 
         let previous_runtime = std::mem::replace(&mut self.runtime, replacement_runtime);
         self.sessions.replace_runtime_session(replacement_session);
         self.permission_mode = mode;
-        self.approval_handler = approval_handler;
-        self.approval_receiver = approval_receiver;
+        self.config.permission_mode = mode;
+        self.approval_handler = approval_channel.handler;
+        self.approval_receiver = approval_channel.receiver;
+        self.classifier_approval_handler = approval_channel.classifier;
         if let Some(manager) = self.tools.subagents() {
             manager.update_permission_mode(mode);
         }
@@ -608,6 +634,7 @@ impl InteractiveRuntime {
         let replacement_session = replacement_runtime
             .rebind_session(SessionOptions::from_snapshot(snapshot))
             .await?;
+        self.bind_classifier_session(&replacement_session);
 
         // Do not change the live runtime until the selected leaf is durable.
         if let Err(error) = storage.set_leaf(target_id) {
@@ -851,11 +878,18 @@ impl InteractiveRuntime {
             ReplacementLifecycle::Started => replacement_runtime.session(options).await?,
             ReplacementLifecycle::Rebound => replacement_runtime.rebind_session(options).await?,
         };
+        self.bind_classifier_session(&replacement_session);
         let previous_runtime = std::mem::replace(&mut self.runtime, replacement_runtime);
         self.sessions
             .replace_session(replacement_session, resume_omission);
         previous_runtime.shutdown();
         Ok(())
+    }
+
+    pub(super) fn bind_classifier_session(&self, session: &rho_sdk::Session) {
+        if let Some(classifier) = &self.classifier_approval_handler {
+            classifier.bind_session(session.clone());
+        }
     }
 }
 

@@ -198,6 +198,7 @@ impl InteractiveRuntime {
         let replacement_session = replacement_runtime
             .rebind_session(SessionOptions::from_snapshot(snapshot))
             .await?;
+        self.bind_classifier_session(&replacement_session);
 
         let previous_runtime = std::mem::replace(&mut self.runtime, replacement_runtime);
         self.sessions.replace_runtime_session(replacement_session);

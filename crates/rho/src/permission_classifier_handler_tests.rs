@@ -1,0 +1,212 @@
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
+};
+
+use pretty_assertions::assert_eq;
+use rho_sdk::{
+    ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, CapabilityRequest,
+    CapabilitySource, PathScope,
+};
+
+use super::{ClassificationInput, ClassifierApprovalHandler, ClassifyFn};
+use crate::permission_classifier::{ClassifierVerdict, CONSECUTIVE_DENY_ESCALATION};
+
+fn request() -> ApprovalRequest {
+    ApprovalRequest::new(
+        CapabilityRequest::write_path(
+            "/workspace/file.txt",
+            PathScope::PrimaryWorkspace,
+            CapabilitySource::built_in_tool("write"),
+        ),
+        "approval required",
+    )
+}
+
+#[derive(Clone)]
+struct ScriptedClassifier {
+    outcomes: Arc<Mutex<VecDeque<anyhow::Result<ClassifierVerdict>>>>,
+    calls: Arc<Mutex<Vec<ApprovalRequest>>>,
+}
+
+impl ScriptedClassifier {
+    fn new(outcomes: impl IntoIterator<Item = anyhow::Result<ClassifierVerdict>>) -> Self {
+        Self {
+            outcomes: Arc::new(Mutex::new(outcomes.into_iter().collect())),
+            calls: Arc::default(),
+        }
+    }
+
+    fn classify(&self) -> ClassifyFn {
+        let outcomes = Arc::clone(&self.outcomes);
+        let calls = Arc::clone(&self.calls);
+        Arc::new(move |input: ClassificationInput| {
+            calls.lock().unwrap().push(input.request.clone());
+            let outcome = outcomes
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("scripted classifier outcome");
+            Box::pin(std::future::ready(outcome))
+        })
+    }
+
+    fn call_count(&self) -> usize {
+        self.calls.lock().unwrap().len()
+    }
+}
+
+#[derive(Clone)]
+struct ScriptedApprovals {
+    decisions: Arc<Mutex<VecDeque<ApprovalDecision>>>,
+    requests: Arc<Mutex<Vec<ApprovalRequest>>>,
+}
+
+impl ScriptedApprovals {
+    fn new(decisions: impl IntoIterator<Item = ApprovalDecision>) -> Self {
+        Self {
+            decisions: Arc::new(Mutex::new(decisions.into_iter().collect())),
+            requests: Arc::default(),
+        }
+    }
+
+    fn request_count(&self) -> usize {
+        self.requests.lock().unwrap().len()
+    }
+}
+
+impl ApprovalHandler for ScriptedApprovals {
+    fn request<'a>(&'a self, request: ApprovalRequest) -> ApprovalFuture<'a> {
+        Box::pin(async move {
+            self.requests.lock().unwrap().push(request);
+            self.decisions
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("scripted approval decision")
+        })
+    }
+}
+
+fn handler_with(
+    classifier: &ScriptedClassifier,
+    inner: Option<Arc<dyn ApprovalHandler>>,
+) -> ClassifierApprovalHandler {
+    ClassifierApprovalHandler::for_tests(classifier.classify(), inner)
+}
+
+// Covers: classifier allows should not grant session-wide approval and should clear deny streaks.
+// Owner: permission classifier approval handler.
+#[tokio::test]
+async fn allow_returns_allow_once_and_resets_consecutive_denials() {
+    let classifier = ScriptedClassifier::new([
+        Ok(ClassifierVerdict::Deny {
+            reason: "too broad".into(),
+        }),
+        Ok(ClassifierVerdict::Deny {
+            reason: "still too broad".into(),
+        }),
+        Ok(ClassifierVerdict::Allow),
+        Ok(ClassifierVerdict::Deny {
+            reason: "new streak one".into(),
+        }),
+        Ok(ClassifierVerdict::Deny {
+            reason: "new streak two".into(),
+        }),
+        Ok(ClassifierVerdict::Deny {
+            reason: "new streak three".into(),
+        }),
+    ]);
+    let inner = Arc::new(ScriptedApprovals::new([ApprovalDecision::AllowOnce]));
+    let handler = handler_with(&classifier, Some(inner.clone()));
+
+    assert!(matches!(
+        handler.request(request()).await,
+        ApprovalDecision::Deny { .. }
+    ));
+    assert!(matches!(
+        handler.request(request()).await,
+        ApprovalDecision::Deny { .. }
+    ));
+    assert_eq!(
+        handler.request(request()).await,
+        ApprovalDecision::AllowOnce
+    );
+    for _ in 0..CONSECUTIVE_DENY_ESCALATION {
+        assert!(matches!(
+            handler.request(request()).await,
+            ApprovalDecision::Deny { .. }
+        ));
+    }
+
+    assert_eq!(classifier.call_count(), 6);
+    assert_eq!(inner.request_count(), 0);
+}
+
+// Covers: after three classifier denials, interactive Auto escalates to the human channel.
+// Owner: permission classifier approval handler.
+#[tokio::test]
+async fn after_three_denials_next_request_escalates_to_inner_handler_and_resets() {
+    let classifier = ScriptedClassifier::new([
+        Ok(ClassifierVerdict::Deny {
+            reason: "one".into(),
+        }),
+        Ok(ClassifierVerdict::Deny {
+            reason: "two".into(),
+        }),
+        Ok(ClassifierVerdict::Deny {
+            reason: "three".into(),
+        }),
+        Ok(ClassifierVerdict::Deny {
+            reason: "after reset".into(),
+        }),
+    ]);
+    let inner = Arc::new(ScriptedApprovals::new([ApprovalDecision::AllowOnce]));
+    let handler = handler_with(&classifier, Some(inner.clone()));
+
+    for _ in 0..CONSECUTIVE_DENY_ESCALATION {
+        assert!(matches!(
+            handler.request(request()).await,
+            ApprovalDecision::Deny { .. }
+        ));
+    }
+    assert_eq!(
+        handler.request(request()).await,
+        ApprovalDecision::AllowOnce
+    );
+    assert!(matches!(
+        handler.request(request()).await,
+        ApprovalDecision::Deny { .. }
+    ));
+
+    assert_eq!(classifier.call_count(), 4);
+    assert_eq!(inner.request_count(), 1);
+}
+
+// Covers: classifier transport/parse failures fail closed and count toward headless escalation.
+// Owner: permission classifier approval handler.
+#[tokio::test]
+async fn classifier_errors_deny_and_headless_escalation_does_not_call_classifier() {
+    let classifier = ScriptedClassifier::new([
+        Err(anyhow::anyhow!("timeout")),
+        Err(anyhow::anyhow!("malformed verdict")),
+        Err(anyhow::anyhow!("provider unavailable")),
+    ]);
+    let handler = handler_with(&classifier, None);
+
+    for _ in 0..CONSECUTIVE_DENY_ESCALATION {
+        let decision = handler.request(request()).await;
+        let ApprovalDecision::Deny { reason } = decision else {
+            panic!("classifier failures must deny");
+        };
+        assert!(reason.contains("find a safer path"));
+        assert!(reason.contains("do not route around this block"));
+    }
+    let decision = handler.request(request()).await;
+    let ApprovalDecision::Deny { reason } = decision else {
+        panic!("headless escalation must deny");
+    };
+    assert!(reason.contains("permission classifier denied 3 consecutive requests"));
+
+    assert_eq!(classifier.call_count(), 3);
+}

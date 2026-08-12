@@ -10,11 +10,14 @@ use std::{
 use rho_sdk::{SessionOptions, UserInput};
 
 use {
+    crate::agent::PERMISSION_CLASSIFIER_AGENT_ID,
     crate::cli::{Command, OutputFormat},
     crate::config::Config,
     crate::credential_store::AppCredentialStore,
     crate::diagnostics::RuntimeDiagnostics,
     crate::herdr::{HerdrReporter, HerdrState},
+    crate::permission::PermissionMode,
+    crate::permission_classifier_handler::ClassifierApprovalHandler,
     crate::subagent::{RunState, RunStatus},
     crate::tools::agent::BackgroundSubagents,
     rho_providers::providers::build_automation_provider,
@@ -446,6 +449,7 @@ pub(crate) async fn run_session(
     reporter: Option<&mut RunReporter>,
     cancellation: Option<rho_tools::cancellation::RunCancellation>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
+    ensure_headless_auto_classifier_model(startup.config)?;
     run_session_with_output(prompt_text, startup, reporter, cancellation, None).await
 }
 
@@ -456,6 +460,7 @@ async fn run_session_with_output(
     cancellation: Option<rho_tools::cancellation::RunCancellation>,
     mut jsonl: Option<&mut JsonlAdapter>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
+    ensure_headless_auto_classifier_model(startup.config)?;
     let sdk_options = SdkBootstrapOptions::from_config(startup.config, &startup.cwd)?;
     let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
         Arc::new(AppCredentialStore),
@@ -501,6 +506,12 @@ async fn run_session_with_output(
     let compaction = sdk_options.runtime.compaction.clone();
     startup.diagnostics.update_compaction_config(&compaction);
     let usage_recording = crate::usage::default_recording().await;
+    let (approval_session, classifier_handler) = headless_approval_session(
+        startup.config,
+        startup.approval_session.clone(),
+        workspace_root.clone(),
+        usage_recording.clone(),
+    );
     let hooks = crate::hooks::start_for_cwd(&workspace_root);
     if let Some(hooks) = hooks.as_ref() {
         startup.diagnostics.attach_hooks(hooks);
@@ -512,7 +523,7 @@ async fn run_session_with_output(
                 tools: tool_set.tools(),
                 workspace,
                 workspace_policy: AppPolicy::for_mode(startup.config.permission_mode),
-                approval_session: startup.approval_session.clone(),
+                approval_session,
                 system_prompt,
                 reasoning: sdk_options.runtime.reasoning,
                 service_tier: sdk_options.runtime.service_tier,
@@ -533,6 +544,9 @@ async fn run_session_with_output(
                 return Err(error.into());
             }
         };
+        if let Some(classifier) = &classifier_handler {
+            classifier.bind_session(session.clone());
+        }
         anyhow::Ok((runtime, session))
     }
     .await;
@@ -595,6 +609,45 @@ async fn run_session_with_output(
     startup.herdr.release().await;
 
     result
+}
+
+pub(super) fn ensure_headless_auto_classifier_model(config: &Config) -> anyhow::Result<()> {
+    if config.permission_mode == PermissionMode::Auto
+        && config
+            .internal_agent_model(PERMISSION_CLASSIFIER_AGENT_ID)
+            .is_none()
+    {
+        anyhow::bail!(
+            "permission mode auto requires a configured permission-classifier model (set via /config or config.toml [internal_agents.permission-classifier])"
+        );
+    }
+    Ok(())
+}
+
+fn headless_approval_session(
+    config: &Config,
+    approval_session: Option<rho_sdk::ApprovalSession>,
+    workspace_root: PathBuf,
+    usage_recording: rho_sdk::ProviderRequestUsageRecording,
+) -> (
+    Option<rho_sdk::ApprovalSession>,
+    Option<Arc<ClassifierApprovalHandler>>,
+) {
+    if config.permission_mode != PermissionMode::Auto || approval_session.is_some() {
+        return (approval_session, None);
+    }
+
+    let handler = Arc::new(ClassifierApprovalHandler::new(
+        config.clone(),
+        workspace_root,
+        usage_recording,
+        None,
+    ));
+    let erased: Arc<dyn rho_sdk::ApprovalHandler> = handler.clone();
+    (
+        Some(rho_sdk::ApprovalSession::from_shared(erased)),
+        Some(handler),
+    )
 }
 
 async fn complete_run(

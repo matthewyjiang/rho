@@ -4,7 +4,7 @@
 //! approval channel are all "how do we begin" decisions. Keeping them together
 //! leaves the runtime file to the turn loop it actually owns.
 
-use std::{num::NonZeroUsize, sync::Arc};
+use std::{num::NonZeroUsize, path::PathBuf, sync::Arc};
 
 use rho_sdk::{
     model::Message, provider::ModelProvider, ApprovalHandler, ApprovalRequestReceiver, SessionId,
@@ -23,6 +23,7 @@ use crate::{
     },
     credential_store::AppCredentialStore,
     permission::PermissionMode,
+    permission_classifier_handler::ClassifierApprovalHandler,
     session::Session as StoredSession,
     tools::{agent::BackgroundSubagents, sdk_registry::AppToolSet},
 };
@@ -87,9 +88,16 @@ pub(super) async fn initialize(
     let context_window = configured_context_window(config);
     let compaction = sdk_options.runtime.compaction.clone();
     let permission_mode = config.permission_mode;
-    let (approval_handler, approval_receiver) = approval_channel_for(permission_mode);
     diagnostics.update_compaction_config(&compaction);
     let usage_recording = crate::usage::default_recording().await;
+    let approval_channel = approval_channel_for(
+        permission_mode,
+        ApprovalChannelOptions {
+            config: config.clone(),
+            workspace_path: workspace.root().to_path_buf(),
+            usage_recording: usage_recording.clone(),
+        },
+    );
     let hooks = crate::hooks::start_for_cwd(&cwd);
     if let Some(hooks) = hooks.as_ref() {
         diagnostics.attach_hooks(hooks);
@@ -100,7 +108,8 @@ pub(super) async fn initialize(
             tools: tools.tools(),
             workspace: workspace.clone(),
             workspace_policy: AppPolicy::for_mode(permission_mode),
-            approval_session: approval_handler
+            approval_session: approval_channel
+                .handler
                 .clone()
                 .map(rho_sdk::ApprovalSession::from_shared),
             system_prompt: system_prompt.clone(),
@@ -146,6 +155,7 @@ pub(super) async fn initialize(
             return Err(error);
         }
     };
+    approval_channel.bind_session(&session);
     bind_subagent_parent(&tools, session.id(), storage.as_ref());
     bind_mcp_sampling(&mcp_sampling, &provider, session.id(), &cwd);
     Ok(InteractiveRuntime {
@@ -168,10 +178,12 @@ pub(super) async fn initialize(
         compaction,
         context_window,
         usage_recording,
+        config: config.clone(),
         permission_mode,
         experimental_workspace_rewind: config.experimental_workspace_rewind,
-        approval_handler,
-        approval_receiver,
+        approval_handler: approval_channel.handler,
+        approval_receiver: approval_channel.receiver,
+        classifier_approval_handler: approval_channel.classifier,
         agent,
         agent_id,
         agent_fingerprint,
@@ -271,19 +283,62 @@ pub(super) fn resolve_session_options(
         .prompt_cache_key(prompt_cache_key(id.as_str())))
 }
 
+pub(super) struct ApprovalChannelOptions {
+    pub(super) config: crate::config::Config,
+    pub(super) workspace_path: PathBuf,
+    pub(super) usage_recording: rho_sdk::ProviderRequestUsageRecording,
+}
+
+pub(super) struct ApprovalChannel {
+    pub(super) handler: Option<Arc<dyn ApprovalHandler>>,
+    pub(super) receiver: Option<ApprovalRequestReceiver>,
+    pub(super) classifier: Option<Arc<ClassifierApprovalHandler>>,
+}
+
+impl ApprovalChannel {
+    pub(super) fn bind_session(&self, session: &rho_sdk::Session) {
+        if let Some(classifier) = &self.classifier {
+            classifier.bind_session(session.clone());
+        }
+    }
+}
+
 pub(super) fn approval_channel_for(
     mode: PermissionMode,
-) -> (
-    Option<Arc<dyn ApprovalHandler>>,
-    Option<ApprovalRequestReceiver>,
-) {
+    options: ApprovalChannelOptions,
+) -> ApprovalChannel {
     match mode {
-        PermissionMode::Auto | PermissionMode::Supervised => {
+        PermissionMode::Auto => {
+            let capacity = NonZeroUsize::new(16).expect("approval channel capacity is non-zero");
+            let (human_handler, receiver) = rho_sdk::approval_channel(capacity);
+            let human_handler: Arc<dyn ApprovalHandler> = Arc::new(human_handler);
+            let classifier = Arc::new(ClassifierApprovalHandler::new(
+                options.config,
+                options.workspace_path,
+                options.usage_recording,
+                Some(human_handler),
+            ));
+            let handler: Arc<dyn ApprovalHandler> = classifier.clone();
+            ApprovalChannel {
+                handler: Some(handler),
+                receiver: Some(receiver),
+                classifier: Some(classifier),
+            }
+        }
+        PermissionMode::Supervised => {
             let capacity = NonZeroUsize::new(16).expect("approval channel capacity is non-zero");
             let (handler, receiver) = rho_sdk::approval_channel(capacity);
-            (Some(Arc::new(handler)), Some(receiver))
+            ApprovalChannel {
+                handler: Some(Arc::new(handler)),
+                receiver: Some(receiver),
+                classifier: None,
+            }
         }
-        PermissionMode::Bypass | PermissionMode::Plan => (None, None),
+        PermissionMode::Bypass | PermissionMode::Plan => ApprovalChannel {
+            handler: None,
+            receiver: None,
+            classifier: None,
+        },
     }
 }
 
