@@ -623,6 +623,12 @@ pub(crate) fn ensure_headless_auto_classifier_model(config: &Config) -> anyhow::
     Ok(())
 }
 
+/// Resolves the approval session for one headless run.
+///
+/// Non-Auto keeps the inherited session. Auto always installs a classifier:
+/// isolate a workflow/subagent template when present, otherwise build a fresh
+/// headless classifier. A stray non-classifier `approval_session` is ignored in
+/// Auto so callers do not juggle paired Option knobs.
 fn headless_approval_session(
     config: &Config,
     approval_session: Option<rho_sdk::ApprovalSession>,
@@ -633,29 +639,14 @@ fn headless_approval_session(
     if config.permission_mode != PermissionMode::Auto {
         return Ok(approval_session);
     }
-    match (approval_session.is_some(), approval_classifier) {
-        (true, None) => anyhow::bail!(
-            "permission mode auto requires a classifier approval handler paired with the approval session"
-        ),
-        (_, Some(template)) => {
-            // Isolate deny streaks across concurrent workflow/subagent runs.
-            // History and cancellation arrive per request via ApprovalContext.
-            let _ = approval_session;
-            let handler = template.isolate();
-            let erased: Arc<dyn rho_sdk::ApprovalHandler> = handler;
-            Ok(Some(rho_sdk::ApprovalSession::from_shared(erased)))
+    let handler = match approval_classifier {
+        Some(template) => template.isolate(),
+        None => {
+            ClassifierApprovalHandler::shared(config.clone(), workspace_root, usage_recording, None)
         }
-        (false, None) => {
-            let handler = Arc::new(ClassifierApprovalHandler::new(
-                config.clone(),
-                workspace_root,
-                usage_recording,
-                None,
-            ));
-            let erased: Arc<dyn rho_sdk::ApprovalHandler> = handler;
-            Ok(Some(rho_sdk::ApprovalSession::from_shared(erased)))
-        }
-    }
+    };
+    let erased: Arc<dyn rho_sdk::ApprovalHandler> = handler;
+    Ok(Some(rho_sdk::ApprovalSession::from_shared(erased)))
 }
 
 async fn complete_run(

@@ -57,11 +57,14 @@ impl ScriptedClassifier {
         let cancelled = Arc::clone(&self.cancelled);
         Arc::new(move |input: ClassificationInput| {
             calls.lock().unwrap().push(input.request.clone());
-            histories.lock().unwrap().push(input.history.clone());
+            histories
+                .lock()
+                .unwrap()
+                .push(input.request.context().history().to_vec());
             cancelled
                 .lock()
                 .unwrap()
-                .push(input.cancellation.is_cancelled());
+                .push(input.request.context().cancellation().is_cancelled());
             let outcome = outcomes
                 .lock()
                 .unwrap()
@@ -159,9 +162,8 @@ async fn approval_context_history_reaches_classifier_input() {
 
     assert_eq!(
         handler
-            .request_with_context(
-                request(),
-                context_with(history.clone(), CancellationToken::new()),
+            .request(
+                request().with_context(context_with(history.clone(), CancellationToken::new(),))
             )
             .await,
         ApprovalDecision::AllowOnce
@@ -181,7 +183,7 @@ async fn approval_context_cancellation_reaches_classifier_input() {
 
     assert_eq!(
         handler
-            .request_with_context(request(), context_with(Vec::new(), cancellation))
+            .request(request().with_context(context_with(Vec::new(), cancellation)))
             .await,
         ApprovalDecision::AllowOnce
     );
@@ -333,7 +335,7 @@ async fn headless_escalation_cancels_context_run_token() {
     for _ in 0..CONSECUTIVE_DENY_ESCALATION {
         assert!(matches!(
             handler
-                .request_with_context(request(), context_with(Vec::new(), cancellation.clone()),)
+                .request(request().with_context(context_with(Vec::new(), cancellation.clone(),)))
                 .await,
             ApprovalDecision::Deny { .. }
         ));
@@ -341,7 +343,7 @@ async fn headless_escalation_cancels_context_run_token() {
     }
 
     let decision = handler
-        .request_with_context(request(), context_with(Vec::new(), cancellation.clone()))
+        .request(request().with_context(context_with(Vec::new(), cancellation.clone())))
         .await;
     let ApprovalDecision::Deny { reason } = decision else {
         panic!("headless escalation must deny");

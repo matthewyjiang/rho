@@ -9,8 +9,8 @@ use std::{
 };
 
 use rho_sdk::{
-    model::Message, ApprovalContext, ApprovalDecision, ApprovalFuture, ApprovalHandler,
-    ApprovalRequest, CancellationToken, ProviderRequestUsageRecording, SessionId,
+    ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest,
+    ProviderRequestUsageRecording,
 };
 
 use crate::{
@@ -28,19 +28,16 @@ pub(crate) type ClassifyFn =
 
 pub(crate) struct ClassificationInput {
     pub(crate) config: Config,
-    pub(crate) history: Vec<Message>,
     pub(crate) request: ApprovalRequest,
-    pub(crate) cancellation: CancellationToken,
-    pub(crate) session_id: SessionId,
     pub(crate) workspace_path: PathBuf,
     pub(crate) usage_recording: ProviderRequestUsageRecording,
 }
 
 /// Approval handler that classifies Auto-mode capability requests.
 ///
-/// History and cancellation come from [`ApprovalContext`] on each request. The
-/// only mutable run state is the consecutive-deny streak, which
-/// [`Self::isolate`] resets so concurrent workflow agents do not share it.
+/// History and cancellation come from [`ApprovalRequest::context`]. The only
+/// mutable run state is the consecutive-deny streak, which [`Self::isolate`]
+/// resets so concurrent workflow agents do not share it.
 pub(crate) struct ClassifierApprovalHandler {
     config: RwLock<Config>,
     workspace_path: PathBuf,
@@ -65,6 +62,16 @@ impl ClassifierApprovalHandler {
             inner,
             consecutive_denials: AtomicU32::new(0),
         }
+    }
+
+    /// Shared Auto classifier over an optional human escalator.
+    pub(crate) fn shared(
+        config: Config,
+        workspace_path: PathBuf,
+        usage_recording: ProviderRequestUsageRecording,
+        human: Option<Arc<dyn ApprovalHandler>>,
+    ) -> Arc<Self> {
+        Arc::new(Self::new(config, workspace_path, usage_recording, human))
     }
 
     #[cfg(test)]
@@ -93,7 +100,7 @@ impl ClassifierApprovalHandler {
     ///
     /// The deny streak resets so concurrent workflow nodes cannot escalate each
     /// other. History and cancellation stay request-scoped via
-    /// [`ApprovalContext`].
+    /// [`ApprovalRequest::context`].
     pub(crate) fn isolate(self: &Arc<Self>) -> Arc<Self> {
         let config = self
             .config
@@ -110,7 +117,7 @@ impl ClassifierApprovalHandler {
         })
     }
 
-    fn input_for(&self, request: ApprovalRequest, context: ApprovalContext) -> ClassificationInput {
+    fn input_for(&self, request: ApprovalRequest) -> ClassificationInput {
         let config = self
             .config
             .read()
@@ -118,53 +125,38 @@ impl ClassifierApprovalHandler {
             .clone();
         ClassificationInput {
             config,
-            history: context.history().to_vec(),
             request,
-            cancellation: context.cancellation().clone(),
-            session_id: context.session_id().clone(),
             workspace_path: self.workspace_path.clone(),
             usage_recording: self.usage_recording.clone(),
         }
     }
 
-    async fn escalate_or_deny_headless(
-        &self,
-        request: ApprovalRequest,
-        context: &ApprovalContext,
-    ) -> ApprovalDecision {
+    async fn escalate_or_deny_headless(&self, request: ApprovalRequest) -> ApprovalDecision {
         let Some(inner) = &self.inner else {
-            context.cancellation().cancel();
+            request.context().cancellation().cancel();
             return ApprovalDecision::Deny {
                 reason: format!(
                     "permission classifier denied {CONSECUTIVE_DENY_ESCALATION} consecutive requests and no human approval handler is available"
                 ),
             };
         };
-        inner.request_with_context(request, context.clone()).await
+        inner.request(request).await
     }
 }
 
 impl ApprovalHandler for ClassifierApprovalHandler {
     fn request<'a>(&'a self, request: ApprovalRequest) -> ApprovalFuture<'a> {
-        self.request_with_context(request, ApprovalContext::detached(SessionId::new()))
-    }
-
-    fn request_with_context<'a>(
-        &'a self,
-        request: ApprovalRequest,
-        context: ApprovalContext,
-    ) -> ApprovalFuture<'a> {
         Box::pin(async move {
             let streak = self.consecutive_denials.load(Ordering::Relaxed);
             if streak >= CONSECUTIVE_DENY_ESCALATION {
-                let decision = self.escalate_or_deny_headless(request, &context).await;
+                let decision = self.escalate_or_deny_headless(request).await;
                 if self.inner.is_some() {
                     self.consecutive_denials.store(0, Ordering::Relaxed);
                 }
                 return decision;
             }
 
-            let verdict = (self.classifier)(self.input_for(request, context)).await;
+            let verdict = (self.classifier)(self.input_for(request)).await;
             match verdict {
                 ClassifierVerdict::Allow => {
                     self.consecutive_denials.store(0, Ordering::Relaxed);
@@ -188,13 +180,14 @@ impl ApprovalHandler for ClassifierApprovalHandler {
 fn default_classifier() -> ClassifyFn {
     Arc::new(|input: ClassificationInput| {
         Box::pin(async move {
+            let context = input.request.context();
             classify_capability_request(
                 &input.config,
                 ClassifyRequest {
-                    history: &input.history,
+                    history: context.history(),
                     pending: &input.request,
-                    cancellation: input.cancellation,
-                    session_id: &input.session_id,
+                    cancellation: context.cancellation().clone(),
+                    session_id: context.session_id(),
                     workspace_path: &input.workspace_path,
                     usage_recording: input.usage_recording,
                 },

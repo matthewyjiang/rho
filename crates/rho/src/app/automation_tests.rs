@@ -204,31 +204,32 @@ fn supplied_auto_classifier_template_isolates_handler() {
     assert!(approval_session.is_some());
 }
 
-// Covers: Auto must not install a non-classifier approval session alone.
+// Covers: Auto ignores a stray non-classifier session and still installs a
+// classifier so callers need not clear approval_session first.
 // Owner: automation startup approval wiring.
 #[test]
-fn auto_rejects_approval_session_without_classifier_handler() {
-    let config = Config {
+fn auto_ignores_stray_approval_session_and_builds_classifier() {
+    let mut config = Config {
         permission_mode: PermissionMode::Auto,
         ..Config::default()
     };
+    config.set_internal_agent_model_config(
+        PERMISSION_CLASSIFIER_AGENT_ID,
+        InternalAgentModelConfig::new("openai".into(), "gpt-5.5".into(), "api-key".into()),
+    );
     let root = tempfile::tempdir().unwrap();
     let approval_session = rho_sdk::ApprovalSession::new(rho_sdk::DenyApprovals);
 
-    let error = match headless_approval_session(
+    let resolved = headless_approval_session(
         &config,
         Some(approval_session),
         None,
         root.path().to_path_buf(),
         Default::default(),
-    ) {
-        Ok(_) => panic!("session-only Auto setup must fail"),
-        Err(error) => error,
-    };
+    )
+    .unwrap();
 
-    assert!(error
-        .to_string()
-        .contains("requires a classifier approval handler"));
+    assert!(resolved.is_some());
 }
 
 #[test]

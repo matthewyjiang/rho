@@ -228,7 +228,8 @@ impl AgentExecutor {
     }
 
     /// Supplies a classifier template that each Rho agent run isolates so deny
-    /// streaks stay per-run. History and cancellation arrive via ApprovalContext.
+    /// streaks stay per-run. History and cancellation arrive on each
+    /// [`rho_sdk::ApprovalRequest::context`].
     pub(crate) fn with_classifier_template(
         mut self,
         classifier: Arc<ClassifierApprovalHandler>,
@@ -434,13 +435,10 @@ impl AgentExecutor {
         let persisted_output = output_file.clone();
         let total_permits = Arc::clone(&self.total_permits);
         let claude_permits = Arc::clone(&self.claude_permits);
-        // Auto classifiers are templates: automation forks a per-run handler so
-        // concurrent agents never share bound session/cancellation state.
-        let approval_session = if self.approval_classifier.is_some() {
-            None
-        } else {
-            self.approval_session.clone()
-        };
+        // Auto resolves the classifier template (or builds a fresh one) inside
+        // automation; non-Auto keeps approval_session. Both may be set; Auto
+        // ignores the session.
+        let approval_session = self.approval_session.clone();
         let approval_classifier = self.approval_classifier.clone();
         let task_steering_slot = steering_slot.clone();
 

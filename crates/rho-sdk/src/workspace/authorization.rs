@@ -113,19 +113,20 @@ impl AuthorizationServices {
     }
 
     fn approval_context(&self, cancellation: crate::CancellationToken) -> ApprovalContext {
-        let history = self
-            .scope
-            .live_history
-            .as_ref()
-            .map_or_else(Vec::new, |source| source());
-        ApprovalContext::new(
+        // Supervised and other context-blind handlers must not pay for a
+        // conversation copy on every prompt.
+        let history = if self.approvals.reads_live_history() {
             self.scope
-                .session_id
-                .clone()
-                .unwrap_or_else(crate::SessionId::new),
-            cancellation,
-            history,
-        )
+                .live_history
+                .as_ref()
+                .map_or_else(Vec::new, |source| source())
+        } else {
+            Vec::new()
+        };
+        match self.scope.session_id.clone() {
+            Some(session_id) => ApprovalContext::new(session_id, cancellation, history),
+            None => ApprovalContext::anonymous(cancellation, history),
+        }
     }
 }
 
@@ -250,15 +251,10 @@ async fn prompt_for_approval(
         );
         return Ok(AuthorizationOutcome::AllowedByRememberedApproval);
     }
-    let context = services.approval_context(cancellation);
-    match services
-        .approvals
-        .request_with_context(
-            ApprovalRequest::new(request.clone(), reason).with_tool_call_id(tool_call_id.cloned()),
-            context,
-        )
-        .await
-    {
+    let approval_request = ApprovalRequest::new(request.clone(), reason)
+        .with_tool_call_id(tool_call_id.cloned())
+        .with_context(services.approval_context(cancellation));
+    match services.approvals.request(approval_request).await {
         ApprovalDecision::AllowOnce => {
             audit.record(capability, ApprovalAuditDecision::AllowedOnce);
             Ok(AuthorizationOutcome::AllowedOnce)

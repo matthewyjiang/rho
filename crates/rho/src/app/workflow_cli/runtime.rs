@@ -168,16 +168,16 @@ fn workflow_approval_channel(
     match permission_mode {
         PermissionMode::Auto => {
             ensure_headless_auto_classifier_model(config)?;
-            let inner = approval_mode.can_prompt().then(|| {
+            let human = approval_mode.can_prompt().then(|| {
                 Arc::new(TerminalWorkflowApprovals { interactive: true })
                     as Arc<dyn ApprovalHandler>
             });
-            let classifier = Arc::new(ClassifierApprovalHandler::new(
+            let classifier = ClassifierApprovalHandler::shared(
                 config.clone(),
                 workspace_path,
                 approval_mode.usage_recording(),
-                inner,
-            ));
+                human,
+            );
             let handler: Arc<dyn ApprovalHandler> = classifier.clone();
             Ok(WorkflowApprovalChannel {
                 session: ApprovalSession::from_shared(handler),

@@ -302,13 +302,12 @@ pub(super) fn approval_channel_for(
         PermissionMode::Auto => {
             let capacity = NonZeroUsize::new(16).expect("approval channel capacity is non-zero");
             let (human_handler, receiver) = rho_sdk::approval_channel(capacity);
-            let human_handler: Arc<dyn ApprovalHandler> = Arc::new(human_handler);
-            let classifier = Arc::new(ClassifierApprovalHandler::new(
+            let classifier = ClassifierApprovalHandler::shared(
                 options.config,
                 options.workspace_path,
                 options.usage_recording,
-                Some(human_handler),
-            ));
+                Some(Arc::new(human_handler)),
+            );
             let handler: Arc<dyn ApprovalHandler> = classifier.clone();
             ApprovalChannel {
                 handler: Some(handler),

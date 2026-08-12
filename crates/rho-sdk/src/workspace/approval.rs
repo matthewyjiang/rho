@@ -39,9 +39,18 @@ impl ApprovalContext {
     }
 
     /// Empty history and a fresh cancellation token. Used when a caller has no
-    /// active run context (tests, or `ApprovalHandler::request` fallbacks).
+    /// active run context (direct `ApprovalRequest::new` construction, tests).
     pub fn detached(session_id: SessionId) -> Self {
         Self::new(session_id, CancellationToken::new(), Vec::new())
+    }
+
+    /// Cancellation (and optional history) without a stable session identity.
+    ///
+    /// Used by authorization bundles that can still prompt in tests but have no
+    /// session on the scope. Prefer [`Self::new`] with the real session id in
+    /// production run paths.
+    pub fn anonymous(cancellation: CancellationToken, history: Vec<Message>) -> Self {
+        Self::new(SessionId::new(), cancellation, history)
     }
 
     pub fn session_id(&self) -> &SessionId {
@@ -70,11 +79,15 @@ pub enum ApprovalDecision {
 }
 
 /// Owned request supplied to an [`ApprovalHandler`].
-#[derive(Clone, PartialEq, Eq)]
+///
+/// Equality ignores [`ApprovalContext`]: context is run-scoped metadata for the
+/// prompt, not part of the capability identity hosts remember or compare.
+#[derive(Clone)]
 pub struct ApprovalRequest {
     capability: CapabilityRequest,
     reason: String,
     tool_call_id: Option<crate::ToolCallId>,
+    context: ApprovalContext,
 }
 
 impl ApprovalRequest {
@@ -83,11 +96,18 @@ impl ApprovalRequest {
             capability,
             reason: reason.into(),
             tool_call_id: None,
+            context: ApprovalContext::detached(SessionId::new()),
         }
     }
 
     pub(crate) fn with_tool_call_id(mut self, tool_call_id: Option<crate::ToolCallId>) -> Self {
         self.tool_call_id = tool_call_id;
+        self
+    }
+
+    /// Attaches run-scoped transcript and cancellation for this prompt.
+    pub fn with_context(mut self, context: ApprovalContext) -> Self {
+        self.context = context;
         self
     }
 
@@ -103,7 +123,23 @@ impl ApprovalRequest {
     pub fn tool_call_id(&self) -> Option<&crate::ToolCallId> {
         self.tool_call_id.as_ref()
     }
+
+    /// Run-scoped transcript and cancellation for handlers that classify or
+    /// cancel with the active turn.
+    pub fn context(&self) -> &ApprovalContext {
+        &self.context
+    }
 }
+
+impl PartialEq for ApprovalRequest {
+    fn eq(&self, other: &Self) -> bool {
+        self.capability == other.capability
+            && self.reason == other.reason
+            && self.tool_call_id == other.tool_call_id
+    }
+}
+
+impl Eq for ApprovalRequest {}
 
 impl fmt::Debug for ApprovalRequest {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -114,6 +150,8 @@ impl fmt::Debug for ApprovalRequest {
             .field("correlated_tool_call", &self.tool_call_id.is_some())
             .field("details", &"available through accessors")
             .field("reason", &"[redacted]")
+            .field("session_id", self.context.session_id())
+            .field("history_len", &self.context.history().len())
             .finish()
     }
 }
@@ -122,22 +160,11 @@ impl fmt::Debug for ApprovalRequest {
 pub type ApprovalFuture<'a> = Pin<Box<dyn Future<Output = ApprovalDecision> + Send + 'a>>;
 
 /// Host extension point for interactive or remote approval decisions.
+///
+/// Run-scoped transcript and cancellation ride on [`ApprovalRequest::context`].
+/// Handlers that ignore context keep implementing [`Self::request`] only.
 pub trait ApprovalHandler: Send + Sync {
     fn request<'a>(&'a self, request: ApprovalRequest) -> ApprovalFuture<'a>;
-
-    /// Approval prompt with run-scoped transcript and cancellation.
-    ///
-    /// The default ignores context and calls [`Self::request`]. Handlers that
-    /// classify against live history should override this instead of binding a
-    /// session onto the handler after construction.
-    fn request_with_context<'a>(
-        &'a self,
-        request: ApprovalRequest,
-        context: ApprovalContext,
-    ) -> ApprovalFuture<'a> {
-        let _ = context;
-        self.request(request)
-    }
 
     /// When true, the runtime publishes the turn in flight for
     /// [`crate::Session::live_history`] even if no registered tool declares
