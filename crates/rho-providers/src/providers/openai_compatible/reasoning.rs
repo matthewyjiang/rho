@@ -1,6 +1,7 @@
 use crate::{
     model::{ModelMetadata, ReasoningCapabilities, ReasoningRequestSource},
     protocol::openai_chat::{ChatTemplateKwargs, OpenAiReasoning, OpenAiThinking},
+    provider::CatalogReasoningPolicy,
     reasoning::ReasoningLevel,
 };
 
@@ -38,7 +39,7 @@ impl DialectReasoning {
         let metadata = || crate::model::models_dev::current_model_metadata(provider, model);
         match dialect {
             OpenAiCompatibleDialect::Standard | OpenAiCompatibleDialect::QwenTokenPlan => {
-                Self::Standard(EffortProfile::omit_when_unknown(metadata()))
+                Self::Standard(standard_effort_profile(provider, metadata()))
             }
             OpenAiCompatibleDialect::Poolside => Self::Poolside,
             OpenAiCompatibleDialect::OpenRouter => {
@@ -79,6 +80,22 @@ impl DialectReasoning {
             },
             Self::KimiCode(profile) => kimi_code_reasoning_fields(profile, model, reasoning),
         }
+    }
+}
+
+/// OffAsNone hosts accept `reasoning_effort` including `"none"`. When the
+/// catalog has no row, still send the selected level. Omitting the field lets
+/// Ollama enable thinking on its own.
+fn standard_effort_profile(
+    provider: &'static str,
+    metadata: Option<ModelMetadata>,
+) -> EffortProfile {
+    if crate::provider::provider_descriptor(provider)
+        .is_some_and(|descriptor| descriptor.catalog_reasoning == CatalogReasoningPolicy::OffAsNone)
+    {
+        EffortProfile::send_when_unknown(metadata)
+    } else {
+        EffortProfile::omit_when_unknown(metadata)
     }
 }
 

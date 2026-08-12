@@ -39,7 +39,9 @@ Do not run `/login`. There is no API key and no credential store entry.
 
 ## Models
 
-Rho fetches `/v1/models` at startup for every custom host. A down host is skipped so startup still succeeds; refresh later in `/config` once it is up. The host must support tool calls if you want a coding agent. Reasoning controls are not forwarded.
+Rho fetches `/v1/models` at startup for every custom host. A down host is skipped so startup still succeeds; refresh later in `/config` once it is up. The host must support tool calls if you want a coding agent.
+
+Rho sends `reasoning_effort` on each turn, including `"none"` when reasoning is off. Shift+Tab and `/config` cycle the level. Hosts that do not accept that field may reject the request; pin levels in `~/.rho/models.toml` if you need a smaller set.
 
 ## Example: API for Cursor
 

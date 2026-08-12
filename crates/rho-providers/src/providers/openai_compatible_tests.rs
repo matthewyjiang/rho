@@ -379,6 +379,76 @@ fn ollama_cloud_metadata_drives_top_level_reasoning_effort() {
     assert_eq!(off["reasoning_effort"], "none");
 }
 
+// Covers: OffAsNone Chat Completions hosts must send reasoning_effort, including
+// none, when the model is not in the catalog. Omitting the field lets Ollama
+// enable thinking.
+// Owner: openai-compatible wire encoding
+#[test]
+fn off_as_none_standard_hosts_send_reasoning_effort_when_catalog_is_unknown() {
+    crate::provider::install_custom_openai_compatible_providers(["composer"]).unwrap();
+
+    for provider in ["ollama", "ollama-cloud", "composer"] {
+        assert_eq!(
+            standard_request_reasoning_effort(provider, crate::reasoning::ReasoningLevel::Off)
+                .as_deref(),
+            Some("none"),
+            "{provider}"
+        );
+        assert_eq!(
+            standard_request_reasoning_effort(provider, crate::reasoning::ReasoningLevel::High)
+                .as_deref(),
+            Some("high"),
+            "{provider}"
+        );
+    }
+
+    crate::provider::install_custom_openai_compatible_providers(std::iter::empty::<&str>())
+        .unwrap();
+}
+
+// Covers: ExactAdvertised Standard hosts must not guess effort for unlisted models
+// Owner: openai-compatible wire encoding
+#[test]
+fn exact_advertised_standard_hosts_omit_reasoning_when_catalog_is_unknown() {
+    assert_eq!(
+        standard_request_reasoning_effort("meta", crate::reasoning::ReasoningLevel::High),
+        None
+    );
+}
+
+fn standard_request_reasoning_effort(
+    provider: &'static str,
+    reasoning_level: crate::reasoning::ReasoningLevel,
+) -> Option<String> {
+    let client = OpenAiCompatibleProvider::new(
+        reqwest::Client::new(),
+        provider,
+        "unlisted-local".into(),
+        OpenAiCompatibleDialect::Standard,
+        CompatibleAuth::None,
+        "http://127.0.0.1:11434/v1".into(),
+    );
+    let messages = [Message::user_text("hello")];
+    let body = serde_json::to_value(
+        client
+            .request_body(
+                ModelRequest {
+                    messages: &messages,
+                    tools: &[],
+                    cancellation: Default::default(),
+                    reasoning_level,
+                    prompt_cache_key: None,
+                },
+                /*stream*/ false,
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    body.get("reasoning_effort")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+}
+
 fn request_body(
     dialect: OpenAiCompatibleDialect,
     model: &str,

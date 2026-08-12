@@ -45,4 +45,8 @@ Keep the `/v1` suffix. Rho appends `/models` for discovery and `/chat/completion
 
 Ollama's OpenAI-compatible endpoint can serve many model types, but not every model supports the tool calls needed by a coding agent. Choose a model with reliable tool-call support. Rho does not download models or claim that every installed model supports tools, images, reasoning controls, parallel calls, or usage data.
 
+## Reasoning
+
+Ollama accepts `reasoning_effort`, including `"none"`. Rho sends the selected level on each turn. Shift+Tab and `/config` cycle it. When the model is missing from models.dev, Rho still sends the field so you can turn thinking off. Omitting it lets Ollama enable thinking on its own.
+
 If Ollama omits optional usage data, Rho still handles the response. Run `/doctor` to distinguish a reachable server with installed models, a reachable server with no models, an unreachable server, and an invalid or unsuccessful response.

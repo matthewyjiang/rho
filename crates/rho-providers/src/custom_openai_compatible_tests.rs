@@ -47,7 +47,7 @@ fn install_custom_providers_makes_keyless_openai_compatible_hosts() {
     );
     assert_eq!(
         composer.catalog_reasoning,
-        CatalogReasoningPolicy::NotConfigurable
+        CatalogReasoningPolicy::OffAsNone
     );
     assert!(matches!(
         composer.default_auth().auth_kind,

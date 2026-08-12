@@ -37,7 +37,10 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
         model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "ollama",
-        catalog_reasoning: CatalogReasoningPolicy::NotConfigurable,
+        // Same OpenAI-compatible API as Ollama Cloud: reasoning_effort including "none".
+        // Local models are often missing from models.dev, so Unknown must still send the
+        // selected level. Omitting the field lets Ollama enable thinking on its own.
+        catalog_reasoning: CatalogReasoningPolicy::OffAsNone,
         default_model: None,
     },
     ProviderDescriptor {
