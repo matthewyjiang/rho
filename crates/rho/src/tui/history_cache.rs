@@ -82,27 +82,27 @@ impl SoftSettingsDelta {
         (delta.image_height || delta.tool_output || delta.zen).then_some(delta)
     }
 
-    fn resplice_indices(self, entries: &[Entry]) -> Vec<usize> {
+    /// Collect entry indices that must be re-rendered for this soft delta.
+    ///
+    /// Image-height work uses the cache's tracked dependency flags so a
+    /// text-only transcript does not re-parse markdown on every budget nudge.
+    fn resplice_indices(self, entries: &[Entry], image_height_deps: &[bool]) -> Vec<usize> {
         entries
             .iter()
             .enumerate()
             .filter_map(|(index, entry)| {
                 let needed = match entry {
-                    Entry::Tool(tool) => {
-                        self.tool_output || self.zen || (self.image_height && tool.image.is_some())
+                    Entry::Tool(_) => {
+                        self.tool_output
+                            || self.zen
+                            || (self.image_height && image_height_deps.get(index) == Some(&true))
                     }
-                    Entry::Reasoning(reasoning) => {
+                    Entry::Reasoning(_) => {
                         self.zen
-                            || (self.image_height
-                                && !super::markdown_image::collect_markdown_image_sources(
-                                    &reasoning.text,
-                                )
-                                .is_empty())
+                            || (self.image_height && image_height_deps.get(index) == Some(&true))
                     }
-                    Entry::Assistant(text) => {
-                        self.image_height
-                            && !super::markdown_image::collect_markdown_image_sources(text)
-                                .is_empty()
+                    Entry::Assistant(_) => {
+                        self.image_height && image_height_deps.get(index) == Some(&true)
                     }
                     _ => false,
                 };
@@ -115,9 +115,17 @@ impl SoftSettingsDelta {
 #[derive(Default)]
 pub(super) struct HistoryLineCache {
     settings: Option<HistoryRenderSettings>,
-    lines: Vec<Line<'static>>,
+    /// Per-entry rendered lines. Keeps suffix resplices from shifting a giant
+    /// flat buffer; visible paint walks only the entries that intersect the
+    /// viewport.
+    entry_lines: Vec<Arc<[Line<'static>]>>,
     entry_ranges: Vec<Range<usize>>,
     assistant_caches: Vec<Option<IncrementalAssistantCache>>,
+    /// Absolute transcript line → whether that entry's height depends on
+    /// [`HistoryRenderSettings::max_image_height`].
+    image_height_deps: Vec<bool>,
+    /// Count of `true` in [`Self::image_height_deps`] for O(1) soft no-ops.
+    image_height_dep_count: usize,
     code_blocks: Vec<CachedCodeBlock>,
     image_placements: Vec<RenderedImagePlacements>,
     dirty_from: Option<usize>,
@@ -207,7 +215,7 @@ impl HistoryLineCache {
         image_resolver: EntryImageResolver<'_>,
     ) -> usize {
         self.ensure_current(entries, settings, image_resolver);
-        self.lines.len()
+        self.total_lines()
     }
 
     pub(super) fn code_blocks(
@@ -258,11 +266,40 @@ impl HistoryLineCache {
         let end = slice
             .start
             .saturating_add(slice.count)
-            .min(self.lines.len());
+            .min(self.total_lines());
         if slice.start >= end {
             return;
         }
-        target.extend(self.lines[slice.start..end].iter().cloned());
+
+        // Walk only entries that intersect the viewport instead of slicing a
+        // flat transcript buffer.
+        let mut entry_index = self
+            .entry_ranges
+            .partition_point(|range| range.end <= slice.start);
+        let mut line = slice.start;
+        while line < end && entry_index < self.entry_lines.len() {
+            let range = &self.entry_ranges[entry_index];
+            if range.start >= end {
+                break;
+            }
+            if range.end <= line {
+                entry_index += 1;
+                continue;
+            }
+            let local_start = line.saturating_sub(range.start);
+            let local_end = end.min(range.end).saturating_sub(range.start);
+            if local_start < local_end {
+                target.extend(
+                    self.entry_lines[entry_index][local_start..local_end]
+                        .iter()
+                        .cloned(),
+                );
+                line = range.start.saturating_add(local_end);
+            } else {
+                line = range.end;
+            }
+            entry_index += 1;
+        }
     }
 
     pub(super) fn visible_image_placements(
@@ -292,6 +329,74 @@ impl HistoryLineCache {
             .collect()
     }
 
+    fn total_lines(&self) -> usize {
+        self.entry_ranges.last().map_or(0, |range| range.end)
+    }
+
+    fn clear_rendered(&mut self) {
+        self.entry_lines.clear();
+        self.entry_ranges.clear();
+        self.assistant_caches.clear();
+        self.image_height_deps.clear();
+        self.image_height_dep_count = 0;
+        self.code_blocks.clear();
+        self.image_placements.clear();
+        self.appended_assistant = None;
+        self.resplice.clear();
+    }
+
+    fn set_image_height_dep(&mut self, index: usize, depends: bool) {
+        match self.image_height_deps.get_mut(index) {
+            Some(slot) => {
+                if *slot != depends {
+                    if depends {
+                        self.image_height_dep_count = self.image_height_dep_count.saturating_add(1);
+                    } else {
+                        self.image_height_dep_count = self.image_height_dep_count.saturating_sub(1);
+                    }
+                    *slot = depends;
+                }
+            }
+            None => {
+                debug_assert_eq!(index, self.image_height_deps.len());
+                self.image_height_deps.push(depends);
+                if depends {
+                    self.image_height_dep_count = self.image_height_dep_count.saturating_add(1);
+                }
+            }
+        }
+    }
+
+    fn truncate_entries_to(&mut self, rebuild_from: usize) {
+        if rebuild_from < self.image_height_deps.len() {
+            self.image_height_dep_count = self.image_height_deps[..rebuild_from]
+                .iter()
+                .filter(|depends| **depends)
+                .count();
+        }
+        self.entry_lines.truncate(rebuild_from);
+        self.entry_ranges.truncate(rebuild_from);
+        self.assistant_caches.truncate(rebuild_from);
+        self.image_height_deps.truncate(rebuild_from);
+        let line_start = self.total_lines();
+        self.code_blocks.retain(|block| block.line < line_start);
+        self.image_placements = self
+            .image_placements
+            .iter()
+            .filter_map(|placements| placements.retain_starting_before(line_start))
+            .collect();
+    }
+
+    fn shift_ranges_from(&mut self, index: usize, delta: isize) {
+        if delta == 0 {
+            return;
+        }
+        for range in self.entry_ranges.iter_mut().skip(index) {
+            range.start = offset_usize(range.start, delta);
+            range.end = offset_usize(range.end, delta);
+        }
+    }
+
     fn ensure_current(
         &mut self,
         entries: &[Entry],
@@ -307,24 +412,23 @@ impl HistoryLineCache {
                 // touch discrete entries. Keep the warm suffix so long
                 // transcripts do not re-markdown on every composer resize.
                 self.settings = Some(settings);
-                let indices = delta.resplice_indices(entries);
-                if !indices.is_empty() {
-                    if let Some(dirty) = self.dirty_from {
-                        let min = indices.iter().copied().min().unwrap_or(dirty);
-                        self.dirty_from = Some(dirty.min(min));
-                    } else {
-                        self.resplice_entries(indices);
+                let image_only = delta.image_height && !delta.tool_output && !delta.zen;
+                if image_only && self.image_height_dep_count == 0 {
+                    // O(1): text-only transcript ignores image-budget jitter.
+                } else {
+                    let indices = delta.resplice_indices(entries, &self.image_height_deps);
+                    if !indices.is_empty() {
+                        if let Some(dirty) = self.dirty_from {
+                            let min = indices.iter().copied().min().unwrap_or(dirty);
+                            self.dirty_from = Some(dirty.min(min));
+                        } else {
+                            self.resplice_entries(indices);
+                        }
                     }
                 }
             } else {
                 self.settings = Some(settings);
-                self.lines.clear();
-                self.entry_ranges.clear();
-                self.assistant_caches.clear();
-                self.code_blocks.clear();
-                self.image_placements.clear();
-                self.appended_assistant = None;
-                self.resplice.clear();
+                self.clear_rendered();
                 self.dirty_from = Some(0);
             }
         }
@@ -366,20 +470,7 @@ impl HistoryLineCache {
         {
             return;
         }
-        let line_start = if rebuild_from == 0 {
-            0
-        } else {
-            self.entry_ranges[rebuild_from - 1].end
-        };
-        self.lines.truncate(line_start);
-        self.entry_ranges.truncate(rebuild_from);
-        self.assistant_caches.truncate(rebuild_from);
-        self.code_blocks.retain(|block| block.line < line_start);
-        self.image_placements = self
-            .image_placements
-            .iter()
-            .filter_map(|placements| placements.retain_starting_before(line_start))
-            .collect();
+        self.truncate_entries_to(rebuild_from);
 
         for (entry_index, entry) in entries.iter().enumerate().skip(rebuild_from) {
             self.push_rendered_entry(entry_index, entry, entries.len(), settings, image_resolver);
@@ -399,7 +490,9 @@ impl HistoryLineCache {
             return true;
         }
         if self.entry_ranges.len() != entries.len()
+            || self.entry_lines.len() != entries.len()
             || self.assistant_caches.len() != entries.len()
+            || self.image_height_deps.len() != entries.len()
             || self.settings != Some(settings)
         {
             return false;
@@ -411,25 +504,27 @@ impl HistoryLineCache {
         }
 
         for &index in indices {
-            let old_range = self.entry_ranges[index].clone();
-            if old_range.end > self.lines.len() || old_range.start > old_range.end {
-                return false;
+            #[cfg(test)]
+            {
+                self.entry_renders = self.entry_renders.saturating_add(1);
             }
-
+            let old_range = self.entry_ranges[index].clone();
             let entry = &entries[index];
-            let (new_lines, new_code_blocks, new_image) = match prepare_cache_entry_render(
+            let prepared = prepare_cache_entry_render(
                 entry,
                 index,
                 entries.len(),
                 settings,
                 self.open_stream_tail,
                 image_resolver,
-            ) {
-                None => (Vec::new(), Vec::new(), None),
+            );
+            let (new_lines, new_code_blocks, new_image, depends_on_image_height) = match prepared {
+                None => (Vec::new(), Vec::new(), None, false),
                 Some(rendered) => (
                     rendered.lines,
                     rendered.code_blocks,
                     rendered.image_placement,
+                    rendered.depends_on_image_height,
                 ),
             };
 
@@ -439,7 +534,8 @@ impl HistoryLineCache {
             let new_len = new_lines.len();
             let delta = new_len as isize - old_len as isize;
 
-            self.lines.splice(start..end, new_lines);
+            self.entry_lines[index] = Arc::from(new_lines);
+            self.set_image_height_dep(index, depends_on_image_height);
 
             // Code blocks inside the old span are replaced; later ones shift.
             self.code_blocks
@@ -466,10 +562,7 @@ impl HistoryLineCache {
             );
 
             self.entry_ranges[index] = start..start + new_len;
-            for range in self.entry_ranges.iter_mut().skip(index + 1) {
-                range.start = offset_usize(range.start, delta);
-                range.end = offset_usize(range.end, delta);
-            }
+            self.shift_ranges_from(index + 1, delta);
 
             // Tool/reasoning toggles never own incremental assistant state.
             // Last-assistant open-stream blank changes also clear it; rebuild
@@ -493,19 +586,21 @@ impl HistoryLineCache {
             }
         }
 
-        // Sanity: flat line buffer length matches last range end.
-        let ok = match self.entry_ranges.last() {
-            Some(last) => last.end == self.lines.len(),
-            None => self.lines.is_empty(),
-        };
+        // Sanity: flat line total matches last range end and per-entry lengths.
+        let ok = self.entry_ranges.len() == self.entry_lines.len()
+            && self
+                .entry_ranges
+                .iter()
+                .zip(self.entry_lines.iter())
+                .all(|(range, lines)| range.end.saturating_sub(range.start) == lines.len())
+            && match self.entry_ranges.last() {
+                Some(last) => last.end == self.total_lines(),
+                None => self.total_lines() == 0,
+            };
         if !ok {
             // Should be unreachable if ranges stayed coherent; force a full
             // rebuild rather than paint a torn cache.
-            self.lines.clear();
-            self.entry_ranges.clear();
-            self.assistant_caches.clear();
-            self.code_blocks.clear();
-            self.image_placements.clear();
+            self.clear_rendered();
             self.dirty_from = Some(0);
             return false;
         }
@@ -524,7 +619,7 @@ impl HistoryLineCache {
         {
             self.entry_renders = self.entry_renders.saturating_add(1);
         }
-        let range_start = self.lines.len();
+        let range_start = self.total_lines();
         let Some(rendered) = prepare_cache_entry_render(
             entry,
             entry_index,
@@ -534,12 +629,15 @@ impl HistoryLineCache {
             image_resolver,
         ) else {
             // Keep a zero-height range so entry indices stay aligned with history.
+            self.entry_lines
+                .push(Arc::<[Line<'static>]>::from(Vec::new()));
             self.entry_ranges.push(range_start..range_start);
             self.assistant_caches.push(None);
+            self.set_image_height_dep(entry_index, false);
             return;
         };
 
-        let entry_start = self.lines.len();
+        let entry_start = range_start;
         self.code_blocks
             .extend(rendered.code_blocks.into_iter().map(|mut block| {
                 // Content starts at the first entry row; trailing blank is after.
@@ -550,8 +648,11 @@ impl HistoryLineCache {
             self.image_placements
                 .push(placement.offset_rows(entry_start));
         }
-        self.lines.extend(rendered.lines);
-        self.entry_ranges.push(range_start..self.lines.len());
+        let line_count = rendered.lines.len();
+        self.entry_lines.push(Arc::from(rendered.lines));
+        self.entry_ranges
+            .push(range_start..range_start.saturating_add(line_count));
+        self.set_image_height_dep(entry_index, rendered.depends_on_image_height);
         // Only the last entry can be appended to, so only its cache is ever
         // read (see `assistant_appended`). Building one for every entry would
         // re-render each assistant message's stable prefix a second time,
@@ -606,14 +707,15 @@ impl HistoryLineCache {
 
         // Open stream tails omit the trailing separator; closed entries keep it.
         let has_trailing_blank = !(self.open_stream_tail && index + 1 == entries.len());
+        let content_len = range.end.saturating_sub(range.start);
         let content_end = if has_trailing_blank {
-            range.end.saturating_sub(1)
+            content_len.saturating_sub(1)
         } else {
-            range.end
+            content_len
         };
         // Content starts at range.start; there is no leading spacer.
-        let preserve_end = range.start.saturating_add(cache.stable_line_count);
-        if preserve_end >= content_end || preserve_end > self.lines.len() {
+        let preserve_end = cache.stable_line_count;
+        if preserve_end >= content_end || preserve_end > self.entry_lines[index].len() {
             return false;
         }
         if self
@@ -624,44 +726,43 @@ impl HistoryLineCache {
         {
             return false;
         }
-        let trailing_blank = has_trailing_blank.then(|| self.lines[range.end - 1].clone());
-        self.lines.truncate(preserve_end);
-        self.code_blocks.retain(|block| block.line < preserve_end);
+
+        let mut lines = self.entry_lines[index][..preserve_end].to_vec();
+        let trailing_blank =
+            has_trailing_blank.then(|| self.entry_lines[index][content_len - 1].clone());
+        let absolute_preserve_end = range.start.saturating_add(preserve_end);
+        self.code_blocks
+            .retain(|block| block.line < absolute_preserve_end);
 
         let previous_stable_source_len = cache.stable_source_len;
-        self.append_assistant_segment(&text[previous_stable_source_len..new_tail_start], width);
+        append_assistant_segment_into(
+            &mut lines,
+            &mut self.code_blocks,
+            range.start,
+            &text[previous_stable_source_len..new_tail_start],
+            width,
+        );
         let cache = self.assistant_caches[index]
             .as_mut()
             .expect("assistant cache exists");
-        cache.stable_line_count = self.lines.len().saturating_sub(range.start);
+        cache.stable_line_count = lines.len();
         cache.stable_source_len = new_tail_start;
-        self.append_assistant_segment(&text[new_tail_start..], width);
-        if let Some(trailing_blank) = trailing_blank {
-            self.lines.push(trailing_blank);
-        }
-        self.entry_ranges[index].end = self.lines.len();
-        true
-    }
-
-    fn append_assistant_segment(&mut self, text: &str, width: usize) {
-        if text.is_empty() {
-            return;
-        }
-        let line_start = self.lines.len();
-        let rendered = render_assistant_content(text, width);
-        self.code_blocks.extend(
-            rendered
-                .code_blocks
-                .into_iter()
-                .map(|block| CachedCodeBlock {
-                    line: line_start + block.top_line,
-                    copy_columns: block.copy_columns.start.saturating_add(1)
-                        ..block.copy_columns.end.saturating_add(1),
-                    text: Arc::from(block.text),
-                }),
+        append_assistant_segment_into(
+            &mut lines,
+            &mut self.code_blocks,
+            range.start,
+            &text[new_tail_start..],
+            width,
         );
-        self.lines
-            .extend(rendered.lines.into_iter().map(pad_display_line));
+        if let Some(trailing_blank) = trailing_blank {
+            lines.push(trailing_blank);
+        }
+        let new_len = lines.len();
+        let delta = new_len as isize - content_len as isize;
+        self.entry_lines[index] = Arc::from(lines);
+        self.entry_ranges[index].end = range.start.saturating_add(new_len);
+        self.shift_ranges_from(index + 1, delta);
+        true
     }
 }
 
@@ -673,6 +774,32 @@ fn offset_usize(value: usize, delta: isize) -> usize {
     }
 }
 
+fn append_assistant_segment_into(
+    lines: &mut Vec<Line<'static>>,
+    code_blocks: &mut Vec<CachedCodeBlock>,
+    entry_line_start: usize,
+    text: &str,
+    width: usize,
+) {
+    if text.is_empty() {
+        return;
+    }
+    let local_start = lines.len();
+    let rendered = render_assistant_content(text, width);
+    code_blocks.extend(
+        rendered
+            .code_blocks
+            .into_iter()
+            .map(|block| CachedCodeBlock {
+                line: entry_line_start + local_start + block.top_line,
+                copy_columns: block.copy_columns.start.saturating_add(1)
+                    ..block.copy_columns.end.saturating_add(1),
+                text: Arc::from(block.text),
+            }),
+    );
+    lines.extend(rendered.lines.into_iter().map(pad_display_line));
+}
+
 /// Shared entry render for full rebuild and surgical resplice paths.
 ///
 /// Returns `None` for hidden entries. Code-block line numbers and image
@@ -681,6 +808,7 @@ struct PreparedCacheEntry {
     lines: Vec<Line<'static>>,
     code_blocks: Vec<CachedCodeBlock>,
     image_placement: Option<RenderedImagePlacements>,
+    depends_on_image_height: bool,
 }
 
 fn prepare_cache_entry_render(
@@ -706,6 +834,10 @@ fn prepare_cache_entry_render(
         settings.max_image_height,
         trailing_blank,
     );
+    let mut depends_on_image_height = match entry {
+        Entry::Tool(tool) => tool.image.is_some(),
+        _ => !rendered.image_sources.is_empty(),
+    } || rendered.image_placement.is_some();
     if !rendered.image_sources.is_empty() {
         let images = image_resolver(entry_index, &rendered.image_sources);
         apply_markdown_images(
@@ -714,6 +846,7 @@ fn prepare_cache_entry_render(
             settings.width,
             settings.max_image_height,
         );
+        depends_on_image_height = depends_on_image_height || rendered.image_placement.is_some();
     }
     let code_blocks = rendered
         .code_blocks
@@ -731,6 +864,7 @@ fn prepare_cache_entry_render(
         lines: rendered.lines,
         code_blocks,
         image_placement: rendered.image_placement,
+        depends_on_image_height,
     })
 }
 

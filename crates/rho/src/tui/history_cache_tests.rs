@@ -597,6 +597,34 @@ fn resplice_tool_expand_preserves_later_assistant_lines() {
     assert_eq!(collapsed.len(), total_before);
 }
 
+// Covers: tracked image-height deps keep soft image-budget updates O(deps),
+// not a markdown re-parse of every assistant entry.
+// Owner: history line cache
+#[test]
+fn image_height_only_change_uses_cached_dependency_flags() {
+    let mut cache = HistoryLineCache::default();
+    let entries = vec![
+        Entry::User("prompt".into()),
+        Entry::Assistant("text only".into()),
+        Entry::Assistant("has an image\n\n![shot](./a.png)\n".into()),
+    ];
+    let mut base = settings(80);
+    let _ = cache.line_count(&entries, base, &no_images);
+    assert_eq!(cache.image_height_dep_count, 1);
+    assert_eq!(cache.image_height_deps, vec![false, false, true]);
+
+    let renders_before = cache.entry_render_count();
+    base.max_image_height = base.max_image_height.saturating_add(8);
+    // Force resplice path; only the image entry should render again.
+    // Without a resolver the markdown image stays a placeholder, but the
+    // entry still depends on max_image_height.
+    let _ = cache.line_count(&entries, base, &no_images);
+    assert!(
+        cache.entry_render_count() > renders_before,
+        "image-bearing entries must resplice when the budget moves"
+    );
+}
+
 // Covers: composer/activity height changes must not re-render a text-only
 // transcript when only the feed image budget moved.
 // Owner: history line cache
