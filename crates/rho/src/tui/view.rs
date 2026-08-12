@@ -1,22 +1,13 @@
 use std::{sync::Arc, time::Instant};
 
-use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
-    backend::Backend,
     layout::{Position, Rect},
     style::Style,
-    text::{Line, Span},
+    text::Line,
     widgets::{Clear, Paragraph},
-    DefaultTerminal, Frame, Terminal,
+    DefaultTerminal, Frame,
 };
 
-use super::{
-    activity,
-    history_cache::{HistoryLineSlice, HistoryRenderSettings},
-    App, CachedCodeBlock, CodeBlockCopyTarget, ComposerMode, Entry, GoalStatus, HistoryScrollbar,
-    LineFill, ReasoningChrome, SessionHeaderCache, StreamKind, Theme,
-    HISTORY_SCROLLBAR_REVEAL_DURATION, RECOVERED_HISTORY_LINE_LIMIT,
-};
 use super::{
     highlight_selection,
     message_history::{recovered_history_tail, transcript_entries_from_messages},
@@ -25,6 +16,11 @@ use super::{
     render_copy_notice,
     screen_layout::{terminal_meets_minimum, MIN_TERMINAL_HEIGHT, MIN_TERMINAL_WIDTH},
     session_header_lines, styled_line, tool_entry_lines,
+};
+use super::{
+    history_cache::{HistoryLineSlice, HistoryRenderSettings},
+    App, CachedCodeBlock, CodeBlockCopyTarget, ComposerMode, Entry, GoalStatus, LineFill,
+    ReasoningChrome, SessionHeaderCache, StreamKind, Theme, RECOVERED_HISTORY_LINE_LIMIT,
 };
 #[cfg(test)]
 use super::{ActiveFrame, DEFAULT_TUI_HEIGHT};
@@ -79,10 +75,19 @@ impl App {
         let height = area.height as usize;
         self.note_terminal_geometry(width, height);
         self.refresh_composer_attachment_layout_cache(width);
-        let live_history = self.history_live_lines(width, now);
-        let history_len = self.history_len_with_live(width, &live_history);
         let composer_lines = self.composer_lines(width, height);
         let command_lines = self.command_suggestion_lines(width);
+        // One settings/budget computation feeds every history read this frame;
+        // recomputing it per read re-wrapped the composer several times a frame.
+        let settings = self.history_render_settings_for_chrome(
+            width,
+            composer_lines.len(),
+            command_lines.len(),
+        );
+        let live_history = self.history_live_lines_with_budget(width, settings.max_image_height);
+        let history_len = self
+            .history_static_len_with_settings(width, settings)
+            .saturating_add(live_history.len());
         let layout = self.screen_layout_for_history_len(
             area,
             history_len,
@@ -94,9 +99,12 @@ impl App {
         self.draw_history(
             frame,
             width,
+            settings,
             &layout,
-            history_start,
-            history_count,
+            HistoryLineSlice {
+                start: history_start,
+                count: history_count,
+            },
             &live_history,
         );
         let surface = DrawSurface {
@@ -117,15 +125,24 @@ impl App {
         &mut self,
         frame: &mut Frame<'_>,
         width: usize,
+        settings: HistoryRenderSettings,
         layout: &super::screen_layout::ScreenLayout,
-        history_start: usize,
-        history_count: usize,
+        slice: HistoryLineSlice,
         live_history: &[Line<'static>],
     ) {
-        let history_visible =
-            self.visible_history_lines_with_live(width, history_start, history_count, live_history);
+        let HistoryLineSlice {
+            start: history_start,
+            count: history_count,
+        } = slice;
+        let history_visible = self.visible_history_lines_with_live(
+            width,
+            settings,
+            history_start,
+            history_count,
+            live_history,
+        );
         let visible_images =
-            self.visible_history_image_placements(width, history_start, history_count);
+            self.visible_history_image_placements(width, settings, history_start, history_count);
         frame.render_widget(
             Paragraph::new(history_visible).style(Style::default()),
             layout.history_content,
@@ -139,13 +156,9 @@ impl App {
             );
         }
         if let Some(hovered_line) = self.history.hovered_code_block_copy() {
-            let code_block_copy_targets = self.code_block_copy_targets(width);
-            if let Some(target) = code_block_copy_targets
-                .iter()
-                .find(|target| target.line == hovered_line)
-                .filter(|target| {
-                    (history_start..history_start + history_count).contains(&target.line)
-                })
+            if let Some(target) = self
+                .code_block_copy_target_at_line(width, hovered_line)
+                .filter(|_| (history_start..history_start + history_count).contains(&hovered_line))
             {
                 let row = layout
                     .history_content
@@ -502,6 +515,28 @@ impl App {
             .history_render_settings(width, self.feed_image_row_budget(width))
     }
 
+    /// History render settings from already-counted bottom chrome lines, so a
+    /// frame reuses its composer render instead of re-wrapping it per read.
+    pub(super) fn history_render_settings_for_chrome(
+        &self,
+        width: usize,
+        composer_line_count: usize,
+        command_line_count: usize,
+    ) -> HistoryRenderSettings {
+        let height = self.terminal_height;
+        let content_height = if height == 0 {
+            0
+        } else {
+            self.history_content_height(self.history_height_from_line_counts(
+                height,
+                composer_line_count,
+                command_line_count,
+            ))
+        };
+        let budget = super::feed_image::ImageRowBudget::feed(height, content_height).get();
+        self.info.runtime.history_render_settings(width, budget)
+    }
+
     /// Record terminal size for discrete feed-image budgets and layout caches.
     pub(super) fn note_terminal_geometry(&mut self, width: usize, terminal_height: usize) {
         let _ = width;
@@ -541,12 +576,14 @@ impl App {
         count: usize,
     ) -> Vec<Line<'static>> {
         let live = self.history_live_lines(width, now);
-        self.visible_history_lines_with_live(width, start, count, &live)
+        let settings = self.history_render_settings(width);
+        self.visible_history_lines_with_live(width, settings, start, count, &live)
     }
 
     fn visible_history_lines_with_live(
         &mut self,
         width: usize,
+        settings: HistoryRenderSettings,
         start: usize,
         count: usize,
         live: &[Line<'static>],
@@ -570,7 +607,6 @@ impl App {
             let transcript_start = start.saturating_sub(header_len);
             let transcript_count = count - lines.len();
             let cwd = self.info.runtime.cwd.clone();
-            let settings = self.history_render_settings(width);
             self.sync_open_stream_tail();
             self.history
                 .with_lines_and_images_mut(|history_lines, entries, markdown_images| {
@@ -589,7 +625,8 @@ impl App {
                 });
         }
 
-        let static_len = header_len.saturating_add(self.cached_transcript_line_count(width));
+        let static_len =
+            header_len.saturating_add(self.cached_transcript_line_count_with_settings(settings));
         if lines.len() < count {
             let live_start = start.saturating_sub(static_len);
             lines.extend(
@@ -619,15 +656,26 @@ impl App {
     }
 
     pub(super) fn history_static_len(&mut self, width: usize) -> usize {
-        self.session_header_lines(width)
-            .len()
-            .saturating_add(self.cached_transcript_line_count(width))
+        let settings = self.history_render_settings(width);
+        self.history_static_len_with_settings(width, settings)
     }
 
-    pub(super) fn cached_transcript_line_count(&mut self, width: usize) -> usize {
+    fn history_static_len_with_settings(
+        &mut self,
+        width: usize,
+        settings: HistoryRenderSettings,
+    ) -> usize {
+        self.session_header_lines(width)
+            .len()
+            .saturating_add(self.cached_transcript_line_count_with_settings(settings))
+    }
+
+    fn cached_transcript_line_count_with_settings(
+        &mut self,
+        settings: HistoryRenderSettings,
+    ) -> usize {
         self.sync_open_stream_tail();
         let cwd = self.info.runtime.cwd.clone();
-        let settings = self.history_render_settings(width);
         self.history
             .with_lines_and_images_mut(|history_lines, entries, markdown_images| {
                 history_lines.line_count(entries, settings, &|entry_index, sources| {
@@ -636,28 +684,66 @@ impl App {
             })
     }
 
-    pub(super) fn code_block_copy_targets(&mut self, width: usize) -> Vec<CodeBlockCopyTarget> {
+    /// Code-block copy button whose header row sits at absolute history `line`.
+    ///
+    /// Reads the cached projection and binary-searches it, so pointer events on
+    /// long transcripts do not rebuild a target list per event.
+    pub(super) fn code_block_copy_target_at_line(
+        &mut self,
+        width: usize,
+        line: usize,
+    ) -> Option<CodeBlockCopyTarget> {
         self.sync_open_stream_tail();
         let header_len = self.session_header_lines(width).len();
+        let transcript_line = line.checked_sub(header_len)?;
         let cwd = self.info.runtime.cwd.clone();
         let settings = self.history_render_settings(width);
         self.history
             .with_lines_and_images_mut(|history_lines, entries, markdown_images| {
-                history_lines
-                    .code_blocks(entries, settings, &|entry_index, sources| {
+                let blocks =
+                    history_lines.code_blocks(entries, settings, &|entry_index, sources| {
                         markdown_images.ready_images(entry_index, sources, &cwd)
-                    })
-                    .iter()
-                    .map(|block: &CachedCodeBlock| CodeBlockCopyTarget {
-                        line: header_len.saturating_add(block.line),
-                        columns: block.copy_columns.clone(),
-                        text: Arc::clone(&block.text),
-                    })
-                    .collect()
+                    });
+                // Projection is sorted by line; each block owns one header row.
+                let index = blocks
+                    .binary_search_by(|block: &CachedCodeBlock| block.line.cmp(&transcript_line))
+                    .ok()?;
+                let block = &blocks[index];
+                Some(CodeBlockCopyTarget {
+                    line,
+                    columns: block.copy_columns.clone(),
+                    text: Arc::clone(&block.text),
+                })
             })
     }
 
+    /// Hit-test a pointer position against code-block copy buttons.
+    pub(super) fn code_block_copy_target_at_position(
+        &mut self,
+        width: usize,
+        history: Rect,
+        history_start: usize,
+        column: u16,
+        row: u16,
+    ) -> Option<CodeBlockCopyTarget> {
+        if !history.contains(Position { x: column, y: row }) {
+            return None;
+        }
+        let line = history_start.saturating_add(row.saturating_sub(history.y) as usize);
+        let relative_column = column.saturating_sub(history.x) as usize;
+        self.code_block_copy_target_at_line(width, line)
+            .filter(|target| target.columns.contains(&relative_column))
+    }
+
     pub(super) fn history_live_lines(&self, width: usize, _now: Instant) -> Vec<Line<'static>> {
+        self.history_live_lines_with_budget(width, self.feed_image_row_budget(width))
+    }
+
+    fn history_live_lines_with_budget(
+        &self,
+        width: usize,
+        max_image_height: u16,
+    ) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
         let show_tools = self.info.runtime.shows_work_chrome();
         let shells = if show_tools {
@@ -676,7 +762,6 @@ impl App {
         if has_pending_tools && self.open_stream_tail_active() {
             lines.push(Line::raw(""));
         }
-        let max_image_height = self.feed_image_row_budget(width);
         for pending in &shells {
             // tool_entry_lines owns the trailing spacer under each card.
             lines.extend(tool_entry_lines(
@@ -746,155 +831,6 @@ impl App {
         self.history
             .scroll_chrome()
             .visible_start(history_len, height)
-    }
-
-    pub(super) fn scroll_history_to_bottom(&mut self) {
-        self.history.scroll_to_bottom();
-    }
-
-    pub(super) fn scroll_history_page_up(&mut self, width: usize, height: usize, now: Instant) {
-        let page = self
-            .history_content_height_for_screen(width, height, now)
-            .max(1);
-        self.scroll_history_lines(width, height, now, -(page as isize));
-    }
-
-    fn scroll_history_page_down(&mut self, width: usize, height: usize, now: Instant) {
-        let page = self
-            .history_content_height_for_screen(width, height, now)
-            .max(1);
-        self.scroll_history_lines(width, height, now, page as isize);
-    }
-
-    pub(super) fn scroll_history_lines(
-        &mut self,
-        width: usize,
-        height: usize,
-        now: Instant,
-        delta: isize,
-    ) {
-        let history_len = self.history_len(width, now);
-        let composer_line_count = self.composer_lines(width, height).len();
-        let command_line_count = self.command_suggestion_lines(width).len();
-        let content_height = self.history_content_height(self.history_height_from_line_counts(
-            height,
-            composer_line_count,
-            command_line_count,
-        ));
-        self.history
-            .scroll_chrome_mut()
-            .scroll_by(history_len, content_height, delta);
-    }
-
-    pub(super) fn reveal_history_scrollbar(&mut self, now: Instant) {
-        self.history
-            .reveal_scrollbar(now, HISTORY_SCROLLBAR_REVEAL_DURATION);
-    }
-
-    pub(super) fn hide_history_scrollbar(&mut self) {
-        self.history.hide_scrollbar();
-    }
-
-    pub(super) fn should_render_history_scrollbar(&self, now: Instant) -> bool {
-        self.history.should_render_scrollbar(now)
-    }
-
-    pub(super) fn update_history_scrollbar_hover(
-        &mut self,
-        scrollbar: Option<HistoryScrollbar>,
-        column: u16,
-        row: u16,
-    ) {
-        self.history
-            .scroll_chrome_mut()
-            .update_hover(scrollbar, column, row);
-    }
-
-    pub(super) fn clamp_history_scroll(&mut self, width: usize, height: usize, now: Instant) {
-        let history_len = self.history_len(width, now);
-        let composer_line_count = self.composer_lines(width, height).len();
-        let command_line_count = self.command_suggestion_lines(width).len();
-        let content_height = self.history_content_height(self.history_height_from_line_counts(
-            height,
-            composer_line_count,
-            command_line_count,
-        ));
-        self.history
-            .scroll_chrome_mut()
-            .clamp(history_len, content_height);
-    }
-
-    pub(super) fn clamp_history_scroll_for_terminal<B: Backend>(
-        &mut self,
-        terminal: &mut Terminal<B>,
-    ) -> Result<(), B::Error> {
-        let size = terminal.size()?;
-        self.note_terminal_geometry(size.width as usize, size.height as usize);
-        self.clamp_history_scroll(size.width as usize, size.height as usize, Instant::now());
-        Ok(())
-    }
-
-    pub(super) fn jump_to_bottom_line(&self, width: usize) -> Line<'static> {
-        let text = self.jump_to_bottom_text(width);
-        let binding = self.info.runtime.keybindings.jump_to_bottom.to_string();
-        let Some(action) = text.strip_suffix(&binding) else {
-            return Line::styled(text, Theme::jump_to_bottom());
-        };
-        Line::from(vec![
-            Span::styled(action.to_string(), Theme::jump_to_bottom()),
-            Span::styled(binding, Theme::jump_to_bottom_shortcut()),
-        ])
-    }
-
-    pub(super) fn jump_to_bottom_text(&self, width: usize) -> String {
-        activity::jump_to_bottom_text(
-            width,
-            &self.info.runtime.keybindings.jump_to_bottom.to_string(),
-            /*alongside_activity*/ self.activity_status().is_some(),
-        )
-    }
-
-    pub(super) fn handle_history_key<B: Backend>(
-        &mut self,
-        key: KeyEvent,
-        terminal: &mut Terminal<B>,
-    ) -> Result<bool, B::Error> {
-        if matches!(
-            self.input_ui.composer(),
-            ComposerMode::Picker(picker) if picker.is_overlay()
-        ) {
-            return Ok(false);
-        }
-        let size = terminal.size()?;
-        let width = size.width as usize;
-        let height = size.height as usize;
-        self.note_terminal_geometry(width, height);
-        let now = Instant::now();
-        match (key.modifiers, key.code) {
-            (_, KeyCode::PageUp) => {
-                self.reveal_history_scrollbar(now);
-                self.history.set_scrollbar_drag(None);
-                self.scroll_history_page_up(width, height, now);
-                self.input_ui.clear_paste_burst();
-                self.ctrl_c_streak = 0;
-                Ok(true)
-            }
-            (_, KeyCode::PageDown) => {
-                self.reveal_history_scrollbar(now);
-                self.history.set_scrollbar_drag(None);
-                self.scroll_history_page_down(width, height, now);
-                self.input_ui.clear_paste_burst();
-                self.ctrl_c_streak = 0;
-                Ok(true)
-            }
-            _ if self.info.runtime.keybindings.jump_to_bottom.matches(key) => {
-                self.scroll_history_to_bottom();
-                self.input_ui.clear_paste_burst();
-                self.ctrl_c_streak = 0;
-                Ok(true)
-            }
-            _ => Ok(false),
-        }
     }
 
     fn goal_status(&self) -> Option<GoalStatus> {

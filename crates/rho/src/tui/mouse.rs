@@ -4,7 +4,7 @@ use crossterm::event::{MouseButton, MouseEventKind};
 use ratatui::{backend::Backend, layout::Rect, Terminal};
 
 use super::{
-    copy_interaction::{code_block_copy_target_at, selection_position, selection_position_clamped},
+    copy_interaction::{selection_position, selection_position_clamped},
     paste_burst::word_range_at,
     picker_input::PickerMouseEvent,
     render::tool_entry_lines,
@@ -106,9 +106,13 @@ impl App {
                 let layout = self.screen_layout(screen, now);
                 let (history, history_start) =
                     self.mouse_history_view(layout.history_content, layout.history_len);
-                let targets = self.code_block_copy_targets(width);
-                let code_target =
-                    code_block_copy_target_at(&targets, history, history_start, column, row);
+                let code_target = self.code_block_copy_target_at_position(
+                    width,
+                    history,
+                    history_start,
+                    column,
+                    row,
+                );
                 let scrollbar = layout
                     .history_scrollbar
                     .filter(|scrollbar| scrollbar.contains(column, row))
@@ -247,11 +251,16 @@ impl App {
                 } else {
                     let (history, history_start) =
                         self.mouse_history_view(layout.history_content, layout.history_len);
-                    let targets = self.code_block_copy_targets(width);
-                    self.history.set_hovered_code_block_copy(
-                        code_block_copy_target_at(&targets, history, history_start, column, row)
-                            .map(|target| target.line),
-                    );
+                    let hovered = self
+                        .code_block_copy_target_at_position(
+                            width,
+                            history,
+                            history_start,
+                            column,
+                            row,
+                        )
+                        .map(|target| target.line);
+                    self.history.set_hovered_code_block_copy(hovered);
                     if let (Some(selection), Some(position)) = (
                         self.history.text_selection_mut().as_mut(),
                         selection_position_clamped(history, history_start, column, row),
@@ -292,11 +301,10 @@ impl App {
                     .filter(|target| pressed_subagent.as_deref() == Some(target.run_id.as_str()));
                 let (history, history_start) =
                     self.mouse_history_view(layout.history_content, layout.history_len);
-                let targets = self.code_block_copy_targets(width);
-                self.history.set_hovered_code_block_copy(
-                    code_block_copy_target_at(&targets, history, history_start, column, row)
-                        .map(|target| target.line),
-                );
+                let hovered = self
+                    .code_block_copy_target_at_position(width, history, history_start, column, row)
+                    .map(|target| target.line);
+                self.history.set_hovered_code_block_copy(hovered);
                 if let Some(target) = activate_subagent {
                     self.input_ui.clear_selection();
                     self.history.clear_text_selection();
@@ -377,13 +385,9 @@ impl App {
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
                 let (history, history_start) =
                     self.mouse_history_view(layout.history_content, layout.history_len);
-                let hovered = if history.contains(ratatui::layout::Position { x: column, y: row }) {
-                    let targets = self.code_block_copy_targets(width);
-                    code_block_copy_target_at(&targets, history, history_start, column, row)
-                        .map(|target| target.line)
-                } else {
-                    None
-                };
+                let hovered = self
+                    .code_block_copy_target_at_position(width, history, history_start, column, row)
+                    .map(|target| target.line);
                 self.history.set_hovered_code_block_copy(hovered);
                 let subagent_hover = matches!(self.input_ui.composer(), ComposerMode::Input)
                     .then(|| {

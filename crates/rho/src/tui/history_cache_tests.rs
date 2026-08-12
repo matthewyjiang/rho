@@ -48,6 +48,9 @@ fn caches_code_block_copy_target_and_raw_contents() {
 
 #[test]
 fn caches_unicode_wrapped_lines_and_code_copy_target_without_rendering_drift() {
+    // Rendered lines are compared across separate render passes; hold the lock
+    // so theme-switching tests cannot restyle the second pass mid-test.
+    let _guard = crate::tui::theme::theme_test_lock();
     let mut cache = HistoryLineCache::default();
     let entries = vec![Entry::Assistant("你好你好你好\n```text\nλ🙂\n```".into())];
     let expected_lines = entry_lines(
@@ -72,7 +75,7 @@ fn caches_unicode_wrapped_lines_and_code_copy_target_without_rendering_drift() {
 
     assert_eq!(cached_lines, expected_lines);
     assert_eq!(
-        blocks,
+        blocks.as_ref(),
         &[CachedCodeBlock {
             line: 2,
             copy_columns: 4..10,
@@ -83,6 +86,9 @@ fn caches_unicode_wrapped_lines_and_code_copy_target_without_rendering_drift() {
 
 #[test]
 fn incrementally_extends_assistant_markdown_without_rendering_drift() {
+    // Rendered lines are compared across separate render passes; hold the lock
+    // so theme-switching tests cannot restyle the second pass mid-test.
+    let _guard = crate::tui::theme::theme_test_lock();
     let mut cache = HistoryLineCache::default();
     let mut entries = vec![Entry::Assistant("intro\n\nheader | value\n".into())];
     let mut cached_lines = Vec::new();
@@ -101,7 +107,7 @@ fn incrementally_extends_assistant_markdown_without_rendering_drift() {
         unreachable!();
     };
     text.push_str("--- | ---\nrow | `one`\n");
-    cache.assistant_appended(0);
+    cache.entry_appended(0);
     cached_lines.clear();
     cache.extend_visible_lines(
         &entries,
@@ -127,7 +133,7 @@ fn incrementally_extends_assistant_markdown_without_rendering_drift() {
         unreachable!();
     };
     text.push_str("\n## streamed heading\n");
-    cache.assistant_appended(0);
+    cache.entry_appended(0);
     cached_lines.clear();
     cache.extend_visible_lines(
         &entries,
@@ -153,7 +159,7 @@ fn incrementally_extends_assistant_markdown_without_rendering_drift() {
         unreachable!();
     };
     text.push_str("\n```rust\nlet answer = 42;\n");
-    cache.assistant_appended(0);
+    cache.entry_appended(0);
     cached_lines.clear();
     cache.extend_visible_lines(
         &entries,
@@ -179,7 +185,7 @@ fn incrementally_extends_assistant_markdown_without_rendering_drift() {
         unreachable!();
     };
     text.push_str("println!(\"{answer}\");\n```\ndone\n");
-    cache.assistant_appended(0);
+    cache.entry_appended(0);
     cached_lines.clear();
     cache.extend_visible_lines(
         &entries,
@@ -206,12 +212,92 @@ fn incrementally_extends_assistant_markdown_without_rendering_drift() {
         1
     );
     assert!(cache.entries[0]
-        .assistant
+        .incremental
         .is_some_and(|cached| cached.stable_source_len > "intro\n\n".len()));
+}
+
+// Covers: streamed reasoning extends the cached entry without re-render drift;
+// closing the thought falls back to a full re-render for the summary suffix.
+// Owner: history line cache (incremental append)
+#[test]
+fn incrementally_extends_reasoning_text_without_rendering_drift() {
+    // Rendered lines are compared across separate render passes; hold the lock
+    // so theme-switching tests cannot restyle the second pass mid-test.
+    let _guard = crate::tui::theme::theme_test_lock();
+    let full_slice = HistoryLineSlice {
+        start: 0,
+        count: usize::MAX,
+    };
+    let mut cache = HistoryLineCache::default();
+    let mut entries = vec![Entry::Reasoning(crate::tui::ReasoningEntry::new(
+        "weighing the first option\n",
+    ))];
+    let mut cached_lines = Vec::new();
+    cache.extend_visible_lines(
+        &entries,
+        settings(32),
+        full_slice,
+        &mut cached_lines,
+        &no_images,
+    );
+
+    let Entry::Reasoning(reasoning) = &mut entries[0] else {
+        unreachable!();
+    };
+    reasoning
+        .text
+        .push_str("against a `second` option\n\n## verdict\nkeep it simple\n");
+    cache.entry_appended(0);
+    cached_lines.clear();
+    cache.extend_visible_lines(
+        &entries,
+        settings(32),
+        full_slice,
+        &mut cached_lines,
+        &no_images,
+    );
+    assert_eq!(
+        cached_lines,
+        entry_lines(
+            &entries[0],
+            32,
+            10,
+            crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT
+        )
+    );
+    assert!(cache.entries[0].incremental.is_some());
+
+    // Closing the thought appends the summary line, which the incremental path
+    // cannot produce; the entry re-renders whole and must still match.
+    let Entry::Reasoning(reasoning) = &mut entries[0] else {
+        unreachable!();
+    };
+    reasoning.thought_for = Some(std::time::Duration::from_secs(3));
+    cache.invalidate_from(0);
+    cached_lines.clear();
+    cache.extend_visible_lines(
+        &entries,
+        settings(32),
+        full_slice,
+        &mut cached_lines,
+        &no_images,
+    );
+    assert_eq!(
+        cached_lines,
+        entry_lines(
+            &entries[0],
+            32,
+            10,
+            crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT
+        )
+    );
 }
 
 #[test]
 fn streams_mermaid_as_source_then_caches_the_closed_diagram_by_width() {
+    // Rendered lines are compared across separate render passes; hold the lock
+    // so theme-switching tests cannot restyle the second pass mid-test.
+    let _guard = crate::tui::theme::theme_test_lock();
     let mut cache = HistoryLineCache::default();
     let mut entries = vec![Entry::Assistant(
         "```mermaid\nflowchart LR\nA[Parse] --> B[Render]".into(),
@@ -241,7 +327,7 @@ fn streams_mermaid_as_source_then_caches_the_closed_diagram_by_width() {
         unreachable!();
     };
     text.push_str("\n```");
-    cache.assistant_appended(0);
+    cache.entry_appended(0);
     cached_lines.clear();
     cache.extend_visible_lines(
         &entries,
@@ -295,6 +381,9 @@ fn streams_mermaid_as_source_then_caches_the_closed_diagram_by_width() {
 
 #[test]
 fn resizing_keeps_mermaid_code_block_source_stable() {
+    // Rendered lines are compared across separate render passes; hold the lock
+    // so theme-switching tests cannot restyle the second pass mid-test.
+    let _guard = crate::tui::theme::theme_test_lock();
     let source = crate::tui::markdown::PHASE_CHAIN_FLOWCHART;
     let entries = vec![Entry::Assistant(format!("```mermaid\n{source}\n```"))];
     let mut cache = HistoryLineCache::default();
@@ -375,6 +464,9 @@ fn invalidating_an_assistant_entry_refreshes_code_block_contents() {
 
 #[test]
 fn open_stream_tail_omits_trailing_blank_until_closed() {
+    // Rendered lines are compared across separate render passes; hold the lock
+    // so theme-switching tests cannot restyle the second pass mid-test.
+    let _guard = crate::tui::theme::theme_test_lock();
     use crate::tui::render::{render_entry_with_options, TrailingBlank};
 
     let mut cache = HistoryLineCache::default();
@@ -435,6 +527,9 @@ fn open_stream_tail_omits_trailing_blank_until_closed() {
 // Owner: history line cache display policy.
 #[test]
 fn zen_mode_hides_tool_and_reasoning_lines_and_restores_them() {
+    // Rendered lines are compared across separate render passes; hold the lock
+    // so theme-switching tests cannot restyle the second pass mid-test.
+    let _guard = crate::tui::theme::theme_test_lock();
     use crate::tui::{ReasoningEntry, ToolEntry};
 
     let tool = Entry::Tool(ToolEntry {
@@ -485,6 +580,9 @@ fn zen_mode_hides_tool_and_reasoning_lines_and_restores_them() {
 // Owner: history line cache surgical update
 #[test]
 fn resplice_tool_expand_preserves_later_assistant_lines() {
+    // Rendered lines are compared across separate render passes; hold the lock
+    // so theme-switching tests cannot restyle the second pass mid-test.
+    let _guard = crate::tui::theme::theme_test_lock();
     use crate::tui::ToolEntry;
     use rho_tools::tool_card::{
         DiffRow, DiffRowKind, ToolBody, ToolCard, ToolFamily, ToolHeader, ToolStatus,
