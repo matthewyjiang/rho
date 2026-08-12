@@ -328,7 +328,7 @@ sampling = "ask"
 
 Plugin-provided servers cannot opt themselves in; only the selected config file can.
 
-**Gate two, the user.** Every individual request still raises a question naming the server, the number of messages, and the token ceiling it asked for. A refusal rejects the request and no model call happens. The gate is a question rather than a permission prompt on purpose: Rho's default permission mode allows every capability by policy, so an approval prompt would never reach a person there, and token spend a server asked for is not something that mode ever opted into.
+**Gate two, the user.** Every individual request still raises a question naming the server, the number of messages, and the token ceiling it asked for. A refusal rejects the request and no model call happens. The gate is a question rather than a permission prompt on purpose: Rho's default `bypass` permission mode allows every capability by policy, so an approval prompt would never reach a person there, and token spend a server asked for is not something that mode ever opted into.
 
 Sampling is routed to the in-flight tool call the same way elicitation is, and refuses under the same rules: no call in flight, or more than one, and the request is rejected. A run with no model bound, such as `rho run` or `rho mcp list --connect`, rejects every sampling request and declares no `sampling` capability. Sampling spend is recorded in the usage ledger under the `mcp_sampling` purpose, so it is attributable apart from the user's own turns.
 

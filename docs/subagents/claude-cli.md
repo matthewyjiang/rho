@@ -80,7 +80,7 @@ flowchart TD
    - Omitting `tools` means no tools. There is no `tools: all`
    - `model:` is a Claude model alias such as `opus`, or a full Claude model name. It is not a Rho `@alias`. In `/agents`, the Model row offers the aliases Rho knows (`fable`, `opus`, `sonnet`, `haiku`) plus a Claude Code default row; a definition that pins a full model name keeps its own row
    - optional `reasoning:` maps to Claude `--effort` (`low`/`medium`/`high`/`xhigh`/`max`); omit to inherit Claude's default; `off` and `minimal` are rejected
-   - Keep permission mode at Plan or Auto before launch. Supervised refuses Claude-cli spawn because `claude -p` cannot prompt through Rho
+   - Keep permission mode at Plan or Bypass before launch. Auto and Supervised refuse Claude-cli spawn because `claude -p` cannot run Rho's classifier or prompt through Rho
 
 4. **Confirm setup** in the TUI:
 
@@ -117,7 +117,7 @@ flowchart TD
 | Install | `claude` on `PATH` |
 | Sign in | `/login claude-code` |
 | Define | `runtime: claude-cli` + Claude `tools:` / `model:` |
-| Permission mode | Plan or Auto (not Supervised) |
+| Permission mode | Plan or Bypass (not Auto or Supervised) |
 | Launch | Rho parent `agent` tool, delegated only |
 | Inspect | `rho attach <id>`, `/agents`, `/limits` |
 | Full Claude transcript | `claude --resume <session-id>` |
@@ -134,7 +134,7 @@ Spawn flags are fixed and deliberate:
 | --- | --- |
 | `--output-format stream-json --verbose --include-partial-messages` | NDJSON event stream with partial text |
 | `--input-format stream-json` | NDJSON user turns on stdin so the parent can course-correct a live child |
-| `--permission-mode` | Always set from a Claude-native mode. Delegated runs map Rho Plan to Claude `plan` and Rho Auto to Claude `bypassPermissions` (just run; not Claude classifier `auto`, not `dontAsk`). Advisor one-shots set Claude `dontAsk` directly so they stay non-prompting without plan scaffolding. Supervised refuses before spawn. |
+| `--permission-mode` | Always set from a Claude-native mode. Delegated runs map Rho Plan to Claude `plan` and Rho Bypass to Claude `bypassPermissions` (just run; not Claude classifier `auto`, not `dontAsk`). Advisor one-shots set Claude `dontAsk` directly so they stay non-prompting without plan scaffolding. Auto and Supervised refuse before spawn. |
 | `--disallowedTools Task` | Blocks Claude nested subagents so fan-out stays under Rho |
 | `--tools` | Restricts built-in tool availability to the base Claude tool names from `tools:`. Empty allowlist still sets `--tools ""` so ambient tools are not inherited |
 | `--allowedTools` | Every declared non-`Task` tool entry from `tools:` as separate argv values (bare names such as `Read` and patterns such as `Bash(git *)`). `Task` is never listed here |

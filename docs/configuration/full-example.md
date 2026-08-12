@@ -45,6 +45,12 @@ compact_target_percent = 50
 # auth = "anthropic-api-key"
 # reasoning = "high"
 
+[internal_agents.permission-classifier]
+# provider = "openai"
+# model = "gpt-5.6-luna"
+# auth = "api-key"
+# reasoning = "low"
+
 [web_search]
 hosted = true # provider-hosted search when the chat path supports it
 provider = "auto" # backup only: auto, openai, exa, brave, or disabled
@@ -62,7 +68,7 @@ check_for_updates = true
 enable_subagents = true
 experimental_workspace_rewind = false
 edit_tool = "auto" # auto, hashline, apply_patch, or str_replace
-permission_mode = "auto" # auto, plan, or supervised
+permission_mode = "bypass" # bypass, auto, plan, or supervised
 rtk = true
 inline_shell = "bash" # bash default on macOS/Linux; powershell on Windows
 # credential_store = "os" # or "file"; omit until first /login chooses
