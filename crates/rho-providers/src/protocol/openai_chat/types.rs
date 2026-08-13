@@ -46,6 +46,45 @@ pub(crate) struct ChatStreamOptions {
     pub(crate) include_usage: bool,
 }
 
+/// Whether omitted reasoning-token details are likely hiding thinking tokens.
+///
+/// Derived from serialized request controls only. Absent controls are
+/// [`Unlikely`]; an explicit thinking-on field is [`Likely`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum HiddenReasoningRisk {
+    #[default]
+    Unlikely,
+    Likely,
+}
+
+impl ChatRequest {
+    pub(crate) fn hidden_reasoning_risk(&self) -> HiddenReasoningRisk {
+        if let Some(kwargs) = self.chat_template_kwargs {
+            return if kwargs.enable_thinking {
+                HiddenReasoningRisk::Likely
+            } else {
+                HiddenReasoningRisk::Unlikely
+            };
+        }
+        if let Some(thinking) = &self.thinking {
+            return if thinking.kind == "disabled" {
+                HiddenReasoningRisk::Unlikely
+            } else {
+                HiddenReasoningRisk::Likely
+            };
+        }
+        let effort = self
+            .reasoning
+            .as_ref()
+            .map(|reasoning| reasoning.effort.as_str())
+            .or(self.reasoning_effort.as_deref());
+        match effort {
+            Some("none") | None => HiddenReasoningRisk::Unlikely,
+            Some(_) => HiddenReasoningRisk::Likely,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 pub(crate) struct OpenAiMessage {
     pub(crate) role: String,

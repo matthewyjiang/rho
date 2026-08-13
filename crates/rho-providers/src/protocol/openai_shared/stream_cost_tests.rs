@@ -1,8 +1,12 @@
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
-use super::{extract_generation_output_tokens, extract_usage, GenerationOutputTokens};
+use super::{
+    classify_generation_output_tokens, extract_generation_output_tokens, extract_usage,
+    GenerationOutputTokens,
+};
 use crate::model::ModelUsage;
+use crate::protocol::openai_chat::HiddenReasoningRisk;
 
 #[test]
 fn reported_cost_includes_byok_upstream_inference_cost() {
@@ -195,4 +199,21 @@ fn generation_output_tokens_exclude_reasoning_across_usage_aliases() {
             "{name}: aggregate usage"
         );
     }
+}
+
+#[test]
+fn likely_hidden_reasoning_without_details_is_unavailable_unless_streamed() {
+    let usage = json!({"usage": {"output_tokens": 11}});
+    assert_eq!(
+        classify_generation_output_tokens(&usage, HiddenReasoningRisk::Likely, false),
+        GenerationOutputTokens::Invalid
+    );
+    assert_eq!(
+        classify_generation_output_tokens(&usage, HiddenReasoningRisk::Likely, true),
+        GenerationOutputTokens::Unreported
+    );
+    assert_eq!(
+        classify_generation_output_tokens(&usage, HiddenReasoningRisk::Unlikely, false),
+        GenerationOutputTokens::Unreported
+    );
 }

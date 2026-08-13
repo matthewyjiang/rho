@@ -61,11 +61,12 @@ impl DialectReasoning {
                 ..Default::default()
             },
             Self::Poolside => ReasoningFields {
-                chat_template_kwargs: (reasoning == ReasoningLevel::Off).then_some(
-                    ChatTemplateKwargs {
-                        enable_thinking: false,
-                    },
-                ),
+                // Poolside enables thinking when the field is omitted. Serialize
+                // both values so throughput classification can see thinking-on
+                // from the request body instead of treating omission as off.
+                chat_template_kwargs: Some(ChatTemplateKwargs {
+                    enable_thinking: reasoning != ReasoningLevel::Off,
+                }),
                 ..Default::default()
             },
             Self::OpenRouter(profile) => ReasoningFields {

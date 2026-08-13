@@ -575,7 +575,16 @@ fn poolside_request_body_uses_namespaced_model_and_thinking_control() {
 
     assert_eq!(provider.model_identity().model, "laguna-m.1");
     assert_eq!(body.model, "poolside/laguna-m.1");
-    assert_eq!(body.chat_template_kwargs, None);
+    assert_eq!(
+        body.chat_template_kwargs,
+        Some(crate::protocol::openai_chat::ChatTemplateKwargs {
+            enable_thinking: true,
+        })
+    );
+    assert_eq!(
+        body.hidden_reasoning_risk(),
+        crate::protocol::openai_chat::HiddenReasoningRisk::Likely
+    );
 
     let body = provider
         .request_body(
@@ -594,6 +603,10 @@ fn poolside_request_body_uses_namespaced_model_and_thinking_control() {
         Some(crate::protocol::openai_chat::ChatTemplateKwargs {
             enable_thinking: false,
         })
+    );
+    assert_eq!(
+        body.hidden_reasoning_risk(),
+        crate::protocol::openai_chat::HiddenReasoningRisk::Unlikely
     );
     assert_eq!(
         serde_json::to_value(body).unwrap()["chat_template_kwargs"],
@@ -655,6 +668,7 @@ async fn poolside_publishes_only_final_stream_usage_snapshot() {
         vec![
             ModelEvent::OutputDelta("hel".into()),
             ModelEvent::OutputDelta("lo".into()),
+            generation_output_unavailable(),
             ModelEvent::Usage(ModelUsage {
                 input_tokens: Some(6_900),
                 output_tokens: Some(2),
@@ -668,6 +682,126 @@ async fn poolside_publishes_only_final_stream_usage_snapshot() {
         ModelResponse::Assistant(vec![ContentBlock::Text("hello".into())])
     );
     server.await.unwrap();
+}
+
+// Covers: Poolside thinking-on-by-omission must not fall back to aggregate
+// throughput when usage omits reasoning-token details.
+// Owner: openai-compatible stream usage
+#[tokio::test]
+async fn poolside_hidden_reasoning_without_details_reports_throughput_unavailable() {
+    let events = poolside_stream_events(
+        crate::reasoning::ReasoningLevel::High,
+        concat!(
+            "data: {\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":20},\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n",
+            "data: [DONE]\n\n"
+        ),
+    )
+    .await;
+    assert!(
+        events
+            .iter()
+            .any(|event| *event == generation_output_unavailable()),
+        "constructed Poolside thinking-on request must mark throughput unavailable: {events:?}"
+    );
+}
+
+// Covers: streamed reasoning proves thinking happened, so missing details do
+// not emit the unavailable carrier.
+// Owner: openai-compatible stream usage
+#[tokio::test]
+async fn poolside_streamed_reasoning_without_details_does_not_emit_unavailable() {
+    let events = poolside_stream_events(
+        crate::reasoning::ReasoningLevel::High,
+        concat!(
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"plan\"}}]}\n\n",
+            "data: {\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":20},\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n",
+            "data: [DONE]\n\n"
+        ),
+    )
+    .await;
+    assert!(
+        events
+            .iter()
+            .all(|event| *event != generation_output_unavailable()),
+        "streamed reasoning must not emit unavailable: {events:?}"
+    );
+}
+
+// Covers: Off serializes enable_thinking=false, so missing details stay
+// aggregate fallback rather than unavailable.
+// Owner: openai-compatible stream usage
+#[tokio::test]
+async fn poolside_thinking_off_without_details_does_not_emit_unavailable() {
+    let events = poolside_stream_events(
+        crate::reasoning::ReasoningLevel::Off,
+        concat!(
+            "data: {\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":20},\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n",
+            "data: [DONE]\n\n"
+        ),
+    )
+    .await;
+    assert!(
+        events
+            .iter()
+            .all(|event| *event != generation_output_unavailable()),
+        "thinking-off must keep aggregate fallback: {events:?}"
+    );
+}
+
+fn generation_output_unavailable() -> ModelEvent {
+    ModelEvent::ProviderContext {
+        kind: "rho_model_call_generation_output_tokens".into(),
+        position: None,
+        data: json!({ "tokens": null }),
+    }
+}
+
+async fn poolside_stream_events(
+    reasoning_level: crate::reasoning::ReasoningLevel,
+    body: &'static str,
+) -> Vec<ModelEvent> {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api_base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = [0; 8192];
+        let request_size = stream.read(&mut request).await.unwrap();
+        assert!(request_size > 0);
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(response.as_bytes()).await.unwrap();
+    });
+    let provider = OpenAiCompatibleProvider::new(
+        reqwest::Client::new(),
+        "poolside",
+        "laguna-m.1".into(),
+        OpenAiCompatibleDialect::Poolside,
+        CompatibleAuth::ApiKey("secret".into()),
+        api_base,
+    );
+    let messages = [Message::user_text("hello")];
+    let mut events = Vec::new();
+    provider
+        .stream_turn(
+            ModelRequest {
+                messages: &messages,
+                tools: &[],
+                cancellation: Default::default(),
+                reasoning_level,
+                prompt_cache_key: None,
+            },
+            &mut |event| {
+                events.push(event);
+                Ok(())
+            },
+            &mut |_| Ok(()),
+        )
+        .await
+        .unwrap();
+    server.await.unwrap();
+    events
 }
 
 #[tokio::test]

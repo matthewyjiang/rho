@@ -1,6 +1,7 @@
 use crate::{
     model::{ModelError, ModelEvent, ModelResponse, ModelUsage},
     protocol::cost::parse_usd_micros,
+    protocol::openai_chat::HiddenReasoningRisk,
 };
 
 use super::{
@@ -31,6 +32,7 @@ pub(crate) struct ChatStreamAccumulator {
     reasoning: String,
     tool_calls: Vec<RawChatToolCall>,
     policy: ChatToolCallPolicy,
+    hidden_reasoning_risk: HiddenReasoningRisk,
 }
 
 impl Default for ChatStreamAccumulator {
@@ -46,7 +48,13 @@ impl ChatStreamAccumulator {
             reasoning: String::new(),
             tool_calls: Vec::new(),
             policy,
+            hidden_reasoning_risk: HiddenReasoningRisk::Unlikely,
         }
+    }
+
+    pub(crate) fn with_hidden_reasoning_risk(mut self, risk: HiddenReasoningRisk) -> Self {
+        self.hidden_reasoning_risk = risk;
+        self
     }
 
     /// Consumes one SSE line. Returns whether the line counts as stream activity.
@@ -64,17 +72,12 @@ impl ChatStreamAccumulator {
         let Some(value) = serde_json::from_str::<serde_json::Value>(data).ok() else {
             return Ok(false);
         };
-        if let Some(report) = extract_usage_report(&value) {
-            if let Some(event) = report.generation_output_tokens.into_event() {
-                on_event(event)?;
-            }
-            on_event(ModelEvent::Usage(report.usage))?;
-        }
         let Some(choice) = value
             .get("choices")
             .and_then(|v| v.as_array())
             .and_then(|choices| choices.first())
         else {
+            self.emit_usage(&value, on_event)?;
             return Ok(true);
         };
         let delta = choice.get("delta");
@@ -105,6 +108,7 @@ impl ChatStreamAccumulator {
             if let Some(message) = choice.get("message") {
                 self.merge_completed_message(message);
             }
+            self.emit_usage(&value, on_event)?;
             return Ok(true);
         };
 
@@ -165,6 +169,7 @@ impl ChatStreamAccumulator {
         if let Some(message) = choice.get("message") {
             self.merge_completed_message(message);
         }
+        self.emit_usage(&value, on_event)?;
         Ok(true)
     }
 
@@ -181,6 +186,24 @@ impl ChatStreamAccumulator {
         let finish = self.into_finish()?;
         emit_chat_reasoning_context(finish.reasoning_content, on_event)?;
         Ok(finish.response)
+    }
+
+    fn emit_usage(
+        &self,
+        value: &serde_json::Value,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+    ) -> Result<(), ModelError> {
+        let Some(report) = extract_usage_report_with(
+            value,
+            self.hidden_reasoning_risk,
+            !self.reasoning.is_empty(),
+        ) else {
+            return Ok(());
+        };
+        if let Some(event) = report.generation_output_tokens.into_event() {
+            on_event(event)?;
+        }
+        on_event(ModelEvent::Usage(report.usage))
     }
 
     /// Fills gaps in the accumulated state from a completed message snapshot.
@@ -332,23 +355,50 @@ fn extract_output_usage(usage: &serde_json::Value) -> (Option<u64>, Option<u64>)
 pub(crate) fn extract_generation_output_tokens(
     value: &serde_json::Value,
 ) -> GenerationOutputTokens {
+    classify_generation_output_tokens(value, HiddenReasoningRisk::Unlikely, false)
+}
+
+fn classify_generation_output_tokens(
+    value: &serde_json::Value,
+    hidden_reasoning_risk: HiddenReasoningRisk,
+    reasoning_streamed: bool,
+) -> GenerationOutputTokens {
     let Some(usage) = value.get("usage") else {
         return GenerationOutputTokens::Unreported;
     };
     let (output_tokens, reasoning_tokens) = extract_output_usage(usage);
-    let (Some(output_tokens), Some(reasoning_tokens)) = (output_tokens, reasoning_tokens) else {
-        return GenerationOutputTokens::Unreported;
-    };
-    output_tokens.checked_sub(reasoning_tokens).map_or(
-        GenerationOutputTokens::Invalid,
-        GenerationOutputTokens::Reported,
-    )
+    match (output_tokens, reasoning_tokens) {
+        (Some(output_tokens), Some(reasoning_tokens)) => {
+            output_tokens.checked_sub(reasoning_tokens).map_or(
+                GenerationOutputTokens::Invalid,
+                GenerationOutputTokens::Reported,
+            )
+        }
+        (Some(_), None)
+            if hidden_reasoning_risk == HiddenReasoningRisk::Likely && !reasoning_streamed =>
+        {
+            GenerationOutputTokens::Invalid
+        }
+        _ => GenerationOutputTokens::Unreported,
+    }
 }
 
 pub(crate) fn extract_usage_report(value: &serde_json::Value) -> Option<UsageReport> {
+    extract_usage_report_with(value, HiddenReasoningRisk::Unlikely, false)
+}
+
+fn extract_usage_report_with(
+    value: &serde_json::Value,
+    hidden_reasoning_risk: HiddenReasoningRisk,
+    reasoning_streamed: bool,
+) -> Option<UsageReport> {
     Some(UsageReport {
         usage: extract_usage(value)?,
-        generation_output_tokens: extract_generation_output_tokens(value),
+        generation_output_tokens: classify_generation_output_tokens(
+            value,
+            hidden_reasoning_risk,
+            reasoning_streamed,
+        ),
     })
 }
 

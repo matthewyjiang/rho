@@ -96,16 +96,25 @@ impl OpenAiCompatibleProvider {
         let body = self.request_body(request, true)?;
         let response = self.send(&body, Some(on_request_event)).await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
-        let mut chat_stream = ChatStreamAccumulator::new(self.dialect.chat_tool_call_policy());
+        let mut chat_stream = ChatStreamAccumulator::new(self.dialect.chat_tool_call_policy())
+            .with_hidden_reasoning_risk(body.hidden_reasoning_risk());
         let mut decoder = LineDecoder::default();
         let mut stream = response.bytes_stream();
         let mut idle_deadline = StreamIdleDeadline::new();
         let buffer_usage_until_stream_end = self.dialect == OpenAiCompatibleDialect::Poolside;
         let mut buffered_usage = None;
+        let mut buffered_generation = None;
         {
             let mut handle_event = |event| match event {
                 ModelEvent::Usage(usage) if buffer_usage_until_stream_end => {
                     buffered_usage = Some(usage);
+                    Ok(())
+                }
+                ModelEvent::ProviderContext { ref kind, .. }
+                    if buffer_usage_until_stream_end
+                        && kind == "rho_model_call_generation_output_tokens" =>
+                {
+                    buffered_generation = Some(event);
                     Ok(())
                 }
                 event => on_event(event),
@@ -124,6 +133,9 @@ impl OpenAiCompatibleProvider {
             if let Some(line) = decoder.finish().map_err(invalid_stream_utf8)? {
                 chat_stream.handle_line(line, &mut handle_event)?;
             }
+        }
+        if let Some(generation) = buffered_generation {
+            on_event(generation)?;
         }
         if let Some(usage) = buffered_usage {
             on_event(ModelEvent::Usage(usage))?;

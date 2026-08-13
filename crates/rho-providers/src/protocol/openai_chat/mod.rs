@@ -12,6 +12,7 @@ pub(crate) use super::openai_shared::{
 };
 pub(crate) use line_decode_error as invalid_stream_utf8;
 pub(crate) use types::{
-    ChatRequest, ChatResponse, ChatStreamOptions, ChatTemplateKwargs, OpenAiFunctionCall,
-    OpenAiMessage, OpenAiReasoning, OpenAiThinking, OpenAiTool, OpenAiToolCall, OpenAiToolFunction,
+    ChatRequest, ChatResponse, ChatStreamOptions, ChatTemplateKwargs, HiddenReasoningRisk,
+    OpenAiFunctionCall, OpenAiMessage, OpenAiReasoning, OpenAiThinking, OpenAiTool, OpenAiToolCall,
+    OpenAiToolFunction,
 };
