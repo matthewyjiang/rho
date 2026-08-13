@@ -23,6 +23,12 @@ use crate::{
 /// headless). Lives next to the streak counter that enforces it.
 pub(crate) const CONSECUTIVE_DENY_ESCALATION: u32 = 3;
 
+/// Total classifier denials in one run before Auto escalates to a human (or
+/// cancels headless). Like the consecutive limit, it stops a runaway loop: an
+/// agent that keeps probing around denials never grinds on forever, even when
+/// occasional allows break the streak.
+pub(crate) const TOTAL_DENY_ESCALATION: u32 = 20;
+
 type ClassifyFuture = Pin<Box<dyn Future<Output = ClassifierVerdict> + Send>>;
 pub(crate) type ClassifyFn =
     Arc<dyn Fn(ClassificationInput) -> ClassifyFuture + Send + Sync + 'static>;
@@ -37,8 +43,8 @@ pub(crate) struct ClassificationInput {
 /// Approval handler that classifies Auto-mode capability requests.
 ///
 /// History and cancellation come from [`ApprovalRequest::context`]. The only
-/// mutable run state is the consecutive-deny streak, which [`Self::isolate`]
-/// resets so concurrent workflow agents do not share it.
+/// mutable run state is the deny counters, which [`Self::isolate`] resets so
+/// concurrent workflow agents do not share them.
 pub(crate) struct ClassifierApprovalHandler {
     config: RwLock<Config>,
     workspace_path: PathBuf,
@@ -47,6 +53,7 @@ pub(crate) struct ClassifierApprovalHandler {
     inner: Option<Arc<dyn ApprovalHandler>>,
     session_writes: Option<SessionWriteLog>,
     consecutive_denials: AtomicU32,
+    total_denials: AtomicU32,
 }
 
 impl ClassifierApprovalHandler {
@@ -65,6 +72,7 @@ impl ClassifierApprovalHandler {
             inner,
             session_writes,
             consecutive_denials: AtomicU32::new(0),
+            total_denials: AtomicU32::new(0),
         }
     }
 
@@ -98,6 +106,7 @@ impl ClassifierApprovalHandler {
             inner,
             session_writes: None,
             consecutive_denials: AtomicU32::new(0),
+            total_denials: AtomicU32::new(0),
         }
     }
 
@@ -116,7 +125,7 @@ impl ClassifierApprovalHandler {
 
     /// Clones classifier config for an isolated agent/command run.
     ///
-    /// The deny streak resets so concurrent workflow nodes cannot escalate each
+    /// The deny counters reset so concurrent workflow nodes cannot escalate each
     /// other. History and cancellation stay request-scoped via
     /// [`ApprovalRequest::context`]. Remembered writes stay on this handler's
     /// log; distinct runs should use [`Self::isolate_for_run`] so they record
@@ -151,6 +160,7 @@ impl ClassifierApprovalHandler {
             inner: self.inner.clone(),
             session_writes,
             consecutive_denials: AtomicU32::new(0),
+            total_denials: AtomicU32::new(0),
         })
     }
 
@@ -168,12 +178,18 @@ impl ClassifierApprovalHandler {
         }
     }
 
+    /// True once either deny budget is spent.
+    fn should_escalate(&self) -> bool {
+        self.consecutive_denials.load(Ordering::Relaxed) >= CONSECUTIVE_DENY_ESCALATION
+            || self.total_denials.load(Ordering::Relaxed) >= TOTAL_DENY_ESCALATION
+    }
+
     async fn escalate_or_deny_headless(&self, request: ApprovalRequest) -> ApprovalDecision {
         let Some(inner) = &self.inner else {
             request.context().cancellation().cancel();
             return ApprovalDecision::Deny {
                 reason: format!(
-                    "permission classifier denied {CONSECUTIVE_DENY_ESCALATION} consecutive requests and no human approval handler is available"
+                    "permission classifier denied {CONSECUTIVE_DENY_ESCALATION} consecutive or {TOTAL_DENY_ESCALATION} total requests and no human approval handler is available"
                 ),
             };
         };
@@ -194,11 +210,12 @@ impl ClassifierApprovalHandler {
 impl ApprovalHandler for ClassifierApprovalHandler {
     fn request<'a>(&'a self, request: ApprovalRequest) -> ApprovalFuture<'a> {
         Box::pin(async move {
-            let streak = self.consecutive_denials.load(Ordering::Relaxed);
-            if streak >= CONSECUTIVE_DENY_ESCALATION {
+            if self.should_escalate() {
                 let decision = self.escalate_or_deny_headless(request).await;
                 if self.inner.is_some() {
+                    // A human handled it, so both budgets start over.
                     self.consecutive_denials.store(0, Ordering::Relaxed);
+                    self.total_denials.store(0, Ordering::Relaxed);
                 }
                 return decision;
             }
@@ -215,6 +232,7 @@ impl ApprovalHandler for ClassifierApprovalHandler {
                 }
                 ClassifierVerdict::Deny { reason } => {
                     self.consecutive_denials.fetch_add(1, Ordering::Relaxed);
+                    self.total_denials.fetch_add(1, Ordering::Relaxed);
                     ApprovalDecision::Deny {
                         reason: deny_and_continue_reason(reason),
                     }

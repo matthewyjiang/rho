@@ -16,7 +16,10 @@ use crate::{
     credential_store::build_provider,
 };
 
-use super::{parse_classifier_verdict, render_classifier_transcript, ClassifierVerdict};
+use super::{
+    parse_classifier_verdict, parse_screen_verdict, render_classifier_transcript,
+    ClassifierVerdict, ScreenVerdict, CLASSIFIER_REVIEW_INSTRUCTION, CLASSIFIER_SCREEN_INSTRUCTION,
+};
 
 pub(crate) struct ClassifyRequest<'a> {
     pub history: &'a [Message],
@@ -74,28 +77,88 @@ pub(super) async fn classify_capability_request_with_provider(
     }
 }
 
+/// Runs the two-stage pipeline: a cheap screen, then a reasoned review.
+///
+/// Stage 1 answers `allow` or `escalate` in one token. Only an escalation (or a
+/// stage 1 provider error) pays for stage 2.
+///
+/// Cache-prefix invariant: both stages send the same system prompt and the same
+/// rendered transcript, and the stage instruction is appended AFTER the
+/// transcript. That shared prefix is what makes stage 2 a provider prompt-cache
+/// hit. Never move a stage instruction into the system prompt.
 async fn try_classify_capability_request_with_provider(
     provider: &dyn ModelProvider,
     reasoning: ReasoningLevel,
     request: ClassifyRequest<'_>,
 ) -> anyhow::Result<ClassifierVerdict> {
+    let transcript = render_classifier_transcript(request.history, request.pending)?;
+
+    let screen = run_stage(
+        provider,
+        &request,
+        StageSpec {
+            usage_purpose: "permission-classifier-screen",
+            // The screen is meant to be one cheap token, so it ignores the
+            // configured reasoning level.
+            reasoning: ReasoningLevel::Low,
+            input: stage_input(&transcript, CLASSIFIER_SCREEN_INSTRUCTION),
+        },
+    )
+    .await;
+    match screen.as_deref().map(parse_screen_verdict) {
+        Ok(ScreenVerdict::Allow) => return Ok(ClassifierVerdict::Allow),
+        Ok(ScreenVerdict::Escalate) => {}
+        Err(error) => {
+            // A broken screen must not decide anything; stage 2 still runs and
+            // fails closed on its own if it also breaks.
+            tracing::warn!(error = %error, "permission classifier screen failed; running review");
+        }
+    }
+
+    let review = run_stage(
+        provider,
+        &request,
+        StageSpec {
+            usage_purpose: "permission-classifier-review",
+            reasoning,
+            input: stage_input(&transcript, CLASSIFIER_REVIEW_INSTRUCTION),
+        },
+    )
+    .await?;
+    parse_classifier_verdict(&review).context("permission classifier returned an invalid response")
+}
+
+struct StageSpec {
+    usage_purpose: &'static str,
+    reasoning: ReasoningLevel,
+    input: String,
+}
+
+fn stage_input(transcript: &str, instruction: &str) -> String {
+    format!("{transcript}\n\n{instruction}")
+}
+
+async fn run_stage(
+    provider: &dyn ModelProvider,
+    request: &ClassifyRequest<'_>,
+    stage: StageSpec,
+) -> anyhow::Result<String> {
     let result = run_one_shot_with_provider(
         provider,
         OneShotAgentRequest {
             definition: internal_definition(PERMISSION_CLASSIFIER_AGENT_ID),
-            usage_purpose: "permission-classifier",
-            reasoning: Some(reasoning),
-            input: render_classifier_transcript(request.history, request.pending)?,
-            cancellation: request.cancellation,
+            usage_purpose: stage.usage_purpose,
+            reasoning: Some(stage.reasoning),
+            input: stage.input,
+            cancellation: request.cancellation.clone(),
             session_id: request.session_id,
             workspace_path: request.workspace_path,
         },
-        request.usage_recording,
+        request.usage_recording.clone(),
         /*updates*/ None,
     )
     .await?;
-    parse_classifier_verdict(&result.texts.join("\n"))
-        .context("permission classifier returned an invalid response")
+    Ok(result.texts.join("\n"))
 }
 
 fn classifier_unavailable(error: impl std::fmt::Display) -> ClassifierVerdict {

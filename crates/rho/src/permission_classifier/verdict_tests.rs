@@ -1,6 +1,25 @@
 use pretty_assertions::assert_eq;
 
-use super::{parse_classifier_verdict, ClassifierVerdict};
+use super::{parse_classifier_verdict, parse_screen_verdict, ClassifierVerdict, ScreenVerdict};
+
+// Covers: only an exact `allow` may skip the reasoned review; any other screen output escalates
+// Owner: permission classifier screen parsing
+#[test]
+fn screen_output_only_allows_on_an_exact_allow() {
+    let cases = [
+        ("allow", ScreenVerdict::Allow),
+        ("Allow ", ScreenVerdict::Allow),
+        ("\nALLOW\n", ScreenVerdict::Allow),
+        ("escalate", ScreenVerdict::Escalate),
+        ("allow this one", ScreenVerdict::Escalate),
+        ("\"allow\"", ScreenVerdict::Escalate),
+        ("", ScreenVerdict::Escalate),
+    ];
+
+    for (text, expected) in cases {
+        assert_eq!(parse_screen_verdict(text), expected, "input {text:?}");
+    }
+}
 
 #[test]
 fn parses_allow_and_deny_verdicts_from_json() {
