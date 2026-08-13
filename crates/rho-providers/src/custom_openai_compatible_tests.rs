@@ -1,5 +1,5 @@
 use super::super::{
-    CatalogReasoningPolicy, ProviderAuthKind, ProviderId, ProviderModelSource, UnknownEffortPolicy,
+    CatalogReasoningPolicy, ProviderAuthKind, ProviderModelSource, UnknownEffortPolicy,
 };
 use super::{
     custom_openai_compatible_provider, custom_openai_compatible_providers,
@@ -54,7 +54,6 @@ fn install_custom_providers_makes_keyless_openai_compatible_hosts() {
     let composer = custom_openai_compatible_provider("composer").expect("composer");
     assert_eq!(composer.name, "composer");
     assert_eq!(composer.display_name, "composer");
-    assert_eq!(composer.id, ProviderId::OpenAiCompatible);
     assert_eq!(
         composer.model_source,
         ProviderModelSource::CachedProviderModels
@@ -63,13 +62,16 @@ fn install_custom_providers_makes_keyless_openai_compatible_hosts() {
         composer.catalog_reasoning,
         CatalogReasoningPolicy::OffAsNone
     );
-    assert_eq!(composer.unknown_effort, UnknownEffortPolicy::SendRequested);
     assert!(composer.is_custom_openai_compatible());
+    assert_eq!(
+        composer.unknown_effort(),
+        UnknownEffortPolicy::SendRequested
+    );
     assert!(matches!(
         composer.default_auth().auth_kind,
         ProviderAuthKind::None
     ));
-    let listed = crate::provider::providers();
+    let listed = crate::provider::visible_providers();
     assert!(
         listed
             .iter()

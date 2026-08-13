@@ -17,7 +17,7 @@ use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
 use super::{
     AuthMode, CatalogReasoningPolicy, ModelIdCodec, ProviderAuthKind, ProviderDescriptor,
     ProviderId, ProviderModelRefreshKind, ProviderModelSource, ProviderRuntime,
-    UnknownEffortPolicy, OPENAI_COMPATIBLE_API_BASE, PROVIDERS,
+    OPENAI_COMPATIBLE_API_BASE, PROVIDERS,
 };
 
 const CUSTOM_AUTH: &[AuthMode] = &[AuthMode {
@@ -205,7 +205,9 @@ fn intern(name: &str, registry: &mut CustomRegistry) -> &'static ProviderDescrip
     }
     let leaked_name = Box::leak(name.to_string().into_boxed_str());
     let descriptor = Box::leak(Box::new(ProviderDescriptor {
-        id: ProviderId::OpenAiCompatible,
+        // NEXT_MAJOR(rho-providers): add ProviderId::OpenAiCompatible so
+        // config-defined hosts are not aliased onto a built-in id.
+        id: ProviderId::Ollama,
         runtime: ProviderRuntime::OpenAiCompatible {
             dialect: OpenAiCompatibleDialect::Standard,
             default_api_base: OPENAI_COMPATIBLE_API_BASE,
@@ -220,7 +222,6 @@ fn intern(name: &str, registry: &mut CustomRegistry) -> &'static ProviderDescrip
         // Same Chat Completions effort field as Ollama. Custom names are not in
         // models.dev, so Unknown must still send the selected level.
         catalog_reasoning: CatalogReasoningPolicy::OffAsNone,
-        unknown_effort: UnknownEffortPolicy::SendRequested,
         default_model: None,
     }));
     registry.interned.insert(name.to_string(), descriptor);

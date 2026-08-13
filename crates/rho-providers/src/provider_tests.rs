@@ -1,6 +1,6 @@
 #[test]
 fn provider_ids_have_unique_descriptors_and_lookup_round_trips() {
-    let providers = super::builtin_providers();
+    let providers = super::providers();
 
     for (index, descriptor) in providers.iter().enumerate() {
         assert_eq!(

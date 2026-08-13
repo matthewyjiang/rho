@@ -95,7 +95,7 @@ fn standard_effort_profile(
     else {
         return EffortProfile::omit_when_unknown(metadata);
     };
-    match descriptor.unknown_effort {
+    match descriptor.unknown_effort() {
         UnknownEffortPolicy::Omit => EffortProfile::omit_when_unknown(metadata),
         UnknownEffortPolicy::SendRequested => EffortProfile::send_when_unknown(metadata),
         UnknownEffortPolicy::Constrain(levels) if metadata.is_none() => {

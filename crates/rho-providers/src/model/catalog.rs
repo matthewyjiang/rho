@@ -69,7 +69,7 @@ const MODEL_CATALOG_TOML: &str = include_str!("models.toml");
 static MODEL_CATALOG: OnceLock<Vec<ModelCatalogEntry>> = OnceLock::new();
 
 pub fn implemented_providers() -> Vec<&'static str> {
-    provider::providers()
+    provider::visible_providers()
         .iter()
         .map(|provider| provider.name)
         .collect()
@@ -374,7 +374,7 @@ fn available_models_for_auths_from(
         })
         .cloned()
         .collect::<Vec<_>>();
-    for provider in provider::providers()
+    for provider in provider::visible_providers()
         .iter()
         .filter(|provider| provider_uses_cached_models(provider.name))
     {
