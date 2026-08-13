@@ -59,6 +59,44 @@ fn reported_cost_accepts_strings_and_preserves_zero() {
     );
 }
 
+// Covers: custom OpenAI-compatible hosts (composer-api) report object usage.cost
+// Owner: OpenAI shared usage parser
+#[test]
+fn reported_cost_reads_composer_api_usage_object() {
+    let value = json!({
+        "usage": {
+            "prompt_tokens": 20,
+            "completion_tokens": 5,
+            "total_tokens": 25,
+            "prompt_tokens_details": { "cached_tokens": 0 },
+            "cost": {
+                "currency": "USD",
+                "estimated": true,
+                "input_usd": 0.00001,
+                "output_usd": 0.0000125,
+                "total_usd": 0.0000225,
+                "pricing": {
+                    "input_per_million_tokens_usd": 0.5,
+                    "output_per_million_tokens_usd": 2.5,
+                    "source": "https://cursor.com/changelog/composer-2-5"
+                }
+            }
+        }
+    });
+
+    assert_eq!(
+        extract_usage(&value),
+        Some(ModelUsage {
+            input_tokens: Some(20),
+            output_tokens: Some(5),
+            total_tokens: Some(25),
+            cache_read_tokens: Some(0),
+            cost_usd_micros: Some(23),
+            ..ModelUsage::default()
+        })
+    );
+}
+
 #[test]
 fn valid_cost_components_survive_missing_or_malformed_aliases() {
     let upstream_only = json!({

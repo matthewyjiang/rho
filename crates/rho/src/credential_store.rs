@@ -184,6 +184,10 @@ pub(crate) fn build_provider_from_config(
     config: &Config,
     credential_store: Arc<dyn CredentialStore>,
 ) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, rho_providers::model::ModelError> {
+    let _scope = config
+        .providers
+        .thread_scope()
+        .map_err(|error| rho_providers::model::ModelError::InvalidResponse(error.to_string()))?;
     let options = crate::app::sdk_config::provider_options_from_config(config)?;
     let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
         credential_store,

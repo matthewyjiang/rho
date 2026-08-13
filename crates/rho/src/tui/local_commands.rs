@@ -112,7 +112,7 @@ impl App {
         terminal.draw(|frame| self.draw(frame))?;
 
         let mut provider_health = Vec::new();
-        for descriptor in provider::providers() {
+        for descriptor in provider::visible_providers() {
             if !descriptor.is_keyless()
                 || descriptor.model_refresh != Some(ProviderModelRefreshKind::OpenAiCompatible)
             {

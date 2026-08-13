@@ -414,39 +414,46 @@ impl<'a> DriveSession<'a> {
             cancellation: self.runner.cancellation.clone(),
             progress,
         };
+        let custom_providers = Arc::clone(&self.runner.custom_providers);
         self.tasks.spawn(async move {
-            let cancellation = request.cancellation.clone();
-            let wait_limit_seconds = request.workflow.graph.nodes[&node].timeout_seconds;
-            let permit = match gate
-                .acquire(access, &cancellation, wait_limit_seconds)
-                .await
-            {
-                Ok(permit) => permit,
-                Err(RuntimeError::Cancelled) => {
-                    return Ok(NodeTaskOutput {
+            rho_providers::provider::scope_custom_openai_compatible_providers(
+                custom_providers,
+                async move {
+                    let cancellation = request.cancellation.clone();
+                    let wait_limit_seconds = request.workflow.graph.nodes[&node].timeout_seconds;
+                    let permit = match gate
+                        .acquire(access, &cancellation, wait_limit_seconds)
+                        .await
+                    {
+                        Ok(permit) => permit,
+                        Err(RuntimeError::Cancelled) => {
+                            return Ok(NodeTaskOutput {
+                                node,
+                                attempt,
+                                result: Ok(NodeExecutionResult::terminal(
+                                    NodeTerminalState::Cancellation,
+                                )),
+                            });
+                        }
+                        Err(error @ RuntimeError::CheckoutLockTimeout { .. }) => {
+                            return Ok(NodeTaskOutput {
+                                node,
+                                attempt,
+                                result: Err(error),
+                            });
+                        }
+                        Err(error) => return Err(error),
+                    };
+                    let _permit = permit;
+                    let result = executor.execute(request).await;
+                    Ok(NodeTaskOutput {
                         node,
                         attempt,
-                        result: Ok(NodeExecutionResult::terminal(
-                            NodeTerminalState::Cancellation,
-                        )),
-                    });
-                }
-                Err(error @ RuntimeError::CheckoutLockTimeout { .. }) => {
-                    return Ok(NodeTaskOutput {
-                        node,
-                        attempt,
-                        result: Err(error),
-                    });
-                }
-                Err(error) => return Err(error),
-            };
-            let _permit = permit;
-            let result = executor.execute(request).await;
-            Ok(NodeTaskOutput {
-                node,
-                attempt,
-                result,
-            })
+                        result,
+                    })
+                },
+            )
+            .await
         });
         Ok(())
     }

@@ -62,6 +62,9 @@ provider = "auto" # backup only: auto, openai, exa, brave, or disabled
 [providers.ollama]
 base_url = "http://127.0.0.1:11434/v1"
 
+[providers.custom.composer]
+base_url = "http://127.0.0.1:8787/v1"
+
 [behavior]
 advisor_mode = false
 check_for_updates = true
@@ -92,7 +95,7 @@ Settings are grouped by purpose so the file is easier to scan and edit by hand. 
 
 Keybindings use `+`-separated modifiers and keys. Supported modifiers are `ctrl`, `alt`, and `shift`; supported named keys include `enter`, `esc`, `tab`, arrow keys, `home`, `end`, `pageup`, `pagedown`, `backspace`, and `delete`. Single-character keys can be used directly. Keybinding changes take effect when Rho starts.
 
-The full saved file can also include model overrides for reserved internal agents. Each entry under `[internal_agents]` selects the provider, model, and auth used by that role. An internal agent with no entry follows the active conversation selection. `[providers.ollama].base_url` sets the OpenAI-compatible endpoint used for Ollama chat, model refresh, and health checks. Rho still reads the old `[title]` and flat `title_provider`, `title_model`, and `title_auth` settings, then migrates them to `[internal_agents.session-title]` when it next saves config. Web search API keys are normally stored in the configured credential store rather than config.
+The full saved file can also include model overrides for reserved internal agents. Each entry under `[internal_agents]` selects the provider, model, and auth used by that role. An internal agent with no entry follows the active conversation selection. `[providers.ollama].base_url` and `[providers.custom.<name>].base_url` set OpenAI-compatible endpoints used for those hosts' chat, model refresh, and health checks. Rho still reads the old `[title]` and flat `title_provider`, `title_model`, and `title_auth` settings, then migrates them to `[internal_agents.session-title]` when it next saves config. Web search API keys are normally stored in the configured credential store rather than config.
 
 Ollama's provider-specific API base uses its own section and does not affect other providers:
 
@@ -101,4 +104,11 @@ Ollama's provider-specific API base uses its own section and does not affect oth
 base_url = "http://127.0.0.1:11434/v1"
 ```
 
-See [Ollama](/providers/ollama) for local setup, model refresh, and remote endpoint limits.
+Custom Chat Completions hosts use a name you choose:
+
+```toml
+[providers.custom.composer]
+base_url = "http://127.0.0.1:8787/v1"
+```
+
+See [Ollama](/providers/ollama) and [Custom OpenAI-compatible hosts](/providers/openai-compatible) for setup, model refresh, and endpoint limits.

@@ -1,8 +1,9 @@
 use crate::{
-    model::{ModelMetadata, ReasoningCapabilities, ReasoningRequestSource},
+    model::{ModelMetadata, ReasoningCapabilities, ReasoningLevelSet, ReasoningRequestSource},
     protocol::openai_chat::{
         ChatTemplateKwargs, HiddenReasoningRisk, OpenAiReasoning, OpenAiThinking,
     },
+    provider::UnknownEffortPolicy,
     reasoning::ReasoningLevel,
 };
 
@@ -40,7 +41,7 @@ impl DialectReasoning {
         let metadata = || crate::model::models_dev::current_model_metadata(provider, model);
         match dialect {
             OpenAiCompatibleDialect::Standard | OpenAiCompatibleDialect::QwenTokenPlan => {
-                Self::Standard(EffortProfile::omit_when_unknown(metadata()))
+                Self::Standard(standard_effort_profile(provider, metadata()))
             }
             OpenAiCompatibleDialect::Poolside => Self::Poolside,
             OpenAiCompatibleDialect::OpenRouter => {
@@ -128,6 +129,28 @@ impl ReasoningFields {
     }
 }
 
+/// Standard-dialect hosts take unknown-model effort from the descriptor.
+/// Ollama constrains to the server's vocabulary; config-defined hosts send the
+/// requested level so thinking can be turned off.
+fn standard_effort_profile(
+    provider: &'static str,
+    metadata: Option<ModelMetadata>,
+) -> EffortProfile {
+    let Some(descriptor) = crate::provider::provider_descriptor(provider)
+        .or_else(|| crate::provider::interned_custom_openai_compatible_provider(provider))
+    else {
+        return EffortProfile::omit_when_unknown(metadata);
+    };
+    match descriptor.unknown_effort() {
+        UnknownEffortPolicy::Omit => EffortProfile::omit_when_unknown(metadata),
+        UnknownEffortPolicy::SendRequested => EffortProfile::send_when_unknown(metadata),
+        UnknownEffortPolicy::Constrain(levels) if metadata.is_none() => {
+            EffortProfile::constrained(levels.iter().copied())
+        }
+        UnknownEffortPolicy::Constrain(_) => EffortProfile::send_when_unknown(metadata),
+    }
+}
+
 /// Metadata-driven effort selection for dialects that speak level names on the
 /// wire, with an explicit policy for models whose capabilities are unknown.
 pub(super) struct EffortProfile {
@@ -152,6 +175,15 @@ impl EffortProfile {
         Self::from_metadata(metadata, UnknownCapabilities::SendRequested)
     }
 
+    fn constrained(levels: impl IntoIterator<Item = ReasoningLevel>) -> Self {
+        Self {
+            capabilities: ReasoningCapabilities::Levels(ReasoningLevelSet::new(
+                levels.into_iter().collect(),
+            )),
+            when_unknown: UnknownCapabilities::Omit,
+        }
+    }
+
     fn from_metadata(metadata: Option<ModelMetadata>, when_unknown: UnknownCapabilities) -> Self {
         Self {
             capabilities: metadata
@@ -163,14 +195,7 @@ impl EffortProfile {
 
     #[cfg(test)]
     pub(super) fn levels(levels: impl IntoIterator<Item = ReasoningLevel>) -> Self {
-        use crate::model::ReasoningLevelSet;
-
-        Self {
-            capabilities: ReasoningCapabilities::Levels(ReasoningLevelSet::new(
-                levels.into_iter().collect(),
-            )),
-            when_unknown: UnknownCapabilities::Omit,
-        }
+        Self::constrained(levels)
     }
 
     #[cfg(test)]

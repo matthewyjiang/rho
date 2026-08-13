@@ -246,30 +246,37 @@ pub(crate) async fn execute_run(
         crate::usage::default_recording().await,
     );
     let runtime = WorkflowRuntime::build(&run, config_path, approval_mode)?;
-    let use_tui = output.is_none()
-        && interactive_terminal
-        && interactive_display
-        && runtime.permission_mode != crate::permission::PermissionMode::Supervised;
-    let runner = Arc::clone(&runtime.runner);
-    let execution = if use_tui {
-        let adapter =
-            RunnerTuiAdapter::start(Arc::clone(&runner), rho_home, run.clone(), recovery)?;
-        crate::tui::workflow::run(Box::new(adapter))
-            .await
-            .map(|_| false)
-    } else {
-        drive_with_stream(Arc::clone(&runner), &run, recovery, presentation).await
-    };
-    drop(runner);
-    runtime.shutdown().await;
-    let interrupted = execution?;
-    if interrupted {
-        anyhow::bail!(
-            "workflow was cancelled by an interrupt; resume it with `rho workflow resume {}`",
-            run.manifest.run_id
-        );
-    }
-    Ok(())
+    let custom_providers = runtime.custom_providers.clone();
+    rho_providers::provider::scope_custom_openai_compatible_providers(
+        custom_providers,
+        async move {
+            let use_tui = output.is_none()
+                && interactive_terminal
+                && interactive_display
+                && runtime.permission_mode != crate::permission::PermissionMode::Supervised;
+            let runner = Arc::clone(&runtime.runner);
+            let execution = if use_tui {
+                let adapter =
+                    RunnerTuiAdapter::start(Arc::clone(&runner), rho_home, run.clone(), recovery)?;
+                crate::tui::workflow::run(Box::new(adapter))
+                    .await
+                    .map(|_| false)
+            } else {
+                drive_with_stream(Arc::clone(&runner), &run, recovery, presentation).await
+            };
+            drop(runner);
+            runtime.shutdown().await;
+            let interrupted = execution?;
+            if interrupted {
+                anyhow::bail!(
+                "workflow was cancelled by an interrupt; resume it with `rho workflow resume {}`",
+                run.manifest.run_id
+            );
+            }
+            Ok(())
+        },
+    )
+    .await
 }
 
 /// Starts a workflow run on a detached task and returns immediately.
@@ -291,57 +298,64 @@ pub(crate) async fn spawn_background_run(
         WorkflowApprovalMode::non_interactive(crate::usage::default_recording().await),
     )?;
     let runner = Arc::clone(&runtime.runner);
+    let custom_providers = runtime.custom_providers.clone();
     tokio::spawn(async move {
-        let result = runner.drive(run_id, recovery, None).await;
-        drop(runner);
-        runtime.shutdown().await;
-        if let Some(tracker) = tracker {
-            match crate::paths::rho_dir() {
-                Ok(home) => match crate::workflow::WorkflowStore::new(&home) {
-                    Ok(store) => match store.load_run(run_id) {
-                        Ok(final_run) => tracker.mark_finished_from_stored(&final_run),
+        rho_providers::provider::scope_custom_openai_compatible_providers(
+            custom_providers,
+            async move {
+                let result = runner.drive(run_id, recovery, None).await;
+                drop(runner);
+                runtime.shutdown().await;
+                if let Some(tracker) = tracker {
+                    match crate::paths::rho_dir() {
+                        Ok(home) => match crate::workflow::WorkflowStore::new(&home) {
+                            Ok(store) => match store.load_run(run_id) {
+                                Ok(final_run) => tracker.mark_finished_from_stored(&final_run),
+                                Err(error) => match &result {
+                                    Ok(_) => tracker.mark_failed(
+                                        &run_id.to_string(),
+                                        format!(
+                                            "workflow finished but status could not be loaded: {error}"
+                                        ),
+                                    ),
+                                    Err(drive_error) => tracker.mark_failed(
+                                        &run_id.to_string(),
+                                        format!("{drive_error}; status load failed: {error}"),
+                                    ),
+                                },
+                            },
+                            Err(error) => match &result {
+                                Ok(_) => tracker.mark_failed(
+                                    &run_id.to_string(),
+                                    format!("workflow finished but store could not be opened: {error}"),
+                                ),
+                                Err(drive_error) => tracker.mark_failed(
+                                    &run_id.to_string(),
+                                    format!("{drive_error}; store open failed: {error}"),
+                                ),
+                            },
+                        },
                         Err(error) => match &result {
                             Ok(_) => tracker.mark_failed(
                                 &run_id.to_string(),
-                                format!(
-                                    "workflow finished but status could not be loaded: {error}"
-                                ),
+                                format!("workflow finished but rho home is unavailable: {error}"),
                             ),
                             Err(drive_error) => tracker.mark_failed(
                                 &run_id.to_string(),
-                                format!("{drive_error}; status load failed: {error}"),
+                                format!("{drive_error}; rho home unavailable: {error}"),
                             ),
                         },
-                    },
-                    Err(error) => match &result {
-                        Ok(_) => tracker.mark_failed(
-                            &run_id.to_string(),
-                            format!("workflow finished but store could not be opened: {error}"),
-                        ),
-                        Err(drive_error) => tracker.mark_failed(
-                            &run_id.to_string(),
-                            format!("{drive_error}; store open failed: {error}"),
-                        ),
-                    },
-                },
-                Err(error) => match &result {
-                    Ok(_) => tracker.mark_failed(
-                        &run_id.to_string(),
-                        format!("workflow finished but rho home is unavailable: {error}"),
-                    ),
-                    Err(drive_error) => tracker.mark_failed(
-                        &run_id.to_string(),
-                        format!("{drive_error}; rho home unavailable: {error}"),
-                    ),
-                },
-            }
-        }
-        match result {
-            Ok(_) => tracing::info!(%run_id, "background workflow completed"),
-            Err(error) => {
-                tracing::warn!(%run_id, error = %error, "background workflow failed")
-            }
-        }
+                    }
+                }
+                match result {
+                    Ok(_) => tracing::info!(%run_id, "background workflow completed"),
+                    Err(error) => {
+                        tracing::warn!(%run_id, error = %error, "background workflow failed")
+                    }
+                }
+            },
+        )
+        .await;
     });
     // Return the pre-spawn snapshot immediately. Progress is eventually consistent
     // via status / watch / automatic completion notification.
@@ -353,6 +367,7 @@ struct WorkflowRuntime {
     command_executor: Arc<dyn WorkflowNodeExecutor>,
     hosts: Arc<WorkflowCommandHosts>,
     permission_mode: crate::permission::PermissionMode,
+    custom_providers: std::sync::Arc<[String]>,
 }
 
 impl WorkflowRuntime {
@@ -365,6 +380,9 @@ impl WorkflowRuntime {
         let repository = ConfigRepository::new(config_path);
         let config_path = absolute_config_path(&repository)?;
         let mut config = repository.load()?;
+        let custom_providers = config.providers.intern_names()?;
+        let _scope =
+            rho_providers::provider::CustomProviderThreadScope::enter(custom_providers.clone());
         let permission_mode = effective_permission_mode(run, config.permission_mode)?;
         config.permission_mode = permission_mode;
         let approvals =
@@ -444,11 +462,13 @@ impl WorkflowRuntime {
         if let Some(engine) = hook_engine {
             runner = runner.with_hooks(engine);
         }
+        runner = runner.with_custom_providers(custom_providers.clone());
         Ok(Self {
             runner: Arc::new(runner),
             command_executor,
             hosts,
             permission_mode,
+            custom_providers,
         })
     }
 

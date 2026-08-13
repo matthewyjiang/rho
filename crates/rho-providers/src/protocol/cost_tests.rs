@@ -10,6 +10,68 @@ fn parses_numeric_and_formatted_costs() {
     assert_eq!(parse_usd_micros(&json!("1234.50")), Some(1_234_500_000));
 }
 
+// Covers: object-shaped usage.cost must count USD totals, not catalog rates
+// Owner: shared USD cost parser
+#[test]
+fn parses_object_shaped_usage_cost_totals() {
+    let cases = [
+        (
+            "composer-api total_usd wins over parts",
+            json!({
+                "currency": "USD",
+                "estimated": true,
+                "input_usd": 0.001,
+                "output_usd": 0.0032,
+                "total_usd": 0.0042,
+                "pricing": {
+                    "input_per_million_tokens_usd": 0.5,
+                    "output_per_million_tokens_usd": 2.5
+                }
+            }),
+            Some(4_200),
+        ),
+        (
+            "input_usd plus output_usd when total is absent",
+            json!({ "input_usd": 0.001, "output_usd": 0.0032 }),
+            Some(4_200),
+        ),
+        (
+            "nested cost_usd alias",
+            json!({ "cost_usd": "$0.0042" }),
+            Some(4_200),
+        ),
+        (
+            "zero total is preserved",
+            json!({ "total_usd": 0 }),
+            Some(0),
+        ),
+        (
+            "catalog rates are not dollar totals",
+            json!({ "input": 0.5, "output": 2.5 }),
+            None,
+        ),
+        (
+            "negative input does not offset a valid output",
+            json!({ "input_usd": -1.0, "output_usd": 0.0042 }),
+            Some(4_200),
+        ),
+        (
+            "negative preferred total falls back to a valid alias",
+            json!({ "total_usd": -1.0, "cost_usd": 0.0042 }),
+            Some(4_200),
+        ),
+        (
+            "negative preferred total falls back to valid parts",
+            json!({ "total_usd": -0.5, "input_usd": 0.001, "output_usd": 0.0032 }),
+            Some(4_200),
+        ),
+    ];
+
+    for (name, value, expected) in cases {
+        assert_eq!(parse_usd_micros(&value), expected, "{name}");
+    }
+}
+
 #[test]
 fn rejects_invalid_or_out_of_range_costs() {
     for value in [

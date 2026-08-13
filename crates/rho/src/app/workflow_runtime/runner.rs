@@ -28,6 +28,7 @@ pub(crate) struct WorkflowRunner {
     /// poll as a fallback when the owner process is separate.
     pub(super) cancel_check: Arc<tokio::sync::Notify>,
     pub(super) hooks: Option<Arc<crate::hooks::HookEngine>>,
+    pub(super) custom_providers: Arc<[String]>,
 }
 
 impl WorkflowRunner {
@@ -47,11 +48,17 @@ impl WorkflowRunner {
             cancellation: rho_sdk::CancellationToken::new(),
             cancel_check: Arc::new(tokio::sync::Notify::new()),
             hooks: None,
+            custom_providers: Arc::from([]),
         }
     }
 
     pub(crate) fn with_hooks(mut self, hooks: Arc<crate::hooks::HookEngine>) -> Self {
         self.hooks = Some(hooks);
+        self
+    }
+
+    pub(crate) fn with_custom_providers(mut self, names: Arc<[String]>) -> Self {
+        self.custom_providers = names;
         self
     }
 

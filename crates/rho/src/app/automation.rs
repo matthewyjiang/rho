@@ -462,6 +462,7 @@ async fn run_session_with_output(
     mut jsonl: Option<&mut JsonlAdapter>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
     ensure_headless_auto_classifier_model(startup.config)?;
+    let _scope = startup.config.providers.thread_scope()?;
     let sdk_options = SdkBootstrapOptions::from_config(startup.config, &startup.cwd)?;
     let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
         Arc::new(AppCredentialStore),

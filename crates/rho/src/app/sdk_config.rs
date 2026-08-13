@@ -99,6 +99,13 @@ fn provider_options_with_transport(
     endpoint: Option<Url>,
     request_timeout: Option<Duration>,
 ) -> Result<ProviderBuildOptions, ModelError> {
+    // Intern the names and keep the overlay alive through option resolution.
+    // The options retain the resolved descriptor, so later construction does
+    // not need this scope.
+    let _scope = config
+        .providers
+        .thread_scope()
+        .map_err(|error| ModelError::InvalidResponse(error.to_string()))?;
     let mut provider =
         ProviderBuildOptions::new(&config.provider, &config.model, config.reasoning)?
             .with_auth(&config.auth)?

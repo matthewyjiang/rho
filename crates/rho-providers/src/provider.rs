@@ -31,6 +31,17 @@ pub const QWEN_TOKEN_PLAN_API_BASE: &str =
     "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1";
 /// Meta Model API OpenAI-compatible base (Chat Completions and `/models`).
 pub const META_API_BASE: &str = "https://api.meta.ai/v1";
+/// Placeholder only. Config-defined hosts must take their API base from application config.
+pub const OPENAI_COMPATIBLE_API_BASE: &str = "http://127.0.0.1:0/v1";
+
+/// Ollama's OpenAI-compatible API accepts only these effort values.
+pub const OLLAMA_UNKNOWN_REASONING_LEVELS: &[crate::reasoning::ReasoningLevel] = &[
+    crate::reasoning::ReasoningLevel::Off,
+    crate::reasoning::ReasoningLevel::Low,
+    crate::reasoning::ReasoningLevel::Medium,
+    crate::reasoning::ReasoningLevel::High,
+    crate::reasoning::ReasoningLevel::Max,
+];
 
 /// OpenAI API-key vs Codex OAuth runtime auth selection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,6 +111,14 @@ pub fn same_provider_family(left: ProviderId, right: ProviderId) -> bool {
         .any(|group| group.contains(&left) && group.contains(&right))
 }
 
+/// # Next major
+///
+/// NEXT_MAJOR(rho-providers): add a variant for config-defined OpenAI-compatible
+/// hosts so their identity is not aliased onto a built-in id.
+///
+/// Until then, named custom hosts reuse [`ProviderId::Ollama`] as a wire-family
+/// stand-in. Callers must use [`ProviderDescriptor::name`] and
+/// [`ProviderDescriptor::is_custom_openai_compatible`] for identity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ProviderId {
     Ollama,
@@ -157,6 +176,17 @@ pub enum CatalogReasoningPolicy {
     OffOrMax,
     /// The provider serializes `Off` as a provider-owned `none` control.
     OffAsNone,
+}
+
+/// What to serialize when a Standard-dialect model is missing catalog metadata.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnknownEffortPolicy {
+    /// Omit the field so the host applies its own default.
+    Omit,
+    /// Send the requested level, including `Off` as `"none"`.
+    SendRequested,
+    /// Map the request onto this fixed vocabulary.
+    Constrain(&'static [crate::reasoning::ReasoningLevel]),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -408,15 +438,55 @@ impl ProviderDescriptor {
     pub fn is_keyless(self) -> bool {
         matches!(self.default_auth().auth_kind, ProviderAuthKind::None)
     }
+
+    /// Config-defined Chat Completions hosts are named providers, not a single built-in.
+    pub fn is_custom_openai_compatible(self) -> bool {
+        PROVIDERS.iter().all(|builtin| builtin.name != self.name)
+    }
+
+    /// Wire policy for Standard-dialect hosts when models.dev has no row.
+    pub fn unknown_effort(self) -> UnknownEffortPolicy {
+        if self.is_custom_openai_compatible() {
+            return UnknownEffortPolicy::SendRequested;
+        }
+        match self.id {
+            ProviderId::Ollama | ProviderId::OllamaCloud => {
+                UnknownEffortPolicy::Constrain(OLLAMA_UNKNOWN_REASONING_LEVELS)
+            }
+            _ => UnknownEffortPolicy::Omit,
+        }
+    }
 }
 
 #[path = "provider_table.rs"]
 mod provider_table;
 
+#[path = "custom_openai_compatible.rs"]
+mod custom_openai_compatible;
+
+pub use custom_openai_compatible::{
+    custom_provider_registry_test_lock, install_custom_openai_compatible_providers,
+    intern_custom_openai_compatible_providers, reset_custom_openai_compatible_providers_for_tests,
+    scope_custom_openai_compatible_providers, validate_custom_provider_name,
+    CustomProviderThreadScope,
+};
 pub use provider_table::PROVIDERS;
 
 pub fn providers() -> &'static [ProviderDescriptor] {
     PROVIDERS
+}
+
+/// Built-in providers plus the currently visible custom OpenAI-compatible hosts.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-providers): make [`providers`] include config-defined hosts,
+/// or replace both with one iterator, so callers do not choose between the
+/// static table and a visibility snapshot.
+pub fn visible_providers() -> Vec<&'static ProviderDescriptor> {
+    let mut providers = PROVIDERS.iter().collect::<Vec<_>>();
+    providers.extend(custom_openai_compatible::custom_openai_compatible_providers());
+    providers
 }
 
 /// Environment variable names used as provider credential overrides.
@@ -430,7 +500,7 @@ pub fn credential_env_vars() -> &'static [&'static str] {
 
     static VARS: OnceLock<Vec<&'static str>> = OnceLock::new();
     VARS.get_or_init(|| {
-        let mut vars: Vec<&'static str> = PROVIDERS
+        let mut vars: Vec<&'static str> = providers()
             .iter()
             .flat_map(|descriptor| descriptor.auth_modes())
             .filter_map(|mode| mode.auth_kind.env_var())
@@ -480,9 +550,16 @@ pub fn legacy_provider_alias(provider: &str) -> Option<(&'static str, &'static s
 /// external input must use [`resolve_provider_reference`] or [`resolve_profile`]
 /// rather than discarding that choice here.
 pub fn provider_descriptor(provider: &str) -> Option<&'static ProviderDescriptor> {
-    providers()
+    PROVIDERS
         .iter()
         .find(|descriptor| descriptor.name == provider)
+        .or_else(|| custom_openai_compatible::custom_openai_compatible_provider(provider))
+}
+
+pub(crate) fn interned_custom_openai_compatible_provider(
+    provider: &str,
+) -> Option<&'static ProviderDescriptor> {
+    custom_openai_compatible::interned_custom_provider(provider)
 }
 
 /// Formats a provider-qualified model reference for user input and display.
@@ -575,7 +652,8 @@ pub fn resolve_profile_exact(
     }
     let auth_profile = provider_descriptor_for_auth(auth)
         .ok_or_else(|| ProfileResolutionError::UnknownAuth(auth.into()))?;
-    if same_provider_family(provider.id, auth_profile.id) {
+    if !provider.is_custom_openai_compatible() && same_provider_family(provider.id, auth_profile.id)
+    {
         let mode = auth_profile
             .auth_mode(auth)
             .expect("auth exists on auth_profile");
@@ -612,7 +690,7 @@ pub fn provider_descriptor_by_id(id: ProviderId) -> &'static ProviderDescriptor 
     providers()
         .iter()
         .find(|descriptor| descriptor.id == id)
-        .expect("every provider ID must have a descriptor")
+        .expect("every built-in provider ID must have a descriptor")
 }
 
 #[cfg(test)]

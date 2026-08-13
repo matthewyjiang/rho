@@ -125,6 +125,8 @@ pub(crate) struct SdkEventAdapter {
     /// call_id -> attachment journal key so later events reuse the preview slot.
     attachment_call_keys: std::collections::BTreeMap<String, String>,
     pending_generation_output_tokens: Option<GenerationOutputTokens>,
+    /// True after this attempt streamed reasoning text.
+    reasoning_streamed: bool,
 }
 
 impl SdkEventAdapter {
@@ -136,7 +138,23 @@ impl SdkEventAdapter {
             attachment_preview_keys: std::collections::BTreeMap::new(),
             attachment_call_keys: std::collections::BTreeMap::new(),
             pending_generation_output_tokens: None,
+            reasoning_streamed: false,
         }
+    }
+
+    fn reset_generation_throughput_state(&mut self) {
+        self.pending_generation_output_tokens = None;
+        self.reasoning_streamed = false;
+    }
+
+    fn take_generation_output_tokens(&mut self) -> GenerationOutputTokens {
+        let tokens = self.pending_generation_output_tokens.take();
+        let reasoning_streamed = std::mem::take(&mut self.reasoning_streamed);
+        tokens.unwrap_or(if reasoning_streamed {
+            GenerationOutputTokens::Unavailable
+        } else {
+            GenerationOutputTokens::AggregateFallback
+        })
     }
 
     fn presenter(&mut self) -> &mut InteractiveToolPresenter {
@@ -213,11 +231,11 @@ impl SdkEventAdapter {
     pub(super) fn translate(&mut self, event: RunEvent) -> Vec<ViewEvent> {
         match event {
             RunEvent::Started { .. } => {
-                self.pending_generation_output_tokens = None;
+                self.reset_generation_throughput_state();
                 vec![ViewEvent::Update(ViewModelEvent::RunStarted)]
             }
             RunEvent::StepStarted { step } => {
-                self.pending_generation_output_tokens = None;
+                self.reset_generation_throughput_state();
                 self.presenter().step_started();
                 self.bound_stream_call_ids.clear();
                 vec![ViewEvent::Update(ViewModelEvent::StepStarted(step))]
@@ -232,6 +250,7 @@ impl SdkEventAdapter {
                 vec![ViewEvent::Update(ViewModelEvent::OutputDelta(text))]
             }
             RunEvent::ReasoningDelta { text } | RunEvent::ReasoningSummaryDelta { text } => {
+                self.reasoning_streamed |= !text.is_empty();
                 vec![ViewEvent::Update(ViewModelEvent::ReasoningDelta(text))]
             }
             RunEvent::ToolCallUpdated {
@@ -312,10 +331,7 @@ impl SdkEventAdapter {
                 vec![ViewEvent::Update(ViewModelEvent::ModelCallCompleted {
                     profile,
                     metrics,
-                    generation_output_tokens: self
-                        .pending_generation_output_tokens
-                        .take()
-                        .unwrap_or(GenerationOutputTokens::AggregateFallback),
+                    generation_output_tokens: self.take_generation_output_tokens(),
                 })]
             }
             RunEvent::WebSearch { detail } => {
@@ -348,7 +364,7 @@ impl SdkEventAdapter {
                 Vec::new()
             }
             RunEvent::ProviderStreamReset { reason, .. } => {
-                self.pending_generation_output_tokens = None;
+                self.reset_generation_throughput_state();
                 self.presenter().step_started();
                 self.bound_stream_call_ids.clear();
                 vec![ViewEvent::Update(ViewModelEvent::ProviderStreamReset(
