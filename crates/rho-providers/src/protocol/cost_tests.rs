@@ -50,6 +50,21 @@ fn parses_object_shaped_usage_cost_totals() {
             json!({ "input": 0.5, "output": 2.5 }),
             None,
         ),
+        (
+            "negative input does not offset a valid output",
+            json!({ "input_usd": -1.0, "output_usd": 0.0042 }),
+            Some(4_200),
+        ),
+        (
+            "negative preferred total falls back to a valid alias",
+            json!({ "total_usd": -1.0, "cost_usd": 0.0042 }),
+            Some(4_200),
+        ),
+        (
+            "negative preferred total falls back to valid parts",
+            json!({ "total_usd": -0.5, "input_usd": 0.001, "output_usd": 0.0032 }),
+            Some(4_200),
+        ),
     ];
 
     for (name, value, expected) in cases {

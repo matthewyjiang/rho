@@ -22,18 +22,23 @@ fn dollars_to_micros(dollars: f64) -> Option<u64> {
 /// so a models-list shape cannot be mistaken for a dollar amount.
 fn object_usd_dollars(value: &Value) -> Option<f64> {
     for key in ["total_usd", "cost_usd"] {
-        if let Some(dollars) = value.get(key).and_then(scalar_usd_dollars) {
+        if let Some(dollars) = value.get(key).and_then(non_negative_usd_dollars) {
             return Some(dollars);
         }
     }
-    let input = value.get("input_usd").and_then(scalar_usd_dollars);
-    let output = value.get("output_usd").and_then(scalar_usd_dollars);
+    let input = value.get("input_usd").and_then(non_negative_usd_dollars);
+    let output = value.get("output_usd").and_then(non_negative_usd_dollars);
     match (input, output) {
         (Some(input), Some(output)) => Some(input + output),
         (Some(input), None) => Some(input),
         (None, Some(output)) => Some(output),
         (None, None) => None,
     }
+}
+
+fn non_negative_usd_dollars(value: &Value) -> Option<f64> {
+    let dollars = scalar_usd_dollars(value)?;
+    (dollars.is_finite() && dollars >= 0.0).then_some(dollars)
 }
 
 fn scalar_usd_dollars(value: &Value) -> Option<f64> {

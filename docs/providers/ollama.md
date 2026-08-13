@@ -47,6 +47,6 @@ Ollama's OpenAI-compatible endpoint can serve many model types, but not every mo
 
 ## Reasoning
 
-Ollama accepts `reasoning_effort` values `low`, `medium`, `high`, `max`, and `none`. Rho sends the selected level on each turn. Shift+Tab and `/config` cycle it. When the model is missing from models.dev, Rho still sends the field so you can turn thinking off, mapping other Rho levels to the nearest accepted value. Omitting the field lets Ollama enable thinking on its own.
+Ollama accepts `reasoning_effort` values `low`, `medium`, `high`, `max`, and `none`. Rho sends the selected level when the model capability profile permits it. Shift+Tab and `/config` cycle it. When the model is missing from models.dev, Rho still sends the field so you can turn thinking off, mapping other Rho levels to the nearest accepted value. Rho omits the field for models whose metadata reports reasoning as not configurable. Omitting the field lets Ollama enable thinking on its own.
 
 If Ollama omits optional usage data, Rho still handles the response. Run `/doctor` to distinguish a reachable server with installed models, a reachable server with no models, an unreachable server, and an invalid or unsuccessful response.

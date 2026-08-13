@@ -462,6 +462,7 @@ impl WorkflowRuntime {
         if let Some(engine) = hook_engine {
             runner = runner.with_hooks(engine);
         }
+        runner = runner.with_custom_providers(custom_providers.clone());
         Ok(Self {
             runner: Arc::new(runner),
             command_executor,
