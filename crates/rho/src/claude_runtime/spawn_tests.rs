@@ -375,8 +375,8 @@ fn model_is_passed_byte_for_byte_without_alias_rewrite() {
         .any(|pair| pair == ["--model", "claude-opus-4-6"]));
 }
 
-// Covers: Auto / Allow edits reach dontAsk only when specifiers and inherited
-// Claude settings cannot widen past the bound tool set.
+// Covers: Auto / Allow edits reach dontAsk only when specifiers, inherited
+// Claude settings, and bare Bash/Edit/Write cannot widen past the bound set.
 // Owner: Claude spawn argv mapping
 #[test]
 fn rho_permission_modes_map_to_claude_cli_modes() {
@@ -384,6 +384,9 @@ fn rho_permission_modes_map_to_claude_cli_modes() {
 
     let bare = ["Read".to_string(), "Glob".to_string()];
     let narrowed = ["Read".to_string(), "Bash(git status:*)".to_string()];
+    let bash = ["Bash".to_string()];
+    let edit = ["Edit".to_string()];
+    let write = ["Write".to_string()];
 
     for (mode, tools, inherit, expected) in [
         (
@@ -409,6 +412,42 @@ fn rho_permission_modes_map_to_claude_cli_modes() {
             bare.as_slice(),
             false,
             Ok(ClaudePermissionMode::DontAsk),
+        ),
+        (
+            PermissionMode::Auto,
+            bash.as_slice(),
+            false,
+            Err(ClaudeSpawnError::DontAskUnbound),
+        ),
+        (
+            PermissionMode::Auto,
+            edit.as_slice(),
+            false,
+            Err(ClaudeSpawnError::DontAskUnbound),
+        ),
+        (
+            PermissionMode::Auto,
+            write.as_slice(),
+            false,
+            Err(ClaudeSpawnError::DontAskUnbound),
+        ),
+        (
+            PermissionMode::AllowEdits,
+            bash.as_slice(),
+            false,
+            Err(ClaudeSpawnError::DontAskUnbound),
+        ),
+        (
+            PermissionMode::AllowEdits,
+            edit.as_slice(),
+            false,
+            Err(ClaudeSpawnError::DontAskUnbound),
+        ),
+        (
+            PermissionMode::AllowEdits,
+            write.as_slice(),
+            false,
+            Err(ClaudeSpawnError::DontAskUnbound),
         ),
         (
             PermissionMode::Auto,

@@ -153,14 +153,14 @@ pub(crate) enum ClaudeSpawnError {
         "claude-cli agents cannot run in Auto or Allow edits unless the child stays \
 on its declared tools: Claude dontAsk also auto-approves read-only Bash and \
 PreToolUse hooks. Rho therefore refuses when tools include specifiers \
-(for example Bash(git *)) or inherit_claude_config is true. \
-Switch to Plan or Bypass, use bare tool names, or disable inherited Claude config."
+(for example Bash(git *)), bare Bash, Edit, or Write, or inherit_claude_config is true. \
+Switch to Plan or Bypass, use validated no-prompt tool names, or disable inherited Claude config."
     )]
     DontAskUnbound,
     #[error(
         "claude-cli agents cannot run in Supervised permission mode: \
 claude -p cannot prompt interactively for approval. Switch to Auto, Allow edits, Plan, or Bypass, or change the agent. \
-Auto and Allow edits only work when tools are bare names and inherit_claude_config is false."
+Auto and Allow edits only work when tools are validated no-prompt names and inherit_claude_config is false."
     )]
     SupervisedUnsupported,
 }
@@ -182,8 +182,9 @@ pub(crate) enum ClaudeSpawnMaterializeError {
 /// Auto and Allow edits map to Claude `dontAsk` only when
 /// [`dont_ask_preserves_bound_set`] is true. Claude `dontAsk` also
 /// auto-approves built-in read-only Bash and PreToolUse hooks, so a narrowed
-/// `Bash(git *)` rule plus `--tools Bash`, or inherited/project hooks, would
-/// run actions outside the bound set. Advisor one-shots still set
+/// `Bash(git *)` rule plus `--tools Bash`, bare Bash / Edit / Write, or
+/// inherited/project hooks, would run actions outside the Rho approval
+/// boundary. Advisor one-shots still set
 /// [`ClaudePermissionMode::DontAsk`] on the spawn request directly so they
 /// stay independent of host permission mode. Supervised is refused because
 /// `claude -p` cannot pause for interactive human approval.
@@ -210,14 +211,72 @@ pub(crate) fn map_permission_mode(
 ///
 /// Anthropic also auto-approves read-only Bash and PreToolUse hooks. Rho can
 /// keep the child on the bound set only when Claude settings (and their hooks)
-/// stay unloaded and every declared tool is a bare name, so `--tools` does not
-/// expose a broader base tool than `--allowedTools`.
+/// stay unloaded and every declared tool is a validated no-prompt name, so
+/// `--tools` does not expose a write/process tool that skips the Rho Auto /
+/// Allow edits gate.
 fn dont_ask_preserves_bound_set(tools: &[String], inherit_claude_config: bool) -> bool {
     !inherit_claude_config
-        && tools.iter().all(|tool| {
-            let base = tool_base_name(tool);
-            base.eq_ignore_ascii_case("Task") || base == tool
-        })
+        && tools
+            .iter()
+            .all(|tool| dont_ask_tool_preserves_bound_set(tool))
+}
+
+fn dont_ask_tool_preserves_bound_set(tool: &str) -> bool {
+    let base = tool_base_name(tool);
+    if base.eq_ignore_ascii_case("Task") {
+        // Task is always denied separately.
+        return true;
+    }
+    // Specifiers expose a broader base tool via `--tools`.
+    base == tool && dont_ask_bare_tool_preserves_approval_boundary(base)
+}
+
+fn dont_ask_bare_tool_preserves_approval_boundary(base: &str) -> bool {
+    // Claude dontAsk runs these without a Rho prompt. Bash also has a
+    // built-in read-only auto-approve. There is no proven no-prompt
+    // equivalent that preserves Auto / Allow edits write or process gates.
+    !base.eq_ignore_ascii_case("Bash")
+        && !base.eq_ignore_ascii_case("Edit")
+        && !base.eq_ignore_ascii_case("Write")
+}
+
+/// Identity flags that a frozen workflow argv may keep.
+///
+/// Permission-sensitive flags (`--permission-mode`, `--setting-sources`,
+/// `--tools`, `--allowedTools`, `--disallowedTools`, and any skip-permissions
+/// switch) are always taken from the regenerated plan for the effective mode.
+const FROZEN_IDENTITY_FLAGS: &[&str] = &["--model", "--effort", "--max-turns"];
+
+/// Overlay frozen identity onto argv generated from the effective bound mode.
+///
+/// Frozen permission flags cannot widen or replace the mapped Claude mode.
+pub(crate) fn apply_frozen_identity_args(
+    mut generated: Vec<String>,
+    frozen: &[String],
+) -> Vec<String> {
+    for flag in FROZEN_IDENTITY_FLAGS {
+        if let Some(value) = single_flag_value(frozen, flag) {
+            set_single_flag_value(&mut generated, flag, value);
+        }
+    }
+    generated
+}
+
+fn single_flag_value(args: &[String], flag: &str) -> Option<String> {
+    args.windows(2)
+        .find(|pair| pair[0] == flag)
+        .map(|pair| pair[1].clone())
+}
+
+fn set_single_flag_value(args: &mut Vec<String>, flag: &str, value: String) {
+    if let Some(index) = args.iter().position(|arg| arg == flag) {
+        if index + 1 < args.len() {
+            args[index + 1] = value;
+            return;
+        }
+    }
+    args.push((*flag).to_string());
+    args.push(value);
 }
 
 /// Map Rho `reasoning:` onto Claude `--effort`.
@@ -266,9 +325,9 @@ pub(crate) fn build_spawn_plan(request: &ClaudeSpawnRequest) -> ClaudeSpawnPlan 
     };
 
     // `--tools` controls availability from Claude's built-in set (base names).
-    // A specifier such as `Bash(git *)` still lists `Bash` here, which is why
-    // Auto / Allow edits refuse that shape under dontAsk: the base tool would
-    // then receive Claude's built-in read-only Bash approvals.
+    // A specifier such as `Bash(git *)` still lists `Bash` here, and bare
+    // Bash / Edit / Write skip the Rho approval gate, which is why Auto /
+    // Allow edits refuse those shapes under dontAsk.
     // `--allowedTools` carries every declared non-Task entry (bare names and
     // patterns) as separate argv items. Task is always denied so nested Claude
     // agents stay off.

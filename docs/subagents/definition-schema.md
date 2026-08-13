@@ -136,7 +136,7 @@ ToolName(specifier)
 | Membership | open-ended (plugins/MCP may add tools); Rho checks shape, not a fixed catalog |
 | Examples | `Read`, `Edit`, `Glob`, `Grep`, `Bash(git *)`, `mcp__server__tool` |
 
-Base names feed Claude `--tools`. A specifier such as `Bash(git *)` still lists `Bash` there, so Auto and Allow edits refuse that shape under Claude `dontAsk`. Full entries (except nested `Task`) feed `--allowedTools`. Nested Claude `Task` stays disallowed at spawn.
+Base names feed Claude `--tools`. A specifier such as `Bash(git *)` still lists `Bash` there, and bare Bash, Edit, and Write skip the Rho Auto / Allow edits gate under Claude `dontAsk`, so those shapes refuse spawn. Full entries (except nested `Task`) feed `--allowedTools`. Nested Claude `Task` stays disallowed at spawn.
 
 ## Body / prompt semantics
 

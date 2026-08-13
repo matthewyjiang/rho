@@ -100,7 +100,7 @@ Details: [Binding and security](/subagents/binding-and-security).
 
 Rho can hand a **delegated** agent to the installed `claude` binary so a child run can use a Claude subscription while the parent stays in Rho. This is not Anthropic API-key access and is not available as the root session runtime.
 
-Quick path: install `claude`, run `/login claude-code`, define an agent with `runtime: claude-cli`, then launch it through the `agent` tool under Plan or Bypass. Auto and Allow edits work only for bare `tools:` with `inherit_claude_config: false`.
+Quick path: install `claude`, run `/login claude-code`, define an agent with `runtime: claude-cli`, then launch it through the `agent` tool under Plan or Bypass. Auto and Allow edits work only for validated no-prompt `tools:` with `inherit_claude_config: false`.
 
 Full guide: [Claude Code as a delegated runtime](/subagents/claude-cli).
 
