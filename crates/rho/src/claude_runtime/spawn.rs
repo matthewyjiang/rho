@@ -246,8 +246,9 @@ fn dont_ask_bare_tool_preserves_approval_boundary(mode: PermissionMode, base: &s
     // Fail closed: only known Claude built-ins whose Rho class is freely
     // allowed in this mode may ride dontAsk. Write and process tools still
     // need the remaining Auto / Allow edits gate (git-tracked / remembered
-    // paths, classifier or human process approval). Unknown, plugin, and MCP
-    // names have no proven class.
+    // paths, classifier or human process approval). Unknown, plugin, MCP,
+    // and Claude MCP resource tools have no proven class: a server resource
+    // URI can do more than Rho Read.
     let Some(kind) = claude_tool_capability_kind(base) else {
         return false;
     };
@@ -255,12 +256,11 @@ fn dont_ask_bare_tool_preserves_approval_boundary(mode: PermissionMode, base: &s
 }
 
 /// Maps a Claude built-in base name onto the Rho capability class it can
-/// exercise. `None` means unproven (new Claude tools, plugins, MCP).
+/// exercise. `None` means unproven (new Claude tools, plugins, MCP, and
+/// Claude MCP resource tools whose URI effects are not Rho Read).
 fn claude_tool_capability_kind(base: &str) -> Option<CapabilityKind> {
     Some(match base.to_ascii_lowercase().as_str() {
-        "read" | "glob" | "grep" | "lsp" | "listmcpresourcestool" | "readmcpresourcetool" => {
-            CapabilityKind::Read
-        }
+        "read" | "glob" | "grep" | "lsp" => CapabilityKind::Read,
         "webfetch" | "websearch" => CapabilityKind::Network,
         "edit" | "write" | "notebookedit" => CapabilityKind::Write,
         "bash" | "powershell" | "monitor" | "skill" => CapabilityKind::Process,

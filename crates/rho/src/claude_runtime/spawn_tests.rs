@@ -392,6 +392,8 @@ fn rho_permission_modes_map_to_claude_cli_modes() {
     let notebook = ["NotebookEdit".to_string()];
     let powershell = ["PowerShell".to_string()];
     let mcp = ["mcp__server__tool".to_string()];
+    let list_mcp_resource = ["ListMcpResourcesTool".to_string()];
+    let read_mcp_resource = ["ReadMcpResourceTool".to_string()];
     let unknown = ["FutureClaudeTool".to_string()];
 
     for (mode, tools, inherit, expected) in [
@@ -482,6 +484,18 @@ fn rho_permission_modes_map_to_claude_cli_modes() {
         (
             PermissionMode::Auto,
             mcp.as_slice(),
+            false,
+            Err(ClaudeSpawnError::DontAskUnbound),
+        ),
+        (
+            PermissionMode::Auto,
+            list_mcp_resource.as_slice(),
+            false,
+            Err(ClaudeSpawnError::DontAskUnbound),
+        ),
+        (
+            PermissionMode::AllowEdits,
+            read_mcp_resource.as_slice(),
             false,
             Err(ClaudeSpawnError::DontAskUnbound),
         ),
