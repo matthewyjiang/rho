@@ -4387,7 +4387,7 @@ dependencies = [
 
 [[package]]
 name = "rho-coding-agent"
-version = "1.38.2"
+version = "1.39.0"
 dependencies = [
  "anyhow",
  "arboard",
