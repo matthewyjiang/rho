@@ -69,3 +69,37 @@ fn credentials_are_redacted_and_mismatches_fail_before_execution() {
         .contains("credential kind does not match provider"));
     assert!(!format!("{error:?}").contains(secret));
 }
+
+// Covers: custom-host construction must not depend on a still-live thread scope
+// Owner: provider builder
+#[test]
+fn custom_host_build_survives_dropped_thread_scope() {
+    let _lock = crate::provider::custom_provider_registry_test_lock();
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+    struct RestoreCustomProviders;
+    impl Drop for RestoreCustomProviders {
+        fn drop(&mut self) {
+            crate::provider::reset_custom_openai_compatible_providers_for_tests();
+        }
+    }
+    let _restore = RestoreCustomProviders;
+
+    let names = crate::provider::intern_custom_openai_compatible_providers(["composer"]).unwrap();
+    let options = {
+        let _scope = crate::provider::CustomProviderThreadScope::enter(names);
+        ProviderBuildOptions::new("composer", "local-model", ReasoningLevel::Off)
+            .unwrap()
+            .endpoint(Url::parse("http://127.0.0.1:8787/v1").unwrap())
+            .unwrap()
+    };
+    assert!(
+        crate::provider::provider_descriptor("composer").is_none(),
+        "scope drop must hide the name from process-wide lookup"
+    );
+    ProviderBuilder::new(
+        options,
+        ProviderCredential::OpenAiCompatible(CompatibleAuth::None),
+    )
+    .build()
+    .expect("interned custom host must still build after the constructing scope drops");
+}

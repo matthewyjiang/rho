@@ -6,7 +6,7 @@ use url::Url;
 use crate::{
     auth::{github_copilot_token::GitHubCopilotAuthManager, xai_token::XaiAuthManager},
     credentials::CredentialStore,
-    model::{registry::provider_runtime, ModelError},
+    model::ModelError,
     provider::{self, OpenAiRuntimeAuth, ProviderAuthKind, ProviderRuntime},
     providers::{
         anthropic::AnthropicProvider,
@@ -177,10 +177,15 @@ impl ProviderBuilder {
     }
 
     pub(crate) fn build(self) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, ModelError> {
+        // Options may have been built under a dropped thread/task scope. Interned
+        // custom hosts stay resolvable so later construction does not depend on
+        // the process-wide active set still listing that name.
         let descriptor = provider::provider_descriptor(&self.options.provider)
+            .or_else(|| {
+                provider::interned_custom_openai_compatible_provider(&self.options.provider)
+            })
             .ok_or_else(|| ModelError::UnsupportedProvider(self.options.provider.clone()))?;
-        let runtime =
-            provider_runtime(descriptor.name).expect("registered providers must declare a runtime");
+        let runtime = descriptor.runtime;
         let provider_name = descriptor.name;
         let auth_kind = descriptor
             .auth_mode(&self.options.auth)

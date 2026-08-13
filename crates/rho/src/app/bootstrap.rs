@@ -354,6 +354,7 @@ async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Res
         .check_for_updates
         .then(|| tokio::spawn(update::update_notice(env!("CARGO_PKG_VERSION"))));
 
+    let _scope = startup.config.providers.thread_scope()?;
     let sdk_options = SdkBootstrapOptions::from_config(&startup.config, &startup.cwd)?;
     let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
         Arc::new(AppCredentialStore),

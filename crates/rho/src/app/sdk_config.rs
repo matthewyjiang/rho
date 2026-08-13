@@ -99,6 +99,9 @@ fn provider_options_with_transport(
     endpoint: Option<Url>,
     request_timeout: Option<Duration>,
 ) -> Result<ProviderBuildOptions, ModelError> {
+    // Intern the names and keep the overlay alive through option resolution.
+    // ProviderBuilder::build later uses interned descriptors if this scope has
+    // already dropped.
     let _scope = config
         .providers
         .thread_scope()
