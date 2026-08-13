@@ -15,10 +15,7 @@
 //! 4. project Agent Plugins skills: nearest `.agents/plugins` ancestor first
 //! 5. user Agent Plugins skills: `~/.agents/plugins`
 
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SkillSource {
@@ -254,9 +251,6 @@ struct SkillFrontmatter {
     #[serde(default)]
     compatibility: Option<String>,
     #[expect(dead_code, reason = "type-validated only")]
-    #[serde(default)]
-    metadata: Option<BTreeMap<String, String>>,
-    #[expect(dead_code, reason = "type-validated only")]
     #[serde(rename = "allowed-tools", default)]
     allowed_tools: Option<String>,
     #[serde(rename = "disable-model-invocation", default)]
@@ -314,8 +308,8 @@ fn validate_frontmatter(frontmatter: &SkillFrontmatter) -> anyhow::Result<()> {
             anyhow::bail!("skill compatibility must be 1-500 characters");
         }
     }
-    // `license`, `metadata` (string keys and values), and `allowed-tools`
-    // (space-separated tool list) are constrained by their deserialized types.
+    // `license` and `allowed-tools` (space-separated tool list) are constrained
+    // by their deserialized types. `metadata` and other client fields are ignored.
     Ok(())
 }
 
@@ -649,13 +643,16 @@ description: "a \"quoted\" description"
                 expected: Err("description"),
             },
             Case {
-                name: "metadata value must not be a mapping",
-                frontmatter: "name: quote-skill\ndescription: desc\nmetadata:\n  nested:\n    deep: x\n",
-                // serde_yaml_ng reports a type mismatch for nested mappings under string values.
-                expected: Err("invalid type"),
+                name: "nested metadata mapping is accepted",
+                frontmatter: "name: quote-skill\ndescription: desc\nmetadata:\n  requires:\n    bins: [\"bitbucket-cli\"]\n",
+                expected: Ok(Expected {
+                    name: "quote-skill",
+                    description: "desc",
+                    disable_model_invocation: false,
+                }),
             },
             Case {
-                name: "numeric metadata scalar coerces to its string form",
+                name: "numeric metadata scalar is accepted",
                 frontmatter: "name: quote-skill\ndescription: desc\nmetadata:\n  version: 1.0\n",
                 expected: Ok(Expected {
                     name: "quote-skill",
