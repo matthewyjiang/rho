@@ -1,10 +1,7 @@
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
-use super::{
-    classify_generation_output_tokens, extract_generation_output_tokens, extract_usage,
-    GenerationOutputTokens,
-};
+use super::{classify_generation_output_tokens, extract_usage, GenerationOutputTokens};
 use crate::model::ModelUsage;
 use crate::protocol::openai_chat::HiddenReasoningRisk;
 
@@ -189,7 +186,11 @@ fn generation_output_tokens_exclude_reasoning_across_usage_aliases() {
 
     for (name, value, expected_generation, expected_usage) in cases {
         assert_eq!(
-            extract_generation_output_tokens(&value),
+            classify_generation_output_tokens(
+                &value,
+                HiddenReasoningRisk::Unlikely,
+                /*reasoning_streamed*/ false
+            ),
             expected_generation,
             "{name}: generation output"
         );

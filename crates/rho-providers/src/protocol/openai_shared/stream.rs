@@ -352,12 +352,6 @@ fn extract_output_usage(usage: &serde_json::Value) -> (Option<u64>, Option<u64>)
     (None, None)
 }
 
-pub(crate) fn extract_generation_output_tokens(
-    value: &serde_json::Value,
-) -> GenerationOutputTokens {
-    classify_generation_output_tokens(value, HiddenReasoningRisk::Unlikely, false)
-}
-
 fn classify_generation_output_tokens(
     value: &serde_json::Value,
     hidden_reasoning_risk: HiddenReasoningRisk,
