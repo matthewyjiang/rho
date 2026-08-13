@@ -569,7 +569,7 @@ pub fn model_reference(provider: &str, model: &str) -> String {
 
 pub fn provider_descriptor_for_auth(auth: &str) -> Option<&'static ProviderDescriptor> {
     providers()
-        .into_iter()
+        .iter()
         .find(|descriptor| descriptor.auth_mode(auth).is_some())
 }
 
