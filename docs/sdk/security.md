@@ -30,7 +30,7 @@ A provider is required because a runtime without a provider cannot execute, but 
 
 ### Rho application defaults differ
 
-The default-deny posture above applies to external SDK embedders. The shipped Rho CLI, automation mode, and interactive TUI enable unrestricted path resolution, while the selected [permission mode](/configuration#permission-modes) controls capability authority. `bypass` allows requests, `auto` classifies writes and process execution with a configured permission-classifier model, `plan` denies those actions, and `supervised` asks before them. Supervised non-interactive runs and headless Auto without a classifier model fail closed. Built-in tools still run with the current process's operating-system rights, so do not treat these controls as a sandbox. Hosts that need tighter controls must embed the SDK with an explicit workspace and policy.
+The default-deny posture above applies to external SDK embedders. The shipped Rho CLI, automation mode, and interactive TUI enable unrestricted path resolution, while the selected [permission mode](/configuration#permission-modes) controls capability authority. `bypass` allows requests, `auto` classifies new-file writes and process execution with a configured permission-classifier model, `allow_edits` allows in-workspace writes to git-tracked files and asks before the rest, `plan` denies those actions, and `supervised` asks before them. Supervised or Allow edits non-interactive runs and headless Auto without a classifier model fail closed. Built-in tools still run with the current process's operating-system rights, so do not treat these controls as a sandbox. Hosts that need tighter controls must embed the SDK with an explicit workspace and policy.
 
 ## Capability model
 

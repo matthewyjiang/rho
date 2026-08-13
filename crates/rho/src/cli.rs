@@ -83,7 +83,7 @@ pub struct Cli {
     /// Override reasoning level: off, minimal, low, medium, high, xhigh, or max.
     #[arg(long)]
     pub reasoning: Option<ReasoningLevel>,
-    /// Override permission mode: bypass, auto, plan, or supervised.
+    /// Override permission mode: bypass, auto, allow_edits, plan, or supervised.
     #[arg(long, value_name = "MODE", value_parser = parse_permission_mode)]
     pub(crate) permission_mode: Option<PermissionMode>,
     /// Persist --provider/--model/--auth/--reasoning overrides to the config file.

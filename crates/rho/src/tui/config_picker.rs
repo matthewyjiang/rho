@@ -474,26 +474,21 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
 pub(super) fn permission_mode_picker(mode: PermissionMode) -> UiPicker {
     UiPicker::new(
         "Permission mode",
-        [
-            PermissionMode::Bypass,
-            PermissionMode::Auto,
-            PermissionMode::Plan,
-            PermissionMode::Supervised,
-        ]
-        .into_iter()
-        .map(|candidate| PickerItem {
-            section: None,
-            label: candidate.label().into(),
-            detail: Some(permission_mode_description(candidate).into()),
-            preview: None,
-            badge: (candidate == mode).then_some(PickerBadge {
-                text: "selected".into(),
-                tone: PickerBadgeTone::Selected,
-            }),
-            value: format!("{PERMISSION_MODE_PREFIX}{}", candidate.as_str()),
-            selection_verb: None,
-        })
-        .collect(),
+        PermissionMode::ALL
+            .into_iter()
+            .map(|candidate| PickerItem {
+                section: None,
+                label: candidate.label().into(),
+                detail: Some(permission_mode_description(candidate).into()),
+                preview: None,
+                badge: (candidate == mode).then_some(PickerBadge {
+                    text: "selected".into(),
+                    tone: PickerBadgeTone::Selected,
+                }),
+                value: format!("{PERMISSION_MODE_PREFIX}{}", candidate.as_str()),
+                selection_verb: None,
+            })
+            .collect(),
         PickerAction::Config,
     )
 }
@@ -501,7 +496,12 @@ pub(super) fn permission_mode_picker(mode: PermissionMode) -> UiPicker {
 fn permission_mode_description(mode: PermissionMode) -> &'static str {
     match mode {
         PermissionMode::Bypass => "No permission checks.",
-        PermissionMode::Auto => "Classifier reviews writes and processes.",
+        PermissionMode::Auto => {
+            "Classifier reviews new files and processes; tracked workspace edits are free."
+        }
+        PermissionMode::AllowEdits => {
+            "Tracked workspace edits are free; ask before new files and processes."
+        }
         PermissionMode::Plan => "Investigate only; writes and processes are denied.",
         PermissionMode::Supervised => "Ask before writes and processes.",
     }

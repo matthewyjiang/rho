@@ -315,7 +315,7 @@ pub(super) fn approval_channel_for(
                 classifier: Some(classifier),
             }
         }
-        PermissionMode::Supervised => {
+        PermissionMode::AllowEdits | PermissionMode::Supervised => {
             let capacity = NonZeroUsize::new(16).expect("approval channel capacity is non-zero");
             let (handler, receiver) = rho_sdk::approval_channel(capacity);
             ApprovalChannel {

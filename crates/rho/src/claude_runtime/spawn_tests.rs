@@ -381,6 +381,8 @@ fn supervised_rho_mode_is_refused_at_the_mapping_boundary() {
     assert_eq!(error, ClaudeSpawnError::SupervisedUnsupported);
     let error = map_permission_mode(crate::permission::PermissionMode::Auto).unwrap_err();
     assert_eq!(error, ClaudeSpawnError::SupervisedUnsupported);
+    let error = map_permission_mode(crate::permission::PermissionMode::AllowEdits).unwrap_err();
+    assert_eq!(error, ClaudeSpawnError::SupervisedUnsupported);
 }
 
 // Covers: Rho Bypass maps to Claude bypassPermissions (just run), not dontAsk

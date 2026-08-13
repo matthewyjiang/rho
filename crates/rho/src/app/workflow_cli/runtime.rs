@@ -184,7 +184,7 @@ fn workflow_approval_channel(
                 classifier: Some(classifier),
             })
         }
-        PermissionMode::Supervised => Ok(WorkflowApprovalChannel {
+        PermissionMode::AllowEdits | PermissionMode::Supervised => Ok(WorkflowApprovalChannel {
             session: ApprovalSession::new(TerminalWorkflowApprovals {
                 interactive: approval_mode.can_prompt(),
             }),
@@ -253,7 +253,11 @@ pub(crate) async fn execute_run(
             let use_tui = output.is_none()
                 && interactive_terminal
                 && interactive_display
-                && runtime.permission_mode != crate::permission::PermissionMode::Supervised;
+                && !matches!(
+                    runtime.permission_mode,
+                    crate::permission::PermissionMode::AllowEdits
+                        | crate::permission::PermissionMode::Supervised
+                );
             let runner = Arc::clone(&runtime.runner);
             let execution = if use_tui {
                 let adapter =
