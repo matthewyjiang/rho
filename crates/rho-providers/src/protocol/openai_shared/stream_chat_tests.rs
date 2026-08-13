@@ -88,7 +88,83 @@ fn accumulates_streamed_tool_call_deltas() {
     );
 }
 
-// Covers: sparse tool indexes, duplicate ids, object-form args must still validate
+// Covers: reasoning that only appears in the final message snapshot never
+// streamed, so itemized reasoning tokens must still subtract from the
+// throughput numerator instead of reporting the inflated aggregate total
+// Owner: openai chat completions streaming
+#[test]
+fn final_snapshot_reasoning_does_not_count_as_streamed_for_throughput() {
+    let mut chat_stream =
+        ChatStreamAccumulator::new(ChatToolCallPolicy::Strict, HiddenReasoningRisk::Possible);
+    let mut events = Vec::new();
+    let mut on_event = |event: ModelEvent| {
+        events.push(event);
+        Ok(())
+    };
+
+    chat_stream
+        .handle_line(
+            r#"data: {"choices":[{"delta":{"content":"answer"}}]}"#,
+            &mut on_event,
+        )
+        .unwrap();
+    chat_stream
+        .handle_line(
+            r#"data: {"usage":{"prompt_tokens":10,"completion_tokens":30,"completion_tokens_details":{"reasoning_tokens":12}},"choices":[{"delta":{},"finish_reason":"stop","message":{"role":"assistant","content":"answer","reasoning_content":"hidden chain"}}]}"#,
+            &mut on_event,
+        )
+        .unwrap();
+
+    let response = chat_stream.finish(&mut on_event).unwrap();
+
+    assert!(matches!(
+        response,
+        ModelResponse::Assistant(blocks)
+            if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "answer")
+    ));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        ModelEvent::ProviderContext { kind, data, .. }
+            if kind == "rho_model_call_generation_output_tokens"
+                && data["tokens"] == json!(18)
+    )));
+}
+
+// Covers: a final usage snapshot without cache details must not combine its
+// raw input total with cache buckets retained from an earlier snapshot
+// Owner: openai chat completions streaming
+#[test]
+fn partial_final_usage_snapshot_keeps_input_buckets_disjoint() {
+    let mut chat_stream = ChatStreamAccumulator::default();
+    let mut events = Vec::new();
+    let mut on_event = |event: ModelEvent| {
+        events.push(event);
+        Ok(())
+    };
+
+    chat_stream
+        .handle_line(
+            r#"data: {"usage":{"prompt_tokens":100,"prompt_tokens_details":{"cached_tokens":50},"completion_tokens":1},"choices":[{"delta":{"content":"a"}}]}"#,
+            &mut on_event,
+        )
+        .unwrap();
+    chat_stream
+        .handle_line(
+            r#"data: {"usage":{"prompt_tokens":100,"completion_tokens":2},"choices":[]}"#,
+            &mut on_event,
+        )
+        .unwrap();
+
+    chat_stream.finish(&mut on_event).unwrap();
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        ModelEvent::Usage(usage)
+            if usage.input_tokens == Some(50)
+                && usage.cache_read_tokens == Some(50)
+                && usage.output_tokens == Some(2)
+    )));
+}
 // Owner: openai chat completions streaming
 #[test]
 fn streamed_tool_calls_tolerate_qwen_style_quirks() {

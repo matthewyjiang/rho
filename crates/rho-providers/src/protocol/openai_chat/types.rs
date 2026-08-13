@@ -29,6 +29,11 @@ impl ChatRequest {
     /// reasoning tokens. Controls that explicitly disable reasoning, and
     /// requests that serialize no reasoning control, keep aggregate totals
     /// trustworthy as visible-generation counts.
+    ///
+    /// This classifies the body only. Hosts that reason when no control is
+    /// serialized (Poolside enables thinking by omission) need a
+    /// dialect-level override; see
+    /// `providers::openai_compatible::reasoning::DialectReasoning`.
     pub(crate) fn hidden_reasoning_risk(
         &self,
     ) -> crate::protocol::openai_shared::stream::HiddenReasoningRisk {

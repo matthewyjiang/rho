@@ -34,14 +34,19 @@ const MAX_STREAM_BLOCK_INDEX: usize = 4096;
 pub(crate) struct ChatStreamAccumulator {
     text: String,
     reasoning: String,
+    /// Set only when a reasoning delta streamed; a completed message snapshot
+    /// can fill `reasoning` without any reasoning wall time inside the
+    /// measured generation window.
+    reasoning_delta_streamed: bool,
     tool_calls: Vec<RawChatToolCall>,
     policy: ChatToolCallPolicy,
     hidden_reasoning_risk: HiddenReasoningRisk,
-    /// Merged usage snapshot across the stream. Chat hosts restate usage as
-    /// running or final totals rather than increments, and some restate a
-    /// snapshot on several chunks, so publishing each report downstream would
-    /// double-count. `finish` publishes the merged snapshot exactly once.
-    usage_snapshot: Option<ModelUsage>,
+    /// Merged usage snapshot across the stream, kept raw (before cache-bucket
+    /// derivation). Chat hosts restate usage as running or final totals rather
+    /// than increments, and some restate a snapshot on several chunks, so
+    /// publishing each report downstream would double-count. `finish` derives
+    /// and publishes one `ModelUsage` snapshot plus one throughput carrier.
+    usage_snapshot: Option<RawUsage>,
     /// Output/reasoning token pairing from the latest usage payload that
     /// reported an output count, kept for the throughput carrier at finish.
     output_usage: Option<ReportedOutputUsage>,
@@ -61,6 +66,7 @@ impl ChatStreamAccumulator {
         Self {
             text: String::new(),
             reasoning: String::new(),
+            reasoning_delta_streamed: false,
             tool_calls: Vec::new(),
             policy,
             hidden_reasoning_risk,
@@ -84,7 +90,7 @@ impl ChatStreamAccumulator {
         let Some(value) = serde_json::from_str::<serde_json::Value>(data).ok() else {
             return Ok(false);
         };
-        if let Some(usage) = extract_usage(&value) {
+        if let Some(usage) = extract_raw_usage(&value) {
             self.usage_snapshot = Some(match self.usage_snapshot.take() {
                 Some(snapshot) => merge_cumulative_usage(&snapshot, usage),
                 None => usage,
@@ -115,6 +121,7 @@ impl ChatStreamAccumulator {
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
         {
+            self.reasoning_delta_streamed = true;
             self.reasoning.push_str(reasoning_delta);
             on_event(ModelEvent::ReasoningDelta(reasoning_delta.to_string()))?;
         }
@@ -208,7 +215,7 @@ impl ChatStreamAccumulator {
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
         let context = GenerationTokenContext {
-            reasoning_streamed: !self.reasoning.is_empty(),
+            reasoning_streamed: self.reasoning_delta_streamed,
             hidden_reasoning_risk: self.hidden_reasoning_risk,
         };
         if let Some(event) =
@@ -216,8 +223,8 @@ impl ChatStreamAccumulator {
         {
             on_event(event)?;
         }
-        if let Some(usage) = self.usage_snapshot.clone() {
-            on_event(ModelEvent::Usage(usage))?;
+        if let Some(usage) = self.usage_snapshot {
+            on_event(ModelEvent::Usage(usage.into_model_usage()))?;
         }
         let finish = self.into_finish()?;
         emit_chat_reasoning_context(finish.reasoning_content, on_event)?;
@@ -460,10 +467,48 @@ pub(crate) fn extract_usage_report(
     })
 }
 
+/// Usage fields as the host reported them, before cache-bucket derivation.
+///
+/// Snapshots merge at this raw level: deriving `ModelUsage` per snapshot
+/// would let a later snapshot's cache-adjusted input combine with cache
+/// buckets retained from an earlier one, double-counting cached tokens.
+#[derive(Clone, Copy, Debug, Default)]
+struct RawUsage {
+    /// Raw input total; cache reads and writes are subsets of this count.
+    input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
+    cache_read_tokens: Option<u64>,
+    cache_write_tokens: Option<u64>,
+    total_tokens: Option<u64>,
+    context_window: Option<u64>,
+    cost_usd_micros: Option<u64>,
+}
+
+impl RawUsage {
+    /// OpenAI reports cache reads and writes as subsets of the raw input
+    /// count, while `ModelUsage` keeps the three input buckets disjoint.
+    fn into_model_usage(self) -> ModelUsage {
+        let input_tokens = self.input_tokens.map(|input| {
+            input
+                .saturating_sub(self.cache_read_tokens.unwrap_or_default())
+                .saturating_sub(self.cache_write_tokens.unwrap_or_default())
+        });
+        ModelUsage {
+            input_tokens,
+            output_tokens: self.output_tokens,
+            cache_read_tokens: self.cache_read_tokens,
+            cache_write_tokens: self.cache_write_tokens,
+            total_tokens: self.total_tokens,
+            context_window: self.context_window,
+            cost_usd_micros: self.cost_usd_micros,
+        }
+    }
+}
+
 /// Field-wise cumulative merge: a later snapshot wins where it reports a
 /// field, earlier totals survive where it does not.
-fn merge_cumulative_usage(previous: &ModelUsage, observed: ModelUsage) -> ModelUsage {
-    ModelUsage {
+fn merge_cumulative_usage(previous: &RawUsage, observed: RawUsage) -> RawUsage {
+    RawUsage {
         input_tokens: observed.input_tokens.or(previous.input_tokens),
         output_tokens: observed.output_tokens.or(previous.output_tokens),
         cache_read_tokens: observed.cache_read_tokens.or(previous.cache_read_tokens),
@@ -475,8 +520,12 @@ fn merge_cumulative_usage(previous: &ModelUsage, observed: ModelUsage) -> ModelU
 }
 
 pub(crate) fn extract_usage(value: &serde_json::Value) -> Option<ModelUsage> {
+    extract_raw_usage(value).map(RawUsage::into_model_usage)
+}
+
+fn extract_raw_usage(value: &serde_json::Value) -> Option<RawUsage> {
     let usage = value.get("usage").filter(|usage| usage.is_object())?;
-    let raw_input_tokens = usage
+    let input_tokens = usage
         .get("input_tokens")
         .or_else(|| usage.get("prompt_tokens"))
         .and_then(|v| v.as_u64());
@@ -523,15 +572,7 @@ pub(crate) fn extract_usage(value: &serde_json::Value) -> Option<ModelUsage> {
         (None, None) => None,
     };
 
-    // OpenAI reports cache reads and writes as subsets of the raw input count,
-    // while ModelUsage keeps the three input buckets disjoint.
-    let input_tokens = raw_input_tokens.map(|input| {
-        input
-            .saturating_sub(cache_read_tokens.unwrap_or_default())
-            .saturating_sub(cache_write_tokens.unwrap_or_default())
-    });
-
-    Some(ModelUsage {
+    Some(RawUsage {
         input_tokens,
         output_tokens,
         cache_read_tokens,

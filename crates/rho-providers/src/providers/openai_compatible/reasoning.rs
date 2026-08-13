@@ -1,6 +1,8 @@
 use crate::{
     model::{ModelMetadata, ReasoningCapabilities, ReasoningRequestSource},
-    protocol::openai_chat::{ChatTemplateKwargs, OpenAiReasoning, OpenAiThinking},
+    protocol::openai_chat::{
+        ChatTemplateKwargs, HiddenReasoningRisk, OpenAiReasoning, OpenAiThinking,
+    },
     reasoning::ReasoningLevel,
 };
 
@@ -78,6 +80,23 @@ impl DialectReasoning {
                 ..Default::default()
             },
             Self::KimiCode(profile) => kimi_code_reasoning_fields(profile, model, reasoning),
+        }
+    }
+
+    /// Hidden-reasoning risk for one request, derived from the dialect's
+    /// effective reasoning decision rather than the serialized body alone.
+    pub(super) fn hidden_reasoning_risk(
+        &self,
+        reasoning: ReasoningLevel,
+        body_risk: HiddenReasoningRisk,
+    ) -> HiddenReasoningRisk {
+        match self {
+            // Poolside enables thinking by omission for every non-Off request,
+            // so a body that serializes no reasoning control still reasons
+            // off-wire. Off serializes `enable_thinking: false` and stays
+            // body-classified.
+            Self::Poolside if reasoning != ReasoningLevel::Off => HiddenReasoningRisk::Possible,
+            _ => body_risk,
         }
     }
 }

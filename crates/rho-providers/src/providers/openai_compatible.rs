@@ -93,13 +93,15 @@ impl OpenAiCompatibleProvider {
         on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                   + Send),
     ) -> Result<ModelResponse, ModelError> {
+        let reasoning_level = request.reasoning_level;
         let body = self.request_body(request, true)?;
         let response = self.send(&body, Some(on_request_event)).await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
-        let mut chat_stream = ChatStreamAccumulator::new(
-            self.dialect.chat_tool_call_policy(),
-            body.hidden_reasoning_risk(),
-        );
+        let hidden_reasoning_risk = self
+            .reasoning
+            .hidden_reasoning_risk(reasoning_level, body.hidden_reasoning_risk());
+        let mut chat_stream =
+            ChatStreamAccumulator::new(self.dialect.chat_tool_call_policy(), hidden_reasoning_risk);
         let mut decoder = LineDecoder::default();
         let mut stream = response.bytes_stream();
         let mut idle_deadline = StreamIdleDeadline::new();
