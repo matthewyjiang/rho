@@ -140,15 +140,10 @@ impl PermissionMode {
     /// `ScopedWorkspacePolicy` is not used here because it deny-defaults
     /// network destinations behind a per-host allowlist, which would break the
     /// "reads and network are free" contract of the checked modes.
-    #[cfg(test)]
-    pub fn workspace_policy(self) -> Option<ModePolicy> {
-        self.workspace_policy_with_writes(SessionWriteLog::default())
-    }
-
-    pub fn workspace_policy_with_writes(
-        self,
-        session_writes: SessionWriteLog,
-    ) -> Option<ModePolicy> {
+    ///
+    /// `session_writes` carries the paths whose first write already passed the
+    /// gate this session.
+    pub fn workspace_policy(self, session_writes: SessionWriteLog) -> Option<ModePolicy> {
         match self {
             Self::Bypass => None,
             Self::Auto | Self::AllowEdits | Self::Plan | Self::Supervised => Some(ModePolicy {
@@ -174,6 +169,16 @@ impl SessionWriteLog {
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .insert(path);
+    }
+
+    /// Approvals granted under an edit-allowing mode carry only into another
+    /// edit-allowing mode; any other switch starts from an empty log.
+    pub(crate) fn carried_across(self, from: PermissionMode, to: PermissionMode) -> Self {
+        if from.allows_tracked_workspace_edits() && to.allows_tracked_workspace_edits() {
+            self
+        } else {
+            Self::default()
+        }
     }
 
     fn contains(&self, path: &Path) -> bool {
@@ -283,26 +288,19 @@ fn rememberable_workspace_write(request: &CapabilityRequest) -> Option<PathBuf> 
 /// `git ls-files --error-unmatch` from the file's parent. Missing git, a
 /// non-repo, or an untracked path all return false so the skip fails closed.
 fn path_is_git_tracked(path: &Path) -> bool {
-    let Some(parent) = path.parent() else {
-        return false;
-    };
-    let Some(file_name) = path.file_name() else {
-        return false;
-    };
-    Command::new("git")
-        .args(["ls-files", "--error-unmatch", "-z", "--"])
-        .arg(file_name)
-        .current_dir(parent)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
+    git_status_check(path, &["ls-files", "--error-unmatch", "-z", "--"])
 }
 
 /// `git check-ignore -q` from the file's parent. Missing git or a non-repo
 /// means the path is not ignored, so the skip stays available.
 fn path_is_git_ignored(path: &Path) -> bool {
+    git_status_check(path, &["check-ignore", "-q", "--"])
+}
+
+/// Runs `git <args> <file_name>` from the path's parent and reports whether it
+/// exited successfully. A path without a parent or file name, missing git, or a
+/// non-repo all return false.
+fn git_status_check(path: &Path, args: &[&str]) -> bool {
     let Some(parent) = path.parent() else {
         return false;
     };
@@ -310,7 +308,7 @@ fn path_is_git_ignored(path: &Path) -> bool {
         return false;
     };
     Command::new("git")
-        .args(["check-ignore", "-q", "--"])
+        .args(args)
         .arg(file_name)
         .current_dir(parent)
         .stdin(Stdio::null())

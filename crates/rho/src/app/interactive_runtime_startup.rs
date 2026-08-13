@@ -109,10 +109,7 @@ pub(super) async fn initialize(
             provider: Arc::clone(&provider),
             tools: tools.tools(),
             workspace: workspace.clone(),
-            workspace_policy: AppPolicy::for_mode_with_writes(
-                permission_mode,
-                session_writes.clone(),
-            ),
+            workspace_policy: AppPolicy::for_mode(permission_mode, session_writes.clone()),
             approval_session: approval_channel
                 .handler
                 .clone()
@@ -305,7 +302,11 @@ pub(super) fn approval_channel_for(
     mode: PermissionMode,
     options: ApprovalChannelOptions,
 ) -> ApprovalChannel {
-    match mode {
+    let ApprovalChannel {
+        handler,
+        receiver,
+        classifier,
+    } = match mode {
         PermissionMode::Auto => {
             let capacity = NonZeroUsize::new(16).expect("approval channel capacity is non-zero");
             let (human_handler, receiver) = rho_sdk::approval_channel(capacity);
@@ -315,27 +316,13 @@ pub(super) fn approval_channel_for(
                 options.usage_recording,
                 Some(Arc::new(human_handler)),
             );
-            let handler: Arc<dyn ApprovalHandler> =
-                remember_allowed_workspace_writes(classifier.clone(), options.session_writes);
             ApprovalChannel {
-                handler: Some(handler),
+                handler: Some(classifier.clone()),
                 receiver: Some(receiver),
                 classifier: Some(classifier),
             }
         }
-        PermissionMode::AllowEdits => {
-            let capacity = NonZeroUsize::new(16).expect("approval channel capacity is non-zero");
-            let (handler, receiver) = rho_sdk::approval_channel(capacity);
-            ApprovalChannel {
-                handler: Some(remember_allowed_workspace_writes(
-                    Arc::new(handler),
-                    options.session_writes,
-                )),
-                receiver: Some(receiver),
-                classifier: None,
-            }
-        }
-        PermissionMode::Supervised => {
+        PermissionMode::AllowEdits | PermissionMode::Supervised => {
             let capacity = NonZeroUsize::new(16).expect("approval channel capacity is non-zero");
             let (handler, receiver) = rho_sdk::approval_channel(capacity);
             ApprovalChannel {
@@ -349,6 +336,19 @@ pub(super) fn approval_channel_for(
             receiver: None,
             classifier: None,
         },
+    };
+    // Only the edit-allowing modes record approvals; Supervised keeps every
+    // write behind the gate, so its handler stays unwrapped.
+    let handler = match handler {
+        Some(handler) if mode.allows_tracked_workspace_edits() => Some(
+            remember_allowed_workspace_writes(handler, options.session_writes),
+        ),
+        other => other,
+    };
+    ApprovalChannel {
+        handler,
+        receiver,
+        classifier,
     }
 }
 

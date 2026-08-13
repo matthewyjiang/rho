@@ -17,7 +17,7 @@ fn mode_policy_dispatches_to_permission_mode() {
     let request = write_request();
     for mode in [PermissionMode::Plan, PermissionMode::Supervised] {
         assert_eq!(
-            AppPolicy::for_mode_with_writes(mode, Default::default()).evaluate(&request),
+            AppPolicy::for_mode(mode, Default::default()).evaluate(&request),
             mode.decision_for(request.kind())
         );
     }

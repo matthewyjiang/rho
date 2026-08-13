@@ -166,7 +166,7 @@ fn workflow_approval_channel(
     approval_mode: WorkflowApprovalMode,
     session_writes: SessionWriteLog,
 ) -> anyhow::Result<WorkflowApprovalChannel> {
-    match permission_mode {
+    let (handler, classifier): (Arc<dyn ApprovalHandler>, _) = match permission_mode {
         PermissionMode::Auto => {
             ensure_headless_auto_classifier_model(config)?;
             let human = approval_mode.can_prompt().then(|| {
@@ -179,34 +179,29 @@ fn workflow_approval_channel(
                 approval_mode.usage_recording(),
                 human,
             );
-            let handler = remember_allowed_workspace_writes(classifier.clone(), session_writes);
-            Ok(WorkflowApprovalChannel {
-                session: ApprovalSession::from_shared(handler),
-                classifier: Some(classifier),
-            })
+            (classifier.clone(), Some(classifier))
         }
-        PermissionMode::AllowEdits => Ok(WorkflowApprovalChannel {
-            session: ApprovalSession::from_shared(remember_allowed_workspace_writes(
-                Arc::new(TerminalWorkflowApprovals {
-                    interactive: approval_mode.can_prompt(),
-                }),
-                session_writes,
-            )),
-            classifier: None,
-        }),
-        PermissionMode::Supervised => Ok(WorkflowApprovalChannel {
-            session: ApprovalSession::new(TerminalWorkflowApprovals {
+        PermissionMode::AllowEdits
+        | PermissionMode::Supervised
+        | PermissionMode::Bypass
+        | PermissionMode::Plan => (
+            Arc::new(TerminalWorkflowApprovals {
                 interactive: approval_mode.can_prompt(),
             }),
-            classifier: None,
-        }),
-        PermissionMode::Bypass | PermissionMode::Plan => Ok(WorkflowApprovalChannel {
-            session: ApprovalSession::new(TerminalWorkflowApprovals {
-                interactive: approval_mode.can_prompt(),
-            }),
-            classifier: None,
-        }),
-    }
+            None,
+        ),
+    };
+    // Only the edit-allowing modes record approvals; the other modes keep every
+    // write behind the gate, so their handler stays unwrapped.
+    let handler = if permission_mode.allows_tracked_workspace_edits() {
+        remember_allowed_workspace_writes(handler, session_writes)
+    } else {
+        handler
+    };
+    Ok(WorkflowApprovalChannel {
+        session: ApprovalSession::from_shared(handler),
+        classifier,
+    })
 }
 
 struct WorkflowCommandHosts {
@@ -436,7 +431,7 @@ impl WorkflowRuntime {
         };
         let hosts = Arc::new(WorkflowCommandHosts {
             workspace,
-            policy: AppPolicy::for_mode_with_writes(permission_mode, session_writes),
+            policy: AppPolicy::for_mode(permission_mode, session_writes),
             approvals: command_approvals,
             hooks,
         });

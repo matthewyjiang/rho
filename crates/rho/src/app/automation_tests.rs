@@ -313,7 +313,7 @@ async fn headless_run_compacts_at_configured_threshold_and_completes() {
         provider: shared_provider,
         tools: &tools,
         workspace: Workspace::new(root.path()).unwrap(),
-        workspace_policy: AppPolicy::for_mode_with_writes(PermissionMode::Auto, Default::default()),
+        workspace_policy: AppPolicy::for_mode(PermissionMode::Auto, Default::default()),
         approval_session: None,
         system_prompt: SystemPrompt::None,
         reasoning: rho_sdk::ReasoningLevel::Off,

@@ -527,7 +527,7 @@ async fn run_session_with_output(
                 provider,
                 tools: tool_set.tools(),
                 workspace,
-                workspace_policy: AppPolicy::for_mode_with_writes(
+                workspace_policy: AppPolicy::for_mode(
                     startup.config.permission_mode,
                     session_writes,
                 ),

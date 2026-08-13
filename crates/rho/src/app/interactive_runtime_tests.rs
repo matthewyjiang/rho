@@ -47,7 +47,7 @@ async fn configured_token_threshold_installs_sdk_automatic_compaction_policy() {
         provider: shared_provider,
         tools: tools.tools(),
         workspace,
-        workspace_policy: AppPolicy::for_mode_with_writes(PermissionMode::Auto, Default::default()),
+        workspace_policy: AppPolicy::for_mode(PermissionMode::Auto, Default::default()),
         approval_session: None,
         system_prompt: SystemPrompt::None,
         reasoning: rho_sdk::ReasoningLevel::Off,

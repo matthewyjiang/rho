@@ -9,8 +9,8 @@ pub(crate) enum AppPolicy {
 }
 
 impl AppPolicy {
-    pub(crate) fn for_mode_with_writes(mode: PermissionMode, writes: SessionWriteLog) -> Self {
-        match mode.workspace_policy_with_writes(writes) {
+    pub(crate) fn for_mode(mode: PermissionMode, writes: SessionWriteLog) -> Self {
+        match mode.workspace_policy(writes) {
             Some(policy) => Self::Mode(policy),
             None => Self::Allow,
         }

@@ -8,7 +8,7 @@ use rho_sdk::{
     ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits, WorkspacePolicy,
 };
 
-use super::PermissionMode;
+use super::{PermissionMode, SessionWriteLog};
 
 fn source(name: &str) -> CapabilitySource {
     CapabilitySource::built_in_tool(name)
@@ -169,7 +169,7 @@ fn workspace_policy_agrees_with_decision_for_when_writes_are_not_tracked() {
         PermissionMode::Supervised,
     ] {
         let policy = mode
-            .workspace_policy()
+            .workspace_policy(SessionWriteLog::default())
             .expect("policy exists for checked modes");
         for request in [
             &read_request,
@@ -189,7 +189,9 @@ fn workspace_policy_agrees_with_decision_for_when_writes_are_not_tracked() {
         }
     }
 
-    assert!(PermissionMode::Bypass.workspace_policy().is_none());
+    assert!(PermissionMode::Bypass
+        .workspace_policy(SessionWriteLog::default())
+        .is_none());
 }
 
 // Covers: Allow edits and Auto skip the classifier/prompt for in-workspace
@@ -208,7 +210,9 @@ fn allow_edits_and_auto_allow_tracked_workspace_writes_only() {
     let process = process_request("git status");
 
     for mode in [PermissionMode::AllowEdits, PermissionMode::Auto] {
-        let policy = mode.workspace_policy().expect("checked mode has a policy");
+        let policy = mode
+            .workspace_policy(SessionWriteLog::default())
+            .expect("checked mode has a policy");
         assert_eq!(policy.evaluate(&tracked_write), PolicyDecision::Allow);
         assert_eq!(
             policy.evaluate(&untracked_write),
@@ -231,7 +235,7 @@ fn allow_edits_and_auto_allow_tracked_workspace_writes_only() {
     }
 
     let supervised = PermissionMode::Supervised
-        .workspace_policy()
+        .workspace_policy(SessionWriteLog::default())
         .expect("supervised has a policy");
     assert_eq!(
         supervised.evaluate(&tracked_write),
@@ -262,7 +266,9 @@ fn allow_edits_and_auto_allow_later_writes_to_approved_workspace_files() {
     let outside_write = write_request(dir.path().join("new.rs"), PathScope::UnrestrictedFilesystem);
 
     for mode in [PermissionMode::AllowEdits, PermissionMode::Auto] {
-        let policy = mode.workspace_policy().expect("checked mode has a policy");
+        let policy = mode
+            .workspace_policy(SessionWriteLog::default())
+            .expect("checked mode has a policy");
         assert_eq!(
             policy.evaluate(&created_write),
             PolicyDecision::RequireApproval {

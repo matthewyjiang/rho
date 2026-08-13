@@ -119,7 +119,7 @@ impl InteractiveRuntime {
     }
 
     fn workspace_policy(&self) -> AppPolicy {
-        AppPolicy::for_mode_with_writes(self.permission_mode, self.session_writes.clone())
+        AppPolicy::for_mode(self.permission_mode, self.session_writes.clone())
     }
 
     pub(crate) fn update_config(&mut self, config: Config) {
@@ -166,13 +166,10 @@ impl InteractiveRuntime {
             return Ok(());
         }
 
-        let session_writes = if mode.allows_tracked_workspace_edits()
-            && self.permission_mode.allows_tracked_workspace_edits()
-        {
-            self.session_writes.clone()
-        } else {
-            crate::permission::SessionWriteLog::default()
-        };
+        let session_writes = self
+            .session_writes
+            .clone()
+            .carried_across(self.permission_mode, mode);
         let snapshot = self.sessions.session().snapshot();
         let approval_channel = approval_channel_for(
             mode,
@@ -187,7 +184,7 @@ impl InteractiveRuntime {
             provider: Arc::clone(self.provider.provider()),
             tools: self.tools.tools(),
             workspace: self.workspace.clone(),
-            workspace_policy: AppPolicy::for_mode_with_writes(mode, session_writes.clone()),
+            workspace_policy: AppPolicy::for_mode(mode, session_writes.clone()),
             approval_session: approval_channel
                 .handler
                 .clone()
