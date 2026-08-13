@@ -14,7 +14,9 @@ use crate::{
 use rho_sdk::model::ToolCall;
 
 use super::convert::{extract_response_text, ResponsesResponse};
-use super::stream::{extract_usage_report, line_decode_error, sse_data};
+use super::stream::{
+    extract_usage_report, line_decode_error, sse_data, GenerationTokenContext, HiddenReasoningRisk,
+};
 
 /// Max chars for a single search/url detail string in activity previews.
 const DETAIL_MAX_CHARS: usize = 80;
@@ -110,6 +112,10 @@ pub(crate) struct CodexSseState {
     /// stream carried no text or function calls yet; skip those keys so
     /// WebSearch / HostedToolActivity are not dual-emitted.
     emitted_search_keys: BTreeSet<String>,
+    /// True once a non-empty reasoning or reasoning-summary delta streamed.
+    /// Decides whether reasoning wall time sits inside the generation window
+    /// when the completed usage payload is converted to a throughput count.
+    reasoning_streamed: bool,
 }
 
 impl CodexSseState {
@@ -511,6 +517,9 @@ pub(crate) fn handle_codex_sse_value(
         }
     } else if event_type.contains("reasoning") && event_type.ends_with(".delta") {
         if let Some(delta) = extract_reasoning_delta(value) {
+            if !delta.is_empty() {
+                state.reasoning_streamed = true;
+            }
             if let Some(on_event) = on_event.as_mut() {
                 if is_reasoning_summary_event(event_type) {
                     on_event(ModelEvent::ReasoningSummaryDelta(delta))?;
@@ -646,9 +655,15 @@ pub(crate) fn handle_codex_sse_value(
             .filter(|status| !status.is_empty())
             .map(str::to_owned);
         let response = value.get("response");
+        // Responses backends host reasoning models, so an aggregate total
+        // without reasoning details cannot be trusted as a throughput count.
+        let context = GenerationTokenContext {
+            reasoning_streamed: state.reasoning_streamed,
+            hidden_reasoning_risk: HiddenReasoningRisk::Possible,
+        };
         let usage_report = response
-            .and_then(extract_usage_report)
-            .or_else(|| extract_usage_report(value));
+            .and_then(|response| extract_usage_report(response, context))
+            .or_else(|| extract_usage_report(value, context));
         if let Some(report) = usage_report {
             if let Some(on_event) = on_event.as_mut() {
                 if let Some(event) = report.generation_output_tokens.into_event() {

@@ -96,37 +96,26 @@ impl OpenAiCompatibleProvider {
         let body = self.request_body(request, true)?;
         let response = self.send(&body, Some(on_request_event)).await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
-        let mut chat_stream = ChatStreamAccumulator::new(self.dialect.chat_tool_call_policy());
+        let mut chat_stream = ChatStreamAccumulator::new(
+            self.dialect.chat_tool_call_policy(),
+            body.hidden_reasoning_risk(),
+        );
         let mut decoder = LineDecoder::default();
         let mut stream = response.bytes_stream();
         let mut idle_deadline = StreamIdleDeadline::new();
-        let buffer_usage_until_stream_end = self.dialect == OpenAiCompatibleDialect::Poolside;
-        let mut buffered_usage = None;
-        {
-            let mut handle_event = |event| match event {
-                ModelEvent::Usage(usage) if buffer_usage_until_stream_end => {
-                    buffered_usage = Some(usage);
-                    Ok(())
-                }
-                event => on_event(event),
+        loop {
+            let Some(chunk) = idle_deadline.wait_for(stream.next()).await? else {
+                break;
             };
-            loop {
-                let Some(chunk) = idle_deadline.wait_for(stream.next()).await? else {
-                    break;
-                };
-                decoder.push(&chunk?);
-                while let Some(line) = decoder.next_line().map_err(invalid_stream_utf8)? {
-                    if chat_stream.handle_line(line, &mut handle_event)? {
-                        idle_deadline.record_activity();
-                    }
+            decoder.push(&chunk?);
+            while let Some(line) = decoder.next_line().map_err(invalid_stream_utf8)? {
+                if chat_stream.handle_line(line, on_event)? {
+                    idle_deadline.record_activity();
                 }
-            }
-            if let Some(line) = decoder.finish().map_err(invalid_stream_utf8)? {
-                chat_stream.handle_line(line, &mut handle_event)?;
             }
         }
-        if let Some(usage) = buffered_usage {
-            on_event(ModelEvent::Usage(usage))?;
+        if let Some(line) = decoder.finish().map_err(invalid_stream_utf8)? {
+            chat_stream.handle_line(line, on_event)?;
         }
         chat_stream.finish(on_event)
     }

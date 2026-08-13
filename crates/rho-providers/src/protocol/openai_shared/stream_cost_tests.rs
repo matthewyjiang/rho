@@ -1,8 +1,24 @@
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
-use super::{extract_generation_output_tokens, extract_usage, GenerationOutputTokens};
+use super::{
+    extract_generation_output_tokens, extract_usage, GenerationOutputTokens,
+    GenerationTokenContext, HiddenReasoningRisk,
+};
 use crate::model::ModelUsage;
+
+const HIDDEN_UNLIKELY: GenerationTokenContext = GenerationTokenContext {
+    reasoning_streamed: false,
+    hidden_reasoning_risk: HiddenReasoningRisk::Unlikely,
+};
+const HIDDEN_POSSIBLE: GenerationTokenContext = GenerationTokenContext {
+    reasoning_streamed: false,
+    hidden_reasoning_risk: HiddenReasoningRisk::Possible,
+};
+const REASONING_STREAMED: GenerationTokenContext = GenerationTokenContext {
+    reasoning_streamed: true,
+    hidden_reasoning_risk: HiddenReasoningRisk::Possible,
+};
 
 #[test]
 fn reported_cost_includes_byok_upstream_inference_cost() {
@@ -76,28 +92,67 @@ fn invalid_reported_costs_do_not_replace_catalog_fallback() {
     );
 }
 
-// Covers: throughput must exclude reasoning tokens across ordered OpenAI usage aliases
+// Covers: the throughput numerator must match the generation window — subtract
+// reasoning only when it stayed off the wire, refuse aggregate totals that may
+// hide reasoning, and keep full totals when reasoning streamed in-window
 // Owner: OpenAI shared usage parser
 #[test]
-fn generation_output_tokens_exclude_reasoning_across_usage_aliases() {
+fn generation_output_tokens_match_generation_window_accounting() {
     let cases = [
         (
-            "responses aliases",
+            "responses aliases subtract hidden reasoning",
             json!({"usage": {
                 "output_tokens": 30,
                 "output_tokens_details": {"reasoning_tokens": 12}
             }}),
+            HIDDEN_POSSIBLE,
             GenerationOutputTokens::Reported(18),
             Some(30),
         ),
         (
-            "chat completions aliases",
+            "chat completions aliases subtract hidden reasoning",
             json!({"usage": {
                 "completion_tokens": 21,
                 "completion_tokens_details": {"reasoning_tokens": 8}
             }}),
+            HIDDEN_POSSIBLE,
             GenerationOutputTokens::Reported(13),
             Some(21),
+        ),
+        (
+            "streamed reasoning keeps the full total despite details",
+            json!({"usage": {
+                "completion_tokens": 160,
+                "completion_tokens_details": {"reasoning_tokens": 100}
+            }}),
+            REASONING_STREAMED,
+            GenerationOutputTokens::Reported(160),
+            Some(160),
+        ),
+        (
+            "streamed reasoning keeps the full total without details",
+            json!({"usage": {"completion_tokens": 230}}),
+            REASONING_STREAMED,
+            GenerationOutputTokens::Reported(230),
+            Some(230),
+        ),
+        (
+            "details absent with possible hidden reasoning is unavailable",
+            json!({"usage": {
+                "prompt_tokens": 3211,
+                "completion_tokens": 230,
+                "total_tokens": 3441
+            }}),
+            HIDDEN_POSSIBLE,
+            GenerationOutputTokens::Unavailable,
+            Some(230),
+        ),
+        (
+            "details absent without reasoning trusts the aggregate",
+            json!({"usage": {"output_tokens": 11}}),
+            HIDDEN_UNLIKELY,
+            GenerationOutputTokens::Unreported,
+            Some(11),
         ),
         (
             "count and details aliases stay paired",
@@ -106,6 +161,7 @@ fn generation_output_tokens_exclude_reasoning_across_usage_aliases() {
                 "completion_tokens": 21,
                 "completion_tokens_details": {"reasoning_tokens": 8}
             }}),
+            HIDDEN_UNLIKELY,
             GenerationOutputTokens::Unreported,
             Some(30),
         ),
@@ -117,6 +173,7 @@ fn generation_output_tokens_exclude_reasoning_across_usage_aliases() {
                 "output_tokens_details": {"reasoning_tokens": "invalid"},
                 "completion_tokens_details": {"reasoning_tokens": 4}
             }}),
+            HIDDEN_POSSIBLE,
             GenerationOutputTokens::Reported(15),
             Some(19),
         ),
@@ -126,7 +183,8 @@ fn generation_output_tokens_exclude_reasoning_across_usage_aliases() {
                 "output_tokens": 3,
                 "output_tokens_details": {"reasoning_tokens": 9}
             }}),
-            GenerationOutputTokens::Invalid,
+            HIDDEN_UNLIKELY,
+            GenerationOutputTokens::Unavailable,
             Some(3),
         ),
         (
@@ -134,20 +192,22 @@ fn generation_output_tokens_exclude_reasoning_across_usage_aliases() {
             json!({"usage": {
                 "output_tokens_details": {"reasoning_tokens": 2}
             }}),
+            HIDDEN_POSSIBLE,
             GenerationOutputTokens::Unreported,
             None,
         ),
         (
-            "details absent",
-            json!({"usage": {"output_tokens": 11}}),
+            "null usage placeholder chunks report nothing",
+            json!({"usage": null}),
+            HIDDEN_POSSIBLE,
             GenerationOutputTokens::Unreported,
-            Some(11),
+            None,
         ),
     ];
 
-    for (name, value, expected_generation, expected_usage) in cases {
+    for (name, value, context, expected_generation, expected_usage) in cases {
         assert_eq!(
-            extract_generation_output_tokens(&value),
+            extract_generation_output_tokens(&value, context),
             expected_generation,
             "{name}: generation output"
         );

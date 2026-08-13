@@ -1,5 +1,6 @@
 use crate::model::{ContentBlock, ModelEvent, ModelResponse, ToolCall};
 use crate::protocol::openai_chat::{ChatStreamAccumulator, ChatToolCallPolicy};
+use crate::protocol::openai_shared::stream::HiddenReasoningRisk;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
@@ -91,7 +92,8 @@ fn accumulates_streamed_tool_call_deltas() {
 // Owner: openai chat completions streaming
 #[test]
 fn streamed_tool_calls_tolerate_qwen_style_quirks() {
-    let mut chat_stream = ChatStreamAccumulator::new(ChatToolCallPolicy::Lenient);
+    let mut chat_stream =
+        ChatStreamAccumulator::new(ChatToolCallPolicy::Lenient, HiddenReasoningRisk::Unlikely);
     // index 1 first leaves a hole at 0; arguments arrive as a JSON object value.
     chat_stream
         .handle_line(

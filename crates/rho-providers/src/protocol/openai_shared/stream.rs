@@ -26,26 +26,46 @@ const MAX_STREAM_BLOCK_INDEX: usize = 4096;
 /// `reasoning_content`). History conversion only replays that context to the
 /// exact model that produced it, and hosts that do not know the field ignore
 /// it, so emitting it for every OpenAI-chat-style provider stays safe.
+///
+/// Usage is not forwarded per chunk: hosts restate usage as running or final
+/// snapshots (sometimes on several chunks, with non-monotonic input totals),
+/// so `finish` publishes one merged snapshot and one throughput carrier after
+/// the stream ends.
 pub(crate) struct ChatStreamAccumulator {
     text: String,
     reasoning: String,
     tool_calls: Vec<RawChatToolCall>,
     policy: ChatToolCallPolicy,
+    hidden_reasoning_risk: HiddenReasoningRisk,
+    /// Merged usage snapshot across the stream. Chat hosts restate usage as
+    /// running or final totals rather than increments, and some restate a
+    /// snapshot on several chunks, so publishing each report downstream would
+    /// double-count. `finish` publishes the merged snapshot exactly once.
+    usage_snapshot: Option<ModelUsage>,
+    /// Output/reasoning token pairing from the latest usage payload that
+    /// reported an output count, kept for the throughput carrier at finish.
+    output_usage: Option<ReportedOutputUsage>,
 }
 
 impl Default for ChatStreamAccumulator {
     fn default() -> Self {
-        Self::new(ChatToolCallPolicy::Strict)
+        Self::new(ChatToolCallPolicy::Strict, HiddenReasoningRisk::Unlikely)
     }
 }
 
 impl ChatStreamAccumulator {
-    pub(crate) fn new(policy: ChatToolCallPolicy) -> Self {
+    pub(crate) fn new(
+        policy: ChatToolCallPolicy,
+        hidden_reasoning_risk: HiddenReasoningRisk,
+    ) -> Self {
         Self {
             text: String::new(),
             reasoning: String::new(),
             tool_calls: Vec::new(),
             policy,
+            hidden_reasoning_risk,
+            usage_snapshot: None,
+            output_usage: None,
         }
     }
 
@@ -64,11 +84,19 @@ impl ChatStreamAccumulator {
         let Some(value) = serde_json::from_str::<serde_json::Value>(data).ok() else {
             return Ok(false);
         };
-        if let Some(report) = extract_usage_report(&value) {
-            if let Some(event) = report.generation_output_tokens.into_event() {
-                on_event(event)?;
+        if let Some(usage) = extract_usage(&value) {
+            self.usage_snapshot = Some(match self.usage_snapshot.take() {
+                Some(snapshot) => merge_cumulative_usage(&snapshot, usage),
+                None => usage,
+            });
+            let (output_tokens, reasoning_tokens) =
+                extract_output_usage(value.get("usage").unwrap_or(&serde_json::Value::Null));
+            if let Some(output_tokens) = output_tokens {
+                self.output_usage = Some(ReportedOutputUsage {
+                    output_tokens,
+                    reasoning_tokens,
+                });
             }
-            on_event(ModelEvent::Usage(report.usage))?;
         }
         let Some(choice) = value
             .get("choices")
@@ -173,11 +201,24 @@ impl ChatStreamAccumulator {
         finalize_chat_assistant(self.text, self.reasoning, self.tool_calls, self.policy)
     }
 
-    /// Finalizes and emits retained reasoning context through `on_event`.
+    /// Finalizes and emits the usage snapshot, throughput carrier, and retained
+    /// reasoning context through `on_event`.
     pub(crate) fn finish(
         self,
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
+        let context = GenerationTokenContext {
+            reasoning_streamed: !self.reasoning.is_empty(),
+            hidden_reasoning_risk: self.hidden_reasoning_risk,
+        };
+        if let Some(event) =
+            resolve_generation_output_tokens(self.output_usage, context).into_event()
+        {
+            on_event(event)?;
+        }
+        if let Some(usage) = self.usage_snapshot.clone() {
+            on_event(ModelEvent::Usage(usage))?;
+        }
         let finish = self.into_finish()?;
         emit_chat_reasoning_context(finish.reasoning_content, on_event)?;
         Ok(finish.response)
@@ -294,7 +335,7 @@ fn generation_output_tokens_unavailable_event() -> ModelEvent {
 pub(crate) enum GenerationOutputTokens {
     Unreported,
     Reported(u64),
-    Invalid,
+    Unavailable,
 }
 
 impl GenerationOutputTokens {
@@ -302,9 +343,33 @@ impl GenerationOutputTokens {
         match self {
             Self::Unreported => None,
             Self::Reported(tokens) => Some(generation_output_tokens_event(tokens)),
-            Self::Invalid => Some(generation_output_tokens_unavailable_event()),
+            Self::Unavailable => Some(generation_output_tokens_unavailable_event()),
         }
     }
+}
+
+/// Whether this call may have produced reasoning tokens the stream never
+/// showed. Decides how to treat a usage payload that reports output tokens
+/// without reasoning-token details when no reasoning deltas streamed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HiddenReasoningRisk {
+    /// No serialized control asked the host to reason; treat aggregate output
+    /// totals as visible-generation tokens.
+    Unlikely,
+    /// Reasoning was requested (or cannot be ruled out), so an aggregate total
+    /// may hide off-wire reasoning whose wall time sat before the visible
+    /// stream. Without reasoning-token details, report throughput as
+    /// unavailable instead of an inflated rate.
+    Possible,
+}
+
+/// Stream observations that decide which output-token count matches the
+/// generation window measured by the runtime.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct GenerationTokenContext {
+    /// Whether any reasoning deltas streamed before this usage payload.
+    pub(crate) reasoning_streamed: bool,
+    pub(crate) hidden_reasoning_risk: HiddenReasoningRisk,
 }
 
 pub(crate) struct UsageReport {
@@ -329,31 +394,88 @@ fn extract_output_usage(usage: &serde_json::Value) -> (Option<u64>, Option<u64>)
     (None, None)
 }
 
+/// Output/reasoning token pairing from one usage payload.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ReportedOutputUsage {
+    pub(crate) output_tokens: u64,
+    pub(crate) reasoning_tokens: Option<u64>,
+}
+
+/// Picks the output-token count that matches the runtime's generation window.
+///
+/// The window opens at the first generated event, including reasoning deltas.
+/// Reasoning that streamed therefore spent its wall time inside the window, so
+/// the full output total is the matching numerator even when the host itemizes
+/// reasoning tokens separately. Reasoning that stayed off the wire spent its
+/// wall time before the window: subtract it when the host itemizes it, and
+/// refuse to report a count when it might exist but cannot be separated.
+pub(crate) fn resolve_generation_output_tokens(
+    output_usage: Option<ReportedOutputUsage>,
+    context: GenerationTokenContext,
+) -> GenerationOutputTokens {
+    let Some(output_usage) = output_usage else {
+        return GenerationOutputTokens::Unreported;
+    };
+    if context.reasoning_streamed {
+        return GenerationOutputTokens::Reported(output_usage.output_tokens);
+    }
+    match (output_usage.reasoning_tokens, context.hidden_reasoning_risk) {
+        (Some(reasoning_tokens), _) => output_usage
+            .output_tokens
+            .checked_sub(reasoning_tokens)
+            .map_or(
+                GenerationOutputTokens::Unavailable,
+                GenerationOutputTokens::Reported,
+            ),
+        (None, HiddenReasoningRisk::Unlikely) => GenerationOutputTokens::Unreported,
+        (None, HiddenReasoningRisk::Possible) => GenerationOutputTokens::Unavailable,
+    }
+}
+
+/// [`resolve_generation_output_tokens`] over a raw stream payload.
 pub(crate) fn extract_generation_output_tokens(
     value: &serde_json::Value,
+    context: GenerationTokenContext,
 ) -> GenerationOutputTokens {
-    let Some(usage) = value.get("usage") else {
+    let Some(usage) = value.get("usage").filter(|usage| usage.is_object()) else {
         return GenerationOutputTokens::Unreported;
     };
     let (output_tokens, reasoning_tokens) = extract_output_usage(usage);
-    let (Some(output_tokens), Some(reasoning_tokens)) = (output_tokens, reasoning_tokens) else {
-        return GenerationOutputTokens::Unreported;
-    };
-    output_tokens.checked_sub(reasoning_tokens).map_or(
-        GenerationOutputTokens::Invalid,
-        GenerationOutputTokens::Reported,
+    resolve_generation_output_tokens(
+        output_tokens.map(|output_tokens| ReportedOutputUsage {
+            output_tokens,
+            reasoning_tokens,
+        }),
+        context,
     )
 }
 
-pub(crate) fn extract_usage_report(value: &serde_json::Value) -> Option<UsageReport> {
+pub(crate) fn extract_usage_report(
+    value: &serde_json::Value,
+    context: GenerationTokenContext,
+) -> Option<UsageReport> {
     Some(UsageReport {
         usage: extract_usage(value)?,
-        generation_output_tokens: extract_generation_output_tokens(value),
+        generation_output_tokens: extract_generation_output_tokens(value, context),
     })
 }
 
+/// Field-wise cumulative merge: a later snapshot wins where it reports a
+/// field, earlier totals survive where it does not.
+fn merge_cumulative_usage(previous: &ModelUsage, observed: ModelUsage) -> ModelUsage {
+    ModelUsage {
+        input_tokens: observed.input_tokens.or(previous.input_tokens),
+        output_tokens: observed.output_tokens.or(previous.output_tokens),
+        cache_read_tokens: observed.cache_read_tokens.or(previous.cache_read_tokens),
+        cache_write_tokens: observed.cache_write_tokens.or(previous.cache_write_tokens),
+        total_tokens: observed.total_tokens.or(previous.total_tokens),
+        context_window: observed.context_window.or(previous.context_window),
+        cost_usd_micros: observed.cost_usd_micros.or(previous.cost_usd_micros),
+    }
+}
+
 pub(crate) fn extract_usage(value: &serde_json::Value) -> Option<ModelUsage> {
-    let usage = value.get("usage")?;
+    let usage = value.get("usage").filter(|usage| usage.is_object())?;
     let raw_input_tokens = usage
         .get("input_tokens")
         .or_else(|| usage.get("prompt_tokens"))
