@@ -164,11 +164,10 @@ async fn screen_result_decides_whether_review_runs() {
     }
 }
 
-// Covers: both stages must share the system prompt and transcript prefix so the review
-// hits the provider prompt cache, and the screen must stay on the cheap reasoning level
+// Covers: both stages share the transcript block and only the review uses configured reasoning
 // Owner: permission classifier two-stage pipeline
 #[tokio::test]
-async fn stages_share_a_cache_prefix_and_differ_only_after_the_transcript() {
+async fn stages_share_the_transcript_block_and_differ_in_instruction_and_reasoning() {
     let provider = ScriptedProvider::new(
         ModelIdentity::new("provider", "api", "model"),
         [text_turn("escalate"), text_turn(r#"{"decision":"allow"}"#)],
@@ -182,14 +181,20 @@ async fn stages_share_a_cache_prefix_and_differ_only_after_the_transcript() {
         requests[0].messages,
         [
             Message::System(CLASSIFIER_PROMPT.into()),
-            Message::user_text(format!("{transcript}\n\n{CLASSIFIER_SCREEN_INSTRUCTION}")),
+            Message::User(vec![
+                ContentBlock::Text(transcript.clone()),
+                ContentBlock::Text(CLASSIFIER_SCREEN_INSTRUCTION.into()),
+            ]),
         ]
     );
     assert_eq!(
         requests[1].messages,
         [
             Message::System(CLASSIFIER_PROMPT.into()),
-            Message::user_text(format!("{transcript}\n\n{CLASSIFIER_REVIEW_INSTRUCTION}")),
+            Message::User(vec![
+                ContentBlock::Text(transcript),
+                ContentBlock::Text(CLASSIFIER_REVIEW_INSTRUCTION.into()),
+            ]),
         ]
     );
     assert_eq!(requests[0].reasoning_level, ReasoningLevel::Low);

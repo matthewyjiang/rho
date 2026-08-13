@@ -73,6 +73,10 @@ fn request_body_serializes_messages_tools_and_stream_flag() {
     assert!(value.get("cache_control").is_none());
     assert!(value.get("prompt_cache_key").is_none());
     assert_eq!(value["messages"][1]["content"][0]["type"], "tool_use");
+    assert_eq!(
+        value["messages"][0]["content"][0]["cache_control"],
+        json!({"type":"ephemeral"})
+    );
 }
 
 #[test]
@@ -174,6 +178,111 @@ fn adaptive_effort_uses_only_levels_supported_by_each_model() {
         adaptive_effort("claude-opus-4-8-20260401", ReasoningLevel::Xhigh),
         "xhigh"
     );
+}
+
+fn two_stage_request_body(
+    provider: &AnthropicProvider,
+    instruction: &str,
+    reasoning_level: ReasoningLevel,
+) -> AnthropicRequest {
+    let messages = [
+        Message::System("classifier".into()),
+        Message::User(vec![
+            ContentBlock::Text("shared transcript".into()),
+            ContentBlock::Text(instruction.into()),
+        ]),
+    ];
+    provider
+        .request_body(
+            ModelRequest {
+                messages: &messages,
+                tools: &[],
+                cancellation: Default::default(),
+                reasoning_level,
+                prompt_cache_key: None,
+            },
+            false,
+        )
+        .unwrap()
+}
+
+fn user_text_blocks(body: &AnthropicRequest) -> [(&str, Option<&AnthropicCacheControl>); 2] {
+    match body.messages[0].content.as_slice() {
+        [AnthropicContentBlock::Text {
+            text: first,
+            cache_control: first_cache,
+        }, AnthropicContentBlock::Text {
+            text: second,
+            cache_control: second_cache,
+        }] => [
+            (first.as_str(), first_cache.as_ref()),
+            (second.as_str(), second_cache.as_ref()),
+        ],
+        other => panic!("expected two user text blocks, got {other:?}"),
+    }
+}
+
+// Covers: the cache write lands on the last byte-identical user block; different
+// stage reasoning still changes thinking or effort, so this layout does not
+// guarantee a message-cache hit.
+// Owner: anthropic request body cache breakpoints
+#[test]
+fn two_stage_bodies_mark_shared_transcript_and_vary_thinking() {
+    let marker = Some(AnthropicCacheControl::ephemeral());
+    let cases = [
+        (
+            "claude-opus-4-8",
+            Some(AnthropicThinkingConfig::Adaptive {
+                display: "summarized",
+            }),
+            Some(AnthropicThinkingConfig::Adaptive {
+                display: "summarized",
+            }),
+            Some(AnthropicOutputConfig { effort: "low" }),
+            Some(AnthropicOutputConfig { effort: "high" }),
+        ),
+        (
+            "claude-haiku-4-5",
+            Some(AnthropicThinkingConfig::Enabled {
+                budget_tokens: 2_048,
+            }),
+            Some(AnthropicThinkingConfig::Enabled {
+                budget_tokens: DEFAULT_MAX_TOKENS.saturating_sub(ANTHROPIC_ANSWER_RESERVE_TOKENS),
+            }),
+            None,
+            None,
+        ),
+    ];
+
+    for (model, screen_thinking, review_thinking, screen_effort, review_effort) in cases {
+        let provider = test_provider(model);
+        let screen = two_stage_request_body(&provider, "screen", ReasoningLevel::Low);
+        let review = two_stage_request_body(&provider, "review", ReasoningLevel::High);
+
+        assert_eq!(screen.system, review.system, "{model} system");
+        let screen_user = user_text_blocks(&screen);
+        let review_user = user_text_blocks(&review);
+        assert_eq!(
+            screen_user[0],
+            ("shared transcript", marker.as_ref()),
+            "{model} screen transcript"
+        );
+        assert_eq!(
+            review_user[0],
+            ("shared transcript", marker.as_ref()),
+            "{model} review transcript"
+        );
+        assert_eq!(screen_user[1], ("screen", None), "{model} screen suffix");
+        assert_eq!(review_user[1], ("review", None), "{model} review suffix");
+        assert_eq!(screen.thinking, screen_thinking, "{model} screen thinking");
+        assert_eq!(review.thinking, review_thinking, "{model} review thinking");
+        assert_eq!(screen.output_config, screen_effort, "{model} screen effort");
+        assert_eq!(review.output_config, review_effort, "{model} review effort");
+        assert!(
+            screen.thinking != review.thinking || screen.output_config != review.output_config,
+            "{model} stage reasoning must change the wire thinking or effort"
+        );
+    }
 }
 
 #[test]

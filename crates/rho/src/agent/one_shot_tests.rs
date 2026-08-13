@@ -49,7 +49,7 @@ fn request<'a>(
         definition,
         usage_purpose: "test-purpose",
         reasoning: None,
-        input: "user input".into(),
+        input: vec![ContentBlock::Text("user input".into())],
         cancellation: CancellationToken::new(),
         session_id,
         workspace_path,

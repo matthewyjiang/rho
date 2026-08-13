@@ -396,7 +396,7 @@ async fn consult_advisor_with_provider(
             definition: internal_definition(ADVISOR_AGENT_ID),
             usage_purpose: USAGE_PURPOSE,
             reasoning: Some(reasoning),
-            input: transcript,
+            input: vec![rho_sdk::model::ContentBlock::Text(transcript)],
             cancellation,
             session_id,
             workspace_path,

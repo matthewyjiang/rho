@@ -1,7 +1,10 @@
 use std::path::Path;
 
 use anyhow::{anyhow, bail, Context};
-use rho_providers::{model::Message, reasoning::ReasoningLevel};
+use rho_providers::{
+    model::{ContentBlock, Message},
+    reasoning::ReasoningLevel,
+};
 use rho_sdk::{
     provider::ModelProvider, ApprovalRequest, CancellationToken, ProviderRequestUsageRecording,
     SessionId,
@@ -82,10 +85,14 @@ pub(super) async fn classify_capability_request_with_provider(
 /// Stage 1 answers `allow` or `escalate` in one token. Only an escalation (or a
 /// stage 1 provider error) pays for stage 2.
 ///
-/// Cache-prefix invariant: both stages send the same system prompt and the same
-/// rendered transcript, and the stage instruction is appended AFTER the
-/// transcript. That shared prefix is what makes stage 2 a provider prompt-cache
-/// hit. Never move a stage instruction into the system prompt.
+/// Cache-prefix layout: both stages send the same system prompt and the same
+/// rendered transcript as the first user text block. The stage instruction is a
+/// second user text block so the last byte-identical block can be the cache
+/// breakpoint. Never move a stage instruction into the system prompt.
+///
+/// That layout is required for a message-cache write. It is not a guarantee:
+/// Anthropic invalidates message-block cache when thinking or effort change, and
+/// the screen always uses [`ReasoningLevel::Low`].
 async fn try_classify_capability_request_with_provider(
     provider: &dyn ModelProvider,
     reasoning: ReasoningLevel,
@@ -131,11 +138,14 @@ async fn try_classify_capability_request_with_provider(
 struct StageSpec {
     usage_purpose: &'static str,
     reasoning: ReasoningLevel,
-    input: String,
+    input: Vec<ContentBlock>,
 }
 
-fn stage_input(transcript: &str, instruction: &str) -> String {
-    format!("{transcript}\n\n{instruction}")
+fn stage_input(transcript: &str, instruction: &str) -> Vec<ContentBlock> {
+    vec![
+        ContentBlock::Text(transcript.to_owned()),
+        ContentBlock::Text(instruction.to_owned()),
+    ]
 }
 
 async fn run_stage(

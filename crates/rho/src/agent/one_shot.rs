@@ -17,7 +17,7 @@ pub(crate) struct OneShotAgentRequest<'a> {
     pub usage_purpose: &'static str,
     /// When set, overrides the definition's reasoning level.
     pub reasoning: Option<rho_providers::reasoning::ReasoningLevel>,
-    pub input: String,
+    pub input: Vec<ContentBlock>,
     pub cancellation: CancellationToken,
     pub session_id: &'a SessionId,
     pub workspace_path: &'a Path,
@@ -106,7 +106,7 @@ pub(crate) async fn run_one_shot_with_provider(
     };
     let messages = vec![
         Message::System(prompt.clone()),
-        Message::user_text(request.input),
+        Message::User(request.input),
     ];
     let usage_context =
         ProviderRequestUsageContext::for_purpose(provider.identity(), request.usage_purpose)
