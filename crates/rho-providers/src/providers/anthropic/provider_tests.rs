@@ -223,6 +223,20 @@ fn reasoning_off_disables_adaptive_thinking_when_supported() {
 }
 
 #[test]
+fn reasoning_off_is_rejected_when_thinking_cannot_be_disabled() {
+    with_anthropic_capabilities(
+        &[("claude-fable-5", adaptive_capabilities(true, true))],
+        || {
+            let provider = test_provider("claude-fable-5");
+            assert!(matches!(
+                request_body(&provider, ReasoningLevel::Off),
+                Err(ModelError::UnsupportedReasoning { .. })
+            ));
+        },
+    );
+}
+
+#[test]
 fn unknown_model_omits_thinking_instead_of_sending_enabled() {
     let provider = test_provider("claude-opus-5");
 

@@ -57,7 +57,12 @@ pub(crate) fn thinking_config(
     ),
     ModelError,
 > {
-    thinking_config_for(&resolve_thinking_protocol(model), reasoning, max_tokens)
+    thinking_config_for(
+        model,
+        &resolve_thinking_protocol(model),
+        reasoning,
+        max_tokens,
+    )
 }
 
 fn resolve_thinking_protocol(model: &str) -> AnthropicThinkingProtocol {
@@ -78,7 +83,19 @@ fn dated_parent_model(model: &str) -> Option<&str> {
     (date.len() == 8 && date.bytes().all(|byte| byte.is_ascii_digit())).then_some(parent)
 }
 
+fn adaptive_thinking_is_mandatory(model: &str) -> bool {
+    const MANDATORY: &[&str] = &["claude-fable-5", "claude-mythos-5", "claude-mythos-preview"];
+    let canonical = dated_parent_model(model).unwrap_or(model);
+    MANDATORY.iter().any(|prefix| {
+        canonical == *prefix
+            || canonical
+                .strip_prefix(prefix)
+                .is_some_and(|suffix| suffix.starts_with('-'))
+    })
+}
+
 fn thinking_config_for(
+    model: &str,
     protocol: &AnthropicThinkingProtocol,
     reasoning: ReasoningLevel,
     max_tokens: u32,
@@ -90,9 +107,16 @@ fn thinking_config_for(
     ModelError,
 > {
     if reasoning == ReasoningLevel::Off {
-        // Adaptive models accept disabled without an effort field. Mandatory
-        // models (Fable/Mythos) reject it; Anthropic does not advertise that
-        // yet, so Off still sends disabled when adaptive is known.
+        if adaptive_thinking_is_mandatory(model) {
+            return Err(ModelError::UnsupportedReasoning {
+                provider: "anthropic",
+                model: model.to_string(),
+                requested: reasoning,
+            });
+        }
+        // Adaptive models that accept Off use thinking.type.disabled. Fable and
+        // Mythos reject that field; the Models API has no disabled leaf because
+        // those models cannot turn thinking off.
         let thinking = protocol
             .adaptive
             .then_some(AnthropicThinkingConfig::Disabled);
