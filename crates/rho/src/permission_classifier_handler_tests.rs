@@ -11,6 +11,7 @@ use rho_sdk::{
 
 use super::{
     ClassificationInput, ClassifierApprovalHandler, ClassifyFn, CONSECUTIVE_DENY_ESCALATION,
+    TOTAL_DENY_ESCALATION,
 };
 use crate::permission_classifier::ClassifierVerdict;
 
@@ -279,6 +280,53 @@ async fn after_three_denials_next_request_escalates_to_inner_handler_and_resets(
     assert_eq!(inner.request_count(), 1);
 }
 
+// Covers: denials spread out by allows still escalate once the total budget is spent,
+// and a human decision clears both budgets.
+// Owner: permission classifier approval handler.
+#[tokio::test]
+async fn total_denials_escalate_to_human_and_reset_both_counters() {
+    // Two denials then an allow, so the consecutive streak never trips.
+    let mut outcomes = Vec::new();
+    for index in 0..TOTAL_DENY_ESCALATION {
+        if index > 0 && index % 2 == 0 {
+            outcomes.push(ClassifierVerdict::Allow);
+        }
+        outcomes.push(ClassifierVerdict::Deny {
+            reason: format!("deny {index}"),
+        });
+    }
+    let denials_before_escalation = outcomes.len();
+    outcomes.push(ClassifierVerdict::Deny {
+        reason: "after reset".into(),
+    });
+    let classifier = ScriptedClassifier::new(outcomes);
+    let inner = Arc::new(ScriptedApprovals::new([ApprovalDecision::AllowOnce]));
+    let handler = handler_with(&classifier, Some(inner.clone()));
+
+    for _ in 0..denials_before_escalation {
+        assert!(matches!(
+            handler.request(request()).await,
+            ApprovalDecision::Deny { .. } | ApprovalDecision::AllowOnce
+        ));
+    }
+    assert_eq!(inner.request_count(), 0);
+
+    // The total budget is spent, so the next request goes to the human.
+    assert_eq!(
+        handler.request(request()).await,
+        ApprovalDecision::AllowOnce
+    );
+    assert_eq!(inner.request_count(), 1);
+
+    // Both budgets restarted, so classification resumes instead of escalating.
+    assert!(matches!(
+        handler.request(request()).await,
+        ApprovalDecision::Deny { .. }
+    ));
+    assert_eq!(inner.request_count(), 1);
+    assert_eq!(classifier.call_count(), denials_before_escalation + 1);
+}
+
 // Covers: classifier unavailable denials count toward headless escalation.
 // Owner: permission classifier approval handler.
 #[tokio::test]
@@ -308,7 +356,7 @@ async fn unavailable_denials_escalate_headless_without_further_classifier_calls(
     let ApprovalDecision::Deny { reason } = decision else {
         panic!("headless escalation must deny");
     };
-    assert!(reason.contains("permission classifier denied 3 consecutive requests"));
+    assert!(reason.contains("permission classifier denied"));
 
     assert_eq!(classifier.call_count(), 3);
 }
@@ -348,7 +396,7 @@ async fn headless_escalation_cancels_context_run_token() {
     let ApprovalDecision::Deny { reason } = decision else {
         panic!("headless escalation must deny");
     };
-    assert!(reason.contains("permission classifier denied 3 consecutive requests"));
+    assert!(reason.contains("permission classifier denied"));
     assert!(cancellation.is_cancelled());
     assert_eq!(classifier.call_count(), 3);
 }

@@ -200,9 +200,9 @@ pub(super) async fn evaluate(
             definition: internal_definition(GOAL_JUDGE_AGENT_ID),
             usage_purpose: "goal",
             reasoning: Some(reasoning),
-            input: format!(
+            input: vec![rho_sdk::model::ContentBlock::Text(format!(
                 "Completion condition:\n{condition}\n\nConversation transcript:\n{transcript}"
-            ),
+            ))],
             cancellation,
             session_id,
             workspace_path,

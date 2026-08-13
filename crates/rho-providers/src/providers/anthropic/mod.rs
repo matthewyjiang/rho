@@ -292,18 +292,15 @@ fn model_matches(model: &str, prefix: &str) -> bool {
 }
 
 fn mark_cache_control_points(messages: &mut [AnthropicMessage]) {
-    let marker = AnthropicCacheControl::ephemeral();
+    // Writes occur only at marked breakpoints. When the last user message has a
+    // trailing per-request suffix, mark the last shared cacheable block, not the
+    // suffix. A single cacheable block is marked as before.
     for message in messages.iter_mut().rev() {
-        if message.role == AnthropicRole::User {
-            let Some(block) = message.content.last_mut() else {
-                return;
-            };
-            if let AnthropicContentBlock::Text { cache_control, .. }
-            | AnthropicContentBlock::ToolResult { cache_control, .. } = block
-            {
-                *cache_control = Some(marker);
-                return;
-            }
+        if message.role != AnthropicRole::User {
+            continue;
+        }
+        if mark_last_shared_user_breakpoint(&mut message.content) {
+            return;
         }
     }
 
@@ -317,10 +314,51 @@ fn mark_cache_control_points(messages: &mut [AnthropicMessage]) {
             .rev()
             .find(|block| matches!(block, AnthropicContentBlock::Text { .. }))
         {
-            *cache_control = Some(marker);
+            *cache_control = Some(AnthropicCacheControl::ephemeral());
             return;
         }
     }
+}
+
+fn mark_last_shared_user_breakpoint(content: &mut [AnthropicContentBlock]) -> bool {
+    let cacheable = content
+        .iter()
+        .enumerate()
+        .filter(|(_, block)| is_cacheable_user_block(block))
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    let Some(&last) = cacheable.last() else {
+        return false;
+    };
+    // A trailing user text block is the per-request suffix. Tool-result tails stay
+    // marked so a multi-result user turn still writes the full prefix.
+    let index = if cacheable.len() > 1 && is_user_text_block(&content[last]) {
+        cacheable[cacheable.len() - 2]
+    } else {
+        last
+    };
+    match &mut content[index] {
+        AnthropicContentBlock::Text { cache_control, .. }
+        | AnthropicContentBlock::ToolResult { cache_control, .. } => {
+            *cache_control = Some(AnthropicCacheControl::ephemeral());
+            true
+        }
+        AnthropicContentBlock::Thinking { .. }
+        | AnthropicContentBlock::RedactedThinking { .. }
+        | AnthropicContentBlock::Image { .. }
+        | AnthropicContentBlock::ToolUse { .. } => false,
+    }
+}
+
+fn is_cacheable_user_block(block: &AnthropicContentBlock) -> bool {
+    matches!(
+        block,
+        AnthropicContentBlock::Text { .. } | AnthropicContentBlock::ToolResult { .. }
+    )
+}
+
+fn is_user_text_block(block: &AnthropicContentBlock) -> bool {
+    matches!(block, AnthropicContentBlock::Text { .. })
 }
 
 crate::impl_sdk_model_provider!(AnthropicProvider);

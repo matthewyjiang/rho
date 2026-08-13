@@ -79,9 +79,9 @@ pub(super) async fn generate_session_title(
             definition: internal_definition(SESSION_TITLE_AGENT_ID),
             usage_purpose: "title",
             reasoning: Some(reasoning),
-            input: format!(
+            input: vec![rho_sdk::model::ContentBlock::Text(format!(
                 "First turn:\n\nUser:\n{first_user_message}\n\nAssistant:\n{first_assistant_message}"
-            ),
+            ))],
             cancellation: cancellation.clone(),
             session_id: &session_id,
             workspace_path: &workspace_path,

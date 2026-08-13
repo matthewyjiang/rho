@@ -1,7 +1,10 @@
 use std::path::Path;
 
 use anyhow::{anyhow, bail, Context};
-use rho_providers::{model::Message, reasoning::ReasoningLevel};
+use rho_providers::{
+    model::{ContentBlock, Message},
+    reasoning::ReasoningLevel,
+};
 use rho_sdk::{
     provider::ModelProvider, ApprovalRequest, CancellationToken, ProviderRequestUsageRecording,
     SessionId,
@@ -16,7 +19,10 @@ use crate::{
     credential_store::build_provider,
 };
 
-use super::{parse_classifier_verdict, render_classifier_transcript, ClassifierVerdict};
+use super::{
+    parse_classifier_verdict, parse_screen_verdict, render_classifier_transcript,
+    ClassifierVerdict, ScreenVerdict, CLASSIFIER_REVIEW_INSTRUCTION, CLASSIFIER_SCREEN_INSTRUCTION,
+};
 
 pub(crate) struct ClassifyRequest<'a> {
     pub history: &'a [Message],
@@ -74,28 +80,95 @@ pub(super) async fn classify_capability_request_with_provider(
     }
 }
 
+/// Runs the two-stage pipeline: a cheap screen, then a reasoned review.
+///
+/// Stage 1 answers `allow` or `escalate` in one token at [`ReasoningLevel::Low`].
+/// Only an escalation (or a stage 1 provider error) pays for stage 2, which uses
+/// the configured reasoning level.
+///
+/// Cache-prefix layout: both stages send the same system prompt and the same
+/// rendered transcript as the first user text block. The stage instruction is a
+/// second user text block so the last byte-identical block can be the cache
+/// breakpoint. Never move a stage instruction into the system prompt.
+///
+/// That layout can reuse stage 1's message-cache prefix only when thinking and
+/// effort stay the same, which is the default Low classifier reasoning. Raising
+/// review reasoning keeps the common-path screen cheap and forgoes that cache
+/// hit: Anthropic invalidates message-block cache when thinking or effort change.
 async fn try_classify_capability_request_with_provider(
     provider: &dyn ModelProvider,
     reasoning: ReasoningLevel,
     request: ClassifyRequest<'_>,
 ) -> anyhow::Result<ClassifierVerdict> {
+    let transcript = render_classifier_transcript(request.history, request.pending)?;
+
+    let screen = run_stage(
+        provider,
+        &request,
+        StageSpec {
+            usage_purpose: "permission-classifier-screen",
+            reasoning: ReasoningLevel::Low,
+            input: stage_input(&transcript, CLASSIFIER_SCREEN_INSTRUCTION),
+        },
+    )
+    .await;
+    match screen.as_deref().map(parse_screen_verdict) {
+        Ok(ScreenVerdict::Allow) => return Ok(ClassifierVerdict::Allow),
+        Ok(ScreenVerdict::Escalate) => {}
+        Err(error) => {
+            // A broken screen must not decide anything; stage 2 still runs and
+            // fails closed on its own if it also breaks.
+            tracing::warn!(error = %error, "permission classifier screen failed; running review");
+        }
+    }
+
+    let review = run_stage(
+        provider,
+        &request,
+        StageSpec {
+            usage_purpose: "permission-classifier-review",
+            reasoning,
+            input: stage_input(&transcript, CLASSIFIER_REVIEW_INSTRUCTION),
+        },
+    )
+    .await?;
+    parse_classifier_verdict(&review).context("permission classifier returned an invalid response")
+}
+
+struct StageSpec {
+    usage_purpose: &'static str,
+    reasoning: ReasoningLevel,
+    input: Vec<ContentBlock>,
+}
+
+fn stage_input(transcript: &str, instruction: &str) -> Vec<ContentBlock> {
+    vec![
+        ContentBlock::Text(transcript.to_owned()),
+        ContentBlock::Text(instruction.to_owned()),
+    ]
+}
+
+async fn run_stage(
+    provider: &dyn ModelProvider,
+    request: &ClassifyRequest<'_>,
+    stage: StageSpec,
+) -> anyhow::Result<String> {
     let result = run_one_shot_with_provider(
         provider,
         OneShotAgentRequest {
             definition: internal_definition(PERMISSION_CLASSIFIER_AGENT_ID),
-            usage_purpose: "permission-classifier",
-            reasoning: Some(reasoning),
-            input: render_classifier_transcript(request.history, request.pending)?,
-            cancellation: request.cancellation,
+            usage_purpose: stage.usage_purpose,
+            reasoning: Some(stage.reasoning),
+            input: stage.input,
+            cancellation: request.cancellation.clone(),
             session_id: request.session_id,
             workspace_path: request.workspace_path,
         },
-        request.usage_recording,
+        request.usage_recording.clone(),
         /*updates*/ None,
     )
     .await?;
-    parse_classifier_verdict(&result.texts.join("\n"))
-        .context("permission classifier returned an invalid response")
+    Ok(result.texts.join("\n"))
 }
 
 fn classifier_unavailable(error: impl std::fmt::Display) -> ClassifierVerdict {

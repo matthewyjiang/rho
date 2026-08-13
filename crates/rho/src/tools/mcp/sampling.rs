@@ -220,7 +220,7 @@ impl McpSamplingService {
             definition: &definition,
             usage_purpose: SAMPLING_USAGE_PURPOSE,
             reasoning: None,
-            input,
+            input: vec![rho_sdk::model::ContentBlock::Text(input)],
             cancellation: caller.cancellation().clone(),
             session_id: &model.session_id,
             workspace_path: &model.workspace_path,
