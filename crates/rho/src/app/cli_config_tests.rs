@@ -494,7 +494,7 @@ fn not_configurable_models_retain_persisted_preference_and_reject_explicit_contr
 }
 
 #[test]
-fn only_kimi_prepares_provider_capabilities_during_startup() {
+fn only_capability_backed_providers_prepare_capabilities_during_startup() {
     let refresh = super::ProviderRefreshStatus::NotAttempted;
     let xai = Config {
         provider: "xai".into(),
@@ -506,9 +506,17 @@ fn only_kimi_prepares_provider_capabilities_during_startup() {
         model: "unseen-model".into(),
         ..Config::default()
     };
+    let anthropic = Config {
+        provider: "anthropic".into(),
+        model: "claude-opus-5".into(),
+        ..Config::default()
+    };
 
     assert!(!super::needs_startup_capability_refresh(&xai, &refresh));
     assert!(super::needs_startup_capability_refresh(&kimi, &refresh));
+    assert!(super::needs_startup_capability_refresh(
+        &anthropic, &refresh
+    ));
 }
 
 #[test]

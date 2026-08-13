@@ -60,8 +60,7 @@ pub(super) async fn refresh_model_cache(
     if cli.provider.is_none()
         && cli.model.is_none()
         && cli.auth.is_none()
-        && (provider != "kimi-code"
-            || !provider_model_capabilities_need_refresh(provider, &config.model))
+        && !provider_model_capabilities_need_refresh(provider, &config.model)
     {
         return Ok(ProviderRefreshStatus::NotAttempted);
     }
@@ -281,8 +280,7 @@ fn needs_startup_capability_refresh(
     config: &Config,
     provider_refresh: &ProviderRefreshStatus,
 ) -> bool {
-    config.provider == "kimi-code"
-        && !provider_refresh.was_attempted_for(&config.provider)
+    !provider_refresh.was_attempted_for(&config.provider)
         && provider_model_capabilities_need_refresh(&config.provider, &config.model)
 }
 

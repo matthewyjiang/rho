@@ -3,11 +3,10 @@ use crate::{
     protocol::anthropic_messages::{
         collect_anthropic_sse_response, convert_anthropic_response, split_system_and_messages,
         to_anthropic_tool, AnthropicCacheControl, AnthropicContentBlock, AnthropicMessage,
-        AnthropicOutputConfig, AnthropicRequest, AnthropicResponse, AnthropicRole,
-        AnthropicSystemBlock, AnthropicThinkingConfig, ProviderContextReplay,
+        AnthropicRequest, AnthropicResponse, AnthropicRole, AnthropicSystemBlock,
+        AnthropicThinkingConfig, ProviderContextReplay,
     },
     provider_backend::{ModelError, ModelEvent, ModelRequest, ModelResponse},
-    reasoning::ReasoningLevel,
 };
 
 #[cfg(test)]
@@ -17,7 +16,9 @@ use crate::provider_backend::stream_timeout::provider_client;
 const ANTHROPIC_API_BASE: &str = "https://api.anthropic.com/v1";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 pub const DEFAULT_MAX_TOKENS: u32 = 4096;
-const ANTHROPIC_ANSWER_RESERVE_TOKENS: u32 = 1_024;
+pub(crate) const ANTHROPIC_ANSWER_RESERVE_TOKENS: u32 = 1_024;
+
+mod thinking;
 
 pub struct AnthropicProvider {
     client: reqwest::Client,
@@ -63,7 +64,7 @@ impl AnthropicProvider {
         let target = self.model_identity();
         let max_tokens = (self.max_tokens)(&self.model);
         let (thinking, output_config) =
-            thinking_config(&self.model, request.reasoning_level, max_tokens)?;
+            thinking::thinking_config(&self.model, request.reasoning_level, max_tokens)?;
         let (system, mut messages) = split_system_and_messages(
             request.messages.to_vec(),
             &target,
@@ -165,130 +166,6 @@ fn provider_context_replay(thinking: Option<&AnthropicThinkingConfig>) -> Provid
         ) => ProviderContextReplay::Enabled,
         Some(AnthropicThinkingConfig::Disabled) | None => ProviderContextReplay::Disabled,
     }
-}
-
-fn thinking_config(
-    model: &str,
-    reasoning: ReasoningLevel,
-    max_tokens: u32,
-) -> Result<
-    (
-        Option<AnthropicThinkingConfig>,
-        Option<AnthropicOutputConfig>,
-    ),
-    ModelError,
-> {
-    if reasoning == ReasoningLevel::Off && adaptive_thinking_is_mandatory(model) {
-        return Err(ModelError::UnsupportedReasoning {
-            provider: "anthropic",
-            model: model.to_string(),
-            requested: reasoning,
-        });
-    }
-    if reasoning == ReasoningLevel::Off {
-        let thinking =
-            supports_disabled_thinking(model).then_some(AnthropicThinkingConfig::Disabled);
-        return Ok((thinking, None));
-    }
-    if supports_adaptive_thinking(model) {
-        return Ok((
-            Some(AnthropicThinkingConfig::Adaptive {
-                display: "summarized",
-            }),
-            Some(AnthropicOutputConfig {
-                effort: adaptive_effort(model, reasoning),
-            }),
-        ));
-    }
-
-    let requested_budget = match reasoning {
-        ReasoningLevel::Off => return Ok((None, None)),
-        ReasoningLevel::Minimal => 1_024,
-        ReasoningLevel::Low => 2_048,
-        ReasoningLevel::Medium => 4_096,
-        ReasoningLevel::High => 8_192,
-        ReasoningLevel::Xhigh => 16_384,
-        ReasoningLevel::Max => 32_768,
-    };
-    let available = max_tokens.saturating_sub(ANTHROPIC_ANSWER_RESERVE_TOKENS);
-    if available < 1_024 {
-        return Err(ModelError::InvalidResponse(format!(
-            "Anthropic max output tokens {max_tokens} cannot reserve a reasoning budget"
-        )));
-    }
-    Ok((
-        Some(AnthropicThinkingConfig::Enabled {
-            budget_tokens: requested_budget.min(available),
-        }),
-        None,
-    ))
-}
-
-const ADAPTIVE: u8 = 1 << 0;
-const MANDATORY: u8 = 1 << 1;
-const DISABLED: u8 = 1 << 2;
-const XHIGH: u8 = 1 << 3;
-
-#[derive(Clone, Copy)]
-struct ModelCapabilities(u8);
-
-impl ModelCapabilities {
-    fn has(self, capability: u8) -> bool {
-        self.0 & capability != 0
-    }
-}
-
-fn model_capabilities(model: &str) -> ModelCapabilities {
-    const TABLE: &[(&str, u8)] = &[
-        ("claude-opus-4-6", ADAPTIVE),
-        ("claude-opus-4-7", ADAPTIVE | XHIGH),
-        ("claude-opus-4-8", ADAPTIVE | XHIGH),
-        ("claude-sonnet-4-6", ADAPTIVE),
-        ("claude-sonnet-5", ADAPTIVE | DISABLED | XHIGH),
-        ("claude-fable-5", ADAPTIVE | MANDATORY | XHIGH),
-        ("claude-mythos-5", ADAPTIVE | MANDATORY | XHIGH),
-        ("claude-mythos-preview", ADAPTIVE | MANDATORY),
-    ];
-    let flags = TABLE
-        .iter()
-        .find(|(prefix, _)| model_matches(model, prefix))
-        .map(|(_, flags)| *flags)
-        .unwrap_or(0);
-    ModelCapabilities(flags)
-}
-
-fn supports_adaptive_thinking(model: &str) -> bool {
-    model_capabilities(model).has(ADAPTIVE)
-}
-
-fn adaptive_thinking_is_mandatory(model: &str) -> bool {
-    model_capabilities(model).has(MANDATORY)
-}
-
-fn supports_disabled_thinking(model: &str) -> bool {
-    model_capabilities(model).has(DISABLED)
-}
-
-fn adaptive_effort(model: &str, reasoning: ReasoningLevel) -> &'static str {
-    match reasoning {
-        ReasoningLevel::Off | ReasoningLevel::Minimal | ReasoningLevel::Low => "low",
-        ReasoningLevel::Medium => "medium",
-        ReasoningLevel::High => "high",
-        ReasoningLevel::Xhigh if supports_xhigh_effort(model) => "xhigh",
-        ReasoningLevel::Xhigh => "high",
-        ReasoningLevel::Max => "max",
-    }
-}
-
-fn supports_xhigh_effort(model: &str) -> bool {
-    model_capabilities(model).has(XHIGH)
-}
-
-fn model_matches(model: &str, prefix: &str) -> bool {
-    model == prefix
-        || model
-            .strip_prefix(prefix)
-            .is_some_and(|suffix| suffix.starts_with('-'))
 }
 
 fn mark_cache_control_points(messages: &mut [AnthropicMessage]) {

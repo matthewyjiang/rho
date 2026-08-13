@@ -73,3 +73,43 @@ fn provider_snapshot_expiration_applies_to_every_model_in_the_snapshot() {
     });
     let _ = fs::remove_dir_all(cache_dir);
 }
+
+#[test]
+fn anthropic_rows_without_capabilities_need_refresh() {
+    let cache_dir = unique_test_cache_dir("anthropic-missing-capabilities");
+    with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
+        replace_cached_provider_models(
+            "anthropic",
+            &[ProviderModel {
+                provider: "anthropic".into(),
+                model: "claude-opus-5".into(),
+                display_name: "Claude Opus 5".into(),
+                context_window: None,
+                max_output_tokens: None,
+                reasoning_capabilities: ReasoningCapabilities::Unknown,
+            }],
+        )
+        .unwrap();
+
+        assert!(provider_model_capabilities_need_refresh(
+            "anthropic",
+            "claude-opus-5"
+        ));
+
+        write_cached_provider_model_raw_json_for_tests(
+            "anthropic",
+            "claude-opus-5",
+            "Claude Opus 5",
+            &serde_json::json!({
+                "thinking": {"supported": true, "types": {"adaptive": {"supported": true}}}
+            }),
+        )
+        .unwrap();
+
+        assert!(!provider_model_capabilities_need_refresh(
+            "anthropic",
+            "claude-opus-5"
+        ));
+    });
+    let _ = fs::remove_dir_all(cache_dir);
+}
