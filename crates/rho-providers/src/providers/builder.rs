@@ -249,13 +249,22 @@ impl ProviderBuilder {
                 ProviderCredential::OpenAiCompatible(auth),
             ) if compatible_auth_matches_kind(&auth, auth_kind) => {
                 let model = descriptor.canonicalize_model_id(&self.options.model);
+                let api_base = if descriptor.is_custom_openai_compatible() {
+                    endpoint.ok_or_else(|| {
+                        ModelError::InvalidResponse(format!(
+                            "custom provider '{provider_name}' requires a configured base_url"
+                        ))
+                    })?
+                } else {
+                    endpoint.unwrap_or_else(|| default_api_base.into())
+                };
                 Ok(Arc::new(OpenAiCompatibleProvider::new(
                     client,
                     provider_name,
                     model,
                     dialect,
                     auth,
-                    endpoint.unwrap_or_else(|| default_api_base.into()),
+                    api_base,
                 )))
             }
             (ProviderRuntime::Xai, ProviderCredential::Xai(auth)) => {

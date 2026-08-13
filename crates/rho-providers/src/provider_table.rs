@@ -7,10 +7,11 @@
 use super::{
     AuthMode, BearerCredentialAcquisition, BrowserOAuthFlow, CatalogReasoningPolicy, ModelIdCodec,
     OpenAiRuntimeAuth, ProviderAuthKind, ProviderDescriptor, ProviderId, ProviderModelRefreshKind,
-    ProviderModelSource, ProviderRuntime, ANTHROPIC_API_KEY_ACCOUNT, CODEX_TOKENS_ACCOUNT,
-    GITHUB_COPILOT_TOKENS_ACCOUNT, GOOGLE_API_KEY_ACCOUNT, KIMI_CODE_API_BASE, KIMI_TOKENS_ACCOUNT,
-    META_API_BASE, META_API_KEY_ACCOUNT, MOONSHOT_API_BASE, MOONSHOT_API_KEY_ACCOUNT,
-    OLLAMA_API_BASE, OLLAMA_CLOUD_API_BASE, OLLAMA_CLOUD_API_KEY_ACCOUNT, OPENAI_API_KEY_ACCOUNT,
+    ProviderModelSource, ProviderRuntime, UnknownEffortPolicy, ANTHROPIC_API_KEY_ACCOUNT,
+    CODEX_TOKENS_ACCOUNT, GITHUB_COPILOT_TOKENS_ACCOUNT, GOOGLE_API_KEY_ACCOUNT,
+    KIMI_CODE_API_BASE, KIMI_TOKENS_ACCOUNT, META_API_BASE, META_API_KEY_ACCOUNT,
+    MOONSHOT_API_BASE, MOONSHOT_API_KEY_ACCOUNT, OLLAMA_API_BASE, OLLAMA_CLOUD_API_BASE,
+    OLLAMA_CLOUD_API_KEY_ACCOUNT, OLLAMA_UNKNOWN_REASONING_LEVELS, OPENAI_API_KEY_ACCOUNT,
     OPENROUTER_API_BASE, OPENROUTER_API_KEY_ACCOUNT, OPENROUTER_OAUTH_KEY_ACCOUNT,
     POOLSIDE_API_BASE, POOLSIDE_API_KEY_ACCOUNT, QWEN_TOKEN_PLAN_API_BASE,
     QWEN_TOKEN_PLAN_API_KEY_ACCOUNT, XAI_API_KEY_ACCOUNT, XAI_TOKENS_ACCOUNT,
@@ -41,6 +42,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         // Local models are often missing from models.dev. Unknown models still send
         // effort, constrained to Ollama's accepted values (low/medium/high/max/none).
         catalog_reasoning: CatalogReasoningPolicy::OffAsNone,
+        unknown_effort: UnknownEffortPolicy::Constrain(OLLAMA_UNKNOWN_REASONING_LEVELS),
         default_model: None,
     },
     ProviderDescriptor {
@@ -77,6 +79,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         metadata_upstream: "ollama-cloud",
         // Ollama's OpenAI-compatible API accepts reasoning_effort including "none".
         catalog_reasoning: CatalogReasoningPolicy::OffAsNone,
+        unknown_effort: UnknownEffortPolicy::Constrain(OLLAMA_UNKNOWN_REASONING_LEVELS),
         default_model: None,
     },
     ProviderDescriptor {
@@ -103,6 +106,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "openai",
         catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
+        unknown_effort: UnknownEffortPolicy::Omit,
         default_model: None,
     },
     ProviderDescriptor {
@@ -128,6 +132,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "openai",
         catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
+        unknown_effort: UnknownEffortPolicy::Omit,
         default_model: None,
     },
     ProviderDescriptor {
@@ -152,6 +157,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "anthropic",
         catalog_reasoning: CatalogReasoningPolicy::Unknown,
+        unknown_effort: UnknownEffortPolicy::Omit,
         default_model: Some("claude-sonnet-4-5"),
     },
     ProviderDescriptor {
@@ -176,6 +182,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "google",
         catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
+        unknown_effort: UnknownEffortPolicy::Omit,
         default_model: Some("gemini-3.1-flash-lite"),
     },
     ProviderDescriptor {
@@ -199,6 +206,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "github-copilot",
         catalog_reasoning: CatalogReasoningPolicy::NotConfigurable,
+        unknown_effort: UnknownEffortPolicy::Omit,
         default_model: None,
     },
     ProviderDescriptor {
@@ -226,6 +234,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "moonshotai",
         catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
+        unknown_effort: UnknownEffortPolicy::Omit,
         default_model: None,
     },
     ProviderDescriptor {
@@ -253,6 +262,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_id_codec: ModelIdCodec::ProviderPrefixed,
         metadata_upstream: "poolside",
         catalog_reasoning: CatalogReasoningPolicy::OffOrMax,
+        unknown_effort: UnknownEffortPolicy::Omit,
         default_model: None,
     },
     ProviderDescriptor {
@@ -290,6 +300,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "openrouter",
         catalog_reasoning: CatalogReasoningPolicy::OffAsNone,
+        unknown_effort: UnknownEffortPolicy::Omit,
         default_model: None,
     },
     ProviderDescriptor {
@@ -316,6 +327,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "moonshotai",
         catalog_reasoning: CatalogReasoningPolicy::OffByAdvertisedToggle,
+        unknown_effort: UnknownEffortPolicy::Omit,
         default_model: None,
     },
     ProviderDescriptor {
@@ -343,6 +355,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "alibaba-token-plan",
         catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
+        unknown_effort: UnknownEffortPolicy::Omit,
         default_model: None,
     },
     ProviderDescriptor {
@@ -370,6 +383,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "meta",
         catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
+        unknown_effort: UnknownEffortPolicy::Omit,
         default_model: Some("muse-spark-1.2"),
     },
     ProviderDescriptor {
@@ -403,6 +417,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "xai",
         catalog_reasoning: CatalogReasoningPolicy::OffByAdvertisedToggle,
+        unknown_effort: UnknownEffortPolicy::Omit,
         default_model: None,
     },
 ];

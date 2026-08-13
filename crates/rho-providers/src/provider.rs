@@ -31,8 +31,17 @@ pub const QWEN_TOKEN_PLAN_API_BASE: &str =
     "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1";
 /// Meta Model API OpenAI-compatible base (Chat Completions and `/models`).
 pub const META_API_BASE: &str = "https://api.meta.ai/v1";
-/// Fallback API base for user-defined OpenAI-compatible hosts. Config supplies the real URL.
-pub const OPENAI_COMPATIBLE_API_BASE: &str = "http://127.0.0.1:8000/v1";
+/// Placeholder only. Config-defined hosts must take their API base from application config.
+pub const OPENAI_COMPATIBLE_API_BASE: &str = "http://127.0.0.1:0/v1";
+
+/// Ollama's OpenAI-compatible API accepts only these effort values.
+pub const OLLAMA_UNKNOWN_REASONING_LEVELS: &[crate::reasoning::ReasoningLevel] = &[
+    crate::reasoning::ReasoningLevel::Off,
+    crate::reasoning::ReasoningLevel::Low,
+    crate::reasoning::ReasoningLevel::Medium,
+    crate::reasoning::ReasoningLevel::High,
+    crate::reasoning::ReasoningLevel::Max,
+];
 
 /// OpenAI API-key vs Codex OAuth runtime auth selection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -118,6 +127,10 @@ pub enum ProviderId {
     KimiCode,
     QwenTokenPlan,
     Meta,
+    /// Runtime family for config-defined Chat Completions hosts.
+    ///
+    /// Each `[providers.custom.<name>]` entry is its own named provider. This ID
+    /// is not a selectable built-in and has no `PROVIDERS` row.
     OpenAiCompatible,
 }
 
@@ -160,6 +173,17 @@ pub enum CatalogReasoningPolicy {
     OffOrMax,
     /// The provider serializes `Off` as a provider-owned `none` control.
     OffAsNone,
+}
+
+/// What to serialize when a Standard-dialect model is missing catalog metadata.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnknownEffortPolicy {
+    /// Omit the field so the host applies its own default.
+    Omit,
+    /// Send the requested level, including `Off` as `"none"`.
+    SendRequested,
+    /// Map the request onto this fixed vocabulary.
+    Constrain(&'static [crate::reasoning::ReasoningLevel]),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -368,6 +392,8 @@ pub struct ProviderDescriptor {
     pub model_id_codec: ModelIdCodec,
     pub metadata_upstream: &'static str,
     pub catalog_reasoning: CatalogReasoningPolicy,
+    /// Wire policy for Standard-dialect hosts when models.dev has no row.
+    pub unknown_effort: UnknownEffortPolicy,
     /// Preferred model when the cache is empty or contains this id.
     pub default_model: Option<&'static str>,
 }
@@ -410,6 +436,11 @@ impl ProviderDescriptor {
 
     pub fn is_keyless(self) -> bool {
         matches!(self.default_auth().auth_kind, ProviderAuthKind::None)
+    }
+
+    /// Config-defined Chat Completions hosts are named providers, not a single built-in.
+    pub fn is_custom_openai_compatible(self) -> bool {
+        PROVIDERS.iter().all(|builtin| builtin.name != self.name)
     }
 }
 

@@ -69,13 +69,14 @@ impl ProviderConfigs {
                 let Some(base_url) = endpoint.base_url else {
                     anyhow::bail!("providers.custom.{name} requires base_url");
                 };
-                rho_providers::provider::validate_custom_provider_name(&name)?;
                 self.set_endpoint(&name, &base_url)?;
             }
         }
         Ok(())
     }
 
+    /// Publishes config-defined hosts as named providers for lookup, pickers,
+    /// and model refresh. Replaces the previous active set.
     pub(crate) fn activate(&self) -> anyhow::Result<()> {
         rho_providers::provider::install_custom_openai_compatible_providers(
             self.custom.keys().map(String::as_str),

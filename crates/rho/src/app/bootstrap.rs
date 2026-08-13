@@ -202,6 +202,7 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
     // Ask before loading; loading writes the default config when none exists.
     let first_run = detect_first_run(&config_repository);
     let mut config = config_repository.load()?;
+    // Register every [providers.custom.*] name before refresh, pickers, and /model.
     config.providers.activate()?;
     let absolute_config = absolute_config_path(&config_repository)?;
     crate::credential_store::initialize_from_config(&mut config, &absolute_config)?;

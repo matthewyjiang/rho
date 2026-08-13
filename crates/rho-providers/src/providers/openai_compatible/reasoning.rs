@@ -1,7 +1,7 @@
 use crate::{
     model::{ModelMetadata, ReasoningCapabilities, ReasoningLevelSet, ReasoningRequestSource},
     protocol::openai_chat::{ChatTemplateKwargs, OpenAiReasoning, OpenAiThinking},
-    provider::{CatalogReasoningPolicy, ProviderId},
+    provider::UnknownEffortPolicy,
     reasoning::ReasoningLevel,
 };
 
@@ -83,19 +83,9 @@ impl DialectReasoning {
     }
 }
 
-/// Ollama's OpenAI-compatible API accepts only these effort values.
-const OLLAMA_WIRE_LEVELS: [ReasoningLevel; 5] = [
-    ReasoningLevel::Off,
-    ReasoningLevel::Low,
-    ReasoningLevel::Medium,
-    ReasoningLevel::High,
-    ReasoningLevel::Max,
-];
-
-/// OffAsNone hosts accept `reasoning_effort` including `"none"`. When the
-/// catalog has no row, still send a value. Omitting the field lets Ollama
-/// enable thinking on its own. Unknown Ollama models are constrained to the
-/// server's vocabulary; other OffAsNone hosts send the requested level.
+/// Standard-dialect hosts take unknown-model effort from the descriptor.
+/// Ollama constrains to the server's vocabulary; config-defined hosts send the
+/// requested level so thinking can be turned off.
 fn standard_effort_profile(
     provider: &'static str,
     metadata: Option<ModelMetadata>,
@@ -103,13 +93,14 @@ fn standard_effort_profile(
     let Some(descriptor) = crate::provider::provider_descriptor(provider) else {
         return EffortProfile::omit_when_unknown(metadata);
     };
-    if descriptor.catalog_reasoning != CatalogReasoningPolicy::OffAsNone {
-        return EffortProfile::omit_when_unknown(metadata);
+    match descriptor.unknown_effort {
+        UnknownEffortPolicy::Omit => EffortProfile::omit_when_unknown(metadata),
+        UnknownEffortPolicy::SendRequested => EffortProfile::send_when_unknown(metadata),
+        UnknownEffortPolicy::Constrain(levels) if metadata.is_none() => {
+            EffortProfile::constrained(levels.iter().copied())
+        }
+        UnknownEffortPolicy::Constrain(_) => EffortProfile::send_when_unknown(metadata),
     }
-    if matches!(descriptor.id, ProviderId::Ollama | ProviderId::OllamaCloud) && metadata.is_none() {
-        return EffortProfile::constrained(OLLAMA_WIRE_LEVELS);
-    }
-    EffortProfile::send_when_unknown(metadata)
 }
 
 /// Metadata-driven effort selection for dialects that speak level names on the

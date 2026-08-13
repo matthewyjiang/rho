@@ -1,7 +1,8 @@
 //! User-defined OpenAI-compatible Chat Completions hosts.
 //!
-//! Names and endpoints come from application config. These providers are
-//! keyless, like Ollama, and do not appear in `/login`.
+//! Names and endpoints come from application config. Each name is its own
+//! provider (`/model composer/...`, `/model vllm/...`). They are keyless, like
+//! Ollama, and do not appear in `/login`.
 
 use std::collections::BTreeMap;
 use std::sync::{OnceLock, RwLock};
@@ -11,7 +12,7 @@ use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
 use super::{
     AuthMode, CatalogReasoningPolicy, ModelIdCodec, ProviderAuthKind, ProviderDescriptor,
     ProviderId, ProviderModelRefreshKind, ProviderModelSource, ProviderRuntime,
-    OPENAI_COMPATIBLE_API_BASE, PROVIDERS,
+    UnknownEffortPolicy, OPENAI_COMPATIBLE_API_BASE, PROVIDERS,
 };
 
 const CUSTOM_AUTH: &[AuthMode] = &[AuthMode {
@@ -43,13 +44,14 @@ fn lock_write() -> std::sync::RwLockWriteGuard<'static, CustomRegistry> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// Registers custom OpenAI-compatible providers without unregistering others.
+/// Replaces the active custom OpenAI-compatible providers.
 ///
 /// Names are interned for the process lifetime so descriptors can be `'static`.
-/// Concurrent runtimes may install different configs; adding a name must not
-/// make an earlier name unresolvable. Callers that only change an endpoint do
-/// not need to reinstall; the application config remains the source of truth
-/// for the API base.
+/// The active set is the current config: a later install drops names that are
+/// no longer listed. Interned rows stay so a name can be reinstalled without
+/// leaking a second descriptor. Callers that only change an endpoint do not
+/// need to reinstall; the application config remains the source of truth for
+/// the API base.
 pub fn install_custom_openai_compatible_providers<'a, I>(names: I) -> anyhow::Result<()>
 where
     I: IntoIterator<Item = &'a str>,
@@ -64,21 +66,16 @@ where
     }
 
     let mut registry = lock_write();
+    let mut active = Vec::with_capacity(names.len());
     for name in names {
-        let descriptor = intern(name, &mut registry);
-        if !registry
-            .active
-            .iter()
-            .any(|installed| installed.name == descriptor.name)
-        {
-            registry.active.push(descriptor);
-        }
+        active.push(intern(name, &mut registry));
     }
+    registry.active = active;
     Ok(())
 }
 
 /// Drops interned and active custom providers. Tests use this so one case
-/// cannot leak names into another; production runtimes only add names.
+/// cannot leak names into another.
 #[doc(hidden)]
 pub fn reset_custom_openai_compatible_providers_for_tests() {
     *lock_write() = CustomRegistry::default();
@@ -89,13 +86,14 @@ pub fn custom_openai_compatible_providers() -> Vec<&'static ProviderDescriptor> 
 }
 
 pub fn custom_openai_compatible_provider(name: &str) -> Option<&'static ProviderDescriptor> {
-    lock_read().interned.get(name).copied()
+    lock_read()
+        .active
+        .iter()
+        .copied()
+        .find(|descriptor| descriptor.name == name)
 }
 
 pub fn validate_custom_provider_name(name: &str) -> anyhow::Result<()> {
-    if name.is_empty() {
-        anyhow::bail!("custom provider name must not be empty");
-    }
     if name == "all" {
         anyhow::bail!("custom provider name 'all' is reserved");
     }
@@ -139,6 +137,7 @@ fn intern(name: &str, registry: &mut CustomRegistry) -> &'static ProviderDescrip
         // Same Chat Completions effort field as Ollama. Custom names are not in
         // models.dev, so Unknown must still send the selected level.
         catalog_reasoning: CatalogReasoningPolicy::OffAsNone,
+        unknown_effort: UnknownEffortPolicy::SendRequested,
         default_model: None,
     }));
     registry.interned.insert(name.to_string(), descriptor);
