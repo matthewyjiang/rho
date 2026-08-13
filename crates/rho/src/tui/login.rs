@@ -461,8 +461,7 @@ impl App {
             }
             InteractiveUserAction::OpenUrl { url, instruction } => {
                 self.insert_entry(&Entry::Notice(format!("{provider_label}: {instruction}")));
-                self.insert_entry(&Entry::Notice(url.clone()));
-                self.copy_login_url(&url);
+                self.insert_entry(&Entry::Notice(url));
             }
             InteractiveUserAction::DeviceCode {
                 verification_uri,
@@ -842,9 +841,10 @@ impl App {
         }
     }
 
-    /// Puts a login URL on the clipboard so the user can still reach it when
-    /// the browser does not open. The URL stays in the transcript either way.
-    fn copy_login_url(&mut self, url: &str) {
+    /// Puts a login URL on the clipboard on request (ctrl+y in the OAuth code
+    /// box) so the user can still reach it when the browser does not open.
+    /// The URL stays in the transcript either way.
+    pub(super) fn copy_login_url(&mut self, url: &str) {
         use super::clipboard::CopyOutcome;
         let notice = match self.clipboard.copy(url) {
             Ok(CopyOutcome::Confirmed) => "copied login URL to clipboard".to_string(),

@@ -38,6 +38,22 @@ impl App {
             return Ok(false);
         };
 
+        // ctrl+y copies the pending authorize URL; plain keys stay reserved
+        // for typing the secret itself.
+        if (key.modifiers, key.code) == (KeyModifiers::CONTROL, KeyCode::Char('y')) {
+            let oauth_url = match &secret.kind {
+                super::login_secret_input::SecretInputKind::OAuthCode(request) => {
+                    Some(request.authorize_url.clone())
+                }
+                super::login_secret_input::SecretInputKind::ApiKey => None,
+            };
+            if let Some(url) = oauth_url {
+                self.copy_login_url(&url);
+            }
+            self.clear_transient_key_state();
+            return Ok(true);
+        }
+
         let submit = match (key.modifiers, key.code) {
             (KeyModifiers::NONE, KeyCode::Enter) => {
                 let target = secret.target.clone();

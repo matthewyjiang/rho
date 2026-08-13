@@ -86,13 +86,16 @@ pub(super) fn secret_input_lines(
     secret: &SecretInput,
     width: usize,
 ) -> Vec<ratatui::text::Line<'static>> {
-    let prompt_label = match secret.kind {
-        SecretInputKind::ApiKey => secret.target.label.as_str(),
-        SecretInputKind::OAuthCode(_) => "Anthropic OAuth code",
+    let (prompt_label, footer_parts): (&str, &[&str]) = match secret.kind {
+        SecretInputKind::ApiKey => (secret.target.label.as_str(), &["Enter save", "Esc cancel"]),
+        SecretInputKind::OAuthCode(_) => (
+            "Anthropic OAuth code",
+            &["Enter save", "Esc cancel", "Ctrl+Y copy URL"],
+        ),
     };
     let prompt = format!(
         "enter {prompt_label}  {}",
-        composer_chrome::join_footer_parts(["Enter save", "Esc cancel"])
+        composer_chrome::join_footer_parts(footer_parts.iter().copied())
     );
     let display_value = "•".repeat(secret.value.chars().count());
     vec![

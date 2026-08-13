@@ -22,7 +22,7 @@ Run `/login`, select **Anthropic**, then choose **API Key**, **OAuth**, or **Cla
 /login anthropic-oauth
 ```
 
-API-key login opens a masked key entry box. `/login anthropic-oauth` opens the browser, then asks you to paste the authorization code from the callback page (`code#state`). Rho also copies the login URL to your clipboard, so you can open it by hand when the browser does not launch.
+API-key login opens a masked key entry box. `/login anthropic-oauth` opens the browser, then asks you to paste the authorization code from the callback page (`code#state`). If the browser does not launch, press `ctrl+y` in the code box to copy the login URL to your clipboard and open it by hand.
 
 OAuth is usage-credits billing. Rho warns whenever that auth mode is signed in and selected: the session header, statusline (`usage credits`), `/info`, login, and auth-mode switch.
 
