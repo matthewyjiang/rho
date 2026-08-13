@@ -26,18 +26,31 @@ pub struct AnthropicProvider {
     api_base: String,
     model: String,
     max_tokens: fn(&str) -> u32,
+    thinking_protocol: thinking::AnthropicThinkingProtocol,
 }
 
 impl AnthropicProvider {
+    // Tests construct with an empty protocol and inject one explicitly via
+    // `with_thinking_protocol`, so they never touch the on-disk model cache.
     #[cfg(test)]
     pub fn new(model: String, api_key: String, max_tokens: fn(&str) -> u32) -> Self {
-        Self::new_with_transport(
-            model,
+        Self {
+            client: provider_client(),
             api_key,
+            api_base: ANTHROPIC_API_BASE.into(),
+            model,
             max_tokens,
-            provider_client(),
-            ANTHROPIC_API_BASE.into(),
-        )
+            thinking_protocol: thinking::AnthropicThinkingProtocol::default(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_thinking_protocol(
+        mut self,
+        thinking_protocol: thinking::AnthropicThinkingProtocol,
+    ) -> Self {
+        self.thinking_protocol = thinking_protocol;
+        self
     }
 
     pub(crate) fn new_with_transport(
@@ -47,12 +60,14 @@ impl AnthropicProvider {
         client: reqwest::Client,
         api_base: String,
     ) -> Self {
+        let thinking_protocol = thinking::resolve_thinking_protocol(&model);
         Self {
             client,
             api_key,
             api_base,
             model,
             max_tokens,
+            thinking_protocol,
         }
     }
 
@@ -63,8 +78,12 @@ impl AnthropicProvider {
     ) -> Result<AnthropicRequest, ModelError> {
         let target = self.model_identity();
         let max_tokens = (self.max_tokens)(&self.model);
-        let (thinking, output_config) =
-            thinking::thinking_config(&self.model, request.reasoning_level, max_tokens)?;
+        let (thinking, output_config) = thinking::thinking_config_for(
+            &self.model,
+            &self.thinking_protocol,
+            request.reasoning_level,
+            max_tokens,
+        )?;
         let (system, mut messages) = split_system_and_messages(
             request.messages.to_vec(),
             &target,

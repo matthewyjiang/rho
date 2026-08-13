@@ -520,18 +520,6 @@ fn only_capability_backed_providers_prepare_capabilities_during_startup() {
 }
 
 #[test]
-fn only_kimi_requires_synchronous_capability_discovery() {
-    assert!(!super::needs_synchronous_capability_refresh(
-        "xai",
-        "unseen-model"
-    ));
-    assert!(super::needs_synchronous_capability_refresh(
-        "kimi-code",
-        "unseen-model"
-    ));
-}
-
-#[test]
 fn cli_model_override_resolves_user_defined_alias() {
     with_cached_provider_models("anthropic", vec!["claude-sonnet-4-5"], || {
         let mut cfg = Config {

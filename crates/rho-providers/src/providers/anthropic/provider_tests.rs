@@ -3,9 +3,6 @@ use serde_json::json;
 
 use super::*;
 use crate::{
-    model::provider_models::{
-        with_provider_models_cache_dir_for_tests, write_cached_provider_model_raw_json_for_tests,
-    },
     protocol::anthropic_messages::AnthropicOutputConfig,
     provider_backend::{ContentBlock, Message, ToolCall, ToolSpec},
     reasoning::ReasoningLevel,
@@ -18,7 +15,16 @@ fn test_provider(model: &str) -> AnthropicProvider {
     provider
 }
 
-fn adaptive_capabilities(xhigh: bool, max: bool) -> serde_json::Value {
+fn test_provider_with_capabilities(
+    model: &str,
+    capabilities: &serde_json::Value,
+) -> AnthropicProvider {
+    test_provider(model).with_thinking_protocol(
+        thinking::AnthropicThinkingProtocol::from_capabilities(capabilities),
+    )
+}
+
+fn adaptive_capabilities() -> serde_json::Value {
     json!({
         "thinking": {
             "supported": true,
@@ -32,8 +38,8 @@ fn adaptive_capabilities(xhigh: bool, max: bool) -> serde_json::Value {
             "low": {"supported": true},
             "medium": {"supported": true},
             "high": {"supported": true},
-            "xhigh": {"supported": xhigh},
-            "max": {"supported": max}
+            "xhigh": {"supported": true},
+            "max": {"supported": true}
         }
     })
 }
@@ -47,20 +53,6 @@ fn enabled_capabilities() -> serde_json::Value {
                 "enabled": {"supported": true}
             }
         }
-    })
-}
-
-fn with_anthropic_capabilities<T>(
-    models: &[(&str, serde_json::Value)],
-    f: impl FnOnce() -> T,
-) -> T {
-    let cache = tempfile::tempdir().unwrap();
-    with_provider_models_cache_dir_for_tests(cache.path().to_path_buf(), || {
-        for (model, capabilities) in models {
-            write_cached_provider_model_raw_json_for_tests("anthropic", model, model, capabilities)
-                .unwrap();
-        }
-        f()
     })
 }
 
@@ -134,54 +126,28 @@ fn request_body_serializes_messages_tools_and_stream_flag() {
 
 #[test]
 fn adaptive_thinking_uses_output_effort_without_a_token_budget() {
-    with_anthropic_capabilities(
-        &[("claude-opus-5", adaptive_capabilities(true, true))],
-        || {
-            let provider = test_provider("claude-opus-5");
+    let provider = test_provider_with_capabilities("claude-opus-5", &adaptive_capabilities());
 
-            let body = request_body(&provider, ReasoningLevel::Medium).unwrap();
-            let value = serde_json::to_value(&body).unwrap();
+    let body = request_body(&provider, ReasoningLevel::Medium).unwrap();
+    let value = serde_json::to_value(&body).unwrap();
 
-            assert_eq!(body.max_tokens, DEFAULT_MAX_TOKENS);
-            assert_eq!(
-                body.thinking,
-                Some(AnthropicThinkingConfig::Adaptive {
-                    display: "summarized"
-                })
-            );
-            assert_eq!(
-                body.output_config,
-                Some(AnthropicOutputConfig { effort: "medium" })
-            );
-            assert_eq!(
-                value["thinking"],
-                json!({"type": "adaptive", "display": "summarized"})
-            );
-            assert_eq!(value["output_config"], json!({"effort": "medium"}));
-            assert!(value["thinking"].get("budget_tokens").is_none());
-        },
+    assert_eq!(body.max_tokens, DEFAULT_MAX_TOKENS);
+    assert_eq!(
+        body.thinking,
+        Some(AnthropicThinkingConfig::Adaptive {
+            display: "summarized"
+        })
     );
-}
-
-#[test]
-fn dated_model_ids_reuse_parent_alias_capabilities() {
-    with_anthropic_capabilities(
-        &[("claude-opus-5", adaptive_capabilities(true, true))],
-        || {
-            let provider = test_provider("claude-opus-5-20260724");
-            let body = request_body(&provider, ReasoningLevel::High).unwrap();
-            assert_eq!(
-                body.thinking,
-                Some(AnthropicThinkingConfig::Adaptive {
-                    display: "summarized"
-                })
-            );
-            assert_eq!(
-                body.output_config,
-                Some(AnthropicOutputConfig { effort: "high" })
-            );
-        },
+    assert_eq!(
+        body.output_config,
+        Some(AnthropicOutputConfig { effort: "medium" })
     );
+    assert_eq!(
+        value["thinking"],
+        json!({"type": "adaptive", "display": "summarized"})
+    );
+    assert_eq!(value["output_config"], json!({"effort": "medium"}));
+    assert!(value["thinking"].get("budget_tokens").is_none());
 }
 
 #[test]
@@ -207,33 +173,23 @@ fn provider_context_replay_follows_effective_thinking_mode() {
 
 #[test]
 fn reasoning_off_disables_adaptive_thinking_when_supported() {
-    with_anthropic_capabilities(
-        &[("claude-sonnet-5", adaptive_capabilities(true, true))],
-        || {
-            let provider = test_provider("claude-sonnet-5");
+    let provider = test_provider_with_capabilities("claude-sonnet-5", &adaptive_capabilities());
 
-            let body = request_body(&provider, ReasoningLevel::Off).unwrap();
-            let value = serde_json::to_value(&body).unwrap();
+    let body = request_body(&provider, ReasoningLevel::Off).unwrap();
+    let value = serde_json::to_value(&body).unwrap();
 
-            assert_eq!(body.thinking, Some(AnthropicThinkingConfig::Disabled));
-            assert_eq!(body.output_config, None);
-            assert_eq!(value["thinking"], json!({"type": "disabled"}));
-        },
-    );
+    assert_eq!(body.thinking, Some(AnthropicThinkingConfig::Disabled));
+    assert_eq!(body.output_config, None);
+    assert_eq!(value["thinking"], json!({"type": "disabled"}));
 }
 
 #[test]
 fn reasoning_off_is_rejected_when_thinking_cannot_be_disabled() {
-    with_anthropic_capabilities(
-        &[("claude-fable-5", adaptive_capabilities(true, true))],
-        || {
-            let provider = test_provider("claude-fable-5");
-            assert!(matches!(
-                request_body(&provider, ReasoningLevel::Off),
-                Err(ModelError::UnsupportedReasoning { .. })
-            ));
-        },
-    );
+    let provider = test_provider_with_capabilities("claude-fable-5", &adaptive_capabilities());
+    assert!(matches!(
+        request_body(&provider, ReasoningLevel::Off),
+        Err(ModelError::UnsupportedReasoning { .. })
+    ));
 }
 
 #[test]
@@ -250,89 +206,84 @@ fn unknown_model_omits_thinking_instead_of_sending_enabled() {
 
 #[test]
 fn legacy_thinking_still_reserves_answer_tokens() {
-    with_anthropic_capabilities(&[("claude-sonnet-4-5", enabled_capabilities())], || {
-        let provider = test_provider("claude-sonnet-4-5");
+    let provider = test_provider_with_capabilities("claude-sonnet-4-5", &enabled_capabilities());
 
-        let body = request_body(&provider, ReasoningLevel::Medium).unwrap();
+    let body = request_body(&provider, ReasoningLevel::Medium).unwrap();
 
-        assert_eq!(body.max_tokens, DEFAULT_MAX_TOKENS);
-        assert_eq!(
-            body.thinking,
-            Some(AnthropicThinkingConfig::Enabled {
-                budget_tokens: DEFAULT_MAX_TOKENS - ANTHROPIC_ANSWER_RESERVE_TOKENS,
-            })
-        );
-        assert_eq!(body.output_config, None);
-    });
+    assert_eq!(body.max_tokens, DEFAULT_MAX_TOKENS);
+    assert_eq!(
+        body.thinking,
+        Some(AnthropicThinkingConfig::Enabled {
+            budget_tokens: DEFAULT_MAX_TOKENS - ANTHROPIC_ANSWER_RESERVE_TOKENS,
+        })
+    );
+    assert_eq!(body.output_config, None);
 }
 
+// Covers: the cache write lands on the shared transcript; raising review
+// reasoning changes thinking or effort, so that is not a guaranteed cache hit
+// Owner: anthropic request body cache breakpoints
 #[test]
 fn two_stage_bodies_mark_shared_transcript_and_keep_screen_thinking_cheap() {
-    with_anthropic_capabilities(
-        &[
-            ("claude-opus-4-8", adaptive_capabilities(true, true)),
-            ("claude-haiku-4-5", enabled_capabilities()),
-        ],
-        || {
-            let marker = Some(AnthropicCacheControl::ephemeral());
-            let cases = [
-                (
-                    "claude-opus-4-8",
-                    Some(AnthropicThinkingConfig::Adaptive {
-                        display: "summarized",
-                    }),
-                    Some(AnthropicThinkingConfig::Adaptive {
-                        display: "summarized",
-                    }),
-                    Some(AnthropicOutputConfig { effort: "low" }),
-                    Some(AnthropicOutputConfig { effort: "high" }),
-                ),
-                (
-                    "claude-haiku-4-5",
-                    Some(AnthropicThinkingConfig::Enabled {
-                        budget_tokens: 2_048,
-                    }),
-                    Some(AnthropicThinkingConfig::Enabled {
-                        budget_tokens: DEFAULT_MAX_TOKENS
-                            .saturating_sub(ANTHROPIC_ANSWER_RESERVE_TOKENS),
-                    }),
-                    None,
-                    None,
-                ),
-            ];
+    let marker = Some(AnthropicCacheControl::ephemeral());
+    let cases = [
+        (
+            "claude-opus-4-8",
+            adaptive_capabilities(),
+            Some(AnthropicThinkingConfig::Adaptive {
+                display: "summarized",
+            }),
+            Some(AnthropicThinkingConfig::Adaptive {
+                display: "summarized",
+            }),
+            Some(AnthropicOutputConfig { effort: "low" }),
+            Some(AnthropicOutputConfig { effort: "high" }),
+        ),
+        (
+            "claude-haiku-4-5",
+            enabled_capabilities(),
+            Some(AnthropicThinkingConfig::Enabled {
+                budget_tokens: 2_048,
+            }),
+            Some(AnthropicThinkingConfig::Enabled {
+                budget_tokens: DEFAULT_MAX_TOKENS.saturating_sub(ANTHROPIC_ANSWER_RESERVE_TOKENS),
+            }),
+            None,
+            None,
+        ),
+    ];
 
-            for (model, screen_thinking, review_thinking, screen_effort, review_effort) in cases {
-                let provider = test_provider(model);
-                let screen = two_stage_request_body(&provider, "screen", ReasoningLevel::Low);
-                let review = two_stage_request_body(&provider, "review", ReasoningLevel::High);
+    for (model, capabilities, screen_thinking, review_thinking, screen_effort, review_effort) in
+        cases
+    {
+        let provider = test_provider_with_capabilities(model, &capabilities);
+        let screen = two_stage_request_body(&provider, "screen", ReasoningLevel::Low);
+        let review = two_stage_request_body(&provider, "review", ReasoningLevel::High);
 
-                assert_eq!(screen.system, review.system, "{model} system");
-                let screen_user = user_text_blocks(&screen);
-                let review_user = user_text_blocks(&review);
-                assert_eq!(
-                    screen_user[0],
-                    ("shared transcript", marker.as_ref()),
-                    "{model} screen transcript"
-                );
-                assert_eq!(
-                    review_user[0],
-                    ("shared transcript", marker.as_ref()),
-                    "{model} review transcript"
-                );
-                assert_eq!(screen_user[1], ("screen", None), "{model} screen suffix");
-                assert_eq!(review_user[1], ("review", None), "{model} review suffix");
-                assert_eq!(screen.thinking, screen_thinking, "{model} screen thinking");
-                assert_eq!(review.thinking, review_thinking, "{model} review thinking");
-                assert_eq!(screen.output_config, screen_effort, "{model} screen effort");
-                assert_eq!(review.output_config, review_effort, "{model} review effort");
-                assert!(
-                    screen.thinking != review.thinking
-                        || screen.output_config != review.output_config,
-                    "{model} raised review reasoning must change wire thinking or effort"
-                );
-            }
-        },
-    );
+        assert_eq!(screen.system, review.system, "{model} system");
+        let screen_user = user_text_blocks(&screen);
+        let review_user = user_text_blocks(&review);
+        assert_eq!(
+            screen_user[0],
+            ("shared transcript", marker.as_ref()),
+            "{model} screen transcript"
+        );
+        assert_eq!(
+            review_user[0],
+            ("shared transcript", marker.as_ref()),
+            "{model} review transcript"
+        );
+        assert_eq!(screen_user[1], ("screen", None), "{model} screen suffix");
+        assert_eq!(review_user[1], ("review", None), "{model} review suffix");
+        assert_eq!(screen.thinking, screen_thinking, "{model} screen thinking");
+        assert_eq!(review.thinking, review_thinking, "{model} review thinking");
+        assert_eq!(screen.output_config, screen_effort, "{model} screen effort");
+        assert_eq!(review.output_config, review_effort, "{model} review effort");
+        assert!(
+            screen.thinking != review.thinking || screen.output_config != review.output_config,
+            "{model} raised review reasoning must change wire thinking or effort"
+        );
+    }
 }
 
 fn two_stage_request_body(

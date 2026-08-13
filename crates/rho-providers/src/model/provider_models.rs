@@ -98,6 +98,8 @@ pub(crate) fn cached_provider_model_raw_json(provider: &str, model: &str) -> Opt
     raw.and_then(|value| serde_json::from_str(&value).ok())
 }
 
+/// Replaces the provider's cached rows with one model carrying `raw_json`,
+/// through the same write path production refreshes use.
 #[cfg(test)]
 pub(crate) fn write_cached_provider_model_raw_json_for_tests(
     provider: &str,
@@ -105,40 +107,20 @@ pub(crate) fn write_cached_provider_model_raw_json_for_tests(
     display_name: &str,
     raw_json: &Value,
 ) -> Result<(), ModelError> {
-    let connection = open_provider_models_cache().map_err(model_cache_error)?;
-    let reasoning_capabilities =
-        serde_json::to_string(&ReasoningCapabilities::Unknown).map_err(|error| {
-            ModelError::InvalidResponse(format!(
-                "failed to serialize provider reasoning capabilities: {error}"
-            ))
-        })?;
-    connection
-        .execute(
-            "insert into provider_models (provider, model, display_name, context_window, max_output_tokens, reasoning_capabilities_json, cache_version, raw_json, updated_at)
-             values (?1, ?2, ?3, null, null, ?4, ?5, ?6, strftime('%s', 'now'))
-             on conflict(provider, model) do update set
-               display_name = excluded.display_name,
-               raw_json = excluded.raw_json,
-               updated_at = excluded.updated_at",
-            params![
-                provider,
-                model,
-                display_name,
-                reasoning_capabilities,
-                PROVIDER_MODEL_CACHE_VERSION,
-                raw_json.to_string()
-            ],
-        )
-        .map_err(model_cache_error)?;
-    connection
-        .execute(
-            "insert into provider_model_refresh (provider, updated_at, error)
-             values (?1, strftime('%s', 'now'), null)
-             on conflict(provider) do update set updated_at = excluded.updated_at, error = null",
-            params![provider],
-        )
-        .map_err(model_cache_error)?;
-    Ok(())
+    replace_cached_provider_model_records(
+        provider,
+        &[ProviderModelRecord {
+            model: ProviderModel {
+                provider: provider.to_string(),
+                model: model.to_string(),
+                display_name: display_name.to_string(),
+                context_window: None,
+                max_output_tokens: None,
+                reasoning_capabilities: ReasoningCapabilities::Unknown,
+            },
+            raw_json: raw_json.clone(),
+        }],
+    )
 }
 
 pub fn cached_provider_models(provider: &str) -> Vec<ProviderModel> {
@@ -180,63 +162,64 @@ const PROVIDER_MODEL_CACHE_VERSION: i64 = 2;
 const PROVIDER_MODEL_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 
 pub fn provider_model_capabilities_need_refresh(provider: &str, model: &str) -> bool {
-    match provider {
-        "kimi-code" => kimi_capabilities_need_refresh(model),
-        "anthropic" => anthropic_capabilities_need_refresh(model),
-        _ => false,
-    }
+    let capabilities_are_known = match provider {
+        "kimi-code" => kimi_capabilities_are_known as fn(&CachedCapabilityRow) -> bool,
+        "anthropic" => anthropic_capabilities_are_known,
+        _ => return false,
+    };
+    let Some(row) = cached_capability_row(provider, model) else {
+        return true;
+    };
+    row.cache_version < PROVIDER_MODEL_CACHE_VERSION
+        || !capabilities_are_known(&row)
+        || !row
+            .updated_at
+            .is_some_and(provider_snapshot_timestamp_is_fresh)
 }
 
-fn kimi_capabilities_need_refresh(model: &str) -> bool {
-    let Ok(connection) = open_provider_models_cache() else {
-        return true;
-    };
-    let Ok((cache_version, serialized_capabilities, updated_at)) = connection.query_row(
-        "select models.cache_version, models.reasoning_capabilities_json, refresh.updated_at
-         from provider_models models
-         left join provider_model_refresh refresh on refresh.provider = models.provider
-         where models.provider = ?1 and models.model = ?2",
-        params!["kimi-code", model],
-        |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, Option<String>>(1)?,
-                row.get::<_, Option<i64>>(2)?,
-            ))
-        },
-    ) else {
-        return true;
-    };
-    let capabilities = serialized_capabilities
-        .and_then(|value| serde_json::from_str::<ReasoningCapabilities>(&value).ok())
-        .unwrap_or_default();
-    cache_version < PROVIDER_MODEL_CACHE_VERSION
-        || !capabilities.is_known()
-        || !updated_at.is_some_and(provider_snapshot_timestamp_is_fresh)
+struct CachedCapabilityRow {
+    cache_version: i64,
+    reasoning_capabilities_json: Option<String>,
+    raw_json: Option<String>,
+    updated_at: Option<i64>,
 }
 
-fn anthropic_capabilities_need_refresh(model: &str) -> bool {
-    let Ok(connection) = open_provider_models_cache() else {
-        return true;
-    };
-    let Ok((raw_json, updated_at)) = connection.query_row(
-        "select models.raw_json, refresh.updated_at
-         from provider_models models
-         left join provider_model_refresh refresh on refresh.provider = models.provider
-         where models.provider = ?1 and models.model = ?2",
-        params!["anthropic", model],
-        |row| {
-            Ok((
-                row.get::<_, Option<String>>(0)?,
-                row.get::<_, Option<i64>>(1)?,
-            ))
-        },
-    ) else {
-        return true;
-    };
-    let capabilities = raw_json.and_then(|value| serde_json::from_str::<Value>(&value).ok());
-    !capabilities.is_some_and(|value| value.is_object())
-        || !updated_at.is_some_and(provider_snapshot_timestamp_is_fresh)
+fn cached_capability_row(provider: &str, model: &str) -> Option<CachedCapabilityRow> {
+    let connection = open_provider_models_cache().ok()?;
+    connection
+        .query_row(
+            "select models.cache_version, models.reasoning_capabilities_json, models.raw_json, refresh.updated_at
+             from provider_models models
+             left join provider_model_refresh refresh on refresh.provider = models.provider
+             where models.provider = ?1 and models.model = ?2",
+            params![provider, model],
+            |row| {
+                Ok(CachedCapabilityRow {
+                    cache_version: row.get(0)?,
+                    reasoning_capabilities_json: row.get(1)?,
+                    raw_json: row.get(2)?,
+                    updated_at: row.get(3)?,
+                })
+            },
+        )
+        .ok()
+}
+
+fn kimi_capabilities_are_known(row: &CachedCapabilityRow) -> bool {
+    row.reasoning_capabilities_json
+        .as_deref()
+        .and_then(|value| serde_json::from_str::<ReasoningCapabilities>(value).ok())
+        .unwrap_or_default()
+        .is_known()
+}
+
+// Anthropic capabilities live in raw_json as the Models API `capabilities`
+// object; anything but a JSON object (missing row, legacy null) is unknown.
+fn anthropic_capabilities_are_known(row: &CachedCapabilityRow) -> bool {
+    row.raw_json
+        .as_deref()
+        .and_then(|value| serde_json::from_str::<Value>(value).ok())
+        .is_some_and(|value| value.is_object())
 }
 
 fn provider_snapshot_timestamp_is_fresh(updated_at: i64) -> bool {

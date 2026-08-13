@@ -96,21 +96,33 @@ fn adaptive_capabilities_send_effort_and_never_a_token_budget() {
     assert_eq!(output, Some(AnthropicOutputConfig { effort: "medium" }));
 }
 
-// Covers: Off on adaptive models that allow it uses thinking.type.disabled
+// Covers: Off on models known to accept it uses thinking.type.disabled
 // Owner: anthropic thinking protocol
 #[test]
-fn adaptive_off_disables_thinking_without_effort() {
+fn off_disables_thinking_only_for_models_known_to_accept_it() {
     let protocol = AnthropicThinkingProtocol::from_capabilities(&adaptive_full_effort());
-    assert_eq!(
-        thinking_config_for(
-            "claude-opus-5",
-            &protocol,
-            ReasoningLevel::Off,
-            DEFAULT_MAX_TOKENS,
-        )
-        .unwrap(),
-        (Some(AnthropicThinkingConfig::Disabled), None)
-    );
+    for model in ["claude-sonnet-5", "claude-sonnet-5-20260203"] {
+        assert_eq!(
+            thinking_config_for(model, &protocol, ReasoningLevel::Off, DEFAULT_MAX_TOKENS).unwrap(),
+            (Some(AnthropicThinkingConfig::Disabled), None),
+            "{model}"
+        );
+    }
+}
+
+// Covers: Off must not send thinking.type.disabled to models that never
+// advertised accepting it; the field 400s where it is unsupported
+// Owner: anthropic thinking protocol
+#[test]
+fn off_omits_thinking_when_disabled_support_is_unknown() {
+    let protocol = AnthropicThinkingProtocol::from_capabilities(&adaptive_full_effort());
+    for model in ["claude-opus-4-8", "claude-opus-5", "claude-sonnet-4-6"] {
+        assert_eq!(
+            thinking_config_for(model, &protocol, ReasoningLevel::Off, DEFAULT_MAX_TOKENS).unwrap(),
+            (None, None),
+            "{model}"
+        );
+    }
 }
 
 // Covers: Fable/Mythos reject thinking.type.disabled, so Off must not be sent
@@ -156,10 +168,11 @@ fn enabled_capabilities_reserve_an_answer_budget() {
     );
 }
 
-// Covers: unsupported effort levels clamp to a supported neighbor
+// Covers: unsupported effort levels clamp down to the nearest cheaper level
+// so the user's request never silently escalates cost
 // Owner: anthropic thinking protocol
 #[test]
-fn effort_clamps_to_levels_the_model_advertises() {
+fn effort_clamps_down_to_levels_the_model_advertises() {
     let protocol = AnthropicThinkingProtocol::from_capabilities(&adaptive_without_xhigh());
     let (_, output) = thinking_config_for(
         "claude-opus-4-6",
@@ -168,7 +181,34 @@ fn effort_clamps_to_levels_the_model_advertises() {
         DEFAULT_MAX_TOKENS,
     )
     .unwrap();
-    assert_eq!(output, Some(AnthropicOutputConfig { effort: "max" }));
+    assert_eq!(output, Some(AnthropicOutputConfig { effort: "high" }));
+}
+
+// Covers: a request below the advertised range rises to the model minimum
+// Owner: anthropic thinking protocol
+#[test]
+fn effort_below_the_advertised_range_rises_to_the_model_minimum() {
+    let capabilities = json!({
+        "thinking": {
+            "supported": true,
+            "types": {"adaptive": {"supported": true}}
+        },
+        "effort": {
+            "supported": true,
+            "low": {"supported": false},
+            "medium": {"supported": true},
+            "high": {"supported": true}
+        }
+    });
+    let protocol = AnthropicThinkingProtocol::from_capabilities(&capabilities);
+    let (_, output) = thinking_config_for(
+        "claude-opus-5",
+        &protocol,
+        ReasoningLevel::Low,
+        DEFAULT_MAX_TOKENS,
+    )
+    .unwrap();
+    assert_eq!(output, Some(AnthropicOutputConfig { effort: "medium" }));
 }
 
 #[test]
@@ -179,4 +219,35 @@ fn dated_snapshot_ids_reuse_the_parent_alias_capabilities() {
     );
     assert_eq!(dated_parent_model("claude-opus-5"), None);
     assert_eq!(dated_parent_model("claude-sonnet-4-6"), None);
+}
+
+// Covers: construction-time resolution reads the cached capabilities row and
+// falls back to the parent alias for dated snapshot ids
+// Owner: anthropic thinking protocol
+#[test]
+fn resolve_reads_cached_capabilities_including_dated_snapshots() {
+    let cache = tempfile::tempdir().unwrap();
+    crate::model::provider_models::with_provider_models_cache_dir_for_tests(
+        cache.path().to_path_buf(),
+        || {
+            crate::model::provider_models::write_cached_provider_model_raw_json_for_tests(
+                "anthropic",
+                "claude-opus-5",
+                "Claude Opus 5",
+                &adaptive_full_effort(),
+            )
+            .unwrap();
+
+            let expected = AnthropicThinkingProtocol::from_capabilities(&adaptive_full_effort());
+            assert_eq!(resolve_thinking_protocol("claude-opus-5"), expected);
+            assert_eq!(
+                resolve_thinking_protocol("claude-opus-5-20260724"),
+                expected
+            );
+            assert_eq!(
+                resolve_thinking_protocol("claude-unknown"),
+                AnthropicThinkingProtocol::default()
+            );
+        },
+    );
 }

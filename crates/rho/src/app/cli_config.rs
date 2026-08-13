@@ -272,8 +272,8 @@ pub(super) async fn prepare_model_metadata(
     // models.dev metadata is optional and fetched asynchronously by the TUI.
     // Blocking automation and background-agent startup on the full catalog makes
     // cold or offline launches depend on an unrelated network request. Provider-
-    // native discovery remains synchronous above because Kimi uses it as the
-    // authoritative capability source.
+    // native discovery remains synchronous above because Kimi and Anthropic use
+    // it as the authoritative capability source.
 }
 
 fn needs_startup_capability_refresh(
@@ -411,8 +411,8 @@ async fn refresh_model_list_for_provider(
     };
     let needs_model_discovery = catalog::default_model_for_provider(provider).is_none()
         && (selected_model.is_none() || provider_requires_cached_models(provider));
-    let needs_capabilities =
-        selected_model.is_some_and(|model| needs_synchronous_capability_refresh(provider, model));
+    let needs_capabilities = selected_model
+        .is_some_and(|model| provider_model_capabilities_need_refresh(provider, model));
     if descriptor.model_refresh.is_none() || (!needs_model_discovery && !needs_capabilities) {
         return Ok(false);
     }
@@ -427,10 +427,6 @@ async fn refresh_model_list_for_provider(
         }
         Err(_) => Ok(true),
     }
-}
-
-fn needs_synchronous_capability_refresh(provider: &str, model: &str) -> bool {
-    provider == "kimi-code" && provider_model_capabilities_need_refresh(provider, model)
 }
 
 fn selected_model_for_refresh(config: &Config, provider: &str) -> Option<String> {
