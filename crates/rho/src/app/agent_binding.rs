@@ -370,14 +370,7 @@ pub(crate) fn narrower_permission_mode(
     frozen: crate::permission::PermissionMode,
     current: crate::permission::PermissionMode,
 ) -> crate::permission::PermissionMode {
-    use crate::permission::PermissionMode;
-    let rank = |mode| match mode {
-        PermissionMode::Plan => 0,
-        PermissionMode::Supervised => 1,
-        PermissionMode::Auto => 2,
-        PermissionMode::Bypass => 3,
-    };
-    if rank(current) < rank(frozen) {
+    if current.restrictiveness_rank() < frozen.restrictiveness_rank() {
         current
     } else {
         frozen

@@ -328,7 +328,10 @@ fn field(
 fn permission_style(mode: PermissionMode) -> Style {
     match mode {
         PermissionMode::Bypass => Theme::warning(),
-        PermissionMode::Auto | PermissionMode::Plan | PermissionMode::Supervised => Theme::dim(),
+        PermissionMode::Auto
+        | PermissionMode::AllowEdits
+        | PermissionMode::Plan
+        | PermissionMode::Supervised => Theme::dim(),
     }
 }
 

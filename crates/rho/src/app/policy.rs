@@ -1,16 +1,16 @@
 use rho_sdk::{CapabilityRequest, PolicyDecision, WorkspacePolicy};
 
-use crate::permission::{ModePolicy, PermissionMode};
+use crate::permission::{ModePolicy, PermissionMode, SessionWriteLog};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum AppPolicy {
     Allow,
     Mode(ModePolicy),
 }
 
 impl AppPolicy {
-    pub(crate) fn for_mode(mode: PermissionMode) -> Self {
-        match mode.workspace_policy() {
+    pub(crate) fn for_mode(mode: PermissionMode, writes: SessionWriteLog) -> Self {
+        match mode.workspace_policy(writes) {
             Some(policy) => Self::Mode(policy),
             None => Self::Allow,
         }

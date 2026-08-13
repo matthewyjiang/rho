@@ -111,7 +111,9 @@ sessions belong in a multiplexer such as tmux or Herdr, or in a foreground
 ## Permissions and safety
 
 `process` requests the Process capability. [Permission modes](/configuration#permission-modes)
-can deny it (`plan`), classify it (`auto`), or ask first (`supervised`). They do not add an
+can deny it (`plan`), classify it (`auto`), or ask first (`allow_edits` and
+`supervised`). The `allow_edits` free-write skip covers workspace file writes
+only; process execution always needs approval. They do not add an
 operating-system sandbox. The child still runs with the current user's rights
 and can affect files inside or outside the workspace the same way a shell in
 that account could.
@@ -123,7 +125,7 @@ running across turns and read its output later.
 ## Related
 
 - [Tools and workspace](/tools-workspace) - workspace root and capability model
-- [Permission modes](/configuration#permission-modes) - plan, auto, and supervised
+- [Permission modes](/configuration#permission-modes) - plan, auto, allow_edits, and supervised
   process policy
 - [Workflow runtime](/workflows/runtime) - host-only `workflow_command` for
   frozen workflow steps (not the agent `process` tool)

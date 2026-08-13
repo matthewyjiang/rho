@@ -62,12 +62,13 @@ rho --config ~/.rho/config.toml
 
 ## Permission modes
 
-`permission_mode` must be `bypass`, `auto`, `plan`, or `supervised`. Missing values default to `bypass`; an unrecognized value is a configuration error. The setting controls whether Rho allows, denies, classifies, or asks before security-sensitive tool capabilities:
+`permission_mode` must be `bypass`, `auto`, `allow_edits`, `plan`, or `supervised`. Missing values default to `bypass`; an unrecognized value is a configuration error. The setting controls whether Rho allows, denies, classifies, or asks before security-sensitive tool capabilities:
 
 ```mermaid
 flowchart LR
     bypass[bypass: allow all] --> tools[Sensitive tools]
     auto[auto: classifier] --> tools
+    allowEdits[allow_edits: tracked edits] --> tools
     plan[plan: deny writes and process] --> tools
     supervised[supervised: ask first] --> tools
 ```
@@ -75,22 +76,24 @@ flowchart LR
 | Mode | Config string | Default? | Behavior |
 | --- | --- | --- | --- |
 | Bypass | `bypass` | yes (new installs / unset) | No policy checks. Every capability allowed. |
-| Auto | `auto` | no | Same require-approval set as Supervised. A configured classifier model decides allow or deny. |
+| Auto | `auto` | no | Same gate as Allow edits. A configured classifier model decides allow or deny for the rest. |
+| Allow edits | `allow_edits` | no | In-workspace writes to git-tracked files are allowed. Later writes to a path already allowed this session are also allowed. Human approval for other new files, processes, and unknown capabilities. |
 | Plan | `plan` | no | Investigation only. File writes and process execution are denied. |
 | Supervised | `supervised` | no | Human approval for writes, processes, and unknown capabilities. |
 
 - `bypass` is the default and preserves unrestricted tool behavior. The status line shows **Bypass** in warning style so the open posture stays visible.
-- `auto` uses the same capability gate as `supervised`. A permission-classifier model reviews gated requests instead of opening the approval UI. Denied calls return a tool error and the run continues. After three consecutive classifier denials, Rho escalates to the human approval prompt in the TUI or fails closed in headless runs. Auto requires a configured classifier model; choosing it from `/config` opens the model picker when none is set, starting interactive Auto without one opens the same picker, and headless `rho run` fails at startup without one. Escaping the startup picker falls back to Supervised so gated tools still ask a human.
+- `auto` uses the same capability gate as `allow_edits`. A permission-classifier model reviews gated requests instead of opening the approval UI. Denied calls return a tool error and the run continues. After three consecutive classifier denials, Rho escalates to the human approval prompt in the TUI or fails closed in headless runs. Auto requires a configured classifier model; choosing it from `/config` opens the model picker when none is set, starting interactive Auto without one opens the same picker, and headless `rho run` fails at startup without one. Escaping the startup picker falls back to Supervised so gated tools still ask a human.
+- `allow_edits` lets the agent edit git-tracked files in the workspace without a prompt. After a new in-workspace file is allowed once this session, later edits to that path also skip the prompt. Gitignored paths, writes outside the workspace, and process execution still ask first. Reads, network access, skills, and instruction discovery do not prompt. `allow-edits` is accepted as an alias.
 - `plan` allows investigation but denies file writes and process execution.
 - `supervised` asks for confirmation before file writes and process execution. Reads, network access, skills, and instruction discovery do not prompt.
 
-Configure the classifier under **Agent behavior** in `/config`, or in config as `[internal_agents.permission-classifier]`. Rho does not pick a default classifier model. Override the mode for one invocation with `--permission-mode bypass|auto|plan|supervised` (not persisted).
+Configure the classifier under **Agent behavior** in `/config`, or in config as `[internal_agents.permission-classifier]`. Rho does not pick a default classifier model. Override the mode for one invocation with `--permission-mode bypass|auto|allow_edits|plan|supervised` (not persisted).
 
-Change the mode from **Agent behavior** > **Permission mode** in `/config`. An interactive mode change applies before the next turn and preserves the current session ID and history, but clears every remembered **Allow for session** approval. In a supervised approval prompt, the default focus is **Deny**. Choose **Allow once**, **Allow for session**, or **Deny**. A session approval remembers only the exact structured capability request for the current session. Pressing Escape denies the request and cancels the current run; choosing **Deny** with Enter rejects only that operation so the run can continue.
+Change the mode from **Agent behavior** > **Permission mode** in `/config`. An interactive mode change applies before the next turn and preserves the current session ID and history, but clears every remembered **Allow for session** approval. Remembered path grants stay bound to the approver that allowed them. A classifier grant in Auto does not skip the human gate after switching to Allow edits; a human grant may. Resetting or resuming a different session starts without inherited path grants. In a supervised approval prompt, the default focus is **Deny**. Choose **Allow once**, **Allow for session**, or **Deny**. A session approval remembers only the exact structured capability request for the current session. Pressing Escape denies the request and cancels the current run; choosing **Deny** with Enter rejects only that operation so the run can continue.
 
-Non-interactive `rho run` sessions cannot display approval prompts. Supervised operations that require approval therefore fail closed instead of being approved automatically.
+Non-interactive `rho run` sessions cannot display approval prompts. Supervised and Allow edits operations that require approval therefore fail closed instead of being approved automatically.
 
-Permission modes are application policy checks, not an operating-system sandbox. Rho and its tools still run with the current user's permissions, and tools must correctly declare and authorize their capabilities for the policy to cover them. In restricted modes, capability classes that this Rho version does not recognize fail closed: Plan denies them, Supervised requires approval, and Auto sends them to the classifier.
+Permission modes are application policy checks, not an operating-system sandbox. Rho and its tools still run with the current user's permissions, and tools must correctly declare and authorize their capabilities for the policy to cover them. In restricted modes, capability classes that this Rho version does not recognize fail closed: Plan denies them, Supervised and Allow edits require approval, and Auto sends them to the classifier.
 
 ## Reasoning options
 

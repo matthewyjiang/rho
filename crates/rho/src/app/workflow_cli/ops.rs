@@ -347,11 +347,8 @@ fn recheck_frozen_graph(
 }
 
 fn permission_rank(value: &str) -> Option<u8> {
-    match value {
-        "plan" => Some(0),
-        "supervised" => Some(1),
-        "auto" => Some(2),
-        "bypass" => Some(3),
-        _ => None,
-    }
+    value
+        .parse::<crate::permission::PermissionMode>()
+        .ok()
+        .map(crate::permission::PermissionMode::restrictiveness_rank)
 }

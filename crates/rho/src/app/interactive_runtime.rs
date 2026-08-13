@@ -2,8 +2,8 @@ use std::{path::PathBuf, sync::Arc};
 
 use rho_sdk::{
     model::{Message, ToolCall},
-    ApprovalHandler, ApprovalRequestReceiver, Error, HostInputId, HostInputResponse, Rho, RunEvent,
-    RunOutcome, SessionId, SessionOptions, UserInput, Workspace,
+    ApprovalHandler, ApprovalRequestReceiver, ApprovalSession, Error, HostInputId,
+    HostInputResponse, Rho, RunEvent, RunOutcome, SessionId, SessionOptions, UserInput, Workspace,
 };
 
 use {
@@ -83,6 +83,7 @@ pub(crate) struct InteractiveRuntime {
     config: Config,
     permission_mode: PermissionMode,
     experimental_workspace_rewind: bool,
+    session_writes: crate::permission::SessionWriteLog,
     approval_handler: Option<Arc<dyn ApprovalHandler>>,
     approval_receiver: Option<ApprovalRequestReceiver>,
     classifier_approval_handler: Option<Arc<ClassifierApprovalHandler>>,
@@ -108,6 +109,15 @@ enum ReplacementLifecycle {
     Rebound,
 }
 
+/// Whether a rebuilt runtime may keep path grants from the previous live session.
+#[derive(Clone, Copy)]
+enum SessionWriteRetention {
+    /// Same session and the same grantor still own these paths.
+    Keep,
+    /// A distinct session must not inherit another session's remembered writes.
+    Forget,
+}
+
 impl InteractiveRuntime {
     pub(crate) async fn new(options: InteractiveRuntimeOptions<'_>) -> anyhow::Result<Self> {
         startup::initialize(options).await
@@ -115,6 +125,10 @@ impl InteractiveRuntime {
 
     pub(crate) fn permission_mode(&self) -> PermissionMode {
         self.permission_mode
+    }
+
+    fn workspace_policy(&self) -> AppPolicy {
+        AppPolicy::for_mode(self.permission_mode, self.session_writes.clone())
     }
 
     pub(crate) fn update_config(&mut self, config: Config) {
@@ -161,6 +175,10 @@ impl InteractiveRuntime {
             return Ok(());
         }
 
+        let session_writes = self
+            .session_writes
+            .clone()
+            .carried_across(self.permission_mode, mode);
         let snapshot = self.sessions.session().snapshot();
         let approval_channel = approval_channel_for(
             mode,
@@ -168,13 +186,14 @@ impl InteractiveRuntime {
                 config: self.config.clone(),
                 workspace_path: self.workspace.root().to_path_buf(),
                 usage_recording: self.usage_recording.clone(),
+                session_writes: session_writes.clone(),
             },
         );
         let replacement_runtime = build_runtime(RuntimeBuildOptions {
             provider: Arc::clone(self.provider.provider()),
             tools: self.tools.tools(),
             workspace: self.workspace.clone(),
-            workspace_policy: AppPolicy::for_mode(mode),
+            workspace_policy: AppPolicy::for_mode(mode, session_writes.clone()),
             approval_session: approval_channel
                 .handler
                 .clone()
@@ -198,6 +217,7 @@ impl InteractiveRuntime {
         self.sessions.replace_runtime_session(replacement_session);
         self.permission_mode = mode;
         self.config.permission_mode = mode;
+        self.session_writes = session_writes;
         self.approval_handler = approval_channel.handler;
         self.approval_receiver = approval_channel.receiver;
         self.classifier_approval_handler = approval_channel.classifier;
@@ -343,11 +363,15 @@ impl InteractiveRuntime {
             return Err(Error::SessionBusy);
         }
         if let Some(source) = self.sessions.pending_replacement() {
-            self.rebuild_session(source, ReplacementLifecycle::Started)
-                .await
-                .map_err(|error| Error::Persistence {
-                    message: error.to_string(),
-                })?;
+            self.rebuild_session(
+                source,
+                ReplacementLifecycle::Started,
+                SessionWriteRetention::Keep,
+            )
+            .await
+            .map_err(|error| Error::Persistence {
+                message: error.to_string(),
+            })?;
         }
         let model_user = Message::User(input.blocks().to_vec());
         let mut request_history = self.sessions.history();
@@ -558,6 +582,7 @@ impl InteractiveRuntime {
         self.completed_runs = 0;
         let session_id = self.sessions.reset()?;
         bind_subagent_parent(&self.tools, &session_id, None);
+        self.session_writes.clear();
         self.invalidate_live_context();
         Ok(())
     }
@@ -585,6 +610,7 @@ impl InteractiveRuntime {
                 id,
             },
             ReplacementLifecycle::Started,
+            SessionWriteRetention::Forget,
         )
         .await?;
         bind_subagent_parent(&self.tools, self.sessions.session().id(), Some(&storage));
@@ -610,15 +636,21 @@ impl InteractiveRuntime {
         let snapshot =
             storage.snapshot_for_node(target_id, identity.clone(), prompt_cache_key(&id))?;
         let resume_omission = resume_omissions_report(&snapshot, &identity);
+        let same_session = self
+            .sessions
+            .storage()
+            .is_some_and(|current| current.id() == storage.id());
+        let permission = self.permission_for_rebuild(if same_session {
+            SessionWriteRetention::Keep
+        } else {
+            SessionWriteRetention::Forget
+        });
         let replacement_runtime = build_runtime(RuntimeBuildOptions {
             provider: Arc::clone(self.provider.provider()),
             tools: self.tools.tools(),
             workspace: self.workspace.clone(),
-            workspace_policy: AppPolicy::for_mode(self.permission_mode),
-            approval_session: self
-                .approval_handler
-                .clone()
-                .map(rho_sdk::ApprovalSession::from_shared),
+            workspace_policy: permission.workspace_policy,
+            approval_session: permission.approval_session,
             system_prompt: self.active_system_prompt(),
             reasoning: self.provider.reasoning(),
             service_tier: self.sessions.session().service_tier(),
@@ -642,6 +674,7 @@ impl InteractiveRuntime {
         self.sessions
             .replace_session(replacement_session, resume_omission);
         self.sessions.set_resumed_storage(storage);
+        self.install_rebuilt_permission(permission.pending);
         previous_runtime.shutdown();
         self.invalidate_live_context();
         self.refresh_context_usage();
@@ -801,6 +834,7 @@ impl InteractiveRuntime {
             self.rebuild_session(
                 ReplacementSessionSource::DurableSnapshot { snapshot },
                 ReplacementLifecycle::Rebound,
+                SessionWriteRetention::Keep,
             )
             .await?;
             self.sessions.set_resumed_storage(storage);
@@ -818,6 +852,7 @@ impl InteractiveRuntime {
                 id,
             },
             ReplacementLifecycle::Rebound,
+            SessionWriteRetention::Keep,
         )
         .await?;
         self.sessions.set_resumed_storage(storage);
@@ -828,6 +863,7 @@ impl InteractiveRuntime {
         &mut self,
         source: ReplacementSessionSource,
         lifecycle: ReplacementLifecycle,
+        writes: SessionWriteRetention,
     ) -> anyhow::Result<()> {
         let identity = self.provider.provider().identity();
         let (options, resume_omission) = match source {
@@ -851,15 +887,13 @@ impl InteractiveRuntime {
                 (options, None)
             }
         };
+        let permission = self.permission_for_rebuild(writes);
         let replacement_runtime = build_runtime(RuntimeBuildOptions {
             provider: Arc::clone(self.provider.provider()),
             tools: self.tools.tools(),
             workspace: self.workspace.clone(),
-            workspace_policy: AppPolicy::for_mode(self.permission_mode),
-            approval_session: self
-                .approval_handler
-                .clone()
-                .map(rho_sdk::ApprovalSession::from_shared),
+            workspace_policy: permission.workspace_policy,
+            approval_session: permission.approval_session,
             system_prompt: self.active_system_prompt(),
             reasoning: self.provider.reasoning(),
             service_tier: self.sessions.session().service_tier(),
@@ -878,9 +912,62 @@ impl InteractiveRuntime {
         let previous_runtime = std::mem::replace(&mut self.runtime, replacement_runtime);
         self.sessions
             .replace_session(replacement_session, resume_omission);
+        self.install_rebuilt_permission(permission.pending);
         previous_runtime.shutdown();
         Ok(())
     }
+
+    fn permission_for_rebuild(&self, writes: SessionWriteRetention) -> RebuiltPermission {
+        match writes {
+            SessionWriteRetention::Keep => RebuiltPermission {
+                workspace_policy: self.workspace_policy(),
+                approval_session: self
+                    .approval_handler
+                    .clone()
+                    .map(ApprovalSession::from_shared),
+                pending: None,
+            },
+            SessionWriteRetention::Forget => {
+                let session_writes = crate::permission::SessionWriteLog::default();
+                let channel = approval_channel_for(
+                    self.permission_mode,
+                    ApprovalChannelOptions {
+                        config: self.config.clone(),
+                        workspace_path: self.workspace.root().to_path_buf(),
+                        usage_recording: self.usage_recording.clone(),
+                        session_writes: session_writes.clone(),
+                    },
+                );
+                RebuiltPermission {
+                    workspace_policy: AppPolicy::for_mode(
+                        self.permission_mode,
+                        session_writes.clone(),
+                    ),
+                    approval_session: channel.handler.clone().map(ApprovalSession::from_shared),
+                    pending: Some((session_writes, channel)),
+                }
+            }
+        }
+    }
+
+    fn install_rebuilt_permission(
+        &mut self,
+        pending: Option<(crate::permission::SessionWriteLog, startup::ApprovalChannel)>,
+    ) {
+        let Some((session_writes, channel)) = pending else {
+            return;
+        };
+        self.session_writes = session_writes;
+        self.approval_handler = channel.handler;
+        self.approval_receiver = channel.receiver;
+        self.classifier_approval_handler = channel.classifier;
+    }
+}
+
+struct RebuiltPermission {
+    workspace_policy: AppPolicy,
+    approval_session: Option<ApprovalSession>,
+    pending: Option<(crate::permission::SessionWriteLog, startup::ApprovalChannel)>,
 }
 
 #[cfg(test)]

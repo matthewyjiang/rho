@@ -26,6 +26,11 @@ fn effective_mode_is_the_narrowest_run_wide_ceiling() {
             PermissionMode::Plan,
         ),
         (
+            PermissionMode::Auto,
+            &["allow_edits", "auto"][..],
+            PermissionMode::AllowEdits,
+        ),
+        (
             PermissionMode::Plan,
             &["auto", "supervised"][..],
             PermissionMode::Plan,

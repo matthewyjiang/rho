@@ -132,6 +132,7 @@ fn parses_permission_mode_override() {
     for (flag, expected) in [
         ("bypass", crate::permission::PermissionMode::Bypass),
         ("auto", crate::permission::PermissionMode::Auto),
+        ("allow_edits", crate::permission::PermissionMode::AllowEdits),
         ("plan", crate::permission::PermissionMode::Plan),
         ("supervised", crate::permission::PermissionMode::Supervised),
     ] {
@@ -152,7 +153,7 @@ fn rejects_unknown_permission_mode() {
     assert!(error.to_string().contains("paranoid"));
     assert!(error
         .to_string()
-        .contains("bypass, auto, plan, or supervised"));
+        .contains("bypass, auto, allow_edits, plan, or supervised"));
 }
 
 #[test]

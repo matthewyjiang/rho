@@ -15,10 +15,7 @@ use rho_sdk::{SessionOptions, SystemPrompt};
 
 use crate::config::InternalAgentModelConfig;
 
-use super::super::{
-    policy::AppPolicy,
-    runtime_builder::{build_runtime, RuntimeBuildOptions},
-};
+use super::super::runtime_builder::{build_runtime, RuntimeBuildOptions};
 
 use super::InteractiveRuntime;
 
@@ -179,7 +176,7 @@ impl InteractiveRuntime {
             provider: Arc::clone(self.provider.provider()),
             tools: self.tools.tools(),
             workspace: self.workspace.clone(),
-            workspace_policy: AppPolicy::for_mode(self.permission_mode),
+            workspace_policy: self.workspace_policy(),
             approval_session: self
                 .approval_handler
                 .clone()

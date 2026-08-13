@@ -155,13 +155,14 @@ Permission modes map a `workflow_command` process request as follows:
 | Permission mode | Policy decision | Host prompt |
 | --- | --- | --- |
 | `bypass` | allow | no |
-| `auto` | require approval (classifier) | classifier, then human after three consecutive denials when a responder is available |
+| `auto` | allow tracked workspace edits; require approval (classifier) for other writes and process | classifier, then human after three consecutive denials when a responder is available |
+| `allow_edits` | allow tracked workspace edits; require approval for other writes and process | yes, when a responder is available |
 | `plan` | deny | no |
 | `supervised` | require approval | yes, when a responder is available |
 
 The `before_tool_use` hook still runs when policy returns allow. A host prompt
-runs only for `require approval`. A headless supervised run fails closed when no
-approval responder is available.
+runs only for `require approval`. Headless `supervised` and `allow_edits` runs
+fail closed when no approval responder is available.
 
 Project workflow sources and project agent definitions follow project trust
 rules. User hooks remain eligible. Project hooks stay inactive until the

@@ -16,7 +16,7 @@ use {
     crate::credential_store::AppCredentialStore,
     crate::diagnostics::RuntimeDiagnostics,
     crate::herdr::{HerdrReporter, HerdrState},
-    crate::permission::PermissionMode,
+    crate::permission::{PermissionMode, SessionWriteLog},
     crate::permission_classifier_handler::ClassifierApprovalHandler,
     crate::subagent::{RunState, RunStatus},
     crate::tools::agent::BackgroundSubagents,
@@ -508,12 +508,14 @@ async fn run_session_with_output(
     let compaction = sdk_options.runtime.compaction.clone();
     startup.diagnostics.update_compaction_config(&compaction);
     let usage_recording = crate::usage::default_recording().await;
+    let session_writes = SessionWriteLog::default();
     let approval_session = headless_approval_session(
         startup.config,
         startup.approval_session.clone(),
         startup.approval_classifier.clone(),
         workspace_root.clone(),
         usage_recording.clone(),
+        session_writes.clone(),
     )?;
     let hooks = crate::hooks::start_for_cwd(&workspace_root);
     if let Some(hooks) = hooks.as_ref() {
@@ -525,7 +527,10 @@ async fn run_session_with_output(
                 provider,
                 tools: tool_set.tools(),
                 workspace,
-                workspace_policy: AppPolicy::for_mode(startup.config.permission_mode),
+                workspace_policy: AppPolicy::for_mode(
+                    startup.config.permission_mode,
+                    session_writes,
+                ),
                 approval_session,
                 system_prompt,
                 reasoning: sdk_options.runtime.reasoning,
@@ -627,27 +632,49 @@ pub(crate) fn ensure_headless_auto_classifier_model(config: &Config) -> anyhow::
 /// Resolves the approval session for one headless run.
 ///
 /// Non-Auto keeps the inherited session. Auto always installs a classifier:
-/// isolate a workflow/subagent template when present, otherwise build a fresh
-/// headless classifier. A stray non-classifier `approval_session` is ignored in
-/// Auto so callers do not juggle paired Option knobs.
+/// isolate a workflow/subagent template onto this run's write log when present,
+/// otherwise build a fresh headless classifier. A stray non-classifier
+/// `approval_session` is ignored in Auto so callers do not juggle paired Option
+/// knobs.
 fn headless_approval_session(
     config: &Config,
     approval_session: Option<rho_sdk::ApprovalSession>,
     approval_classifier: Option<Arc<ClassifierApprovalHandler>>,
     workspace_root: PathBuf,
     usage_recording: rho_sdk::ProviderRequestUsageRecording,
+    session_writes: SessionWriteLog,
 ) -> anyhow::Result<Option<rho_sdk::ApprovalSession>> {
     if config.permission_mode != PermissionMode::Auto {
         return Ok(approval_session);
     }
-    let handler = match approval_classifier {
-        Some(template) => template.isolate(),
-        None => {
-            ClassifierApprovalHandler::shared(config.clone(), workspace_root, usage_recording, None)
-        }
-    };
-    let erased: Arc<dyn rho_sdk::ApprovalHandler> = handler;
-    Ok(Some(rho_sdk::ApprovalSession::from_shared(erased)))
+    Ok(Some(rho_sdk::ApprovalSession::from_shared(
+        headless_auto_classifier(
+            config,
+            approval_classifier,
+            workspace_root,
+            usage_recording,
+            session_writes,
+        ),
+    )))
+}
+
+fn headless_auto_classifier(
+    config: &Config,
+    approval_classifier: Option<Arc<ClassifierApprovalHandler>>,
+    workspace_root: PathBuf,
+    usage_recording: rho_sdk::ProviderRequestUsageRecording,
+    session_writes: SessionWriteLog,
+) -> Arc<ClassifierApprovalHandler> {
+    match approval_classifier {
+        Some(template) => template.isolate_for_run(session_writes),
+        None => ClassifierApprovalHandler::shared(
+            config.clone(),
+            workspace_root,
+            usage_recording,
+            None,
+            Some(session_writes),
+        ),
+    }
 }
 
 async fn complete_run(
