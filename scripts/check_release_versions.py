@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Ensure Release Please and Cargo agree on independently released versions."""
+"""Ensure Release Please and Cargo agree on independently released versions.
+
+Cargo may sit exactly one unpublished patch or minor ahead of the Release Please
+manifest. Publish dry-run path-patches unpublished versions so a new public API
+can land before the next tag. The manifest must stay on the last tagged version;
+if it is pre-bumped without a tag, Release Please loses the baseline and can
+rewrite history as a false major.
+"""
 
 from __future__ import annotations
 
@@ -21,6 +28,27 @@ DEPENDENCY_TABLES = ("dependencies", "dev-dependencies", "build-dependencies")
 
 def load_json(path: Path) -> dict[str, object]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def parse_semver(version: str) -> tuple[int, int, int]:
+    """Parse a `major.minor.patch` version used by Cargo and Release Please."""
+    parts = version.split(".")
+    if len(parts) != 3 or not all(part.isdigit() for part in parts):
+        raise ValueError(f"expected major.minor.patch, got {version!r}")
+    return int(parts[0]), int(parts[1]), int(parts[2])
+
+
+def cargo_agrees_with_release_baseline(cargo_version: str, release_version: str) -> bool:
+    """Return whether Cargo matches or is the next unpublished patch/minor."""
+    if cargo_version == release_version:
+        return True
+    try:
+        cargo = parse_semver(cargo_version)
+        released = parse_semver(release_version)
+    except ValueError:
+        return False
+    major, minor, patch = released
+    return cargo in {(major, minor, patch + 1), (major, minor + 1, 0)}
 
 
 def package_versions() -> dict[Path, str]:
@@ -158,10 +186,16 @@ def main() -> None:
         with cargo_manifest.open("rb") as file:
             cargo_version = tomllib.load(file)["package"]["version"]
         release_version = manifest[release_path]
-        if cargo_version != release_version:
+        if not isinstance(release_version, str):
+            raise RuntimeError(
+                f"{release_path} release-please manifest version must be a string"
+            )
+        if not cargo_agrees_with_release_baseline(cargo_version, release_version):
             raise RuntimeError(
                 f"{release_path} Cargo version {cargo_version} does not match "
-                f"release-please manifest version {release_version}"
+                f"release-please manifest version {release_version}. "
+                "Cargo may be exactly one unpublished patch or minor ahead of "
+                "the last tagged Release Please version."
             )
 
     check_internal_dependency_versions()
