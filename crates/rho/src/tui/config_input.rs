@@ -41,9 +41,10 @@ impl App {
         let submit = match (key.modifiers, key.code) {
             (KeyModifiers::NONE, KeyCode::Enter) => {
                 let target = secret.target.clone();
+                let kind = secret.kind.clone();
                 let value = secret.value.trim().to_string();
                 self.input_ui.set_composer(ComposerMode::Input);
-                Some((target, value))
+                Some((target, kind, value))
             }
             (_, KeyCode::Esc) => {
                 self.input_ui.set_composer(ComposerMode::Input);
@@ -83,9 +84,17 @@ impl App {
             _ => None,
         };
         self.clear_transient_key_state();
-        if let Some((target, value)) = submit {
-            self.submit_api_key_login(target, value, terminal, agent)
-                .await?;
+        if let Some((target, kind, value)) = submit {
+            match kind {
+                super::login_secret_input::SecretInputKind::ApiKey => {
+                    self.submit_api_key_login(target, value, terminal, agent)
+                        .await?;
+                }
+                super::login_secret_input::SecretInputKind::OAuthCode(request) => {
+                    self.submit_oauth_code_login(target, request, value, terminal, agent)
+                        .await?;
+                }
+            }
         }
         Ok(true)
     }

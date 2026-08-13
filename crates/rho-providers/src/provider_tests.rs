@@ -97,6 +97,20 @@ fn resolve_profile_exact_rejects_incompatible_auth() {
     assert_eq!(soft.auth_id(), "xai-api-key");
 }
 
+#[test]
+fn anthropic_registers_api_key_and_oauth_modes() {
+    let descriptor = super::provider_descriptor("anthropic").unwrap();
+    assert!(descriptor.auth_mode("anthropic-api-key").is_some());
+    assert!(descriptor.auth_mode("anthropic-oauth").is_some());
+    assert!(super::provider_accepts_auth("anthropic", "anthropic-oauth"));
+    assert!(super::anthropic_oauth_usage_credits_active(
+        "anthropic-oauth"
+    ));
+    assert!(!super::anthropic_oauth_usage_credits_active(
+        "anthropic-api-key"
+    ));
+}
+
 // Covers: qwen-token-plan must resolve as OpenAI-compatible with api-key auth
 // Owner: provider registry
 #[test]

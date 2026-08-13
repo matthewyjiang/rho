@@ -163,7 +163,8 @@ async fn load_model_request_auth(
         }
         ProviderAuthKind::CodexOAuth { .. }
         | ProviderAuthKind::GithubCopilotDevice { .. }
-        | ProviderAuthKind::XaiOAuth { .. } => Err(ModelError::UnsupportedProvider(format!(
+        | ProviderAuthKind::XaiOAuth { .. }
+        | ProviderAuthKind::AnthropicOAuth { .. } => Err(ModelError::UnsupportedProvider(format!(
             "auth mode '{}'",
             mode.id
         ))),

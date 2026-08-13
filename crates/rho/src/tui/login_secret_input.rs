@@ -1,12 +1,19 @@
 //! Secret API-key collection for interactive provider login.
 
-use rho_providers::model::catalog::LoginTarget;
+use rho_providers::{auth::anthropic_oauth::AnthropicOAuthRequest, model::catalog::LoginTarget};
 
 use super::{composer_chrome, styled_line, truncate_one_line, LineFill, Theme};
 
 #[derive(Clone, Debug)]
+pub(super) enum SecretInputKind {
+    ApiKey,
+    OAuthCode(AnthropicOAuthRequest),
+}
+
+#[derive(Clone, Debug)]
 pub(super) struct SecretInput {
     pub(super) target: LoginTarget,
+    pub(super) kind: SecretInputKind,
     pub(super) value: String,
     pub(super) cursor: usize,
 }
@@ -15,6 +22,16 @@ impl SecretInput {
     pub(super) fn new(target: LoginTarget) -> Self {
         Self {
             target,
+            kind: SecretInputKind::ApiKey,
+            value: String::new(),
+            cursor: 0,
+        }
+    }
+
+    pub(super) fn oauth_code(target: LoginTarget, request: AnthropicOAuthRequest) -> Self {
+        Self {
+            target,
+            kind: SecretInputKind::OAuthCode(request),
             value: String::new(),
             cursor: 0,
         }
@@ -69,9 +86,12 @@ pub(super) fn secret_input_lines(
     secret: &SecretInput,
     width: usize,
 ) -> Vec<ratatui::text::Line<'static>> {
+    let prompt_label = match secret.kind {
+        SecretInputKind::ApiKey => secret.target.label.as_str(),
+        SecretInputKind::OAuthCode(_) => "Anthropic OAuth code",
+    };
     let prompt = format!(
-        "enter {}  {}",
-        secret.target.label,
+        "enter {prompt_label}  {}",
         composer_chrome::join_footer_parts(["Enter save", "Esc cancel"])
     );
     let display_value = "•".repeat(secret.value.chars().count());

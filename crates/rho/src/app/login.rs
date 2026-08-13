@@ -80,6 +80,20 @@ pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<()>
         InteractiveLoginCompletion::Unconfirmed { instruction } => {
             eprintln!("{instruction}");
         }
+        InteractiveLoginCompletion::AuthorizationCode {
+            request,
+            instruction,
+        } => {
+            eprintln!("{instruction}");
+            eprint!("Paste the authorization code: ");
+            let mut code = String::new();
+            std::io::stdin().read_line(&mut code)?;
+            ProviderAuthentication::complete_authorization_code(request, &code)
+                .await?
+                .save(&AppCredentialStore)?;
+            eprintln!("Successfully logged in to {}", target.auth);
+            eprintln!("{}", rho_providers::provider::ANTHROPIC_OAUTH_USAGE_WARNING);
+        }
     }
     Ok(())
 }

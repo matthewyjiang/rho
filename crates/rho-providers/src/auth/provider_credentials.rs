@@ -4,14 +4,15 @@ use rho_sdk::SecretString;
 
 use crate::{
     auth::{
+        anthropic_token::{AnthropicAuthManager, AnthropicAuthSource},
         github_copilot_token::GitHubCopilotAuthManager,
         kimi_token::{KimiAuthManager, KimiAuthSource},
         ollama_device::OllamaDeviceKey,
         xai_token::{XaiAuthManager, XaiAuthSource},
     },
     credentials::{
-        load_codex_tokens, load_kimi_tokens, load_provider_api_key, load_xai_tokens, CodexTokens,
-        CredentialStore, KimiTokens, XaiTokens,
+        load_anthropic_tokens, load_codex_tokens, load_kimi_tokens, load_provider_api_key,
+        load_xai_tokens, AnthropicTokens, CodexTokens, CredentialStore, KimiTokens, XaiTokens,
     },
     model::{
         registry::{
@@ -72,9 +73,33 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
                     refresh_store: self.store.clone(),
                 })
             }
-            ProviderRuntime::Anthropic => Ok(ProviderCredential::AnthropicApiKey(
-                SecretString::new(load_anthropic_api_key(self.store.as_ref())?),
-            )),
+            ProviderRuntime::Anthropic => match selected.auth_kind {
+                ProviderAuthKind::ApiKey { .. } => Ok(ProviderCredential::AnthropicApiKey(
+                    SecretString::new(load_anthropic_api_key(self.store.as_ref())?),
+                )),
+                ProviderAuthKind::AnthropicOAuth {
+                    env_var,
+                    missing_message,
+                    ..
+                } => {
+                    let (source, tokens) = env_or_stored(
+                        env_var,
+                        |access_token| AnthropicTokens {
+                            access_token,
+                            refresh_token: None,
+                            expires_at_unix: None,
+                        },
+                        || Ok(load_anthropic_tokens(self.store.as_ref())?),
+                        missing_credential_error(missing_message),
+                        AnthropicAuthSource::Env,
+                        AnthropicAuthSource::Store,
+                    )?;
+                    Ok(ProviderCredential::AnthropicOAuth(
+                        AnthropicAuthManager::from_tokens(self.store.clone(), source, tokens),
+                    ))
+                }
+                _ => Err(ModelError::UnsupportedProvider(provider.into())),
+            },
             ProviderRuntime::Google => Ok(ProviderCredential::GoogleApiKey(SecretString::new(
                 load_provider_api_key_auth("google", self.store.as_ref())?,
             ))),
@@ -130,7 +155,8 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
                     }
                     ProviderAuthKind::CodexOAuth { .. }
                     | ProviderAuthKind::GithubCopilotDevice { .. }
-                    | ProviderAuthKind::XaiOAuth { .. } => {
+                    | ProviderAuthKind::XaiOAuth { .. }
+                    | ProviderAuthKind::AnthropicOAuth { .. } => {
                         return Err(ModelError::UnsupportedProvider(provider.into()));
                     }
                 };

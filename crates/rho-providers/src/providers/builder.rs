@@ -4,7 +4,10 @@ use rho_sdk::SecretString;
 use url::Url;
 
 use crate::{
-    auth::{github_copilot_token::GitHubCopilotAuthManager, xai_token::XaiAuthManager},
+    auth::{
+        anthropic_token::AnthropicAuthManager, github_copilot_token::GitHubCopilotAuthManager,
+        xai_token::XaiAuthManager,
+    },
     credentials::CredentialStore,
     model::ModelError,
     provider::{self, OpenAiRuntimeAuth, ProviderAuthKind, ProviderRuntime},
@@ -131,6 +134,7 @@ pub enum ProviderCredential {
         refresh_store: Arc<dyn CredentialStore>,
     },
     AnthropicApiKey(SecretString),
+    AnthropicOAuth(AnthropicAuthManager),
     GoogleApiKey(SecretString),
     GitHubCopilot(GitHubCopilotAuthManager),
     Xai(XaiAuthManager),
@@ -142,6 +146,7 @@ impl fmt::Debug for ProviderCredential {
         let kind = match self {
             Self::OpenAi { .. } => "openai",
             Self::AnthropicApiKey(_) => "anthropic-api-key",
+            Self::AnthropicOAuth(_) => "anthropic-oauth",
             Self::GoogleApiKey(_) => "google-api-key",
             Self::GitHubCopilot(_) => "github-copilot",
             Self::Xai(_) => "xai",
@@ -212,7 +217,17 @@ impl ProviderBuilder {
             (ProviderRuntime::Anthropic, ProviderCredential::AnthropicApiKey(api_key)) => {
                 let provider = AnthropicProvider::new_with_transport(
                     self.options.model,
-                    api_key.into_secret(),
+                    crate::providers::anthropic::AnthropicAuth::ApiKey(api_key.into_secret()),
+                    anthropic_max_tokens,
+                    client,
+                    endpoint.unwrap_or_else(|| ANTHROPIC_API_BASE.into()),
+                );
+                Ok(Arc::new(provider))
+            }
+            (ProviderRuntime::Anthropic, ProviderCredential::AnthropicOAuth(auth)) => {
+                let provider = AnthropicProvider::new_with_transport(
+                    self.options.model,
+                    crate::providers::anthropic::AnthropicAuth::OAuth(auth),
                     anthropic_max_tokens,
                     client,
                     endpoint.unwrap_or_else(|| ANTHROPIC_API_BASE.into()),

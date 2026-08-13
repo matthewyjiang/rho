@@ -350,6 +350,41 @@ impl App {
             .await
     }
 
+    pub(super) async fn submit_oauth_code_login(
+        &mut self,
+        target: LoginTarget,
+        request: rho_providers::auth::anthropic_oauth::AnthropicOAuthRequest,
+        code: String,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        if code.trim().is_empty() {
+            self.insert_entry(&Entry::Error(
+                "OAuth authorization code cannot be empty".into(),
+            ));
+            self.set_status("login failed");
+            return Ok(());
+        }
+        match ProviderAuthentication::complete_authorization_code(request, &code).await {
+            Ok(result) => {
+                self.cancel_limits_command().await;
+                match result.save(self.credential_store.as_ref()) {
+                    Ok(()) => self.finish_login(target, terminal, agent).await,
+                    Err(err) => {
+                        self.insert_entry(&Entry::Error(err.to_string()));
+                        self.set_status("login failed");
+                        Ok(())
+                    }
+                }
+            }
+            Err(err) => {
+                self.insert_entry(&Entry::Error(err.to_string()));
+                self.set_status("login failed");
+                Ok(())
+            }
+        }
+    }
+
     async fn persist_api_key_and_finish(
         &mut self,
         target: LoginTarget,
@@ -454,6 +489,18 @@ impl App {
                 self.report_resting_herdr_state().await;
                 return Ok(());
             }
+            InteractiveLoginCompletion::AuthorizationCode {
+                request,
+                instruction,
+            } => {
+                self.insert_entry(&Entry::Notice(instruction.into()));
+                self.input_ui
+                    .set_composer(ComposerMode::SecretInput(SecretInput::oauth_code(
+                        target, request,
+                    )));
+                self.set_status("paste Anthropic OAuth code");
+                return Ok(());
+            }
         };
         let flow = if device_flow { " device" } else { "" };
         self.set_status(format!(
@@ -528,6 +575,7 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         self.refresh_available_auths();
+        self.maybe_warn_anthropic_oauth(&target.auth);
         self.refresh_model_list_after_login(&target, terminal)
             .await?;
         if self.using_unavailable_provider {
@@ -792,6 +840,14 @@ impl App {
                 self.set_status("logout failed");
                 Ok(())
             }
+        }
+    }
+
+    pub(super) fn maybe_warn_anthropic_oauth(&mut self, auth: &str) {
+        if rho_providers::provider::anthropic_oauth_usage_credits_active(auth) {
+            self.insert_entry(&Entry::Notice(
+                rho_providers::provider::ANTHROPIC_OAUTH_USAGE_WARNING.into(),
+            ));
         }
     }
 

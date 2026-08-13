@@ -1,9 +1,10 @@
 //! Setup state for a session, and the header copy that follows from it.
 //!
-//! One fact decides how a running session presents itself: whether the active
-//! provider has usable credentials. The session header and the statusline badge
-//! read the same [`SetupState`], so a login or a logout changes them together
-//! instead of letting them drift apart.
+//! Two facts decide how a running session presents itself: whether the active
+//! provider has usable credentials, and whether the active auth bills Anthropic
+//! usage credits. The session header and the statusline badge read the same
+//! [`SetupState`], so a login or a logout changes them together instead of
+//! letting them drift apart.
 //!
 //! [`SetupEntry`] is the separate question of whether this launch opens the
 //! full-screen setup at all, and at which step. See [`super::setup_screen`].
@@ -76,6 +77,8 @@ const SIGNED_OUT_HINTS: &[Hint] = &[
 /// The one headline the session header can carry. A first launch says its
 /// welcome on the setup screen, so the header never repeats it.
 const SIGNED_OUT_HEADLINE: &str = " Not signed in. Rho needs a provider before it can answer.";
+const ANTHROPIC_OAUTH_HEADLINE: &str =
+    " Anthropic OAuth bills usage credits, not your Claude plan. Check claude.ai/settings/usage.";
 
 /// Which step a launch opens the first-run setup screen at.
 ///
@@ -97,12 +100,17 @@ pub(crate) enum SetupEntry {
 pub(super) struct SetupState {
     /// The active provider resolved to usable credentials.
     pub(super) signed_in: bool,
+    /// Active Anthropic OAuth spends usage credits, not a plan allowance.
+    pub(super) anthropic_usage_credits: bool,
 }
 
 impl Default for SetupState {
     /// A session that can run a turn, which is what most sessions are.
     fn default() -> Self {
-        Self { signed_in: true }
+        Self {
+            signed_in: true,
+            anthropic_usage_credits: false,
+        }
     }
 }
 
@@ -110,7 +118,13 @@ impl SetupState {
     /// Copy above the hint block, shown only when the session cannot run a
     /// turn. A session that works needs no announcement.
     pub(super) fn headline(self) -> Option<Span<'static>> {
-        (!self.signed_in).then(|| Span::styled(SIGNED_OUT_HEADLINE, Theme::warning()))
+        if !self.signed_in {
+            Some(Span::styled(SIGNED_OUT_HEADLINE, Theme::warning()))
+        } else if self.anthropic_usage_credits {
+            Some(Span::styled(ANTHROPIC_OAUTH_HEADLINE, Theme::warning()))
+        } else {
+            None
+        }
     }
 
     pub(super) fn hints(self) -> &'static [Hint] {
@@ -128,6 +142,10 @@ impl super::App {
     pub(super) fn setup_state(&self) -> SetupState {
         SetupState {
             signed_in: self.info.services.auth_unavailable.is_none(),
+            anthropic_usage_credits: self.info.services.auth_unavailable.is_none()
+                && rho_providers::provider::anthropic_oauth_usage_credits_active(
+                    &self.info.runtime.auth,
+                ),
         }
     }
 

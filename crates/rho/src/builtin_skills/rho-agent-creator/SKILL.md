@@ -43,7 +43,7 @@ First choose the harness. Runtime and model are separate axes.
 - `rho` (default): Rho's own loop and Rho tool capabilities. Use this for normal subagents, including ones that call Anthropic or other providers with API keys / OAuth already configured in Rho.
 - `claude-cli`: the external `claude` binary. Use this only when the user wants a **delegated** child that runs on Claude Code and can spend a Claude.ai Free/Pro/Max subscription.
 
-Anthropic does not allow third-party clients to put Claude.ai subscription credentials on their own API stacks. Rho's Anthropic provider path is API-key billing only. `runtime: claude-cli` is the supported **indirect** workaround: Rho stays the parent orchestrator, and the official `claude` binary owns sign-in, the child loop, and plan usage. Rho never sees or stores the subscription token.
+Anthropic does not allow third-party clients to put Claude.ai subscription credentials on their own API stacks. Rho's Anthropic provider path is API-key billing or OAuth usage credits, not a Claude plan. `runtime: claude-cli` is the supported **indirect** workaround: Rho stays the parent orchestrator, and the official `claude` binary owns sign-in, the child loop, and plan usage. Rho never sees or stores the subscription token.
 
 Do **not** choose `claude-cli` merely because the user said "Opus" or "Claude". If they only want a model through Rho's normal provider path, keep `runtime: rho` and set model/provider later.
 

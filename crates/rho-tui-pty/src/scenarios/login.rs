@@ -94,11 +94,12 @@ pub(super) const LOGIN_PROVIDER_GROUPS_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::AssertText("API Key"),
+    Step::AssertText("OAuth"),
     Step::AssertText("Claude Code (delegation only)"),
     // Claude Code carries the detail pane; select it so ownership copy is visible.
-    Step::Key(Key::Down),
+    Step::TypeText("Claude Code"),
     Step::WaitText {
-        text: "not Anthropic API billing",
+        text: "Claude Code (delegation only)",
         timeout: SETTLE,
     },
     Step::AssertText("External Claude binary"),

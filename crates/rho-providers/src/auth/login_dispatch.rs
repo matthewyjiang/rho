@@ -2,11 +2,12 @@ use std::{future::Future, pin::Pin};
 
 use crate::{
     auth::{
-        codex_oauth, github_copilot_device, kimi_oauth, ollama_device, openrouter_oauth, xai_oauth,
+        anthropic_oauth, codex_oauth, github_copilot_device, kimi_oauth, ollama_device,
+        openrouter_oauth, xai_oauth,
     },
     credentials::{
-        self, CodexTokens, CredentialResult, CredentialStore, GitHubCopilotTokens, KimiTokens,
-        XaiTokens,
+        self, AnthropicTokens, CodexTokens, CredentialResult, CredentialStore, GitHubCopilotTokens,
+        KimiTokens, XaiTokens,
     },
     provider::{
         self, BearerCredentialAcquisition, BrowserOAuthFlow, ProviderAuthKind,
@@ -52,6 +53,11 @@ pub enum InteractiveLoginCompletion {
     Unconfirmed {
         instruction: &'static str,
     },
+    /// Browser opened; the user must paste the authorization code to finish.
+    AuthorizationCode {
+        request: anthropic_oauth::AnthropicOAuthRequest,
+        instruction: &'static str,
+    },
 }
 
 impl std::fmt::Debug for InteractiveLoginCompletion {
@@ -60,6 +66,10 @@ impl std::fmt::Debug for InteractiveLoginCompletion {
             Self::Confirm(_) => formatter.write_str("Confirm(<authentication future>)"),
             Self::Unconfirmed { instruction } => formatter
                 .debug_struct("Unconfirmed")
+                .field("instruction", instruction)
+                .finish(),
+            Self::AuthorizationCode { instruction, .. } => formatter
+                .debug_struct("AuthorizationCode")
                 .field("instruction", instruction)
                 .finish(),
         }
@@ -117,6 +127,9 @@ impl CompletedAuthentication {
                 credentials::save_openrouter_oauth_key(store, &key)
             }
             LoginCredentials::Xai(tokens) => credentials::save_xai_tokens(store, &tokens),
+            LoginCredentials::Anthropic(tokens) => {
+                credentials::save_anthropic_tokens(store, &tokens)
+            }
         }
     }
 }
@@ -133,6 +146,7 @@ enum LoginCredentials {
     Kimi(KimiTokens),
     OpenRouter(String),
     Xai(XaiTokens),
+    Anthropic(AnthropicTokens),
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -157,6 +171,9 @@ impl ProviderAuthentication {
             },
             ProviderAuthKind::XaiOAuth { .. } => AuthenticationMethod::Interactive {
                 provider_label: "xAI",
+            },
+            ProviderAuthKind::AnthropicOAuth { .. } => AuthenticationMethod::Interactive {
+                provider_label: "Anthropic",
             },
             ProviderAuthKind::OllamaDeviceKey { .. } => AuthenticationMethod::Interactive {
                 provider_label: "Ollama Cloud",
@@ -197,6 +214,7 @@ impl ProviderAuthentication {
             ProviderAuthKind::GithubCopilotDevice { .. } => start_github_copilot().await,
             ProviderAuthKind::KimiOAuth { .. } => start_kimi().await,
             ProviderAuthKind::XaiOAuth { .. } => start_xai(mode).await,
+            ProviderAuthKind::AnthropicOAuth { .. } => start_anthropic(mode).await,
             ProviderAuthKind::OllamaDeviceKey { .. } => start_ollama_device(mode).await,
             ProviderAuthKind::BearerCredential { acquisition, .. } => match acquisition {
                 BearerCredentialAcquisition::BrowserOAuth(BrowserOAuthFlow::OpenRouter) => {
@@ -264,6 +282,18 @@ impl ProviderAuthentication {
         } else {
             credentials::provider_has_env_override(provider_or_auth)
         }
+    }
+
+    pub async fn complete_authorization_code(
+        request: anthropic_oauth::AnthropicOAuthRequest,
+        code: &str,
+    ) -> Result<CompletedAuthentication, AuthenticationError> {
+        anthropic_oauth::complete_anthropic_oauth(request, code)
+            .await
+            .map(|tokens| CompletedAuthentication {
+                credentials: LoginCredentials::Anthropic(tokens),
+            })
+            .map_err(flow_error)
     }
 }
 
@@ -397,6 +427,32 @@ async fn start_openrouter(
                 })
                 .map_err(flow_error)
         })),
+    })
+}
+
+const ANTHROPIC_OAUTH_PASTE_INSTRUCTION: &str =
+    "Approve access, then paste the authorization code from the callback page (code#state). This mode bills usage credits, not your Claude plan.";
+
+async fn start_anthropic(
+    mode: InteractiveLoginMode,
+) -> Result<InteractiveLogin, AuthenticationError> {
+    if mode == InteractiveLoginMode::Device {
+        return Err(AuthenticationError::Flow(
+            "Anthropic OAuth does not support device login; paste the authorization code after opening the URL".into(),
+        ));
+    }
+    let request = anthropic_oauth::start_anthropic_oauth_request();
+    let _ = webbrowser::open(&request.authorize_url);
+    Ok(InteractiveLogin {
+        provider_label: "Anthropic",
+        user_action: InteractiveUserAction::OpenUrl {
+            url: request.authorize_url.clone(),
+            instruction: ANTHROPIC_OAUTH_PASTE_INSTRUCTION.into(),
+        },
+        completion: InteractiveLoginCompletion::AuthorizationCode {
+            request,
+            instruction: ANTHROPIC_OAUTH_PASTE_INSTRUCTION,
+        },
     })
 }
 

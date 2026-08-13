@@ -1,3 +1,5 @@
+pub mod anthropic_oauth;
+pub mod anthropic_token;
 pub mod codex_oauth;
 pub mod github_copilot_device;
 pub mod github_copilot_token;

@@ -43,6 +43,12 @@ fn dispatches_registered_providers_to_typed_authentication_methods() {
         }
     );
     assert_eq!(
+        ProviderAuthentication::method("anthropic-oauth").unwrap(),
+        AuthenticationMethod::Interactive {
+            provider_label: "Anthropic",
+        }
+    );
+    assert_eq!(
         ProviderAuthentication::method("ollama-cloud-device").unwrap(),
         AuthenticationMethod::Interactive {
             provider_label: "Ollama Cloud",
@@ -54,6 +60,9 @@ fn dispatches_registered_providers_to_typed_authentication_methods() {
     ));
     assert!(!ProviderAuthentication::supports_device_login(
         "openrouter-oauth"
+    ));
+    assert!(!ProviderAuthentication::supports_device_login(
+        "anthropic-oauth"
     ));
 }
 
@@ -81,6 +90,16 @@ fn ollama_device_setup_does_not_wait_for_confirmation() {
 
 #[test]
 fn multi_auth_provider_name_is_ambiguous_for_login() {
+    let error = ProviderAuthentication::method("anthropic").unwrap_err();
+    match error {
+        AuthenticationError::AmbiguousProvider { provider, auth_ids } => {
+            assert_eq!(provider, "anthropic");
+            assert!(auth_ids.contains(&"anthropic-api-key"));
+            assert!(auth_ids.contains(&"anthropic-oauth"));
+        }
+        other => panic!("expected AmbiguousProvider, got {other:?}"),
+    }
+
     let error = ProviderAuthentication::method("ollama-cloud").unwrap_err();
     match error {
         AuthenticationError::AmbiguousProvider { provider, auth_ids } => {

@@ -856,6 +856,8 @@ impl App {
     fn refresh_statusline_state(&mut self) {
         self.statusline
             .update_signed_in(self.setup_state().signed_in);
+        self.statusline
+            .update_usage_credits(self.setup_state().anthropic_usage_credits);
         self.statusline.update_model(&self.info.runtime);
         let display_usage = super::usage_cost::display_usage_with_live(
             self.usage.cumulative_usage.as_ref(),

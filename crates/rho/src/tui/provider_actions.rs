@@ -119,6 +119,7 @@ impl App {
         };
         let outcome = self.activate_provider(activation, agent)?;
         self.refresh_available_auths();
+        self.maybe_warn_anthropic_oauth(mode.id);
         match outcome {
             ProviderActivationOutcome::Saved => {
                 self.set_status(format!(

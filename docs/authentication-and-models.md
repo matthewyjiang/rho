@@ -21,7 +21,7 @@ Rho's implemented providers are:
 | --- | --- | --- |
 | `openai` | `api-key` | [OpenAI](/providers/openai) |
 | `openai-codex` | `codex` | [OpenAI (Codex OAuth)](/providers/openai-codex) |
-| `anthropic` | `anthropic-api-key` | [Anthropic](/providers/anthropic) |
+| `anthropic` | `anthropic-api-key`, `anthropic-oauth` | [Anthropic](/providers/anthropic) |
 | `google` | `google-api-key` | [Google Gemini](/providers/google-gemini) |
 | `github-copilot` | `github-copilot` | [GitHub Copilot](/providers/github-copilot) |
 | `xai` | `xai-api-key`, `xai-oauth` | [xAI](/providers/xai) |
@@ -98,13 +98,13 @@ Successful login normally stores credentials only. It does not switch the active
 
 ### Claude Code runtime sign-in
 
-Claude Code is a **runtime**, not a Rho provider. It is separate from the [Anthropic API-key provider](/providers/anthropic). Anthropic does not allow third-party clients to use Claude.ai subscription credentials on their own API stacks, so Rho cannot put a Pro/Max plan on the normal Anthropic provider path. `runtime: claude-cli` is the indirect workaround: delegate a child to the official `claude` binary, which owns sign-in and plan usage (see [subscription workaround and how to use it](/subagents/claude-cli)). Install the `claude` binary first ([installation](/installation#claude-code-binary-optional)).
+Claude Code is a **runtime**, not a Rho provider. It is separate from the [Anthropic provider](/providers/anthropic). Anthropic does not allow third-party clients to use Claude.ai subscription credentials on their own API stacks, so Rho cannot put a Pro/Max plan on the normal Anthropic provider path. Anthropic OAuth on that path bills usage credits, not the included plan. `runtime: claude-cli` is the indirect workaround for subscription spend: delegate a child to the official `claude` binary, which owns sign-in and plan usage (see [subscription workaround and how to use it](/subagents/claude-cli)). Install the `claude` binary first ([installation](/installation#claude-code-binary-optional)).
 
 - `/login claude-code` (or **Anthropic** → **Claude Code (delegation only)** in the picker) hands the terminal to `claude auth login --claudeai`. Rho suspends its TUI for that process and resumes when it exits.
 - Claude Code runs the sign-in UI, stores the subscription credential, and remains the owner of that state. Rho never sees or stores the token and never writes a Rho credential-store entry for it.
 - Rho reads signed-in state with bounded `claude auth status` probes for `/info` and `/doctor`. Ownership wording stays explicit (`managed by the claude binary`).
 - Sign out with `/logout claude-code` (after an explicit confirmation that this signs out of Claude Code everywhere) or with `claude auth logout` yourself. That is a global Claude Code logout, not a Rho token delete. Rho cannot remove a Claude token from the Rho credential store because it never stored one.
-- Bare `/login` lists Claude Code under the Anthropic group next to the Anthropic API key method. Choosing it skips the Rho credential-store chooser entirely.
+- Bare `/login` lists Claude Code under the Anthropic group next to the Anthropic API key and OAuth methods. Choosing it skips the Rho credential-store chooser entirely.
 
 ## Selecting models
 

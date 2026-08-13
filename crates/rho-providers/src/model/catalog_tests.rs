@@ -520,4 +520,18 @@ fn login_groups_include_meta_and_merge_openai_codex() {
     assert_eq!(openai_auths, vec!["api-key", "codex"]);
     assert!(groups.iter().all(|group| group.id != "openai-codex"));
     assert!(groups.iter().all(|group| group.id != "kimi-code"));
+
+    let anthropic = groups
+        .iter()
+        .find(|group| group.id == "anthropic")
+        .expect("anthropic login group");
+    let anthropic_auths = anthropic
+        .methods
+        .iter()
+        .map(|method| method.target.auth.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        anthropic_auths,
+        vec!["anthropic-api-key", "anthropic-oauth"]
+    );
 }

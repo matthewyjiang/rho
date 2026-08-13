@@ -1,4 +1,6 @@
 use crate::{
+    auth::anthropic_oauth::oauth_beta_header,
+    auth::anthropic_token::AnthropicAuthManager,
     model::ModelIdentity,
     protocol::anthropic_messages::{
         collect_anthropic_sse_response, convert_anthropic_response, split_system_and_messages,
@@ -19,9 +21,14 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 pub const DEFAULT_MAX_TOKENS: u32 = 4096;
 const ANTHROPIC_ANSWER_RESERVE_TOKENS: u32 = 1_024;
 
+pub(crate) enum AnthropicAuth {
+    ApiKey(String),
+    OAuth(AnthropicAuthManager),
+}
+
 pub struct AnthropicProvider {
     client: reqwest::Client,
-    api_key: String,
+    auth: AnthropicAuth,
     api_base: String,
     model: String,
     max_tokens: fn(&str) -> u32,
@@ -32,7 +39,7 @@ impl AnthropicProvider {
     pub fn new(model: String, api_key: String, max_tokens: fn(&str) -> u32) -> Self {
         Self::new_with_transport(
             model,
-            api_key,
+            AnthropicAuth::ApiKey(api_key),
             max_tokens,
             provider_client(),
             ANTHROPIC_API_BASE.into(),
@@ -41,14 +48,14 @@ impl AnthropicProvider {
 
     pub(crate) fn new_with_transport(
         model: String,
-        api_key: String,
+        auth: AnthropicAuth,
         max_tokens: fn(&str) -> u32,
         client: reqwest::Client,
         api_base: String,
     ) -> Self {
         Self {
             client,
-            api_key,
+            auth,
             api_base,
             model,
             max_tokens,
@@ -122,14 +129,7 @@ impl AnthropicProvider {
 
     async fn send_messages(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
         let body = self.request_body(request, false)?;
-        let response = self
-            .client
-            .post(self.messages_url())
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", ANTHROPIC_VERSION)
-            .json(&body)
-            .send()
-            .await?;
+        let response = self.send_authorized(|builder| builder.json(&body)).await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
         let response: AnthropicResponse = response.json().await?;
         convert_anthropic_response(response)
@@ -141,21 +141,58 @@ impl AnthropicProvider {
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
         let body = self.request_body(request, true)?;
-        let response = self
-            .client
-            .post(self.messages_url())
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", ANTHROPIC_VERSION)
-            .json(&body)
-            .send()
-            .await?;
+        let response = self.send_authorized(|builder| builder.json(&body)).await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
         collect_anthropic_sse_response(response, on_event).await
+    }
+
+    async fn send_authorized(
+        &self,
+        apply_body: impl Fn(reqwest::RequestBuilder) -> reqwest::RequestBuilder,
+    ) -> Result<reqwest::Response, ModelError> {
+        match &self.auth {
+            AnthropicAuth::ApiKey(api_key) => Ok(apply_body(
+                self.client
+                    .post(self.messages_url())
+                    .header("x-api-key", api_key)
+                    .header("anthropic-version", ANTHROPIC_VERSION),
+            )
+            .send()
+            .await?),
+            AnthropicAuth::OAuth(manager) => {
+                let material = manager.auth_material().await?;
+                let response = apply_body(oauth_request(
+                    self.client.post(self.messages_url()),
+                    &material.access_token,
+                ))
+                .send()
+                .await?;
+                if response.status() != reqwest::StatusCode::UNAUTHORIZED {
+                    return Ok(response);
+                }
+                let Some(refreshed) = manager.force_refresh(&material.access_token).await? else {
+                    return Ok(response);
+                };
+                Ok(apply_body(oauth_request(
+                    self.client.post(self.messages_url()),
+                    &refreshed.access_token,
+                ))
+                .send()
+                .await?)
+            }
+        }
     }
 
     fn messages_url(&self) -> String {
         format!("{}/messages", self.api_base.trim_end_matches('/'))
     }
+}
+
+fn oauth_request(builder: reqwest::RequestBuilder, access_token: &str) -> reqwest::RequestBuilder {
+    builder
+        .bearer_auth(access_token)
+        .header("anthropic-version", ANTHROPIC_VERSION)
+        .header("anthropic-beta", oauth_beta_header())
 }
 
 fn provider_context_replay(thinking: Option<&AnthropicThinkingConfig>) -> ProviderContextReplay {

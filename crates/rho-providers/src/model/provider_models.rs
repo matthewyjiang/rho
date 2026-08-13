@@ -11,11 +11,15 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::{
-    auth::github_copilot_token::{
-        auth_material_with_store, force_refresh_auth_material_with_store,
-        GitHubCopilotAuthMaterial, GitHubCopilotAuthSource,
+    auth::{
+        anthropic_oauth::oauth_beta_header,
+        github_copilot_token::{
+            auth_material_with_store, force_refresh_auth_material_with_store,
+            GitHubCopilotAuthMaterial, GitHubCopilotAuthSource,
+        },
+        provider_credentials::load_api_key_for_mode,
     },
-    credentials::{load_provider_api_key, CredentialStore},
+    credentials::{load_anthropic_tokens, load_provider_api_key, CredentialStore},
     model::{registry::missing_credential_error, ModelError, ReasoningCapabilities},
     provider::{self, ProviderAuthKind, ProviderModelRefreshKind},
 };
@@ -173,7 +177,7 @@ pub async fn refresh_provider_models_with_store(
     let models = match descriptor.model_refresh {
         Some(ProviderModelRefreshKind::OpenAi) => fetch_openai_models(provider, store).await?,
         Some(ProviderModelRefreshKind::Anthropic) => {
-            fetch_anthropic_models(provider, store).await?
+            fetch_anthropic_models(provider, auth_mode, store).await?
         }
         Some(ProviderModelRefreshKind::Google) => {
             google::fetch(provider, load_api_key_auth(provider, store)?).await?
@@ -278,9 +282,9 @@ async fn fetch_openai_models(
 
 async fn fetch_anthropic_models(
     provider: &str,
+    auth_mode: provider::AuthMode,
     store: &dyn CredentialStore,
 ) -> Result<Vec<ProviderModel>, ModelError> {
-    let key = load_api_key_auth(provider, store)?;
     let client = provider_models_client()?;
     let mut models = Vec::new();
     let mut after_id = None::<String>;
@@ -291,15 +295,10 @@ async fn fetch_anthropic_models(
         if let Some(after_id) = &after_id {
             url.query_pairs_mut().append_pair("after_id", after_id);
         }
-        let response: AnthropicModelsResponse = client
-            .get(url)
-            .header("x-api-key", &key)
-            .header("anthropic-version", "2023-06-01")
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
+        let mut request = client.get(url).header("anthropic-version", "2023-06-01");
+        request = authorize_anthropic_models_request(request, auth_mode, store).await?;
+        let response: AnthropicModelsResponse =
+            request.send().await?.error_for_status()?.json().await?;
         let last_id = response.last_id.clone();
         models.extend(
             response
@@ -423,6 +422,47 @@ fn provider_models_client() -> Result<reqwest::Client, ModelError> {
     Ok(reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()?)
+}
+
+async fn authorize_anthropic_models_request(
+    request: reqwest::RequestBuilder,
+    auth_mode: provider::AuthMode,
+    store: &dyn CredentialStore,
+) -> Result<reqwest::RequestBuilder, ModelError> {
+    match auth_mode.auth_kind {
+        ProviderAuthKind::ApiKey { .. } => Ok(request.header(
+            "x-api-key",
+            load_api_key_for_mode(auth_mode.auth_kind, store)?,
+        )),
+        ProviderAuthKind::AnthropicOAuth {
+            env_var,
+            missing_message,
+            ..
+        } => {
+            let token = if let Ok(value) = std::env::var(env_var) {
+                if !value.trim().is_empty() {
+                    value
+                } else {
+                    load_anthropic_tokens(store)?
+                        .map(|tokens| tokens.access_token)
+                        .filter(|token| !token.trim().is_empty())
+                        .ok_or_else(|| missing_credential_error(missing_message))?
+                }
+            } else {
+                load_anthropic_tokens(store)?
+                    .map(|tokens| tokens.access_token)
+                    .filter(|token| !token.trim().is_empty())
+                    .ok_or_else(|| missing_credential_error(missing_message))?
+            };
+            Ok(request
+                .bearer_auth(token)
+                .header("anthropic-beta", oauth_beta_header()))
+        }
+        _ => Err(ModelError::UnsupportedProvider(format!(
+            "auth mode '{}'",
+            auth_mode.id
+        ))),
+    }
 }
 
 fn load_api_key_auth(provider: &str, store: &dyn CredentialStore) -> Result<String, ModelError> {

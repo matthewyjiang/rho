@@ -99,6 +99,13 @@ pub struct XaiTokens {
     pub id_token: Option<String>,
 }
 
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct AnthropicTokens {
+    pub access_token: String,
+    pub refresh_token: Option<String>,
+    pub expires_at_unix: Option<i64>,
+}
+
 macro_rules! redacted_token_debug {
     ($type:ty, $($visible:ident),* $(,)?) => {
         impl fmt::Debug for $type {
@@ -124,10 +131,11 @@ redacted_token_debug!(
 );
 redacted_token_debug!(KimiTokens, expires_at_unix);
 redacted_token_debug!(XaiTokens, expires_at_unix);
+redacted_token_debug!(AnthropicTokens, expires_at_unix);
 
 #[derive(Clone, Debug, Error)]
 pub enum CredentialError {
-    #[error("credential store is unavailable: {0}. Configure your OS keychain, explicitly select the file backend, or use CI/dev env overrides such as OPENAI_API_KEY, ANTHROPIC_API_KEY, MOONSHOT_API_KEY, POOLSIDE_API_KEY, CODEX_ACCESS_TOKEN, GITHUB_COPILOT_TOKEN, KIMI_ACCESS_TOKEN, or XAI_ACCESS_TOKEN.")]
+    #[error("credential store is unavailable: {0}. Configure your OS keychain, explicitly select the file backend, or use CI/dev env overrides such as OPENAI_API_KEY, ANTHROPIC_API_KEY, ANTHROPIC_ACCESS_TOKEN, MOONSHOT_API_KEY, POOLSIDE_API_KEY, CODEX_ACCESS_TOKEN, GITHUB_COPILOT_TOKEN, KIMI_ACCESS_TOKEN, or XAI_ACCESS_TOKEN.")]
     StoreUnavailable(String),
     #[error("stored credential data is invalid: {0}")]
     InvalidData(String),
@@ -329,6 +337,26 @@ pub fn save_xai_tokens(store: &dyn CredentialStore, tokens: &XaiTokens) -> Crede
     store.set_secret(XAI_TOKENS_ACCOUNT, &secret)
 }
 
+pub fn load_anthropic_tokens(
+    store: &dyn CredentialStore,
+) -> CredentialResult<Option<AnthropicTokens>> {
+    let Some(secret) = store.get_secret(crate::provider::ANTHROPIC_TOKENS_ACCOUNT)? else {
+        return Ok(None);
+    };
+    serde_json::from_str(&secret).map(Some).map_err(|err| {
+        CredentialError::InvalidData(format!("invalid stored Anthropic token JSON: {err}"))
+    })
+}
+
+pub fn save_anthropic_tokens(
+    store: &dyn CredentialStore,
+    tokens: &AnthropicTokens,
+) -> CredentialResult<()> {
+    let secret = serde_json::to_string(tokens)
+        .map_err(|err| CredentialError::InvalidData(format!("could not encode tokens: {err}")))?;
+    store.set_secret(crate::provider::ANTHROPIC_TOKENS_ACCOUNT, &secret)
+}
+
 pub fn load_github_copilot_tokens(
     store: &dyn CredentialStore,
 ) -> CredentialResult<Option<GitHubCopilotTokens>> {
@@ -491,6 +519,15 @@ fn auth_mode_has_credentials(
                     .as_deref()
                     .is_some_and(credential_value_is_usable)
         })),
+        ProviderAuthKind::AnthropicOAuth { .. } => {
+            Ok(load_anthropic_tokens(store)?.is_some_and(|tokens| {
+                credential_value_is_usable(&tokens.access_token)
+                    || tokens
+                        .refresh_token
+                        .as_deref()
+                        .is_some_and(credential_value_is_usable)
+            }))
+        }
         ProviderAuthKind::KimiOAuth { .. } => Ok(load_kimi_tokens(store)?.is_some_and(|tokens| {
             credential_value_is_usable(&tokens.access_token)
                 || tokens

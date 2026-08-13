@@ -9,6 +9,10 @@ fn credential_account_names_are_stable() {
     assert_eq!(SERVICE, "rho");
     assert_eq!(OPENAI_API_KEY_ACCOUNT, "provider:openai:api-key");
     assert_eq!(ANTHROPIC_API_KEY_ACCOUNT, "provider:anthropic:api-key");
+    assert_eq!(
+        crate::provider::ANTHROPIC_TOKENS_ACCOUNT,
+        "provider:anthropic:tokens"
+    );
     assert_eq!(CODEX_TOKENS_ACCOUNT, "provider:openai-codex:tokens");
     assert_eq!(
         GITHUB_COPILOT_TOKENS_ACCOUNT,

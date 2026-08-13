@@ -3,8 +3,18 @@ use pretty_assertions::assert_eq;
 use super::*;
 use crate::tui::render::session_header_lines;
 
-const READY: SetupState = SetupState { signed_in: true };
-const SIGNED_OUT: SetupState = SetupState { signed_in: false };
+const READY: SetupState = SetupState {
+    signed_in: true,
+    anthropic_usage_credits: false,
+};
+const SIGNED_OUT: SetupState = SetupState {
+    signed_in: false,
+    anthropic_usage_credits: false,
+};
+const ANTHROPIC_OAUTH: SetupState = SetupState {
+    signed_in: true,
+    anthropic_usage_credits: true,
+};
 
 fn header_lines(setup: SetupState) -> Vec<String> {
     session_header_lines(None, setup, 80)
@@ -22,8 +32,8 @@ fn header_lines(setup: SetupState) -> Vec<String> {
 /// first launch says its welcome on the setup screen, so repeating it here
 /// would greet the user twice.
 #[test]
-fn only_a_signed_out_session_adds_a_headline() {
-    let cases = [(READY, false), (SIGNED_OUT, true)];
+fn only_signed_out_or_usage_credit_sessions_add_a_headline() {
+    let cases = [(READY, false), (SIGNED_OUT, true), (ANTHROPIC_OAUTH, true)];
 
     for (setup, expected) in cases {
         assert_eq!(
@@ -61,7 +71,7 @@ fn login_is_the_next_step_exactly_while_signed_out() {
 /// so a state change cannot leave a stale hint block on screen.
 #[test]
 fn the_header_renders_the_hints_the_state_selected() {
-    for setup in [READY, SIGNED_OUT] {
+    for setup in [READY, SIGNED_OUT, ANTHROPIC_OAUTH] {
         let rendered = header_lines(setup);
         let hints: Vec<&str> = setup.hints().iter().map(|hint| hint.text).collect();
         let rendered_hints: Vec<&str> = rendered

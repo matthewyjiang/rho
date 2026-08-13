@@ -15,8 +15,13 @@ fn token_debug_redacts_every_secret_field() {
         expires_at_unix: Some(123),
         id_token: Some("xai-id-secret".into()),
     };
+    let anthropic = AnthropicTokens {
+        access_token: "anthropic-access-secret".into(),
+        refresh_token: Some("anthropic-refresh-secret".into()),
+        expires_at_unix: Some(123),
+    };
 
-    let debug = format!("{codex:?} {xai:?}");
+    let debug = format!("{codex:?} {xai:?} {anthropic:?}");
     for secret in [
         "codex-access-secret",
         "codex-refresh-secret",
@@ -24,6 +29,8 @@ fn token_debug_redacts_every_secret_field() {
         "xai-access-secret",
         "xai-refresh-secret",
         "xai-id-secret",
+        "anthropic-access-secret",
+        "anthropic-refresh-secret",
     ] {
         assert!(!debug.contains(secret));
     }

@@ -51,6 +51,8 @@ pub(super) struct StatusLineState {
     /// The active provider resolved to usable credentials. When false the row
     /// names the gap instead of a model the session cannot reach.
     signed_in: bool,
+    /// Anthropic OAuth spends usage credits; keep that visible while active.
+    usage_credits: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -94,6 +96,7 @@ impl Default for StatusLineState {
             extra_cost_usd_micros: 0,
             average_generation_rate: None,
             signed_in: true,
+            usage_credits: false,
         }
     }
 }
@@ -116,6 +119,7 @@ impl StatusLineState {
             extra_cost_usd_micros: 0,
             average_generation_rate: None,
             signed_in: true,
+            usage_credits: false,
         }
     }
 }
@@ -179,6 +183,13 @@ impl StatusLine {
     pub(super) fn update_signed_in(&mut self, signed_in: bool) {
         if self.state.signed_in != signed_in {
             self.state.signed_in = signed_in;
+            self.invalidate();
+        }
+    }
+
+    pub(super) fn update_usage_credits(&mut self, usage_credits: bool) {
+        if self.state.usage_credits != usage_credits {
+            self.state.usage_credits = usage_credits;
             self.invalidate();
         }
     }
@@ -271,6 +282,8 @@ const RANK_PERMISSION: u8 = 7;
 const RANK_ADVISOR: u8 = 2;
 /// Signed-out copy outranks permission so the row still names the fix.
 const RANK_SIGNED_OUT: u8 = 8;
+/// Usage-credit billing stays visible while Anthropic OAuth is active.
+const RANK_USAGE_CREDITS: u8 = 7;
 
 /// Identity keys used by pack tests and paint order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -285,6 +298,7 @@ enum FieldKey {
     Reasoning,
     SignedOut,
     LoginHint,
+    UsageCredits,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -467,6 +481,17 @@ fn bottom_fields(state: &StatusLineState) -> Vec<StatusField> {
             Theme::dim(),
         ));
         return fields;
+    }
+
+    if state.usage_credits {
+        fields.push(field(
+            FieldKey::UsageCredits,
+            Side::Right,
+            RANK_USAGE_CREDITS,
+            0,
+            "usage credits",
+            Theme::warning(),
+        ));
     }
 
     let provider = provider_display_name(&state.provider);

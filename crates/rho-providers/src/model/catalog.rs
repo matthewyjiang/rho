@@ -180,6 +180,7 @@ fn login_method_prompt(auth_kind: ProviderAuthKind) -> &'static str {
         ProviderAuthKind::CodexOAuth { .. }
         | ProviderAuthKind::GithubCopilotDevice { .. }
         | ProviderAuthKind::XaiOAuth { .. }
+        | ProviderAuthKind::AnthropicOAuth { .. }
         | ProviderAuthKind::BearerCredential { .. }
         | ProviderAuthKind::KimiOAuth { .. } => "OAuth",
     }

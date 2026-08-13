@@ -7,10 +7,11 @@
 use super::{
     AuthMode, BearerCredentialAcquisition, BrowserOAuthFlow, CatalogReasoningPolicy, ModelIdCodec,
     OpenAiRuntimeAuth, ProviderAuthKind, ProviderDescriptor, ProviderId, ProviderModelRefreshKind,
-    ProviderModelSource, ProviderRuntime, ANTHROPIC_API_KEY_ACCOUNT, CODEX_TOKENS_ACCOUNT,
-    GITHUB_COPILOT_TOKENS_ACCOUNT, GOOGLE_API_KEY_ACCOUNT, KIMI_CODE_API_BASE, KIMI_TOKENS_ACCOUNT,
-    META_API_BASE, META_API_KEY_ACCOUNT, MOONSHOT_API_BASE, MOONSHOT_API_KEY_ACCOUNT,
-    OLLAMA_API_BASE, OLLAMA_CLOUD_API_BASE, OLLAMA_CLOUD_API_KEY_ACCOUNT, OPENAI_API_KEY_ACCOUNT,
+    ProviderModelSource, ProviderRuntime, ANTHROPIC_API_KEY_ACCOUNT, ANTHROPIC_OAUTH_AUTH,
+    ANTHROPIC_TOKENS_ACCOUNT, CODEX_TOKENS_ACCOUNT, GITHUB_COPILOT_TOKENS_ACCOUNT,
+    GOOGLE_API_KEY_ACCOUNT, KIMI_CODE_API_BASE, KIMI_TOKENS_ACCOUNT, META_API_BASE,
+    META_API_KEY_ACCOUNT, MOONSHOT_API_BASE, MOONSHOT_API_KEY_ACCOUNT, OLLAMA_API_BASE,
+    OLLAMA_CLOUD_API_BASE, OLLAMA_CLOUD_API_KEY_ACCOUNT, OPENAI_API_KEY_ACCOUNT,
     OPENROUTER_API_BASE, OPENROUTER_API_KEY_ACCOUNT, OPENROUTER_OAUTH_KEY_ACCOUNT,
     POOLSIDE_API_BASE, POOLSIDE_API_KEY_ACCOUNT, QWEN_TOKEN_PLAN_API_BASE,
     QWEN_TOKEN_PLAN_API_KEY_ACCOUNT, XAI_API_KEY_ACCOUNT, XAI_TOKENS_ACCOUNT,
@@ -143,7 +144,16 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             env_var: "ANTHROPIC_API_KEY",
             account: ANTHROPIC_API_KEY_ACCOUNT,
             entry_label: "Anthropic API key",
-            missing_message: "missing Anthropic API key; run /login anthropic in the TUI or set ANTHROPIC_API_KEY as a CI/dev override",
+            missing_message: "missing Anthropic API key; run /login anthropic-api-key in the TUI or set ANTHROPIC_API_KEY as a CI/dev override",
+        },
+        },
+        AuthMode {
+            id: ANTHROPIC_OAUTH_AUTH,
+            login_label: "Anthropic OAuth (usage credits)",
+            auth_kind: ProviderAuthKind::AnthropicOAuth {
+            env_var: "ANTHROPIC_ACCESS_TOKEN",
+            account: ANTHROPIC_TOKENS_ACCOUNT,
+            missing_message: "missing Anthropic OAuth credentials; run /login anthropic-oauth in the TUI or set ANTHROPIC_ACCESS_TOKEN as a CI/dev override",
         },
         }
         ],

@@ -6,6 +6,8 @@
 
 pub const OPENAI_API_KEY_ACCOUNT: &str = "provider:openai:api-key";
 pub const ANTHROPIC_API_KEY_ACCOUNT: &str = "provider:anthropic:api-key";
+pub const ANTHROPIC_TOKENS_ACCOUNT: &str = "provider:anthropic:tokens";
+pub const ANTHROPIC_OAUTH_AUTH: &str = "anthropic-oauth";
 pub const GOOGLE_API_KEY_ACCOUNT: &str = "provider:google:api-key";
 pub const CODEX_TOKENS_ACCOUNT: &str = "provider:openai-codex:tokens";
 pub const GITHUB_COPILOT_TOKENS_ACCOUNT: &str = "provider:github-copilot:tokens";
@@ -236,6 +238,11 @@ pub enum ProviderAuthKind {
         account: &'static str,
         missing_message: &'static str,
     },
+    AnthropicOAuth {
+        env_var: &'static str,
+        account: &'static str,
+        missing_message: &'static str,
+    },
     BearerCredential {
         env_var: &'static str,
         account: &'static str,
@@ -328,6 +335,7 @@ impl ProviderAuthKind {
             | Self::CodexOAuth { env_var, .. }
             | Self::GithubCopilotDevice { env_var, .. }
             | Self::XaiOAuth { env_var, .. }
+            | Self::AnthropicOAuth { env_var, .. }
             | Self::BearerCredential { env_var, .. }
             | Self::KimiOAuth { env_var, .. } => Some(env_var),
         }
@@ -340,6 +348,7 @@ impl ProviderAuthKind {
             | Self::CodexOAuth { account, .. }
             | Self::GithubCopilotDevice { account, .. }
             | Self::XaiOAuth { account, .. }
+            | Self::AnthropicOAuth { account, .. }
             | Self::BearerCredential { account, .. }
             | Self::KimiOAuth { account, .. } => Some(account),
         }
@@ -359,6 +368,9 @@ impl ProviderAuthKind {
                 missing_message, ..
             }
             | Self::XaiOAuth {
+                missing_message, ..
+            }
+            | Self::AnthropicOAuth {
                 missing_message, ..
             }
             | Self::BearerCredential {
@@ -475,6 +487,14 @@ pub use provider_table::PROVIDERS;
 pub fn providers() -> &'static [ProviderDescriptor] {
     PROVIDERS
 }
+
+/// True when the active auth profile bills Anthropic usage credits, not a plan.
+pub fn anthropic_oauth_usage_credits_active(auth: &str) -> bool {
+    auth == ANTHROPIC_OAUTH_AUTH
+}
+
+/// Persistent warning for Anthropic OAuth. This mode spends usage credits.
+pub const ANTHROPIC_OAUTH_USAGE_WARNING: &str = "Anthropic OAuth is signed in. This mode bills usage credits (extra usage), not your Claude plan allowance. Check claude.ai/settings/usage.";
 
 /// Built-in providers plus the currently visible custom OpenAI-compatible hosts.
 ///

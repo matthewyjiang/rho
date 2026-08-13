@@ -18,12 +18,15 @@ use crate::claude_runtime::auth::{self, ClaudeProbeSnapshot};
 enum BillingInfo {
     Metered,
     Subscription,
+    UsageCredits,
 }
 
 impl BillingInfo {
     fn from_provider_auth(provider: &str, auth: &str) -> Self {
         if provider == "openai-codex" || auth == "codex" || auth == "xai-oauth" {
             Self::Subscription
+        } else if rho_providers::provider::anthropic_oauth_usage_credits_active(auth) {
+            Self::UsageCredits
         } else {
             Self::Metered
         }
@@ -33,6 +36,7 @@ impl BillingInfo {
         match self {
             Self::Metered => "metered API",
             Self::Subscription => "subscription",
+            Self::UsageCredits => "usage credits",
         }
     }
 }
