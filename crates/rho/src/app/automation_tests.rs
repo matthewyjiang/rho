@@ -17,8 +17,9 @@ use rho_sdk::{
         ToolErrorKind, ToolFuture, ToolInvocation, ToolMetadata, ToolOutput,
         ToolPreparationContext, ToolPrepareFuture, ToolProgress, ToolResource, ToolResourceAccess,
     },
-    CancellationToken, HostChoice, HostInputRequest, HostInputResponse, HostQuestion, Rho,
-    SelectionMode, SessionOptions, SystemPrompt, Workspace,
+    ApprovalDecision, ApprovalHandler, ApprovalRequest, CancellationToken, CapabilityRequest,
+    CapabilitySource, HostChoice, HostInputRequest, HostInputResponse, HostQuestion, PathScope,
+    PolicyDecision, Rho, SelectionMode, SessionOptions, SystemPrompt, Workspace, WorkspacePolicy,
 };
 use serde_json::json;
 use tokio::{
@@ -28,8 +29,9 @@ use tokio::{
 
 use super::{
     classify_error, classify_run_terminal, complete_run, ensure_headless_auto_classifier_model,
-    headless_approval_session, prompt_from_reader, terminal_error_message, AutomationExit,
-    RunArtifactIdentity, RunReporter, RunTerminal, MAX_STEPS_MESSAGE,
+    headless_approval_session, headless_auto_classifier, prompt_from_reader,
+    terminal_error_message, AutomationExit, RunArtifactIdentity, RunReporter, RunTerminal,
+    MAX_STEPS_MESSAGE,
 };
 use crate::app::headless_run::{HeadlessRunDeps, HostInputRespondFuture, HostInputResponder};
 use crate::permission_classifier_handler::ClassifierApprovalHandler;
@@ -43,6 +45,7 @@ use crate::{
     compaction::CompactionConfig,
     config::{Config, InternalAgentModelConfig},
     permission::PermissionMode,
+    permission_classifier::ClassifierVerdict,
 };
 
 #[test]
@@ -171,11 +174,23 @@ fn headless_auto_requires_configured_permission_classifier_model() {
     ensure_headless_auto_classifier_model(&config).unwrap();
 }
 
-// Covers: workflow Auto templates must isolate so concurrent runs do not share
-// deny streaks on the original handler.
+// Covers: a classifier allow on a supplied Auto template must record into this
+// run's write log so a later untracked workspace write skips classification.
 // Owner: automation startup approval wiring.
-#[test]
-fn supplied_auto_classifier_template_isolates_handler() {
+#[tokio::test]
+async fn supplied_auto_classifier_template_records_allows_on_the_run_write_log() {
+    let root = tempfile::tempdir().unwrap();
+    let created = root.path().join("new.rs");
+    std::fs::write(&created, "fn main() {}\n").unwrap();
+    let git_status = std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(root.path())
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .status()
+        .expect("git should be available for permission tests");
+    assert!(git_status.success(), "git init failed");
+
     let mut config = Config {
         permission_mode: PermissionMode::Auto,
         ..Config::default()
@@ -184,26 +199,47 @@ fn supplied_auto_classifier_template_isolates_handler() {
         PERMISSION_CLASSIFIER_AGENT_ID,
         InternalAgentModelConfig::new("openai".into(), "gpt-5.5".into(), "api-key".into()),
     );
-    let root = tempfile::tempdir().unwrap();
-    let classifier = Arc::new(ClassifierApprovalHandler::new(
-        config.clone(),
-        root.path().to_path_buf(),
-        Default::default(),
-        None,
+    let classify_calls = Arc::new(AtomicUsize::new(0));
+    let template = Arc::new(ClassifierApprovalHandler::for_tests(
+        {
+            let classify_calls = Arc::clone(&classify_calls);
+            Arc::new(move |_input| {
+                classify_calls.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async { ClassifierVerdict::Allow })
+            })
+        },
         None,
     ));
-
-    let approval_session = headless_approval_session(
+    let session_writes = crate::permission::SessionWriteLog::default();
+    let handler = headless_auto_classifier(
         &config,
-        None,
-        Some(classifier),
+        Some(template),
         root.path().to_path_buf(),
         Default::default(),
-        crate::permission::SessionWriteLog::default(),
-    )
-    .unwrap();
+        session_writes.clone(),
+    );
+    let policy = AppPolicy::for_mode(PermissionMode::Auto, session_writes);
+    let request = CapabilityRequest::write_path(
+        created,
+        PathScope::PrimaryWorkspace,
+        CapabilitySource::built_in_tool("write"),
+    );
 
-    assert!(approval_session.is_some());
+    assert_eq!(
+        policy.evaluate(&request),
+        PolicyDecision::RequireApproval {
+            reason: String::new(),
+        }
+    );
+    assert_eq!(
+        handler
+            .request(ApprovalRequest::new(request.clone(), "approval required"))
+            .await,
+        ApprovalDecision::AllowOnce
+    );
+    assert_eq!(classify_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(policy.evaluate(&request), PolicyDecision::Allow);
+    assert_eq!(classify_calls.load(Ordering::SeqCst), 1);
 }
 
 // Covers: Auto ignores a stray non-classifier session and still installs a

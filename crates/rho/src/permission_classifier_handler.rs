@@ -112,8 +112,25 @@ impl ClassifierApprovalHandler {
     ///
     /// The deny streak resets so concurrent workflow nodes cannot escalate each
     /// other. History and cancellation stay request-scoped via
-    /// [`ApprovalRequest::context`].
+    /// [`ApprovalRequest::context`]. Remembered writes stay on this handler's
+    /// log; distinct runs should use [`Self::isolate_for_run`] so they record
+    /// into the log their workspace policy consults.
     pub(crate) fn isolate(self: &Arc<Self>) -> Arc<Self> {
+        self.clone_with_reset_streak(self.session_writes.clone())
+    }
+
+    /// Isolates a template onto a distinct run's write log.
+    ///
+    /// The deny streak still resets, but later-write memory records into
+    /// `session_writes` instead of the template's log, which is often absent.
+    pub(crate) fn isolate_for_run(self: &Arc<Self>, session_writes: SessionWriteLog) -> Arc<Self> {
+        self.clone_with_reset_streak(Some(session_writes))
+    }
+
+    fn clone_with_reset_streak(
+        self: &Arc<Self>,
+        session_writes: Option<SessionWriteLog>,
+    ) -> Arc<Self> {
         let config = self
             .config
             .read()
@@ -125,7 +142,7 @@ impl ClassifierApprovalHandler {
             usage_recording: self.usage_recording.clone(),
             classifier: Arc::clone(&self.classifier),
             inner: self.inner.clone(),
-            session_writes: self.session_writes.clone(),
+            session_writes,
             consecutive_denials: AtomicU32::new(0),
         })
     }

@@ -632,9 +632,10 @@ pub(crate) fn ensure_headless_auto_classifier_model(config: &Config) -> anyhow::
 /// Resolves the approval session for one headless run.
 ///
 /// Non-Auto keeps the inherited session. Auto always installs a classifier:
-/// isolate a workflow/subagent template when present, otherwise build a fresh
-/// headless classifier. A stray non-classifier `approval_session` is ignored in
-/// Auto so callers do not juggle paired Option knobs.
+/// isolate a workflow/subagent template onto this run's write log when present,
+/// otherwise build a fresh headless classifier. A stray non-classifier
+/// `approval_session` is ignored in Auto so callers do not juggle paired Option
+/// knobs.
 fn headless_approval_session(
     config: &Config,
     approval_session: Option<rho_sdk::ApprovalSession>,
@@ -646,8 +647,26 @@ fn headless_approval_session(
     if config.permission_mode != PermissionMode::Auto {
         return Ok(approval_session);
     }
-    let handler = match approval_classifier {
-        Some(template) => template.isolate(),
+    Ok(Some(rho_sdk::ApprovalSession::from_shared(
+        headless_auto_classifier(
+            config,
+            approval_classifier,
+            workspace_root,
+            usage_recording,
+            session_writes,
+        ),
+    )))
+}
+
+fn headless_auto_classifier(
+    config: &Config,
+    approval_classifier: Option<Arc<ClassifierApprovalHandler>>,
+    workspace_root: PathBuf,
+    usage_recording: rho_sdk::ProviderRequestUsageRecording,
+    session_writes: SessionWriteLog,
+) -> Arc<ClassifierApprovalHandler> {
+    match approval_classifier {
+        Some(template) => template.isolate_for_run(session_writes),
         None => ClassifierApprovalHandler::shared(
             config.clone(),
             workspace_root,
@@ -655,8 +674,7 @@ fn headless_approval_session(
             None,
             Some(session_writes),
         ),
-    };
-    Ok(Some(rho_sdk::ApprovalSession::from_shared(handler)))
+    }
 }
 
 async fn complete_run(
