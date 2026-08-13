@@ -82,15 +82,19 @@ pub(super) async fn classify_capability_request_with_provider(
 
 /// Runs the two-stage pipeline: a cheap screen, then a reasoned review.
 ///
-/// Stage 1 answers `allow` or `escalate` in one token. Only an escalation (or a
-/// stage 1 provider error) pays for stage 2.
+/// Stage 1 answers `allow` or `escalate` in one token at [`ReasoningLevel::Low`].
+/// Only an escalation (or a stage 1 provider error) pays for stage 2, which uses
+/// the configured reasoning level.
 ///
-/// Cache-prefix layout: both stages send the same system prompt, the same
-/// rendered transcript as the first user text block, and the same reasoning
-/// level. The stage instruction is a second user text block so the last
-/// byte-identical block can be the cache breakpoint. Never move a stage
-/// instruction into the system prompt, and never change thinking or effort
-/// between stages: Anthropic invalidates message-block cache when those change.
+/// Cache-prefix layout: both stages send the same system prompt and the same
+/// rendered transcript as the first user text block. The stage instruction is a
+/// second user text block so the last byte-identical block can be the cache
+/// breakpoint. Never move a stage instruction into the system prompt.
+///
+/// That layout can reuse stage 1's message-cache prefix only when thinking and
+/// effort stay the same, which is the default Low classifier reasoning. Raising
+/// review reasoning keeps the common-path screen cheap and forgoes that cache
+/// hit: Anthropic invalidates message-block cache when thinking or effort change.
 async fn try_classify_capability_request_with_provider(
     provider: &dyn ModelProvider,
     reasoning: ReasoningLevel,
@@ -103,7 +107,7 @@ async fn try_classify_capability_request_with_provider(
         &request,
         StageSpec {
             usage_purpose: "permission-classifier-screen",
-            reasoning,
+            reasoning: ReasoningLevel::Low,
             input: stage_input(&transcript, CLASSIFIER_SCREEN_INSTRUCTION),
         },
     )

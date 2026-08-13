@@ -164,10 +164,10 @@ async fn screen_result_decides_whether_review_runs() {
     }
 }
 
-// Covers: both stages share the transcript block and reasoning; only the instruction suffix changes
+// Covers: the screen stays at Low while the review uses configured reasoning; transcript blocks match
 // Owner: permission classifier two-stage pipeline
 #[tokio::test]
-async fn stages_share_the_transcript_block_and_reasoning() {
+async fn screen_stays_low_reasoning_while_review_uses_configured_level() {
     let provider = ScriptedProvider::new(
         ModelIdentity::new("provider", "api", "model"),
         [text_turn("escalate"), text_turn(r#"{"decision":"allow"}"#)],
@@ -197,8 +197,8 @@ async fn stages_share_the_transcript_block_and_reasoning() {
             ]),
         ]
     );
-    assert_eq!(requests[0].reasoning_level, ReasoningLevel::High);
-    assert_eq!(requests[1].reasoning_level, requests[0].reasoning_level);
+    assert_eq!(requests[0].reasoning_level, ReasoningLevel::Low);
+    assert_eq!(requests[1].reasoning_level, ReasoningLevel::High);
     assert!(requests[0].tools.is_empty());
     assert!(requests[1].tools.is_empty());
 }
