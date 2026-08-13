@@ -12,7 +12,7 @@ use serde_json::Value;
 
 use crate::{
     auth::{
-        anthropic_oauth::oauth_beta_header,
+        anthropic_oauth::OAUTH_BETA_HEADER,
         github_copilot_token::{
             auth_material_with_store, force_refresh_auth_material_with_store,
             GitHubCopilotAuthMaterial, GitHubCopilotAuthSource,
@@ -439,24 +439,19 @@ async fn authorize_anthropic_models_request(
             missing_message,
             ..
         } => {
-            let token = if let Ok(value) = std::env::var(env_var) {
-                if !value.trim().is_empty() {
-                    value
-                } else {
-                    load_anthropic_tokens(store)?
-                        .map(|tokens| tokens.access_token)
-                        .filter(|token| !token.trim().is_empty())
-                        .ok_or_else(|| missing_credential_error(missing_message))?
-                }
-            } else {
-                load_anthropic_tokens(store)?
+            let env_token = std::env::var(env_var)
+                .ok()
+                .filter(|value| !value.trim().is_empty());
+            let token = match env_token {
+                Some(token) => token,
+                None => load_anthropic_tokens(store)?
                     .map(|tokens| tokens.access_token)
                     .filter(|token| !token.trim().is_empty())
-                    .ok_or_else(|| missing_credential_error(missing_message))?
+                    .ok_or_else(|| missing_credential_error(missing_message))?,
             };
             Ok(request
                 .bearer_auth(token)
-                .header("anthropic-beta", oauth_beta_header()))
+                .header("anthropic-beta", OAUTH_BETA_HEADER))
         }
         _ => Err(ModelError::UnsupportedProvider(format!(
             "auth mode '{}'",

@@ -1,14 +1,6 @@
 use super::*;
 use pretty_assertions::assert_eq;
 
-fn previous_tokens() -> AnthropicTokens {
-    AnthropicTokens {
-        access_token: "expired-access".into(),
-        refresh_token: Some("refresh".into()),
-        expires_at_unix: Some(1_000),
-    }
-}
-
 #[test]
 fn refresh_without_expires_in_clears_stale_expiry() {
     let refreshed = merge_refreshed_tokens(
@@ -18,7 +10,6 @@ fn refresh_without_expires_in_clears_stale_expiry() {
             expires_in: None,
         },
         "refresh",
-        &previous_tokens(),
         Some(10_000),
     )
     .unwrap();
@@ -43,7 +34,6 @@ fn refresh_with_expires_in_sets_absolute_expiry() {
             expires_in: Some(3_600),
         },
         "refresh",
-        &previous_tokens(),
         Some(10_000),
     )
     .unwrap();

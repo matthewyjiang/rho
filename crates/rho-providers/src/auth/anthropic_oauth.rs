@@ -18,7 +18,8 @@ const AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
 const REDIRECT_URI: &str = "https://console.anthropic.com/oauth/code/callback";
 const SCOPE: &str = "org:create_api_key user:profile user:inference";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
-const OAUTH_BETA: &str = "oauth-2025-04-20";
+/// `anthropic-beta` header value required on OAuth-authorized API requests.
+pub(crate) const OAUTH_BETA_HEADER: &str = "oauth-2025-04-20";
 
 #[derive(Clone)]
 pub struct AnthropicOAuthRequest {
@@ -73,10 +74,6 @@ struct TokenResponse {
 }
 
 /// Builds the Anthropic OAuth authorize request without opening a browser.
-pub fn start_anthropic_oauth_request() -> AnthropicOAuthRequest {
-    build_oauth_request()
-}
-
 pub fn build_oauth_request() -> AnthropicOAuthRequest {
     build_oauth_request_with_values(random_token(32), random_token(64))
 }
@@ -134,10 +131,6 @@ async fn complete_anthropic_oauth_with_endpoint(
         .json::<TokenResponse>()
         .await?;
     tokens_from_response(response)
-}
-
-pub(crate) fn oauth_beta_header() -> &'static str {
-    OAUTH_BETA
 }
 
 struct ParsedAuthorizationCode {

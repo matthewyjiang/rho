@@ -42,7 +42,7 @@ pub struct AnthropicAuthManager {
     tokens: Mutex<AnthropicTokens>,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Serialize)]
 struct AnthropicRefreshRequest<'a> {
     grant_type: &'static str,
     refresh_token: &'a str,
@@ -111,7 +111,7 @@ impl AnthropicAuthManager {
         let refresh_token = current.refresh_token.clone().ok_or(
             crate::model::registry::missing_credentials_error("anthropic-oauth"),
         )?;
-        let refreshed = refresh_anthropic_tokens(&self.client, &refresh_token, &current).await?;
+        let refreshed = refresh_anthropic_tokens(&self.client, &refresh_token).await?;
         save_anthropic_tokens(self.store.as_ref(), &refreshed)?;
         let access_token = refreshed.access_token.clone();
         *current = refreshed;
@@ -119,10 +119,9 @@ impl AnthropicAuthManager {
     }
 }
 
-pub async fn refresh_anthropic_tokens(
+async fn refresh_anthropic_tokens(
     client: &reqwest::Client,
     refresh_token: &str,
-    previous: &AnthropicTokens,
 ) -> Result<AnthropicTokens, ModelError> {
     let response = client
         .post(TOKEN_URL)
@@ -145,13 +144,12 @@ pub async fn refresh_anthropic_tokens(
         });
     }
     let response = response.json::<AnthropicRefreshResponse>().await?;
-    merge_refreshed_tokens(response, refresh_token, previous, now_unix())
+    merge_refreshed_tokens(response, refresh_token, now_unix())
 }
 
 fn merge_refreshed_tokens(
     response: AnthropicRefreshResponse,
     previous_refresh_token: &str,
-    _previous: &AnthropicTokens,
     now_unix: Option<i64>,
 ) -> Result<AnthropicTokens, ModelError> {
     let access_token = response.access_token.ok_or_else(|| {

@@ -1,5 +1,5 @@
 use crate::{
-    auth::anthropic_oauth::oauth_beta_header,
+    auth::anthropic_oauth::OAUTH_BETA_HEADER,
     auth::anthropic_token::AnthropicAuthManager,
     model::ModelIdentity,
     protocol::anthropic_messages::{
@@ -129,7 +129,7 @@ impl AnthropicProvider {
 
     async fn send_messages(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
         let body = self.request_body(request, false)?;
-        let response = self.send_authorized(|builder| builder.json(&body)).await?;
+        let response = self.send_authorized(&body).await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
         let response: AnthropicResponse = response.json().await?;
         convert_anthropic_response(response)
@@ -141,30 +141,31 @@ impl AnthropicProvider {
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
         let body = self.request_body(request, true)?;
-        let response = self.send_authorized(|builder| builder.json(&body)).await?;
+        let response = self.send_authorized(&body).await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
         collect_anthropic_sse_response(response, on_event).await
     }
 
     async fn send_authorized(
         &self,
-        apply_body: impl Fn(reqwest::RequestBuilder) -> reqwest::RequestBuilder,
+        body: &AnthropicRequest,
     ) -> Result<reqwest::Response, ModelError> {
         match &self.auth {
-            AnthropicAuth::ApiKey(api_key) => Ok(apply_body(
-                self.client
-                    .post(self.messages_url())
-                    .header("x-api-key", api_key)
-                    .header("anthropic-version", ANTHROPIC_VERSION),
-            )
-            .send()
-            .await?),
+            AnthropicAuth::ApiKey(api_key) => Ok(self
+                .client
+                .post(self.messages_url())
+                .header("x-api-key", api_key)
+                .header("anthropic-version", ANTHROPIC_VERSION)
+                .json(body)
+                .send()
+                .await?),
             AnthropicAuth::OAuth(manager) => {
                 let material = manager.auth_material().await?;
-                let response = apply_body(oauth_request(
+                let response = oauth_request(
                     self.client.post(self.messages_url()),
                     &material.access_token,
-                ))
+                )
+                .json(body)
                 .send()
                 .await?;
                 if response.status() != reqwest::StatusCode::UNAUTHORIZED {
@@ -173,10 +174,11 @@ impl AnthropicProvider {
                 let Some(refreshed) = manager.force_refresh(&material.access_token).await? else {
                     return Ok(response);
                 };
-                Ok(apply_body(oauth_request(
+                Ok(oauth_request(
                     self.client.post(self.messages_url()),
                     &refreshed.access_token,
-                ))
+                )
+                .json(body)
                 .send()
                 .await?)
             }
@@ -192,7 +194,7 @@ fn oauth_request(builder: reqwest::RequestBuilder, access_token: &str) -> reqwes
     builder
         .bearer_auth(access_token)
         .header("anthropic-version", ANTHROPIC_VERSION)
-        .header("anthropic-beta", oauth_beta_header())
+        .header("anthropic-beta", OAUTH_BETA_HEADER)
 }
 
 fn provider_context_replay(thinking: Option<&AnthropicThinkingConfig>) -> ProviderContextReplay {

@@ -441,7 +441,7 @@ async fn start_anthropic(
             "Anthropic OAuth does not support device login; paste the authorization code after opening the URL".into(),
         ));
     }
-    let request = anthropic_oauth::start_anthropic_oauth_request();
+    let request = anthropic_oauth::build_oauth_request();
     let _ = webbrowser::open(&request.authorize_url);
     Ok(InteractiveLogin {
         provider_label: "Anthropic",

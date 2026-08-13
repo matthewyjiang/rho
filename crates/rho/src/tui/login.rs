@@ -365,24 +365,22 @@ impl App {
             self.set_status("login failed");
             return Ok(());
         }
-        match ProviderAuthentication::complete_authorization_code(request, &code).await {
-            Ok(result) => {
-                self.cancel_limits_command().await;
-                match result.save(self.credential_store.as_ref()) {
-                    Ok(()) => self.finish_login(target, terminal, agent).await,
-                    Err(err) => {
-                        self.insert_entry(&Entry::Error(err.to_string()));
-                        self.set_status("login failed");
-                        Ok(())
-                    }
+        let completed =
+            match ProviderAuthentication::complete_authorization_code(request, &code).await {
+                Ok(completed) => completed,
+                Err(err) => {
+                    self.insert_entry(&Entry::Error(err.to_string()));
+                    self.set_status("login failed");
+                    return Ok(());
                 }
-            }
-            Err(err) => {
-                self.insert_entry(&Entry::Error(err.to_string()));
-                self.set_status("login failed");
-                Ok(())
-            }
+            };
+        self.cancel_limits_command().await;
+        if let Err(err) = completed.save(self.credential_store.as_ref()) {
+            self.insert_entry(&Entry::Error(err.to_string()));
+            self.set_status("login failed");
+            return Ok(());
         }
+        self.finish_login(target, terminal, agent).await
     }
 
     async fn persist_api_key_and_finish(
