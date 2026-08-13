@@ -1,12 +1,12 @@
-use crate::{
-    model::{ModelError, ModelEvent, ModelResponse, ModelUsage},
-    protocol::cost::parse_usd_micros,
-    protocol::openai_chat::HiddenReasoningRisk,
-};
+use crate::model::{ModelError, ModelEvent, ModelResponse};
 
 use super::{
     convert::{emit_chat_reasoning_context, finalize_chat_assistant, ChatAssistantFinish},
     tool_calls::{ChatToolCallPolicy, RawChatToolCall},
+    usage::{
+        extract_raw_usage, resolve_generation_output_tokens, GenerationTokenContext,
+        HiddenReasoningRisk, RawUsage,
+    },
 };
 
 #[cfg(test)]
@@ -27,34 +27,49 @@ const MAX_STREAM_BLOCK_INDEX: usize = 4096;
 /// `reasoning_content`). History conversion only replays that context to the
 /// exact model that produced it, and hosts that do not know the field ignore
 /// it, so emitting it for every OpenAI-chat-style provider stays safe.
+///
+/// Usage is not forwarded per chunk: hosts restate usage as running or final
+/// snapshots (sometimes on several chunks, with non-monotonic input totals),
+/// so `finish` publishes one merged snapshot and one throughput carrier after
+/// the stream ends.
 pub(crate) struct ChatStreamAccumulator {
     text: String,
     reasoning: String,
+    /// Set only when a reasoning delta streamed; a completed message snapshot
+    /// can fill `reasoning` without any reasoning wall time inside the
+    /// measured generation window.
+    reasoning_delta_streamed: bool,
     tool_calls: Vec<RawChatToolCall>,
     policy: ChatToolCallPolicy,
     hidden_reasoning_risk: HiddenReasoningRisk,
+    /// Merged usage snapshot across the stream, kept raw (before cache-bucket
+    /// derivation). Chat hosts restate usage as running or final totals rather
+    /// than increments, and some restate a snapshot on several chunks, so
+    /// publishing each report downstream would double-count. `finish` derives
+    /// and publishes one `ModelUsage` snapshot plus one throughput carrier.
+    usage_snapshot: Option<RawUsage>,
 }
 
 impl Default for ChatStreamAccumulator {
     fn default() -> Self {
-        Self::new(ChatToolCallPolicy::Strict)
+        Self::new(ChatToolCallPolicy::Strict, HiddenReasoningRisk::Unlikely)
     }
 }
 
 impl ChatStreamAccumulator {
-    pub(crate) fn new(policy: ChatToolCallPolicy) -> Self {
+    pub(crate) fn new(
+        policy: ChatToolCallPolicy,
+        hidden_reasoning_risk: HiddenReasoningRisk,
+    ) -> Self {
         Self {
             text: String::new(),
             reasoning: String::new(),
+            reasoning_delta_streamed: false,
             tool_calls: Vec::new(),
             policy,
-            hidden_reasoning_risk: HiddenReasoningRisk::Unlikely,
+            hidden_reasoning_risk,
+            usage_snapshot: None,
         }
-    }
-
-    pub(crate) fn with_hidden_reasoning_risk(mut self, risk: HiddenReasoningRisk) -> Self {
-        self.hidden_reasoning_risk = risk;
-        self
     }
 
     /// Consumes one SSE line. Returns whether the line counts as stream activity.
@@ -72,12 +87,17 @@ impl ChatStreamAccumulator {
         let Some(value) = serde_json::from_str::<serde_json::Value>(data).ok() else {
             return Ok(false);
         };
+        if let Some(usage) = extract_raw_usage(&value) {
+            self.usage_snapshot = Some(
+                self.usage_snapshot
+                    .map_or(usage, |snapshot| snapshot.merge(usage)),
+            );
+        }
         let Some(choice) = value
             .get("choices")
             .and_then(|v| v.as_array())
             .and_then(|choices| choices.first())
         else {
-            self.emit_usage(&value, on_event)?;
             return Ok(true);
         };
         let delta = choice.get("delta");
@@ -90,6 +110,7 @@ impl ChatStreamAccumulator {
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
         {
+            self.reasoning_delta_streamed = true;
             self.reasoning.push_str(reasoning_delta);
             on_event(ModelEvent::ReasoningDelta(reasoning_delta.to_string()))?;
         }
@@ -108,7 +129,6 @@ impl ChatStreamAccumulator {
             if let Some(message) = choice.get("message") {
                 self.merge_completed_message(message);
             }
-            self.emit_usage(&value, on_event)?;
             return Ok(true);
         };
 
@@ -169,7 +189,6 @@ impl ChatStreamAccumulator {
         if let Some(message) = choice.get("message") {
             self.merge_completed_message(message);
         }
-        self.emit_usage(&value, on_event)?;
         Ok(true)
     }
 
@@ -178,32 +197,29 @@ impl ChatStreamAccumulator {
         finalize_chat_assistant(self.text, self.reasoning, self.tool_calls, self.policy)
     }
 
-    /// Finalizes and emits retained reasoning context through `on_event`.
+    /// Finalizes and emits the usage snapshot, throughput carrier, and retained
+    /// reasoning context through `on_event`.
     pub(crate) fn finish(
         self,
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
+        let context = GenerationTokenContext {
+            reasoning_streamed: self.reasoning_delta_streamed,
+            hidden_reasoning_risk: self.hidden_reasoning_risk,
+        };
+        let generation = resolve_generation_output_tokens(
+            self.usage_snapshot.and_then(RawUsage::reported_output),
+            context,
+        );
+        if let Some(event) = generation.into_event() {
+            on_event(event)?;
+        }
+        if let Some(usage) = self.usage_snapshot {
+            on_event(ModelEvent::Usage(usage.into_model_usage()))?;
+        }
         let finish = self.into_finish()?;
         emit_chat_reasoning_context(finish.reasoning_content, on_event)?;
         Ok(finish.response)
-    }
-
-    fn emit_usage(
-        &self,
-        value: &serde_json::Value,
-        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
-    ) -> Result<(), ModelError> {
-        let Some(report) = extract_usage_report_with(
-            value,
-            self.hidden_reasoning_risk,
-            !self.reasoning.is_empty(),
-        ) else {
-            return Ok(());
-        };
-        if let Some(event) = report.generation_output_tokens.into_event() {
-            on_event(event)?;
-        }
-        on_event(ModelEvent::Usage(report.usage))
     }
 
     /// Fills gaps in the accumulated state from a completed message snapshot.
@@ -295,175 +311,6 @@ pub(crate) fn sse_data(line: &str) -> Option<&str> {
     Some(rest.strip_prefix(' ').unwrap_or(rest))
 }
 
-// Keep the raw 1.x carrier until rho-providers can raise its minimum rho-sdk
-// version. Package verification must compile against the currently published SDK.
-pub(crate) fn generation_output_tokens_event(tokens: u64) -> ModelEvent {
-    ModelEvent::ProviderContext {
-        kind: "rho_model_call_generation_output_tokens".into(),
-        position: None,
-        data: serde_json::json!({ "tokens": tokens }),
-    }
-}
-
-fn generation_output_tokens_unavailable_event() -> ModelEvent {
-    ModelEvent::ProviderContext {
-        kind: "rho_model_call_generation_output_tokens".into(),
-        position: None,
-        data: serde_json::json!({ "tokens": null }),
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum GenerationOutputTokens {
-    Unreported,
-    Reported(u64),
-    Invalid,
-}
-
-impl GenerationOutputTokens {
-    pub(crate) fn into_event(self) -> Option<ModelEvent> {
-        match self {
-            Self::Unreported => None,
-            Self::Reported(tokens) => Some(generation_output_tokens_event(tokens)),
-            Self::Invalid => Some(generation_output_tokens_unavailable_event()),
-        }
-    }
-}
-
-pub(crate) struct UsageReport {
-    pub(crate) usage: ModelUsage,
-    pub(crate) generation_output_tokens: GenerationOutputTokens,
-}
-
-fn extract_output_usage(usage: &serde_json::Value) -> (Option<u64>, Option<u64>) {
-    for (tokens_key, details_key) in [
-        ("output_tokens", "output_tokens_details"),
-        ("completion_tokens", "completion_tokens_details"),
-    ] {
-        let Some(output_tokens) = usage.get(tokens_key).and_then(serde_json::Value::as_u64) else {
-            continue;
-        };
-        let reasoning_tokens = usage
-            .get(details_key)
-            .and_then(|details| details.get("reasoning_tokens"))
-            .and_then(serde_json::Value::as_u64);
-        return (Some(output_tokens), reasoning_tokens);
-    }
-    (None, None)
-}
-
-fn classify_generation_output_tokens(
-    value: &serde_json::Value,
-    hidden_reasoning_risk: HiddenReasoningRisk,
-    reasoning_streamed: bool,
-) -> GenerationOutputTokens {
-    let Some(usage) = value.get("usage") else {
-        return GenerationOutputTokens::Unreported;
-    };
-    let (output_tokens, reasoning_tokens) = extract_output_usage(usage);
-    match (output_tokens, reasoning_tokens) {
-        (Some(output_tokens), Some(reasoning_tokens)) => {
-            output_tokens.checked_sub(reasoning_tokens).map_or(
-                GenerationOutputTokens::Invalid,
-                GenerationOutputTokens::Reported,
-            )
-        }
-        (Some(_), None)
-            if hidden_reasoning_risk == HiddenReasoningRisk::Likely || reasoning_streamed =>
-        {
-            GenerationOutputTokens::Invalid
-        }
-        _ => GenerationOutputTokens::Unreported,
-    }
-}
-
-pub(crate) fn extract_usage_report(value: &serde_json::Value) -> Option<UsageReport> {
-    extract_usage_report_with(value, HiddenReasoningRisk::Unlikely, false)
-}
-
-fn extract_usage_report_with(
-    value: &serde_json::Value,
-    hidden_reasoning_risk: HiddenReasoningRisk,
-    reasoning_streamed: bool,
-) -> Option<UsageReport> {
-    Some(UsageReport {
-        usage: extract_usage(value)?,
-        generation_output_tokens: classify_generation_output_tokens(
-            value,
-            hidden_reasoning_risk,
-            reasoning_streamed,
-        ),
-    })
-}
-
-pub(crate) fn extract_usage(value: &serde_json::Value) -> Option<ModelUsage> {
-    let usage = value.get("usage")?;
-    let raw_input_tokens = usage
-        .get("input_tokens")
-        .or_else(|| usage.get("prompt_tokens"))
-        .and_then(|v| v.as_u64());
-    let (output_tokens, _) = extract_output_usage(usage);
-    let total_tokens = usage.get("total_tokens").and_then(|v| v.as_u64());
-    let input_details = usage
-        .get("input_tokens_details")
-        .or_else(|| usage.get("prompt_tokens_details"));
-    let cache_read_tokens = input_details
-        .and_then(|v| {
-            v.get("cached_tokens")
-                .or_else(|| v.get("cache_read_tokens"))
-                .or_else(|| v.get("cached_input_tokens"))
-        })
-        .and_then(|v| v.as_u64());
-    let cache_write_tokens = input_details
-        .and_then(|v| {
-            v.get("cache_write_tokens")
-                .or_else(|| v.get("cache_creation_input_tokens"))
-                .or_else(|| v.get("cache_creation_tokens"))
-        })
-        .and_then(|v| v.as_u64());
-    let context_window = usage
-        .get("context_window")
-        .or_else(|| usage.get("context_window_tokens"))
-        .and_then(|v| v.as_u64());
-    let reported_cost = [
-        usage.get("cost_usd"),
-        usage.get("estimated_cost_usd"),
-        usage.get("cost"),
-        usage.get("estimated_cost"),
-    ]
-    .into_iter()
-    .flatten()
-    .find_map(parse_usd_micros);
-    let upstream_cost = usage
-        .get("cost_details")
-        .and_then(|details| details.get("upstream_inference_cost"))
-        .and_then(parse_usd_micros);
-    let cost_usd_micros = match (reported_cost, upstream_cost) {
-        (Some(reported), Some(upstream)) => Some(reported.saturating_add(upstream)),
-        (Some(reported), None) => Some(reported),
-        (None, Some(upstream)) => Some(upstream),
-        (None, None) => None,
-    };
-
-    // OpenAI reports cache reads and writes as subsets of the raw input count,
-    // while ModelUsage keeps the three input buckets disjoint.
-    let input_tokens = raw_input_tokens.map(|input| {
-        input
-            .saturating_sub(cache_read_tokens.unwrap_or_default())
-            .saturating_sub(cache_write_tokens.unwrap_or_default())
-    });
-
-    Some(ModelUsage {
-        input_tokens,
-        output_tokens,
-        cache_read_tokens,
-        cache_write_tokens,
-        total_tokens,
-        context_window,
-        cost_usd_micros,
-    })
-}
-
 #[cfg(test)]
 pub(crate) fn extract_sse_text(body: &str) -> Result<String, ModelError> {
     let mut text = String::new();
@@ -501,10 +348,6 @@ pub(crate) fn extract_sse_text(body: &str) -> Result<String, ModelError> {
         Ok(text)
     }
 }
-
-#[cfg(test)]
-#[path = "stream_cost_tests.rs"]
-mod stream_cost_tests;
 
 #[cfg(test)]
 #[path = "stream_chat_tests.rs"]

@@ -1,6 +1,8 @@
 use crate::{
     model::{ModelMetadata, ReasoningCapabilities, ReasoningLevelSet, ReasoningRequestSource},
-    protocol::openai_chat::{ChatTemplateKwargs, OpenAiReasoning, OpenAiThinking},
+    protocol::openai_chat::{
+        ChatTemplateKwargs, HiddenReasoningRisk, OpenAiReasoning, OpenAiThinking,
+    },
     provider::UnknownEffortPolicy,
     reasoning::ReasoningLevel,
 };
@@ -61,12 +63,11 @@ impl DialectReasoning {
                 ..Default::default()
             },
             Self::Poolside => ReasoningFields {
-                // Poolside enables thinking when the field is omitted. Serialize
-                // both values so throughput classification can see thinking-on
-                // from the request body instead of treating omission as off.
-                chat_template_kwargs: Some(ChatTemplateKwargs {
-                    enable_thinking: reasoning != ReasoningLevel::Off,
-                }),
+                chat_template_kwargs: (reasoning == ReasoningLevel::Off).then_some(
+                    ChatTemplateKwargs {
+                        enable_thinking: false,
+                    },
+                ),
                 ..Default::default()
             },
             Self::OpenRouter(profile) => ReasoningFields {
@@ -80,6 +81,50 @@ impl DialectReasoning {
                 ..Default::default()
             },
             Self::KimiCode(profile) => kimi_code_reasoning_fields(profile, model, reasoning),
+        }
+    }
+
+    /// Hidden-reasoning risk for one request, derived from the dialect's
+    /// effective reasoning decision rather than reverse-inferred from the
+    /// serialized body.
+    pub(super) fn hidden_reasoning_risk(
+        &self,
+        model: &str,
+        reasoning: ReasoningLevel,
+    ) -> HiddenReasoningRisk {
+        match self {
+            // Poolside enables thinking by omission for every non-Off request,
+            // so a body that serializes no reasoning control still reasons
+            // off-wire. Off serializes `enable_thinking: false` and stays
+            // classified from the fields.
+            Self::Poolside if reasoning != ReasoningLevel::Off => HiddenReasoningRisk::Possible,
+            _ => self.fields(model, reasoning).hidden_reasoning_risk(),
+        }
+    }
+}
+
+impl ReasoningFields {
+    fn hidden_reasoning_risk(&self) -> HiddenReasoningRisk {
+        let effort_requests_reasoning = |effort: &str| effort != "none";
+        let requested = self
+            .thinking
+            .as_ref()
+            .is_some_and(|thinking| thinking.kind == "enabled")
+            || self
+                .reasoning_effort
+                .as_deref()
+                .is_some_and(effort_requests_reasoning)
+            || self
+                .reasoning
+                .as_ref()
+                .is_some_and(|reasoning| effort_requests_reasoning(&reasoning.effort))
+            || self
+                .chat_template_kwargs
+                .is_some_and(|kwargs| kwargs.enable_thinking);
+        if requested {
+            HiddenReasoningRisk::Possible
+        } else {
+            HiddenReasoningRisk::Unlikely
         }
     }
 }
