@@ -275,8 +275,11 @@ fn resolve_agent(
             effort,
         } => {
             let (executable, executable_identity) = host.resolve_executable("claude")?;
-            let permission_mode =
-                crate::claude_runtime::spawn::map_permission_mode(*permission_mode)?;
+            let permission_mode = crate::claude_runtime::spawn::map_permission_mode(
+                *permission_mode,
+                tools,
+                *inherit_claude_config,
+            )?;
             let plan = crate::claude_runtime::spawn::build_spawn_plan(
                 &crate::claude_runtime::spawn::ClaudeSpawnRequest {
                     system_prompt: entry.definition.prompt.clone(),

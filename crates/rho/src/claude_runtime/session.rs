@@ -56,7 +56,8 @@ pub(crate) struct ClaudeSessionRequest {
 }
 
 impl ClaudeSessionRequest {
-    /// Replace generated Claude arguments with the exact frozen workflow argv.
+    /// Keep frozen Claude identity argv. Permission-sensitive flags are
+    /// regenerated from the effective bound mode at launch.
     pub(crate) fn set_frozen_argv(&mut self, arguments: Vec<String>) {
         self.overrides.frozen_argv = Some(arguments);
     }
@@ -67,7 +68,8 @@ impl ClaudeSessionRequest {
 pub(crate) struct ClaudeSessionOverrides {
     /// Claude binary to run instead of the resolved one.
     pub(crate) executable: Option<ClaudeExecutable>,
-    /// Exact workflow arguments to use instead of generated Claude arguments.
+    /// Frozen workflow identity arguments. Permission-sensitive flags are not
+    /// reused as-is; launch regenerates those from the effective bound mode.
     pub(crate) frozen_argv: Option<Vec<String>>,
     /// Auth preflight result. When set, production `auth::query` is not called.
     pub(crate) auth_status: Option<Result<ClaudeAuthStatus, ClaudeAuthError>>,
@@ -216,16 +218,19 @@ async fn prepare_launch(request: &mut ClaudeSessionRequest) -> Result<Launch, St
     };
 
     let frozen_arguments = request.overrides.frozen_argv.take();
-    let permission_mode =
-        spawn::map_permission_mode(request.permission_mode).map_err(|error| error.to_string())?;
+    // Always map and generate permission argv from the effective bound mode
+    // and bound tools. Frozen argv must not skip that gate or validate an
+    // empty tool list / stale Bypass mode.
+    let permission_mode = spawn::map_permission_mode(
+        request.permission_mode,
+        &request.tools,
+        request.inherit_claude_config,
+    )
+    .map_err(|error| error.to_string())?;
     let mut plan = spawn::build_spawn_plan(&ClaudeSpawnRequest {
         system_prompt: request.system_prompt.clone(),
         model: request.model.clone(),
-        tools: if frozen_arguments.is_some() {
-            Vec::new()
-        } else {
-            request.tools.clone()
-        },
+        tools: request.tools.clone(),
         inherit_claude_config: request.inherit_claude_config,
         permission_mode,
         cwd: request.cwd.clone(),
@@ -236,7 +241,7 @@ async fn prepare_launch(request: &mut ClaudeSessionRequest) -> Result<Launch, St
         input_format: spawn::ClaudeInputFormat::StreamJson,
     });
     if let Some(arguments) = frozen_arguments {
-        plan.args = arguments;
+        plan.args = spawn::apply_frozen_identity_args(plan.args, &arguments);
     }
 
     // Materialize the system prompt next to the status file (kept as a run

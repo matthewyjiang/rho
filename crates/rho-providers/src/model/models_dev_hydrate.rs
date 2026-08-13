@@ -147,6 +147,11 @@ fn catalog_hydrate_lock() -> &'static Mutex<()> {
 }
 
 pub(super) fn catalog_snapshot_is_ready() -> bool {
+    // Isolated test cache dirs share this process flag. A sibling test that
+    // marked the catalog ready would otherwise skip our aged sqlite.
+    if super::test_cache_dir_override_is_set() {
+        return is_catalog_snapshot_current();
+    }
     if CATALOG_READY.load(Ordering::Acquire) {
         return true;
     }

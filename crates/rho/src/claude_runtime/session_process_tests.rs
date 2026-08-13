@@ -1,6 +1,10 @@
 use super::*;
 use pretty_assertions::assert_eq;
-use std::{os::unix::fs::PermissionsExt, path::Path};
+use std::{
+    os::unix::fs::PermissionsExt,
+    path::Path,
+    sync::{Arc, Mutex},
+};
 
 use crate::run_artifacts::AttachmentEvent;
 
@@ -180,6 +184,115 @@ async fn supervised_permission_mode_fails_before_spawn() {
         error.contains("Supervised") || error.contains("supervised"),
         "unexpected error: {error}"
     );
+}
+
+// Covers: a frozen Bypass argv cannot keep Claude bypassPermissions when the
+// current bound mode is Auto; launched permissions must narrow to dontAsk.
+// Owner: Claude session launch
+#[tokio::test]
+async fn frozen_bypass_argv_narrows_to_auto_dont_ask() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("result.json");
+    let fake = dir.path().join("claude");
+    install_streaming_fake(&fake, &fixture("success.ndjson"), 0);
+    let captured = Arc::new(Mutex::new(Vec::<String>::new()));
+    let captured_for_spawn = Arc::clone(&captured);
+    let rate_limit_dir = tempfile::tempdir().unwrap();
+    let frozen = vec![
+        "-p",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--include-partial-messages",
+        "--permission-mode",
+        "bypassPermissions",
+        "--disallowedTools",
+        "Task",
+        "--setting-sources",
+        "project",
+        "--strict-mcp-config",
+        "--input-format",
+        "stream-json",
+        "--model",
+        "opus",
+        "--max-turns",
+        "8",
+        "--tools",
+        "Read",
+        "--allowedTools",
+        "Read",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect();
+
+    run_session(ClaudeSessionRequest {
+        system_prompt: system_prompt(),
+        identity: ClaudeRunIdentity {
+            agent_id: "claude-planner".into(),
+            agent_fingerprint: "fp".into(),
+            model: Some("opus".into()),
+        },
+        model: Some("opus".into()),
+        tools: vec!["Read".into()],
+        inherit_claude_config: false,
+        max_turns: 8,
+        effort: None,
+        prompt: "hi".into(),
+        output_file: output.clone(),
+        cwd: dir.path().to_path_buf(),
+        permission_mode: PermissionMode::Auto,
+        cancellation: RunCancellation::new(),
+        status_tx: None,
+        started_status: None,
+        parent_messages: None,
+        overrides: ClaudeSessionOverrides {
+            executable: Some(ClaudeExecutable::from_path(&fake)),
+            frozen_argv: Some(frozen),
+            auth_status: Some(Ok(logged_in())),
+            rate_limit_state_path: Some(rate_limit_dir.path().join("rate-limits.json")),
+            before_spawn: Some(Box::new(move |command| {
+                let args = command
+                    .as_std()
+                    .get_args()
+                    .map(|arg| arg.to_string_lossy().into_owned())
+                    .collect();
+                *captured_for_spawn.lock().expect("spawn argv lock") = args;
+                Ok(())
+            })),
+        },
+    })
+    .await
+    .unwrap();
+
+    let args = captured.lock().expect("spawn argv lock").clone();
+    assert!(
+        args.windows(2)
+            .any(|pair| pair == ["--permission-mode", "dontAsk"]),
+        "Auto must launch dontAsk, got {args:?}"
+    );
+    assert!(
+        !args
+            .windows(2)
+            .any(|pair| pair == ["--permission-mode", "bypassPermissions"]),
+        "frozen Bypass must not survive Auto narrowing: {args:?}"
+    );
+    assert!(
+        args.windows(2)
+            .any(|pair| pair == ["--setting-sources", ""]),
+        "dontAsk must unload setting sources: {args:?}"
+    );
+    assert!(
+        args.windows(2).any(|pair| pair == ["--tools", "Read"]),
+        "bound tools must remain: {args:?}"
+    );
+    assert!(
+        args.windows(2).any(|pair| pair == ["--model", "opus"]),
+        "frozen identity model must remain: {args:?}"
+    );
+    let status = subagent::read_status(&output).expect("status");
+    assert_eq!(status.state, RunState::Ok);
+    drop(rate_limit_dir);
 }
 
 #[tokio::test]

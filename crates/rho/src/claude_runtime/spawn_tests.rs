@@ -137,7 +137,7 @@ fn builds_explicit_safe_spawn_args() {
     assert!(!plan.args.iter().any(|arg| arg == "--system-prompt-file"));
     assert!(plan.args.contains(&"--include-partial-messages".into()));
     assert!(plan.args.contains(&"--verbose".into()));
-    // Rho Auto uses Claude bypassPermissions via --permission-mode only; do not
+    // Bypass uses Claude bypassPermissions via --permission-mode only; do not
     // also pass the separate --dangerously-skip-permissions flag.
     assert!(!plan
         .args
@@ -375,38 +375,228 @@ fn model_is_passed_byte_for_byte_without_alias_rewrite() {
         .any(|pair| pair == ["--model", "claude-opus-4-6"]));
 }
 
-// Covers: Supervised, Auto, and AllowEdits have no Claude equivalent, so the
-// mapping refuses them instead of picking a looser Claude mode.
+// Covers: Auto / Allow edits reach dontAsk only when every tool is proven
+// free for that Rho class. Specifiers, inherited Claude settings, write or
+// process tools, and unknown / plugin / MCP names fail closed.
 // Owner: Claude spawn argv mapping
 #[test]
-fn claude_unsupported_rho_modes_are_refused_at_the_mapping_boundary() {
-    let error = map_permission_mode(crate::permission::PermissionMode::Supervised).unwrap_err();
-    assert_eq!(error, ClaudeSpawnError::SupervisedUnsupported);
-    let error = map_permission_mode(crate::permission::PermissionMode::Auto).unwrap_err();
-    assert_eq!(error, ClaudeSpawnError::SupervisedUnsupported);
-    let error = map_permission_mode(crate::permission::PermissionMode::AllowEdits).unwrap_err();
-    assert_eq!(error, ClaudeSpawnError::SupervisedUnsupported);
+fn rho_permission_modes_map_to_claude_cli_modes() {
+    use crate::permission::PermissionMode;
+
+    let bare = ["Read".to_string(), "Glob".to_string()];
+    let network = ["WebSearch".to_string(), "WebFetch".to_string()];
+    let narrowed = ["Read".to_string(), "Bash(git status:*)".to_string()];
+    let bash = ["Bash".to_string()];
+    let edit = ["Edit".to_string()];
+    let write = ["Write".to_string()];
+    let notebook = ["NotebookEdit".to_string()];
+    let powershell = ["PowerShell".to_string()];
+    let mcp = ["mcp__server__tool".to_string()];
+    let list_mcp_resource = ["ListMcpResourcesTool".to_string()];
+    let read_mcp_resource = ["ReadMcpResourceTool".to_string()];
+    let unknown = ["FutureClaudeTool".to_string()];
+
+    for (mode, tools, inherit, expected) in [
+        (
+            PermissionMode::Plan,
+            bare.as_slice(),
+            false,
+            Ok(ClaudePermissionMode::Plan),
+        ),
+        (
+            PermissionMode::Bypass,
+            narrowed.as_slice(),
+            true,
+            Ok(ClaudePermissionMode::BypassPermissions),
+        ),
+        (
+            PermissionMode::Auto,
+            bare.as_slice(),
+            false,
+            Ok(ClaudePermissionMode::DontAsk),
+        ),
+        (
+            PermissionMode::AllowEdits,
+            bare.as_slice(),
+            false,
+            Ok(ClaudePermissionMode::DontAsk),
+        ),
+        (
+            PermissionMode::Auto,
+            bash.as_slice(),
+            false,
+            Err(ClaudeSpawnError::DontAskUnbound),
+        ),
+        (
+            PermissionMode::Auto,
+            edit.as_slice(),
+            false,
+            Err(ClaudeSpawnError::DontAskUnbound),
+        ),
+        (
+            PermissionMode::Auto,
+            write.as_slice(),
+            false,
+            Err(ClaudeSpawnError::DontAskUnbound),
+        ),
+        (
+            PermissionMode::AllowEdits,
+            bash.as_slice(),
+            false,
+            Err(ClaudeSpawnError::DontAskUnbound),
+        ),
+        (
+            PermissionMode::AllowEdits,
+            edit.as_slice(),
+            false,
+            Err(ClaudeSpawnError::DontAskUnbound),
+        ),
+        (
+            PermissionMode::AllowEdits,
+            write.as_slice(),
+            false,
+            Err(ClaudeSpawnError::DontAskUnbound),
+        ),
+        (
+            PermissionMode::Auto,
+            network.as_slice(),
+            false,
+            Ok(ClaudePermissionMode::DontAsk),
+        ),
+        (
+            PermissionMode::AllowEdits,
+            network.as_slice(),
+            false,
+            Ok(ClaudePermissionMode::DontAsk),
+        ),
+        (
+            PermissionMode::Auto,
+            notebook.as_slice(),
+            false,
+            Err(ClaudeSpawnError::DontAskUnbound),
+        ),
+        (
+            PermissionMode::AllowEdits,
+            powershell.as_slice(),
+            false,
+            Err(ClaudeSpawnError::DontAskUnbound),
+        ),
+        (
+            PermissionMode::Auto,
+            mcp.as_slice(),
+            false,
+            Err(ClaudeSpawnError::DontAskUnbound),
+        ),
+        (
+            PermissionMode::Auto,
+            list_mcp_resource.as_slice(),
+            false,
+            Err(ClaudeSpawnError::DontAskUnbound),
+        ),
+        (
+            PermissionMode::AllowEdits,
+            read_mcp_resource.as_slice(),
+            false,
+            Err(ClaudeSpawnError::DontAskUnbound),
+        ),
+        (
+            PermissionMode::AllowEdits,
+            unknown.as_slice(),
+            false,
+            Err(ClaudeSpawnError::DontAskUnbound),
+        ),
+        (
+            PermissionMode::Auto,
+            &["Read".to_string(), "mcp__server__tool".to_string()][..],
+            false,
+            Err(ClaudeSpawnError::DontAskUnbound),
+        ),
+        (
+            PermissionMode::Plan,
+            mcp.as_slice(),
+            false,
+            Ok(ClaudePermissionMode::Plan),
+        ),
+        (
+            PermissionMode::Bypass,
+            unknown.as_slice(),
+            false,
+            Ok(ClaudePermissionMode::BypassPermissions),
+        ),
+        (
+            PermissionMode::Auto,
+            &[][..],
+            false,
+            Ok(ClaudePermissionMode::DontAsk),
+        ),
+        (
+            PermissionMode::Auto,
+            narrowed.as_slice(),
+            false,
+            Err(ClaudeSpawnError::DontAskUnbound),
+        ),
+        (
+            PermissionMode::AllowEdits,
+            bare.as_slice(),
+            true,
+            Err(ClaudeSpawnError::DontAskUnbound),
+        ),
+        (
+            PermissionMode::Supervised,
+            bare.as_slice(),
+            false,
+            Err(ClaudeSpawnError::SupervisedUnsupported),
+        ),
+    ] {
+        assert_eq!(map_permission_mode(mode, tools, inherit), expected);
+        if let Ok(mapped) = expected {
+            assert_eq!(
+                mapped.as_cli_flag(),
+                match mapped {
+                    ClaudePermissionMode::Plan => "plan",
+                    ClaudePermissionMode::BypassPermissions => "bypassPermissions",
+                    ClaudePermissionMode::DontAsk => "dontAsk",
+                }
+            );
+        }
+    }
 }
 
-// Covers: Rho Bypass maps to Claude bypassPermissions (just run), not dontAsk
-// (allowlist-only) or classifier auto. One-shots set DontAsk separately.
+// Covers: a bound Auto spawn uses dontAsk, empty setting sources, and does
+// not expose a Bash base tool that Claude would read-only-approve.
 // Owner: Claude spawn argv mapping
 #[test]
-fn rho_bypass_maps_to_claude_bypass_permissions() {
+fn auto_spawn_plan_uses_dont_ask_with_declared_tool_boundary() {
+    let mode = map_permission_mode(
+        crate::permission::PermissionMode::Auto,
+        &["Read".into(), "Glob".into()],
+        false,
+    )
+    .expect("bound Auto maps to Claude dontAsk");
+    let plan = build_spawn_plan(&request(
+        vec!["Read", "Glob"],
+        false,
+        None,
+        mode,
+        8,
+        PromptPolicy::Replace("Plan carefully.".into()),
+    ));
+    assert!(plan
+        .args
+        .windows(2)
+        .any(|pair| pair == ["--permission-mode", "dontAsk"]));
+    assert!(plan
+        .args
+        .windows(2)
+        .any(|pair| pair == ["--setting-sources", ""]));
+    assert!(plan
+        .args
+        .windows(2)
+        .any(|pair| pair == ["--tools", "Read,Glob"]));
     assert_eq!(
-        map_permission_mode(crate::permission::PermissionMode::Bypass),
-        Ok(ClaudePermissionMode::BypassPermissions)
+        flag_values(&plan.args, "--allowedTools"),
+        vec!["Read".to_string(), "Glob".to_string()]
     );
-    assert_eq!(
-        map_permission_mode(crate::permission::PermissionMode::Plan),
-        Ok(ClaudePermissionMode::Plan)
-    );
-    assert_eq!(
-        ClaudePermissionMode::BypassPermissions.as_cli_flag(),
-        "bypassPermissions"
-    );
-    assert_eq!(ClaudePermissionMode::DontAsk.as_cli_flag(), "dontAsk");
-    assert_eq!(ClaudePermissionMode::Plan.as_cli_flag(), "plan");
 }
 
 #[test]

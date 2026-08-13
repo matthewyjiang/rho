@@ -476,6 +476,10 @@ thread_local! {
     static TEST_CACHE_DIR: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
 }
 
+pub(super) fn test_cache_dir_override_is_set() -> bool {
+    TEST_CACHE_DIR.with(|cache_dir| cache_dir.borrow().is_some())
+}
+
 #[doc(hidden)]
 pub fn with_models_dev_cache_dir_for_tests<T>(path: PathBuf, f: impl FnOnce() -> T) -> T {
     // Process-level ready must not leak across tests that swap the sqlite path.
