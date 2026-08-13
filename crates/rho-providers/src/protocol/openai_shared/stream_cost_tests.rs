@@ -2,8 +2,9 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 
 use super::{
-    extract_generation_output_tokens, extract_usage, GenerationOutputTokens,
-    GenerationTokenContext, HiddenReasoningRisk,
+    extract_generation_output_tokens, extract_raw_usage, extract_usage,
+    resolve_generation_output_tokens, GenerationOutputTokens, GenerationTokenContext,
+    HiddenReasoningRisk,
 };
 use crate::model::ModelUsage;
 
@@ -217,4 +218,23 @@ fn generation_output_tokens_match_generation_window_accounting() {
             "{name}: aggregate usage"
         );
     }
+}
+
+// Covers: a later usage snapshot that reports output without reasoning
+// details must replace the whole output/reasoning pair, not keep the
+// earlier reasoning count next to the new output total
+// Owner: OpenAI shared usage parser
+#[test]
+fn merge_replaces_output_reasoning_pair_atomically() {
+    let earlier = extract_raw_usage(&json!({"usage": {
+        "completion_tokens": 30,
+        "completion_tokens_details": {"reasoning_tokens": 12}
+    }}))
+    .unwrap();
+    let later = extract_raw_usage(&json!({"usage": {"completion_tokens": 40}})).unwrap();
+
+    assert_eq!(
+        resolve_generation_output_tokens(earlier.merge(later).reported_output(), HIDDEN_POSSIBLE),
+        GenerationOutputTokens::Unavailable
+    );
 }

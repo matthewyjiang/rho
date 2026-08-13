@@ -23,46 +23,6 @@ pub(crate) struct ChatRequest {
     pub(crate) chat_template_kwargs: Option<ChatTemplateKwargs>,
 }
 
-impl ChatRequest {
-    /// Whether this request's serialized reasoning controls ask the host to
-    /// reason, and hence whether aggregate output totals may hide off-wire
-    /// reasoning tokens. Controls that explicitly disable reasoning, and
-    /// requests that serialize no reasoning control, keep aggregate totals
-    /// trustworthy as visible-generation counts.
-    ///
-    /// This classifies the body only. Hosts that reason when no control is
-    /// serialized (Poolside enables thinking by omission) need a
-    /// dialect-level override; see
-    /// `providers::openai_compatible::reasoning::DialectReasoning`.
-    pub(crate) fn hidden_reasoning_risk(
-        &self,
-    ) -> crate::protocol::openai_shared::stream::HiddenReasoningRisk {
-        use crate::protocol::openai_shared::stream::HiddenReasoningRisk;
-
-        let effort_requests_reasoning = |effort: &str| effort != "none";
-        let requested = self
-            .thinking
-            .as_ref()
-            .is_some_and(|thinking| thinking.kind == "enabled")
-            || self
-                .reasoning_effort
-                .as_deref()
-                .is_some_and(effort_requests_reasoning)
-            || self
-                .reasoning
-                .as_ref()
-                .is_some_and(|reasoning| effort_requests_reasoning(&reasoning.effort))
-            || self
-                .chat_template_kwargs
-                .is_some_and(|kwargs| kwargs.enable_thinking);
-        if requested {
-            HiddenReasoningRisk::Possible
-        } else {
-            HiddenReasoningRisk::Unlikely
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct ChatTemplateKwargs {
     pub(crate) enable_thinking: bool,

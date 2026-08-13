@@ -99,7 +99,7 @@ impl OpenAiCompatibleProvider {
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
         let hidden_reasoning_risk = self
             .reasoning
-            .hidden_reasoning_risk(reasoning_level, body.hidden_reasoning_risk());
+            .hidden_reasoning_risk(&self.model, reasoning_level);
         let mut chat_stream =
             ChatStreamAccumulator::new(self.dialect.chat_tool_call_policy(), hidden_reasoning_risk);
         let mut decoder = LineDecoder::default();

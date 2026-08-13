@@ -14,9 +14,8 @@ use crate::{
 use rho_sdk::model::ToolCall;
 
 use super::convert::{extract_response_text, ResponsesResponse};
-use super::stream::{
-    extract_usage_report, line_decode_error, sse_data, GenerationTokenContext, HiddenReasoningRisk,
-};
+use super::stream::{line_decode_error, sse_data};
+use super::usage::{extract_usage_report, GenerationTokenContext, HiddenReasoningRisk};
 
 /// Max chars for a single search/url detail string in activity previews.
 const DETAIL_MAX_CHARS: usize = 80;

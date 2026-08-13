@@ -52,7 +52,7 @@ pub(crate) fn parse_compact_response(
         .ok_or_else(|| {
             ModelError::InvalidResponse("compact response missing output array".into())
         })?;
-    let usage = super::stream::extract_usage(body).unwrap_or_default();
+    let usage = super::usage::extract_usage(body).unwrap_or_default();
     let messages = replacement_from_compact_output(
         identity,
         retained_system_messages,

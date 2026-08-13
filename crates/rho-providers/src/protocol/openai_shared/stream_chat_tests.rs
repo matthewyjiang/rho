@@ -1,6 +1,6 @@
 use crate::model::{ContentBlock, ModelEvent, ModelResponse, ToolCall};
 use crate::protocol::openai_chat::{ChatStreamAccumulator, ChatToolCallPolicy};
-use crate::protocol::openai_shared::stream::HiddenReasoningRisk;
+use crate::protocol::openai_shared::usage::HiddenReasoningRisk;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
