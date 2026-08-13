@@ -32,8 +32,7 @@ const XAI_API_BASE: &str = "https://api.x.ai/v1";
 /// construction cannot confuse positional strings or durations.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProviderBuildOptions {
-    provider: String,
-    auth: String,
+    profile: provider::ResolvedProviderProfile,
     model: String,
     endpoint: Option<Url>,
     request_timeout: Option<Duration>,
@@ -64,8 +63,7 @@ impl ProviderBuildOptions {
         let profile = provider::resolve_provider_reference(&provider)
             .map_err(|error| ModelError::InvalidResponse(error.to_string()))?;
         Ok(Self {
-            provider: profile.provider_name().into(),
-            auth: profile.auth_id().into(),
+            profile,
             model,
             endpoint: None,
             request_timeout: None,
@@ -76,10 +74,8 @@ impl ProviderBuildOptions {
     /// Selects an auth profile registered for this provider (or a same-runtime legacy profile).
     pub fn with_auth(mut self, auth: impl Into<String>) -> Result<Self, ModelError> {
         let auth = auth.into();
-        let profile = provider::resolve_profile(&self.provider, &auth)
+        self.profile = provider::resolve_profile(self.profile.provider_name(), &auth)
             .map_err(|error| ModelError::InvalidResponse(error.to_string()))?;
-        self.provider = profile.provider_name().into();
-        self.auth = profile.auth_id().into();
         Ok(self)
     }
 
@@ -112,11 +108,11 @@ impl ProviderBuildOptions {
     }
 
     pub(crate) fn provider(&self) -> &str {
-        &self.provider
+        self.profile.provider_name()
     }
 
     pub(crate) fn auth(&self) -> &str {
-        &self.auth
+        self.profile.auth_id()
     }
 
     #[cfg(any(debug_assertions, test))]
@@ -177,20 +173,13 @@ impl ProviderBuilder {
     }
 
     pub(crate) fn build(self) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, ModelError> {
-        // Options may have been built under a dropped thread/task scope. Interned
-        // custom hosts stay resolvable so later construction does not depend on
-        // the process-wide active set still listing that name.
-        let descriptor = provider::provider_descriptor(&self.options.provider)
-            .or_else(|| {
-                provider::interned_custom_openai_compatible_provider(&self.options.provider)
-            })
-            .ok_or_else(|| ModelError::UnsupportedProvider(self.options.provider.clone()))?;
+        // Identity was resolved when the options were built. Consume that
+        // descriptor directly so a later dropped custom-host scope cannot
+        // change construction and build never bypasses visibility checks.
+        let descriptor = self.options.profile.provider;
         let runtime = descriptor.runtime;
         let provider_name = descriptor.name;
-        let auth_kind = descriptor
-            .auth_mode(&self.options.auth)
-            .map(|mode| mode.auth_kind)
-            .unwrap_or_else(|| descriptor.default_auth().auth_kind);
+        let auth_kind = self.options.profile.auth_kind();
         let client = provider_http_client(self.options.request_timeout)?;
         let endpoint = self.options.endpoint.map(|endpoint| endpoint.to_string());
 
@@ -283,8 +272,7 @@ impl ProviderBuilder {
                 )))
             }
             _ => Err(ModelError::InvalidResponse(format!(
-                "credential kind does not match provider '{}'",
-                self.options.provider
+                "credential kind does not match provider '{provider_name}'"
             ))),
         }
     }

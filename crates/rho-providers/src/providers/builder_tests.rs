@@ -14,12 +14,15 @@ fn options_reject_invalid_states_and_accept_typed_overrides() {
 
     let options = ProviderBuildOptions::new("openai", "model", ReasoningLevel::Low)
         .unwrap()
+        .with_auth("codex")
+        .unwrap()
         .endpoint(Url::parse("https://example.test/v1").unwrap())
         .unwrap()
         .request_timeout(Duration::from_secs(30))
         .unwrap();
 
-    assert_eq!(options.provider(), "openai");
+    assert_eq!(options.provider(), "openai-codex");
+    assert_eq!(options.auth(), "codex");
     assert_eq!(options.model(), "model");
     assert!(
         ProviderBuildOptions::new("openai", "model", ReasoningLevel::Off)
