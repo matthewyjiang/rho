@@ -170,11 +170,8 @@ fn workflow_approval_channel(
         PermissionMode::Auto => {
             ensure_headless_auto_classifier_model(config)?;
             let human = approval_mode.can_prompt().then(|| {
-                remember_allowed_workspace_writes(
-                    Arc::new(TerminalWorkflowApprovals { interactive: true }),
-                    session_writes.clone(),
-                    crate::permission::WriteAuthority::Human,
-                )
+                Arc::new(TerminalWorkflowApprovals { interactive: true })
+                    as Arc<dyn ApprovalHandler>
             });
             let classifier = ClassifierApprovalHandler::shared(
                 config.clone(),

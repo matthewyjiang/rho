@@ -17,9 +17,10 @@ use rho_sdk::{
         ToolErrorKind, ToolFuture, ToolInvocation, ToolMetadata, ToolOutput,
         ToolPreparationContext, ToolPrepareFuture, ToolProgress, ToolResource, ToolResourceAccess,
     },
-    ApprovalDecision, ApprovalHandler, ApprovalRequest, CancellationToken, CapabilityRequest,
-    CapabilitySource, HostChoice, HostInputRequest, HostInputResponse, HostQuestion, PathScope,
-    PolicyDecision, Rho, SelectionMode, SessionOptions, SystemPrompt, Workspace, WorkspacePolicy,
+    ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, CancellationToken,
+    CapabilityRequest, CapabilitySource, HostChoice, HostInputRequest, HostInputResponse,
+    HostQuestion, PathScope, PolicyDecision, Rho, SelectionMode, SessionOptions, SystemPrompt,
+    Workspace, WorkspacePolicy,
 };
 use serde_json::json;
 use tokio::{
@@ -34,7 +35,9 @@ use super::{
     MAX_STEPS_MESSAGE,
 };
 use crate::app::headless_run::{HeadlessRunDeps, HostInputRespondFuture, HostInputResponder};
-use crate::permission_classifier_handler::ClassifierApprovalHandler;
+use crate::permission_classifier_handler::{
+    ClassifierApprovalHandler, CONSECUTIVE_DENY_ESCALATION,
+};
 use crate::{
     agent::PERMISSION_CLASSIFIER_AGENT_ID,
     app::{
@@ -174,11 +177,19 @@ fn headless_auto_requires_configured_permission_classifier_model() {
     ensure_headless_auto_classifier_model(&config).unwrap();
 }
 
-// Covers: a classifier allow on a supplied Auto template must record into this
-// run's write log so a later untracked workspace write skips classification.
+// Covers: a classifier allow or human escalation on a supplied Auto template
+// must record into this run's write log, not the template's, so a later
+// untracked workspace write skips classification.
 // Owner: automation startup approval wiring.
 #[tokio::test]
 async fn supplied_auto_classifier_template_records_allows_on_the_run_write_log() {
+    struct AllowInner;
+    impl ApprovalHandler for AllowInner {
+        fn request<'a>(&'a self, _request: ApprovalRequest) -> ApprovalFuture<'a> {
+            Box::pin(async { ApprovalDecision::AllowOnce })
+        }
+    }
+
     let root = tempfile::tempdir().unwrap();
     let created = root.path().join("new.rs");
     std::fs::write(&created, "fn main() {}\n").unwrap();
@@ -199,47 +210,95 @@ async fn supplied_auto_classifier_template_records_allows_on_the_run_write_log()
         PERMISSION_CLASSIFIER_AGENT_ID,
         InternalAgentModelConfig::new("openai".into(), "gpt-5.5".into(), "api-key".into()),
     );
-    let classify_calls = Arc::new(AtomicUsize::new(0));
-    let template = Arc::new(ClassifierApprovalHandler::for_tests(
-        {
-            let classify_calls = Arc::clone(&classify_calls);
-            Arc::new(move |_input| {
-                classify_calls.fetch_add(1, Ordering::SeqCst);
-                Box::pin(async { ClassifierVerdict::Allow })
-            })
-        },
-        None,
-    ));
-    let session_writes = crate::permission::SessionWriteLog::default();
-    let handler = headless_auto_classifier(
-        &config,
-        Some(template),
-        root.path().to_path_buf(),
-        Default::default(),
-        session_writes.clone(),
-    );
-    let policy = AppPolicy::for_mode(PermissionMode::Auto, session_writes);
     let request = CapabilityRequest::write_path(
         created,
         PathScope::PrimaryWorkspace,
         CapabilitySource::built_in_tool("write"),
     );
 
-    assert_eq!(
-        policy.evaluate(&request),
-        PolicyDecision::RequireApproval {
-            reason: String::new(),
+    for escalate in [false, true] {
+        let classify_calls = Arc::new(AtomicUsize::new(0));
+        let template_writes = crate::permission::SessionWriteLog::default();
+        let run_writes = crate::permission::SessionWriteLog::default();
+        let template = Arc::new(
+            ClassifierApprovalHandler::for_tests(
+                {
+                    let classify_calls = Arc::clone(&classify_calls);
+                    Arc::new(move |_input| {
+                        classify_calls.fetch_add(1, Ordering::SeqCst);
+                        Box::pin(async move {
+                            if escalate {
+                                ClassifierVerdict::Deny {
+                                    reason: "blocked".into(),
+                                }
+                            } else {
+                                ClassifierVerdict::Allow
+                            }
+                        })
+                    })
+                },
+                escalate.then(|| Arc::new(AllowInner) as Arc<dyn ApprovalHandler>),
+            )
+            .with_session_writes(template_writes.clone()),
+        );
+        let handler = headless_auto_classifier(
+            &config,
+            Some(template),
+            root.path().to_path_buf(),
+            Default::default(),
+            run_writes.clone(),
+        );
+        let run_policy = AppPolicy::for_mode(PermissionMode::Auto, run_writes);
+        let template_policy = AppPolicy::for_mode(PermissionMode::Auto, template_writes);
+
+        assert_eq!(
+            run_policy.evaluate(&request),
+            PolicyDecision::RequireApproval {
+                reason: String::new(),
+            }
+        );
+
+        if escalate {
+            for _ in 0..CONSECUTIVE_DENY_ESCALATION {
+                assert!(matches!(
+                    handler
+                        .request(ApprovalRequest::new(request.clone(), "approval required"))
+                        .await,
+                    ApprovalDecision::Deny { .. }
+                ));
+            }
         }
-    );
-    assert_eq!(
-        handler
-            .request(ApprovalRequest::new(request.clone(), "approval required"))
-            .await,
-        ApprovalDecision::AllowOnce
-    );
-    assert_eq!(classify_calls.load(Ordering::SeqCst), 1);
-    assert_eq!(policy.evaluate(&request), PolicyDecision::Allow);
-    assert_eq!(classify_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            handler
+                .request(ApprovalRequest::new(request.clone(), "approval required"))
+                .await,
+            ApprovalDecision::AllowOnce
+        );
+        assert_eq!(
+            classify_calls.load(Ordering::SeqCst),
+            if escalate {
+                CONSECUTIVE_DENY_ESCALATION as usize
+            } else {
+                1
+            }
+        );
+        assert_eq!(run_policy.evaluate(&request), PolicyDecision::Allow);
+        assert_eq!(
+            template_policy.evaluate(&request),
+            PolicyDecision::RequireApproval {
+                reason: String::new(),
+            },
+            "isolated grants must not land on the template log"
+        );
+        assert_eq!(
+            classify_calls.load(Ordering::SeqCst),
+            if escalate {
+                CONSECUTIVE_DENY_ESCALATION as usize
+            } else {
+                1
+            }
+        );
+    }
 }
 
 // Covers: Auto ignores a stray non-classifier session and still installs a

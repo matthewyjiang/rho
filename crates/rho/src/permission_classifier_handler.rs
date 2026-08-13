@@ -101,6 +101,12 @@ impl ClassifierApprovalHandler {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_session_writes(mut self, session_writes: SessionWriteLog) -> Self {
+        self.session_writes = Some(session_writes);
+        self
+    }
+
     pub(crate) fn update_config(&self, config: Config) {
         *self
             .config
@@ -121,8 +127,9 @@ impl ClassifierApprovalHandler {
 
     /// Isolates a template onto a distinct run's write log.
     ///
-    /// The deny streak still resets, but later-write memory records into
-    /// `session_writes` instead of the template's log, which is often absent.
+    /// The deny streak still resets. Classifier allows and human escalations
+    /// record into `session_writes` instead of the template's log, which is
+    /// often absent or owned by a different session.
     pub(crate) fn isolate_for_run(self: &Arc<Self>, session_writes: SessionWriteLog) -> Arc<Self> {
         self.clone_with_reset_streak(Some(session_writes))
     }
@@ -170,7 +177,17 @@ impl ClassifierApprovalHandler {
                 ),
             };
         };
-        inner.request(request).await
+        let capability = request.capability().clone();
+        let decision = inner.request(request).await;
+        if matches!(
+            decision,
+            ApprovalDecision::AllowOnce | ApprovalDecision::AllowForSession
+        ) {
+            if let Some(writes) = &self.session_writes {
+                writes.remember(&capability, WriteAuthority::Human);
+            }
+        }
+        decision
     }
 }
 
