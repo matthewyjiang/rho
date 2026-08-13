@@ -390,25 +390,35 @@ fn parallel_tool_calls_stream_arguments_per_output_index() {
     );
 }
 
-// Covers: Chat Completions must emit generation-only throughput before unchanged usage
+// Covers: Chat Completions must publish generation-only throughput before the
+// normalized usage snapshot once at stream finish
 // Owner: OpenAI Chat Completions protocol
 #[test]
 fn chat_stream_usage_normalizes_prompt_cache_tokens() {
     let mut chat_stream = ChatStreamAccumulator::default();
     let mut events = Vec::new();
+    let mut on_event = |event: ModelEvent| {
+        events.push(event);
+        Ok(())
+    };
+    chat_stream
+        .handle_line(
+            r#"data: {"choices":[{"delta":{"content":"ok"}}]}"#,
+            &mut on_event,
+        )
+        .unwrap();
     chat_stream
         .handle_line(
             r#"data: {"usage":{"prompt_tokens":1000,"completion_tokens":20,"total_tokens":1020,"prompt_tokens_details":{"cached_tokens":700,"cache_write_tokens":200},"completion_tokens_details":{"reasoning_tokens":5}},"choices":[{"delta":{}}]}"#,
-            &mut |event| {
-                events.push(event);
-                Ok(())
-            },
+            &mut on_event,
         )
         .unwrap();
+    chat_stream.finish(&mut on_event).unwrap();
 
     assert_eq!(
         events,
         vec![
+            ModelEvent::OutputDelta("ok".into()),
             generation_output_tokens_event(15),
             ModelEvent::Usage(crate::model::ModelUsage {
                 input_tokens: Some(100),
