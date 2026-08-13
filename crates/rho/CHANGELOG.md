@@ -1,21 +1,5 @@
 # Changelog
 
-## [1.39.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.38.2...rho-coding-agent-v1.39.0) (2026-08-13)
-
-
-### Features
-
-* **permission:** let Auto skip review of tracked workspace edits ([#892](https://github.com/matthewyjiang/rho/issues/892)) ([2babff2](https://github.com/matthewyjiang/rho/commit/2babff25ddd4788433adbdb40babf38a59c4ec29))
-* **permission:** screen Auto requests with a two-stage classifier ([#893](https://github.com/matthewyjiang/rho/issues/893)) ([4149f11](https://github.com/matthewyjiang/rho/commit/4149f1157aa2c8ee10561a21a919a0e530b8f3cc))
-* **providers:** let config name openai-compatible hosts ([#888](https://github.com/matthewyjiang/rho/issues/888)) ([a87649a](https://github.com/matthewyjiang/rho/commit/a87649a9e76332f53f125c52e7eccd8a14bc14f1))
-
-
-### Dependencies
-
-* The following workspace dependencies were updated
-  * dependencies
-    * rho-providers bumped from 1.2.0 to 2.0.0
-
 ## [1.38.2](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.38.1...rho-coding-agent-v1.38.2) (2026-08-12)
 
 
