@@ -38,6 +38,15 @@ fn authorization_url_uses_console_callback_and_pkce() {
     assert!(query.contains_key("code_challenge"));
 }
 
+// Covers: the authorize state must equal the PKCE verifier; the token
+// endpoint rejects mismatches as a disguised 429 rate_limit_error.
+// Owner: anthropic oauth flow
+#[test]
+fn authorize_state_is_the_pkce_verifier() {
+    let request = build_oauth_request();
+    assert_eq!(request.state, request.verifier);
+}
+
 #[test]
 fn parse_authorization_code_splits_code_hash_state() {
     let parsed = parse_authorization_code("  auth-code#returned-state  ").unwrap();

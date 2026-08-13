@@ -74,8 +74,13 @@ struct TokenResponse {
 }
 
 /// Builds the Anthropic OAuth authorize request without opening a browser.
+///
+/// The authorize `state` must be the PKCE verifier itself. The token endpoint
+/// rejects exchanges whose state does not match the verifier, and it reports
+/// that rejection as a 429 `rate_limit_error`, not an invalid-grant error.
 pub fn build_oauth_request() -> AnthropicOAuthRequest {
-    build_oauth_request_with_values(random_token(32), random_token(64))
+    let verifier = random_token(64);
+    build_oauth_request_with_values(verifier.clone(), verifier)
 }
 
 fn build_oauth_request_with_values(state: String, verifier: String) -> AnthropicOAuthRequest {
@@ -126,10 +131,16 @@ async fn complete_anthropic_oauth_with_endpoint(
             state: Some(state),
         })
         .send()
-        .await?
-        .error_for_status()?
-        .json::<TokenResponse>()
         .await?;
+    // The token endpoint reports rejected exchanges (bad code, stale attempt,
+    // state/verifier mismatch) as 429 rate_limit_error, so a raw HTTP error
+    // would mislead the user into waiting instead of retrying the login.
+    if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return Err(AnthropicOAuthError::OAuthDenied(
+            "Anthropic rejected the code exchange (HTTP 429). This usually means the pasted code was wrong, expired, or from an older login attempt, not real rate limiting. Run /login anthropic-oauth again and paste a fresh code.".into(),
+        ));
+    }
+    let response = response.error_for_status()?.json::<TokenResponse>().await?;
     tokens_from_response(response)
 }
 
