@@ -375,8 +375,11 @@ fn model_is_passed_byte_for_byte_without_alias_rewrite() {
         .any(|pair| pair == ["--model", "claude-opus-4-6"]));
 }
 
+// Covers: Supervised, Auto, and AllowEdits have no Claude equivalent, so the
+// mapping refuses them instead of picking a looser Claude mode.
+// Owner: Claude spawn argv mapping
 #[test]
-fn supervised_rho_mode_is_refused_at_the_mapping_boundary() {
+fn claude_unsupported_rho_modes_are_refused_at_the_mapping_boundary() {
     let error = map_permission_mode(crate::permission::PermissionMode::Supervised).unwrap_err();
     assert_eq!(error, ClaudeSpawnError::SupervisedUnsupported);
     let error = map_permission_mode(crate::permission::PermissionMode::Auto).unwrap_err();

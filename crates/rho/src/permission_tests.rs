@@ -300,6 +300,55 @@ fn allow_edits_and_auto_allow_later_writes_to_approved_workspace_files() {
     }
 }
 
+// Covers: a symlink never gets the free-write skip, even when git tracks it or
+// the session already allowed that path, so a link out of the workspace is
+// still gated.
+// Owner: application permission policy
+#[test]
+fn allow_edits_and_auto_gate_symlinked_workspace_writes() {
+    let outside = TempDir::new().unwrap();
+    let target = outside.path().join("secret.txt");
+    std::fs::write(&target, "secret").unwrap();
+
+    let dir = TempDir::new().unwrap();
+    let tracked_link = dir.path().join("tracked-link.txt");
+    std::os::unix::fs::symlink(&target, &tracked_link).unwrap();
+    run_git(dir.path(), &["init"]);
+    run_git(dir.path(), &["add", "tracked-link.txt"]);
+
+    // A path allowed earlier this session, then swapped for a link.
+    let remembered = dir.path().join("remembered.txt");
+    std::fs::write(&remembered, "plain").unwrap();
+
+    let tracked_link_write = write_request(tracked_link, PathScope::PrimaryWorkspace);
+    let remembered_write = write_request(remembered.clone(), PathScope::PrimaryWorkspace);
+
+    for mode in [PermissionMode::AllowEdits, PermissionMode::Auto] {
+        let policy = mode
+            .workspace_policy(SessionWriteLog::default())
+            .expect("checked mode has a policy");
+        assert_eq!(
+            policy.evaluate(&tracked_link_write),
+            PolicyDecision::RequireApproval {
+                reason: String::new(),
+            }
+        );
+
+        policy.remember_approved_write(&remembered_write);
+        assert_eq!(policy.evaluate(&remembered_write), PolicyDecision::Allow);
+        std::fs::remove_file(&remembered).unwrap();
+        std::os::unix::fs::symlink(&target, &remembered).unwrap();
+        assert_eq!(
+            policy.evaluate(&remembered_write),
+            PolicyDecision::RequireApproval {
+                reason: String::new(),
+            }
+        );
+        std::fs::remove_file(&remembered).unwrap();
+        std::fs::write(&remembered, "plain").unwrap();
+    }
+}
+
 fn all_capability_kinds() -> [CapabilityKind; 6] {
     [
         CapabilityKind::Read,

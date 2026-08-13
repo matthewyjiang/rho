@@ -268,8 +268,9 @@ fn is_free_workspace_write(request: &CapabilityRequest, session_writes: &Session
             path,
             scope: PathScope::PrimaryWorkspace,
         } => {
-            path_is_git_tracked(path)
-                || (session_writes.contains(path) && !path_is_git_ignored(path))
+            !path_is_symlink(path)
+                && (path_is_git_tracked(path)
+                    || (session_writes.contains(path) && !path_is_git_ignored(path)))
         }
         _ => false,
     }
@@ -282,6 +283,17 @@ fn rememberable_workspace_write(request: &CapabilityRequest) -> Option<PathBuf> 
             scope: PathScope::PrimaryWorkspace,
         } if !path_is_git_ignored(path) => Some(path.clone()),
         _ => None,
+    }
+}
+
+/// Reports whether the path is a symbolic link. Git tracks symlinks, and a
+/// tracked link can point outside the workspace, so the free-write skip never
+/// applies to one. Only a missing path is treated as "not a link"; any other
+/// metadata error keeps the write gated.
+fn path_is_symlink(path: &Path) -> bool {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata.file_type().is_symlink(),
+        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
     }
 }
 

@@ -161,8 +161,8 @@ Permission modes map a `workflow_command` process request as follows:
 | `supervised` | require approval | yes, when a responder is available |
 
 The `before_tool_use` hook still runs when policy returns allow. A host prompt
-runs only for `require approval`. A headless supervised run fails closed when no
-approval responder is available.
+runs only for `require approval`. Headless `supervised` and `allow_edits` runs
+fail closed when no approval responder is available.
 
 Project workflow sources and project agent definitions follow project trust
 rules. User hooks remain eligible. Project hooks stay inactive until the
