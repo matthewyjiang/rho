@@ -213,7 +213,6 @@ impl ApprovalHandler for ClassifierApprovalHandler {
             if self.should_escalate() {
                 let decision = self.escalate_or_deny_headless(request).await;
                 if self.inner.is_some() {
-                    // A human handled it, so both budgets start over.
                     self.consecutive_denials.store(0, Ordering::Relaxed);
                     self.total_denials.store(0, Ordering::Relaxed);
                 }
