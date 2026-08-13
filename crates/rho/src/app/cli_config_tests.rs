@@ -623,6 +623,13 @@ fn cli_auth_profile_normalizes_compatible_provider() {
 // Owner: app startup
 #[tokio::test]
 async fn custom_hosts_fetch_models_from_the_openai_compatible_endpoint() {
+    struct RestoreCustomProviders;
+    impl Drop for RestoreCustomProviders {
+        fn drop(&mut self) {
+            rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
+        }
+    }
+
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let api_base = format!("http://{}/v1", listener.local_addr().unwrap());
     tokio::spawn(async move {
@@ -646,6 +653,8 @@ async fn custom_hosts_fetch_models_from_the_openai_compatible_endpoint() {
 
     let cache_dir = unique_cache_dir("custom-host-refresh");
     set_provider_models_cache_dir_for_tests(Some(cache_dir.clone()));
+    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
+    let _restore = RestoreCustomProviders;
     let mut cfg = Config::default();
     cfg.providers.set_endpoint("composer", &api_base).unwrap();
     cfg.providers.activate().unwrap();
@@ -663,4 +672,70 @@ async fn custom_hosts_fetch_models_from_the_openai_compatible_endpoint() {
             .collect::<Vec<_>>(),
         ["composer-2.5", "composer-2.5-fast"]
     );
+}
+
+// Covers: unavailable custom hosts must not serialize their discovery timeouts
+// Owner: app startup
+#[tokio::test]
+async fn custom_hosts_refresh_models_concurrently() {
+    struct RestoreCustomProviders;
+    impl Drop for RestoreCustomProviders {
+        fn drop(&mut self) {
+            rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
+        }
+    }
+
+    let listener_a = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener_b = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api_a = format!("http://{}/v1", listener_a.local_addr().unwrap());
+    let api_b = format!("http://{}/v1", listener_b.local_addr().unwrap());
+    let (ready_a, wait_a) = tokio::sync::oneshot::channel();
+    let (ready_b, wait_b) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = tokio::sync::watch::channel(false);
+
+    let spawn_hold = |listener: tokio::net::TcpListener,
+                      ready: tokio::sync::oneshot::Sender<()>,
+                      mut release_rx: tokio::sync::watch::Receiver<bool>| {
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buffer = [0; 2048];
+            let _ = tokio::io::AsyncReadExt::read(&mut stream, &mut buffer)
+                .await
+                .unwrap();
+            let _ = ready.send(());
+            release_rx.wait_for(|released| *released).await.unwrap();
+            let body = r#"{"data":[{"id":"m"}]}"#;
+            let reply = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = tokio::io::AsyncWriteExt::write_all(&mut stream, reply.as_bytes()).await;
+        })
+    };
+    spawn_hold(listener_a, ready_a, release_rx.clone());
+    spawn_hold(listener_b, ready_b, release_rx);
+
+    let cache_dir = unique_cache_dir("custom-host-concurrent");
+    set_provider_models_cache_dir_for_tests(Some(cache_dir.clone()));
+    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
+    let _restore = RestoreCustomProviders;
+    let mut cfg = Config::default();
+    cfg.providers.set_endpoint("composer", &api_a).unwrap();
+    cfg.providers.set_endpoint("vllm", &api_b).unwrap();
+    cfg.providers.activate().unwrap();
+    let store = MemoryCredentialStore::default();
+
+    let refresh = tokio::spawn(async move {
+        refresh_custom_provider_models(&cfg, &store).await;
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        wait_a.await.unwrap();
+        wait_b.await.unwrap();
+    })
+    .await
+    .expect("both custom hosts should accept before either responds");
+    release_tx.send(true).unwrap();
+    refresh.await.unwrap();
+    set_provider_models_cache_dir_for_tests(None);
+    let _ = std::fs::remove_dir_all(cache_dir);
 }

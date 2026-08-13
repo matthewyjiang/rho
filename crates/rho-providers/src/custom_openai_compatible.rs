@@ -43,11 +43,13 @@ fn lock_write() -> std::sync::RwLockWriteGuard<'static, CustomRegistry> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// Replaces the active custom OpenAI-compatible providers.
+/// Registers custom OpenAI-compatible providers without unregistering others.
 ///
 /// Names are interned for the process lifetime so descriptors can be `'static`.
-/// Callers that only change an endpoint do not need to reinstall; the
-/// application config remains the source of truth for the API base.
+/// Concurrent runtimes may install different configs; adding a name must not
+/// make an earlier name unresolvable. Callers that only change an endpoint do
+/// not need to reinstall; the application config remains the source of truth
+/// for the API base.
 pub fn install_custom_openai_compatible_providers<'a, I>(names: I) -> anyhow::Result<()>
 where
     I: IntoIterator<Item = &'a str>,
@@ -62,12 +64,24 @@ where
     }
 
     let mut registry = lock_write();
-    let mut active = Vec::with_capacity(names.len());
     for name in names {
-        active.push(intern(name, &mut registry));
+        let descriptor = intern(name, &mut registry);
+        if !registry
+            .active
+            .iter()
+            .any(|installed| installed.name == descriptor.name)
+        {
+            registry.active.push(descriptor);
+        }
     }
-    registry.active = active;
     Ok(())
+}
+
+/// Drops interned and active custom providers. Tests use this so one case
+/// cannot leak names into another; production runtimes only add names.
+#[doc(hidden)]
+pub fn reset_custom_openai_compatible_providers_for_tests() {
+    *lock_write() = CustomRegistry::default();
 }
 
 pub fn custom_openai_compatible_providers() -> Vec<&'static ProviderDescriptor> {
@@ -75,11 +89,7 @@ pub fn custom_openai_compatible_providers() -> Vec<&'static ProviderDescriptor> 
 }
 
 pub fn custom_openai_compatible_provider(name: &str) -> Option<&'static ProviderDescriptor> {
-    lock_read()
-        .active
-        .iter()
-        .copied()
-        .find(|descriptor| descriptor.name == name)
+    lock_read().interned.get(name).copied()
 }
 
 pub fn validate_custom_provider_name(name: &str) -> anyhow::Result<()> {
@@ -110,7 +120,7 @@ pub fn validate_custom_provider_name(name: &str) -> anyhow::Result<()> {
 
 fn intern(name: &str, registry: &mut CustomRegistry) -> &'static ProviderDescriptor {
     if let Some(existing) = registry.interned.get(name) {
-        return *existing;
+        return existing;
     }
     let leaked_name = Box::leak(name.to_string().into_boxed_str());
     let descriptor = Box::leak(Box::new(ProviderDescriptor {

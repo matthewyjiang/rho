@@ -18,7 +18,7 @@ base_url = "http://127.0.0.1:8000/v1"
 
 Keep the `/v1` suffix. Rho appends `/models` for discovery and `/chat/completions` for agent turns. The URL must use `http` or `https` and cannot contain credentials, a query, or a fragment.
 
-Names must be lowercase letters, digits, and hyphens, start with a letter, and must not match a built-in provider. Restart Rho after you add or rename a host. Changing only `base_url` on an existing name is enough on the next request if Rho is already running that host; adding a new name still needs a restart.
+Names must be lowercase letters, digits, and hyphens, start with a letter, and must not match a built-in provider. Restart Rho after you edit this table, including an existing `base_url`. Direct edits to `config.toml` do not update a running process.
 
 ## Use it
 

@@ -1,7 +1,7 @@
 use crate::{
-    model::{ModelMetadata, ReasoningCapabilities, ReasoningRequestSource},
+    model::{ModelMetadata, ReasoningCapabilities, ReasoningLevelSet, ReasoningRequestSource},
     protocol::openai_chat::{ChatTemplateKwargs, OpenAiReasoning, OpenAiThinking},
-    provider::CatalogReasoningPolicy,
+    provider::{CatalogReasoningPolicy, ProviderId},
     reasoning::ReasoningLevel,
 };
 
@@ -83,20 +83,33 @@ impl DialectReasoning {
     }
 }
 
+/// Ollama's OpenAI-compatible API accepts only these effort values.
+const OLLAMA_WIRE_LEVELS: [ReasoningLevel; 5] = [
+    ReasoningLevel::Off,
+    ReasoningLevel::Low,
+    ReasoningLevel::Medium,
+    ReasoningLevel::High,
+    ReasoningLevel::Max,
+];
+
 /// OffAsNone hosts accept `reasoning_effort` including `"none"`. When the
-/// catalog has no row, still send the selected level. Omitting the field lets
-/// Ollama enable thinking on its own.
+/// catalog has no row, still send a value. Omitting the field lets Ollama
+/// enable thinking on its own. Unknown Ollama models are constrained to the
+/// server's vocabulary; other OffAsNone hosts send the requested level.
 fn standard_effort_profile(
     provider: &'static str,
     metadata: Option<ModelMetadata>,
 ) -> EffortProfile {
-    if crate::provider::provider_descriptor(provider)
-        .is_some_and(|descriptor| descriptor.catalog_reasoning == CatalogReasoningPolicy::OffAsNone)
-    {
-        EffortProfile::send_when_unknown(metadata)
-    } else {
-        EffortProfile::omit_when_unknown(metadata)
+    let Some(descriptor) = crate::provider::provider_descriptor(provider) else {
+        return EffortProfile::omit_when_unknown(metadata);
+    };
+    if descriptor.catalog_reasoning != CatalogReasoningPolicy::OffAsNone {
+        return EffortProfile::omit_when_unknown(metadata);
     }
+    if matches!(descriptor.id, ProviderId::Ollama | ProviderId::OllamaCloud) && metadata.is_none() {
+        return EffortProfile::constrained(OLLAMA_WIRE_LEVELS);
+    }
+    EffortProfile::send_when_unknown(metadata)
 }
 
 /// Metadata-driven effort selection for dialects that speak level names on the
@@ -123,6 +136,15 @@ impl EffortProfile {
         Self::from_metadata(metadata, UnknownCapabilities::SendRequested)
     }
 
+    fn constrained(levels: impl IntoIterator<Item = ReasoningLevel>) -> Self {
+        Self {
+            capabilities: ReasoningCapabilities::Levels(ReasoningLevelSet::new(
+                levels.into_iter().collect(),
+            )),
+            when_unknown: UnknownCapabilities::Omit,
+        }
+    }
+
     fn from_metadata(metadata: Option<ModelMetadata>, when_unknown: UnknownCapabilities) -> Self {
         Self {
             capabilities: metadata
@@ -134,14 +156,7 @@ impl EffortProfile {
 
     #[cfg(test)]
     pub(super) fn levels(levels: impl IntoIterator<Item = ReasoningLevel>) -> Self {
-        use crate::model::ReasoningLevelSet;
-
-        Self {
-            capabilities: ReasoningCapabilities::Levels(ReasoningLevelSet::new(
-                levels.into_iter().collect(),
-            )),
-            when_unknown: UnknownCapabilities::Omit,
-        }
+        Self::constrained(levels)
     }
 
     #[cfg(test)]

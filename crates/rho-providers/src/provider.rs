@@ -420,7 +420,8 @@ mod provider_table;
 mod custom_openai_compatible;
 
 pub use custom_openai_compatible::{
-    install_custom_openai_compatible_providers, validate_custom_provider_name,
+    install_custom_openai_compatible_providers, reset_custom_openai_compatible_providers_for_tests,
+    validate_custom_provider_name,
 };
 pub use provider_table::PROVIDERS;
 
@@ -495,9 +496,10 @@ pub fn legacy_provider_alias(provider: &str) -> Option<(&'static str, &'static s
 /// external input must use [`resolve_provider_reference`] or [`resolve_profile`]
 /// rather than discarding that choice here.
 pub fn provider_descriptor(provider: &str) -> Option<&'static ProviderDescriptor> {
-    providers()
-        .into_iter()
+    PROVIDERS
+        .iter()
         .find(|descriptor| descriptor.name == provider)
+        .or_else(|| custom_openai_compatible::custom_openai_compatible_provider(provider))
 }
 
 /// Formats a provider-qualified model reference for user input and display.

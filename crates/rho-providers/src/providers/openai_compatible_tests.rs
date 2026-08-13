@@ -385,6 +385,14 @@ fn ollama_cloud_metadata_drives_top_level_reasoning_effort() {
 // Owner: openai-compatible wire encoding
 #[test]
 fn off_as_none_standard_hosts_send_reasoning_effort_when_catalog_is_unknown() {
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+    struct RestoreCustomProviders;
+    impl Drop for RestoreCustomProviders {
+        fn drop(&mut self) {
+            crate::provider::reset_custom_openai_compatible_providers_for_tests();
+        }
+    }
+    let _restore = RestoreCustomProviders;
     crate::provider::install_custom_openai_compatible_providers(["composer"]).unwrap();
 
     for provider in ["ollama", "ollama-cloud", "composer"] {
@@ -401,9 +409,53 @@ fn off_as_none_standard_hosts_send_reasoning_effort_when_catalog_is_unknown() {
             "{provider}"
         );
     }
+}
 
-    crate::provider::install_custom_openai_compatible_providers(std::iter::empty::<&str>())
-        .unwrap();
+// Covers: unknown Ollama models must not send effort values the server rejects
+// Owner: openai-compatible wire encoding
+#[test]
+fn unknown_ollama_models_send_only_accepted_reasoning_effort() {
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+    struct RestoreCustomProviders;
+    impl Drop for RestoreCustomProviders {
+        fn drop(&mut self) {
+            crate::provider::reset_custom_openai_compatible_providers_for_tests();
+        }
+    }
+    let _restore = RestoreCustomProviders;
+    crate::provider::install_custom_openai_compatible_providers(["composer"]).unwrap();
+
+    for (provider, requested, expected) in [
+        ("ollama", crate::reasoning::ReasoningLevel::Off, "none"),
+        ("ollama", crate::reasoning::ReasoningLevel::Minimal, "low"),
+        ("ollama", crate::reasoning::ReasoningLevel::Low, "low"),
+        ("ollama", crate::reasoning::ReasoningLevel::Medium, "medium"),
+        ("ollama", crate::reasoning::ReasoningLevel::High, "high"),
+        ("ollama", crate::reasoning::ReasoningLevel::Xhigh, "max"),
+        ("ollama", crate::reasoning::ReasoningLevel::Max, "max"),
+        (
+            "ollama-cloud",
+            crate::reasoning::ReasoningLevel::Minimal,
+            "low",
+        ),
+        (
+            "ollama-cloud",
+            crate::reasoning::ReasoningLevel::Xhigh,
+            "max",
+        ),
+        (
+            "composer",
+            crate::reasoning::ReasoningLevel::Minimal,
+            "minimal",
+        ),
+        ("composer", crate::reasoning::ReasoningLevel::Xhigh, "xhigh"),
+    ] {
+        assert_eq!(
+            standard_request_reasoning_effort(provider, requested).as_deref(),
+            Some(expected),
+            "{provider} {requested:?}"
+        );
+    }
 }
 
 // Covers: ExactAdvertised Standard hosts must not guess effort for unlisted models
