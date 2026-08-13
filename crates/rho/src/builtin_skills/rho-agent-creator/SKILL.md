@@ -51,7 +51,7 @@ Do **not** choose `claude-cli` merely because the user said "Opus" or "Claude". 
 
 - Delegated only. Interactive and `rho run` roots cannot bind `runtime: claude-cli`. A Rho parent must launch the agent through the `agent` tool.
 - Requires the `claude` binary on `PATH` and a Claude Code login (`/login claude-code`). Offer to remind the user after write if they have not signed in yet.
-- Launch under Plan or Auto. Supervised mode refuses Claude-cli spawn because `claude -p` cannot prompt through Rho.
+- Launch in any permission mode except Supervised. Auto and Allow edits run deny-closed under Claude `dontAsk` (declared `tools:` auto-approve; everything else is denied). Supervised refuses spawn because `claude -p` cannot prompt through Rho.
 - No nested Claude `Task` agents. Fan-out stays under Rho.
 - No Rho `provider`, no Rho `@alias` models, no `tools: all`
 - `reasoning:` is optional and maps to Claude `--effort` (`low`, `medium`, `high`, `xhigh`, `max`). Do not emit `off` or `minimal`.
@@ -171,7 +171,7 @@ After writing:
 6. For `runtime: claude-cli`, also tell the user to:
    - install `claude` if needed
    - run `/login claude-code` if not already signed in
-   - use Plan or Auto before delegating
+   - launch it from any permission mode except Supervised (Auto and Allow edits deny undeclared tools)
    - launch it from a Rho parent via the `agent` tool (not as the interactive root)
    - optionally confirm binary/auth with `/doctor` and inspect later runs with `rho attach <run-id>`
 

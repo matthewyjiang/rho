@@ -210,6 +210,58 @@ fn frozen_binding_does_not_rebind_and_narrows_current_policy() {
     );
 }
 
+// Covers: a frozen Bypass ceiling plus current Auto narrows to Auto and
+// binds a claude-cli agent instead of erroring at the mapping boundary.
+// Owner: frozen workflow agent binding
+#[test]
+fn frozen_claude_cli_bypass_ceiling_narrows_to_current_auto() {
+    let source = claude_definition(ModelPolicy::Inherit);
+    let frozen = crate::workflow::ResolvedAgent {
+        agent_id: source.id.to_string(),
+        fingerprint: source.fingerprint().to_string(),
+        runtime: crate::workflow::AgentRuntime::ClaudeCli,
+        source_origin: "project".into(),
+        trust_required: true,
+        prompt_policy: "replace:frozen".into(),
+        provider: None,
+        model: Some("opus".into()),
+        reasoning: None,
+        step_limit: 9,
+        capabilities: ["Read", "Bash(git status:*)"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+        permission_ceiling: "bypass".into(),
+        auth_profile: None,
+        executable: None,
+        executable_identity: None,
+        arguments: Vec::new(),
+    };
+    let current = Config {
+        permission_mode: crate::permission::PermissionMode::Auto,
+        ..Config::default()
+    };
+    let bound = AgentBinder::bind_frozen(&frozen, &current, &capabilities()).unwrap();
+    match bound.runtime() {
+        BoundRuntime::ClaudeCli {
+            model,
+            tools,
+            permission_mode,
+            max_turns,
+            ..
+        } => {
+            assert_eq!(model.as_deref(), Some("opus"));
+            assert_eq!(
+                tools.as_slice(),
+                ["Bash(git status:*)".to_string(), "Read".to_string()].as_slice()
+            );
+            assert_eq!(*permission_mode, crate::permission::PermissionMode::Auto);
+            assert_eq!(*max_turns, 9);
+        }
+        BoundRuntime::Rho { .. } => panic!("expected Claude bound runtime"),
+    }
+}
+
 #[test]
 fn bind_drops_web_search_when_bound_path_cannot_search() {
     let host = Config {

@@ -17,8 +17,8 @@ pub(crate) const SYSTEM_PROMPT_FILE_NAME: &str = "system-prompt.txt";
 /// each variant is a deliberate Claude CLI contract:
 /// - [`Self::Plan`] — Rho Plan (investigation / plan scaffolding)
 /// - [`Self::BypassPermissions`] — Rho Bypass ("just run", no Claude prompts)
-/// - [`Self::DontAsk`] — headless no-tools one-shots (advisor); never prompt,
-///   never inject plan scaffolding, deny anything not already allowed
+/// - [`Self::DontAsk`] — Auto / Allow edits delegated runs, and advisor
+///   one-shots; never prompt, deny anything not already allowed
 ///
 /// Claude classifier `auto` is intentionally absent because Rho's classifier
 /// mode needs its own approval handler.
@@ -148,8 +148,9 @@ pub(crate) struct ClaudeSpawnPlan {
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum ClaudeSpawnError {
     #[error(
-        "claude-cli agents cannot run in Auto, Allow edits, or Supervised permission mode: \
-claude -p cannot run Rho's classifier or prompt for approval. Switch to Plan or Bypass, or change the agent."
+        "claude-cli agents cannot run in Supervised permission mode: \
+claude -p cannot prompt interactively for approval. Switch to Auto, Allow edits, Plan, or Bypass, or change the agent. \
+In Auto and Allow edits, actions outside the agent's declared tools are denied rather than approved interactively."
     )]
     SupervisedUnsupported,
 }
@@ -167,21 +168,20 @@ pub(crate) enum ClaudeSpawnMaterializeError {
 
 /// Map Rho permission mode onto a Claude CLI permission mode.
 ///
-/// Rho Bypass means "do not gate capabilities," so it maps to Claude
-/// `bypassPermissions`, not Claude `auto` (classifier) or `dontAsk`
-/// (allowlist-only deny). Callers that need `dontAsk` (no-tools one-shots) set
-/// [`ClaudePermissionMode::DontAsk`] on the spawn request directly. Auto,
-/// Allow edits, and Supervised have no safe non-interactive counterpart, so
-/// spawn is refused.
+/// Bypass maps to Claude `bypassPermissions` (no Claude permission layer).
+/// Auto and Allow edits map to Claude `dontAsk`: never prompt, and treat
+/// `--allowedTools` as the deny-closed boundary. Advisor one-shots still set
+/// [`ClaudePermissionMode::DontAsk`] on the spawn request directly so they
+/// stay independent of host permission mode. Supervised is refused because
+/// `claude -p` cannot pause for interactive human approval.
 pub(crate) fn map_permission_mode(
     mode: PermissionMode,
 ) -> Result<ClaudePermissionMode, ClaudeSpawnError> {
     match mode {
-        PermissionMode::Bypass => Ok(ClaudePermissionMode::BypassPermissions),
         PermissionMode::Plan => Ok(ClaudePermissionMode::Plan),
-        PermissionMode::Auto | PermissionMode::AllowEdits | PermissionMode::Supervised => {
-            Err(ClaudeSpawnError::SupervisedUnsupported)
-        }
+        PermissionMode::Bypass => Ok(ClaudePermissionMode::BypassPermissions),
+        PermissionMode::Auto | PermissionMode::AllowEdits => Ok(ClaudePermissionMode::DontAsk),
+        PermissionMode::Supervised => Err(ClaudeSpawnError::SupervisedUnsupported),
     }
 }
 

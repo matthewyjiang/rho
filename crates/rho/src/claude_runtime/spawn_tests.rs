@@ -137,7 +137,7 @@ fn builds_explicit_safe_spawn_args() {
     assert!(!plan.args.iter().any(|arg| arg == "--system-prompt-file"));
     assert!(plan.args.contains(&"--include-partial-messages".into()));
     assert!(plan.args.contains(&"--verbose".into()));
-    // Rho Auto uses Claude bypassPermissions via --permission-mode only; do not
+    // Bypass uses Claude bypassPermissions via --permission-mode only; do not
     // also pass the separate --dangerously-skip-permissions flag.
     assert!(!plan
         .args
@@ -375,31 +375,27 @@ fn model_is_passed_byte_for_byte_without_alias_rewrite() {
         .any(|pair| pair == ["--model", "claude-opus-4-6"]));
 }
 
-// Covers: Supervised, Auto, and AllowEdits have no Claude equivalent, so the
-// mapping refuses them instead of picking a looser Claude mode.
+// Covers: each Rho permission mode maps to a Claude CLI mode, except
+// Supervised which is refused instead of picking a looser Claude mode.
 // Owner: Claude spawn argv mapping
 #[test]
-fn claude_unsupported_rho_modes_are_refused_at_the_mapping_boundary() {
-    let error = map_permission_mode(crate::permission::PermissionMode::Supervised).unwrap_err();
-    assert_eq!(error, ClaudeSpawnError::SupervisedUnsupported);
-    let error = map_permission_mode(crate::permission::PermissionMode::Auto).unwrap_err();
-    assert_eq!(error, ClaudeSpawnError::SupervisedUnsupported);
-    let error = map_permission_mode(crate::permission::PermissionMode::AllowEdits).unwrap_err();
-    assert_eq!(error, ClaudeSpawnError::SupervisedUnsupported);
-}
+fn rho_permission_modes_map_to_claude_cli_modes() {
+    use crate::permission::PermissionMode;
 
-// Covers: Rho Bypass maps to Claude bypassPermissions (just run), not dontAsk
-// (allowlist-only) or classifier auto. One-shots set DontAsk separately.
-// Owner: Claude spawn argv mapping
-#[test]
-fn rho_bypass_maps_to_claude_bypass_permissions() {
+    for (mode, expected) in [
+        (PermissionMode::Plan, ClaudePermissionMode::Plan),
+        (
+            PermissionMode::Bypass,
+            ClaudePermissionMode::BypassPermissions,
+        ),
+        (PermissionMode::Auto, ClaudePermissionMode::DontAsk),
+        (PermissionMode::AllowEdits, ClaudePermissionMode::DontAsk),
+    ] {
+        assert_eq!(map_permission_mode(mode), Ok(expected));
+    }
     assert_eq!(
-        map_permission_mode(crate::permission::PermissionMode::Bypass),
-        Ok(ClaudePermissionMode::BypassPermissions)
-    );
-    assert_eq!(
-        map_permission_mode(crate::permission::PermissionMode::Plan),
-        Ok(ClaudePermissionMode::Plan)
+        map_permission_mode(PermissionMode::Supervised),
+        Err(ClaudeSpawnError::SupervisedUnsupported)
     );
     assert_eq!(
         ClaudePermissionMode::BypassPermissions.as_cli_flag(),
@@ -407,6 +403,35 @@ fn rho_bypass_maps_to_claude_bypass_permissions() {
     );
     assert_eq!(ClaudePermissionMode::DontAsk.as_cli_flag(), "dontAsk");
     assert_eq!(ClaudePermissionMode::Plan.as_cli_flag(), "plan");
+}
+
+// Covers: Auto spawn keeps dontAsk plus the declared tools/allowedTools
+// boundary instead of bypassing the permission layer.
+// Owner: Claude spawn argv mapping
+#[test]
+fn auto_spawn_plan_uses_dont_ask_with_declared_tool_boundary() {
+    let mode = map_permission_mode(crate::permission::PermissionMode::Auto)
+        .expect("Auto maps to Claude dontAsk");
+    let plan = build_spawn_plan(&request(
+        vec!["Read", "Bash(git status:*)"],
+        false,
+        None,
+        mode,
+        8,
+        PromptPolicy::Replace("Plan carefully.".into()),
+    ));
+    assert!(plan
+        .args
+        .windows(2)
+        .any(|pair| pair == ["--permission-mode", "dontAsk"]));
+    assert!(plan
+        .args
+        .windows(2)
+        .any(|pair| pair == ["--tools", "Read,Bash"]));
+    assert_eq!(
+        flag_values(&plan.args, "--allowedTools"),
+        vec!["Read".to_string(), "Bash(git status:*)".to_string()]
+    );
 }
 
 #[test]
