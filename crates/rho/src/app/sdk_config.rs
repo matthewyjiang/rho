@@ -99,9 +99,9 @@ fn provider_options_with_transport(
     endpoint: Option<Url>,
     request_timeout: Option<Duration>,
 ) -> Result<ProviderBuildOptions, ModelError> {
-    config
+    let _scope = config
         .providers
-        .activate()
+        .thread_scope()
         .map_err(|error| ModelError::InvalidResponse(error.to_string()))?;
     let mut provider =
         ProviderBuildOptions::new(&config.provider, &config.model, config.reasoning)?

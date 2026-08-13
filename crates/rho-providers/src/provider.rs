@@ -451,8 +451,10 @@ mod provider_table;
 mod custom_openai_compatible;
 
 pub use custom_openai_compatible::{
-    install_custom_openai_compatible_providers, reset_custom_openai_compatible_providers_for_tests,
-    validate_custom_provider_name,
+    custom_provider_registry_test_lock, install_custom_openai_compatible_providers,
+    intern_custom_openai_compatible_providers, reset_custom_openai_compatible_providers_for_tests,
+    scope_custom_openai_compatible_providers, validate_custom_provider_name,
+    CustomProviderThreadScope,
 };
 pub use provider_table::PROVIDERS;
 
@@ -531,6 +533,12 @@ pub fn provider_descriptor(provider: &str) -> Option<&'static ProviderDescriptor
         .iter()
         .find(|descriptor| descriptor.name == provider)
         .or_else(|| custom_openai_compatible::custom_openai_compatible_provider(provider))
+}
+
+pub(crate) fn interned_custom_openai_compatible_provider(
+    provider: &str,
+) -> Option<&'static ProviderDescriptor> {
+    custom_openai_compatible::interned_custom_provider(provider)
 }
 
 /// Formats a provider-qualified model reference for user input and display.

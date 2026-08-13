@@ -385,6 +385,7 @@ fn ollama_cloud_metadata_drives_top_level_reasoning_effort() {
 // Owner: openai-compatible wire encoding
 #[test]
 fn off_as_none_standard_hosts_send_reasoning_effort_when_catalog_is_unknown() {
+    let _lock = crate::provider::custom_provider_registry_test_lock();
     crate::provider::reset_custom_openai_compatible_providers_for_tests();
     struct RestoreCustomProviders;
     impl Drop for RestoreCustomProviders {
@@ -415,6 +416,7 @@ fn off_as_none_standard_hosts_send_reasoning_effort_when_catalog_is_unknown() {
 // Owner: openai-compatible wire encoding
 #[test]
 fn unknown_ollama_models_send_only_accepted_reasoning_effort() {
+    let _lock = crate::provider::custom_provider_registry_test_lock();
     crate::provider::reset_custom_openai_compatible_providers_for_tests();
     struct RestoreCustomProviders;
     impl Drop for RestoreCustomProviders {
@@ -683,7 +685,7 @@ async fn standard_dialect_streams_without_auth_or_usage() {
             serde_json::from_str(request.split("\r\n\r\n").nth(1).unwrap()).unwrap();
         assert_eq!(body["stream_options"]["include_usage"], true);
         assert!(body.get("reasoning").is_none());
-        assert!(body.get("reasoning_effort").is_none());
+        assert_eq!(body["reasoning_effort"], "none");
         assert!(body.get("thinking").is_none());
 
         // Ollama may omit the optional usage chunk.

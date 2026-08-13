@@ -3,9 +3,14 @@
 //! Names and endpoints come from application config. Each name is its own
 //! provider (`/model composer/...`, `/model vllm/...`). They are keyless, like
 //! Ollama, and do not appear in `/login`.
+//!
+//! Descriptors are interned for `'static` lookup. Visibility is scoped: the
+//! process-wide active set is the foreground config, and a runtime can overlay
+//! its own names on the current thread or Tokio task without replacing that set.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::sync::{OnceLock, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock};
 
 use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
 
@@ -44,15 +49,42 @@ fn lock_write() -> std::sync::RwLockWriteGuard<'static, CustomRegistry> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// Replaces the active custom OpenAI-compatible providers.
+thread_local! {
+    static THREAD_SCOPE: RefCell<Vec<Arc<[String]>>> = const { RefCell::new(Vec::new()) };
+}
+
+tokio::task_local! {
+    static TASK_SCOPE: Arc<[String]>;
+}
+
+fn scoped_names() -> Option<Arc<[String]>> {
+    TASK_SCOPE
+        .try_with(Arc::clone)
+        .ok()
+        .or_else(|| THREAD_SCOPE.with(|stack| stack.borrow().last().cloned()))
+}
+
+/// Interns names and publishes them as the process-wide picker/lookup set.
 ///
-/// Names are interned for the process lifetime so descriptors can be `'static`.
-/// The active set is the current config: a later install drops names that are
-/// no longer listed. Interned rows stay so a name can be reinstalled without
-/// leaking a second descriptor. Callers that only change an endpoint do not
-/// need to reinstall; the application config remains the source of truth for
-/// the API base.
+/// A later install replaces that process set. Concurrent runtimes that must
+/// keep the foreground set intact should intern and enter a
+/// [`CustomProviderThreadScope`] or [`scope_custom_openai_compatible_providers`]
+/// instead of installing.
 pub fn install_custom_openai_compatible_providers<'a, I>(names: I) -> anyhow::Result<()>
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    let interned = intern_custom_openai_compatible_providers(names)?;
+    let mut registry = lock_write();
+    registry.active = interned
+        .iter()
+        .filter_map(|name| registry.interned.get(name.as_str()).copied())
+        .collect();
+    Ok(())
+}
+
+/// Interns names without changing the process-wide active set.
+pub fn intern_custom_openai_compatible_providers<'a, I>(names: I) -> anyhow::Result<Arc<[String]>>
 where
     I: IntoIterator<Item = &'a str>,
 {
@@ -66,31 +98,82 @@ where
     }
 
     let mut registry = lock_write();
-    let mut active = Vec::with_capacity(names.len());
+    let mut interned = Vec::with_capacity(names.len());
     for name in names {
-        active.push(intern(name, &mut registry));
+        intern(name, &mut registry);
+        interned.push(name.to_string());
     }
-    registry.active = active;
-    Ok(())
+    Ok(interned.into())
 }
 
-/// Drops interned and active custom providers. Tests use this so one case
-/// cannot leak names into another.
+/// Overlays custom provider visibility on the current thread until dropped.
+pub struct CustomProviderThreadScope {
+    _private: (),
+}
+
+impl CustomProviderThreadScope {
+    pub fn enter(names: Arc<[String]>) -> Self {
+        THREAD_SCOPE.with(|stack| stack.borrow_mut().push(names));
+        Self { _private: () }
+    }
+}
+
+impl Drop for CustomProviderThreadScope {
+    fn drop(&mut self) {
+        THREAD_SCOPE.with(|stack| {
+            stack.borrow_mut().pop();
+        });
+    }
+}
+
+/// Overlays custom provider visibility on the current Tokio task.
+pub async fn scope_custom_openai_compatible_providers<F, T>(names: Arc<[String]>, future: F) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    TASK_SCOPE.scope(names, future).await
+}
+
+/// Serializes tests that mutate the process-wide custom provider set.
+#[doc(hidden)]
+pub fn custom_provider_registry_test_lock() -> MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Drops the process-wide active set. Interned descriptors stay so parallel
+/// tests can still resolve unknown-effort policy for a previously interned name.
 #[doc(hidden)]
 pub fn reset_custom_openai_compatible_providers_for_tests() {
-    *lock_write() = CustomRegistry::default();
+    lock_write().active.clear();
 }
 
 pub fn custom_openai_compatible_providers() -> Vec<&'static ProviderDescriptor> {
+    if let Some(names) = scoped_names() {
+        return names
+            .iter()
+            .filter_map(|name| interned_custom_provider(name))
+            .collect();
+    }
     lock_read().active.clone()
 }
 
 pub fn custom_openai_compatible_provider(name: &str) -> Option<&'static ProviderDescriptor> {
+    if let Some(names) = scoped_names() {
+        if !names.iter().any(|visible| visible == name) {
+            return None;
+        }
+        return interned_custom_provider(name);
+    }
     lock_read()
         .active
         .iter()
         .copied()
         .find(|descriptor| descriptor.name == name)
+}
+
+pub(crate) fn interned_custom_provider(name: &str) -> Option<&'static ProviderDescriptor> {
+    lock_read().interned.get(name).copied()
 }
 
 pub fn validate_custom_provider_name(name: &str) -> anyhow::Result<()> {

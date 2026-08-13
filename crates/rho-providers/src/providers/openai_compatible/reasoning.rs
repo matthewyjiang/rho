@@ -90,7 +90,9 @@ fn standard_effort_profile(
     provider: &'static str,
     metadata: Option<ModelMetadata>,
 ) -> EffortProfile {
-    let Some(descriptor) = crate::provider::provider_descriptor(provider) else {
+    let Some(descriptor) = crate::provider::provider_descriptor(provider)
+        .or_else(|| crate::provider::interned_custom_openai_compatible_provider(provider))
+    else {
         return EffortProfile::omit_when_unknown(metadata);
     };
     match descriptor.unknown_effort {

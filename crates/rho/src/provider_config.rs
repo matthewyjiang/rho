@@ -75,12 +75,27 @@ impl ProviderConfigs {
         Ok(())
     }
 
-    /// Publishes config-defined hosts as named providers for lookup, pickers,
-    /// and model refresh. Replaces the previous active set.
+    /// Interns config-defined hosts without changing the process-wide picker set.
+    pub(crate) fn intern_names(&self) -> anyhow::Result<std::sync::Arc<[String]>> {
+        rho_providers::provider::intern_custom_openai_compatible_providers(
+            self.custom.keys().map(String::as_str),
+        )
+    }
+
+    /// Publishes config-defined hosts as the process-wide named provider set.
     pub(crate) fn activate(&self) -> anyhow::Result<()> {
         rho_providers::provider::install_custom_openai_compatible_providers(
             self.custom.keys().map(String::as_str),
         )
+    }
+
+    /// Interns this config's hosts and overlays them on the current thread.
+    pub(crate) fn thread_scope(
+        &self,
+    ) -> anyhow::Result<rho_providers::provider::CustomProviderThreadScope> {
+        Ok(rho_providers::provider::CustomProviderThreadScope::enter(
+            self.intern_names()?,
+        ))
     }
 }
 

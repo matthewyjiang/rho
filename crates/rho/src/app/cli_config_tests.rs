@@ -621,8 +621,9 @@ fn cli_auth_profile_normalizes_compatible_provider() {
 
 // Covers: custom hosts must populate the picker from /v1/models without a manual refresh
 // Owner: app startup
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn custom_hosts_fetch_models_from_the_openai_compatible_endpoint() {
+    let _lock = rho_providers::provider::custom_provider_registry_test_lock();
     struct RestoreCustomProviders;
     impl Drop for RestoreCustomProviders {
         fn drop(&mut self) {
@@ -676,8 +677,9 @@ async fn custom_hosts_fetch_models_from_the_openai_compatible_endpoint() {
 
 // Covers: unavailable custom hosts must not serialize their discovery timeouts
 // Owner: app startup
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn custom_hosts_refresh_models_concurrently() {
+    let _lock = rho_providers::provider::custom_provider_registry_test_lock();
     struct RestoreCustomProviders;
     impl Drop for RestoreCustomProviders {
         fn drop(&mut self) {

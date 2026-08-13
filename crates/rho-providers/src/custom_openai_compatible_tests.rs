@@ -3,8 +3,9 @@ use super::super::{
 };
 use super::{
     custom_openai_compatible_provider, custom_openai_compatible_providers,
-    install_custom_openai_compatible_providers, reset_custom_openai_compatible_providers_for_tests,
-    validate_custom_provider_name,
+    custom_provider_registry_test_lock, install_custom_openai_compatible_providers,
+    intern_custom_openai_compatible_providers, reset_custom_openai_compatible_providers_for_tests,
+    validate_custom_provider_name, CustomProviderThreadScope,
 };
 
 fn restore_empty() {
@@ -45,6 +46,7 @@ fn custom_provider_names_reject_reserved_and_invalid_values() {
 // Owner: provider registry
 #[test]
 fn install_custom_providers_makes_keyless_openai_compatible_hosts() {
+    let _lock = custom_provider_registry_test_lock();
     restore_empty();
     let _restore = RestoreCustomProviders;
     install_custom_openai_compatible_providers(["composer", "vllm"]).unwrap();
@@ -105,6 +107,7 @@ fn install_custom_providers_makes_keyless_openai_compatible_hosts() {
 // Owner: provider registry
 #[test]
 fn install_custom_providers_replaces_the_active_set() {
+    let _lock = custom_provider_registry_test_lock();
     restore_empty();
     let _restore = RestoreCustomProviders;
     install_custom_openai_compatible_providers(["composer"]).unwrap();
@@ -121,4 +124,22 @@ fn install_custom_providers_replaces_the_active_set() {
     );
     assert!(crate::provider::provider_descriptor("composer").is_none());
     assert!(crate::provider::provider_descriptor("vllm").is_some());
+}
+
+// Covers: a runtime overlay must not replace another runtime's process-wide names
+// Owner: provider registry
+#[test]
+fn thread_scope_does_not_replace_process_active_providers() {
+    let _lock = custom_provider_registry_test_lock();
+    restore_empty();
+    let _restore = RestoreCustomProviders;
+    install_custom_openai_compatible_providers(["composer"]).unwrap();
+    let overlay = intern_custom_openai_compatible_providers(["vllm"]).unwrap();
+    {
+        let _scope = CustomProviderThreadScope::enter(overlay);
+        assert!(crate::provider::provider_descriptor("vllm").is_some());
+        assert!(crate::provider::provider_descriptor("composer").is_none());
+    }
+    assert!(crate::provider::provider_descriptor("composer").is_some());
+    assert!(crate::provider::provider_descriptor("vllm").is_none());
 }
