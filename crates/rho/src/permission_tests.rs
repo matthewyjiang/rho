@@ -304,6 +304,7 @@ fn allow_edits_and_auto_allow_later_writes_to_approved_workspace_files() {
 // the session already allowed that path, so a link out of the workspace is
 // still gated.
 // Owner: application permission policy
+#[cfg(unix)]
 #[test]
 fn allow_edits_and_auto_gate_symlinked_workspace_writes() {
     let outside = TempDir::new().unwrap();
