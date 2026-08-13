@@ -85,14 +85,12 @@ pub(super) async fn classify_capability_request_with_provider(
 /// Stage 1 answers `allow` or `escalate` in one token. Only an escalation (or a
 /// stage 1 provider error) pays for stage 2.
 ///
-/// Cache-prefix layout: both stages send the same system prompt and the same
-/// rendered transcript as the first user text block. The stage instruction is a
-/// second user text block so the last byte-identical block can be the cache
-/// breakpoint. Never move a stage instruction into the system prompt.
-///
-/// That layout is required for a message-cache write. It is not a guarantee:
-/// Anthropic invalidates message-block cache when thinking or effort change, and
-/// the screen always uses [`ReasoningLevel::Low`].
+/// Cache-prefix layout: both stages send the same system prompt, the same
+/// rendered transcript as the first user text block, and the same reasoning
+/// level. The stage instruction is a second user text block so the last
+/// byte-identical block can be the cache breakpoint. Never move a stage
+/// instruction into the system prompt, and never change thinking or effort
+/// between stages: Anthropic invalidates message-block cache when those change.
 async fn try_classify_capability_request_with_provider(
     provider: &dyn ModelProvider,
     reasoning: ReasoningLevel,
@@ -105,9 +103,7 @@ async fn try_classify_capability_request_with_provider(
         &request,
         StageSpec {
             usage_purpose: "permission-classifier-screen",
-            // The screen is meant to be one cheap token, so it ignores the
-            // configured reasoning level.
-            reasoning: ReasoningLevel::Low,
+            reasoning,
             input: stage_input(&transcript, CLASSIFIER_SCREEN_INSTRUCTION),
         },
     )

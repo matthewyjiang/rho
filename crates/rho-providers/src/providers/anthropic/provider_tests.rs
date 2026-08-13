@@ -222,12 +222,10 @@ fn user_text_blocks(body: &AnthropicRequest) -> [(&str, Option<&AnthropicCacheCo
     }
 }
 
-// Covers: the cache write lands on the last byte-identical user block; different
-// stage reasoning still changes thinking or effort, so this layout does not
-// guarantee a message-cache hit.
+// Covers: stage 1 and stage 2 share a cacheable transcript prefix, including thinking
 // Owner: anthropic request body cache breakpoints
 #[test]
-fn two_stage_bodies_mark_shared_transcript_and_vary_thinking() {
+fn two_stage_bodies_share_a_cacheable_transcript_prefix() {
     let marker = Some(AnthropicCacheControl::ephemeral());
     let cases = [
         (
@@ -235,28 +233,20 @@ fn two_stage_bodies_mark_shared_transcript_and_vary_thinking() {
             Some(AnthropicThinkingConfig::Adaptive {
                 display: "summarized",
             }),
-            Some(AnthropicThinkingConfig::Adaptive {
-                display: "summarized",
-            }),
-            Some(AnthropicOutputConfig { effort: "low" }),
             Some(AnthropicOutputConfig { effort: "high" }),
         ),
         (
             "claude-haiku-4-5",
             Some(AnthropicThinkingConfig::Enabled {
-                budget_tokens: 2_048,
-            }),
-            Some(AnthropicThinkingConfig::Enabled {
                 budget_tokens: DEFAULT_MAX_TOKENS.saturating_sub(ANTHROPIC_ANSWER_RESERVE_TOKENS),
             }),
-            None,
             None,
         ),
     ];
 
-    for (model, screen_thinking, review_thinking, screen_effort, review_effort) in cases {
+    for (model, thinking, effort) in cases {
         let provider = test_provider(model);
-        let screen = two_stage_request_body(&provider, "screen", ReasoningLevel::Low);
+        let screen = two_stage_request_body(&provider, "screen", ReasoningLevel::High);
         let review = two_stage_request_body(&provider, "review", ReasoningLevel::High);
 
         assert_eq!(screen.system, review.system, "{model} system");
@@ -274,13 +264,12 @@ fn two_stage_bodies_mark_shared_transcript_and_vary_thinking() {
         );
         assert_eq!(screen_user[1], ("screen", None), "{model} screen suffix");
         assert_eq!(review_user[1], ("review", None), "{model} review suffix");
-        assert_eq!(screen.thinking, screen_thinking, "{model} screen thinking");
-        assert_eq!(review.thinking, review_thinking, "{model} review thinking");
-        assert_eq!(screen.output_config, screen_effort, "{model} screen effort");
-        assert_eq!(review.output_config, review_effort, "{model} review effort");
-        assert!(
-            screen.thinking != review.thinking || screen.output_config != review.output_config,
-            "{model} stage reasoning must change the wire thinking or effort"
+        assert_eq!(screen.thinking, thinking, "{model} screen thinking");
+        assert_eq!(review.thinking, screen.thinking, "{model} review thinking");
+        assert_eq!(screen.output_config, effort, "{model} screen effort");
+        assert_eq!(
+            review.output_config, screen.output_config,
+            "{model} review effort"
         );
     }
 }
