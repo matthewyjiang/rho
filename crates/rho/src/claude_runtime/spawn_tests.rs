@@ -375,34 +375,38 @@ fn model_is_passed_byte_for_byte_without_alias_rewrite() {
         .any(|pair| pair == ["--model", "claude-opus-4-6"]));
 }
 
-// Covers: each Rho permission mode maps to a Claude CLI mode, except
-// Supervised which is refused instead of picking a looser Claude mode.
+// Covers: each Rho permission mode maps to a Claude CLI mode and flag value,
+// except Supervised which is refused instead of picking a looser Claude mode.
 // Owner: Claude spawn argv mapping
 #[test]
 fn rho_permission_modes_map_to_claude_cli_modes() {
     use crate::permission::PermissionMode;
 
-    for (mode, expected) in [
-        (PermissionMode::Plan, ClaudePermissionMode::Plan),
+    for (mode, expected, cli_flag) in [
+        (PermissionMode::Plan, ClaudePermissionMode::Plan, "plan"),
         (
             PermissionMode::Bypass,
             ClaudePermissionMode::BypassPermissions,
+            "bypassPermissions",
         ),
-        (PermissionMode::Auto, ClaudePermissionMode::DontAsk),
-        (PermissionMode::AllowEdits, ClaudePermissionMode::DontAsk),
+        (
+            PermissionMode::Auto,
+            ClaudePermissionMode::DontAsk,
+            "dontAsk",
+        ),
+        (
+            PermissionMode::AllowEdits,
+            ClaudePermissionMode::DontAsk,
+            "dontAsk",
+        ),
     ] {
         assert_eq!(map_permission_mode(mode), Ok(expected));
+        assert_eq!(expected.as_cli_flag(), cli_flag);
     }
     assert_eq!(
         map_permission_mode(PermissionMode::Supervised),
         Err(ClaudeSpawnError::SupervisedUnsupported)
     );
-    assert_eq!(
-        ClaudePermissionMode::BypassPermissions.as_cli_flag(),
-        "bypassPermissions"
-    );
-    assert_eq!(ClaudePermissionMode::DontAsk.as_cli_flag(), "dontAsk");
-    assert_eq!(ClaudePermissionMode::Plan.as_cli_flag(), "plan");
 }
 
 // Covers: Auto spawn keeps dontAsk plus the declared tools/allowedTools
