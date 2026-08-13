@@ -6,6 +6,8 @@ use std::sync::LazyLock;
 
 use rho_providers::{model::ReasoningLevelSet, reasoning::ReasoningLevel};
 
+use rho_sdk::{CapabilityKind, PolicyDecision};
+
 use crate::{agent::PromptPolicy, permission::PermissionMode};
 
 /// File name for the materialized system prompt inside a run directory.
@@ -152,15 +154,18 @@ pub(crate) enum ClaudeSpawnError {
     #[error(
         "claude-cli agents cannot run in Auto or Allow edits unless the child stays \
 on its declared tools: Claude dontAsk also auto-approves read-only Bash and \
-PreToolUse hooks. Rho therefore refuses when tools include specifiers \
-(for example Bash(git *)), bare Bash, Edit, or Write, or inherit_claude_config is true. \
-Switch to Plan or Bypass, use validated no-prompt tool names, or disable inherited Claude config."
+PreToolUse hooks. Rho therefore refuses when inherit_claude_config is true, \
+when a tool uses a specifier (for example Bash(git *)), or when any declared \
+tool is not proven to stay inside that Rho approval class. Unknown Claude, \
+plugin, and MCP names fail closed. Switch to Plan or Bypass, use only proven \
+no-prompt tools, or disable inherited Claude config."
     )]
     DontAskUnbound,
     #[error(
         "claude-cli agents cannot run in Supervised permission mode: \
 claude -p cannot prompt interactively for approval. Switch to Auto, Allow edits, Plan, or Bypass, or change the agent. \
-Auto and Allow edits only work when tools are validated no-prompt names and inherit_claude_config is false."
+Auto and Allow edits only work when every tool is proven not to bypass that \
+Rho approval class and inherit_claude_config is false."
     )]
     SupervisedUnsupported,
 }
@@ -182,9 +187,9 @@ pub(crate) enum ClaudeSpawnMaterializeError {
 /// Auto and Allow edits map to Claude `dontAsk` only when
 /// [`dont_ask_preserves_bound_set`] is true. Claude `dontAsk` also
 /// auto-approves built-in read-only Bash and PreToolUse hooks, so a narrowed
-/// `Bash(git *)` rule plus `--tools Bash`, bare Bash / Edit / Write, or
-/// inherited/project hooks, would run actions outside the Rho approval
-/// boundary. Advisor one-shots still set
+/// `Bash(git *)` rule plus `--tools Bash`, a write or process tool, an
+/// unknown Claude / plugin / MCP name, or inherited/project hooks, would run
+/// actions outside the Rho approval boundary. Advisor one-shots still set
 /// [`ClaudePermissionMode::DontAsk`] on the spawn request directly so they
 /// stay independent of host permission mode. Supervised is refused because
 /// `claude -p` cannot pause for interactive human approval.
@@ -197,7 +202,7 @@ pub(crate) fn map_permission_mode(
         PermissionMode::Plan => Ok(ClaudePermissionMode::Plan),
         PermissionMode::Bypass => Ok(ClaudePermissionMode::BypassPermissions),
         PermissionMode::Auto | PermissionMode::AllowEdits => {
-            if dont_ask_preserves_bound_set(tools, inherit_claude_config) {
+            if dont_ask_preserves_bound_set(mode, tools, inherit_claude_config) {
                 Ok(ClaudePermissionMode::DontAsk)
             } else {
                 Err(ClaudeSpawnError::DontAskUnbound)
@@ -209,35 +214,58 @@ pub(crate) fn map_permission_mode(
 
 /// Claude `dontAsk` is not limited to `--allowedTools`.
 ///
-/// Anthropic also auto-approves read-only Bash and PreToolUse hooks. Rho can
-/// keep the child on the bound set only when Claude settings (and their hooks)
-/// stay unloaded and every declared tool is a validated no-prompt name, so
-/// `--tools` does not expose a write/process tool that skips the Rho Auto /
-/// Allow edits gate.
-fn dont_ask_preserves_bound_set(tools: &[String], inherit_claude_config: bool) -> bool {
+/// Anthropic also auto-approves read-only Bash and PreToolUse hooks, and
+/// `--allowedTools` itself runs listed tools without prompting. Rho can keep
+/// the child on the bound set only when Claude settings (and their hooks)
+/// stay unloaded and every declared tool is proven not to bypass this mode's
+/// approval class, so `--tools` / `--allowedTools` cannot expose a
+/// write/process/unknown tool that skips the remaining Auto / Allow edits
+/// gate.
+fn dont_ask_preserves_bound_set(
+    mode: PermissionMode,
+    tools: &[String],
+    inherit_claude_config: bool,
+) -> bool {
     !inherit_claude_config
         && tools
             .iter()
-            .all(|tool| dont_ask_tool_preserves_bound_set(tool))
+            .all(|tool| dont_ask_tool_preserves_bound_set(mode, tool))
 }
 
-fn dont_ask_tool_preserves_bound_set(tool: &str) -> bool {
+fn dont_ask_tool_preserves_bound_set(mode: PermissionMode, tool: &str) -> bool {
     let base = tool_base_name(tool);
     if base.eq_ignore_ascii_case("Task") {
         // Task is always denied separately.
         return true;
     }
     // Specifiers expose a broader base tool via `--tools`.
-    base == tool && dont_ask_bare_tool_preserves_approval_boundary(base)
+    base == tool && dont_ask_bare_tool_preserves_approval_boundary(mode, base)
 }
 
-fn dont_ask_bare_tool_preserves_approval_boundary(base: &str) -> bool {
-    // Claude dontAsk runs these without a Rho prompt. Bash also has a
-    // built-in read-only auto-approve. There is no proven no-prompt
-    // equivalent that preserves Auto / Allow edits write or process gates.
-    !base.eq_ignore_ascii_case("Bash")
-        && !base.eq_ignore_ascii_case("Edit")
-        && !base.eq_ignore_ascii_case("Write")
+fn dont_ask_bare_tool_preserves_approval_boundary(mode: PermissionMode, base: &str) -> bool {
+    // Fail closed: only known Claude built-ins whose Rho class is freely
+    // allowed in this mode may ride dontAsk. Write and process tools still
+    // need the remaining Auto / Allow edits gate (git-tracked / remembered
+    // paths, classifier or human process approval). Unknown, plugin, and MCP
+    // names have no proven class.
+    let Some(kind) = claude_tool_capability_kind(base) else {
+        return false;
+    };
+    matches!(mode.decision_for(kind), PolicyDecision::Allow)
+}
+
+/// Maps a Claude built-in base name onto the Rho capability class it can
+/// exercise. `None` means unproven (new Claude tools, plugins, MCP).
+fn claude_tool_capability_kind(base: &str) -> Option<CapabilityKind> {
+    Some(match base.to_ascii_lowercase().as_str() {
+        "read" | "glob" | "grep" | "lsp" | "listmcpresourcestool" | "readmcpresourcetool" => {
+            CapabilityKind::Read
+        }
+        "webfetch" | "websearch" => CapabilityKind::Network,
+        "edit" | "write" | "notebookedit" => CapabilityKind::Write,
+        "bash" | "powershell" | "monitor" | "skill" => CapabilityKind::Process,
+        _ => return None,
+    })
 }
 
 /// Identity flags that a frozen workflow argv may keep.
@@ -325,12 +353,13 @@ pub(crate) fn build_spawn_plan(request: &ClaudeSpawnRequest) -> ClaudeSpawnPlan 
     };
 
     // `--tools` controls availability from Claude's built-in set (base names).
-    // A specifier such as `Bash(git *)` still lists `Bash` here, and bare
-    // Bash / Edit / Write skip the Rho approval gate, which is why Auto /
-    // Allow edits refuse those shapes under dontAsk.
+    // A specifier such as `Bash(git *)` still lists `Bash` here, and any tool
+    // that is not proven free for this Rho approval class skips the remaining
+    // gate, which is why Auto / Allow edits refuse those shapes under dontAsk.
     // `--allowedTools` carries every declared non-Task entry (bare names and
-    // patterns) as separate argv items. Task is always denied so nested Claude
-    // agents stay off.
+    // patterns) as separate argv items and executes them without prompting, so
+    // unknown names must never reach a mapped Auto / Allow edits spawn. Task
+    // is always denied so nested Claude agents stay off.
     let tool_base_names = tool_base_names(&request.tools);
     let allowed_tool_entries = allowed_tool_entries(&request.tools);
 

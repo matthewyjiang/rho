@@ -51,7 +51,7 @@ Do **not** choose `claude-cli` merely because the user said "Opus" or "Claude". 
 
 - Delegated only. Interactive and `rho run` roots cannot bind `runtime: claude-cli`. A Rho parent must launch the agent through the `agent` tool.
 - Requires the `claude` binary on `PATH` and a Claude Code login (`/login claude-code`). Offer to remind the user after write if they have not signed in yet.
-- Launch in Plan or Bypass. Auto and Allow edits spawn only when `tools:` are validated no-prompt Claude names (not bare Bash, Edit, or Write) and `inherit_claude_config` is false. Those runs use Claude `dontAsk`, which also auto-approves read-only Bash and PreToolUse hooks, so specifiers such as `Bash(git *)`, those write/process tools, or inherited Claude config refuse spawn. Supervised always refuses because `claude -p` cannot prompt through Rho.
+- Launch in Plan or Bypass. Auto and Allow edits spawn only when every `tools:` entry is a proven no-prompt Claude built-in for that Rho approval class and `inherit_claude_config` is false. Those runs use Claude `dontAsk`, which also auto-approves read-only Bash and PreToolUse hooks, and `--allowedTools` runs listed tools without prompting, so specifiers such as `Bash(git *)`, write/process tools, unknown Claude/plugin/MCP names, or inherited Claude config refuse spawn. Supervised always refuses because `claude -p` cannot prompt through Rho.
 - No nested Claude `Task` agents. Fan-out stays under Rho.
 - No Rho `provider`, no Rho `@alias` models, no `tools: all`
 - `reasoning:` is optional and maps to Claude `--effort` (`low`, `medium`, `high`, `xhigh`, `max`). Do not emit `off` or `minimal`.
@@ -171,7 +171,7 @@ After writing:
 6. For `runtime: claude-cli`, also tell the user to:
    - install `claude` if needed
    - run `/login claude-code` if not already signed in
-   - launch it from Plan or Bypass (Auto and Allow edits only with validated no-prompt `tools:` and `inherit_claude_config: false`)
+   - launch it from Plan or Bypass (Auto and Allow edits only with proven no-prompt `tools:` for that Rho class and `inherit_claude_config: false`)
    - launch it from a Rho parent via the `agent` tool (not as the interactive root)
    - optionally confirm binary/auth with `/doctor` and inspect later runs with `rho attach <run-id>`
 

@@ -516,6 +516,9 @@ fn validate_claude_tool_shape(path: &Path, name: &str) -> Result<(), AgentCatalo
 }
 
 fn validate_claude_base_name(path: &Path, name: &str) -> Result<(), AgentCatalogError> {
+    // Shape only. Plugins and MCP may introduce names, so parse does not use a
+    // fixed catalog. Auto / Allow edits fail closed at spawn unless the name is
+    // a proven no-prompt Claude built-in for that Rho approval class.
     if name.is_empty()
         || !name
             .chars()

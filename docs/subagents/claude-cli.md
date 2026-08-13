@@ -80,7 +80,7 @@ flowchart TD
    - Omitting `tools` means no tools. There is no `tools: all`
    - `model:` is a Claude model alias such as `opus`, or a full Claude model name. It is not a Rho `@alias`. In `/agents`, the Model row offers the aliases Rho knows (`fable`, `opus`, `sonnet`, `haiku`) plus a Claude Code default row; a definition that pins a full model name keeps its own row
    - optional `reasoning:` maps to Claude `--effort` (`low`/`medium`/`high`/`xhigh`/`max`); omit to inherit Claude's default; `off` and `minimal` are rejected
-   - Auto and Allow edits use Claude `dontAsk` only when `tools:` are validated no-prompt names (not bare Bash, Edit, or Write) and `inherit_claude_config` is false. Claude `dontAsk` also auto-approves read-only Bash and PreToolUse hooks, so specifiers such as `Bash(git *)`, those write/process tools, or inherited Claude settings refuse spawn. Plan and Bypass keep their Claude-native mappings. Supervised always refuses, because `claude -p` cannot prompt through Rho
+   - Auto and Allow edits use Claude `dontAsk` only when every `tools:` entry is a proven no-prompt Claude built-in for that Rho approval class and `inherit_claude_config` is false. Claude `dontAsk` and `--allowedTools` both execute without prompting, so specifiers such as `Bash(git *)`, write/process tools, unknown Claude/plugin/MCP names, or inherited Claude settings refuse spawn. Plan and Bypass keep their Claude-native mappings. Supervised always refuses, because `claude -p` cannot prompt through Rho
 
 4. **Confirm setup** in the TUI:
 
@@ -117,7 +117,7 @@ flowchart TD
 | Install | `claude` on `PATH` |
 | Sign in | `/login claude-code` |
 | Define | `runtime: claude-cli` + Claude `tools:` / `model:` |
-| Permission mode | Plan or Bypass. Auto / Allow edits only with validated no-prompt `tools:` (not Bash, Edit, or Write) and `inherit_claude_config: false` |
+| Permission mode | Plan or Bypass. Auto / Allow edits only with proven no-prompt `tools:` for that Rho class and `inherit_claude_config: false`. Unknown names fail closed |
 | Launch | Rho parent `agent` tool, delegated only |
 | Inspect | `rho attach <id>`, `/agents`, `/limits` |
 | Full Claude transcript | `claude --resume <session-id>` |
@@ -134,9 +134,9 @@ Spawn flags are fixed and deliberate:
 | --- | --- |
 | `--output-format stream-json --verbose --include-partial-messages` | NDJSON event stream with partial text |
 | `--input-format stream-json` | NDJSON user turns on stdin so the parent can course-correct a live child |
-| `--permission-mode` | Always set from a Claude-native mode. Delegated runs map Rho Plan to Claude `plan` and Rho Bypass to Claude `bypassPermissions` (just run; not Claude classifier `auto`). Rho Auto / Allow edits map to Claude `dontAsk` only when every declared tool is a validated no-prompt name and `inherit_claude_config` is false. Claude `dontAsk` also auto-approves read-only Bash and PreToolUse hooks, so a specifier such as `Bash(git *)` (emitted as `--tools Bash`), bare Bash / Edit / Write, or inherited settings refuse spawn rather than over-claim a deny-closed `--allowedTools` fence. Advisor one-shots set Claude `dontAsk` directly, with no tools. Supervised refuses before spawn. |
+| `--permission-mode` | Always set from a Claude-native mode. Delegated runs map Rho Plan to Claude `plan` and Rho Bypass to Claude `bypassPermissions` (just run; not Claude classifier `auto`). Rho Auto / Allow edits map to Claude `dontAsk` only when every declared tool is a proven no-prompt Claude built-in for that Rho approval class and `inherit_claude_config` is false. Claude `dontAsk` also auto-approves read-only Bash and PreToolUse hooks, and `--allowedTools` runs listed tools without prompting, so a specifier such as `Bash(git *)` (emitted as `--tools Bash`), write/process tools, unknown Claude/plugin/MCP names, or inherited settings refuse spawn rather than over-claim a deny-closed `--allowedTools` fence. Advisor one-shots set Claude `dontAsk` directly, with no tools. Supervised refuses before spawn. |
 | `--disallowedTools Task` | Blocks Claude nested subagents so fan-out stays under Rho |
-| `--tools` | Restricts built-in tool availability to the base Claude tool names from `tools:`. A specifier such as `Bash(git *)` still lists `Bash`, which is why Auto / Allow edits refuse that shape under `dontAsk`. Empty allowlist still sets `--tools ""` so ambient tools are not inherited |
+| `--tools` | Restricts built-in tool availability to the base Claude tool names from `tools:`. A specifier such as `Bash(git *)` still lists `Bash`, and unknown names have no proven Rho class, which is why Auto / Allow edits refuse those shapes under `dontAsk`. Empty allowlist still sets `--tools ""` so ambient tools are not inherited |
 | `--allowedTools` | Every declared non-`Task` tool entry from `tools:` as separate argv values (bare names such as `Read` and patterns such as `Bash(git *)`). `Task` is never listed here |
 | `--setting-sources` | Empty for Claude `dontAsk` so user, project, and local hooks and allow rules cannot widen the child. Org-managed Claude policy still applies. Otherwise `project` by default, or `user,project,local` when `inherit_claude_config: true` |
 | `--strict-mcp-config` | MCP servers only from what the spawn passes |

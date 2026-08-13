@@ -133,10 +133,10 @@ ToolName(specifier)
 | Base name | non-empty; letters, digits, `_`, `-` only |
 | Specifier | optional `(...)` with balanced parentheses; may contain spaces and quotes |
 | Commas | not allowed inside a specifier (Claude list grammar cannot round-trip them) |
-| Membership | open-ended (plugins/MCP may add tools); Rho checks shape, not a fixed catalog |
+| Membership | parse is open-ended (plugins/MCP may add tools); Rho checks shape, not a fixed catalog. Auto and Allow edits fail closed at spawn unless every base name is a proven no-prompt Claude built-in for that Rho approval class |
 | Examples | `Read`, `Edit`, `Glob`, `Grep`, `Bash(git *)`, `mcp__server__tool` |
 
-Base names feed Claude `--tools`. A specifier such as `Bash(git *)` still lists `Bash` there, and bare Bash, Edit, and Write skip the Rho Auto / Allow edits gate under Claude `dontAsk`, so those shapes refuse spawn. Full entries (except nested `Task`) feed `--allowedTools`. Nested Claude `Task` stays disallowed at spawn.
+Base names feed Claude `--tools`. A specifier such as `Bash(git *)` still lists `Bash` there. Claude `--allowedTools` runs listed tools without prompting, so Auto and Allow edits map to Claude `dontAsk` only when every declared tool is a proven no-prompt Claude built-in for that Rho approval class (read/network names such as `Read`, `Glob`, `Grep`, `WebSearch`). Write, process, specifier, unknown, plugin, and MCP names fail closed. Plan and Bypass still accept any well-shaped name. Nested Claude `Task` stays disallowed at spawn.
 
 ## Body / prompt semantics
 
