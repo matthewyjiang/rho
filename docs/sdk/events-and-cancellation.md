@@ -71,9 +71,11 @@ breakdown, the runtime emits a `ProviderActivity` immediately before
 `PROVIDER_ACTIVITY_GENERATION_OUTPUT_TOKENS`, and its decimal `detail` is the
 aggregate output total minus reasoning tokens. The built-in TUI uses that value
 as the numerator for generation and response speed. If the provider does not report a breakdown, it uses the aggregate total
-unless the request enabled hidden reasoning (for example Poolside thinking
-on by omission). In that case the runtime emits the same activity with a
-null token count so the TUI treats generation throughput as unavailable.
+unless reasoning is known to have occurred: the request enabled hidden
+reasoning (for example Poolside thinking on by omission), or reasoning
+tokens streamed without a usage split. In those cases the runtime emits the
+same activity with a null token count so the TUI treats generation
+throughput as unavailable rather than deriving it from aggregate output.
 
 This does not change usage or billing. `UsageUpdated.usage.output_tokens`,
 `ModelCallCompleted.metrics.output_tokens`, and

@@ -202,8 +202,11 @@ fn generation_output_tokens_exclude_reasoning_across_usage_aliases() {
     }
 }
 
+// Covers: known thinking without a reasoning-token count cannot use aggregate
+// output as a generation-throughput numerator.
+// Owner: OpenAI shared usage parser
 #[test]
-fn likely_hidden_reasoning_without_details_is_unavailable_unless_streamed() {
+fn omitted_reasoning_count_is_unavailable_when_thinking_is_known() {
     let usage = json!({"usage": {"output_tokens": 11}});
     assert_eq!(
         classify_generation_output_tokens(&usage, HiddenReasoningRisk::Likely, false),
@@ -211,7 +214,11 @@ fn likely_hidden_reasoning_without_details_is_unavailable_unless_streamed() {
     );
     assert_eq!(
         classify_generation_output_tokens(&usage, HiddenReasoningRisk::Likely, true),
-        GenerationOutputTokens::Unreported
+        GenerationOutputTokens::Invalid
+    );
+    assert_eq!(
+        classify_generation_output_tokens(&usage, HiddenReasoningRisk::Unlikely, true),
+        GenerationOutputTokens::Invalid
     );
     assert_eq!(
         classify_generation_output_tokens(&usage, HiddenReasoningRisk::Unlikely, false),

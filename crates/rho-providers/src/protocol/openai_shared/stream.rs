@@ -369,7 +369,7 @@ fn classify_generation_output_tokens(
             )
         }
         (Some(_), None)
-            if hidden_reasoning_risk == HiddenReasoningRisk::Likely && !reasoning_streamed =>
+            if hidden_reasoning_risk == HiddenReasoningRisk::Likely || reasoning_streamed =>
         {
             GenerationOutputTokens::Invalid
         }

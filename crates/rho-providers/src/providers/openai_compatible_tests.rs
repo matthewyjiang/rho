@@ -705,11 +705,11 @@ async fn poolside_hidden_reasoning_without_details_reports_throughput_unavailabl
     );
 }
 
-// Covers: streamed reasoning proves thinking happened, so missing details do
-// not emit the unavailable carrier.
+// Covers: streamed reasoning proves thinking happened, so missing details must
+// not fall back to aggregate throughput.
 // Owner: openai-compatible stream usage
 #[tokio::test]
-async fn poolside_streamed_reasoning_without_details_does_not_emit_unavailable() {
+async fn poolside_streamed_reasoning_without_details_reports_throughput_unavailable() {
     let events = poolside_stream_events(
         crate::reasoning::ReasoningLevel::High,
         concat!(
@@ -722,8 +722,8 @@ async fn poolside_streamed_reasoning_without_details_does_not_emit_unavailable()
     assert!(
         events
             .iter()
-            .all(|event| *event != generation_output_unavailable()),
-        "streamed reasoning must not emit unavailable: {events:?}"
+            .any(|event| *event == generation_output_unavailable()),
+        "streamed reasoning without a token count must mark throughput unavailable: {events:?}"
     );
 }
 

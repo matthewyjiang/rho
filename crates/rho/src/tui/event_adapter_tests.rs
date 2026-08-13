@@ -162,6 +162,41 @@ fn unavailable_generation_output_carrier_is_preserved() {
     ));
 }
 
+// Covers: streamed reasoning without a generation-token count must not use
+// aggregate output as a throughput numerator.
+// Owner: TUI SDK event adapter
+#[test]
+fn streamed_reasoning_without_carrier_is_unavailable() {
+    let mut adapter = SdkEventAdapter::default();
+    assert!(matches!(
+        only_event(adapter.translate(RunEvent::ReasoningDelta {
+            text: "plan".into()
+        })),
+        ViewEvent::Update(ViewModelEvent::ReasoningDelta(text)) if text == "plan"
+    ));
+
+    assert!(matches!(
+        only_event(adapter.translate(RunEvent::ModelCallCompleted {
+            profile: rho_sdk::ModelCallProfile {
+                provider: "openai".into(),
+                model: "gpt".into(),
+                reasoning: rho_sdk::ReasoningLevel::High,
+                service_tier: None,
+            },
+            metrics: rho_sdk::ModelCallMetrics {
+                output_tokens: Some(100),
+                time_to_first_token: Some(Duration::from_secs(1)),
+                generation_time: Some(Duration::from_secs(2)),
+                total_latency: Duration::from_secs(3),
+            },
+        })),
+        ViewEvent::Update(ViewModelEvent::ModelCallCompleted {
+            generation_output_tokens: GenerationOutputTokens::Unavailable,
+            ..
+        })
+    ));
+}
+
 #[test]
 fn provider_retry_resets_the_current_provider_stream() {
     let mut adapter = SdkEventAdapter::default();
