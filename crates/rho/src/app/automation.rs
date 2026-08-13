@@ -16,7 +16,7 @@ use {
     crate::credential_store::AppCredentialStore,
     crate::diagnostics::RuntimeDiagnostics,
     crate::herdr::{HerdrReporter, HerdrState},
-    crate::permission::{remember_allowed_workspace_writes, PermissionMode, SessionWriteLog},
+    crate::permission::{PermissionMode, SessionWriteLog},
     crate::permission_classifier_handler::ClassifierApprovalHandler,
     crate::subagent::{RunState, RunStatus},
     crate::tools::agent::BackgroundSubagents,
@@ -648,12 +648,15 @@ fn headless_approval_session(
     }
     let handler = match approval_classifier {
         Some(template) => template.isolate(),
-        None => {
-            ClassifierApprovalHandler::shared(config.clone(), workspace_root, usage_recording, None)
-        }
+        None => ClassifierApprovalHandler::shared(
+            config.clone(),
+            workspace_root,
+            usage_recording,
+            None,
+            Some(session_writes),
+        ),
     };
-    let erased = remember_allowed_workspace_writes(handler, session_writes);
-    Ok(Some(rho_sdk::ApprovalSession::from_shared(erased)))
+    Ok(Some(rho_sdk::ApprovalSession::from_shared(handler)))
 }
 
 async fn complete_run(

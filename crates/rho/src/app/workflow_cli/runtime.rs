@@ -170,14 +170,18 @@ fn workflow_approval_channel(
         PermissionMode::Auto => {
             ensure_headless_auto_classifier_model(config)?;
             let human = approval_mode.can_prompt().then(|| {
-                Arc::new(TerminalWorkflowApprovals { interactive: true })
-                    as Arc<dyn ApprovalHandler>
+                remember_allowed_workspace_writes(
+                    Arc::new(TerminalWorkflowApprovals { interactive: true }),
+                    session_writes.clone(),
+                    crate::permission::WriteAuthority::Human,
+                )
             });
             let classifier = ClassifierApprovalHandler::shared(
                 config.clone(),
                 workspace_path,
                 approval_mode.usage_recording(),
                 human,
+                Some(session_writes.clone()),
             );
             (classifier.clone(), Some(classifier))
         }
@@ -191,12 +195,13 @@ fn workflow_approval_channel(
             None,
         ),
     };
-    // Only the edit-allowing modes record approvals; the other modes keep every
-    // write behind the gate, so their handler stays unwrapped.
-    let handler = if permission_mode.allows_tracked_workspace_edits() {
-        remember_allowed_workspace_writes(handler, session_writes)
-    } else {
-        handler
+    let handler = match permission_mode {
+        PermissionMode::AllowEdits => remember_allowed_workspace_writes(
+            handler,
+            session_writes,
+            crate::permission::WriteAuthority::Human,
+        ),
+        _ => handler,
     };
     Ok(WorkflowApprovalChannel {
         session: ApprovalSession::from_shared(handler),
@@ -422,11 +427,7 @@ impl WorkflowRuntime {
         let command_approvals = match &command_classifier {
             // Commands get an isolated streak counter so agent denials cannot
             // escalate command approvals (and vice versa).
-            Some(handler) => {
-                let erased =
-                    remember_allowed_workspace_writes(handler.clone(), session_writes.clone());
-                ApprovalSession::from_shared(erased)
-            }
+            Some(handler) => ApprovalSession::from_shared(handler.clone()),
             None => approvals.session.clone(),
         };
         let hosts = Arc::new(WorkflowCommandHosts {

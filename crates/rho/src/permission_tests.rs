@@ -4,11 +4,12 @@ use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
 use rho_sdk::{
-    CapabilityKind, CapabilityRequest, CapabilitySource, NetworkTarget, PathScope, PolicyDecision,
+    ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, CapabilityKind,
+    CapabilityRequest, CapabilitySource, NetworkTarget, PathScope, PolicyDecision,
     ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits, WorkspacePolicy,
 };
 
-use super::{PermissionMode, SessionWriteLog};
+use super::{remember_allowed_workspace_writes, PermissionMode, SessionWriteLog, WriteAuthority};
 
 fn source(name: &str) -> CapabilitySource {
     CapabilitySource::built_in_tool(name)
@@ -347,6 +348,103 @@ fn allow_edits_and_auto_gate_symlinked_workspace_writes() {
         );
         std::fs::remove_file(&remembered).unwrap();
         std::fs::write(&remembered, "plain").unwrap();
+    }
+}
+
+// Covers: classifier approval on a shared log cannot skip Allow edits' human gate.
+// Owner: application permission policy
+#[tokio::test]
+async fn remembered_writes_are_bound_to_their_grantor() {
+    let dir = TempDir::new().unwrap();
+    run_git(dir.path(), &["init"]);
+    let created = dir.path().join("new.rs");
+    std::fs::write(&created, "fn main() {}\n").unwrap();
+    let created_write = write_request(created, PathScope::PrimaryWorkspace);
+
+    struct Allow;
+    impl ApprovalHandler for Allow {
+        fn request<'a>(&'a self, _request: ApprovalRequest) -> ApprovalFuture<'a> {
+            Box::pin(async { ApprovalDecision::AllowOnce })
+        }
+    }
+
+    let writes = SessionWriteLog::default();
+    let handler = remember_allowed_workspace_writes(
+        std::sync::Arc::new(Allow),
+        writes.clone(),
+        WriteAuthority::Classifier,
+    );
+    handler
+        .request(ApprovalRequest::new(created_write.clone(), ""))
+        .await;
+
+    let auto = PermissionMode::Auto
+        .workspace_policy(writes.clone())
+        .expect("auto has a policy");
+    let allow_edits = PermissionMode::AllowEdits
+        .workspace_policy(writes)
+        .expect("allow edits has a policy");
+    assert_eq!(auto.evaluate(&created_write), PolicyDecision::Allow);
+    assert_eq!(
+        allow_edits.evaluate(&created_write),
+        PolicyDecision::RequireApproval {
+            reason: String::new(),
+        }
+    );
+}
+
+#[test]
+fn carried_across_keeps_writes_only_for_the_same_grantor() {
+    let dir = TempDir::new().unwrap();
+    run_git(dir.path(), &["init"]);
+    let created = dir.path().join("new.rs");
+    std::fs::write(&created, "fn main() {}\n").unwrap();
+    let created_write = write_request(created, PathScope::PrimaryWorkspace);
+
+    let writes = SessionWriteLog::default();
+    writes.remember(&created_write, WriteAuthority::Classifier);
+    let carried = writes
+        .clone()
+        .carried_across(PermissionMode::Auto, PermissionMode::AllowEdits);
+    let allow_edits = PermissionMode::AllowEdits
+        .workspace_policy(carried)
+        .expect("allow edits has a policy");
+    assert_eq!(
+        allow_edits.evaluate(&created_write),
+        PolicyDecision::RequireApproval {
+            reason: String::new(),
+        }
+    );
+
+    let same_session = writes.carried_across(PermissionMode::Auto, PermissionMode::Auto);
+    let auto = PermissionMode::Auto
+        .workspace_policy(same_session)
+        .expect("auto has a policy");
+    assert_eq!(auto.evaluate(&created_write), PolicyDecision::Allow);
+}
+
+// Covers: a human grant is accepted in Auto, but a classifier grant is never
+// accepted in Allow edits.
+// Owner: application permission policy
+#[test]
+fn human_grants_are_stronger_than_classifier_grants() {
+    let dir = TempDir::new().unwrap();
+    run_git(dir.path(), &["init"]);
+    let created = dir.path().join("new.rs");
+    std::fs::write(&created, "fn main() {}\n").unwrap();
+    let created_write = write_request(created, PathScope::PrimaryWorkspace);
+
+    let writes = SessionWriteLog::default();
+    writes.remember(&created_write, WriteAuthority::Human);
+    for mode in [PermissionMode::Auto, PermissionMode::AllowEdits] {
+        let policy = mode
+            .workspace_policy(writes.clone())
+            .expect("edit-allowing mode has a policy");
+        assert_eq!(
+            policy.evaluate(&created_write),
+            PolicyDecision::Allow,
+            "{mode:?} should honor a human grant"
+        );
     }
 }
 

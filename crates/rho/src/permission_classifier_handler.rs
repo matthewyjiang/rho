@@ -15,6 +15,7 @@ use rho_sdk::{
 
 use crate::{
     config::Config,
+    permission::{SessionWriteLog, WriteAuthority},
     permission_classifier::{classify_capability_request, ClassifierVerdict, ClassifyRequest},
 };
 
@@ -44,6 +45,7 @@ pub(crate) struct ClassifierApprovalHandler {
     usage_recording: ProviderRequestUsageRecording,
     classifier: ClassifyFn,
     inner: Option<Arc<dyn ApprovalHandler>>,
+    session_writes: Option<SessionWriteLog>,
     consecutive_denials: AtomicU32,
 }
 
@@ -53,6 +55,7 @@ impl ClassifierApprovalHandler {
         workspace_path: PathBuf,
         usage_recording: ProviderRequestUsageRecording,
         inner: Option<Arc<dyn ApprovalHandler>>,
+        session_writes: Option<SessionWriteLog>,
     ) -> Self {
         Self {
             config: RwLock::new(config),
@@ -60,6 +63,7 @@ impl ClassifierApprovalHandler {
             usage_recording,
             classifier: default_classifier(),
             inner,
+            session_writes,
             consecutive_denials: AtomicU32::new(0),
         }
     }
@@ -70,8 +74,15 @@ impl ClassifierApprovalHandler {
         workspace_path: PathBuf,
         usage_recording: ProviderRequestUsageRecording,
         human: Option<Arc<dyn ApprovalHandler>>,
+        session_writes: Option<SessionWriteLog>,
     ) -> Arc<Self> {
-        Arc::new(Self::new(config, workspace_path, usage_recording, human))
+        Arc::new(Self::new(
+            config,
+            workspace_path,
+            usage_recording,
+            human,
+            session_writes,
+        ))
     }
 
     #[cfg(test)]
@@ -85,6 +96,7 @@ impl ClassifierApprovalHandler {
             usage_recording: ProviderRequestUsageRecording::default(),
             classifier,
             inner,
+            session_writes: None,
             consecutive_denials: AtomicU32::new(0),
         }
     }
@@ -113,6 +125,7 @@ impl ClassifierApprovalHandler {
             usage_recording: self.usage_recording.clone(),
             classifier: Arc::clone(&self.classifier),
             inner: self.inner.clone(),
+            session_writes: self.session_writes.clone(),
             consecutive_denials: AtomicU32::new(0),
         })
     }
@@ -156,10 +169,14 @@ impl ApprovalHandler for ClassifierApprovalHandler {
                 return decision;
             }
 
+            let capability = request.capability().clone();
             let verdict = (self.classifier)(self.input_for(request)).await;
             match verdict {
                 ClassifierVerdict::Allow => {
                     self.consecutive_denials.store(0, Ordering::Relaxed);
+                    if let Some(writes) = &self.session_writes {
+                        writes.remember(&capability, WriteAuthority::Classifier);
+                    }
                     ApprovalDecision::AllowOnce
                 }
                 ClassifierVerdict::Deny { reason } => {

@@ -310,11 +310,17 @@ pub(super) fn approval_channel_for(
         PermissionMode::Auto => {
             let capacity = NonZeroUsize::new(16).expect("approval channel capacity is non-zero");
             let (human_handler, receiver) = rho_sdk::approval_channel(capacity);
+            let human = remember_allowed_workspace_writes(
+                Arc::new(human_handler),
+                options.session_writes.clone(),
+                crate::permission::WriteAuthority::Human,
+            );
             let classifier = ClassifierApprovalHandler::shared(
                 options.config,
                 options.workspace_path,
                 options.usage_recording,
-                Some(Arc::new(human_handler)),
+                Some(human),
+                Some(options.session_writes.clone()),
             );
             ApprovalChannel {
                 handler: Some(classifier.clone()),
@@ -337,13 +343,17 @@ pub(super) fn approval_channel_for(
             classifier: None,
         },
     };
-    // Only the edit-allowing modes record approvals; Supervised keeps every
-    // write behind the gate, so its handler stays unwrapped.
-    let handler = match handler {
-        Some(handler) if mode.allows_tracked_workspace_edits() => Some(
-            remember_allowed_workspace_writes(handler, options.session_writes),
-        ),
-        other => other,
+    // Allow edits records human approvals. Auto records classifier allows on
+    // the handler itself and human escalations on the inner wrapper above.
+    // Supervised keeps every write behind the gate, so its handler stays
+    // unwrapped.
+    let handler = match (handler, mode) {
+        (Some(handler), PermissionMode::AllowEdits) => Some(remember_allowed_workspace_writes(
+            handler,
+            options.session_writes,
+            crate::permission::WriteAuthority::Human,
+        )),
+        (other, _) => other,
     };
     ApprovalChannel {
         handler,

@@ -4,9 +4,10 @@ use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::{ContentBlock, Message, ModelIdentity, ModelResponse, ModelUsage},
     provider::{ModelProvider, ScriptedProvider, ScriptedTurn},
-    CompactionFuture, CompactionOutput, CompactionRequest, Compactor, PolicyDecision,
-    ProviderError, ProviderErrorKind, Retryability, RunEvent, RunId, SessionId, SessionOptions,
-    SystemPrompt, UserInput, Workspace,
+    ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, CompactionFuture,
+    CompactionOutput, CompactionRequest, Compactor, PolicyDecision, ProviderError,
+    ProviderErrorKind, Retryability, RunEvent, RunId, SessionId, SessionOptions, SystemPrompt,
+    UserInput, Workspace, WorkspacePolicy,
 };
 
 use super::{
@@ -19,7 +20,7 @@ use crate::{
     compaction::CompactionConfig,
     config::Config,
     diagnostics::RuntimeDiagnostics,
-    permission::PermissionMode,
+    permission::{PermissionMode, WriteAuthority},
     session::Session as StoredSession,
     tools::{
         agent::BackgroundSubagents,
@@ -418,6 +419,162 @@ async fn permission_mode_switch_rejects_an_active_run_without_mutation() {
     assert!(error.to_string().contains("while a run is active"));
     assert_eq!(interactive.permission_mode(), PermissionMode::Auto);
     assert!(interactive.approval_receiver().is_none());
+}
+
+// Covers: remembered workspace writes stay bound to the session and grantor
+// that produced them. Reset, resume, and Auto→Allow edits must not reuse them;
+// tree navigation inside the same stored session may.
+// Owner: interactive runtime permission lifecycle
+#[tokio::test]
+async fn remembered_writes_do_not_cross_session_or_grantor_boundaries() {
+    let (_repo, created_write) = untracked_workspace_write();
+    let require_approval = PolicyDecision::RequireApproval {
+        reason: String::new(),
+    };
+
+    let mut interactive = pending_compaction_runtime("done").await;
+    remember_live_write(&interactive, &created_write).await;
+    assert_eq!(
+        interactive.workspace_policy().evaluate(&created_write),
+        PolicyDecision::Allow
+    );
+
+    interactive.reset().await.unwrap();
+    assert_eq!(
+        interactive.workspace_policy().evaluate(&created_write),
+        require_approval.clone()
+    );
+
+    remember_live_write(&interactive, &created_write).await;
+    interactive
+        .set_permission_mode(PermissionMode::AllowEdits)
+        .await
+        .unwrap();
+    assert_eq!(
+        interactive.workspace_policy().evaluate(&created_write),
+        require_approval.clone()
+    );
+    interactive
+        .set_permission_mode(PermissionMode::Auto)
+        .await
+        .unwrap();
+    assert_eq!(
+        interactive.workspace_policy().evaluate(&created_write),
+        PolicyDecision::Allow,
+        "classifier grants must remain bound to Auto after a round-trip"
+    );
+
+    remember_live_write(&interactive, &created_write).await;
+    let root = tempfile::tempdir().unwrap();
+    let cwd = root.path().join("workspace");
+    std::fs::create_dir(&cwd).unwrap();
+    let target = StoredSession::create_in_root(root.path(), &cwd).unwrap();
+    interactive.resume(target, Vec::new()).await.unwrap();
+    assert_eq!(
+        interactive.workspace_policy().evaluate(&created_write),
+        require_approval
+    );
+}
+
+// Covers: navigating the conversation tree of the live stored session keeps
+// grants from the current grantor instead of installing a detached log.
+// Owner: interactive runtime permission lifecycle
+#[tokio::test]
+async fn tree_navigation_keeps_same_session_write_authority() {
+    let (_repo, created_write) = untracked_workspace_write();
+    let mut interactive = pending_compaction_runtime("done").await;
+    let root = tempfile::tempdir().unwrap();
+    let cwd = root.path().join("workspace");
+    std::fs::create_dir(&cwd).unwrap();
+    let (storage, root_id) = stored_session_with_branch(root.path(), &cwd);
+    interactive.sessions.attach_storage(storage.clone());
+    remember_live_write(&interactive, &created_write).await;
+
+    interactive
+        .select_tree_node(storage, &root_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        interactive.workspace_policy().evaluate(&created_write),
+        PolicyDecision::Allow
+    );
+}
+
+async fn remember_live_write(
+    interactive: &InteractiveRuntime,
+    request: &rho_sdk::CapabilityRequest,
+) {
+    let authority = interactive
+        .permission_mode
+        .write_authority()
+        .unwrap_or(WriteAuthority::Classifier);
+    struct Allow;
+    impl ApprovalHandler for Allow {
+        fn request<'a>(&'a self, _request: ApprovalRequest) -> ApprovalFuture<'a> {
+            Box::pin(async { ApprovalDecision::AllowOnce })
+        }
+    }
+    let handler = crate::permission::remember_allowed_workspace_writes(
+        Arc::new(Allow),
+        interactive.session_writes.clone(),
+        authority,
+    );
+    handler
+        .request(ApprovalRequest::new(request.clone(), ""))
+        .await;
+}
+
+fn untracked_workspace_write() -> (tempfile::TempDir, rho_sdk::CapabilityRequest) {
+    let dir = tempfile::tempdir().unwrap();
+    let status = std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(dir.path())
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .status()
+        .expect("git should be available");
+    assert!(status.success());
+    let path = dir.path().join("new.rs");
+    std::fs::write(&path, "fn main() {}\n").unwrap();
+    let request = rho_sdk::CapabilityRequest::write_path(
+        path,
+        rho_sdk::PathScope::PrimaryWorkspace,
+        rho_sdk::CapabilitySource::built_in_tool("write"),
+    );
+    (dir, request)
+}
+
+fn stored_session_with_branch(
+    session_root: &std::path::Path,
+    cwd: &std::path::Path,
+) -> (StoredSession, crate::session::tree::NodeId) {
+    let storage = StoredSession::create_in_root(session_root, cwd).unwrap();
+    let id = SessionId::from_string(storage.id()).unwrap();
+    let first = rho_sdk::SessionSnapshot::new(
+        id.clone(),
+        rho_sdk::Revision::from_u64(1),
+        vec![Message::user_text("root")],
+        ModelIdentity::new("test", "test", "test"),
+        rho_sdk::CompactionState::default(),
+    )
+    .with_prompt_cache_key(format!("rho:{}", storage.id()));
+    storage.save_snapshot(&first, first.history()).unwrap();
+    let root_id = storage
+        .session_tree()
+        .unwrap()
+        .active_leaf_id()
+        .unwrap()
+        .clone();
+    let leaf = rho_sdk::SessionSnapshot::new(
+        id,
+        rho_sdk::Revision::from_u64(2),
+        vec![Message::user_text("root"), Message::assistant_text("leaf")],
+        ModelIdentity::new("test", "test", "test"),
+        rho_sdk::CompactionState::default(),
+    )
+    .with_prompt_cache_key(format!("rho:{}", storage.id()));
+    storage.save_snapshot(&leaf, &leaf.history()[1..]).unwrap();
+    (storage, root_id)
 }
 
 #[tokio::test]

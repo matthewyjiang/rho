@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     fmt,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -86,7 +86,35 @@ impl PermissionMode {
     /// True for Auto and Allow edits: tracked workspace files and later writes
     /// to a path already allowed this session skip the remaining gate.
     pub(crate) const fn allows_tracked_workspace_edits(self) -> bool {
-        matches!(self, Self::Auto | Self::AllowEdits)
+        self.write_authority().is_some()
+    }
+
+    /// Who can grant remembered path authority in this mode.
+    ///
+    /// Classifier approval and human approval are not interchangeable: a path
+    /// remembered under one grantor must not skip the other grantor's gate.
+    pub(crate) const fn write_authority(self) -> Option<WriteAuthority> {
+        match self {
+            Self::Auto => Some(WriteAuthority::Classifier),
+            Self::AllowEdits => Some(WriteAuthority::Human),
+            Self::Bypass | Self::Plan | Self::Supervised => None,
+        }
+    }
+
+    /// Whether a grant from `authority` may skip this mode's remaining write gate.
+    ///
+    /// Allow edits accepts only a human grant. Auto also accepts a human grant
+    /// because a person is a stronger approver than the classifier. The reverse
+    /// is never true.
+    pub(crate) const fn honors_write_authority(self, authority: WriteAuthority) -> bool {
+        match self {
+            Self::Auto => matches!(
+                authority,
+                WriteAuthority::Classifier | WriteAuthority::Human
+            ),
+            Self::AllowEdits => matches!(authority, WriteAuthority::Human),
+            Self::Bypass | Self::Plan | Self::Supervised => false,
+        }
     }
 
     /// Pure kind mapping: the default decision when request details do not
@@ -154,25 +182,39 @@ impl PermissionMode {
     }
 }
 
+/// Who granted a remembered in-workspace write.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WriteAuthority {
+    /// Auto-mode classifier (or its human escalation).
+    Classifier,
+    /// Interactive Allow edits approval.
+    Human,
+}
+
 /// Session-scoped paths whose first in-workspace write already passed the gate.
+///
+/// Each path is bound to the grantor that allowed it. Evaluation only skips the
+/// gate when the current mode's grantor matches, so classifier approval cannot
+/// become a human-approval bypass.
 #[derive(Clone, Default)]
 pub(crate) struct SessionWriteLog {
-    paths: Arc<RwLock<HashSet<PathBuf>>>,
+    paths: Arc<RwLock<HashMap<PathBuf, WriteAuthority>>>,
 }
 
 impl SessionWriteLog {
-    pub(crate) fn remember(&self, request: &CapabilityRequest) {
+    pub(crate) fn remember(&self, request: &CapabilityRequest, authority: WriteAuthority) {
         let Some(path) = rememberable_workspace_write(request) else {
             return;
         };
         self.paths
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert(path);
+            .insert(path, authority);
     }
 
-    /// Approvals granted under an edit-allowing mode carry only into another
-    /// edit-allowing mode; any other switch starts from an empty log.
+    /// Approvals stay with the session when both modes can remember writes.
+    /// Evaluation still filters by [`PermissionMode::honors_write_authority`],
+    /// so a classifier grant cannot skip Allow edits.
     pub(crate) fn carried_across(self, from: PermissionMode, to: PermissionMode) -> Self {
         if from.allows_tracked_workspace_edits() && to.allows_tracked_workspace_edits() {
             self
@@ -181,11 +223,21 @@ impl SessionWriteLog {
         }
     }
 
-    fn contains(&self, path: &Path) -> bool {
+    /// Drops every remembered path. Used when the live session identity changes
+    /// so a later session cannot inherit another session's grants.
+    pub(crate) fn clear(&self) {
+        self.paths
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
+    }
+
+    fn granted_by(&self, path: &Path) -> Option<WriteAuthority> {
         self.paths
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .contains(path)
+            .get(path)
+            .copied()
     }
 }
 
@@ -214,14 +266,17 @@ impl ModePolicy {
     #[cfg(test)]
     /// Records a write that already passed classifier or human approval.
     pub(crate) fn remember_approved_write(&self, request: &CapabilityRequest) {
-        self.session_writes.remember(request);
+        let Some(authority) = self.mode.write_authority() else {
+            return;
+        };
+        self.session_writes.remember(request, authority);
     }
 }
 
 impl WorkspacePolicy for ModePolicy {
     fn evaluate(&self, request: &CapabilityRequest) -> PolicyDecision {
         if self.mode.allows_tracked_workspace_edits()
-            && is_free_workspace_write(request, &self.session_writes)
+            && is_free_workspace_write(request, &self.session_writes, self.mode)
         {
             return PolicyDecision::Allow;
         }
@@ -233,13 +288,19 @@ impl WorkspacePolicy for ModePolicy {
 pub(crate) fn remember_allowed_workspace_writes(
     inner: Arc<dyn ApprovalHandler>,
     writes: SessionWriteLog,
+    authority: WriteAuthority,
 ) -> Arc<dyn ApprovalHandler> {
-    Arc::new(RememberingApprovals { inner, writes })
+    Arc::new(RememberingApprovals {
+        inner,
+        writes,
+        authority,
+    })
 }
 
 struct RememberingApprovals {
     inner: Arc<dyn ApprovalHandler>,
     writes: SessionWriteLog,
+    authority: WriteAuthority,
 }
 
 impl ApprovalHandler for RememberingApprovals {
@@ -251,7 +312,7 @@ impl ApprovalHandler for RememberingApprovals {
                 decision,
                 ApprovalDecision::AllowOnce | ApprovalDecision::AllowForSession
             ) {
-                self.writes.remember(&capability);
+                self.writes.remember(&capability, self.authority);
             }
             decision
         })
@@ -262,7 +323,11 @@ impl ApprovalHandler for RememberingApprovals {
     }
 }
 
-fn is_free_workspace_write(request: &CapabilityRequest, session_writes: &SessionWriteLog) -> bool {
+fn is_free_workspace_write(
+    request: &CapabilityRequest,
+    session_writes: &SessionWriteLog,
+    mode: PermissionMode,
+) -> bool {
     match request.operation() {
         CapabilityOperation::WritePath {
             path,
@@ -270,7 +335,10 @@ fn is_free_workspace_write(request: &CapabilityRequest, session_writes: &Session
         } => {
             !path_is_symlink(path)
                 && (path_is_git_tracked(path)
-                    || (session_writes.contains(path) && !path_is_git_ignored(path)))
+                    || (session_writes
+                        .granted_by(path)
+                        .is_some_and(|authority| mode.honors_write_authority(authority))
+                        && !path_is_git_ignored(path)))
         }
         _ => false,
     }

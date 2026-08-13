@@ -190,6 +190,7 @@ fn supplied_auto_classifier_template_isolates_handler() {
         root.path().to_path_buf(),
         Default::default(),
         None,
+        None,
     ));
 
     let approval_session = headless_approval_session(
