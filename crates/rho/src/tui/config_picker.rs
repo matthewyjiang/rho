@@ -497,10 +497,10 @@ fn permission_mode_description(mode: PermissionMode) -> &'static str {
     match mode {
         PermissionMode::Bypass => "No permission checks.",
         PermissionMode::Auto => {
-            "Classifier reviews new files and processes; tracked workspace edits are free."
+            "Classifier reviews new files and processes; tracked and already-approved workspace edits are free."
         }
         PermissionMode::AllowEdits => {
-            "Tracked workspace edits are free; ask before new files and processes."
+            "Tracked and already-approved workspace edits are free; ask before new files and processes."
         }
         PermissionMode::Plan => "Investigate only; writes and processes are denied.",
         PermissionMode::Supervised => "Ask before writes and processes.",

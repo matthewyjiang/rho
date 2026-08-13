@@ -83,6 +83,7 @@ pub(crate) struct InteractiveRuntime {
     config: Config,
     permission_mode: PermissionMode,
     experimental_workspace_rewind: bool,
+    session_writes: crate::permission::SessionWriteLog,
     approval_handler: Option<Arc<dyn ApprovalHandler>>,
     approval_receiver: Option<ApprovalRequestReceiver>,
     classifier_approval_handler: Option<Arc<ClassifierApprovalHandler>>,
@@ -115,6 +116,10 @@ impl InteractiveRuntime {
 
     pub(crate) fn permission_mode(&self) -> PermissionMode {
         self.permission_mode
+    }
+
+    fn workspace_policy(&self) -> AppPolicy {
+        AppPolicy::for_mode_with_writes(self.permission_mode, self.session_writes.clone())
     }
 
     pub(crate) fn update_config(&mut self, config: Config) {
@@ -161,6 +166,13 @@ impl InteractiveRuntime {
             return Ok(());
         }
 
+        let session_writes = if mode.allows_tracked_workspace_edits()
+            && self.permission_mode.allows_tracked_workspace_edits()
+        {
+            self.session_writes.clone()
+        } else {
+            crate::permission::SessionWriteLog::default()
+        };
         let snapshot = self.sessions.session().snapshot();
         let approval_channel = approval_channel_for(
             mode,
@@ -168,13 +180,14 @@ impl InteractiveRuntime {
                 config: self.config.clone(),
                 workspace_path: self.workspace.root().to_path_buf(),
                 usage_recording: self.usage_recording.clone(),
+                session_writes: session_writes.clone(),
             },
         );
         let replacement_runtime = build_runtime(RuntimeBuildOptions {
             provider: Arc::clone(self.provider.provider()),
             tools: self.tools.tools(),
             workspace: self.workspace.clone(),
-            workspace_policy: AppPolicy::for_mode(mode),
+            workspace_policy: AppPolicy::for_mode_with_writes(mode, session_writes.clone()),
             approval_session: approval_channel
                 .handler
                 .clone()
@@ -198,6 +211,7 @@ impl InteractiveRuntime {
         self.sessions.replace_runtime_session(replacement_session);
         self.permission_mode = mode;
         self.config.permission_mode = mode;
+        self.session_writes = session_writes;
         self.approval_handler = approval_channel.handler;
         self.approval_receiver = approval_channel.receiver;
         self.classifier_approval_handler = approval_channel.classifier;
@@ -614,7 +628,7 @@ impl InteractiveRuntime {
             provider: Arc::clone(self.provider.provider()),
             tools: self.tools.tools(),
             workspace: self.workspace.clone(),
-            workspace_policy: AppPolicy::for_mode(self.permission_mode),
+            workspace_policy: self.workspace_policy(),
             approval_session: self
                 .approval_handler
                 .clone()
@@ -855,7 +869,7 @@ impl InteractiveRuntime {
             provider: Arc::clone(self.provider.provider()),
             tools: self.tools.tools(),
             workspace: self.workspace.clone(),
-            workspace_policy: AppPolicy::for_mode(self.permission_mode),
+            workspace_policy: self.workspace_policy(),
             approval_session: self
                 .approval_handler
                 .clone()

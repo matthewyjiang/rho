@@ -198,6 +198,7 @@ fn supplied_auto_classifier_template_isolates_handler() {
         Some(classifier),
         root.path().to_path_buf(),
         Default::default(),
+        crate::permission::SessionWriteLog::default(),
     )
     .unwrap();
 
@@ -226,6 +227,7 @@ fn auto_ignores_stray_approval_session_and_builds_classifier() {
         None,
         root.path().to_path_buf(),
         Default::default(),
+        crate::permission::SessionWriteLog::default(),
     )
     .unwrap();
 
@@ -311,7 +313,7 @@ async fn headless_run_compacts_at_configured_threshold_and_completes() {
         provider: shared_provider,
         tools: &tools,
         workspace: Workspace::new(root.path()).unwrap(),
-        workspace_policy: AppPolicy::for_mode(PermissionMode::Auto),
+        workspace_policy: AppPolicy::for_mode_with_writes(PermissionMode::Auto, Default::default()),
         approval_session: None,
         system_prompt: SystemPrompt::None,
         reasoning: rho_sdk::ReasoningLevel::Off,

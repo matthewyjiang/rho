@@ -241,6 +241,59 @@ fn allow_edits_and_auto_allow_tracked_workspace_writes_only() {
     );
 }
 
+// Covers: after a new workspace file is allowed once, later edits skip the
+// gate; ignored and out-of-workspace paths stay gated.
+// Owner: application permission policy
+#[test]
+fn allow_edits_and_auto_allow_later_writes_to_approved_workspace_files() {
+    let dir = TempDir::new().unwrap();
+    run_git(dir.path(), &["init"]);
+    std::fs::write(dir.path().join(".gitignore"), ".env\n").unwrap();
+    let created = dir.path().join("new.rs");
+    let other = dir.path().join("other.rs");
+    let ignored = dir.path().join(".env");
+    std::fs::write(&created, "fn main() {}\n").unwrap();
+    std::fs::write(&other, "fn other() {}\n").unwrap();
+    std::fs::write(&ignored, "SECRET=\n").unwrap();
+
+    let created_write = write_request(created, PathScope::PrimaryWorkspace);
+    let other_write = write_request(other, PathScope::PrimaryWorkspace);
+    let ignored_write = write_request(ignored, PathScope::PrimaryWorkspace);
+    let outside_write = write_request(dir.path().join("new.rs"), PathScope::UnrestrictedFilesystem);
+
+    for mode in [PermissionMode::AllowEdits, PermissionMode::Auto] {
+        let policy = mode.workspace_policy().expect("checked mode has a policy");
+        assert_eq!(
+            policy.evaluate(&created_write),
+            PolicyDecision::RequireApproval {
+                reason: String::new(),
+            }
+        );
+        policy.remember_approved_write(&created_write);
+        policy.remember_approved_write(&ignored_write);
+        policy.remember_approved_write(&outside_write);
+        assert_eq!(policy.evaluate(&created_write), PolicyDecision::Allow);
+        assert_eq!(
+            policy.evaluate(&other_write),
+            PolicyDecision::RequireApproval {
+                reason: String::new(),
+            }
+        );
+        assert_eq!(
+            policy.evaluate(&ignored_write),
+            PolicyDecision::RequireApproval {
+                reason: String::new(),
+            }
+        );
+        assert_eq!(
+            policy.evaluate(&outside_write),
+            PolicyDecision::RequireApproval {
+                reason: String::new(),
+            }
+        );
+    }
+}
+
 fn all_capability_kinds() -> [CapabilityKind; 6] {
     [
         CapabilityKind::Read,

@@ -22,7 +22,7 @@ use crate::{
         tools_prompt::{assemble_tools_and_prompt, ToolsAndPrompt, ToolsAndPromptOptions},
     },
     credential_store::AppCredentialStore,
-    permission::PermissionMode,
+    permission::{remember_allowed_workspace_writes, PermissionMode, SessionWriteLog},
     permission_classifier_handler::ClassifierApprovalHandler,
     session::Session as StoredSession,
     tools::{agent::BackgroundSubagents, sdk_registry::AppToolSet},
@@ -90,12 +90,14 @@ pub(super) async fn initialize(
     let permission_mode = config.permission_mode;
     diagnostics.update_compaction_config(&compaction);
     let usage_recording = crate::usage::default_recording().await;
+    let session_writes = SessionWriteLog::default();
     let approval_channel = approval_channel_for(
         permission_mode,
         ApprovalChannelOptions {
             config: config.clone(),
             workspace_path: workspace.root().to_path_buf(),
             usage_recording: usage_recording.clone(),
+            session_writes: session_writes.clone(),
         },
     );
     let hooks = crate::hooks::start_for_cwd(&cwd);
@@ -107,7 +109,10 @@ pub(super) async fn initialize(
             provider: Arc::clone(&provider),
             tools: tools.tools(),
             workspace: workspace.clone(),
-            workspace_policy: AppPolicy::for_mode(permission_mode),
+            workspace_policy: AppPolicy::for_mode_with_writes(
+                permission_mode,
+                session_writes.clone(),
+            ),
             approval_session: approval_channel
                 .handler
                 .clone()
@@ -180,6 +185,7 @@ pub(super) async fn initialize(
         config: config.clone(),
         permission_mode,
         experimental_workspace_rewind: config.experimental_workspace_rewind,
+        session_writes,
         approval_handler: approval_channel.handler,
         approval_receiver: approval_channel.receiver,
         classifier_approval_handler: approval_channel.classifier,
@@ -286,6 +292,7 @@ pub(super) struct ApprovalChannelOptions {
     pub(super) config: crate::config::Config,
     pub(super) workspace_path: PathBuf,
     pub(super) usage_recording: rho_sdk::ProviderRequestUsageRecording,
+    pub(super) session_writes: SessionWriteLog,
 }
 
 pub(super) struct ApprovalChannel {
@@ -308,14 +315,27 @@ pub(super) fn approval_channel_for(
                 options.usage_recording,
                 Some(Arc::new(human_handler)),
             );
-            let handler: Arc<dyn ApprovalHandler> = classifier.clone();
+            let handler: Arc<dyn ApprovalHandler> =
+                remember_allowed_workspace_writes(classifier.clone(), options.session_writes);
             ApprovalChannel {
                 handler: Some(handler),
                 receiver: Some(receiver),
                 classifier: Some(classifier),
             }
         }
-        PermissionMode::AllowEdits | PermissionMode::Supervised => {
+        PermissionMode::AllowEdits => {
+            let capacity = NonZeroUsize::new(16).expect("approval channel capacity is non-zero");
+            let (handler, receiver) = rho_sdk::approval_channel(capacity);
+            ApprovalChannel {
+                handler: Some(remember_allowed_workspace_writes(
+                    Arc::new(handler),
+                    options.session_writes,
+                )),
+                receiver: Some(receiver),
+                classifier: None,
+            }
+        }
+        PermissionMode::Supervised => {
             let capacity = NonZeroUsize::new(16).expect("approval channel capacity is non-zero");
             let (handler, receiver) = rho_sdk::approval_channel(capacity);
             ApprovalChannel {

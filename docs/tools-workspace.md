@@ -63,7 +63,7 @@ flowchart LR
     cap --> os[OS user permissions still apply]
 ```
 
-The default `bypass` [permission mode](/configuration#permission-modes) allows this behavior. `auto` uses the same write and process gate as `allow_edits`, but a configured classifier model approves or denies each gated request. `allow_edits` allows in-workspace writes to git-tracked files and asks before new files or process execution. `plan` denies file writes and process execution, while `supervised` asks for interactive confirmation before those operations. Supervised and Allow edits runs without an approval UI and headless Auto runs without a classifier model fail closed.
+The default `bypass` [permission mode](/configuration#permission-modes) allows this behavior. `auto` uses the same write and process gate as `allow_edits`, but a configured classifier model approves or denies each gated request. `allow_edits` allows in-workspace writes to git-tracked files and later writes to a path already allowed this session, and asks before other new files or process execution. `plan` denies file writes and process execution, while `supervised` asks for interactive confirmation before those operations. Supervised and Allow edits runs without an approval UI and headless Auto runs without a classifier model fail closed.
 
 Permission modes are policy checks at Rho's tool-capability boundary, not an operating-system sandbox. They do not reduce the permissions of the Rho process itself, and they depend on tools correctly declaring and authorizing capabilities. The SDK still scopes file access by default; embedded hosts must opt into broader access when they build a `Workspace`. Run Rho only in workspaces where you are comfortable with the selected mode and these limits.
 

@@ -1,15 +1,17 @@
 use std::{
+    collections::HashSet,
     fmt,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     str::FromStr,
+    sync::{Arc, RwLock},
 };
 
 use serde::{Deserialize, Serialize};
 
 use rho_sdk::{
-    CapabilityKind, CapabilityOperation, CapabilityRequest, PathScope, PolicyDecision,
-    WorkspacePolicy,
+    ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, CapabilityKind,
+    CapabilityOperation, CapabilityRequest, PathScope, PolicyDecision, WorkspacePolicy,
 };
 
 /// Lightweight permission mode that gates the model's most sensitive actions.
@@ -20,10 +22,12 @@ pub(crate) enum PermissionMode {
     Bypass,
     /// Same capability gate as [`Self::AllowEdits`]; remaining writes, process
     /// execution, and unrecognized capability classes require classifier
-    /// approval.
+    /// approval. In-workspace writes to git-tracked files, and later writes to
+    /// a path already allowed this session, skip the classifier.
     Auto,
     /// Known reads, network access, skills, instruction discovery, and
-    /// in-workspace writes to git-tracked files are free; other writes, process
+    /// in-workspace writes to git-tracked files are free. Later writes to a
+    /// path already allowed this session are also free. Other writes, process
     /// execution, and unrecognized capability classes require interactive
     /// approval.
     AllowEdits,
@@ -79,9 +83,16 @@ impl PermissionMode {
         }
     }
 
+    /// True for Auto and Allow edits: tracked workspace files and later writes
+    /// to a path already allowed this session skip the remaining gate.
+    pub(crate) const fn allows_tracked_workspace_edits(self) -> bool {
+        matches!(self, Self::Auto | Self::AllowEdits)
+    }
+
     /// Pure kind mapping: the default decision when request details do not
     /// refine it. [`ModePolicy::evaluate`] may allow in-workspace writes to
-    /// git-tracked files for [`Self::Auto`] and [`Self::AllowEdits`].
+    /// git-tracked files, and later writes to a path already allowed this
+    /// session, for [`Self::Auto`] and [`Self::AllowEdits`].
     ///
     /// The wildcard arms intentionally fail closed if the non-exhaustive SDK
     /// enum gains a capability this application has not classified yet.
@@ -125,46 +136,147 @@ impl PermissionMode {
     ///
     /// The returned policy starts from [`Self::decision_for`] and, for
     /// [`Self::Auto`] and [`Self::AllowEdits`], allows primary-workspace writes
-    /// to git-tracked files. `ScopedWorkspacePolicy` is not used here because it
-    /// deny-defaults network destinations behind a per-host allowlist, which
-    /// would break the "reads and network are free" contract of the checked
-    /// modes.
+    /// to git-tracked files and to paths already allowed this session.
+    /// `ScopedWorkspacePolicy` is not used here because it deny-defaults
+    /// network destinations behind a per-host allowlist, which would break the
+    /// "reads and network are free" contract of the checked modes.
+    #[cfg(test)]
     pub fn workspace_policy(self) -> Option<ModePolicy> {
-        match self {
-            Self::Bypass => None,
-            Self::Auto | Self::AllowEdits | Self::Plan | Self::Supervised => {
-                Some(ModePolicy { mode: self })
-            }
-        }
+        self.workspace_policy_with_writes(SessionWriteLog::default())
     }
 
-    fn allows_tracked_workspace_edits(self) -> bool {
-        matches!(self, Self::Auto | Self::AllowEdits)
+    pub fn workspace_policy_with_writes(
+        self,
+        session_writes: SessionWriteLog,
+    ) -> Option<ModePolicy> {
+        match self {
+            Self::Bypass => None,
+            Self::Auto | Self::AllowEdits | Self::Plan | Self::Supervised => Some(ModePolicy {
+                mode: self,
+                session_writes,
+            }),
+        }
+    }
+}
+
+/// Session-scoped paths whose first in-workspace write already passed the gate.
+#[derive(Clone, Default)]
+pub(crate) struct SessionWriteLog {
+    paths: Arc<RwLock<HashSet<PathBuf>>>,
+}
+
+impl SessionWriteLog {
+    pub(crate) fn remember(&self, request: &CapabilityRequest) {
+        let Some(path) = rememberable_workspace_write(request) else {
+            return;
+        };
+        self.paths
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(path);
+    }
+
+    fn contains(&self, path: &Path) -> bool {
+        self.paths
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains(path)
+    }
+}
+
+impl fmt::Debug for SessionWriteLog {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let len = self
+            .paths
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .len();
+        formatter
+            .debug_struct("SessionWriteLog")
+            .field("path_count", &len)
+            .finish()
     }
 }
 
 /// Policy that enforces a single [`PermissionMode`].
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct ModePolicy {
     mode: PermissionMode,
+    session_writes: SessionWriteLog,
+}
+
+impl ModePolicy {
+    #[cfg(test)]
+    /// Records a write that already passed classifier or human approval.
+    pub(crate) fn remember_approved_write(&self, request: &CapabilityRequest) {
+        self.session_writes.remember(request);
+    }
 }
 
 impl WorkspacePolicy for ModePolicy {
     fn evaluate(&self, request: &CapabilityRequest) -> PolicyDecision {
-        if self.mode.allows_tracked_workspace_edits() && is_tracked_workspace_write(request) {
+        if self.mode.allows_tracked_workspace_edits()
+            && is_free_workspace_write(request, &self.session_writes)
+        {
             return PolicyDecision::Allow;
         }
         self.mode.decision_for(request.kind())
     }
 }
 
-fn is_tracked_workspace_write(request: &CapabilityRequest) -> bool {
+/// Records allowed primary-workspace writes so later edits skip the gate.
+pub(crate) fn remember_allowed_workspace_writes(
+    inner: Arc<dyn ApprovalHandler>,
+    writes: SessionWriteLog,
+) -> Arc<dyn ApprovalHandler> {
+    Arc::new(RememberingApprovals { inner, writes })
+}
+
+struct RememberingApprovals {
+    inner: Arc<dyn ApprovalHandler>,
+    writes: SessionWriteLog,
+}
+
+impl ApprovalHandler for RememberingApprovals {
+    fn request<'a>(&'a self, request: ApprovalRequest) -> ApprovalFuture<'a> {
+        Box::pin(async move {
+            let capability = request.capability().clone();
+            let decision = self.inner.request(request).await;
+            if matches!(
+                decision,
+                ApprovalDecision::AllowOnce | ApprovalDecision::AllowForSession
+            ) {
+                self.writes.remember(&capability);
+            }
+            decision
+        })
+    }
+
+    fn reads_live_history(&self) -> bool {
+        self.inner.reads_live_history()
+    }
+}
+
+fn is_free_workspace_write(request: &CapabilityRequest, session_writes: &SessionWriteLog) -> bool {
     match request.operation() {
         CapabilityOperation::WritePath {
             path,
             scope: PathScope::PrimaryWorkspace,
-        } => path_is_git_tracked(path),
+        } => {
+            path_is_git_tracked(path)
+                || (session_writes.contains(path) && !path_is_git_ignored(path))
+        }
         _ => false,
+    }
+}
+
+fn rememberable_workspace_write(request: &CapabilityRequest) -> Option<PathBuf> {
+    match request.operation() {
+        CapabilityOperation::WritePath {
+            path,
+            scope: PathScope::PrimaryWorkspace,
+        } if !path_is_git_ignored(path) => Some(path.clone()),
+        _ => None,
     }
 }
 
@@ -179,6 +291,26 @@ fn path_is_git_tracked(path: &Path) -> bool {
     };
     Command::new("git")
         .args(["ls-files", "--error-unmatch", "-z", "--"])
+        .arg(file_name)
+        .current_dir(parent)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// `git check-ignore -q` from the file's parent. Missing git or a non-repo
+/// means the path is not ignored, so the skip stays available.
+fn path_is_git_ignored(path: &Path) -> bool {
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    let Some(file_name) = path.file_name() else {
+        return false;
+    };
+    Command::new("git")
+        .args(["check-ignore", "-q", "--"])
         .arg(file_name)
         .current_dir(parent)
         .stdin(Stdio::null())

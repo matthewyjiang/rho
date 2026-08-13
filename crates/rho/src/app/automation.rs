@@ -16,7 +16,7 @@ use {
     crate::credential_store::AppCredentialStore,
     crate::diagnostics::RuntimeDiagnostics,
     crate::herdr::{HerdrReporter, HerdrState},
-    crate::permission::PermissionMode,
+    crate::permission::{remember_allowed_workspace_writes, PermissionMode, SessionWriteLog},
     crate::permission_classifier_handler::ClassifierApprovalHandler,
     crate::subagent::{RunState, RunStatus},
     crate::tools::agent::BackgroundSubagents,
@@ -508,12 +508,14 @@ async fn run_session_with_output(
     let compaction = sdk_options.runtime.compaction.clone();
     startup.diagnostics.update_compaction_config(&compaction);
     let usage_recording = crate::usage::default_recording().await;
+    let session_writes = SessionWriteLog::default();
     let approval_session = headless_approval_session(
         startup.config,
         startup.approval_session.clone(),
         startup.approval_classifier.clone(),
         workspace_root.clone(),
         usage_recording.clone(),
+        session_writes.clone(),
     )?;
     let hooks = crate::hooks::start_for_cwd(&workspace_root);
     if let Some(hooks) = hooks.as_ref() {
@@ -525,7 +527,10 @@ async fn run_session_with_output(
                 provider,
                 tools: tool_set.tools(),
                 workspace,
-                workspace_policy: AppPolicy::for_mode(startup.config.permission_mode),
+                workspace_policy: AppPolicy::for_mode_with_writes(
+                    startup.config.permission_mode,
+                    session_writes,
+                ),
                 approval_session,
                 system_prompt,
                 reasoning: sdk_options.runtime.reasoning,
@@ -636,6 +641,7 @@ fn headless_approval_session(
     approval_classifier: Option<Arc<ClassifierApprovalHandler>>,
     workspace_root: PathBuf,
     usage_recording: rho_sdk::ProviderRequestUsageRecording,
+    session_writes: SessionWriteLog,
 ) -> anyhow::Result<Option<rho_sdk::ApprovalSession>> {
     if config.permission_mode != PermissionMode::Auto {
         return Ok(approval_session);
@@ -646,7 +652,7 @@ fn headless_approval_session(
             ClassifierApprovalHandler::shared(config.clone(), workspace_root, usage_recording, None)
         }
     };
-    let erased: Arc<dyn rho_sdk::ApprovalHandler> = handler;
+    let erased = remember_allowed_workspace_writes(handler, session_writes);
     Ok(Some(rho_sdk::ApprovalSession::from_shared(erased)))
 }
 

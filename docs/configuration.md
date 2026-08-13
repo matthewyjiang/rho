@@ -77,13 +77,13 @@ flowchart LR
 | --- | --- | --- | --- |
 | Bypass | `bypass` | yes (new installs / unset) | No policy checks. Every capability allowed. |
 | Auto | `auto` | no | Same gate as Allow edits. A configured classifier model decides allow or deny for the rest. |
-| Allow edits | `allow_edits` | no | In-workspace writes to git-tracked files are allowed. Human approval for new files, processes, and unknown capabilities. |
+| Allow edits | `allow_edits` | no | In-workspace writes to git-tracked files are allowed. Later writes to a path already allowed this session are also allowed. Human approval for other new files, processes, and unknown capabilities. |
 | Plan | `plan` | no | Investigation only. File writes and process execution are denied. |
 | Supervised | `supervised` | no | Human approval for writes, processes, and unknown capabilities. |
 
 - `bypass` is the default and preserves unrestricted tool behavior. The status line shows **Bypass** in warning style so the open posture stays visible.
 - `auto` uses the same capability gate as `allow_edits`. A permission-classifier model reviews gated requests instead of opening the approval UI. Denied calls return a tool error and the run continues. After three consecutive classifier denials, Rho escalates to the human approval prompt in the TUI or fails closed in headless runs. Auto requires a configured classifier model; choosing it from `/config` opens the model picker when none is set, starting interactive Auto without one opens the same picker, and headless `rho run` fails at startup without one. Escaping the startup picker falls back to Supervised so gated tools still ask a human.
-- `allow_edits` lets the agent edit git-tracked files in the workspace without a prompt. New files, ignored or untracked paths, writes outside the workspace, and process execution still ask first. Reads, network access, skills, and instruction discovery do not prompt. `allow-edits` is accepted as an alias.
+- `allow_edits` lets the agent edit git-tracked files in the workspace without a prompt. After a new in-workspace file is allowed once this session, later edits to that path also skip the prompt. Gitignored paths, writes outside the workspace, and process execution still ask first. Reads, network access, skills, and instruction discovery do not prompt. `allow-edits` is accepted as an alias.
 - `plan` allows investigation but denies file writes and process execution.
 - `supervised` asks for confirmation before file writes and process execution. Reads, network access, skills, and instruction discovery do not prompt.
 

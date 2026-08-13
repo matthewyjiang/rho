@@ -26,7 +26,7 @@ use crate::{
     },
     cli::WorkflowRunFormat,
     config::Config,
-    permission::PermissionMode,
+    permission::{remember_allowed_workspace_writes, PermissionMode, SessionWriteLog},
     permission_classifier_handler::ClassifierApprovalHandler,
     workflow::{ResolvedNode, StoredRun},
 };
@@ -164,6 +164,7 @@ fn workflow_approval_channel(
     permission_mode: PermissionMode,
     workspace_path: PathBuf,
     approval_mode: WorkflowApprovalMode,
+    session_writes: SessionWriteLog,
 ) -> anyhow::Result<WorkflowApprovalChannel> {
     match permission_mode {
         PermissionMode::Auto => {
@@ -178,13 +179,22 @@ fn workflow_approval_channel(
                 approval_mode.usage_recording(),
                 human,
             );
-            let handler: Arc<dyn ApprovalHandler> = classifier.clone();
+            let handler = remember_allowed_workspace_writes(classifier.clone(), session_writes);
             Ok(WorkflowApprovalChannel {
                 session: ApprovalSession::from_shared(handler),
                 classifier: Some(classifier),
             })
         }
-        PermissionMode::AllowEdits | PermissionMode::Supervised => Ok(WorkflowApprovalChannel {
+        PermissionMode::AllowEdits => Ok(WorkflowApprovalChannel {
+            session: ApprovalSession::from_shared(remember_allowed_workspace_writes(
+                Arc::new(TerminalWorkflowApprovals {
+                    interactive: approval_mode.can_prompt(),
+                }),
+                session_writes,
+            )),
+            classifier: None,
+        }),
+        PermissionMode::Supervised => Ok(WorkflowApprovalChannel {
             session: ApprovalSession::new(TerminalWorkflowApprovals {
                 interactive: approval_mode.can_prompt(),
             }),
@@ -215,7 +225,7 @@ impl CommandHostFactory for WorkflowCommandHosts {
         let mut builder = ToolHost::builder()
             .tool(tool)
             .workspace(self.workspace.clone())
-            .workspace_policy(self.policy)
+            .workspace_policy(self.policy.clone())
             .approval_session(self.approvals.clone())
             .hook_host_labels(labels);
         if let Some(hooks) = &self.hooks {
@@ -389,8 +399,14 @@ impl WorkflowRuntime {
             rho_providers::provider::CustomProviderThreadScope::enter(custom_providers.clone());
         let permission_mode = effective_permission_mode(run, config.permission_mode)?;
         config.permission_mode = permission_mode;
-        let approvals =
-            workflow_approval_channel(&config, permission_mode, cwd.clone(), approval_mode)?;
+        let session_writes = SessionWriteLog::default();
+        let approvals = workflow_approval_channel(
+            &config,
+            permission_mode,
+            cwd.clone(),
+            approval_mode,
+            session_writes.clone(),
+        )?;
         let needs_provider_credentials = run.graph.resolved_nodes.values().any(|node| {
             matches!(
                 node,
@@ -412,14 +428,15 @@ impl WorkflowRuntime {
             // Commands get an isolated streak counter so agent denials cannot
             // escalate command approvals (and vice versa).
             Some(handler) => {
-                let erased: Arc<dyn ApprovalHandler> = handler.clone();
+                let erased =
+                    remember_allowed_workspace_writes(handler.clone(), session_writes.clone());
                 ApprovalSession::from_shared(erased)
             }
             None => approvals.session.clone(),
         };
         let hosts = Arc::new(WorkflowCommandHosts {
             workspace,
-            policy: AppPolicy::for_mode(permission_mode),
+            policy: AppPolicy::for_mode_with_writes(permission_mode, session_writes),
             approvals: command_approvals,
             hooks,
         });
