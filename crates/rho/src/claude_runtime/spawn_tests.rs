@@ -375,49 +375,93 @@ fn model_is_passed_byte_for_byte_without_alias_rewrite() {
         .any(|pair| pair == ["--model", "claude-opus-4-6"]));
 }
 
-// Covers: each Rho permission mode maps to a Claude CLI mode and flag value,
-// except Supervised which is refused instead of picking a looser Claude mode.
+// Covers: Auto / Allow edits reach dontAsk only when specifiers and inherited
+// Claude settings cannot widen past the bound tool set.
 // Owner: Claude spawn argv mapping
 #[test]
 fn rho_permission_modes_map_to_claude_cli_modes() {
     use crate::permission::PermissionMode;
 
-    for (mode, expected, cli_flag) in [
-        (PermissionMode::Plan, ClaudePermissionMode::Plan, "plan"),
+    let bare = ["Read".to_string(), "Glob".to_string()];
+    let narrowed = ["Read".to_string(), "Bash(git status:*)".to_string()];
+
+    for (mode, tools, inherit, expected) in [
+        (
+            PermissionMode::Plan,
+            bare.as_slice(),
+            false,
+            Ok(ClaudePermissionMode::Plan),
+        ),
         (
             PermissionMode::Bypass,
-            ClaudePermissionMode::BypassPermissions,
-            "bypassPermissions",
+            narrowed.as_slice(),
+            true,
+            Ok(ClaudePermissionMode::BypassPermissions),
         ),
         (
             PermissionMode::Auto,
-            ClaudePermissionMode::DontAsk,
-            "dontAsk",
+            bare.as_slice(),
+            false,
+            Ok(ClaudePermissionMode::DontAsk),
         ),
         (
             PermissionMode::AllowEdits,
-            ClaudePermissionMode::DontAsk,
-            "dontAsk",
+            bare.as_slice(),
+            false,
+            Ok(ClaudePermissionMode::DontAsk),
+        ),
+        (
+            PermissionMode::Auto,
+            &[][..],
+            false,
+            Ok(ClaudePermissionMode::DontAsk),
+        ),
+        (
+            PermissionMode::Auto,
+            narrowed.as_slice(),
+            false,
+            Err(ClaudeSpawnError::DontAskUnbound),
+        ),
+        (
+            PermissionMode::AllowEdits,
+            bare.as_slice(),
+            true,
+            Err(ClaudeSpawnError::DontAskUnbound),
+        ),
+        (
+            PermissionMode::Supervised,
+            bare.as_slice(),
+            false,
+            Err(ClaudeSpawnError::SupervisedUnsupported),
         ),
     ] {
-        assert_eq!(map_permission_mode(mode), Ok(expected));
-        assert_eq!(expected.as_cli_flag(), cli_flag);
+        assert_eq!(map_permission_mode(mode, tools, inherit), expected);
+        if let Ok(mapped) = expected {
+            assert_eq!(
+                mapped.as_cli_flag(),
+                match mapped {
+                    ClaudePermissionMode::Plan => "plan",
+                    ClaudePermissionMode::BypassPermissions => "bypassPermissions",
+                    ClaudePermissionMode::DontAsk => "dontAsk",
+                }
+            );
+        }
     }
-    assert_eq!(
-        map_permission_mode(PermissionMode::Supervised),
-        Err(ClaudeSpawnError::SupervisedUnsupported)
-    );
 }
 
-// Covers: Auto spawn keeps dontAsk plus the declared tools/allowedTools
-// boundary instead of bypassing the permission layer.
+// Covers: a bound Auto spawn uses dontAsk, empty setting sources, and does
+// not expose a Bash base tool that Claude would read-only-approve.
 // Owner: Claude spawn argv mapping
 #[test]
 fn auto_spawn_plan_uses_dont_ask_with_declared_tool_boundary() {
-    let mode = map_permission_mode(crate::permission::PermissionMode::Auto)
-        .expect("Auto maps to Claude dontAsk");
+    let mode = map_permission_mode(
+        crate::permission::PermissionMode::Auto,
+        &["Read".into(), "Glob".into()],
+        false,
+    )
+    .expect("bound Auto maps to Claude dontAsk");
     let plan = build_spawn_plan(&request(
-        vec!["Read", "Bash(git status:*)"],
+        vec!["Read", "Glob"],
         false,
         None,
         mode,
@@ -431,10 +475,14 @@ fn auto_spawn_plan_uses_dont_ask_with_declared_tool_boundary() {
     assert!(plan
         .args
         .windows(2)
-        .any(|pair| pair == ["--tools", "Read,Bash"]));
+        .any(|pair| pair == ["--setting-sources", ""]));
+    assert!(plan
+        .args
+        .windows(2)
+        .any(|pair| pair == ["--tools", "Read,Glob"]));
     assert_eq!(
         flag_values(&plan.args, "--allowedTools"),
-        vec!["Read".to_string(), "Bash(git status:*)".to_string()]
+        vec!["Read".to_string(), "Glob".to_string()]
     );
 }
 

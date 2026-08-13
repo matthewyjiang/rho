@@ -44,6 +44,13 @@ fn one_shot_spawn_plan_uses_claude_dont_ask() {
     );
     assert!(
         plan.args
+            .windows(2)
+            .any(|pair| pair == ["--setting-sources", ""]),
+        "one-shot dontAsk must not load Claude setting sources: {:?}",
+        plan.args
+    );
+    assert!(
+        plan.args
             .iter()
             .any(|arg| arg == "--no-session-persistence"),
         "one-shot argv must discard the session: {:?}",

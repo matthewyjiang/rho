@@ -29,10 +29,12 @@ pub(crate) const CANCELLATION_ERROR: &str = "claude code: cancelled";
 /// Claude CLI permission mode for no-tools one-shots (advisor).
 ///
 /// One-shots set Claude `dontAsk` directly so they stay independent of host
-/// permission mode. Delegated Auto and Allow edits also map to `dontAsk`, but
-/// they go through [`super::spawn::map_permission_mode`]. [`ClaudePermissionMode::Plan`]
-/// injects AskUserQuestion / ExitPlanMode text and poisons advisor prose even
-/// when tools is empty.
+/// permission mode. They expose no tools, so Claude's extra dontAsk approvals
+/// (read-only Bash, PreToolUse hooks) have nothing to run. Delegated Auto and
+/// Allow edits map to `dontAsk` only when
+/// [`super::spawn::map_permission_mode`] can keep the child on the bound set.
+/// [`ClaudePermissionMode::Plan`] injects AskUserQuestion / ExitPlanMode text
+/// and poisons advisor prose even when tools is empty.
 pub(crate) const ONE_SHOT_PERMISSION_MODE: ClaudePermissionMode = ClaudePermissionMode::DontAsk;
 
 /// A single Claude question with no tools and no follow-up turn.
