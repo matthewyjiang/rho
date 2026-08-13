@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.1.1...rho-providers-v1.2.0) (2026-08-13)
+
+
+### Features
+
+* **permission:** screen Auto requests with a two-stage classifier ([#893](https://github.com/matthewyjiang/rho/issues/893)) ([4149f11](https://github.com/matthewyjiang/rho/commit/4149f1157aa2c8ee10561a21a919a0e530b8f3cc))
+* **providers:** let config name openai-compatible hosts ([#888](https://github.com/matthewyjiang/rho/issues/888)) ([a87649a](https://github.com/matthewyjiang/rho/commit/a87649a9e76332f53f125c52e7eccd8a14bc14f1))
+
+
+### Bug Fixes
+
+* **providers:** stop inflated and deflated TPS for reasoning models ([#890](https://github.com/matthewyjiang/rho/issues/890)) ([a2c673d](https://github.com/matthewyjiang/rho/commit/a2c673dc48743e77689a67e4852fb6d3d094bc47))
+
 ## [1.1.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.1.0...rho-providers-v1.1.1) (2026-08-12)
 
 
