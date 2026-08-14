@@ -20,7 +20,7 @@ use crate::tool::*;
 pub(crate) use execute::{apply_prepared_sections, claim_unique_path, PreparedSection};
 pub(crate) use format::{
     compute_file_hash, format_chain_snapshot, format_hashline_view, format_header,
-    split_content_lines,
+    iter_content_lines,
 };
 pub(crate) use parser::parse_hashline;
 pub use proposed::{
