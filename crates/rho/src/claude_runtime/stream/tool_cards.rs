@@ -15,7 +15,7 @@ use rho_tools::{
     },
 };
 
-use super::format::{truncate_payload_lines, MAX_TOOL_DISPLAY_LINES};
+use super::format::{truncate_payload_lines, MAX_TOOL_BODY_LINES};
 use super::types::MAX_TOOL_PAYLOAD_CHARS;
 
 /// A Claude `tool_use` remembered until its `tool_result` arrives.
@@ -186,7 +186,7 @@ fn populate_finished(
                 if !files.is_empty() {
                     card.body = ToolBody::Lines(truncate_payload_lines(
                         &files.join("\n"),
-                        MAX_TOOL_DISPLAY_LINES,
+                        MAX_TOOL_BODY_LINES,
                     ));
                 }
             } else {
@@ -475,7 +475,7 @@ fn set_lines_body(card: &mut ToolCard, content_text: &str) {
     if content_text.trim().is_empty() {
         return;
     }
-    card.body = ToolBody::Lines(truncate_payload_lines(content_text, MAX_TOOL_DISPLAY_LINES));
+    card.body = ToolBody::Lines(truncate_payload_lines(content_text, MAX_TOOL_BODY_LINES));
 }
 
 fn push_error_output(card: &mut ToolCard, content: &str) {
@@ -483,7 +483,7 @@ fn push_error_output(card: &mut ToolCard, content: &str) {
     if trimmed.is_empty() {
         return;
     }
-    let lines = truncate_payload_lines(trimmed, MAX_TOOL_DISPLAY_LINES);
+    let lines = truncate_payload_lines(trimmed, MAX_TOOL_BODY_LINES);
     let Some(first) = lines.first() else {
         return;
     };

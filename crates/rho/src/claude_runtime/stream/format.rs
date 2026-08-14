@@ -12,8 +12,12 @@ use rho_sdk::{
 
 use super::types::{MAX_RESULT_CHARS, MAX_TEXT_DELTA_CHARS, MAX_TOOL_PAYLOAD_CHARS};
 
-/// Maximum display lines kept for a tool payload after truncation.
-pub(super) const MAX_TOOL_DISPLAY_LINES: usize = 12;
+/// Maximum body lines kept on a finished tool card after truncation.
+///
+/// Collapsed paint uses `max_tool_output_lines` (default 10). This cap is
+/// larger so expand can reveal more than a couple of extra rows. The 16 KiB
+/// payload bound still limits journal size.
+pub(super) const MAX_TOOL_BODY_LINES: usize = 50;
 
 /// Bytes retained on [`crate::subagent::RunStatus::last_text`].
 pub(super) const LAST_TEXT_BYTES: usize = 400;
