@@ -3,7 +3,9 @@ use std::path::Path;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
-use rho_tools::tool_card::{ToolBody, ToolFact, ToolFamily, ToolHeader, ToolStatus};
+use rho_tools::tool_card::{
+    DiffRow, DiffRowKind, ToolBody, ToolFact, ToolFamily, ToolHeader, ToolStatus,
+};
 
 use super::{finished_card, started_card, StartedClaudeTool, MAX_TOOL_PAYLOAD_CHARS};
 
@@ -153,7 +155,13 @@ fn finished_cards_use_structured_results() {
             ..
         })
     ));
-    assert!(edit.body.is_diff());
+    assert_eq!(
+        edit.body,
+        ToolBody::Diff(vec![
+            DiffRow::new(DiffRowKind::Removed, Some(1), "old"),
+            DiffRow::new(DiffRowKind::Added, Some(1), "new"),
+        ])
+    );
 }
 
 // Covers: failed results keep the Claude name and surface an error fact
@@ -236,7 +244,8 @@ fn finished_bash_body_keeps_depth_past_collapsed_budget() {
     }
 }
 
-// Covers: empty `{}` start input is treated as missing, not stored
+// Covers: empty `{}` start input is treated as missing; later snapshots
+// fill only when still empty; json fragments assemble into input
 // Owner: claude stream tool card mapper
 #[test]
 fn apply_input_upgrades_empty_start() {
@@ -244,7 +253,21 @@ fn apply_input_upgrades_empty_start() {
     assert_eq!(started.input, None);
     assert!(started.apply_input(Some(&json!({"file_path": "a.rs"}))));
     assert_eq!(started.input, Some(json!({"file_path": "a.rs"})));
-    assert!(!started.apply_input(Some(&json!({"file_path": "a.rs"}))));
+    assert!(!started.apply_input(Some(&json!({"file_path": "b.rs"}))));
+    assert_eq!(started.input, Some(json!({"file_path": "a.rs"})));
+}
+
+// Covers: input_json_delta fragments become parsed input once complete
+// Owner: claude stream tool card mapper
+#[test]
+fn push_input_json_assembles_fragments() {
+    let mut started = StartedClaudeTool::from_name_input(Some("Read"), Some(&json!({})));
+    assert!(!started.push_input_json("{\"file_path\":"));
+    assert_eq!(started.input, None);
+    assert!(started.push_input_json("\"note.txt\"}"));
+    assert_eq!(started.input, Some(json!({"file_path": "note.txt"})));
+    assert!(!started.apply_input(Some(&json!({"file_path": "other.txt"}))));
+    assert_eq!(started.input, Some(json!({"file_path": "note.txt"})));
 }
 
 // Covers: oversized Write content must not drop file_path from the card

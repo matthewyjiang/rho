@@ -9,8 +9,8 @@ use crate::run_artifacts::AttachmentEvent;
 
 use super::presentation::{
     content_block_kind, fidelity_notice, mark_and_reasoning, mark_and_text, mark_complete_index,
-    mark_slot_emitted, push_block_slot, reasoning_effects, text_effects, tool_started_effects,
-    tool_updated_effects, ContentBlockKind,
+    mark_slot_emitted, push_block_slot, reasoning_effects, reconcile_complete_block,
+    set_slot_tool_id, text_effects, tool_started_effects, tool_updated_effects, ContentBlockKind,
 };
 use super::tool_cards::StartedClaudeTool;
 use super::types::StreamEffect;
@@ -53,7 +53,15 @@ pub(super) fn emit_open_snapshot_block(
                     "claude stream: dropped snapshot tool block; tracked block cap reached",
                 );
             }
-            start_tool_effects(active_tools, max_active_tools, &tool_id, block, cwd)
+            start_tool_effects(
+                state,
+                ordinal,
+                active_tools,
+                max_active_tools,
+                &tool_id,
+                block,
+                cwd,
+            )
         }
         ContentBlockKind::Text => emit_open_snapshot_text_like(
             state,
@@ -169,8 +177,11 @@ pub(super) fn emit_complete_block(
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string();
-            if !tool_id.is_empty() && active_tools.contains_key(&tool_id) {
-                // Started via partials; still mark this complete index seen.
+            let already_started = !tool_id.is_empty() && active_tools.contains_key(&tool_id);
+            let already_emitted = reconcile_complete_block(state, ContentBlockKind::Tool, index);
+            if already_started || already_emitted {
+                // Started via partials or already presented; still mark this
+                // complete index seen. Never restart a finished or evicted id.
                 let _ = mark_complete_index(state, index, ContentBlockKind::Tool);
                 return refresh_started_tool(active_tools, &tool_id, block, cwd);
             }
@@ -179,7 +190,24 @@ pub(super) fn emit_complete_block(
                     "claude stream: dropped complete tool block; tracked block cap reached",
                 );
             }
-            start_tool_effects(active_tools, max_active_tools, &tool_id, block, cwd)
+            let Some(ordinal) = state
+                .block_slots
+                .iter()
+                .position(|slot| slot.index == Some(index))
+            else {
+                return fidelity_notice(
+                    "claude stream: dropped complete tool block; tracked block cap reached",
+                );
+            };
+            start_tool_effects(
+                state,
+                ordinal,
+                active_tools,
+                max_active_tools,
+                &tool_id,
+                block,
+                cwd,
+            )
         }
         ContentBlockKind::Other => {
             let other = block.get("type").and_then(Value::as_str).unwrap_or("");
@@ -218,12 +246,15 @@ pub(super) fn note_tool_started(
 }
 
 fn start_tool_effects(
+    state: &mut MessageStreamState,
+    ordinal: usize,
     active_tools: &mut HashMap<String, StartedClaudeTool>,
     max_active_tools: usize,
     tool_id: &str,
     block: &Value,
     cwd: Option<&Path>,
 ) -> Vec<StreamEffect> {
+    set_slot_tool_id(state, ordinal, tool_id);
     let tool = StartedClaudeTool::from_block(block);
     let mut effects = Vec::new();
     if let Some(notice) = note_tool_started(active_tools, max_active_tools, tool_id, tool.clone()) {

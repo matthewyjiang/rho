@@ -39,9 +39,7 @@ use rho_sdk::model::ModelUsage;
 
 use crate::{run_artifacts::AttachmentEvent, subagent::RunState};
 
-use blocks::{
-    emit_complete_block, emit_open_snapshot_block, note_tool_started, refresh_started_tool,
-};
+use blocks::{emit_complete_block, emit_open_snapshot_block, note_tool_started};
 use events::{decode_stream_event, ContentBlockStart, ContentDelta, StreamEventPayload};
 use format::{
     bound_result_text, context_usage_from_result, format_permission_denial, raw_usage_to_model,
@@ -51,9 +49,9 @@ pub(crate) use presentation::apply_status_patch;
 use presentation::{
     clear_all_open_indexless, content_block_kind, fidelity_notice, map_error_message,
     map_rate_limit, map_system, mark_and_text, mark_slot_emitted, push_block_slot,
-    reasoning_effects, reconcile_complete_block, resolve_partial_slot, stable_message_id,
-    text_effects, tool_finished_effects, tool_started_effects, tool_updated_effects,
-    ContentBlockKind,
+    reasoning_effects, reconcile_complete_block, resolve_partial_slot, set_slot_tool_id,
+    stable_message_id, text_effects, tool_finished_effects, tool_id_for_slot, tool_started_effects,
+    tool_updated_effects, ContentBlockKind,
 };
 use protocol::{
     decode_line, AssistantMessage, ClaudeStreamMessage, ResultMessage, StreamEventMessage,
@@ -258,16 +256,11 @@ impl StreamMapper {
                 for (index, block) in blocks.iter().enumerate() {
                     let kind =
                         content_block_kind(block.get("type").and_then(Value::as_str).unwrap_or(""));
-                    if reconcile_complete_block(&mut state, kind, index) {
-                        if kind == ContentBlockKind::Tool {
-                            let tool_id = block.get("id").and_then(Value::as_str).unwrap_or("");
-                            effects.extend(refresh_started_tool(
-                                &mut self.active_tools,
-                                tool_id,
-                                block,
-                                self.cwd.as_deref(),
-                            ));
-                        }
+                    // Tools always go through emit so already-started cards can
+                    // pick up a later complete input. Text/reasoning skip.
+                    if kind != ContentBlockKind::Tool
+                        && reconcile_complete_block(&mut state, kind, index)
+                    {
                         continue;
                     }
                     effects.extend(emit_complete_block(
@@ -576,7 +569,10 @@ impl StreamMapper {
                 match self.claim_partial_slot(&message_key, index, kind, "partial tool start") {
                     // Already started: the slot claim above keeps ordering, but
                     // the tool must not be announced twice.
-                    Ok(()) if already_started => {
+                    Ok(ordinal) if already_started => {
+                        if let Some(state) = self.messages.get_mut(&message_key) {
+                            set_slot_tool_id(state, ordinal, &tool_id);
+                        }
                         if let Some(tool) = self.active_tools.get_mut(&tool_id) {
                             if tool.apply_input(input.as_ref()) {
                                 let tool = tool.clone();
@@ -589,9 +585,12 @@ impl StreamMapper {
                         }
                         effects
                     }
-                    Ok(()) => {
+                    Ok(ordinal) => {
                         let tool =
                             StartedClaudeTool::from_name_input(name.as_deref(), input.as_ref());
+                        if let Some(state) = self.messages.get_mut(&message_key) {
+                            set_slot_tool_id(state, ordinal, &tool_id);
+                        }
                         if let Some(notice) = note_tool_started(
                             &mut self.active_tools,
                             MAX_ACTIVE_TOOLS,
@@ -649,7 +648,7 @@ impl StreamMapper {
         index: Option<usize>,
         kind: ContentBlockKind,
         what: &str,
-    ) -> Result<(), Vec<StreamEffect>> {
+    ) -> Result<usize, Vec<StreamEffect>> {
         let Some(state) = self.messages.get_mut(key) else {
             return Err(Vec::new());
         };
@@ -664,7 +663,7 @@ impl StreamMapper {
         if !mark_slot_emitted(state, ordinal, index) {
             return dropped();
         }
-        Ok(())
+        Ok(ordinal)
     }
 
     /// Claim a slot and present `text` through `present`.
@@ -683,9 +682,34 @@ impl StreamMapper {
             return Vec::new();
         }
         match self.claim_partial_slot(key, index, kind, what) {
-            Ok(()) => present(text),
+            Ok(_) => present(text),
             Err(notices) => notices,
         }
+    }
+
+    fn apply_input_json_delta(
+        &mut self,
+        key: &MessageKey,
+        index: Option<usize>,
+        partial_json: &str,
+    ) -> Vec<StreamEffect> {
+        if partial_json.is_empty() {
+            return Vec::new();
+        }
+        let Some(state) = self.messages.get(key) else {
+            return Vec::new();
+        };
+        let Some(tool_id) = tool_id_for_slot(state, index) else {
+            return Vec::new();
+        };
+        let Some(tool) = self.active_tools.get_mut(&tool_id) else {
+            return Vec::new();
+        };
+        if !tool.push_input_json(partial_json) {
+            return Vec::new();
+        }
+        let tool = tool.clone();
+        tool_updated_effects(&tool_id, &tool, self.cwd.as_deref())
     }
 
     fn map_content_block_delta(
@@ -728,7 +752,11 @@ impl StreamMapper {
                 ));
                 effects
             }
-            ContentDelta::InputJson { .. } | ContentDelta::Signature => effects,
+            ContentDelta::InputJson { partial_json } => {
+                effects.extend(self.apply_input_json_delta(&message_key, index, &partial_json));
+                effects
+            }
+            ContentDelta::Signature => effects,
             ContentDelta::Other { type_name } if !type_name.is_empty() => {
                 effects.push(StreamEffect::Attachment(AttachmentEvent::Notice(format!(
                     "claude stream: ignored delta `{type_name}`"

@@ -76,9 +76,8 @@ pub(super) enum ContentDelta {
     Thinking {
         text: String,
     },
-    /// Tool-input JSON fragments; presentation does not surface them.
+    /// Tool-input JSON fragments; assembled onto the started tool.
     InputJson {
-        #[allow(dead_code)]
         partial_json: String,
     },
     /// Signature fragments; presentation ignores them.

@@ -11,25 +11,89 @@ use serde_json::Value;
 use rho_tools::{
     tool::compact_display_path,
     tool_card::{
-        compact_diff_rows, ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus,
+        DiffRow, DiffRowKind, ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus,
     },
 };
 
 use super::format::{truncate_payload_lines, MAX_TOOL_BODY_LINES};
 use super::types::MAX_TOOL_PAYLOAD_CHARS;
 
+/// Claude tool identity parsed once from the wire name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClaudeTool {
+    Bash,
+    Read,
+    Write,
+    Edit,
+    NotebookEdit,
+    Glob,
+    Grep,
+    Ls,
+    WebSearch,
+    WebFetch,
+    Skill,
+    Task,
+    TodoWrite,
+    AskUserQuestion,
+    ExitPlanMode,
+    EnterPlanMode,
+    Other,
+}
+
+impl ClaudeTool {
+    fn from_name(name: &str) -> Self {
+        match name {
+            "Bash" => Self::Bash,
+            "Read" => Self::Read,
+            "Write" => Self::Write,
+            "Edit" => Self::Edit,
+            "NotebookEdit" => Self::NotebookEdit,
+            "Glob" => Self::Glob,
+            "Grep" => Self::Grep,
+            "LS" => Self::Ls,
+            "WebSearch" => Self::WebSearch,
+            "WebFetch" => Self::WebFetch,
+            "Skill" => Self::Skill,
+            "Task" => Self::Task,
+            "TodoWrite" => Self::TodoWrite,
+            "AskUserQuestion" => Self::AskUserQuestion,
+            "ExitPlanMode" => Self::ExitPlanMode,
+            "EnterPlanMode" => Self::EnterPlanMode,
+            _ => Self::Other,
+        }
+    }
+
+    fn family(self) -> ToolFamily {
+        match self {
+            Self::Bash | Self::Read | Self::Glob | Self::Grep | Self::Ls => ToolFamily::FileCommand,
+            Self::Edit | Self::Write | Self::NotebookEdit => ToolFamily::FileDiff,
+            Self::WebSearch | Self::WebFetch => ToolFamily::Web,
+            Self::Skill => ToolFamily::Skill,
+            Self::Task => ToolFamily::Agent,
+            Self::AskUserQuestion | Self::ExitPlanMode | Self::EnterPlanMode => ToolFamily::Form,
+            Self::TodoWrite | Self::Other => ToolFamily::Default,
+        }
+    }
+}
+
 /// A Claude `tool_use` remembered until its `tool_result` arrives.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct StartedClaudeTool {
-    pub(super) name: String,
+    kind: ClaudeTool,
+    name: String,
     pub(super) input: Option<Value>,
+    /// Concatenated `input_json_delta` fragments for this tool.
+    input_json: String,
 }
 
 impl StartedClaudeTool {
     pub(super) fn from_name_input(name: Option<&str>, input: Option<&Value>) -> Self {
+        let name = clean_name(name);
         Self {
-            name: clean_name(name),
+            kind: ClaudeTool::from_name(&name),
+            name,
             input: bounded_input(input),
+            input_json: String::new(),
         }
     }
 
@@ -41,10 +105,36 @@ impl StartedClaudeTool {
         Self::from_name_input(name, block.get("input"))
     }
 
-    /// Replace empty/`{}` input with a later complete payload. Returns true
-    /// when the stored input changed.
+    pub(super) fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Fill input only when it is still missing. Later snapshots must not
+    /// clobber a payload assembled from `input_json_delta`.
     pub(super) fn apply_input(&mut self, input: Option<&Value>) -> bool {
+        if self.input.is_some() {
+            return false;
+        }
         let Some(input) = bounded_input(input) else {
+            return false;
+        };
+        self.input = Some(input);
+        true
+    }
+
+    /// Append a JSON fragment. Returns true when parsed input changed.
+    pub(super) fn push_input_json(&mut self, fragment: &str) -> bool {
+        if fragment.is_empty() {
+            return false;
+        }
+        if self.input_json.len().saturating_add(fragment.len()) > MAX_TOOL_PAYLOAD_CHARS {
+            return false;
+        }
+        self.input_json.push_str(fragment);
+        let Ok(value) = serde_json::from_str::<Value>(&self.input_json) else {
+            return false;
+        };
+        let Some(input) = bounded_input(Some(&value)) else {
             return false;
         };
         if self.input.as_ref() == Some(&input) {
@@ -52,6 +142,111 @@ impl StartedClaudeTool {
         }
         self.input = Some(input);
         true
+    }
+
+    fn header(&self, cwd: Option<&Path>) -> ToolHeader {
+        match self.kind {
+            ClaudeTool::Bash => {
+                ToolHeader::shell("$", string_field(self.input.as_ref(), &["command", "cmd"]))
+            }
+            ClaudeTool::Task => {
+                let identity = string_field(self.input.as_ref(), &["subagent_type", "agent"])
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_else(|| "Task".into());
+                let detail = string_field(self.input.as_ref(), &["description", "prompt"])
+                    .unwrap_or_default();
+                ToolHeader::status_first(identity, detail)
+            }
+            _ => ToolHeader::call(self.name(), self.primary(cwd)),
+        }
+    }
+
+    fn primary(&self, cwd: Option<&Path>) -> Option<String> {
+        let input = self.input.as_ref();
+        let primary = match self.kind {
+            ClaudeTool::Read | ClaudeTool::Write | ClaudeTool::Edit => {
+                display_path_field(input, &["file_path", "path"], cwd)
+            }
+            ClaudeTool::NotebookEdit => {
+                display_path_field(input, &["notebook_path", "file_path"], cwd)
+            }
+            ClaudeTool::Ls => display_path_field(input, &["path"], cwd),
+            ClaudeTool::Glob => string_field(input, &["pattern"]),
+            ClaudeTool::Grep => grep_primary(input, cwd),
+            ClaudeTool::WebSearch => {
+                string_field(input, &["query"]).map(|query| quoted(&query, 80))
+            }
+            ClaudeTool::WebFetch => string_field(input, &["url"]).map(|url| truncate(&url, 80)),
+            ClaudeTool::Skill => string_field(input, &["skill", "command", "name"]),
+            _ => None,
+        };
+        primary.filter(|value| !value.is_empty())
+    }
+
+    fn populate_running(&self, card: &mut ToolCard) {
+        match self.kind {
+            ClaudeTool::Bash => push_bash_meta(card, self.input.as_ref()),
+            ClaudeTool::TodoWrite => push_todo_facts(card, self.input.as_ref()),
+            ClaudeTool::Read | ClaudeTool::Write | ClaudeTool::Edit => {
+                if let Some(range) = read_range_fact(self.input.as_ref()) {
+                    card.push_fact(range);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn populate_finished(
+        &self,
+        card: &mut ToolCard,
+        content_text: &str,
+        tool_use_result: Option<&Value>,
+    ) {
+        let input = self.input.as_ref();
+        match self.kind {
+            ClaudeTool::Bash => {
+                push_bash_meta(card, input);
+                set_lines_body(card, content_text);
+            }
+            ClaudeTool::Read => {
+                if let Some(range) = read_range_fact(input) {
+                    card.push_fact(range);
+                }
+                let lines =
+                    file_line_count(tool_use_result).or_else(|| count_nonempty_lines(content_text));
+                if let Some(value) = lines {
+                    card.push_fact(count_fact("line", "lines", value, None));
+                }
+            }
+            ClaudeTool::Glob => {
+                let files = filenames_from_result(tool_use_result);
+                let value = u64_field(tool_use_result, &["numFiles", "num_files"])
+                    .or_else(|| files.as_ref().map(|names| names.len() as u64))
+                    .or_else(|| count_nonempty_lines(content_text));
+                if let Some(value) = value {
+                    card.push_fact(count_fact("file", "files", value, None));
+                }
+                if let Some(files) = files.filter(|names| !names.is_empty()) {
+                    set_lines_body(card, &files.join("\n"));
+                } else {
+                    set_lines_body(card, content_text);
+                }
+            }
+            ClaudeTool::Grep => push_grep_result(card, input, content_text, tool_use_result),
+            ClaudeTool::Edit | ClaudeTool::Write | ClaudeTool::NotebookEdit => {
+                push_diff_result(card, self.kind, input, content_text, tool_use_result);
+            }
+            ClaudeTool::WebSearch | ClaudeTool::WebFetch => {
+                if let Some(value) = u64_field(tool_use_result, &["resultCount", "numResults"])
+                    .or_else(|| count_nonempty_lines(content_text))
+                {
+                    card.push_fact(count_fact("result", "results", value, None));
+                }
+                set_lines_body(card, content_text);
+            }
+            ClaudeTool::TodoWrite => push_todo_facts(card, input),
+            _ => set_lines_body(card, content_text),
+        }
     }
 }
 
@@ -66,13 +261,15 @@ pub(super) fn finished_card(
     tool_use_result: Option<&Value>,
     cwd: Option<&Path>,
 ) -> ToolCard {
-    let fallback = StartedClaudeTool {
-        name: "tool".into(),
-        input: None,
-    };
+    let fallback = StartedClaudeTool::from_name_input(None, None);
     let tool = tool.unwrap_or(&fallback);
-    let status = ToolStatus::from_finished(ok);
-    build_card(tool, status, content_text, tool_use_result, cwd)
+    build_card(
+        tool,
+        ToolStatus::from_finished(ok),
+        content_text,
+        tool_use_result,
+        cwd,
+    )
 }
 
 fn build_card(
@@ -82,135 +279,15 @@ fn build_card(
     tool_use_result: Option<&Value>,
     cwd: Option<&Path>,
 ) -> ToolCard {
-    let input = tool.input.as_ref();
-    let mut card = ToolCard::new(status, family_for(&tool.name), header_for(tool, cwd));
-    if status == ToolStatus::Error {
-        push_error_output(&mut card, content_text);
-        return card;
+    let mut card = ToolCard::new(status, tool.kind.family(), tool.header(cwd));
+    match status {
+        ToolStatus::Error => push_error_output(&mut card, content_text),
+        ToolStatus::Running => tool.populate_running(&mut card),
+        ToolStatus::Ok | ToolStatus::Interrupted => {
+            tool.populate_finished(&mut card, content_text, tool_use_result);
+        }
     }
-    if status == ToolStatus::Running {
-        populate_running(&mut card, tool);
-        return card;
-    }
-    populate_finished(&mut card, tool, input, content_text, tool_use_result, cwd);
     card
-}
-
-fn family_for(name: &str) -> ToolFamily {
-    match name {
-        "Bash" | "Read" | "Glob" | "Grep" | "LS" => ToolFamily::FileCommand,
-        "Edit" | "Write" | "NotebookEdit" => ToolFamily::FileDiff,
-        "WebSearch" | "WebFetch" => ToolFamily::Web,
-        "Skill" => ToolFamily::Skill,
-        "Task" => ToolFamily::Agent,
-        "AskUserQuestion" | "ExitPlanMode" | "EnterPlanMode" => ToolFamily::Form,
-        _ => ToolFamily::Default,
-    }
-}
-
-fn header_for(tool: &StartedClaudeTool, cwd: Option<&Path>) -> ToolHeader {
-    let input = tool.input.as_ref();
-    match tool.name.as_str() {
-        "Bash" => ToolHeader::shell("$", string_field(input, &["command", "cmd"])),
-        "Task" => {
-            let identity = string_field(input, &["subagent_type", "agent"])
-                .filter(|value| !value.is_empty())
-                .unwrap_or_else(|| "Task".into());
-            let detail = string_field(input, &["description", "prompt"]).unwrap_or_default();
-            ToolHeader::status_first(identity, detail)
-        }
-        _ => ToolHeader::call(&tool.name, primary_for(&tool.name, input, cwd)),
-    }
-}
-
-fn primary_for(name: &str, input: Option<&Value>, cwd: Option<&Path>) -> Option<String> {
-    let primary = match name {
-        "Read" | "Write" | "Edit" => display_path_field(input, &["file_path", "path"], cwd),
-        "NotebookEdit" => display_path_field(input, &["notebook_path", "file_path"], cwd),
-        "LS" => display_path_field(input, &["path"], cwd),
-        "Glob" => string_field(input, &["pattern"]),
-        "Grep" => grep_primary(input, cwd),
-        "WebSearch" => string_field(input, &["query"]).map(|query| quoted(&query, 80)),
-        "WebFetch" => string_field(input, &["url"]).map(|url| truncate(&url, 80)),
-        "Skill" => string_field(input, &["skill", "command", "name"]),
-        _ => None,
-    };
-    primary.filter(|value| !value.is_empty())
-}
-
-fn populate_running(card: &mut ToolCard, tool: &StartedClaudeTool) {
-    match tool.name.as_str() {
-        "Bash" => push_bash_meta(card, tool.input.as_ref()),
-        "TodoWrite" => push_todo_facts(card, tool.input.as_ref()),
-        "Read" | "Write" | "Edit" => {
-            if let Some(range) = read_range_fact(tool.input.as_ref()) {
-                card.push_fact(range);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn populate_finished(
-    card: &mut ToolCard,
-    tool: &StartedClaudeTool,
-    input: Option<&Value>,
-    content_text: &str,
-    tool_use_result: Option<&Value>,
-    cwd: Option<&Path>,
-) {
-    match tool.name.as_str() {
-        "Bash" => {
-            push_bash_meta(card, input);
-            set_lines_body(card, content_text);
-        }
-        "Read" => {
-            if let Some(range) = read_range_fact(input) {
-                card.push_fact(range);
-            }
-            let lines =
-                file_line_count(tool_use_result).or_else(|| count_nonempty_lines(content_text));
-            if let Some(value) = lines {
-                card.push_fact(count_fact("line", "lines", value, None));
-            }
-        }
-        "Glob" => {
-            let files = filenames_from_result(tool_use_result);
-            let value = u64_field(tool_use_result, &["numFiles", "num_files"])
-                .or_else(|| files.as_ref().map(|names| names.len() as u64))
-                .or_else(|| count_nonempty_lines(content_text));
-            if let Some(value) = value {
-                card.push_fact(count_fact("file", "files", value, None));
-            }
-            if let Some(files) = files {
-                if !files.is_empty() {
-                    card.body = ToolBody::Lines(truncate_payload_lines(
-                        &files.join("\n"),
-                        MAX_TOOL_BODY_LINES,
-                    ));
-                }
-            } else {
-                set_lines_body(card, content_text);
-            }
-        }
-        "Grep" => {
-            push_grep_result(card, input, content_text, tool_use_result);
-        }
-        "Edit" | "Write" | "NotebookEdit" => {
-            push_diff_result(card, tool, input, content_text, tool_use_result, cwd);
-        }
-        "WebSearch" | "WebFetch" => {
-            if let Some(value) = u64_field(tool_use_result, &["resultCount", "numResults"])
-                .or_else(|| count_nonempty_lines(content_text))
-            {
-                card.push_fact(count_fact("result", "results", value, None));
-            }
-            set_lines_body(card, content_text);
-        }
-        "TodoWrite" => push_todo_facts(card, input),
-        "Skill" | "Task" | "LS" => set_lines_body(card, content_text),
-        _ => set_lines_body(card, content_text),
-    }
 }
 
 fn push_bash_meta(card: &mut ToolCard, input: Option<&Value>) {
@@ -239,7 +316,7 @@ fn push_grep_result(
     content_text: &str,
     tool_use_result: Option<&Value>,
 ) {
-    let match_lines = u64_field(tool_use_result, &["numMatches", "matchCount", "modeCount"])
+    let match_lines = u64_field(tool_use_result, &["numMatches", "matchCount"])
         .or_else(|| count_nonempty_lines(content_text))
         .unwrap_or(0);
     let file_count = u64_field(tool_use_result, &["numFiles", "fileCount"]);
@@ -264,16 +341,12 @@ fn push_grep_result(
 
 fn push_diff_result(
     card: &mut ToolCard,
-    tool: &StartedClaudeTool,
+    kind: ClaudeTool,
     input: Option<&Value>,
     content_text: &str,
     tool_use_result: Option<&Value>,
-    cwd: Option<&Path>,
 ) {
-    let path = display_path_field(input, &["file_path", "path", "notebook_path"], cwd);
-    if let Some(rows) =
-        diff_rows_from_result(tool_use_result, input, tool.name.as_str(), path.as_deref())
-    {
+    if let Some(rows) = diff_rows_from_result(tool_use_result, input, kind) {
         let (added, removed) = diff_row_stats(&rows);
         card.push_fact(ToolFact::DiffStat {
             added,
@@ -291,24 +364,15 @@ fn push_diff_result(
 fn diff_rows_from_result(
     tool_use_result: Option<&Value>,
     input: Option<&Value>,
-    name: &str,
-    path: Option<&str>,
-) -> Option<Vec<rho_tools::tool_card::DiffRow>> {
-    if let Some(rows) = structured_patch_rows(tool_use_result, path) {
+    kind: ClaudeTool,
+) -> Option<Vec<DiffRow>> {
+    if let Some(rows) = structured_patch_rows(tool_use_result) {
         return Some(rows);
     }
-    if name != "Write" {
-        return old_new_string_rows(input);
+    if matches!(kind, ClaudeTool::Write) {
+        return write_result_rows(tool_use_result, input);
     }
-    if write_result_is_update(tool_use_result) {
-        return write_update_rows(tool_use_result, input, path);
-    }
-    if !write_result_is_create(tool_use_result) {
-        return None;
-    }
-    let content = string_field(input, &["content"])
-        .or_else(|| string_field(tool_use_result, &["content"]))?;
-    write_create_rows(&content, path.unwrap_or("file"))
+    old_new_string_rows(input)
 }
 
 fn write_result_is_create(tool_use_result: Option<&Value>) -> bool {
@@ -325,33 +389,33 @@ fn write_result_is_update(tool_use_result: Option<&Value>) -> bool {
     ) || string_field(tool_use_result, &["originalFile", "original_file"]).is_some()
 }
 
-fn write_update_rows(
+fn write_result_rows(
     tool_use_result: Option<&Value>,
     input: Option<&Value>,
-    path: Option<&str>,
-) -> Option<Vec<rho_tools::tool_card::DiffRow>> {
-    let old = string_field(tool_use_result, &["originalFile", "original_file"])?;
-    let new = string_field(tool_use_result, &["content"])
-        .or_else(|| string_field(input, &["content"]))?;
-    replace_rows(&old, &new, path.unwrap_or("file"))
-}
-
-fn write_create_rows(content: &str, path: &str) -> Option<Vec<rho_tools::tool_card::DiffRow>> {
-    let line_count = content.lines().count().max(1);
-    let mut unified = format!("--- /dev/null\n+++ b/{path}\n@@ -0,0 +1,{line_count} @@\n");
-    for line in content.lines() {
-        unified.push('+');
-        unified.push_str(line);
-        unified.push('\n');
+) -> Option<Vec<DiffRow>> {
+    if write_result_is_update(tool_use_result) {
+        return write_update_rows(tool_use_result, input);
     }
-    let rows = compact_diff_rows(&unified, /*include_file_headers*/ false);
+    if !write_result_is_create(tool_use_result) {
+        return None;
+    }
+    let content = string_field(input, &["content"])
+        .or_else(|| string_field(tool_use_result, &["content"]))?;
+    let rows = line_rows(&content, DiffRowKind::Added);
     (!rows.is_empty()).then_some(rows)
 }
 
-fn structured_patch_rows(
+fn write_update_rows(
     tool_use_result: Option<&Value>,
-    path: Option<&str>,
-) -> Option<Vec<rho_tools::tool_card::DiffRow>> {
+    input: Option<&Value>,
+) -> Option<Vec<DiffRow>> {
+    let old = string_field(tool_use_result, &["originalFile", "original_file"])?;
+    let new = string_field(tool_use_result, &["content"])
+        .or_else(|| string_field(input, &["content"]))?;
+    replace_rows(&old, &new)
+}
+
+fn structured_patch_rows(tool_use_result: Option<&Value>) -> Option<Vec<DiffRow>> {
     let patch = tool_use_result
         .and_then(|value| value.get("structuredPatch"))
         .or_else(|| tool_use_result.and_then(|value| value.get("structured_patch")))?;
@@ -359,81 +423,82 @@ fn structured_patch_rows(
     if hunks.is_empty() {
         return None;
     }
-    let path = path.unwrap_or("file");
-    let mut unified = format!("--- a/{path}\n+++ b/{path}\n");
-    for hunk in hunks {
+    let mut rows = Vec::new();
+    for (index, hunk) in hunks.iter().enumerate() {
+        if index > 0 {
+            rows.push(DiffRow::new(DiffRowKind::Skip, None, "⋯"));
+        }
         let lines = hunk.get("lines").and_then(Value::as_array)?;
-        let old_start = hunk.get("oldStart").and_then(Value::as_u64).unwrap_or(1);
-        let new_start = hunk.get("newStart").and_then(Value::as_u64).unwrap_or(1);
-        let old_lines = hunk
-            .get("oldLines")
-            .and_then(Value::as_u64)
-            .unwrap_or_else(|| count_hunk_side(lines, /*added*/ false));
-        let new_lines = hunk
-            .get("newLines")
-            .and_then(Value::as_u64)
-            .unwrap_or_else(|| count_hunk_side(lines, /*added*/ true));
-        unified.push_str(&format!(
-            "@@ -{old_start},{old_lines} +{new_start},{new_lines} @@\n"
-        ));
+        let mut old_line = u32_field(hunk, "oldStart").unwrap_or(1);
+        let mut new_line = u32_field(hunk, "newStart").unwrap_or(1);
         for line in lines {
-            if let Some(text) = line.as_str() {
-                unified.push_str(text);
-                unified.push('\n');
+            let Some(text) = line.as_str() else {
+                continue;
+            };
+            let (kind, content, line_no) = match text.as_bytes().first().copied() {
+                Some(b'+') => (DiffRowKind::Added, tail_after_marker(text), new_line),
+                Some(b'-') => (DiffRowKind::Removed, tail_after_marker(text), old_line),
+                Some(b' ') => (DiffRowKind::Context, tail_after_marker(text), new_line),
+                _ => continue,
+            };
+            match kind {
+                DiffRowKind::Added => new_line = new_line.saturating_add(1),
+                DiffRowKind::Removed => old_line = old_line.saturating_add(1),
+                DiffRowKind::Context => {
+                    old_line = old_line.saturating_add(1);
+                    new_line = new_line.saturating_add(1);
+                }
+                _ => {}
             }
+            rows.push(DiffRow::new(kind, Some(line_no), content));
         }
     }
-    let rows = compact_diff_rows(&unified, /*include_file_headers*/ false);
     (!rows.is_empty()).then_some(rows)
 }
 
-fn old_new_string_rows(input: Option<&Value>) -> Option<Vec<rho_tools::tool_card::DiffRow>> {
+fn old_new_string_rows(input: Option<&Value>) -> Option<Vec<DiffRow>> {
     let old = string_field(input, &["old_string", "oldString"])?;
     let new = string_field(input, &["new_string", "newString"])?;
-    replace_rows(&old, &new, "file")
+    replace_rows(&old, &new)
 }
 
-fn replace_rows(old: &str, new: &str, path: &str) -> Option<Vec<rho_tools::tool_card::DiffRow>> {
-    let old_count = old.lines().count().max(1);
-    let new_count = new.lines().count().max(1);
-    let mut unified = format!("--- a/{path}\n+++ b/{path}\n@@ -1,{old_count} +1,{new_count} @@\n");
-    for line in old.lines() {
-        unified.push('-');
-        unified.push_str(line);
-        unified.push('\n');
-    }
-    for line in new.lines() {
-        unified.push('+');
-        unified.push_str(line);
-        unified.push('\n');
-    }
-    let rows = compact_diff_rows(&unified, /*include_file_headers*/ false);
+fn replace_rows(old: &str, new: &str) -> Option<Vec<DiffRow>> {
+    let mut rows = line_rows(old, DiffRowKind::Removed);
+    rows.extend(line_rows(new, DiffRowKind::Added));
     (!rows.is_empty()).then_some(rows)
 }
 
-fn count_hunk_side(lines: &[Value], added: bool) -> u64 {
-    lines
-        .iter()
-        .filter_map(Value::as_str)
-        .filter(|line| {
-            let marker = line.as_bytes().first().copied();
-            match marker {
-                Some(b'+') => added,
-                Some(b'-') => !added,
-                Some(b' ') | None => true,
-                _ => false,
-            }
+fn line_rows(text: &str, kind: DiffRowKind) -> Vec<DiffRow> {
+    text.lines()
+        .enumerate()
+        .map(|(index, line)| {
+            DiffRow::new(
+                kind,
+                Some(u32::try_from(index + 1).unwrap_or(u32::MAX)),
+                line,
+            )
         })
-        .count() as u64
+        .collect()
 }
 
-fn diff_row_stats(rows: &[rho_tools::tool_card::DiffRow]) -> (u64, u64) {
+fn tail_after_marker(text: &str) -> &str {
+    text.get(1..).unwrap_or_default()
+}
+
+fn u32_field(value: &Value, key: &str) -> Option<u32> {
+    value
+        .get(key)
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+}
+
+fn diff_row_stats(rows: &[DiffRow]) -> (u64, u64) {
     let mut added = 0;
     let mut removed = 0;
     for row in rows {
         match row.kind {
-            rho_tools::tool_card::DiffRowKind::Added => added += 1,
-            rho_tools::tool_card::DiffRowKind::Removed => removed += 1,
+            DiffRowKind::Added => added += 1,
+            DiffRowKind::Removed => removed += 1,
             _ => {}
         }
     }
@@ -447,8 +512,9 @@ fn push_todo_facts(card: &mut ToolCard, input: Option<&Value>) {
     else {
         return;
     };
-    const MAX_TODOS: usize = 10;
-    for todo in todos.iter().take(MAX_TODOS) {
+    /// Visible todo rows on the card. Extra items collapse to a count.
+    const MAX_TODO_FACTS: usize = 10;
+    for todo in todos.iter().take(MAX_TODO_FACTS) {
         let text = string_field(Some(todo), &["content", "activeForm"]).unwrap_or_default();
         if text.is_empty() {
             continue;
@@ -463,9 +529,9 @@ fn push_todo_facts(card: &mut ToolCard, input: Option<&Value>) {
             text: format!("{marker} {text}"),
         });
     }
-    if todos.len() > MAX_TODOS {
+    if todos.len() > MAX_TODO_FACTS {
         card.push_fact(ToolFact::Meta {
-            text: format!("{} more", todos.len() - MAX_TODOS),
+            text: format!("{} more", todos.len() - MAX_TODO_FACTS),
         });
     }
 }

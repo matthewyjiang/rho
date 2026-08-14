@@ -491,3 +491,46 @@ fn maps_live_tool_roundtrip_capture() {
         "live capture must not spam status notices"
     );
 }
+
+// Covers: input_json_delta must enrich a running card before any complete envelope
+// Owner: claude stream mapper
+#[test]
+fn input_json_delta_updates_running_card() {
+    let lines = [
+        r#"{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_json","role":"assistant"}}}"#,
+        r#"{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_json","name":"Read","input":{}}}}"#,
+        r#"{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"file_path\":"}}}"#,
+        r#"{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"note.txt\"}"}}}"#,
+    ];
+    let mut mapper = StreamMapper::new();
+    let effects: Vec<_> = lines
+        .iter()
+        .flat_map(|line| mapper.push_line(line))
+        .collect();
+
+    assert_eq!(
+        count_attachments(&effects, |event| {
+            matches!(event, AttachmentEvent::ToolStarted { key, .. } if key.as_deref() == Some("toolu_json"))
+        }),
+        1,
+        "tool start"
+    );
+    assert_eq!(
+        count_attachments(&effects, |event| {
+            matches!(
+                event,
+                AttachmentEvent::ToolUpdated { card, .. }
+                    if card.header
+                        == rho_tools::tool_card::ToolHeader::call("Read", Some("note.txt".into()))
+            )
+        }),
+        1,
+        "json delta update"
+    );
+    assert_eq!(
+        count_attachments(&effects, |event| {
+            matches!(event, AttachmentEvent::ToolFinished { .. })
+        }),
+        0
+    );
+}
