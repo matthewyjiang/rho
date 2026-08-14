@@ -303,9 +303,19 @@ fn diff_rows_from_result(
     if write_result_is_update(tool_use_result) {
         return write_update_rows(tool_use_result, input, path);
     }
+    if !write_result_is_create(tool_use_result) {
+        return None;
+    }
     let content = string_field(input, &["content"])
         .or_else(|| string_field(tool_use_result, &["content"]))?;
     write_create_rows(&content, path.unwrap_or("file"))
+}
+
+fn write_result_is_create(tool_use_result: Option<&Value>) -> bool {
+    matches!(
+        string_field(tool_use_result, &["type"]).as_deref(),
+        Some("create")
+    )
 }
 
 fn write_result_is_update(tool_use_result: Option<&Value>) -> bool {

@@ -267,7 +267,7 @@ fn oversized_write_input_keeps_path_for_card() {
         Some(&started),
         /*ok*/ true,
         "ok",
-        None,
+        Some(&json!({"type": "create"})),
         Some(Path::new("/tmp/ws")),
     );
     assert_eq!(
@@ -308,7 +308,7 @@ fn oversized_escaped_write_input_keeps_path_and_diff() {
         Some(&started),
         /*ok*/ true,
         "ok",
-        None,
+        Some(&json!({"type": "create"})),
         Some(Path::new("/tmp/ws")),
     );
     assert_eq!(
@@ -316,6 +316,53 @@ fn oversized_escaped_write_input_keeps_path_and_diff() {
         ToolHeader::call("Write", Some("esc.rs".into()))
     );
     assert!(card.body.is_diff());
+}
+
+// Covers: unenriched Write must not be painted as a /dev/null create
+// Owner: claude stream tool card mapper
+#[test]
+fn unenriched_write_is_not_painted_as_create() {
+    let cases = [
+        (None, false),
+        (Some(json!({"type": "create", "structuredPatch": []})), true),
+    ];
+    for (result, expect_create_diff) in cases {
+        let card = finished_card(
+            Some(&tool(
+                "Write",
+                json!({"file_path": "note.txt", "content": "hello\nworld"}),
+            )),
+            /*ok*/ true,
+            "ok",
+            result.as_ref(),
+            None,
+        );
+        assert_eq!(
+            card.header,
+            ToolHeader::call("Write", Some("note.txt".into()))
+        );
+        if expect_create_diff {
+            assert!(card.body.is_diff());
+            assert!(matches!(
+                card.facts.first(),
+                Some(ToolFact::DiffStat {
+                    added,
+                    removed: 0,
+                    ..
+                }) if *added > 0
+            ));
+        } else {
+            assert!(!card.body.is_diff());
+            assert!(!matches!(
+                card.facts.first(),
+                Some(ToolFact::DiffStat {
+                    added,
+                    removed: 0,
+                    ..
+                }) if *added > 0
+            ));
+        }
+    }
 }
 
 // Covers: patchless Write update must not be painted as a new-file create
