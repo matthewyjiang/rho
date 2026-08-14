@@ -1,8 +1,9 @@
 use pretty_assertions::assert_eq;
 
 use super::{
-    bundled_current_display, latest_section, parse_request, section_for_version, ChangelogGroup,
-    ChangelogRequest, ChangelogRequestError, ChangelogSection, ChangelogSource, BUNDLED_CHANGELOG,
+    bundled_current_display, latest_section, parse_request, section_for_latest_tag,
+    section_for_version, ChangelogGroup, ChangelogRequest, ChangelogRequestError, ChangelogSection,
+    ChangelogSource, BUNDLED_CHANGELOG,
 };
 
 const SAMPLE: &str = r#"# Changelog
@@ -168,15 +169,21 @@ fn dependency_only_version_resolves_and_is_skipped_as_latest() {
             groups: vec![],
         })
     );
+    let user_facing = ChangelogSection {
+        version: "1.40.0".into(),
+        date: Some("2026-08-14".into()),
+        groups: vec![ChangelogGroup {
+            title: "Bug Fixes".into(),
+            items: vec!["compile openai-compatible hosts".into()],
+        }],
+    };
+    assert_eq!(latest_section(changelog), Some(user_facing.clone()));
     assert_eq!(
-        latest_section(changelog),
-        Some(ChangelogSection {
-            version: "1.40.0".into(),
-            date: Some("2026-08-14".into()),
-            groups: vec![ChangelogGroup {
-                title: "Bug Fixes".into(),
-                items: vec!["compile openai-compatible hosts".into()],
-            }],
-        })
+        section_for_latest_tag(changelog, "1.40.1"),
+        Some(user_facing.clone())
+    );
+    assert_eq!(
+        section_for_latest_tag(changelog, "1.40.0"),
+        Some(user_facing)
     );
 }
