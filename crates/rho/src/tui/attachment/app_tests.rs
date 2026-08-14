@@ -585,6 +585,39 @@ fn card_to_card_drag_release_does_not_toggle() {
     assert!(!transcript_tool(&app, 1).expanded);
 }
 
+// Covers: leaving a card then releasing on it again is a drag, not a click
+// Owner: attach event loop
+#[test]
+fn drag_away_and_back_does_not_toggle() {
+    let (_directory, mut app) = test_app();
+    app.apply_event(AttachmentEvent::ToolFinished {
+        key: Some("call-1".into()),
+        card: long_body_card(),
+    });
+    app.apply_event(AttachmentEvent::ToolFinished {
+        key: Some("call-2".into()),
+        card: long_body_card(),
+    });
+    sync_view(&mut app, 80, 40);
+    let first_height = match app.transcript.first() {
+        Some(entry) => HistoryItem::Transcript { index: 0, entry }
+            .paint_lines(80, app.display.max_tool_output_lines())
+            .len(),
+        None => panic!("expected first transcript tool"),
+    };
+    let second_row = 4u16.saturating_add(u16::try_from(first_height).expect("card height"));
+
+    app.handle_event(mouse(MouseEventKind::Down(MouseButton::Left), 8, 5));
+    app.handle_event(mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        8,
+        second_row,
+    ));
+    app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 8, 5));
+    assert!(!transcript_tool(&app, 0).expanded);
+    assert!(!transcript_tool(&app, 1).expanded);
+}
+
 // Covers: ctrl+o expands latest pending, then last finished card, accordion-style
 // Owner: attach event loop
 #[test]

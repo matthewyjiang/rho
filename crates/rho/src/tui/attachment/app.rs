@@ -452,6 +452,15 @@ impl AttachmentApp {
                             self.toggle_target_at_pointer(mouse.column, mouse.row)
                         };
                     }
+                    MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Moved => {
+                        if self.press_toggle_target.as_ref().is_some_and(|press| {
+                            self.toggle_target_at_pointer(mouse.column, mouse.row)
+                                .as_ref()
+                                != Some(press)
+                        }) {
+                            self.press_toggle_target = None;
+                        }
+                    }
                     MouseEventKind::Up(MouseButton::Left) => {
                         let press = self.press_toggle_target.take();
                         let release = self.toggle_target_at_pointer(mouse.column, mouse.row);
