@@ -615,7 +615,7 @@ fn bound_oversized_object(value: &Value) -> Option<Value> {
             kept.insert(key, field);
         }
     }
-    (!kept.is_empty()).then(|| Value::Object(kept))
+    (!kept.is_empty()).then_some(Value::Object(kept))
 }
 
 /// Longest prefix of `text` whose JSON object still fits the payload budget.
@@ -633,7 +633,7 @@ fn largest_fitting_string(
     let mut hi = chars.len();
     let mut best = None;
     while lo < hi {
-        let mid = lo + (hi - lo + 1) / 2;
+        let mid = lo + (hi - lo).div_ceil(2);
         let prefix = chars[..mid].iter().collect::<String>();
         let field = Value::String(prefix);
         if object_fits(kept, key, &field) {
