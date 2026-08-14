@@ -294,9 +294,10 @@ pub(crate) async fn fetch_deprecated_provider_models(provider: &str) -> Option<H
     if !hydrate::catalog_snapshot_is_ready() {
         let _guard = hydrate::catalog_hydrate_lock_for_parent().lock().await;
         if !hydrate::catalog_snapshot_is_ready() {
-            let _ = hydrate::hydrate_catalog_from_api(&response);
-            hydrate::mark_catalog_snapshot_current();
-            hydrate::apply_in_memory_catalog_ready();
+            let written = hydrate::hydrate_catalog_from_api(&response);
+            if written > 0 && hydrate::mark_catalog_snapshot_current() {
+                hydrate::apply_in_memory_catalog_ready();
+            }
         }
     }
     Some(deprecated_provider_models_from_api(&response, provider))
@@ -435,7 +436,9 @@ where
             }
         }
     }
-    let _ = tx.commit();
+    if tx.commit().is_err() {
+        return 0;
+    }
     written
 }
 
@@ -569,7 +572,7 @@ pub fn write_cached_model_metadata_for_tests(
 /// Marks the on-disk catalog snapshot current for tests that pre-seed rows.
 #[doc(hidden)]
 pub fn mark_catalog_snapshot_current_for_tests() {
-    hydrate::mark_catalog_snapshot_current();
+    let _ = hydrate::mark_catalog_snapshot_current();
     hydrate::apply_in_memory_catalog_ready();
 }
 

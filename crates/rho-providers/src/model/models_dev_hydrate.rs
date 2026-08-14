@@ -52,8 +52,9 @@ pub async fn ensure_models_dev_catalog() -> usize {
         return 0;
     };
     let written = hydrate_catalog_from_api(&response);
-    mark_catalog_snapshot_current();
-    CATALOG_READY.store(true, Ordering::Release);
+    if written > 0 && mark_catalog_snapshot_current() {
+        CATALOG_READY.store(true, Ordering::Release);
+    }
     written
 }
 
@@ -104,8 +105,10 @@ pub(super) fn hydrate_catalog_from_api(api: &Value) -> usize {
     let written = write_cached_upstream_model_metadata_batch(
         entries.iter().map(|(p, m, meta)| (*p, m.as_str(), meta)),
     );
-    for provider in touched_providers {
-        crate::model::display_name::forget_provider_display_names(provider);
+    if written > 0 {
+        for provider in touched_providers {
+            crate::model::display_name::forget_provider_display_names(provider);
+        }
     }
     written
 }
@@ -196,18 +199,20 @@ fn catalog_snapshot_timestamp_is_fresh(updated_at: i64) -> bool {
     updated_at <= now && now - updated_at <= max_age
 }
 
-pub(super) fn mark_catalog_snapshot_current() {
+pub(super) fn mark_catalog_snapshot_current() -> bool {
     let Ok(connection) = open_models_dev_cache() else {
-        return;
+        return false;
     };
-    let _ = connection.execute(
-        "insert into catalog_snapshot (id, cache_version, updated_at)
-         values (1, ?1, strftime('%s', 'now'))
-         on conflict(id) do update set
-           cache_version = excluded.cache_version,
-           updated_at = excluded.updated_at",
-        params![MODEL_METADATA_CACHE_VERSION],
-    );
+    connection
+        .execute(
+            "insert into catalog_snapshot (id, cache_version, updated_at)
+             values (1, ?1, strftime('%s', 'now'))
+             on conflict(id) do update set
+               cache_version = excluded.cache_version,
+               updated_at = excluded.updated_at",
+            params![MODEL_METADATA_CACHE_VERSION],
+        )
+        .is_ok()
 }
 
 pub(super) fn catalog_hydrate_lock_for_parent() -> &'static Mutex<()> {
