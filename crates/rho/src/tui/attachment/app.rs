@@ -1,6 +1,7 @@
 use std::{
     collections::BTreeMap,
     io::IsTerminal,
+    ops::Range,
     path::PathBuf,
     time::{Duration, Instant},
 };
@@ -29,6 +30,7 @@ use super::super::{
     scrollbar::{HistoryScrollChrome, HistoryScrollbar, ScrollbarMouseInput},
     terminal_events::TerminalEvents,
     theme::Theme,
+    tool_card_hover,
     usage_cost::{
         format_token_count, format_usage_token_summary, format_usd, resolved_usage_cost_usd_micros,
         AttemptAwareRunUsage,
@@ -37,7 +39,8 @@ use super::super::{
     HISTORY_SCROLLBAR_REVEAL_DURATION,
 };
 use super::tool_toggle::{
-    latest_toggle_target, status_fallback_items, tool_target_at_line, HistoryItem, ToggleTarget,
+    latest_toggle_target, status_fallback_items, tool_card_at_line, tool_target_at_line,
+    HistoryItem, ToggleTarget,
 };
 
 const REFRESH_INTERVAL: Duration = Duration::from_millis(100);
@@ -176,6 +179,9 @@ struct AttachmentApp {
     /// pending→transcript promotion and provider resets that shift indexes.
     press_tool_key: Option<String>,
     press_cell: Option<(u16, u16)>,
+    /// Toggleable tool-card line span under the pointer. Content-line indexes,
+    /// not screen rows, so scrolling keeps the hover lift pinned to the card.
+    hovered_tool_lines: Option<Range<usize>>,
     /// Current transcript index for each finished tool key.
     finished_tool_index: BTreeMap<String, usize>,
     viewport_height: usize,
@@ -212,6 +218,7 @@ impl AttachmentApp {
             last_mouse_position: None,
             press_tool_key: None,
             press_cell: None,
+            hovered_tool_lines: None,
             finished_tool_index: BTreeMap::new(),
             viewport_height: 0,
             history_area: Rect::default(),
@@ -369,6 +376,9 @@ impl AttachmentApp {
             .remove(&key)
             .is_some_and(|entry| entry.expanded);
         self.pending_order.retain(|pending| pending != &key);
+        // The card moves from the pending tail into the transcript, shifting
+        // line spans; re-anchor the hover lift on the next pointer move.
+        self.hovered_tool_lines = None;
         self.transcript.push(Entry::Tool(ToolEntry {
             card,
             expanded,
@@ -430,6 +440,7 @@ impl AttachmentApp {
     fn clear_pending_tools(&mut self) {
         self.pending_tools.clear();
         self.pending_order.clear();
+        self.hovered_tool_lines = None;
     }
 
     fn handle_event(&mut self, event: Event) -> bool {
@@ -511,10 +522,16 @@ impl AttachmentApp {
                                 .and_then(|target| self.tool_key_for_target(&target))
                         };
                     }
-                    MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Moved => {
+                    MouseEventKind::Drag(MouseButton::Left) => {
                         if self.press_cell != Some((mouse.column, mouse.row)) {
                             self.press_tool_key = None;
                         }
+                    }
+                    MouseEventKind::Moved => {
+                        if self.press_cell != Some((mouse.column, mouse.row)) {
+                            self.press_tool_key = None;
+                        }
+                        self.update_tool_card_hover(mouse.column, mouse.row);
                     }
                     MouseEventKind::Up(MouseButton::Left) => {
                         let same_cell = self.press_cell.take() == Some((mouse.column, mouse.row));
@@ -546,6 +563,8 @@ impl AttachmentApp {
             }
             Event::Resize(_, _) => {
                 self.clear_press();
+                // Reflow changes card heights; re-anchor on the next move.
+                self.hovered_tool_lines = None;
                 true
             }
             _ => false,
@@ -616,6 +635,20 @@ impl AttachmentApp {
             .visible_start(self.content_len, self.viewport_height);
         let end = start.saturating_add(self.viewport_height).min(lines.len());
         frame.render_widget(Paragraph::new(lines[start..end].to_vec()), chunks[1]);
+        if let Some(hovered) = self
+            .hovered_tool_lines
+            .clone()
+            .filter(|span| span.start < end)
+        {
+            let visible = hovered.start.max(start)..hovered.end.min(end);
+            if visible.start < visible.end {
+                tool_card_hover::lift_rows(
+                    frame.buffer_mut(),
+                    chunks[1],
+                    visible.start - start..visible.end - start,
+                );
+            }
+        }
 
         let now = Instant::now();
         if let Some(scrollbar) = self
@@ -678,7 +711,8 @@ impl AttachmentApp {
         }
     }
 
-    fn toggle_target_at_pointer(&self, column: u16, row: u16) -> Option<ToggleTarget> {
+    /// Content line under the pointer, excluding the scrollbar column.
+    fn pointer_history_line(&self, column: u16, row: u16) -> Option<usize> {
         if !self.history_area.contains((column, row).into()) {
             return None;
         }
@@ -688,16 +722,37 @@ impl AttachmentApp {
         {
             return None;
         }
-        let line = self
-            .scroll
-            .visible_start(self.content_len, self.viewport_height)
-            .saturating_add(usize::from(row.saturating_sub(self.history_area.y)));
+        Some(
+            self.scroll
+                .visible_start(self.content_len, self.viewport_height)
+                .saturating_add(usize::from(row.saturating_sub(self.history_area.y))),
+        )
+    }
+
+    fn toggle_target_at_pointer(&self, column: u16, row: u16) -> Option<ToggleTarget> {
+        let line = self.pointer_history_line(column, row)?;
         tool_target_at_line(
             self.history_items(self.status.as_ref()),
             line,
             self.toggle_width(),
             self.display.max_tool_output_lines(),
         )
+    }
+
+    /// Hover lift span for the toggleable card under the pointer, if any.
+    fn tool_card_span_at_pointer(&self, column: u16, row: u16) -> Option<Range<usize>> {
+        let line = self.pointer_history_line(column, row)?;
+        tool_card_at_line(
+            self.history_items(self.status.as_ref()),
+            line,
+            self.toggle_width(),
+            self.display.max_tool_output_lines(),
+        )
+        .map(|(_, span)| span)
+    }
+
+    fn update_tool_card_hover(&mut self, column: u16, row: u16) {
+        self.hovered_tool_lines = self.tool_card_span_at_pointer(column, row);
     }
 
     fn toggle_latest_tool(&mut self) {
@@ -723,6 +778,8 @@ impl AttachmentApp {
             tool.expanded =
                 expand && matches!(&target, ToggleTarget::Pending(pending) if pending == key);
         }
+        // Expanded height shifts following lines; re-anchor on the next move.
+        self.hovered_tool_lines = None;
     }
 
     fn is_expanded(&self, target: &ToggleTarget) -> bool {

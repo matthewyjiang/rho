@@ -47,6 +47,9 @@ impl App {
                 Some("no truncated tool output")
             } else {
                 pending.expanded = !pending.expanded;
+                // Expanded height shifts following lines; drop the hover lift
+                // until the pointer moves again.
+                self.history.set_hovered_tool_card_lines(None);
                 Some(if pending.expanded {
                     "tool output expanded"
                 } else {
@@ -90,6 +93,9 @@ impl App {
             // Surgical height update — do not rebuild assistant markdown (etc.)
             // after the toggled tool(s).
             self.history.lines_mut().resplice_entries(changed);
+            // Line heights shifted; the hover lift re-anchors on the next
+            // pointer move.
+            self.history.set_hovered_tool_card_lines(None);
         }
         self.set_status(if expand {
             "tool output expanded"

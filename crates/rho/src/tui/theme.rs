@@ -20,6 +20,9 @@ mod theme_diff;
 
 const USER_BACKGROUND_ALPHA: f32 = 0.10;
 const NEUTRAL_TOOL_BACKGROUND_ALPHA: f32 = 0.10;
+// Blend strength for hovered tool-card text. Enough to read as a lift at a
+// glance without turning the card into a highlight.
+const HOVER_LIFT_ALPHA: f32 = 0.35;
 // Light/dark split for palette-derived chrome. Matches the existing block
 // contrast threshold used by block_foreground.
 const LIGHT_BACKGROUND_LUMINANCE: f32 = 0.55;
@@ -659,6 +662,40 @@ impl Theme {
         } else {
             Self::dim_block(palette.neutral_tool_background).add_modifier(Modifier::BOLD)
         }
+    }
+
+    /// Lifted foreground for hovered tool-card text, or `None` to fall back to
+    /// a bold modifier.
+    ///
+    /// RGB ink blends toward the surface-opposite extreme (white on dark UIs,
+    /// black on light ones) so the lift stays in the ink's hue family. Named
+    /// and default ink (unsampled terminal themes) cannot blend; callers add
+    /// bold so hover still gives feedback.
+    pub(super) fn hover_lifted(fg: Color) -> Option<Color> {
+        let Color::Rgb(red, green, blue) = fg else {
+            return None;
+        };
+        let palette = Palette::current();
+        // Surface luminance picks the lift direction. Unsampled terminal
+        // themes leave the surface to the host; assume dark, the common case.
+        let dark_surface = palette.surface.is_none_or(|surface| match surface {
+            Color::Rgb(red, green, blue) => {
+                !is_light_background(Rgb::new(red, green, blue).luminance())
+            }
+            // Named fallback surfaces are only used on light hosts.
+            Color::White | Color::Gray | Color::Yellow => false,
+            _ => true,
+        });
+        let target = if dark_surface {
+            Rgb::new(255, 255, 255)
+        } else {
+            Rgb::new(0, 0, 0)
+        };
+        Some(
+            Rgb::new(red, green, blue)
+                .blend_toward(target, HOVER_LIFT_ALPHA)
+                .color(),
+        )
     }
 
     pub(super) fn markdown_bold() -> Style {

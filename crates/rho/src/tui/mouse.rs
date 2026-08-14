@@ -1,4 +1,7 @@
-use std::time::{Duration, Instant};
+use std::{
+    ops::Range,
+    time::{Duration, Instant},
+};
 
 use crossterm::event::{MouseButton, MouseEventKind};
 use ratatui::{
@@ -6,6 +9,7 @@ use ratatui::{
     layout::{Position, Rect},
     Terminal,
 };
+use rho_sdk::ToolCallId;
 
 use super::{
     copy_interaction::{selection_position, selection_position_clamped},
@@ -19,6 +23,21 @@ use super::{
 
 /// Max gap between presses that still counts as a double-click in the composer.
 const COMPOSER_DOUBLE_CLICK: Duration = Duration::from_millis(500);
+
+/// Which toggleable tool card a history line belongs to.
+#[derive(Clone, Debug)]
+enum ToolCardTarget {
+    Transcript(usize),
+    Preview(usize),
+    Running(ToolCallId),
+}
+
+/// A toggleable tool card under the pointer, with the absolute history lines
+/// covering the whole clickable card.
+struct ToolCardHit {
+    target: ToolCardTarget,
+    lines: Range<usize>,
+}
 
 impl App {
     /// Drops both the history-anchored and screen-space text selections.
@@ -61,6 +80,7 @@ impl App {
                 }
                 self.screen_selection = None;
                 self.history.set_hovered_code_block_copy(None);
+                self.history.set_hovered_tool_card_lines(None);
                 self.subagent_panel.clear_pointer_state();
                 self.reveal_history_scrollbar(now);
                 self.history.set_scrollbar_drag(None);
@@ -84,6 +104,7 @@ impl App {
                 }
                 self.screen_selection = None;
                 self.history.set_hovered_code_block_copy(None);
+                self.history.set_hovered_tool_card_lines(None);
                 self.subagent_panel.clear_pointer_state();
                 self.reveal_history_scrollbar(now);
                 self.history.set_scrollbar_drag(None);
@@ -401,6 +422,7 @@ impl App {
                     )
                     .map(|target| target.line);
                 self.history.set_hovered_code_block_copy(hovered);
+                self.update_tool_card_hover(history, history_start, row, width);
                 let subagent_hover = matches!(self.input_ui.composer(), ComposerMode::Input)
                     .then(|| {
                         self.subagent_panel
@@ -430,34 +452,91 @@ impl App {
         width: usize,
         terminal: &mut Terminal<B>,
     ) -> Result<bool, B::Error> {
-        if !self.info.runtime.shows_work_chrome() {
+        let Some(hit) = self.tool_card_hit_at_history_line(line, width) else {
             return Ok(false);
+        };
+        // Card heights change on toggle; drop the hover lift until the next
+        // pointer move re-anchors it.
+        self.history.set_hovered_tool_card_lines(None);
+        match hit.target {
+            ToolCardTarget::Transcript(index) => {
+                self.toggle_transcript_tool_output(index);
+            }
+            ToolCardTarget::Preview(index) => {
+                let expanded = self
+                    .turn
+                    .tool_calls_mut()
+                    .previews
+                    .get_mut(&index)
+                    .is_some_and(|pending| {
+                        pending.expanded = !pending.expanded;
+                        pending.expanded
+                    });
+                self.set_tool_expand_status(expanded);
+            }
+            ToolCardTarget::Running(call_id) => {
+                let expanded = self
+                    .turn
+                    .tool_calls_mut()
+                    .running
+                    .get_mut(&call_id)
+                    .is_some_and(|pending| {
+                        pending.expanded = !pending.expanded;
+                        pending.expanded
+                    });
+                self.set_tool_expand_status(expanded);
+            }
         }
+        self.clamp_history_scroll_for_terminal(terminal)?;
+        Ok(true)
+    }
+
+    fn set_tool_expand_status(&mut self, expanded: bool) {
+        self.set_status(if expanded {
+            "tool output expanded"
+        } else {
+            "tool output collapsed"
+        });
+    }
+
+    /// The toggleable tool card covering absolute history `line`, if any.
+    ///
+    /// Shared by click toggling and hover lift so both agree on the clickable
+    /// card span. Transcript cards resolve through the history cache; pending
+    /// live cards walk the same paint order as `history_live_lines`.
+    fn tool_card_hit_at_history_line(&mut self, line: usize, width: usize) -> Option<ToolCardHit> {
+        if !self.info.runtime.shows_work_chrome() {
+            return None;
+        }
+        let max_tool_output_lines = self.info.runtime.max_tool_output_lines;
         let header_len = self.session_header_lines(width).len();
         if let Some(transcript_line) = line.checked_sub(header_len) {
             let cwd = self.info.runtime.cwd.clone();
             let settings = self.history_render_settings(width);
             self.sync_open_stream_tail();
-            let index = self.history.with_lines_and_images_mut(
+            let hit = self.history.with_lines_and_images_mut(
                 |history_lines, entries, markdown_images| {
-                    history_lines.entry_index_at_line(
+                    let index = history_lines.entry_index_at_line(
                         entries,
                         settings,
                         transcript_line,
                         &|entry_index, sources| {
                             markdown_images.ready_images(entry_index, sources, &cwd)
                         },
-                    )
+                    )?;
+                    entries
+                        .get(index)
+                        .filter(|entry| expandable_tool_entry(entry, max_tool_output_lines, width))
+                        .map(|_| index)
+                        .and_then(|index| history_lines.entry_line_range(index))
+                        .map(|range| (index, range))
                 },
             );
-            if let Some(index) = index.filter(|&index| {
-                self.history.get(index).is_some_and(|entry| {
-                    expandable_tool_entry(entry, self.info.runtime.max_tool_output_lines, width)
-                })
-            }) {
-                self.toggle_transcript_tool_output(index);
-                self.clamp_history_scroll_for_terminal(terminal)?;
-                return Ok(true);
+            if let Some((index, range)) = hit {
+                return Some(ToolCardHit {
+                    target: ToolCardTarget::Transcript(index),
+                    lines: (header_len + range.start)..(header_len + range.end),
+                });
             }
         }
 
@@ -475,72 +554,64 @@ impl App {
                 tool_entry_lines(
                     shell,
                     width,
-                    self.info.runtime.max_tool_output_lines,
+                    max_tool_output_lines,
                     self.feed_image_row_budget(width),
                 )
                 .len(),
             );
         }
-        enum PendingToolKey {
-            Preview(usize),
-            Running(rho_sdk::ToolCallId),
-        }
-        let mut target = None;
         let entries = self
             .turn
             .tool_calls()
             .previews
             .iter()
-            .map(|(index, entry)| (PendingToolKey::Preview(*index), entry))
+            .map(|(index, entry)| (ToolCardTarget::Preview(*index), entry))
             .chain(
                 self.turn
                     .tool_calls()
                     .running
                     .iter()
-                    .map(|(call_id, entry)| (PendingToolKey::Running(call_id.clone()), entry)),
+                    .map(|(call_id, entry)| (ToolCardTarget::Running(call_id.clone()), entry)),
             );
-        for (key, pending) in entries {
+        for (target, pending) in entries {
             let pending_end = pending_start.saturating_add(
                 tool_entry_lines(
                     pending,
                     width,
-                    self.info.runtime.max_tool_output_lines,
+                    max_tool_output_lines,
                     self.feed_image_row_budget(width),
                 )
                 .len(),
             );
             if (pending_start..pending_end).contains(&line)
-                && tool_output_toggleable(pending, self.info.runtime.max_tool_output_lines, width)
+                && tool_output_toggleable(pending, max_tool_output_lines, width)
             {
-                target = Some(key);
-                break;
+                return Some(ToolCardHit {
+                    target,
+                    lines: pending_start..pending_end,
+                });
             }
             pending_start = pending_end;
         }
-        if let Some(target) = target {
-            let expanded = {
-                let pending = match target {
-                    PendingToolKey::Preview(index) => {
-                        self.turn.tool_calls_mut().previews.get_mut(&index)
-                    }
-                    PendingToolKey::Running(call_id) => {
-                        self.turn.tool_calls_mut().running.get_mut(&call_id)
-                    }
-                }
-                .expect("pending tool exists");
-                pending.expanded = !pending.expanded;
-                pending.expanded
-            };
-            self.set_status(if expanded {
-                "tool output expanded"
-            } else {
-                "tool output collapsed"
-            });
-            self.clamp_history_scroll_for_terminal(terminal)?;
-            return Ok(true);
-        }
+        None
+    }
 
-        Ok(false)
+    /// Update the hovered tool-card lift from a pointer position.
+    fn update_tool_card_hover(
+        &mut self,
+        history: Rect,
+        history_start: usize,
+        row: u16,
+        width: usize,
+    ) {
+        let lines = if (history.y..history.bottom()).contains(&row) {
+            let line = history_start.saturating_add(row.saturating_sub(history.y) as usize);
+            self.tool_card_hit_at_history_line(line, width)
+                .map(|hit| hit.lines)
+        } else {
+            None
+        };
+        self.history.set_hovered_tool_card_lines(lines);
     }
 
     pub(super) fn copy_text(&mut self, text: &str, now: Instant) {

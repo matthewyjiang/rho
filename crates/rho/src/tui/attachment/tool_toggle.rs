@@ -103,13 +103,16 @@ pub(super) fn status_fallback_items(
     items
 }
 
-/// Map a visible history line onto a toggleable tool, if any.
-pub(super) fn tool_target_at_line<'a, I>(
+/// Toggleable tool card covering `line`: its target and full line span.
+///
+/// The span is the whole clickable card, so hover lift and click toggle
+/// agree on the hit region.
+pub(super) fn tool_card_at_line<'a, I>(
     items: I,
     line: usize,
     width: usize,
     max_tool_output_lines: usize,
-) -> Option<ToggleTarget>
+) -> Option<(ToggleTarget, std::ops::Range<usize>)>
 where
     I: IntoIterator<Item = HistoryItem<'a>>,
 {
@@ -124,11 +127,25 @@ where
             return item
                 .is_toggleable(width, max_tool_output_lines)
                 .then(|| item.toggle_target())
-                .flatten();
+                .flatten()
+                .map(|target| (target, start..end));
         }
         start = end;
     }
     None
+}
+
+/// Map a visible history line onto a toggleable tool, if any.
+pub(super) fn tool_target_at_line<'a, I>(
+    items: I,
+    line: usize,
+    width: usize,
+    max_tool_output_lines: usize,
+) -> Option<ToggleTarget>
+where
+    I: IntoIterator<Item = HistoryItem<'a>>,
+{
+    tool_card_at_line(items, line, width, max_tool_output_lines).map(|(target, _)| target)
 }
 
 /// Latest Ctrl+O target in paint order.

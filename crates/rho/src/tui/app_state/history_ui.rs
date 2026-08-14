@@ -1,6 +1,9 @@
 //! Transcript history, scroll, selection, and related render caches.
 
-use std::time::{Duration, Instant};
+use std::{
+    ops::Range,
+    time::{Duration, Instant},
+};
 
 use crate::tui::{
     history_cache::HistoryLineCache,
@@ -22,6 +25,9 @@ pub(in crate::tui) struct HistoryUi {
     images_dirty_from: Option<usize>,
     scroll: HistoryScrollChrome,
     hovered_code_block_copy: Option<usize>,
+    /// Absolute history lines of the toggleable tool card under the pointer.
+    /// Line indexes, not screen rows, so scrolling keeps the hover pinned.
+    hovered_tool_card_lines: Option<Range<usize>>,
     text_selection: Option<TextSelection>,
     copy_notice: Option<CopyNotice>,
     session_header_cache: Option<SessionHeaderCache>,
@@ -175,6 +181,14 @@ impl HistoryUi {
 
     pub(in crate::tui) fn set_hovered_code_block_copy(&mut self, line: Option<usize>) {
         self.hovered_code_block_copy = line;
+    }
+
+    pub(in crate::tui) fn hovered_tool_card_lines(&self) -> Option<Range<usize>> {
+        self.hovered_tool_card_lines.clone()
+    }
+
+    pub(in crate::tui) fn set_hovered_tool_card_lines(&mut self, lines: Option<Range<usize>>) {
+        self.hovered_tool_card_lines = lines;
     }
 
     pub(in crate::tui) fn session_header_cache(&self) -> Option<&SessionHeaderCache> {

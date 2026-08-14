@@ -26,6 +26,7 @@ mod sessions_hub;
 mod statusline;
 mod subagent_rail;
 mod text_selection;
+mod tool_card_hover;
 mod workflow;
 mod workspace_rewind;
 
@@ -72,6 +73,7 @@ use statusline::STATUSLINE_HIERARCHY_STEPS;
 use std::time::{Duration, Instant};
 use subagent_rail::SUBAGENT_RAIL_MOUSE_STEPS;
 use text_selection::{SCREEN_TEXT_SELECTION_STEPS, TEXT_SELECTION_DRAG_STEPS};
+use tool_card_hover::TOOL_CARD_HOVER_STEPS;
 use workflow::{WORKFLOW_CANCEL_RESUME_ID, WORKFLOW_RUN_ID};
 use workspace_rewind::WORKSPACE_REWIND_SCENARIO;
 
@@ -899,6 +901,13 @@ const ALL_SCENARIOS: &[Scenario] = &[
         "Keep hover through refreshes and activate rows on a completed click",
         DEFAULT_SIZE,
         SUBAGENT_RAIL_MOUSE_STEPS,
+        false,
+    ),
+    Scenario::new(
+        "tool_card_hover",
+        "Lift tool-card text on hover and expand the card on click",
+        DEFAULT_SIZE,
+        TOOL_CARD_HOVER_STEPS,
         false,
     ),
     Scenario::new(

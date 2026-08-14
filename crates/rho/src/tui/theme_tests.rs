@@ -192,6 +192,46 @@ fn fixed_light_scheme_uses_rgb_dim_and_surface() {
     Theme::apply_committed("terminal");
 }
 
+// Covers: hover lift direction tracks surface luminance; non-RGB ink lifts to bold
+// Owner: tui theme palette mapping
+#[test]
+fn hover_lift_blends_rgb_ink_toward_surface_opposite() {
+    let _guard = theme_test_lock();
+    Theme::apply_committed("terminal");
+    Theme::apply_committed("one-half-dark");
+    // Dark surface: mid gray lifts toward white, staying in band.
+    let lifted = Theme::hover_lifted(Color::Rgb(140, 140, 140)).expect("rgb ink lifts");
+    let Color::Rgb(red, green, blue) = lifted else {
+        panic!("lifted ink must stay RGB, got {lifted:?}");
+    };
+    assert!(
+        red > 140 && green > 140 && blue > 140,
+        "dark-surface lift must brighten, got ({red},{green},{blue})"
+    );
+
+    Theme::apply_committed("monochrome-light");
+    // Light surface: dark ink lifts toward black.
+    let lifted = Theme::hover_lifted(Color::Rgb(100, 100, 100)).expect("rgb ink lifts");
+    let Color::Rgb(red, green, blue) = lifted else {
+        panic!("lifted ink must stay RGB, got {lifted:?}");
+    };
+    assert!(
+        red < 100 && green < 100 && blue < 100,
+        "light-surface lift must darken, got ({red},{green},{blue})"
+    );
+
+    // Named and default ink cannot blend; callers fall back to bold.
+    for ink in [Color::Reset, Color::DarkGray, Color::White] {
+        assert_eq!(
+            Theme::hover_lifted(ink),
+            None,
+            "{ink:?} must fall back to bold"
+        );
+    }
+
+    Theme::apply_committed("terminal");
+}
+
 // Covers: add/remove chrome uses role fg signs, soft wash, base content text
 // Owner: tui theme palette mapping
 #[test]

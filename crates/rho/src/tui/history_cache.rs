@@ -258,6 +258,12 @@ impl HistoryLineCache {
             .map(|_| index)
     }
 
+    /// Cached transcript line span of `index`. Valid only while the cache is
+    /// current (call after [`Self::entry_index_at_line`] ensured it).
+    pub(super) fn entry_line_range(&self, index: usize) -> Option<Range<usize>> {
+        self.entry_ranges.get(index).cloned()
+    }
+
     #[cfg(test)]
     pub(super) fn entry_render_count(&self) -> u64 {
         self.entry_renders

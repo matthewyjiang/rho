@@ -15,7 +15,7 @@ use super::{
     render::{pad_display_line, padded_content_width, truncate_one_line},
     render_copy_notice,
     screen_layout::{terminal_meets_minimum, MIN_TERMINAL_HEIGHT, MIN_TERMINAL_WIDTH},
-    session_header_lines, styled_line, tool_entry_lines,
+    session_header_lines, styled_line, tool_card_hover, tool_entry_lines,
 };
 use super::{
     history_cache::{HistoryLineSlice, HistoryRenderSettings},
@@ -147,6 +147,20 @@ impl App {
             Paragraph::new(history_visible).style(Style::default()),
             layout.history_content,
         );
+        if let Some(lines) = self
+            .history
+            .hovered_tool_card_lines()
+            .filter(|lines| lines.start < history_start.saturating_add(history_count))
+        {
+            // Hover lift paints under text selection: an active drag keeps
+            // its reverse-video highlight on overlapping rows.
+            let visible =
+                lines.start.max(history_start)..lines.end.min(history_start + history_count);
+            if visible.start < visible.end {
+                let rows = visible.start - history_start..visible.end - history_start;
+                tool_card_hover::lift_rows(frame.buffer_mut(), layout.history_content, rows);
+            }
+        }
         if let Some(selection) = self.history.text_selection() {
             highlight_selection(
                 frame.buffer_mut(),

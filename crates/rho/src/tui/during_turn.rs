@@ -777,6 +777,7 @@ impl App {
                     self.clamp_overlay_detail_scroll(terminal);
                     self.clear_selections();
                     self.history.set_hovered_code_block_copy(None);
+                    self.history.set_hovered_tool_card_lines(None);
                     self.subagent_panel.clear_pointer_state();
                     self.hide_history_scrollbar();
                     self.clamp_history_scroll_for_terminal(terminal)?;
