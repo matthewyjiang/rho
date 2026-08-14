@@ -53,10 +53,7 @@ pub(super) enum ContentBlockStart {
         name: Option<String>,
         input: Option<Value>,
     },
-    Other {
-        type_name: String,
-        raw: Value,
-    },
+    Other,
 }
 
 impl ContentBlockStart {
@@ -66,41 +63,6 @@ impl ContentBlockStart {
             Self::Thinking { .. } => ContentBlockKind::Reasoning,
             Self::ToolUse { .. } => ContentBlockKind::Tool,
             Self::Other { .. } => ContentBlockKind::Other,
-        }
-    }
-
-    /// Rebuild a JSON object for tool presentation helpers that still take
-    /// `Value` (name / id / input rendering).
-    pub(super) fn tool_block_value(&self) -> Value {
-        match self {
-            Self::ToolUse { id, name, input } => {
-                let mut object = serde_json::Map::new();
-                object.insert("type".into(), Value::String("tool_use".into()));
-                if let Some(id) = id {
-                    object.insert("id".into(), Value::String(id.clone()));
-                }
-                if let Some(name) = name {
-                    object.insert("name".into(), Value::String(name.clone()));
-                }
-                if let Some(input) = input {
-                    object.insert("input".into(), input.clone());
-                }
-                Value::Object(object)
-            }
-            Self::Text { text } => serde_json::json!({ "type": "text", "text": text }),
-            Self::Thinking { text } => {
-                serde_json::json!({ "type": "thinking", "thinking": text })
-            }
-            Self::Other { type_name, raw } => {
-                let mut object = match raw {
-                    Value::Object(map) => map.clone(),
-                    _ => serde_json::Map::new(),
-                };
-                object
-                    .entry("type")
-                    .or_insert_with(|| Value::String(type_name.clone()));
-                Value::Object(object)
-            }
         }
     }
 }
@@ -114,9 +76,8 @@ pub(super) enum ContentDelta {
     Thinking {
         text: String,
     },
-    /// Tool-input JSON fragments; presentation does not surface them.
+    /// Tool-input JSON fragments; assembled onto the started tool.
     InputJson {
-        #[allow(dead_code)]
         partial_json: String,
     },
     /// Signature fragments; presentation ignores them.
@@ -224,10 +185,7 @@ fn decode_content_block_start(raw: Value) -> ContentBlockStart {
                 .map(str::to_string),
             input: raw.get("input").cloned(),
         },
-        other => ContentBlockStart::Other {
-            type_name: other.to_string(),
-            raw,
-        },
+        _ => ContentBlockStart::Other,
     }
 }
 

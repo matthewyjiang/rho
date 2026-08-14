@@ -1,5 +1,7 @@
 //! Presentation helpers shared by the Claude stream mapper.
 
+use std::path::Path;
+
 use serde_json::Value;
 
 use crate::{
@@ -7,11 +9,9 @@ use crate::{
     subagent::{RunState, RunStatus},
 };
 
-use super::format::{
-    append_tail, bound_delta_text, bound_text, stringify_content, truncate_payload_lines,
-    LAST_TEXT_BYTES, MAX_TOOL_DISPLAY_LINES,
-};
+use super::format::{append_tail, bound_delta_text, bound_text, LAST_TEXT_BYTES};
 use super::protocol::{ErrorMessage, RateLimitMessage, SystemMessage};
+use super::tool_cards::{finished_card, started_card, StartedClaudeTool};
 use super::types::{
     StatusPatch, StreamEffect, TerminalClassification, TerminalResult, MAX_RESULT_CHARS,
 };
@@ -79,13 +79,15 @@ impl OpenIndexlessSlots {
 }
 
 /// One content block opened by a partial `content_block_start`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(super) struct ContentBlockSlot {
     pub(super) kind: ContentBlockKind,
     /// Explicit stream index when Claude provided one.
     pub(super) index: Option<usize>,
     /// True once this slot produced text, reasoning, or tool-start output.
     pub(super) emitted: bool,
+    /// Tool use id bound when this slot started a `tool_use` block.
+    pub(super) tool_id: Option<String>,
 }
 
 pub(super) fn content_block_kind(type_name: &str) -> ContentBlockKind {
@@ -127,6 +129,7 @@ pub(super) fn push_block_slot(
         kind,
         index,
         emitted: false,
+        tool_id: None,
     });
     if index.is_none() {
         state.open_indexless.open(kind, ordinal);
@@ -187,6 +190,37 @@ pub(super) fn mark_slot_emitted(
     }
     slot.emitted = true;
     true
+}
+
+pub(super) fn set_slot_tool_id(state: &mut MessageStreamState, ordinal: usize, tool_id: &str) {
+    if tool_id.is_empty() {
+        return;
+    }
+    if let Some(slot) = state.block_slots.get_mut(ordinal) {
+        slot.tool_id = Some(tool_id.to_string());
+    }
+}
+
+/// Tool use id bound to the slot that should absorb this partial event.
+pub(super) fn tool_id_for_slot(
+    state: &MessageStreamState,
+    explicit_index: Option<usize>,
+) -> Option<String> {
+    if let Some(index) = explicit_index {
+        if let Some(tool_id) = state
+            .block_slots
+            .iter()
+            .find(|slot| slot.index == Some(index))
+            .and_then(|slot| slot.tool_id.clone())
+        {
+            return Some(tool_id);
+        }
+    }
+    state
+        .open_indexless
+        .get(ContentBlockKind::Tool)
+        .and_then(|ordinal| state.block_slots.get(ordinal))
+        .and_then(|slot| slot.tool_id.clone())
 }
 
 /// Ensure a complete-envelope content index has a slot and mark it emitted.
@@ -394,82 +428,60 @@ pub(super) fn map_error_message(message: ErrorMessage) -> Vec<StreamEffect> {
     ]
 }
 
-pub(super) fn tool_started_effects(block: &Value) -> Vec<StreamEffect> {
-    let name = block
-        .get("name")
-        .and_then(Value::as_str)
-        .or_else(|| block.get("tool_name").and_then(Value::as_str))
-        .unwrap_or("tool");
-    let id = block.get("id").and_then(Value::as_str).unwrap_or("");
-    let input = block.get("input");
-    let primary = if id.is_empty() {
-        None
-    } else {
-        Some(id.to_string())
-    };
-    let mut card = rho_tools::tool_card::ToolCard::new(
-        rho_tools::tool_card::ToolStatus::Running,
-        rho_tools::tool_card::ToolFamily::Default,
-        rho_tools::tool_card::ToolHeader::call(name, primary),
-    );
-    let rendered = stringify_content(input);
-    if !rendered.is_empty() && rendered != "null" {
-        card.body = rho_tools::tool_card::ToolBody::Lines(truncate_payload_lines(
-            &rendered,
-            MAX_TOOL_DISPLAY_LINES,
-        ));
-    }
+pub(super) fn tool_started_effects(
+    tool_use_id: &str,
+    tool: &StartedClaudeTool,
+    cwd: Option<&Path>,
+) -> Vec<StreamEffect> {
+    let card = started_card(tool, cwd);
     vec![
         StreamEffect::Attachment(AttachmentEvent::ToolStarted {
-            key: if id.is_empty() {
-                None
-            } else {
-                Some(id.to_string())
-            },
+            key: non_empty_key(tool_use_id),
             card,
         }),
         StreamEffect::Status(StatusPatch {
-            last_activity: Some(format!("tool: {name}")),
+            last_activity: Some(format!("tool: {}", tool.name())),
             ..StatusPatch::default()
         }),
     ]
 }
 
+pub(super) fn tool_updated_effects(
+    tool_use_id: &str,
+    tool: &StartedClaudeTool,
+    cwd: Option<&Path>,
+) -> Vec<StreamEffect> {
+    let card = started_card(tool, cwd);
+    vec![StreamEffect::Attachment(AttachmentEvent::ToolUpdated {
+        key: non_empty_key(tool_use_id),
+        card,
+    })]
+}
+
 pub(super) fn tool_finished_effects(
     tool_use_id: &str,
+    tool: Option<&StartedClaudeTool>,
     ok: bool,
     content_text: &str,
+    tool_use_result: Option<&Value>,
+    cwd: Option<&Path>,
 ) -> Vec<StreamEffect> {
-    let status = if ok {
-        rho_tools::tool_card::ToolStatus::Ok
-    } else {
-        rho_tools::tool_card::ToolStatus::Error
-    };
-    let mut card = rho_tools::tool_card::ToolCard::new(
-        status,
-        rho_tools::tool_card::ToolFamily::Default,
-        rho_tools::tool_card::ToolHeader::call("tool result", Some(tool_use_id.to_string())),
-    );
-    if !content_text.is_empty() {
-        card.body = rho_tools::tool_card::ToolBody::Lines(truncate_payload_lines(
-            content_text,
-            MAX_TOOL_DISPLAY_LINES,
-        ));
-    }
+    let card = finished_card(tool, ok, content_text, tool_use_result, cwd);
+    let name = tool.map_or("tool", StartedClaudeTool::name);
     vec![
         StreamEffect::Attachment(AttachmentEvent::ToolFinished {
-            key: if tool_use_id.is_empty() {
-                None
-            } else {
-                Some(tool_use_id.to_string())
-            },
+            key: non_empty_key(tool_use_id),
             card,
         }),
         StreamEffect::Status(StatusPatch {
-            last_activity: Some(format!("tool result: {tool_use_id}")),
+            last_activity: Some(format!("tool result: {name}")),
             ..StatusPatch::default()
         }),
     ]
+}
+
+fn non_empty_key(tool_use_id: &str) -> Option<String> {
+    (!tool_use_id.is_empty()).then(|| tool_use_id.to_string())
 }
 
 pub(super) fn text_effects(text: &str) -> Vec<StreamEffect> {

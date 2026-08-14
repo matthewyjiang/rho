@@ -34,8 +34,12 @@ const FINISH_JOIN_BUDGET: Duration = Duration::from_secs(5);
 /// Producers are tokio tasks driving the run's select loop, and a wedged disk
 /// makes every event pay the full budget, so this stays short: long enough to
 /// ride out a burst the writer is already draining, short enough that a stuck
-/// disk cannot make the run stop responding.
+/// disk cannot make the run stop responding. Windows journal `flush` under
+/// load can exceed 250 ms, so that target uses a longer ride-out.
+#[cfg(not(windows))]
 const ATTACHMENT_ENQUEUE_BUDGET: Duration = Duration::from_millis(250);
+#[cfg(windows)]
+const ATTACHMENT_ENQUEUE_BUDGET: Duration = Duration::from_secs(2);
 /// Upper bound on one coalesced delta so a fast producer cannot grow a single
 /// journal line without limit. Leftover deltas stay queued and merge next time.
 const MAX_COALESCED_DELTA_BYTES: usize = 64 * 1024;

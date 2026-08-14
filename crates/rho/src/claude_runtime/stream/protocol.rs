@@ -43,6 +43,9 @@ pub(super) struct UserMessage {
     pub(super) tool_use_id: Option<String>,
     #[serde(default)]
     pub(super) content: Option<Value>,
+    /// Structured result sibling Claude sometimes emits next to `tool_result`.
+    #[serde(default)]
+    pub(super) tool_use_result: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -79,6 +82,9 @@ pub(super) struct SystemMessage {
     /// `--model` alias such as `opus` is reported as a concrete id.
     #[serde(default)]
     pub(super) model: Option<String>,
+    /// Workspace cwd from the `init` frame, used to compact tool card paths.
+    #[serde(default)]
+    pub(super) cwd: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
