@@ -135,12 +135,14 @@ fn opencode_go_catalog_npm_selects_adapter_identity() {
         let cache = tempfile::tempdir().unwrap();
         with_models_dev_cache_dir_for_tests(cache.path().to_path_buf(), || {
             if let Some(sdk_package) = sdk_package {
+                // Hydrate keeps sdk-only rows with incomplete reasoning
+                // metadata; construction must still honor them.
                 write_cached_model_metadata_for_tests(
                     "opencode-go",
                     model,
                     &ModelMetadata {
                         sdk_package: Some(sdk_package.into()),
-                        reasoning_metadata_complete: true,
+                        reasoning_metadata_complete: false,
                         ..ModelMetadata::default()
                     },
                 );
@@ -201,7 +203,7 @@ async fn opencode_go_anthropic_npm_posts_messages_with_x_api_key() {
             "minimax-m3",
             &ModelMetadata {
                 sdk_package: Some("@ai-sdk/anthropic".into()),
-                reasoning_metadata_complete: true,
+                reasoning_metadata_complete: false,
                 ..ModelMetadata::default()
             },
         );

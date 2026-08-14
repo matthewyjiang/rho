@@ -211,14 +211,12 @@ impl ProviderBuilder {
                     client,
                     endpoint,
                     self.options.hosted_web_search,
-                    /*identity_provider*/ None,
                 )))
             }
             (ProviderRuntime::Anthropic, ProviderCredential::AnthropicApiKey(api_key)) => {
                 let provider = AnthropicProvider::new_with_transport(
                     self.options.model,
                     api_key.into_secret(),
-                    anthropic_max_tokens,
                     client,
                     endpoint.unwrap_or_else(|| ANTHROPIC_API_BASE.into()),
                 );
@@ -336,36 +334,42 @@ fn build_openai_compatible_provider(
     model: String,
     build: OpenAiCompatibleBuild,
 ) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, ModelError> {
+    // Adapter choice only needs the catalog's npm mapping, not fresh reasoning
+    // metadata, so a stale or reasoning-incomplete row must still steer it.
     let adapter = match descriptor.catalog_construction() {
         CatalogConstruction::Runtime => CatalogSdkAdapter::OpenAiCompatible,
         CatalogConstruction::PreferModelsDevNpm => CatalogSdkAdapter::from_sdk_package(
-            crate::model::models_dev::current_model_metadata(provider_name, &model)
+            crate::model::models_dev::cached_model_metadata(provider_name, &model)
                 .as_ref()
                 .and_then(|metadata| metadata.sdk_package.as_deref()),
         ),
     };
     match (adapter, build.auth) {
         (CatalogSdkAdapter::OpenAiResponses, CompatibleAuth::ApiKey(key)) => {
-            Ok(Arc::new(OpenAiProvider::new_with_transport(
+            // Api-key auth never refreshes tokens, so an inert store satisfies
+            // the Codex refresh dependency without touching real credentials.
+            Ok(Arc::new(OpenAiProvider::new_with_identity(
                 model,
                 Auth::ApiKey(key),
                 Arc::new(MemoryCredentialStore::default()),
                 build.client,
                 Some(build.api_base),
                 build.hosted_web_search,
-                Some(provider_name),
+                provider_name,
             )))
         }
         (CatalogSdkAdapter::AnthropicMessages, CompatibleAuth::ApiKey(key)) => {
             Ok(Arc::new(AnthropicProvider::new_with_identity(
                 model,
                 key,
-                catalog_max_tokens_for(provider_name),
                 build.client,
                 build.api_base,
                 provider_name,
             )))
         }
+        // Chat Completions is the descriptor's declared runtime, so it is also
+        // the fallback when the catalog has no row yet (cold cache before the
+        // first hydrate) or names an unrecognized package.
         (_, auth) => Ok(Arc::new(OpenAiCompatibleProvider::new(
             build.client,
             provider_name,
@@ -375,32 +379,6 @@ fn build_openai_compatible_provider(
             build.api_base,
         ))),
     }
-}
-
-fn catalog_max_tokens_for(provider: &'static str) -> fn(&str) -> u32 {
-    match provider {
-        "opencode-go" => opencode_go_max_tokens,
-        _ => anthropic_max_tokens,
-    }
-}
-
-fn opencode_go_max_tokens(model: &str) -> u32 {
-    resolve_catalog_max_tokens("opencode-go", model)
-}
-
-fn anthropic_max_tokens(model: &str) -> u32 {
-    resolve_catalog_max_tokens("anthropic", model)
-}
-
-fn resolve_catalog_max_tokens(provider: &str, model: &str) -> u32 {
-    crate::model::provider_models::cached_provider_model(provider, model)
-        .and_then(|metadata| metadata.max_output_tokens)
-        .or_else(|| {
-            crate::model::models_dev::cached_model_metadata(provider, model)
-                .and_then(|metadata| metadata.max_output_tokens)
-        })
-        .and_then(|tokens| u32::try_from(tokens).ok())
-        .unwrap_or(crate::providers::anthropic::DEFAULT_MAX_TOKENS)
 }
 
 #[cfg(test)]

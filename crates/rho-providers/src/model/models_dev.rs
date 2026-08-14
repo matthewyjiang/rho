@@ -339,6 +339,10 @@ pub(super) async fn fetch_models_dev_api() -> Option<Value> {
 ///
 /// v8: `display_name` added. Older rows are complete without it, so only a bump
 /// makes them refetch and pick up the catalog name.
+///
+/// `sdk_package` was added without a bump: only opencode-go reads it, and that
+/// provider registered in the same release, so no older rows can miss it. Bump
+/// when an already-registered provider switches to `PreferModelsDevNpm`.
 pub(super) const MODEL_METADATA_CACHE_VERSION: i64 = 8;
 
 fn cached_upstream_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {

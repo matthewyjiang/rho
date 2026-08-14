@@ -67,7 +67,6 @@ impl OpenAiProvider {
             provider_client(),
             None,
             /*hosted_web_search*/ true,
-            /*identity_provider*/ None,
         )
     }
 
@@ -78,9 +77,47 @@ impl OpenAiProvider {
         client: reqwest::Client,
         api_base_override: Option<String>,
         hosted_web_search: bool,
-        identity_provider: Option<&'static str>,
     ) -> Self {
-        let profile = ResponsesProfile::from_auth_with_provider(&auth, model, identity_provider);
+        let profile = ResponsesProfile::from_auth(&auth, model);
+        Self::from_profile(
+            profile,
+            auth,
+            credential_store,
+            client,
+            api_base_override,
+            hosted_web_search,
+        )
+    }
+
+    /// Responses transport branded with a catalog host identity (e.g. `opencode-go`).
+    pub(crate) fn new_with_identity(
+        model: String,
+        auth: Auth,
+        credential_store: Arc<dyn CredentialStore>,
+        client: reqwest::Client,
+        api_base_override: Option<String>,
+        hosted_web_search: bool,
+        identity_provider: &'static str,
+    ) -> Self {
+        let profile = ResponsesProfile::from_auth_as(&auth, model, identity_provider);
+        Self::from_profile(
+            profile,
+            auth,
+            credential_store,
+            client,
+            api_base_override,
+            hosted_web_search,
+        )
+    }
+
+    fn from_profile(
+        profile: ResponsesProfile,
+        auth: Auth,
+        credential_store: Arc<dyn CredentialStore>,
+        client: reqwest::Client,
+        api_base_override: Option<String>,
+        hosted_web_search: bool,
+    ) -> Self {
         let api_base = api_base_override.unwrap_or_else(|| profile.default_api_base().to_string());
         let reasoning = OpenAiReasoningProfile::from_metadata(
             crate::model::models_dev::current_model_metadata(profile.provider(), profile.model()),

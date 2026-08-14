@@ -26,15 +26,17 @@ pub struct AnthropicProvider {
     api_base: String,
     identity_provider: String,
     model: String,
-    max_tokens: fn(&str) -> u32,
+    /// Fixed max-tokens for tests; `None` resolves from the model catalog per request.
+    max_tokens_override: Option<u32>,
     thinking: thinking::ThinkingSource,
 }
 
 impl AnthropicProvider {
     // Tests construct unresolved and inject capabilities explicitly via
-    // `with_thinking`, so they never touch the on-disk model cache.
+    // `with_thinking` and a fixed max-tokens, so they never touch the on-disk
+    // model cache.
     #[cfg(test)]
-    pub fn new(model: String, api_key: String, max_tokens: fn(&str) -> u32) -> Self {
+    pub fn new(model: String, api_key: String) -> Self {
         let thinking = thinking::ThinkingSource::unresolved(&model);
         Self {
             client: provider_client(),
@@ -42,7 +44,7 @@ impl AnthropicProvider {
             api_base: ANTHROPIC_API_BASE.into(),
             identity_provider: "anthropic".into(),
             model,
-            max_tokens,
+            max_tokens_override: Some(DEFAULT_MAX_TOKENS),
             thinking,
         }
     }
@@ -56,17 +58,15 @@ impl AnthropicProvider {
     pub(crate) fn new_with_transport(
         model: String,
         api_key: String,
-        max_tokens: fn(&str) -> u32,
         client: reqwest::Client,
         api_base: String,
     ) -> Self {
-        Self::new_with_identity(model, api_key, max_tokens, client, api_base, "anthropic")
+        Self::new_with_identity(model, api_key, client, api_base, "anthropic")
     }
 
     pub(crate) fn new_with_identity(
         model: String,
         api_key: String,
-        max_tokens: fn(&str) -> u32,
         client: reqwest::Client,
         api_base: String,
         identity_provider: impl Into<String>,
@@ -78,9 +78,28 @@ impl AnthropicProvider {
             api_base,
             identity_provider: identity_provider.into(),
             model,
-            max_tokens,
+            max_tokens_override: None,
             thinking,
         }
+    }
+
+    /// Resolved per request so a catalog hydrate that finishes after
+    /// construction still supplies the real output budget.
+    fn max_tokens(&self) -> u32 {
+        if let Some(tokens) = self.max_tokens_override {
+            return tokens;
+        }
+        crate::model::provider_models::cached_provider_model(&self.identity_provider, &self.model)
+            .and_then(|metadata| metadata.max_output_tokens)
+            .or_else(|| {
+                crate::model::models_dev::cached_model_metadata(
+                    &self.identity_provider,
+                    &self.model,
+                )
+                .and_then(|metadata| metadata.max_output_tokens)
+            })
+            .and_then(|tokens| u32::try_from(tokens).ok())
+            .unwrap_or(DEFAULT_MAX_TOKENS)
     }
 
     fn request_body(
@@ -89,7 +108,7 @@ impl AnthropicProvider {
         stream: bool,
     ) -> Result<AnthropicRequest, ModelError> {
         let target = self.model_identity();
-        let max_tokens = (self.max_tokens)(&self.model);
+        let max_tokens = self.max_tokens();
         let (thinking, output_config) =
             thinking::thinking_config_for(&self.thinking, request.reasoning_level, max_tokens)?;
         let (system, mut messages) = split_system_and_messages(
