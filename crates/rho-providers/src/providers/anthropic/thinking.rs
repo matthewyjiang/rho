@@ -1,20 +1,11 @@
 use crate::{
-    model::provider_models::{self, AnthropicModelCapabilities},
+    model::provider_models::{self, AnthropicModelCapabilities, OffThinking},
     protocol::anthropic_messages::{AnthropicOutputConfig, AnthropicThinkingConfig},
     provider_backend::ModelError,
     reasoning::ReasoningLevel,
 };
 
 use super::ANTHROPIC_ANSWER_RESERVE_TOKENS;
-
-/// How Off is encoded when a catalog advertises that choice.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum OffThinking {
-    #[default]
-    Omit,
-    Disabled,
-    Unsupported,
-}
 
 /// Wire protocol advertised by Anthropic's Models API `capabilities` object.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -30,7 +21,7 @@ pub(crate) struct AnthropicThinkingProtocol {
 }
 
 /// Effort levels the model advertises, cheapest first, indexed like
-/// `EFFORT_LEVELS`.
+/// `provider_models::ANTHROPIC_EFFORT_LEVELS`.
 const EFFORT_LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -54,7 +45,7 @@ impl AnthropicThinkingProtocol {
             resolved: true,
             adaptive: capabilities.adaptive(),
             enabled: capabilities.enabled(),
-            off: off_thinking(model, capabilities.disabled()),
+            off: provider_models::anthropic_off_thinking(model, capabilities.disabled()),
             effort: EffortSupport {
                 supported: capabilities.effort_supported(),
                 levels: EFFORT_LEVELS.map(|level| capabilities.effort_level(level)),
@@ -68,38 +59,6 @@ impl AnthropicThinkingProtocol {
             ..Self::default()
         }
     }
-}
-
-fn off_thinking(model: &str, disabled_leaf: Option<bool>) -> OffThinking {
-    match disabled_leaf {
-        Some(true) => OffThinking::Disabled,
-        Some(false) => OffThinking::Unsupported,
-        None => off_when_unadvertised(model),
-    }
-}
-
-/// Models API has no `disabled` leaf on current Claude 5 rows. These prefixes
-/// fill that gap; a present leaf always wins.
-fn off_when_unadvertised(model: &str) -> OffThinking {
-    if model_has_prefix(model, &["claude-opus-5", "claude-sonnet-5"]) {
-        OffThinking::Disabled
-    } else if model_has_prefix(
-        model,
-        &["claude-fable-5", "claude-mythos-5", "claude-mythos-preview"],
-    ) {
-        OffThinking::Unsupported
-    } else {
-        OffThinking::Omit
-    }
-}
-
-fn model_has_prefix(model: &str, prefixes: &[&str]) -> bool {
-    prefixes.iter().any(|prefix| {
-        model == *prefix
-            || model
-                .strip_prefix(prefix)
-                .is_some_and(|suffix| suffix.starts_with('-'))
-    })
 }
 
 /// Resolves the cached Models API capabilities for `model`, including the

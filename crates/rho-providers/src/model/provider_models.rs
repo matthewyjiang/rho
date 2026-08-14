@@ -26,7 +26,8 @@ use crate::paths;
 #[path = "provider_models/anthropic.rs"]
 mod anthropic;
 pub(crate) use anthropic::{
-    cached_capabilities as cached_anthropic_capabilities, AnthropicModelCapabilities,
+    cached_capabilities as cached_anthropic_capabilities, off_thinking as anthropic_off_thinking,
+    AnthropicModelCapabilities, OffThinking,
 };
 #[path = "provider_models/google.rs"]
 mod google;
@@ -161,7 +162,7 @@ pub fn cached_provider_models(provider: &str) -> Vec<ProviderModel> {
     rows.filter_map(Result::ok).collect()
 }
 
-const PROVIDER_MODEL_CACHE_VERSION: i64 = 2;
+const PROVIDER_MODEL_CACHE_VERSION: i64 = 3;
 const PROVIDER_MODEL_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 
 pub fn provider_model_capabilities_need_refresh(provider: &str, model: &str) -> bool {

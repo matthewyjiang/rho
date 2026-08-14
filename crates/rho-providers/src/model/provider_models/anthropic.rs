@@ -4,7 +4,8 @@ use serde_json::Value;
 
 use crate::{
     credentials::CredentialStore,
-    model::{ModelError, ReasoningCapabilities},
+    model::{ModelError, ReasoningCapabilities, ReasoningLevelSet},
+    reasoning::ReasoningLevel,
 };
 
 use super::{load_api_key_auth, provider_models_client, ProviderModel};
@@ -114,6 +115,100 @@ fn leaf_supported(leaf: Option<&SupportedLeaf>) -> bool {
     leaf.and_then(|leaf| leaf.supported).unwrap_or(false)
 }
 
+/// Effort levels Anthropic's `output_config` accepts, cheapest first. The
+/// protocol has no `minimal`, so no reasoning level maps onto one.
+pub(crate) const EFFORT_LEVELS: [(&str, ReasoningLevel); 5] = [
+    ("low", ReasoningLevel::Low),
+    ("medium", ReasoningLevel::Medium),
+    ("high", ReasoningLevel::High),
+    ("xhigh", ReasoningLevel::Xhigh),
+    ("max", ReasoningLevel::Max),
+];
+
+/// How Off is encoded for a model, given what the Models API advertises.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum OffThinking {
+    #[default]
+    Omit,
+    Disabled,
+    Unsupported,
+}
+
+/// Resolves the Off encoding from the advertised `disabled` leaf, falling back
+/// to per-family defaults when the Models API omits it.
+pub(crate) fn off_thinking(model: &str, disabled_leaf: Option<bool>) -> OffThinking {
+    match disabled_leaf {
+        Some(true) => OffThinking::Disabled,
+        Some(false) => OffThinking::Unsupported,
+        None => off_when_unadvertised(model),
+    }
+}
+
+/// Models API has no `disabled` leaf on current Claude 5 rows. These prefixes
+/// fill that gap; a present leaf always wins.
+fn off_when_unadvertised(model: &str) -> OffThinking {
+    if model_has_prefix(model, &["claude-opus-5", "claude-sonnet-5"]) {
+        OffThinking::Disabled
+    } else if model_has_prefix(
+        model,
+        &["claude-fable-5", "claude-mythos-5", "claude-mythos-preview"],
+    ) {
+        OffThinking::Unsupported
+    } else {
+        OffThinking::Omit
+    }
+}
+
+fn model_has_prefix(model: &str, prefixes: &[&str]) -> bool {
+    prefixes.iter().any(|prefix| {
+        model == *prefix
+            || model
+                .strip_prefix(prefix)
+                .is_some_and(|suffix| suffix.starts_with('-'))
+    })
+}
+
+/// Derives selectable reasoning levels from the Models API capabilities, so
+/// pickers offer exactly what the wire protocol accepts.
+///
+/// Adaptive models take their levels from the advertised effort vocabulary,
+/// which never includes `minimal`. Budget-token models accept any budget down
+/// to Anthropic's 1024 minimum, so the whole ladder is selectable. Anything
+/// else stays `Unknown` rather than inventing a control.
+pub(crate) fn reasoning_capabilities(
+    model: &str,
+    capabilities: &AnthropicModelCapabilities,
+) -> ReasoningCapabilities {
+    let mut levels = if capabilities.adaptive() {
+        if !capabilities.effort_supported() {
+            return ReasoningCapabilities::Unknown;
+        }
+        EFFORT_LEVELS
+            .iter()
+            .filter(|(name, _)| capabilities.effort_level(name))
+            .map(|(_, level)| *level)
+            .collect::<Vec<_>>()
+    } else if capabilities.enabled() {
+        vec![
+            ReasoningLevel::Minimal,
+            ReasoningLevel::Low,
+            ReasoningLevel::Medium,
+            ReasoningLevel::High,
+            ReasoningLevel::Xhigh,
+            ReasoningLevel::Max,
+        ]
+    } else {
+        return ReasoningCapabilities::Unknown;
+    };
+    if levels.is_empty() {
+        return ReasoningCapabilities::Unknown;
+    }
+    if off_thinking(model, capabilities.disabled()) != OffThinking::Unsupported {
+        levels.push(ReasoningLevel::Off);
+    }
+    ReasoningCapabilities::Levels(ReasoningLevelSet::new(levels))
+}
+
 /// Strips a trailing `-YYYYMMDD` snapshot suffix, yielding the parent alias
 /// that carries the cached capabilities row.
 pub(super) fn dated_parent_model(model: &str) -> Option<&str> {
@@ -204,16 +299,22 @@ fn records_from_page(
         .data
         .into_iter()
         .filter(|model| model.id.starts_with("claude-"))
-        .map(|model| super::ProviderModelRecord {
-            model: ProviderModel {
-                provider: provider.to_string(),
-                display_name: model.display_name.unwrap_or_else(|| model.id.clone()),
-                context_window: model.max_input_tokens.filter(|window| *window > 0),
-                max_output_tokens: model.max_tokens,
-                model: model.id,
-                reasoning_capabilities: ReasoningCapabilities::Unknown,
-            },
-            raw_json: capabilities_json(model.capabilities),
+        .map(|model| {
+            let raw_json = capabilities_json(model.capabilities);
+            let reasoning_capabilities = AnthropicModelCapabilities::from_value(&raw_json)
+                .map(|capabilities| reasoning_capabilities(&model.id, &capabilities))
+                .unwrap_or(ReasoningCapabilities::Unknown);
+            super::ProviderModelRecord {
+                model: ProviderModel {
+                    provider: provider.to_string(),
+                    display_name: model.display_name.unwrap_or_else(|| model.id.clone()),
+                    context_window: model.max_input_tokens.filter(|window| *window > 0),
+                    max_output_tokens: model.max_tokens,
+                    model: model.id,
+                    reasoning_capabilities,
+                },
+                raw_json,
+            }
         })
         .collect()
 }
