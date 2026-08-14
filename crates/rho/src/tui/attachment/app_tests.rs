@@ -477,6 +477,11 @@ fn mouse(kind: MouseEventKind, column: u16, row: u16) -> Event {
     })
 }
 
+fn click_card(app: &mut AttachmentApp, column: u16, row: u16) {
+    app.handle_event(mouse(MouseEventKind::Down(MouseButton::Left), column, row));
+    app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), column, row));
+}
+
 fn sync_view(app: &mut AttachmentApp, width: u16, height: u16) {
     let lines = app.history_lines(width as usize, None);
     app.sync_history_geometry(Rect::new(0, 4, width, height), lines.len(), width as usize);
@@ -501,11 +506,11 @@ fn click_toggles_finished_over_budget_card() {
     sync_view(&mut app, 80, 30);
     let collapsed_len = app.history_lines(80, None).len();
 
-    app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 8, 5));
+    click_card(&mut app, 8, 5);
     assert!(transcript_tool(&app, 0).expanded);
     assert!(app.history_lines(80, None).len() > collapsed_len);
 
-    app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 8, 5));
+    click_card(&mut app, 8, 5);
     assert!(!transcript_tool(&app, 0).expanded);
     assert_eq!(app.history_lines(80, None).len(), collapsed_len);
 }
@@ -520,7 +525,7 @@ fn click_ignores_under_budget_card() {
         card: short_body_card(),
     });
     sync_view(&mut app, 80, 20);
-    app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 8, 5));
+    click_card(&mut app, 8, 5);
     assert!(!transcript_tool(&app, 0).expanded);
 }
 
@@ -550,6 +555,34 @@ fn scrollbar_drag_release_does_not_toggle() {
             _ => None,
         })
         .all(|expanded| !expanded));
+}
+
+// Covers: releasing a card-to-card drag must not toggle the release target
+// Owner: attach event loop
+#[test]
+fn card_to_card_drag_release_does_not_toggle() {
+    let (_directory, mut app) = test_app();
+    app.apply_event(AttachmentEvent::ToolFinished {
+        key: Some("call-1".into()),
+        card: long_body_card(),
+    });
+    app.apply_event(AttachmentEvent::ToolFinished {
+        key: Some("call-2".into()),
+        card: long_body_card(),
+    });
+    sync_view(&mut app, 80, 40);
+    let first_height = match app.transcript.first() {
+        Some(entry) => HistoryItem::Transcript { index: 0, entry }
+            .paint_lines(80, app.display.max_tool_output_lines())
+            .len(),
+        None => panic!("expected first transcript tool"),
+    };
+    let second_row = 4u16.saturating_add(u16::try_from(first_height).expect("card height"));
+
+    app.handle_event(mouse(MouseEventKind::Down(MouseButton::Left), 8, 5));
+    app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 8, second_row));
+    assert!(!transcript_tool(&app, 0).expanded);
+    assert!(!transcript_tool(&app, 1).expanded);
 }
 
 // Covers: ctrl+o expands latest pending, then last finished card, accordion-style

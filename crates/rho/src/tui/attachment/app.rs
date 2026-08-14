@@ -171,6 +171,9 @@ struct AttachmentApp {
     herdr: HerdrReporter,
     scroll: HistoryScrollChrome,
     last_mouse_position: Option<(u16, u16)>,
+    /// Tool under the last left-button press, if any. Release toggles only
+    /// when it lands on the same card; card-to-card drags are not clicks.
+    press_toggle_target: Option<ToggleTarget>,
     viewport_height: usize,
     history_area: Rect,
     history_width: usize,
@@ -203,6 +206,7 @@ impl AttachmentApp {
             herdr,
             scroll: HistoryScrollChrome::default(),
             last_mouse_position: None,
+            press_toggle_target: None,
             viewport_height: 0,
             history_area: Rect::default(),
             history_width: 0,
@@ -440,11 +444,25 @@ impl AttachmentApp {
                         wheel_lines: HISTORY_MOUSE_SCROLL_LINES,
                     },
                 );
-                if matches!(mouse.kind, MouseEventKind::Up(MouseButton::Left))
-                    && !was_drag
-                    && self.try_toggle_tool_at_pointer(mouse.column, mouse.row)
-                {
-                    return true;
+                match mouse.kind {
+                    MouseEventKind::Down(MouseButton::Left) => {
+                        self.press_toggle_target = if self.scroll.drag().is_some() {
+                            None
+                        } else {
+                            self.toggle_target_at_pointer(mouse.column, mouse.row)
+                        };
+                    }
+                    MouseEventKind::Up(MouseButton::Left) => {
+                        let press = self.press_toggle_target.take();
+                        let release = self.toggle_target_at_pointer(mouse.column, mouse.row);
+                        if !was_drag && press == release {
+                            if let Some(target) = press {
+                                self.toggle_tool_at(target);
+                                return true;
+                            }
+                        }
+                    }
+                    _ => {}
                 }
                 true
             }
@@ -583,30 +601,26 @@ impl AttachmentApp {
         }
     }
 
-    fn try_toggle_tool_at_pointer(&mut self, column: u16, row: u16) -> bool {
+    fn toggle_target_at_pointer(&self, column: u16, row: u16) -> Option<ToggleTarget> {
         if !self.history_area.contains((column, row).into()) {
-            return false;
+            return None;
         }
         if self
             .history_scrollbar()
             .is_some_and(|scrollbar| scrollbar.contains(column, row))
         {
-            return false;
+            return None;
         }
         let line = self
             .scroll
             .visible_start(self.content_len, self.viewport_height)
             .saturating_add(usize::from(row.saturating_sub(self.history_area.y)));
-        let Some(target) = tool_target_at_line(
+        tool_target_at_line(
             self.history_items(self.status.as_ref()),
             line,
             self.toggle_width(),
             self.display.max_tool_output_lines(),
-        ) else {
-            return false;
-        };
-        self.toggle_tool_at(target);
-        true
+        )
     }
 
     fn toggle_latest_tool(&mut self) {
