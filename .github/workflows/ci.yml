@@ -152,6 +152,8 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           shared-key: package
+      - name: Check the release binary compiles
+        run: cargo check --release --locked --bin rho
       - name: Test crate publish prep fixture
         run: python3 scripts/crate_publish_prep.py --self-test
       - name: Verify crate publish preparation
