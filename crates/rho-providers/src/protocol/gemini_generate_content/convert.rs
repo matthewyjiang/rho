@@ -378,14 +378,19 @@ impl ResponseCollector {
             let Some(content) = candidate.content else {
                 continue;
             };
-            for part in content.parts {
+            for mut part in content.parts {
+                // Empty text is not a text part. Collapse it here so portable,
+                // merge, and emit checks keep one meaning of `text`.
+                if part.text.as_ref().is_some_and(String::is_empty) {
+                    part.text = None;
+                }
                 let has_text = part.text.is_some();
                 let has_signature = part.thought_signature.is_some();
                 self.has_emitted_output |= has_text || part.function_call.is_some();
                 // Gemini forbids merging a signed part with an unsigned neighbor.
                 let merges_with_previous_text = !part.thought
                     && part.function_call.is_none()
-                    && part.text.is_some()
+                    && has_text
                     && !has_signature
                     && self.can_merge_output_text;
                 let portable_position = if merges_with_previous_text {
@@ -393,8 +398,7 @@ impl ResponseCollector {
                 } else {
                     self.content.len()
                 };
-                let is_portable =
-                    !part.thought && (part.text.is_some() || part.function_call.is_some());
+                let is_portable = !part.thought && (has_text || part.function_call.is_some());
                 if part.thought {
                     emit(
                         &mut on_event,
@@ -501,9 +505,7 @@ impl ResponseCollector {
 
     pub fn finish(self) -> Result<ModelResponse, ModelError> {
         if self.content.is_empty() {
-            return Err(ModelError::InvalidResponse(
-                "Gemini returned no content".into(),
-            ));
+            return Err(ModelError::empty_assistant());
         }
         Ok(ModelResponse::Assistant(self.content))
     }

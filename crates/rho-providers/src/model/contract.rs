@@ -73,4 +73,14 @@ impl ModelError {
     pub fn missing_credentials(message: &'static str) -> Self {
         Self::MissingCredentials(message)
     }
+
+    /// Empty assistant turns are transient: a later attempt often produces
+    /// text or tool calls. Permanent classification kills the run on the
+    /// first thinking-only or blank completion.
+    pub(crate) fn empty_assistant() -> Self {
+        Self::RetryableInvalidResponse {
+            error_type: "empty_assistant".into(),
+            message: "assistant message had no content or tool calls".into(),
+        }
+    }
 }

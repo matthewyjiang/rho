@@ -258,9 +258,7 @@ pub(crate) fn convert_content_blocks(
         }
     }
     if blocks.is_empty() {
-        Err(ModelError::InvalidResponse(
-            "assistant message had no content or tool calls".into(),
-        ))
+        Err(ModelError::empty_assistant())
     } else {
         Ok(ModelResponse::Assistant(blocks))
     }
@@ -462,6 +460,21 @@ mod tests {
             messages[0].content.as_slice(),
             [AnthropicContentBlock::Text { text, .. }, AnthropicContentBlock::Text { text: summary, .. }]
                 if text == "answer" && summary.contains("safe summary")
+        ));
+    }
+
+    // Covers: thinking-only Messages completions must retry, not kill the run
+    // Owner: anthropic messages response conversion
+    #[test]
+    fn thinking_only_assistant_is_retryable() {
+        let error = convert_content_blocks(vec![AnthropicContentBlock::Thinking {
+            thinking: "plan".into(),
+            signature: "sig".into(),
+        }])
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            ModelError::RetryableInvalidResponse { error_type, .. } if error_type == "empty_assistant"
         ));
     }
 
