@@ -211,6 +211,7 @@ fn intern(name: &str, registry: &mut CustomRegistry) -> &'static ProviderDescrip
         runtime: ProviderRuntime::OpenAiCompatible {
             dialect: OpenAiCompatibleDialect::Standard,
             default_api_base: OPENAI_COMPATIBLE_API_BASE,
+            catalog_construction: CatalogConstruction::Runtime,
         },
         name: leaked_name,
         display_name: leaked_name,
@@ -222,7 +223,6 @@ fn intern(name: &str, registry: &mut CustomRegistry) -> &'static ProviderDescrip
         // Same Chat Completions effort field as Ollama. Custom names are not in
         // models.dev, so Unknown must still send the selected level.
         catalog_reasoning: CatalogReasoningPolicy::OffAsNone,
-        catalog_construction: CatalogConstruction::Runtime,
         default_model: None,
     }));
     registry.interned.insert(name.to_string(), descriptor);

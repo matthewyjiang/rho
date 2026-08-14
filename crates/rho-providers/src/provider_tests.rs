@@ -101,7 +101,10 @@ fn resolve_profile_exact_rejects_incompatible_auth() {
 // Owner: provider registry
 #[test]
 fn qwen_token_plan_is_openai_compatible_with_api_key_auth() {
-    use super::{CatalogReasoningPolicy, ProviderId, ProviderRuntime, QWEN_TOKEN_PLAN_API_BASE};
+    use super::{
+        CatalogConstruction, CatalogReasoningPolicy, ProviderId, ProviderRuntime,
+        QWEN_TOKEN_PLAN_API_BASE,
+    };
     use crate::model::registry::provider_runtime;
     use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
 
@@ -118,6 +121,7 @@ fn qwen_token_plan_is_openai_compatible_with_api_key_auth() {
         Some(ProviderRuntime::OpenAiCompatible {
             dialect: OpenAiCompatibleDialect::QwenTokenPlan,
             default_api_base: QWEN_TOKEN_PLAN_API_BASE,
+            catalog_construction: CatalogConstruction::Runtime,
         })
     );
 }
@@ -126,7 +130,9 @@ fn qwen_token_plan_is_openai_compatible_with_api_key_auth() {
 // Owner: provider registry
 #[test]
 fn meta_is_openai_compatible_with_api_key_auth() {
-    use super::{CatalogReasoningPolicy, ProviderId, ProviderRuntime, META_API_BASE};
+    use super::{
+        CatalogConstruction, CatalogReasoningPolicy, ProviderId, ProviderRuntime, META_API_BASE,
+    };
     use crate::model::registry::provider_runtime;
     use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
 
@@ -145,6 +151,7 @@ fn meta_is_openai_compatible_with_api_key_auth() {
         Some(ProviderRuntime::OpenAiCompatible {
             dialect: OpenAiCompatibleDialect::Standard,
             default_api_base: META_API_BASE,
+            catalog_construction: CatalogConstruction::Runtime,
         })
     );
 }
@@ -169,16 +176,13 @@ fn opencode_go_is_openai_compatible_with_catalog_npm_construction() {
         descriptor.catalog_reasoning,
         CatalogReasoningPolicy::ExactAdvertised
     );
-    assert_eq!(
-        descriptor.catalog_construction,
-        CatalogConstruction::PreferModelsDevNpm
-    );
     assert!(descriptor.auth_mode("opencode-go-api-key").is_some());
     assert_eq!(
         provider_runtime("opencode-go"),
         Some(ProviderRuntime::OpenAiCompatible {
             dialect: OpenAiCompatibleDialect::Standard,
             default_api_base: OPENCODE_GO_API_BASE,
+            catalog_construction: CatalogConstruction::PreferModelsDevNpm,
         })
     );
 }

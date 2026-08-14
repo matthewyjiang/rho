@@ -8,10 +8,7 @@ use crate::{
     credentials::{CredentialStore, MemoryCredentialStore},
     model::{models_dev::CatalogSdkAdapter, ModelError},
     openai_compatible_dialect::OpenAiCompatibleDialect,
-    provider::{
-        self, CatalogConstruction, OpenAiRuntimeAuth, ProviderAuthKind, ProviderDescriptor,
-        ProviderRuntime,
-    },
+    provider::{self, CatalogConstruction, OpenAiRuntimeAuth, ProviderAuthKind, ProviderRuntime},
     providers::{
         anthropic::AnthropicProvider,
         github_copilot::GitHubCopilotProvider,
@@ -115,14 +112,18 @@ impl ProviderBuildOptions {
         self.profile.provider_name()
     }
 
-    /// Whether the resolved provider picks its wire adapter from the
-    /// models.dev catalog `npm` mapping instead of its declared runtime.
+    /// Awaits the models.dev hydrate when the resolved provider picks its
+    /// wire adapter from the catalog `npm` mapping instead of its declared
+    /// runtime; a no-op for every other provider.
     ///
-    /// Cold-cache construction for such providers should await a catalog
-    /// hydrate first; the hydrate is bounded and stays cache-only offline,
-    /// leaving construction on the declared-runtime fallback.
-    pub fn follows_model_catalog(&self) -> bool {
-        self.profile.provider.catalog_construction == CatalogConstruction::PreferModelsDevNpm
+    /// The hydrate is bounded and stays cache-only offline, leaving
+    /// construction on the declared-runtime fallback.
+    pub async fn ensure_catalog_for_construction(&self) {
+        if self.profile.provider.runtime.catalog_construction()
+            == CatalogConstruction::PreferModelsDevNpm
+        {
+            crate::model::models_dev::ensure_models_dev_catalog().await;
+        }
     }
 
     pub(crate) fn auth(&self) -> &str {
@@ -252,6 +253,7 @@ impl ProviderBuilder {
                 ProviderRuntime::OpenAiCompatible {
                     dialect,
                     default_api_base,
+                    catalog_construction,
                 },
                 ProviderCredential::OpenAiCompatible(auth),
             ) if compatible_auth_matches_kind(&auth, auth_kind) => {
@@ -266,7 +268,7 @@ impl ProviderBuilder {
                     endpoint.unwrap_or_else(|| default_api_base.into())
                 };
                 build_openai_compatible_provider(
-                    descriptor,
+                    catalog_construction,
                     provider_name,
                     model,
                     OpenAiCompatibleBuild {
@@ -339,14 +341,14 @@ struct OpenAiCompatibleBuild {
 }
 
 fn build_openai_compatible_provider(
-    descriptor: &ProviderDescriptor,
+    catalog_construction: CatalogConstruction,
     provider_name: &'static str,
     model: String,
     build: OpenAiCompatibleBuild,
 ) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, ModelError> {
     // Adapter choice only needs the catalog's npm mapping, not fresh reasoning
     // metadata, so a stale or reasoning-incomplete row must still steer it.
-    let adapter = match descriptor.catalog_construction {
+    let adapter = match catalog_construction {
         CatalogConstruction::Runtime => CatalogSdkAdapter::OpenAiCompatible,
         CatalogConstruction::PreferModelsDevNpm => CatalogSdkAdapter::from_sdk_package(
             crate::model::models_dev::cached_model_metadata(provider_name, &model)

@@ -65,6 +65,9 @@ pub enum ProviderRuntime {
     OpenAiCompatible {
         dialect: crate::openai_compatible_dialect::OpenAiCompatibleDialect,
         default_api_base: &'static str,
+        /// Whether construction may follow the catalog's models.dev `npm`
+        /// mapping instead of the declared Chat Completions runtime.
+        catalog_construction: CatalogConstruction,
     },
     Anthropic,
     Google,
@@ -73,6 +76,22 @@ pub enum ProviderRuntime {
 }
 
 impl ProviderRuntime {
+    /// Only Chat Completions runtimes can defer their wire adapter to the
+    /// catalog; every other runtime constructs as declared.
+    pub fn catalog_construction(self) -> CatalogConstruction {
+        match self {
+            Self::OpenAiCompatible {
+                catalog_construction,
+                ..
+            } => catalog_construction,
+            Self::OpenAi { .. }
+            | Self::Anthropic
+            | Self::Google
+            | Self::GithubCopilot
+            | Self::Xai => CatalogConstruction::Runtime,
+        }
+    }
+
     /// Whether two descriptors share a runtime family for auth-profile resolution.
     ///
     /// # Next major
@@ -411,9 +430,6 @@ pub struct ProviderDescriptor {
     pub model_id_codec: ModelIdCodec,
     pub metadata_upstream: &'static str,
     pub catalog_reasoning: CatalogReasoningPolicy,
-    /// Whether construction may follow the catalog's models.dev `npm` mapping
-    /// instead of the descriptor's declared runtime.
-    pub catalog_construction: CatalogConstruction,
     /// Preferred model when the cache is empty or contains this id.
     pub default_model: Option<&'static str>,
 }
