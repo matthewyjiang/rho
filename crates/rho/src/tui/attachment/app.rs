@@ -1,5 +1,4 @@
 use std::{
-    borrow::Cow,
     io::IsTerminal,
     path::PathBuf,
     time::{Duration, Instant},
@@ -23,10 +22,9 @@ use crate::{
 };
 
 use super::super::{
-    feed_image::DEFAULT_IMAGE_HEIGHT,
     live_started_at, mouse_capture,
     provider_attempt::ProviderAttempt,
-    render::{entry_lines, truncate_one_line},
+    render::truncate_one_line,
     scrollbar::{HistoryScrollChrome, HistoryScrollbar, ScrollbarMouseInput},
     terminal_events::TerminalEvents,
     theme::Theme,
@@ -37,7 +35,9 @@ use super::super::{
     Entry, HistoryScroll, ReasoningChrome, ReasoningEntry, ToolEntry, HISTORY_MOUSE_SCROLL_LINES,
     HISTORY_SCROLLBAR_REVEAL_DURATION,
 };
-use super::tool_toggle::{latest_toggle_target, tool_target_at_line, HistoryItem, ToggleTarget};
+use super::tool_toggle::{
+    latest_toggle_target, status_fallback_items, tool_target_at_line, HistoryItem, ToggleTarget,
+};
 
 const REFRESH_INTERVAL: Duration = Duration::from_millis(100);
 const TOGGLE_WIDTH_FALLBACK: usize = 80;
@@ -544,12 +544,7 @@ impl AttachmentApp {
         let mut lines = Vec::new();
         let max_tool_output_lines = self.display.max_tool_output_lines();
         for item in self.history_items(status) {
-            lines.extend(entry_lines(
-                item.entry.as_ref(),
-                width,
-                max_tool_output_lines,
-                DEFAULT_IMAGE_HEIGHT,
-            ));
+            lines.extend(item.paint_lines(width, max_tool_output_lines));
         }
         if lines.is_empty() {
             lines.push(Line::styled("waiting for agent output...", Theme::dim()));
@@ -558,57 +553,25 @@ impl AttachmentApp {
     }
 
     fn history_items(&self, status: Option<&RunStatus>) -> Vec<HistoryItem<'_>> {
-        let mut items = Vec::new();
-        for (index, entry) in self.transcript.iter().enumerate() {
-            if self.display.hides_entry(entry) {
-                continue;
-            }
-            items.push(HistoryItem {
-                target: matches!(entry, Entry::Tool(_)).then_some(ToggleTarget::Transcript(index)),
-                entry: Cow::Borrowed(entry),
-            });
-        }
+        let mut items = self
+            .transcript
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| !self.display.hides_entry(entry))
+            .map(|(index, entry)| HistoryItem::Transcript { index, entry })
+            .collect::<Vec<_>>();
         if self.display.shows_work_chrome() {
-            for key in &self.pending_order {
-                if let Some(tool) = self.pending_tools.get(key) {
-                    items.push(HistoryItem {
-                        target: Some(ToggleTarget::Pending(key.clone())),
-                        entry: Cow::Owned(Entry::Tool(tool.clone())),
-                    });
-                }
-            }
+            items.extend(self.pending_order.iter().filter_map(|key| {
+                self.pending_tools
+                    .get(key)
+                    .map(|tool| HistoryItem::Pending { key, tool })
+            }));
         }
         let has_assistant = self
             .transcript
             .iter()
             .any(|entry| matches!(entry, Entry::Assistant(_)));
-        if !has_assistant {
-            let fallback = status.and_then(|status| {
-                status
-                    .result
-                    .as_deref()
-                    .or(status.last_text.as_deref())
-                    .filter(|text| !text.is_empty())
-            });
-            if let Some(text) = fallback {
-                items.push(HistoryItem {
-                    target: None,
-                    entry: Cow::Owned(Entry::Assistant(text.to_string())),
-                });
-            }
-        }
-        if let Some(error) = status.and_then(|status| status.error.as_deref()) {
-            items.push(HistoryItem {
-                target: None,
-                entry: Cow::Owned(Entry::Error(error.to_string())),
-            });
-        }
-        if let Some(error) = status.and_then(|status| status.attachment_error.as_deref()) {
-            items.push(HistoryItem {
-                target: None,
-                entry: Cow::Owned(Entry::Error(error.to_string())),
-            });
-        }
+        items.extend(status_fallback_items(status, has_assistant));
         items
     }
 

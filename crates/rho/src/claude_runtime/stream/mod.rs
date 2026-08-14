@@ -331,9 +331,7 @@ impl StreamMapper {
         if tool_blocks.is_empty() {
             return self.map_toplevel_tool_result(message);
         }
-        let enrichment = (tool_blocks.len() == 1)
-            .then_some(message.tool_use_result.as_ref())
-            .flatten();
+        let sole_result = tool_blocks.len() == 1;
         let mut effects = Vec::new();
         for block in tool_blocks {
             let ok = !block
@@ -351,7 +349,7 @@ impl StreamMapper {
                 started.as_ref(),
                 ok,
                 &content_text,
-                enrichment,
+                enrichment_for_result(message.tool_use_result.as_ref(), tool_use_id, sole_result),
                 self.cwd.as_deref(),
             ));
         }
@@ -835,6 +833,33 @@ impl StreamMapper {
     /// without an id can still pair with exactly one anonymous stream.
     fn anonymous_open_key(&self) -> Option<MessageKey> {
         self.open_message.clone().filter(MessageKey::is_anonymous)
+    }
+}
+
+/// Pair a Claude `tool_use_result` sibling with one `tool_result` block.
+///
+/// A lone result takes the sibling as-is. Batched results only keep
+/// enrichment that names the same `tool_use_id`, so a Read file object is
+/// never applied to a parallel Edit.
+fn enrichment_for_result<'a>(
+    tool_use_result: Option<&'a Value>,
+    tool_use_id: &str,
+    sole_result: bool,
+) -> Option<&'a Value> {
+    let value = tool_use_result?;
+    if sole_result {
+        return Some(value);
+    }
+    match value {
+        Value::Array(items) => items
+            .iter()
+            .find(|item| item.get("tool_use_id").and_then(Value::as_str) == Some(tool_use_id)),
+        Value::Object(_)
+            if value.get("tool_use_id").and_then(Value::as_str) == Some(tool_use_id) =>
+        {
+            Some(value)
+        }
+        _ => None,
     }
 }
 

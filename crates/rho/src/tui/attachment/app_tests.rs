@@ -552,7 +552,7 @@ fn scrollbar_drag_release_does_not_toggle() {
         .all(|expanded| !expanded));
 }
 
-// Covers: ctrl+o expands latest pending, then last transcript, accordion-style
+// Covers: ctrl+o expands latest pending, then last finished card, accordion-style
 // Owner: attach event loop
 #[test]
 fn ctrl_o_prefers_pending_and_collapses_others() {
@@ -574,11 +574,24 @@ fn ctrl_o_prefers_pending_and_collapses_others() {
     assert!(app.pending_tools["live"].expanded);
     assert!(!transcript_tool(&app, 0).expanded);
 
-    app.pending_tools.remove("live");
-    app.pending_order.clear();
+    app.apply_event(AttachmentEvent::ToolFinished {
+        key: Some("live".into()),
+        card: long_body_card(),
+    });
+    assert!(transcript_tool(&app, 1).expanded);
+    assert!(!transcript_tool(&app, 0).expanded);
+
     app.handle_event(Event::Key(KeyEvent::new(
         KeyCode::Char('o'),
         KeyModifiers::CONTROL,
     )));
-    assert!(transcript_tool(&app, 0).expanded);
+    assert!(!transcript_tool(&app, 0).expanded);
+    assert!(!transcript_tool(&app, 1).expanded);
+
+    app.handle_event(Event::Key(KeyEvent::new(
+        KeyCode::Char('o'),
+        KeyModifiers::CONTROL,
+    )));
+    assert!(!transcript_tool(&app, 0).expanded);
+    assert!(transcript_tool(&app, 1).expanded);
 }

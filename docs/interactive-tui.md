@@ -179,7 +179,7 @@ Run `rho attach <id>` to watch a subagent reported by the `agent` tool:
 rho attach abc123
 ```
 
-Attached mode uses a separate read-only TUI. It renders the delegated prompt, reasoning, assistant output, tool activity, usage, and final state, but it has no message box and cannot submit prompts or change the subagent environment. Use Up/Down, Page Up/Page Down, and Home/End to scroll. Press `q`, Escape, or Ctrl-C to detach without stopping the run. For Claude-cli runs, attach also surfaces `claude_session_id` when present so you can open the full Claude transcript with `claude --resume <session-id>`. Under [Herdr](/integrations/herdr), activating a subagent row opens a sibling pane that runs attach for you. See [subagents](/subagents/attachment-and-artifacts) for lifecycle details.
+Attached mode uses a separate read-only TUI. It renders the delegated prompt, reasoning, assistant output, tool activity, usage, and final state, but it has no message box and cannot submit prompts or change the subagent environment. Use Up/Down, Page Up/Page Down, and Home/End to scroll. Click a truncated tool card, or press Ctrl+O, to expand or collapse it. Press `q`, Escape, or Ctrl-C to detach without stopping the run. For Claude-cli runs, attach also surfaces `claude_session_id` when present so you can open the full Claude transcript with `claude --resume <session-id>`. Under [Herdr](/integrations/herdr), activating a subagent row opens a sibling pane that runs attach for you. See [subagents](/subagents/attachment-and-artifacts) for lifecycle details.
 
 ## Attachments
 

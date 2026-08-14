@@ -1,13 +1,17 @@
 //! Hit-test and accordion toggle targets for attach tool cards.
 //!
 //! Attach rebuilds history on every draw, so click mapping walks the same
-//! visible entries `history_lines` paints instead of a cached line index.
+//! visible items `history_lines` paints instead of a cached line index.
 
-use std::borrow::Cow;
+use ratatui::text::Line;
+
+use crate::subagent::RunStatus;
 
 use super::super::{
-    feed_image::DEFAULT_IMAGE_HEIGHT, render::entry_lines, tool_output_ui::expandable_tool_entry,
-    Entry,
+    feed_image::DEFAULT_IMAGE_HEIGHT,
+    render::{entry_lines, tool_entry_lines},
+    tool_output_ui::tool_output_toggleable,
+    Entry, ToolEntry,
 };
 
 /// A tool card the user can expand or collapse.
@@ -17,10 +21,86 @@ pub(super) enum ToggleTarget {
     Pending(String),
 }
 
-/// One painted history block, in the same order as [`super::app::AttachmentApp`] draw.
-pub(super) struct HistoryItem<'a> {
-    pub target: Option<ToggleTarget>,
-    pub entry: Cow<'a, Entry>,
+/// One painted history block, in the same order as attach draw.
+pub(super) enum HistoryItem<'a> {
+    Transcript { index: usize, entry: &'a Entry },
+    Pending { key: &'a str, tool: &'a ToolEntry },
+    Ephemeral(Entry),
+}
+
+impl HistoryItem<'_> {
+    pub(super) fn paint_lines(
+        &self,
+        width: usize,
+        max_tool_output_lines: usize,
+    ) -> Vec<Line<'static>> {
+        match self {
+            Self::Transcript { entry, .. } => {
+                entry_lines(entry, width, max_tool_output_lines, DEFAULT_IMAGE_HEIGHT)
+            }
+            Self::Ephemeral(entry) => {
+                entry_lines(entry, width, max_tool_output_lines, DEFAULT_IMAGE_HEIGHT)
+            }
+            Self::Pending { tool, .. } => {
+                tool_entry_lines(tool, width, max_tool_output_lines, DEFAULT_IMAGE_HEIGHT)
+            }
+        }
+    }
+
+    fn tool_entry(&self) -> Option<&ToolEntry> {
+        match self {
+            Self::Transcript {
+                entry: Entry::Tool(tool),
+                ..
+            }
+            | Self::Ephemeral(Entry::Tool(tool)) => Some(tool),
+            Self::Pending { tool, .. } => Some(tool),
+            _ => None,
+        }
+    }
+
+    fn toggle_target(&self) -> Option<ToggleTarget> {
+        match self {
+            Self::Transcript {
+                index,
+                entry: Entry::Tool(_),
+            } => Some(ToggleTarget::Transcript(*index)),
+            Self::Pending { key, .. } => Some(ToggleTarget::Pending((*key).to_string())),
+            _ => None,
+        }
+    }
+
+    fn is_toggleable(&self, width: usize, max_tool_output_lines: usize) -> bool {
+        self.tool_entry()
+            .is_some_and(|tool| tool_output_toggleable(tool, max_tool_output_lines, width))
+    }
+}
+
+/// Status-only assistant/error rows that paint after the journal.
+pub(super) fn status_fallback_items(
+    status: Option<&RunStatus>,
+    has_assistant: bool,
+) -> Vec<HistoryItem<'static>> {
+    let mut items = Vec::new();
+    if !has_assistant {
+        let fallback = status.and_then(|status| {
+            status
+                .result
+                .as_deref()
+                .or(status.last_text.as_deref())
+                .filter(|text| !text.is_empty())
+        });
+        if let Some(text) = fallback {
+            items.push(HistoryItem::Ephemeral(Entry::Assistant(text.to_string())));
+        }
+    }
+    if let Some(error) = status.and_then(|status| status.error.as_deref()) {
+        items.push(HistoryItem::Ephemeral(Entry::Error(error.to_string())));
+    }
+    if let Some(error) = status.and_then(|status| status.attachment_error.as_deref()) {
+        items.push(HistoryItem::Ephemeral(Entry::Error(error.to_string())));
+    }
+    items
 }
 
 /// Map a visible history line onto a toggleable tool, if any.
@@ -35,22 +115,23 @@ where
 {
     let mut start = 0usize;
     for item in items {
-        let height = entry_height(item.entry.as_ref(), width, max_tool_output_lines);
+        let height = item.paint_lines(width, max_tool_output_lines).len();
         if height == 0 {
             continue;
         }
         let end = start.saturating_add(height);
         if (start..end).contains(&line) {
-            return item.target.filter(|_| {
-                expandable_tool_entry(item.entry.as_ref(), max_tool_output_lines, width)
-            });
+            return item
+                .is_toggleable(width, max_tool_output_lines)
+                .then(|| item.toggle_target())
+                .flatten();
         }
         start = end;
     }
     None
 }
 
-/// Last toggleable tool in paint order: pending cards win over transcript.
+/// Last toggleable tool in paint order. Pending cards paint after transcript.
 pub(super) fn latest_toggle_target<'a, I>(
     items: I,
     width: usize,
@@ -61,16 +142,9 @@ where
 {
     items
         .into_iter()
-        .filter(|item| {
-            item.target.is_some()
-                && expandable_tool_entry(item.entry.as_ref(), max_tool_output_lines, width)
-        })
+        .filter(|item| item.is_toggleable(width, max_tool_output_lines))
         .last()
-        .and_then(|item| item.target)
-}
-
-pub(super) fn entry_height(entry: &Entry, width: usize, max_tool_output_lines: usize) -> usize {
-    entry_lines(entry, width, max_tool_output_lines, DEFAULT_IMAGE_HEIGHT).len()
+        .and_then(|item| item.toggle_target())
 }
 
 #[cfg(test)]

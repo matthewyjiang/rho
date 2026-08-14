@@ -1,9 +1,7 @@
-use std::borrow::Cow;
-
 use pretty_assertions::assert_eq;
 use rho_tools::tool_card::{ToolBody, ToolCard, ToolFamily, ToolHeader, ToolStatus};
 
-use super::{entry_height, latest_toggle_target, tool_target_at_line, HistoryItem, ToggleTarget};
+use super::{latest_toggle_target, tool_target_at_line, HistoryItem, ToggleTarget};
 use crate::tui::{Entry, ToolEntry};
 
 fn long_card() -> ToolCard {
@@ -26,39 +24,42 @@ fn short_card() -> ToolCard {
     .with_body(ToolBody::Lines(vec!["ok".into()]))
 }
 
-fn tool_entry(card: ToolCard) -> Entry {
-    Entry::Tool(ToolEntry {
+fn tool_entry(card: ToolCard) -> ToolEntry {
+    ToolEntry {
         card,
         expanded: false,
         image: None,
         started_at: None,
-    })
+    }
 }
 
-fn items(entries: Vec<(Option<ToggleTarget>, Entry)>) -> Vec<HistoryItem<'static>> {
-    entries
-        .into_iter()
-        .map(|(target, entry)| HistoryItem {
-            target,
-            entry: Cow::Owned(entry),
-        })
-        .collect()
+fn paint_height(item: &HistoryItem<'_>, width: usize, max_tool_output_lines: usize) -> usize {
+    item.paint_lines(width, max_tool_output_lines).len()
 }
 
 // Covers: click maps onto the card that owns the line, including spacer
 // Owner: attach tool hit-test
 #[test]
 fn tool_target_at_line_maps_header_body_spacer_and_neighbors() {
-    let long = tool_entry(long_card());
+    let long = Entry::Tool(tool_entry(long_card()));
     let notice = Entry::Notice("after".into());
-    let short = tool_entry(short_card());
-    let long_height = entry_height(&long, 80, 10);
-    let notice_height = entry_height(&notice, 80, 10);
-    let mapped = items(vec![
-        (Some(ToggleTarget::Transcript(0)), long),
-        (None, notice),
-        (Some(ToggleTarget::Pending("live".into())), short),
-    ]);
+    let pending = tool_entry(short_card());
+    let items = [
+        HistoryItem::Transcript {
+            index: 0,
+            entry: &long,
+        },
+        HistoryItem::Transcript {
+            index: 1,
+            entry: &notice,
+        },
+        HistoryItem::Pending {
+            key: "live",
+            tool: &pending,
+        },
+    ];
+    let long_height = paint_height(&items[0], 80, 10);
+    let notice_height = paint_height(&items[1], 80, 10);
 
     let cases = [
         (0, Some(ToggleTarget::Transcript(0))),
@@ -71,10 +72,20 @@ fn tool_target_at_line_maps_header_body_spacer_and_neighbors() {
     for (line, expected) in cases {
         assert_eq!(
             tool_target_at_line(
-                mapped.iter().map(|item| HistoryItem {
-                    target: item.target.clone(),
-                    entry: Cow::Borrowed(item.entry.as_ref()),
-                }),
+                [
+                    HistoryItem::Transcript {
+                        index: 0,
+                        entry: &long,
+                    },
+                    HistoryItem::Transcript {
+                        index: 1,
+                        entry: &notice,
+                    },
+                    HistoryItem::Pending {
+                        key: "live",
+                        tool: &pending,
+                    },
+                ],
                 line,
                 80,
                 10
@@ -89,19 +100,20 @@ fn tool_target_at_line_maps_header_body_spacer_and_neighbors() {
 // Owner: attach tool hit-test
 #[test]
 fn latest_toggle_target_prefers_pending() {
-    let mapped = items(vec![
-        (Some(ToggleTarget::Transcript(0)), tool_entry(long_card())),
-        (
-            Some(ToggleTarget::Pending("live".into())),
-            tool_entry(long_card()),
-        ),
-    ]);
+    let finished = Entry::Tool(tool_entry(long_card()));
+    let pending = tool_entry(long_card());
     assert_eq!(
         latest_toggle_target(
-            mapped.iter().map(|item| HistoryItem {
-                target: item.target.clone(),
-                entry: Cow::Borrowed(item.entry.as_ref()),
-            }),
+            [
+                HistoryItem::Transcript {
+                    index: 0,
+                    entry: &finished,
+                },
+                HistoryItem::Pending {
+                    key: "live",
+                    tool: &pending,
+                },
+            ],
             80,
             10,
         ),
