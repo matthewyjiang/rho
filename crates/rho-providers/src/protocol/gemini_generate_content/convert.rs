@@ -378,8 +378,13 @@ impl ResponseCollector {
             let Some(content) = candidate.content else {
                 continue;
             };
-            for part in content.parts {
-                let has_text = part.text.as_ref().is_some_and(|text| !text.is_empty());
+            for mut part in content.parts {
+                // Empty text is not a text part. Collapse it here so portable,
+                // merge, and emit checks keep one meaning of `text`.
+                if part.text.as_ref().is_some_and(String::is_empty) {
+                    part.text = None;
+                }
+                let has_text = part.text.is_some();
                 let has_signature = part.thought_signature.is_some();
                 self.has_emitted_output |= has_text || part.function_call.is_some();
                 // Gemini forbids merging a signed part with an unsigned neighbor.
@@ -433,7 +438,7 @@ impl ResponseCollector {
                         },
                     )?;
                 }
-                if let Some(text) = part.text.filter(|text| !text.is_empty()) {
+                if let Some(text) = part.text {
                     if part.thought {
                         self.can_merge_output_text = false;
                         emit(&mut on_event, ModelEvent::ReasoningSummaryDelta(text))?;

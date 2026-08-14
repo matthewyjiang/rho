@@ -629,3 +629,7 @@ mod image_tests;
 #[cfg(test)]
 #[path = "convert_handoff_tests.rs"]
 mod handoff_tests;
+
+#[cfg(test)]
+#[path = "convert_finalize_tests.rs"]
+mod finalize_tests;
