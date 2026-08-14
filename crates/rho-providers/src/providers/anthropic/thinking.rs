@@ -1,5 +1,7 @@
 use crate::{
-    model::provider_models::{self, AnthropicModelCapabilities, OffThinking},
+    model::provider_models::{
+        self, AnthropicModelCapabilities, OffThinking, ANTHROPIC_EFFORT_NAMES,
+    },
     protocol::anthropic_messages::{AnthropicOutputConfig, AnthropicThinkingConfig},
     provider_backend::ModelError,
     reasoning::ReasoningLevel,
@@ -20,14 +22,11 @@ pub(crate) struct AnthropicThinkingProtocol {
     effort: EffortSupport,
 }
 
-/// Effort levels the model advertises, cheapest first, indexed like
-/// `provider_models::ANTHROPIC_EFFORT_LEVELS`.
-const EFFORT_LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct EffortSupport {
     supported: bool,
-    levels: [bool; EFFORT_LEVELS.len()],
+    /// Parallel to [`provider_models::ANTHROPIC_EFFORT_NAMES`].
+    levels: [bool; ANTHROPIC_EFFORT_NAMES.len()],
 }
 
 impl AnthropicThinkingProtocol {
@@ -48,7 +47,7 @@ impl AnthropicThinkingProtocol {
             off: provider_models::anthropic_off_thinking(model, capabilities.disabled()),
             effort: EffortSupport {
                 supported: capabilities.effort_supported(),
-                levels: EFFORT_LEVELS.map(|level| capabilities.effort_level(level)),
+                levels: ANTHROPIC_EFFORT_NAMES.map(|level| capabilities.effort_level(level)),
             },
         }
     }
@@ -160,9 +159,9 @@ impl EffortSupport {
         };
         (0..=requested)
             .rev()
-            .chain(requested + 1..EFFORT_LEVELS.len())
+            .chain(requested + 1..ANTHROPIC_EFFORT_NAMES.len())
             .find(|&index| self.levels[index])
-            .map(|index| EFFORT_LEVELS[index])
+            .map(|index| ANTHROPIC_EFFORT_NAMES[index])
     }
 }
 

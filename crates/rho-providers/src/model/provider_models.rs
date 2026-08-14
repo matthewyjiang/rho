@@ -27,7 +27,7 @@ use crate::paths;
 mod anthropic;
 pub(crate) use anthropic::{
     cached_capabilities as cached_anthropic_capabilities, off_thinking as anthropic_off_thinking,
-    AnthropicModelCapabilities, OffThinking,
+    AnthropicModelCapabilities, OffThinking, EFFORT_NAMES as ANTHROPIC_EFFORT_NAMES,
 };
 #[path = "provider_models/google.rs"]
 mod google;

@@ -109,21 +109,44 @@ impl AnthropicModelCapabilities {
             _ => false,
         }
     }
+
+    /// Selectable reasoning levels for pickers and validation.
+    ///
+    /// Adaptive models take levels from the advertised effort vocabulary.
+    /// Budget-token models accept every non-Off Rho level (the request builder
+    /// maps them onto budgets down to Anthropic's 1024 minimum). Anything else
+    /// stays `Unknown` rather than inventing a control. `Off` is added unless
+    /// the model cannot disable thinking.
+    pub(crate) fn reasoning_capabilities(&self, model: &str) -> ReasoningCapabilities {
+        let mut levels = if self.adaptive() {
+            if !self.effort_supported() {
+                return ReasoningCapabilities::Unknown;
+            }
+            advertised_effort_levels(self)
+        } else if self.enabled() {
+            budget_token_levels()
+        } else {
+            return ReasoningCapabilities::Unknown;
+        };
+        if levels.is_empty() {
+            return ReasoningCapabilities::Unknown;
+        }
+        if off_thinking(model, self.disabled()) != OffThinking::Unsupported {
+            levels.push(ReasoningLevel::Off);
+        }
+        ReasoningCapabilities::Levels(ReasoningLevelSet::new(levels))
+    }
 }
 
 fn leaf_supported(leaf: Option<&SupportedLeaf>) -> bool {
     leaf.and_then(|leaf| leaf.supported).unwrap_or(false)
 }
 
-/// Effort levels Anthropic's `output_config` accepts, cheapest first. The
-/// protocol has no `minimal`, so no reasoning level maps onto one.
-pub(crate) const EFFORT_LEVELS: [(&str, ReasoningLevel); 5] = [
-    ("low", ReasoningLevel::Low),
-    ("medium", ReasoningLevel::Medium),
-    ("high", ReasoningLevel::High),
-    ("xhigh", ReasoningLevel::Xhigh),
-    ("max", ReasoningLevel::Max),
-];
+/// Anthropic `output_config.effort` names, cheapest first.
+///
+/// Shared by picker derivation and request clamping. The effort protocol has
+/// no `minimal`, so that Rho level never appears here.
+pub(crate) const EFFORT_NAMES: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
 /// How Off is encoded for a model, given what the Models API advertises.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -168,45 +191,24 @@ fn model_has_prefix(model: &str, prefixes: &[&str]) -> bool {
     })
 }
 
-/// Derives selectable reasoning levels from the Models API capabilities, so
-/// pickers offer exactly what the wire protocol accepts.
-///
-/// Adaptive models take their levels from the advertised effort vocabulary,
-/// which never includes `minimal`. Budget-token models accept any budget down
-/// to Anthropic's 1024 minimum, so the whole ladder is selectable. Anything
-/// else stays `Unknown` rather than inventing a control.
-pub(crate) fn reasoning_capabilities(
-    model: &str,
-    capabilities: &AnthropicModelCapabilities,
-) -> ReasoningCapabilities {
-    let mut levels = if capabilities.adaptive() {
-        if !capabilities.effort_supported() {
-            return ReasoningCapabilities::Unknown;
-        }
-        EFFORT_LEVELS
-            .iter()
-            .filter(|(name, _)| capabilities.effort_level(name))
-            .map(|(_, level)| *level)
-            .collect::<Vec<_>>()
-    } else if capabilities.enabled() {
-        vec![
-            ReasoningLevel::Minimal,
-            ReasoningLevel::Low,
-            ReasoningLevel::Medium,
-            ReasoningLevel::High,
-            ReasoningLevel::Xhigh,
-            ReasoningLevel::Max,
-        ]
-    } else {
-        return ReasoningCapabilities::Unknown;
-    };
-    if levels.is_empty() {
-        return ReasoningCapabilities::Unknown;
-    }
-    if off_thinking(model, capabilities.disabled()) != OffThinking::Unsupported {
-        levels.push(ReasoningLevel::Off);
-    }
-    ReasoningCapabilities::Levels(ReasoningLevelSet::new(levels))
+/// Effort leaves the model advertises, mapped through the shared name table.
+fn advertised_effort_levels(capabilities: &AnthropicModelCapabilities) -> Vec<ReasoningLevel> {
+    EFFORT_NAMES
+        .into_iter()
+        .filter(|name| capabilities.effort_level(name))
+        .map(|name| {
+            name.parse()
+                .expect("EFFORT_NAMES entries are valid ReasoningLevel values")
+        })
+        .collect()
+}
+
+/// Budget-token thinking accepts any positive Rho level; Off is handled apart.
+fn budget_token_levels() -> Vec<ReasoningLevel> {
+    ReasoningLevel::ALL
+        .into_iter()
+        .filter(|level| *level != ReasoningLevel::Off)
+        .collect()
 }
 
 /// Strips a trailing `-YYYYMMDD` snapshot suffix, yielding the parent alias
@@ -302,7 +304,7 @@ fn records_from_page(
         .map(|model| {
             let raw_json = capabilities_json(model.capabilities);
             let reasoning_capabilities = AnthropicModelCapabilities::from_value(&raw_json)
-                .map(|capabilities| reasoning_capabilities(&model.id, &capabilities))
+                .map(|capabilities| capabilities.reasoning_capabilities(&model.id))
                 .unwrap_or(ReasoningCapabilities::Unknown);
             super::ProviderModelRecord {
                 model: ProviderModel {

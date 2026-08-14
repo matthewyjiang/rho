@@ -6,8 +6,8 @@ use crate::{
 };
 
 use super::{
-    add_page, capabilities_json, finalize_models, model_list_truncated, reasoning_capabilities,
-    records_from_page, AnthropicModelCapabilities, AnthropicModelsResponse, ModelListContinuation,
+    add_page, capabilities_json, finalize_models, model_list_truncated, records_from_page,
+    AnthropicModelCapabilities, AnthropicModelsResponse, ModelListContinuation,
 };
 
 fn list_page(id: &str, has_more: bool, last_id: Option<&str>) -> AnthropicModelsResponse {
@@ -173,7 +173,7 @@ fn advertised_capabilities_decide_selectable_reasoning_levels() {
 
     for (name, model, capabilities, expected) in cases {
         let parsed = AnthropicModelCapabilities::from_value(capabilities).unwrap();
-        assert_eq!(reasoning_capabilities(model, &parsed), expected, "{name}");
+        assert_eq!(parsed.reasoning_capabilities(model), expected, "{name}");
     }
 }
 
