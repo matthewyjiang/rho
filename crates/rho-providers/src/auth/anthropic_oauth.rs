@@ -132,12 +132,15 @@ async fn complete_anthropic_oauth_with_endpoint(
         })
         .send()
         .await?;
-    // The token endpoint reports rejected exchanges (bad code, stale attempt,
-    // state/verifier mismatch) as 429 rate_limit_error, so a raw HTTP error
-    // would mislead the user into waiting instead of retrying the login.
+    // Anthropic's edge answers token grants from unofficial clients with a
+    // 429 rate_limit_error that never reaches the API (verified 2026-08:
+    // fresh valid codes, clean IPs, JSON and form bodies all get the same
+    // 429 without a request_id, while malformed bodies get real 400s). A raw
+    // HTTP error would mislead the user into waiting out a rate limit that
+    // does not exist.
     if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
         return Err(AnthropicOAuthError::OAuthDenied(
-            "Anthropic rejected the code exchange (HTTP 429). This usually means the pasted code was wrong, expired, or from an older login attempt, not real rate limiting. Run /login anthropic-oauth again and paste a fresh code.".into(),
+            "Anthropic refused the code exchange (HTTP 429). Anthropic blocks OAuth token grants from third-party clients, so this login mode does not currently work. Use /login anthropic-api-key, or runtime: claude-cli delegation for subscription use.".into(),
         ));
     }
     let response = response.error_for_status()?.json::<TokenResponse>().await?;
