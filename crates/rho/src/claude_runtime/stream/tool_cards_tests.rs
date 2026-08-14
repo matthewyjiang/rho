@@ -305,11 +305,7 @@ fn oversized_streamed_write_fragments_keep_running_path() {
 #[test]
 fn push_input_json_caps_retained_fragments_and_keeps_path() {
     let content = "x".repeat(super::MAX_INPUT_JSON_CHARS + 64);
-    let raw = serde_json::to_string(&json!({
-        "file_path": "/tmp/ws/huge.rs",
-        "content": content
-    }))
-    .expect("serialize write input");
+    let raw = format!(r#"{{"file_path":"/tmp/ws/huge.rs","content":"{content}"}}"#);
     assert!(raw.len() > super::MAX_INPUT_JSON_CHARS);
     let cases = [raw.len(), 1024];
     for chunk_size in cases {
