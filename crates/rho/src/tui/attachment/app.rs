@@ -172,8 +172,10 @@ struct AttachmentApp {
     scroll: HistoryScrollChrome,
     last_mouse_position: Option<(u16, u16)>,
     /// Tool under the last left-button press, if any. Release toggles only
-    /// when it lands on the same card; card-to-card drags are not clicks.
+    /// when it lands on the same card without the pointer moving — matching
+    /// the main TUI `has_moved` click-vs-drag split.
     press_toggle_target: Option<ToggleTarget>,
+    press_cell: Option<(u16, u16)>,
     viewport_height: usize,
     history_area: Rect,
     history_width: usize,
@@ -207,6 +209,7 @@ impl AttachmentApp {
             scroll: HistoryScrollChrome::default(),
             last_mouse_position: None,
             press_toggle_target: None,
+            press_cell: None,
             viewport_height: 0,
             history_area: Rect::default(),
             history_width: 0,
@@ -446,6 +449,7 @@ impl AttachmentApp {
                 );
                 match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left) => {
+                        self.press_cell = Some((mouse.column, mouse.row));
                         self.press_toggle_target = if self.scroll.drag().is_some() {
                             None
                         } else {
@@ -453,15 +457,12 @@ impl AttachmentApp {
                         };
                     }
                     MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Moved => {
-                        if self.press_toggle_target.as_ref().is_some_and(|press| {
-                            self.toggle_target_at_pointer(mouse.column, mouse.row)
-                                .as_ref()
-                                != Some(press)
-                        }) {
+                        if self.press_cell != Some((mouse.column, mouse.row)) {
                             self.press_toggle_target = None;
                         }
                     }
                     MouseEventKind::Up(MouseButton::Left) => {
+                        self.press_cell = None;
                         let press = self.press_toggle_target.take();
                         let release = self.toggle_target_at_pointer(mouse.column, mouse.row);
                         if !was_drag && press == release {

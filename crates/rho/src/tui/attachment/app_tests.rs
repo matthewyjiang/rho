@@ -618,6 +618,23 @@ fn drag_away_and_back_does_not_toggle() {
     assert!(!transcript_tool(&app, 1).expanded);
 }
 
+// Covers: dragging inside one card is not a click
+// Owner: attach event loop
+#[test]
+fn intra_card_drag_does_not_toggle() {
+    let (_directory, mut app) = test_app();
+    app.apply_event(AttachmentEvent::ToolFinished {
+        key: Some("call-1".into()),
+        card: long_body_card(),
+    });
+    sync_view(&mut app, 80, 30);
+
+    app.handle_event(mouse(MouseEventKind::Down(MouseButton::Left), 8, 5));
+    app.handle_event(mouse(MouseEventKind::Drag(MouseButton::Left), 8, 6));
+    app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 8, 6));
+    assert!(!transcript_tool(&app, 0).expanded);
+}
+
 // Covers: ctrl+o expands latest pending, then last finished card, accordion-style
 // Owner: attach event loop
 #[test]
