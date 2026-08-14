@@ -434,6 +434,11 @@ fn maps_model_errors_to_sanitized_provider_errors() {
             true,
         ),
         (
+            ModelError::empty_assistant(),
+            ProviderErrorKind::InvalidResponse,
+            true,
+        ),
+        (
             ModelError::UnsupportedReasoning {
                 provider: "xai",
                 model: "grok-build-0.1".into(),

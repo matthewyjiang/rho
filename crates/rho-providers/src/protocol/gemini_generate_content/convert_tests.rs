@@ -626,3 +626,14 @@ fn content_policy_finish_reason_stays_a_permanent_invalid_response() {
 
     assert!(matches!(error, ModelError::InvalidResponse(_)));
 }
+
+// Covers: blank Gemini completions must retry, not kill the run
+// Owner: gemini generateContent response conversion
+#[test]
+fn empty_gemini_assistant_is_retryable() {
+    let error = ResponseCollector::default().finish().unwrap_err();
+    assert!(matches!(
+        error,
+        ModelError::RetryableInvalidResponse { error_type, .. } if error_type == "empty_assistant"
+    ));
+}

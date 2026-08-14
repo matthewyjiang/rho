@@ -46,9 +46,7 @@ pub(crate) fn finalize_chat_assistant(
             .map(ContentBlock::ToolCall),
     );
     if blocks.is_empty() {
-        return Err(ModelError::InvalidResponse(
-            "assistant message had no content or tool calls".into(),
-        ));
+        return Err(ModelError::empty_assistant());
     }
     Ok(ChatAssistantFinish {
         response: ModelResponse::Assistant(blocks),

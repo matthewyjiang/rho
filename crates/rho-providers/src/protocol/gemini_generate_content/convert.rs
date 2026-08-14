@@ -501,9 +501,7 @@ impl ResponseCollector {
 
     pub fn finish(self) -> Result<ModelResponse, ModelError> {
         if self.content.is_empty() {
-            return Err(ModelError::InvalidResponse(
-                "Gemini returned no content".into(),
-            ));
+            return Err(ModelError::empty_assistant());
         }
         Ok(ModelResponse::Assistant(self.content))
     }
