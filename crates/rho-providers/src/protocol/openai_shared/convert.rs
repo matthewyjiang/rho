@@ -352,13 +352,27 @@ fn append_codex_assistant(
 }
 
 fn openai_assistant_message(blocks: Vec<ContentBlock>) -> Result<OpenAiMessage, ModelError> {
-    openai_prepared_assistant(PreparedAssistant {
-        content: blocks,
-        replay_context: Vec::new(),
-    })
+    openai_prepared_assistant(
+        PreparedAssistant {
+            content: blocks,
+            replay_context: Vec::new(),
+        },
+        // Plain assistant history carries no provenance, so it never gets
+        // same-model reasoning synthesis.
+        false,
+    )
 }
 
-fn openai_prepared_assistant(prepared: PreparedAssistant) -> Result<OpenAiMessage, ModelError> {
+/// Converts a prepared assistant turn for the chat-completions wire.
+///
+/// `same_model` marks a turn whose provenance matches the request target.
+/// DeepSeek V4 thinking mode rejects tool-call turns that omit
+/// `reasoning_content` (a present empty string is accepted), so same-model
+/// tool-call turns always carry the field, defaulting to an empty string.
+fn openai_prepared_assistant(
+    prepared: PreparedAssistant,
+    same_model: bool,
+) -> Result<OpenAiMessage, ModelError> {
     let replay = chat_replay(prepared.replay_context)?;
     let content = assistant_text(&prepared.content);
     let tool_calls = prepared
@@ -372,7 +386,9 @@ fn openai_prepared_assistant(prepared: PreparedAssistant) -> Result<OpenAiMessag
     Ok(OpenAiMessage {
         role: "assistant".into(),
         content: (!content.is_empty()).then(|| json!(content)),
-        reasoning_content: replay.reasoning_content,
+        reasoning_content: replay
+            .reasoning_content
+            .or_else(|| (same_model && !tool_calls.is_empty()).then(String::new)),
         tool_calls: (!tool_calls.is_empty()).then_some(tool_calls),
         tool_call_id: None,
     })
@@ -396,15 +412,11 @@ pub(crate) fn to_openai_message_for_target(
             let fallback_target = message.provenance.clone().unwrap_or_else(|| {
                 crate::model::ModelIdentity::new("foreign", "openai-chat-completions", "foreign")
             });
-            openai_prepared_assistant(prepare_assistant(
-                *message,
-                target.unwrap_or(&fallback_target),
-            ))
+            let target = target.unwrap_or(&fallback_target);
+            let same_model = message.provenance.as_ref() == Some(target);
+            openai_prepared_assistant(prepare_assistant(*message, target), same_model)
         }
         Message::AbortedAssistant(message) => {
-            let fallback_target = message.provenance.clone().unwrap_or_else(|| {
-                crate::model::ModelIdentity::new("foreign", "openai-chat-completions", "foreign")
-            });
             let mut enriched = crate::model::AssistantMessage {
                 content: aborted_content_as_non_executable(&message),
                 provenance: message.provenance,
@@ -414,10 +426,12 @@ pub(crate) fn to_openai_message_for_target(
             enriched
                 .content
                 .push(ContentBlock::Text("[Operation aborted]".into()));
-            openai_prepared_assistant(prepare_assistant(
-                enriched,
-                target.unwrap_or(&fallback_target),
-            ))
+            let fallback_target = enriched.provenance.clone().unwrap_or_else(|| {
+                crate::model::ModelIdentity::new("foreign", "openai-chat-completions", "foreign")
+            });
+            let target = target.unwrap_or(&fallback_target);
+            let same_model = enriched.provenance.as_ref() == Some(target);
+            openai_prepared_assistant(prepare_assistant(enriched, target), same_model)
         }
         Message::ToolResult(result) => Ok(OpenAiMessage {
             role: "tool".into(),
