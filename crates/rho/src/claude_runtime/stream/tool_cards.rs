@@ -18,6 +18,11 @@ use rho_tools::{
 use super::format::{truncate_payload_lines, MAX_TOOL_BODY_LINES};
 use super::types::MAX_TOOL_PAYLOAD_CHARS;
 
+/// Raw `input_json_delta` assembly budget. Larger than the presentation cap
+/// so a complete oversized object can be parsed, then reduced by
+/// [`bounded_input`].
+const MAX_INPUT_JSON_CHARS: usize = MAX_TOOL_PAYLOAD_CHARS.saturating_mul(16);
+
 /// Claude tool identity parsed once from the wire name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ClaudeTool {
@@ -127,7 +132,7 @@ impl StartedClaudeTool {
         if fragment.is_empty() {
             return false;
         }
-        if self.input_json.len().saturating_add(fragment.len()) > MAX_TOOL_PAYLOAD_CHARS {
+        if self.input_json.len() >= MAX_INPUT_JSON_CHARS {
             return false;
         }
         self.input_json.push_str(fragment);

@@ -270,6 +270,36 @@ fn push_input_json_assembles_fragments() {
     assert_eq!(started.input, Some(json!({"file_path": "note.txt"})));
 }
 
+// Covers: oversized streamed Write fragments must still enrich the running path
+// Owner: claude stream tool card mapper
+#[test]
+fn oversized_streamed_write_fragments_keep_running_path() {
+    let content = "x".repeat(MAX_TOOL_PAYLOAD_CHARS + 64);
+    let raw = serde_json::to_string(&json!({
+        "file_path": "/tmp/ws/big.rs",
+        "content": content
+    }))
+    .expect("serialize write input");
+    assert!(raw.len() > MAX_TOOL_PAYLOAD_CHARS);
+    let mut started = StartedClaudeTool::from_name_input(Some("Write"), Some(&json!({})));
+    for chunk in raw.as_bytes().chunks(128) {
+        let fragment = std::str::from_utf8(chunk).expect("ascii json chunk");
+        started.push_input_json(fragment);
+    }
+    assert_eq!(
+        started
+            .input
+            .as_ref()
+            .and_then(|value| value.get("file_path")),
+        Some(&json!("/tmp/ws/big.rs"))
+    );
+    let card = started_card(&started, Some(Path::new("/tmp/ws")));
+    assert_eq!(
+        card.header,
+        ToolHeader::call("Write", Some("big.rs".into()))
+    );
+}
+
 // Covers: oversized Write content must not drop file_path from the card
 // Owner: claude stream tool card mapper
 #[test]
