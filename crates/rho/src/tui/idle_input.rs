@@ -329,7 +329,7 @@ impl App {
                         turn.display,
                         agent.has_tool("skill"),
                     )? {
-                        skill_actions::SkillCommandAction::Prompt(prompt) => turn = prompt,
+                        skill_actions::SkillCommandAction::Prompt(prompt) => turn = *prompt,
                         skill_actions::SkillCommandAction::Rejected => return Ok(()),
                         skill_actions::SkillCommandAction::NotSkill => {
                             self.report_unknown_command(&name);
@@ -362,7 +362,7 @@ impl App {
             );
             if let TurnOutcome::Failed(failed_turn) = outcome {
                 if resume_goal {
-                    pending_goal_retries.push_back(failed_turn);
+                    pending_goal_retries.push_back(*failed_turn);
                 }
             }
 

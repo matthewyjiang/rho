@@ -22,7 +22,7 @@ mod provider;
 #[path = "interactive_runtime_hooks.rs"]
 mod session_hooks;
 #[path = "interactive_runtime_startup.rs"]
-mod startup;
+pub(super) mod startup;
 #[path = "interactive_runtime_workspace_rewind.rs"]
 mod workspace_rewind;
 

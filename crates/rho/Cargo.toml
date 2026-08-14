@@ -88,6 +88,7 @@ jsonschema = { version = "0.49", default-features = false }
 # The MCP OAuth client hands rmcp a client of rmcp's own reqwest version, so
 # that version is named here instead of being inferred from the lock file.
 mcp-reqwest = { package = "reqwest", version = "0.13", default-features = false, features = ["json", "native-tls"] }
+agent-client-protocol = "=2.0.0"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [

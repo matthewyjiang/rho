@@ -713,7 +713,7 @@ impl App {
         self.turn.stop_loading();
         self.insert_entry(&Entry::Error(message));
         self.set_status("error");
-        TurnOutcome::Failed(failed_turn)
+        TurnOutcome::Failed(Box::new(failed_turn))
     }
 
     /// Clears start-time busy chrome and returns drained turn-boundary work

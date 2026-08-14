@@ -2,7 +2,7 @@ use super::*;
 
 pub(super) enum SkillCommandAction {
     NotSkill,
-    Prompt(TurnPrompt),
+    Prompt(Box<TurnPrompt>),
     Rejected,
 }
 
@@ -42,7 +42,7 @@ impl App {
         else {
             return Ok(SkillCommandAction::NotSkill);
         };
-        Ok(SkillCommandAction::Prompt(
+        Ok(SkillCommandAction::Prompt(Box::new(
             TurnPrompt::command(model_prompt, display).with_initial_tool_call(
                 rho_sdk::model::ToolCall {
                     id: rho_sdk::ToolCallId::new().into_string(),
@@ -50,7 +50,7 @@ impl App {
                     arguments: serde_json::json!({"name": skill.name}),
                 },
             ),
-        ))
+        )))
     }
 }
 

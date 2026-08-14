@@ -120,7 +120,7 @@ impl App {
             .await?;
         let outcome_kind = outcome.kind();
         let pending_retries = match outcome {
-            TurnOutcome::Failed(failed_turn) => VecDeque::from([failed_turn]),
+            TurnOutcome::Failed(failed_turn) => VecDeque::from([*failed_turn]),
             TurnOutcome::Completed | TurnOutcome::Interrupted | TurnOutcome::Cancelled => {
                 VecDeque::new()
             }
@@ -162,7 +162,7 @@ impl App {
             let outcome_kind = outcome.kind();
             self.finish_goal_resumption_turn(outcome_kind);
             let pending_retries = match outcome {
-                TurnOutcome::Failed(failed_turn) => VecDeque::from([failed_turn]),
+                TurnOutcome::Failed(failed_turn) => VecDeque::from([*failed_turn]),
                 TurnOutcome::Completed | TurnOutcome::Interrupted | TurnOutcome::Cancelled => {
                     VecDeque::new()
                 }
@@ -232,7 +232,7 @@ impl App {
                 match outcome {
                     TurnOutcome::Completed => continue,
                     TurnOutcome::Failed(failed_turn) => {
-                        pending_retries.push_front(failed_turn);
+                        pending_retries.push_front(*failed_turn);
                         continue;
                     }
                     TurnOutcome::Interrupted | TurnOutcome::Cancelled => break,
@@ -250,7 +250,7 @@ impl App {
                 match outcome {
                     TurnOutcome::Completed => {}
                     TurnOutcome::Failed(failed_turn) => {
-                        pending_retries.push_front(failed_turn);
+                        pending_retries.push_front(*failed_turn);
                     }
                     TurnOutcome::Interrupted | TurnOutcome::Cancelled => break,
                 }
@@ -406,7 +406,7 @@ impl App {
             match outcome {
                 TurnOutcome::Completed => {}
                 TurnOutcome::Failed(failed_turn) => {
-                    pending_retries.push_front(failed_turn);
+                    pending_retries.push_front(*failed_turn);
                 }
                 TurnOutcome::Interrupted | TurnOutcome::Cancelled => break,
             }

@@ -224,7 +224,7 @@ pub(super) enum TurnOutcome {
     Interrupted,
     /// User cancelled interactive work such as a questionnaire.
     Cancelled,
-    Failed(FailedTurn),
+    Failed(Box<FailedTurn>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

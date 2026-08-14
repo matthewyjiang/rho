@@ -16,6 +16,7 @@ use {
 };
 
 use super::{
+    acp,
     agent_binding::{AgentBinder, AgentInvocation, AgentRole},
     automation, automation_protocol, cli_config,
     config_repository::ConfigRepository,
@@ -103,6 +104,17 @@ async fn run_inner(cli: Cli) -> anyhow::Result<()> {
             output,
             max_steps,
             timeout,
+            herdr,
+        })
+        .await;
+    }
+    if matches!(cli.command, Some(Command::Acp)) {
+        return run_acp_startup(AcpCommandStartup {
+            config,
+            config_repository,
+            cwd,
+            cli,
+            bound_agent,
             herdr,
         })
         .await;
@@ -251,7 +263,7 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
         config.permission_mode = session_permission_mode;
     }
     let reasoning_before_binding = config.reasoning;
-    let role = if automation_prompt.is_some() {
+    let role = if automation_prompt.is_some() || matches!(cli.command, Some(Command::Acp)) {
         AgentRole::AutomationRoot
     } else {
         AgentRole::InteractiveRoot
@@ -332,6 +344,31 @@ async fn run_automation_startup(startup: AutomationStartup<'_>) -> anyhow::Resul
             hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
         },
     )
+    .await
+}
+
+struct AcpCommandStartup {
+    config: crate::config::Config,
+    config_repository: ConfigRepository,
+    cwd: std::path::PathBuf,
+    cli: Cli,
+    bound_agent: super::agent_binding::BoundAgent,
+    herdr: HerdrReporter,
+}
+
+async fn run_acp_startup(startup: AcpCommandStartup) -> anyhow::Result<()> {
+    let diagnostics = bind_agent_diagnostics(&startup.config, &startup.bound_agent);
+    acp::run(acp::AcpStartup {
+        config: startup.config,
+        config_path: absolute_config_path(&startup.config_repository)?,
+        cwd: startup.cwd,
+        no_system_prompt: startup.cli.no_system_prompt,
+        no_tools: startup.cli.no_tools,
+        no_subagents: startup.cli.no_subagents,
+        agent: startup.bound_agent,
+        diagnostics,
+        herdr: startup.herdr,
+    })
     .await
 }
 

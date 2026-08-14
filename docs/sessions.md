@@ -20,7 +20,7 @@ Sessions persist automatically under:
 ~/.rho/sessions/<workspace-key>/
 ```
 
-`<workspace-key>` contains a readable encoding of the absolute working directory plus a stable hash to avoid path collisions. Rho uses the current directory as its [workspace](/tools-workspace).
+`<workspace-key>` contains a readable encoding of the absolute working directory plus a stable hash to avoid path collisions. Rho uses the current directory as its [workspace](/tools-workspace). Sessions started through [`rho acp`](/integrations/acp) use this same tree and show up in `rho sessions list` and `rho -R`.
 
 ### Layout
 

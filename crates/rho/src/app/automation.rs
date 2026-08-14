@@ -13,26 +13,21 @@ use {
     crate::agent::PERMISSION_CLASSIFIER_AGENT_ID,
     crate::cli::{Command, OutputFormat},
     crate::config::Config,
-    crate::credential_store::AppCredentialStore,
     crate::diagnostics::RuntimeDiagnostics,
     crate::herdr::{HerdrReporter, HerdrState},
     crate::permission::{PermissionMode, SessionWriteLog},
     crate::permission_classifier_handler::ClassifierApprovalHandler,
     crate::subagent::{RunState, RunStatus},
     crate::tools::agent::BackgroundSubagents,
-    rho_providers::providers::build_automation_provider,
 };
 
 use super::{
     agent_binding::BoundAgent,
     automation_protocol::{write_event, JsonlAdapter, TerminalReason, WireEvent},
     headless_run::{self, HeadlessRunDeps, HostInputResponder},
-    policy::AppPolicy,
-    runtime_builder::{
-        build_runtime_with_max_steps, configured_context_window, RuntimeBuildOptions,
+    session_assembly::{
+        assemble_session, ApprovalInputs, SessionApproval, SessionAssembly, SessionAssemblyOptions,
     },
-    sdk_config::SdkBootstrapOptions,
-    tools_prompt::{assemble_tools_and_prompt, ToolsAndPrompt, ToolsAndPromptOptions},
 };
 
 /// Error returned after an automation run has cleaned up and selected a stable exit code.
@@ -170,7 +165,8 @@ pub(super) fn prompt_for_command(command: &Option<Command>) -> anyhow::Result<Op
             | Command::Plugins { .. }
             | Command::Workflow { .. }
             | Command::WorkflowPlannerWorker
-            | Command::Update,
+            | Command::Update
+            | Command::Acp,
         )
         | None => Ok(None),
     }
@@ -462,22 +458,10 @@ async fn run_session_with_output(
     mut jsonl: Option<&mut JsonlAdapter>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
     ensure_headless_auto_classifier_model(startup.config)?;
-    let _scope = startup.config.providers.thread_scope()?;
-    let sdk_options = SdkBootstrapOptions::from_config(startup.config, &startup.cwd)?;
-    let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
-        Arc::new(AppCredentialStore),
-    );
-    // Automation normally skips the catalog fetch, but catalog-constructed
-    // providers need the hydrate before build; a no-op for the rest.
-    sdk_options.provider.ensure_catalog_for_construction().await;
-    let provider = build_automation_provider(sdk_options.provider, &credentials)?;
-    let workspace_root = sdk_options.workspace.root.clone();
-    let workspace = sdk_options.workspace.build_workspace()?;
-    let ToolsAndPrompt {
-        tools: mut tool_set,
-        system_prompt,
-        ..
-    } = assemble_tools_and_prompt(ToolsAndPromptOptions {
+    let SessionAssembly {
+        built,
+        workspace_root,
+    } = assemble_session(SessionAssemblyOptions {
         config: startup.config,
         config_path: startup.config_path.clone(),
         cwd: &startup.cwd,
@@ -496,81 +480,36 @@ async fn run_session_with_output(
         // Automation binds no model for sampling, so it never declares the
         // capability and rejects any request that arrives anyway.
         mcp_sampling: crate::app::tools_prompt::McpSamplingSupport::Unavailable,
-        // Do not block automation startup on models.dev; use whatever cache is warm.
-        await_catalog_names: false,
         background_subagents: BackgroundSubagents::Disabled,
         diagnostics: &startup.diagnostics,
         agent: &startup.agent,
+        max_steps: startup.max_steps,
+        usage_purpose: startup.usage_purpose,
+        usage_parent_session_id: startup.parent_session_id.clone(),
+        hook_host_labels: startup.hook_host_labels.clone(),
+        extend_tools: |mut tool_set: crate::tools::sdk_registry::AppToolSet| {
+            if let Some(poster) = startup.notice_poster.clone() {
+                tool_set.add_bundle(crate::tools::message_parent_bundle(poster));
+            }
+            tool_set
+        },
+        approval: |inputs: ApprovalInputs| {
+            Ok(SessionApproval {
+                session: headless_approval_session(
+                    &inputs.config,
+                    startup.approval_session.clone(),
+                    startup.approval_classifier.clone(),
+                    inputs.workspace_root,
+                    inputs.usage_recording,
+                    inputs.session_writes,
+                )?,
+                receiver: None,
+            })
+        },
+        session_options: |_| Ok(SessionOptions::default()),
     })
     .await?;
-    if let Some(poster) = startup.notice_poster.clone() {
-        tool_set.add_bundle(crate::tools::message_parent_bundle(poster));
-    }
-
-    let context_window = configured_context_window(startup.config);
-    let compaction = sdk_options.runtime.compaction.clone();
-    startup.diagnostics.update_compaction_config(&compaction);
-    let usage_recording = crate::usage::default_recording().await;
-    let session_writes = SessionWriteLog::default();
-    let approval_session = headless_approval_session(
-        startup.config,
-        startup.approval_session.clone(),
-        startup.approval_classifier.clone(),
-        workspace_root.clone(),
-        usage_recording.clone(),
-        session_writes.clone(),
-    )?;
-    let hooks = crate::hooks::start_for_cwd(&workspace_root);
-    if let Some(hooks) = hooks.as_ref() {
-        startup.diagnostics.attach_hooks(hooks);
-    }
-    let startup_result: anyhow::Result<_> = async {
-        let runtime = build_runtime_with_max_steps(
-            RuntimeBuildOptions {
-                provider,
-                tools: tool_set.tools(),
-                workspace,
-                workspace_policy: AppPolicy::for_mode(
-                    startup.config.permission_mode,
-                    session_writes,
-                ),
-                approval_session,
-                system_prompt,
-                reasoning: sdk_options.runtime.reasoning,
-                service_tier: sdk_options.runtime.service_tier,
-                compaction,
-                context_window,
-                usage_purpose: startup.usage_purpose,
-                usage_parent_session_id: startup.parent_session_id.clone(),
-                usage_recording,
-                hook_host_labels: startup.hook_host_labels.clone(),
-                hooks: hooks.as_ref(),
-            },
-            startup.max_steps,
-        )?;
-        let session = match runtime.session(SessionOptions::default()).await {
-            Ok(session) => session,
-            Err(error) => {
-                runtime.shutdown();
-                return Err(error.into());
-            }
-        };
-        anyhow::Ok((runtime, session))
-    }
-    .await;
-    let (runtime, session) = match startup_result {
-        Ok(startup) => startup,
-        Err(error) => {
-            if let Some(hooks) = hooks {
-                hooks.shutdown(crate::hooks::DRAIN_GRACE).await;
-            }
-            tool_set.shutdown().await;
-            return Err(error);
-        }
-    };
-    if let Some(advisor) = tool_set.advisor() {
-        advisor.bind_session(session.clone());
-    }
+    let session = &built.session;
     if let Some(adapter) = jsonl.as_deref_mut() {
         adapter.set_run_context(session.id(), &workspace_root);
     }
@@ -579,7 +518,7 @@ async fn run_session_with_output(
         .report_state(HerdrState::Working, None, None)
         .await;
     let result = complete_run(
-        &session,
+        session,
         prompt_text,
         HeadlessRunDeps {
             reporter,
@@ -591,7 +530,7 @@ async fn run_session_with_output(
     )
     .await;
 
-    let session_hooks = runtime.hooks();
+    let session_hooks = built.runtime.hooks();
     let session_id = session.id().clone();
     match &result {
         Ok(_) => {
@@ -603,13 +542,7 @@ async fn run_session_with_output(
             &error.to_string(),
         ),
     }
-    runtime.shutdown();
-    drop(session);
-    drop(runtime);
-    if let Some(hooks) = hooks {
-        hooks.shutdown(crate::hooks::DRAIN_GRACE).await;
-    }
-    tool_set.shutdown().await;
+    built.teardown().await;
     startup
         .herdr
         .report_state(HerdrState::Idle, None, None)

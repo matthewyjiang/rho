@@ -8,7 +8,7 @@ printf 'summarize this repository' | rho run --stdin
 rho run "review this diff" --stdin < diff.txt
 ```
 
-Use the [interactive TUI](/interactive-tui) when you want an ongoing session. Use `rho run` when you want a single answer for a script, hook, alias, pipeline, or CI job.
+Use the [interactive TUI](/interactive-tui) when you want an ongoing session. Use `rho run` when you want a single answer for a script, hook, alias, pipeline, or CI job. Use [`rho acp`](/integrations/acp) when an editor host speaks Agent Client Protocol. That command does not change `rho run --output jsonl`.
 
 ```mermaid
 flowchart LR
@@ -205,6 +205,7 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | --- | --- |
 | `rho` | Start an interactive TUI session in the current working directory. |
 | `rho run [OPTIONS] [PROMPT]...` | Send one prompt, optionally append stdin, print the final answer, and exit. |
+| `rho acp` | Serve Agent Client Protocol over stdio for an editor host. See [ACP](/integrations/acp). |
 | `rho attach <ID>` | Watch a delegated agent run in a read-only TUI. See [subagents](/subagents/attachment-and-artifacts). |
 | `rho workflow <COMMAND>` | Use `list`, `validate`, `plan`, `run`, `status`, `cancel`, or `resume <RUN_ID>` for a [durable workflow](/workflows). |
 | `rho sessions list [--all-projects] [--search TEXT] [--limit N] [--json]` | List saved sessions for the current workspace, or every workspace with cwd context. |
