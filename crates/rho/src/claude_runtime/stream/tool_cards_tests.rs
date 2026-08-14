@@ -5,7 +5,7 @@ use serde_json::json;
 
 use rho_tools::tool_card::{ToolBody, ToolFact, ToolFamily, ToolHeader, ToolStatus};
 
-use super::{finished_card, started_card, StartedClaudeTool};
+use super::{finished_card, started_card, StartedClaudeTool, MAX_TOOL_PAYLOAD_CHARS};
 
 fn tool(name: &str, input: serde_json::Value) -> StartedClaudeTool {
     StartedClaudeTool::from_name_input(Some(name), Some(&input))
@@ -245,4 +245,103 @@ fn apply_input_upgrades_empty_start() {
     assert!(started.apply_input(Some(&json!({"file_path": "a.rs"}))));
     assert_eq!(started.input, Some(json!({"file_path": "a.rs"})));
     assert!(!started.apply_input(Some(&json!({"file_path": "a.rs"}))));
+}
+
+// Covers: oversized Write content must not drop file_path from the card
+// Owner: claude stream tool card mapper
+#[test]
+fn oversized_write_input_keeps_path_for_card() {
+    let content = "x".repeat(MAX_TOOL_PAYLOAD_CHARS + 64);
+    let started = tool(
+        "Write",
+        json!({"file_path": "/tmp/ws/big.rs", "content": content}),
+    );
+    assert_eq!(
+        started
+            .input
+            .as_ref()
+            .and_then(|value| value.get("file_path")),
+        Some(&json!("/tmp/ws/big.rs"))
+    );
+    let card = finished_card(
+        Some(&started),
+        /*ok*/ true,
+        "ok",
+        None,
+        Some(Path::new("/tmp/ws")),
+    );
+    assert_eq!(
+        card.header,
+        ToolHeader::call("Write", Some("big.rs".into()))
+    );
+    assert!(card.body.is_diff());
+    assert!(matches!(
+        card.facts.first(),
+        Some(ToolFact::DiffStat {
+            added,
+            removed: 0,
+            ..
+        }) if *added > 0
+    ));
+}
+
+// Covers: patchless Write update must not be painted as a new-file create
+// Owner: claude stream tool card mapper
+#[test]
+fn patchless_write_update_is_not_painted_as_create() {
+    let cases = [
+        (
+            json!({
+                "type": "update",
+                "content": "beta",
+                "structuredPatch": [],
+                "originalFile": "alpha"
+            }),
+            Some((1_u64, 1_u64)),
+        ),
+        (
+            json!({
+                "type": "update",
+                "content": "beta",
+                "structuredPatch": []
+            }),
+            None,
+        ),
+    ];
+    for (result, expected_stat) in cases {
+        let card = finished_card(
+            Some(&tool(
+                "Write",
+                json!({"file_path": "note.txt", "content": "beta"}),
+            )),
+            /*ok*/ true,
+            "updated",
+            Some(&result),
+            None,
+        );
+        match expected_stat {
+            Some((added, removed)) => {
+                assert_eq!(
+                    card.facts.first(),
+                    Some(&ToolFact::DiffStat {
+                        added,
+                        removed,
+                        path: None,
+                    })
+                );
+                assert!(card.body.is_diff());
+            }
+            None => {
+                assert!(!matches!(
+                    card.facts.first(),
+                    Some(ToolFact::DiffStat {
+                        added,
+                        removed: 0,
+                        ..
+                    }) if *added > 0
+                ));
+                assert!(!card.body.is_diff());
+            }
+        }
+    }
 }

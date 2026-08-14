@@ -300,8 +300,33 @@ fn diff_rows_from_result(
     if name != "Write" {
         return old_new_string_rows(input);
     }
-    let content = string_field(input, &["content"])?;
-    let path = path.unwrap_or("file");
+    if write_result_is_update(tool_use_result) {
+        return write_update_rows(tool_use_result, input, path);
+    }
+    let content = string_field(input, &["content"])
+        .or_else(|| string_field(tool_use_result, &["content"]))?;
+    write_create_rows(&content, path.unwrap_or("file"))
+}
+
+fn write_result_is_update(tool_use_result: Option<&Value>) -> bool {
+    matches!(
+        string_field(tool_use_result, &["type"]).as_deref(),
+        Some("update")
+    ) || string_field(tool_use_result, &["originalFile", "original_file"]).is_some()
+}
+
+fn write_update_rows(
+    tool_use_result: Option<&Value>,
+    input: Option<&Value>,
+    path: Option<&str>,
+) -> Option<Vec<rho_tools::tool_card::DiffRow>> {
+    let old = string_field(tool_use_result, &["originalFile", "original_file"])?;
+    let new = string_field(tool_use_result, &["content"])
+        .or_else(|| string_field(input, &["content"]))?;
+    replace_rows(&old, &new, path.unwrap_or("file"))
+}
+
+fn write_create_rows(content: &str, path: &str) -> Option<Vec<rho_tools::tool_card::DiffRow>> {
     let line_count = content.lines().count().max(1);
     let mut unified = format!("--- /dev/null\n+++ b/{path}\n@@ -0,0 +1,{line_count} @@\n");
     for line in content.lines() {
@@ -355,9 +380,13 @@ fn structured_patch_rows(
 fn old_new_string_rows(input: Option<&Value>) -> Option<Vec<rho_tools::tool_card::DiffRow>> {
     let old = string_field(input, &["old_string", "oldString"])?;
     let new = string_field(input, &["new_string", "newString"])?;
+    replace_rows(&old, &new, "file")
+}
+
+fn replace_rows(old: &str, new: &str, path: &str) -> Option<Vec<rho_tools::tool_card::DiffRow>> {
     let old_count = old.lines().count().max(1);
     let new_count = new.lines().count().max(1);
-    let mut unified = format!("--- a/file\n+++ b/file\n@@ -1,{old_count} +1,{new_count} @@\n");
+    let mut unified = format!("--- a/{path}\n+++ b/{path}\n@@ -1,{old_count} +1,{new_count} @@\n");
     for line in old.lines() {
         unified.push('-');
         unified.push_str(line);
@@ -550,13 +579,70 @@ fn count_nonempty_lines(content: &str) -> Option<u64> {
     (count > 0).then_some(count)
 }
 
+/// Fields at or under this encoded size are presentation metadata and are
+/// kept even when a sibling body field overflows the payload budget.
+const SMALL_INPUT_FIELD_CHARS: usize = 512;
+
 fn bounded_input(input: Option<&Value>) -> Option<Value> {
     let value = input.filter(|value| !value.is_null())?;
     if value.as_object().is_some_and(serde_json::Map::is_empty) {
         return None;
     }
     let serialized = serde_json::to_string(value).ok()?;
-    (serialized.len() <= MAX_TOOL_PAYLOAD_CHARS).then(|| value.clone())
+    if serialized.len() <= MAX_TOOL_PAYLOAD_CHARS {
+        return Some(value.clone());
+    }
+    bound_oversized_object(value)
+}
+
+fn bound_oversized_object(value: &Value) -> Option<Value> {
+    let object = value.as_object()?;
+    let mut kept = serde_json::Map::new();
+    let mut large_strings = Vec::new();
+    for (key, field) in object {
+        if let Value::String(text) = field {
+            if encoded_len(field) > SMALL_INPUT_FIELD_CHARS {
+                large_strings.push((key.clone(), text.clone()));
+                continue;
+            }
+        }
+        if encoded_len(field) <= SMALL_INPUT_FIELD_CHARS && object_fits(&kept, key, field) {
+            kept.insert(key.clone(), field.clone());
+        }
+    }
+    for (key, text) in large_strings {
+        let room = remaining_string_room(&kept, &key);
+        if room == 0 {
+            continue;
+        }
+        let field = Value::String(truncate(&text, room));
+        if object_fits(&kept, &key, &field) {
+            kept.insert(key, field);
+        }
+    }
+    (!kept.is_empty()).then(|| Value::Object(kept))
+}
+
+fn encoded_len(value: &Value) -> usize {
+    serde_json::to_string(value)
+        .map(|encoded| encoded.len())
+        .unwrap_or(usize::MAX)
+}
+
+fn encoded_object_len(object: &serde_json::Map<String, Value>) -> usize {
+    encoded_len(&Value::Object(object.clone()))
+}
+
+fn object_fits(kept: &serde_json::Map<String, Value>, key: &str, field: &Value) -> bool {
+    let mut probe = kept.clone();
+    probe.insert(key.to_string(), field.clone());
+    encoded_object_len(&probe) <= MAX_TOOL_PAYLOAD_CHARS
+}
+
+fn remaining_string_room(kept: &serde_json::Map<String, Value>, key: &str) -> usize {
+    MAX_TOOL_PAYLOAD_CHARS
+        .saturating_sub(encoded_object_len(kept))
+        .saturating_sub(key.len().saturating_add(6))
 }
 
 fn clean_name(name: Option<&str>) -> String {
