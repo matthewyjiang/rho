@@ -120,3 +120,28 @@ fn latest_toggle_target_prefers_pending() {
         Some(ToggleTarget::Pending("live".into()))
     );
 }
+
+// Covers: ctrl+o must not skip a non-expandable latest pending card
+// Owner: attach tool hit-test
+#[test]
+fn latest_toggle_target_does_not_skip_non_expandable_pending() {
+    let finished = Entry::Tool(tool_entry(long_card()));
+    let pending = tool_entry(short_card());
+    assert_eq!(
+        latest_toggle_target(
+            [
+                HistoryItem::Transcript {
+                    index: 0,
+                    entry: &finished,
+                },
+                HistoryItem::Pending {
+                    key: "live",
+                    tool: &pending,
+                },
+            ],
+            80,
+            10,
+        ),
+        None
+    );
+}

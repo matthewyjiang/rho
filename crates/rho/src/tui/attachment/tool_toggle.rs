@@ -131,7 +131,12 @@ where
     None
 }
 
-/// Last toggleable tool in paint order. Pending cards paint after transcript.
+/// Latest Ctrl+O target in paint order.
+///
+/// Pending cards paint after transcript. While any pending card exists, only
+/// the latest pending card is eligible — matching the main TUI, which does
+/// not fall back to an older pending or transcript card when that latest
+/// pending body is under budget.
 pub(super) fn latest_toggle_target<'a, I>(
     items: I,
     width: usize,
@@ -140,11 +145,23 @@ pub(super) fn latest_toggle_target<'a, I>(
 where
     I: IntoIterator<Item = HistoryItem<'a>>,
 {
-    items
-        .into_iter()
-        .filter(|item| item.is_toggleable(width, max_tool_output_lines))
-        .last()
-        .and_then(|item| item.toggle_target())
+    let mut last_pending = None;
+    let mut last_toggleable = None;
+    for item in items {
+        if matches!(item, HistoryItem::Pending { .. }) {
+            last_pending = Some(item);
+        } else if item.is_toggleable(width, max_tool_output_lines) {
+            last_toggleable = Some(item);
+        }
+    }
+    let candidate = match last_pending {
+        Some(pending) => pending,
+        None => last_toggleable?,
+    };
+    candidate
+        .is_toggleable(width, max_tool_output_lines)
+        .then(|| candidate.toggle_target())
+        .flatten()
 }
 
 #[cfg(test)]
