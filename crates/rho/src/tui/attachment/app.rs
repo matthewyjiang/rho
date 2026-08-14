@@ -1,10 +1,11 @@
 use std::{
+    borrow::Cow,
     io::IsTerminal,
     path::PathBuf,
     time::{Duration, Instant},
 };
 
-use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
+use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::Style,
@@ -36,8 +37,10 @@ use super::super::{
     Entry, HistoryScroll, ReasoningChrome, ReasoningEntry, ToolEntry, HISTORY_MOUSE_SCROLL_LINES,
     HISTORY_SCROLLBAR_REVEAL_DURATION,
 };
+use super::tool_toggle::{latest_toggle_target, tool_target_at_line, HistoryItem, ToggleTarget};
 
 const REFRESH_INTERVAL: Duration = Duration::from_millis(100);
+const TOGGLE_WIDTH_FALLBACK: usize = 80;
 
 /// Display policy for `rho attach`, mirrored from interactive config.
 ///
@@ -170,6 +173,7 @@ struct AttachmentApp {
     last_mouse_position: Option<(u16, u16)>,
     viewport_height: usize,
     history_area: Rect,
+    history_width: usize,
     content_len: usize,
     should_quit: bool,
 }
@@ -201,6 +205,7 @@ impl AttachmentApp {
             last_mouse_position: None,
             viewport_height: 0,
             history_area: Rect::default(),
+            history_width: 0,
             content_len: 0,
             should_quit: false,
         }
@@ -348,11 +353,14 @@ impl AttachmentApp {
 
     fn finish_pending_tool(&mut self, key: Option<String>, card: ToolCard) {
         let key = attachment_tool_key(key);
-        self.pending_tools.remove(&key);
+        let expanded = self
+            .pending_tools
+            .remove(&key)
+            .is_some_and(|entry| entry.expanded);
         self.pending_order.retain(|pending| pending != &key);
         self.transcript.push(Entry::Tool(ToolEntry {
             card,
-            expanded: false,
+            expanded,
             image: None,
             started_at: None,
         }));
@@ -403,6 +411,10 @@ impl AttachmentApp {
                     self.scroll.scroll_to_bottom();
                     true
                 }
+                KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.toggle_latest_tool();
+                    true
+                }
                 _ => false,
             },
             Event::Mouse(mouse) => {
@@ -414,6 +426,7 @@ impl AttachmentApp {
                 if matches!(mouse.kind, MouseEventKind::Moved) {
                     self.last_mouse_position = Some((mouse.column, mouse.row));
                 }
+                let was_drag = self.scroll.drag().is_some();
                 self.scroll.handle_scrollbar_mouse(
                     mouse.kind,
                     mouse.column,
@@ -427,6 +440,12 @@ impl AttachmentApp {
                         wheel_lines: HISTORY_MOUSE_SCROLL_LINES,
                     },
                 );
+                if matches!(mouse.kind, MouseEventKind::Up(MouseButton::Left))
+                    && !was_drag
+                    && self.try_toggle_tool_at_pointer(mouse.column, mouse.row)
+                {
+                    return true;
+                }
                 true
             }
             Event::FocusGained => {
@@ -455,8 +474,9 @@ impl AttachmentApp {
         )
     }
 
-    fn sync_history_geometry(&mut self, area: Rect, content_len: usize) {
+    fn sync_history_geometry(&mut self, area: Rect, content_len: usize, width: usize) {
         self.history_area = area;
+        self.history_width = width;
         self.viewport_height = area.height as usize;
         self.content_len = content_len;
         self.scroll.clamp(self.content_len, self.viewport_height);
@@ -495,7 +515,7 @@ impl AttachmentApp {
         frame.render_widget(Paragraph::new(header), chunks[0]);
 
         let lines = self.history_lines(width, status);
-        self.sync_history_geometry(chunks[1], lines.len());
+        self.sync_history_geometry(chunks[1], lines.len(), width);
         let start = self
             .scroll
             .visible_start(self.content_len, self.viewport_height);
@@ -513,7 +533,7 @@ impl AttachmentApp {
         let footer = vec![
             Line::styled("─".repeat(width.max(1)), Theme::dim()),
             Line::styled(
-                truncate_one_line("read-only · scroll · home/end · q detach", width),
+                truncate_one_line("read-only · scroll · ctrl+o expand · q detach", width),
                 Theme::dim(),
             ),
         ];
@@ -523,26 +543,38 @@ impl AttachmentApp {
     fn history_lines(&self, width: usize, status: Option<&RunStatus>) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
         let max_tool_output_lines = self.display.max_tool_output_lines();
-        for entry in &self.transcript {
-            if self.display.hides_entry(entry) {
-                continue;
-            }
+        for item in self.history_items(status) {
             lines.extend(entry_lines(
-                entry,
+                item.entry.as_ref(),
                 width,
                 max_tool_output_lines,
                 DEFAULT_IMAGE_HEIGHT,
             ));
         }
+        if lines.is_empty() {
+            lines.push(Line::styled("waiting for agent output...", Theme::dim()));
+        }
+        lines
+    }
+
+    fn history_items(&self, status: Option<&RunStatus>) -> Vec<HistoryItem<'_>> {
+        let mut items = Vec::new();
+        for (index, entry) in self.transcript.iter().enumerate() {
+            if self.display.hides_entry(entry) {
+                continue;
+            }
+            items.push(HistoryItem {
+                target: matches!(entry, Entry::Tool(_)).then_some(ToggleTarget::Transcript(index)),
+                entry: Cow::Borrowed(entry),
+            });
+        }
         if self.display.shows_work_chrome() {
             for key in &self.pending_order {
                 if let Some(tool) = self.pending_tools.get(key) {
-                    lines.extend(entry_lines(
-                        &Entry::Tool(tool.clone()),
-                        width,
-                        max_tool_output_lines,
-                        DEFAULT_IMAGE_HEIGHT,
-                    ));
+                    items.push(HistoryItem {
+                        target: Some(ToggleTarget::Pending(key.clone())),
+                        entry: Cow::Owned(Entry::Tool(tool.clone())),
+                    });
                 }
             }
         }
@@ -559,34 +591,97 @@ impl AttachmentApp {
                     .filter(|text| !text.is_empty())
             });
             if let Some(text) = fallback {
-                lines.extend(entry_lines(
-                    &Entry::Assistant(text.to_string()),
-                    width,
-                    max_tool_output_lines,
-                    DEFAULT_IMAGE_HEIGHT,
-                ));
+                items.push(HistoryItem {
+                    target: None,
+                    entry: Cow::Owned(Entry::Assistant(text.to_string())),
+                });
             }
         }
         if let Some(error) = status.and_then(|status| status.error.as_deref()) {
-            lines.extend(entry_lines(
-                &Entry::Error(error.to_string()),
-                width,
-                max_tool_output_lines,
-                DEFAULT_IMAGE_HEIGHT,
-            ));
+            items.push(HistoryItem {
+                target: None,
+                entry: Cow::Owned(Entry::Error(error.to_string())),
+            });
         }
         if let Some(error) = status.and_then(|status| status.attachment_error.as_deref()) {
-            lines.extend(entry_lines(
-                &Entry::Error(error.to_string()),
-                width,
-                max_tool_output_lines,
-                DEFAULT_IMAGE_HEIGHT,
-            ));
+            items.push(HistoryItem {
+                target: None,
+                entry: Cow::Owned(Entry::Error(error.to_string())),
+            });
         }
-        if lines.is_empty() {
-            lines.push(Line::styled("waiting for agent output...", Theme::dim()));
+        items
+    }
+
+    fn toggle_width(&self) -> usize {
+        if self.history_width == 0 {
+            TOGGLE_WIDTH_FALLBACK
+        } else {
+            self.history_width
         }
-        lines
+    }
+
+    fn try_toggle_tool_at_pointer(&mut self, column: u16, row: u16) -> bool {
+        if !self.history_area.contains((column, row).into()) {
+            return false;
+        }
+        if self
+            .history_scrollbar()
+            .is_some_and(|scrollbar| scrollbar.contains(column, row))
+        {
+            return false;
+        }
+        let line = self
+            .scroll
+            .visible_start(self.content_len, self.viewport_height)
+            .saturating_add(usize::from(row.saturating_sub(self.history_area.y)));
+        let Some(target) = tool_target_at_line(
+            self.history_items(self.status.as_ref()),
+            line,
+            self.toggle_width(),
+            self.display.max_tool_output_lines(),
+        ) else {
+            return false;
+        };
+        self.toggle_tool_at(target);
+        true
+    }
+
+    fn toggle_latest_tool(&mut self) {
+        let Some(target) = latest_toggle_target(
+            self.history_items(self.status.as_ref()),
+            self.toggle_width(),
+            self.display.max_tool_output_lines(),
+        ) else {
+            return;
+        };
+        self.toggle_tool_at(target);
+    }
+
+    fn toggle_tool_at(&mut self, target: ToggleTarget) {
+        let expand = !self.is_expanded(&target);
+        for (index, entry) in self.transcript.iter_mut().enumerate() {
+            if let Entry::Tool(tool) = entry {
+                tool.expanded =
+                    expand && matches!(&target, ToggleTarget::Transcript(i) if *i == index);
+            }
+        }
+        for (key, tool) in &mut self.pending_tools {
+            tool.expanded =
+                expand && matches!(&target, ToggleTarget::Pending(pending) if pending == key);
+        }
+    }
+
+    fn is_expanded(&self, target: &ToggleTarget) -> bool {
+        match target {
+            ToggleTarget::Transcript(index) => matches!(
+                self.transcript.get(*index),
+                Some(Entry::Tool(tool)) if tool.expanded
+            ),
+            ToggleTarget::Pending(key) => self
+                .pending_tools
+                .get(key)
+                .is_some_and(|tool| tool.expanded),
+        }
     }
 }
 

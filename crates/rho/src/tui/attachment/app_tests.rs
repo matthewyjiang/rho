@@ -1,5 +1,8 @@
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use pretty_assertions::assert_eq;
+use ratatui::layout::Rect;
 use tempfile::TempDir;
 
 use super::*;
@@ -443,4 +446,139 @@ fn format_run_cost_prefers_status_total_via_shared_usd_helper() {
         .as_deref(),
         Some("$0.013")
     );
+}
+
+fn long_body_card() -> rho_tools::tool_card::ToolCard {
+    rho_tools::tool_card::ToolCard::new(
+        rho_tools::tool_card::ToolStatus::Ok,
+        rho_tools::tool_card::ToolFamily::FileCommand,
+        rho_tools::tool_card::ToolHeader::shell("$", Some("seq 20".into())),
+    )
+    .with_body(rho_tools::tool_card::ToolBody::Lines(
+        (0..20).map(|i| format!("out-{i}")).collect(),
+    ))
+}
+
+fn short_body_card() -> rho_tools::tool_card::ToolCard {
+    rho_tools::tool_card::ToolCard::new(
+        rho_tools::tool_card::ToolStatus::Ok,
+        rho_tools::tool_card::ToolFamily::Default,
+        rho_tools::tool_card::ToolHeader::call("echo", None),
+    )
+    .with_body(rho_tools::tool_card::ToolBody::Lines(vec!["ok".into()]))
+}
+
+fn mouse(kind: MouseEventKind, column: u16, row: u16) -> Event {
+    Event::Mouse(MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    })
+}
+
+fn sync_view(app: &mut AttachmentApp, width: u16, height: u16) {
+    let lines = app.history_lines(width as usize, None);
+    app.sync_history_geometry(Rect::new(0, 4, width, height), lines.len(), width as usize);
+}
+
+fn transcript_tool(app: &AttachmentApp, index: usize) -> &ToolEntry {
+    match app.transcript.get(index) {
+        Some(Entry::Tool(tool)) => tool,
+        other => panic!("expected tool at {index}, got {other:?}"),
+    }
+}
+
+// Covers: click expands and collapses an over-budget finished card
+// Owner: attach event loop
+#[test]
+fn click_toggles_finished_over_budget_card() {
+    let (_directory, mut app) = test_app();
+    app.apply_event(AttachmentEvent::ToolFinished {
+        key: Some("call-1".into()),
+        card: long_body_card(),
+    });
+    sync_view(&mut app, 80, 30);
+    let collapsed_len = app.history_lines(80, None).len();
+
+    app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 8, 5));
+    assert!(transcript_tool(&app, 0).expanded);
+    assert!(app.history_lines(80, None).len() > collapsed_len);
+
+    app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 8, 5));
+    assert!(!transcript_tool(&app, 0).expanded);
+    assert_eq!(app.history_lines(80, None).len(), collapsed_len);
+}
+
+// Covers: under-budget cards ignore click
+// Owner: attach event loop
+#[test]
+fn click_ignores_under_budget_card() {
+    let (_directory, mut app) = test_app();
+    app.apply_event(AttachmentEvent::ToolFinished {
+        key: Some("call-1".into()),
+        card: short_body_card(),
+    });
+    sync_view(&mut app, 80, 20);
+    app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 8, 5));
+    assert!(!transcript_tool(&app, 0).expanded);
+}
+
+// Covers: releasing a scrollbar drag over a card must not toggle
+// Owner: attach event loop
+#[test]
+fn scrollbar_drag_release_does_not_toggle() {
+    let (_directory, mut app) = test_app();
+    for i in 0..8 {
+        app.apply_event(AttachmentEvent::ToolFinished {
+            key: Some(format!("call-{i}")),
+            card: long_body_card(),
+        });
+    }
+    sync_view(&mut app, 80, 8);
+    app.scroll
+        .reveal(std::time::Instant::now(), HISTORY_SCROLLBAR_REVEAL_DURATION);
+
+    app.handle_event(mouse(MouseEventKind::Down(MouseButton::Left), 79, 4));
+    assert!(app.scroll.drag().is_some());
+    app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 8, 5));
+    assert!(app
+        .transcript
+        .iter()
+        .filter_map(|entry| match entry {
+            Entry::Tool(tool) => Some(tool.expanded),
+            _ => None,
+        })
+        .all(|expanded| !expanded));
+}
+
+// Covers: ctrl+o expands latest pending, then last transcript, accordion-style
+// Owner: attach event loop
+#[test]
+fn ctrl_o_prefers_pending_and_collapses_others() {
+    let (_directory, mut app) = test_app();
+    app.apply_event(AttachmentEvent::ToolFinished {
+        key: Some("done".into()),
+        card: long_body_card(),
+    });
+    app.apply_event(AttachmentEvent::ToolStarted {
+        key: Some("live".into()),
+        card: long_body_card(),
+    });
+    sync_view(&mut app, 80, 40);
+
+    app.handle_event(Event::Key(KeyEvent::new(
+        KeyCode::Char('o'),
+        KeyModifiers::CONTROL,
+    )));
+    assert!(app.pending_tools["live"].expanded);
+    assert!(!transcript_tool(&app, 0).expanded);
+
+    app.pending_tools.remove("live");
+    app.pending_order.clear();
+    app.handle_event(Event::Key(KeyEvent::new(
+        KeyCode::Char('o'),
+        KeyModifiers::CONTROL,
+    )));
+    assert!(transcript_tool(&app, 0).expanded);
 }
