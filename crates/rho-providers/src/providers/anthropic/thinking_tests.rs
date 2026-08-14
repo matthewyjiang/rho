@@ -67,6 +67,13 @@ fn capabilities_with_disabled_leaf(supported: bool) -> serde_json::Value {
                 "enabled": {"supported": false},
                 "disabled": {"supported": supported}
             }
+        },
+        "effort": {
+            "supported": true,
+            "low": {"supported": true},
+            "medium": {"supported": true},
+            "high": {"supported": true},
+            "max": {"supported": true}
         }
     })
 }
@@ -83,7 +90,7 @@ fn config(
     ModelError,
 > {
     thinking_config_for(
-        &AnthropicThinkingProtocol::from_capabilities(model, capabilities),
+        &ThinkingSource::from_capabilities(model, capabilities),
         reasoning,
         DEFAULT_MAX_TOKENS,
     )
@@ -94,10 +101,10 @@ fn config(
 // Owner: anthropic thinking protocol
 #[test]
 fn unresolved_capabilities_reject_requested_reasoning_and_omit_off() {
-    let unknown = AnthropicThinkingProtocol::unknown("unknown-claude");
+    let unknown = ThinkingSource::unresolved("unknown-claude");
     assert!(matches!(
         thinking_config_for(&unknown, ReasoningLevel::Medium, DEFAULT_MAX_TOKENS),
-        Err(ModelError::InvalidResponse(_))
+        Err(ModelError::UnsupportedReasoning { .. })
     ));
     assert_eq!(
         thinking_config_for(&unknown, ReasoningLevel::Off, DEFAULT_MAX_TOKENS).unwrap(),
@@ -105,12 +112,17 @@ fn unresolved_capabilities_reject_requested_reasoning_and_omit_off() {
     );
 }
 
-// Covers: a fetched empty capabilities object is resolved, not missing
+// Covers: a fetched empty capabilities object is incomplete Unknown, not a
+// proven non-configurable surface — non-Off leaves the model default
 // Owner: anthropic thinking protocol
 #[test]
-fn empty_fetched_capabilities_omit_thinking_without_error() {
+fn empty_fetched_capabilities_leave_model_default_for_requested_reasoning() {
     assert_eq!(
         config("claude-haiku-4-5", &json!({}), ReasoningLevel::Medium).unwrap(),
+        (None, None)
+    );
+    assert_eq!(
+        config("claude-haiku-4-5", &json!({}), ReasoningLevel::Off).unwrap(),
         (None, None)
     );
 }
@@ -235,7 +247,7 @@ fn off_follows_disabled_leaf_then_model_gap_table() {
 
     assert_eq!(
         thinking_config_for(
-            &AnthropicThinkingProtocol::unknown("claude-unknown"),
+            &ThinkingSource::unresolved("claude-unknown"),
             ReasoningLevel::Off,
             DEFAULT_MAX_TOKENS,
         )
@@ -298,6 +310,25 @@ fn effort_below_the_advertised_range_rises_to_the_model_minimum() {
     assert_eq!(output, Some(AnthropicOutputConfig { effort: "medium" }));
 }
 
+// Covers: adaptive without effort still sends adaptive thinking and omits
+// effort clamping rather than failing as unsupported
+// Owner: anthropic thinking protocol
+#[test]
+fn adaptive_without_effort_sends_adaptive_without_output_config() {
+    let capabilities = json!({
+        "thinking": {"types": {"adaptive": {"supported": true}}}
+    });
+    let (thinking, output) =
+        config("claude-opus-5", &capabilities, ReasoningLevel::Medium).unwrap();
+    assert_eq!(
+        thinking,
+        Some(AnthropicThinkingConfig::Adaptive {
+            display: "summarized"
+        })
+    );
+    assert_eq!(output, None);
+}
+
 // Covers: construction-time resolution reads the cached capabilities row and
 // falls back to the parent alias for dated snapshot ids
 // Owner: anthropic thinking protocol
@@ -323,7 +354,7 @@ fn resolve_reads_cached_capabilities_including_dated_snapshots() {
             .unwrap();
             assert_eq!(
                 thinking_config_for(
-                    &resolve_thinking_protocol("claude-opus-5"),
+                    &ThinkingSource::resolve("claude-opus-5"),
                     ReasoningLevel::Medium,
                     DEFAULT_MAX_TOKENS,
                 )
@@ -332,7 +363,7 @@ fn resolve_reads_cached_capabilities_including_dated_snapshots() {
             );
             assert_eq!(
                 thinking_config_for(
-                    &resolve_thinking_protocol("claude-opus-5-20260724"),
+                    &ThinkingSource::resolve("claude-opus-5-20260724"),
                     ReasoningLevel::Medium,
                     DEFAULT_MAX_TOKENS,
                 )
@@ -341,7 +372,7 @@ fn resolve_reads_cached_capabilities_including_dated_snapshots() {
             );
             assert_eq!(
                 thinking_config_for(
-                    &resolve_thinking_protocol("claude-unknown"),
+                    &ThinkingSource::resolve("claude-unknown"),
                     ReasoningLevel::Off,
                     DEFAULT_MAX_TOKENS,
                 )
@@ -350,11 +381,11 @@ fn resolve_reads_cached_capabilities_including_dated_snapshots() {
             );
             assert!(matches!(
                 thinking_config_for(
-                    &resolve_thinking_protocol("claude-unknown"),
+                    &ThinkingSource::resolve("claude-unknown"),
                     ReasoningLevel::Medium,
                     DEFAULT_MAX_TOKENS,
                 ),
-                Err(ModelError::InvalidResponse(_))
+                Err(ModelError::UnsupportedReasoning { .. })
             ));
         },
     );

@@ -1,145 +1,29 @@
+//! Anthropic `/v1/models` discovery.
+//!
+//! Capability projection (thinking mode, effort, Off encoding) lives in
+//! [`policy`] so fetch transport and wire/picker semantics stay separate.
+
 use reqwest::Url;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::{
-    credentials::CredentialStore,
-    model::{ModelError, ReasoningCapabilities},
-};
+use crate::{credentials::CredentialStore, model::ModelError};
 
 use super::{load_api_key_auth, provider_models_client, ProviderModel};
+
+#[path = "anthropic_policy.rs"]
+mod policy;
+
+#[cfg(test)]
+pub(crate) use policy::thinking_mode_from_value;
+pub(crate) use policy::{
+    cached_thinking_mode, capabilities_json_is_known, dated_parent_model, AnthropicThinkingMode,
+    OffThinking,
+};
 
 /// Upper bound on `/v1/models` pages so a misbehaving cursor cannot hang the
 /// startup refresh.
 const MAX_MODEL_PAGES: usize = 20;
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
-pub(crate) struct AnthropicModelCapabilities {
-    #[serde(default)]
-    thinking: Option<ThinkingBlock>,
-    #[serde(default)]
-    effort: Option<EffortBlock>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
-struct ThinkingBlock {
-    #[serde(default)]
-    types: ThinkingTypes,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
-struct ThinkingTypes {
-    #[serde(default)]
-    adaptive: Option<SupportedLeaf>,
-    #[serde(default)]
-    enabled: Option<SupportedLeaf>,
-    #[serde(default)]
-    disabled: Option<SupportedLeaf>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
-struct EffortBlock {
-    #[serde(default)]
-    supported: Option<bool>,
-    #[serde(default)]
-    low: Option<SupportedLeaf>,
-    #[serde(default)]
-    medium: Option<SupportedLeaf>,
-    #[serde(default)]
-    high: Option<SupportedLeaf>,
-    #[serde(default)]
-    xhigh: Option<SupportedLeaf>,
-    #[serde(default)]
-    max: Option<SupportedLeaf>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
-struct SupportedLeaf {
-    #[serde(default)]
-    supported: Option<bool>,
-}
-
-impl AnthropicModelCapabilities {
-    pub(crate) fn from_value(value: &Value) -> Option<Self> {
-        value
-            .is_object()
-            .then(|| serde_json::from_value(value.clone()).ok())
-            .flatten()
-    }
-
-    pub(crate) fn adaptive(&self) -> bool {
-        leaf_supported(
-            self.thinking
-                .as_ref()
-                .and_then(|block| block.types.adaptive.as_ref()),
-        )
-    }
-
-    pub(crate) fn enabled(&self) -> bool {
-        leaf_supported(
-            self.thinking
-                .as_ref()
-                .and_then(|block| block.types.enabled.as_ref()),
-        )
-    }
-
-    /// `Some` only when the Models API advertised a `disabled` leaf.
-    pub(crate) fn disabled(&self) -> Option<bool> {
-        self.thinking.as_ref()?.types.disabled.as_ref()?.supported
-    }
-
-    pub(crate) fn effort_supported(&self) -> bool {
-        self.effort
-            .as_ref()
-            .and_then(|block| block.supported)
-            .unwrap_or(false)
-    }
-
-    pub(crate) fn effort_level(&self, level: &str) -> bool {
-        let Some(block) = &self.effort else {
-            return false;
-        };
-        match level {
-            "low" => leaf_supported(block.low.as_ref()),
-            "medium" => leaf_supported(block.medium.as_ref()),
-            "high" => leaf_supported(block.high.as_ref()),
-            "xhigh" => leaf_supported(block.xhigh.as_ref()),
-            "max" => leaf_supported(block.max.as_ref()),
-            _ => false,
-        }
-    }
-}
-
-fn leaf_supported(leaf: Option<&SupportedLeaf>) -> bool {
-    leaf.and_then(|leaf| leaf.supported).unwrap_or(false)
-}
-
-/// Strips a trailing `-YYYYMMDD` snapshot suffix, yielding the parent alias
-/// that carries the cached capabilities row.
-pub(super) fn dated_parent_model(model: &str) -> Option<&str> {
-    let (parent, date) = model.rsplit_once('-')?;
-    (date.len() == 8 && date.bytes().all(|byte| byte.is_ascii_digit())).then_some(parent)
-}
-
-pub(super) fn capabilities_json_is_known(raw_json: Option<&str>) -> bool {
-    raw_json
-        .and_then(|value| serde_json::from_str::<Value>(value).ok())
-        .as_ref()
-        .and_then(AnthropicModelCapabilities::from_value)
-        .is_some()
-}
-
-/// Resolves cached Models API capabilities, falling back to the parent alias
-/// for dated snapshot ids.
-pub(crate) fn cached_capabilities(model: &str) -> Option<AnthropicModelCapabilities> {
-    cached_capabilities_for_id(model)
-        .or_else(|| dated_parent_model(model).and_then(cached_capabilities_for_id))
-}
-
-fn cached_capabilities_for_id(model: &str) -> Option<AnthropicModelCapabilities> {
-    let value = super::cached_provider_model_raw_json("anthropic", model)?;
-    AnthropicModelCapabilities::from_value(&value)
-}
 
 #[derive(Deserialize)]
 struct AnthropicModelsResponse {
@@ -190,12 +74,6 @@ fn model_list_truncated(max_pages: usize) -> ModelError {
     ))
 }
 
-fn capabilities_json(capabilities: Option<Value>) -> Value {
-    capabilities
-        .filter(|value| AnthropicModelCapabilities::from_value(value).is_some())
-        .unwrap_or(Value::Null)
-}
-
 fn records_from_page(
     provider: &str,
     response: AnthropicModelsResponse,
@@ -204,16 +82,24 @@ fn records_from_page(
         .data
         .into_iter()
         .filter(|model| model.id.starts_with("claude-"))
-        .map(|model| super::ProviderModelRecord {
-            model: ProviderModel {
-                provider: provider.to_string(),
-                display_name: model.display_name.unwrap_or_else(|| model.id.clone()),
-                context_window: model.max_input_tokens.filter(|window| *window > 0),
-                max_output_tokens: model.max_tokens,
-                model: model.id,
-                reasoning_capabilities: ReasoningCapabilities::Unknown,
-            },
-            raw_json: capabilities_json(model.capabilities),
+        .map(|model| {
+            let raw_json = policy::capabilities_json(model.capabilities);
+            // `capabilities_json` always yields a parseable object, including
+            // `{}` when the API omitted capabilities.
+            let reasoning_capabilities = policy::AnthropicModelCapabilities::from_value(&raw_json)
+                .expect("capabilities_json always stores a parseable object")
+                .reasoning_capabilities(&model.id);
+            super::ProviderModelRecord {
+                model: ProviderModel {
+                    provider: provider.to_string(),
+                    display_name: model.display_name.unwrap_or_else(|| model.id.clone()),
+                    context_window: model.max_input_tokens.filter(|window| *window > 0),
+                    max_output_tokens: model.max_tokens,
+                    model: model.id,
+                    reasoning_capabilities,
+                },
+                raw_json,
+            }
         })
         .collect()
 }

@@ -26,30 +26,28 @@ pub struct AnthropicProvider {
     api_base: String,
     model: String,
     max_tokens: fn(&str) -> u32,
-    thinking_protocol: thinking::AnthropicThinkingProtocol,
+    thinking: thinking::ThinkingSource,
 }
 
 impl AnthropicProvider {
-    // Tests construct with an empty protocol and inject one explicitly via
-    // `with_thinking_protocol`, so they never touch the on-disk model cache.
+    // Tests construct unresolved and inject capabilities explicitly via
+    // `with_thinking`, so they never touch the on-disk model cache.
     #[cfg(test)]
     pub fn new(model: String, api_key: String, max_tokens: fn(&str) -> u32) -> Self {
+        let thinking = thinking::ThinkingSource::unresolved(&model);
         Self {
             client: provider_client(),
             api_key,
             api_base: ANTHROPIC_API_BASE.into(),
             model,
             max_tokens,
-            thinking_protocol: thinking::AnthropicThinkingProtocol::default(),
+            thinking,
         }
     }
 
     #[cfg(test)]
-    pub(crate) fn with_thinking_protocol(
-        mut self,
-        thinking_protocol: thinking::AnthropicThinkingProtocol,
-    ) -> Self {
-        self.thinking_protocol = thinking_protocol;
+    pub(crate) fn with_thinking(mut self, thinking: thinking::ThinkingSource) -> Self {
+        self.thinking = thinking;
         self
     }
 
@@ -60,14 +58,14 @@ impl AnthropicProvider {
         client: reqwest::Client,
         api_base: String,
     ) -> Self {
-        let thinking_protocol = thinking::resolve_thinking_protocol(&model);
+        let thinking = thinking::ThinkingSource::resolve(&model);
         Self {
             client,
             api_key,
             api_base,
             model,
             max_tokens,
-            thinking_protocol,
+            thinking,
         }
     }
 
@@ -78,11 +76,8 @@ impl AnthropicProvider {
     ) -> Result<AnthropicRequest, ModelError> {
         let target = self.model_identity();
         let max_tokens = (self.max_tokens)(&self.model);
-        let (thinking, output_config) = thinking::thinking_config_for(
-            &self.thinking_protocol,
-            request.reasoning_level,
-            max_tokens,
-        )?;
+        let (thinking, output_config) =
+            thinking::thinking_config_for(&self.thinking, request.reasoning_level, max_tokens)?;
         let (system, mut messages) = split_system_and_messages(
             request.messages.to_vec(),
             &target,

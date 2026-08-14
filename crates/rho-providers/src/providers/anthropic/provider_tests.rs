@@ -19,9 +19,10 @@ fn test_provider_with_capabilities(
     model: &str,
     capabilities: &serde_json::Value,
 ) -> AnthropicProvider {
-    test_provider(model).with_thinking_protocol(
-        thinking::AnthropicThinkingProtocol::from_capabilities(model, capabilities),
-    )
+    test_provider(model).with_thinking(thinking::ThinkingSource::from_capabilities(
+        model,
+        capabilities,
+    ))
 }
 
 fn adaptive_capabilities() -> serde_json::Value {
@@ -94,7 +95,7 @@ fn request_body_serializes_messages_tools_and_stream_flag() {
                     input_schema: json!({"type":"object"}),
                 }],
                 cancellation: Default::default(),
-                reasoning_level: Default::default(),
+                reasoning_level: ReasoningLevel::Off,
                 prompt_cache_key: Some("ignored"),
             },
             true,
@@ -191,7 +192,7 @@ fn unknown_model_rejects_requested_reasoning_instead_of_omitting_thinking() {
 
     assert!(matches!(
         request_body(&provider, ReasoningLevel::Medium),
-        Err(ModelError::InvalidResponse(_))
+        Err(ModelError::UnsupportedReasoning { .. })
     ));
     let body = request_body(&provider, ReasoningLevel::Off).unwrap();
     assert_eq!(body.thinking, None);
@@ -352,7 +353,7 @@ fn request_body_removes_top_level_schema_composition_from_tools() {
                     }),
                 }],
                 cancellation: Default::default(),
-                reasoning_level: Default::default(),
+                reasoning_level: ReasoningLevel::Off,
                 prompt_cache_key: None,
             },
             false,
@@ -401,7 +402,7 @@ fn request_body_types_pure_composition_tool_schemas_for_anthropic() {
                     }),
                 }],
                 cancellation: Default::default(),
-                reasoning_level: Default::default(),
+                reasoning_level: ReasoningLevel::Off,
                 prompt_cache_key: None,
             },
             false,
@@ -434,7 +435,7 @@ fn request_body_forces_non_object_root_schema_type_to_object() {
                     }),
                 }],
                 cancellation: Default::default(),
-                reasoning_level: Default::default(),
+                reasoning_level: ReasoningLevel::Off,
                 prompt_cache_key: None,
             },
             false,
