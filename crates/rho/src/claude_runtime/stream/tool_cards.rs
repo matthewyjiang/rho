@@ -611,7 +611,7 @@ fn bound_oversized_object(value: &Value) -> Option<Value> {
         }
     }
     for (key, text) in large_strings {
-        if let Some(field) = largest_fitting_string(&kept, key, text) {
+        if let Some(field) = largest_fitting_string(&kept, &key, &text) {
             kept.insert(key, field);
         }
     }
