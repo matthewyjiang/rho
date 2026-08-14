@@ -2,9 +2,10 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 
 use super::*;
+use crate::provider_backend::ModelError;
 use crate::providers::anthropic::DEFAULT_MAX_TOKENS;
 
-fn adaptive_full_effort() -> Value {
+fn adaptive_full_effort() -> serde_json::Value {
     json!({
         "thinking": {
             "supported": true,
@@ -24,7 +25,7 @@ fn adaptive_full_effort() -> Value {
     })
 }
 
-fn adaptive_without_xhigh() -> Value {
+fn adaptive_without_xhigh() -> serde_json::Value {
     json!({
         "thinking": {
             "supported": true,
@@ -44,7 +45,7 @@ fn adaptive_without_xhigh() -> Value {
     })
 }
 
-fn enabled_budget() -> Value {
+fn enabled_budget() -> serde_json::Value {
     json!({
         "thinking": {
             "supported": true,
@@ -57,13 +58,48 @@ fn enabled_budget() -> Value {
     })
 }
 
+fn capabilities_with_disabled_leaf(supported: bool) -> serde_json::Value {
+    json!({
+        "thinking": {
+            "supported": true,
+            "types": {
+                "adaptive": {"supported": true},
+                "enabled": {"supported": false},
+                "disabled": {"supported": supported}
+            }
+        }
+    })
+}
+
+fn config(
+    model: &str,
+    capabilities: &serde_json::Value,
+    reasoning: ReasoningLevel,
+) -> Result<
+    (
+        Option<AnthropicThinkingConfig>,
+        Option<AnthropicOutputConfig>,
+    ),
+    ModelError,
+> {
+    thinking_config_for(
+        &AnthropicThinkingProtocol::from_capabilities(model, capabilities),
+        reasoning,
+        DEFAULT_MAX_TOKENS,
+    )
+}
+
 // Covers: unknown or missing capabilities must not send thinking.type.enabled
 // Owner: anthropic thinking protocol
 #[test]
 fn unknown_capabilities_omit_thinking_instead_of_sending_a_budget() {
-    let protocol = AnthropicThinkingProtocol::default();
     assert_eq!(
-        thinking_config_for(&protocol, ReasoningLevel::Medium, DEFAULT_MAX_TOKENS).unwrap(),
+        thinking_config_for(
+            &AnthropicThinkingProtocol::unknown("unknown-claude"),
+            ReasoningLevel::Medium,
+            DEFAULT_MAX_TOKENS,
+        )
+        .unwrap(),
         (None, None)
     );
 }
@@ -72,9 +108,12 @@ fn unknown_capabilities_omit_thinking_instead_of_sending_a_budget() {
 // Owner: anthropic thinking protocol
 #[test]
 fn adaptive_capabilities_send_effort_and_never_a_token_budget() {
-    let protocol = AnthropicThinkingProtocol::from_capabilities(&adaptive_full_effort());
-    let (thinking, output) =
-        thinking_config_for(&protocol, ReasoningLevel::Medium, DEFAULT_MAX_TOKENS).unwrap();
+    let (thinking, output) = config(
+        "claude-opus-5",
+        &adaptive_full_effort(),
+        ReasoningLevel::Medium,
+    )
+    .unwrap();
     assert_eq!(
         thinking,
         Some(AnthropicThinkingConfig::Adaptive {
@@ -84,62 +123,113 @@ fn adaptive_capabilities_send_effort_and_never_a_token_budget() {
     assert_eq!(output, Some(AnthropicOutputConfig { effort: "medium" }));
 }
 
-// Covers: Off on adaptive capabilities, including Opus 5 dated snapshots,
-// must serialize thinking.type=disabled and must not send xhigh/max effort
+// Covers: Off follows a disabled leaf when present, otherwise the tiny
+// Models API gap table, and never sends xhigh/max with Off
 // Owner: anthropic thinking protocol
 #[test]
-fn off_serializes_disabled_from_adaptive_capabilities() {
-    let cache = tempfile::tempdir().unwrap();
-    crate::model::provider_models::with_provider_models_cache_dir_for_tests(
-        cache.path().to_path_buf(),
-        || {
-            crate::model::provider_models::write_cached_provider_model_raw_json_for_tests(
-                "anthropic",
-                "claude-opus-5",
-                "Claude Opus 5",
-                &adaptive_full_effort(),
-            )
-            .unwrap();
+fn off_follows_disabled_leaf_then_model_gap_table() {
+    let cases = [
+        (
+            "advertised disabled",
+            "any-model",
+            capabilities_with_disabled_leaf(/*supported*/ true),
+            Ok(Some(AnthropicThinkingConfig::Disabled)),
+        ),
+        (
+            "advertised cannot disable",
+            "any-model",
+            capabilities_with_disabled_leaf(/*supported*/ false),
+            Err(()),
+        ),
+        (
+            "opus 5 gap table",
+            "claude-opus-5",
+            adaptive_full_effort(),
+            Ok(Some(AnthropicThinkingConfig::Disabled)),
+        ),
+        (
+            "opus 5 dated snapshot gap table",
+            "claude-opus-5-20260724",
+            adaptive_full_effort(),
+            Ok(Some(AnthropicThinkingConfig::Disabled)),
+        ),
+        (
+            "sonnet 5 gap table",
+            "claude-sonnet-5",
+            adaptive_full_effort(),
+            Ok(Some(AnthropicThinkingConfig::Disabled)),
+        ),
+        (
+            "fable cannot disable",
+            "claude-fable-5",
+            adaptive_full_effort(),
+            Err(()),
+        ),
+        (
+            "mythos cannot disable",
+            "claude-mythos-preview",
+            adaptive_full_effort(),
+            Err(()),
+        ),
+        (
+            "leaf wins over fable table",
+            "claude-fable-5",
+            capabilities_with_disabled_leaf(/*supported*/ true),
+            Ok(Some(AnthropicThinkingConfig::Disabled)),
+        ),
+        (
+            "leaf wins over opus table",
+            "claude-opus-5",
+            capabilities_with_disabled_leaf(/*supported*/ false),
+            Err(()),
+        ),
+        (
+            "adaptive without leaf or table",
+            "claude-opus-4-8",
+            adaptive_full_effort(),
+            Ok(None),
+        ),
+        (
+            "enabled budget only",
+            "claude-haiku-4-5",
+            enabled_budget(),
+            Ok(None),
+        ),
+    ];
 
-            let cases = [
-                (
-                    "opus-5 alias",
-                    resolve_thinking_protocol("claude-opus-5"),
-                    true,
-                ),
-                (
-                    "opus-5 dated snapshot",
-                    resolve_thinking_protocol("claude-opus-5-20260724"),
-                    true,
-                ),
-                (
-                    "enabled budget only",
-                    AnthropicThinkingProtocol::from_capabilities(&enabled_budget()),
-                    false,
-                ),
-                (
-                    "unknown capabilities",
-                    AnthropicThinkingProtocol::default(),
-                    false,
-                ),
-            ];
-            for (name, protocol, expect_disabled) in cases {
-                let (thinking, output) =
-                    thinking_config_for(&protocol, ReasoningLevel::Off, DEFAULT_MAX_TOKENS)
-                        .unwrap();
-                if expect_disabled {
-                    assert_eq!(thinking, Some(AnthropicThinkingConfig::Disabled), "{name}");
-                    assert_eq!(output, None, "{name}: Off must not send xhigh/max effort");
+    for (name, model, capabilities, expected) in cases {
+        let result = config(model, &capabilities, ReasoningLevel::Off);
+        match expected {
+            Ok(thinking) => {
+                let (actual, output) =
+                    result.unwrap_or_else(|error| panic!("{name}: unexpected error: {error}"));
+                assert_eq!(actual, thinking, "{name}");
+                assert_eq!(output, None, "{name}: Off must not send effort");
+                if thinking == Some(AnthropicThinkingConfig::Disabled) {
                     assert_eq!(
-                        serde_json::to_value(&thinking).unwrap(),
+                        serde_json::to_value(&actual).unwrap(),
                         json!({"type": "disabled"}),
                         "{name}"
                     );
-                } else {
-                    assert_eq!((thinking, output), (None, None), "{name}");
                 }
             }
-        },
+            Err(()) => {
+                assert!(
+                    matches!(result, Err(ModelError::UnsupportedReasoning { .. })),
+                    "{name}: expected unsupported Off, got {result:?}"
+                );
+            }
+        }
+    }
+
+    assert_eq!(
+        thinking_config_for(
+            &AnthropicThinkingProtocol::unknown("claude-unknown"),
+            ReasoningLevel::Off,
+            DEFAULT_MAX_TOKENS,
+        )
+        .unwrap(),
+        (None, None)
     );
 }
 
@@ -147,9 +237,13 @@ fn off_serializes_disabled_from_adaptive_capabilities() {
 // Owner: anthropic thinking protocol
 #[test]
 fn enabled_capabilities_reserve_an_answer_budget() {
-    let protocol = AnthropicThinkingProtocol::from_capabilities(&enabled_budget());
     assert_eq!(
-        thinking_config_for(&protocol, ReasoningLevel::Medium, DEFAULT_MAX_TOKENS).unwrap(),
+        config(
+            "claude-haiku-4-5",
+            &enabled_budget(),
+            ReasoningLevel::Medium,
+        )
+        .unwrap(),
         (
             Some(AnthropicThinkingConfig::Enabled {
                 budget_tokens: DEFAULT_MAX_TOKENS - ANTHROPIC_ANSWER_RESERVE_TOKENS,
@@ -164,9 +258,12 @@ fn enabled_capabilities_reserve_an_answer_budget() {
 // Owner: anthropic thinking protocol
 #[test]
 fn effort_clamps_down_to_levels_the_model_advertises() {
-    let protocol = AnthropicThinkingProtocol::from_capabilities(&adaptive_without_xhigh());
-    let (_, output) =
-        thinking_config_for(&protocol, ReasoningLevel::Xhigh, DEFAULT_MAX_TOKENS).unwrap();
+    let (_, output) = config(
+        "claude-opus-4-6",
+        &adaptive_without_xhigh(),
+        ReasoningLevel::Xhigh,
+    )
+    .unwrap();
     assert_eq!(output, Some(AnthropicOutputConfig { effort: "high" }));
 }
 
@@ -186,20 +283,8 @@ fn effort_below_the_advertised_range_rises_to_the_model_minimum() {
             "high": {"supported": true}
         }
     });
-    let protocol = AnthropicThinkingProtocol::from_capabilities(&capabilities);
-    let (_, output) =
-        thinking_config_for(&protocol, ReasoningLevel::Low, DEFAULT_MAX_TOKENS).unwrap();
+    let (_, output) = config("claude-opus-5", &capabilities, ReasoningLevel::Low).unwrap();
     assert_eq!(output, Some(AnthropicOutputConfig { effort: "medium" }));
-}
-
-#[test]
-fn dated_snapshot_ids_reuse_the_parent_alias_capabilities() {
-    assert_eq!(
-        dated_parent_model("claude-opus-5-20260724"),
-        Some("claude-opus-5")
-    );
-    assert_eq!(dated_parent_model("claude-opus-5"), None);
-    assert_eq!(dated_parent_model("claude-sonnet-4-6"), None);
 }
 
 // Covers: construction-time resolution reads the cached capabilities row and
@@ -219,15 +304,38 @@ fn resolve_reads_cached_capabilities_including_dated_snapshots() {
             )
             .unwrap();
 
-            let expected = AnthropicThinkingProtocol::from_capabilities(&adaptive_full_effort());
-            assert_eq!(resolve_thinking_protocol("claude-opus-5"), expected);
+            let expected = config(
+                "claude-opus-5",
+                &adaptive_full_effort(),
+                ReasoningLevel::Medium,
+            )
+            .unwrap();
             assert_eq!(
-                resolve_thinking_protocol("claude-opus-5-20260724"),
+                thinking_config_for(
+                    &resolve_thinking_protocol("claude-opus-5"),
+                    ReasoningLevel::Medium,
+                    DEFAULT_MAX_TOKENS,
+                )
+                .unwrap(),
                 expected
             );
             assert_eq!(
-                resolve_thinking_protocol("claude-unknown"),
-                AnthropicThinkingProtocol::default()
+                thinking_config_for(
+                    &resolve_thinking_protocol("claude-opus-5-20260724"),
+                    ReasoningLevel::Medium,
+                    DEFAULT_MAX_TOKENS,
+                )
+                .unwrap(),
+                expected
+            );
+            assert_eq!(
+                thinking_config_for(
+                    &resolve_thinking_protocol("claude-unknown"),
+                    ReasoningLevel::Medium,
+                    DEFAULT_MAX_TOKENS,
+                )
+                .unwrap(),
+                (None, None)
             );
         },
     );

@@ -32,7 +32,6 @@ webbrowser = "1"
 ssh-key = { version = "0.6", features = ["ed25519", "std", "alloc"] }
 signature = "2"
 gethostname = "1"
-tracing = "0.1"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [

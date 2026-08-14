@@ -25,6 +25,9 @@ use crate::paths;
 
 #[path = "provider_models/anthropic.rs"]
 mod anthropic;
+pub(crate) use anthropic::{
+    cached_capabilities as cached_anthropic_capabilities, AnthropicModelCapabilities,
+};
 #[path = "provider_models/google.rs"]
 mod google;
 pub(crate) use google::{thinking_policy, ThinkingPolicy};
@@ -161,29 +164,16 @@ pub fn cached_provider_models(provider: &str) -> Vec<ProviderModel> {
 const PROVIDER_MODEL_CACHE_VERSION: i64 = 2;
 const PROVIDER_MODEL_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 
-/// Strips a trailing `-YYYYMMDD` snapshot suffix, yielding the parent alias
-/// that carries the cached capabilities row.
-pub(crate) fn dated_parent_model(model: &str) -> Option<&str> {
-    let (parent, date) = model.rsplit_once('-')?;
-    (date.len() == 8 && date.bytes().all(|byte| byte.is_ascii_digit())).then_some(parent)
-}
-
 pub fn provider_model_capabilities_need_refresh(provider: &str, model: &str) -> bool {
     let capabilities_are_known = match provider {
         "kimi-code" => kimi_capabilities_are_known as fn(&CachedCapabilityRow) -> bool,
         "anthropic" => anthropic_capabilities_are_known,
         _ => return false,
     };
-    // Anthropic dated snapshot ids are served from the parent alias row (see
-    // the Anthropic thinking resolver), so honour the same fallback here or
-    // every launch re-fetches the Models API for a cached snapshot id.
-    let row = cached_capability_row(provider, model).or_else(|| {
-        (provider == "anthropic")
-            .then(|| dated_parent_model(model))
-            .flatten()
+    let Some(row) = cached_capability_row(provider, model).or_else(|| {
+        fallback_capability_model(provider, model)
             .and_then(|parent| cached_capability_row(provider, parent))
-    });
-    let Some(row) = row else {
+    }) else {
         return true;
     };
     row.cache_version < PROVIDER_MODEL_CACHE_VERSION
@@ -191,6 +181,13 @@ pub fn provider_model_capabilities_need_refresh(provider: &str, model: &str) -> 
         || !row
             .updated_at
             .is_some_and(provider_snapshot_timestamp_is_fresh)
+}
+
+fn fallback_capability_model<'a>(provider: &str, model: &'a str) -> Option<&'a str> {
+    match provider {
+        "anthropic" => anthropic::dated_parent_model(model),
+        _ => None,
+    }
 }
 
 struct CachedCapabilityRow {
@@ -229,13 +226,8 @@ fn kimi_capabilities_are_known(row: &CachedCapabilityRow) -> bool {
         .is_known()
 }
 
-// Anthropic capabilities live in raw_json as the Models API `capabilities`
-// object; anything but a JSON object (missing row, legacy null) is unknown.
 fn anthropic_capabilities_are_known(row: &CachedCapabilityRow) -> bool {
-    row.raw_json
-        .as_deref()
-        .and_then(|value| serde_json::from_str::<Value>(value).ok())
-        .is_some_and(|value| value.is_object())
+    anthropic::capabilities_json_is_known(row.raw_json.as_deref())
 }
 
 fn provider_snapshot_timestamp_is_fresh(updated_at: i64) -> bool {

@@ -1,7 +1,5 @@
-use serde_json::Value;
-
 use crate::{
-    model::provider_models,
+    model::provider_models::{self, AnthropicModelCapabilities},
     protocol::anthropic_messages::{AnthropicOutputConfig, AnthropicThinkingConfig},
     provider_backend::ModelError,
     reasoning::ReasoningLevel,
@@ -9,11 +7,22 @@ use crate::{
 
 use super::ANTHROPIC_ANSWER_RESERVE_TOKENS;
 
+/// How Off is encoded when a catalog advertises that choice.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum OffThinking {
+    #[default]
+    Omit,
+    Disabled,
+    Unsupported,
+}
+
 /// Wire protocol advertised by Anthropic's Models API `capabilities` object.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct AnthropicThinkingProtocol {
+    model: String,
     adaptive: bool,
     enabled: bool,
+    off: OffThinking,
     effort: EffortSupport,
 }
 
@@ -28,44 +37,76 @@ struct EffortSupport {
 }
 
 impl AnthropicThinkingProtocol {
-    pub(crate) fn from_capabilities(capabilities: &Value) -> Self {
-        let thinking = capabilities.get("thinking");
-        let effort = capabilities.get("effort");
+    #[cfg(test)]
+    pub(crate) fn from_capabilities(model: &str, capabilities: &serde_json::Value) -> Self {
+        match AnthropicModelCapabilities::from_value(capabilities) {
+            Some(parsed) => Self::from_parsed(model, &parsed),
+            None => Self::unknown(model),
+        }
+    }
+
+    fn from_parsed(model: &str, capabilities: &AnthropicModelCapabilities) -> Self {
         Self {
-            adaptive: leaf_supported(thinking, &["types", "adaptive"]),
-            enabled: leaf_supported(thinking, &["types", "enabled"]),
+            model: model.to_string(),
+            adaptive: capabilities.adaptive(),
+            enabled: capabilities.enabled(),
+            off: off_thinking(model, capabilities.disabled()),
             effort: EffortSupport {
-                supported: leaf_supported(effort, &[]),
-                levels: EFFORT_LEVELS.map(|level| leaf_supported(effort, &[level])),
+                supported: capabilities.effort_supported(),
+                levels: EFFORT_LEVELS.map(|level| capabilities.effort_level(level)),
             },
         }
     }
-}
 
-/// Resolves the cached Models API capabilities for `model`, falling back to the
-/// parent alias for dated snapshot ids. Resolved once at provider construction;
-/// request building stays pure.
-pub(super) fn resolve_thinking_protocol(model: &str) -> AnthropicThinkingProtocol {
-    let capabilities = cached_capabilities(model)
-        .or_else(|| dated_parent_model(model).and_then(cached_capabilities));
-    match capabilities {
-        Some(value) => AnthropicThinkingProtocol::from_capabilities(&value),
-        None => {
-            tracing::warn!(
-                target: "rho::providers",
-                "no cached Anthropic capabilities for model {model}; reasoning levels will not change thinking on the wire"
-            );
-            AnthropicThinkingProtocol::default()
+    fn unknown(model: &str) -> Self {
+        Self {
+            model: model.to_string(),
+            ..Self::default()
         }
     }
 }
 
-fn cached_capabilities(model: &str) -> Option<Value> {
-    provider_models::cached_provider_model_raw_json("anthropic", model)
-        .filter(|value| !value.is_null())
+fn off_thinking(model: &str, disabled_leaf: Option<bool>) -> OffThinking {
+    match disabled_leaf {
+        Some(true) => OffThinking::Disabled,
+        Some(false) => OffThinking::Unsupported,
+        None => off_when_unadvertised(model),
+    }
 }
 
-use provider_models::dated_parent_model;
+/// Models API has no `disabled` leaf on current Claude 5 rows. These prefixes
+/// fill that gap; a present leaf always wins.
+fn off_when_unadvertised(model: &str) -> OffThinking {
+    if model_has_prefix(model, &["claude-opus-5", "claude-sonnet-5"]) {
+        OffThinking::Disabled
+    } else if model_has_prefix(
+        model,
+        &["claude-fable-5", "claude-mythos-5", "claude-mythos-preview"],
+    ) {
+        OffThinking::Unsupported
+    } else {
+        OffThinking::Omit
+    }
+}
+
+fn model_has_prefix(model: &str, prefixes: &[&str]) -> bool {
+    prefixes.iter().any(|prefix| {
+        model == *prefix
+            || model
+                .strip_prefix(prefix)
+                .is_some_and(|suffix| suffix.starts_with('-'))
+    })
+}
+
+/// Resolves the cached Models API capabilities for `model`, including the
+/// parent alias for dated snapshot ids. Resolved once at provider construction;
+/// request building stays pure.
+pub(super) fn resolve_thinking_protocol(model: &str) -> AnthropicThinkingProtocol {
+    match provider_models::cached_anthropic_capabilities(model) {
+        Some(capabilities) => AnthropicThinkingProtocol::from_parsed(model, &capabilities),
+        None => AnthropicThinkingProtocol::unknown(model),
+    }
+}
 
 pub(super) fn thinking_config_for(
     protocol: &AnthropicThinkingProtocol,
@@ -79,14 +120,16 @@ pub(super) fn thinking_config_for(
     ModelError,
 > {
     if reasoning == ReasoningLevel::Off {
-        // Adaptive models accept thinking.type.disabled. Opus 5 rejects that
-        // pairing at xhigh/max; Off never sends output_config, so those
-        // levels cannot ride along. Models that do not advertise adaptive
-        // default thinking off, so the field is omitted.
-        let thinking = protocol
-            .adaptive
-            .then_some(AnthropicThinkingConfig::Disabled);
-        return Ok((thinking, None));
+        // Off never sends output_config, so xhigh/max cannot ride along.
+        return match protocol.off {
+            OffThinking::Unsupported => Err(ModelError::UnsupportedReasoning {
+                provider: "anthropic",
+                model: protocol.model.clone(),
+                requested: reasoning,
+            }),
+            OffThinking::Disabled => Ok((Some(AnthropicThinkingConfig::Disabled), None)),
+            OffThinking::Omit => Ok((None, None)),
+        };
     }
     if protocol.adaptive {
         return Ok((
@@ -149,22 +192,6 @@ impl EffortSupport {
             .find(|&index| self.levels[index])
             .map(|index| EFFORT_LEVELS[index])
     }
-}
-
-fn leaf_supported(root: Option<&Value>, path: &[&str]) -> bool {
-    let Some(mut current) = root else {
-        return false;
-    };
-    for key in path {
-        let Some(next) = current.get(*key) else {
-            return false;
-        };
-        current = next;
-    }
-    current
-        .get("supported")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
 }
 
 #[cfg(test)]

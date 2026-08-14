@@ -20,7 +20,7 @@ fn test_provider_with_capabilities(
     capabilities: &serde_json::Value,
 ) -> AnthropicProvider {
     test_provider(model).with_thinking_protocol(
-        thinking::AnthropicThinkingProtocol::from_capabilities(capabilities),
+        thinking::AnthropicThinkingProtocol::from_capabilities(model, capabilities),
     )
 }
 
@@ -173,7 +173,9 @@ fn provider_context_replay_follows_effective_thinking_mode() {
 
 #[test]
 fn reasoning_off_disables_adaptive_thinking_when_supported() {
-    let provider = test_provider_with_capabilities("claude-opus-5", &adaptive_capabilities());
+    let mut capabilities = adaptive_capabilities();
+    capabilities["thinking"]["types"]["disabled"] = json!({"supported": true});
+    let provider = test_provider_with_capabilities("claude-opus-5", &capabilities);
 
     let body = request_body(&provider, ReasoningLevel::Off).unwrap();
     let value = serde_json::to_value(&body).unwrap();

@@ -4476,7 +4476,6 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "toml 0.8.23",
- "tracing",
  "url",
  "webbrowser",
  "windows-sys 0.61.2",
