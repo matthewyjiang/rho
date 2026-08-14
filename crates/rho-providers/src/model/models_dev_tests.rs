@@ -1144,6 +1144,10 @@ fn hydrate_writes_opencode_go_rows_that_only_advertise_sdk_package() {
                 .and_then(|cost| cost.input_micros_per_m),
             Some(300_000)
         );
-        assert!(!metadata.reasoning_metadata_complete);
+        assert!(metadata.reasoning_metadata_complete);
+        assert_eq!(
+            metadata.supported_reasoning_levels,
+            Some(vec![ReasoningLevel::Off, ReasoningLevel::Max])
+        );
     });
 }

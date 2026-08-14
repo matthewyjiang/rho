@@ -683,7 +683,11 @@ fn reasoning_capabilities_known(model: &Value, policy: CatalogReasoningPolicy) -
 /// A toggle-only catalog row is a complete binary on/off control, but only for
 /// protocols that already treat Off as an explicit wire value (`none`).
 fn toggle_is_complete_binary_control(model: &Value, policy: CatalogReasoningPolicy) -> bool {
-    policy == CatalogReasoningPolicy::OffAsNone && advertised_toggle(model)
+    advertised_toggle(model)
+        && matches!(
+            policy,
+            CatalogReasoningPolicy::OffAsNone | CatalogReasoningPolicy::ExactAdvertised
+        )
 }
 
 fn is_recognized_effort_value(value: &Value) -> bool {

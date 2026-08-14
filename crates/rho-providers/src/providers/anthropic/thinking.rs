@@ -19,10 +19,10 @@ pub(crate) struct ThinkingSource {
 }
 
 impl ThinkingSource {
-    pub(super) fn resolve(model: &str) -> Self {
+    pub(super) fn resolve(provider: &str, model: &str) -> Self {
         Self {
             model: model.to_string(),
-            mode: provider_models::cached_anthropic_thinking_mode(model),
+            mode: thinking_mode_for_provider(provider, model),
         }
     }
 
@@ -49,6 +49,23 @@ impl ThinkingSource {
             requested,
         }
     }
+}
+
+fn thinking_mode_for_provider(provider: &str, model: &str) -> Option<AnthropicThinkingMode> {
+    if provider == "anthropic" {
+        return provider_models::cached_anthropic_thinking_mode(model);
+    }
+    Some(
+        crate::model::models_dev::cached_model_metadata(provider, model)
+            .map(|metadata| {
+                AnthropicThinkingMode::from_host_catalog_capabilities(
+                    metadata.reasoning_capabilities(),
+                )
+            })
+            .unwrap_or(AnthropicThinkingMode::BudgetTokens {
+                off: OffThinking::Disabled,
+            }),
+    )
 }
 
 pub(super) fn thinking_config_for(

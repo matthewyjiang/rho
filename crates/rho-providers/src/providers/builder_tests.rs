@@ -188,6 +188,14 @@ async fn opencode_go_anthropic_npm_posts_messages_with_x_api_key() {
         assert!(!request
             .to_ascii_lowercase()
             .contains("authorization: bearer"));
+        let json = request
+            .rsplit("\r\n\r\n")
+            .next()
+            .expect("messages request body");
+        assert!(
+            json.contains(r#""type":"enabled""#) || json.contains(r#""type": "enabled""#),
+            "hosted Messages Max must send thinking.type=enabled, got {json}"
+        );
         let body = r#"{"content":[{"type":"text","text":"hello"}]}"#;
         let response = format!(
             "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
@@ -227,7 +235,7 @@ async fn opencode_go_anthropic_npm_posts_messages_with_x_api_key() {
             messages: &messages,
             tools: &[],
             cancellation: Default::default(),
-            reasoning_level: ReasoningLevel::Off,
+            reasoning_level: ReasoningLevel::Max,
             prompt_cache_key: None,
         })
         .await

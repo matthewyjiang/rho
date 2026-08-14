@@ -162,6 +162,20 @@ impl EffortMask {
             .collect()
     }
 
+    fn from_reasoning_levels(levels: &[ReasoningLevel]) -> Option<Self> {
+        let mapped = [
+            levels.contains(&ReasoningLevel::Low),
+            levels.contains(&ReasoningLevel::Medium),
+            levels.contains(&ReasoningLevel::High),
+            levels.contains(&ReasoningLevel::Xhigh),
+            levels.contains(&ReasoningLevel::Max),
+        ];
+        mapped
+            .iter()
+            .any(|supported| *supported)
+            .then_some(Self { levels: mapped })
+    }
+
     /// Maps a reasoning level onto the nearest advertised effort, preferring
     /// the cheaper side so an unsupported request never escalates cost. A
     /// request below the advertised range still rises to the model minimum.
@@ -205,6 +219,38 @@ pub(crate) enum AnthropicThinkingMode {
 }
 
 impl AnthropicThinkingMode {
+    /// Hosted Messages adapters have no Anthropic Models API row. Map the
+    /// host catalog's advertised levels onto a thinking surface so a picker
+    /// level can be encoded instead of failing as unsupported.
+    pub(crate) fn from_host_catalog_capabilities(capabilities: ReasoningCapabilities) -> Self {
+        match capabilities {
+            ReasoningCapabilities::NotConfigurable => Self::Unknown {
+                off: OffThinking::Omit,
+            },
+            ReasoningCapabilities::Unknown => Self::BudgetTokens {
+                off: OffThinking::Disabled,
+            },
+            ReasoningCapabilities::Levels(levels) => {
+                let advertised = levels.levels();
+                let off = if advertised.contains(&ReasoningLevel::Off) {
+                    OffThinking::Disabled
+                } else {
+                    OffThinking::Unsupported
+                };
+                if catalog_levels_are_toggle(advertised) {
+                    return Self::BudgetTokens { off };
+                }
+                match EffortMask::from_reasoning_levels(advertised) {
+                    Some(efforts) => Self::Adaptive {
+                        off,
+                        efforts: Some(efforts),
+                    },
+                    None => Self::BudgetTokens { off },
+                }
+            }
+        }
+    }
+
     pub(crate) fn from_capabilities(
         model: &str,
         capabilities: &AnthropicModelCapabilities,
@@ -287,6 +333,15 @@ fn model_has_prefix(model: &str, prefixes: &[&str]) -> bool {
                 .strip_prefix(prefix)
                 .is_some_and(|suffix| suffix.starts_with('-'))
     })
+}
+
+fn catalog_levels_are_toggle(levels: &[ReasoningLevel]) -> bool {
+    let on = levels
+        .iter()
+        .copied()
+        .filter(|level| *level != ReasoningLevel::Off)
+        .collect::<Vec<_>>();
+    on.is_empty() || on == [ReasoningLevel::Max]
 }
 
 /// Budget-token thinking accepts any positive Rho level; Off is handled apart.

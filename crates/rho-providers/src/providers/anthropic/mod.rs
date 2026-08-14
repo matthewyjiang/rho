@@ -28,7 +28,9 @@ pub struct AnthropicProvider {
     model: String,
     /// Fixed max-tokens for tests; `None` resolves from the model catalog per request.
     max_tokens_override: Option<u32>,
-    thinking: thinking::ThinkingSource,
+    /// Test-only thinking snapshot. Production resolves per request so a
+    /// catalog hydrate that finishes after construction still applies.
+    thinking_override: Option<thinking::ThinkingSource>,
 }
 
 impl AnthropicProvider {
@@ -37,7 +39,6 @@ impl AnthropicProvider {
     // model cache.
     #[cfg(test)]
     pub fn new(model: String, api_key: String) -> Self {
-        let thinking = thinking::ThinkingSource::unresolved(&model);
         Self {
             client: provider_client(),
             api_key,
@@ -45,13 +46,13 @@ impl AnthropicProvider {
             identity_provider: "anthropic".into(),
             model,
             max_tokens_override: Some(DEFAULT_MAX_TOKENS),
-            thinking,
+            thinking_override: Some(thinking::ThinkingSource::unresolved(&model)),
         }
     }
 
     #[cfg(test)]
     pub(crate) fn with_thinking(mut self, thinking: thinking::ThinkingSource) -> Self {
-        self.thinking = thinking;
+        self.thinking_override = Some(thinking);
         self
     }
 
@@ -71,7 +72,6 @@ impl AnthropicProvider {
         api_base: String,
         identity_provider: impl Into<String>,
     ) -> Self {
-        let thinking = thinking::ThinkingSource::resolve(&model);
         Self {
             client,
             api_key,
@@ -79,8 +79,14 @@ impl AnthropicProvider {
             identity_provider: identity_provider.into(),
             model,
             max_tokens_override: None,
-            thinking,
+            thinking_override: None,
         }
+    }
+
+    fn thinking_source(&self) -> thinking::ThinkingSource {
+        self.thinking_override.clone().unwrap_or_else(|| {
+            thinking::ThinkingSource::resolve(&self.identity_provider, &self.model)
+        })
     }
 
     /// Resolved per request so a catalog hydrate that finishes after
@@ -109,8 +115,11 @@ impl AnthropicProvider {
     ) -> Result<AnthropicRequest, ModelError> {
         let target = self.model_identity();
         let max_tokens = self.max_tokens();
-        let (thinking, output_config) =
-            thinking::thinking_config_for(&self.thinking, request.reasoning_level, max_tokens)?;
+        let (thinking, output_config) = thinking::thinking_config_for(
+            &self.thinking_source(),
+            request.reasoning_level,
+            max_tokens,
+        )?;
         let (system, mut messages) = split_system_and_messages(
             request.messages.to_vec(),
             &target,

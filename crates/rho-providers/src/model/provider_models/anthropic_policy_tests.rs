@@ -4,6 +4,8 @@ use super::{
     capabilities_json, dated_parent_model, AnthropicModelCapabilities, AnthropicThinkingMode,
     OffThinking,
 };
+use crate::model::{ReasoningCapabilities, ReasoningLevelSet};
+use crate::reasoning::ReasoningLevel;
 
 // Covers: a successful fetch always stores a capabilities object, including
 // when the API omitted the field, so the row is known rather than cold cache,
@@ -36,4 +38,38 @@ fn dated_parent_model_strips_yyyymmdd_suffix() {
     );
     assert_eq!(dated_parent_model("claude-opus-5"), None);
     assert_eq!(dated_parent_model("claude-opus-5-preview"), None);
+}
+
+// Covers: hosted Messages catalogs must map toggle and effort rows to a
+// thinking surface the request builder can encode
+// Owner: anthropic thinking protocol
+#[test]
+fn host_catalog_capabilities_select_budget_or_adaptive_thinking() {
+    assert_eq!(
+        AnthropicThinkingMode::from_host_catalog_capabilities(ReasoningCapabilities::Unknown),
+        AnthropicThinkingMode::BudgetTokens {
+            off: OffThinking::Disabled
+        }
+    );
+    assert_eq!(
+        AnthropicThinkingMode::from_host_catalog_capabilities(ReasoningCapabilities::Levels(
+            ReasoningLevelSet::new(vec![ReasoningLevel::Off, ReasoningLevel::Max])
+        )),
+        AnthropicThinkingMode::BudgetTokens {
+            off: OffThinking::Disabled
+        }
+    );
+    assert!(matches!(
+        AnthropicThinkingMode::from_host_catalog_capabilities(ReasoningCapabilities::Levels(
+            ReasoningLevelSet::new(vec![
+                ReasoningLevel::Off,
+                ReasoningLevel::Low,
+                ReasoningLevel::High
+            ])
+        )),
+        AnthropicThinkingMode::Adaptive {
+            off: OffThinking::Disabled,
+            efforts: Some(_)
+        }
+    ));
 }
