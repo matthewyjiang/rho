@@ -5,15 +5,17 @@
 //! arms across the crate.
 
 use super::{
-    AuthMode, BearerCredentialAcquisition, BrowserOAuthFlow, CatalogReasoningPolicy, ModelIdCodec,
-    OpenAiRuntimeAuth, ProviderAuthKind, ProviderDescriptor, ProviderId, ProviderModelRefreshKind,
-    ProviderModelSource, ProviderRuntime, ANTHROPIC_API_KEY_ACCOUNT, CODEX_TOKENS_ACCOUNT,
-    GITHUB_COPILOT_TOKENS_ACCOUNT, GOOGLE_API_KEY_ACCOUNT, KIMI_CODE_API_BASE, KIMI_TOKENS_ACCOUNT,
-    META_API_BASE, META_API_KEY_ACCOUNT, MOONSHOT_API_BASE, MOONSHOT_API_KEY_ACCOUNT,
-    OLLAMA_API_BASE, OLLAMA_CLOUD_API_BASE, OLLAMA_CLOUD_API_KEY_ACCOUNT, OPENAI_API_KEY_ACCOUNT,
-    OPENROUTER_API_BASE, OPENROUTER_API_KEY_ACCOUNT, OPENROUTER_OAUTH_KEY_ACCOUNT,
-    POOLSIDE_API_BASE, POOLSIDE_API_KEY_ACCOUNT, QWEN_TOKEN_PLAN_API_BASE,
-    QWEN_TOKEN_PLAN_API_KEY_ACCOUNT, XAI_API_KEY_ACCOUNT, XAI_TOKENS_ACCOUNT,
+    AuthMode, BearerCredentialAcquisition, BrowserOAuthFlow, CatalogConstruction,
+    CatalogReasoningPolicy, ModelIdCodec, OpenAiRuntimeAuth, ProviderAuthKind, ProviderDescriptor,
+    ProviderId, ProviderModelRefreshKind, ProviderModelSource, ProviderRuntime,
+    ANTHROPIC_API_KEY_ACCOUNT, CODEX_TOKENS_ACCOUNT, GITHUB_COPILOT_TOKENS_ACCOUNT,
+    GOOGLE_API_KEY_ACCOUNT, KIMI_CODE_API_BASE, KIMI_TOKENS_ACCOUNT, META_API_BASE,
+    META_API_KEY_ACCOUNT, MOONSHOT_API_BASE, MOONSHOT_API_KEY_ACCOUNT, OLLAMA_API_BASE,
+    OLLAMA_CLOUD_API_BASE, OLLAMA_CLOUD_API_KEY_ACCOUNT, OPENAI_API_KEY_ACCOUNT,
+    OPENCODE_GO_API_BASE, OPENCODE_GO_API_KEY_ACCOUNT, OPENROUTER_API_BASE,
+    OPENROUTER_API_KEY_ACCOUNT, OPENROUTER_OAUTH_KEY_ACCOUNT, POOLSIDE_API_BASE,
+    POOLSIDE_API_KEY_ACCOUNT, QWEN_TOKEN_PLAN_API_BASE, QWEN_TOKEN_PLAN_API_KEY_ACCOUNT,
+    XAI_API_KEY_ACCOUNT, XAI_TOKENS_ACCOUNT,
 };
 use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
 
@@ -23,6 +25,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         runtime: ProviderRuntime::OpenAiCompatible {
             dialect: OpenAiCompatibleDialect::Standard,
             default_api_base: OLLAMA_API_BASE,
+            catalog_construction: CatalogConstruction::Runtime,
         },
         name: "ollama",
         display_name: "Ollama",
@@ -48,6 +51,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         runtime: ProviderRuntime::OpenAiCompatible {
             dialect: OpenAiCompatibleDialect::Standard,
             default_api_base: OLLAMA_CLOUD_API_BASE,
+            catalog_construction: CatalogConstruction::Runtime,
         },
         name: "ollama-cloud",
         display_name: "Ollama Cloud",
@@ -206,6 +210,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         runtime: ProviderRuntime::OpenAiCompatible {
             dialect: OpenAiCompatibleDialect::Moonshot,
             default_api_base: MOONSHOT_API_BASE,
+            catalog_construction: CatalogConstruction::Runtime,
         },
         name: "moonshot",
         display_name: "Moonshot AI",
@@ -233,6 +238,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         runtime: ProviderRuntime::OpenAiCompatible {
             dialect: OpenAiCompatibleDialect::Poolside,
             default_api_base: POOLSIDE_API_BASE,
+            catalog_construction: CatalogConstruction::Runtime,
         },
         name: "poolside",
         display_name: "Poolside",
@@ -260,6 +266,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         runtime: ProviderRuntime::OpenAiCompatible {
             dialect: OpenAiCompatibleDialect::OpenRouter,
             default_api_base: OPENROUTER_API_BASE,
+            catalog_construction: CatalogConstruction::Runtime,
         },
         name: "openrouter",
         display_name: "OpenRouter",
@@ -297,6 +304,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         runtime: ProviderRuntime::OpenAiCompatible {
             dialect: OpenAiCompatibleDialect::KimiCode,
             default_api_base: KIMI_CODE_API_BASE,
+            catalog_construction: CatalogConstruction::Runtime,
         },
         name: "kimi-code",
         display_name: "Kimi Code",
@@ -323,6 +331,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         runtime: ProviderRuntime::OpenAiCompatible {
             dialect: OpenAiCompatibleDialect::QwenTokenPlan,
             default_api_base: QWEN_TOKEN_PLAN_API_BASE,
+            catalog_construction: CatalogConstruction::Runtime,
         },
         name: "qwen-token-plan",
         display_name: "Qwen Token Plan",
@@ -350,6 +359,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         runtime: ProviderRuntime::OpenAiCompatible {
             dialect: OpenAiCompatibleDialect::Standard,
             default_api_base: META_API_BASE,
+            catalog_construction: CatalogConstruction::Runtime,
         },
         name: "meta",
         display_name: "Meta Model API",
@@ -371,6 +381,32 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         metadata_upstream: "meta",
         catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
         default_model: Some("muse-spark-1.2"),
+    },
+    ProviderDescriptor {
+        id: ProviderId::OpenCodeGo,
+        runtime: ProviderRuntime::OpenAiCompatible {
+            dialect: OpenAiCompatibleDialect::Standard,
+            default_api_base: OPENCODE_GO_API_BASE,
+            catalog_construction: CatalogConstruction::PreferModelsDevNpm,
+        },
+        name: "opencode-go",
+        display_name: "OpenCode Go",
+        auth_modes: &[AuthMode {
+            id: "opencode-go-api-key",
+            login_label: "OpenCode Go API key",
+            auth_kind: ProviderAuthKind::ApiKey {
+                env_var: "OPENCODE_API_KEY",
+                account: OPENCODE_GO_API_KEY_ACCOUNT,
+                entry_label: "OpenCode Go API key",
+                missing_message: "missing OpenCode Go API key; run /login opencode-go in the TUI or set OPENCODE_API_KEY as a CI/dev override",
+            },
+        }],
+        model_source: ProviderModelSource::CachedProviderModels,
+        model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
+        model_id_codec: ModelIdCodec::Plain,
+        metadata_upstream: "opencode-go",
+        catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
+        default_model: None,
     },
     ProviderDescriptor {
         id: ProviderId::Xai,

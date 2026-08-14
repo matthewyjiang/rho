@@ -67,23 +67,47 @@ impl ResponsesWireContract {
 pub(super) struct ResponsesProfile {
     model: String,
     identity: ModelIdentity,
+    identity_provider: &'static str,
     contract: ResponsesWireContract,
 }
 
 impl ResponsesProfile {
+    /// Identity provider comes from the wire contract (`openai` / `openai-codex`).
     pub(super) fn from_auth(auth: &Auth, model: impl Into<String>) -> Self {
-        let model = model.into();
         let contract = ResponsesWireContract::for_auth(auth);
-        let provider = contract.provider();
+        Self::with_identity(contract, contract.provider(), model)
+    }
+
+    /// Rebrands identity for a catalog-constructed host (e.g. `opencode-go`)
+    /// while keeping the wire contract implied by the auth.
+    pub(super) fn from_auth_as(
+        auth: &Auth,
+        model: impl Into<String>,
+        identity_provider: &'static str,
+    ) -> Self {
+        Self::with_identity(
+            ResponsesWireContract::for_auth(auth),
+            identity_provider,
+            model,
+        )
+    }
+
+    fn with_identity(
+        contract: ResponsesWireContract,
+        identity_provider: &'static str,
+        model: impl Into<String>,
+    ) -> Self {
+        let model = model.into();
         Self {
-            identity: ModelIdentity::new(provider, "openai-responses", &model),
+            identity: ModelIdentity::new(identity_provider, "openai-responses", &model),
+            identity_provider,
             model,
             contract,
         }
     }
 
     pub(super) fn provider(&self) -> &'static str {
-        self.contract.provider()
+        self.identity_provider
     }
 
     pub(super) fn model(&self) -> &str {

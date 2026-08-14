@@ -14,21 +14,24 @@ use super::ANTHROPIC_ANSWER_RESERVE_TOKENS;
 /// identify adaptive or budget control — incomplete, not non-configurable.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ThinkingSource {
+    provider: &'static str,
     model: String,
     mode: Option<AnthropicThinkingMode>,
 }
 
 impl ThinkingSource {
-    pub(super) fn resolve(model: &str) -> Self {
+    pub(super) fn resolve(provider: &'static str, model: &str) -> Self {
         Self {
+            provider,
             model: model.to_string(),
-            mode: provider_models::cached_anthropic_thinking_mode(model),
+            mode: thinking_mode_for_provider(provider, model),
         }
     }
 
     #[cfg(test)]
     pub(crate) fn unresolved(model: &str) -> Self {
         Self {
+            provider: "anthropic",
             model: model.to_string(),
             mode: None,
         }
@@ -37,6 +40,7 @@ impl ThinkingSource {
     #[cfg(test)]
     pub(crate) fn from_capabilities(model: &str, capabilities: &serde_json::Value) -> Self {
         Self {
+            provider: "anthropic",
             model: model.to_string(),
             mode: provider_models::anthropic_thinking_mode_from_value(model, capabilities),
         }
@@ -44,11 +48,28 @@ impl ThinkingSource {
 
     fn unsupported(&self, requested: ReasoningLevel) -> ModelError {
         ModelError::UnsupportedReasoning {
-            provider: "anthropic",
+            provider: self.provider,
             model: self.model.clone(),
             requested,
         }
     }
+}
+
+fn thinking_mode_for_provider(provider: &str, model: &str) -> Option<AnthropicThinkingMode> {
+    if provider == "anthropic" {
+        return provider_models::cached_anthropic_thinking_mode(model);
+    }
+    Some(
+        crate::model::models_dev::cached_model_metadata(provider, model)
+            .map(|metadata| {
+                AnthropicThinkingMode::from_host_catalog_capabilities(
+                    metadata.reasoning_capabilities(),
+                )
+            })
+            .unwrap_or(AnthropicThinkingMode::BudgetTokens {
+                off: OffThinking::Disabled,
+            }),
+    )
 }
 
 pub(super) fn thinking_config_for(

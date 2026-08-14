@@ -76,7 +76,7 @@ impl App {
             return Ok(());
         }
 
-        if self.handle_reasoning_cycle_key(key, agent)? {
+        if self.handle_reasoning_cycle_key(key, agent).await? {
             return Ok(());
         }
 

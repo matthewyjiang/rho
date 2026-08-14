@@ -486,6 +486,15 @@ fn meta_default_is_muse_spark_1_2() {
     );
 }
 
+// Covers: OpenCode Go has no baked default when the live /models cache is empty
+// Owner: model catalog
+#[test]
+fn opencode_go_has_no_default_model_when_cache_is_empty() {
+    with_empty_provider_models_cache("opencode-go-default-empty", || {
+        assert_eq!(default_model_for_provider("opencode-go"), None);
+    });
+}
+
 // Covers: login groups derive single-provider rows and keep cross-provider merges
 // Owner: model catalog
 #[test]
@@ -507,6 +516,14 @@ fn login_groups_include_meta_and_merge_openai_codex() {
     assert_eq!(meta.prompt, "Meta Model API");
     assert_eq!(meta.methods.len(), 1);
     assert_eq!(meta.methods[0].target.auth, "meta-api-key");
+
+    let opencode_go = groups
+        .iter()
+        .find(|group| group.id == "opencode-go")
+        .expect("opencode-go login group");
+    assert_eq!(opencode_go.prompt, "OpenCode Go");
+    assert_eq!(opencode_go.methods.len(), 1);
+    assert_eq!(opencode_go.methods[0].target.auth, "opencode-go-api-key");
 
     let openai = groups
         .iter()

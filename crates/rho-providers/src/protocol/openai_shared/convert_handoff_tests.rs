@@ -119,6 +119,67 @@ fn chat_handoff_rejects_unknown_replay_context_kinds() {
     ));
 }
 
+// Covers: DeepSeek V4 thinking mode 400s unless same-model tool-call turns
+// always carry reasoning_content, including present-but-empty; other models
+// and foreign targets keep the field omitted so strict hosts never see it
+// Owner: openai chat completions history conversion
+#[test]
+fn chat_handoff_injects_empty_reasoning_content_for_same_model_tool_turns() {
+    let identity = crate::model::ModelIdentity::new(
+        "opencode-go",
+        "openai-chat-completions",
+        "deepseek-v4-pro",
+    );
+    let tool_call = || {
+        vec![ContentBlock::ToolCall(ToolCall {
+            id: "call_1".into(),
+            name: "bash".into(),
+            arguments: json!({"command": "pwd"}),
+        })]
+    };
+
+    let same_model_tool_turn = Message::assistant(crate::model::AssistantMessage {
+        content: tool_call(),
+        provenance: Some(identity.clone()),
+        reasoning_summary: None,
+        provider_context: Vec::new(),
+    });
+    let converted = to_openai_message_for_target(same_model_tool_turn, Some(&identity)).unwrap();
+    assert_eq!(converted.reasoning_content.as_deref(), Some(""));
+
+    let same_model_text_turn = Message::assistant(crate::model::AssistantMessage {
+        content: vec![ContentBlock::Text("answer".into())],
+        provenance: Some(identity.clone()),
+        reasoning_summary: None,
+        provider_context: Vec::new(),
+    });
+    let converted = to_openai_message_for_target(same_model_text_turn, Some(&identity)).unwrap();
+    assert!(converted.reasoning_content.is_none());
+
+    let non_deepseek =
+        crate::model::ModelIdentity::new("opencode-go", "openai-chat-completions", "kimi-k2.7");
+    let non_deepseek_tool_turn = Message::assistant(crate::model::AssistantMessage {
+        content: tool_call(),
+        provenance: Some(non_deepseek.clone()),
+        reasoning_summary: None,
+        provider_context: Vec::new(),
+    });
+    let converted =
+        to_openai_message_for_target(non_deepseek_tool_turn, Some(&non_deepseek)).unwrap();
+    assert!(converted.reasoning_content.is_none());
+
+    let foreign_target =
+        crate::model::ModelIdentity::new("openrouter", "openai-chat-completions", "other");
+    let foreign_tool_turn = Message::assistant(crate::model::AssistantMessage {
+        content: tool_call(),
+        provenance: Some(identity),
+        reasoning_summary: None,
+        provider_context: Vec::new(),
+    });
+    let converted = to_openai_message_for_target(foreign_tool_turn, Some(&foreign_target)).unwrap();
+    assert!(converted.reasoning_content.is_none());
+}
+
 // Covers: non-stream completions must capture reasoning_content for replay
 // Owner: openai chat completions response conversion
 #[test]

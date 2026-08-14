@@ -24,49 +24,86 @@ pub struct AnthropicProvider {
     client: reqwest::Client,
     api_key: String,
     api_base: String,
+    identity_provider: &'static str,
     model: String,
-    max_tokens: fn(&str) -> u32,
-    thinking: thinking::ThinkingSource,
+    /// Fixed max-tokens for tests; `None` resolves from the model catalog per request.
+    max_tokens_override: Option<u32>,
+    /// Test-only thinking snapshot. Production resolves per request so a
+    /// catalog hydrate that finishes after construction still applies.
+    thinking_override: Option<thinking::ThinkingSource>,
 }
 
 impl AnthropicProvider {
     // Tests construct unresolved and inject capabilities explicitly via
-    // `with_thinking`, so they never touch the on-disk model cache.
+    // `with_thinking` and a fixed max-tokens, so they never touch the on-disk
+    // model cache.
     #[cfg(test)]
-    pub fn new(model: String, api_key: String, max_tokens: fn(&str) -> u32) -> Self {
-        let thinking = thinking::ThinkingSource::unresolved(&model);
+    pub fn new(model: String, api_key: String) -> Self {
+        let thinking_override = Some(thinking::ThinkingSource::unresolved(&model));
         Self {
             client: provider_client(),
             api_key,
             api_base: ANTHROPIC_API_BASE.into(),
+            identity_provider: "anthropic",
             model,
-            max_tokens,
-            thinking,
+            max_tokens_override: Some(DEFAULT_MAX_TOKENS),
+            thinking_override,
         }
     }
 
     #[cfg(test)]
     pub(crate) fn with_thinking(mut self, thinking: thinking::ThinkingSource) -> Self {
-        self.thinking = thinking;
+        self.thinking_override = Some(thinking);
         self
     }
 
     pub(crate) fn new_with_transport(
         model: String,
         api_key: String,
-        max_tokens: fn(&str) -> u32,
         client: reqwest::Client,
         api_base: String,
     ) -> Self {
-        let thinking = thinking::ThinkingSource::resolve(&model);
+        Self::new_with_identity(model, api_key, client, api_base, "anthropic")
+    }
+
+    pub(crate) fn new_with_identity(
+        model: String,
+        api_key: String,
+        client: reqwest::Client,
+        api_base: String,
+        identity_provider: &'static str,
+    ) -> Self {
         Self {
             client,
             api_key,
             api_base,
+            identity_provider,
             model,
-            max_tokens,
-            thinking,
+            max_tokens_override: None,
+            thinking_override: None,
         }
+    }
+
+    fn thinking_source(&self) -> thinking::ThinkingSource {
+        self.thinking_override.clone().unwrap_or_else(|| {
+            thinking::ThinkingSource::resolve(self.identity_provider, &self.model)
+        })
+    }
+
+    /// Resolved per request so a catalog hydrate that finishes after
+    /// construction still supplies the real output budget.
+    fn max_tokens(&self) -> u32 {
+        if let Some(tokens) = self.max_tokens_override {
+            return tokens;
+        }
+        crate::model::provider_models::cached_provider_model(self.identity_provider, &self.model)
+            .and_then(|metadata| metadata.max_output_tokens)
+            .or_else(|| {
+                crate::model::models_dev::cached_model_metadata(self.identity_provider, &self.model)
+                    .and_then(|metadata| metadata.max_output_tokens)
+            })
+            .and_then(|tokens| u32::try_from(tokens).ok())
+            .unwrap_or(DEFAULT_MAX_TOKENS)
     }
 
     fn request_body(
@@ -75,9 +112,12 @@ impl AnthropicProvider {
         stream: bool,
     ) -> Result<AnthropicRequest, ModelError> {
         let target = self.model_identity();
-        let max_tokens = (self.max_tokens)(&self.model);
-        let (thinking, output_config) =
-            thinking::thinking_config_for(&self.thinking, request.reasoning_level, max_tokens)?;
+        let max_tokens = self.max_tokens();
+        let (thinking, output_config) = thinking::thinking_config_for(
+            &self.thinking_source(),
+            request.reasoning_level,
+            max_tokens,
+        )?;
         let (system, mut messages) = split_system_and_messages(
             request.messages.to_vec(),
             &target,
@@ -112,7 +152,7 @@ impl AnthropicProvider {
     }
 
     pub(crate) fn model_identity(&self) -> ModelIdentity {
-        ModelIdentity::new("anthropic", "anthropic-messages", &self.model)
+        ModelIdentity::new(self.identity_provider, "anthropic-messages", &self.model)
     }
 
     /// Completes one turn using inherent async methods so the future is `Send`.

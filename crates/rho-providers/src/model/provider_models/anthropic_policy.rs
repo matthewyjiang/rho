@@ -205,6 +205,34 @@ pub(crate) enum AnthropicThinkingMode {
 }
 
 impl AnthropicThinkingMode {
+    /// Hosted Messages adapters have no Anthropic Models API row. Map the
+    /// host catalog's advertised levels onto the legacy budget-token surface
+    /// so a picker level can be encoded instead of failing as unsupported.
+    ///
+    /// Generic catalog effort levels do not prove the model supports the
+    /// `thinking.type: "adaptive"` protocol, so adaptive is never inferred
+    /// here. Adaptive selection requires an explicit signal from the host or a
+    /// model-specific protocol contract (the first-party Models API path).
+    pub(crate) fn from_host_catalog_capabilities(capabilities: ReasoningCapabilities) -> Self {
+        match capabilities {
+            ReasoningCapabilities::NotConfigurable => Self::Unknown {
+                off: OffThinking::Omit,
+            },
+            ReasoningCapabilities::Unknown => Self::BudgetTokens {
+                off: OffThinking::Disabled,
+            },
+            ReasoningCapabilities::Levels(levels) => {
+                let advertised = levels.levels();
+                let off = if advertised.contains(&ReasoningLevel::Off) {
+                    OffThinking::Disabled
+                } else {
+                    OffThinking::Unsupported
+                };
+                Self::BudgetTokens { off }
+            }
+        }
+    }
+
     pub(crate) fn from_capabilities(
         model: &str,
         capabilities: &AnthropicModelCapabilities,

@@ -15,8 +15,8 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock};
 use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
 
 use super::{
-    AuthMode, CatalogReasoningPolicy, ModelIdCodec, ProviderAuthKind, ProviderDescriptor,
-    ProviderId, ProviderModelRefreshKind, ProviderModelSource, ProviderRuntime,
+    AuthMode, CatalogConstruction, CatalogReasoningPolicy, ModelIdCodec, ProviderAuthKind,
+    ProviderDescriptor, ProviderId, ProviderModelRefreshKind, ProviderModelSource, ProviderRuntime,
     OPENAI_COMPATIBLE_API_BASE, PROVIDERS,
 };
 
@@ -211,6 +211,7 @@ fn intern(name: &str, registry: &mut CustomRegistry) -> &'static ProviderDescrip
         runtime: ProviderRuntime::OpenAiCompatible {
             dialect: OpenAiCompatibleDialect::Standard,
             default_api_base: OPENAI_COMPATIBLE_API_BASE,
+            catalog_construction: CatalogConstruction::Runtime,
         },
         name: leaked_name,
         display_name: leaked_name,

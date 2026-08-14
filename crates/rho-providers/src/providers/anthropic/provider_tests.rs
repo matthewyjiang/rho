@@ -9,8 +9,7 @@ use crate::{
 };
 
 fn test_provider(model: &str) -> AnthropicProvider {
-    let mut provider =
-        AnthropicProvider::new(model.into(), "test-key".into(), |_| DEFAULT_MAX_TOKENS);
+    let mut provider = AnthropicProvider::new(model.into(), "test-key".into());
     provider.api_base = "https://example.test/v1".into();
     provider
 }

@@ -89,7 +89,10 @@ pub(super) fn resolve_fetched_reasoning(
 }
 
 impl App {
-    pub(super) fn cycle_reasoning(&mut self, agent: &mut InteractiveRuntime) -> anyhow::Result<()> {
+    pub(super) async fn cycle_reasoning(
+        &mut self,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
         let capabilities = models_dev::current_reasoning_capabilities(
             &self.info.runtime.provider,
             &self.info.runtime.model,
@@ -98,12 +101,15 @@ impl App {
             return Ok(());
         }
         let reasoning = capabilities.next_level(self.info.runtime.reasoning);
-        let provider = match self.build_provider_for_selection(
-            &self.info.runtime.provider,
-            &self.info.runtime.model,
-            reasoning,
-            &self.info.runtime.auth,
-        ) {
+        let provider = match self
+            .build_provider_for_selection(
+                &self.info.runtime.provider,
+                &self.info.runtime.model,
+                reasoning,
+                &self.info.runtime.auth,
+            )
+            .await
+        {
             Ok(provider) => provider,
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(

@@ -10,7 +10,11 @@ use crate::{
 
 #[path = "models_dev_hydrate.rs"]
 mod hydrate;
+#[path = "models_dev_sdk.rs"]
+mod sdk;
 pub use hydrate::{ensure_models_dev_catalog, prefetch_model_metadata};
+use sdk::resolved_sdk_package;
+pub use sdk::CatalogSdkAdapter;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ModelMetadata {
@@ -39,6 +43,9 @@ pub struct ModelMetadata {
     /// unknown capabilities.
     #[serde(default)]
     pub reasoning_metadata_complete: bool,
+    /// Resolved models.dev AI SDK package (`npm` or `provider.npm`).
+    #[serde(default)]
+    pub sdk_package: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -331,6 +338,10 @@ pub(super) async fn fetch_models_dev_api() -> Option<Value> {
 ///
 /// v8: `display_name` added. Older rows are complete without it, so only a bump
 /// makes them refetch and pick up the catalog name.
+///
+/// `sdk_package` was added without a bump: only opencode-go reads it, and that
+/// provider registered in the same release, so no older rows can miss it. Bump
+/// when an already-registered provider switches to `PreferModelsDevNpm`.
 pub(super) const MODEL_METADATA_CACHE_VERSION: i64 = 8;
 
 fn cached_upstream_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
@@ -618,6 +629,7 @@ fn model_metadata_from_api_with_policy(
         },
         reasoning_capabilities_known: reasoning_capabilities_known(model, reasoning_policy),
         reasoning_metadata_complete: reasoning_metadata_complete(model, reasoning_policy),
+        sdk_package: resolved_sdk_package(api.get(provider), model),
     })
 }
 
@@ -670,7 +682,11 @@ fn reasoning_capabilities_known(model: &Value, policy: CatalogReasoningPolicy) -
 /// A toggle-only catalog row is a complete binary on/off control, but only for
 /// protocols that already treat Off as an explicit wire value (`none`).
 fn toggle_is_complete_binary_control(model: &Value, policy: CatalogReasoningPolicy) -> bool {
-    policy == CatalogReasoningPolicy::OffAsNone && advertised_toggle(model)
+    advertised_toggle(model)
+        && matches!(
+            policy,
+            CatalogReasoningPolicy::OffAsNone | CatalogReasoningPolicy::ExactAdvertised
+        )
 }
 
 fn is_recognized_effort_value(value: &Value) -> bool {

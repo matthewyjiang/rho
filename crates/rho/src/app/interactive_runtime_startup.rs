@@ -50,6 +50,9 @@ pub(super) async fn initialize(
     let agent_id = agent.id().to_string();
     let agent_fingerprint = agent.fingerprint().to_string();
     let sdk_options = crate::app::sdk_config::SdkBootstrapOptions::from_config(config, &cwd)?;
+    // Catalog-constructed providers must wait for the models.dev hydrate
+    // instead of racing it; a no-op for the rest.
+    sdk_options.provider.ensure_catalog_for_construction().await;
     let provider = resolve_provider(unavailable_error, &sdk_options)?;
     let workspace = sdk_options.workspace.build_workspace()?;
     let ToolsAndPrompt {

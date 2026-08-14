@@ -350,13 +350,38 @@ fn append_codex_assistant(
 }
 
 fn openai_assistant_message(blocks: Vec<ContentBlock>) -> Result<OpenAiMessage, ModelError> {
-    openai_prepared_assistant(PreparedAssistant {
-        content: blocks,
-        replay_context: Vec::new(),
-    })
+    openai_prepared_assistant(
+        PreparedAssistant {
+            content: blocks,
+            replay_context: Vec::new(),
+        },
+        // Plain assistant history carries no provenance, so it never gets
+        // same-model reasoning synthesis.
+        /*synthesize_tool_reasoning*/
+        false,
+    )
 }
 
-fn openai_prepared_assistant(prepared: PreparedAssistant) -> Result<OpenAiMessage, ModelError> {
+/// DeepSeek's thinking mode rejects tool-call turns that omit
+/// `reasoning_content` (a present empty string is accepted), while stricter
+/// chat hosts can reject the field as unknown. Synthesis is therefore scoped
+/// to same-model turns for the models documented to require it.
+fn synthesizes_tool_reasoning(
+    provenance: Option<&crate::model::ModelIdentity>,
+    target: &crate::model::ModelIdentity,
+) -> bool {
+    provenance == Some(target) && target.model.to_ascii_lowercase().contains("deepseek")
+}
+
+/// Converts a prepared assistant turn for the chat-completions wire.
+///
+/// `synthesize_tool_reasoning` makes tool-call turns always carry
+/// `reasoning_content`, defaulting to an empty string; see
+/// [`synthesizes_tool_reasoning`].
+fn openai_prepared_assistant(
+    prepared: PreparedAssistant,
+    synthesize_tool_reasoning: bool,
+) -> Result<OpenAiMessage, ModelError> {
     let replay = chat_replay(prepared.replay_context)?;
     let content = assistant_text(&prepared.content);
     let tool_calls = prepared
@@ -370,7 +395,9 @@ fn openai_prepared_assistant(prepared: PreparedAssistant) -> Result<OpenAiMessag
     Ok(OpenAiMessage {
         role: "assistant".into(),
         content: (!content.is_empty()).then(|| json!(content)),
-        reasoning_content: replay.reasoning_content,
+        reasoning_content: replay
+            .reasoning_content
+            .or_else(|| (synthesize_tool_reasoning && !tool_calls.is_empty()).then(String::new)),
         tool_calls: (!tool_calls.is_empty()).then_some(tool_calls),
         tool_call_id: None,
     })
@@ -394,15 +421,11 @@ pub(crate) fn to_openai_message_for_target(
             let fallback_target = message.provenance.clone().unwrap_or_else(|| {
                 crate::model::ModelIdentity::new("foreign", "openai-chat-completions", "foreign")
             });
-            openai_prepared_assistant(prepare_assistant(
-                *message,
-                target.unwrap_or(&fallback_target),
-            ))
+            let target = target.unwrap_or(&fallback_target);
+            let synthesize = synthesizes_tool_reasoning(message.provenance.as_ref(), target);
+            openai_prepared_assistant(prepare_assistant(*message, target), synthesize)
         }
         Message::AbortedAssistant(message) => {
-            let fallback_target = message.provenance.clone().unwrap_or_else(|| {
-                crate::model::ModelIdentity::new("foreign", "openai-chat-completions", "foreign")
-            });
             let mut enriched = crate::model::AssistantMessage {
                 content: aborted_content_as_non_executable(&message),
                 provenance: message.provenance,
@@ -412,10 +435,12 @@ pub(crate) fn to_openai_message_for_target(
             enriched
                 .content
                 .push(ContentBlock::Text("[Operation aborted]".into()));
-            openai_prepared_assistant(prepare_assistant(
-                enriched,
-                target.unwrap_or(&fallback_target),
-            ))
+            let fallback_target = enriched.provenance.clone().unwrap_or_else(|| {
+                crate::model::ModelIdentity::new("foreign", "openai-chat-completions", "foreign")
+            });
+            let target = target.unwrap_or(&fallback_target);
+            let synthesize = synthesizes_tool_reasoning(enriched.provenance.as_ref(), target);
+            openai_prepared_assistant(prepare_assistant(enriched, target), synthesize)
         }
         Message::ToolResult(result) => Ok(OpenAiMessage {
             role: "tool".into(),

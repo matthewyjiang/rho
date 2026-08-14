@@ -17,7 +17,11 @@ pub(super) enum ProviderActivationOutcome {
 impl App {
     /// Builds a provider selection on top of persisted application config so
     /// transport settings (notably custom endpoints) survive live rebuilds.
-    pub(super) fn build_provider_for_selection(
+    ///
+    /// Awaits models.dev hydrate when the selected provider maps adapters from
+    /// catalog npm metadata, so a mid-session switch does not start on the
+    /// Chat Completions fallback.
+    pub(super) async fn build_provider_for_selection(
         &self,
         provider: &str,
         model: &str,
@@ -29,10 +33,13 @@ impl App {
         config.model = model.into();
         config.reasoning = reasoning;
         config.auth = auth.into();
-        Ok(crate::credential_store::build_provider_from_config(
-            &config,
-            std::sync::Arc::clone(&self.credential_store),
-        )?)
+        Ok(
+            crate::credential_store::build_provider_from_config_ensuring_catalog(
+                &config,
+                std::sync::Arc::clone(&self.credential_store),
+            )
+            .await?,
+        )
     }
 
     pub(super) fn activate_provider(
@@ -59,7 +66,7 @@ impl App {
         })
     }
 
-    pub(super) fn switch_active_auth_mode(
+    pub(super) async fn switch_active_auth_mode(
         &mut self,
         auth: &str,
         agent: &mut InteractiveRuntime,
@@ -94,18 +101,20 @@ impl App {
 
         let model = self.info.runtime.model.clone();
         let reasoning = self.info.runtime.reasoning;
-        let new_provider =
-            match self.build_provider_for_selection(&provider_name, &model, reasoning, mode.id) {
-                Ok(provider) => provider,
-                Err(err) => {
-                    self.insert_entry(&Entry::Error(format!(
-                        "could not switch to {}: {err}. Run /login {} to sign in again.",
-                        mode.login_label, mode.id
-                    )));
-                    self.set_status("auth switch failed");
-                    return Ok(());
-                }
-            };
+        let new_provider = match self
+            .build_provider_for_selection(&provider_name, &model, reasoning, mode.id)
+            .await
+        {
+            Ok(provider) => provider,
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not switch to {}: {err}. Run /login {} to sign in again.",
+                    mode.login_label, mode.id
+                )));
+                self.set_status("auth switch failed");
+                return Ok(());
+            }
+        };
 
         let activation = ProviderActivation {
             provider: provider_name,

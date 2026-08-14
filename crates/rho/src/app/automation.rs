@@ -467,6 +467,9 @@ async fn run_session_with_output(
     let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
         Arc::new(AppCredentialStore),
     );
+    // Automation normally skips the catalog fetch, but catalog-constructed
+    // providers need the hydrate before build; a no-op for the rest.
+    sdk_options.provider.ensure_catalog_for_construction().await;
     let provider = build_automation_provider(sdk_options.provider, &credentials)?;
     let workspace_root = sdk_options.workspace.root.clone();
     let workspace = sdk_options.workspace.build_workspace()?;

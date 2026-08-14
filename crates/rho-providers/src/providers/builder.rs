@@ -5,9 +5,10 @@ use url::Url;
 
 use crate::{
     auth::{github_copilot_token::GitHubCopilotAuthManager, xai_token::XaiAuthManager},
-    credentials::CredentialStore,
-    model::ModelError,
-    provider::{self, OpenAiRuntimeAuth, ProviderAuthKind, ProviderRuntime},
+    credentials::{CredentialStore, MemoryCredentialStore},
+    model::{models_dev::CatalogSdkAdapter, ModelError},
+    openai_compatible_dialect::OpenAiCompatibleDialect,
+    provider::{self, CatalogConstruction, OpenAiRuntimeAuth, ProviderAuthKind, ProviderRuntime},
     providers::{
         anthropic::AnthropicProvider,
         github_copilot::GitHubCopilotProvider,
@@ -109,6 +110,20 @@ impl ProviderBuildOptions {
 
     pub(crate) fn provider(&self) -> &str {
         self.profile.provider_name()
+    }
+
+    /// Awaits the models.dev hydrate when the resolved provider picks its
+    /// wire adapter from the catalog `npm` mapping instead of its declared
+    /// runtime; a no-op for every other provider.
+    ///
+    /// The hydrate is bounded and stays cache-only offline, leaving
+    /// construction on the declared-runtime fallback.
+    pub async fn ensure_catalog_for_construction(&self) {
+        if self.profile.provider.runtime.catalog_construction()
+            == CatalogConstruction::PreferModelsDevNpm
+        {
+            crate::model::models_dev::ensure_models_dev_catalog().await;
+        }
     }
 
     pub(crate) fn auth(&self) -> &str {
@@ -213,7 +228,6 @@ impl ProviderBuilder {
                 let provider = AnthropicProvider::new_with_transport(
                     self.options.model,
                     api_key.into_secret(),
-                    anthropic_max_tokens,
                     client,
                     endpoint.unwrap_or_else(|| ANTHROPIC_API_BASE.into()),
                 );
@@ -239,6 +253,7 @@ impl ProviderBuilder {
                 ProviderRuntime::OpenAiCompatible {
                     dialect,
                     default_api_base,
+                    catalog_construction,
                 },
                 ProviderCredential::OpenAiCompatible(auth),
             ) if compatible_auth_matches_kind(&auth, auth_kind) => {
@@ -252,14 +267,18 @@ impl ProviderBuilder {
                 } else {
                     endpoint.unwrap_or_else(|| default_api_base.into())
                 };
-                Ok(Arc::new(OpenAiCompatibleProvider::new(
-                    client,
+                build_openai_compatible_provider(
+                    catalog_construction,
                     provider_name,
                     model,
-                    dialect,
-                    auth,
-                    api_base,
-                )))
+                    OpenAiCompatibleBuild {
+                        dialect,
+                        auth,
+                        api_base,
+                        client,
+                        hosted_web_search: self.options.hosted_web_search,
+                    },
+                )
             }
             (ProviderRuntime::Xai, ProviderCredential::Xai(auth)) => {
                 Ok(Arc::new(XaiProvider::new_with_transport(
@@ -313,15 +332,68 @@ fn provider_http_client(timeout: Option<Duration>) -> Result<reqwest::Client, Mo
     builder.build().map_err(ModelError::Request)
 }
 
-fn anthropic_max_tokens(model: &str) -> u32 {
-    crate::model::provider_models::cached_provider_model("anthropic", model)
-        .and_then(|metadata| metadata.max_output_tokens)
-        .or_else(|| {
-            crate::model::models_dev::cached_model_metadata("anthropic", model)
-                .and_then(|metadata| metadata.max_output_tokens)
-        })
-        .and_then(|tokens| u32::try_from(tokens).ok())
-        .unwrap_or(crate::providers::anthropic::DEFAULT_MAX_TOKENS)
+struct OpenAiCompatibleBuild {
+    dialect: OpenAiCompatibleDialect,
+    auth: CompatibleAuth,
+    api_base: String,
+    client: reqwest::Client,
+    hosted_web_search: bool,
+}
+
+fn build_openai_compatible_provider(
+    catalog_construction: CatalogConstruction,
+    provider_name: &'static str,
+    model: String,
+    build: OpenAiCompatibleBuild,
+) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, ModelError> {
+    // Adapter choice only needs the catalog's npm mapping, not fresh reasoning
+    // metadata, so a stale or reasoning-incomplete row must still steer it.
+    let adapter = match catalog_construction {
+        CatalogConstruction::Runtime => CatalogSdkAdapter::OpenAiCompatible,
+        CatalogConstruction::PreferModelsDevNpm => CatalogSdkAdapter::from_sdk_package(
+            crate::model::models_dev::cached_model_metadata(provider_name, &model)
+                .as_ref()
+                .and_then(|metadata| metadata.sdk_package.as_deref()),
+        ),
+    };
+    match (adapter, build.auth) {
+        (CatalogSdkAdapter::OpenAiResponses, CompatibleAuth::ApiKey(key)) => {
+            // Api-key auth never refreshes tokens, so an inert store satisfies
+            // the Codex refresh dependency without touching real credentials.
+            // NEXT_MAJOR(rho-providers): give Responses construction an
+            // explicit api-key path so it no longer needs a placeholder
+            // CredentialStore to satisfy the Codex refresh dependency.
+            Ok(Arc::new(OpenAiProvider::new_with_identity(
+                model,
+                Auth::ApiKey(key),
+                Arc::new(MemoryCredentialStore::default()),
+                build.client,
+                Some(build.api_base),
+                build.hosted_web_search,
+                provider_name,
+            )))
+        }
+        (CatalogSdkAdapter::AnthropicMessages, CompatibleAuth::ApiKey(key)) => {
+            Ok(Arc::new(AnthropicProvider::new_with_identity(
+                model,
+                key,
+                build.client,
+                build.api_base,
+                provider_name,
+            )))
+        }
+        // Chat Completions is the descriptor's declared runtime, so it is also
+        // the fallback when the catalog has no row yet (cold cache before the
+        // first hydrate) or names an unrecognized package.
+        (_, auth) => Ok(Arc::new(OpenAiCompatibleProvider::new(
+            build.client,
+            provider_name,
+            model,
+            build.dialect,
+            auth,
+            build.api_base,
+        ))),
+    }
 }
 
 #[cfg(test)]

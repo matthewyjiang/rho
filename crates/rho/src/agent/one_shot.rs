@@ -1,4 +1,4 @@
-use std::{future::Future, path::Path, sync::Arc};
+use std::{path::Path, sync::Arc};
 
 use anyhow::bail;
 use rho_sdk::{
@@ -72,25 +72,23 @@ pub(crate) struct OneShotAgentResult {
     pub usage: ModelUsage,
 }
 
-/// Builds the provider before returning so callers can time only the model request.
-pub(crate) fn run_one_shot_agent<'a>(
-    request: OneShotAgentRequest<'a>,
+/// Builds the provider (awaiting catalog hydrate when needed) then runs the request.
+pub(crate) async fn run_one_shot_agent(
+    request: OneShotAgentRequest<'_>,
     provider_name: &str,
     model: &str,
     auth: &str,
     usage_recording: ProviderRequestUsageRecording,
-) -> anyhow::Result<impl Future<Output = anyhow::Result<OneShotAgentResult>> + 'a> {
+) -> anyhow::Result<OneShotAgentResult> {
     let reasoning = resolve_reasoning(request.definition, request.reasoning)?;
-    let provider = build_provider(provider_name, model, reasoning, auth)?;
-    Ok(async move {
-        run_one_shot_with_provider(
-            provider.as_ref(),
-            request,
-            usage_recording,
-            /*updates*/ None,
-        )
-        .await
-    })
+    let provider = build_provider(provider_name, model, reasoning, auth).await?;
+    run_one_shot_with_provider(
+        provider.as_ref(),
+        request,
+        usage_recording,
+        /*updates*/ None,
+    )
+    .await
 }
 
 /// Runs a prepared one-shot request against an already-built provider.

@@ -354,7 +354,7 @@ fn resolve_reads_cached_capabilities_including_dated_snapshots() {
             .unwrap();
             assert_eq!(
                 thinking_config_for(
-                    &ThinkingSource::resolve("claude-opus-5"),
+                    &ThinkingSource::resolve("anthropic", "claude-opus-5"),
                     ReasoningLevel::Medium,
                     DEFAULT_MAX_TOKENS,
                 )
@@ -363,7 +363,7 @@ fn resolve_reads_cached_capabilities_including_dated_snapshots() {
             );
             assert_eq!(
                 thinking_config_for(
-                    &ThinkingSource::resolve("claude-opus-5-20260724"),
+                    &ThinkingSource::resolve("anthropic", "claude-opus-5-20260724"),
                     ReasoningLevel::Medium,
                     DEFAULT_MAX_TOKENS,
                 )
@@ -372,7 +372,7 @@ fn resolve_reads_cached_capabilities_including_dated_snapshots() {
             );
             assert_eq!(
                 thinking_config_for(
-                    &ThinkingSource::resolve("claude-unknown"),
+                    &ThinkingSource::resolve("anthropic", "claude-unknown"),
                     ReasoningLevel::Off,
                     DEFAULT_MAX_TOKENS,
                 )
@@ -381,11 +381,57 @@ fn resolve_reads_cached_capabilities_including_dated_snapshots() {
             );
             assert!(matches!(
                 thinking_config_for(
-                    &ThinkingSource::resolve("claude-unknown"),
+                    &ThinkingSource::resolve("anthropic", "claude-unknown"),
                     ReasoningLevel::Medium,
                     DEFAULT_MAX_TOKENS,
                 ),
                 Err(ModelError::UnsupportedReasoning { .. })
+            ));
+        },
+    );
+}
+
+// Covers: OpenCode Go Messages models must encode advertised levels instead of
+// reading the first-party Anthropic cache and failing locally
+// Owner: anthropic thinking protocol
+#[test]
+fn hosted_messages_resolve_uses_host_catalog_not_anthropic_cache() {
+    let cache = tempfile::tempdir().unwrap();
+    crate::model::models_dev::with_models_dev_cache_dir_for_tests(
+        cache.path().to_path_buf(),
+        || {
+            crate::model::models_dev::write_cached_model_metadata_for_tests(
+                "opencode-go",
+                "minimax-m3",
+                &crate::model::models_dev::ModelMetadata {
+                    supported_reasoning_levels: Some(vec![
+                        ReasoningLevel::Off,
+                        ReasoningLevel::Max,
+                    ]),
+                    reasoning_capabilities_known: true,
+                    reasoning_metadata_complete: true,
+                    sdk_package: Some("@ai-sdk/anthropic".into()),
+                    ..crate::model::models_dev::ModelMetadata::default()
+                },
+            );
+
+            let off = thinking_config_for(
+                &ThinkingSource::resolve("opencode-go", "minimax-m3"),
+                ReasoningLevel::Off,
+                DEFAULT_MAX_TOKENS,
+            )
+            .unwrap();
+            assert_eq!(off, (Some(AnthropicThinkingConfig::Disabled), None));
+
+            let on = thinking_config_for(
+                &ThinkingSource::resolve("opencode-go", "minimax-m3"),
+                ReasoningLevel::Max,
+                DEFAULT_MAX_TOKENS,
+            )
+            .unwrap();
+            assert!(matches!(
+                on.0,
+                Some(AnthropicThinkingConfig::Enabled { .. })
             ));
         },
     );

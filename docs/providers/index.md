@@ -18,6 +18,7 @@ This index lists every first-party provider Rho ships. Shared concepts such as c
 | `kimi-code` | `kimi-oauth` | [Moonshot and Kimi Code](/providers/moonshot-kimi) |
 | `qwen-token-plan` | `qwen-token-plan-api-key` | [Qwen Token Plan](/providers/qwen-token-plan) |
 | `meta` | `meta-api-key` | [Meta Model API](/providers/meta) |
+| `opencode-go` | `opencode-go-api-key` | [OpenCode Go](/providers/opencode-go) |
 
 User-defined Chat Completions hosts are not login providers. Add `[providers.custom.<name>]` with a `base_url`. See [Custom OpenAI-compatible hosts](/providers/openai-compatible).
 

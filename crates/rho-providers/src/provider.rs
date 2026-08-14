@@ -19,6 +19,7 @@ pub const OPENROUTER_OAUTH_KEY_ACCOUNT: &str = "provider:openrouter:oauth-key";
 pub const KIMI_TOKENS_ACCOUNT: &str = "provider:kimi-code:tokens";
 pub const QWEN_TOKEN_PLAN_API_KEY_ACCOUNT: &str = "provider:qwen-token-plan:api-key";
 pub const META_API_KEY_ACCOUNT: &str = "provider:meta:api-key";
+pub const OPENCODE_GO_API_KEY_ACCOUNT: &str = "provider:opencode-go:api-key";
 
 pub const OLLAMA_API_BASE: &str = "http://127.0.0.1:11434/v1";
 pub const OLLAMA_CLOUD_API_BASE: &str = "https://ollama.com/v1";
@@ -31,6 +32,8 @@ pub const QWEN_TOKEN_PLAN_API_BASE: &str =
     "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1";
 /// Meta Model API OpenAI-compatible base (Chat Completions and `/models`).
 pub const META_API_BASE: &str = "https://api.meta.ai/v1";
+/// OpenCode Go bootstrap base (Chat Completions, Responses, Messages, `/models`).
+pub const OPENCODE_GO_API_BASE: &str = "https://opencode.ai/zen/go/v1";
 /// Placeholder only. Config-defined hosts must take their API base from application config.
 pub const OPENAI_COMPATIBLE_API_BASE: &str = "http://127.0.0.1:0/v1";
 
@@ -62,6 +65,9 @@ pub enum ProviderRuntime {
     OpenAiCompatible {
         dialect: crate::openai_compatible_dialect::OpenAiCompatibleDialect,
         default_api_base: &'static str,
+        /// Whether construction may follow the catalog's models.dev `npm`
+        /// mapping instead of the declared Chat Completions runtime.
+        catalog_construction: CatalogConstruction,
     },
     Anthropic,
     Google,
@@ -70,6 +76,22 @@ pub enum ProviderRuntime {
 }
 
 impl ProviderRuntime {
+    /// Only Chat Completions runtimes can defer their wire adapter to the
+    /// catalog; every other runtime constructs as declared.
+    pub fn catalog_construction(self) -> CatalogConstruction {
+        match self {
+            Self::OpenAiCompatible {
+                catalog_construction,
+                ..
+            } => catalog_construction,
+            Self::OpenAi { .. }
+            | Self::Anthropic
+            | Self::Google
+            | Self::GithubCopilot
+            | Self::Xai => CatalogConstruction::Runtime,
+        }
+    }
+
     /// Whether two descriptors share a runtime family for auth-profile resolution.
     ///
     /// # Next major
@@ -135,6 +157,7 @@ pub enum ProviderId {
     KimiCode,
     QwenTokenPlan,
     Meta,
+    OpenCodeGo,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -176,6 +199,18 @@ pub enum CatalogReasoningPolicy {
     OffOrMax,
     /// The provider serializes `Off` as a provider-owned `none` control.
     OffAsNone,
+}
+
+/// How an OpenAI-compatible table row chooses its HTTP adapter.
+///
+/// [`Self::Runtime`] uses [`ProviderRuntime`] only. [`Self::PreferModelsDevNpm`]
+/// may construct Responses or Anthropic adapters when models.dev names a
+/// different AI SDK package for the selected model.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CatalogConstruction {
+    #[default]
+    Runtime,
+    PreferModelsDevNpm,
 }
 
 /// What to serialize when a Standard-dialect model is missing catalog metadata.
