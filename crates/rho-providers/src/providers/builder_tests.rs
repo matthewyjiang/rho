@@ -169,10 +169,7 @@ async fn opencode_go_anthropic_npm_posts_messages_with_x_api_key() {
         with_models_dev_cache_dir_for_tests, write_cached_model_metadata_for_tests, ModelMetadata,
     };
     use rho_sdk::model::{Message, ModelRequest};
-    use tokio::{
-        io::{AsyncReadExt, AsyncWriteExt},
-        net::TcpListener,
-    };
+    use tokio::{io::AsyncWriteExt, net::TcpListener};
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let api_base = format!("http://{}", listener.local_addr().unwrap());
