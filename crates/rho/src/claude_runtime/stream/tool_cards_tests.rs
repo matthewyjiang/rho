@@ -285,6 +285,39 @@ fn oversized_write_input_keeps_path_for_card() {
     ));
 }
 
+// Covers: escape-heavy oversized Write content must keep path and a fitting diff
+// Owner: claude stream tool card mapper
+#[test]
+fn oversized_escaped_write_input_keeps_path_and_diff() {
+    let content = "\"é\\\n".repeat(MAX_TOOL_PAYLOAD_CHARS / 2 + 32);
+    let started = tool(
+        "Write",
+        json!({"file_path": "/tmp/ws/esc.rs", "content": content}),
+    );
+    let input = started.input.as_ref().expect("bounded write input");
+    assert_eq!(input.get("file_path"), Some(&json!("/tmp/ws/esc.rs")));
+    let bounded = input
+        .get("content")
+        .and_then(serde_json::Value::as_str)
+        .expect("bounded write content");
+    assert!(!bounded.is_empty());
+    let encoded = serde_json::to_string(input).expect("encode bounded input");
+    assert!(encoded.len() <= MAX_TOOL_PAYLOAD_CHARS);
+    assert!(encoded.len() > MAX_TOOL_PAYLOAD_CHARS.saturating_sub(24));
+    let card = finished_card(
+        Some(&started),
+        /*ok*/ true,
+        "ok",
+        None,
+        Some(Path::new("/tmp/ws")),
+    );
+    assert_eq!(
+        card.header,
+        ToolHeader::call("Write", Some("esc.rs".into()))
+    );
+    assert!(card.body.is_diff());
+}
+
 // Covers: patchless Write update must not be painted as a new-file create
 // Owner: claude stream tool card mapper
 #[test]

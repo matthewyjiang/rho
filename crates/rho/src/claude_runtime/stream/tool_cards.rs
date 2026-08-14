@@ -611,16 +611,39 @@ fn bound_oversized_object(value: &Value) -> Option<Value> {
         }
     }
     for (key, text) in large_strings {
-        let room = remaining_string_room(&kept, &key);
-        if room == 0 {
-            continue;
-        }
-        let field = Value::String(truncate(&text, room));
-        if object_fits(&kept, &key, &field) {
+        if let Some(field) = largest_fitting_string(&kept, key, text) {
             kept.insert(key, field);
         }
     }
     (!kept.is_empty()).then(|| Value::Object(kept))
+}
+
+/// Longest prefix of `text` whose JSON object still fits the payload budget.
+fn largest_fitting_string(
+    kept: &serde_json::Map<String, Value>,
+    key: &str,
+    text: &str,
+) -> Option<Value> {
+    let full = Value::String(text.to_string());
+    if object_fits(kept, key, &full) {
+        return Some(full);
+    }
+    let chars = text.chars().collect::<Vec<_>>();
+    let mut lo = 0;
+    let mut hi = chars.len();
+    let mut best = None;
+    while lo < hi {
+        let mid = lo + (hi - lo + 1) / 2;
+        let prefix = chars[..mid].iter().collect::<String>();
+        let field = Value::String(prefix);
+        if object_fits(kept, key, &field) {
+            best = Some(field);
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    best
 }
 
 fn encoded_len(value: &Value) -> usize {
@@ -637,12 +660,6 @@ fn object_fits(kept: &serde_json::Map<String, Value>, key: &str, field: &Value) 
     let mut probe = kept.clone();
     probe.insert(key.to_string(), field.clone());
     encoded_object_len(&probe) <= MAX_TOOL_PAYLOAD_CHARS
-}
-
-fn remaining_string_room(kept: &serde_json::Map<String, Value>, key: &str) -> usize {
-    MAX_TOOL_PAYLOAD_CHARS
-        .saturating_sub(encoded_object_len(kept))
-        .saturating_sub(key.len().saturating_add(6))
 }
 
 fn clean_name(name: Option<&str>) -> String {
