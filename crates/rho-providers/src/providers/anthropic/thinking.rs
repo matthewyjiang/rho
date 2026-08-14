@@ -65,10 +65,7 @@ fn cached_capabilities(model: &str) -> Option<Value> {
         .filter(|value| !value.is_null())
 }
 
-fn dated_parent_model(model: &str) -> Option<&str> {
-    let (parent, date) = model.rsplit_once('-')?;
-    (date.len() == 8 && date.bytes().all(|byte| byte.is_ascii_digit())).then_some(parent)
-}
+use provider_models::dated_parent_model;
 
 // The Models API capabilities object has no `disabled` leaf, so which models
 // accept or require `thinking.type.disabled` stays hardcoded by model family.

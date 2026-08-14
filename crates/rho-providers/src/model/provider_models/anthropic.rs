@@ -9,6 +9,10 @@ use crate::{
 
 use super::{load_api_key_auth, provider_models_client, ProviderModel};
 
+/// Upper bound on `/v1/models` pages so a misbehaving cursor cannot hang the
+/// startup refresh.
+const MAX_MODEL_PAGES: usize = 20;
+
 #[derive(Deserialize)]
 struct AnthropicModelsResponse {
     data: Vec<AnthropicModel>,
@@ -35,10 +39,11 @@ pub(super) async fn fetch(
     let client = provider_models_client()?;
     let mut models = Vec::new();
     let mut after_id = None::<String>;
-    loop {
-        let mut url = Url::parse("https://api.anthropic.com/v1/models").map_err(|err| {
-            ModelError::InvalidResponse(format!("invalid Anthropic models URL: {err}"))
-        })?;
+    let base = Url::parse("https://api.anthropic.com/v1/models").map_err(|err| {
+        ModelError::InvalidResponse(format!("invalid Anthropic models URL: {err}"))
+    })?;
+    for _ in 0..MAX_MODEL_PAGES {
+        let mut url = base.clone();
         if let Some(after_id) = &after_id {
             url.query_pairs_mut().append_pair("after_id", after_id);
         }
@@ -81,6 +86,10 @@ pub(super) async fn fetch(
         let Some(next_after_id) = last_id else {
             break;
         };
+        if after_id.as_deref() == Some(next_after_id.as_str()) {
+            // The cursor did not advance; stop instead of refetching the page.
+            break;
+        }
         after_id = Some(next_after_id);
     }
     models.sort_by(|left, right| left.model.model.cmp(&right.model.model));

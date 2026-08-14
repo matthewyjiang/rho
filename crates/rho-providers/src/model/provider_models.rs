@@ -161,13 +161,29 @@ pub fn cached_provider_models(provider: &str) -> Vec<ProviderModel> {
 const PROVIDER_MODEL_CACHE_VERSION: i64 = 2;
 const PROVIDER_MODEL_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 
+/// Strips a trailing `-YYYYMMDD` snapshot suffix, yielding the parent alias
+/// that carries the cached capabilities row.
+pub(crate) fn dated_parent_model(model: &str) -> Option<&str> {
+    let (parent, date) = model.rsplit_once('-')?;
+    (date.len() == 8 && date.bytes().all(|byte| byte.is_ascii_digit())).then_some(parent)
+}
+
 pub fn provider_model_capabilities_need_refresh(provider: &str, model: &str) -> bool {
     let capabilities_are_known = match provider {
         "kimi-code" => kimi_capabilities_are_known as fn(&CachedCapabilityRow) -> bool,
         "anthropic" => anthropic_capabilities_are_known,
         _ => return false,
     };
-    let Some(row) = cached_capability_row(provider, model) else {
+    // Anthropic dated snapshot ids are served from the parent alias row (see
+    // the Anthropic thinking resolver), so honour the same fallback here or
+    // every launch re-fetches the Models API for a cached snapshot id.
+    let row = cached_capability_row(provider, model).or_else(|| {
+        (provider == "anthropic")
+            .then(|| dated_parent_model(model))
+            .flatten()
+            .and_then(|parent| cached_capability_row(provider, parent))
+    });
+    let Some(row) = row else {
         return true;
     };
     row.cache_version < PROVIDER_MODEL_CACHE_VERSION

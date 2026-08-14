@@ -194,14 +194,22 @@ fn reasoning_off_is_rejected_when_thinking_cannot_be_disabled() {
 
 #[test]
 fn unknown_model_omits_thinking_instead_of_sending_enabled() {
-    let provider = test_provider("claude-opus-5");
+    // An empty cache dir keeps the "no cached capabilities" precondition owned
+    // by the test instead of by whatever else touched the shared test cache.
+    let cache = tempfile::tempdir().unwrap();
+    crate::model::provider_models::with_provider_models_cache_dir_for_tests(
+        cache.path().to_path_buf(),
+        || {
+            let provider = test_provider("claude-opus-5");
 
-    let body = request_body(&provider, ReasoningLevel::Medium).unwrap();
-    let value = serde_json::to_value(&body).unwrap();
+            let body = request_body(&provider, ReasoningLevel::Medium).unwrap();
+            let value = serde_json::to_value(&body).unwrap();
 
-    assert_eq!(body.thinking, None);
-    assert_eq!(body.output_config, None);
-    assert!(value.get("thinking").is_none());
+            assert_eq!(body.thinking, None);
+            assert_eq!(body.output_config, None);
+            assert!(value.get("thinking").is_none());
+        },
+    );
 }
 
 #[test]
