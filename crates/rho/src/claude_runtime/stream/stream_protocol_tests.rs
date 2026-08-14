@@ -563,3 +563,43 @@ fn only_the_init_frame_reports_the_model_the_run_bound() {
         Some("claude-sonnet-5")
     );
 }
+
+fn finished_cards(lines: &[&str]) -> Vec<(Option<String>, rho_tools::tool_card::ToolCard)> {
+    let mut mapper = StreamMapper::new();
+    lines
+        .iter()
+        .flat_map(|line| mapper.push_line(line))
+        .filter_map(|effect| match effect {
+            StreamEffect::Attachment(AttachmentEvent::ToolFinished { key, card }) => {
+                Some((key, card))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+// Covers: batched tool_result blocks keep per-id enrichment and drop unkeyed siblings
+// Owner: claude stream mapper
+#[test]
+fn batched_tool_results_keep_matching_enrichment_only() {
+    let start = r#"{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"tool_use","id":"toolu_a","name":"Read","input":{"file_path":"a.txt"}},{"type":"tool_use","id":"toolu_b","name":"Edit","input":{"file_path":"b.rs"}}]}}"#;
+    let keyed = r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_a","content":"1\thi"},{"type":"tool_result","tool_use_id":"toolu_b","content":"updated"}]},"tool_use_result":[{"tool_use_id":"toolu_a","type":"text","file":{"numLines":1}},{"tool_use_id":"toolu_b","structuredPatch":[{"oldStart":1,"newStart":1,"oldLines":1,"newLines":1,"lines":["-old","+new"]}]}]}"#;
+    let keyed = finished_cards(&[start, keyed]);
+    assert_eq!(keyed.len(), 2);
+    assert_eq!(keyed[0].0.as_deref(), Some("toolu_a"));
+    assert_eq!(
+        keyed[0].1.facts,
+        vec![rho_tools::tool_card::ToolFact::Count {
+            label: "line".into(),
+            value: 1,
+            detail: None,
+        }]
+    );
+    assert!(keyed[1].1.body.is_diff());
+
+    let unkeyed = r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_a","content":"1\thi"},{"type":"tool_result","tool_use_id":"toolu_b","content":"updated"}]},"tool_use_result":{"structuredPatch":[{"oldStart":1,"newStart":1,"oldLines":1,"newLines":1,"lines":["-old","+new"]}]}}"#;
+    let unkeyed = finished_cards(&[start, unkeyed]);
+    assert_eq!(unkeyed.len(), 2);
+    assert!(!unkeyed[0].1.body.is_diff());
+    assert!(!unkeyed[1].1.body.is_diff());
+}

@@ -5,6 +5,7 @@
 
 mod app;
 pub(crate) mod sdk_writer;
+mod tool_toggle;
 
 pub(crate) use app::{run, AttachmentDisplaySettings};
 pub(crate) use sdk_writer::translate_run_event;
