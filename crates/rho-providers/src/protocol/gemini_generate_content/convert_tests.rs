@@ -631,9 +631,20 @@ fn content_policy_finish_reason_stays_a_permanent_invalid_response() {
 // Owner: gemini generateContent response conversion
 #[test]
 fn empty_gemini_assistant_is_retryable() {
-    let error = ResponseCollector::default().finish().unwrap_err();
-    assert!(matches!(
-        error,
-        ModelError::RetryableInvalidResponse { error_type, .. } if error_type == "empty_assistant"
-    ));
+    for response in [
+        None,
+        Some(json!({"candidates":[{"content":{"parts":[{"text":""}]},"finishReason":"STOP"}]})),
+    ] {
+        let mut collector = ResponseCollector::default();
+        if let Some(response) = response {
+            collector
+                .apply(serde_json::from_value(response).unwrap(), None)
+                .unwrap();
+        }
+        let error = collector.finish().unwrap_err();
+        assert!(matches!(
+            error,
+            ModelError::RetryableInvalidResponse { error_type, .. } if error_type == "empty_assistant"
+        ));
+    }
 }

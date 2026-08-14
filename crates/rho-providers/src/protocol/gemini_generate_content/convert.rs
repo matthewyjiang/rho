@@ -379,13 +379,13 @@ impl ResponseCollector {
                 continue;
             };
             for part in content.parts {
-                let has_text = part.text.is_some();
+                let has_text = part.text.as_ref().is_some_and(|text| !text.is_empty());
                 let has_signature = part.thought_signature.is_some();
                 self.has_emitted_output |= has_text || part.function_call.is_some();
                 // Gemini forbids merging a signed part with an unsigned neighbor.
                 let merges_with_previous_text = !part.thought
                     && part.function_call.is_none()
-                    && part.text.is_some()
+                    && has_text
                     && !has_signature
                     && self.can_merge_output_text;
                 let portable_position = if merges_with_previous_text {
@@ -393,8 +393,7 @@ impl ResponseCollector {
                 } else {
                     self.content.len()
                 };
-                let is_portable =
-                    !part.thought && (part.text.is_some() || part.function_call.is_some());
+                let is_portable = !part.thought && (has_text || part.function_call.is_some());
                 if part.thought {
                     emit(
                         &mut on_event,
@@ -434,7 +433,7 @@ impl ResponseCollector {
                         },
                     )?;
                 }
-                if let Some(text) = part.text {
+                if let Some(text) = part.text.filter(|text| !text.is_empty()) {
                     if part.thought {
                         self.can_merge_output_text = false;
                         emit(&mut on_event, ModelEvent::ReasoningSummaryDelta(text))?;
