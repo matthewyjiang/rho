@@ -745,12 +745,10 @@ fn interrupted_press_does_not_toggle() {
         });
         sync_view(&mut app, 80, 30);
         app.handle_event(mouse(MouseEventKind::Down(MouseButton::Left), 8, 5));
+        let label = format!("{interrupt:?}");
         app.handle_event(interrupt);
         app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 8, 5));
-        assert!(
-            !transcript_tool(&app, 0).expanded,
-            "interrupt {interrupt:?}"
-        );
+        assert!(!transcript_tool(&app, 0).expanded, "{label}");
     }
 }
 
