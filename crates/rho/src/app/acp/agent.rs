@@ -32,10 +32,12 @@ struct LiveSession {
 pub(super) struct RhoAcpAgent {
     startup: AcpStartup,
     sessions: tokio::sync::Mutex<HashMap<SessionId, Arc<LiveSession>>>,
-    /// Serializes `session/new` and `session/load` publication so a replacement
-    /// cannot return success after a later install has already taken the slot.
+    /// Write-locked only by `shutdown_all` so in-flight installs finish first.
     /// Prompt and cancel never take this lock.
-    install_lock: tokio::sync::Mutex<()>,
+    install_gate: tokio::sync::RwLock<()>,
+    /// One lock per session ID. Replacements of the same ID stay ordered;
+    /// different IDs publish and tear down independently.
+    install_locks: tokio::sync::Mutex<HashMap<SessionId, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl RhoAcpAgent {
@@ -43,7 +45,8 @@ impl RhoAcpAgent {
         Self {
             startup,
             sessions: tokio::sync::Mutex::new(HashMap::new()),
-            install_lock: tokio::sync::Mutex::new(()),
+            install_gate: tokio::sync::RwLock::new(()),
+            install_locks: tokio::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -133,11 +136,12 @@ impl RhoAcpAgent {
     }
 
     pub(super) async fn shutdown_all(&self) {
-        let _install = self.install_lock.lock().await;
+        let _gate = self.install_gate.write().await;
         let lives: Vec<Arc<LiveSession>> = {
             let mut sessions = self.sessions.lock().await;
             sessions.drain().map(|(_, live)| live).collect()
         };
+        self.install_locks.lock().await.clear();
         for live in lives {
             shutdown_live(live).await;
         }
@@ -148,7 +152,9 @@ impl RhoAcpAgent {
     }
 
     async fn publish(&self, session_id: SessionId, live: Arc<LiveSession>) {
-        let _install = self.install_lock.lock().await;
+        let _gate = self.install_gate.read().await;
+        let install = self.install_lock_for(&session_id).await;
+        let _install = install.lock().await;
         let previous = {
             let mut sessions = self.sessions.lock().await;
             sessions.insert(session_id, live)
@@ -156,6 +162,14 @@ impl RhoAcpAgent {
         if let Some(previous) = previous {
             shutdown_live(previous).await;
         }
+    }
+
+    async fn install_lock_for(&self, session_id: &SessionId) -> Arc<tokio::sync::Mutex<()>> {
+        let mut locks = self.install_locks.lock().await;
+        locks
+            .entry(session_id.clone())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
     }
 }
 

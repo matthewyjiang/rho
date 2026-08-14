@@ -158,6 +158,29 @@ fn vacant_session() -> Arc<LiveSession> {
     })
 }
 
+async fn wait_until_published(
+    agent: &RhoAcpAgent,
+    session_id: &SessionId,
+    expected: &Arc<LiveSession>,
+) {
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            {
+                let sessions = agent.sessions.lock().await;
+                if sessions
+                    .get(session_id)
+                    .is_some_and(|live| Arc::ptr_eq(live, expected))
+                {
+                    return;
+                }
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("session should publish");
+}
+
 // Covers: a second session/prompt must report a busy session, not a missing one.
 // Owner: ACP agent session map
 #[tokio::test]
@@ -196,22 +219,7 @@ async fn replacement_finishes_before_the_next_one_publishes() {
         first_agent.publish(first_id, first_live).await;
     });
 
-    tokio::time::timeout(Duration::from_secs(1), async {
-        loop {
-            {
-                let sessions = agent.sessions.lock().await;
-                if sessions
-                    .get(&session_id)
-                    .is_some_and(|live| Arc::ptr_eq(live, &first))
-                {
-                    return;
-                }
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("first replacement should publish");
+    wait_until_published(&agent, &session_id, &first).await;
 
     let second_agent = Arc::clone(&agent);
     let second_id = session_id.clone();
@@ -239,4 +247,51 @@ async fn replacement_finishes_before_the_next_one_publishes() {
         .await
         .get(&session_id)
         .is_some_and(|live| Arc::ptr_eq(live, &second)));
+}
+
+// Covers: tearing down a replaced session must not delay publication of another ID.
+// Owner: ACP agent session map
+#[tokio::test]
+async fn blocked_replacement_does_not_block_unrelated_session_publication() {
+    let agent = test_agent();
+    let blocked_id = SessionId::new("blocked");
+    let other_id = SessionId::new("other");
+    let previous = vacant_session();
+    let replacement = vacant_session();
+    let other = vacant_session();
+    agent
+        .sessions
+        .lock()
+        .await
+        .insert(blocked_id.clone(), Arc::clone(&previous));
+    let held = previous.host.lock().await;
+
+    let blocked_agent = Arc::clone(&agent);
+    let blocked_session = blocked_id.clone();
+    let blocked_live = Arc::clone(&replacement);
+    let blocked_install = tokio::spawn(async move {
+        blocked_agent.publish(blocked_session, blocked_live).await;
+    });
+
+    wait_until_published(&agent, &blocked_id, &replacement).await;
+
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        agent.publish(other_id.clone(), Arc::clone(&other)),
+    )
+    .await
+    .expect("unrelated session publication must not wait for another session's teardown");
+
+    assert!(
+        agent
+            .sessions
+            .lock()
+            .await
+            .get(&other_id)
+            .is_some_and(|live| Arc::ptr_eq(live, &other)),
+        "unrelated session must be visible while the blocked replacement is still tearing down"
+    );
+
+    drop(held);
+    blocked_install.await.expect("blocked install");
 }
