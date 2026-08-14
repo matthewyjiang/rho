@@ -635,6 +635,26 @@ fn intra_card_drag_does_not_toggle() {
     assert!(!transcript_tool(&app, 0).expanded);
 }
 
+// Covers: a pending card that finishes during a stationary click still expands
+// Owner: attach event loop
+#[test]
+fn pending_finish_during_click_still_toggles() {
+    let (_directory, mut app) = test_app();
+    app.apply_event(AttachmentEvent::ToolStarted {
+        key: Some("live".into()),
+        card: long_body_card(),
+    });
+    sync_view(&mut app, 80, 30);
+
+    app.handle_event(mouse(MouseEventKind::Down(MouseButton::Left), 8, 5));
+    app.apply_event(AttachmentEvent::ToolFinished {
+        key: Some("live".into()),
+        card: long_body_card(),
+    });
+    app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 8, 5));
+    assert!(transcript_tool(&app, 0).expanded);
+}
+
 // Covers: ctrl+o expands latest pending, then last finished card, accordion-style
 // Owner: attach event loop
 #[test]

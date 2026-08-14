@@ -371,6 +371,12 @@ impl AttachmentApp {
             image: None,
             started_at: None,
         }));
+        if matches!(
+            &self.press_toggle_target,
+            Some(ToggleTarget::Pending(pending)) if pending == &key
+        ) {
+            self.press_toggle_target = Some(ToggleTarget::Transcript(self.transcript.len() - 1));
+        }
     }
 
     fn clear_pending_tools(&mut self) {
