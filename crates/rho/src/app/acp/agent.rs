@@ -1,4 +1,10 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 
 use agent_client_protocol::{
     schema::v1::{
@@ -32,12 +38,15 @@ struct LiveSession {
 pub(super) struct RhoAcpAgent {
     startup: AcpStartup,
     sessions: tokio::sync::Mutex<HashMap<SessionId, Arc<LiveSession>>>,
-    /// Write-locked only by `shutdown_all` so in-flight installs finish first.
-    /// Prompt and cancel never take this lock.
+    /// Readers are `session/new` and `session/load` for their full
+    /// build-and-publish lifecycle. `shutdown_all` takes the write lock so it
+    /// waits for those requests, then sets `closed`. Prompt, cancel, and
+    /// `publish` never take this lock.
     install_gate: tokio::sync::RwLock<()>,
     /// One lock per session ID. Replacements of the same ID stay ordered;
     /// different IDs publish and tear down independently.
     install_locks: tokio::sync::Mutex<HashMap<SessionId, Arc<tokio::sync::Mutex<()>>>>,
+    closed: AtomicBool,
 }
 
 impl RhoAcpAgent {
@@ -47,6 +56,7 @@ impl RhoAcpAgent {
             sessions: tokio::sync::Mutex::new(HashMap::new()),
             install_gate: tokio::sync::RwLock::new(()),
             install_locks: tokio::sync::Mutex::new(HashMap::new()),
+            closed: AtomicBool::new(false),
         }
     }
 
@@ -83,6 +93,7 @@ impl RhoAcpAgent {
         self: &Arc<Self>,
         request: NewSessionRequest,
     ) -> Result<NewSessionResponse, AcpError> {
+        let _gate = self.begin_install().await?;
         let (host, response) = SessionHost::create(&self.startup, request)
             .await
             .map_err(host_error)?;
@@ -96,6 +107,7 @@ impl RhoAcpAgent {
         request: LoadSessionRequest,
         port: &dyn AcpClientPort,
     ) -> Result<LoadSessionResponse, AcpError> {
+        let _gate = self.begin_install().await?;
         let session_id = request.session_id.clone();
         let (host, response) = SessionHost::load(&self.startup, request, port)
             .await
@@ -137,6 +149,7 @@ impl RhoAcpAgent {
 
     pub(super) async fn shutdown_all(&self) {
         let _gate = self.install_gate.write().await;
+        self.closed.store(true, Ordering::Release);
         let lives: Vec<Arc<LiveSession>> = {
             let mut sessions = self.sessions.lock().await;
             sessions.drain().map(|(_, live)| live).collect()
@@ -147,20 +160,33 @@ impl RhoAcpAgent {
         }
     }
 
+    async fn begin_install(&self) -> Result<tokio::sync::RwLockReadGuard<'_, ()>, AcpError> {
+        let gate = self.install_gate.read().await;
+        if self.closed.load(Ordering::Acquire) {
+            return Err(agent_stopped());
+        }
+        Ok(gate)
+    }
+
     async fn install(&self, session_id: SessionId, host: SessionHost) {
         self.publish(session_id, LiveSession::new(host)).await;
     }
 
     async fn publish(&self, session_id: SessionId, live: Arc<LiveSession>) {
-        let _gate = self.install_gate.read().await;
         let install = self.install_lock_for(&session_id).await;
         let _install = install.lock().await;
-        let previous = {
+        let outcome = {
             let mut sessions = self.sessions.lock().await;
-            sessions.insert(session_id, live)
+            if self.closed.load(Ordering::Acquire) {
+                Err(live)
+            } else {
+                Ok(sessions.insert(session_id, live))
+            }
         };
-        if let Some(previous) = previous {
-            shutdown_live(previous).await;
+        match outcome {
+            Ok(Some(previous)) => shutdown_live(previous).await,
+            Ok(None) => {}
+            Err(rejected) => shutdown_live(rejected).await,
         }
     }
 
@@ -192,6 +218,10 @@ fn busy_session(session_id: &SessionId) -> AcpError {
 
 fn host_error(error: anyhow::Error) -> AcpError {
     AcpError::internal_error().data(error.to_string())
+}
+
+fn agent_stopped() -> AcpError {
+    AcpError::internal_error().data("agent is shut down")
 }
 
 impl LiveSession {

@@ -295,3 +295,87 @@ async fn blocked_replacement_does_not_block_unrelated_session_publication() {
     drop(held);
     blocked_install.await.expect("blocked install");
 }
+
+// Covers: a session/new or session/load that is still building when shutdown
+// starts must be published into the drain, not left live after shutdown returns.
+// Owner: ACP agent session map
+#[tokio::test]
+async fn shutdown_all_waits_for_in_flight_install() {
+    let agent = test_agent();
+    let session_id = SessionId::new("in-flight");
+    let live = vacant_session();
+    let (building_tx, building_rx) = tokio::sync::oneshot::channel();
+    let (finish_tx, finish_rx) = tokio::sync::oneshot::channel();
+    let (published_tx, published_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+
+    let install_agent = Arc::clone(&agent);
+    let install_id = session_id.clone();
+    let install_live = Arc::clone(&live);
+    let install = tokio::spawn(async move {
+        let _gate = install_agent
+            .begin_install()
+            .await
+            .expect("install should start before shutdown");
+        building_tx.send(()).expect("building");
+        finish_rx.await.expect("finish");
+        install_agent
+            .publish(install_id, Arc::clone(&install_live))
+            .await;
+        published_tx.send(()).expect("published");
+        release_rx.await.expect("release");
+    });
+
+    building_rx.await.expect("install started");
+    let shutdown_agent = Arc::clone(&agent);
+    let shutdown = tokio::spawn(async move {
+        shutdown_agent.shutdown_all().await;
+    });
+
+    finish_tx.send(()).expect("allow publish");
+    published_rx
+        .await
+        .expect("published under the install gate");
+    assert!(
+        agent
+            .sessions
+            .lock()
+            .await
+            .get(&session_id)
+            .is_some_and(|current| Arc::ptr_eq(current, &live)),
+        "shutdown must still be waiting so the in-flight publish is visible to drain"
+    );
+
+    release_tx.send(()).expect("release gate");
+    install.await.expect("install");
+    shutdown.await.expect("shutdown");
+    assert!(
+        agent.sessions.lock().await.is_empty(),
+        "in-flight install must be included in shutdown"
+    );
+}
+
+// Covers: once shutdown_all returns, a later publish must not install a live host.
+// Owner: ACP agent session map
+#[tokio::test]
+async fn shutdown_all_prevents_later_publication() {
+    let agent = test_agent();
+    let session_id = SessionId::new("late");
+    let live = vacant_session();
+
+    agent.shutdown_all().await;
+    agent.publish(session_id.clone(), Arc::clone(&live)).await;
+
+    assert!(
+        agent.sessions.lock().await.is_empty(),
+        "publication after shutdown_all must not leave a live host"
+    );
+    let load = agent
+        .load_session(
+            LoadSessionRequest::new(session_id, PathBuf::from("/tmp")),
+            &NullPort,
+        )
+        .await
+        .expect_err("load after shutdown");
+    assert_eq!(load.code, ErrorCode::InternalError);
+}
