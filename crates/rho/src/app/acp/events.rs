@@ -29,31 +29,31 @@ impl EventMapper {
         }
     }
 
+    /// Maps one SDK event onto at most one ACP notification. Events that only
+    /// move mapper state, or that ACP has no update for, map to `None`.
     #[allow(deprecated)]
     pub(super) fn map_event(
         &mut self,
         session_id: &SessionId,
         event: &rho_sdk::RunEvent,
-    ) -> Vec<SessionNotification> {
+    ) -> Option<SessionNotification> {
         match event {
-            RunEvent::AssistantTextDelta { text } => {
-                vec![notify(
-                    session_id,
-                    SessionUpdate::AgentMessageChunk(text_chunk(text)),
-                )]
-            }
+            RunEvent::AssistantTextDelta { text } => Some(notify(
+                session_id,
+                SessionUpdate::AgentMessageChunk(text_chunk(text)),
+            )),
             RunEvent::ReasoningDelta { text } | RunEvent::ReasoningSummaryDelta { text } => {
-                vec![notify(
+                Some(notify(
                     session_id,
                     SessionUpdate::AgentThoughtChunk(text_chunk(text)),
-                )]
+                ))
             }
             RunEvent::ToolProposed { call } => {
                 if !call.id.is_empty() {
                     self.proposed
                         .insert(call.id.clone(), call.arguments.clone());
                 }
-                Vec::new()
+                None
             }
             RunEvent::ToolStarted {
                 call_id,
@@ -61,12 +61,12 @@ impl EventMapper {
                 metadata,
             } => {
                 let proposed = self.proposed.remove(call_id.as_str());
-                vec![notify(
+                Some(notify(
                     session_id,
                     SessionUpdate::ToolCall(started_tool_call(call_id, name, metadata, proposed)),
-                )]
+                ))
             }
-            RunEvent::ToolUpdated { call_id, progress } => vec![notify(
+            RunEvent::ToolUpdated { call_id, progress } => Some(notify(
                 session_id,
                 SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
                     ToolCallId::new(call_id.as_str()),
@@ -74,28 +74,28 @@ impl EventMapper {
                         .status(ToolCallStatus::InProgress)
                         .content(vec![ToolCallContent::from(progress.text())]),
                 )),
-            )],
+            )),
             RunEvent::ToolFinished { call_id, result } => {
                 self.proposed.remove(call_id.as_str());
                 let (status, content) = finished_content(result);
-                vec![notify(
+                Some(notify(
                     session_id,
                     SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
                         ToolCallId::new(call_id.as_str()),
                         ToolCallUpdateFields::new().status(status).content(content),
                     )),
-                )]
+                ))
             }
             RunEvent::ProviderStreamReset { .. } => {
                 self.proposed.clear();
-                vec![notify(
+                Some(notify(
                     session_id,
                     SessionUpdate::AgentThoughtChunk(text_chunk(PROVIDER_STREAM_RESET_NOTICE)),
-                )]
+                ))
             }
             RunEvent::Completed { .. } | RunEvent::Cancelled { .. } | RunEvent::Failed { .. } => {
                 self.proposed.clear();
-                Vec::new()
+                None
             }
             RunEvent::Started { .. }
             | RunEvent::StepStarted { .. }
@@ -114,8 +114,8 @@ impl EventMapper {
             | RunEvent::ModelCallCompleted { .. }
             | RunEvent::HostedToolActivity { .. }
             | RunEvent::ProviderServiceTierFallback { .. }
-            | RunEvent::ContextEstimated { .. } => Vec::new(),
-            _ => Vec::new(),
+            | RunEvent::ContextEstimated { .. } => None,
+            _ => None,
         }
     }
 

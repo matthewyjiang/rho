@@ -1,4 +1,4 @@
-use std::{future::Future, path::PathBuf, pin::Pin, sync::Arc};
+use std::{collections::HashMap, future::Future, path::PathBuf, pin::Pin, sync::Arc};
 
 use agent_client_protocol::{
     schema::{
@@ -13,7 +13,7 @@ use agent_client_protocol::{
 };
 use pretty_assertions::assert_eq;
 
-use super::RhoAcpAgent;
+use super::{may_restore, take_host_for_prompt, LiveSession, PromptGate, RhoAcpAgent};
 use crate::{
     agent::{AgentDefinition, AgentId, AgentRuntimeSpec, ModelPolicy, PromptPolicy, ToolPolicy},
     app::acp::{AcpClientPort, AcpStartup},
@@ -94,7 +94,8 @@ fn initialize_advertises_load_session_and_prompt_caps() {
     assert!(response.auth_methods.is_empty());
 }
 
-// Covers: session/set_mode must fail instead of changing permission mode.
+// Covers: session/set_mode must fail for a known mode without claiming the
+// advertised method does not exist.
 // Owner: ACP agent handshake
 #[test]
 fn set_session_mode_is_unsupported() {
@@ -103,7 +104,7 @@ fn set_session_mode_is_unsupported() {
         SessionModeId::new("bypass"),
     ));
 
-    assert_eq!(error.code, ErrorCode::MethodNotFound);
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
 }
 
 // Covers: session/set_mode must reject unknown ids instead of a generic not-found
@@ -148,4 +149,40 @@ async fn missing_session_prompt_and_load_return_errors() {
         )
         .await
         .expect_err("missing load session");
+}
+
+/// Builds the map entry a prompt leaves behind while it holds the host.
+fn borrowed_session(generation: u64) -> LiveSession {
+    LiveSession {
+        host: None,
+        cancel: Arc::new(PromptGate::new()),
+        generation,
+    }
+}
+
+// Covers: a second session/prompt must report a busy session, not a missing one.
+// Owner: ACP agent session map
+#[test]
+fn prompt_on_a_borrowed_session_is_busy_not_missing() {
+    let busy = SessionId::new("busy");
+    let mut sessions = HashMap::from([(busy.clone(), borrowed_session(7))]);
+
+    let error = take_host_for_prompt(&mut sessions, &busy)
+        .err()
+        .expect("busy session");
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+
+    let error = take_host_for_prompt(&mut sessions, &SessionId::new("missing"))
+        .err()
+        .expect("missing session");
+    assert_eq!(error.code, ErrorCode::ResourceNotFound);
+}
+
+// Covers: a prompt that outlived its session/new or session/load replacement must
+// not put its stale host back over the replacement.
+// Owner: ACP agent session map
+#[test]
+fn only_the_borrowing_generation_may_restore_its_host() {
+    assert!(may_restore(&borrowed_session(7), 7));
+    assert!(!may_restore(&borrowed_session(8), 7));
 }

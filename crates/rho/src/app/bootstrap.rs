@@ -108,7 +108,7 @@ async fn run_inner(cli: Cli) -> anyhow::Result<()> {
         })
         .await;
     }
-    if matches!(cli.command, Some(Command::Acp {})) {
+    if matches!(cli.command, Some(Command::Acp)) {
         return run_acp_startup(AcpCommandStartup {
             config,
             config_repository,
@@ -263,7 +263,7 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
         config.permission_mode = session_permission_mode;
     }
     let reasoning_before_binding = config.reasoning;
-    let role = if automation_prompt.is_some() || matches!(cli.command, Some(Command::Acp {})) {
+    let role = if automation_prompt.is_some() || matches!(cli.command, Some(Command::Acp)) {
         AgentRole::AutomationRoot
     } else {
         AgentRole::InteractiveRoot

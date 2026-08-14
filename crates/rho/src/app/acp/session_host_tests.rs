@@ -9,7 +9,7 @@ use rho_sdk::model::{ContentBlock, ImageContent as SdkImage};
 
 use super::{
     convert::{user_input_from_prompt, validate_session_cwd, workspace_cwd, SessionCwdError},
-    ActivePromptError, PromptGate,
+    PromptGate,
 };
 
 // Covers: session/new and session/load must refuse a non-workspace cwd
@@ -79,22 +79,31 @@ fn prompt_content_maps_text_image_and_embedded_context() {
     );
 }
 
+// Covers: a resource body that contains its own fence must not close ours early
+// Owner: acp session host
+#[test]
+fn fenced_context_outgrows_backticks_in_the_body() {
+    let prompt = vec![AcpContentBlock::Resource(EmbeddedResource::new(
+        EmbeddedResourceResource::TextResourceContents(TextResourceContents::new(
+            "```rust\nfn main() {}\n```",
+            "file:///workspace/readme.md",
+        )),
+    ))];
+
+    let input = user_input_from_prompt(&prompt).unwrap();
+    assert_eq!(
+        input.blocks(),
+        [ContentBlock::Text(
+            "````resource file:///workspace/readme.md\n```rust\nfn main() {}\n```\n````".into()
+        )]
+    );
+}
+
 // Covers: an empty prompt must not start a run
 // Owner: acp session host
 #[test]
 fn empty_prompt_is_rejected() {
     assert!(user_input_from_prompt(&[]).is_err());
-}
-
-// Covers: ACP allows only one in-flight prompt per session
-// Owner: acp session host
-#[test]
-fn one_active_prompt_is_rejected() {
-    let gate = PromptGate::new();
-    assert_eq!(gate.try_begin(), Ok(()));
-    assert_eq!(gate.try_begin(), Err(ActivePromptError));
-    gate.finish();
-    assert_eq!(gate.try_begin(), Ok(()));
 }
 
 // Covers: session/cancel must be safe when no prompt is running
@@ -109,9 +118,23 @@ fn cancel_is_idle_safe() {
 #[test]
 fn cancel_during_start_marks_the_gate() {
     let gate = PromptGate::new();
-    assert_eq!(gate.try_begin(), Ok(()));
+    gate.begin();
     gate.cancel();
     let token = rho_sdk::CancellationToken::new();
     gate.activate(token.clone());
     assert!(token.is_cancelled());
+}
+
+// Covers: a cancel aimed at a finished prompt must not cancel the next one
+// Owner: acp session host
+#[test]
+fn cancel_before_the_next_prompt_does_not_leak_into_it() {
+    let gate = PromptGate::new();
+    gate.begin();
+    gate.finish();
+    gate.cancel();
+    gate.begin();
+    let token = rho_sdk::CancellationToken::new();
+    gate.activate(token.clone());
+    assert!(!token.is_cancelled());
 }

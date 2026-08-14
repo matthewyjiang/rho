@@ -288,20 +288,20 @@ pub(super) fn resolve_session_options(
         .prompt_cache_key(prompt_cache_key(id.as_str())))
 }
 
-pub(super) struct ApprovalChannelOptions {
-    pub(super) config: crate::config::Config,
-    pub(super) workspace_path: PathBuf,
-    pub(super) usage_recording: rho_sdk::ProviderRequestUsageRecording,
-    pub(super) session_writes: SessionWriteLog,
+pub(in crate::app) struct ApprovalChannelOptions {
+    pub(in crate::app) config: crate::config::Config,
+    pub(in crate::app) workspace_path: PathBuf,
+    pub(in crate::app) usage_recording: rho_sdk::ProviderRequestUsageRecording,
+    pub(in crate::app) session_writes: SessionWriteLog,
 }
 
-pub(super) struct ApprovalChannel {
-    pub(super) handler: Option<Arc<dyn ApprovalHandler>>,
-    pub(super) receiver: Option<ApprovalRequestReceiver>,
-    pub(super) classifier: Option<Arc<ClassifierApprovalHandler>>,
+pub(in crate::app) struct ApprovalChannel {
+    pub(in crate::app) handler: Option<Arc<dyn ApprovalHandler>>,
+    pub(in crate::app) receiver: Option<ApprovalRequestReceiver>,
+    pub(in crate::app) classifier: Option<Arc<ClassifierApprovalHandler>>,
 }
 
-pub(super) fn approval_channel_for(
+pub(in crate::app) fn approval_channel_for(
     mode: PermissionMode,
     options: ApprovalChannelOptions,
 ) -> ApprovalChannel {
@@ -362,7 +362,7 @@ pub(super) fn approval_channel_for(
     }
 }
 
-pub(super) fn prompt_cache_key(id: &str) -> String {
+pub(in crate::app) fn prompt_cache_key(id: &str) -> String {
     rho_providers::providers::openai::prompt_cache_key_from_session_id(id)
         .unwrap_or_else(|| format!("rho:{id}"))
 }

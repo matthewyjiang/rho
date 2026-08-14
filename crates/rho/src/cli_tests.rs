@@ -25,7 +25,7 @@ fn rejects_unknown_auth_profiles() {
 fn parses_acp_subcommand() {
     let cli = Cli::try_parse_from(["rho", "acp"]).unwrap();
 
-    assert!(matches!(cli.command, Some(Command::Acp {})));
+    assert!(matches!(cli.command, Some(Command::Acp)));
 }
 
 #[test]

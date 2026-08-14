@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use agent_client_protocol::schema::v1::{
-    LoadSessionRequest, LoadSessionResponse, NewSessionRequest, NewSessionResponse, PromptRequest,
-    PromptResponse, RequestPermissionOutcome, SessionId,
+    LoadSessionRequest, LoadSessionResponse, McpServer, NewSessionRequest, NewSessionResponse,
+    PromptRequest, PromptResponse, RequestPermissionOutcome, SessionId,
 };
 use rho_sdk::{
     model::Message, ApprovalRequestReceiver, CancellationToken, PendingApproval, SessionOptions,
@@ -11,6 +11,7 @@ use rho_sdk::{
 
 use super::{events::EventMapper, permission, AcpClientPort};
 use crate::{
+    app::{interactive_runtime::startup::prompt_cache_key, session_assembly::BuiltSession},
     herdr::{HerdrReporter, HerdrState},
     session::Session as StoredSession,
     tools::sdk_registry::AppToolSet,
@@ -21,7 +22,7 @@ mod build;
 #[path = "session_host_convert.rs"]
 mod convert;
 
-use build::{build_session, mode_state, prompt_cache_key, teardown_session, BuiltSession};
+use build::{build_session, mode_state};
 use convert::{user_input_from_prompt, validate_session_cwd, workspace_cwd};
 
 pub(super) struct SessionBuildContext<'a> {
@@ -44,13 +45,16 @@ pub(super) struct SessionHost {
     tools: AppToolSet,
     hooks: Option<crate::hooks::HookPipeline>,
     approval_receiver: Option<ApprovalRequestReceiver>,
-    mapper: EventMapper,
     prompt_gate: Arc<PromptGate>,
     completed_runs: u64,
     herdr: HerdrReporter,
 }
 
-/// One-prompt-at-a-time slot. `cancel` is a no-op while idle.
+/// Carries cancellation for the session's current prompt. The agent's session
+/// map already serializes prompts by handing out the host exclusively, so this
+/// gate only has to cover the window between prompt entry and the run's token
+/// existing: a cancel that lands while `Starting` is replayed onto the token as
+/// soon as `activate` receives it. `cancel` is a no-op while idle.
 pub(super) struct PromptGate {
     slot: Mutex<PromptGateState>,
 }
@@ -62,17 +66,6 @@ enum PromptGateState {
     Active(CancellationToken),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct ActivePromptError;
-
-impl std::fmt::Display for ActivePromptError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("ACP session already has an active prompt")
-    }
-}
-
-impl std::error::Error for ActivePromptError {}
-
 impl PromptGate {
     pub(super) fn new() -> Self {
         Self {
@@ -80,18 +73,14 @@ impl PromptGate {
         }
     }
 
-    pub(super) fn try_begin(&self) -> Result<(), ActivePromptError> {
-        let mut slot = self
+    /// Opens the starting window for a prompt, dropping any cancel that
+    /// arrived for the previous one.
+    pub(super) fn begin(&self) {
+        *self
             .slot
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        match *slot {
-            PromptGateState::Idle => {
-                *slot = PromptGateState::Starting { cancelled: false };
-                Ok(())
-            }
-            PromptGateState::Starting { .. } | PromptGateState::Active(_) => Err(ActivePromptError),
-        }
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            PromptGateState::Starting { cancelled: false };
     }
 
     fn activate(&self, token: CancellationToken) {
@@ -140,9 +129,7 @@ impl SessionHost {
         request: NewSessionRequest,
     ) -> anyhow::Result<(Self, NewSessionResponse)> {
         let cwd = validate_session_cwd(&request.cwd)?;
-        // Host-supplied MCP servers are ignored. Rho loads MCP from workspace
-        // and config through assemble_tools_and_prompt, not request.mcpServers.
-        let _ = request.mcp_servers;
+        ignore_host_mcp_servers(&request.mcp_servers);
         let sdk_id = rho_sdk::SessionId::new();
         let cache_key = prompt_cache_key(sdk_id.as_str());
         let built = build_session(&ctx, cwd, |_| {
@@ -159,14 +146,7 @@ impl SessionHost {
         ) {
             Ok(stored) => stored,
             Err(error) => {
-                let BuiltSession {
-                    runtime,
-                    session,
-                    tools,
-                    hooks,
-                    ..
-                } = built;
-                teardown_session(runtime, session, hooks, tools).await;
+                built.teardown().await;
                 return Err(error);
             }
         };
@@ -188,7 +168,7 @@ impl SessionHost {
         if !request.cwd.as_os_str().is_empty() {
             validate_session_cwd(cwd)?;
         }
-        let _ = request.mcp_servers;
+        ignore_host_mcp_servers(&request.mcp_servers);
         let (stored, histories) =
             StoredSession::open_by_id_with_histories(cwd, request.session_id.0.as_ref())?;
         let built = build_session(&ctx, cwd, |provider| {
@@ -200,14 +180,7 @@ impl SessionHost {
         let replay_result =
             replay_display_history(&request.session_id, &histories.display, client).await;
         if let Err(error) = replay_result {
-            let BuiltSession {
-                runtime,
-                session,
-                tools,
-                hooks,
-                ..
-            } = built;
-            teardown_session(runtime, session, hooks, tools).await;
+            built.teardown().await;
             return Err(error);
         }
         let response = LoadSessionResponse::new().modes(mode_state(ctx.config.permission_mode));
@@ -223,9 +196,8 @@ impl SessionHost {
         client: &dyn AcpClientPort,
     ) -> anyhow::Result<PromptResponse> {
         let input = user_input_from_prompt(&request.prompt)?;
-        self.prompt_gate.try_begin()?;
+        self.prompt_gate.begin();
         let _guard = PromptGuard(Arc::clone(&self.prompt_gate));
-        self.mapper = EventMapper::new();
         self.herdr
             .report_state(
                 HerdrState::Working,
@@ -251,10 +223,19 @@ impl SessionHost {
             session,
             tools,
             hooks,
+            approval_receiver,
             herdr,
             ..
         } = self;
-        teardown_session(runtime, session, hooks, tools).await;
+        BuiltSession {
+            runtime,
+            session,
+            tools,
+            hooks,
+            approval_receiver,
+        }
+        .teardown()
+        .await;
         herdr.release().await;
     }
 
@@ -272,7 +253,6 @@ impl SessionHost {
             tools: built.tools,
             hooks: built.hooks,
             approval_receiver: built.approval_receiver,
-            mapper: EventMapper::new(),
             prompt_gate: Arc::new(PromptGate::new()),
             completed_runs: 0,
             herdr,
@@ -293,8 +273,9 @@ impl SessionHost {
         };
         self.prompt_gate.activate(run.cancellation_handle());
         let mut approval_receiver = self.approval_receiver.take();
+        let mut mapper = EventMapper::new();
         let pump_result = self
-            .pump_run(&mut run, client, approval_receiver.as_mut())
+            .pump_run(&mut run, &mut mapper, client, approval_receiver.as_mut())
             .await;
         self.approval_receiver = approval_receiver;
         if let Err(error) = pump_result {
@@ -334,6 +315,7 @@ impl SessionHost {
     async fn pump_run(
         &mut self,
         run: &mut rho_sdk::Run,
+        mapper: &mut EventMapper,
         client: &dyn AcpClientPort,
         approval_receiver: Option<&mut ApprovalRequestReceiver>,
     ) -> anyhow::Result<()> {
@@ -354,7 +336,7 @@ impl SessionHost {
                     let Some(event) = event else {
                         return Ok(());
                     };
-                    for notification in self.mapper.map_event(&self.acp_session_id, &event) {
+                    if let Some(notification) = mapper.map_event(&self.acp_session_id, &event) {
                         send_notification(client, notification).await?;
                     }
                 }
@@ -387,6 +369,10 @@ impl SessionHost {
         );
     }
 }
+
+/// Host-supplied MCP servers are ignored. Rho loads MCP from the workspace and
+/// config through `assemble_tools_and_prompt`, not from `request.mcpServers`.
+fn ignore_host_mcp_servers(_servers: &[McpServer]) {}
 
 async fn replay_display_history(
     session_id: &SessionId,

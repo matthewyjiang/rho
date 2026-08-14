@@ -16,9 +16,10 @@ fn session_id() -> SessionId {
 }
 
 fn only_update(mapper: &mut EventMapper, event: RunEvent) -> SessionUpdate {
-    let notifications = mapper.map_event(&session_id(), &event);
-    assert_eq!(notifications.len(), 1);
-    notifications.into_iter().next().unwrap().update
+    mapper
+        .map_event(&session_id(), &event)
+        .expect("one notification")
+        .update
 }
 
 fn text_of(block: &ContentBlock) -> &str {
@@ -78,7 +79,7 @@ fn proposed_started_finished_map_kind_and_status() {
             },
         },
     );
-    assert_eq!(proposed, Vec::new());
+    assert_eq!(proposed, None);
 
     let started = only_update(
         &mut mapper,
@@ -192,7 +193,7 @@ fn ignored_events_emit_nothing() {
         },
     ];
     for event in ignored {
-        assert_eq!(mapper.map_event(&session_id(), &event), Vec::new());
+        assert_eq!(mapper.map_event(&session_id(), &event), None);
     }
 }
 

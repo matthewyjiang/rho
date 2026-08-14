@@ -88,6 +88,20 @@ fn content_block_from_acp(block: &AcpContentBlock) -> ContentBlock {
     }
 }
 
+/// Wraps a body in a code fence long enough to survive backticks inside it.
+/// A body that already contains ``` would end the fence early, so the fence
+/// grows past the body's longest backtick run.
 fn fence_context(kind: &str, header: &str, body: &str) -> String {
-    format!("```{kind} {header}\n{body}\n```")
+    let fence = "`".repeat(longest_backtick_run(body).max(2) + 1);
+    format!("{fence}{kind} {header}\n{body}\n{fence}")
+}
+
+fn longest_backtick_run(body: &str) -> usize {
+    let mut longest = 0;
+    let mut run = 0;
+    for character in body.chars() {
+        run = if character == '`' { run + 1 } else { 0 };
+        longest = longest.max(run);
+    }
+    longest
 }

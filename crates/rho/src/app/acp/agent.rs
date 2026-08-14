@@ -7,7 +7,7 @@ use agent_client_protocol::{
         NewSessionResponse, PromptCapabilities, PromptRequest, PromptResponse, SessionId,
         SetSessionModeRequest,
     },
-    Error as AcpError, ErrorCode,
+    Error as AcpError,
 };
 
 use super::{
@@ -16,9 +16,15 @@ use super::{
 };
 
 /// Session entry that keeps a cancel handle even while `prompt` holds the host.
+///
+/// `generation` identifies this entry for the lifetime of the map slot. A
+/// prompt that borrows `host` remembers the generation it borrowed from, so a
+/// `session/new` or `session/load` that replaces the slot mid-prompt cannot be
+/// clobbered when the old prompt returns its host.
 struct LiveSession {
     host: Option<SessionHost>,
-    cancel: std::sync::Arc<PromptGate>,
+    cancel: Arc<PromptGate>,
+    generation: u64,
 }
 
 /// In-process ACP agent. Session hosts live in a mutex map so request
@@ -26,6 +32,7 @@ struct LiveSession {
 pub(super) struct RhoAcpAgent {
     startup: AcpStartup,
     sessions: tokio::sync::Mutex<HashMap<SessionId, LiveSession>>,
+    next_generation: std::sync::atomic::AtomicU64,
 }
 
 impl RhoAcpAgent {
@@ -33,6 +40,7 @@ impl RhoAcpAgent {
         Self {
             startup,
             sessions: tokio::sync::Mutex::new(HashMap::new()),
+            next_generation: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -74,9 +82,10 @@ impl RhoAcpAgent {
             .await
             .map_err(host_error)?;
         let session_id = response.session_id.clone();
+        let entry = LiveSession::new(host, self.next_generation());
         let previous = {
             let mut sessions = self.sessions.lock().await;
-            sessions.insert(session_id, LiveSession::new(host))
+            sessions.insert(session_id, entry)
         };
         shutdown_replaced(previous).await;
         Ok(response)
@@ -92,9 +101,10 @@ impl RhoAcpAgent {
         let (host, response) = SessionHost::load(ctx, request, port)
             .await
             .map_err(host_error)?;
+        let entry = LiveSession::new(host, self.next_generation());
         let previous = {
             let mut sessions = self.sessions.lock().await;
-            sessions.insert(session_id, LiveSession::new(host))
+            sessions.insert(session_id, entry)
         };
         shutdown_replaced(previous).await;
         Ok(response)
@@ -106,21 +116,16 @@ impl RhoAcpAgent {
         port: &dyn AcpClientPort,
     ) -> Result<PromptResponse, AcpError> {
         let session_id = request.session_id.clone();
-        let mut host = {
+        let (mut host, generation) = {
             let mut sessions = self.sessions.lock().await;
-            let live = sessions
-                .get_mut(&session_id)
-                .ok_or_else(|| missing_session(&session_id))?;
-            live.host
-                .take()
-                .ok_or_else(|| missing_session(&session_id))?
+            take_host_for_prompt(&mut sessions, &session_id)?
         };
         let result = host.prompt(request, port).await;
         {
             let mut sessions = self.sessions.lock().await;
             match sessions.get_mut(&session_id) {
-                Some(live) => live.host = Some(host),
-                None => host.shutdown().await,
+                Some(live) if may_restore(live, generation) => live.host = Some(host),
+                Some(_) | None => host.shutdown().await,
             }
         }
         result.map_err(host_error)
@@ -143,6 +148,11 @@ impl RhoAcpAgent {
         }
     }
 
+    fn next_generation(&self) -> u64 {
+        self.next_generation
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+
     fn build_context(&self) -> SessionBuildContext<'_> {
         SessionBuildContext {
             config: &self.startup.config,
@@ -158,26 +168,52 @@ impl RhoAcpAgent {
     }
 }
 
+/// The agent implements and advertises these methods, so `MethodNotFound`
+/// would lie about the surface. `InvalidRequest` says the call cannot be
+/// served as sent, and the data string says why.
 fn not_yet_supported(method: &str) -> AcpError {
-    AcpError::new(
-        i32::from(ErrorCode::MethodNotFound),
-        format!("{method} is not yet supported"),
-    )
+    AcpError::invalid_request().data(format!("{method} is not yet supported"))
 }
 
 fn missing_session(session_id: &SessionId) -> AcpError {
     AcpError::resource_not_found(Some(session_id.to_string()))
 }
 
+fn busy_session(session_id: &SessionId) -> AcpError {
+    AcpError::invalid_request().data(format!(
+        "session '{session_id}' already has an active prompt"
+    ))
+}
+
 fn host_error(error: anyhow::Error) -> AcpError {
     AcpError::internal_error().data(error.to_string())
 }
 
+/// Borrows a session's host for one prompt. A session with its host already
+/// borrowed is busy, not missing, and the two must not report the same error.
+fn take_host_for_prompt(
+    sessions: &mut HashMap<SessionId, LiveSession>,
+    session_id: &SessionId,
+) -> Result<(SessionHost, u64), AcpError> {
+    let live = sessions
+        .get_mut(session_id)
+        .ok_or_else(|| missing_session(session_id))?;
+    let host = live.host.take().ok_or_else(|| busy_session(session_id))?;
+    Ok((host, live.generation))
+}
+
+/// A finished prompt may return its host only to the same map entry it
+/// borrowed from, and only while that entry's slot is still empty.
+fn may_restore(live: &LiveSession, generation: u64) -> bool {
+    live.generation == generation && live.host.is_none()
+}
+
 impl LiveSession {
-    fn new(host: SessionHost) -> Self {
+    fn new(host: SessionHost, generation: u64) -> Self {
         Self {
             cancel: host.cancel_handle(),
             host: Some(host),
+            generation,
         }
     }
 }
