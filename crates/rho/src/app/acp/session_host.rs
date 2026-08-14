@@ -1,7 +1,10 @@
 use std::{
     future::Future,
     pin::Pin,
-    sync::{atomic::AtomicU64, Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex,
+    },
 };
 
 use agent_client_protocol::schema::v1::{
@@ -36,6 +39,7 @@ pub(super) struct SessionHost {
     prompt_gate: Arc<PromptGate>,
     completed_runs: u64,
     permission_placeholders: AtomicU64,
+    replaced: Arc<AtomicBool>,
     herdr: HerdrReporter,
 }
 
@@ -197,6 +201,10 @@ impl SessionHost {
         Arc::clone(&self.prompt_gate)
     }
 
+    pub(super) fn replaced_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.replaced)
+    }
+
     pub(super) async fn shutdown(self) {
         self.prompt_gate.cancel();
         let Self { built, herdr, .. } = self;
@@ -217,6 +225,7 @@ impl SessionHost {
             prompt_gate: Arc::new(PromptGate::new()),
             completed_runs: 0,
             permission_placeholders: AtomicU64::new(0),
+            replaced: Arc::new(AtomicBool::new(false)),
             herdr,
         }
     }
@@ -297,6 +306,9 @@ impl SessionHost {
     }
 
     fn persist_turn(&self, input: &UserInput, assistant_text: Option<&str>) -> anyhow::Result<()> {
+        if self.replaced.load(Ordering::Acquire) {
+            return Ok(());
+        }
         let mut display_tail = vec![Message::User(input.blocks().to_vec())];
         if let Some(text) = assistant_text.filter(|text| !text.is_empty()) {
             display_tail.push(Message::assistant_text(text));

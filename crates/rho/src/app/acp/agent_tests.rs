@@ -1,4 +1,10 @@
-use std::{future::Future, path::PathBuf, pin::Pin, sync::Arc, time::Duration};
+use std::{
+    future::Future,
+    path::PathBuf,
+    pin::Pin,
+    sync::{atomic::AtomicBool, Arc},
+    time::Duration,
+};
 
 use agent_client_protocol::{
     schema::{
@@ -155,30 +161,21 @@ fn vacant_session() -> Arc<LiveSession> {
     Arc::new(LiveSession {
         host: tokio::sync::Mutex::new(None),
         cancel: Arc::new(PromptGate::new()),
+        replaced: Arc::new(AtomicBool::new(false)),
     })
 }
 
-async fn wait_until_published(
-    agent: &RhoAcpAgent,
-    session_id: &SessionId,
-    expected: &Arc<LiveSession>,
-) {
+async fn wait_until_replaced(live: &LiveSession) {
     tokio::time::timeout(Duration::from_secs(1), async {
         loop {
-            {
-                let sessions = agent.sessions.lock().await;
-                if sessions
-                    .get(session_id)
-                    .is_some_and(|live| Arc::ptr_eq(live, expected))
-                {
-                    return;
-                }
+            if live.replaced.load(std::sync::atomic::Ordering::Acquire) {
+                return;
             }
             tokio::task::yield_now().await;
         }
     })
     .await
-    .expect("session should publish");
+    .expect("replacement should mark the previous session");
 }
 
 // Covers: a second session/prompt must report a busy session, not a missing one.
@@ -219,7 +216,7 @@ async fn replacement_finishes_before_the_next_one_publishes() {
         first_agent.publish(first_id, first_live).await;
     });
 
-    wait_until_published(&agent, &session_id, &first).await;
+    wait_until_replaced(&previous).await;
 
     let second_agent = Arc::clone(&agent);
     let second_id = session_id.clone();
@@ -234,7 +231,7 @@ async fn replacement_finishes_before_the_next_one_publishes() {
             .lock()
             .await
             .get(&session_id)
-            .is_some_and(|live| Arc::ptr_eq(live, &first)),
+            .is_some_and(|live| Arc::ptr_eq(live, &previous)),
         "later replacement must not publish while the earlier install still holds the slot"
     );
 
@@ -273,7 +270,7 @@ async fn blocked_replacement_does_not_block_unrelated_session_publication() {
         blocked_agent.publish(blocked_session, blocked_live).await;
     });
 
-    wait_until_published(&agent, &blocked_id, &replacement).await;
+    wait_until_replaced(&previous).await;
 
     tokio::time::timeout(
         Duration::from_secs(1),
@@ -290,6 +287,15 @@ async fn blocked_replacement_does_not_block_unrelated_session_publication() {
             .get(&other_id)
             .is_some_and(|live| Arc::ptr_eq(live, &other)),
         "unrelated session must be visible while the blocked replacement is still tearing down"
+    );
+    assert!(
+        agent
+            .sessions
+            .lock()
+            .await
+            .get(&blocked_id)
+            .is_some_and(|live| Arc::ptr_eq(live, &previous)),
+        "blocked replacement must stay unpublished until the old prompt releases"
     );
 
     drop(held);
@@ -378,4 +384,64 @@ async fn shutdown_all_prevents_later_publication() {
         .await
         .expect_err("load after shutdown");
     assert_eq!(load.code, ErrorCode::InternalError);
+}
+
+// Covers: a same-ID replacement must not become promptable until the old host
+// lock is released, so the cancelled old prompt and a new prompt cannot run
+// on two hosts at once.
+// Owner: ACP agent session map
+#[tokio::test]
+async fn replacement_is_not_visible_until_the_old_prompt_releases() {
+    let agent = test_agent();
+    let session_id = SessionId::new("session");
+    let previous = vacant_session();
+    let replacement = vacant_session();
+    agent
+        .sessions
+        .lock()
+        .await
+        .insert(session_id.clone(), Arc::clone(&previous));
+    let held = previous.host.lock().await;
+
+    let publish_agent = Arc::clone(&agent);
+    let publish_id = session_id.clone();
+    let publish_live = Arc::clone(&replacement);
+    let publish = tokio::spawn(async move {
+        publish_agent.publish(publish_id, publish_live).await;
+    });
+
+    wait_until_replaced(&previous).await;
+    assert!(
+        agent
+            .sessions
+            .lock()
+            .await
+            .get(&session_id)
+            .is_some_and(|live| Arc::ptr_eq(live, &previous)),
+        "replacement must not be published while the old prompt still holds the host"
+    );
+    let current = agent
+        .sessions
+        .lock()
+        .await
+        .get(&session_id)
+        .cloned()
+        .expect("session stays mapped to the old host");
+    assert_eq!(
+        current
+            .try_lock_host(&session_id)
+            .err()
+            .expect("old prompt still owns the host")
+            .code,
+        ErrorCode::InvalidRequest
+    );
+
+    drop(held);
+    publish.await.expect("publish");
+    assert!(agent
+        .sessions
+        .lock()
+        .await
+        .get(&session_id)
+        .is_some_and(|live| Arc::ptr_eq(live, &replacement)));
 }

@@ -25,12 +25,14 @@ use super::{
 /// prompt never has to take it out of the map and put it back.
 ///
 /// `try_lock` is the busy gate: the map lock is only held long enough to clone
-/// this `Arc`. Cancel reads `cancel` without the host lock. Replacing the map
-/// entry drops the old `Arc` from the map; teardown then waits for any in-flight
-/// prompt to release the host lock, takes the host, and shuts it down.
+/// this `Arc`. Cancel reads `cancel` without the host lock. A replacement marks
+/// `replaced` and waits for any in-flight prompt to release the host lock before
+/// publishing the new slot, so a follow-up prompt cannot run on the new host
+/// while the old turn is still finishing.
 struct LiveSession {
     host: tokio::sync::Mutex<Option<SessionHost>>,
     cancel: Arc<PromptGate>,
+    replaced: Arc<AtomicBool>,
 }
 
 /// In-process ACP agent. Session slots live in a mutex map so request
@@ -175,18 +177,34 @@ impl RhoAcpAgent {
     async fn publish(&self, session_id: SessionId, live: Arc<LiveSession>) {
         let install = self.install_lock_for(&session_id).await;
         let _install = install.lock().await;
+        if self.closed.load(Ordering::Acquire) {
+            shutdown_live(live).await;
+            return;
+        }
+
+        let previous = { self.sessions.lock().await.get(&session_id).cloned() };
+        let old_host = if let Some(previous) = previous {
+            previous.replaced.store(true, Ordering::Release);
+            previous.cancel.cancel();
+            previous.host.lock().await.take()
+        } else {
+            None
+        };
+
         let outcome = {
             let mut sessions = self.sessions.lock().await;
             if self.closed.load(Ordering::Acquire) {
                 Err(live)
             } else {
-                Ok(sessions.insert(session_id, live))
+                sessions.insert(session_id, live);
+                Ok(())
             }
         };
-        match outcome {
-            Ok(Some(previous)) => shutdown_live(previous).await,
-            Ok(None) => {}
-            Err(rejected) => shutdown_live(rejected).await,
+        if let Some(host) = old_host {
+            host.shutdown().await;
+        }
+        if let Err(rejected) = outcome {
+            shutdown_live(rejected).await;
         }
     }
 
@@ -227,9 +245,11 @@ fn agent_stopped() -> AcpError {
 impl LiveSession {
     fn new(host: SessionHost) -> Arc<Self> {
         let cancel = host.cancel_handle();
+        let replaced = host.replaced_flag();
         Arc::new(Self {
             host: tokio::sync::Mutex::new(Some(host)),
             cancel,
+            replaced,
         })
     }
 
@@ -246,6 +266,7 @@ impl LiveSession {
 }
 
 async fn shutdown_live(live: Arc<LiveSession>) {
+    live.replaced.store(true, Ordering::Release);
     live.cancel.cancel();
     let host = live.host.lock().await.take();
     if let Some(host) = host {
