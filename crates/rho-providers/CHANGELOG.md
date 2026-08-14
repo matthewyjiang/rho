@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.2.1...rho-providers-v1.3.0) (2026-08-14)
+
+
+### Features
+
+* **providers:** sign in to OpenCode Go and use its models ([#913](https://github.com/matthewyjiang/rho/issues/913)) ([db501a6](https://github.com/matthewyjiang/rho/commit/db501a6ab5b64c44114d6ecf1a1bf3a75ac597b6))
+
+
+### Bug Fixes
+
+* **anthropic:** derive reasoning levels from models api capabilities ([#907](https://github.com/matthewyjiang/rho/issues/907)) ([f057529](https://github.com/matthewyjiang/rho/commit/f057529128be880c640e5dd9b5d5e42071eed792))
+* **providers:** retry empty assistant completions ([b50aa7b](https://github.com/matthewyjiang/rho/commit/b50aa7b5968cf9ab38fa1c10d1a26666f48332ac))
+
 ## [1.2.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.2.0...rho-providers-v1.2.1) (2026-08-14)
 
 

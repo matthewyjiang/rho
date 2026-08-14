@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.40.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.39.1...rho-coding-agent-v1.40.0) (2026-08-14)
+
+
+### Features
+
+* **attach:** expand tool cards on click and ctrl+o ([#911](https://github.com/matthewyjiang/rho/issues/911)) ([061bf10](https://github.com/matthewyjiang/rho/commit/061bf10e1aa28b435eac2a9a46458074ec2c15f3))
+* **claude-cli:** show Claude tool names on attach cards ([#909](https://github.com/matthewyjiang/rho/issues/909)) ([1bcdaba](https://github.com/matthewyjiang/rho/commit/1bcdabaf2bdf1a5d991adf6330b95f1bddaf503f))
+* **cli:** let editor hosts drive Rho over stdio ([#910](https://github.com/matthewyjiang/rho/issues/910)) ([3f10136](https://github.com/matthewyjiang/rho/commit/3f10136d39ed6a428a4b4e7dca40c2fec882fe67))
+* **providers:** sign in to OpenCode Go and use its models ([#913](https://github.com/matthewyjiang/rho/issues/913)) ([db501a6](https://github.com/matthewyjiang/rho/commit/db501a6ab5b64c44114d6ecf1a1bf3a75ac597b6))
+
+
+### Bug Fixes
+
+* **anthropic:** derive reasoning levels from models api capabilities ([#907](https://github.com/matthewyjiang/rho/issues/907)) ([f057529](https://github.com/matthewyjiang/rho/commit/f057529128be880c640e5dd9b5d5e42071eed792))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 1.2.2 to 1.3.0
+
 ## [1.39.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.39.0...rho-coding-agent-v1.39.1) (2026-08-14)
 
 
