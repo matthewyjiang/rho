@@ -158,16 +158,16 @@ fn advertised_capabilities_decide_selectable_reasoning_levels() {
             ])),
         ),
         (
-            "adaptive without an effort control stays unknown",
+            "adaptive without an effort control is not configurable",
             "claude-opus-5",
             &json!({"thinking": {"types": {"adaptive": {"supported": true}}}}),
-            ReasoningCapabilities::Unknown,
+            ReasoningCapabilities::NotConfigurable,
         ),
         (
-            "a row advertising no thinking type stays unknown",
+            "a row advertising no thinking type is not configurable",
             "claude-haiku-4-5",
             &json!({}),
-            ReasoningCapabilities::Unknown,
+            ReasoningCapabilities::NotConfigurable,
         ),
     ];
 

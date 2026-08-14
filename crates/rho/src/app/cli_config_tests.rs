@@ -508,7 +508,7 @@ fn only_capability_backed_providers_prepare_capabilities_during_startup() {
     };
     let anthropic = Config {
         provider: "anthropic".into(),
-        model: "claude-opus-5".into(),
+        model: "unseen-model".into(),
         ..Config::default()
     };
 

@@ -14,6 +14,12 @@ use super::{load_api_key_auth, provider_models_client, ProviderModel};
 /// startup refresh.
 const MAX_MODEL_PAGES: usize = 20;
 
+/// Anthropic `output_config.effort` names, cheapest first.
+///
+/// Shared by picker derivation and request clamping. The effort protocol has
+/// no `minimal`, so that Rho level never appears here.
+pub(crate) const EFFORT_NAMES: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 pub(crate) struct AnthropicModelCapabilities {
     #[serde(default)]
@@ -68,7 +74,7 @@ impl AnthropicModelCapabilities {
             .flatten()
     }
 
-    pub(crate) fn adaptive(&self) -> bool {
+    fn adaptive(&self) -> bool {
         leaf_supported(
             self.thinking
                 .as_ref()
@@ -76,7 +82,7 @@ impl AnthropicModelCapabilities {
         )
     }
 
-    pub(crate) fn enabled(&self) -> bool {
+    fn enabled(&self) -> bool {
         leaf_supported(
             self.thinking
                 .as_ref()
@@ -85,68 +91,45 @@ impl AnthropicModelCapabilities {
     }
 
     /// `Some` only when the Models API advertised a `disabled` leaf.
-    pub(crate) fn disabled(&self) -> Option<bool> {
+    fn disabled(&self) -> Option<bool> {
         self.thinking.as_ref()?.types.disabled.as_ref()?.supported
     }
 
-    pub(crate) fn effort_supported(&self) -> bool {
+    fn effort_supported(&self) -> bool {
         self.effort
             .as_ref()
             .and_then(|block| block.supported)
             .unwrap_or(false)
     }
 
-    pub(crate) fn effort_level(&self, level: &str) -> bool {
+    fn effort_level_at(&self, index: usize) -> bool {
         let Some(block) = &self.effort else {
             return false;
         };
-        match level {
-            "low" => leaf_supported(block.low.as_ref()),
-            "medium" => leaf_supported(block.medium.as_ref()),
-            "high" => leaf_supported(block.high.as_ref()),
-            "xhigh" => leaf_supported(block.xhigh.as_ref()),
-            "max" => leaf_supported(block.max.as_ref()),
+        match index {
+            0 => leaf_supported(block.low.as_ref()),
+            1 => leaf_supported(block.medium.as_ref()),
+            2 => leaf_supported(block.high.as_ref()),
+            3 => leaf_supported(block.xhigh.as_ref()),
+            4 => leaf_supported(block.max.as_ref()),
             _ => false,
         }
     }
 
+    /// Single mode used by pickers and the request builder.
+    pub(crate) fn thinking_mode(&self, model: &str) -> AnthropicThinkingMode {
+        AnthropicThinkingMode::from_capabilities(model, self)
+    }
+
     /// Selectable reasoning levels for pickers and validation.
-    ///
-    /// Adaptive models take levels from the advertised effort vocabulary.
-    /// Budget-token models accept every non-Off Rho level (the request builder
-    /// maps them onto budgets down to Anthropic's 1024 minimum). Anything else
-    /// stays `Unknown` rather than inventing a control. `Off` is added unless
-    /// the model cannot disable thinking.
     pub(crate) fn reasoning_capabilities(&self, model: &str) -> ReasoningCapabilities {
-        let mut levels = if self.adaptive() {
-            if !self.effort_supported() {
-                return ReasoningCapabilities::Unknown;
-            }
-            advertised_effort_levels(self)
-        } else if self.enabled() {
-            budget_token_levels()
-        } else {
-            return ReasoningCapabilities::Unknown;
-        };
-        if levels.is_empty() {
-            return ReasoningCapabilities::Unknown;
-        }
-        if off_thinking(model, self.disabled()) != OffThinking::Unsupported {
-            levels.push(ReasoningLevel::Off);
-        }
-        ReasoningCapabilities::Levels(ReasoningLevelSet::new(levels))
+        self.thinking_mode(model).reasoning_capabilities()
     }
 }
 
 fn leaf_supported(leaf: Option<&SupportedLeaf>) -> bool {
     leaf.and_then(|leaf| leaf.supported).unwrap_or(false)
 }
-
-/// Anthropic `output_config.effort` names, cheapest first.
-///
-/// Shared by picker derivation and request clamping. The effort protocol has
-/// no `minimal`, so that Rho level never appears here.
-pub(crate) const EFFORT_NAMES: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
 /// How Off is encoded for a model, given what the Models API advertises.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -157,9 +140,113 @@ pub(crate) enum OffThinking {
     Unsupported,
 }
 
+/// Advertised effort leaves, parallel to [`EFFORT_NAMES`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct EffortMask {
+    levels: [bool; EFFORT_NAMES.len()],
+}
+
+impl EffortMask {
+    fn from_capabilities(capabilities: &AnthropicModelCapabilities) -> Option<Self> {
+        if !capabilities.effort_supported() {
+            return None;
+        }
+        let levels = std::array::from_fn(|index| capabilities.effort_level_at(index));
+        levels.iter().any(|supported| *supported).then_some(Self { levels })
+    }
+
+    fn reasoning_levels(self) -> Vec<ReasoningLevel> {
+        EFFORT_NAMES
+            .into_iter()
+            .enumerate()
+            .filter(|(index, _)| self.levels[*index])
+            .map(|(_, name)| {
+                name.parse()
+                    .expect("EFFORT_NAMES entries are valid ReasoningLevel values")
+            })
+            .collect()
+    }
+
+    /// Maps a reasoning level onto the nearest advertised effort, preferring
+    /// the cheaper side so an unsupported request never escalates cost. A
+    /// request below the advertised range still rises to the model minimum.
+    pub(crate) fn for_level(self, reasoning: ReasoningLevel) -> &'static str {
+        let requested = match reasoning {
+            ReasoningLevel::Off | ReasoningLevel::Minimal | ReasoningLevel::Low => 0,
+            ReasoningLevel::Medium => 1,
+            ReasoningLevel::High => 2,
+            ReasoningLevel::Xhigh => 3,
+            ReasoningLevel::Max => 4,
+        };
+        (0..=requested)
+            .rev()
+            .chain(requested + 1..EFFORT_NAMES.len())
+            .find(|&index| self.levels[index])
+            .map(|index| EFFORT_NAMES[index])
+            .expect("EffortMask is non-empty")
+    }
+}
+
+/// Controllable thinking surface derived from Models API capabilities.
+///
+/// Pickers and the wire path both project from this enum so they cannot drift.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AnthropicThinkingMode {
+    /// Adaptive thinking with an effort vocabulary.
+    Adaptive { off: OffThinking, efforts: EffortMask },
+    /// Legacy budget-token thinking.
+    BudgetTokens { off: OffThinking },
+    /// Capabilities were fetched but advertise no controllable thinking surface.
+    NoControl { off: OffThinking },
+}
+
+impl AnthropicThinkingMode {
+    pub(crate) fn from_capabilities(
+        model: &str,
+        capabilities: &AnthropicModelCapabilities,
+    ) -> Self {
+        let off = off_thinking(model, capabilities.disabled());
+        if capabilities.adaptive() {
+            if let Some(efforts) = EffortMask::from_capabilities(capabilities) {
+                return Self::Adaptive { off, efforts };
+            }
+            return Self::NoControl { off };
+        }
+        if capabilities.enabled() {
+            return Self::BudgetTokens { off };
+        }
+        Self::NoControl { off }
+    }
+
+    pub(crate) fn off(self) -> OffThinking {
+        match self {
+            Self::Adaptive { off, .. }
+            | Self::BudgetTokens { off }
+            | Self::NoControl { off } => off,
+        }
+    }
+
+    pub(crate) fn reasoning_capabilities(self) -> ReasoningCapabilities {
+        let mut levels = match self {
+            Self::Adaptive { efforts, .. } => efforts.reasoning_levels(),
+            Self::BudgetTokens { .. } => budget_token_levels(),
+            Self::NoControl { .. } => {
+                return ReasoningCapabilities::NotConfigurable;
+            }
+        };
+        if levels.is_empty() {
+            return ReasoningCapabilities::NotConfigurable;
+        }
+        if self.off() != OffThinking::Unsupported {
+            levels.push(ReasoningLevel::Off);
+        }
+        ReasoningCapabilities::Levels(ReasoningLevelSet::new(levels))
+    }
+}
+
 /// Resolves the Off encoding from the advertised `disabled` leaf, falling back
 /// to per-family defaults when the Models API omits it.
-pub(crate) fn off_thinking(model: &str, disabled_leaf: Option<bool>) -> OffThinking {
+fn off_thinking(model: &str, disabled_leaf: Option<bool>) -> OffThinking {
     match disabled_leaf {
         Some(true) => OffThinking::Disabled,
         Some(false) => OffThinking::Unsupported,
@@ -191,18 +278,6 @@ fn model_has_prefix(model: &str, prefixes: &[&str]) -> bool {
     })
 }
 
-/// Effort leaves the model advertises, mapped through the shared name table.
-fn advertised_effort_levels(capabilities: &AnthropicModelCapabilities) -> Vec<ReasoningLevel> {
-    EFFORT_NAMES
-        .into_iter()
-        .filter(|name| capabilities.effort_level(name))
-        .map(|name| {
-            name.parse()
-                .expect("EFFORT_NAMES entries are valid ReasoningLevel values")
-        })
-        .collect()
-}
-
 /// Budget-token thinking accepts any positive Rho level; Off is handled apart.
 fn budget_token_levels() -> Vec<ReasoningLevel> {
     ReasoningLevel::ALL
@@ -226,11 +301,20 @@ pub(super) fn capabilities_json_is_known(raw_json: Option<&str>) -> bool {
         .is_some()
 }
 
-/// Resolves cached Models API capabilities, falling back to the parent alias
-/// for dated snapshot ids.
-pub(crate) fn cached_capabilities(model: &str) -> Option<AnthropicModelCapabilities> {
+/// Resolves the cached thinking mode, falling back to the parent alias for
+/// dated snapshot ids. `None` means no cached capabilities row.
+pub(crate) fn cached_thinking_mode(model: &str) -> Option<AnthropicThinkingMode> {
     cached_capabilities_for_id(model)
         .or_else(|| dated_parent_model(model).and_then(cached_capabilities_for_id))
+        .map(|capabilities| capabilities.thinking_mode(model))
+}
+
+#[cfg(test)]
+pub(crate) fn thinking_mode_from_value(
+    model: &str,
+    value: &Value,
+) -> Option<AnthropicThinkingMode> {
+    AnthropicModelCapabilities::from_value(value).map(|capabilities| capabilities.thinking_mode(model))
 }
 
 fn cached_capabilities_for_id(model: &str) -> Option<AnthropicModelCapabilities> {
