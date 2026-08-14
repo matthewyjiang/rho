@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.2.0...rho-providers-v1.2.1) (2026-08-14)
+
+
+### Bug Fixes
+
+* **anthropic:** stop opus 5 from sending thinking.type.enabled ([#904](https://github.com/matthewyjiang/rho/issues/904)) ([d76a398](https://github.com/matthewyjiang/rho/commit/d76a3984d37d299850de6fabf9d7135c047c137c))
+* **claude-cli:** keep Auto dontAsk on the bound tool set ([#903](https://github.com/matthewyjiang/rho/issues/903)) ([fb2de07](https://github.com/matthewyjiang/rho/commit/fb2de0793939ce4034303718efadb03fba858ab9))
+
 ## [1.2.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.1.1...rho-providers-v1.2.0) (2026-08-13)
 
 
