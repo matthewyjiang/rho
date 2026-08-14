@@ -4,7 +4,11 @@ use agent_client_protocol::schema::v1::{
 use pretty_assertions::assert_eq;
 use rho_sdk::{ApprovalDecision, ApprovalRequest, CapabilityRequest, CapabilitySource, PathScope};
 
-use super::{decision_for, mode_id, parse_mode_id, permission_request};
+use std::sync::atomic::AtomicU64;
+
+use super::{
+    decision_for, mode_id, next_placeholder_tool_call_id, parse_mode_id, permission_request,
+};
 use crate::permission::PermissionMode;
 
 fn session_id() -> SessionId {
@@ -26,7 +30,7 @@ fn write_request(reason: &str) -> ApprovalRequest {
 // Owner: acp permission mapper
 #[test]
 fn permission_request_offers_three_session_scoped_options() {
-    let request = permission_request(&session_id(), &write_request("edit file"));
+    let request = permission_request(&session_id(), &write_request("edit file"), "pending-1");
     let options = request
         .options
         .iter()
@@ -40,7 +44,28 @@ fn permission_request_offers_three_session_scoped_options() {
             ("reject_once", PermissionOptionKind::RejectOnce),
         ]
     );
-    assert_eq!(request.tool_call.tool_call_id.0.as_ref(), "unknown");
+    assert_eq!(request.tool_call.tool_call_id.0.as_ref(), "pending-1");
+}
+
+// Covers: two approval prompts without a tool-call id must not share one ACP id
+// Owner: acp permission mapper
+#[test]
+fn missing_tool_call_ids_do_not_reuse_a_placeholder() {
+    let counter = AtomicU64::new(0);
+    let first = permission_request(
+        &session_id(),
+        &write_request("first"),
+        &next_placeholder_tool_call_id(&counter),
+    );
+    let second = permission_request(
+        &session_id(),
+        &write_request("second"),
+        &next_placeholder_tool_call_id(&counter),
+    );
+    assert_ne!(
+        first.tool_call.tool_call_id.0.as_ref(),
+        second.tool_call.tool_call_id.0.as_ref()
+    );
 }
 
 // Covers: ACP outcomes must collapse onto Rho's session-scoped decisions

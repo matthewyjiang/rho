@@ -1,12 +1,17 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{atomic::AtomicU64, Arc, Mutex},
+};
 
 use agent_client_protocol::schema::v1::{
     LoadSessionRequest, LoadSessionResponse, McpServer, NewSessionRequest, NewSessionResponse,
     PromptRequest, PromptResponse, RequestPermissionOutcome, SessionId,
 };
+use futures_util::stream::{FuturesUnordered, StreamExt};
 use rho_sdk::{
-    model::Message, ApprovalRequestReceiver, CancellationToken, PendingApproval, SessionOptions,
-    UserInput,
+    model::Message, ApprovalRequestReceiver, CancellationToken, PendingApproval, RunEvent,
+    SessionOptions, UserInput,
 };
 
 use super::{events::EventMapper, permission, AcpClientPort, AcpStartup};
@@ -30,6 +35,7 @@ pub(super) struct SessionHost {
     stored: StoredSession,
     prompt_gate: Arc<PromptGate>,
     completed_runs: u64,
+    permission_placeholders: AtomicU64,
     herdr: HerdrReporter,
 }
 
@@ -210,6 +216,7 @@ impl SessionHost {
             stored,
             prompt_gate: Arc::new(PromptGate::new()),
             completed_runs: 0,
+            permission_placeholders: AtomicU64::new(0),
             herdr,
         }
     }
@@ -273,38 +280,20 @@ impl SessionHost {
         run: &mut rho_sdk::Run,
         mapper: &mut EventMapper,
         client: &dyn AcpClientPort,
-        mut approval_receiver: Option<&mut ApprovalRequestReceiver>,
+        approval_receiver: Option<&mut ApprovalRequestReceiver>,
     ) -> anyhow::Result<()> {
-        let cancel = run.cancellation_handle();
-        let mut run_cancelled = cancel.is_cancelled();
-        let mut approvals_open = approval_receiver.is_some();
-        loop {
-            tokio::select! {
-                biased;
-
-                _ = cancel.cancelled(), if !run_cancelled => {
-                    run.cancel();
-                    run_cancelled = true;
-                }
-
-                event = run.next_event() => {
-                    let Some(event) = event else {
-                        return Ok(());
-                    };
-                    if let Some(notification) = mapper.map_event(&self.acp_session_id, &event) {
-                        send_notification(client, notification).await?;
-                    }
-                }
-
-                pending = recv_approval(approval_receiver.as_deref_mut()), if approvals_open => {
-                    let Some(pending) = pending else {
-                        approvals_open = false;
-                        continue;
-                    };
-                    answer_approval(&self.acp_session_id, pending, client, &cancel).await;
-                }
-            }
-        }
+        let approvals_open = approval_receiver.is_some();
+        pump_sources(PumpSources {
+            session_id: &self.acp_session_id,
+            cancel: run.cancellation_handle(),
+            mapper,
+            client,
+            placeholders: &self.permission_placeholders,
+            events: &mut EventSource::Run(run),
+            approvals: &mut ApprovalSource::Receiver(approval_receiver),
+            approvals_open,
+        })
+        .await
     }
 
     fn persist_turn(&self, input: &UserInput, assistant_text: Option<&str>) -> anyhow::Result<()> {
@@ -350,20 +339,119 @@ async fn send_notification(
         .map_err(|error| anyhow::Error::msg(error.to_string()))
 }
 
-async fn recv_approval(receiver: Option<&mut ApprovalRequestReceiver>) -> Option<PendingApproval> {
-    match receiver {
-        Some(receiver) => receiver.recv().await,
-        None => std::future::pending().await,
+enum EventSource<'a> {
+    Run(&'a mut rho_sdk::Run),
+    #[cfg(test)]
+    Channel(&'a mut tokio::sync::mpsc::UnboundedReceiver<RunEvent>),
+}
+
+impl EventSource<'_> {
+    async fn next(&mut self) -> Option<RunEvent> {
+        match self {
+            Self::Run(run) => run.next_event().await,
+            #[cfg(test)]
+            Self::Channel(events) => events.recv().await,
+        }
+    }
+
+    fn cancel_run(&mut self) {
+        match self {
+            Self::Run(run) => run.cancel(),
+            #[cfg(test)]
+            Self::Channel(_) => {}
+        }
+    }
+}
+
+enum ApprovalSource<'a> {
+    Receiver(Option<&'a mut ApprovalRequestReceiver>),
+    #[cfg(test)]
+    Channel(&'a mut tokio::sync::mpsc::UnboundedReceiver<PendingApproval>),
+}
+
+impl ApprovalSource<'_> {
+    async fn next(&mut self) -> Option<PendingApproval> {
+        match self {
+            Self::Receiver(None) => std::future::pending().await,
+            Self::Receiver(Some(receiver)) => receiver.recv().await,
+            #[cfg(test)]
+            Self::Channel(approvals) => approvals.recv().await,
+        }
+    }
+}
+
+struct PumpSources<'a> {
+    session_id: &'a SessionId,
+    cancel: CancellationToken,
+    mapper: &'a mut EventMapper,
+    client: &'a dyn AcpClientPort,
+    placeholders: &'a AtomicU64,
+    events: &'a mut EventSource<'a>,
+    approvals: &'a mut ApprovalSource<'a>,
+    approvals_open: bool,
+}
+
+async fn pump_sources(sources: PumpSources<'_>) -> anyhow::Result<()> {
+    let PumpSources {
+        session_id,
+        cancel,
+        mapper,
+        client,
+        placeholders,
+        events,
+        approvals,
+        mut approvals_open,
+    } = sources;
+    let mut run_cancelled = cancel.is_cancelled();
+    let mut inflight: FuturesUnordered<Pin<Box<dyn Future<Output = ()> + Send + '_>>> =
+        FuturesUnordered::new();
+    loop {
+        tokio::select! {
+            biased;
+
+            _ = cancel.cancelled(), if !run_cancelled => {
+                events.cancel_run();
+                run_cancelled = true;
+            }
+
+            event = events.next() => {
+                let Some(event) = event else {
+                    while inflight.next().await.is_some() {}
+                    return Ok(());
+                };
+                if let Some(notification) = mapper.map_event(session_id, &event) {
+                    send_notification(client, notification).await?;
+                }
+            }
+
+            pending = approvals.next(), if approvals_open => {
+                let Some(pending) = pending else {
+                    approvals_open = false;
+                    continue;
+                };
+                inflight.push(Box::pin(answer_approval(
+                    session_id.clone(),
+                    pending,
+                    client,
+                    cancel.clone(),
+                    placeholders,
+                )));
+            }
+
+            Some(()) = inflight.next(), if !inflight.is_empty() => {}
+        }
     }
 }
 
 async fn answer_approval(
-    session_id: &SessionId,
+    session_id: SessionId,
     mut pending: PendingApproval,
     client: &dyn AcpClientPort,
-    cancel: &CancellationToken,
+    cancel: CancellationToken,
+    placeholders: &AtomicU64,
 ) {
-    let request = permission::permission_request(session_id, pending.request());
+    let placeholder = permission::next_placeholder_tool_call_id(placeholders);
+    let request = permission::permission_request(&session_id, pending.request(), &placeholder);
     let outcome = tokio::select! {
         biased;
         _ = cancel.cancelled() => RequestPermissionOutcome::Cancelled,

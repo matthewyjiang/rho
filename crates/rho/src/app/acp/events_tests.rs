@@ -238,6 +238,38 @@ fn replay_history_emits_user_and_assistant_text() {
     }
 }
 
+// Covers: a unified diff must not be sent as ACP Diff.new_text (file contents)
+// Owner: acp event mapper
+#[test]
+fn finished_unified_diff_is_patch_text() {
+    let finished = only_update(
+        &mut EventMapper::new(),
+        RunEvent::ToolFinished {
+            call_id: ToolCallId::from_string("call-1").unwrap(),
+            result: ToolCompletion::Success(
+                ToolOutput::text("ok").metadata(
+                    ToolMetadata::new()
+                        .affected_path("a.rs")
+                        .diff("diff --git a/a.rs"),
+                ),
+            ),
+        },
+    );
+    match finished {
+        SessionUpdate::ToolCallUpdate(update) => {
+            let content = update.fields.content.expect("finished content");
+            assert_eq!(content.len(), 2);
+            match &content[1] {
+                agent_client_protocol::schema::v1::ToolCallContent::Content(block) => {
+                    assert_eq!(text_of(&block.content), "diff --git a/a.rs");
+                }
+                other => panic!("expected patch text, got {other:?}"),
+            }
+        }
+        other => panic!("expected ToolCallUpdate, got {other:?}"),
+    }
+}
+
 // Covers: in-flight progress must stay in_progress and carry the progress text
 // Owner: acp event mapper
 #[test]

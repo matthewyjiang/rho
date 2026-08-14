@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use agent_client_protocol::schema::v1::{
-    ContentBlock, ContentChunk, Diff, ImageContent, SessionId, SessionNotification, SessionUpdate,
+    ContentBlock, ContentChunk, ImageContent, SessionId, SessionNotification, SessionUpdate,
     StopReason, ToolCall, ToolCallContent, ToolCallId, ToolCallLocation, ToolCallStatus,
     ToolCallUpdate, ToolCallUpdateFields, ToolKind,
 };
@@ -209,10 +209,10 @@ fn success_content(output: &ToolOutput) -> Vec<ToolCallContent> {
         content.push(ToolCallContent::from(output.content()));
     }
     if let Some(diff) = output.presentation().unified_diff() {
-        match output.presentation().affected_paths().first() {
-            Some(path) => content.push(ToolCallContent::from(Diff::new(path.clone(), diff))),
-            None => content.push(ToolCallContent::from(diff)),
-        }
+        // unified_diff is patch text, not the file's new contents. ACP Diff.new_text
+        // is the post-edit file, so the patch is sent as ordinary tool content
+        // whether or not an affected path is present.
+        content.push(ToolCallContent::from(diff));
     }
     content
 }

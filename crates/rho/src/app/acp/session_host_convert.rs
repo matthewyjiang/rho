@@ -92,7 +92,12 @@ fn content_block_from_acp(block: &AcpContentBlock) -> ContentBlock {
 /// A body that already contains ``` would end the fence early, so the fence
 /// grows past the body's longest backtick run.
 fn fence_context(kind: &str, header: &str, body: &str) -> String {
-    let fence = "`".repeat(longest_backtick_run(body).max(2) + 1);
+    let fence = "`".repeat(
+        longest_backtick_run(header)
+            .max(longest_backtick_run(body))
+            .max(2)
+            + 1,
+    );
     format!("{fence}{kind} {header}\n{body}\n{fence}")
 }
 

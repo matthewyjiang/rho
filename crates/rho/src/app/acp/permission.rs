@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use agent_client_protocol::schema::v1::{
     PermissionOption, PermissionOptionKind, RequestPermissionOutcome, RequestPermissionRequest,
     SessionId, SessionMode, SessionModeId, ToolCallId, ToolCallUpdate, ToolCallUpdateFields,
@@ -28,14 +30,19 @@ pub(super) fn parse_mode_id(id: &str) -> Option<PermissionMode> {
         .find(|mode| mode.as_str() == id)
 }
 
+pub(super) fn next_placeholder_tool_call_id(counter: &AtomicU64) -> String {
+    format!("pending-{}", counter.fetch_add(1, Ordering::Relaxed) + 1)
+}
+
 pub(super) fn permission_request(
     session_id: &SessionId,
     request: &rho_sdk::ApprovalRequest,
+    placeholder_tool_call_id: &str,
 ) -> RequestPermissionRequest {
     let tool_call_id = request
         .tool_call_id()
         .map(|id| id.as_str().to_string())
-        .unwrap_or_else(|| "unknown".into());
+        .unwrap_or_else(|| placeholder_tool_call_id.to_string());
     RequestPermissionRequest::new(
         session_id.clone(),
         ToolCallUpdate::new(
