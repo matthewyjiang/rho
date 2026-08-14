@@ -39,6 +39,7 @@ impl AnthropicProvider {
     // model cache.
     #[cfg(test)]
     pub fn new(model: String, api_key: String) -> Self {
+        let thinking_override = Some(thinking::ThinkingSource::unresolved(&model));
         Self {
             client: provider_client(),
             api_key,
@@ -46,7 +47,7 @@ impl AnthropicProvider {
             identity_provider: "anthropic".into(),
             model,
             max_tokens_override: Some(DEFAULT_MAX_TOKENS),
-            thinking_override: Some(thinking::ThinkingSource::unresolved(&model)),
+            thinking_override,
         }
     }
 
