@@ -1,13 +1,12 @@
-use serde_json::{json, Value};
+use serde_json::json;
 
 use crate::{
-    model::{ModelError, ReasoningCapabilities, ReasoningLevelSet},
-    reasoning::ReasoningLevel,
+    model::{ModelError, ReasoningCapabilities},
 };
 
 use super::{
-    add_page, capabilities_json, finalize_models, model_list_truncated, records_from_page,
-    AnthropicModelCapabilities, AnthropicModelsResponse, ModelListContinuation,
+    add_page, finalize_models, model_list_truncated, policy, records_from_page,
+    AnthropicModelsResponse, ModelListContinuation,
 };
 
 fn list_page(id: &str, has_more: bool, last_id: Option<&str>) -> AnthropicModelsResponse {
@@ -39,11 +38,11 @@ fn collect_pages(
     Err(model_list_truncated(max_pages))
 }
 
-// Covers: list rows must keep a capabilities object for the request builder
-// and must not invent one when the API omitted it
+// Covers: list rows keep advertised capabilities and record `{}` when the API
+// omitted them so the snapshot is known rather than perpetually incomplete
 // Owner: anthropic model discovery
 #[test]
-fn list_payload_keeps_or_omits_capabilities_for_the_request_builder() {
+fn list_payload_keeps_or_defaults_capabilities_for_the_request_builder() {
     let response: AnthropicModelsResponse = serde_json::from_value(json!({
         "data": [
             {
@@ -88,93 +87,15 @@ fn list_payload_keeps_or_omits_capabilities_for_the_request_builder() {
         true
     );
     assert_eq!(records[1].model.model, "claude-missing-caps");
-    assert!(records[1].raw_json.is_null());
-}
-
-#[test]
-fn missing_or_non_object_capabilities_are_unknown() {
-    assert!(capabilities_json(None).is_null());
-    assert!(capabilities_json(Some(json!(null))).is_null());
-    assert!(capabilities_json(Some(json!("adaptive"))).is_null());
-    assert!(capabilities_json(Some(json!({}))).is_object());
-}
-
-// Covers: selectable reasoning levels must match the wire protocol the model
-// advertises, so pickers never offer an effort Anthropic rejects
-// Owner: anthropic model discovery
-#[test]
-fn advertised_capabilities_decide_selectable_reasoning_levels() {
-    let adaptive_with_effort = json!({
-        "thinking": {"types": {"adaptive": {"supported": true}}},
-        "effort": {
-            "supported": true,
-            "low": {"supported": true},
-            "medium": {"supported": true},
-            "high": {"supported": true},
-            "max": {"supported": true}
-        }
-    });
-    let cases: [(&str, &str, &Value, ReasoningCapabilities); 5] = [
-        (
-            "adaptive effort models drop minimal and keep off",
-            "claude-opus-5",
-            &adaptive_with_effort,
-            ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
-                ReasoningLevel::Off,
-                ReasoningLevel::Low,
-                ReasoningLevel::Medium,
-                ReasoningLevel::High,
-                ReasoningLevel::Max,
-            ])),
-        ),
-        (
-            "a model that cannot disable thinking has no off",
-            "claude-mythos-5",
-            &adaptive_with_effort,
-            ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
-                ReasoningLevel::Low,
-                ReasoningLevel::Medium,
-                ReasoningLevel::High,
-                ReasoningLevel::Max,
-            ])),
-        ),
-        (
-            "budget-token models accept the whole ladder",
-            "claude-sonnet-4-5",
-            &json!({
-                "thinking": {"types": {
-                    "enabled": {"supported": true},
-                    "disabled": {"supported": true}
-                }}
-            }),
-            ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
-                ReasoningLevel::Off,
-                ReasoningLevel::Minimal,
-                ReasoningLevel::Low,
-                ReasoningLevel::Medium,
-                ReasoningLevel::High,
-                ReasoningLevel::Xhigh,
-                ReasoningLevel::Max,
-            ])),
-        ),
-        (
-            "adaptive without an effort control is not configurable",
-            "claude-opus-5",
-            &json!({"thinking": {"types": {"adaptive": {"supported": true}}}}),
-            ReasoningCapabilities::NotConfigurable,
-        ),
-        (
-            "a row advertising no thinking type is not configurable",
-            "claude-haiku-4-5",
-            &json!({}),
-            ReasoningCapabilities::NotConfigurable,
-        ),
-    ];
-
-    for (name, model, capabilities, expected) in cases {
-        let parsed = AnthropicModelCapabilities::from_value(capabilities).unwrap();
-        assert_eq!(parsed.reasoning_capabilities(model), expected, "{name}");
-    }
+    assert_eq!(records[1].raw_json, json!({}));
+    assert_eq!(
+        records[1].model.reasoning_capabilities,
+        ReasoningCapabilities::NotConfigurable
+    );
+    assert!(
+        policy::capabilities_json_is_known(Some(&records[1].raw_json.to_string())),
+        "omitted API caps must still count as a known empty object"
+    );
 }
 
 // Covers: exhausting the model-list page bound must not succeed with a partial snapshot

@@ -80,18 +80,35 @@ pub struct ProviderModelRefresh {
 }
 
 pub fn cached_provider_model(provider: &str, model: &str) -> Option<ProviderModel> {
-    let model = provider::provider_descriptor(provider)
-        .map(|descriptor| descriptor.canonicalize_model_id(model))
-        .unwrap_or_else(|| model.to_string());
+    let model = canonicalize_cached_model_id(provider, model);
+    cached_provider_model_exact(provider, &model).or_else(|| {
+        // Anthropic dated snapshots reuse the parent alias row for picker
+        // levels, freshness, and wire mode so the three paths cannot drift.
+        fallback_capability_model(provider, &model).and_then(|parent| {
+            cached_provider_model_exact(provider, parent).map(|mut entry| {
+                entry.model = model.clone();
+                entry
+            })
+        })
+    })
+}
+
+fn cached_provider_model_exact(provider: &str, model: &str) -> Option<ProviderModel> {
     cached_provider_models(provider)
         .into_iter()
         .find(|entry| entry.model == model)
 }
 
-pub(crate) fn cached_provider_model_raw_json(provider: &str, model: &str) -> Option<Value> {
-    let model = provider::provider_descriptor(provider)
+fn canonicalize_cached_model_id(provider: &str, model: &str) -> String {
+    provider::provider_descriptor(provider)
         .map(|descriptor| descriptor.canonicalize_model_id(model))
-        .unwrap_or_else(|| model.to_string());
+        .unwrap_or_else(|| model.to_string())
+}
+
+/// Exact-id raw_json lookup. Callers that need dated-parent fallback go through
+/// [`anthropic::cached_thinking_mode`] / [`cached_provider_model`].
+pub(crate) fn cached_provider_model_raw_json(provider: &str, model: &str) -> Option<Value> {
+    let model = canonicalize_cached_model_id(provider, model);
     let connection = open_provider_models_cache().ok()?;
     let raw: Option<String> = connection
         .query_row(
@@ -112,6 +129,11 @@ pub(crate) fn write_cached_provider_model_raw_json_for_tests(
     display_name: &str,
     raw_json: &Value,
 ) -> Result<(), ModelError> {
+    // Derive levels from raw so the helper cannot write a rich blob with
+    // Unknown picker levels that drift from the wire path.
+    let reasoning_capabilities = anthropic_thinking_mode_from_value(model, raw_json)
+        .map(|mode| mode.reasoning_capabilities())
+        .unwrap_or(ReasoningCapabilities::Unknown);
     replace_cached_provider_model_records(
         provider,
         &[ProviderModelRecord {
@@ -121,7 +143,7 @@ pub(crate) fn write_cached_provider_model_raw_json_for_tests(
                 display_name: display_name.to_string(),
                 context_window: None,
                 max_output_tokens: None,
-                reasoning_capabilities: ReasoningCapabilities::Unknown,
+                reasoning_capabilities,
             },
             raw_json: raw_json.clone(),
         }],
@@ -172,10 +194,8 @@ pub fn provider_model_capabilities_need_refresh(provider: &str, model: &str) -> 
         "anthropic" => anthropic_capabilities_are_known,
         _ => return false,
     };
-    let Some(row) = cached_capability_row(provider, model).or_else(|| {
-        fallback_capability_model(provider, model)
-            .and_then(|parent| cached_capability_row(provider, parent))
-    }) else {
+    let model = canonicalize_cached_model_id(provider, model);
+    let Some(row) = resolve_capability_row(provider, &model) else {
         return true;
     };
     row.cache_version < PROVIDER_MODEL_CACHE_VERSION
@@ -183,6 +203,14 @@ pub fn provider_model_capabilities_need_refresh(provider: &str, model: &str) -> 
         || !row
             .updated_at
             .is_some_and(provider_snapshot_timestamp_is_fresh)
+}
+
+/// Exact id, then provider-specific parent alias (Anthropic dated snapshots).
+fn resolve_capability_row(provider: &str, model: &str) -> Option<CachedCapabilityRow> {
+    cached_capability_row(provider, model).or_else(|| {
+        fallback_capability_model(provider, model)
+            .and_then(|parent| cached_capability_row(provider, parent))
+    })
 }
 
 fn fallback_capability_model<'a>(provider: &str, model: &'a str) -> Option<&'a str> {
