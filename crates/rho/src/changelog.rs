@@ -75,10 +75,14 @@ pub fn bundled_current_display(current_version: &str) -> Result<ChangelogDisplay
     let section = section_for_version(BUNDLED_CHANGELOG, current_version).ok_or_else(|| {
         format!("no changelog section for v{current_version} in the bundled release notes")
     })?;
+    let note = section
+        .groups
+        .is_empty()
+        .then(|| "this version only updated workspace dependencies".to_string());
     Ok(ChangelogDisplay {
         section,
         source: ChangelogSource::Bundled,
-        note: None,
+        note,
     })
 }
 
@@ -88,11 +92,9 @@ pub async fn fetch_latest_display() -> anyhow::Result<ChangelogDisplay> {
     let version = release_tag_to_version(&tag)
         .ok_or_else(|| anyhow::anyhow!("latest release tag '{tag}' does not contain a version"))?;
     let body = fetch_remote_changelog(&tag).await?;
-    let section = section_for_version(&body, &version)
-        .or_else(|| latest_section(&body))
-        .ok_or_else(|| {
-            anyhow::anyhow!("latest release changelog did not contain a readable section")
-        })?;
+    let section = section_for_latest_tag(&body, &version).ok_or_else(|| {
+        anyhow::anyhow!("latest release changelog did not contain a readable section")
+    })?;
     Ok(ChangelogDisplay {
         section,
         source: ChangelogSource::LatestRelease,
@@ -108,9 +110,22 @@ pub fn section_for_version(changelog: &str, version: &str) -> Option<ChangelogSe
         .find(|section| section.version == version)
 }
 
-/// Extract the first (newest) release section in document order.
+/// Extract the first (newest) release section that still has user-facing notes.
 pub fn latest_section(changelog: &str) -> Option<ChangelogSection> {
-    parse_sections(changelog).into_iter().next()
+    parse_sections(changelog)
+        .into_iter()
+        .find(|section| !section.groups.is_empty())
+}
+
+/// Select the section `/changelog latest` shows for a published tag.
+///
+/// Exact-version lookup wins only when that heading still has user-facing
+/// groups. A dependency-only latest tag falls through to the newest
+/// non-empty section in the same file.
+pub fn section_for_latest_tag(changelog: &str, tagged_version: &str) -> Option<ChangelogSection> {
+    section_for_version(changelog, tagged_version)
+        .filter(|section| !section.groups.is_empty())
+        .or_else(|| latest_section(changelog))
 }
 
 fn fetch_remote_changelog(tag: &str) -> impl std::future::Future<Output = anyhow::Result<String>> {
@@ -170,11 +185,9 @@ fn parse_sections(changelog: &str) -> Vec<ChangelogSection> {
         }
         flush_group(&mut groups, current_title.take(), &mut current_items);
 
-        // Prefer user-visible change groups over dependency-only noise.
+        // Drop dependency-only noise, but keep the heading so a dep-only
+        // current version still resolves for `/changelog`.
         groups.retain(|group| !is_skipped_group(&group.title));
-        if groups.is_empty() {
-            continue;
-        }
         sections.push(ChangelogSection {
             version,
             date,

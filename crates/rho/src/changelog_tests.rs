@@ -1,8 +1,9 @@
 use pretty_assertions::assert_eq;
 
 use super::{
-    bundled_current_display, latest_section, parse_request, section_for_version, ChangelogGroup,
-    ChangelogRequest, ChangelogRequestError, ChangelogSection, ChangelogSource, BUNDLED_CHANGELOG,
+    bundled_current_display, latest_section, parse_request, section_for_latest_tag,
+    section_for_version, ChangelogGroup, ChangelogRequest, ChangelogRequestError, ChangelogSection,
+    ChangelogSource, BUNDLED_CHANGELOG,
 };
 
 const SAMPLE: &str = r#"# Changelog
@@ -134,11 +135,56 @@ fn bundled_changelog_contains_this_package_version() {
     assert_eq!(display.source, ChangelogSource::Bundled);
     assert_eq!(display.section.version, env!("CARGO_PKG_VERSION"));
     assert!(
-        !display.section.groups.is_empty(),
-        "bundled section should retain at least one non-dependency group"
+        latest_section(BUNDLED_CHANGELOG).is_some_and(|section| !section.groups.is_empty()),
+        "bundled changelog should parse at least one user-facing section"
     );
-    assert!(
-        latest_section(BUNDLED_CHANGELOG).is_some(),
-        "bundled changelog should parse at least one section"
+}
+
+// Covers: a dependency-only current version must still resolve, while the
+// `/changelog latest` selector used by fetch_latest_display skips that
+// empty heading and uses the newest notes users can actually read.
+// Owner: pure unit
+#[test]
+fn dependency_only_version_resolves_and_is_skipped_as_latest() {
+    let changelog = r#"# Changelog
+
+## [1.40.1](https://example.test/compare/v1.40.0...v1.40.1) (2026-08-14)
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 1.3.0 to 1.3.1
+
+## [1.40.0](https://example.test/compare/v1.39.1...v1.40.0) (2026-08-14)
+
+### Bug Fixes
+
+* compile openai-compatible hosts
+"#;
+    assert_eq!(
+        section_for_version(changelog, "1.40.1"),
+        Some(ChangelogSection {
+            version: "1.40.1".into(),
+            date: Some("2026-08-14".into()),
+            groups: vec![],
+        })
+    );
+    let user_facing = ChangelogSection {
+        version: "1.40.0".into(),
+        date: Some("2026-08-14".into()),
+        groups: vec![ChangelogGroup {
+            title: "Bug Fixes".into(),
+            items: vec!["compile openai-compatible hosts".into()],
+        }],
+    };
+    assert_eq!(latest_section(changelog), Some(user_facing.clone()));
+    assert_eq!(
+        section_for_latest_tag(changelog, "1.40.1"),
+        Some(user_facing.clone())
+    );
+    assert_eq!(
+        section_for_latest_tag(changelog, "1.40.0"),
+        Some(user_facing)
     );
 }
