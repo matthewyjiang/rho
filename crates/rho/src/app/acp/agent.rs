@@ -11,28 +11,27 @@ use agent_client_protocol::{
 };
 
 use super::{
-    session_host::{PromptGate, SessionBuildContext, SessionHost},
+    session_host::{PromptGate, SessionHost},
     AcpClientPort, AcpStartup,
 };
 
-/// Session entry that keeps a cancel handle even while `prompt` holds the host.
+/// One ACP session slot. The host stays in this mutex for its whole life, so a
+/// prompt never has to take it out of the map and put it back.
 ///
-/// `generation` identifies this entry for the lifetime of the map slot. A
-/// prompt that borrows `host` remembers the generation it borrowed from, so a
-/// `session/new` or `session/load` that replaces the slot mid-prompt cannot be
-/// clobbered when the old prompt returns its host.
+/// `try_lock` is the busy gate: the map lock is only held long enough to clone
+/// this `Arc`. Cancel reads `cancel` without the host lock. Replacing the map
+/// entry drops the old `Arc` from the map; teardown then waits for any in-flight
+/// prompt to release the host lock, takes the host, and shuts it down.
 struct LiveSession {
-    host: Option<SessionHost>,
+    host: tokio::sync::Mutex<Option<SessionHost>>,
     cancel: Arc<PromptGate>,
-    generation: u64,
 }
 
-/// In-process ACP agent. Session hosts live in a mutex map so request
+/// In-process ACP agent. Session slots live in a mutex map so request
 /// handlers can run concurrently without `RefCell`.
 pub(super) struct RhoAcpAgent {
     startup: AcpStartup,
-    sessions: tokio::sync::Mutex<HashMap<SessionId, LiveSession>>,
-    next_generation: std::sync::atomic::AtomicU64,
+    sessions: tokio::sync::Mutex<HashMap<SessionId, Arc<LiveSession>>>,
 }
 
 impl RhoAcpAgent {
@@ -40,7 +39,6 @@ impl RhoAcpAgent {
         Self {
             startup,
             sessions: tokio::sync::Mutex::new(HashMap::new()),
-            next_generation: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -77,17 +75,11 @@ impl RhoAcpAgent {
         self: &Arc<Self>,
         request: NewSessionRequest,
     ) -> Result<NewSessionResponse, AcpError> {
-        let ctx = self.build_context();
-        let (host, response) = SessionHost::create(ctx, request)
+        let (host, response) = SessionHost::create(&self.startup, request)
             .await
             .map_err(host_error)?;
         let session_id = response.session_id.clone();
-        let entry = LiveSession::new(host, self.next_generation());
-        let previous = {
-            let mut sessions = self.sessions.lock().await;
-            sessions.insert(session_id, entry)
-        };
-        shutdown_replaced(previous).await;
+        self.install(session_id, host).await;
         Ok(response)
     }
 
@@ -97,16 +89,10 @@ impl RhoAcpAgent {
         port: &dyn AcpClientPort,
     ) -> Result<LoadSessionResponse, AcpError> {
         let session_id = request.session_id.clone();
-        let ctx = self.build_context();
-        let (host, response) = SessionHost::load(ctx, request, port)
+        let (host, response) = SessionHost::load(&self.startup, request, port)
             .await
             .map_err(host_error)?;
-        let entry = LiveSession::new(host, self.next_generation());
-        let previous = {
-            let mut sessions = self.sessions.lock().await;
-            sessions.insert(session_id, entry)
-        };
-        shutdown_replaced(previous).await;
+        self.install(session_id, host).await;
         Ok(response)
     }
 
@@ -116,54 +102,48 @@ impl RhoAcpAgent {
         port: &dyn AcpClientPort,
     ) -> Result<PromptResponse, AcpError> {
         let session_id = request.session_id.clone();
-        let (mut host, generation) = {
-            let mut sessions = self.sessions.lock().await;
-            take_host_for_prompt(&mut sessions, &session_id)?
+        let live = {
+            let sessions = self.sessions.lock().await;
+            sessions
+                .get(&session_id)
+                .cloned()
+                .ok_or_else(|| missing_session(&session_id))?
         };
-        let result = host.prompt(request, port).await;
-        {
-            let mut sessions = self.sessions.lock().await;
-            match sessions.get_mut(&session_id) {
-                Some(live) if may_restore(live, generation) => live.host = Some(host),
-                Some(_) | None => host.shutdown().await,
-            }
-        }
-        result.map_err(host_error)
+        let mut slot = live.try_lock_host(&session_id)?;
+        slot.as_mut()
+            .ok_or_else(|| busy_session(&session_id))?
+            .prompt(request, port)
+            .await
+            .map_err(host_error)
     }
 
     pub(super) async fn cancel(&self, notification: CancelNotification) {
-        let sessions = self.sessions.lock().await;
-        if let Some(live) = sessions.get(&notification.session_id) {
+        let live = {
+            let sessions = self.sessions.lock().await;
+            sessions.get(&notification.session_id).cloned()
+        };
+        if let Some(live) = live {
             live.cancel.cancel();
         }
     }
 
     pub(super) async fn shutdown_all(&self) {
-        let lives: Vec<LiveSession> = {
+        let lives: Vec<Arc<LiveSession>> = {
             let mut sessions = self.sessions.lock().await;
             sessions.drain().map(|(_, live)| live).collect()
         };
         for live in lives {
-            shutdown_replaced(Some(live)).await;
+            shutdown_live(live).await;
         }
     }
 
-    fn next_generation(&self) -> u64 {
-        self.next_generation
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    }
-
-    fn build_context(&self) -> SessionBuildContext<'_> {
-        SessionBuildContext {
-            config: &self.startup.config,
-            config_path: &self.startup.config_path,
-            process_cwd: &self.startup.cwd,
-            no_system_prompt: self.startup.no_system_prompt,
-            no_tools: self.startup.no_tools,
-            no_subagents: self.startup.no_subagents,
-            agent: &self.startup.agent,
-            diagnostics: &self.startup.diagnostics,
-            herdr: &self.startup.herdr,
+    async fn install(&self, session_id: SessionId, host: SessionHost) {
+        let previous = {
+            let mut sessions = self.sessions.lock().await;
+            sessions.insert(session_id, LiveSession::new(host))
+        };
+        if let Some(previous) = previous {
+            shutdown_live(previous).await;
         }
     }
 }
@@ -189,41 +169,32 @@ fn host_error(error: anyhow::Error) -> AcpError {
     AcpError::internal_error().data(error.to_string())
 }
 
-/// Borrows a session's host for one prompt. A session with its host already
-/// borrowed is busy, not missing, and the two must not report the same error.
-fn take_host_for_prompt(
-    sessions: &mut HashMap<SessionId, LiveSession>,
-    session_id: &SessionId,
-) -> Result<(SessionHost, u64), AcpError> {
-    let live = sessions
-        .get_mut(session_id)
-        .ok_or_else(|| missing_session(session_id))?;
-    let host = live.host.take().ok_or_else(|| busy_session(session_id))?;
-    Ok((host, live.generation))
-}
-
-/// A finished prompt may return its host only to the same map entry it
-/// borrowed from, and only while that entry's slot is still empty.
-fn may_restore(live: &LiveSession, generation: u64) -> bool {
-    live.generation == generation && live.host.is_none()
-}
-
 impl LiveSession {
-    fn new(host: SessionHost, generation: u64) -> Self {
-        Self {
-            cancel: host.cancel_handle(),
-            host: Some(host),
-            generation,
+    fn new(host: SessionHost) -> Arc<Self> {
+        let cancel = host.cancel_handle();
+        Arc::new(Self {
+            host: tokio::sync::Mutex::new(Some(host)),
+            cancel,
+        })
+    }
+
+    fn try_lock_host(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<tokio::sync::MutexGuard<'_, Option<SessionHost>>, AcpError> {
+        let guard = self.host.try_lock().map_err(|_| busy_session(session_id))?;
+        if guard.is_none() {
+            return Err(busy_session(session_id));
         }
+        Ok(guard)
     }
 }
 
-async fn shutdown_replaced(previous: Option<LiveSession>) {
-    if let Some(live) = previous {
-        live.cancel.cancel();
-        if let Some(host) = live.host {
-            host.shutdown().await;
-        }
+async fn shutdown_live(live: Arc<LiveSession>) {
+    live.cancel.cancel();
+    let host = live.host.lock().await.take();
+    if let Some(host) = host {
+        host.shutdown().await;
     }
 }
 

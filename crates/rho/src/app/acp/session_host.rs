@@ -9,12 +9,11 @@ use rho_sdk::{
     UserInput,
 };
 
-use super::{events::EventMapper, permission, AcpClientPort};
+use super::{events::EventMapper, permission, AcpClientPort, AcpStartup};
 use crate::{
     app::{interactive_runtime::startup::prompt_cache_key, session_assembly::BuiltSession},
     herdr::{HerdrReporter, HerdrState},
     session::Session as StoredSession,
-    tools::sdk_registry::AppToolSet,
 };
 
 #[path = "session_host_build.rs"]
@@ -25,26 +24,10 @@ mod convert;
 use build::{build_session, mode_state};
 use convert::{user_input_from_prompt, validate_session_cwd, workspace_cwd};
 
-pub(super) struct SessionBuildContext<'a> {
-    pub config: &'a crate::config::Config,
-    pub config_path: &'a std::path::Path,
-    pub process_cwd: &'a std::path::Path,
-    pub no_system_prompt: bool,
-    pub no_tools: bool,
-    pub no_subagents: bool,
-    pub agent: &'a crate::app::agent_binding::BoundAgent,
-    pub diagnostics: &'a crate::diagnostics::RuntimeDiagnostics,
-    pub herdr: &'a crate::herdr::HerdrReporter,
-}
-
 pub(super) struct SessionHost {
     acp_session_id: SessionId,
-    runtime: rho_sdk::Rho,
-    session: rho_sdk::Session,
+    built: BuiltSession,
     stored: StoredSession,
-    tools: AppToolSet,
-    hooks: Option<crate::hooks::HookPipeline>,
-    approval_receiver: Option<ApprovalRequestReceiver>,
     prompt_gate: Arc<PromptGate>,
     completed_runs: u64,
     herdr: HerdrReporter,
@@ -73,21 +56,20 @@ impl PromptGate {
         }
     }
 
+    fn slot(&self) -> std::sync::MutexGuard<'_, PromptGateState> {
+        self.slot
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     /// Opens the starting window for a prompt, dropping any cancel that
     /// arrived for the previous one.
     pub(super) fn begin(&self) {
-        *self
-            .slot
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) =
-            PromptGateState::Starting { cancelled: false };
+        *self.slot() = PromptGateState::Starting { cancelled: false };
     }
 
     fn activate(&self, token: CancellationToken) {
-        let mut slot = self
-            .slot
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut slot = self.slot();
         let cancelled = matches!(*slot, PromptGateState::Starting { cancelled: true });
         if cancelled {
             token.cancel();
@@ -96,18 +78,11 @@ impl PromptGate {
     }
 
     pub(super) fn finish(&self) {
-        *self
-            .slot
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = PromptGateState::Idle;
+        *self.slot() = PromptGateState::Idle;
     }
 
     pub(super) fn cancel(&self) {
-        let mut slot = self
-            .slot
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        match &mut *slot {
+        match &mut *self.slot() {
             PromptGateState::Idle => {}
             PromptGateState::Starting { cancelled } => *cancelled = true,
             PromptGateState::Active(token) => token.cancel(),
@@ -125,14 +100,14 @@ impl Drop for PromptGuard {
 
 impl SessionHost {
     pub(super) async fn create(
-        ctx: SessionBuildContext<'_>,
+        startup: &AcpStartup,
         request: NewSessionRequest,
     ) -> anyhow::Result<(Self, NewSessionResponse)> {
         let cwd = validate_session_cwd(&request.cwd)?;
         ignore_host_mcp_servers(&request.mcp_servers);
         let sdk_id = rho_sdk::SessionId::new();
         let cache_key = prompt_cache_key(sdk_id.as_str());
-        let built = build_session(&ctx, cwd, |_| {
+        let built = build_session(startup, cwd, |_| {
             Ok(SessionOptions::new()
                 .id(sdk_id.clone())
                 .prompt_cache_key(cache_key.clone()))
@@ -141,8 +116,8 @@ impl SessionHost {
         let stored = match StoredSession::create_with_id(
             cwd,
             built.session.id().as_str(),
-            ctx.agent.id().as_str(),
-            &ctx.agent.fingerprint().to_string(),
+            startup.agent.id().as_str(),
+            &startup.agent.fingerprint().to_string(),
         ) {
             Ok(stored) => stored,
             Err(error) => {
@@ -152,26 +127,26 @@ impl SessionHost {
         };
         let acp_session_id = SessionId::new(built.session.id().as_str());
         let response = NewSessionResponse::new(acp_session_id.clone())
-            .modes(mode_state(ctx.config.permission_mode));
+            .modes(mode_state(startup.config.permission_mode));
         Ok((
-            Self::from_built(acp_session_id, built, stored, ctx.herdr.clone()),
+            Self::from_built(acp_session_id, built, stored, startup.herdr.clone()),
             response,
         ))
     }
 
     pub(super) async fn load(
-        ctx: SessionBuildContext<'_>,
+        startup: &AcpStartup,
         request: LoadSessionRequest,
         client: &dyn AcpClientPort,
     ) -> anyhow::Result<(Self, LoadSessionResponse)> {
-        let cwd = workspace_cwd(&request.cwd, ctx.process_cwd);
+        let cwd = workspace_cwd(&request.cwd, &startup.cwd);
         if !request.cwd.as_os_str().is_empty() {
             validate_session_cwd(cwd)?;
         }
         ignore_host_mcp_servers(&request.mcp_servers);
         let (stored, histories) =
             StoredSession::open_by_id_with_histories(cwd, request.session_id.0.as_ref())?;
-        let built = build_session(&ctx, cwd, |provider| {
+        let built = build_session(startup, cwd, |provider| {
             let snapshot =
                 stored.snapshot_for_resume(provider.identity(), prompt_cache_key(stored.id()))?;
             Ok(SessionOptions::from_snapshot(snapshot))
@@ -183,9 +158,9 @@ impl SessionHost {
             built.teardown().await;
             return Err(error);
         }
-        let response = LoadSessionResponse::new().modes(mode_state(ctx.config.permission_mode));
+        let response = LoadSessionResponse::new().modes(mode_state(startup.config.permission_mode));
         Ok((
-            Self::from_built(request.session_id, built, stored, ctx.herdr.clone()),
+            Self::from_built(request.session_id, built, stored, startup.herdr.clone()),
             response,
         ))
     }
@@ -218,24 +193,8 @@ impl SessionHost {
 
     pub(super) async fn shutdown(self) {
         self.prompt_gate.cancel();
-        let Self {
-            runtime,
-            session,
-            tools,
-            hooks,
-            approval_receiver,
-            herdr,
-            ..
-        } = self;
-        BuiltSession {
-            runtime,
-            session,
-            tools,
-            hooks,
-            approval_receiver,
-        }
-        .teardown()
-        .await;
+        let Self { built, herdr, .. } = self;
+        built.teardown().await;
         herdr.release().await;
     }
 
@@ -247,12 +206,8 @@ impl SessionHost {
     ) -> Self {
         Self {
             acp_session_id,
-            runtime: built.runtime,
-            session: built.session,
+            built,
             stored,
-            tools: built.tools,
-            hooks: built.hooks,
-            approval_receiver: built.approval_receiver,
             prompt_gate: Arc::new(PromptGate::new()),
             completed_runs: 0,
             herdr,
@@ -264,7 +219,7 @@ impl SessionHost {
         input: UserInput,
         client: &dyn AcpClientPort,
     ) -> anyhow::Result<PromptResponse> {
-        let mut run = match self.session.start(input.clone()).await {
+        let mut run = match self.built.session.start(input.clone()).await {
             Ok(run) => run,
             Err(error) => {
                 self.dispatch_failed(&error.to_string());
@@ -272,12 +227,12 @@ impl SessionHost {
             }
         };
         self.prompt_gate.activate(run.cancellation_handle());
-        let mut approval_receiver = self.approval_receiver.take();
+        let mut approval_receiver = self.built.approval_receiver.take();
         let mut mapper = EventMapper::new();
         let pump_result = self
             .pump_run(&mut run, &mut mapper, client, approval_receiver.as_mut())
             .await;
-        self.approval_receiver = approval_receiver;
+        self.built.approval_receiver = approval_receiver;
         if let Err(error) = pump_result {
             run.cancel();
             let _ = run.outcome().await;
@@ -291,9 +246,10 @@ impl SessionHost {
                     return Err(error);
                 }
                 self.completed_runs = self.completed_runs.saturating_add(1);
-                self.runtime
+                self.built
+                    .runtime
                     .hooks()
-                    .session_completed(self.session.id(), self.completed_runs);
+                    .session_completed(self.built.session.id(), self.completed_runs);
                 Ok(PromptResponse::new(EventMapper::map_stop(&outcome)))
             }
             Err(rho_sdk::Error::Cancelled) => {
@@ -317,11 +273,10 @@ impl SessionHost {
         run: &mut rho_sdk::Run,
         mapper: &mut EventMapper,
         client: &dyn AcpClientPort,
-        approval_receiver: Option<&mut ApprovalRequestReceiver>,
+        mut approval_receiver: Option<&mut ApprovalRequestReceiver>,
     ) -> anyhow::Result<()> {
         let cancel = run.cancellation_handle();
         let mut run_cancelled = cancel.is_cancelled();
-        let mut approval_receiver = approval_receiver;
         let mut approvals_open = approval_receiver.is_some();
         loop {
             tokio::select! {
@@ -358,12 +313,12 @@ impl SessionHost {
             display_tail.push(Message::assistant_text(text));
         }
         self.stored
-            .save_snapshot(&self.session.snapshot(), &display_tail)
+            .save_snapshot(&self.built.session.snapshot(), &display_tail)
     }
 
     fn dispatch_failed(&self, message: &str) {
-        self.runtime.hooks().session_failed(
-            self.session.id(),
+        self.built.runtime.hooks().session_failed(
+            self.built.session.id(),
             rho_sdk::hooks::HookSessionFailureKind::RunFailed,
             message,
         );

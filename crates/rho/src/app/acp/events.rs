@@ -115,6 +115,7 @@ impl EventMapper {
             | RunEvent::HostedToolActivity { .. }
             | RunEvent::ProviderServiceTierFallback { .. }
             | RunEvent::ContextEstimated { .. } => None,
+            // RunEvent is non_exhaustive; unknown future variants have no ACP update.
             _ => None,
         }
     }
@@ -138,6 +139,7 @@ fn map_sdk_stop_reason(reason: rho_sdk::StopReason) -> StopReason {
     match reason {
         rho_sdk::StopReason::EndTurn => StopReason::EndTurn,
         rho_sdk::StopReason::MaxSteps => StopReason::MaxTurnRequests,
+        // StopReason is non_exhaustive; a new SDK reason still ends the ACP turn.
         _ => StopReason::EndTurn,
     }
 }
@@ -195,7 +197,9 @@ fn finished_content(result: &ToolCompletion) -> (ToolCallStatus, Vec<ToolCallCon
             ToolCallStatus::Failed,
             vec![ToolCallContent::from(failure.message())],
         ),
-        ToolCompletion::Unavailable | _ => (ToolCallStatus::Failed, Vec::new()),
+        ToolCompletion::Unavailable => (ToolCallStatus::Failed, Vec::new()),
+        // ToolCompletion is non_exhaustive; unknown results cannot be shown as success.
+        _ => (ToolCallStatus::Failed, Vec::new()),
     }
 }
 

@@ -95,6 +95,7 @@ fn tool_kind_for_capability(kind: CapabilityKind) -> ToolKind {
         CapabilityKind::Write => ToolKind::Edit,
         CapabilityKind::Process => ToolKind::Execute,
         CapabilityKind::Network => ToolKind::Fetch,
+        CapabilityKind::Skill => ToolKind::Other,
         _ => ToolKind::Other,
     }
 }

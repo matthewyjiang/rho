@@ -3,8 +3,7 @@ use std::{path::Path, sync::Arc};
 use agent_client_protocol::schema::v1::SessionModeState;
 use rho_sdk::{provider::ModelProvider, ApprovalSession, SessionOptions};
 
-use super::super::permission;
-use super::SessionBuildContext;
+use super::super::{permission, AcpStartup};
 use crate::{
     app::{
         automation::ensure_headless_auto_classifier_model,
@@ -22,24 +21,24 @@ use crate::{
 };
 
 pub(super) async fn build_session(
-    ctx: &SessionBuildContext<'_>,
+    startup: &AcpStartup,
     workspace: &Path,
     session_options: impl FnOnce(Arc<dyn ModelProvider>) -> anyhow::Result<SessionOptions>,
 ) -> anyhow::Result<BuiltSession> {
-    ensure_headless_auto_classifier_model(ctx.config)?;
+    ensure_headless_auto_classifier_model(&startup.config)?;
     let SessionAssembly { built, .. } = assemble_session(SessionAssemblyOptions {
-        config: ctx.config,
-        config_path: ctx.config_path.to_path_buf(),
+        config: &startup.config,
+        config_path: startup.config_path.clone(),
         cwd: workspace,
-        no_system_prompt: ctx.no_system_prompt,
-        no_tools: ctx.no_tools,
-        no_subagents: ctx.no_subagents,
+        no_system_prompt: startup.no_system_prompt,
+        no_tools: startup.no_tools,
+        no_subagents: startup.no_subagents,
         questionnaire_enabled: false,
         mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
         mcp_sampling: McpSamplingSupport::Unavailable,
         background_subagents: BackgroundSubagents::Disabled,
-        diagnostics: ctx.diagnostics,
-        agent: ctx.agent,
+        diagnostics: &startup.diagnostics,
+        agent: &startup.agent,
         max_steps: None,
         usage_purpose: "agent",
         usage_parent_session_id: None,
