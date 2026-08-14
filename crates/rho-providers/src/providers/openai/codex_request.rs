@@ -145,7 +145,7 @@ fn lower_responses_request(
         reasoning_profile.config(profile.provider(), profile.model(), request.reasoning_level)?;
     let mut instructions = Vec::new();
     let input = codex_input_items_for_target(
-        request.messages.to_vec(),
+        request.messages,
         &mut instructions,
         Some(profile.identity()),
     )?;

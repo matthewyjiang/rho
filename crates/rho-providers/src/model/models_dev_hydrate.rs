@@ -19,7 +19,7 @@ use crate::provider::{CatalogConstruction, ProviderDescriptor, ProviderId};
 
 use super::{
     fetch_models_dev_api, model_metadata_needs_refresh, open_models_dev_cache,
-    upstream_metadata_from_api, write_cached_upstream_model_metadata_raw,
+    upstream_metadata_from_api, write_cached_upstream_model_metadata_batch,
     MODEL_METADATA_CACHE_VERSION,
 };
 
@@ -84,23 +84,26 @@ pub async fn prefetch_model_metadata(targets: impl IntoIterator<Item = (String, 
 /// rows use the aggregator model ids (`anthropic/claude-…`). Kimi Code's `k3`
 /// alias is written beside the upstream `kimi-k3` id.
 pub(super) fn hydrate_catalog_from_api(api: &Value) -> usize {
-    let mut written = 0;
+    let mut entries = Vec::new();
     let mut touched_providers = HashSet::new();
     for descriptor in crate::provider::providers() {
         for model_id in catalog_model_ids_for_provider(api, descriptor) {
-            if write_complete_upstream_row(api, descriptor, &model_id) {
+            if let Some(metadata) = extract_complete_upstream_metadata(api, descriptor, &model_id) {
                 touched_providers.insert(descriptor.name);
-                written += 1;
+                entries.push((descriptor.name, model_id, metadata));
             }
         }
         // Provider-facing ids that are not catalog keys still need a cache row.
-        if descriptor.id == ProviderId::KimiCode
-            && write_complete_upstream_row(api, descriptor, "k3")
-        {
-            touched_providers.insert(descriptor.name);
-            written += 1;
+        if descriptor.id == ProviderId::KimiCode {
+            if let Some(metadata) = extract_complete_upstream_metadata(api, descriptor, "k3") {
+                touched_providers.insert(descriptor.name);
+                entries.push((descriptor.name, "k3".to_string(), metadata));
+            }
         }
     }
+    let written = write_cached_upstream_model_metadata_batch(
+        entries.iter().map(|(p, m, meta)| (*p, m.as_str(), meta)),
+    );
     for provider in touched_providers {
         crate::model::display_name::forget_provider_display_names(provider);
     }
@@ -125,23 +128,21 @@ fn catalog_model_ids_for_provider(
         .unwrap_or_default()
 }
 
-/// Writes a row when its reasoning metadata is complete. Providers whose
+/// Extracts metadata when its reasoning metadata is complete. Providers whose
 /// construction follows the catalog's npm mapping also keep
 /// reasoning-incomplete rows, because the builder needs `sdk_package` even
 /// when reasoning levels stay unknown.
-fn write_complete_upstream_row(api: &Value, descriptor: &ProviderDescriptor, model: &str) -> bool {
+fn extract_complete_upstream_metadata(
+    api: &Value,
+    descriptor: &ProviderDescriptor,
+    model: &str,
+) -> Option<super::ModelMetadata> {
     let keep_sdk_only_rows =
         descriptor.runtime.catalog_construction() == CatalogConstruction::PreferModelsDevNpm;
-    let Some(metadata) =
-        upstream_metadata_from_api(api, descriptor.name, model).filter(|metadata| {
-            metadata.reasoning_metadata_complete
-                || (keep_sdk_only_rows && metadata.sdk_package.is_some())
-        })
-    else {
-        return false;
-    };
-    write_cached_upstream_model_metadata_raw(descriptor.name, model, &metadata);
-    true
+    upstream_metadata_from_api(api, descriptor.name, model).filter(|metadata| {
+        metadata.reasoning_metadata_complete
+            || (keep_sdk_only_rows && metadata.sdk_package.is_some())
+    })
 }
 
 /// Process-local "full catalog hydrate already succeeded this run".

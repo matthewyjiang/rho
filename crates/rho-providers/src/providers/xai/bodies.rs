@@ -30,8 +30,7 @@ fn lower_xai_create_request(
 ) -> Result<XaiCreateLowered, ModelError> {
     let mut instructions = Vec::new();
     let target = ModelIdentity::new(provider, "openai-responses", model);
-    let input =
-        codex_input_items_for_target(request.messages.to_vec(), &mut instructions, Some(&target))?;
+    let input = codex_input_items_for_target(request.messages, &mut instructions, Some(&target))?;
     Ok(XaiCreateLowered {
         instructions: instructions.join("\n\n"),
         input,
@@ -125,7 +124,7 @@ pub(super) fn build_xai_compact_body(
     request: ModelRequest<'_>,
 ) -> Result<Value, ModelError> {
     let target = ModelIdentity::new(provider, "openai-responses", model);
-    let input = xai_compact_input_items(request.messages.to_vec(), &target)?;
+    let input = xai_compact_input_items(request.messages, &target)?;
     Ok(json!({
         "model": model,
         "input": input,
@@ -134,7 +133,7 @@ pub(super) fn build_xai_compact_body(
 
 /// Converts history for compact: system messages stay in `input` in order.
 fn xai_compact_input_items(
-    messages: Vec<Message>,
+    messages: &[Message],
     target: &ModelIdentity,
 ) -> Result<Vec<Value>, ModelError> {
     let mut input = Vec::new();
@@ -148,7 +147,11 @@ fn xai_compact_input_items(
             }
             other => {
                 let mut peeled = Vec::new();
-                let items = codex_input_items_for_target(vec![other], &mut peeled, Some(target))?;
+                let items = codex_input_items_for_target(
+                    std::slice::from_ref(other),
+                    &mut peeled,
+                    Some(target),
+                )?;
                 debug_assert!(
                     peeled.is_empty(),
                     "non-system messages must not peel instructions"

@@ -839,7 +839,7 @@ fn local_reasoning_override_replaces_provider_levels_exactly() {
         toml::from_str::<toml::Value>(r#"supported_reasoning_levels = ["medium", "xhigh"]"#)
             .unwrap();
 
-    let metadata = merge_toml_override(provider_metadata, table.as_table().unwrap());
+    let metadata = overrides::merge_toml_override(provider_metadata, table.as_table().unwrap());
 
     assert_eq!(
         metadata.supported_reasoning_levels,
@@ -1148,6 +1148,48 @@ fn hydrate_writes_opencode_go_rows_that_only_advertise_sdk_package() {
         assert_eq!(
             metadata.supported_reasoning_levels,
             Some(vec![ReasoningLevel::Off, ReasoningLevel::Max])
+        );
+    });
+}
+
+// Covers: batch metadata writes insert all records in one transaction
+// Owner: models.dev cache
+#[test]
+fn batch_metadata_writes_inserts_all_records() {
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        let meta_a = ModelMetadata {
+            display_name: Some("Model A".into()),
+            advertised_context_window: Some(100_000),
+            reasoning_capabilities_known: true,
+            reasoning_metadata_complete: true,
+            ..ModelMetadata::default()
+        };
+        let meta_b = ModelMetadata {
+            display_name: Some("Model B".into()),
+            advertised_context_window: Some(200_000),
+            reasoning_capabilities_known: true,
+            reasoning_metadata_complete: true,
+            ..ModelMetadata::default()
+        };
+
+        let written = write_cached_upstream_model_metadata_batch([
+            ("provider-x", "model-1", &meta_a),
+            ("provider-x", "model-2", &meta_b),
+        ]);
+        assert_eq!(written, 2);
+
+        assert_eq!(
+            cached_upstream_model_metadata("provider-x", "model-1")
+                .unwrap()
+                .display_name,
+            Some("Model A".into())
+        );
+        assert_eq!(
+            cached_upstream_model_metadata("provider-x", "model-2")
+                .unwrap()
+                .display_name,
+            Some("Model B".into())
         );
     });
 }

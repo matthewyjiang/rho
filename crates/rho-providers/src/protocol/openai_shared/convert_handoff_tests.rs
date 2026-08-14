@@ -15,7 +15,7 @@ fn chat_handoff_keeps_foreign_reasoning_summary_as_tagged_text() {
         provider_context: Vec::new(),
     });
 
-    let converted = to_openai_message_for_target(message, Some(&target)).unwrap();
+    let converted = to_openai_message_for_target(&message, Some(&target)).unwrap();
     let content = converted.content.unwrap().as_str().unwrap().to_string();
 
     assert!(content.contains("answer"));
@@ -48,7 +48,7 @@ fn chat_handoff_replays_reasoning_content_for_exact_model() {
         }],
     });
 
-    let converted = to_openai_message_for_target(message, Some(&identity)).unwrap();
+    let converted = to_openai_message_for_target(&message, Some(&identity)).unwrap();
     assert_eq!(
         converted.reasoning_content.as_deref(),
         Some("need to inspect the workspace first")
@@ -82,7 +82,7 @@ fn chat_handoff_omits_reasoning_content_for_foreign_model() {
         }],
     });
 
-    let converted = to_openai_message_for_target(message, Some(&target)).unwrap();
+    let converted = to_openai_message_for_target(&message, Some(&target)).unwrap();
     assert!(converted.reasoning_content.is_none());
     assert_eq!(converted.content.unwrap().as_str().unwrap(), "answer");
 }
@@ -108,7 +108,7 @@ fn chat_handoff_rejects_unknown_replay_context_kinds() {
         }],
     });
 
-    let err = match to_openai_message_for_target(message, Some(&identity)) {
+    let err = match to_openai_message_for_target(&message, Some(&identity)) {
         Ok(_) => panic!("expected unknown replay kind to fail"),
         Err(error) => error,
     };
@@ -144,7 +144,7 @@ fn chat_handoff_injects_empty_reasoning_content_for_same_model_tool_turns() {
         reasoning_summary: None,
         provider_context: Vec::new(),
     });
-    let converted = to_openai_message_for_target(same_model_tool_turn, Some(&identity)).unwrap();
+    let converted = to_openai_message_for_target(&same_model_tool_turn, Some(&identity)).unwrap();
     assert_eq!(converted.reasoning_content.as_deref(), Some(""));
 
     let same_model_text_turn = Message::assistant(crate::model::AssistantMessage {
@@ -153,7 +153,7 @@ fn chat_handoff_injects_empty_reasoning_content_for_same_model_tool_turns() {
         reasoning_summary: None,
         provider_context: Vec::new(),
     });
-    let converted = to_openai_message_for_target(same_model_text_turn, Some(&identity)).unwrap();
+    let converted = to_openai_message_for_target(&same_model_text_turn, Some(&identity)).unwrap();
     assert!(converted.reasoning_content.is_none());
 
     let non_deepseek =
@@ -165,7 +165,7 @@ fn chat_handoff_injects_empty_reasoning_content_for_same_model_tool_turns() {
         provider_context: Vec::new(),
     });
     let converted =
-        to_openai_message_for_target(non_deepseek_tool_turn, Some(&non_deepseek)).unwrap();
+        to_openai_message_for_target(&non_deepseek_tool_turn, Some(&non_deepseek)).unwrap();
     assert!(converted.reasoning_content.is_none());
 
     let foreign_target =
@@ -176,7 +176,8 @@ fn chat_handoff_injects_empty_reasoning_content_for_same_model_tool_turns() {
         reasoning_summary: None,
         provider_context: Vec::new(),
     });
-    let converted = to_openai_message_for_target(foreign_tool_turn, Some(&foreign_target)).unwrap();
+    let converted =
+        to_openai_message_for_target(&foreign_tool_turn, Some(&foreign_target)).unwrap();
     assert!(converted.reasoning_content.is_none());
 }
 
@@ -224,8 +225,7 @@ fn codex_handoff_restores_replay_item_position() {
         }],
     });
 
-    let input =
-        codex_input_items_for_target(vec![message], &mut Vec::new(), Some(&source)).unwrap();
+    let input = codex_input_items_for_target(&[message], &mut Vec::new(), Some(&source)).unwrap();
 
     assert_eq!(input[0]["type"], "reasoning");
     assert_eq!(input[1]["role"], "assistant");
@@ -250,10 +250,14 @@ fn codex_remote_compaction_marker_replays_item_without_portable_text() {
         .with_portable_fallback("portable summary"),
     );
 
-    let exact = codex_input_items_for_target(vec![message.clone()], &mut Vec::new(), Some(&source))
-        .unwrap();
+    let exact = codex_input_items_for_target(
+        std::slice::from_ref(&message),
+        &mut Vec::new(),
+        Some(&source),
+    )
+    .unwrap();
     let foreign = codex_input_items_for_target(
-        vec![message],
+        std::slice::from_ref(&message),
         &mut Vec::new(),
         Some(&crate::model::ModelIdentity::new(
             "anthropic",
@@ -289,10 +293,14 @@ fn codex_handoff_replays_only_exact_model_context() {
         }],
     });
 
-    let exact = codex_input_items_for_target(vec![message.clone()], &mut Vec::new(), Some(&source))
-        .unwrap();
+    let exact = codex_input_items_for_target(
+        std::slice::from_ref(&message),
+        &mut Vec::new(),
+        Some(&source),
+    )
+    .unwrap();
     let foreign = codex_input_items_for_target(
-        vec![message],
+        std::slice::from_ref(&message),
         &mut Vec::new(),
         Some(&crate::model::ModelIdentity::new(
             "anthropic",

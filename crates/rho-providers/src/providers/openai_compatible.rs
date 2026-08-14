@@ -131,7 +131,6 @@ impl OpenAiCompatibleProvider {
         let messages = request
             .messages
             .iter()
-            .cloned()
             .map(|message| to_openai_message_for_target(message, Some(&target)))
             .collect::<Result<Vec<_>, _>>()?;
         let tools = request

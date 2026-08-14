@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashSet, fs, path::PathBuf, sync::OnceLock, time::Duration};
+use std::{cell::RefCell, collections::HashSet, fs, path::PathBuf, time::Duration};
 
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -10,6 +10,8 @@ use crate::{
 
 #[path = "models_dev_hydrate.rs"]
 mod hydrate;
+#[path = "models_dev_overrides.rs"]
+mod overrides;
 #[path = "models_dev_sdk.rs"]
 mod sdk;
 pub use hydrate::{ensure_models_dev_catalog, prefetch_model_metadata};
@@ -224,9 +226,9 @@ pub(super) fn upstream_metadata_from_api(
 }
 
 fn apply_overrides(provider: &str, model: &str, metadata: ModelMetadata) -> ModelMetadata {
-    let metadata = apply_builtin_overrides(provider, model, metadata);
+    let metadata = overrides::apply_builtin_overrides(provider, model, metadata);
     let metadata = apply_provider_capabilities(provider, model, metadata);
-    apply_local_overrides(provider, model, metadata)
+    overrides::apply_local_overrides(provider, model, metadata)
 }
 
 fn apply_provider_capabilities(
@@ -393,6 +395,50 @@ fn write_cached_upstream_model_metadata(provider: &str, model: &str, metadata: &
     super::display_name::forget_provider_display_names(provider);
 }
 
+/// Writes a batch of model metadata rows in a single SQLite transaction with a prepared statement.
+pub(super) fn write_cached_upstream_model_metadata_batch<'a, I>(entries: I) -> usize
+where
+    I: IntoIterator<Item = (&'a str, &'a str, &'a ModelMetadata)>,
+{
+    let Ok(mut connection) = open_models_dev_cache() else {
+        return 0;
+    };
+    let Ok(tx) = connection.transaction() else {
+        return 0;
+    };
+    let mut written = 0;
+    {
+        let Ok(mut stmt) = tx.prepare_cached(
+            "insert into model_metadata (provider, model, metadata_json, updated_at, cache_version)
+             values (?1, ?2, ?3, strftime('%s', 'now'), ?4)
+             on conflict(provider, model) do update set
+               metadata_json = excluded.metadata_json,
+               updated_at = excluded.updated_at,
+               cache_version = excluded.cache_version",
+        ) else {
+            return 0;
+        };
+        for (provider, model, metadata) in entries {
+            let Ok(contents) = serde_json::to_string(metadata) else {
+                continue;
+            };
+            if stmt
+                .execute(params![
+                    provider,
+                    model,
+                    contents,
+                    MODEL_METADATA_CACHE_VERSION
+                ])
+                .is_ok()
+            {
+                written += 1;
+            }
+        }
+    }
+    let _ = tx.commit();
+    written
+}
+
 /// Writes a row without invalidating the display-name cache.
 ///
 /// Full hydrate touches many providers; callers invalidate each touched
@@ -402,28 +448,7 @@ pub(super) fn write_cached_upstream_model_metadata_raw(
     model: &str,
     metadata: &ModelMetadata,
 ) {
-    let cache_provider = provider;
-    let cache_model = model;
-    let Ok(connection) = open_models_dev_cache() else {
-        return;
-    };
-    let Ok(contents) = serde_json::to_string(metadata) else {
-        return;
-    };
-    let _ = connection.execute(
-        "insert into model_metadata (provider, model, metadata_json, updated_at, cache_version)
-         values (?1, ?2, ?3, strftime('%s', 'now'), ?4)
-         on conflict(provider, model) do update set
-           metadata_json = excluded.metadata_json,
-           updated_at = excluded.updated_at,
-           cache_version = excluded.cache_version",
-        params![
-            cache_provider,
-            cache_model,
-            contents,
-            MODEL_METADATA_CACHE_VERSION
-        ],
-    );
+    write_cached_upstream_model_metadata_batch([(provider, model, metadata)]);
 }
 
 pub(super) fn open_models_dev_cache() -> rusqlite::Result<Connection> {
@@ -843,132 +868,6 @@ fn model_cost_has_rates(cost: &ModelCost) -> bool {
         || cost.output_micros_per_m.is_some()
         || cost.cache_read_micros_per_m.is_some()
         || cost.cache_write_micros_per_m.is_some()
-}
-
-const BUILTIN_MODEL_OVERRIDES_TOML: &str = include_str!("model_overrides.toml");
-
-fn apply_builtin_overrides(provider: &str, model: &str, metadata: ModelMetadata) -> ModelMetadata {
-    static OVERRIDES: OnceLock<toml::Value> = OnceLock::new();
-    let overrides = OVERRIDES.get_or_init(|| {
-        BUILTIN_MODEL_OVERRIDES_TOML
-            .parse()
-            .expect("built-in model overrides must be valid TOML")
-    });
-    let key = format!("{provider}/{model}");
-    let Some(table) = overrides
-        .get("models")
-        .and_then(|models| models.get(&key))
-        .and_then(toml::Value::as_table)
-    else {
-        return metadata;
-    };
-
-    merge_toml_override(metadata, table)
-}
-
-fn apply_local_overrides(provider: &str, model: &str, metadata: ModelMetadata) -> ModelMetadata {
-    let Some(path) = local_overrides_path() else {
-        return metadata;
-    };
-    let Ok(contents) = fs::read_to_string(path) else {
-        return metadata;
-    };
-    let Ok(value) = contents.parse::<toml::Value>() else {
-        return metadata;
-    };
-    let key = format!("{provider}/{model}");
-    let Some(table) = value
-        .get("models")
-        .and_then(|models| models.get(&key))
-        .and_then(|value| value.as_table())
-    else {
-        return metadata;
-    };
-
-    merge_toml_override(metadata, table)
-}
-
-fn local_overrides_path() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("RHO_MODELS_PATH") {
-        return Some(path.into());
-    }
-    Some(crate::paths::rho_dir().ok()?.join("models.toml"))
-}
-
-fn merge_toml_override(
-    mut metadata: ModelMetadata,
-    table: &toml::map::Map<String, toml::Value>,
-) -> ModelMetadata {
-    metadata.display_name = table
-        .get("display_name")
-        .and_then(toml::Value::as_str)
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .map(str::to_string)
-        .or(metadata.display_name);
-    metadata.advertised_context_window =
-        toml_u64(table, "advertised_context_window").or(metadata.advertised_context_window);
-    metadata.effective_context_window =
-        toml_u64(table, "effective_context_window").or(metadata.effective_context_window);
-    metadata.usable_context_window =
-        toml_u64(table, "usable_context_window").or(metadata.usable_context_window);
-    metadata.long_context_threshold =
-        toml_u64(table, "long_context_threshold").or(metadata.long_context_threshold);
-    metadata.max_output_tokens =
-        toml_u64(table, "max_output_tokens").or(metadata.max_output_tokens);
-    metadata.cost_default = toml_cost(table, "cost_default").or(metadata.cost_default);
-    metadata.cost_long_context =
-        toml_cost(table, "cost_long_context").or(metadata.cost_long_context);
-    if let Some(levels) = toml_reasoning_levels(table, "supported_reasoning_levels") {
-        metadata.supported_reasoning_levels = Some(levels);
-        metadata.reasoning_capabilities_known = true;
-        metadata.reasoning_metadata_complete = true;
-    }
-    metadata
-}
-
-fn toml_reasoning_levels(
-    table: &toml::map::Map<String, toml::Value>,
-    key: &str,
-) -> Option<Vec<ReasoningLevel>> {
-    let mut levels = table
-        .get(key)?
-        .as_array()?
-        .iter()
-        .filter_map(toml::Value::as_str)
-        .filter_map(|value| value.parse().ok())
-        .collect::<Vec<_>>();
-    levels.sort_unstable();
-    levels.dedup();
-    Some(levels)
-}
-
-fn toml_u64(table: &toml::map::Map<String, toml::Value>, key: &str) -> Option<u64> {
-    table
-        .get(key)
-        .and_then(|value| value.as_integer())
-        .and_then(|value| u64::try_from(value).ok())
-}
-
-fn toml_cost(table: &toml::map::Map<String, toml::Value>, key: &str) -> Option<ModelCost> {
-    let table = table.get(key)?.as_table()?;
-    Some(ModelCost {
-        input_micros_per_m: toml_cost_value(table, "input"),
-        output_micros_per_m: toml_cost_value(table, "output"),
-        cache_read_micros_per_m: toml_cost_value(table, "cache_read"),
-        cache_write_micros_per_m: toml_cost_value(table, "cache_write"),
-    })
-}
-
-fn toml_cost_value(table: &toml::map::Map<String, toml::Value>, key: &str) -> Option<u64> {
-    let dollars = table.get(key).and_then(|value| {
-        value
-            .as_float()
-            .or_else(|| value.as_integer().map(|v| v as f64))
-    })?;
-    dollars
-        .is_finite()
-        .then(|| (dollars.max(0.0) * 1_000_000.0).round() as u64)
 }
 
 fn cost_micros_per_million(value: &Value) -> Option<u64> {
