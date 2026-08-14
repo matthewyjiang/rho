@@ -72,6 +72,7 @@ pub(super) struct ResponsesProfile {
 }
 
 impl ResponsesProfile {
+    #[cfg(test)]
     pub(super) fn from_auth(auth: &Auth, model: impl Into<String>) -> Self {
         Self::from_auth_with_provider(auth, model, None)
     }

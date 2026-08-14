@@ -261,11 +261,13 @@ impl ProviderBuilder {
                     descriptor,
                     provider_name,
                     model,
-                    dialect,
-                    auth,
-                    api_base,
-                    client,
-                    self.options.hosted_web_search,
+                    OpenAiCompatibleBuild {
+                        dialect,
+                        auth,
+                        api_base,
+                        client,
+                        hosted_web_search: self.options.hosted_web_search,
+                    },
                 )
             }
             (ProviderRuntime::Xai, ProviderCredential::Xai(auth)) => {
@@ -320,15 +322,19 @@ fn provider_http_client(timeout: Option<Duration>) -> Result<reqwest::Client, Mo
     builder.build().map_err(ModelError::Request)
 }
 
-fn build_openai_compatible_provider(
-    descriptor: &ProviderDescriptor,
-    provider_name: &'static str,
-    model: String,
+struct OpenAiCompatibleBuild {
     dialect: OpenAiCompatibleDialect,
     auth: CompatibleAuth,
     api_base: String,
     client: reqwest::Client,
     hosted_web_search: bool,
+}
+
+fn build_openai_compatible_provider(
+    descriptor: &ProviderDescriptor,
+    provider_name: &'static str,
+    model: String,
+    build: OpenAiCompatibleBuild,
 ) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, ModelError> {
     let adapter = match descriptor.catalog_construction() {
         CatalogConstruction::Runtime => CatalogSdkAdapter::OpenAiCompatible,
@@ -338,15 +344,15 @@ fn build_openai_compatible_provider(
                 .and_then(|metadata| metadata.sdk_package.as_deref()),
         ),
     };
-    match (adapter, auth) {
+    match (adapter, build.auth) {
         (CatalogSdkAdapter::OpenAiResponses, CompatibleAuth::ApiKey(key)) => {
             Ok(Arc::new(OpenAiProvider::new_with_transport(
                 model,
                 Auth::ApiKey(key),
                 Arc::new(MemoryCredentialStore::default()),
-                client,
-                Some(api_base),
-                hosted_web_search,
+                build.client,
+                Some(build.api_base),
+                build.hosted_web_search,
                 Some(provider_name),
             )))
         }
@@ -355,18 +361,18 @@ fn build_openai_compatible_provider(
                 model,
                 key,
                 catalog_max_tokens_for(provider_name),
-                client,
-                api_base,
+                build.client,
+                build.api_base,
                 provider_name,
             )))
         }
         (_, auth) => Ok(Arc::new(OpenAiCompatibleProvider::new(
-            client,
+            build.client,
             provider_name,
             model,
-            dialect,
+            build.dialect,
             auth,
-            api_base,
+            build.api_base,
         ))),
     }
 }
