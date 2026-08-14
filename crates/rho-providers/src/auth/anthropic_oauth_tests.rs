@@ -38,6 +38,15 @@ fn authorization_url_uses_console_callback_and_pkce() {
     assert!(query.contains_key("code_challenge"));
 }
 
+// Covers: the token endpoint's edge answers `User-Agent: anthropic` with a
+// 429 that never reaches the API, so the OAuth flow must identify as Rho.
+// Owner: anthropic oauth flow
+#[test]
+fn oauth_user_agent_identifies_rho_and_not_anthropic() {
+    assert!(OAUTH_USER_AGENT.starts_with("rho/"));
+    assert_ne!(OAUTH_USER_AGENT, "anthropic");
+}
+
 // Covers: the authorize state must equal the PKCE verifier; the token
 // endpoint rejects mismatches as a disguised 429 rate_limit_error.
 // Owner: anthropic oauth flow
@@ -53,6 +62,18 @@ fn parse_authorization_code_splits_code_hash_state() {
     assert_eq!(parsed.code, "auth-code");
     assert_eq!(parsed.state.as_deref(), Some("returned-state"));
     assert!(parse_authorization_code("   ").is_none());
+}
+
+// Covers: users paste the whole redirect URL as often as the code#state pair.
+// Owner: anthropic oauth flow
+#[test]
+fn parse_authorization_code_accepts_a_pasted_redirect_url() {
+    let parsed = parse_authorization_code(
+        "http://localhost:53692/callback?code=auth-code&state=returned-state",
+    )
+    .unwrap();
+    assert_eq!(parsed.code, "auth-code");
+    assert_eq!(parsed.state.as_deref(), Some("returned-state"));
 }
 
 #[tokio::test]

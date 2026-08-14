@@ -13,11 +13,17 @@ use crate::credentials::AnthropicTokens;
 use super::loopback::{pkce_challenge, random_token};
 
 pub(crate) const CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-pub(crate) const TOKEN_URL: &str = "https://console.anthropic.com/v1/oauth/token";
+pub(crate) const TOKEN_URL: &str = "https://platform.claude.com/v1/oauth/token";
 const AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
 const REDIRECT_URI: &str = "https://console.anthropic.com/oauth/code/callback";
 const SCOPE: &str = "org:create_api_key user:profile user:inference";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// Identifies Rho on OAuth token requests.
+///
+/// Must not be `anthropic`: the token endpoint sits behind an edge rule that
+/// answers that user agent with a 429 `rate_limit_error` which never reaches
+/// the API. Any honest client string gets through.
+pub(crate) const OAUTH_USER_AGENT: &str = concat!("rho/", env!("CARGO_PKG_VERSION"));
 /// `anthropic-beta` header value required on OAuth-authorized API requests.
 pub(crate) const OAUTH_BETA_HEADER: &str = "oauth-2025-04-20";
 
@@ -121,7 +127,7 @@ async fn complete_anthropic_oauth_with_endpoint(
     let response = client
         .post(endpoint)
         .header("Content-Type", "application/json")
-        .header("User-Agent", "anthropic")
+        .header("User-Agent", OAUTH_USER_AGENT)
         .json(&TokenExchangeRequest {
             grant_type: "authorization_code",
             client_id: CLIENT_ID,
@@ -132,15 +138,13 @@ async fn complete_anthropic_oauth_with_endpoint(
         })
         .send()
         .await?;
-    // Anthropic's edge answers token grants from unofficial clients with a
-    // 429 rate_limit_error that never reaches the API (verified 2026-08:
-    // fresh valid codes, clean IPs, JSON and form bodies all get the same
-    // 429 without a request_id, while malformed bodies get real 400s). A raw
-    // HTTP error would mislead the user into waiting out a rate limit that
-    // does not exist.
+    // A 429 here is an edge rule, not real throttling: it never reaches the
+    // API and carries no request_id. It fires on rejected user agents, so a
+    // raw HTTP error would send the user off to wait out a limit that does
+    // not exist. See OAUTH_USER_AGENT.
     if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
         return Err(AnthropicOAuthError::OAuthDenied(
-            "Anthropic refused the code exchange (HTTP 429). Anthropic blocks OAuth token grants from third-party clients, so this login mode does not currently work. Use /login anthropic-api-key, or runtime: claude-cli delegation for subscription use.".into(),
+            "Anthropic refused the code exchange (HTTP 429). This is an edge block on the request, not real rate limiting; please report it with your Rho version.".into(),
         ));
     }
     let response = response.error_for_status()?.json::<TokenResponse>().await?;
@@ -152,10 +156,29 @@ struct ParsedAuthorizationCode {
     state: Option<String>,
 }
 
+/// Accepts either the `code#state` string the callback page shows, or a whole
+/// redirect URL pasted from the browser address bar.
 fn parse_authorization_code(raw: &str) -> Option<ParsedAuthorizationCode> {
     let raw = raw.trim();
     if raw.is_empty() {
         return None;
+    }
+    if let Ok(url) = Url::parse(raw) {
+        if url.has_authority() {
+            let mut query = url.query_pairs().into_owned().collect::<Vec<_>>();
+            let code = query
+                .iter()
+                .position(|(name, _)| name == "code")
+                .map(|index| query.swap_remove(index).1)?;
+            let state = query
+                .into_iter()
+                .find(|(name, _)| name == "state")
+                .map(|(_, value)| value);
+            return Some(ParsedAuthorizationCode {
+                code,
+                state: state.filter(|value| !value.trim().is_empty()),
+            });
+        }
     }
     let (code, state) = match raw.split_once('#') {
         Some((code, state)) => (code, Some(state.to_string())),
@@ -174,7 +197,7 @@ fn parse_authorization_code(raw: &str) -> Option<ParsedAuthorizationCode> {
 fn http_client() -> Result<reqwest::Client, AnthropicOAuthError> {
     reqwest::Client::builder()
         .timeout(REQUEST_TIMEOUT)
-        .user_agent("anthropic")
+        .user_agent(OAUTH_USER_AGENT)
         .build()
         .map_err(AnthropicOAuthError::Request)
 }

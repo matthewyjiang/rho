@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::{
-    auth::anthropic_oauth::{CLIENT_ID, TOKEN_URL},
+    auth::anthropic_oauth::{CLIENT_ID, OAUTH_USER_AGENT, TOKEN_URL},
     credentials::{save_anthropic_tokens, AnthropicTokens, CredentialStore},
     model::ModelError,
 };
@@ -126,7 +126,7 @@ async fn refresh_anthropic_tokens(
     let response = client
         .post(TOKEN_URL)
         .header("Content-Type", "application/json")
-        .header("User-Agent", "anthropic")
+        .header("User-Agent", OAUTH_USER_AGENT)
         .json(&AnthropicRefreshRequest {
             grant_type: "refresh_token",
             refresh_token,
