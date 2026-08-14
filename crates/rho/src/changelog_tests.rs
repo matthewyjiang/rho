@@ -140,8 +140,9 @@ fn bundled_changelog_contains_this_package_version() {
     );
 }
 
-// Covers: a dependency-only current version must still resolve, while latest
-// skips empty headings and uses the newest notes users can actually read.
+// Covers: a dependency-only current version must still resolve, while the
+// `/changelog latest` selector used by fetch_latest_display skips that
+// empty heading and uses the newest notes users can actually read.
 // Owner: pure unit
 #[test]
 fn dependency_only_version_resolves_and_is_skipped_as_latest() {
