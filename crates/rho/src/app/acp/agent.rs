@@ -32,6 +32,10 @@ struct LiveSession {
 pub(super) struct RhoAcpAgent {
     startup: AcpStartup,
     sessions: tokio::sync::Mutex<HashMap<SessionId, Arc<LiveSession>>>,
+    /// Serializes `session/new` and `session/load` publication so a replacement
+    /// cannot return success after a later install has already taken the slot.
+    /// Prompt and cancel never take this lock.
+    install_lock: tokio::sync::Mutex<()>,
 }
 
 impl RhoAcpAgent {
@@ -39,6 +43,7 @@ impl RhoAcpAgent {
         Self {
             startup,
             sessions: tokio::sync::Mutex::new(HashMap::new()),
+            install_lock: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -111,7 +116,7 @@ impl RhoAcpAgent {
         };
         let mut slot = live.try_lock_host(&session_id)?;
         slot.as_mut()
-            .ok_or_else(|| busy_session(&session_id))?
+            .expect("try_lock_host rejects an empty slot")
             .prompt(request, port)
             .await
             .map_err(host_error)
@@ -128,6 +133,7 @@ impl RhoAcpAgent {
     }
 
     pub(super) async fn shutdown_all(&self) {
+        let _install = self.install_lock.lock().await;
         let lives: Vec<Arc<LiveSession>> = {
             let mut sessions = self.sessions.lock().await;
             sessions.drain().map(|(_, live)| live).collect()
@@ -138,9 +144,14 @@ impl RhoAcpAgent {
     }
 
     async fn install(&self, session_id: SessionId, host: SessionHost) {
+        self.publish(session_id, LiveSession::new(host)).await;
+    }
+
+    async fn publish(&self, session_id: SessionId, live: Arc<LiveSession>) {
+        let _install = self.install_lock.lock().await;
         let previous = {
             let mut sessions = self.sessions.lock().await;
-            sessions.insert(session_id, LiveSession::new(host))
+            sessions.insert(session_id, live)
         };
         if let Some(previous) = previous {
             shutdown_live(previous).await;

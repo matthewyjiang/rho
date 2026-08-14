@@ -33,11 +33,11 @@ pub(super) struct SessionHost {
     herdr: HerdrReporter,
 }
 
-/// Carries cancellation for the session's current prompt. The agent's session
-/// map already serializes prompts by handing out the host exclusively, so this
-/// gate only has to cover the window between prompt entry and the run's token
-/// existing: a cancel that lands while `Starting` is replayed onto the token as
-/// soon as `activate` receives it. `cancel` is a no-op while idle.
+/// Carries cancellation for the session's current prompt. The agent already
+/// serializes prompts with `try_lock` on the host slot, so this gate only has
+/// to cover the window between prompt entry and the run's token existing: a
+/// cancel that lands while `Starting` is replayed onto the token as soon as
+/// `activate` receives it. `cancel` is a no-op while idle.
 pub(super) struct PromptGate {
     slot: Mutex<PromptGateState>,
 }

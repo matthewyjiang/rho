@@ -1,4 +1,4 @@
-use std::{future::Future, path::PathBuf, pin::Pin, sync::Arc};
+use std::{future::Future, path::PathBuf, pin::Pin, sync::Arc, time::Duration};
 
 use agent_client_protocol::{
     schema::{
@@ -170,4 +170,73 @@ async fn prompt_on_a_locked_session_is_busy() {
         .err()
         .expect("busy session");
     assert_eq!(error.code, ErrorCode::InvalidRequest);
+}
+
+// Covers: a later session/load must not publish until the earlier replacement
+// has finished, so its success still names the host in the map.
+// Owner: ACP agent session map
+#[tokio::test]
+async fn replacement_finishes_before_the_next_one_publishes() {
+    let agent = test_agent();
+    let session_id = SessionId::new("session");
+    let previous = vacant_session();
+    let first = vacant_session();
+    let second = vacant_session();
+    agent
+        .sessions
+        .lock()
+        .await
+        .insert(session_id.clone(), Arc::clone(&previous));
+    let held = previous.host.lock().await;
+
+    let first_agent = Arc::clone(&agent);
+    let first_id = session_id.clone();
+    let first_live = Arc::clone(&first);
+    let first_install = tokio::spawn(async move {
+        first_agent.publish(first_id, first_live).await;
+    });
+
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            {
+                let sessions = agent.sessions.lock().await;
+                if sessions
+                    .get(&session_id)
+                    .is_some_and(|live| Arc::ptr_eq(live, &first))
+                {
+                    return;
+                }
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("first replacement should publish");
+
+    let second_agent = Arc::clone(&agent);
+    let second_id = session_id.clone();
+    let second_live = Arc::clone(&second);
+    let second_install = tokio::spawn(async move {
+        second_agent.publish(second_id, second_live).await;
+    });
+
+    assert!(
+        agent
+            .sessions
+            .lock()
+            .await
+            .get(&session_id)
+            .is_some_and(|live| Arc::ptr_eq(live, &first)),
+        "later replacement must not publish while the earlier install still holds the slot"
+    );
+
+    drop(held);
+    first_install.await.expect("first install");
+    second_install.await.expect("second install");
+    assert!(agent
+        .sessions
+        .lock()
+        .await
+        .get(&session_id)
+        .is_some_and(|live| Arc::ptr_eq(live, &second)));
 }
