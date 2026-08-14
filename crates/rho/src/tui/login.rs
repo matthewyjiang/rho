@@ -531,7 +531,7 @@ impl App {
         self.refresh_model_list_after_login(&target, terminal)
             .await?;
         if self.using_unavailable_provider {
-            if self.activate_provider_after_login(&target, agent)? {
+            if self.activate_provider_after_login(&target, agent).await? {
                 self.set_status(format!(
                     "stored credentials for {} and selected {}",
                     target.provider,
@@ -542,7 +542,10 @@ impl App {
                 ));
             }
         } else if target.provider == self.info.runtime.provider {
-            if self.reload_active_provider_after_login(&target, agent)? {
+            if self
+                .reload_active_provider_after_login(&target, agent)
+                .await?
+            {
                 self.set_status(format!(
                     "stored credentials for {} and refreshed the active provider. Switch models with /model when you want to use another provider.",
                     target.provider
@@ -629,7 +632,7 @@ impl App {
         }
     }
 
-    fn reload_active_provider_after_login(
+    async fn reload_active_provider_after_login(
         &mut self,
         target: &LoginTarget,
         agent: &mut InteractiveRuntime,
@@ -639,12 +642,10 @@ impl App {
         let Some(reasoning) = self.resolve_reasoning_after_login(&provider, &model) else {
             return Ok(false);
         };
-        let new_provider = match self.build_provider_for_selection(
-            &provider,
-            &model,
-            reasoning.effective,
-            &target.auth,
-        ) {
+        let new_provider = match self
+            .build_provider_for_selection(&provider, &model, reasoning.effective, &target.auth)
+            .await
+        {
             Ok(provider) => provider,
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(
@@ -675,7 +676,7 @@ impl App {
         Ok(true)
     }
 
-    fn activate_provider_after_login(
+    async fn activate_provider_after_login(
         &mut self,
         target: &LoginTarget,
         agent: &mut InteractiveRuntime,
@@ -690,12 +691,15 @@ impl App {
         let Some(reasoning) = self.resolve_reasoning_after_login(&target.provider, &model) else {
             return Ok(false);
         };
-        let new_provider = match self.build_provider_for_selection(
-            &target.provider,
-            &model,
-            reasoning.effective,
-            &target.auth,
-        ) {
+        let new_provider = match self
+            .build_provider_for_selection(
+                &target.provider,
+                &model,
+                reasoning.effective,
+                &target.auth,
+            )
+            .await
+        {
             Ok(provider) => provider,
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(

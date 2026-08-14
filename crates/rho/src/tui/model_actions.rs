@@ -340,7 +340,7 @@ impl App {
                     }
                 }
             }
-            PickerAction::SwitchAuthMode => self.switch_active_auth_mode(&value, agent),
+            PickerAction::SwitchAuthMode => self.switch_active_auth_mode(&value, agent).await,
             PickerAction::RefreshModelList => self.refresh_model_lists(&value, terminal).await,
             PickerAction::InsertSkillCommand => {
                 self.input_ui.set_shell_mode(None);
@@ -641,12 +641,10 @@ impl App {
                 return Ok(None);
             }
         };
-        let new_provider = match self.build_provider_for_selection(
-            &provider,
-            &model,
-            reasoning.effective,
-            &auth,
-        ) {
+        let new_provider = match self
+            .build_provider_for_selection(&provider, &model, reasoning.effective, &auth)
+            .await
+        {
             Ok(provider) => provider,
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(

@@ -261,6 +261,7 @@ impl App {
                 self.info.runtime.reasoning,
                 &target.auth,
             )
+            .await
             .map(|provider| provider.identity())
         {
             Ok(identity) => identity,

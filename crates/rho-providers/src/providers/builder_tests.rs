@@ -178,22 +178,33 @@ async fn opencode_go_anthropic_npm_posts_messages_with_x_api_key() {
     let api_base = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
-        let mut request = [0; 8192];
-        let bytes = stream.read(&mut request).await.unwrap();
-        let request = String::from_utf8_lossy(&request[..bytes]);
-        assert!(request.starts_with("POST /messages HTTP/1.1"));
-        assert!(request
+        let raw = read_complete_http_request(&mut stream).await;
+        let header_end = raw
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .expect("http header terminator");
+        let headers = String::from_utf8_lossy(&raw[..header_end]);
+        assert!(headers.starts_with("POST /messages HTTP/1.1"));
+        assert!(headers
             .to_ascii_lowercase()
             .contains("x-api-key: go-secret"));
-        assert!(!request
+        assert!(!headers
             .to_ascii_lowercase()
             .contains("authorization: bearer"));
-        let json = request
-            .rsplit("\r\n\r\n")
-            .next()
-            .expect("messages request body");
-        assert!(
-            json.contains(r#""type":"enabled""#) || json.contains(r#""type": "enabled""#),
+        let content_length = headers.lines().find_map(|line| {
+            line.to_ascii_lowercase()
+                .strip_prefix("content-length:")
+                .map(|value| value.trim().parse::<usize>().unwrap())
+        });
+        let body = match content_length {
+            Some(len) => &raw[header_end + 4..header_end + 4 + len],
+            None => &raw[header_end + 4..],
+        };
+        let json: serde_json::Value = serde_json::from_slice(body).unwrap();
+        assert_eq!(
+            json.pointer("/thinking/type")
+                .and_then(|value| value.as_str()),
+            Some("enabled"),
             "hosted Messages Max must send thinking.type=enabled, got {json}"
         );
         let body = r#"{"content":[{"type":"text","text":"hello"}]}"#;
@@ -241,4 +252,34 @@ async fn opencode_go_anthropic_npm_posts_messages_with_x_api_key() {
         .await
         .unwrap();
     server.await.unwrap();
+}
+
+async fn read_complete_http_request(stream: &mut tokio::net::TcpStream) -> Vec<u8> {
+    use tokio::io::AsyncReadExt;
+
+    let mut buf = vec![0; 16_384];
+    let mut request = Vec::new();
+    loop {
+        let bytes = stream.read(&mut buf).await.unwrap();
+        if bytes == 0 {
+            break;
+        }
+        request.extend_from_slice(&buf[..bytes]);
+        let Some(header_end) = request.windows(4).position(|window| window == b"\r\n\r\n") else {
+            continue;
+        };
+        let headers = String::from_utf8_lossy(&request[..header_end + 4]);
+        let content_length = headers
+            .lines()
+            .find_map(|line| {
+                line.to_ascii_lowercase()
+                    .strip_prefix("content-length:")
+                    .map(|value| value.trim().parse::<usize>().unwrap_or(0))
+            })
+            .unwrap_or(0);
+        if request.len() >= header_end + 4 + content_length {
+            break;
+        }
+    }
+    request
 }

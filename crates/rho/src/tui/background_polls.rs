@@ -67,7 +67,7 @@ impl App {
         }));
     }
 
-    pub(super) fn poll_model_metadata_fetch(&mut self, agent: &mut InteractiveRuntime) {
+    pub(super) async fn poll_model_metadata_fetch(&mut self, agent: &mut InteractiveRuntime) {
         let Some(handle) = self.pending_model_metadata.as_mut() else {
             return;
         };
@@ -94,12 +94,15 @@ impl App {
                         self.info.runtime.provider, self.info.runtime.model
                     )));
                 }
-                let provider_updated = match self.build_provider_for_selection(
-                    &self.info.runtime.provider,
-                    &self.info.runtime.model,
-                    reasoning,
-                    &self.info.runtime.auth,
-                ) {
+                let provider_updated = match self
+                    .build_provider_for_selection(
+                        &self.info.runtime.provider,
+                        &self.info.runtime.model,
+                        reasoning,
+                        &self.info.runtime.auth,
+                    )
+                    .await
+                {
                     Ok(provider) => {
                         match agent.replace_provider(provider, reasoning, &self.info.runtime.auth) {
                             Ok(_) => true,

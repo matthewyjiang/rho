@@ -195,6 +195,24 @@ pub(crate) fn build_provider_from_config(
     rho_providers::providers::build_sdk_provider_with_source(options, &credentials)
 }
 
+/// Live rebuilds await catalog hydrate so npm-following providers pick the
+/// advertised adapter before the first request, not after a background fetch.
+pub(crate) async fn build_provider_from_config_ensuring_catalog(
+    config: &Config,
+    credential_store: Arc<dyn CredentialStore>,
+) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, rho_providers::model::ModelError> {
+    let _scope = config
+        .providers
+        .thread_scope()
+        .map_err(|error| rho_providers::model::ModelError::InvalidResponse(error.to_string()))?;
+    let options = crate::app::sdk_config::provider_options_from_config(config)?;
+    options.ensure_catalog_for_construction().await;
+    let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
+        credential_store,
+    );
+    rho_providers::providers::build_sdk_provider_with_source(options, &credentials)
+}
+
 pub(crate) fn build_provider(
     provider: &str,
     model: &str,
