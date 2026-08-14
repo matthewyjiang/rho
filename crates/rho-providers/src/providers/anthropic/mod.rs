@@ -79,7 +79,6 @@ impl AnthropicProvider {
         let target = self.model_identity();
         let max_tokens = (self.max_tokens)(&self.model);
         let (thinking, output_config) = thinking::thinking_config_for(
-            &self.model,
             &self.thinking_protocol,
             request.reasoning_level,
             max_tokens,

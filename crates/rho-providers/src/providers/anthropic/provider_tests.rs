@@ -173,7 +173,7 @@ fn provider_context_replay_follows_effective_thinking_mode() {
 
 #[test]
 fn reasoning_off_disables_adaptive_thinking_when_supported() {
-    let provider = test_provider_with_capabilities("claude-sonnet-5", &adaptive_capabilities());
+    let provider = test_provider_with_capabilities("claude-opus-5", &adaptive_capabilities());
 
     let body = request_body(&provider, ReasoningLevel::Off).unwrap();
     let value = serde_json::to_value(&body).unwrap();
@@ -181,15 +181,6 @@ fn reasoning_off_disables_adaptive_thinking_when_supported() {
     assert_eq!(body.thinking, Some(AnthropicThinkingConfig::Disabled));
     assert_eq!(body.output_config, None);
     assert_eq!(value["thinking"], json!({"type": "disabled"}));
-}
-
-#[test]
-fn reasoning_off_is_rejected_when_thinking_cannot_be_disabled() {
-    let provider = test_provider_with_capabilities("claude-fable-5", &adaptive_capabilities());
-    assert!(matches!(
-        request_body(&provider, ReasoningLevel::Off),
-        Err(ModelError::UnsupportedReasoning { .. })
-    ));
 }
 
 #[test]

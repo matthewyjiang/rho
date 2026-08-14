@@ -67,31 +67,7 @@ fn cached_capabilities(model: &str) -> Option<Value> {
 
 use provider_models::dated_parent_model;
 
-// The Models API capabilities object has no `disabled` leaf, so which models
-// accept or require `thinking.type.disabled` stays hardcoded by model family.
-fn adaptive_thinking_is_mandatory(model: &str) -> bool {
-    model_in_families(
-        model,
-        &["claude-fable-5", "claude-mythos-5", "claude-mythos-preview"],
-    )
-}
-
-fn supports_disabled_thinking(model: &str) -> bool {
-    model_in_families(model, &["claude-sonnet-5"])
-}
-
-fn model_in_families(model: &str, families: &[&str]) -> bool {
-    let canonical = dated_parent_model(model).unwrap_or(model);
-    families.iter().any(|prefix| {
-        canonical == *prefix
-            || canonical
-                .strip_prefix(prefix)
-                .is_some_and(|suffix| suffix.starts_with('-'))
-    })
-}
-
 pub(super) fn thinking_config_for(
-    model: &str,
     protocol: &AnthropicThinkingProtocol,
     reasoning: ReasoningLevel,
     max_tokens: u32,
@@ -103,18 +79,13 @@ pub(super) fn thinking_config_for(
     ModelError,
 > {
     if reasoning == ReasoningLevel::Off {
-        if adaptive_thinking_is_mandatory(model) {
-            return Err(ModelError::UnsupportedReasoning {
-                provider: "anthropic",
-                model: model.to_string(),
-                requested: reasoning,
-            });
-        }
-        // Only models known to accept thinking.type.disabled get it; sending
-        // the field to a model that rejects it is a 400, while omitting it
-        // merely leaves thinking at the model default.
-        let thinking =
-            supports_disabled_thinking(model).then_some(AnthropicThinkingConfig::Disabled);
+        // Adaptive models accept thinking.type.disabled. Opus 5 rejects that
+        // pairing at xhigh/max; Off never sends output_config, so those
+        // levels cannot ride along. Models that do not advertise adaptive
+        // default thinking off, so the field is omitted.
+        let thinking = protocol
+            .adaptive
+            .then_some(AnthropicThinkingConfig::Disabled);
         return Ok((thinking, None));
     }
     if protocol.adaptive {
