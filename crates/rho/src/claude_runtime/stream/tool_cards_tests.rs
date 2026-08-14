@@ -210,27 +210,38 @@ fn started_bash_card_uses_shell_header() {
     assert_eq!(card.family, ToolFamily::FileCommand);
 }
 
-// Covers: finished bodies keep the char-bounded payload, not a pre-collapse line cap
+// Covers: finished bodies keep more than the collapsed 10-line budget
 // Owner: claude stream tool card mapper
 #[test]
-fn finished_bash_body_keeps_char_bound_not_line_cap() {
-    let content = (0..60)
-        .map(|i| format!("out-{i}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let card = finished_card(
-        Some(&tool("Bash", json!({"command": "seq 60"}))),
-        /*ok*/ true,
-        &content,
-        None,
-        None,
-    );
-    let ToolBody::Lines(lines) = card.body else {
-        panic!("payload should become a line body");
-    };
-    assert_eq!(lines.len(), 60);
-    assert_eq!(lines[0], "out-0");
-    assert_eq!(lines.last().map(String::as_str), Some("out-59"));
+fn finished_bash_body_keeps_depth_past_collapsed_budget() {
+    let cases = [(40, 40, false), (60, 51, true)];
+    for (input_lines, expected_len, truncated) in cases {
+        let content = (0..input_lines)
+            .map(|i| format!("out-{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let card = finished_card(
+            Some(&tool(
+                "Bash",
+                json!({"command": format!("seq {input_lines}")}),
+            )),
+            /*ok*/ true,
+            &content,
+            None,
+            None,
+        );
+        let ToolBody::Lines(lines) = card.body else {
+            panic!("{input_lines}-line payload should become a line body");
+        };
+        assert_eq!(lines.len(), expected_len, "{input_lines} lines");
+        assert_eq!(lines[0], "out-0");
+        if truncated {
+            assert_eq!(lines[49], "out-49");
+            assert_ne!(lines.last().map(String::as_str), Some("out-59"));
+        } else {
+            assert_eq!(lines.last().map(String::as_str), Some("out-39"));
+        }
+    }
 }
 
 // Covers: empty `{}` start input is treated as missing; later snapshots
