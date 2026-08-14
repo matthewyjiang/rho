@@ -149,7 +149,9 @@ where
         approval,
         session_options,
     } = options;
-    let _scope = config.providers.thread_scope()?;
+    // from_config already scopes custom-provider resolution. Do not hold a
+    // thread-local overlay across the catalog await: Tokio may resume on
+    // another worker and Drop would pop the wrong stack.
     let sdk_options = SdkBootstrapOptions::from_config(config, cwd)?;
     let credentials = ApplicationCredentialSource::new(Arc::new(AppCredentialStore));
     // Automation and ACP normally skip the catalog fetch, but catalog-constructed
