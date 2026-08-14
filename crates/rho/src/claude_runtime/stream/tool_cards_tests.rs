@@ -300,6 +300,49 @@ fn oversized_streamed_write_fragments_keep_running_path() {
     );
 }
 
+// Covers: a fragment over the raw assembly cap must not retain unbounded json
+// Owner: claude stream tool card mapper
+#[test]
+fn push_input_json_caps_retained_fragments_and_keeps_path() {
+    let content = "x".repeat(super::MAX_INPUT_JSON_CHARS + 64);
+    let raw = serde_json::to_string(&json!({
+        "file_path": "/tmp/ws/huge.rs",
+        "content": content
+    }))
+    .expect("serialize write input");
+    assert!(raw.len() > super::MAX_INPUT_JSON_CHARS);
+    let cases = [raw.len(), 1024];
+    for chunk_size in cases {
+        let mut started = StartedClaudeTool::from_name_input(Some("Write"), Some(&json!({})));
+        if chunk_size >= raw.len() {
+            started.push_input_json(&raw);
+        } else {
+            for chunk in raw.as_bytes().chunks(chunk_size) {
+                let fragment = std::str::from_utf8(chunk).expect("ascii json chunk");
+                started.push_input_json(fragment);
+            }
+        }
+        assert!(
+            started.input_json.len() <= super::MAX_INPUT_JSON_CHARS,
+            "chunk_size {chunk_size}"
+        );
+        assert_eq!(
+            started
+                .input
+                .as_ref()
+                .and_then(|value| value.get("file_path")),
+            Some(&json!("/tmp/ws/huge.rs")),
+            "chunk_size {chunk_size}"
+        );
+        let card = started_card(&started, Some(Path::new("/tmp/ws")));
+        assert_eq!(
+            card.header,
+            ToolHeader::call("Write", Some("huge.rs".into())),
+            "chunk_size {chunk_size}"
+        );
+    }
+}
+
 // Covers: oversized Write content must not drop file_path from the card
 // Owner: claude stream tool card mapper
 #[test]

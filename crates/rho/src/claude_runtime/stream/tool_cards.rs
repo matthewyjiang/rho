@@ -8,6 +8,8 @@ use std::path::Path;
 
 use serde_json::Value;
 
+use rho_sdk::floor_char_boundary;
+
 use rho_tools::{
     tool::compact_display_path,
     tool_card::{
@@ -132,11 +134,20 @@ impl StartedClaudeTool {
         if fragment.is_empty() {
             return false;
         }
-        if self.input_json.len() >= MAX_INPUT_JSON_CHARS {
+        let room = MAX_INPUT_JSON_CHARS.saturating_sub(self.input_json.len());
+        if room == 0 {
             return false;
         }
-        self.input_json.push_str(fragment);
-        let Ok(value) = serde_json::from_str::<Value>(&self.input_json) else {
+        if fragment.len() <= room {
+            self.input_json.push_str(fragment);
+        } else {
+            let end = floor_char_boundary(fragment, room);
+            if end == 0 {
+                return false;
+            }
+            self.input_json.push_str(&fragment[..end]);
+        }
+        let Some(value) = parse_assembled_input(&self.input_json) else {
             return false;
         };
         let Some(input) = bounded_input(Some(&value)) else {
@@ -658,6 +669,22 @@ fn count_nonempty_lines(content: &str) -> Option<u64> {
         .filter(|line| !line.trim().is_empty())
         .count() as u64;
     (count > 0).then_some(count)
+}
+
+/// Parse assembled `input_json_delta` text. Truncated objects keep leading
+/// keys when a small closer produces valid JSON.
+fn parse_assembled_input(raw: &str) -> Option<Value> {
+    if let Ok(value) = serde_json::from_str(raw) {
+        return Some(value);
+    }
+    for suffix in ["}", "\"}"] {
+        if let Ok(value) = serde_json::from_str::<Value>(&format!("{raw}{suffix}")) {
+            if value.is_object() {
+                return Some(value);
+            }
+        }
+    }
+    None
 }
 
 /// Fields at or under this encoded size are presentation metadata and are
