@@ -5,7 +5,7 @@ use url::Url;
 
 use crate::{
     auth::{github_copilot_token::GitHubCopilotAuthManager, xai_token::XaiAuthManager},
-    credentials::{CredentialStore, MemoryCredentialStore},
+    credentials::{CredentialResult, CredentialStore},
     model::{models_dev::CatalogSdkAdapter, ModelError},
     openai_compatible_dialect::OpenAiCompatibleDialect,
     provider::{self, CatalogConstruction, OpenAiRuntimeAuth, ProviderAuthKind, ProviderRuntime},
@@ -340,6 +340,24 @@ struct OpenAiCompatibleBuild {
     hosted_web_search: bool,
 }
 
+/// Empty store for construction paths that require a `CredentialStore` but
+/// never read or write secrets. `MemoryCredentialStore` is debug/test-only.
+struct InertCredentialStore;
+
+impl CredentialStore for InertCredentialStore {
+    fn get_secret(&self, _account: &str) -> CredentialResult<Option<String>> {
+        Ok(None)
+    }
+
+    fn set_secret(&self, _account: &str, _secret: &str) -> CredentialResult<()> {
+        Ok(())
+    }
+
+    fn delete_secret(&self, _account: &str) -> CredentialResult<bool> {
+        Ok(false)
+    }
+}
+
 fn build_openai_compatible_provider(
     catalog_construction: CatalogConstruction,
     provider_name: &'static str,
@@ -366,7 +384,7 @@ fn build_openai_compatible_provider(
             Ok(Arc::new(OpenAiProvider::new_with_identity(
                 model,
                 Auth::ApiKey(key),
-                Arc::new(MemoryCredentialStore::default()),
+                Arc::new(InertCredentialStore),
                 build.client,
                 Some(build.api_base),
                 build.hosted_web_search,
