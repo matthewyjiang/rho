@@ -106,3 +106,129 @@ fn custom_host_build_survives_dropped_thread_scope() {
     .build()
     .expect("interned custom host must still build after the constructing scope drops");
 }
+
+// Covers: PreferModelsDevNpm must construct the adapter named by catalog npm
+// Owner: provider builder
+#[test]
+fn opencode_go_catalog_npm_selects_adapter_identity() {
+    use crate::model::models_dev::{
+        with_models_dev_cache_dir_for_tests, write_cached_model_metadata_for_tests, ModelMetadata,
+    };
+    use rho_sdk::model::ModelIdentity;
+
+    let cases = [
+        (
+            "kimi-k2.7-code",
+            Some("@ai-sdk/openai-compatible"),
+            "openai-chat-completions",
+        ),
+        ("grok-4.5", Some("@ai-sdk/openai"), "openai-responses"),
+        (
+            "minimax-m3",
+            Some("@ai-sdk/anthropic"),
+            "anthropic-messages",
+        ),
+        ("unknown-go-model", None, "openai-chat-completions"),
+    ];
+
+    for (model, sdk_package, api) in cases {
+        let cache = tempfile::tempdir().unwrap();
+        with_models_dev_cache_dir_for_tests(cache.path().to_path_buf(), || {
+            if let Some(sdk_package) = sdk_package {
+                write_cached_model_metadata_for_tests(
+                    "opencode-go",
+                    model,
+                    &ModelMetadata {
+                        sdk_package: Some(sdk_package.into()),
+                        reasoning_metadata_complete: true,
+                        ..ModelMetadata::default()
+                    },
+                );
+            }
+            let provider = ProviderBuilder::new(
+                ProviderBuildOptions::new("opencode-go", model, ReasoningLevel::Off).unwrap(),
+                ProviderCredential::OpenAiCompatible(CompatibleAuth::ApiKey("go-secret".into())),
+            )
+            .build()
+            .unwrap();
+            assert_eq!(
+                provider.identity(),
+                ModelIdentity::new("opencode-go", api, model)
+            );
+        });
+    }
+}
+
+// Covers: catalog anthropic npm must send x-api-key to /messages, not Bearer chat
+// Owner: provider builder
+#[tokio::test]
+async fn opencode_go_anthropic_npm_posts_messages_with_x_api_key() {
+    use crate::model::models_dev::{
+        with_models_dev_cache_dir_for_tests, write_cached_model_metadata_for_tests, ModelMetadata,
+    };
+    use rho_sdk::model::{Message, ModelRequest};
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api_base = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = [0; 8192];
+        let bytes = stream.read(&mut request).await.unwrap();
+        let request = String::from_utf8_lossy(&request[..bytes]);
+        assert!(request.starts_with("POST /messages HTTP/1.1"));
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("x-api-key: go-secret"));
+        assert!(!request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer"));
+        let body = r#"{"content":[{"type":"text","text":"hello"}]}"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(response.as_bytes()).await.unwrap();
+    });
+
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir_for_tests(cache.path().to_path_buf(), || {
+        write_cached_model_metadata_for_tests(
+            "opencode-go",
+            "minimax-m3",
+            &ModelMetadata {
+                sdk_package: Some("@ai-sdk/anthropic".into()),
+                reasoning_metadata_complete: true,
+                ..ModelMetadata::default()
+            },
+        );
+    });
+
+    let provider = with_models_dev_cache_dir_for_tests(cache.path().to_path_buf(), || {
+        ProviderBuilder::new(
+            ProviderBuildOptions::new("opencode-go", "minimax-m3", ReasoningLevel::Off)
+                .unwrap()
+                .endpoint(Url::parse(&api_base).unwrap())
+                .unwrap(),
+            ProviderCredential::OpenAiCompatible(CompatibleAuth::ApiKey("go-secret".into())),
+        )
+        .build()
+        .unwrap()
+    });
+
+    let messages = [Message::user_text("hello")];
+    provider
+        .send_turn(ModelRequest {
+            messages: &messages,
+            tools: &[],
+            cancellation: Default::default(),
+            reasoning_level: ReasoningLevel::Off,
+            prompt_cache_key: None,
+        })
+        .await
+        .unwrap();
+    server.await.unwrap();
+}

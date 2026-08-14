@@ -24,6 +24,7 @@ pub struct AnthropicProvider {
     client: reqwest::Client,
     api_key: String,
     api_base: String,
+    identity_provider: String,
     model: String,
     max_tokens: fn(&str) -> u32,
     thinking: thinking::ThinkingSource,
@@ -39,6 +40,7 @@ impl AnthropicProvider {
             client: provider_client(),
             api_key,
             api_base: ANTHROPIC_API_BASE.into(),
+            identity_provider: "anthropic".into(),
             model,
             max_tokens,
             thinking,
@@ -58,11 +60,23 @@ impl AnthropicProvider {
         client: reqwest::Client,
         api_base: String,
     ) -> Self {
+        Self::new_with_identity(model, api_key, max_tokens, client, api_base, "anthropic")
+    }
+
+    pub(crate) fn new_with_identity(
+        model: String,
+        api_key: String,
+        max_tokens: fn(&str) -> u32,
+        client: reqwest::Client,
+        api_base: String,
+        identity_provider: impl Into<String>,
+    ) -> Self {
         let thinking = thinking::ThinkingSource::resolve(&model);
         Self {
             client,
             api_key,
             api_base,
+            identity_provider: identity_provider.into(),
             model,
             max_tokens,
             thinking,
@@ -112,7 +126,7 @@ impl AnthropicProvider {
     }
 
     pub(crate) fn model_identity(&self) -> ModelIdentity {
-        ModelIdentity::new("anthropic", "anthropic-messages", &self.model)
+        ModelIdentity::new(&self.identity_provider, "anthropic-messages", &self.model)
     }
 
     /// Completes one turn using inherent async methods so the future is `Send`.

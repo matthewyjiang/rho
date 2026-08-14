@@ -67,23 +67,33 @@ impl ResponsesWireContract {
 pub(super) struct ResponsesProfile {
     model: String,
     identity: ModelIdentity,
+    identity_provider: &'static str,
     contract: ResponsesWireContract,
 }
 
 impl ResponsesProfile {
     pub(super) fn from_auth(auth: &Auth, model: impl Into<String>) -> Self {
+        Self::from_auth_with_provider(auth, model, None)
+    }
+
+    pub(super) fn from_auth_with_provider(
+        auth: &Auth,
+        model: impl Into<String>,
+        identity_provider: Option<&'static str>,
+    ) -> Self {
         let model = model.into();
         let contract = ResponsesWireContract::for_auth(auth);
-        let provider = contract.provider();
+        let identity_provider = identity_provider.unwrap_or(contract.provider());
         Self {
-            identity: ModelIdentity::new(provider, "openai-responses", &model),
+            identity: ModelIdentity::new(identity_provider, "openai-responses", &model),
+            identity_provider,
             model,
             contract,
         }
     }
 
     pub(super) fn provider(&self) -> &'static str {
-        self.contract.provider()
+        self.identity_provider
     }
 
     pub(super) fn model(&self) -> &str {

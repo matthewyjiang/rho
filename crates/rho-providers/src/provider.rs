@@ -19,6 +19,7 @@ pub const OPENROUTER_OAUTH_KEY_ACCOUNT: &str = "provider:openrouter:oauth-key";
 pub const KIMI_TOKENS_ACCOUNT: &str = "provider:kimi-code:tokens";
 pub const QWEN_TOKEN_PLAN_API_KEY_ACCOUNT: &str = "provider:qwen-token-plan:api-key";
 pub const META_API_KEY_ACCOUNT: &str = "provider:meta:api-key";
+pub const OPENCODE_GO_API_KEY_ACCOUNT: &str = "provider:opencode-go:api-key";
 
 pub const OLLAMA_API_BASE: &str = "http://127.0.0.1:11434/v1";
 pub const OLLAMA_CLOUD_API_BASE: &str = "https://ollama.com/v1";
@@ -31,6 +32,8 @@ pub const QWEN_TOKEN_PLAN_API_BASE: &str =
     "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1";
 /// Meta Model API OpenAI-compatible base (Chat Completions and `/models`).
 pub const META_API_BASE: &str = "https://api.meta.ai/v1";
+/// OpenCode Go bootstrap base (Chat Completions, Responses, Messages, `/models`).
+pub const OPENCODE_GO_API_BASE: &str = "https://opencode.ai/zen/go/v1";
 /// Placeholder only. Config-defined hosts must take their API base from application config.
 pub const OPENAI_COMPATIBLE_API_BASE: &str = "http://127.0.0.1:0/v1";
 
@@ -135,6 +138,7 @@ pub enum ProviderId {
     KimiCode,
     QwenTokenPlan,
     Meta,
+    OpenCodeGo,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -176,6 +180,18 @@ pub enum CatalogReasoningPolicy {
     OffOrMax,
     /// The provider serializes `Off` as a provider-owned `none` control.
     OffAsNone,
+}
+
+/// How an OpenAI-compatible table row chooses its HTTP adapter.
+///
+/// [`Self::Runtime`] uses [`ProviderRuntime`] only. [`Self::PreferModelsDevNpm`]
+/// may construct Responses or Anthropic adapters when models.dev names a
+/// different AI SDK package for the selected model.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CatalogConstruction {
+    #[default]
+    Runtime,
+    PreferModelsDevNpm,
 }
 
 /// What to serialize when a Standard-dialect model is missing catalog metadata.
@@ -442,6 +458,14 @@ impl ProviderDescriptor {
     /// Config-defined Chat Completions hosts are named providers, not a single built-in.
     pub fn is_custom_openai_compatible(self) -> bool {
         PROVIDERS.iter().all(|builtin| builtin.name != self.name)
+    }
+
+    /// Whether construction may follow models.dev `npm` instead of `runtime`.
+    pub fn catalog_construction(self) -> CatalogConstruction {
+        match self.id {
+            ProviderId::OpenCodeGo => CatalogConstruction::PreferModelsDevNpm,
+            _ => CatalogConstruction::Runtime,
+        }
     }
 
     /// Wire policy for Standard-dialect hosts when models.dev has no row.

@@ -127,7 +127,7 @@ fn catalog_model_ids_for_provider(
 
 fn write_complete_upstream_row(api: &Value, provider: &str, model: &str) -> bool {
     let Some(metadata) = upstream_metadata_from_api(api, provider, model)
-        .filter(|metadata| metadata.reasoning_metadata_complete)
+        .filter(|metadata| metadata.reasoning_metadata_complete || metadata.sdk_package.is_some())
     else {
         return false;
     };

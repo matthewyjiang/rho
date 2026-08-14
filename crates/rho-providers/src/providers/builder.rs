@@ -5,9 +5,13 @@ use url::Url;
 
 use crate::{
     auth::{github_copilot_token::GitHubCopilotAuthManager, xai_token::XaiAuthManager},
-    credentials::CredentialStore,
-    model::ModelError,
-    provider::{self, OpenAiRuntimeAuth, ProviderAuthKind, ProviderRuntime},
+    credentials::{CredentialStore, MemoryCredentialStore},
+    model::{models_dev::CatalogSdkAdapter, ModelError},
+    openai_compatible_dialect::OpenAiCompatibleDialect,
+    provider::{
+        self, CatalogConstruction, OpenAiRuntimeAuth, ProviderAuthKind, ProviderDescriptor,
+        ProviderRuntime,
+    },
     providers::{
         anthropic::AnthropicProvider,
         github_copilot::GitHubCopilotProvider,
@@ -207,6 +211,7 @@ impl ProviderBuilder {
                     client,
                     endpoint,
                     self.options.hosted_web_search,
+                    /*identity_provider*/ None,
                 )))
             }
             (ProviderRuntime::Anthropic, ProviderCredential::AnthropicApiKey(api_key)) => {
@@ -252,14 +257,16 @@ impl ProviderBuilder {
                 } else {
                     endpoint.unwrap_or_else(|| default_api_base.into())
                 };
-                Ok(Arc::new(OpenAiCompatibleProvider::new(
-                    client,
+                build_openai_compatible_provider(
+                    descriptor,
                     provider_name,
                     model,
                     dialect,
                     auth,
                     api_base,
-                )))
+                    client,
+                    self.options.hosted_web_search,
+                )
             }
             (ProviderRuntime::Xai, ProviderCredential::Xai(auth)) => {
                 Ok(Arc::new(XaiProvider::new_with_transport(
@@ -313,11 +320,77 @@ fn provider_http_client(timeout: Option<Duration>) -> Result<reqwest::Client, Mo
     builder.build().map_err(ModelError::Request)
 }
 
+fn build_openai_compatible_provider(
+    descriptor: &ProviderDescriptor,
+    provider_name: &'static str,
+    model: String,
+    dialect: OpenAiCompatibleDialect,
+    auth: CompatibleAuth,
+    api_base: String,
+    client: reqwest::Client,
+    hosted_web_search: bool,
+) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, ModelError> {
+    let adapter = match descriptor.catalog_construction() {
+        CatalogConstruction::Runtime => CatalogSdkAdapter::OpenAiCompatible,
+        CatalogConstruction::PreferModelsDevNpm => CatalogSdkAdapter::from_sdk_package(
+            crate::model::models_dev::current_model_metadata(provider_name, &model)
+                .as_ref()
+                .and_then(|metadata| metadata.sdk_package.as_deref()),
+        ),
+    };
+    match (adapter, auth) {
+        (CatalogSdkAdapter::OpenAiResponses, CompatibleAuth::ApiKey(key)) => {
+            Ok(Arc::new(OpenAiProvider::new_with_transport(
+                model,
+                Auth::ApiKey(key),
+                Arc::new(MemoryCredentialStore::default()),
+                client,
+                Some(api_base),
+                hosted_web_search,
+                Some(provider_name),
+            )))
+        }
+        (CatalogSdkAdapter::AnthropicMessages, CompatibleAuth::ApiKey(key)) => {
+            Ok(Arc::new(AnthropicProvider::new_with_identity(
+                model,
+                key,
+                catalog_max_tokens_for(provider_name),
+                client,
+                api_base,
+                provider_name,
+            )))
+        }
+        (_, auth) => Ok(Arc::new(OpenAiCompatibleProvider::new(
+            client,
+            provider_name,
+            model,
+            dialect,
+            auth,
+            api_base,
+        ))),
+    }
+}
+
+fn catalog_max_tokens_for(provider: &'static str) -> fn(&str) -> u32 {
+    match provider {
+        "opencode-go" => opencode_go_max_tokens,
+        _ => anthropic_max_tokens,
+    }
+}
+
+fn opencode_go_max_tokens(model: &str) -> u32 {
+    resolve_catalog_max_tokens("opencode-go", model)
+}
+
 fn anthropic_max_tokens(model: &str) -> u32 {
-    crate::model::provider_models::cached_provider_model("anthropic", model)
+    resolve_catalog_max_tokens("anthropic", model)
+}
+
+fn resolve_catalog_max_tokens(provider: &str, model: &str) -> u32 {
+    crate::model::provider_models::cached_provider_model(provider, model)
         .and_then(|metadata| metadata.max_output_tokens)
         .or_else(|| {
-            crate::model::models_dev::cached_model_metadata("anthropic", model)
+            crate::model::models_dev::cached_model_metadata(provider, model)
                 .and_then(|metadata| metadata.max_output_tokens)
         })
         .and_then(|tokens| u32::try_from(tokens).ok())

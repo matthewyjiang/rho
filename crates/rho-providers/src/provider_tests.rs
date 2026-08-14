@@ -149,6 +149,40 @@ fn meta_is_openai_compatible_with_api_key_auth() {
     );
 }
 
+// Covers: opencode-go must resolve as OpenAI-compatible with catalog npm construction
+// Owner: provider registry
+#[test]
+fn opencode_go_is_openai_compatible_with_catalog_npm_construction() {
+    use super::{
+        CatalogConstruction, CatalogReasoningPolicy, ProviderId, ProviderRuntime,
+        OPENCODE_GO_API_BASE,
+    };
+    use crate::model::registry::provider_runtime;
+    use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
+
+    let descriptor = super::provider_descriptor_by_id(ProviderId::OpenCodeGo);
+    assert_eq!(descriptor.name, "opencode-go");
+    assert_eq!(descriptor.display_name, "OpenCode Go");
+    assert_eq!(descriptor.metadata_upstream, "opencode-go");
+    assert_eq!(descriptor.default_model, None);
+    assert_eq!(
+        descriptor.catalog_reasoning,
+        CatalogReasoningPolicy::ExactAdvertised
+    );
+    assert_eq!(
+        descriptor.catalog_construction(),
+        CatalogConstruction::PreferModelsDevNpm
+    );
+    assert!(descriptor.auth_mode("opencode-go-api-key").is_some());
+    assert_eq!(
+        provider_runtime("opencode-go"),
+        Some(ProviderRuntime::OpenAiCompatible {
+            dialect: OpenAiCompatibleDialect::Standard,
+            default_api_base: OPENCODE_GO_API_BASE,
+        })
+    );
+}
+
 // Covers: openai api-key and codex share a runtime family for auth resolution
 // Owner: provider registry
 #[test]

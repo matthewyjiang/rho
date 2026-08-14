@@ -33,10 +33,11 @@ Rho's implemented providers are:
 | `kimi-code` | `kimi-oauth` | [Moonshot and Kimi Code](/providers/moonshot-kimi) |
 | `qwen-token-plan` | `qwen-token-plan-api-key` | [Qwen Token Plan](/providers/qwen-token-plan) |
 | `meta` | `meta-api-key` | [Meta Model API](/providers/meta) |
+| `opencode-go` | `opencode-go-api-key` | [OpenCode Go](/providers/opencode-go) |
 
 User-defined Chat Completions hosts use `[providers.custom.<name>]` and `auth = "none"`. They do not appear in `/login`. See [Custom OpenAI-compatible hosts](/providers/openai-compatible).
 
-OpenAI, Anthropic, Google Gemini, GitHub Copilot, Ollama, Ollama Cloud, Poolside, OpenRouter, Moonshot, Kimi Code, Qwen Token Plan, Meta Model API, and user-defined OpenAI-compatible hosts expose refreshable API model lists. Local Ollama and custom hosts need no login; the other providers refresh after authentication. OpenAI Codex OAuth and xAI OAuth use static allowlists, so their available models are maintained by Rho rather than fetched through **Refresh model lists** in `/config`.
+OpenAI, Anthropic, Google Gemini, GitHub Copilot, Ollama, Ollama Cloud, Poolside, OpenRouter, Moonshot, Kimi Code, Qwen Token Plan, Meta Model API, OpenCode Go, and user-defined OpenAI-compatible hosts expose refreshable API model lists. Local Ollama and custom hosts need no login; the other providers refresh after authentication. OpenAI Codex OAuth and xAI OAuth use static allowlists, so their available models are maintained by Rho rather than fetched through **Refresh model lists** in `/config`.
 
 Each provider page documents whether authentication is required, how to select models, and any provider-specific setup.
 
@@ -124,7 +125,7 @@ Use `/model provider/model` to switch explicitly, including to another provider:
 
 A bare model id works when it uniquely matches the catalog for the active selection rules. Uncataloged bare model ids stay on the current provider as an escape hatch for newly released models.
 
-OpenAI, Anthropic, Google Gemini, GitHub Copilot, Ollama, Ollama Cloud, Poolside, OpenRouter, Moonshot, Kimi Code, Qwen Token Plan, Meta Model API, and user-defined OpenAI-compatible hosts can refresh their provider model lists through **Refresh model lists** in `/config`. Local Ollama and custom hosts read their models without authentication. Codex OAuth and xAI OAuth use static allowlists instead. API-backed model lists can change as providers add or remove models; refresh them before selecting a newly released or newly installed model.
+OpenAI, Anthropic, Google Gemini, GitHub Copilot, Ollama, Ollama Cloud, Poolside, OpenRouter, Moonshot, Kimi Code, Qwen Token Plan, Meta Model API, OpenCode Go, and user-defined OpenAI-compatible hosts can refresh their provider model lists through **Refresh model lists** in `/config`. Local Ollama and custom hosts read their models without authentication. Codex OAuth and xAI OAuth use static allowlists instead. API-backed model lists can change as providers add or remove models; refresh them before selecting a newly released or newly installed model.
 
 ## Where credentials live
 

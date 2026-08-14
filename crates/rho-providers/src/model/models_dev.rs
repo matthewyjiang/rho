@@ -10,7 +10,11 @@ use crate::{
 
 #[path = "models_dev_hydrate.rs"]
 mod hydrate;
+#[path = "models_dev_sdk.rs"]
+mod sdk;
 pub use hydrate::{ensure_models_dev_catalog, prefetch_model_metadata};
+use sdk::resolved_sdk_package;
+pub use sdk::CatalogSdkAdapter;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ModelMetadata {
@@ -39,6 +43,9 @@ pub struct ModelMetadata {
     /// unknown capabilities.
     #[serde(default)]
     pub reasoning_metadata_complete: bool,
+    /// Resolved models.dev AI SDK package (`npm` or `provider.npm`).
+    #[serde(default)]
+    pub sdk_package: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -276,6 +283,7 @@ fn metadata_has_values(metadata: &ModelMetadata) -> bool {
         || metadata.reasoning_capabilities_known
         || metadata.reasoning_metadata_complete
         || metadata.reasoning_off_behavior != ReasoningOffBehavior::Omit
+        || metadata.sdk_package.is_some()
 }
 
 pub(crate) async fn fetch_deprecated_provider_models(provider: &str) -> Option<HashSet<String>> {
@@ -618,6 +626,7 @@ fn model_metadata_from_api_with_policy(
         },
         reasoning_capabilities_known: reasoning_capabilities_known(model, reasoning_policy),
         reasoning_metadata_complete: reasoning_metadata_complete(model, reasoning_policy),
+        sdk_package: resolved_sdk_package(api.get(provider), model),
     })
 }
 

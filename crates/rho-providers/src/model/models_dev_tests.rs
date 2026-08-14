@@ -59,6 +59,69 @@ fn models_dev_parses_the_catalog_name_and_rejects_blank_ones() {
     );
 }
 
+// Covers: models.dev npm inherits from the provider document unless a model overrides it
+// Owner: models.dev catalog policy
+#[test]
+fn models_dev_resolves_sdk_package_from_provider_and_model_npm() {
+    use super::CatalogSdkAdapter;
+
+    let api = json!({
+        "opencode-go": {
+            "npm": "@ai-sdk/openai-compatible",
+            "models": {
+                "kimi-k2.7-code": {
+                    "name": "Kimi K2.7 Code",
+                    "reasoning": true,
+                    "reasoning_options": []
+                },
+                "grok-4.5": {
+                    "name": "Grok 4.5",
+                    "reasoning": true,
+                    "reasoning_options": [{"type": "effort", "values": ["low", "high"]}],
+                    "provider": { "npm": "@ai-sdk/openai" }
+                },
+                "minimax-m3": {
+                    "name": "MiniMax-M3",
+                    "reasoning": true,
+                    "reasoning_options": [{"type": "toggle"}],
+                    "npm": "@ai-sdk/anthropic"
+                }
+            }
+        }
+    });
+
+    let inherited = model_metadata_from_api(&api, "opencode-go", "kimi-k2.7-code").unwrap();
+    let responses = model_metadata_from_api(&api, "opencode-go", "grok-4.5").unwrap();
+    let messages = model_metadata_from_api(&api, "opencode-go", "minimax-m3").unwrap();
+
+    assert_eq!(
+        inherited.sdk_package.as_deref(),
+        Some("@ai-sdk/openai-compatible")
+    );
+    assert_eq!(responses.sdk_package.as_deref(), Some("@ai-sdk/openai"));
+    assert_eq!(messages.sdk_package.as_deref(), Some("@ai-sdk/anthropic"));
+    assert_eq!(
+        inherited.cost_default, None,
+        "cost still comes from catalog fields, not npm"
+    );
+    assert_eq!(
+        [
+            CatalogSdkAdapter::from_sdk_package(inherited.sdk_package.as_deref()),
+            CatalogSdkAdapter::from_sdk_package(responses.sdk_package.as_deref()),
+            CatalogSdkAdapter::from_sdk_package(messages.sdk_package.as_deref()),
+            CatalogSdkAdapter::from_sdk_package(None),
+            CatalogSdkAdapter::from_sdk_package(Some("@ai-sdk/unknown")),
+        ],
+        [
+            CatalogSdkAdapter::OpenAiCompatible,
+            CatalogSdkAdapter::OpenAiResponses,
+            CatalogSdkAdapter::AnthropicMessages,
+            CatalogSdkAdapter::OpenAiCompatible,
+            CatalogSdkAdapter::OpenAiCompatible,
+        ]
+    );
+}
+
 #[test]
 fn provider_facing_cache_keys_are_order_independent() {
     let api = json!({
@@ -640,6 +703,7 @@ fn models_dev_parses_long_context_cost_tiers() {
             reasoning_off_behavior: ReasoningOffBehavior::Omit,
             reasoning_capabilities_known: true,
             reasoning_metadata_complete: true,
+            sdk_package: None,
         }
     );
     assert_eq!(
@@ -1046,5 +1110,40 @@ fn hydrate_writes_complete_rows_for_every_registered_provider() {
                 .as_deref(),
             Some("Kimi K3")
         );
+    });
+}
+
+// Covers: OpenCode Go toggle-only rows still hydrate when they name an SDK package
+// Owner: models.dev catalog policy
+#[test]
+fn hydrate_writes_opencode_go_rows_that_only_advertise_sdk_package() {
+    let api = json!({
+        "opencode-go": {
+            "npm": "@ai-sdk/openai-compatible",
+            "models": {
+                "minimax-m3": {
+                    "name": "MiniMax-M3",
+                    "reasoning": true,
+                    "reasoning_options": [{"type": "toggle"}],
+                    "provider": { "npm": "@ai-sdk/anthropic" },
+                    "limit": { "context": 1_000_000, "output": 131_072 },
+                    "cost": { "input": 0.3, "output": 1.2 }
+                }
+            }
+        }
+    });
+
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        assert!(hydrate::hydrate_catalog_from_api(&api) >= 1);
+        let metadata = cached_model_metadata("opencode-go", "minimax-m3").expect("hydrated");
+        assert_eq!(metadata.sdk_package.as_deref(), Some("@ai-sdk/anthropic"));
+        assert_eq!(
+            metadata
+                .cost_default
+                .and_then(|cost| cost.input_micros_per_m),
+            Some(300_000)
+        );
+        assert!(!metadata.reasoning_metadata_complete);
     });
 }
