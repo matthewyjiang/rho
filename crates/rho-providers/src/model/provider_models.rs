@@ -25,11 +25,11 @@ use crate::paths;
 
 #[path = "provider_models/anthropic.rs"]
 mod anthropic;
+#[cfg(test)]
+pub(crate) use anthropic::thinking_mode_from_value as anthropic_thinking_mode_from_value;
 pub(crate) use anthropic::{
     cached_thinking_mode as cached_anthropic_thinking_mode, AnthropicThinkingMode, OffThinking,
 };
-#[cfg(test)]
-pub(crate) use anthropic::thinking_mode_from_value as anthropic_thinking_mode_from_value;
 #[path = "provider_models/google.rs"]
 mod google;
 pub(crate) use google::{thinking_policy, ThinkingPolicy};

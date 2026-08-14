@@ -188,7 +188,10 @@ impl EffortMask {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AnthropicThinkingMode {
     /// Adaptive thinking with an effort vocabulary.
-    Adaptive { off: OffThinking, efforts: EffortMask },
+    Adaptive {
+        off: OffThinking,
+        efforts: EffortMask,
+    },
     /// Legacy budget-token thinking.
     BudgetTokens { off: OffThinking },
     /// Capabilities were fetched but advertise no controllable thinking surface.
@@ -215,9 +218,9 @@ impl AnthropicThinkingMode {
 
     pub(crate) fn off(self) -> OffThinking {
         match self {
-            Self::Adaptive { off, .. }
-            | Self::BudgetTokens { off }
-            | Self::NoControl { off } => off,
+            Self::Adaptive { off, .. } | Self::BudgetTokens { off } | Self::NoControl { off } => {
+                off
+            }
         }
     }
 

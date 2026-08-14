@@ -14,12 +14,12 @@ use super::{load_api_key_auth, provider_models_client, ProviderModel};
 #[path = "anthropic_policy.rs"]
 mod policy;
 
+#[cfg(test)]
+pub(crate) use policy::thinking_mode_from_value;
 pub(crate) use policy::{
     cached_thinking_mode, capabilities_json_is_known, dated_parent_model, AnthropicThinkingMode,
     OffThinking,
 };
-#[cfg(test)]
-pub(crate) use policy::thinking_mode_from_value;
 
 /// Upper bound on `/v1/models` pages so a misbehaving cursor cannot hang the
 /// startup refresh.

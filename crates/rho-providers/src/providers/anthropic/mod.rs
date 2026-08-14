@@ -76,11 +76,8 @@ impl AnthropicProvider {
     ) -> Result<AnthropicRequest, ModelError> {
         let target = self.model_identity();
         let max_tokens = (self.max_tokens)(&self.model);
-        let (thinking, output_config) = thinking::thinking_config_for(
-            &self.thinking,
-            request.reasoning_level,
-            max_tokens,
-        )?;
+        let (thinking, output_config) =
+            thinking::thinking_config_for(&self.thinking, request.reasoning_level, max_tokens)?;
         let (system, mut messages) = split_system_and_messages(
             request.messages.to_vec(),
             &target,
