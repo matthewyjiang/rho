@@ -370,7 +370,9 @@ async fn live_tool_roundtrip_stream_writes_session_and_tool_events() {
     assert!(
         events.iter().any(|event| matches!(
             event,
-            AttachmentEvent::ToolFinished { card, .. } if card.status == rho_tools::tool_card::ToolStatus::Ok
+            AttachmentEvent::ToolFinished { card, .. }
+                if card.status == rho_tools::tool_card::ToolStatus::Ok
+                    && card.header_text().contains("Read")
         )),
         "tool finished: {events:?}"
     );

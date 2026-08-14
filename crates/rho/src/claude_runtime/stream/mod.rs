@@ -27,9 +27,11 @@ mod events;
 mod format;
 mod presentation;
 mod protocol;
+mod tool_cards;
 mod types;
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
 
 use serde_json::Value;
 
@@ -37,7 +39,9 @@ use rho_sdk::model::ModelUsage;
 
 use crate::{run_artifacts::AttachmentEvent, subagent::RunState};
 
-use blocks::{emit_complete_block, emit_open_snapshot_block, note_tool_started};
+use blocks::{
+    emit_complete_block, emit_open_snapshot_block, note_tool_started, refresh_started_tool,
+};
 use events::{decode_stream_event, ContentBlockStart, ContentDelta, StreamEventPayload};
 use format::{
     bound_result_text, context_usage_from_result, format_permission_denial, raw_usage_to_model,
@@ -48,12 +52,14 @@ use presentation::{
     clear_all_open_indexless, content_block_kind, fidelity_notice, map_error_message,
     map_rate_limit, map_system, mark_and_text, mark_slot_emitted, push_block_slot,
     reasoning_effects, reconcile_complete_block, resolve_partial_slot, stable_message_id,
-    text_effects, tool_finished_effects, tool_started_effects, ContentBlockKind,
+    text_effects, tool_finished_effects, tool_started_effects, tool_updated_effects,
+    ContentBlockKind,
 };
 use protocol::{
     decode_line, AssistantMessage, ClaudeStreamMessage, ResultMessage, StreamEventMessage,
-    UserMessage,
+    SystemMessage, UserMessage,
 };
+use tool_cards::StartedClaudeTool;
 pub(crate) use types::{
     classify_terminal_result, describe_rate_limit, notable_rate_limit_status, RateLimitInfo,
     StatusPatch, StreamEffect, TerminalClassification, TerminalResult,
@@ -81,7 +87,9 @@ pub(crate) struct StreamMapper {
     /// Message currently receiving partial deltas, when known.
     open_message: Option<MessageKey>,
     /// Tool use ids that have started and not yet finished.
-    active_tools: HashSet<String>,
+    active_tools: HashMap<String, StartedClaudeTool>,
+    /// Workspace cwd from the Claude init frame, used to compact card paths.
+    cwd: Option<PathBuf>,
     /// Monotonic counter for anonymous partial streams without a message id.
     anon_counter: u64,
 }
@@ -167,7 +175,7 @@ impl StreamMapper {
             ClaudeStreamMessage::Assistant(message) => self.map_assistant(message),
             ClaudeStreamMessage::User(message) => self.map_user_tool_result(message),
             ClaudeStreamMessage::Result(message) => self.map_result(message),
-            ClaudeStreamMessage::System(message) => map_system(message),
+            ClaudeStreamMessage::System(message) => self.map_system_message(message),
             ClaudeStreamMessage::RateLimit(message) => map_rate_limit(message),
             ClaudeStreamMessage::StreamEvent(message) => self.map_stream_event(message),
             ClaudeStreamMessage::Error(message) => map_error_message(message),
@@ -243,6 +251,7 @@ impl StreamMapper {
                         block,
                         &mut self.active_tools,
                         MAX_ACTIVE_TOOLS,
+                        self.cwd.as_deref(),
                     ));
                 }
             } else {
@@ -250,6 +259,15 @@ impl StreamMapper {
                     let kind =
                         content_block_kind(block.get("type").and_then(Value::as_str).unwrap_or(""));
                     if reconcile_complete_block(&mut state, kind, index) {
+                        if kind == ContentBlockKind::Tool {
+                            let tool_id = block.get("id").and_then(Value::as_str).unwrap_or("");
+                            effects.extend(refresh_started_tool(
+                                &mut self.active_tools,
+                                tool_id,
+                                block,
+                                self.cwd.as_deref(),
+                            ));
+                        }
                         continue;
                     }
                     effects.extend(emit_complete_block(
@@ -258,6 +276,7 @@ impl StreamMapper {
                         index,
                         &mut self.active_tools,
                         MAX_ACTIVE_TOOLS,
+                        self.cwd.as_deref(),
                     ));
                 }
             }
@@ -290,6 +309,20 @@ impl StreamMapper {
         self.messages.insert(key, state);
     }
 
+    fn map_system_message(&mut self, message: SystemMessage) -> Vec<StreamEffect> {
+        if message.subtype.as_deref() == Some("init") {
+            if let Some(cwd) = message
+                .cwd
+                .as_deref()
+                .map(str::trim)
+                .filter(|cwd| !cwd.is_empty())
+            {
+                self.cwd = Some(PathBuf::from(cwd));
+            }
+        }
+        map_system(message)
+    }
+
     fn map_user_tool_result(&mut self, message: UserMessage) -> Vec<StreamEffect> {
         let Some(body) = message.message.as_ref() else {
             return self.map_toplevel_tool_result(message);
@@ -298,11 +331,18 @@ impl StreamMapper {
         let Some(blocks) = content else {
             return self.map_toplevel_tool_result(message);
         };
+        let tool_blocks = blocks
+            .iter()
+            .filter(|block| block.get("type").and_then(Value::as_str) == Some("tool_result"))
+            .collect::<Vec<_>>();
+        if tool_blocks.is_empty() {
+            return self.map_toplevel_tool_result(message);
+        }
+        let enrichment = (tool_blocks.len() == 1)
+            .then_some(message.tool_use_result.as_ref())
+            .flatten();
         let mut effects = Vec::new();
-        for block in blocks {
-            if block.get("type").and_then(Value::as_str) != Some("tool_result") {
-                continue;
-            }
+        for block in tool_blocks {
             let ok = !block
                 .get("is_error")
                 .and_then(Value::as_bool)
@@ -311,12 +351,16 @@ impl StreamMapper {
                 .get("tool_use_id")
                 .and_then(Value::as_str)
                 .unwrap_or("tool");
-            self.active_tools.remove(tool_use_id);
+            let started = self.active_tools.remove(tool_use_id);
             let content_text = stringify_content(block.get("content"));
-            effects.extend(tool_finished_effects(tool_use_id, ok, &content_text));
-        }
-        if effects.is_empty() {
-            return self.map_toplevel_tool_result(message);
+            effects.extend(tool_finished_effects(
+                tool_use_id,
+                started.as_ref(),
+                ok,
+                &content_text,
+                enrichment,
+                self.cwd.as_deref(),
+            ));
         }
         effects
     }
@@ -325,9 +369,16 @@ impl StreamMapper {
         let Some(tool_use_id) = message.tool_use_id.as_deref() else {
             return Vec::new();
         };
-        self.active_tools.remove(tool_use_id);
+        let started = self.active_tools.remove(tool_use_id);
         let content_text = stringify_content(message.content.as_ref());
-        tool_finished_effects(tool_use_id, /*ok*/ true, &content_text)
+        tool_finished_effects(
+            tool_use_id,
+            started.as_ref(),
+            /*ok*/ true,
+            &content_text,
+            message.tool_use_result.as_ref(),
+            self.cwd.as_deref(),
+        )
     }
 
     fn map_result(&mut self, message: ResultMessage) -> Vec<StreamEffect> {
@@ -514,20 +565,42 @@ impl StreamMapper {
         }
 
         match block {
-            ContentBlockStart::ToolUse { ref id, .. } => {
+            ContentBlockStart::ToolUse {
+                ref id,
+                ref name,
+                ref input,
+            } => {
                 let tool_id = id.clone().unwrap_or_default();
-                let already_started = !tool_id.is_empty() && self.active_tools.contains(&tool_id);
+                let already_started =
+                    !tool_id.is_empty() && self.active_tools.contains_key(&tool_id);
                 match self.claim_partial_slot(&message_key, index, kind, "partial tool start") {
                     // Already started: the slot claim above keeps ordering, but
                     // the tool must not be announced twice.
-                    Ok(()) if already_started => effects,
+                    Ok(()) if already_started => {
+                        if let Some(tool) = self.active_tools.get_mut(&tool_id) {
+                            if tool.apply_input(input.as_ref()) {
+                                let tool = tool.clone();
+                                effects.extend(tool_updated_effects(
+                                    &tool_id,
+                                    &tool,
+                                    self.cwd.as_deref(),
+                                ));
+                            }
+                        }
+                        effects
+                    }
                     Ok(()) => {
-                        if let Some(notice) =
-                            note_tool_started(&mut self.active_tools, MAX_ACTIVE_TOOLS, &tool_id)
-                        {
+                        let tool =
+                            StartedClaudeTool::from_name_input(name.as_deref(), input.as_ref());
+                        if let Some(notice) = note_tool_started(
+                            &mut self.active_tools,
+                            MAX_ACTIVE_TOOLS,
+                            &tool_id,
+                            tool.clone(),
+                        ) {
                             effects.extend(notice);
                         }
-                        effects.extend(tool_started_effects(&block.tool_block_value()));
+                        effects.extend(tool_started_effects(&tool_id, &tool, self.cwd.as_deref()));
                         effects
                     }
                     // A restarted tool never needed presentation, so a cap here
@@ -561,7 +634,7 @@ impl StreamMapper {
                 ));
                 effects
             }
-            ContentBlockStart::Other { .. } => effects,
+            ContentBlockStart::Other => effects,
         }
     }
 

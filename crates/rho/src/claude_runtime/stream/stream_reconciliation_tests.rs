@@ -1,20 +1,12 @@
 use pretty_assertions::assert_eq;
 
 use crate::{run_artifacts::AttachmentEvent, subagent::RunState};
-use rho_tools::tool_card::{ToolCard, ToolHeader};
 
 use super::stream_test_support::*;
 use super::*;
 
-fn tool_card_has_id(card: &ToolCard, tool_id: &str) -> bool {
-    // Claude tool presentation puts the tool use id in the Call primary.
-    matches!(
-        &card.header,
-        ToolHeader::Call {
-            primary: Some(primary),
-            ..
-        } if primary == tool_id
-    )
+fn tool_event_has_id(key: &Option<String>, tool_id: &str) -> bool {
+    key.as_deref() == Some(tool_id)
 }
 
 #[test]
@@ -87,8 +79,8 @@ fn partial_tool_only_plus_complete_only_text_and_reasoning() {
     assert_eq!(joined_text(&effects), "text complete-only");
     assert_eq!(
         count_attachments(&effects, |event| {
-            matches!(event, AttachmentEvent::ToolStarted { card, .. }
-                if tool_card_has_id(card, "toolu_partial_1"))
+            matches!(event, AttachmentEvent::ToolStarted { key, .. }
+                if tool_event_has_id(key, "toolu_partial_1"))
         }),
         1
     );
@@ -159,8 +151,8 @@ fn indexless_partials_do_not_duplicate_on_complete_envelope() {
     assert_eq!(joined_text(&effects), "Hello indexless.");
     assert_eq!(
         count_attachments(&effects, |event| {
-            matches!(event, AttachmentEvent::ToolStarted { card, .. }
-                if tool_card_has_id(card, "toolu_indexless_1"))
+            matches!(event, AttachmentEvent::ToolStarted { key, .. }
+                if tool_event_has_id(key, "toolu_indexless_1"))
         }),
         1
     );
@@ -311,15 +303,28 @@ fn ordered_indexless_slots_preserve_complete_only_then_streamed_tool() {
     let started: Vec<_> = effects
         .iter()
         .filter_map(|effect| match effect {
-            StreamEffect::Attachment(AttachmentEvent::ToolStarted { card, .. }) => {
-                Some(card.header_text())
+            StreamEffect::Attachment(AttachmentEvent::ToolStarted { key, card, .. }) => {
+                Some((key.clone(), card.header_text()))
             }
             _ => None,
         })
         .collect();
     assert_eq!(started.len(), 2, "both tools once: {started:?}");
-    assert!(started[0].contains("toolu_a") && started[0].contains("Read"));
-    assert!(started[1].contains("toolu_b") && started[1].contains("Bash"));
+    assert_eq!(started[0].0.as_deref(), Some("toolu_a"));
+    assert!(started[0].1.contains("Read"));
+    assert_eq!(started[1].0.as_deref(), Some("toolu_b"));
+    assert!(
+        started[1].1.contains('$'),
+        "empty Bash start uses the shell dialect: {}",
+        started[1].1
+    );
+    assert_eq!(
+        count_attachments(&effects, |event| {
+            matches!(event, AttachmentEvent::ToolUpdated { .. })
+        }),
+        2,
+        "complete envelope enriches started cards once each"
+    );
     // Complete envelope must not re-emit either tool.
     assert_eq!(
         count_attachments(&effects, |event| {
@@ -385,8 +390,7 @@ fn maps_live_tool_roundtrip_capture() {
     assert_eq!(
         count_attachments(&effects, |event| {
             matches!(event, AttachmentEvent::ToolStarted { card, .. }
-                if card.header_text().contains("Read")
-                    && card.header_text().contains("toolu_0liveToolRoundtrip"))
+                if card.header_text().contains("Read"))
         }),
         1,
         "tool start"
@@ -395,7 +399,28 @@ fn maps_live_tool_roundtrip_capture() {
         count_attachments(&effects, |event| {
             matches!(
                 event,
-                AttachmentEvent::ToolFinished { card, .. } if card.status == rho_tools::tool_card::ToolStatus::Ok
+                AttachmentEvent::ToolUpdated { card, .. }
+                    if card.header_text().contains("Read")
+                        && card.header_text().contains("note.txt")
+            )
+        }),
+        1,
+        "tool update with path"
+    );
+    assert_eq!(
+        count_attachments(&effects, |event| {
+            matches!(
+                event,
+                AttachmentEvent::ToolFinished { card, .. }
+                    if card.status == rho_tools::tool_card::ToolStatus::Ok
+                        && card.header_text().contains("Read")
+                        && card.header_text().contains("note.txt")
+                        && card.facts.iter().any(|fact| {
+                            matches!(
+                                fact,
+                                rho_tools::tool_card::ToolFact::Count { value: 2, .. }
+                            )
+                        })
             )
         }),
         1,

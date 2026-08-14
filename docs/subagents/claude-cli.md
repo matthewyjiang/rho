@@ -102,6 +102,8 @@ flowchart TD
    rho attach <run-id>
    ```
 
+   Attach paints Claude tools with the same card grammar as native Rho tools, using Claude names (`Read`, `Bash`, `Glob`) plus paths, counts, and diffs when the stream provides them.
+
    Cancel through the `agents` tool or parent shutdown. When the run finishes, attach and the completion entry may show `claude_session_id`. Reopen the Claude-side transcript with:
 
    ```bash

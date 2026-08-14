@@ -151,13 +151,21 @@ fn maps_tool_call_and_result_display() {
     });
     let started = started.expect("tool started");
     assert!(started[0].contains("Read"));
-    let finished = effects.iter().any(|effect| {
-        matches!(
-            effect,
-            StreamEffect::Attachment(AttachmentEvent::ToolFinished { card, .. }) if card.status == rho_tools::tool_card::ToolStatus::Ok
-        )
+    assert!(started[0].contains("README.md"));
+    let finished = effects.iter().find_map(|effect| match effect {
+        StreamEffect::Attachment(AttachmentEvent::ToolFinished { card, .. }) => Some(card),
+        _ => None,
     });
-    assert!(finished);
+    let finished = finished.expect("tool finished");
+    assert_eq!(finished.status, rho_tools::tool_card::ToolStatus::Ok);
+    assert_eq!(
+        finished.header,
+        rho_tools::tool_card::ToolHeader::call("Read", Some("README.md".into()))
+    );
+    assert_eq!(
+        finished.family,
+        rho_tools::tool_card::ToolFamily::FileCommand
+    );
     assert!(effects.iter().any(|effect| {
         matches!(
             effect,
