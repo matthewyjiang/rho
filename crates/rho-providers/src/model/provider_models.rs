@@ -23,6 +23,11 @@ use crate::{
 #[cfg(not(test))]
 use crate::paths;
 
+#[path = "provider_models/anthropic.rs"]
+mod anthropic;
+pub(crate) use anthropic::{
+    cached_capabilities as cached_anthropic_capabilities, AnthropicModelCapabilities,
+};
 #[path = "provider_models/google.rs"]
 mod google;
 pub(crate) use google::{thinking_policy, ThinkingPolicy};
@@ -31,6 +36,11 @@ mod kimi_capabilities;
 #[path = "provider_models/openai_compatible.rs"]
 mod openai_compatible;
 pub use openai_compatible::probe_provider_models;
+
+pub(super) struct ProviderModelRecord {
+    pub model: ProviderModel,
+    pub raw_json: Value,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProviderModel {
@@ -76,6 +86,46 @@ pub fn cached_provider_model(provider: &str, model: &str) -> Option<ProviderMode
         .find(|entry| entry.model == model)
 }
 
+pub(crate) fn cached_provider_model_raw_json(provider: &str, model: &str) -> Option<Value> {
+    let model = provider::provider_descriptor(provider)
+        .map(|descriptor| descriptor.canonicalize_model_id(model))
+        .unwrap_or_else(|| model.to_string());
+    let connection = open_provider_models_cache().ok()?;
+    let raw: Option<String> = connection
+        .query_row(
+            "select raw_json from provider_models where provider = ?1 and model = ?2",
+            params![provider, model],
+            |row| row.get(0),
+        )
+        .ok()?;
+    raw.and_then(|value| serde_json::from_str(&value).ok())
+}
+
+/// Replaces the provider's cached rows with one model carrying `raw_json`,
+/// through the same write path production refreshes use.
+#[cfg(test)]
+pub(crate) fn write_cached_provider_model_raw_json_for_tests(
+    provider: &str,
+    model: &str,
+    display_name: &str,
+    raw_json: &Value,
+) -> Result<(), ModelError> {
+    replace_cached_provider_model_records(
+        provider,
+        &[ProviderModelRecord {
+            model: ProviderModel {
+                provider: provider.to_string(),
+                model: model.to_string(),
+                display_name: display_name.to_string(),
+                context_window: None,
+                max_output_tokens: None,
+                reasoning_capabilities: ReasoningCapabilities::Unknown,
+            },
+            raw_json: raw_json.clone(),
+        }],
+    )
+}
+
 pub fn cached_provider_models(provider: &str) -> Vec<ProviderModel> {
     let Ok(connection) = open_provider_models_cache() else {
         return Vec::new();
@@ -115,34 +165,69 @@ const PROVIDER_MODEL_CACHE_VERSION: i64 = 2;
 const PROVIDER_MODEL_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 
 pub fn provider_model_capabilities_need_refresh(provider: &str, model: &str) -> bool {
-    if provider != "kimi-code" {
-        return false;
+    let capabilities_are_known = match provider {
+        "kimi-code" => kimi_capabilities_are_known as fn(&CachedCapabilityRow) -> bool,
+        "anthropic" => anthropic_capabilities_are_known,
+        _ => return false,
+    };
+    let Some(row) = cached_capability_row(provider, model).or_else(|| {
+        fallback_capability_model(provider, model)
+            .and_then(|parent| cached_capability_row(provider, parent))
+    }) else {
+        return true;
+    };
+    row.cache_version < PROVIDER_MODEL_CACHE_VERSION
+        || !capabilities_are_known(&row)
+        || !row
+            .updated_at
+            .is_some_and(provider_snapshot_timestamp_is_fresh)
+}
+
+fn fallback_capability_model<'a>(provider: &str, model: &'a str) -> Option<&'a str> {
+    match provider {
+        "anthropic" => anthropic::dated_parent_model(model),
+        _ => None,
     }
-    let Ok(connection) = open_provider_models_cache() else {
-        return true;
-    };
-    let Ok((cache_version, serialized_capabilities, updated_at)) = connection.query_row(
-        "select models.cache_version, models.reasoning_capabilities_json, refresh.updated_at
-         from provider_models models
-         left join provider_model_refresh refresh on refresh.provider = models.provider
-         where models.provider = ?1 and models.model = ?2",
-        params![provider, model],
-        |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, Option<String>>(1)?,
-                row.get::<_, Option<i64>>(2)?,
-            ))
-        },
-    ) else {
-        return true;
-    };
-    let capabilities = serialized_capabilities
-        .and_then(|value| serde_json::from_str::<ReasoningCapabilities>(&value).ok())
-        .unwrap_or_default();
-    cache_version < PROVIDER_MODEL_CACHE_VERSION
-        || !capabilities.is_known()
-        || !updated_at.is_some_and(provider_snapshot_timestamp_is_fresh)
+}
+
+struct CachedCapabilityRow {
+    cache_version: i64,
+    reasoning_capabilities_json: Option<String>,
+    raw_json: Option<String>,
+    updated_at: Option<i64>,
+}
+
+fn cached_capability_row(provider: &str, model: &str) -> Option<CachedCapabilityRow> {
+    let connection = open_provider_models_cache().ok()?;
+    connection
+        .query_row(
+            "select models.cache_version, models.reasoning_capabilities_json, models.raw_json, refresh.updated_at
+             from provider_models models
+             left join provider_model_refresh refresh on refresh.provider = models.provider
+             where models.provider = ?1 and models.model = ?2",
+            params![provider, model],
+            |row| {
+                Ok(CachedCapabilityRow {
+                    cache_version: row.get(0)?,
+                    reasoning_capabilities_json: row.get(1)?,
+                    raw_json: row.get(2)?,
+                    updated_at: row.get(3)?,
+                })
+            },
+        )
+        .ok()
+}
+
+fn kimi_capabilities_are_known(row: &CachedCapabilityRow) -> bool {
+    row.reasoning_capabilities_json
+        .as_deref()
+        .and_then(|value| serde_json::from_str::<ReasoningCapabilities>(value).ok())
+        .unwrap_or_default()
+        .is_known()
+}
+
+fn anthropic_capabilities_are_known(row: &CachedCapabilityRow) -> bool {
+    anthropic::capabilities_json_is_known(row.raw_json.as_deref())
 }
 
 fn provider_snapshot_timestamp_is_fresh(updated_at: i64) -> bool {
@@ -170,16 +255,16 @@ pub async fn refresh_provider_models_with_store(
     let descriptor = profile.provider;
     let provider = descriptor.name;
     let auth_mode = profile.auth;
-    let models = match descriptor.model_refresh {
-        Some(ProviderModelRefreshKind::OpenAi) => fetch_openai_models(provider, store).await?,
-        Some(ProviderModelRefreshKind::Anthropic) => {
-            fetch_anthropic_models(provider, store).await?
+    let records = match descriptor.model_refresh {
+        Some(ProviderModelRefreshKind::OpenAi) => {
+            records_from_models(fetch_openai_models(provider, store).await?)
         }
+        Some(ProviderModelRefreshKind::Anthropic) => anthropic::fetch(provider, store).await?,
         Some(ProviderModelRefreshKind::Google) => {
-            google::fetch(provider, load_api_key_auth(provider, store)?).await?
+            records_from_models(google::fetch(provider, load_api_key_auth(provider, store)?).await?)
         }
         Some(ProviderModelRefreshKind::GithubCopilot) => {
-            fetch_github_copilot_models(provider, store).await?
+            records_from_models(fetch_github_copilot_models(provider, store).await?)
         }
         Some(ProviderModelRefreshKind::OpenAiCompatible) => {
             let ProviderModelEndpoint::OpenAiCompatible(api_base) = endpoint else {
@@ -188,20 +273,39 @@ pub async fn refresh_provider_models_with_store(
                     descriptor.name
                 )));
             };
-            openai_compatible::fetch(descriptor, auth_mode, api_base, store).await?
+            records_from_models(
+                openai_compatible::fetch(descriptor, auth_mode, api_base, store).await?,
+            )
         }
         None => return Err(ModelError::UnsupportedProvider(provider.to_string())),
     };
-    replace_cached_provider_models(provider, &models)?;
+    replace_cached_provider_model_records(provider, &records)?;
     Ok(ProviderModelRefresh {
         provider: provider.to_string(),
-        models,
+        models: records.into_iter().map(|record| record.model).collect(),
     })
+}
+
+fn records_from_models(models: Vec<ProviderModel>) -> Vec<ProviderModelRecord> {
+    models
+        .into_iter()
+        .map(|model| ProviderModelRecord {
+            model,
+            raw_json: Value::Null,
+        })
+        .collect()
 }
 
 fn replace_cached_provider_models(
     provider: &str,
     models: &[ProviderModel],
+) -> Result<(), ModelError> {
+    replace_cached_provider_model_records(provider, &records_from_models(models.to_vec()))
+}
+
+fn replace_cached_provider_model_records(
+    provider: &str,
+    records: &[ProviderModelRecord],
 ) -> Result<(), ModelError> {
     let mut connection = open_provider_models_cache().map_err(model_cache_error)?;
     let tx = connection.transaction().map_err(model_cache_error)?;
@@ -210,9 +314,9 @@ fn replace_cached_provider_models(
         params![provider],
     )
     .map_err(model_cache_error)?;
-    for model in models {
-        let reasoning_capabilities =
-            serde_json::to_string(&model.reasoning_capabilities).map_err(|error| {
+    for record in records {
+        let reasoning_capabilities = serde_json::to_string(&record.model.reasoning_capabilities)
+            .map_err(|error| {
                 ModelError::InvalidResponse(format!(
                     "failed to serialize provider reasoning capabilities: {error}"
                 ))
@@ -222,13 +326,13 @@ fn replace_cached_provider_models(
              values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, strftime('%s', 'now'))",
             params![
                 provider,
-                model.model,
-                model.display_name,
-                model.context_window,
-                model.max_output_tokens,
+                record.model.model,
+                record.model.display_name,
+                record.model.context_window,
+                record.model.max_output_tokens,
                 reasoning_capabilities,
                 PROVIDER_MODEL_CACHE_VERSION,
-                Value::Null.to_string()
+                record.raw_json.to_string()
             ],
         )
         .map_err(model_cache_error)?;
@@ -271,58 +375,6 @@ async fn fetch_openai_models(
             reasoning_capabilities: ReasoningCapabilities::Unknown,
         })
         .collect::<Vec<_>>();
-    models.sort_by(|left, right| left.model.cmp(&right.model));
-    models.dedup_by(|left, right| left.model == right.model);
-    Ok(models)
-}
-
-async fn fetch_anthropic_models(
-    provider: &str,
-    store: &dyn CredentialStore,
-) -> Result<Vec<ProviderModel>, ModelError> {
-    let key = load_api_key_auth(provider, store)?;
-    let client = provider_models_client()?;
-    let mut models = Vec::new();
-    let mut after_id = None::<String>;
-    loop {
-        let mut url = Url::parse("https://api.anthropic.com/v1/models").map_err(|err| {
-            ModelError::InvalidResponse(format!("invalid Anthropic models URL: {err}"))
-        })?;
-        if let Some(after_id) = &after_id {
-            url.query_pairs_mut().append_pair("after_id", after_id);
-        }
-        let response: AnthropicModelsResponse = client
-            .get(url)
-            .header("x-api-key", &key)
-            .header("anthropic-version", "2023-06-01")
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-        let last_id = response.last_id.clone();
-        models.extend(
-            response
-                .data
-                .into_iter()
-                .filter(|model| model.id.starts_with("claude-"))
-                .map(|model| ProviderModel {
-                    provider: provider.to_string(),
-                    display_name: model.display_name.unwrap_or_else(|| model.id.clone()),
-                    model: model.id,
-                    context_window: None,
-                    max_output_tokens: model.max_tokens,
-                    reasoning_capabilities: ReasoningCapabilities::Unknown,
-                }),
-        );
-        if !response.has_more {
-            break;
-        }
-        let Some(next_after_id) = last_id else {
-            break;
-        };
-        after_id = Some(next_after_id);
-    }
     models.sort_by(|left, right| left.model.cmp(&right.model));
     models.dedup_by(|left, right| left.model == right.model);
     Ok(models)
@@ -467,21 +519,6 @@ struct OpenAiModel {
     context_length: Option<u64>,
     #[serde(flatten)]
     kimi_reasoning: kimi_capabilities::KimiReasoningMetadata,
-}
-
-#[derive(Deserialize)]
-struct AnthropicModelsResponse {
-    data: Vec<AnthropicModel>,
-    #[serde(default)]
-    has_more: bool,
-    last_id: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct AnthropicModel {
-    id: String,
-    display_name: Option<String>,
-    max_tokens: Option<u64>,
 }
 
 fn open_provider_models_cache() -> rusqlite::Result<Connection> {

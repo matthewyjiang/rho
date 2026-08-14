@@ -1,0 +1,146 @@
+use serde_json::json;
+
+use crate::model::ModelError;
+
+use super::{
+    add_page, capabilities_json, finalize_models, model_list_truncated, records_from_page,
+    AnthropicModelsResponse, ModelListContinuation,
+};
+
+fn list_page(id: &str, has_more: bool, last_id: Option<&str>) -> AnthropicModelsResponse {
+    serde_json::from_value(json!({
+        "data": [{ "id": id }],
+        "has_more": has_more,
+        "last_id": last_id,
+    }))
+    .unwrap()
+}
+
+fn collect_pages(
+    pages: Vec<AnthropicModelsResponse>,
+    max_pages: usize,
+) -> Result<Vec<super::super::ProviderModelRecord>, ModelError> {
+    let mut models = Vec::new();
+    let mut after_id = None::<String>;
+    for (index, page) in pages.into_iter().enumerate() {
+        if index >= max_pages {
+            return Err(model_list_truncated(max_pages));
+        }
+        match add_page(&mut models, "anthropic", page, after_id.as_deref()) {
+            ModelListContinuation::Done => return Ok(finalize_models(models)),
+            ModelListContinuation::Next {
+                after_id: next_after_id,
+            } => after_id = Some(next_after_id),
+        }
+    }
+    Err(model_list_truncated(max_pages))
+}
+
+// Covers: list rows must keep a capabilities object for the request builder
+// and must not invent one when the API omitted it
+// Owner: anthropic model discovery
+#[test]
+fn list_payload_keeps_or_omits_capabilities_for_the_request_builder() {
+    let response: AnthropicModelsResponse = serde_json::from_value(json!({
+        "data": [
+            {
+                "id": "claude-opus-5",
+                "display_name": "Claude Opus 5",
+                "max_input_tokens": 1_000_000,
+                "max_tokens": 128_000,
+                "capabilities": {
+                    "thinking": {
+                        "supported": true,
+                        "types": {
+                            "adaptive": {"supported": true},
+                            "enabled": {"supported": false}
+                        }
+                    },
+                    "effort": {
+                        "supported": true,
+                        "max": {"supported": true}
+                    }
+                }
+            },
+            {
+                "id": "claude-missing-caps",
+                "display_name": "Missing"
+            },
+            {
+                "id": "not-claude",
+                "display_name": "ignored",
+                "capabilities": {"thinking": {"supported": true}}
+            }
+        ],
+        "has_more": false
+    }))
+    .unwrap();
+
+    let records = records_from_page("anthropic", response);
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0].model.model, "claude-opus-5");
+    assert_eq!(records[0].model.context_window, Some(1_000_000));
+    assert_eq!(
+        records[0].raw_json["thinking"]["types"]["adaptive"]["supported"],
+        true
+    );
+    assert_eq!(records[1].model.model, "claude-missing-caps");
+    assert!(records[1].raw_json.is_null());
+}
+
+#[test]
+fn missing_or_non_object_capabilities_are_unknown() {
+    assert!(capabilities_json(None).is_null());
+    assert!(capabilities_json(Some(json!(null))).is_null());
+    assert!(capabilities_json(Some(json!("adaptive"))).is_null());
+    assert!(capabilities_json(Some(json!({}))).is_object());
+}
+
+// Covers: exhausting the model-list page bound must not succeed with a partial snapshot
+// Owner: anthropic model discovery
+#[test]
+fn model_page_limit_exhaustion_is_not_success() {
+    let cases = [
+        (
+            "has_more on the last allowed page",
+            vec![
+                list_page("claude-1", true, Some("claude-1")),
+                list_page("claude-2", true, Some("claude-2")),
+            ],
+            false,
+        ),
+        (
+            "final page reports no more",
+            vec![
+                list_page("claude-1", true, Some("claude-1")),
+                list_page("claude-2", false, Some("claude-2")),
+            ],
+            true,
+        ),
+        (
+            "missing cursor stops without error",
+            vec![list_page("claude-1", true, None)],
+            true,
+        ),
+        (
+            "repeated cursor stops without error",
+            vec![
+                list_page("claude-1", true, Some("claude-1")),
+                list_page("claude-1", true, Some("claude-1")),
+            ],
+            true,
+        ),
+    ];
+
+    for (name, pages, expect_success) in cases {
+        let result = collect_pages(pages, /*max_pages*/ 2);
+        if expect_success {
+            result.unwrap_or_else(|error| panic!("{name}: unexpected error: {error}"));
+        } else {
+            assert!(
+                matches!(result, Err(ModelError::InvalidResponse(_))),
+                "{name}: bound exhaustion must not succeed"
+            );
+        }
+    }
+}

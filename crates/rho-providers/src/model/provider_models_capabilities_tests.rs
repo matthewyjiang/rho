@@ -73,3 +73,72 @@ fn provider_snapshot_expiration_applies_to_every_model_in_the_snapshot() {
     });
     let _ = fs::remove_dir_all(cache_dir);
 }
+
+#[test]
+fn anthropic_rows_without_capabilities_need_refresh() {
+    let cache_dir = unique_test_cache_dir("anthropic-missing-capabilities");
+    with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
+        replace_cached_provider_models(
+            "anthropic",
+            &[ProviderModel {
+                provider: "anthropic".into(),
+                model: "claude-opus-5".into(),
+                display_name: "Claude Opus 5".into(),
+                context_window: None,
+                max_output_tokens: None,
+                reasoning_capabilities: ReasoningCapabilities::Unknown,
+            }],
+        )
+        .unwrap();
+
+        assert!(provider_model_capabilities_need_refresh(
+            "anthropic",
+            "claude-opus-5"
+        ));
+
+        write_cached_provider_model_raw_json_for_tests(
+            "anthropic",
+            "claude-opus-5",
+            "Claude Opus 5",
+            &serde_json::json!({
+                "thinking": {"supported": true, "types": {"adaptive": {"supported": true}}}
+            }),
+        )
+        .unwrap();
+
+        assert!(!provider_model_capabilities_need_refresh(
+            "anthropic",
+            "claude-opus-5"
+        ));
+    });
+    let _ = fs::remove_dir_all(cache_dir);
+}
+
+// Covers: dated snapshot ids resolve capabilities through the parent alias, so
+// a fresh parent row must not trigger a refresh on every launch
+// Owner: anthropic thinking protocol
+#[test]
+fn anthropic_dated_snapshots_reuse_the_parent_alias_freshness() {
+    let cache_dir = unique_test_cache_dir("anthropic-dated-snapshot-freshness");
+    with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
+        write_cached_provider_model_raw_json_for_tests(
+            "anthropic",
+            "claude-opus-5",
+            "Claude Opus 5",
+            &serde_json::json!({
+                "thinking": {"supported": true, "types": {"adaptive": {"supported": true}}}
+            }),
+        )
+        .unwrap();
+
+        assert!(!provider_model_capabilities_need_refresh(
+            "anthropic",
+            "claude-opus-5-20260724"
+        ));
+        assert!(provider_model_capabilities_need_refresh(
+            "anthropic",
+            "claude-unknown"
+        ));
+    });
+    let _ = fs::remove_dir_all(cache_dir);
+}
