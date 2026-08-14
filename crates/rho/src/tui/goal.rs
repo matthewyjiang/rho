@@ -211,7 +211,7 @@ pub(super) async fn evaluate(
         model,
         auth,
         usage_recording,
-    )?
+    )
     .await?;
     let text = result.texts.join("\n");
     parse_evaluation(&text).context("goal evaluator returned an invalid response")

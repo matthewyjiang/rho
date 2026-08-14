@@ -212,7 +212,7 @@ pub(crate) async fn build_provider_from_config_ensuring_catalog(
     rho_providers::providers::build_sdk_provider_with_source(options, &credentials)
 }
 
-pub(crate) fn build_provider(
+pub(crate) async fn build_provider(
     provider: &str,
     model: &str,
     reasoning: rho_providers::reasoning::ReasoningLevel,
@@ -225,7 +225,7 @@ pub(crate) fn build_provider(
         auth: auth.into(),
         ..Config::default()
     };
-    build_provider_from_config(&config, Arc::new(AppCredentialStore))
+    build_provider_from_config_ensuring_catalog(&config, Arc::new(AppCredentialStore)).await
 }
 
 fn env_backend_override() -> Option<String> {

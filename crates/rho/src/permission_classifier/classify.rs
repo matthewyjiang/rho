@@ -60,6 +60,7 @@ async fn try_classify_capability_request(
         reasoning,
         &selection.auth,
     )
+    .await
     .map_err(|_| {
         anyhow!(
             "failed to build {PERMISSION_CLASSIFIER_AGENT_ID} provider; check configured credentials"

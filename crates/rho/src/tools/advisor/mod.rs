@@ -310,6 +310,7 @@ async fn consult_advisor(
                 reasoning,
                 &selection.auth,
             )
+            .await
             .map_err(|error| {
                 execution_error(format!(
                     "advisor model {reference} could not start: {error}. Choose another advisor model with /advisor."

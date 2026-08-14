@@ -90,7 +90,7 @@ pub(super) async fn generate_session_title(
         &model,
         &auth,
         usage_recording,
-    )?;
+    );
     tokio::pin!(request);
     let (result, timed_out) = tokio::select! {
         result = &mut request => (result, false),
