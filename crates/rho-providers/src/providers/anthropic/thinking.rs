@@ -20,6 +20,9 @@ enum OffThinking {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct AnthropicThinkingProtocol {
     model: String,
+    /// False when no cached Models API row exists. That is not the same as a
+    /// fetched object that advertises no thinking types.
+    resolved: bool,
     adaptive: bool,
     enabled: bool,
     off: OffThinking,
@@ -48,6 +51,7 @@ impl AnthropicThinkingProtocol {
     fn from_parsed(model: &str, capabilities: &AnthropicModelCapabilities) -> Self {
         Self {
             model: model.to_string(),
+            resolved: true,
             adaptive: capabilities.adaptive(),
             enabled: capabilities.enabled(),
             off: off_thinking(model, capabilities.disabled()),
@@ -119,6 +123,15 @@ pub(super) fn thinking_config_for(
     ),
     ModelError,
 > {
+    if !protocol.resolved {
+        if reasoning == ReasoningLevel::Off {
+            return Ok((None, None));
+        }
+        return Err(ModelError::InvalidResponse(format!(
+            "Anthropic model '{}' has no cached thinking capabilities; cannot apply reasoning level {reasoning}",
+            protocol.model
+        )));
+    }
     if reasoning == ReasoningLevel::Off {
         // Off never sends output_config, so xhigh/max cannot ride along.
         return match protocol.off {
@@ -143,8 +156,8 @@ pub(super) fn thinking_config_for(
         ));
     }
     if !protocol.enabled {
-        // Unknown models omit thinking. Sending `enabled` 400s on current
-        // Claude 5 / 4.7+ models; omitting leaves thinking at the model default.
+        // A fetched row with no thinking types leaves the model default.
+        // Sending `enabled` 400s on current Claude 5 / 4.7+ models.
         return Ok((None, None));
     }
 

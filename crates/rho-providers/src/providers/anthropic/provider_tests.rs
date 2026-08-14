@@ -75,7 +75,7 @@ fn request_body(
 
 #[test]
 fn request_body_serializes_messages_tools_and_stream_flag() {
-    let provider = test_provider("claude-sonnet-4-5");
+    let provider = test_provider_with_capabilities("claude-sonnet-4-5", &json!({}));
     let body = provider
         .request_body(
             ModelRequest {
@@ -186,7 +186,7 @@ fn reasoning_off_disables_adaptive_thinking_when_supported() {
 }
 
 #[test]
-fn unknown_model_omits_thinking_instead_of_sending_enabled() {
+fn unknown_model_rejects_requested_reasoning_instead_of_omitting_thinking() {
     // An empty cache dir keeps the "no cached capabilities" precondition owned
     // by the test instead of by whatever else touched the shared test cache.
     let cache = tempfile::tempdir().unwrap();
@@ -195,12 +195,13 @@ fn unknown_model_omits_thinking_instead_of_sending_enabled() {
         || {
             let provider = test_provider("claude-opus-5");
 
-            let body = request_body(&provider, ReasoningLevel::Medium).unwrap();
-            let value = serde_json::to_value(&body).unwrap();
-
+            assert!(matches!(
+                request_body(&provider, ReasoningLevel::Medium),
+                Err(ModelError::InvalidResponse(_))
+            ));
+            let body = request_body(&provider, ReasoningLevel::Off).unwrap();
             assert_eq!(body.thinking, None);
             assert_eq!(body.output_config, None);
-            assert!(value.get("thinking").is_none());
         },
     );
 }
@@ -331,7 +332,7 @@ fn user_text_blocks(body: &AnthropicRequest) -> [(&str, Option<&AnthropicCacheCo
 
 #[test]
 fn request_body_removes_top_level_schema_composition_from_tools() {
-    let provider = test_provider("claude-sonnet-4-5");
+    let provider = test_provider_with_capabilities("claude-sonnet-4-5", &json!({}));
     let body = provider
         .request_body(
             ModelRequest {
@@ -378,7 +379,7 @@ fn request_body_removes_top_level_schema_composition_from_tools() {
 
 #[test]
 fn request_body_types_pure_composition_tool_schemas_for_anthropic() {
-    let provider = test_provider("claude-sonnet-5");
+    let provider = test_provider_with_capabilities("claude-sonnet-5", &json!({}));
     let body = provider
         .request_body(
             ModelRequest {
@@ -425,7 +426,7 @@ fn request_body_types_pure_composition_tool_schemas_for_anthropic() {
 
 #[test]
 fn request_body_forces_non_object_root_schema_type_to_object() {
-    let provider = test_provider("claude-sonnet-5");
+    let provider = test_provider_with_capabilities("claude-sonnet-5", &json!({}));
     let body = provider
         .request_body(
             ModelRequest {

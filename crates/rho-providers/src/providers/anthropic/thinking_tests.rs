@@ -89,17 +89,28 @@ fn config(
     )
 }
 
-// Covers: unknown or missing capabilities must not send thinking.type.enabled
+// Covers: missing capabilities must not silently drop an explicit reasoning
+// request, and must not send thinking.type.enabled
 // Owner: anthropic thinking protocol
 #[test]
-fn unknown_capabilities_omit_thinking_instead_of_sending_a_budget() {
+fn unresolved_capabilities_reject_requested_reasoning_and_omit_off() {
+    let unknown = AnthropicThinkingProtocol::unknown("unknown-claude");
+    assert!(matches!(
+        thinking_config_for(&unknown, ReasoningLevel::Medium, DEFAULT_MAX_TOKENS),
+        Err(ModelError::InvalidResponse(_))
+    ));
     assert_eq!(
-        thinking_config_for(
-            &AnthropicThinkingProtocol::unknown("unknown-claude"),
-            ReasoningLevel::Medium,
-            DEFAULT_MAX_TOKENS,
-        )
-        .unwrap(),
+        thinking_config_for(&unknown, ReasoningLevel::Off, DEFAULT_MAX_TOKENS).unwrap(),
+        (None, None)
+    );
+}
+
+// Covers: a fetched empty capabilities object is resolved, not missing
+// Owner: anthropic thinking protocol
+#[test]
+fn empty_fetched_capabilities_omit_thinking_without_error() {
+    assert_eq!(
+        config("claude-haiku-4-5", &json!({}), ReasoningLevel::Medium).unwrap(),
         (None, None)
     );
 }
@@ -331,12 +342,20 @@ fn resolve_reads_cached_capabilities_including_dated_snapshots() {
             assert_eq!(
                 thinking_config_for(
                     &resolve_thinking_protocol("claude-unknown"),
-                    ReasoningLevel::Medium,
+                    ReasoningLevel::Off,
                     DEFAULT_MAX_TOKENS,
                 )
                 .unwrap(),
                 (None, None)
             );
+            assert!(matches!(
+                thinking_config_for(
+                    &resolve_thinking_protocol("claude-unknown"),
+                    ReasoningLevel::Medium,
+                    DEFAULT_MAX_TOKENS,
+                ),
+                Err(ModelError::InvalidResponse(_))
+            ));
         },
     );
 }
