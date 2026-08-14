@@ -91,7 +91,7 @@ fn list_payload_keeps_or_defaults_capabilities_for_the_request_builder() {
     assert_eq!(records[1].raw_json, json!({}));
     assert_eq!(
         records[1].model.reasoning_capabilities,
-        ReasoningCapabilities::NotConfigurable
+        ReasoningCapabilities::Unknown
     );
     assert!(
         policy::capabilities_json_is_known(Some(&records[1].raw_json.to_string())),
@@ -158,16 +158,16 @@ fn records_from_page_projects_advertised_reasoning_levels() {
             ])),
         ),
         (
-            "adaptive without an effort control is not configurable",
+            "adaptive without an effort control stays unknown",
             "claude-opus-5",
             json!({"thinking": {"types": {"adaptive": {"supported": true}}}}),
-            ReasoningCapabilities::NotConfigurable,
+            ReasoningCapabilities::Unknown,
         ),
         (
-            "a row advertising no thinking type is not configurable",
+            "a row advertising no thinking type stays unknown",
             "claude-haiku-4-5",
             json!({}),
-            ReasoningCapabilities::NotConfigurable,
+            ReasoningCapabilities::Unknown,
         ),
     ];
 

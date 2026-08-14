@@ -185,17 +185,23 @@ impl EffortMask {
 /// Controllable thinking surface derived from Models API capabilities.
 ///
 /// Pickers and the wire path both project from this enum so they cannot drift.
+/// Incomplete shapes stay [`Self::Unknown`] (or adaptive without an effort
+/// mask) rather than inventing a non-configurable contract from missing data.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AnthropicThinkingMode {
-    /// Adaptive thinking with an effort vocabulary.
+    /// Adaptive thinking. `efforts` is set only when the API advertised a
+    /// usable effort vocabulary; otherwise the wire sends adaptive without
+    /// clamping and the picker keeps the unknown fallback.
     Adaptive {
         off: OffThinking,
-        efforts: EffortMask,
+        efforts: Option<EffortMask>,
     },
     /// Legacy budget-token thinking.
     BudgetTokens { off: OffThinking },
-    /// Capabilities were fetched but advertise no controllable thinking surface.
-    NoControl { off: OffThinking },
+    /// Capabilities were fetched but do not identify adaptive or budget control.
+    /// Distinct from a missing cache row: Off still follows family rules, and
+    /// non-Off leaves the model default rather than inventing a protocol.
+    Unknown { off: OffThinking },
 }
 
 impl AnthropicThinkingMode {
@@ -205,35 +211,37 @@ impl AnthropicThinkingMode {
     ) -> Self {
         let off = off_thinking(model, capabilities.disabled());
         if capabilities.adaptive() {
-            if let Some(efforts) = EffortMask::from_capabilities(capabilities) {
-                return Self::Adaptive { off, efforts };
-            }
-            return Self::NoControl { off };
+            return Self::Adaptive {
+                off,
+                efforts: EffortMask::from_capabilities(capabilities),
+            };
         }
         if capabilities.enabled() {
             return Self::BudgetTokens { off };
         }
-        Self::NoControl { off }
+        Self::Unknown { off }
     }
 
     pub(crate) fn off(self) -> OffThinking {
         match self {
-            Self::Adaptive { off, .. } | Self::BudgetTokens { off } | Self::NoControl { off } => {
-                off
-            }
+            Self::Adaptive { off, .. } | Self::BudgetTokens { off } | Self::Unknown { off } => off,
         }
     }
 
     pub(crate) fn reasoning_capabilities(self) -> ReasoningCapabilities {
         let mut levels = match self {
-            Self::Adaptive { efforts, .. } => efforts.reasoning_levels(),
+            Self::Adaptive {
+                efforts: Some(efforts),
+                ..
+            } => efforts.reasoning_levels(),
             Self::BudgetTokens { .. } => budget_token_levels(),
-            Self::NoControl { .. } => {
-                return ReasoningCapabilities::NotConfigurable;
+            // Absence of a complete control is not proof the model has none.
+            Self::Adaptive { efforts: None, .. } | Self::Unknown { .. } => {
+                return ReasoningCapabilities::Unknown;
             }
         };
         if levels.is_empty() {
-            return ReasoningCapabilities::NotConfigurable;
+            return ReasoningCapabilities::Unknown;
         }
         if self.off() != OffThinking::Unsupported {
             levels.push(ReasoningLevel::Off);
@@ -309,9 +317,10 @@ pub(crate) fn capabilities_json_is_known(raw_json: Option<&str>) -> bool {
 
 /// Normalizes a Models API capabilities field for cache storage.
 ///
-/// Omitted or non-object values become `{}` so a successful fetch is always
-/// recorded as known [`AnthropicThinkingMode::NoControl`] rather than cold
-/// cache / perpetual refresh.
+/// Omitted or non-object values become `{}` so a successful fetch is recorded
+/// as a known row (no perpetual refresh). Projection of that empty object is
+/// still [`AnthropicThinkingMode::Unknown`]: known cache identity is not the
+/// same as a proven non-configurable thinking surface.
 pub(crate) fn capabilities_json(capabilities: Option<Value>) -> Value {
     capabilities
         .filter(|value| AnthropicModelCapabilities::from_value(value).is_some())

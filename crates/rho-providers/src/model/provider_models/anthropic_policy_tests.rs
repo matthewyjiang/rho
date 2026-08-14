@@ -6,7 +6,8 @@ use super::{
 };
 
 // Covers: a successful fetch always stores a capabilities object, including
-// when the API omitted the field, so the row is known NoControl rather than cold
+// when the API omitted the field, so the row is known rather than cold cache,
+// while projection stays Unknown instead of inventing NotConfigurable
 // Owner: anthropic thinking protocol
 #[test]
 fn missing_or_non_object_capabilities_become_empty_object() {
@@ -19,11 +20,11 @@ fn missing_or_non_object_capabilities_become_empty_object() {
             AnthropicModelCapabilities::from_value(&capabilities_json(None))
                 .unwrap()
                 .thinking_mode("claude-haiku-4-5"),
-            AnthropicThinkingMode::NoControl {
+            AnthropicThinkingMode::Unknown {
                 off: OffThinking::Omit
             }
         ),
-        "empty stored caps project to NoControl, not cold cache"
+        "empty stored caps project to Unknown, not cold cache or NotConfigurable"
     );
 }
 

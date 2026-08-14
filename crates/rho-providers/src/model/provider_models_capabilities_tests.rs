@@ -76,7 +76,8 @@ fn provider_snapshot_expiration_applies_to_every_model_in_the_snapshot() {
 }
 
 // Covers: null raw_json is incomplete (pre-capability write), while a successful
-// fetch stores `{}` and is known NoControl so startup does not refresh forever
+// fetch stores `{}` as known cache identity with Unknown picker levels so
+// startup does not refresh forever and does not hide reasoning
 // Owner: anthropic thinking protocol
 #[test]
 fn anthropic_empty_capabilities_object_is_known_and_null_is_not() {
@@ -116,7 +117,7 @@ fn anthropic_empty_capabilities_object_is_known_and_null_is_not() {
             cached_provider_model("anthropic", "claude-opus-5")
                 .unwrap()
                 .reasoning_capabilities,
-            ReasoningCapabilities::NotConfigurable
+            ReasoningCapabilities::Unknown
         );
 
         write_cached_provider_model_raw_json_for_tests(

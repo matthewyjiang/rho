@@ -10,8 +10,8 @@ use super::ANTHROPIC_ANSWER_RESERVE_TOKENS;
 /// Construction-time thinking source for one Anthropic model.
 ///
 /// `None` mode means no cached Models API row. That is distinct from
-/// [`AnthropicThinkingMode::NoControl`], which is a fetched object that
-/// advertises no controllable thinking surface.
+/// [`AnthropicThinkingMode::Unknown`], which is a fetched object that does not
+/// identify adaptive or budget control — incomplete, not non-configurable.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ThinkingSource {
     model: String,
@@ -86,8 +86,8 @@ pub(super) fn thinking_config_for(
             Some(AnthropicThinkingConfig::Adaptive {
                 display: "summarized",
             }),
-            Some(AnthropicOutputConfig {
-                effort: efforts.for_level(reasoning),
+            efforts.map(|mask| AnthropicOutputConfig {
+                effort: mask.for_level(reasoning),
             }),
         )),
         AnthropicThinkingMode::BudgetTokens { .. } => {
@@ -113,7 +113,10 @@ pub(super) fn thinking_config_for(
                 None,
             ))
         }
-        AnthropicThinkingMode::NoControl { .. } => Err(source.unsupported(reasoning)),
+        // Fetched but incomplete: leave the model default. Do not invent
+        // type=enabled (400s on current Claude 5) or fail closed as if the API
+        // proved reasoning is unsupported.
+        AnthropicThinkingMode::Unknown { .. } => Ok((None, None)),
     }
 }
 
