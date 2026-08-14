@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.3.0...rho-providers-v1.3.1) (2026-08-14)
+
+
+### Bug Fixes
+
+* **providers:** compile openai-compatible hosts in release builds ([#917](https://github.com/matthewyjiang/rho/issues/917)) ([4625ab8](https://github.com/matthewyjiang/rho/commit/4625ab8151b348575bdc951af3ac08190ed868d5))
+
 ## [1.3.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.2.1...rho-providers-v1.3.0) (2026-08-14)
 
 
