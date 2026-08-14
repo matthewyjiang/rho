@@ -206,10 +206,7 @@ pub(crate) async fn build_provider_from_config_ensuring_catalog(
 ) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, rho_providers::model::ModelError> {
     let options = crate::app::sdk_config::provider_options_from_config(config)?;
     options.ensure_catalog_for_construction().await;
-    let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
-        credential_store,
-    );
-    rho_providers::providers::build_sdk_provider_with_source(options, &credentials)
+    build_provider_from_config(config, credential_store)
 }
 
 pub(crate) async fn build_provider(
