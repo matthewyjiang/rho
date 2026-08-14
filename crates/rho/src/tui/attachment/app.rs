@@ -171,9 +171,9 @@ struct AttachmentApp {
     herdr: HerdrReporter,
     scroll: HistoryScrollChrome,
     last_mouse_position: Option<(u16, u16)>,
-    /// Tool under the last left-button press, if any. Release toggles only
-    /// when it lands on the same card without the pointer moving — matching
-    /// the main TUI `has_moved` click-vs-drag split.
+    /// Tool under the last left-button press, if any. A stationary release
+    /// toggles this identity (remapped if the pending card finished), not
+    /// whatever now occupies the same row.
     press_toggle_target: Option<ToggleTarget>,
     press_cell: Option<(u16, u16)>,
     viewport_height: usize,
@@ -468,11 +468,16 @@ impl AttachmentApp {
                         }
                     }
                     MouseEventKind::Up(MouseButton::Left) => {
-                        self.press_cell = None;
+                        let same_cell = self.press_cell.take() == Some((mouse.column, mouse.row));
                         let press = self.press_toggle_target.take();
-                        let release = self.toggle_target_at_pointer(mouse.column, mouse.row);
-                        if !was_drag && press == release {
-                            if let Some(target) = press {
+                        // Layout can change between down and up (a pressed
+                        // pending card may finish and leave another pending
+                        // under the same row). A stationary click follows the
+                        // remapped press target, not the release hit-test.
+                        if !was_drag && same_cell {
+                            if let Some(target) =
+                                press.filter(|target| self.toggle_target_exists(target))
+                            {
                                 self.toggle_tool_at(target);
                                 return true;
                             }
@@ -648,6 +653,15 @@ impl AttachmentApp {
             return;
         };
         self.toggle_tool_at(target);
+    }
+
+    fn toggle_target_exists(&self, target: &ToggleTarget) -> bool {
+        match target {
+            ToggleTarget::Transcript(index) => {
+                matches!(self.transcript.get(*index), Some(Entry::Tool(_)))
+            }
+            ToggleTarget::Pending(key) => self.pending_tools.contains_key(key),
+        }
     }
 
     fn toggle_tool_at(&mut self, target: ToggleTarget) {

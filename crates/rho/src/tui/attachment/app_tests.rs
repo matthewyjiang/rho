@@ -655,6 +655,42 @@ fn pending_finish_during_click_still_toggles() {
     assert!(transcript_tool(&app, 0).expanded);
 }
 
+// Covers: finishing the pressed pending card still expands when another pending remains
+// Owner: attach event loop
+#[test]
+fn pending_finish_during_click_still_toggles_with_sibling_pending() {
+    let (_directory, mut app) = test_app();
+    app.apply_event(AttachmentEvent::ToolStarted {
+        key: Some("first".into()),
+        card: long_body_card(),
+    });
+    app.apply_event(AttachmentEvent::ToolStarted {
+        key: Some("second".into()),
+        card: long_body_card(),
+    });
+    sync_view(&mut app, 80, 40);
+    let first_height = HistoryItem::Pending {
+        key: "first",
+        tool: &app.pending_tools["first"],
+    }
+    .paint_lines(80, app.display.max_tool_output_lines())
+    .len();
+    let second_row = 4u16.saturating_add(u16::try_from(first_height).expect("card height"));
+
+    app.handle_event(mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        8,
+        second_row,
+    ));
+    app.apply_event(AttachmentEvent::ToolFinished {
+        key: Some("second".into()),
+        card: long_body_card(),
+    });
+    app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 8, second_row));
+    assert!(transcript_tool(&app, 0).expanded);
+    assert!(!app.pending_tools["first"].expanded);
+}
+
 // Covers: ctrl+o expands latest pending, then last finished card, accordion-style
 // Owner: attach event loop
 #[test]
