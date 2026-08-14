@@ -19,6 +19,15 @@ fn rejects_unknown_auth_profiles() {
     assert!(error.to_string().contains("ollama-cloud-api-key"));
 }
 
+// Covers: `rho acp` parses as the ACP stdio subcommand.
+// Owner: CLI parser.
+#[test]
+fn parses_acp_subcommand() {
+    let cli = Cli::try_parse_from(["rho", "acp"]).unwrap();
+
+    assert!(matches!(cli.command, Some(Command::Acp {})));
+}
+
 #[test]
 fn parses_attach_subcommand() {
     let cli = Cli::try_parse_from(["rho", "attach", "abc123"]).unwrap();

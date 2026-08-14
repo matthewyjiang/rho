@@ -1,3 +1,4 @@
+mod acp;
 mod agent_binding;
 pub(crate) mod agent_executor;
 mod automation;

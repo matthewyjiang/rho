@@ -62,7 +62,7 @@ rho --config ~/.rho/config.toml
 
 ## Permission modes
 
-`permission_mode` must be `bypass`, `auto`, `allow_edits`, `plan`, or `supervised`. Missing values default to `bypass`; an unrecognized value is a configuration error. The setting controls whether Rho allows, denies, classifies, or asks before security-sensitive tool capabilities:
+`permission_mode` must be `bypass`, `auto`, `allow_edits`, `plan`, or `supervised`. Missing values default to `bypass`; an unrecognized value is a configuration error. The setting controls whether Rho allows, denies, classifies, or asks before security-sensitive tool capabilities. [`rho acp`](/integrations/acp) can ask the editor host for approval. Headless `rho run` cannot prompt.
 
 ```mermaid
 flowchart LR

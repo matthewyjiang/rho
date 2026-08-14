@@ -170,6 +170,8 @@ pub enum Command {
         #[command(subcommand)]
         command: WorkflowCommand,
     },
+    /// Serve the Agent Client Protocol over stdio for editor/host integration.
+    Acp {},
     /// Internal supervised workflow planner worker. Not a public command.
     #[command(name = "__workflow_planner_worker", hide = true)]
     WorkflowPlannerWorker,

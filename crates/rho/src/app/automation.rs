@@ -170,7 +170,8 @@ pub(super) fn prompt_for_command(command: &Option<Command>) -> anyhow::Result<Op
             | Command::Plugins { .. }
             | Command::Workflow { .. }
             | Command::WorkflowPlannerWorker
-            | Command::Update,
+            | Command::Update
+            | Command::Acp {},
         )
         | None => Ok(None),
     }
