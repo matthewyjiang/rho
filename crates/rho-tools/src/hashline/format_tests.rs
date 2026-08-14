@@ -11,6 +11,24 @@ fn split_content_lines_handles_empty_and_trailing_newline() {
     assert_eq!(split_content_lines("a\nb\n"), vec!["a", "b"]);
     assert_eq!(split_content_lines("\n"), vec![""]);
     assert_eq!(split_content_lines("a\r\nb\r\n"), vec!["a", "b"]);
+
+    assert_eq!(
+        iter_content_lines("").collect::<Vec<_>>(),
+        Vec::<&str>::new()
+    );
+    assert_eq!(
+        iter_content_lines("a\nb").collect::<Vec<_>>(),
+        vec!["a", "b"]
+    );
+    assert_eq!(
+        iter_content_lines("a\nb\n").collect::<Vec<_>>(),
+        vec!["a", "b"]
+    );
+    assert_eq!(iter_content_lines("\n").collect::<Vec<_>>(), vec![""]);
+    assert_eq!(
+        iter_content_lines("a\r\nb\r\n").collect::<Vec<_>>(),
+        vec!["a", "b"]
+    );
 }
 
 // Covers: snapshot tags must stay stable for equivalent normalized text

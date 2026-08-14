@@ -2,7 +2,7 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 use tempfile::TempDir;
 
-use super::{grep_workspace, GrepRequest, MAX_FILE_BYTES};
+use super::{grep_workspace, truncate_chars, GrepRequest, MAX_FILE_BYTES};
 use crate::{
     hashline::compute_file_hash,
     tool::{compact_display_path, resolve_path, ToolError},
@@ -238,4 +238,15 @@ fn content_mode_headers_are_workspace_relative_under_narrowed_path() {
         "must not emit walk-root-relative header: {content}"
     );
     assert!(content.contains("1 | anchor line"), "{content}");
+}
+
+// Covers: truncate_chars bounds multibyte UTF-8 strings at character boundaries
+// Owner: pure unit (grep truncate_chars)
+#[test]
+fn truncate_chars_respects_char_boundaries() {
+    assert_eq!(truncate_chars("hello", 10), "hello");
+    assert_eq!(truncate_chars("hello world", 5), "hello…");
+    assert_eq!(truncate_chars("🦀🦀🦀🦀", 2), "🦀🦀…");
+    assert_eq!(truncate_chars("café", 3), "caf…");
+    assert_eq!(truncate_chars("", 5), "");
 }

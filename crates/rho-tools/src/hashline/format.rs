@@ -22,7 +22,15 @@ pub(crate) const LINE_BODY_SEP: char = ':';
 
 /// Compute the snapshot tag for normalized file text.
 pub(crate) fn compute_file_hash(text: &str) -> String {
-    let digest = fnv1a32(normalize_for_hash(text).as_bytes()) & 0xFFFF;
+    let mut hasher = Fnv1a32::new();
+    for (index, line) in text.split('\n').enumerate() {
+        if index > 0 {
+            hasher.write(b"\n");
+        }
+        let trimmed = line.trim_end_matches([' ', '\t', '\r']);
+        hasher.write(trimmed.as_bytes());
+    }
+    let digest = hasher.finish() & 0xFFFF;
     format!("{digest:04X}")
 }
 
@@ -345,25 +353,26 @@ fn split_hunks(selected: &[usize]) -> Vec<Vec<usize>> {
     hunks
 }
 
+/// Split file text into addressable content lines iterator.
+///
+/// A trailing newline does not create an extra blank line. An empty file has
+/// zero lines. A file whose sole content is a blank line (single `\n`) has one
+/// empty line.
+pub(crate) fn iter_content_lines(text: &str) -> impl Iterator<Item = &str> {
+    let opt_body = (!text.is_empty()).then(|| text.strip_suffix('\n').unwrap_or(text));
+    opt_body
+        .into_iter()
+        .flat_map(|b| b.split('\n'))
+        .map(|line| line.strip_suffix('\r').unwrap_or(line))
+}
+
 /// Split file text into addressable content lines.
 ///
 /// A trailing newline does not create an extra blank line. An empty file has
 /// zero lines. A file whose sole content is a blank line (single `\n`) has one
 /// empty line.
 pub(crate) fn split_content_lines(text: &str) -> Vec<&str> {
-    if text.is_empty() {
-        return Vec::new();
-    }
-    let mut lines: Vec<&str> = text.split('\n').collect();
-    if text.ends_with('\n') {
-        lines.pop();
-    }
-    // Preserve CRLF bodies as line text without the CR so numbered views and
-    // hash anchors stay stable across newline styles.
-    for line in &mut lines {
-        *line = line.strip_suffix('\r').unwrap_or(line);
-    }
-    lines
+    iter_content_lines(text).collect()
 }
 
 /// Detect the dominant end-of-line sequence in `text`.
@@ -390,34 +399,31 @@ pub(crate) fn has_trailing_newline(text: &str) -> bool {
     text.ends_with('\n') || text.ends_with('\r')
 }
 
-/// Strip trailing spaces/tabs/CR from each line before hashing so display trim
-/// and CRLF endings do not invalidate a tag.
-pub(crate) fn normalize_for_hash(text: &str) -> String {
-    if text.is_empty() {
-        return String::new();
-    }
-    let ends_with_newline = text.ends_with('\n');
-    let mut out = String::with_capacity(text.len());
-    for (index, line) in text.split('\n').enumerate() {
-        if index > 0 {
-            out.push('\n');
-        }
-        let trimmed = line.trim_end_matches([' ', '\t', '\r']);
-        out.push_str(trimmed);
-    }
-    if ends_with_newline && !out.ends_with('\n') {
-        out.push('\n');
-    }
-    out
+#[derive(Clone, Copy)]
+struct Fnv1a32 {
+    hash: u32,
 }
 
-fn fnv1a32(data: &[u8]) -> u32 {
-    let mut hash = 0x811c_9dc5_u32;
-    for byte in data {
-        hash ^= u32::from(*byte);
-        hash = hash.wrapping_mul(0x0100_0193);
+impl Fnv1a32 {
+    const OFFSET_BASIS: u32 = 0x811c_9dc5;
+    const PRIME: u32 = 0x0100_0193;
+
+    const fn new() -> Self {
+        Self {
+            hash: Self::OFFSET_BASIS,
+        }
     }
-    hash
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.hash ^= u32::from(byte);
+            self.hash = self.hash.wrapping_mul(Self::PRIME);
+        }
+    }
+
+    fn finish(&self) -> u32 {
+        self.hash
+    }
 }
 
 #[cfg(test)]

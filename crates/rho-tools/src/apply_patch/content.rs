@@ -11,10 +11,7 @@ pub(super) fn derive_new_contents(
 ) -> Result<String, ToolError> {
     let line_ending = preferred_line_ending(original_contents);
     let source_lines = split_source_lines(original_contents);
-    let original_lines = source_lines
-        .iter()
-        .map(|line| line.content.clone())
-        .collect::<Vec<_>>();
+    let original_lines: Vec<&str> = source_lines.iter().map(|line| line.content).collect();
     let had_trailing_newline = source_lines
         .last()
         .is_some_and(|line| !line.ending.is_empty());
@@ -27,12 +24,12 @@ pub(super) fn derive_new_contents(
     ))
 }
 
-struct SourceLine {
-    content: String,
-    ending: String,
+struct SourceLine<'a> {
+    content: &'a str,
+    ending: &'a str,
 }
 
-fn split_source_lines(contents: &str) -> Vec<SourceLine> {
+fn split_source_lines(contents: &str) -> Vec<SourceLine<'_>> {
     let mut lines = Vec::new();
     let mut start = 0;
     let bytes = contents.as_bytes();
@@ -47,23 +44,23 @@ fn split_source_lines(contents: &str) -> Vec<SourceLine> {
             }
         };
         lines.push(SourceLine {
-            content: contents[start..index].to_string(),
-            ending: contents[index..index + ending_len].to_string(),
+            content: &contents[start..index],
+            ending: &contents[index..index + ending_len],
         });
         index += ending_len;
         start = index;
     }
     if start < contents.len() {
         lines.push(SourceLine {
-            content: contents[start..].to_string(),
-            ending: String::new(),
+            content: &contents[start..],
+            ending: "",
         });
     }
     lines
 }
 
 fn compute_replacements(
-    original_lines: &[String],
+    original_lines: &[&str],
     path: &str,
     chunks: &[UpdateFileChunk],
 ) -> Result<Vec<(usize, usize, Vec<String>)>, ToolError> {
@@ -140,13 +137,13 @@ fn compute_replacements(
 }
 
 enum OutputLine<'a> {
-    Original(&'a SourceLine),
+    Original(&'a SourceLine<'a>),
     Replacement(&'a str),
 }
 
-fn apply_replacements(
-    lines: &[SourceLine],
-    replacements: &[(usize, usize, Vec<String>)],
+fn apply_replacements<'a>(
+    lines: &'a [SourceLine<'a>],
+    replacements: &'a [(usize, usize, Vec<String>)],
     preferred_ending: &str,
     trailing_newline: bool,
 ) -> String {
@@ -169,11 +166,11 @@ fn apply_replacements(
         let has_following_line = index < last;
         match line {
             OutputLine::Original(line) => {
-                output.push_str(&line.content);
+                output.push_str(line.content);
                 if has_following_line && line.ending.is_empty() {
                     output.push_str(preferred_ending);
                 } else {
-                    output.push_str(&line.ending);
+                    output.push_str(line.ending);
                 }
             }
             OutputLine::Replacement(line) => {

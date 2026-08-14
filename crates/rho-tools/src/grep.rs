@@ -294,8 +294,7 @@ fn scan_file(request: &GrepRequest, file: WalkedFile, retain: usize) -> Option<F
         lines: Vec::new(),
     };
     // Use hashline line splitting so match line numbers agree with edit anchors.
-    let lines = crate::hashline::split_content_lines(&text);
-    for (index, line) in lines.iter().enumerate() {
+    for (index, line) in crate::hashline::iter_content_lines(&text).enumerate() {
         if !request.regex.is_match(line) {
             continue;
         }
@@ -332,13 +331,14 @@ fn read_searchable_text(path: &Path) -> Option<String> {
 }
 
 fn truncate_chars(text: &str, max_chars: usize) -> String {
-    let count = text.chars().count();
-    if count <= max_chars {
-        return text.to_owned();
+    if let Some((idx, _)) = text.char_indices().nth(max_chars) {
+        let mut out = String::with_capacity(idx + '…'.len_utf8());
+        out.push_str(&text[..idx]);
+        out.push('…');
+        out
+    } else {
+        text.to_owned()
     }
-    let mut out: String = text.chars().take(max_chars).collect();
-    out.push('…');
-    out
 }
 
 #[cfg(test)]

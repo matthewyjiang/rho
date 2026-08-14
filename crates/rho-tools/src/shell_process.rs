@@ -93,7 +93,10 @@ pub(crate) async fn run<S: ProcessSupervisor>(
                 streams.apply_chunk(chunk);
             }
             _ = update_tick.tick() => {
-                on_update(vec![running_content(&streams.stdout, &streams.stderr)]);
+                if streams.dirty {
+                    streams.dirty = false;
+                    on_update(vec![running_content(&streams.stdout, &streams.stderr)]);
+                }
             }
             _ = &mut timeout_sleep, if timeout.is_some() => {
                 supervisor.kill();
@@ -166,6 +169,7 @@ struct StreamSession {
     retained_bytes: usize,
     max_output_bytes: usize,
     output_open: bool,
+    dirty: bool,
 }
 
 struct CollectedOutput {
@@ -199,6 +203,7 @@ impl StreamSession {
             retained_bytes: 0,
             max_output_bytes: max_output_bytes.max(1),
             output_open: true,
+            dirty: false,
         }
     }
 
@@ -214,11 +219,14 @@ impl StreamSession {
                     return;
                 }
                 let take = bytes.len().min(remaining);
-                match kind {
-                    StreamKind::Stdout => self.stdout.extend_from_slice(&bytes[..take]),
-                    StreamKind::Stderr => self.stderr.extend_from_slice(&bytes[..take]),
+                if take > 0 {
+                    match kind {
+                        StreamKind::Stdout => self.stdout.extend_from_slice(&bytes[..take]),
+                        StreamKind::Stderr => self.stderr.extend_from_slice(&bytes[..take]),
+                    }
+                    self.retained_bytes += take;
+                    self.dirty = true;
                 }
-                self.retained_bytes += take;
             }
             None => self.output_open = false,
         }

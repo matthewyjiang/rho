@@ -118,11 +118,18 @@ fn stream_session_caps_retained_stdout_and_stderr() {
         retained_bytes: 0,
         max_output_bytes: 10,
         output_open: true,
+        dirty: false,
     };
 
+    assert!(!streams.dirty);
     streams.apply_chunk(Some((StreamKind::Stdout, b"hello-world".to_vec())));
+    assert!(streams.dirty);
+    streams.dirty = false;
     streams.apply_chunk(Some((StreamKind::Stderr, b"more".to_vec())));
+    // Budget is already full, so no new bytes were retained and dirty stays false.
+    assert!(!streams.dirty);
     streams.apply_chunk(Some((StreamKind::Stdout, b"extra".to_vec())));
+    assert!(!streams.dirty);
 
     assert_eq!(streams.stdout, b"hello-worl");
     assert!(streams.stderr.is_empty());

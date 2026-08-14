@@ -7,9 +7,9 @@
 /// Match strictness decreases: exact, trailing-whitespace, trim, then Unicode
 /// punctuation normalisation. When `eof` is true, try the final window first,
 /// then fall back to scanning from `start`.
-pub(super) fn seek_sequence(
-    lines: &[String],
-    pattern: &[String],
+pub(super) fn seek_sequence<T: AsRef<str>, U: AsRef<str>>(
+    lines: &[T],
+    pattern: &[U],
     start: usize,
     eof: bool,
 ) -> Option<usize> {
@@ -29,7 +29,11 @@ pub(super) fn seek_sequence(
     search_from(lines, pattern, start)
 }
 
-fn search_from(lines: &[String], pattern: &[String], start: usize) -> Option<usize> {
+fn search_from<T: AsRef<str>, U: AsRef<str>>(
+    lines: &[T],
+    pattern: &[U],
+    start: usize,
+) -> Option<usize> {
     find_with(lines, pattern, start, |left, right| left == right)
         .or_else(|| {
             find_with(lines, pattern, start, |left, right| {
@@ -42,15 +46,17 @@ fn search_from(lines: &[String], pattern: &[String], start: usize) -> Option<usi
             })
         })
         .or_else(|| {
-            find_with(lines, pattern, start, |left, right| {
-                normalise(left) == normalise(right)
+            let normalised_pattern: Vec<String> =
+                pattern.iter().map(|pat| normalise(pat.as_ref())).collect();
+            find_with(lines, &normalised_pattern, start, |left, right| {
+                normalise(left) == right
             })
         })
 }
 
-fn find_with(
-    lines: &[String],
-    pattern: &[String],
+fn find_with<T: AsRef<str>, U: AsRef<str>>(
+    lines: &[T],
+    pattern: &[U],
     start: usize,
     eq: impl Fn(&str, &str) -> bool,
 ) -> Option<usize> {
@@ -58,7 +64,7 @@ fn find_with(
         pattern
             .iter()
             .enumerate()
-            .all(|(offset, pat)| eq(&lines[index + offset], pat))
+            .all(|(offset, pat)| eq(lines[index + offset].as_ref(), pat.as_ref()))
     })
 }
 
