@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     io::IsTerminal,
     path::PathBuf,
     time::{Duration, Instant},
@@ -171,11 +172,12 @@ struct AttachmentApp {
     herdr: HerdrReporter,
     scroll: HistoryScrollChrome,
     last_mouse_position: Option<(u16, u16)>,
-    /// Tool under the last left-button press, if any. A stationary release
-    /// toggles this identity (remapped if the pending card finished), not
-    /// whatever now occupies the same row.
-    press_toggle_target: Option<ToggleTarget>,
+    /// Stable tool key under the last left-button press, if any. Survives
+    /// pending→transcript promotion and provider resets that shift indexes.
+    press_tool_key: Option<String>,
     press_cell: Option<(u16, u16)>,
+    /// Current transcript index for each finished tool key.
+    finished_tool_index: BTreeMap<String, usize>,
     viewport_height: usize,
     history_area: Rect,
     history_width: usize,
@@ -208,8 +210,9 @@ impl AttachmentApp {
             herdr,
             scroll: HistoryScrollChrome::default(),
             last_mouse_position: None,
-            press_toggle_target: None,
+            press_tool_key: None,
             press_cell: None,
+            finished_tool_index: BTreeMap::new(),
             viewport_height: 0,
             history_area: Rect::default(),
             history_width: 0,
@@ -322,6 +325,7 @@ impl AttachmentApp {
             }
             AttachmentEvent::ProviderStreamReset => {
                 self.provider_attempt.reset_output(&mut self.transcript);
+                self.reindex_finished_tools();
                 self.clear_pending_tools();
                 self.run_usage.attempt_reset();
             }
@@ -371,11 +375,55 @@ impl AttachmentApp {
             image: None,
             started_at: None,
         }));
-        if matches!(
-            &self.press_toggle_target,
-            Some(ToggleTarget::Pending(pending)) if pending == &key
-        ) {
-            self.press_toggle_target = Some(ToggleTarget::Transcript(self.transcript.len() - 1));
+        self.finished_tool_index
+            .insert(key, self.transcript.len() - 1);
+    }
+
+    fn reindex_finished_tools(&mut self) {
+        let keys = {
+            let mut pairs = self
+                .finished_tool_index
+                .iter()
+                .map(|(key, index)| (*index, key.clone()))
+                .collect::<Vec<_>>();
+            pairs.sort_by_key(|(index, _)| *index);
+            pairs.into_iter().map(|(_, key)| key).collect::<Vec<_>>()
+        };
+        self.finished_tool_index.clear();
+        let mut next = 0usize;
+        for (index, entry) in self.transcript.iter().enumerate() {
+            if matches!(entry, Entry::Tool(_)) {
+                if let Some(key) = keys.get(next) {
+                    self.finished_tool_index.insert(key.clone(), index);
+                }
+                next += 1;
+            }
+        }
+    }
+
+    fn clear_press(&mut self) {
+        self.press_cell = None;
+        self.press_tool_key = None;
+    }
+
+    fn tool_key_for_target(&self, target: &ToggleTarget) -> Option<String> {
+        match target {
+            ToggleTarget::Pending(key) => Some(key.clone()),
+            ToggleTarget::Transcript(index) => self
+                .finished_tool_index
+                .iter()
+                .find_map(|(key, finished)| (*finished == *index).then(|| key.clone())),
+        }
+    }
+
+    fn target_for_tool_key(&self, key: &str) -> Option<ToggleTarget> {
+        if self.pending_tools.contains_key(key) {
+            Some(ToggleTarget::Pending(key.to_string()))
+        } else {
+            self.finished_tool_index
+                .get(key)
+                .copied()
+                .map(ToggleTarget::Transcript)
         }
     }
 
@@ -456,27 +504,27 @@ impl AttachmentApp {
                 match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left) => {
                         self.press_cell = Some((mouse.column, mouse.row));
-                        self.press_toggle_target = if self.scroll.drag().is_some() {
+                        self.press_tool_key = if self.scroll.drag().is_some() {
                             None
                         } else {
                             self.toggle_target_at_pointer(mouse.column, mouse.row)
+                                .and_then(|target| self.tool_key_for_target(&target))
                         };
                     }
                     MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Moved => {
                         if self.press_cell != Some((mouse.column, mouse.row)) {
-                            self.press_toggle_target = None;
+                            self.press_tool_key = None;
                         }
                     }
                     MouseEventKind::Up(MouseButton::Left) => {
                         let same_cell = self.press_cell.take() == Some((mouse.column, mouse.row));
-                        let press = self.press_toggle_target.take();
-                        // Layout can change between down and up (a pressed
-                        // pending card may finish and leave another pending
-                        // under the same row). A stationary click follows the
-                        // remapped press target, not the release hit-test.
+                        let press = self.press_tool_key.take();
+                        // Layout can change between down and up. A stationary
+                        // click follows the stable tool key, not the release
+                        // hit-test or a positional transcript index.
                         if !was_drag && same_cell {
                             if let Some(target) =
-                                press.filter(|target| self.toggle_target_exists(target))
+                                press.and_then(|key| self.target_for_tool_key(&key))
                             {
                                 self.toggle_tool_at(target);
                                 return true;
@@ -488,10 +536,18 @@ impl AttachmentApp {
                 true
             }
             Event::FocusGained => {
+                self.clear_press();
                 mouse_capture::reassert();
                 false
             }
-            Event::Resize(_, _) => true,
+            Event::FocusLost => {
+                self.clear_press();
+                false
+            }
+            Event::Resize(_, _) => {
+                self.clear_press();
+                true
+            }
             _ => false,
         }
     }
@@ -653,15 +709,6 @@ impl AttachmentApp {
             return;
         };
         self.toggle_tool_at(target);
-    }
-
-    fn toggle_target_exists(&self, target: &ToggleTarget) -> bool {
-        match target {
-            ToggleTarget::Transcript(index) => {
-                matches!(self.transcript.get(*index), Some(Entry::Tool(_)))
-            }
-            ToggleTarget::Pending(key) => self.pending_tools.contains_key(key),
-        }
     }
 
     fn toggle_tool_at(&mut self, target: ToggleTarget) {

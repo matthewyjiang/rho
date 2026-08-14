@@ -691,6 +691,69 @@ fn pending_finish_during_click_still_toggles_with_sibling_pending() {
     assert!(!app.pending_tools["first"].expanded);
 }
 
+// Covers: provider reset must not drop a click on a tool that just finished
+// Owner: attach event loop
+#[test]
+fn pending_finish_then_reset_still_toggles_pressed_card() {
+    let (_directory, mut app) = test_app();
+    app.apply_event(AttachmentEvent::Prompt("task".into()));
+    app.apply_event(AttachmentEvent::StepStarted);
+    app.apply_event(AttachmentEvent::AssistantTextDelta("retry this".into()));
+    app.apply_event(AttachmentEvent::ToolStarted {
+        key: Some("live".into()),
+        card: long_body_card(),
+    });
+    sync_view(&mut app, 80, 40);
+    let pending_row = {
+        let mut start = 0usize;
+        for item in app.history_items(None) {
+            let height = item
+                .paint_lines(80, app.display.max_tool_output_lines())
+                .len();
+            if matches!(item, HistoryItem::Pending { key: "live", .. }) {
+                break;
+            }
+            start = start.saturating_add(height);
+        }
+        4u16.saturating_add(u16::try_from(start).expect("pending row"))
+    };
+
+    app.handle_event(mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        8,
+        pending_row,
+    ));
+    app.apply_event(AttachmentEvent::ToolFinished {
+        key: Some("live".into()),
+        card: long_body_card(),
+    });
+    app.apply_event(AttachmentEvent::ProviderStreamReset);
+    app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 8, pending_row));
+    assert!(transcript_tool(&app, 1).expanded);
+}
+
+// Covers: focus change or resize must not complete a card press
+// Owner: attach event loop
+#[test]
+fn interrupted_press_does_not_toggle() {
+    let interrupts = [Event::FocusLost, Event::FocusGained, Event::Resize(80, 24)];
+    for interrupt in interrupts {
+        let (_directory, mut app) = test_app();
+        app.apply_event(AttachmentEvent::ToolFinished {
+            key: Some("call-1".into()),
+            card: long_body_card(),
+        });
+        sync_view(&mut app, 80, 30);
+        app.handle_event(mouse(MouseEventKind::Down(MouseButton::Left), 8, 5));
+        app.handle_event(interrupt);
+        app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 8, 5));
+        assert!(
+            !transcript_tool(&app, 0).expanded,
+            "interrupt {interrupt:?}"
+        );
+    }
+}
+
 // Covers: ctrl+o expands latest pending, then last finished card, accordion-style
 // Owner: attach event loop
 #[test]
