@@ -187,23 +187,15 @@ fn reasoning_off_disables_adaptive_thinking_when_supported() {
 
 #[test]
 fn unknown_model_rejects_requested_reasoning_instead_of_omitting_thinking() {
-    // An empty cache dir keeps the "no cached capabilities" precondition owned
-    // by the test instead of by whatever else touched the shared test cache.
-    let cache = tempfile::tempdir().unwrap();
-    crate::model::provider_models::with_provider_models_cache_dir_for_tests(
-        cache.path().to_path_buf(),
-        || {
-            let provider = test_provider("claude-opus-5");
+    let provider = test_provider("claude-opus-5");
 
-            assert!(matches!(
-                request_body(&provider, ReasoningLevel::Medium),
-                Err(ModelError::InvalidResponse(_))
-            ));
-            let body = request_body(&provider, ReasoningLevel::Off).unwrap();
-            assert_eq!(body.thinking, None);
-            assert_eq!(body.output_config, None);
-        },
-    );
+    assert!(matches!(
+        request_body(&provider, ReasoningLevel::Medium),
+        Err(ModelError::InvalidResponse(_))
+    ));
+    let body = request_body(&provider, ReasoningLevel::Off).unwrap();
+    assert_eq!(body.thinking, None);
+    assert_eq!(body.output_config, None);
 }
 
 #[test]
