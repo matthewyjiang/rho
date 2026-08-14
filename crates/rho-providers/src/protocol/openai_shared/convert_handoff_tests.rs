@@ -120,7 +120,8 @@ fn chat_handoff_rejects_unknown_replay_context_kinds() {
 }
 
 // Covers: DeepSeek V4 thinking mode 400s unless same-model tool-call turns
-// always carry reasoning_content, including present-but-empty
+// always carry reasoning_content, including present-but-empty; other models
+// and foreign targets keep the field omitted so strict hosts never see it
 // Owner: openai chat completions history conversion
 #[test]
 fn chat_handoff_injects_empty_reasoning_content_for_same_model_tool_turns() {
@@ -153,6 +154,18 @@ fn chat_handoff_injects_empty_reasoning_content_for_same_model_tool_turns() {
         provider_context: Vec::new(),
     });
     let converted = to_openai_message_for_target(same_model_text_turn, Some(&identity)).unwrap();
+    assert!(converted.reasoning_content.is_none());
+
+    let non_deepseek =
+        crate::model::ModelIdentity::new("opencode-go", "openai-chat-completions", "kimi-k2.7");
+    let non_deepseek_tool_turn = Message::assistant(crate::model::AssistantMessage {
+        content: tool_call(),
+        provenance: Some(non_deepseek.clone()),
+        reasoning_summary: None,
+        provider_context: Vec::new(),
+    });
+    let converted =
+        to_openai_message_for_target(non_deepseek_tool_turn, Some(&non_deepseek)).unwrap();
     assert!(converted.reasoning_content.is_none());
 
     let foreign_target =
