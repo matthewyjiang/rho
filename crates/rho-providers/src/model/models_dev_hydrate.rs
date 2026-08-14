@@ -131,7 +131,7 @@ fn catalog_model_ids_for_provider(
 /// when reasoning levels stay unknown.
 fn write_complete_upstream_row(api: &Value, descriptor: &ProviderDescriptor, model: &str) -> bool {
     let keep_sdk_only_rows =
-        descriptor.catalog_construction() == CatalogConstruction::PreferModelsDevNpm;
+        descriptor.catalog_construction == CatalogConstruction::PreferModelsDevNpm;
     let Some(metadata) =
         upstream_metadata_from_api(api, descriptor.name, model).filter(|metadata| {
             metadata.reasoning_metadata_complete

@@ -170,7 +170,7 @@ fn opencode_go_is_openai_compatible_with_catalog_npm_construction() {
         CatalogReasoningPolicy::ExactAdvertised
     );
     assert_eq!(
-        descriptor.catalog_construction(),
+        descriptor.catalog_construction,
         CatalogConstruction::PreferModelsDevNpm
     );
     assert!(descriptor.auth_mode("opencode-go-api-key").is_some());

@@ -283,7 +283,6 @@ fn metadata_has_values(metadata: &ModelMetadata) -> bool {
         || metadata.reasoning_capabilities_known
         || metadata.reasoning_metadata_complete
         || metadata.reasoning_off_behavior != ReasoningOffBehavior::Omit
-        || metadata.sdk_package.is_some()
 }
 
 pub(crate) async fn fetch_deprecated_provider_models(provider: &str) -> Option<HashSet<String>> {

@@ -14,13 +14,15 @@ use super::ANTHROPIC_ANSWER_RESERVE_TOKENS;
 /// identify adaptive or budget control — incomplete, not non-configurable.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ThinkingSource {
+    provider: &'static str,
     model: String,
     mode: Option<AnthropicThinkingMode>,
 }
 
 impl ThinkingSource {
-    pub(super) fn resolve(provider: &str, model: &str) -> Self {
+    pub(super) fn resolve(provider: &'static str, model: &str) -> Self {
         Self {
+            provider,
             model: model.to_string(),
             mode: thinking_mode_for_provider(provider, model),
         }
@@ -29,6 +31,7 @@ impl ThinkingSource {
     #[cfg(test)]
     pub(crate) fn unresolved(model: &str) -> Self {
         Self {
+            provider: "anthropic",
             model: model.to_string(),
             mode: None,
         }
@@ -37,6 +40,7 @@ impl ThinkingSource {
     #[cfg(test)]
     pub(crate) fn from_capabilities(model: &str, capabilities: &serde_json::Value) -> Self {
         Self {
+            provider: "anthropic",
             model: model.to_string(),
             mode: provider_models::anthropic_thinking_mode_from_value(model, capabilities),
         }
@@ -44,7 +48,7 @@ impl ThinkingSource {
 
     fn unsupported(&self, requested: ReasoningLevel) -> ModelError {
         ModelError::UnsupportedReasoning {
-            provider: "anthropic",
+            provider: self.provider,
             model: self.model.clone(),
             requested,
         }

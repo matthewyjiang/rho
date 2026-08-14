@@ -467,6 +467,13 @@ async fn run_session_with_output(
     let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
         Arc::new(AppCredentialStore),
     );
+    // The catalog fetch is normally skipped for automation, but a provider
+    // whose wire adapter comes from the catalog cannot be constructed
+    // correctly without it. The hydrate is bounded; offline launches stay
+    // cache-only and fall back to the declared runtime.
+    if sdk_options.provider.follows_model_catalog() {
+        rho_providers::model::models_dev::ensure_models_dev_catalog().await;
+    }
     let provider = build_automation_provider(sdk_options.provider, &credentials)?;
     let workspace_root = sdk_options.workspace.root.clone();
     let workspace = sdk_options.workspace.build_workspace()?;

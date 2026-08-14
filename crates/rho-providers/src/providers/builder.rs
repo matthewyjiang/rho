@@ -115,6 +115,16 @@ impl ProviderBuildOptions {
         self.profile.provider_name()
     }
 
+    /// Whether the resolved provider picks its wire adapter from the
+    /// models.dev catalog `npm` mapping instead of its declared runtime.
+    ///
+    /// Cold-cache construction for such providers should await a catalog
+    /// hydrate first; the hydrate is bounded and stays cache-only offline,
+    /// leaving construction on the declared-runtime fallback.
+    pub fn follows_model_catalog(&self) -> bool {
+        self.profile.provider.catalog_construction == CatalogConstruction::PreferModelsDevNpm
+    }
+
     pub(crate) fn auth(&self) -> &str {
         self.profile.auth_id()
     }
@@ -336,7 +346,7 @@ fn build_openai_compatible_provider(
 ) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, ModelError> {
     // Adapter choice only needs the catalog's npm mapping, not fresh reasoning
     // metadata, so a stale or reasoning-incomplete row must still steer it.
-    let adapter = match descriptor.catalog_construction() {
+    let adapter = match descriptor.catalog_construction {
         CatalogConstruction::Runtime => CatalogSdkAdapter::OpenAiCompatible,
         CatalogConstruction::PreferModelsDevNpm => CatalogSdkAdapter::from_sdk_package(
             crate::model::models_dev::cached_model_metadata(provider_name, &model)
@@ -348,6 +358,9 @@ fn build_openai_compatible_provider(
         (CatalogSdkAdapter::OpenAiResponses, CompatibleAuth::ApiKey(key)) => {
             // Api-key auth never refreshes tokens, so an inert store satisfies
             // the Codex refresh dependency without touching real credentials.
+            // NEXT_MAJOR(rho-providers): give Responses construction an
+            // explicit api-key path so it no longer needs a placeholder
+            // CredentialStore to satisfy the Codex refresh dependency.
             Ok(Arc::new(OpenAiProvider::new_with_identity(
                 model,
                 Auth::ApiKey(key),

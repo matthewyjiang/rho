@@ -50,6 +50,12 @@ pub(super) async fn initialize(
     let agent_id = agent.id().to_string();
     let agent_fingerprint = agent.fingerprint().to_string();
     let sdk_options = crate::app::sdk_config::SdkBootstrapOptions::from_config(config, &cwd)?;
+    // npm-following providers choose their wire adapter from the models.dev
+    // catalog, so construction must wait for the hydrate instead of racing it.
+    // Offline stays cache-only and falls back to the declared runtime.
+    if sdk_options.provider.follows_model_catalog() {
+        rho_providers::model::ensure_model_catalog_names().await;
+    }
     let provider = resolve_provider(unavailable_error, &sdk_options)?;
     let workspace = sdk_options.workspace.build_workspace()?;
     let ToolsAndPrompt {

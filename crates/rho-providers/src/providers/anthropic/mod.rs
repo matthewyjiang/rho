@@ -24,7 +24,7 @@ pub struct AnthropicProvider {
     client: reqwest::Client,
     api_key: String,
     api_base: String,
-    identity_provider: String,
+    identity_provider: &'static str,
     model: String,
     /// Fixed max-tokens for tests; `None` resolves from the model catalog per request.
     max_tokens_override: Option<u32>,
@@ -44,7 +44,7 @@ impl AnthropicProvider {
             client: provider_client(),
             api_key,
             api_base: ANTHROPIC_API_BASE.into(),
-            identity_provider: "anthropic".into(),
+            identity_provider: "anthropic",
             model,
             max_tokens_override: Some(DEFAULT_MAX_TOKENS),
             thinking_override,
@@ -71,13 +71,13 @@ impl AnthropicProvider {
         api_key: String,
         client: reqwest::Client,
         api_base: String,
-        identity_provider: impl Into<String>,
+        identity_provider: &'static str,
     ) -> Self {
         Self {
             client,
             api_key,
             api_base,
-            identity_provider: identity_provider.into(),
+            identity_provider,
             model,
             max_tokens_override: None,
             thinking_override: None,
@@ -86,7 +86,7 @@ impl AnthropicProvider {
 
     fn thinking_source(&self) -> thinking::ThinkingSource {
         self.thinking_override.clone().unwrap_or_else(|| {
-            thinking::ThinkingSource::resolve(&self.identity_provider, &self.model)
+            thinking::ThinkingSource::resolve(self.identity_provider, &self.model)
         })
     }
 
@@ -96,14 +96,11 @@ impl AnthropicProvider {
         if let Some(tokens) = self.max_tokens_override {
             return tokens;
         }
-        crate::model::provider_models::cached_provider_model(&self.identity_provider, &self.model)
+        crate::model::provider_models::cached_provider_model(self.identity_provider, &self.model)
             .and_then(|metadata| metadata.max_output_tokens)
             .or_else(|| {
-                crate::model::models_dev::cached_model_metadata(
-                    &self.identity_provider,
-                    &self.model,
-                )
-                .and_then(|metadata| metadata.max_output_tokens)
+                crate::model::models_dev::cached_model_metadata(self.identity_provider, &self.model)
+                    .and_then(|metadata| metadata.max_output_tokens)
             })
             .and_then(|tokens| u32::try_from(tokens).ok())
             .unwrap_or(DEFAULT_MAX_TOKENS)
@@ -155,7 +152,7 @@ impl AnthropicProvider {
     }
 
     pub(crate) fn model_identity(&self) -> ModelIdentity {
-        ModelIdentity::new(&self.identity_provider, "anthropic-messages", &self.model)
+        ModelIdentity::new(self.identity_provider, "anthropic-messages", &self.model)
     }
 
     /// Completes one turn using inherent async methods so the future is `Send`.

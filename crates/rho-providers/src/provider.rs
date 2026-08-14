@@ -411,6 +411,9 @@ pub struct ProviderDescriptor {
     pub model_id_codec: ModelIdCodec,
     pub metadata_upstream: &'static str,
     pub catalog_reasoning: CatalogReasoningPolicy,
+    /// Whether construction may follow the catalog's models.dev `npm` mapping
+    /// instead of the descriptor's declared runtime.
+    pub catalog_construction: CatalogConstruction,
     /// Preferred model when the cache is empty or contains this id.
     pub default_model: Option<&'static str>,
 }
@@ -458,14 +461,6 @@ impl ProviderDescriptor {
     /// Config-defined Chat Completions hosts are named providers, not a single built-in.
     pub fn is_custom_openai_compatible(self) -> bool {
         PROVIDERS.iter().all(|builtin| builtin.name != self.name)
-    }
-
-    /// Whether construction may follow models.dev `npm` instead of `runtime`.
-    pub fn catalog_construction(self) -> CatalogConstruction {
-        match self.id {
-            ProviderId::OpenCodeGo => CatalogConstruction::PreferModelsDevNpm,
-            _ => CatalogConstruction::Runtime,
-        }
     }
 
     /// Wire policy for Standard-dialect hosts when models.dev has no row.

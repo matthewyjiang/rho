@@ -15,8 +15,8 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock};
 use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
 
 use super::{
-    AuthMode, CatalogReasoningPolicy, ModelIdCodec, ProviderAuthKind, ProviderDescriptor,
-    ProviderId, ProviderModelRefreshKind, ProviderModelSource, ProviderRuntime,
+    AuthMode, CatalogConstruction, CatalogReasoningPolicy, ModelIdCodec, ProviderAuthKind,
+    ProviderDescriptor, ProviderId, ProviderModelRefreshKind, ProviderModelSource, ProviderRuntime,
     OPENAI_COMPATIBLE_API_BASE, PROVIDERS,
 };
 
@@ -222,6 +222,7 @@ fn intern(name: &str, registry: &mut CustomRegistry) -> &'static ProviderDescrip
         // Same Chat Completions effort field as Ollama. Custom names are not in
         // models.dev, so Unknown must still send the selected level.
         catalog_reasoning: CatalogReasoningPolicy::OffAsNone,
+        catalog_construction: CatalogConstruction::Runtime,
         default_model: None,
     }));
     registry.interned.insert(name.to_string(), descriptor);
