@@ -75,10 +75,14 @@ pub fn bundled_current_display(current_version: &str) -> Result<ChangelogDisplay
     let section = section_for_version(BUNDLED_CHANGELOG, current_version).ok_or_else(|| {
         format!("no changelog section for v{current_version} in the bundled release notes")
     })?;
+    let note = section
+        .groups
+        .is_empty()
+        .then(|| "this version only updated workspace dependencies".to_string());
     Ok(ChangelogDisplay {
         section,
         source: ChangelogSource::Bundled,
-        note: None,
+        note,
     })
 }
 
@@ -108,9 +112,11 @@ pub fn section_for_version(changelog: &str, version: &str) -> Option<ChangelogSe
         .find(|section| section.version == version)
 }
 
-/// Extract the first (newest) release section in document order.
+/// Extract the first (newest) release section that still has user-facing notes.
 pub fn latest_section(changelog: &str) -> Option<ChangelogSection> {
-    parse_sections(changelog).into_iter().next()
+    parse_sections(changelog)
+        .into_iter()
+        .find(|section| !section.groups.is_empty())
 }
 
 fn fetch_remote_changelog(tag: &str) -> impl std::future::Future<Output = anyhow::Result<String>> {
@@ -170,11 +176,9 @@ fn parse_sections(changelog: &str) -> Vec<ChangelogSection> {
         }
         flush_group(&mut groups, current_title.take(), &mut current_items);
 
-        // Prefer user-visible change groups over dependency-only noise.
+        // Drop dependency-only noise, but keep the heading so a dep-only
+        // current version still resolves for `/changelog`.
         groups.retain(|group| !is_skipped_group(&group.title));
-        if groups.is_empty() {
-            continue;
-        }
         sections.push(ChangelogSection {
             version,
             date,

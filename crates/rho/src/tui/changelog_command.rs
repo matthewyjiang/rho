@@ -114,7 +114,12 @@ pub(super) fn changelog_lines(display: &ChangelogDisplay, width: usize) -> Vec<L
 
     match display.source {
         ChangelogSource::Bundled => {
-            block.push_note("notes for this installed version");
+            block.push_note(
+                display
+                    .note
+                    .as_deref()
+                    .unwrap_or("notes for this installed version"),
+            );
         }
         ChangelogSource::LatestRelease => {
             block.push_note(
