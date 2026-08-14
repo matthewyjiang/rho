@@ -40,11 +40,12 @@ fn dated_parent_model_strips_yyyymmdd_suffix() {
     assert_eq!(dated_parent_model("claude-opus-5-preview"), None);
 }
 
-// Covers: hosted Messages catalogs must map toggle and effort rows to a
-// thinking surface the request builder can encode
+// Covers: hosted Messages catalogs must map toggle and effort rows to the
+// legacy budget-token surface instead of inferring adaptive thinking from
+// generic effort levels
 // Owner: anthropic thinking protocol
 #[test]
-fn host_catalog_capabilities_select_budget_or_adaptive_thinking() {
+fn host_catalog_capabilities_never_infer_adaptive_thinking() {
     assert_eq!(
         AnthropicThinkingMode::from_host_catalog_capabilities(ReasoningCapabilities::Unknown),
         AnthropicThinkingMode::BudgetTokens {
@@ -59,7 +60,7 @@ fn host_catalog_capabilities_select_budget_or_adaptive_thinking() {
             off: OffThinking::Disabled
         }
     );
-    assert!(matches!(
+    assert_eq!(
         AnthropicThinkingMode::from_host_catalog_capabilities(ReasoningCapabilities::Levels(
             ReasoningLevelSet::new(vec![
                 ReasoningLevel::Off,
@@ -67,9 +68,16 @@ fn host_catalog_capabilities_select_budget_or_adaptive_thinking() {
                 ReasoningLevel::High
             ])
         )),
-        AnthropicThinkingMode::Adaptive {
-            off: OffThinking::Disabled,
-            efforts: Some(_)
+        AnthropicThinkingMode::BudgetTokens {
+            off: OffThinking::Disabled
         }
-    ));
+    );
+    assert_eq!(
+        AnthropicThinkingMode::from_host_catalog_capabilities(ReasoningCapabilities::Levels(
+            ReasoningLevelSet::new(vec![ReasoningLevel::Low, ReasoningLevel::High])
+        )),
+        AnthropicThinkingMode::BudgetTokens {
+            off: OffThinking::Unsupported
+        }
+    );
 }
