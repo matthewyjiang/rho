@@ -273,6 +273,7 @@ async fn permission_mode_runtime() -> InteractiveRuntime {
             std::env::current_dir().unwrap(),
             std::path::PathBuf::new(),
             BackgroundSubagents::Disabled,
+            /*catalog*/ None,
         )),
     );
     interactive

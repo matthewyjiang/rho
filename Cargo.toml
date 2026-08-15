@@ -3,6 +3,16 @@ members = ["crates/rho", "crates/rho-providers", "crates/rho-sdk", "crates/rho-t
 exclude = ["fixtures/downstream", "fixtures/publish-boundary"]
 resolver = "2"
 
+# Thin LTO + one codegen unit shrink the release binary 90.7 MB -> 56.6 MB and
+# steady TUI RSS ~48.7 MB -> ~44 MB (measured 2026-08-15, linux x86_64) at the
+# cost of link time. Symbols are stripped for size; panic messages still carry
+# their location. Do not add `panic = "abort"`: the TUI recovers from renderer
+# panics with `catch_unwind` (tui/markdown/math.rs, mermaid.rs).
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
 [profile.dev]
 debug = 1
 

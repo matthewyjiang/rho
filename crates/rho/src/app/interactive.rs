@@ -15,6 +15,7 @@ use super::{
 
 pub(super) struct Startup<'a> {
     pub(super) cli: &'a Cli,
+    pub(super) catalog: crate::agent::DiscoveredAgentCatalog,
     pub(super) config: Config,
     pub(super) config_path: PathBuf,
     pub(super) config_repository: ConfigRepository,
@@ -39,6 +40,7 @@ fn validate_resume_agent(
 pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
     let Startup {
         cli,
+        catalog,
         config,
         config_path,
         config_repository,
@@ -71,8 +73,10 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
     };
     let mut prompt_templates = crate::prompt_templates::discover(&cwd);
     crate::prompt_templates::merge(&mut prompt_templates, config.prompt_templates.clone());
+    let theme = config.theme.clone();
     let mut runtime = InteractiveRuntime::new(InteractiveRuntimeOptions {
         config: &config,
+        catalog: Some(catalog),
         config_path,
         cwd: cwd.clone(),
         no_system_prompt: cli.no_system_prompt,
@@ -118,6 +122,7 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
             },
             services: ApplicationServices {
                 config_repository,
+                theme,
                 first_run,
                 auth_unavailable: missing_auth_error,
                 update_notice: None,

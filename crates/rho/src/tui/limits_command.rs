@@ -358,7 +358,10 @@ impl App {
                 continue;
             }
             let store = self.credential_store.clone();
-            let client = self.usage_limits_client.clone();
+            let client = self
+                .usage_limits_client
+                .get_or_init(reqwest::Client::new)
+                .clone();
             self.pending_usage_limits.push(PendingUsageFetch {
                 kind,
                 handle: tokio::spawn(async move {

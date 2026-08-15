@@ -479,9 +479,11 @@ impl AgentTool {
         manager: SubagentManager,
         cwd: &Path,
         background_subagents: BackgroundSubagents,
+        catalog: Option<Arc<AgentCatalog>>,
     ) -> Self {
-        let catalog =
-            Arc::new(AgentCatalog::discover(cwd).expect("agent catalog was validated at startup"));
+        let catalog = catalog.unwrap_or_else(|| {
+            Arc::new(AgentCatalog::discover(cwd).expect("agent catalog was validated at startup"))
+        });
         let agent_summaries = catalog
             .iter()
             .filter(|entry| entry.definition.id.as_str() != "default")
@@ -896,6 +898,8 @@ pub(super) struct DelegationBundleOptions {
     pub tools: DelegationToolSelection,
     pub config_path: PathBuf,
     pub background: BackgroundSubagents,
+    /// Catalog already discovered for `cwd`; rediscovered when absent.
+    pub catalog: Option<Arc<AgentCatalog>>,
 }
 
 pub(super) struct SdkDelegationBundle {
@@ -934,8 +938,13 @@ pub(super) fn sdk_bundle(
     let mut tools = Vec::<Arc<dyn rho_sdk::tool::Tool>>::new();
     if options.tools.launches() {
         tools.push(Arc::new(
-            AgentTool::new(manager.clone(), &options.cwd, options.background)
-                .with_mutation_observer(mutation_observer),
+            AgentTool::new(
+                manager.clone(),
+                &options.cwd,
+                options.background,
+                options.catalog,
+            )
+            .with_mutation_observer(mutation_observer),
         ));
     }
     if options.tools.manages() {
