@@ -39,7 +39,7 @@ impl App {
 
     pub(super) fn start_limits_command(&mut self) -> bool {
         if self.pending_usage_limits.is_some() {
-            self.set_status("an OAuth usage limit check is already in progress");
+            self.set_status("a usage limit check is already in progress");
             return false;
         }
 
@@ -48,7 +48,7 @@ impl App {
         self.pending_usage_limits = Some(tokio::spawn(async move {
             fetch_connected_usage_limits(credential_store.as_ref(), client).await
         }));
-        self.set_status("checking OAuth usage limits");
+        self.set_status("checking usage limits");
         true
     }
 
@@ -79,9 +79,9 @@ impl App {
             Ok(result) => self.render_limits_result(result),
             Err(_) => {
                 self.insert_entry(&Entry::Error(
-                    "background task failed: OAuth usage limit check".into(),
+                    "background task failed: usage limit check".into(),
                 ));
-                self.set_status("OAuth usage limit check failed");
+                self.set_status("usage limit check failed");
             }
         }
         Ok(())
@@ -122,7 +122,7 @@ pub(super) enum LimitsViewItem {
     Error(String),
 }
 
-/// Pure `/limits` presentation: OAuth fetch result plus optional Claude cache.
+/// Pure `/limits` presentation: live fetch result plus optional Claude cache.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct LimitsView {
     pub(super) items: Vec<LimitsViewItem>,
@@ -153,7 +153,7 @@ pub(super) fn present_limits_result(
             })];
             for error in &errors {
                 items.push(LimitsViewItem::Error(format!(
-                    "could not check OAuth usage limits: {error}"
+                    "could not check usage limits: {error}"
                 )));
             }
             LimitsView { items, status }
@@ -167,11 +167,11 @@ pub(super) fn present_limits_result(
                 }));
             }
             items.push(LimitsViewItem::Error(format!(
-                "could not check OAuth usage limits: {error}"
+                "could not check usage limits: {error}"
             )));
             LimitsView {
                 items,
-                status: "OAuth usage limit check failed".into(),
+                status: "usage limit check failed".into(),
             }
         }
     }
@@ -231,7 +231,7 @@ fn limits_source_for(provider: &ProviderUsageLimits) -> LimitsSource {
 fn empty_note_for(limits: &ProviderLimits) -> Option<String> {
     if limits.providers.is_empty() {
         return Some(
-            "no supported OAuth providers are connected and no Claude Code limits are known yet; connect Codex with /login openai-codex, Kimi Code with /login kimi-code, xAI with /login xai-oauth, or run a claude-cli agent"
+            "no supported providers are connected and no Claude Code limits are known yet; connect Codex with /login openai-codex, Kimi Code with /login kimi-code, xAI with /login xai-oauth, OpenCode Go with /login opencode-go, or run a claude-cli agent"
                 .into(),
         );
     }
@@ -250,7 +250,7 @@ fn empty_note_for(limits: &ProviderLimits) -> Option<String> {
 
 fn status_for(limits: &ProviderLimits, errors: &[UsageLimitsError], has_claude: bool) -> String {
     if !errors.is_empty() {
-        return "OAuth usage limits partially updated".into();
+        return "usage limits partially updated".into();
     }
     if limits.providers.is_empty() {
         return "no usage limits available".into();

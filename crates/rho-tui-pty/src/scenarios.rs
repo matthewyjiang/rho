@@ -135,7 +135,7 @@ const TYPE_DURING_STREAM_STEPS: &[Step] = &[
     Step::Phase("query_limits"),
     Step::SubmitText("/limits"),
     Step::WaitText {
-        text: "no supported OAuth providers are connected",
+        text: "no supported providers are connected",
         timeout: STREAM,
     },
     Step::Phase("type_draft"),

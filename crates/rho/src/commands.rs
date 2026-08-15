@@ -211,7 +211,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         id: CommandId::Limits,
         name: "limits",
         usage: "/limits",
-        description: "show connected OAuth usage limits and last-observed Claude Code limits",
+        description: "show connected usage limits and last-observed Claude Code limits",
         argument_choices: &[],
     },
     CommandSpec {
