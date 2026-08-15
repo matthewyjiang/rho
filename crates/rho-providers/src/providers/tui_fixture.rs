@@ -9,6 +9,7 @@ use std::{
 mod advisor;
 mod docs_demo;
 mod edit;
+mod goal;
 
 use rho_sdk::{
     model::{
@@ -18,9 +19,17 @@ use rho_sdk::{
     CancellationToken, ProviderError, ProviderErrorKind, Retryability,
 };
 
+use goal::{
+    delegation_result_was_reviewed, is_blocked_goal_evaluation, is_delegation_goal_evaluation,
+    is_delegation_retry_goal_evaluation, is_goal_delegation_prompt,
+    is_goal_delegation_retry_continuation, is_goal_questionnaire_evaluation,
+    is_goal_questionnaire_prompt, is_goal_retry_prompt, DELEGATION_REVIEW_RESPONSE,
+};
+
 const MODE_ENV: &str = "RHO_TUI_TEST_MODE";
 const MATRIX_MODE: &str = "matrix";
 const TOOL_CALL_ID: &str = "tui-fixture-tool";
+const HOVER_TOOL_CALL_ID: &str = "tui-fixture-hover-tool";
 const LONG_APPROVAL_CALL_ID: &str = "tui-fixture-long-approval";
 const QUESTIONNAIRE_CALL_ID: &str = "tui-fixture-questionnaire";
 const PROGRESS_CALL_ID: &str = "tui-fixture-progress";
@@ -34,13 +43,6 @@ const CLAUDE_AGENT_ERROR_CALL_ID: &str = "tui-fixture-claude-agent-error";
 const BACKGROUND_CLAUDE_AGENT_CALL_ID: &str = "tui-fixture-background-claude-agent";
 const GOAL_RETRY_AGENT_CALL_ID: &str = "tui-fixture-goal-retry-agent";
 const AGENTS_LIST_CALL_ID: &str = "tui-fixture-agents-list";
-const GOAL_RETRY_CONDITION: &str = "fixture goal retry";
-const GOAL_BLOCKED_CONDITION: &str = "fixture goal blocked";
-const GOAL_DELEGATION_CONDITION: &str = "fixture goal delegation";
-const GOAL_QUESTIONNAIRE_CONDITION: &str = "fixture goal background questionnaire";
-const GOAL_DELEGATION_RETRY_CONDITION: &str = "fixture goal delegation retry";
-const DELEGATION_REVIEW_RESPONSE: &str =
-    "background agent completion received with delegated result (delivery 1)";
 const BACKGROUND_QUESTIONNAIRE_COMPLETION: &str =
     "background agent questionnaire completed with color blue";
 static GOAL_RETRY_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
@@ -264,6 +266,18 @@ async fn fixture_stream(
             completed_tool_call(TOOL_CALL_ID, "write", arguments)
         }
         edit::PROMPT if edit::is_pending(&request) => edit::stream(&request, &events).await,
+        // Long write body so the collapsed card truncates and becomes
+        // click-toggleable; used by the tool-card hover lift scenario.
+        "fixture hover tool" if tool_result(&request, HOVER_TOOL_CALL_ID).is_none() => {
+            let content = (1..=40)
+                .map(|line| format!("hover fixture line {line:02}\n"))
+                .collect::<String>();
+            let arguments = serde_json::json!({
+                "path": ".rho-tui-fixture-hover.txt",
+                "content": content,
+            });
+            completed_tool_call(HOVER_TOOL_CALL_ID, "write", arguments)
+        }
         edit::CANCEL_PROMPT => edit::stream_until_cancelled(&request, &events).await,
         "fixture questionnaire" if tool_result(&request, QUESTIONNAIRE_CALL_ID).is_none() => {
             completed_tool_call(
@@ -532,26 +546,6 @@ async fn fixture_stream(
     }
 }
 
-fn is_goal_retry_prompt(prompt: &str) -> bool {
-    prompt.contains("The user invoked Rho's `/goal` command")
-        && prompt.contains(&format!("Goal:\n{GOAL_RETRY_CONDITION}"))
-}
-
-fn is_goal_delegation_prompt(prompt: &str) -> bool {
-    prompt.contains("The user invoked Rho's `/goal` command")
-        && prompt.contains(&format!("Goal:\n{GOAL_DELEGATION_CONDITION}\n\n"))
-}
-
-fn is_goal_questionnaire_prompt(prompt: &str) -> bool {
-    prompt.contains("The user invoked Rho's `/goal` command")
-        && prompt.contains(&format!("Goal:\n{GOAL_QUESTIONNAIRE_CONDITION}\n\n"))
-}
-
-fn is_goal_delegation_retry_continuation(prompt: &str) -> bool {
-    prompt.starts_with("Continue working toward this goal:")
-        && prompt.contains(GOAL_DELEGATION_RETRY_CONDITION)
-}
-
 fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, ProviderError> {
     if let Some(review) = advisor::review(request) {
         return review;
@@ -608,6 +602,9 @@ fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, Provide
             "tool lifecycle complete with one result: {}",
             result.content.lines().next().unwrap_or_default()
         ));
+    }
+    if tool_result(request, HOVER_TOOL_CALL_ID).is_some() {
+        return completed("hover tool lifecycle complete");
     }
     if let Some(text) = edit::completion_text(request) {
         return completed(text);
@@ -706,71 +703,6 @@ fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, Provide
         return completed("steering applied exactly once: fixture steer detail");
     }
     completed(format!("fixture response: {prompt}"))
-}
-
-fn is_blocked_goal_evaluation(request: &ModelRequest<'_>) -> bool {
-    request.messages.iter().any(|message| {
-        matches!(
-            message,
-            Message::System(prompt) if prompt.contains("conservative goal-completion evaluator")
-        )
-    }) && last_user_text(request).is_some_and(|prompt| {
-        prompt.contains(&format!("Completion condition:\n{GOAL_BLOCKED_CONDITION}"))
-    })
-}
-
-fn is_goal_questionnaire_evaluation(request: &ModelRequest<'_>) -> bool {
-    request.messages.iter().any(|message| {
-        matches!(
-            message,
-            Message::System(prompt) if prompt.contains("conservative goal-completion evaluator")
-        )
-    }) && last_user_text(request).is_some_and(|prompt| {
-        prompt.contains(&format!(
-            "Completion condition:\n{GOAL_QUESTIONNAIRE_CONDITION}"
-        ))
-    })
-}
-
-fn is_delegation_retry_goal_evaluation(request: &ModelRequest<'_>) -> bool {
-    request.messages.iter().any(|message| {
-        matches!(
-            message,
-            Message::System(prompt) if prompt.contains("conservative goal-completion evaluator")
-        )
-    }) && last_user_text(request).is_some_and(|prompt| {
-        prompt.contains(&format!(
-            "Completion condition:\n{GOAL_DELEGATION_RETRY_CONDITION}"
-        ))
-    })
-}
-
-fn delegation_result_was_reviewed(request: &ModelRequest<'_>) -> bool {
-    request.messages.iter().any(|message| {
-        message
-            .completed_assistant_content()
-            .is_some_and(|content| {
-                content.iter().any(|block| {
-                    matches!(
-                        block,
-                        ContentBlock::Text(text) if text.contains(DELEGATION_REVIEW_RESPONSE)
-                    )
-                })
-            })
-    })
-}
-
-fn is_delegation_goal_evaluation(request: &ModelRequest<'_>) -> bool {
-    request.messages.iter().any(|message| {
-        matches!(
-            message,
-            Message::System(prompt) if prompt.contains("conservative goal-completion evaluator")
-        )
-    }) && last_user_text(request).is_some_and(|prompt| {
-        prompt.contains(&format!(
-            "Completion condition:\n{GOAL_DELEGATION_CONDITION}"
-        ))
-    })
 }
 
 fn last_user_text(request: &ModelRequest<'_>) -> Option<String> {

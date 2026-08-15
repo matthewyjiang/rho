@@ -597,6 +597,14 @@ fn text_selection_highlight_follows_drag_before_release() {
     assert_pass("text_selection_drag");
 }
 
+// Covers: hovering a collapsed tool card lifts its text and reverts on exit,
+// and click-to-expand still works through the shared hit-test path.
+// Owner: interactive TUI
+#[test]
+fn tool_card_hover_lifts_text_and_expands_on_click() {
+    assert_pass("tool_card_hover");
+}
+
 #[test]
 fn screen_text_selection_copies_composer_text() {
     assert_pass("screen_text_selection");

@@ -20,6 +20,9 @@ mod theme_diff;
 
 const USER_BACKGROUND_ALPHA: f32 = 0.10;
 const NEUTRAL_TOOL_BACKGROUND_ALPHA: f32 = 0.10;
+// Blend strength for hovered tool-card text. Enough to read as a lift at a
+// glance without turning the card into a highlight.
+const HOVER_LIFT_ALPHA: f32 = 0.35;
 // Light/dark split for palette-derived chrome. Matches the existing block
 // contrast threshold used by block_foreground.
 const LIGHT_BACKGROUND_LUMINANCE: f32 = 0.55;
@@ -466,7 +469,7 @@ impl Theme {
     pub(super) fn contrasting_ink_on(background: Color) -> Color {
         match background {
             Color::Rgb(red, green, blue) => block_foreground(Some(Rgb::new(red, green, blue))),
-            Color::White | Color::Gray | Color::Yellow => Color::Black,
+            _ if is_light_surface(background) => Color::Black,
             _ => Color::White,
         }
     }
@@ -661,6 +664,35 @@ impl Theme {
         }
     }
 
+    /// Lifted foreground for hovered tool-card text, or `None` to fall back to
+    /// a bold modifier.
+    ///
+    /// RGB ink blends toward the surface-opposite extreme (white on dark UIs,
+    /// black on light ones) so the lift stays in the ink's hue family. Named
+    /// and default ink (unsampled terminal themes) cannot blend; callers add
+    /// bold so hover still gives feedback.
+    pub(super) fn hover_lifted(fg: Color) -> Option<Color> {
+        let Color::Rgb(red, green, blue) = fg else {
+            return None;
+        };
+        let palette = Palette::current();
+        // Surface luminance picks the lift direction. Unsampled terminal
+        // themes leave the surface to the host; assume dark, the common case.
+        let dark_surface = palette
+            .surface
+            .is_none_or(|surface| !is_light_surface(surface));
+        let target = if dark_surface {
+            Rgb::new(255, 255, 255)
+        } else {
+            Rgb::new(0, 0, 0)
+        };
+        Some(
+            Rgb::new(red, green, blue)
+                .blend_toward(target, HOVER_LIFT_ALPHA)
+                .color(),
+        )
+    }
+
     pub(super) fn markdown_bold() -> Style {
         Self::text()
             .add_modifier(Modifier::BOLD)
@@ -841,6 +873,17 @@ fn block_foreground(background: Option<Rgb>) -> Color {
 
 fn is_light_background(luminance: f32) -> bool {
     luminance > LIGHT_BACKGROUND_LUMINANCE
+}
+
+/// Light-host classification shared by contrasting ink and hover lift.
+/// White, gray, and yellow are light-host chrome; every other named color
+/// is dark.
+fn is_light_surface(color: Color) -> bool {
+    match color {
+        Color::Rgb(red, green, blue) => is_light_background(Rgb::new(red, green, blue).luminance()),
+        Color::White | Color::Gray | Color::Yellow => true,
+        _ => false,
+    }
 }
 
 fn blended_or_fallback(

@@ -153,6 +153,7 @@ mod theme_picker;
 mod theme_scheme;
 mod theme_terminal;
 mod tool_call_batch;
+mod tool_card_hover;
 mod tool_card_render;
 mod tool_diff;
 mod tool_output_ui;

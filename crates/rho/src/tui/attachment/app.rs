@@ -1,6 +1,7 @@
 use std::{
     collections::BTreeMap,
     io::IsTerminal,
+    ops::Range,
     path::PathBuf,
     time::{Duration, Instant},
 };
@@ -29,6 +30,7 @@ use super::super::{
     scrollbar::{HistoryScrollChrome, HistoryScrollbar, ScrollbarMouseInput},
     terminal_events::TerminalEvents,
     theme::Theme,
+    tool_card_hover,
     usage_cost::{
         format_token_count, format_usage_token_summary, format_usd, resolved_usage_cost_usd_micros,
         AttemptAwareRunUsage,
@@ -37,7 +39,7 @@ use super::super::{
     HISTORY_SCROLLBAR_REVEAL_DURATION,
 };
 use super::tool_toggle::{
-    latest_toggle_target, status_fallback_items, tool_target_at_line, HistoryItem, ToggleTarget,
+    latest_toggle_target, status_fallback_items, tool_card_at_line, HistoryItem, ToggleTarget,
 };
 
 const REFRESH_INTERVAL: Duration = Duration::from_millis(100);
@@ -507,8 +509,8 @@ impl AttachmentApp {
                         self.press_tool_key = if self.scroll.drag().is_some() {
                             None
                         } else {
-                            self.toggle_target_at_pointer(mouse.column, mouse.row)
-                                .and_then(|target| self.tool_key_for_target(&target))
+                            self.tool_card_at_pointer(mouse.column, mouse.row)
+                                .and_then(|(target, _)| self.tool_key_for_target(&target))
                         };
                     }
                     MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Moved => {
@@ -616,6 +618,16 @@ impl AttachmentApp {
             .visible_start(self.content_len, self.viewport_height);
         let end = start.saturating_add(self.viewport_height).min(lines.len());
         frame.render_widget(Paragraph::new(lines[start..end].to_vec()), chunks[1]);
+        // Hover lift derives from the remembered pointer cell against this
+        // frame's layout, so scroll, promotion, and toggles re-anchor it every
+        // draw instead of caching stale content-line spans.
+        if let Some(hovered) = self
+            .last_mouse_position
+            .and_then(|(column, row)| self.tool_card_at_pointer(column, row))
+            .map(|(_, span)| span)
+        {
+            tool_card_hover::lift_lines(frame.buffer_mut(), chunks[1], start, hovered);
+        }
 
         let now = Instant::now();
         if let Some(scrollbar) = self
@@ -678,7 +690,8 @@ impl AttachmentApp {
         }
     }
 
-    fn toggle_target_at_pointer(&self, column: u16, row: u16) -> Option<ToggleTarget> {
+    /// Content line under the pointer, excluding the scrollbar column.
+    fn pointer_history_line(&self, column: u16, row: u16) -> Option<usize> {
         if !self.history_area.contains((column, row).into()) {
             return None;
         }
@@ -688,11 +701,17 @@ impl AttachmentApp {
         {
             return None;
         }
-        let line = self
-            .scroll
-            .visible_start(self.content_len, self.viewport_height)
-            .saturating_add(usize::from(row.saturating_sub(self.history_area.y)));
-        tool_target_at_line(
+        Some(
+            self.scroll
+                .visible_start(self.content_len, self.viewport_height)
+                .saturating_add(usize::from(row.saturating_sub(self.history_area.y))),
+        )
+    }
+
+    /// Toggleable card under the pointer: click target and hover-lift span.
+    fn tool_card_at_pointer(&self, column: u16, row: u16) -> Option<(ToggleTarget, Range<usize>)> {
+        let line = self.pointer_history_line(column, row)?;
+        tool_card_at_line(
             self.history_items(self.status.as_ref()),
             line,
             self.toggle_width(),

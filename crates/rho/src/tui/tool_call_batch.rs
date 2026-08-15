@@ -8,7 +8,7 @@ use rho_tools::tool_card::{ToolCard, ToolStatus};
 use super::{live_started_at, ToolEntry};
 
 #[derive(Clone)]
-enum LiveToolKey {
+pub(super) enum LiveToolKey {
     Preview(usize),
     Running(ToolCallId),
 }
@@ -36,18 +36,27 @@ impl ToolCallBatch {
         !self.running.is_empty()
     }
 
-    pub(super) fn live_entries(&self) -> impl Iterator<Item = &ToolEntry> {
+    /// Live cards in paint order: `model_order` (previews and running interleaved),
+    /// then unindexed running arrivals.
+    pub(super) fn live_cards(&self) -> impl Iterator<Item = (LiveToolKey, &ToolEntry)> {
         self.model_order
             .values()
-            .filter_map(|key| match key {
-                LiveToolKey::Preview(index) => self.previews.get(index),
-                LiveToolKey::Running(call_id) => self.running.get(call_id),
+            .filter_map(|key| {
+                let entry = match key {
+                    LiveToolKey::Preview(index) => self.previews.get(index),
+                    LiveToolKey::Running(call_id) => self.running.get(call_id),
+                }?;
+                Some((key.clone(), entry))
             })
-            .chain(
-                self.unindexed_running_order
-                    .iter()
-                    .filter_map(|call_id| self.running.get(call_id)),
-            )
+            .chain(self.unindexed_running_order.iter().filter_map(|call_id| {
+                self.running
+                    .get(call_id)
+                    .map(|entry| (LiveToolKey::Running(call_id.clone()), entry))
+            }))
+    }
+
+    pub(super) fn live_entries(&self) -> impl Iterator<Item = &ToolEntry> {
+        self.live_cards().map(|(_, entry)| entry)
     }
 
     pub(super) fn interrupted_entries(&self) -> Vec<ToolEntry> {

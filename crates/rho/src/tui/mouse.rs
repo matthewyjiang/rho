@@ -11,9 +11,10 @@ use super::{
     copy_interaction::{selection_position, selection_position_clamped},
     paste_burst::word_range_at,
     picker_input::PickerMouseEvent,
-    render::tool_entry_lines,
     text_selection::{screen_lines, CopyNotice, TextSelection},
-    tool_output_ui::{expandable_tool_entry, tool_output_toggleable},
+    tool_card_hover::{ToolCardHit, ToolCardTarget},
+    tool_output_ui::expandable_tool_entry,
+    view::LiveHistory,
     App, ComposerMode,
 };
 
@@ -430,117 +431,104 @@ impl App {
         width: usize,
         terminal: &mut Terminal<B>,
     ) -> Result<bool, B::Error> {
-        if !self.info.runtime.shows_work_chrome() {
+        let live = self.live_history_layout(width, self.feed_image_row_budget(width));
+        let Some(hit) = self.tool_card_hit_at_history_line(line, width, &live) else {
             return Ok(false);
+        };
+        match hit.target {
+            ToolCardTarget::Transcript(index) => {
+                self.toggle_transcript_tool_output(index);
+            }
+            ToolCardTarget::Preview(index) => {
+                let expanded = self
+                    .turn
+                    .tool_calls_mut()
+                    .previews
+                    .get_mut(&index)
+                    .is_some_and(|pending| {
+                        pending.expanded = !pending.expanded;
+                        pending.expanded
+                    });
+                self.set_tool_expand_status(expanded);
+            }
+            ToolCardTarget::Running(call_id) => {
+                let expanded = self
+                    .turn
+                    .tool_calls_mut()
+                    .running
+                    .get_mut(&call_id)
+                    .is_some_and(|pending| {
+                        pending.expanded = !pending.expanded;
+                        pending.expanded
+                    });
+                self.set_tool_expand_status(expanded);
+            }
         }
+        self.clamp_history_scroll_for_terminal(terminal)?;
+        Ok(true)
+    }
+
+    fn set_tool_expand_status(&mut self, expanded: bool) {
+        self.set_status(if expanded {
+            "tool output expanded"
+        } else {
+            "tool output collapsed"
+        });
+    }
+
+    /// The toggleable tool card covering absolute history `line`, if any.
+    ///
+    /// Shared by click toggling and the draw-time hover lift so both agree on
+    /// the clickable card span. Transcript cards resolve through the history
+    /// cache; pending live cards walk the same paint order as
+    /// `history_live_lines`.
+    pub(super) fn tool_card_hit_at_history_line(
+        &mut self,
+        line: usize,
+        width: usize,
+        live: &LiveHistory,
+    ) -> Option<ToolCardHit> {
+        if !self.info.runtime.shows_work_chrome() {
+            return None;
+        }
+        let max_tool_output_lines = self.info.runtime.max_tool_output_lines;
         let header_len = self.session_header_lines(width).len();
         if let Some(transcript_line) = line.checked_sub(header_len) {
             let cwd = self.info.runtime.cwd.clone();
             let settings = self.history_render_settings(width);
             self.sync_open_stream_tail();
-            let index = self.history.with_lines_and_images_mut(
+            let hit = self.history.with_lines_and_images_mut(
                 |history_lines, entries, markdown_images| {
-                    history_lines.entry_index_at_line(
+                    let index = history_lines.entry_index_at_line(
                         entries,
                         settings,
                         transcript_line,
                         &|entry_index, sources| {
                             markdown_images.ready_images(entry_index, sources, &cwd)
                         },
-                    )
+                    )?;
+                    entries
+                        .get(index)
+                        .filter(|entry| expandable_tool_entry(entry, max_tool_output_lines, width))
+                        .map(|_| index)
+                        .and_then(|index| history_lines.entry_line_range(index))
+                        .map(|range| (index, range))
                 },
             );
-            if let Some(index) = index.filter(|&index| {
-                self.history.get(index).is_some_and(|entry| {
-                    expandable_tool_entry(entry, self.info.runtime.max_tool_output_lines, width)
-                })
-            }) {
-                self.toggle_transcript_tool_output(index);
-                self.clamp_history_scroll_for_terminal(terminal)?;
-                return Ok(true);
+            if let Some((index, range)) = hit {
+                return Some(ToolCardHit {
+                    target: ToolCardTarget::Transcript(index),
+                    lines: (header_len + range.start)..(header_len + range.end),
+                });
             }
         }
 
         let static_len = self.history_static_len(width);
-        let mut pending_start = static_len;
-        let shells = self.running_inline_shell_entries().collect::<Vec<_>>();
-        let has_pending_tools =
-            !shells.is_empty() || self.turn.tool_calls().live_entries().next().is_some();
-        // Match history_live_lines: open stream tails need one blank before live tools.
-        if has_pending_tools && self.open_stream_tail_active() {
-            pending_start = pending_start.saturating_add(1);
-        }
-        for shell in &shells {
-            pending_start = pending_start.saturating_add(
-                tool_entry_lines(
-                    shell,
-                    width,
-                    self.info.runtime.max_tool_output_lines,
-                    self.feed_image_row_budget(width),
-                )
-                .len(),
-            );
-        }
-        enum PendingToolKey {
-            Preview(usize),
-            Running(rho_sdk::ToolCallId),
-        }
-        let mut target = None;
-        let entries = self
-            .turn
-            .tool_calls()
-            .previews
-            .iter()
-            .map(|(index, entry)| (PendingToolKey::Preview(*index), entry))
-            .chain(
-                self.turn
-                    .tool_calls()
-                    .running
-                    .iter()
-                    .map(|(call_id, entry)| (PendingToolKey::Running(call_id.clone()), entry)),
-            );
-        for (key, pending) in entries {
-            let pending_end = pending_start.saturating_add(
-                tool_entry_lines(
-                    pending,
-                    width,
-                    self.info.runtime.max_tool_output_lines,
-                    self.feed_image_row_budget(width),
-                )
-                .len(),
-            );
-            if (pending_start..pending_end).contains(&line)
-                && tool_output_toggleable(pending, self.info.runtime.max_tool_output_lines, width)
-            {
-                target = Some(key);
-                break;
-            }
-            pending_start = pending_end;
-        }
-        if let Some(target) = target {
-            let expanded = {
-                let pending = match target {
-                    PendingToolKey::Preview(index) => {
-                        self.turn.tool_calls_mut().previews.get_mut(&index)
-                    }
-                    PendingToolKey::Running(call_id) => {
-                        self.turn.tool_calls_mut().running.get_mut(&call_id)
-                    }
-                }
-                .expect("pending tool exists");
-                pending.expanded = !pending.expanded;
-                pending.expanded
-            };
-            self.set_status(if expanded {
-                "tool output expanded"
-            } else {
-                "tool output collapsed"
-            });
-            self.clamp_history_scroll_for_terminal(terminal)?;
-            return Ok(true);
-        }
-
-        Ok(false)
+        live.card_hit_at(line.checked_sub(static_len)?)
+            .map(|(target, range)| ToolCardHit {
+                target,
+                lines: (static_len + range.start)..(static_len + range.end),
+            })
     }
 
     pub(super) fn copy_text(&mut self, text: &str, now: Instant) {
