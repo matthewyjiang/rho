@@ -709,3 +709,54 @@ async fn aborted_stop_caller_does_not_cancel_request_or_cleanup() {
         State::Terminated
     );
 }
+
+async fn wait_for_exit_notification(manager: &ProcessManager) -> Vec<ProcessNotification> {
+    loop {
+        let notified = manager.notified_owned();
+        let notifications = manager.take_notifications();
+        if !notifications.is_empty() {
+            return notifications;
+        }
+        tokio::time::timeout(Duration::from_secs(2), notified)
+            .await
+            .expect("process should become terminal");
+    }
+}
+
+// Covers: a finished process is delivered once at the turn boundary unless poll already observed it
+// Owner: process manager
+#[tokio::test]
+async fn finished_process_is_delivered_once_until_restored() {
+    let manager = ProcessManager::new(ProcessLimits::default());
+    let started = manager
+        .start(SUCCESS_COMMAND.into(), std::path::Path::new("."), None)
+        .await
+        .unwrap();
+    let notifications = wait_for_exit_notification(&manager).await;
+    assert_eq!(notifications.len(), 1);
+    assert_eq!(notifications[0].process_id, started.process_id);
+    assert_eq!(notifications[0].state, State::Exited);
+    assert!(manager.take_notifications().is_empty());
+
+    manager.restore_notifications(&notifications);
+    let again = manager.take_notifications();
+    assert_eq!(again.len(), 1);
+    assert_eq!(again[0].process_id, started.process_id);
+}
+
+// Covers: a terminal poll counts as delivery so idle wake does not repeat it
+// Owner: process manager
+#[tokio::test]
+async fn terminal_poll_observes_and_suppresses_notification() {
+    let manager = ProcessManager::new(ProcessLimits::default());
+    let started = manager
+        .start(SUCCESS_COMMAND.into(), std::path::Path::new("."), None)
+        .await
+        .unwrap();
+    let snapshot = eventually(&manager, &started.process_id).await;
+    assert!(terminal(snapshot.state));
+    assert!(
+        manager.take_notifications().is_empty(),
+        "poll of a finished process must consume the automatic delivery"
+    );
+}

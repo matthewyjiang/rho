@@ -139,6 +139,7 @@ pub struct AppToolSet {
     bundles: Vec<Box<dyn ToolBundle>>,
     advisor: Option<AdvisorTools>,
     subagents: Option<SubagentManager>,
+    processes: Option<super::process::ProcessManager>,
     workflow_tracker: super::workflow_tracker::WorkflowRunTracker,
     checkpoint_tracker: Arc<crate::session::workspace_checkpoint::WorkspaceCheckpointTracker>,
     web_access: super::web::WebAccessStore,
@@ -153,6 +154,7 @@ impl AppToolSet {
             bundles: Vec::new(),
             advisor: None,
             subagents: None,
+            processes: None,
             workflow_tracker: super::workflow_tracker::WorkflowRunTracker::new(),
             checkpoint_tracker: Arc::new(
                 crate::session::workspace_checkpoint::WorkspaceCheckpointTracker::new(false),
@@ -193,11 +195,13 @@ impl AppToolSet {
             tool_set.checkpoint_tracker.clone(),
         ));
         if capabilities.contains(&ToolCapability::Process) {
-            tool_set.add_bundle(super::process::sdk_bundle(
+            let bundle = super::process::sdk_bundle(
                 config.max_output_bytes,
                 process_environment.clone(),
                 tool_set.checkpoint_tracker.clone(),
-            ));
+            );
+            tool_set.processes = Some(bundle.manager_handle());
+            tool_set.add_bundle(bundle);
         }
         if capabilities.contains(&ToolCapability::Skill) {
             tool_set.add_bundle(super::sdk_features::skill_bundle(config.max_output_bytes));
@@ -384,6 +388,10 @@ impl AppToolSet {
 
     pub fn subagents(&self) -> Option<&SubagentManager> {
         self.subagents.as_ref()
+    }
+
+    pub fn processes(&self) -> Option<&super::process::ProcessManager> {
+        self.processes.as_ref()
     }
 
     pub fn workflow_tracker(&self) -> &super::workflow_tracker::WorkflowRunTracker {

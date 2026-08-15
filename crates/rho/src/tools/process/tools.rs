@@ -72,7 +72,7 @@ impl Tool for Process {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "process".into(),
-            description: "Manage a background process: start requires command; poll and stop require process_id.".into(),
+            description: "Manage a background process: start requires command; poll and stop require process_id. Started processes deliver their result when they exit; do not poll in a loop.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {

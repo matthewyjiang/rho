@@ -41,6 +41,7 @@ pub(super) async fn supervise(
     timeout: Option<Duration>,
     limits: ProcessLimits,
     tree: Arc<ProcessTree>,
+    exited: Arc<tokio::sync::Notify>,
 ) {
     tokio::spawn(reader(Stream::Stdout, stdout, tx.clone()));
     tokio::spawn(reader(Stream::Stderr, stderr, tx));
@@ -77,6 +78,8 @@ pub(super) async fn supervise(
     r.state = final_state;
     r.completed = Some(Instant::now());
     r.notify.notify_waiters();
+    drop(r);
+    exited.notify_waiters();
 }
 fn push(rec: &SharedRecord, stream: Stream, b: Vec<u8>, limits: &ProcessLimits) {
     let mut r = rec.lock().unwrap();

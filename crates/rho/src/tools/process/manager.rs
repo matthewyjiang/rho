@@ -33,6 +33,7 @@ pub(super) struct Record {
     pub(super) stop: Option<mpsc::UnboundedSender<Duration>>,
     pub(super) tree: Option<Arc<ProcessTree>>,
     pub(super) notify: Arc<Notify>,
+    pub(super) observed: bool,
 }
 struct Inner {
     records: HashMap<String, SharedRecord>,
@@ -42,6 +43,7 @@ struct Inner {
 pub struct ProcessManager {
     inner: Arc<Mutex<Inner>>,
     environment: ProcessEnvironment,
+    exited: Arc<Notify>,
 }
 
 impl ProcessManager {
@@ -55,12 +57,14 @@ impl ProcessManager {
     }
 
     pub fn with_environment(limits: ProcessLimits, environment: ProcessEnvironment) -> Self {
+        let exited = Arc::new(Notify::new());
         Self {
             inner: Arc::new(Mutex::new(Inner {
                 records: HashMap::new(),
                 limits,
             })),
             environment,
+            exited,
         }
     }
 
@@ -111,6 +115,7 @@ impl ProcessManager {
             stop: None,
             tree: None,
             notify,
+            observed: false,
         }));
         {
             let mut inner = self.inner.lock().unwrap();
@@ -130,10 +135,7 @@ impl ProcessManager {
                     Ok(tree) => Arc::new(tree),
                     Err(error) => {
                         let _ = child.start_kill();
-                        let mut r = rec.lock().unwrap();
-                        r.state = State::FailedToStart;
-                        r.detail = Some(error);
-                        r.completed = Some(Instant::now());
+                        mark_terminal(&rec, State::FailedToStart, Some(error), &self.exited);
                         return Ok(snapshot(&rec, 0));
                     }
                 };
@@ -160,17 +162,17 @@ impl ProcessManager {
                     timeout,
                     limits,
                     tree,
+                    self.exited.clone(),
                 ));
                 Ok(snapshot(&rec, 0))
             }
             Err(e) => {
-                {
-                    let mut r = rec.lock().unwrap();
-                    r.state = State::FailedToStart;
-                    r.detail = Some(e.to_string());
-                    r.completed = Some(Instant::now());
-                    r.notify.notify_waiters();
-                }
+                mark_terminal(
+                    &rec,
+                    State::FailedToStart,
+                    Some(e.to_string()),
+                    &self.exited,
+                );
                 Ok(snapshot(&rec, 0))
             }
         }
@@ -201,6 +203,9 @@ impl ProcessManager {
             };
             let s = snapshot_bounded(&rec, cursor, max_output_bytes);
             if !s.chunks.is_empty() || terminal(s.state) || wait.is_zero() {
+                if terminal(s.state) {
+                    rec.lock().unwrap().observed = true;
+                }
                 return Ok(s);
             }
             if tokio::time::timeout_at(deadline, notified).await.is_err() {
@@ -219,6 +224,78 @@ impl ProcessManager {
         };
         tx.send(grace).map_err(|_| "process already stopped".into())
     }
+    /// Fires when any process becomes terminal. Subscribe before checking
+    /// pending notifications so an exit during the wait is not lost.
+    pub fn notified_owned(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
+        self.exited.clone().notified_owned()
+    }
+
+    pub fn has_active_or_pending_notification(&self) -> bool {
+        self.inner.lock().unwrap().records.values().any(|record| {
+            let record = record.lock().unwrap();
+            !terminal(record.state) || !record.observed
+        })
+    }
+
+    /// Drains unobserved terminal processes, oldest first.
+    pub fn take_notifications(&self) -> Vec<super::ProcessNotification> {
+        let inner = self.inner.lock().unwrap();
+        let mut notifications = inner
+            .records
+            .values()
+            .filter_map(|record| {
+                let mut record = record.lock().unwrap();
+                if !terminal(record.state) || record.observed {
+                    return None;
+                }
+                record.observed = true;
+                Some((
+                    record.started,
+                    super::ProcessNotification {
+                        process_id: record.id.clone(),
+                        command: record.command.clone(),
+                        state: record.state,
+                        exit_code: record.exit_code,
+                        output: super::notify::excerpt_output(
+                            &record
+                                .chunks
+                                .iter()
+                                .map(|item| item.chunk.clone())
+                                .collect::<Vec<_>>(),
+                            super::notify::output_excerpt_budget(),
+                        ),
+                        terminal_detail: record.detail.clone(),
+                    },
+                ))
+            })
+            .collect::<Vec<_>>();
+        notifications.sort_by(|(a_started, a), (b_started, b)| {
+            a_started
+                .cmp(b_started)
+                .then_with(|| a.process_id.cmp(&b.process_id))
+        });
+        notifications
+            .into_iter()
+            .map(|(_, notification)| notification)
+            .collect()
+    }
+
+    pub fn restore_notifications(&self, notifications: &[super::ProcessNotification]) {
+        if notifications.is_empty() {
+            return;
+        }
+        let inner = self.inner.lock().unwrap();
+        for notification in notifications {
+            let Some(record) = inner.records.get(&notification.process_id) else {
+                continue;
+            };
+            let mut record = record.lock().unwrap();
+            if terminal(record.state) && record.observed {
+                record.observed = false;
+            }
+        }
+    }
+
     pub async fn shutdown(&self) {
         let records = self
             .inner
@@ -328,6 +405,16 @@ fn command_from_execution(execution: &ProcessExecution) -> Result<tokio::process
         }
         _ => Err("unsupported process invocation".into()),
     }
+}
+
+fn mark_terminal(rec: &SharedRecord, state: State, detail: Option<String>, exited: &Notify) {
+    let mut record = rec.lock().unwrap();
+    record.state = state;
+    record.detail = detail;
+    record.completed = Some(Instant::now());
+    record.notify.notify_waiters();
+    drop(record);
+    exited.notify_waiters();
 }
 
 fn snapshot(rec: &SharedRecord, cursor: u64) -> Snapshot {

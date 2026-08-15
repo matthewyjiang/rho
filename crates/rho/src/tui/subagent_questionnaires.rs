@@ -88,7 +88,8 @@ impl App {
     }
 
     /// Collects everything owed to the model at a turn boundary: background
-    /// completions, delegated-child notices, and workflow notifications.
+    /// completions, delegated-child notices, workflow notifications, and
+    /// finished process-tool jobs.
     ///
     /// Returns the joined model prompt, display summary, and the drained batch
     /// so callers can restore on setup failure, or `None` when nothing is
@@ -129,6 +130,14 @@ impl App {
                 &batch.workflow_notifications,
             ));
         }
+        if let Some(processes) = agent.processes() {
+            batch.process_notifications = processes.take_notifications();
+            if !batch.process_notifications.is_empty() {
+                push(crate::tools::process::notification_prompts(
+                    &batch.process_notifications,
+                ));
+            }
+        }
         if model_parts.is_empty() {
             return None;
         }
@@ -152,6 +161,9 @@ impl App {
         agent
             .workflow_tracker()
             .restore_notifications(&batch.workflow_notifications);
+        if let Some(processes) = agent.processes() {
+            processes.restore_notifications(&batch.process_notifications);
+        }
     }
 
     async fn finish_pending_subagent_questionnaire(
@@ -351,6 +363,7 @@ pub(super) struct TurnBoundaryBatch {
     subagent_notifications: Vec<crate::tools::agent::SubagentNotification>,
     notices: Vec<crate::app::subagent_messaging::SubagentNotice>,
     workflow_notifications: Vec<crate::tools::workflow_tracker::WorkflowNotification>,
+    process_notifications: Vec<crate::tools::process::ProcessNotification>,
 }
 
 impl TurnBoundaryBatch {

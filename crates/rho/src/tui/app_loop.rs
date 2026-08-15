@@ -79,6 +79,10 @@ impl App {
             needs_redraw |= self
                 .poll_subagent_questionnaires(agent.session_id())
                 .await?;
+            // Subscribe before draining so an exit between drain and wait is not lost.
+            let process_exit = agent
+                .processes()
+                .map(crate::tools::process::ProcessManager::notified_owned);
             needs_redraw |= self.poll_subagent_completions(terminal, agent).await?;
             if needs_redraw {
                 terminal.draw(|frame| self.draw(frame))?;
@@ -89,6 +93,9 @@ impl App {
             }) || agent
                 .workflow_tracker()
                 .has_active_or_pending_notification(agent.session_id().as_str())
+                || agent.processes().is_some_and(
+                    crate::tools::process::ProcessManager::has_active_or_pending_notification,
+                )
                 || self.pending_subagent_questionnaire.is_some()
                 || self.subagent_inbox.has_queued_questionnaires()
                 || self.subagent_inbox.has_pending_notices();
@@ -120,6 +127,14 @@ impl App {
                     needs_redraw |= self.flush_due_paste_burst();
                 }
                 () = self.subagent_inbox.recv() => {
+                    needs_redraw = true;
+                }
+                () = async {
+                    match process_exit {
+                        Some(notified) => notified.await,
+                        None => std::future::pending().await,
+                    }
+                } => {
                     needs_redraw = true;
                 }
                 outcome = media_attach::next_media_attach_completion(&mut self.media_attach_tasks), if media_attach_pending => {
