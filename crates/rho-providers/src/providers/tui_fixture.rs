@@ -727,8 +727,13 @@ fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, Provide
 }
 
 fn is_subagent_title_request(request: &ModelRequest<'_>) -> bool {
-    last_user_text(request)
-        .is_some_and(|text| text.to_ascii_lowercase().contains("delegated agent run"))
+    let is_title_agent = request.messages.iter().any(|message| {
+        matches!(
+            message,
+            Message::System(text) if text.contains("Generate a concise title for this chat session")
+        )
+    });
+    is_title_agent && last_user_text(request).is_some_and(|text| !text.starts_with("First turn:"))
 }
 
 fn last_user_text(request: &ModelRequest<'_>) -> Option<String> {

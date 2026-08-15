@@ -6,6 +6,7 @@ use ratatui::{
 use super::{activity, theme::Theme};
 use crate::{
     subagent::{self, RunState},
+    title::activity_label,
     tools::agent::SubagentManager,
 };
 
@@ -186,7 +187,7 @@ impl SubagentPanel {
         for (index, agent) in agents.into_iter().enumerate() {
             let activity_text = match agent.state {
                 RunState::Starting => "starting",
-                RunState::Running => crate::title::activity_label(agent.last_activity.as_deref()),
+                RunState::Running => activity_label(agent.last_activity.as_deref()),
                 RunState::Ok | RunState::Error | RunState::Stopped => continue,
             };
             let connector =

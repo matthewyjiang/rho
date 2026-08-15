@@ -1,5 +1,8 @@
+use std::sync::{Arc, Mutex};
+
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
+use tokio::sync::watch;
 
 use super::*;
 use crate::run_artifacts::AttachmentReader;
@@ -139,4 +142,36 @@ fn coalescing_keeps_reasoning_and_text_streams_separate() {
     // Every reasoning run is followed by text, so the streams stay ordered pairs
     // no matter how many deltas merged inside each run.
     assert_eq!(interleavings, 512);
+}
+
+// Covers: a title that arrives while the sink is constructed must survive the
+// first watch publish, not only the on-disk result file.
+// Owner: run-artifact sink
+#[test]
+fn continue_from_keeps_a_title_written_during_construction() {
+    let directory = TempDir::new().unwrap();
+    let path = directory.path().join(subagent::RESULT_FILE_NAME);
+    let started = RunStatus {
+        state: RunState::Starting,
+        agent_id: Some("worker".into()),
+        last_activity: Some("starting".into()),
+        ..RunStatus::default()
+    };
+    subagent::initialize_status(&path, &started).unwrap();
+    let (tx, rx) = watch::channel(started.clone());
+    let live_title = Arc::new(Mutex::new(Some("Review the auth path".into())));
+
+    let mut sink = RunArtifactSink::continue_from(
+        path,
+        started,
+        "prompt",
+        Some(tx),
+        Some(Arc::clone(&live_title)),
+    )
+    .unwrap();
+    sink.mark_running("tool: read");
+
+    assert_eq!(sink.status.title.as_deref(), Some("Review the auth path"));
+    assert_eq!(rx.borrow().title.as_deref(), Some("Review the auth path"));
+    assert_eq!(rx.borrow().last_activity.as_deref(), Some("tool: read"));
 }

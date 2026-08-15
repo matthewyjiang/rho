@@ -207,6 +207,19 @@ pub fn initialize_status(path: &Path, status: &RunStatus) -> std::io::Result<()>
     write_status_inner(path, status, /*force*/ true)
 }
 
+/// Stamp a generated title onto the current on-disk status without regressing
+/// other fields.
+pub fn apply_generated_title(path: &Path, title: &str) -> std::io::Result<()> {
+    let Some(mut status) = read_status(path) else {
+        return Ok(());
+    };
+    if status.title.is_none() {
+        status.title = Some(title.to_owned());
+        write_status(path, &status)?;
+    }
+    Ok(())
+}
+
 fn write_status_inner(path: &Path, status: &RunStatus, force: bool) -> std::io::Result<()> {
     let _guard = status_write_lock()
         .lock()

@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{widgets::Clear, DefaultTerminal, Frame};
 
 use crate::subagent;
@@ -33,13 +33,16 @@ pub(super) async fn select_running_run(
         match event {
             Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
                 KeyCode::Esc => return Ok(None),
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    return Ok(None);
+                }
                 KeyCode::Enter => {
                     return Ok(picker.selected_item().map(|item| item.value.clone()));
                 }
                 KeyCode::Up => picker.select_previous(),
                 KeyCode::Down => picker.select_next(),
                 KeyCode::Backspace => picker.pop_filter_char(),
-                KeyCode::Char(ch) => picker.push_filter_char(ch),
+                KeyCode::Char(ch) if key.modifiers.is_empty() => picker.push_filter_char(ch),
                 _ => {}
             },
             Event::Resize(_, _) => {}

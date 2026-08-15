@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use tokio::sync::watch;
 
 use crate::{
-    run_artifacts::{AttachmentEvent, RunArtifactIdentity, RunArtifactSink},
+    run_artifacts::{AttachmentEvent, LiveRunTitle, RunArtifactIdentity, RunArtifactSink},
     subagent::RunStatus,
 };
 
@@ -60,10 +60,12 @@ impl StatusSink {
         mut status: RunStatus,
         prompt: &str,
         status_tx: Option<watch::Sender<RunStatus>>,
+        live_title: Option<LiveRunTitle>,
         rate_limit_state_path: Option<PathBuf>,
     ) -> anyhow::Result<Self> {
         status.last_activity = Some("starting claude".into());
-        let mut inner = RunArtifactSink::continue_from(path, status, prompt, status_tx)?;
+        let mut inner =
+            RunArtifactSink::continue_from(path, status, prompt, status_tx, live_title)?;
         inner.publish();
         Ok(Self {
             inner,

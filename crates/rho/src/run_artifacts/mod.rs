@@ -10,4 +10,4 @@ mod sink;
 #[cfg(test)]
 pub(crate) use journal::AttachmentWriter;
 pub(crate) use journal::{AttachmentEvent, AttachmentReader};
-pub(crate) use sink::{RunArtifactIdentity, RunArtifactSink};
+pub(crate) use sink::{LiveRunTitle, RunArtifactIdentity, RunArtifactSink};

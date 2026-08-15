@@ -428,16 +428,8 @@ impl AgentExecutor {
         let (completion_tx, completion) = tokio::sync::watch::channel(false);
         let cancellation = RunCancellation::new();
         let task_cancellation = cancellation.clone();
-        let config = self.config.read().expect("delegated config lock").clone();
-        spawn_run_title(
-            &config,
-            prompt.clone(),
-            bound.id().to_string(),
-            run_id.clone(),
-            output_file.clone(),
-            self.cwd.clone(),
-            status_tx.clone(),
-        );
+        let live_title = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let title_config = self.config.read().expect("delegated config lock").clone();
         let config_path = self.config_path.clone();
         let cwd = self.cwd.clone();
         let host_input = self.host_input.clone();
@@ -453,6 +445,13 @@ impl AgentExecutor {
         let task_steering_slot = steering_slot.clone();
 
         let task_status_tx = status_tx.clone();
+        let title_run_id = run_id.clone();
+        let title_output = output_file.clone();
+        let title_cwd = self.cwd.clone();
+        let title_prompt = prompt.clone();
+        let title_agent_id = bound.id().to_string();
+        let title_slot = std::sync::Arc::clone(&live_title);
+        let task_live_title = std::sync::Arc::clone(&live_title);
         let task: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
             // Acquire runtime-aware capacity before work starts. Claude runs
             // take Claude capacity first so queued Claude work cannot occupy
@@ -475,6 +474,17 @@ impl AgentExecutor {
                 return Ok(());
             };
 
+            spawn_run_title(
+                &title_config,
+                title_prompt,
+                title_agent_id,
+                title_run_id,
+                title_output,
+                title_cwd,
+                task_status_tx.clone(),
+                title_slot,
+            );
+
             let started_status = task_status_tx.borrow().clone();
             if let Some(mut session) = bound.clone().into_claude_session(
                 prompt.clone(),
@@ -485,6 +495,7 @@ impl AgentExecutor {
                 Some(started_status),
             ) {
                 session.parent_messages = claude_parent_rx;
+                session.overrides.live_title = Some(std::sync::Arc::clone(&task_live_title));
                 if let Some(frozen) = frozen_claude {
                     let expected_identity = frozen.executable_identity;
                     let verified_executable = frozen._verified_executable;
@@ -528,6 +539,7 @@ impl AgentExecutor {
                 steering_slot: task_steering_slot,
                 cancellation: task_cancellation,
                 status_tx: task_status_tx,
+                live_title: task_live_title,
                 hook_host_labels,
                 approval_session,
                 approval_classifier,
@@ -610,6 +622,7 @@ struct RhoAgentRun {
     steering_slot: Option<SteeringSlot>,
     cancellation: RunCancellation,
     status_tx: tokio::sync::watch::Sender<RunStatus>,
+    live_title: crate::run_artifacts::LiveRunTitle,
     hook_host_labels: rho_sdk::hooks::HookHostLabels,
     approval_session: Option<rho_sdk::ApprovalSession>,
     approval_classifier: Option<Arc<ClassifierApprovalHandler>>,
@@ -633,6 +646,7 @@ async fn run_rho_agent(run: RhoAgentRun) -> anyhow::Result<()> {
         steering_slot,
         cancellation,
         status_tx,
+        live_title,
         hook_host_labels,
         approval_session,
         approval_classifier,
@@ -655,6 +669,7 @@ async fn run_rho_agent(run: RhoAgentRun) -> anyhow::Result<()> {
         &prompt,
         /* stream_output */ false,
         Some(status_tx),
+        Some(live_title),
     )?;
     let agent_id = bound.id().to_string();
     let max_steps = std::num::NonZeroUsize::new(
@@ -865,6 +880,7 @@ fn spawn_run_title(
     output_file: PathBuf,
     workspace_path: PathBuf,
     status_tx: tokio::sync::watch::Sender<RunStatus>,
+    live_title: crate::run_artifacts::LiveRunTitle,
 ) {
     let model = crate::title::title_model_from_config(config);
     let session_id =
@@ -884,13 +900,20 @@ fn spawn_run_title(
         let Ok(title) = title else {
             return;
         };
+        {
+            let mut slot = live_title
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if slot.is_none() {
+                *slot = Some(title.clone());
+            }
+        }
         status_tx.send_modify(|status| {
             if status.title.is_none() {
                 status.title = Some(title.clone());
             }
         });
-        let status = status_tx.borrow().clone();
-        let _ = subagent::write_status(&output_file, &status);
+        let _ = subagent::apply_generated_title(&output_file, &title);
     });
 }
 

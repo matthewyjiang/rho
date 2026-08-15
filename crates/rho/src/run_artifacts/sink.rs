@@ -21,6 +21,10 @@ use rho_sdk::{ceil_char_boundary, floor_char_boundary, ELLIPSIS};
 
 use crate::subagent::{self, RunState, RunStatus};
 
+/// Title produced by a sibling task, shared with this sink so the watch
+/// channel stays one-way.
+pub(crate) type LiveRunTitle = Arc<Mutex<Option<String>>>;
+
 use super::journal::{AttachmentEvent, AttachmentWriter};
 
 /// Longest a status-file write is deferred while text streams.
@@ -72,6 +76,7 @@ pub(crate) struct RunArtifactSink {
     path: PathBuf,
     pub(crate) status: RunStatus,
     status_tx: Option<watch::Sender<RunStatus>>,
+    live_title: Option<LiveRunTitle>,
     last_write: Instant,
     closed: bool,
     attachment_enabled: bool,
@@ -98,6 +103,19 @@ fn starting_status(identity: &RunArtifactIdentity) -> RunStatus {
     }
 }
 
+fn merge_title_from_slot(status: &mut RunStatus, live_title: Option<&LiveRunTitle>) {
+    if status.title.is_some() {
+        return;
+    }
+    let Some(slot) = live_title else {
+        return;
+    };
+    let Ok(title) = slot.lock() else {
+        return;
+    };
+    status.title.clone_from(&title);
+}
+
 impl RunArtifactSink {
     /// Open a new run boundary: force-replace prior terminal status, write the
     /// prompt attachment when possible, and publish Starting.
@@ -109,7 +127,7 @@ impl RunArtifactSink {
     ) -> anyhow::Result<Self> {
         let status = starting_status(identity);
         subagent::initialize_status(&path, &status)?;
-        Self::from_started(path, status, prompt, status_tx)
+        Self::from_started(path, status, prompt, status_tx, None)
     }
 
     /// Continue after the launcher already wrote the Starting boundary.
@@ -122,8 +140,9 @@ impl RunArtifactSink {
         status: RunStatus,
         prompt: &str,
         status_tx: Option<watch::Sender<RunStatus>>,
+        live_title: Option<LiveRunTitle>,
     ) -> anyhow::Result<Self> {
-        Self::from_started(path, status, prompt, status_tx)
+        Self::from_started(path, status, prompt, status_tx, live_title)
     }
 
     fn from_started(
@@ -131,6 +150,7 @@ impl RunArtifactSink {
         mut status: RunStatus,
         prompt: &str,
         status_tx: Option<watch::Sender<RunStatus>>,
+        live_title: Option<LiveRunTitle>,
     ) -> anyhow::Result<Self> {
         let (attachment, attachment_error) = match AttachmentWriter::create(&path) {
             Ok(mut writer) => {
@@ -154,6 +174,7 @@ impl RunArtifactSink {
         if status.attachment_error.is_some() {
             write_status_best_effort(&path, &status, &status_write_failed);
         }
+        merge_title_from_slot(&mut status, live_title.as_ref());
         if let Some(tx) = &status_tx {
             tx.send_replace(status.clone());
         }
@@ -181,6 +202,7 @@ impl RunArtifactSink {
             path,
             status,
             status_tx,
+            live_title,
             last_write: Instant::now(),
             closed: false,
             attachment_enabled,
@@ -205,13 +227,7 @@ impl RunArtifactSink {
 
     /// Keep a title written by the title task when this sink still has none.
     fn merge_live_title(&mut self) {
-        if self.status.title.is_some() {
-            return;
-        }
-        let Some(tx) = &self.status_tx else {
-            return;
-        };
-        self.status.title = tx.borrow().title.clone();
+        merge_title_from_slot(&mut self.status, self.live_title.as_ref());
     }
 
     /// Publish when the throttle window has elapsed (streaming text).
@@ -339,6 +355,7 @@ impl RunArtifactSink {
     }
 
     fn finish(&mut self, terminal_attachment: Option<AttachmentEvent>) {
+        self.merge_live_title();
         self.closed = true;
         let terminal_attachment = if self.attachment_enabled {
             terminal_attachment
