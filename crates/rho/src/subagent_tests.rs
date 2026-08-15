@@ -42,6 +42,33 @@ fn write_status_repeatedly_replaces_existing_result_json() {
     assert_eq!(loaded.result.as_deref(), Some("done"));
 }
 
+// Covers: a later status write without a title must keep the generated title.
+// Owner: run status persistence
+#[test]
+fn write_status_preserves_an_existing_title() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join(RESULT_FILE_NAME);
+    let titled = RunStatus {
+        state: RunState::Running,
+        agent_id: Some("worker".into()),
+        title: Some("Review the auth path".into()),
+        last_activity: Some("tool: read".into()),
+        ..RunStatus::default()
+    };
+    write_status(&path, &titled).unwrap();
+
+    let update = RunStatus {
+        state: RunState::Running,
+        agent_id: Some("worker".into()),
+        last_activity: Some("responding".into()),
+        ..RunStatus::default()
+    };
+    write_status(&path, &update).unwrap();
+    let loaded = read_status(&path).unwrap();
+    assert_eq!(loaded.title.as_deref(), Some("Review the auth path"));
+    assert_eq!(loaded.last_activity.as_deref(), Some("responding"));
+}
+
 #[test]
 fn terminal_status_is_not_overwritten_by_nonterminal() {
     let directory = tempfile::tempdir().unwrap();

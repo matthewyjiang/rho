@@ -195,11 +195,23 @@ impl RunArtifactSink {
     /// Publish the current status to the watch channel and disk queue.
     pub(crate) fn publish(&mut self) {
         self.sync_attachment_error();
+        self.merge_live_title();
         self.last_write = Instant::now();
         if let Some(tx) = &self.status_tx {
             tx.send_replace(self.status.clone());
         }
         self.enqueue(WriterCommand::Status(self.status.clone()));
+    }
+
+    /// Keep a title written by the title task when this sink still has none.
+    fn merge_live_title(&mut self) {
+        if self.status.title.is_some() {
+            return;
+        }
+        let Some(tx) = &self.status_tx else {
+            return;
+        };
+        self.status.title = tx.borrow().title.clone();
     }
 
     /// Publish when the throttle window has elapsed (streaming text).

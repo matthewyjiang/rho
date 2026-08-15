@@ -5,6 +5,7 @@
 
 mod app;
 pub(crate) mod sdk_writer;
+mod select;
 mod tool_toggle;
 
 pub(crate) use app::{run, AttachmentDisplaySettings};

@@ -95,6 +95,9 @@ async fn fixture_stream(
     events: ProviderEventSender,
 ) -> Result<ModelResponse, ProviderError> {
     let prompt = last_user_text(&request).unwrap_or_default();
+    if is_subagent_title_request(&request) {
+        return completed("Fixture run title");
+    }
     if let Some(response) = docs_demo::intercept(&prompt, &request, &events).await {
         return response;
     }
@@ -558,6 +561,9 @@ async fn fixture_stream(
 }
 
 fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, ProviderError> {
+    if is_subagent_title_request(request) {
+        return completed("Fixture run title");
+    }
     if let Some(review) = advisor::review(request) {
         return review;
     }
@@ -718,6 +724,11 @@ fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, Provide
         return completed("steering applied exactly once: fixture steer detail");
     }
     completed(format!("fixture response: {prompt}"))
+}
+
+fn is_subagent_title_request(request: &ModelRequest<'_>) -> bool {
+    last_user_text(request)
+        .is_some_and(|text| text.to_ascii_lowercase().contains("delegated agent run"))
 }
 
 fn last_user_text(request: &ModelRequest<'_>) -> Option<String> {

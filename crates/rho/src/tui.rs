@@ -20,6 +20,7 @@ mod agent_picker;
 mod app_construct;
 mod app_state;
 mod approval;
+mod attach_picker;
 pub(crate) mod attachment;
 mod background_polls;
 mod clipboard;

@@ -4,8 +4,13 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
-use super::{STARTUP, STREAM};
-use crate::{harness::WaitTimeout, keys::MouseButton, scenario::Step, PtyHarness};
+use super::{DEFAULT_SIZE, STARTUP, STREAM};
+use crate::{
+    harness::WaitTimeout,
+    keys::MouseButton,
+    scenario::{Scenario, Step},
+    PtyHarness,
+};
 
 fn active_subagent_row(harness: &mut PtyHarness) -> Result<u16> {
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -96,3 +101,11 @@ pub(super) const SUBAGENT_RAIL_MOUSE_STEPS: &[Step] = &[
     Step::Custom(assert_subagent_rail_mouse_flow),
     Step::ExitCommand,
 ];
+
+pub(super) const SUBAGENT_RAIL_MOUSE_SCENARIO: Scenario = Scenario::new(
+    "subagent_rail_mouse",
+    "Keep hover through refreshes and activate rows on a completed click",
+    DEFAULT_SIZE,
+    SUBAGENT_RAIL_MOUSE_STEPS,
+    /*smoke*/ false,
+);

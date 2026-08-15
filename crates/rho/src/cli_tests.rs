@@ -34,15 +34,14 @@ fn parses_attach_subcommand() {
 
     assert!(matches!(
         cli.command,
-        Some(Command::Attach { id }) if id == "abc123"
+        Some(Command::Attach { id: Some(id) }) if id == "abc123"
     ));
 }
 
 #[test]
-fn attach_requires_an_id() {
-    let error = Cli::try_parse_from(["rho", "attach"]).unwrap_err();
-
-    assert!(error.to_string().contains("<ID>"));
+fn attach_id_is_optional() {
+    let cli = Cli::try_parse_from(["rho", "attach"]).unwrap();
+    assert!(matches!(cli.command, Some(Command::Attach { id: None })));
 }
 
 #[test]

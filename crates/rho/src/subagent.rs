@@ -13,8 +13,8 @@ use crate::agent::AgentRuntime;
 
 mod storage;
 pub(crate) use storage::{
-    is_trusted_directory, lock_parent_for_cleanup, release_run_directory, reserve_run_directory,
-    resolve_run_directory, RunPlacement,
+    is_trusted_directory, list_running_runs, lock_parent_for_cleanup, release_run_directory,
+    reserve_run_directory, resolve_run_directory, RunPlacement, RunningRun,
 };
 
 pub const RESULT_FILE_NAME: &str = "result.json";
@@ -94,6 +94,10 @@ pub struct RunStatus {
     pub output_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_activity: Option<String>,
+    /// Generated display title for the run. Absent until the title model
+    /// finishes, and on older result files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -232,6 +236,14 @@ fn write_status_inner(path: &Path, status: &RunStatus, force: bool) -> std::io::
             status.finished_at = Some(finished_at);
         }
         status.mark_finished_now();
+    }
+    if status.title.is_none() {
+        if let Some(title) = existing
+            .as_ref()
+            .and_then(|existing| existing.title.clone())
+        {
+            status.title = Some(title);
+        }
     }
     let contents = serde_json::to_vec_pretty(&status)
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;

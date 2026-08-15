@@ -428,6 +428,16 @@ impl AgentExecutor {
         let (completion_tx, completion) = tokio::sync::watch::channel(false);
         let cancellation = RunCancellation::new();
         let task_cancellation = cancellation.clone();
+        let config = self.config.read().expect("delegated config lock").clone();
+        spawn_run_title(
+            &config,
+            prompt.clone(),
+            bound.id().to_string(),
+            run_id.clone(),
+            output_file.clone(),
+            self.cwd.clone(),
+            status_tx.clone(),
+        );
         let config_path = self.config_path.clone();
         let cwd = self.cwd.clone();
         let host_input = self.host_input.clone();
@@ -845,6 +855,43 @@ async fn acquire_permit_or_cancel(
             }
         }
     }
+}
+
+fn spawn_run_title(
+    config: &Config,
+    prompt: String,
+    agent_id: String,
+    run_id: String,
+    output_file: PathBuf,
+    workspace_path: PathBuf,
+    status_tx: tokio::sync::watch::Sender<RunStatus>,
+) {
+    let model = crate::title::title_model_from_config(config);
+    let session_id =
+        rho_sdk::SessionId::from_string(run_id).unwrap_or_else(|_| rho_sdk::SessionId::new());
+    tokio::spawn(async move {
+        let usage_recording = crate::usage::default_recording().await;
+        let cancellation = rho_sdk::CancellationToken::new();
+        let title = crate::title::generate_title(
+            model,
+            format!("Role: {agent_id}\n\nDelegated agent run:\n{prompt}"),
+            session_id,
+            workspace_path,
+            usage_recording,
+            cancellation,
+        )
+        .await;
+        let Ok(title) = title else {
+            return;
+        };
+        status_tx.send_modify(|status| {
+            if status.title.is_none() {
+                status.title = Some(title.clone());
+            }
+        });
+        let status = status_tx.borrow().clone();
+        let _ = subagent::write_status(&output_file, &status);
+    });
 }
 
 /// Ensures frozen Claude argv can accept parent messages over stream-json stdin.

@@ -1,17 +1,17 @@
-use std::{future::Future, pin::Pin, time::Duration};
+use std::{future::Future, pin::Pin};
 
 use futures_util::task::noop_waker_ref;
 use rho_sdk::{CancellationToken, ProviderRequestUsageRecording, SessionId};
 
-use crate::agent::{
-    effective_internal_agent_reasoning, internal_definition, run_one_shot_agent,
-    OneShotAgentRequest, SESSION_TITLE_AGENT_ID,
-};
+use crate::agent::{effective_internal_agent_reasoning, SESSION_TITLE_AGENT_ID};
+use crate::title::{generate_title, TitleModel};
+
+#[cfg(test)]
+use crate::title::sanitize_title;
 
 use super::{App, Entry, InteractiveRuntime, Session, SessionTitleResult};
 
-pub(crate) const SESSION_TITLE_PROMPT: &str =
-    "Generate a concise title for this chat session. Return only the title, no quotes, no punctuation at the end. Use 3 to 7 words.";
+pub(crate) use crate::title::SESSION_TITLE_PROMPT;
 
 pub(super) struct PendingSessionTitle {
     session_id: String,
@@ -74,58 +74,27 @@ pub(super) async fn generate_session_title(
     usage_recording: ProviderRequestUsageRecording,
     cancellation: CancellationToken,
 ) -> anyhow::Result<String> {
-    let request = run_one_shot_agent(
-        OneShotAgentRequest {
-            definition: internal_definition(SESSION_TITLE_AGENT_ID),
-            usage_purpose: "title",
-            reasoning: Some(reasoning),
-            input: vec![rho_sdk::model::ContentBlock::Text(format!(
-                "First turn:\n\nUser:\n{first_user_message}\n\nAssistant:\n{first_assistant_message}"
-            ))],
-            cancellation: cancellation.clone(),
-            session_id: &session_id,
-            workspace_path: &workspace_path,
+    generate_title(
+        TitleModel {
+            provider: provider_name,
+            model,
+            auth,
+            reasoning,
         },
-        &provider_name,
-        &model,
-        &auth,
+        format!(
+            "First turn:\n\nUser:\n{first_user_message}\n\nAssistant:\n{first_assistant_message}"
+        ),
+        session_id,
+        workspace_path,
         usage_recording,
-    );
-    tokio::pin!(request);
-    let (result, timed_out) = tokio::select! {
-        result = &mut request => (result, false),
-        () = tokio::time::sleep(Duration::from_secs(20)) => {
-            cancellation.cancel();
-            (request.await, true)
-        }
-    };
-    let result = match result {
-        Err(_) if timed_out => return Err(anyhow::anyhow!("title generation timed out")),
-        result => result?,
-    };
-    let title = result.texts.join(" ");
-    sanitize_session_title(&title)
-        .ok_or_else(|| anyhow::anyhow!("title model returned an empty title"))
+        cancellation,
+    )
+    .await
 }
 
+#[cfg(test)]
 pub(super) fn sanitize_session_title(title: &str) -> Option<String> {
-    let title = title
-        .lines()
-        .find(|line| !line.trim().is_empty())?
-        .trim()
-        .trim_matches(|ch| matches!(ch, '"' | '\'' | '`' | '*' | '#'))
-        .trim()
-        .trim_end_matches(['.', ':', ';'])
-        .trim();
-    if title.is_empty() {
-        return None;
-    }
-    let mut title = title.split_whitespace().collect::<Vec<_>>().join(" ");
-    if title.chars().count() > 80 {
-        title = title.chars().take(79).collect();
-        title.push('…');
-    }
-    Some(title)
+    sanitize_title(title)
 }
 
 impl App {
@@ -175,11 +144,10 @@ impl App {
         let workspace_path = agent.workspace_path().to_path_buf();
         let usage_recording = agent.usage_recording();
         self.pending_session_title = None;
-        let configured = self.internal_agent_model_selection(crate::agent::SESSION_TITLE_AGENT_ID);
-        let reasoning =
-            effective_internal_agent_reasoning(crate::agent::SESSION_TITLE_AGENT_ID, &configured);
+        let configured = self.internal_agent_model_selection(SESSION_TITLE_AGENT_ID);
+        let reasoning = effective_internal_agent_reasoning(SESSION_TITLE_AGENT_ID, &configured);
         let selection = super::model_actions::expect_rho_internal_agent_model(
-            crate::agent::SESSION_TITLE_AGENT_ID,
+            SESSION_TITLE_AGENT_ID,
             configured,
         );
         let cancellation = rho_sdk::CancellationToken::new();

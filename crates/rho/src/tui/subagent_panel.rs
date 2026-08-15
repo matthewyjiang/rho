@@ -13,6 +13,7 @@ use crate::{
 struct RunningSubagent {
     id: String,
     agent_id: String,
+    title: Option<String>,
     state: RunState,
     last_activity: Option<String>,
     elapsed_seconds: u64,
@@ -51,6 +52,7 @@ impl SubagentPanel {
             .map(|snapshot| RunningSubagent {
                 id: snapshot.id,
                 agent_id: snapshot.agent_id,
+                title: snapshot.title,
                 state: snapshot.status.state,
                 last_activity: snapshot.status.last_activity,
                 elapsed_seconds: snapshot.elapsed.as_secs(),
@@ -125,6 +127,30 @@ impl SubagentPanel {
             .map(|row| (row, SubagentRowState::Hovered))
     }
 
+    pub(super) fn attach_target(&self, run_id: &str) -> Option<SubagentAttachTarget> {
+        self.agents
+            .iter()
+            .find(|agent| agent.id == run_id)
+            .map(|agent| SubagentAttachTarget {
+                run_id: agent.id.clone(),
+                agent_id: agent.agent_id.clone(),
+            })
+    }
+
+    pub(super) fn candidates(&self) -> Vec<super::attach_picker::AttachCandidate> {
+        self.running_agents()
+            .into_iter()
+            .map(|agent| super::attach_picker::AttachCandidate {
+                run_id: agent.id.clone(),
+                agent_id: agent.agent_id.clone(),
+                title: agent.title.clone(),
+                last_activity: agent.last_activity.clone(),
+                state: agent.state,
+                elapsed_seconds: agent.elapsed_seconds,
+            })
+            .collect()
+    }
+
     pub(super) fn attach_target_at(
         &self,
         area: Rect,
@@ -160,7 +186,7 @@ impl SubagentPanel {
         for (index, agent) in agents.into_iter().enumerate() {
             let activity_text = match agent.state {
                 RunState::Starting => "starting",
-                RunState::Running => activity_label(agent.last_activity.as_deref()),
+                RunState::Running => crate::title::activity_label(agent.last_activity.as_deref()),
                 RunState::Ok | RunState::Error | RunState::Stopped => continue,
             };
             let connector =
@@ -188,17 +214,20 @@ impl SubagentPanel {
         }
     }
 
+    fn running_agents(&self) -> Vec<&RunningSubagent> {
+        self.agents
+            .iter()
+            .filter(|agent| matches!(agent.state, RunState::Starting | RunState::Running))
+            .collect()
+    }
+
     fn visible_agents(&self, height: usize) -> Vec<&RunningSubagent> {
         let limit = self
             .agents
             .len()
             .min(activity::MAX_VISIBLE_RAIL_ROWS)
             .min(height);
-        self.agents
-            .iter()
-            .filter(|agent| matches!(agent.state, RunState::Starting | RunState::Running))
-            .take(limit)
-            .collect()
+        self.running_agents().into_iter().take(limit).collect()
     }
 }
 
@@ -218,14 +247,7 @@ fn agent_line(
     let row_style = Theme::subagent_row(row_state);
     activity::RailRow {
         connector,
-        identity: vec![
-            Span::styled(
-                agent.agent_id.clone(),
-                Theme::text_strong().patch(row_style),
-            ),
-            Span::styled("  ", row_style),
-            Span::styled(agent.id.clone(), Theme::dim().patch(row_style)),
-        ],
+        identity: rail_identity(agent, row_style),
         activity: activity_text.to_owned(),
         trailing,
         row_style,
@@ -233,10 +255,17 @@ fn agent_line(
     .into_line(width)
 }
 
-fn activity_label(activity: Option<&str>) -> &str {
-    match activity {
-        Some("assistant text") => "responding",
-        Some(activity) => activity.strip_prefix("tool: ").unwrap_or(activity),
-        None => "working",
+fn rail_identity(agent: &RunningSubagent, row_style: ratatui::style::Style) -> Vec<Span<'static>> {
+    let mut identity = vec![Span::styled(
+        agent.agent_id.clone(),
+        Theme::text_strong().patch(row_style),
+    )];
+    if let Some(title) = agent.title.as_deref().filter(|title| !title.is_empty()) {
+        identity.push(Span::styled("  ", row_style));
+        identity.push(Span::styled(
+            title.to_owned(),
+            Theme::dim().patch(row_style),
+        ));
     }
+    identity
 }
