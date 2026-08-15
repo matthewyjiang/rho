@@ -221,9 +221,9 @@ fn syntax_for_path(path: &str) -> Option<&'static SyntaxReference> {
 /// paint can reuse it on every line instead of rebuilding it per row.
 #[derive(Clone, Debug)]
 pub(in crate::tui) struct MatchQuery {
-    pub(in crate::tui) pattern: String,
-    pub(in crate::tui) literal: bool,
-    pub(in crate::tui) case_sensitive: bool,
+    pattern: String,
+    literal: bool,
+    case_sensitive: bool,
     compiled: Option<Regex>,
 }
 

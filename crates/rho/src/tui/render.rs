@@ -55,11 +55,7 @@ pub(super) fn pad_spaces(width: usize) -> Cow<'static, str> {
 }
 
 fn push_pad_spaces(buf: &mut String, width: usize) {
-    if width <= PAD_SPACES.len() {
-        buf.push_str(&PAD_SPACES[..width]);
-    } else {
-        buf.extend(std::iter::repeat_n(' ', width));
-    }
+    buf.push_str(&pad_spaces(width));
 }
 
 /// Rows the inline list picker spends on its own chrome, matching what
