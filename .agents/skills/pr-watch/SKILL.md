@@ -13,90 +13,42 @@ compatibility: bun or npx, python3, `gh auth login`, Pullfrog GitHub App on the 
 
 # Watch / babysit a PR
 
-Start a waiter that exits on the event you care about. Then either work
-on something else or end the turn. When the waiter exits, the harness
-delivers the event. That delivery is the only way you learn the result.
-
-Do not poll GitHub. Do not poll the waiter. Do not call process `poll` /
-`status` on it. Do not hold the turn on a foreground watch.
+Snapshot, start the waiter in the background, then do other work or end
+the turn. When it exits, the harness delivers one JSON event. That is the
+only result. Do not poll the process, GitHub, or `gh`.
 
 https://docs.pullfrog.com/watch.md
 
 ## Wait
 
-1. Snapshot once (below).
-2. Start the helper as a **background process** with a long timeout (900s
-   is a good default):
-
-```bash
-python3 .agents/skills/pr-watch/wait.py --pr <number> --until approval
-```
-
-3. After `start` returns an id, you may do unrelated work, or you must
-   end the turn. You may not wait on that id.
-4. When the process exits, you get its stdout: one JSON event. Act then.
-
-| `--until` | Exits on |
-| --- | --- |
-| `approval` | review approved or changes_requested, PR closed/merged, check failure |
-| `review` | review approved or changes_requested, PR closed/merged |
-| `ci` | check success or failure, PR closed/merged |
-| `merged` | PR closed or merged |
-| `kind:value,...` | raw match, e.g. `review:approved,check:failure` |
-
-Same helper with `owner/repo` if the cwd remote is wrong:
-
-```bash
-python3 .agents/skills/pr-watch/wait.py owner/repo --pr <number> --until approval
-```
-
-`bunx pullfrog watch` is the stream. Use `npx` only if `bunx` is missing.
-The helper wraps it and exits on the first match so you are not babysitting
-the raw stream.
-
-## Setup
-
-Snapshot first; watch will not replay:
-
 ```bash
 gh pr view <number> --json number,title,state,isDraft,reviewDecision,statusCheckRollup,url,headRefName
 gh pr checks <number>
+python3 .agents/skills/pr-watch/wait.py --pr <number>
 ```
 
-Need a working `gh auth token` and the Pullfrog app on the repo or the
-stream stays empty. Resolve a missing PR number from `gh pr view --json number`
-or ask.
+Start that last command as a background process with a long timeout (900s).
+After `start` returns an id, do not `poll` or `status` it.
 
-## After the waiter returns
+Need `gh auth token` and the Pullfrog app on the repo or the stream is empty.
+Resolve a missing PR number from `gh pr view --json number` or ask. Pass
+`owner/repo` before `--pr` if the cwd remote is wrong. `bunx` then `npx`.
 
-This section applies only after the harness delivers the process result.
-Do not fetch or check in the meantime.
+Default `--until` is `react`: any review, review comment, or PR comment;
+check failure; PR closed or merged. Other presets: `approval`, `ci`,
+`merged`, or `kind` / `kind:value,...`.
 
-Read the JSON event. Fetch full detail from `data.url` only when you will act.
-stderr ends with `last_cursor=...`.
+## After it returns
+
+Read the event. Fetch `data.url` only if you will act. stderr prints
+`last_cursor=` on every event. Exit 2 means `pullfrog watch` failed; fail
+loud, do not poll GitHub instead.
 
 | Event | Next step |
 | --- | --- |
-| `review` / `changes_requested` | load comments, fix, push, start another waiter with `--since` |
-| `review` / `approved` | stop if review was the goal; else start `--until ci` |
-| `check` / `failure` | diagnose, fix, push, start another waiter |
-| `check` / `success` | report only if that was the wait |
+| review or comment | load it; fix real work, else wait again |
+| `check` / `failure` | diagnose, fix, push, wait again |
+| `review` / `approved` | stop if that was the goal; else wait for `ci` |
 | `pr` closed or merged | stop and return the PR URL |
 
-To wait again after a timeout or a push, start another background waiter
-and again either do other work or end the turn:
-
-```bash
-python3 .agents/skills/pr-watch/wait.py --pr <number> --until approval --since <cursor>
-```
-
-No `--since` means start from now, no history.
-
-## Do not
-
-- Run the waiter in the foreground and sit on the turn.
-- `poll`, `status`, or otherwise wait on the background process.
-- Loop on `gh pr view` / `gh pr checks` while the waiter is running.
-- Swallow auth, missing-app, or stream errors. Fail loud.
-
-Auth, missing app, or stream errors: fail loud. Do not fall back to polling.
+Wait again with `--since <cursor>`. No `--since` starts from now.

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Block until a pullfrog watch event matches, then exit.
 
-Prints the matching JSON event on stdout. Progress and the last cursor
-go to stderr. Resume with --since <cursor> after a timeout or restart.
+Prints the matching JSON event on stdout. Prints last_cursor= on stderr
+as each event arrives so a timeout kill still leaves a resume point.
 """
 
 from __future__ import annotations
@@ -10,12 +10,24 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import signal
 import subprocess
 import sys
 from typing import Any
 
-# Named waits: exit on any of these (kind, field, value).
-PRESETS: dict[str, tuple[tuple[str, str, str], ...]] = {
+# (kind, field, value). field is None: any event of that kind.
+Rule = tuple[str, str | None, str | None]
+
+PRESETS: dict[str, tuple[Rule, ...]] = {
+    # Default babysit: wake on work, not only the final stamp.
+    "react": (
+        ("review", None, None),
+        ("review_comment", None, None),
+        ("comment", None, None),
+        ("check", "conclusion", "failure"),
+        ("pr", "action", "closed"),
+        ("pr", "action", "merged"),
+    ),
     "approval": (
         ("review", "state", "approved"),
         ("review", "state", "changes_requested"),
@@ -33,19 +45,22 @@ PRESETS: dict[str, tuple[tuple[str, str, str], ...]] = {
         ("pr", "action", "closed"),
         ("pr", "action", "merged"),
     ),
-    "review": (
-        ("review", "state", "approved"),
-        ("review", "state", "changes_requested"),
-        ("pr", "action", "closed"),
-        ("pr", "action", "merged"),
-    ),
+}
+
+KIND_FIELDS = {
+    "review": "state",
+    "check": "conclusion",
+    "pr": "action",
+    "review_thread": "action",
+    "review_comment": "action",
+    "comment": "action",
 }
 
 
-def parse_until(raw: str) -> tuple[tuple[str, str, str], ...]:
+def parse_until(raw: str) -> tuple[Rule, ...]:
     if raw in PRESETS:
         return PRESETS[raw]
-    rules: list[tuple[str, str, str]] = []
+    rules: list[Rule] = []
     for part in raw.split(","):
         part = part.strip()
         if not part:
@@ -53,27 +68,23 @@ def parse_until(raw: str) -> tuple[tuple[str, str, str], ...]:
         if part in PRESETS:
             rules.extend(PRESETS[part])
             continue
-        kind, _, value = part.partition(":")
-        if not kind or not value:
+        kind, sep, value = part.partition(":")
+        if not kind:
             raise SystemExit(
                 f"bad --until item {part!r}: use a preset ({', '.join(PRESETS)}) "
-                "or kind:value (review:approved, check:failure, pr:merged)"
+                "or kind / kind:value"
             )
-        field = {
-            "review": "state",
-            "check": "conclusion",
-            "pr": "action",
-            "review_thread": "action",
-            "review_comment": "action",
-            "comment": "action",
-        }.get(kind, "action")
+        if not sep:
+            rules.append((kind, None, None))
+            continue
+        field = KIND_FIELDS.get(kind, "action")
         rules.append((kind, field, value.lower()))
     if not rules:
         raise SystemExit("empty --until")
     return tuple(rules)
 
 
-def event_matches(event: dict[str, Any], rules: tuple[tuple[str, str, str], ...]) -> bool:
+def event_matches(event: dict[str, Any], rules: tuple[Rule, ...]) -> bool:
     kind = str(event.get("kind") or "")
     data = event.get("data")
     if not isinstance(data, dict):
@@ -81,6 +92,8 @@ def event_matches(event: dict[str, Any], rules: tuple[tuple[str, str, str], ...]
     for rule_kind, field, value in rules:
         if kind != rule_kind:
             continue
+        if field is None:
+            return True
         got = data.get(field)
         if got is None and field == "action":
             got = event.get("action")
@@ -102,6 +115,10 @@ def watch_command(pr: int, repo: str | None, since: str | None) -> list[str]:
     return cmd
 
 
+def _note_cursor(cursor: str) -> None:
+    print(f"last_cursor={cursor}", file=sys.stderr, flush=True)
+
+
 def run(pr: int, until: str, repo: str | None, since: str | None) -> int:
     rules = parse_until(until)
     cmd = watch_command(pr, repo, since)
@@ -113,6 +130,13 @@ def run(pr: int, until: str, repo: str | None, since: str | None) -> int:
     assert proc.stdout is not None
     last_cursor = since
     matched = False
+
+    def on_term(_signum: int, _frame: Any) -> None:
+        if last_cursor:
+            _note_cursor(last_cursor)
+        raise SystemExit(143)
+
+    signal.signal(signal.SIGTERM, on_term)
     try:
         for line in proc.stdout:
             line = line.strip()
@@ -121,16 +145,18 @@ def run(pr: int, until: str, repo: str | None, since: str | None) -> int:
             try:
                 event = json.loads(line)
             except json.JSONDecodeError:
-                print(line, file=sys.stderr)
+                print(line, file=sys.stderr, flush=True)
                 continue
             if not isinstance(event, dict):
                 continue
             cursor = event.get("cursor")
             if cursor is not None:
                 last_cursor = str(cursor)
+                _note_cursor(last_cursor)
             if event_matches(event, rules):
                 json.dump(event, sys.stdout, separators=(",", ":"))
                 sys.stdout.write("\n")
+                sys.stdout.flush()
                 matched = True
                 break
     finally:
@@ -140,9 +166,13 @@ def run(pr: int, until: str, repo: str | None, since: str | None) -> int:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 proc.kill()
-        if last_cursor:
-            print(f"last_cursor={last_cursor}", file=sys.stderr)
-    return 0 if matched else 1
+    if matched:
+        return 0
+    code = proc.returncode
+    if code not in (0, None, -signal.SIGTERM):
+        print(f"pullfrog watch failed: exit {code}", file=sys.stderr)
+        return 2
+    return 1
 
 
 def main() -> int:
@@ -152,8 +182,8 @@ def main() -> int:
     parser.add_argument("--pr", type=int, required=True)
     parser.add_argument(
         "--until",
-        required=True,
-        help="preset (approval, ci, merged, review) or kind:value list",
+        default="react",
+        help="preset (react, approval, ci, merged) or kind / kind:value list",
     )
     parser.add_argument("repo", nargs="?", help="owner/repo if cwd remote is wrong")
     parser.add_argument("--since", help="resume from a prior event cursor")
