@@ -101,10 +101,6 @@ impl RateLimitObservation {
         Self::capture_at_nanos(info, now_unix_nanos())
     }
 
-    pub(crate) fn age_seconds(&self, now_unix: i64) -> i64 {
-        now_unix.saturating_sub(self.observed_at_unix).max(0)
-    }
-
     /// Stamp `info` at an explicit unix-epoch nanosecond instant.
     pub(crate) fn capture_at_nanos(info: RateLimitInfo, observed_at_nanos: u64) -> Self {
         Self {
