@@ -34,9 +34,10 @@ Need `gh auth token` and the Pullfrog app on the repo or the stream is empty.
 Resolve a missing PR number from `gh pr view --json number` or ask. Pass
 `owner/repo` before `--pr` if the cwd remote is wrong. `bunx` then `npx`.
 
-Default `--until` is `react`: any review, review comment, or PR comment;
-check failure; PR closed or merged. Other presets: `approval`, `ci`,
-`merged`, or `kind` / `kind:value,...`.
+Default `--until` is `react`: human or pullfrog review/comment, check
+failure, close/merge (scanner bots are ignored). `approval` is a review
+decision or check failure. `ci` is a finished check. `merged` is close
+or merge. Or pass `kind` / `kind:value,...`.
 
 ## After it returns
 

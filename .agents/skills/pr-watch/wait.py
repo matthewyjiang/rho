@@ -56,6 +56,10 @@ KIND_FIELDS = {
     "comment": "action",
 }
 
+# react skips these so credit-limit / scanner nags do not end the wait.
+# pullfrog is the review we want to wake on.
+_NOISE = ("greptile", "coderabbit", "github-actions", "dependabot", "cursor[bot]")
+
 
 def parse_until(raw: str) -> tuple[Rule, ...]:
     if raw in PRESETS:
@@ -82,6 +86,28 @@ def parse_until(raw: str) -> tuple[Rule, ...]:
     if not rules:
         raise SystemExit("empty --until")
     return tuple(rules)
+
+
+def event_actor(event: dict[str, Any]) -> str:
+    data = event.get("data")
+    if not isinstance(data, dict):
+        data = {}
+    for key in ("actor", "author", "reviewer"):
+        value = data.get(key) or event.get(key)
+        if value:
+            return str(value).lower()
+    return ""
+
+
+def is_react_noise(event: dict[str, Any]) -> bool:
+    if str(event.get("kind") or "") not in {"review", "review_comment", "comment"}:
+        return False
+    actor = event_actor(event)
+    if not actor or "pullfrog" in actor:
+        return False
+    if "[bot]" in actor:
+        return True
+    return any(name in actor for name in _NOISE)
 
 
 def event_matches(event: dict[str, Any], rules: tuple[Rule, ...]) -> bool:
@@ -154,6 +180,8 @@ def run(pr: int, until: str, repo: str | None, since: str | None) -> int:
                 last_cursor = str(cursor)
                 _note_cursor(last_cursor)
             if event_matches(event, rules):
+                if until == "react" and is_react_noise(event):
+                    continue
                 json.dump(event, sys.stdout, separators=(",", ":"))
                 sys.stdout.write("\n")
                 sys.stdout.flush()
