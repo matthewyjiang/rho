@@ -64,7 +64,7 @@ enum LimitsSectionId {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum LimitsSectionStatus {
     Checking { cached_at_unix: Option<i64> },
-    Live { fetched_at_unix: i64 },
+    Live,
     Observed { observed_at_unix: i64 },
     Failed { cached_at_unix: Option<i64> },
     Empty,
@@ -93,18 +93,13 @@ impl LimitsOverlay {
             .any(|section| matches!(section.status, LimitsSectionStatus::Checking { .. }))
     }
 
-    fn apply_live(
-        &mut self,
-        kind: UsageProviderKind,
-        windows: Vec<UsageLimitWindow>,
-        fetched_at_unix: i64,
-    ) {
+    fn apply_live(&mut self, kind: UsageProviderKind, windows: Vec<UsageLimitWindow>) {
         if let Some(section) = self.section_mut(kind) {
             section.windows = windows;
             section.status = if section.windows.is_empty() {
                 LimitsSectionStatus::Empty
             } else {
-                LimitsSectionStatus::Live { fetched_at_unix }
+                LimitsSectionStatus::Live
             };
         }
     }
@@ -177,15 +172,7 @@ impl App {
             changed = true;
             match fetch.handle.await {
                 Ok(result) => self.apply_usage_fetch(fetch.kind, result),
-                Err(_) => {
-                    let cached_at = usage_limits_cache::load()
-                        .get(fetch.kind)
-                        .map(|entry| entry.fetched_at_unix);
-                    self.usage_limits_live.insert(fetch.kind, LiveUsage::Failed);
-                    if let ComposerMode::Limits(overlay) = self.input_ui.composer_mut() {
-                        overlay.apply_failed(fetch.kind, cached_at);
-                    }
-                }
+                Err(_) => self.mark_usage_failed(fetch.kind),
             }
         }
         self.pending_usage_limits = still_pending;
@@ -336,6 +323,13 @@ impl App {
         Some((body_len, body_rows))
     }
 
+    fn limits_overlay_mut(&mut self) -> Option<&mut LimitsOverlay> {
+        match self.input_ui.composer_mut() {
+            ComposerMode::Limits(overlay) => Some(overlay),
+            _ => None,
+        }
+    }
+
     fn open_limits_overlay(&mut self) {
         let overlay = build_limits_overlay(
             self.credential_store.as_ref(),
@@ -371,10 +365,16 @@ impl App {
                     fetch_usage_provider(kind, store.as_ref(), client).await
                 }),
             });
-            if let ComposerMode::Limits(overlay) = self.input_ui.composer_mut() {
+            let live_fetched_at = match self.usage_limits_live.get(&kind) {
+                Some(LiveUsage::Ready {
+                    fetched_at_unix, ..
+                }) => Some(*fetched_at_unix),
+                _ => None,
+            };
+            if let Some(overlay) = self.limits_overlay_mut() {
                 if let Some(section) = overlay.section_mut(kind) {
                     let cached_at_unix = match section.status {
-                        LimitsSectionStatus::Live { fetched_at_unix } => Some(fetched_at_unix),
+                        LimitsSectionStatus::Live => live_fetched_at,
                         LimitsSectionStatus::Checking { cached_at_unix }
                         | LimitsSectionStatus::Failed { cached_at_unix } => cached_at_unix,
                         LimitsSectionStatus::Observed { .. } | LimitsSectionStatus::Empty => None,
@@ -399,10 +399,10 @@ impl App {
     fn apply_usage_fetch(&mut self, kind: UsageProviderKind, result: UsageFetchResult) {
         match result {
             Ok(Some(limits)) => {
-                let mut cache = usage_limits_cache::load();
-                usage_limits_cache::record_success(&mut cache, kind, limits.windows.clone());
-                let _ = usage_limits_cache::save(&cache);
                 let fetched_at_unix = now_unix();
+                let mut cache = usage_limits_cache::load();
+                cache.upsert(kind, limits.windows.clone(), fetched_at_unix);
+                let _ = usage_limits_cache::save(&cache);
                 self.usage_limits_live.insert(
                     kind,
                     LiveUsage::Ready {
@@ -410,13 +410,13 @@ impl App {
                         fetched_at_unix,
                     },
                 );
-                if let ComposerMode::Limits(overlay) = self.input_ui.composer_mut() {
-                    overlay.apply_live(kind, limits.windows, fetched_at_unix);
+                if let Some(overlay) = self.limits_overlay_mut() {
+                    overlay.apply_live(kind, limits.windows);
                 }
             }
             Ok(None) => {
                 self.usage_limits_live.remove(&kind);
-                if let ComposerMode::Limits(overlay) = self.input_ui.composer_mut() {
+                if let Some(overlay) = self.limits_overlay_mut() {
                     overlay
                         .sections
                         .retain(|section| section.id != LimitsSectionId::Provider(kind));
@@ -425,15 +425,17 @@ impl App {
                     }
                 }
             }
-            Err(_) => {
-                self.usage_limits_live.insert(kind, LiveUsage::Failed);
-                let cached_at = usage_limits_cache::load()
-                    .get(kind)
-                    .map(|entry| entry.fetched_at_unix);
-                if let ComposerMode::Limits(overlay) = self.input_ui.composer_mut() {
-                    overlay.apply_failed(kind, cached_at);
-                }
-            }
+            Err(_) => self.mark_usage_failed(kind),
+        }
+    }
+
+    fn mark_usage_failed(&mut self, kind: UsageProviderKind) {
+        self.usage_limits_live.insert(kind, LiveUsage::Failed);
+        let cached_at = usage_limits_cache::load()
+            .get(kind)
+            .map(|entry| entry.fetched_at_unix);
+        if let Some(overlay) = self.limits_overlay_mut() {
+            overlay.apply_failed(kind, cached_at);
         }
     }
 }
@@ -499,18 +501,13 @@ fn provider_section(
     let cached = cache.get(kind);
     let checking = pending.contains(&kind);
     match live.get(&kind) {
-        Some(LiveUsage::Ready {
-            limits,
-            fetched_at_unix,
-        }) if !checking => LimitsSection {
+        Some(LiveUsage::Ready { limits, .. }) if !checking => LimitsSection {
             id: LimitsSectionId::Provider(kind),
             label: kind.label().into(),
             status: if limits.windows.is_empty() {
                 LimitsSectionStatus::Empty
             } else {
-                LimitsSectionStatus::Live {
-                    fetched_at_unix: *fetched_at_unix,
-                }
+                LimitsSectionStatus::Live
             },
             windows: limits.windows.clone(),
         },
@@ -618,7 +615,7 @@ fn overlay_body_lines(
                 }
                 LimitsSectionStatus::Empty
                 | LimitsSectionStatus::Failed { .. }
-                | LimitsSectionStatus::Live { .. }
+                | LimitsSectionStatus::Live
                 | LimitsSectionStatus::Observed { .. } => {
                     lines.push(Line::from(Span::styled(
                         "  no active usage limit windows reported",
@@ -672,7 +669,7 @@ fn heading_status(section: &LimitsSection, spinner: Option<&str>, now_unix: i64)
                 None => format!("{spin} checking"),
             }
         }
-        LimitsSectionStatus::Live { .. } => String::new(),
+        LimitsSectionStatus::Live => String::new(),
         LimitsSectionStatus::Observed { observed_at_unix } => {
             match crate::claude_runtime::rate_limit::format_age_since(observed_at_unix, now_unix) {
                 Some(age) => format!("last seen {age}"),

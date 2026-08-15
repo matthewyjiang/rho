@@ -114,14 +114,9 @@ fn applying_one_provider_leaves_others_checking() {
         scroll: 0,
         checking_started: Instant::now(),
     };
-    overlay.apply_live(UsageProviderKind::Codex, vec![codex_window()], 1_000);
+    overlay.apply_live(UsageProviderKind::Codex, vec![codex_window()]);
 
-    assert!(matches!(
-        overlay.sections[0].status,
-        LimitsSectionStatus::Live {
-            fetched_at_unix: 1_000
-        }
-    ));
+    assert_eq!(overlay.sections[0].status, LimitsSectionStatus::Live);
     assert_eq!(overlay.sections[0].windows.len(), 1);
     assert!(matches!(
         overlay.sections[1].status,
@@ -137,15 +132,15 @@ fn applying_one_provider_leaves_others_checking() {
 // Owner: pure unit
 #[test]
 fn live_ready_section_uses_in_memory_fetch_time_not_cache() {
-    let limits = ProviderUsageLimits {
-        provider: UsageProviderKind::Codex.label().into(),
-        windows: vec![codex_window()],
-    };
+    let windows = vec![codex_window()];
     let mut live = BTreeMap::new();
     live.insert(
         UsageProviderKind::Codex,
         LiveUsage::Ready {
-            limits,
+            limits: ProviderUsageLimits {
+                provider: UsageProviderKind::Codex.label().into(),
+                windows: windows.clone(),
+            },
             fetched_at_unix: 1_700,
         },
     );
@@ -155,12 +150,8 @@ fn live_ready_section_uses_in_memory_fetch_time_not_cache() {
         &[],
         &UsageLimitsCache::default(),
     );
-    assert_eq!(
-        section.status,
-        LimitsSectionStatus::Live {
-            fetched_at_unix: 1_700
-        }
-    );
+    assert_eq!(section.status, LimitsSectionStatus::Live);
+    assert_eq!(section.windows, windows);
 }
 
 // Covers: Claude observations appear without a live probe even with no OAuth.
@@ -233,7 +224,7 @@ fn overlay_body_uses_global_window_label_column() {
             LimitsSection {
                 id: LimitsSectionId::Provider(UsageProviderKind::Codex),
                 label: UsageProviderKind::Codex.label().into(),
-                status: LimitsSectionStatus::Live { fetched_at_unix: 1 },
+                status: LimitsSectionStatus::Live,
                 windows: vec![UsageLimitWindow {
                     label: "5-hour".into(),
                     remaining_percent: Some(40.0),
@@ -244,7 +235,7 @@ fn overlay_body_uses_global_window_label_column() {
             LimitsSection {
                 id: LimitsSectionId::Provider(UsageProviderKind::Xai),
                 label: UsageProviderKind::Xai.label().into(),
-                status: LimitsSectionStatus::Live { fetched_at_unix: 1 },
+                status: LimitsSectionStatus::Live,
                 windows: vec![UsageLimitWindow {
                     label: "Monthly".into(),
                     remaining_percent: Some(80.0),

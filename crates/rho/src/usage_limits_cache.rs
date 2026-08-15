@@ -13,7 +13,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use super::usage_limits::{now_unix, UsageLimitWindow, UsageProviderKind};
+use super::usage_limits::{UsageLimitWindow, UsageProviderKind};
 
 const CACHE_VERSION: u32 = 1;
 const STATE_FILE_NAME: &str = "oauth-usage-limits.json";
@@ -118,14 +118,6 @@ pub fn save_to(path: &Path, cache: &UsageLimitsCache) -> io::Result<()> {
     }
     fs::rename(&tmp, path)?;
     Ok(())
-}
-
-pub fn record_success(
-    cache: &mut UsageLimitsCache,
-    kind: UsageProviderKind,
-    windows: Vec<UsageLimitWindow>,
-) {
-    cache.upsert(kind, windows, now_unix());
 }
 
 #[cfg(test)]
