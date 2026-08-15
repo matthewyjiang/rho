@@ -426,6 +426,9 @@ fn detail_wrapped_lines(detail: &str, width: usize) -> Vec<String> {
                 vec![String::new()]
             } else {
                 wrap_line_at_whitespace(line, width)
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
             }
         })
         .collect()

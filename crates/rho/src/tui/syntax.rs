@@ -11,7 +11,7 @@
 use std::{cell::Cell, path::Path, sync::LazyLock};
 
 use ratatui::{style::Style, text::Span};
-use regex::RegexBuilder;
+use regex::{Regex, RegexBuilder};
 use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
 
 use super::theme::{SyntaxRole, Theme};
@@ -216,12 +216,26 @@ fn syntax_for_path(path: &str) -> Option<&'static SyntaxReference> {
 }
 
 /// Match pattern and the same semantics the grep tool used when searching.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// The overlay regex is compiled once in [`MatchQuery::new`] so search-body
+/// paint can reuse it on every line instead of rebuilding it per row.
+#[derive(Clone, Debug)]
 pub(in crate::tui) struct MatchQuery {
     pub(in crate::tui) pattern: String,
     pub(in crate::tui) literal: bool,
     pub(in crate::tui) case_sensitive: bool,
+    compiled: Option<Regex>,
 }
+
+impl PartialEq for MatchQuery {
+    fn eq(&self, other: &Self) -> bool {
+        self.pattern == other.pattern
+            && self.literal == other.literal
+            && self.case_sensitive == other.case_sensitive
+    }
+}
+
+impl Eq for MatchQuery {}
 
 impl MatchQuery {
     pub(in crate::tui) fn new(
@@ -229,12 +243,33 @@ impl MatchQuery {
         literal: bool,
         case_sensitive: bool,
     ) -> Self {
+        let pattern = pattern.into();
+        let compiled = compile_match_regex(&pattern, literal, case_sensitive);
         Self {
-            pattern: pattern.into(),
+            pattern,
             literal,
             case_sensitive,
+            compiled,
         }
     }
+}
+
+/// Same construction as `GrepRequest`: escape literals, then compile once.
+fn compile_match_regex(pattern: &str, literal: bool, case_sensitive: bool) -> Option<Regex> {
+    if pattern.is_empty() {
+        return None;
+    }
+    let source = if literal {
+        regex::escape(pattern)
+    } else {
+        pattern.to_string()
+    };
+    RegexBuilder::new(&source)
+        .case_insensitive(!case_sensitive)
+        .size_limit(1 << 20)
+        .dfa_size_limit(1 << 20)
+        .build()
+        .ok()
 }
 
 /// Byte ranges of pattern matches inside `text` for search-hit overlay.
@@ -244,25 +279,12 @@ impl MatchQuery {
 /// Unicode case pairs (for example `Ä`/`ä`) match the engine that produced the
 /// hits.
 pub(in crate::tui) fn match_byte_ranges(text: &str, query: &MatchQuery) -> Vec<(usize, usize)> {
-    let pattern = query.pattern.as_str();
-    if pattern.is_empty() || text.is_empty() {
+    let Some(re) = query.compiled.as_ref() else {
+        return Vec::new();
+    };
+    if text.is_empty() {
         return Vec::new();
     }
-    // Same construction as GrepRequest: escape literals, then compile once.
-    let source = if query.literal {
-        regex::escape(pattern)
-    } else {
-        pattern.to_string()
-    };
-    let Ok(re) = RegexBuilder::new(&source)
-        .case_insensitive(!query.case_sensitive)
-        .size_limit(1 << 20)
-        .dfa_size_limit(1 << 20)
-        .build()
-    else {
-        // Invalid regex would not have produced grep hits; do not invent matches.
-        return Vec::new();
-    };
     re.find_iter(text).map(|m| (m.start(), m.end())).collect()
 }
 
