@@ -8,7 +8,9 @@ done. Use this for long-running servers, watchers, and other work that should
 outlive a single foreground `bash` or `powershell` call.
 
 Rho owns these processes only while that instance is alive. Shutdown cleans
-them up. Records do not survive a restart.
+them up. Records do not survive a restart. The interactive TUI shows live
+`starting` and `running` jobs in the activity rail. That host view is not a
+`process` tool `list` action.
 
 ```mermaid
 flowchart TD

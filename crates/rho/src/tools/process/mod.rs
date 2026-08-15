@@ -20,12 +20,18 @@ pub(crate) use notify::{notification_prompts, ProcessNotification};
 pub(crate) use platform::{prepare_child_command, ProcessTree};
 pub use tools::Process;
 pub(super) use tools::ProcessArgs;
-pub(crate) use types::Stream;
 pub use types::{Chunk, ProcessLimits, Snapshot, State};
+pub(crate) use types::{LiveProcessSummary, Stream};
 
 pub(super) struct SdkProcessBundle {
     tools: Vec<Arc<dyn SdkTool>>,
     manager: ProcessManager,
+}
+
+impl SdkProcessBundle {
+    pub(super) fn manager_handle(&self) -> ProcessManager {
+        self.manager.clone()
+    }
 }
 
 impl ToolBundle for SdkProcessBundle {
@@ -57,12 +63,6 @@ pub(super) fn sdk_bundle(
         mutation_observer,
     )];
     SdkProcessBundle { tools, manager }
-}
-
-impl SdkProcessBundle {
-    pub(super) fn manager_handle(&self) -> ProcessManager {
-        self.manager.clone()
-    }
 }
 
 #[cfg(test)]

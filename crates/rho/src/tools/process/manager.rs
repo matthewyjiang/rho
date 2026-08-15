@@ -74,21 +74,32 @@ impl ProcessManager {
         cwd: &Path,
         timeout: Option<Duration>,
     ) -> Result<Snapshot, String> {
+        let label = command.clone();
         let execution = ProcessExecution::new(
             cwd,
             rho_tools::shell_invocation(command),
             self.environment.clone(),
             ProcessOutputLimits::new(1, timeout),
         );
-        self.start_execution(execution).await
+        // Keep the user-facing command, not the platform wrapper PowerShell
+        // injects for UTF-8 and exit codes.
+        self.spawn_execution(execution, label).await
     }
 
     /// Starts a process from an already authorized execution plan.
     pub async fn start_execution(&self, execution: ProcessExecution) -> Result<Snapshot, String> {
+        let command = record_command(execution.invocation())?;
+        self.spawn_execution(execution, command).await
+    }
+
+    async fn spawn_execution(
+        &self,
+        execution: ProcessExecution,
+        command: String,
+    ) -> Result<Snapshot, String> {
         self.prune();
         // Build the spawn plan before registering a live record so setup failures
         // cannot leave a Starting entry with no completion.
-        let command = record_command(execution.invocation())?;
         let mut cmd = command_from_execution(&execution)?;
         cmd.current_dir(execution.working_directory())
             .stdin(Stdio::null())
@@ -326,6 +337,37 @@ impl ProcessManager {
                 notified.await;
             }
         }
+    }
+
+    /// Live `Starting`/`Running` records, oldest first.
+    ///
+    /// Host UI uses this to render the activity rail. It is not a tool action.
+    pub(crate) fn live_summaries(&self) -> Vec<super::LiveProcessSummary> {
+        let records = {
+            let inner = self.inner.lock().unwrap();
+            inner.records.values().cloned().collect::<Vec<_>>()
+        };
+        let mut live = records
+            .into_iter()
+            .filter_map(|record| {
+                let record = record.lock().unwrap();
+                if terminal(record.state) {
+                    return None;
+                }
+                Some((
+                    record.started,
+                    record.id.clone(),
+                    super::LiveProcessSummary {
+                        process_id: record.id.clone(),
+                        command: record.command.clone(),
+                        state: record.state,
+                        elapsed_seconds: record.started.elapsed().as_secs(),
+                    },
+                ))
+            })
+            .collect::<Vec<_>>();
+        live.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+        live.into_iter().map(|(_, _, summary)| summary).collect()
     }
 
     fn get(&self, id: &str) -> Result<SharedRecord, String> {

@@ -53,6 +53,61 @@ pub(super) fn bottom_chrome_heights(
     }
 }
 
+/// Consume `desired` rows from `remaining`, leaving at least `floor` unconsumed.
+fn claim_rows(remaining: &mut usize, desired: usize, floor: usize) -> usize {
+    let granted = desired.min(remaining.saturating_sub(floor));
+    *remaining = remaining.saturating_sub(granted);
+    granted
+}
+
+/// Heights claimed from the interactive stack above the top divider.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct InteractiveSplit {
+    pending_input: usize,
+    subagents: usize,
+    processes: usize,
+    composer: usize,
+    history: usize,
+}
+
+/// Inputs to [`split_interactive_budget`]. Named so call sites cannot swap rails.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct InteractiveBudget {
+    budget: usize,
+    composer_lines: usize,
+    desired_pending: usize,
+    desired_subagents: usize,
+    desired_processes: usize,
+    activity_floor: usize,
+}
+
+/// Split the interactive budget in priority order.
+///
+/// First pass (floors held for composer + a one-row activity history):
+/// pending reserve (capped at 2), subagents, processes, then composer.
+/// Second pass: pending may grow into leftover history up to its full desired
+/// height. Remainder is history.
+fn split_interactive_budget(input: InteractiveBudget) -> InteractiveSplit {
+    let composer_floor = usize::from(input.composer_lines > 0);
+    let keep = composer_floor + input.activity_floor;
+
+    let mut remaining = input.budget;
+    let pending_reserve = claim_rows(&mut remaining, input.desired_pending.min(2), keep);
+    let subagents = claim_rows(&mut remaining, input.desired_subagents, keep);
+    let processes = claim_rows(&mut remaining, input.desired_processes, keep);
+    let composer = claim_rows(&mut remaining, input.composer_lines, input.activity_floor);
+
+    remaining = remaining.saturating_add(pending_reserve);
+    let pending_input = claim_rows(&mut remaining, input.desired_pending, input.activity_floor);
+    InteractiveSplit {
+        pending_input,
+        subagents,
+        processes,
+        composer,
+        history: remaining,
+    }
+}
+
 pub(super) fn visible_composer_start(
     cursor_line: usize,
     line_count: usize,
@@ -90,6 +145,7 @@ pub(super) struct ScreenLayout {
     pub(super) jump_to_bottom: Option<Rect>,
     pub(super) pending_input: Rect,
     pub(super) subagents: Rect,
+    pub(super) processes: Rect,
     pub(super) top_divider: Rect,
     pub(super) composer: Rect,
     pub(super) bottom_divider: Rect,
@@ -141,19 +197,17 @@ impl App {
                 < history_len.saturating_sub(content_height_without_jump);
         let reserved_above_composer = usize::from(show_top_divider);
         let interactive_budget = available_above_bottom.saturating_sub(reserved_above_composer);
-        let desired_pending_input_height = self.pending_input_height();
-        let desired_subagent_height = self.subagent_panel.desired_height();
-        let minimum_composer_height = usize::from(!composer_lines.is_empty());
-        let minimum_activity_history = usize::from(self.subagent_panel.is_active());
-        let pending_input_reserve = desired_pending_input_height.min(2).min(
-            interactive_budget.saturating_sub(minimum_composer_height + minimum_activity_history),
-        );
-        let subagent_reserve = desired_subagent_height.min(interactive_budget.saturating_sub(
-            minimum_composer_height + minimum_activity_history + pending_input_reserve,
-        ));
-        let composer_budget = interactive_budget
-            .saturating_sub(minimum_activity_history + pending_input_reserve + subagent_reserve);
-        let visible_composer_len = composer_lines.len().min(composer_budget);
+        let split = split_interactive_budget(InteractiveBudget {
+            budget: interactive_budget,
+            composer_lines: composer_lines.len(),
+            desired_pending: self.pending_input_height(),
+            desired_subagents: self.subagent_panel.desired_height(),
+            desired_processes: self.process_panel.desired_height(),
+            activity_floor: usize::from(
+                self.subagent_panel.is_active() || self.process_panel.is_active(),
+            ),
+        });
+        let visible_composer_len = split.composer;
         let composer_start = visible_composer_start(
             cursor_line,
             composer_lines.len(),
@@ -161,15 +215,10 @@ impl App {
             self.input_ui.composer_view_start(),
         );
         self.input_ui.set_composer_view_start(composer_start);
-        let pending_input_height = desired_pending_input_height
-            .min(interactive_budget.saturating_sub(
-                minimum_activity_history + visible_composer_len + subagent_reserve,
-            ));
-        let subagent_height = desired_subagent_height.min(interactive_budget.saturating_sub(
-            minimum_activity_history + visible_composer_len + pending_input_height,
-        ));
-        let history_height = interactive_budget
-            .saturating_sub(visible_composer_len + pending_input_height + subagent_height);
+        let pending_input_height = split.pending_input;
+        let subagent_height = split.subagents;
+        let process_height = split.processes;
+        let history_height = split.history;
 
         let mut y = area.y;
         let history = Rect::new(area.x, y, area.width, history_height as u16);
@@ -222,6 +271,8 @@ impl App {
         y = y.saturating_add(pending_input.height);
         let subagents = Rect::new(area.x, y, area.width, subagent_height as u16);
         y = y.saturating_add(subagents.height);
+        let processes = Rect::new(area.x, y, area.width, process_height as u16);
+        y = y.saturating_add(processes.height);
         let top_divider = if show_top_divider {
             let rect = Rect::new(area.x, y, area.width, 1);
             y = y.saturating_add(1);
@@ -251,6 +302,7 @@ impl App {
             jump_to_bottom,
             pending_input,
             subagents,
+            processes,
             top_divider,
             composer,
             bottom_divider,
@@ -314,26 +366,17 @@ impl App {
         let show_top_divider = available_above_bottom > 1 && composer_line_count > 0;
         let reserved_above_composer = usize::from(show_top_divider);
         let interactive_budget = available_above_bottom.saturating_sub(reserved_above_composer);
-        let minimum_composer_height = usize::from(composer_line_count > 0);
-        let minimum_activity_history = usize::from(self.subagent_panel.is_active());
-        let pending_input_reserve = self.pending_input_height().min(2).min(
-            interactive_budget.saturating_sub(minimum_composer_height + minimum_activity_history),
-        );
-        let subagent_height =
-            self.subagent_panel
-                .desired_height()
-                .min(interactive_budget.saturating_sub(
-                    minimum_composer_height + minimum_activity_history + pending_input_reserve,
-                ));
-        let composer_budget = interactive_budget
-            .saturating_sub(minimum_activity_history + pending_input_reserve + subagent_height);
-        let visible_composer_len = composer_line_count.min(composer_budget);
-        let pending_input_height = self.pending_input_height().min(
-            interactive_budget
-                .saturating_sub(minimum_activity_history + visible_composer_len + subagent_height),
-        );
-        interactive_budget
-            .saturating_sub(visible_composer_len + pending_input_height + subagent_height)
+        split_interactive_budget(InteractiveBudget {
+            budget: interactive_budget,
+            composer_lines: composer_line_count,
+            desired_pending: self.pending_input_height(),
+            desired_subagents: self.subagent_panel.desired_height(),
+            desired_processes: self.process_panel.desired_height(),
+            activity_floor: usize::from(
+                self.subagent_panel.is_active() || self.process_panel.is_active(),
+            ),
+        })
+        .history
     }
 }
 

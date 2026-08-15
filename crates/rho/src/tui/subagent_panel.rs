@@ -3,17 +3,11 @@ use ratatui::{
     text::{Line, Span},
 };
 
-use super::{
-    render::{display_width, truncate_one_line},
-    theme::Theme,
-};
+use super::{activity, theme::Theme};
 use crate::{
     subagent::{self, RunState},
     tools::agent::SubagentManager,
 };
-
-const MAX_VISIBLE_AGENTS: usize = 2;
-const MAX_AGENT_CONTENT_WIDTH: usize = 52;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RunningSubagent {
@@ -89,7 +83,7 @@ impl SubagentPanel {
     }
 
     pub(super) fn desired_height(&self) -> usize {
-        self.agents.len().min(MAX_VISIBLE_AGENTS)
+        self.agents.len().min(activity::MAX_VISIBLE_RAIL_ROWS)
     }
 
     pub(super) fn clear_pointer_state(&mut self) {
@@ -120,7 +114,7 @@ impl SubagentPanel {
     }
 
     pub(super) fn highlighted_row(&self) -> Option<(usize, SubagentRowState)> {
-        let agents = self.visible_agents(MAX_VISIBLE_AGENTS);
+        let agents = self.visible_agents(activity::MAX_VISIBLE_RAIL_ROWS);
         let row_for = |run_id: &str| agents.iter().position(|agent| agent.id == run_id);
         if let Some(row) = self.pressed_run_id.as_deref().and_then(row_for) {
             return Some((row, SubagentRowState::Pressed));
@@ -154,6 +148,7 @@ impl SubagentPanel {
         width: usize,
         height: usize,
         action_hint: &str,
+        continues_below: bool,
     ) -> Vec<Line<'static>> {
         if self.agents.is_empty() || width == 0 || height == 0 {
             return Vec::new();
@@ -163,20 +158,17 @@ impl SubagentPanel {
         let visible_count = agents.len();
         let mut lines = Vec::with_capacity(visible_count);
         for (index, agent) in agents.into_iter().enumerate() {
-            let activity = match agent.state {
+            let activity_text = match agent.state {
                 RunState::Starting => "starting",
                 RunState::Running => activity_label(agent.last_activity.as_deref()),
                 RunState::Ok | RunState::Error | RunState::Stopped => continue,
             };
-            let connector = if index + 1 == visible_count {
-                "  └ "
-            } else {
-                "  ├ "
-            };
+            let connector =
+                activity::tree_connector(index + 1 == visible_count && !continues_below);
             let row_state = self.row_state(agent);
             lines.push(agent_line(
                 agent,
-                activity,
+                activity_text,
                 connector,
                 width,
                 row_state,
@@ -197,7 +189,11 @@ impl SubagentPanel {
     }
 
     fn visible_agents(&self, height: usize) -> Vec<&RunningSubagent> {
-        let limit = self.agents.len().min(MAX_VISIBLE_AGENTS).min(height);
+        let limit = self
+            .agents
+            .len()
+            .min(activity::MAX_VISIBLE_RAIL_ROWS)
+            .min(height);
         self.agents
             .iter()
             .filter(|agent| matches!(agent.state, RunState::Starting | RunState::Running))
@@ -208,61 +204,33 @@ impl SubagentPanel {
 
 fn agent_line(
     agent: &RunningSubagent,
-    activity: &str,
+    activity_text: &str,
     connector: &'static str,
     width: usize,
     row_state: SubagentRowState,
     action_hint: &str,
 ) -> Line<'static> {
-    const SEPARATOR: &str = "  ·  ";
-    const MIN_GAP: usize = 2;
-
-    let connector_width = display_width(connector);
-    let content_width = width
-        .saturating_sub(connector_width)
-        .min(MAX_AGENT_CONTENT_WIDTH);
-    let identity_width = display_width(&agent.agent_id) + 2 + display_width(&agent.id);
-    let separator_width = display_width(SEPARATOR);
     let elapsed = subagent::format_elapsed_secs(agent.elapsed_seconds);
     let trailing = match row_state {
         SubagentRowState::Idle => elapsed,
         SubagentRowState::Hovered | SubagentRowState::Pressed => action_hint.to_string(),
     };
-    let fixed_width = identity_width + separator_width + MIN_GAP + display_width(&trailing);
     let row_style = Theme::subagent_row(row_state);
-
-    if fixed_width >= content_width {
-        let detail = truncate_one_line(
-            &format!(
-                "{}  {}{SEPARATOR}{activity}  {trailing}",
-                agent.agent_id, agent.id
+    activity::RailRow {
+        connector,
+        identity: vec![
+            Span::styled(
+                agent.agent_id.clone(),
+                Theme::text_strong().patch(row_style),
             ),
-            content_width,
-        );
-        return Line::from(vec![
-            Span::styled(connector, Theme::dim().patch(row_style)),
-            Span::styled(detail, Theme::dim().patch(row_style)),
-        ]);
+            Span::styled("  ", row_style),
+            Span::styled(agent.id.clone(), Theme::dim().patch(row_style)),
+        ],
+        activity: activity_text.to_owned(),
+        trailing,
+        row_style,
     }
-
-    let activity_width = content_width.saturating_sub(fixed_width);
-    let activity = truncate_one_line(activity, activity_width);
-    let gap = " ".repeat(content_width.saturating_sub(
-        identity_width + separator_width + display_width(&activity) + display_width(&trailing),
-    ));
-    Line::from(vec![
-        Span::styled(connector, Theme::dim().patch(row_style)),
-        Span::styled(
-            agent.agent_id.clone(),
-            Theme::text_strong().patch(row_style),
-        ),
-        Span::styled("  ", row_style),
-        Span::styled(agent.id.clone(), Theme::dim().patch(row_style)),
-        Span::styled(SEPARATOR, Theme::dim().patch(row_style)),
-        Span::styled(activity, Theme::text().patch(row_style)),
-        Span::styled(gap, row_style),
-        Span::styled(trailing, Theme::dim().patch(row_style)),
-    ])
+    .into_line(width)
 }
 
 fn activity_label(activity: Option<&str>) -> &str {

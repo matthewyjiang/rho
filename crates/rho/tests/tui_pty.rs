@@ -592,6 +592,13 @@ fn subagent_rail_mouse_activation_uses_release_and_survives_refresh() {
     assert_pass("subagent_rail_mouse");
 }
 
+// Covers: a started process must stay on the activity rail after the turn ends.
+// Owner: interactive TUI
+#[test]
+fn process_rail_stays_visible_after_turn_ends() {
+    assert_pass("process_rail");
+}
+
 #[test]
 fn text_selection_highlight_follows_drag_before_release() {
     assert_pass("text_selection_drag");

@@ -81,7 +81,8 @@ not bound by the two-minute stream idle rule.
 
 `zen_mode` (under `/config` → **Models & reasoning**) hides tool cards,
 reasoning blocks, and the `Thinking...` placeholder so the transcript shows
-message text. The live activity rail and subagent rows stay visible. Tools and
+message text. The live activity rail, subagent rows, and background-process
+rows stay visible. Tools and
 reasoning still run; only their transcript display is suppressed. The setting
 applies immediately, including during the current turn.
 

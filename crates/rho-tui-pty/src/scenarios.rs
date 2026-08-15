@@ -20,6 +20,7 @@ mod mcp;
 mod mermaid;
 mod paste;
 mod pickers;
+mod process_rail;
 mod resume_delete;
 mod runtime_info;
 mod sessions_hub;
@@ -66,6 +67,7 @@ use pickers::{
     setup_edit_user_agent, EDIT_USER_AGENT_STEPS, OPENAI_KEY_ENV, OPEN_AGENTS_PICKER_STEPS,
     OPEN_MODEL_PICKER_STEPS, OPEN_WORKFLOW_HUB_EMPTY_STEPS,
 };
+use process_rail::PROCESS_RAIL_SCENARIO;
 use resume_delete::RESUME_PICKER_DELETE_STEPS;
 use runtime_info::RUNTIME_INFO_STEPS;
 use sessions_hub::{setup_sessions_hub, SESSIONS_HUB_STEPS};
@@ -903,6 +905,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
         SUBAGENT_RAIL_MOUSE_STEPS,
         false,
     ),
+    PROCESS_RAIL_SCENARIO,
     Scenario::new(
         "tool_card_hover",
         "Lift tool-card text on hover and expand the card on click",

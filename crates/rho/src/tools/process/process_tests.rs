@@ -710,6 +710,71 @@ async fn aborted_stop_caller_does_not_cancel_request_or_cleanup() {
     );
 }
 
+// Covers: the host rail must see live jobs and drop them once they finish.
+// Owner: process manager
+#[tokio::test]
+async fn live_summaries_lists_running_and_hides_terminal() {
+    let manager = ProcessManager::new(ProcessLimits::default());
+    let started = manager
+        .start(LONG_RUNNING_COMMAND.into(), std::path::Path::new("."), None)
+        .await
+        .unwrap();
+
+    let summaries = manager.live_summaries();
+    assert_eq!(summaries.len(), 1);
+    pretty_assertions::assert_eq!(
+        (
+            summaries[0].process_id.as_str(),
+            summaries[0].command.as_str(),
+            terminal(summaries[0].state)
+        ),
+        (started.process_id.as_str(), LONG_RUNNING_COMMAND, false)
+    );
+
+    manager
+        .stop(&started.process_id, Duration::ZERO)
+        .await
+        .unwrap();
+    eventually(&manager, &started.process_id).await;
+    assert!(manager.live_summaries().is_empty());
+}
+
+// Covers: overflow rows must keep the oldest live process, not the newest.
+// Owner: process manager
+#[tokio::test]
+async fn live_summaries_orders_oldest_first() {
+    let manager = ProcessManager::new(ProcessLimits::default());
+    let first = manager
+        .start(LONG_RUNNING_COMMAND.into(), std::path::Path::new("."), None)
+        .await
+        .unwrap();
+    let second = manager
+        .start(LONG_RUNNING_COMMAND.into(), std::path::Path::new("."), None)
+        .await
+        .unwrap();
+
+    let ids = manager
+        .live_summaries()
+        .into_iter()
+        .map(|summary| summary.process_id)
+        .collect::<Vec<_>>();
+    pretty_assertions::assert_eq!(
+        ids,
+        vec![first.process_id.clone(), second.process_id.clone()]
+    );
+
+    manager
+        .stop(&first.process_id, Duration::ZERO)
+        .await
+        .unwrap();
+    manager
+        .stop(&second.process_id, Duration::ZERO)
+        .await
+        .unwrap();
+    eventually(&manager, &first.process_id).await;
+    eventually(&manager, &second.process_id).await;
+}
+
 async fn wait_for_exit_notification(manager: &ProcessManager) -> Vec<ProcessNotification> {
     loop {
         let notified = manager.notified_owned();

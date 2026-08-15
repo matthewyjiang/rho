@@ -171,6 +171,14 @@ While [advisor mode](/configuration/advisor-mode) is on, the status line names t
 
 While a goal is active, the status line shows an `◎ /goal active` indicator with the evaluated turn count and elapsed time. A goal paused for user action shows `◎ /goal blocked`; sending a new message or running `/goal resume` asks the agent to verify the blocked steps before continuing implementation work.
 
+## Activity rail
+
+While a background `agent` run or a `process` job is live, Rho keeps a short
+activity rail above the composer. Subagent rows show the agent id, run id, and
+elapsed time, and can be clicked to attach. Process rows show the command, a
+short process id, state, and elapsed time. Process rows are display-only: there
+is no attach or stop action from the rail. The rail stays visible in zen mode.
+
 ## Watch a subagent
 
 Run `rho attach <id>` to watch a subagent reported by the `agent` tool:
