@@ -18,12 +18,21 @@ use super::usage_limits::{now_unix, UsageLimitWindow, UsageProviderKind};
 const CACHE_VERSION: u32 = 1;
 const STATE_FILE_NAME: &str = "oauth-usage-limits.json";
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct UsageLimitsCache {
     #[serde(default = "cache_version")]
     pub version: u32,
     #[serde(default)]
     pub providers: Vec<CachedProviderLimits>,
+}
+
+impl Default for UsageLimitsCache {
+    fn default() -> Self {
+        Self {
+            version: CACHE_VERSION,
+            providers: Vec::new(),
+        }
+    }
 }
 
 fn cache_version() -> u32 {
