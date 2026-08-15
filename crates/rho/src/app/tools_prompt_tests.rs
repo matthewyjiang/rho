@@ -257,26 +257,28 @@ async fn deferred_mcp_connect_returns_pending_inventory_without_waiting() {
     };
 
     let cwd = tempfile::tempdir().unwrap();
-    let mut config = Config::default();
-    config.mcp = McpConfig {
-        servers: BTreeMap::from([(
-            "slow".into(),
-            McpServerConfig {
-                enabled: true,
-                tools: McpToolFilter::default(),
-                log_level: None,
-                sampling: McpSamplingPolicy::Deny,
-                transport: McpTransport::Stdio {
-                    command: "sleep".into(),
-                    args: vec!["120".into()],
-                    cwd: None,
-                    env: BTreeMap::new(),
-                    env_from_env: BTreeMap::new(),
+    let config = Config {
+        mcp: McpConfig {
+            servers: BTreeMap::from([(
+                "slow".into(),
+                McpServerConfig {
+                    enabled: true,
+                    tools: McpToolFilter::default(),
+                    log_level: None,
+                    sampling: McpSamplingPolicy::Deny,
+                    transport: McpTransport::Stdio {
+                        command: "sleep".into(),
+                        args: vec!["120".into()],
+                        cwd: None,
+                        env: BTreeMap::new(),
+                        env_from_env: BTreeMap::new(),
+                    },
+                    filesystem: None,
                 },
-                filesystem: None,
-            },
-        )]),
-        invalid_servers: Vec::new(),
+            )]),
+            invalid_servers: Vec::new(),
+        },
+        ..Config::default()
     };
     let diagnostics = RuntimeDiagnostics::new(&config);
     let agent = bound_agent(&config);
