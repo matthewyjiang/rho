@@ -65,14 +65,14 @@ fn row_containing(harness: &mut PtyHarness, needle: &str) -> Result<u16> {
     }
 }
 
-// Covers: hovering a collapsed tool card lifts its text ink on pointer entry
-// and reverts on pointer exit; a completed click still expands the card and
-// the lift survives the click without any pointer motion.
-// Owner: interactive UX (PTY).
 fn prompt_row(harness: &mut PtyHarness) -> Result<u16> {
     row_containing(harness, "more lines, ctrl+o to expand")
 }
 
+// Covers: hovering a collapsed tool card lifts its text ink on pointer entry
+// and reverts on pointer exit; a completed click still expands the card and
+// the lift survives the click without any pointer motion.
+// Owner: interactive UX (PTY).
 fn assert_hover_lift_and_click_expand(harness: &mut PtyHarness) -> Result<()> {
     let row = prompt_row(harness)?;
     let baseline = row_look(harness, row);
