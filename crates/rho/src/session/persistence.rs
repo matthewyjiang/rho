@@ -269,9 +269,9 @@ impl Session {
         &self,
         cursor: &mut AppendCursor,
         tree: &mut super::tree::SessionTree,
-        entry: &SessionEntry,
+        entry: SessionEntry,
     ) -> anyhow::Result<()> {
-        match entry {
+        match &entry {
             SessionEntry::Node { .. } | SessionEntry::SetLeaf { .. } => {}
             SessionEntry::Session { .. }
             | SessionEntry::Message { .. }
@@ -291,16 +291,16 @@ impl Session {
                 timestamp: upgrade_ts.clone(),
                 active_leaf_id: active_leaf_id.clone(),
             };
-            self.write_jsonl_entries(cursor, &[&upgrade, entry])?;
+            self.write_jsonl_entries(cursor, &[&upgrade, &entry])?;
             if let Err(err) = tree.apply_upgrade(active_leaf_id, &upgrade_ts) {
                 tracing::warn!("failed to apply upgrade marker to in-memory session tree: {err:#}");
             }
         } else {
-            self.write_jsonl_entry(cursor, entry)?;
+            self.write_jsonl_entry(cursor, &entry)?;
         }
         match entry {
             SessionEntry::Node { node } => {
-                if let Err(err) = tree.apply_explicit_node(node.clone()) {
+                if let Err(err) = tree.apply_explicit_node(node) {
                     tracing::warn!(
                         "failed to apply explicit node to in-memory session tree: {err:#}"
                     );
@@ -310,7 +310,7 @@ impl Session {
                 timestamp,
                 target_id,
             } => {
-                if let Err(err) = tree.apply_set_leaf(target_id.clone(), timestamp) {
+                if let Err(err) = tree.apply_set_leaf(target_id, &timestamp) {
                     tracing::warn!("failed to apply set_leaf to in-memory session tree: {err:#}");
                 }
             }

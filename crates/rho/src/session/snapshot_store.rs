@@ -133,7 +133,7 @@ impl Session {
             display_messages,
         };
 
-        self.append_tree_entry(&mut cursor, &mut tree, &SessionEntry::Node { node })?;
+        self.append_tree_entry(&mut cursor, &mut tree, SessionEntry::Node { node })?;
         cursor.last_snapshot = Some(SnapshotDeltaBase::from_snapshot(snapshot));
         let record = self.record_mirrored_index(&tree);
         drop(cursor);
@@ -244,7 +244,7 @@ impl Session {
         self.append_tree_entry(
             &mut cursor,
             &mut tree,
-            &SessionEntry::SetLeaf {
+            SessionEntry::SetLeaf {
                 timestamp: ts,
                 target_id: target_id.clone(),
             },
