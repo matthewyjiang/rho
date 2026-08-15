@@ -4,60 +4,55 @@ description: >
   Babysit an open GitHub PR until review, CI, comments, or state changes
   need a reaction. Use when the user says watch a PR, babysit a PR, wait
   on review or checks, sit on a PR until it merges, or keep an eye on PR
-  activity. Prefer this over polling `gh` or the GitHub API. Use
-  `pullfrog watch`.
-compatibility: bun or npx, `gh auth login`, Pullfrog GitHub App on the repo.
+  activity. Prefer this over polling `gh` or the GitHub API. Start the
+  wait helper as a background process, then either do other work or stop.
+  Do not inspect that process while it runs. When it exits, its stdout is
+  the event.
+compatibility: bun or npx, python3, `gh auth login`, Pullfrog GitHub App on the repo.
 ---
 
 # Watch / babysit a PR
 
-Stream with Pullfrog. Do not poll GitHub.
+Snapshot, start the waiter as a background process, then do other work or
+stop. When the process exits, stdout is one JSON event. That is the only
+result. Do not inspect the process while it runs. Do not poll GitHub.
 
 https://docs.pullfrog.com/watch.md
 
-## Command
-
-```bash
-bunx pullfrog watch --pr <number>
-bunx pullfrog watch owner/repo --pr <number>   # if cwd remote is wrong
-```
-
-Same args with `npx pullfrog` only if `bunx` is missing. Keep JSON lines;
-`--pretty` is for humans. `--pr` is required. No `--since` means start from
-now, no history.
-
-## Setup
-
-Snapshot first; watch will not replay:
+## Wait
 
 ```bash
 gh pr view <number> --json number,title,state,isDraft,reviewDecision,statusCheckRollup,url,headRefName
 gh pr checks <number>
+python3 .agents/skills/pr-watch/wait.py --pr <number>
 ```
 
-Need a working `gh auth token` and the Pullfrog app on the repo or the
-stream stays empty. Resolve a missing PR number from `gh pr view --json number`
-or ask.
+Run that last command in the background with a long timeout (900s). Leave
+it alone until it exits.
 
-## Stream
+Need `gh auth token` and the Pullfrog app on the repo or the stream is empty.
+Resolve a missing PR number from `gh pr view --json number` or ask. Pass
+`owner/repo` before `--pr` if the cwd remote is wrong. `bunx` then `npx`.
 
-Long-lived process. Keep the last `cursor`. Restart with `--since <cursor>`.
+Default `--until` is `react`: pullfrog or human review/comment (not
+`[bot]` scanners), check failure, close/merge. That includes comments
+from the `gh` token owner. `approval` is a review decision or check
+failure. `ci` is a finished check. `merged` is close or merge. Or pass
+`kind` / `kind:value,...`.
 
-Each stdout line is one event: `kind`, `pr`, `createdAt`, `cursor`, `data`.
-`data` is a teaser (actor, action, state, truncated body, url). Fetch full
-detail only when you will act.
+## After it returns
 
-| Kind | Act when |
+Read the event. Fetch `data.url` only if you will act. stderr prints
+`last_cursor=` on every event. Exit 0 is a match. Exit 1 is the stream
+ended with no match: wait again with `--since`. Exit 2 means
+`pullfrog watch` failed; fail loud, do not poll GitHub instead. Exit 143
+is a timeout kill; wait again with the last `last_cursor=` from stderr.
+
+| Event | Next step |
 | --- | --- |
-| `pr` | merged/closed: stop. `synchronize`: wait for `check`. |
-| `review` | `changes_requested`: load, fix, push. `approved`: keep watching CI unless review was the only goal. |
-| `review_comment` | new comments that are not yours and not noise. |
-| `review_thread` | unresolved = open work. Do not reopen without cause. |
-| `comment` | directed at this agent or asking for changes. Skip bot chatter unless it is a real failure. |
-| `check` | failure: diagnose and fix. success: report only if that was the wait. |
+| review or comment | load it; fix real work, else wait again |
+| `check` / `failure` | diagnose, fix, push, wait again |
+| `review` / `approved` | stop if that was the goal; else wait for `ci` |
+| `pr` closed or merged | stop and return the PR URL |
 
-Leave the watcher up while you work. After a push, wait for the next
-`check`/`review` event. Stop on the user's exit condition (merged,
-approved+green, review done, or they say stop) and return the PR URL.
-
-Auth, missing app, or stream errors: fail loud. Do not fall back to polling.
+Wait again with `--since <cursor>`. No `--since` starts from now.
