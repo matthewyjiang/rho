@@ -37,7 +37,7 @@ If you need auth or a model first, use `/login` and `/model`, or follow [getting
 
 ### Send a prompt
 
-Type a request and press `enter` to send it. Slash commands, pickers, and the inline shell stay available while MCP servers connect. A model prompt waits until those servers finish connecting or time out; `enter` keeps the composer text until then.
+Type a request and press `enter` to send it. Slash commands, pickers, and the inline shell stay available while MCP servers connect. A model prompt waits until those servers finish connecting or time out; Rho holds the turn and starts it for you once they settle, so you do not press `enter` twice.
 
 ```text
 summarize this repository

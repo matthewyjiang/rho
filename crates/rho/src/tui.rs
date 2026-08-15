@@ -390,7 +390,7 @@ pub(crate) use attachment::{
 
 pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::Result<TuiResult> {
     let mut terminal = ratatui::init();
-    Theme::initialize_from_terminal();
+    Theme::initialize_from_terminal(&info.services.theme);
     Theme::apply_committed(&info.services.theme);
     let herdr = info.services.herdr.clone();
     let pending_herdr_graphics = {
@@ -497,6 +497,9 @@ struct App {
     pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
     pending_custom_models: Option<tokio::task::JoinHandle<()>>,
     pending_herdr_graphics: Option<tokio::task::JoinHandle<HerdrGraphicsCapability>>,
+    /// Turn submitted while MCP connect was still in flight, released once the
+    /// servers settle.
+    pending_mcp_submission: Option<idle_input::PendingMcpSubmission>,
     pending_model_selection: Option<InteractiveModelSelection>,
     internal_agent_model_target: Option<agent_picker::InternalAgentModelTarget>,
     /// Set when the user dismisses the startup Auto classifier picker. The next

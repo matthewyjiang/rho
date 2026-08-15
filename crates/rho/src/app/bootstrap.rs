@@ -242,11 +242,19 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
     // The walk is reused for the delegation tool set so startup discovers once.
     let catalog = crate::agent::DiscoveredAgentCatalog::new(cwd.clone(), catalog);
 
+    // Only automation, ACP, and interactive sessions reach here; every other
+    // command dispatches early.
+    let role = if automation_prompt.is_some() || matches!(cli.command, Some(Command::Acp)) {
+        AgentRole::AutomationRoot
+    } else {
+        AgentRole::InteractiveRoot
+    };
+
     let store = AppCredentialStore;
     // Interactive sessions refresh custom-provider models after the first frame
-    // so a slow host cannot hold up paint. Every other command resolves the
-    // model list up front, because it has one shot to pick a model.
-    if automation_prompt.is_some() || matches!(cli.command, Some(Command::Acp)) {
+    // so a slow host cannot hold up paint. Automation and ACP resolve the model
+    // list up front, because they get one shot to pick a model.
+    if matches!(role, AgentRole::AutomationRoot) {
         cli_config::refresh_custom_provider_models(&config, &store).await;
     }
     let provider_refresh = cli_config::refresh_model_cache(&cli, &config, &store).await?;
@@ -276,11 +284,6 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
         config.permission_mode = session_permission_mode;
     }
     let reasoning_before_binding = config.reasoning;
-    let role = if automation_prompt.is_some() || matches!(cli.command, Some(Command::Acp)) {
-        AgentRole::AutomationRoot
-    } else {
-        AgentRole::InteractiveRoot
-    };
     let bound_agent = AgentBinder::bind(
         definition,
         AgentInvocation {

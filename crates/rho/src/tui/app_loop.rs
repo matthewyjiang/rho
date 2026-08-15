@@ -6,7 +6,7 @@ use ratatui::DefaultTerminal;
 
 use super::{
     media_attach, mouse_capture, paste_burst::normalize_paste, ActivityPhase, ActivityStatus, App,
-    ComposerMode, HerdrState, HerdrUserWait, InteractiveRuntime, Theme, TuiResult, ViewModelEvent,
+    ComposerMode, HerdrState, HerdrUserWait, InteractiveRuntime, TuiResult, ViewModelEvent,
 };
 
 pub(super) fn print_exit_summary(summary: Option<&str>) -> std::io::Result<()> {
@@ -71,6 +71,7 @@ impl App {
                 || agent.startup_hydrate_pending();
             self.poll_model_metadata_fetch(agent).await;
             needs_redraw |= self.poll_startup_hydrates(agent).await?;
+            needs_redraw |= self.release_pending_mcp_submission(terminal, agent).await?;
             self.poll_update_notice();
             self.poll_custom_provider_models();
             self.poll_herdr_graphics();
@@ -104,7 +105,6 @@ impl App {
                 needs_redraw = false;
                 if first_frame {
                     first_frame = false;
-                    needs_redraw |= Theme::collect_terminal_palette();
                     if open_resume_after_draw {
                         self.open_resume_picker()?;
                         needs_redraw = true;

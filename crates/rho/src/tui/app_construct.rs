@@ -109,6 +109,7 @@ impl App {
             pending_update_notice,
             pending_custom_models,
             pending_herdr_graphics: None,
+            pending_mcp_submission: None,
             pending_model_selection: None,
             internal_agent_model_target: None,
             pending_auto_classifier_demote: false,

@@ -80,13 +80,8 @@ impl AnsiColor {
     }
 }
 
-pub(super) fn write_terminal_palette_queries() -> std::io::Result<()> {
-    let mut stdout = std::io::stdout();
-    write_palette_queries(&mut stdout)
-}
-
-pub(super) fn collect_terminal_palette_response() -> Option<TerminalPalette> {
-    collect_terminal_palette_impl().ok().flatten()
+pub(super) fn query_terminal_palette() -> Option<TerminalPalette> {
+    query_terminal_palette_impl().ok().flatten()
 }
 
 fn write_palette_queries(output: &mut impl std::io::Write) -> std::io::Result<()> {
@@ -99,9 +94,13 @@ fn write_palette_queries(output: &mut impl std::io::Write) -> std::io::Result<()
 }
 
 #[cfg(unix)]
-fn collect_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
+fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
     use std::io::Read;
     use std::os::fd::AsRawFd;
+    use std::time::{Duration, Instant};
+
+    let mut stdout = std::io::stdout();
+    write_palette_queries(&mut stdout)?;
 
     let stdin = std::io::stdin();
     let fd = stdin.as_raw_fd();
@@ -113,24 +112,21 @@ fn collect_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
         return Ok(None);
     }
 
-    // Queries were written at init. First paint already elapsed, so any OSC
-    // reply is in the stdin buffer or it never arrived. Do not sleep: waiting
-    // after first paint eats keys and paste.
     let mut bytes = Vec::new();
     let mut palette = None;
+    let deadline = Instant::now() + Duration::from_millis(80);
     let mut handle = stdin.lock();
-    loop {
+    while Instant::now() < deadline && palette.is_none() {
         let mut buffer = [0u8; 1024];
         match handle.read(&mut buffer) {
-            Ok(0) => break,
+            Ok(0) => std::thread::sleep(Duration::from_millis(2)),
             Ok(count) => {
                 bytes.extend_from_slice(&buffer[..count]);
                 palette = parse_palette_response(&String::from_utf8_lossy(&bytes));
-                if palette.is_some() {
-                    break;
-                }
             }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(2));
+            }
             Err(error) => {
                 let _ = unsafe { libc::fcntl(fd, libc::F_SETFL, flags) };
                 return Err(error);
@@ -148,13 +144,15 @@ fn is_native_wezterm() -> bool {
 }
 
 #[cfg(windows)]
-fn collect_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
+fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
     if is_native_wezterm() {
         // WezTerm's bundled ConPTY does not pass terminal query responses back
         // to native Windows applications. Use the console palette directly.
         return query_windows_console_palette();
     }
 
+    use std::io::stdout;
+    use std::time::{Duration, Instant};
     use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
     use windows_sys::Win32::Storage::FileSystem::ReadFile;
     use windows_sys::Win32::System::Console::{
@@ -191,11 +189,15 @@ fn collect_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
         mode: original_mode,
     };
 
-    // Queries were written at init. Drain already-queued OSC only: a blocking
-    // wait after first paint eats keys and paste.
+    let mut output = stdout();
+    write_palette_queries(&mut output)?;
+
     let mut bytes = Vec::new();
-    loop {
-        if unsafe { WaitForSingleObject(input, 0) } != WAIT_OBJECT_0 {
+    let deadline = Instant::now() + Duration::from_millis(80);
+    while Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let timeout_ms = remaining.as_millis().max(1).min(u128::from(u32::MAX)) as u32;
+        if unsafe { WaitForSingleObject(input, timeout_ms) } != WAIT_OBJECT_0 {
             break;
         }
 
@@ -238,7 +240,7 @@ fn collect_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
             continue;
         }
         if record_count == 0 {
-            break;
+            continue;
         }
 
         let mut buffer = [0u8; 1024];
@@ -320,7 +322,7 @@ fn rgb_from_colorref(color: u32) -> Rgb {
 }
 
 #[cfg(not(any(unix, windows)))]
-fn collect_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
+fn query_terminal_palette_impl() -> std::io::Result<Option<TerminalPalette>> {
     Ok(None)
 }
 

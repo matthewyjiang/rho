@@ -5,9 +5,16 @@ use ratatui::DefaultTerminal;
 
 use super::{
     command_actions::CommandSubmission, command_palette::slash_command_args, commands,
-    goal_command, skill_actions, App, ComposerMode, GoalState, HistoryDirection,
+    goal_command, skill_actions, App, ChatMedia, ComposerMode, GoalState, HistoryDirection,
     InputSubmissionMode, InteractiveRuntime, TurnOutcome, TurnPrompt,
 };
+
+/// A turn submitted while MCP connect was still in flight. Released once the
+/// servers settle so the prompt starts without a second `enter`.
+pub(super) struct PendingMcpSubmission {
+    pub(super) turn: TurnPrompt,
+    pub(super) media: Vec<ChatMedia>,
+}
 
 impl App {
     fn take_command_submission(
@@ -341,11 +348,6 @@ impl App {
             }
         }
 
-        if agent.mcp_connect_pending() {
-            self.notify_status("connecting MCP servers");
-            return Ok(());
-        }
-
         if !self.setup_state().signed_in {
             return self.offer_login_instead_of_turn(turn);
         }
@@ -355,6 +357,48 @@ impl App {
             .take_ready_media()
             .expect("pending attachments block submission");
         self.clear_submitted_input();
+
+        // MCP connect now runs after the first frame, so a prompt can land
+        // before the servers report. Hold the turn and start it once connect
+        // settles; the alternative is a person watching a status line and
+        // pressing enter again for up to the full connect budget.
+        if agent.mcp_connect_pending() {
+            self.pending_mcp_submission = Some(PendingMcpSubmission { turn, media });
+            self.notify_status("connecting MCP servers");
+            return Ok(());
+        }
+
+        self.run_turn_sequence(turn, media, terminal, agent).await
+    }
+
+    /// Start a turn that was held during MCP connect, once the servers settle.
+    /// Reports whether anything changed so the caller can redraw.
+    pub(super) async fn release_pending_mcp_submission(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<bool> {
+        if self.pending_mcp_submission.is_none() || agent.mcp_connect_pending() {
+            return Ok(false);
+        }
+        let Some(PendingMcpSubmission { turn, media }) = self.pending_mcp_submission.take() else {
+            return Ok(false);
+        };
+        self.set_status_quiet("");
+        self.run_turn_sequence(turn, media, terminal, agent).await?;
+        Ok(true)
+    }
+
+    /// Run a submitted turn plus any goal resumption or queued follow-ups it
+    /// triggers. Entered directly on submit, or later when a turn that arrived
+    /// during MCP connect is released.
+    pub(super) async fn run_turn_sequence(
+        &mut self,
+        turn: TurnPrompt,
+        media: Vec<ChatMedia>,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
         let turn = self.prepare_goal_resumption_turn(turn);
         let mut outcome = self.run_prompt_turn(turn, media, terminal, agent).await?;
         self.finish_goal_resumption_turn(outcome.kind());

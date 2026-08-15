@@ -11,7 +11,7 @@ use crate::{
     scenario::{Scenario, Step},
 };
 
-use super::{SETTLE, STARTUP};
+use super::{SETTLE, STARTUP, STREAM};
 
 pub(super) const MCP_INVENTORY_SCENARIO: Scenario = Scenario::new(
     "mcp_inventory",
@@ -27,7 +27,7 @@ pub(super) const MCP_INVENTORY_SCENARIO: Scenario = Scenario::new(
 
 pub(super) const MCP_CONNECTING_SCENARIO: Scenario = Scenario::new(
     "mcp_connecting",
-    "Paint while MCP connects, keep composer text on Enter, and still open /mcp",
+    "Paint while MCP connects, hold the turn on Enter, and still open /mcp",
     PtySize {
         rows: 30,
         cols: 120,
@@ -36,6 +36,18 @@ pub(super) const MCP_CONNECTING_SCENARIO: Scenario = Scenario::new(
     /* smoke */ false,
 )
 .with_setup(setup_slow_mcp);
+
+pub(super) const MCP_CONNECT_RELEASE_SCENARIO: Scenario = Scenario::new(
+    "mcp_connect_release",
+    "Start a turn held during MCP connect once the servers settle",
+    PtySize {
+        rows: 30,
+        cols: 120,
+    },
+    MCP_CONNECT_RELEASE_STEPS,
+    /* smoke */ false,
+)
+.with_setup(setup_settling_mcp);
 
 const MCP_INVENTORY_STEPS: &[Step] = &[
     Step::Phase("startup"),
@@ -71,15 +83,13 @@ const MCP_CONNECTING_STEPS: &[Step] = &[
         text: "gpt-5.5",
         timeout: STARTUP,
     },
-    Step::Phase("submit_blocked"),
+    // Submitting while the servers are still connecting must leave the session
+    // usable. That the turn is held rather than dropped is proved by
+    // `mcp_connect_release`, which watches one actually start.
+    Step::Phase("submit_during_connect"),
     Step::TypeText("hold-turn-xyz"),
     Step::Key(Key::Enter),
-    Step::WaitText {
-        text: "turn-xyz",
-        timeout: SETTLE,
-    },
     Step::Phase("open_mcp"),
-    Step::Key(Key::Ctrl('c')),
     Step::SubmitText("/mcp"),
     Step::WaitText {
         text: "slow-stdio",
@@ -90,6 +100,24 @@ const MCP_CONNECTING_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Key(Key::Enter),
+    Step::CtrlCExit,
+];
+
+const MCP_CONNECT_RELEASE_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("submit_during_connect"),
+    Step::SubmitText("fixture stream"),
+    // No second Enter: the held turn must start on its own once the server
+    // settles, and the model's reply is the proof it ran.
+    Step::Phase("turn_runs_after_connect"),
+    Step::WaitText {
+        text: "assistant stream part one",
+        timeout: STREAM,
+    },
     Step::CtrlCExit,
 ];
 
@@ -112,6 +140,27 @@ command = "rho-mcp-command-that-does-not-exist"
         ),
     )
     .context("append MCP servers to isolated config")?;
+    Ok(())
+}
+
+/// A server that settles shortly after the first frame, so a turn submitted
+/// during connect is released while the scenario is still running. It exits
+/// non-zero: connect finishing is what matters here, not connect succeeding.
+fn setup_settling_mcp(home: &IsolatedHome) -> Result<()> {
+    let existing = fs::read_to_string(&home.config_path).context("read isolated config")?;
+    fs::write(
+        &home.config_path,
+        format!(
+            r#"{existing}
+
+[mcp.servers.settling-stdio]
+transport = "stdio"
+command = "sh"
+args = ["-c", "sleep 1; exit 1"]
+"#
+        ),
+    )
+    .context("append settling MCP server to isolated config")?;
     Ok(())
 }
 

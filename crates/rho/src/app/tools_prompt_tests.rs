@@ -288,6 +288,7 @@ async fn deferred_mcp_connect_returns_pending_inventory_without_waiting() {
     let assembled = tokio::time::timeout(
         std::time::Duration::from_millis(500),
         assemble_tools_and_prompt(ToolsAndPromptOptions {
+            catalog: None,
             config: &config,
             config_path: cwd.path().join("config.toml"),
             cwd: cwd.path(),

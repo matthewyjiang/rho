@@ -49,11 +49,19 @@ fn startup_first_frame_paints_session_chrome() {
     assert_pass("startup_first_frame");
 }
 
-// Covers: Enter must not start a turn while MCP is connecting; /mcp still opens.
+// Covers: submitting while MCP connects must leave the session usable; /mcp still opens.
 // Owner: interactive TUI
 #[test]
-fn mcp_connecting_blocks_submit_and_stays_inspectable() {
+fn mcp_connecting_keeps_the_session_inspectable() {
     assert_pass("mcp_connecting");
+}
+
+// Covers: a turn held during MCP connect must start on its own once the
+// servers settle, without a second Enter.
+// Owner: interactive TUI
+#[test]
+fn mcp_connect_release_starts_the_held_turn() {
+    assert_pass("mcp_connect_release");
 }
 
 #[test]
