@@ -704,6 +704,21 @@ pub(crate) fn drop_incomplete_tool_turn_tail(mut messages: Vec<Message>) -> Vec<
     messages
 }
 
+/// History after the same resume normalization `snapshot_for_resume` applies.
+///
+/// Keep this aligned with `drop_incomplete_tool_turn_tail` plus
+/// `SessionSnapshot::sanitize_history`. The application crate cannot call that
+/// SDK method until the next `rho-sdk` crates.io release.
+pub(crate) fn resume_normalized_history(history: Vec<Message>) -> Vec<Message> {
+    let mut history = drop_incomplete_tool_turn_tail(history);
+    for message in &mut history {
+        if let Message::AbortedAssistant(assistant) = message {
+            assistant.reasoning.clear();
+        }
+    }
+    history
+}
+
 /// Collapses id-prefix matches to at most one, erroring on an ambiguous prefix.
 /// Returns `None` when nothing matched.
 fn single_match<'a, T>(matches: &'a [T], id_prefix: &str) -> anyhow::Result<Option<&'a T>> {

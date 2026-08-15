@@ -5,13 +5,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use rho_providers::model::Message;
 use rho_sdk::SessionSnapshot;
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use uuid::Uuid;
 
 use super::persistence::{
-    drop_incomplete_tool_turn_tail, next_revision, parse_timestamp, session_id_from_path,
+    next_revision, parse_timestamp, resume_normalized_history, session_id_from_path,
     validate_session_version, PersistedSessionState, SessionEntry, StoredDisplayMessage,
 };
 use super::snapshot_delta::StoredSnapshotDelta;
@@ -940,10 +939,8 @@ fn snapshot_less_parent_state_changed(
     snapshot: &SessionSnapshot,
     parent: &PersistedSessionState,
 ) -> bool {
-    let normalize = |history: Vec<Message>| {
-        SessionSnapshot::sanitize_history(drop_incomplete_tool_turn_tail(history))
-    };
-    normalize(snapshot.history().to_vec()) != normalize(parent.model.clone())
+    resume_normalized_history(snapshot.history().to_vec())
+        != resume_normalized_history(parent.model.clone())
         || snapshot.compaction() != &parent.compaction
         || snapshot.revision() != parent.revision
 }
