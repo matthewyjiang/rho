@@ -52,6 +52,31 @@ jobs:
           cargo check -p rho-agent-tools --no-default-features --features document-docx --locked
           cargo check -p rho-agent-tools --no-default-features --features document-pdf --locked
 
+  pty-smoke:
+    name: interactive TUI smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache Cargo registry
+        uses: swatinem/rust-cache@v2
+        with:
+          shared-key: pty-smoke
+      # Matrix fixtures are compiled under debug_assertions, so the harness
+      # requires a debug binary.
+      - name: Build debug rho
+        run: cargo build -p rho-coding-agent --locked
+      - name: Run PTY smoke suite
+        run: cargo run -p rho-tui-pty --bin rho-pty-scenario --locked -- --smoke --artifacts pty-artifacts
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pty-smoke-artifacts
+          path: pty-artifacts/
+          if-no-files-found: ignore
+
   sdk-benchmarks:
     name: SDK release benchmarks
     if: github.event_name == 'pull_request'
