@@ -363,7 +363,10 @@ impl App {
         // settles; the alternative is a person watching a status line and
         // pressing enter again for up to the full connect budget.
         if agent.mcp_connect_pending() {
-            self.pending_mcp_submission = Some(PendingMcpSubmission { turn, media });
+            // Queue rather than replace: someone who submits twice while the
+            // servers are still connecting must not lose the first prompt.
+            self.pending_mcp_submissions
+                .push_back(PendingMcpSubmission { turn, media });
             self.notify_status("connecting MCP servers");
             return Ok(());
         }
@@ -371,20 +374,22 @@ impl App {
         self.run_turn_sequence(turn, media, terminal, agent).await
     }
 
-    /// Start a turn that was held during MCP connect, once the servers settle.
-    /// Reports whether anything changed so the caller can redraw.
+    /// Start the next turn held during MCP connect, once the servers settle.
+    /// One per call, so several held turns run in submission order. Reports
+    /// whether anything changed so the caller can redraw.
     pub(super) async fn release_pending_mcp_submission(
         &mut self,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
-        if self.pending_mcp_submission.is_none()
+        if self.pending_mcp_submissions.is_empty()
             || agent.mcp_connect_pending()
             || self.input_ui.composer().blocks_held_turn_start()
         {
             return Ok(false);
         }
-        let Some(PendingMcpSubmission { turn, media }) = self.pending_mcp_submission.take() else {
+        let Some(PendingMcpSubmission { turn, media }) = self.pending_mcp_submissions.pop_front()
+        else {
             return Ok(false);
         };
         self.set_status_quiet("");

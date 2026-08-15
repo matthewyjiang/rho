@@ -373,6 +373,10 @@ impl Theme {
     /// that descriptor, or the two race for the same bytes and user keys go
     /// missing. It runs whatever the configured theme is, because `/theme` can
     /// select `terminal` later and this is the only safe moment to ask.
+    ///
+    /// This is the one startup tail still on the first-frame path. A terminal
+    /// that answers costs a few milliseconds; one that never answers costs the
+    /// 80 ms read deadline in [`query_terminal_palette`].
     pub(super) fn initialize_from_terminal() {
         if let Some(palette) = query_terminal_palette() {
             let _ = TERMINAL_SAMPLE.set(palette);
