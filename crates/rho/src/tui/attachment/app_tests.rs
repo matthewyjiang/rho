@@ -603,6 +603,7 @@ fn draw_hover_lift_follows_pointer_and_survives_toggle() {
 // Owner: attach draw
 #[test]
 fn draw_hover_lift_skips_untoggleable_card() {
+    let _guard = crate::tui::theme::theme_test_lock();
     let (_directory, mut app) = test_app();
     app.apply_event(AttachmentEvent::ToolFinished {
         key: Some("call-1".into()),

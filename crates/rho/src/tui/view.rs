@@ -37,12 +37,6 @@ pub(super) struct LiveHistory {
 }
 
 impl LiveHistory {
-    fn card_at(&self, live_line: usize) -> Option<Range<usize>> {
-        self.cards
-            .iter()
-            .find_map(|(_, range)| range.contains(&live_line).then(|| range.clone()))
-    }
-
     pub(super) fn card_hit_at(&self, live_line: usize) -> Option<(ToolCardTarget, Range<usize>)> {
         self.cards
             .iter()
@@ -131,23 +125,22 @@ impl App {
         );
         let (history_start, history_count) =
             self.visible_history_window(history_len, layout.history_content.height as usize);
-        self.draw_history(
-            frame,
-            width,
-            settings,
-            &layout,
-            HistoryLineSlice {
-                start: history_start,
-                count: history_count,
-            },
-            &live_history,
-        );
         let surface = DrawSurface {
             area,
             width,
             now,
             layout: &layout,
         };
+        self.draw_history(
+            frame,
+            settings,
+            surface,
+            HistoryLineSlice {
+                start: history_start,
+                count: history_count,
+            },
+            &live_history,
+        );
         self.draw_panels(frame, surface);
         self.draw_composer(frame, surface, composer_lines, command_lines);
         self.draw_cursor(frame, surface);
@@ -159,12 +152,14 @@ impl App {
     fn draw_history(
         &mut self,
         frame: &mut Frame<'_>,
-        width: usize,
         settings: HistoryRenderSettings,
-        layout: &super::screen_layout::ScreenLayout,
+        surface: DrawSurface<'_>,
         slice: HistoryLineSlice,
         live_history: &LiveHistory,
     ) {
+        let DrawSurface {
+            width, now, layout, ..
+        } = surface;
         let HistoryLineSlice {
             start: history_start,
             count: history_count,
@@ -191,21 +186,15 @@ impl App {
             .last_mouse_position
             .filter(|position| {
                 layout.history_content.contains((*position).into())
-                    && layout
-                        .history_scrollbar
-                        .is_none_or(|scrollbar| !scrollbar.contains(position.0, position.1))
+                    && !layout.history_scrollbar.is_some_and(|scrollbar| {
+                        scrollbar.contains(position.0, position.1)
+                            && self.should_render_history_scrollbar(now)
+                    })
             })
             .and_then(|(_, row)| {
                 let line = history_start + usize::from(row - layout.history_content.y);
-                let static_len = self.history_static_len_with_settings(width, settings);
-                if line >= static_len {
-                    live_history
-                        .card_at(line - static_len)
-                        .map(|range| (static_len + range.start)..(static_len + range.end))
-                } else {
-                    self.tool_card_hit_at_history_line(line, width)
-                        .map(|hit| hit.lines)
-                }
+                self.tool_card_hit_at_history_line(line, width, live_history)
+                    .map(|hit| hit.lines)
             })
         {
             tool_card_hover::lift_lines(

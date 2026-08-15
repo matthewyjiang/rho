@@ -14,6 +14,7 @@ use super::{
     text_selection::{screen_lines, CopyNotice, TextSelection},
     tool_card_hover::{ToolCardHit, ToolCardTarget},
     tool_output_ui::expandable_tool_entry,
+    view::LiveHistory,
     App, ComposerMode,
 };
 
@@ -430,7 +431,8 @@ impl App {
         width: usize,
         terminal: &mut Terminal<B>,
     ) -> Result<bool, B::Error> {
-        let Some(hit) = self.tool_card_hit_at_history_line(line, width) else {
+        let live = self.live_history_layout(width, self.feed_image_row_budget(width));
+        let Some(hit) = self.tool_card_hit_at_history_line(line, width, &live) else {
             return Ok(false);
         };
         match hit.target {
@@ -484,6 +486,7 @@ impl App {
         &mut self,
         line: usize,
         width: usize,
+        live: &LiveHistory,
     ) -> Option<ToolCardHit> {
         if !self.info.runtime.shows_work_chrome() {
             return None;
@@ -521,9 +524,7 @@ impl App {
         }
 
         let static_len = self.history_static_len(width);
-        let live = self.live_history_layout(width, self.feed_image_row_budget(width));
-        live.card_hit_at(line.saturating_sub(static_len))
-            .filter(|_| line >= static_len)
+        live.card_hit_at(line.checked_sub(static_len)?)
             .map(|(target, range)| ToolCardHit {
                 target,
                 lines: (static_len + range.start)..(static_len + range.end),
