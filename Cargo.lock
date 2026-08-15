@@ -4580,6 +4580,7 @@ dependencies = [
  "gethostname",
  "keyring",
  "libc",
+ "memchr",
  "pretty_assertions",
  "rand 0.8.6",
  "reqwest 0.12.28",

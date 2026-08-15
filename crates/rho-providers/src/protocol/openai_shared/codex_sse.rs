@@ -504,7 +504,7 @@ pub(crate) fn handle_codex_sse_value(
         .get("type")
         .and_then(|v| v.as_str())
         .unwrap_or_default();
-    if !event_type.is_empty() {
+    if !event_type.is_empty() && !state.event_types.contains(event_type) {
         state.event_types.insert(event_type.to_owned());
     }
     if event_type == "response.output_text.delta" {
