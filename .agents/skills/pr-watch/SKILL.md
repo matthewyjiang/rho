@@ -34,16 +34,19 @@ Need `gh auth token` and the Pullfrog app on the repo or the stream is empty.
 Resolve a missing PR number from `gh pr view --json number` or ask. Pass
 `owner/repo` before `--pr` if the cwd remote is wrong. `bunx` then `npx`.
 
-Default `--until` is `react`: pullfrog or human review/comment (not your
-own, not `[bot]` scanners), check failure, close/merge. `approval` is a
-review decision or check failure. `ci` is a finished check. `merged` is
-close or merge. Or pass `kind` / `kind:value,...`.
+Default `--until` is `react`: pullfrog or human review/comment (not
+`[bot]` scanners), check failure, close/merge. That includes comments
+from the `gh` token owner. `approval` is a review decision or check
+failure. `ci` is a finished check. `merged` is close or merge. Or pass
+`kind` / `kind:value,...`.
 
 ## After it returns
 
 Read the event. Fetch `data.url` only if you will act. stderr prints
-`last_cursor=` on every event. Exit 2 means `pullfrog watch` failed; fail
-loud, do not poll GitHub instead.
+`last_cursor=` on every event. Exit 0 is a match. Exit 1 is the stream
+ended with no match: wait again with `--since`. Exit 2 means
+`pullfrog watch` failed; fail loud, do not poll GitHub instead. Exit 143
+is a timeout kill; wait again with the last `last_cursor=` from stderr.
 
 | Event | Next step |
 | --- | --- |
