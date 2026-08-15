@@ -36,7 +36,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Some(Command::Run { output, .. }) => Some(*output),
         _ => None,
     };
-    let result = run_inner(cli).await;
+    let result = run_inner(cli)
+        .instrument(tracing::info_span!("startup"))
+        .await;
     let Err(error) = result else {
         return Ok(());
     };
@@ -69,7 +71,6 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
 }
 
 async fn run_inner(cli: Cli) -> anyhow::Result<()> {
-    let _startup = tracing::info_span!("startup").entered();
     cli_config::validate(&cli)?;
     if let EarlyDispatch::Handled(result) = dispatch_early_command(&cli).await? {
         return result;
