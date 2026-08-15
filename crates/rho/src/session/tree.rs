@@ -423,6 +423,14 @@ impl SessionTree {
         self.version.is_some_and(|version| version < 4) && !self.upgraded
     }
 
+    /// Applies one already-persisted tree mutation without re-reading the file.
+    pub(crate) fn apply_persisted_entry(&mut self, entry: SessionEntry) -> anyhow::Result<()> {
+        let expected = self.session_id.clone();
+        let mut legacy_state = PersistedSessionState::default();
+        self.apply_entry(entry, 0, &mut legacy_state, expected.as_deref())?;
+        self.validate_active_leaf()
+    }
+
     fn apply_entry(
         &mut self,
         entry: SessionEntry,
@@ -650,21 +658,36 @@ impl SessionTree {
                 let parent = self.nodes.get(parent_id).ok_or_else(|| {
                     anyhow::anyhow!("node '{}' names missing parent '{parent_id}'", node.id)
                 })?;
-                let parent_snapshot = parent.state.snapshot.as_ref().ok_or_else(|| {
-                    anyhow::anyhow!("parent '{parent_id}' has no complete snapshot")
-                })?;
                 if node.kind == SessionNodeKind::Compaction
                     && !matches!(transition, StoredStateTransition::Snapshot { .. })
                 {
                     anyhow::bail!("compaction node '{}' must store a full snapshot", node.id);
                 }
-                let snapshot = match transition {
-                    StoredStateTransition::Snapshot { snapshot } => snapshot.as_ref().clone(),
-                    StoredStateTransition::SnapshotDelta { delta } => {
+                let snapshot = match (&parent.state.snapshot, transition) {
+                    (Some(parent_snapshot), StoredStateTransition::Snapshot { snapshot }) => {
+                        snapshot.as_ref().clone()
+                    }
+                    (Some(parent_snapshot), StoredStateTransition::SnapshotDelta { delta }) => {
                         delta.restore(parent_snapshot)?
                     }
+                    (None, StoredStateTransition::Snapshot { snapshot }) => {
+                        // Message-only v1 parents keep restored state without a
+                        // complete snapshot. A full snapshot child can still
+                        // advance the explicit tree after the upgrade marker.
+                        snapshot.as_ref().clone()
+                    }
+                    (None, StoredStateTransition::SnapshotDelta { .. }) => {
+                        anyhow::bail!("parent '{parent_id}' has no complete snapshot")
+                    }
                 };
-                if snapshot != *parent_snapshot && snapshot.revision() <= parent.state.revision {
+                if parent
+                    .state
+                    .snapshot
+                    .as_ref()
+                    .is_some_and(|parent_snapshot| {
+                        snapshot != *parent_snapshot && snapshot.revision() <= parent.state.revision
+                    })
+                {
                     anyhow::bail!(
                         "node '{}' changed state without advancing parent revision {}",
                         node.id,
@@ -757,7 +780,7 @@ impl SessionTree {
 }
 
 fn continuation_is_valid(messages: &[rho_providers::model::Message]) -> bool {
-    super::drop_incomplete_tool_turn_tail(messages.to_vec()).len() == messages.len()
+    super::complete_message_len(messages) == messages.len()
 }
 
 fn refresh_snapshot_state(state: &mut PersistedSessionState) {

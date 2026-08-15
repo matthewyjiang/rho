@@ -1,5 +1,6 @@
 use std::{fs, path::PathBuf};
 
+use pretty_assertions::assert_eq;
 use rho_providers::model::{ContentBlock, Message};
 use rho_sdk::{CompactionState, Revision, SessionId, SessionSnapshot};
 use rho_tools::tool::ToolCall;
@@ -273,4 +274,111 @@ fn v4_tree_session_summary_matches_active_display() {
     );
     assert_eq!(record.node_count, 1);
     assert_eq!(record.effective_format_version, 4);
+}
+
+// Covers: turn save must write the same index row a full transcript parse would
+// Owner: session persistence
+#[test]
+fn save_snapshot_index_matches_full_file_summarize() {
+    let root = TempDir::new().unwrap();
+    let cwd = TempDir::new().unwrap();
+    let session = Session::create_in_root(root.path(), cwd.path()).unwrap();
+    let session_id = SessionId::from_string(session.id().to_owned()).unwrap();
+
+    let root_snapshot = SessionSnapshot::new(
+        session_id.clone(),
+        Revision::from_u64(1),
+        vec![Message::user_text("root prompt")],
+        ModelIdentity::new("provider", "api", "model"),
+        CompactionState::default(),
+    );
+    session
+        .save_snapshot(&root_snapshot, root_snapshot.history())
+        .unwrap();
+    assert_indexed_record_matches_file(&session, root.path());
+
+    let root_id = session
+        .session_tree()
+        .unwrap()
+        .active_leaf_id()
+        .unwrap()
+        .clone();
+    let left = SessionSnapshot::new(
+        session_id.clone(),
+        Revision::from_u64(2),
+        vec![
+            Message::user_text("root prompt"),
+            Message::assistant_text("left"),
+        ],
+        ModelIdentity::new("provider", "api", "model"),
+        CompactionState::default(),
+    );
+    session.save_snapshot(&left, &left.history()[1..]).unwrap();
+    assert_indexed_record_matches_file(&session, root.path());
+
+    session.set_leaf(&root_id).unwrap();
+    assert_indexed_record_matches_file(&session, root.path());
+
+    let right = SessionSnapshot::new(
+        session_id,
+        Revision::from_u64(2),
+        vec![
+            Message::user_text("root prompt"),
+            Message::user_text("right prompt"),
+        ],
+        ModelIdentity::new("provider", "api", "model"),
+        CompactionState::default(),
+    );
+    session
+        .save_snapshot(&right, &right.history()[1..])
+        .unwrap();
+    assert_indexed_record_matches_file(&session, root.path());
+}
+
+fn assert_indexed_record_matches_file(session: &Session, session_root: &std::path::Path) {
+    let from_file = summarize_session_file(session.path(), session.cwd()).unwrap();
+    let indexed = indexed_record(session_root, session.id());
+    assert_eq!(indexed.summary, from_file.summary);
+    assert_eq!(indexed.node_count, from_file.node_count);
+    assert_eq!(indexed.branch_count, from_file.branch_count);
+    assert_eq!(indexed.active_leaf_id, from_file.active_leaf_id);
+    assert_eq!(
+        indexed.effective_format_version,
+        from_file.effective_format_version
+    );
+    assert_eq!(indexed.file_size, from_file.file_size);
+}
+
+fn indexed_record(session_root: &std::path::Path, id: &str) -> SessionIndexRecord {
+    let connection = rusqlite::Connection::open(session_root.join("index.sqlite3")).unwrap();
+    connection
+        .query_row(
+            "select id, path, cwd, created_at, updated_at, message_count, title,
+                    first_user_message, last_user_message, file_size, file_mtime,
+                    node_count, branch_count, active_leaf_id, effective_format_version
+             from sessions where id = ?1",
+            [id],
+            |row| {
+                Ok(SessionIndexRecord {
+                    summary: SessionSummary {
+                        id: row.get(0)?,
+                        path: PathBuf::from(row.get::<_, String>(1)?),
+                        cwd: PathBuf::from(row.get::<_, String>(2)?),
+                        created_at: row.get::<_, i64>(3)?.max(0) as u64,
+                        updated_at: row.get::<_, i64>(4)?.max(0) as u64,
+                        message_count: row.get::<_, i64>(5)?.max(0) as u64,
+                        title: row.get(6)?,
+                        first_user_message: row.get(7)?,
+                        last_user_message: row.get(8)?,
+                    },
+                    file_size: row.get(9)?,
+                    file_mtime: row.get(10)?,
+                    node_count: row.get::<_, i64>(11)?.max(0) as u64,
+                    branch_count: row.get::<_, i64>(12)?.max(0) as u64,
+                    active_leaf_id: row.get(13)?,
+                    effective_format_version: row.get::<_, i64>(14)?.max(0) as u32,
+                })
+            },
+        )
+        .unwrap()
 }

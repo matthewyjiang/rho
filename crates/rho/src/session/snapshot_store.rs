@@ -1,7 +1,10 @@
 use rho_providers::model::{Message, ModelIdentity};
 use rho_sdk::{SessionId, SessionSnapshot};
 
-use super::persistence::{read_session_state, timestamp, SessionEntry, StoredDisplayMessage};
+use super::persistence::{
+    index_record_from_tree, read_session_state, timestamp, SessionEntry, SessionSummaryMeta,
+    StoredDisplayMessage,
+};
 use super::snapshot_delta::{SnapshotDeltaBase, StoredSnapshotDelta};
 #[cfg(test)]
 use super::tree::SessionTreeFacts;
@@ -60,7 +63,11 @@ impl Session {
             .write_lock
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let tree = SessionTree::load(&self.path)?;
+        let mut meta = SessionSummaryMeta::new(&self.path, &self.cwd);
+        let mut tree = SessionTree::load_with_entry_visitor(&self.path, |entry| {
+            meta.observe(entry);
+            Ok(())
+        })?;
         let parent_id = tree.active_leaf_id().cloned();
         let parent_snapshot = tree
             .active_state()
@@ -116,8 +123,9 @@ impl Session {
 
         self.append_tree_entry(
             &mut cursor,
-            &tree,
-            &SessionEntry::Node {
+            &mut tree,
+            &mut meta,
+            SessionEntry::Node {
                 node: SessionNode {
                     id: NodeId::new(),
                     parent_id,
@@ -130,7 +138,8 @@ impl Session {
             },
         )?;
         cursor.last_snapshot = Some(SnapshotDeltaBase::from_snapshot(snapshot));
-        let _ = index::record_snapshot(self);
+        let record = index_record_from_tree(&tree, &self.path, meta)?;
+        let _ = index::record_snapshot_record(self, &record);
         Ok(())
     }
 
@@ -185,7 +194,11 @@ impl Session {
             .write_lock
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let tree = SessionTree::load(&self.path)?;
+        let mut meta = SessionSummaryMeta::new(&self.path, &self.cwd);
+        let mut tree = SessionTree::load_with_entry_visitor(&self.path, |entry| {
+            meta.observe(entry);
+            Ok(())
+        })?;
         if tree.node(target_id).is_none() {
             anyhow::bail!("cannot select missing session node '{target_id}'");
         }
@@ -194,8 +207,9 @@ impl Session {
         }
         self.append_tree_entry(
             &mut cursor,
-            &tree,
-            &SessionEntry::SetLeaf {
+            &mut tree,
+            &mut meta,
+            SessionEntry::SetLeaf {
                 timestamp: timestamp(),
                 target_id: target_id.clone(),
             },
@@ -204,7 +218,8 @@ impl Session {
             .node(target_id)
             .and_then(|node| node.state().snapshot.as_ref())
             .map(SnapshotDeltaBase::from_snapshot);
-        let _ = index::record_snapshot(self);
+        let record = index_record_from_tree(&tree, &self.path, meta)?;
+        let _ = index::record_snapshot_record(self, &record);
         Ok(())
     }
 

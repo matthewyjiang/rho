@@ -289,10 +289,7 @@ impl Session {
             Some(active_leaf_id) => tree.projected_display(active_leaf_id)?,
             None => Vec::new(),
         };
-        let complete_len = drop_incomplete_tool_turn_tail(
-            messages.iter().map(|entry| entry.message.clone()).collect(),
-        )
-        .len();
+        let complete_len = complete_turn_tail_len(messages.len(), |index| &messages[index].message);
         messages.truncate(complete_len);
         Ok(SessionExport {
             id: record.summary.id,
@@ -710,10 +707,17 @@ impl Session {
     }
 }
 
-fn drop_incomplete_tool_turn_tail(mut messages: Vec<Message>) -> Vec<Message> {
+pub(super) fn complete_message_len(messages: &[Message]) -> usize {
+    complete_turn_tail_len(messages.len(), |index| &messages[index])
+}
+
+pub(super) fn complete_turn_tail_len<'a>(
+    len: usize,
+    message_at: impl Fn(usize) -> &'a Message,
+) -> usize {
     let mut index = 0usize;
-    while index < messages.len() {
-        let Some(blocks) = messages[index].completed_assistant_content() else {
+    while index < len {
+        let Some(blocks) = message_at(index).completed_assistant_content() else {
             index += 1;
             continue;
         };
@@ -732,22 +736,26 @@ fn drop_incomplete_tool_turn_tail(mut messages: Vec<Message>) -> Vec<Message> {
 
         let results_start = index + 1;
         let results_end = results_start + tool_call_ids.len();
-        if results_end > messages.len() {
-            messages.truncate(index);
-            return messages;
+        if results_end > len {
+            return index;
         }
 
         let complete = tool_call_ids.iter().enumerate().all(|(offset, id)| {
             matches!(
-                &messages[results_start + offset],
+                message_at(results_start + offset),
                 Message::ToolResult(result) if result.id == *id
             )
         });
         if !complete {
-            messages.truncate(index);
-            return messages;
+            return index;
         }
         index = results_end;
     }
+    len
+}
+
+fn drop_incomplete_tool_turn_tail(mut messages: Vec<Message>) -> Vec<Message> {
+    let complete_len = complete_message_len(&messages);
+    messages.truncate(complete_len);
     messages
 }

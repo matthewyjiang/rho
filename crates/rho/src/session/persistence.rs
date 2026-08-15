@@ -247,14 +247,14 @@ impl SessionEntry {
 
 /// Metadata collected while the tree parses a transcript; messages come from the tree.
 #[derive(Debug)]
-struct SessionSummaryMeta {
+pub(super) struct SessionSummaryMeta {
     cwd: PathBuf,
     created_at: u64,
     updated_at: u64,
 }
 
 impl SessionSummaryMeta {
-    fn new(path: &Path, fallback_cwd: &Path) -> Self {
+    pub(super) fn new(path: &Path, fallback_cwd: &Path) -> Self {
         let created_at = timestamp_from_filename(path).unwrap_or_default();
         Self {
             cwd: fallback_cwd.to_path_buf(),
@@ -263,7 +263,7 @@ impl SessionSummaryMeta {
         }
     }
 
-    fn observe(&mut self, entry: &SessionEntry) {
+    pub(super) fn observe(&mut self, entry: &SessionEntry) {
         if let SessionEntry::Session {
             timestamp,
             cwd: session_cwd,
@@ -303,11 +303,14 @@ impl Session {
     ///
     /// When a marker is required, the marker and entry are written as one append
     /// so a failed entry write cannot leave a bare upgrade marker on disk.
+    /// After a successful write the in-memory tree and summary meta are updated
+    /// so callers can index the new leaf without re-reading the transcript.
     pub(super) fn append_tree_entry(
         &self,
         cursor: &mut AppendCursor,
-        tree: &super::tree::SessionTree,
-        entry: &SessionEntry,
+        tree: &mut super::tree::SessionTree,
+        meta: &mut SessionSummaryMeta,
+        entry: SessionEntry,
     ) -> anyhow::Result<()> {
         match entry {
             SessionEntry::Node { .. } | SessionEntry::SetLeaf { .. } => {}
@@ -328,10 +331,15 @@ impl Session {
                 timestamp: timestamp(),
                 active_leaf_id,
             };
-            self.write_jsonl_entries(cursor, &[&upgrade, entry])
+            self.write_jsonl_entries(cursor, &[&upgrade, &entry])?;
+            meta.observe(&upgrade);
+            tree.apply_persisted_entry(upgrade)?;
         } else {
-            self.write_jsonl_entry(cursor, entry)
+            self.write_jsonl_entry(cursor, &entry)?;
         }
+        meta.observe(&entry);
+        tree.apply_persisted_entry(entry)?;
+        Ok(())
     }
 
     pub(super) fn append_entry_unlocked(
@@ -363,9 +371,8 @@ impl Session {
     ) -> anyhow::Result<()> {
         let mut serialized = Vec::new();
         for entry in entries {
-            let mut bytes = serde_json::to_vec(entry)?;
-            bytes.push(b'\n');
-            serialized.extend_from_slice(&bytes);
+            serde_json::to_writer(&mut serialized, entry)?;
+            serialized.push(b'\n');
         }
         let mut options = OpenOptions::new();
         options.create(true).read(true).append(true);
@@ -546,13 +553,14 @@ pub(super) fn read_histories(path: &Path) -> anyhow::Result<SessionHistories> {
     };
     let state = tree.active_state().expect("active leaf has restored state");
     Ok(SessionHistories {
-        model: drop_incomplete_tool_turn_tail(state.model.clone()),
-        display: drop_incomplete_tool_turn_tail(
-            tree.projected_display(active_leaf_id)?
-                .into_iter()
-                .map(|entry| entry.message)
-                .collect(),
-        ),
+        model: super::drop_incomplete_tool_turn_tail(state.model.clone()),
+        display: {
+            let mut projected = tree.projected_display(active_leaf_id)?;
+            let complete_len =
+                super::complete_turn_tail_len(projected.len(), |index| &projected[index].message);
+            projected.truncate(complete_len);
+            projected.into_iter().map(|entry| entry.message).collect()
+        },
     })
 }
 
@@ -660,26 +668,29 @@ fn summarize_session_file_with_tree(
     path: &Path,
     fallback_cwd: &Path,
 ) -> anyhow::Result<(SessionIndexRecord, super::tree::SessionTree)> {
-    let id = session_id_from_path(path)
-        .ok_or_else(|| anyhow::anyhow!("session file has invalid name: {}", path.display()))?;
     let mut meta = SessionSummaryMeta::new(path, fallback_cwd);
     let tree = super::tree::SessionTree::load_with_entry_visitor(path, |entry| {
         meta.observe(entry);
         Ok(())
     })?;
+    let record = index_record_from_tree(&tree, path, meta)?;
+    Ok((record, tree))
+}
 
-    // Canonical summary messages: active leaf display after incomplete tool tails.
-    let messages = drop_incomplete_tool_turn_tail(
-        tree.active_state()
-            .map(|state| {
-                state
-                    .display
-                    .iter()
-                    .map(|entry| entry.message.clone())
-                    .collect()
-            })
-            .unwrap_or_default(),
-    );
+pub(super) fn index_record_from_tree(
+    tree: &super::tree::SessionTree,
+    path: &Path,
+    mut meta: SessionSummaryMeta,
+) -> anyhow::Result<SessionIndexRecord> {
+    let id = session_id_from_path(path)
+        .ok_or_else(|| anyhow::anyhow!("session file has invalid name: {}", path.display()))?;
+    let display = tree
+        .active_state()
+        .map(|state| state.display.as_slice())
+        .unwrap_or(&[]);
+    let complete_len =
+        super::complete_turn_tail_len(display.len(), |index| &display[index].message);
+    let messages = &display[..complete_len];
     let (file_size, file_mtime) = session_file_stats(path);
     if meta.updated_at == 0 {
         meta.updated_at = file_mtime.map(|mtime| mtime as u64).unwrap_or_default();
@@ -689,7 +700,7 @@ fn summarize_session_file_with_tree(
     }
 
     let facts = tree.facts();
-    let record = SessionIndexRecord {
+    Ok(SessionIndexRecord {
         summary: SessionSummary {
             id,
             path: path.to_path_buf(),
@@ -698,8 +709,13 @@ fn summarize_session_file_with_tree(
             updated_at: meta.updated_at,
             message_count: messages.len() as u64,
             title: None,
-            first_user_message: messages.iter().find_map(user_message_text),
-            last_user_message: messages.iter().rev().find_map(user_message_text),
+            first_user_message: messages
+                .iter()
+                .find_map(|entry| user_message_text(&entry.message)),
+            last_user_message: messages
+                .iter()
+                .rev()
+                .find_map(|entry| user_message_text(&entry.message)),
         },
         file_size,
         file_mtime,
@@ -707,50 +723,7 @@ fn summarize_session_file_with_tree(
         branch_count: facts.branch_count as u64,
         active_leaf_id: facts.active_leaf_id.map(|id| id.to_string()),
         effective_format_version: tree.effective_format_version(),
-    };
-    Ok((record, tree))
-}
-
-fn drop_incomplete_tool_turn_tail(mut messages: Vec<Message>) -> Vec<Message> {
-    let mut index = 0usize;
-    while index < messages.len() {
-        let Some(blocks) = messages[index].completed_assistant_content() else {
-            index += 1;
-            continue;
-        };
-        let tool_call_ids = blocks
-            .iter()
-            .filter_map(|block| match block {
-                rho_providers::model::ContentBlock::ToolCall(call) => Some(call.id.as_str()),
-                rho_providers::model::ContentBlock::Text(_)
-                | rho_providers::model::ContentBlock::Image(_) => None,
-            })
-            .collect::<Vec<_>>();
-        if tool_call_ids.is_empty() {
-            index += 1;
-            continue;
-        }
-
-        let results_start = index + 1;
-        let results_end = results_start + tool_call_ids.len();
-        if results_end > messages.len() {
-            messages.truncate(index);
-            return messages;
-        }
-
-        let complete = tool_call_ids.iter().enumerate().all(|(offset, id)| {
-            matches!(
-                &messages[results_start + offset],
-                Message::ToolResult(result) if result.id == *id
-            )
-        });
-        if !complete {
-            messages.truncate(index);
-            return messages;
-        }
-        index = results_end;
-    }
-    messages
+    })
 }
 
 /// Collapses id-prefix matches to at most one, erroring on an ambiguous prefix.
