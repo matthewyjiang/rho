@@ -410,11 +410,7 @@ fn push_hanging_text(
     let mut first = true;
     for raw_line in text.lines() {
         let chunks = wrap_line_at_whitespace(raw_line, inner_width);
-        let chunks = if chunks.is_empty() {
-            vec![String::new()]
-        } else {
-            chunks
-        };
+        let chunks = if chunks.is_empty() { vec![""] } else { chunks };
         for chunk in chunks {
             let prefix = if first { prefix } else { continuation.as_str() };
             first = false;

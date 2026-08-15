@@ -32,6 +32,32 @@ const PICKER_RESERVED_FEED_ROWS: usize = 5;
 /// Stable text prefix for [`Entry::Error`] so severity survives without color.
 pub(super) const ERROR_ENTRY_MARKER: &str = "error: ";
 
+/// Shared space pad for render hot paths. Typical terminal widths fit here, so
+/// padding can borrow instead of allocating `" ".repeat(n)` on every row.
+const PAD_SPACES: &str = concat!(
+    "                                                                ",
+    "                                                                ",
+    "                                                                ",
+    "                                                                ",
+    "                                                                ",
+    "                                                                ",
+    "                                                                ",
+    "                                                                ",
+);
+
+/// Spaces of `width` columns, borrowed from [`PAD_SPACES`] when they fit.
+pub(super) fn pad_spaces(width: usize) -> Cow<'static, str> {
+    if width <= PAD_SPACES.len() {
+        Cow::Borrowed(&PAD_SPACES[..width])
+    } else {
+        Cow::Owned(" ".repeat(width))
+    }
+}
+
+fn push_pad_spaces(buf: &mut String, width: usize) {
+    buf.push_str(&pad_spaces(width));
+}
+
 /// Rows the inline list picker spends on its own chrome, matching what
 /// `list_picker_lines` emits around the item rows.
 fn list_picker_chrome_rows(picker: &UiPicker) -> usize {
@@ -594,14 +620,14 @@ pub(super) fn push_wrapped_text_with(
     width: usize,
     style: Style,
     fill: LineFill,
-    wrap_line: fn(&str, usize) -> Vec<String>,
+    wrap_line: fn(&str, usize) -> Vec<&str>,
 ) {
     let width = width.max(1);
     let mut emitted = false;
     for raw_line in text.lines() {
         let chunks = wrap_line(raw_line, width);
         for chunk in chunks {
-            lines.push(styled_line(chunk, width, style, fill));
+            lines.push(styled_line(chunk.to_string(), width, style, fill));
             emitted = true;
         }
     }
@@ -620,21 +646,21 @@ pub(super) fn styled_line(
     if fill.pads_to_width() {
         let len = display_width(&text);
         if len < width {
-            text.push_str(&" ".repeat(width - len));
+            push_pad_spaces(&mut text, width - len);
         }
     }
     Line::from(Span::styled(text, style))
 }
 
 pub(super) fn styled_blank_line(width: usize, style: Style) -> Line<'static> {
-    Line::from(Span::styled(" ".repeat(width.max(1)), style))
+    Line::from(Span::styled(pad_spaces(width.max(1)), style))
 }
 
 /// Word-wrap a line for display. Break-boundary whitespace is collapsed so
 /// continuation rows are not indented; pure whitespace lines still wrap.
-pub(super) fn wrap_line_at_whitespace(line: &str, width: usize) -> Vec<String> {
+pub(super) fn wrap_line_at_whitespace(line: &str, width: usize) -> Vec<&str> {
     soft_wrap_visible_ranges(line, wrap_line_at_whitespace_ranges(line, width))
-        .map(|range| line[range].to_string())
+        .map(|range| &line[range])
         .collect()
 }
 
@@ -780,10 +806,10 @@ pub(super) fn hard_wrap_ranges(text: &str, width: usize) -> Vec<std::ops::Range<
     ranges
 }
 
-pub(super) fn wrap_line_hard(line: &str, width: usize) -> Vec<String> {
+pub(super) fn wrap_line_hard(line: &str, width: usize) -> Vec<&str> {
     hard_wrap_ranges(line, width)
         .into_iter()
-        .map(|range| line[range].to_string())
+        .map(|range| &line[range])
         .collect()
 }
 

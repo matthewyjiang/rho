@@ -223,9 +223,9 @@ fn wrapped_text_keeps_list_syntax_out_of_generic_wrapping() {
             39,
         ),
         vec![
-            "- ".to_string(),
-            "fixtures/downstream/no-default-features".to_string(),
-            "/Cargo.toml: package 0.0.0".to_string(),
+            "- ",
+            "fixtures/downstream/no-default-features",
+            "/Cargo.toml: package 0.0.0",
         ]
     );
 }

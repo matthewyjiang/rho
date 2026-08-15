@@ -15,7 +15,7 @@ use unicode_width::UnicodeWidthStr;
 use super::{
     feed_image::reserve_optional_image_rows,
     render::{
-        display_width, hard_wrap_styled_spans, pad_display_line, padded_content_width,
+        display_width, hard_wrap_styled_spans, pad_display_line, pad_spaces, padded_content_width,
         push_wrapped_text, slice_spans_by_bytes, soft_wrap_visible_ranges, spans_display_width,
         styled_blank_line, wrap_line_at_whitespace_ranges, wrap_line_hard, LineFill,
     },
@@ -818,7 +818,7 @@ fn push_body_line(lines: &mut Vec<Line<'static>>, line: &str, width: usize, styl
         lines.push(pad_spans_line(
             vec![
                 Span::styled(prefix.to_string(), Theme::tool_tree()),
-                Span::styled(chunk, style),
+                Span::styled(chunk.to_string(), style),
             ],
             width,
         ));
@@ -862,7 +862,7 @@ fn pad_spans_line_with(
         .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
         .sum::<usize>();
     if used < width {
-        spans.push(Span::styled(" ".repeat(width - used), pad_style));
+        spans.push(Span::styled(pad_spaces(width - used), pad_style));
     }
     Line::from(spans)
 }

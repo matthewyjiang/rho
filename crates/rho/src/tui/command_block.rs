@@ -70,7 +70,7 @@ impl CommandBlock {
                     format!("  {label:label_width$}"),
                     self.style.add_modifier(Modifier::DIM),
                 ),
-                Span::styled(first, self.style),
+                Span::styled(first.to_owned(), self.style),
             ]));
             self.lines.extend(values.map(|value| {
                 Line::from(vec![

@@ -6,7 +6,7 @@ use ratatui::{
 };
 
 use super::{
-    render::{display_width, hard_wrap_styled_spans, wrap_line_hard},
+    render::{display_width, hard_wrap_styled_spans, pad_spaces, wrap_line_hard},
     syntax::{
         match_byte_ranges, spans_from_segments_with_matches, spans_plain_with_matches,
         BlockHighlighter, HighlightSegment, MatchQuery, MAX_TOOL_SYNTAX_LINES,
@@ -279,7 +279,7 @@ fn pad_line(mut spans: Vec<Span<'static>>, width: usize) -> Line<'static> {
         .map(|span| display_width(span.content.as_ref()))
         .sum::<usize>();
     if used < width {
-        spans.push(Span::styled(" ".repeat(width - used), Theme::text()));
+        spans.push(Span::styled(pad_spaces(width - used), Theme::text()));
     }
     Line::from(spans)
 }
