@@ -74,21 +74,32 @@ impl ProcessManager {
         cwd: &Path,
         timeout: Option<Duration>,
     ) -> Result<Snapshot, String> {
+        let label = command.clone();
         let execution = ProcessExecution::new(
             cwd,
             rho_tools::shell_invocation(command),
             self.environment.clone(),
             ProcessOutputLimits::new(1, timeout),
         );
-        self.start_execution(execution).await
+        // Keep the user-facing command, not the platform wrapper PowerShell
+        // injects for UTF-8 and exit codes.
+        self.spawn_execution(execution, label).await
     }
 
     /// Starts a process from an already authorized execution plan.
     pub async fn start_execution(&self, execution: ProcessExecution) -> Result<Snapshot, String> {
+        let command = record_command(execution.invocation())?;
+        self.spawn_execution(execution, command).await
+    }
+
+    async fn spawn_execution(
+        &self,
+        execution: ProcessExecution,
+        command: String,
+    ) -> Result<Snapshot, String> {
         self.prune();
         // Build the spawn plan before registering a live record so setup failures
         // cannot leave a Starting entry with no completion.
-        let command = record_command(execution.invocation())?;
         let mut cmd = command_from_execution(&execution)?;
         cmd.current_dir(execution.working_directory())
             .stdin(Stdio::null())
