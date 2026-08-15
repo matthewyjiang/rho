@@ -1,6 +1,6 @@
 //! `/mcp` shows configured servers and session load status.
 
-use std::fs;
+use std::{fs, time::Duration};
 
 use anyhow::{Context, Result};
 
@@ -27,7 +27,7 @@ pub(super) const MCP_INVENTORY_SCENARIO: Scenario = Scenario::new(
 
 pub(super) const MCP_CONNECTING_SCENARIO: Scenario = Scenario::new(
     "mcp_connecting",
-    "Paint while MCP connects, hold the turn on Enter, and still open /mcp",
+    "Paint while MCP connects, accept a submit, and still open /mcp",
     PtySize {
         rows: 30,
         cols: 120,
@@ -118,7 +118,15 @@ const MCP_CONNECT_RELEASE_STEPS: &[Step] = &[
         text: "assistant stream part one",
         timeout: STREAM,
     },
-    Step::CtrlCExit,
+    Step::WaitText {
+        text: "part two",
+        timeout: STREAM,
+    },
+    Step::WaitQuiet {
+        quiet_for: Duration::from_millis(200),
+        timeout: SETTLE,
+    },
+    Step::ExitCommand,
 ];
 
 fn setup_mcp(home: &IsolatedHome) -> Result<()> {
