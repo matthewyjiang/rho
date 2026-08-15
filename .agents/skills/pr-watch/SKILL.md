@@ -5,17 +5,17 @@ description: >
   need a reaction. Use when the user says watch a PR, babysit a PR, wait
   on review or checks, sit on a PR until it merges, or keep an eye on PR
   activity. Prefer this over polling `gh` or the GitHub API. Start the
-  wait helper as a background process, then either do other work or end
-  the turn. Never poll that process. The harness delivers the event when
-  it exits.
+  wait helper as a background process, then either do other work or stop.
+  Do not inspect that process while it runs. When it exits, its stdout is
+  the event.
 compatibility: bun or npx, python3, `gh auth login`, Pullfrog GitHub App on the repo.
 ---
 
 # Watch / babysit a PR
 
-Snapshot, start the waiter in the background, then do other work or end
-the turn. When it exits, the harness delivers one JSON event. That is the
-only result. Do not poll the process, GitHub, or `gh`.
+Snapshot, start the waiter as a background process, then do other work or
+stop. When the process exits, stdout is one JSON event. That is the only
+result. Do not inspect the process while it runs. Do not poll GitHub.
 
 https://docs.pullfrog.com/watch.md
 
@@ -27,8 +27,8 @@ gh pr checks <number>
 python3 .agents/skills/pr-watch/wait.py --pr <number>
 ```
 
-Start that last command as a background process with a long timeout (900s).
-After `start` returns an id, do not `poll` or `status` it.
+Run that last command in the background with a long timeout (900s). Leave
+it alone until it exits.
 
 Need `gh auth token` and the Pullfrog app on the repo or the stream is empty.
 Resolve a missing PR number from `gh pr view --json number` or ask. Pass
