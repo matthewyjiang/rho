@@ -105,7 +105,7 @@ mod pending_input;
 mod performance_benchmarks;
 mod permission_mode;
 mod picker;
-mod picker_input;
+pub(in crate::tui) mod picker_input;
 mod picker_overlay;
 mod picker_overlay_layout;
 mod picker_rows;

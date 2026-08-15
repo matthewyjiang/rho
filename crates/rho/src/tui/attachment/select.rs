@@ -9,6 +9,7 @@ use crate::subagent;
 
 use super::super::{
     attach_picker::{self, AttachCandidate},
+    picker_input::{apply_picker_key, overlay_scroll_targets, PickerKeyEffect},
     picker_overlay::picker_overlay_frame,
     Theme, UiPicker,
 };
@@ -31,20 +32,22 @@ pub(super) async fn select_running_run(
             continue;
         };
         match event {
-            Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
-                KeyCode::Esc => return Ok(None),
-                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            Event::Key(key) if key.kind == KeyEventKind::Press => {
+                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     return Ok(None);
                 }
-                KeyCode::Enter => {
-                    return Ok(picker.selected_item().map(|item| item.value.clone()));
+                let targets = overlay_scroll_targets(&picker, terminal);
+                match apply_picker_key(&mut picker, key, targets, /*space_confirms*/ false) {
+                    PickerKeyEffect::Submit => {
+                        return Ok(picker.selected_item().map(|item| item.value.clone()));
+                    }
+                    PickerKeyEffect::Escape => return Ok(None),
+                    PickerKeyEffect::Handled
+                    | PickerKeyEffect::None
+                    | PickerKeyEffect::ToggleFavorite
+                    | PickerKeyEffect::DeleteRow => {}
                 }
-                KeyCode::Up => picker.select_previous(),
-                KeyCode::Down => picker.select_next(),
-                KeyCode::Backspace => picker.pop_filter_char(),
-                KeyCode::Char(ch) if key.modifiers.is_empty() => picker.push_filter_char(ch),
-                _ => {}
-            },
+            }
             Event::Resize(_, _) => {}
             _ => {}
         }

@@ -30,7 +30,7 @@ pub(super) enum PickerMouseEvent {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PickerKeyEffect {
+pub(in crate::tui) enum PickerKeyEffect {
     None,
     Handled,
     Submit,
@@ -56,7 +56,7 @@ fn overlay_nav_row_at(
     picker.nav_item_at_row(row_index).map(|_| row_index)
 }
 
-fn overlay_scroll_targets(
+pub(in crate::tui) fn overlay_scroll_targets(
     picker: &UiPicker,
     terminal: &DefaultTerminal,
 ) -> Option<OverlayScrollTargets> {
@@ -108,7 +108,7 @@ fn apply_home_end_key(picker: &mut UiPicker, targets: OverlayScrollTargets, home
     }
 }
 
-fn apply_picker_key(
+pub(in crate::tui) fn apply_picker_key(
     picker: &mut UiPicker,
     key: KeyEvent,
     targets: Option<OverlayScrollTargets>,
