@@ -53,6 +53,57 @@ pub(super) fn bottom_chrome_heights(
     }
 }
 
+/// Consume `desired` rows from `remaining`, leaving at least `floor` unconsumed.
+fn claim_rows(remaining: &mut usize, desired: usize, floor: usize) -> usize {
+    let granted = desired.min(remaining.saturating_sub(floor));
+    *remaining = remaining.saturating_sub(granted);
+    granted
+}
+
+/// Heights claimed from the interactive stack above the top divider.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct InteractiveSplit {
+    pending_input: usize,
+    subagents: usize,
+    processes: usize,
+    composer: usize,
+    history: usize,
+}
+
+/// Split the interactive budget in priority order.
+///
+/// First pass (floors held for composer + a one-row activity history):
+/// pending reserve (capped at 2), subagents, processes, then composer.
+/// Second pass: pending may grow into leftover history up to its full desired
+/// height. Remainder is history.
+fn split_interactive_budget(
+    budget: usize,
+    composer_lines: usize,
+    desired_pending: usize,
+    desired_subagents: usize,
+    desired_processes: usize,
+    activity_floor: usize,
+) -> InteractiveSplit {
+    let composer_floor = usize::from(composer_lines > 0);
+    let keep = composer_floor + activity_floor;
+
+    let mut remaining = budget;
+    let pending_reserve = claim_rows(&mut remaining, desired_pending.min(2), keep);
+    let subagents = claim_rows(&mut remaining, desired_subagents, keep);
+    let processes = claim_rows(&mut remaining, desired_processes, keep);
+    let composer = claim_rows(&mut remaining, composer_lines, activity_floor);
+
+    remaining = remaining.saturating_add(pending_reserve);
+    let pending_input = claim_rows(&mut remaining, desired_pending, activity_floor);
+    InteractiveSplit {
+        pending_input,
+        subagents,
+        processes,
+        composer,
+        history: remaining,
+    }
+}
+
 pub(super) fn visible_composer_start(
     cursor_line: usize,
     line_count: usize,
@@ -142,29 +193,15 @@ impl App {
                 < history_len.saturating_sub(content_height_without_jump);
         let reserved_above_composer = usize::from(show_top_divider);
         let interactive_budget = available_above_bottom.saturating_sub(reserved_above_composer);
-        let desired_pending_input_height = self.pending_input_height();
-        let desired_subagent_height = self.subagent_panel.desired_height();
-        let desired_process_height = self.process_panel.desired_height();
-        let minimum_composer_height = usize::from(!composer_lines.is_empty());
-        let minimum_activity_history =
-            usize::from(self.subagent_panel.is_active() || self.process_panel.is_active());
-        let pending_input_reserve = desired_pending_input_height.min(2).min(
-            interactive_budget.saturating_sub(minimum_composer_height + minimum_activity_history),
+        let split = split_interactive_budget(
+            interactive_budget,
+            composer_lines.len(),
+            self.pending_input_height(),
+            self.subagent_panel.desired_height(),
+            self.process_panel.desired_height(),
+            usize::from(self.subagent_panel.is_active() || self.process_panel.is_active()),
         );
-        let subagent_reserve = desired_subagent_height.min(interactive_budget.saturating_sub(
-            minimum_composer_height + minimum_activity_history + pending_input_reserve,
-        ));
-        // Processes yield first on short terminals: reserve them after subagents.
-        let process_reserve = desired_process_height.min(interactive_budget.saturating_sub(
-            minimum_composer_height
-                + minimum_activity_history
-                + pending_input_reserve
-                + subagent_reserve,
-        ));
-        let composer_budget = interactive_budget.saturating_sub(
-            minimum_activity_history + pending_input_reserve + subagent_reserve + process_reserve,
-        );
-        let visible_composer_len = composer_lines.len().min(composer_budget);
+        let visible_composer_len = split.composer;
         let composer_start = visible_composer_start(
             cursor_line,
             composer_lines.len(),
@@ -172,28 +209,10 @@ impl App {
             self.input_ui.composer_view_start(),
         );
         self.input_ui.set_composer_view_start(composer_start);
-        let pending_input_height =
-            desired_pending_input_height.min(interactive_budget.saturating_sub(
-                minimum_activity_history
-                    + visible_composer_len
-                    + subagent_reserve
-                    + process_reserve,
-            ));
-        let subagent_height = desired_subagent_height.min(interactive_budget.saturating_sub(
-            minimum_activity_history
-                + visible_composer_len
-                + pending_input_height
-                + process_reserve,
-        ));
-        let process_height = desired_process_height.min(interactive_budget.saturating_sub(
-            minimum_activity_history
-                + visible_composer_len
-                + pending_input_height
-                + subagent_height,
-        ));
-        let history_height = interactive_budget.saturating_sub(
-            visible_composer_len + pending_input_height + subagent_height + process_height,
-        );
+        let pending_input_height = split.pending_input;
+        let subagent_height = split.subagents;
+        let process_height = split.processes;
+        let history_height = split.history;
 
         let mut y = area.y;
         let history = Rect::new(area.x, y, area.width, history_height as u16);
@@ -341,42 +360,15 @@ impl App {
         let show_top_divider = available_above_bottom > 1 && composer_line_count > 0;
         let reserved_above_composer = usize::from(show_top_divider);
         let interactive_budget = available_above_bottom.saturating_sub(reserved_above_composer);
-        let minimum_composer_height = usize::from(composer_line_count > 0);
-        let minimum_activity_history =
-            usize::from(self.subagent_panel.is_active() || self.process_panel.is_active());
-        let pending_input_reserve = self.pending_input_height().min(2).min(
-            interactive_budget.saturating_sub(minimum_composer_height + minimum_activity_history),
-        );
-        let subagent_height =
-            self.subagent_panel
-                .desired_height()
-                .min(interactive_budget.saturating_sub(
-                    minimum_composer_height + minimum_activity_history + pending_input_reserve,
-                ));
-        let process_height =
-            self.process_panel
-                .desired_height()
-                .min(interactive_budget.saturating_sub(
-                    minimum_composer_height
-                        + minimum_activity_history
-                        + pending_input_reserve
-                        + subagent_height,
-                ));
-        let composer_budget = interactive_budget.saturating_sub(
-            minimum_activity_history + pending_input_reserve + subagent_height + process_height,
-        );
-        let visible_composer_len = composer_line_count.min(composer_budget);
-        let pending_input_height =
-            self.pending_input_height()
-                .min(interactive_budget.saturating_sub(
-                    minimum_activity_history
-                        + visible_composer_len
-                        + subagent_height
-                        + process_height,
-                ));
-        interactive_budget.saturating_sub(
-            visible_composer_len + pending_input_height + subagent_height + process_height,
+        split_interactive_budget(
+            interactive_budget,
+            composer_line_count,
+            self.pending_input_height(),
+            self.subagent_panel.desired_height(),
+            self.process_panel.desired_height(),
+            usize::from(self.subagent_panel.is_active() || self.process_panel.is_active()),
         )
+        .history
     }
 }
 

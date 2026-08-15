@@ -107,6 +107,7 @@ mod picker_input;
 mod picker_overlay;
 mod picker_overlay_layout;
 mod picker_rows;
+mod process_panel;
 mod prompt_turn;
 mod provider_actions;
 mod provider_attempt;
@@ -136,7 +137,6 @@ mod skill_actions;
 mod skill_picker;
 // Always compiled: display_version() is used in release TUI chrome.
 // Matrix/herdr injection paths stay no-ops outside debug builds.
-mod process_panel;
 mod smoke_injection;
 mod status_overlay;
 mod statusline;

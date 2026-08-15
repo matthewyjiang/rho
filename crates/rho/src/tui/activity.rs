@@ -1,9 +1,15 @@
 use std::time::{Duration, Instant};
 
-use ratatui::text::{Line, Span};
+use ratatui::{
+    style::Style,
+    text::{Line, Span},
+};
 use rho_sdk::{ProviderErrorKind, ProviderStreamResetReason};
 
-use super::{render::display_width, theme::Theme};
+use super::{
+    render::{display_width, truncate_one_line},
+    theme::Theme,
+};
 
 /// Rows occupied by the spinner/jump activity rail.
 pub(super) const ACTIVITY_RAIL_ROWS: usize = 1;
@@ -16,6 +22,70 @@ pub(super) fn tree_connector(is_last: bool) -> &'static str {
         "  └ "
     } else {
         "  ├ "
+    }
+}
+
+/// Visible stacked rows shared by the subagent and process rails.
+pub(super) const MAX_VISIBLE_RAIL_ROWS: usize = 2;
+/// Content width clamp shared by stacked activity-rail rows.
+pub(super) const MAX_RAIL_CONTENT_WIDTH: usize = 52;
+
+/// One stacked activity-rail row. Identity styling stays at the call site.
+pub(super) struct RailRow {
+    pub(super) connector: &'static str,
+    pub(super) identity: Vec<Span<'static>>,
+    pub(super) activity: String,
+    pub(super) trailing: String,
+    pub(super) row_style: Style,
+}
+
+impl RailRow {
+    pub(super) fn into_line(self, width: usize) -> Line<'static> {
+        const SEPARATOR: &str = "  ·  ";
+        const MIN_GAP: usize = 2;
+
+        let connector_width = display_width(self.connector);
+        let content_width = width
+            .saturating_sub(connector_width)
+            .min(MAX_RAIL_CONTENT_WIDTH);
+        let identity_plain: String = self
+            .identity
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        let identity_width = display_width(&identity_plain);
+        let separator_width = display_width(SEPARATOR);
+        let trailing_width = display_width(&self.trailing);
+        let fixed_width = identity_width + separator_width + MIN_GAP + trailing_width;
+        let row_style = self.row_style;
+
+        if fixed_width >= content_width {
+            let detail = truncate_one_line(
+                &format!(
+                    "{identity_plain}{SEPARATOR}{}  {}",
+                    self.activity, self.trailing
+                ),
+                content_width,
+            );
+            return Line::from(vec![
+                Span::styled(self.connector, Theme::dim().patch(row_style)),
+                Span::styled(detail, Theme::dim().patch(row_style)),
+            ]);
+        }
+
+        let activity_width = content_width.saturating_sub(fixed_width);
+        let activity = truncate_one_line(&self.activity, activity_width);
+        let gap = " ".repeat(content_width.saturating_sub(
+            identity_width + separator_width + display_width(&activity) + trailing_width,
+        ));
+        let mut spans = Vec::with_capacity(self.identity.len() + 5);
+        spans.push(Span::styled(self.connector, Theme::dim().patch(row_style)));
+        spans.extend(self.identity);
+        spans.push(Span::styled(SEPARATOR, Theme::dim().patch(row_style)));
+        spans.push(Span::styled(activity, Theme::text().patch(row_style)));
+        spans.push(Span::styled(gap, row_style));
+        spans.push(Span::styled(self.trailing, Theme::dim().patch(row_style)));
+        Line::from(spans)
     }
 }
 
@@ -254,7 +324,7 @@ pub(super) fn jump_to_bottom_text(width: usize, binding: &str, alongside_activit
     } else if display_width(&shortcut) <= width {
         shortcut
     } else {
-        super::render::truncate_one_line(&shortcut, width)
+        truncate_one_line(&shortcut, width)
     }
 }
 

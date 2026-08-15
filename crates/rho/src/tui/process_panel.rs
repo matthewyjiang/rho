@@ -5,19 +5,11 @@ use ratatui::{
     Frame,
 };
 
-use super::{
-    render::{display_width, truncate_one_line},
-    theme::Theme,
-    App,
-};
+use super::{activity, theme::Theme, App};
 use crate::{
     subagent,
     tools::process::{LiveProcessSummary, ProcessManager, State},
 };
-
-// Same visible-row and content-width receipts as `subagent_panel`.
-const MAX_VISIBLE_PROCESSES: usize = 2;
-const MAX_PROCESS_CONTENT_WIDTH: usize = 52;
 
 /// Live managed processes shown in the activity rail.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -46,7 +38,7 @@ impl ProcessPanel {
     }
 
     pub(super) fn desired_height(&self) -> usize {
-        self.processes.len().min(MAX_VISIBLE_PROCESSES)
+        self.processes.len().min(activity::MAX_VISIBLE_RAIL_ROWS)
     }
 
     pub(super) fn lines(&self, width: usize, height: usize) -> Vec<Line<'static>> {
@@ -56,24 +48,23 @@ impl ProcessPanel {
 
         let processes = self.visible_processes(height);
         let visible_count = processes.len();
-        let mut lines = Vec::with_capacity(visible_count);
-        for (index, process) in processes.into_iter().enumerate() {
-            let Some(activity) = state_label(process.state) else {
-                continue;
-            };
-            let connector = super::activity::tree_connector(index + 1 == visible_count);
-            lines.push(process_line(process, activity, connector, width));
-        }
-        lines
+        processes
+            .iter()
+            .enumerate()
+            .map(|(index, process)| {
+                let connector = activity::tree_connector(index + 1 == visible_count);
+                process_line(process, state_label(process.state), connector, width)
+            })
+            .collect()
     }
 
-    fn visible_processes(&self, height: usize) -> Vec<&LiveProcessSummary> {
-        let limit = self.processes.len().min(MAX_VISIBLE_PROCESSES).min(height);
-        self.processes
-            .iter()
-            .filter(|process| matches!(process.state, State::Starting | State::Running))
-            .take(limit)
-            .collect()
+    fn visible_processes(&self, height: usize) -> &[LiveProcessSummary] {
+        let limit = self
+            .processes
+            .len()
+            .min(activity::MAX_VISIBLE_RAIL_ROWS)
+            .min(height);
+        &self.processes[..limit]
     }
 }
 
@@ -92,51 +83,25 @@ impl App {
 
 fn process_line(
     process: &LiveProcessSummary,
-    activity: &str,
+    activity_text: &str,
     connector: &'static str,
     width: usize,
 ) -> Line<'static> {
-    const SEPARATOR: &str = "  ·  ";
-    const MIN_GAP: usize = 2;
-
-    let connector_width = display_width(connector);
-    let content_width = width
-        .saturating_sub(connector_width)
-        .min(MAX_PROCESS_CONTENT_WIDTH);
     let command = command_identity(&process.command);
     let short_id = short_process_id(&process.process_id);
-    let identity_width = display_width(command) + 1 + display_width(short_id);
-    let separator_width = display_width(SEPARATOR);
-    let elapsed = subagent::format_elapsed_secs(process.elapsed_seconds);
-    let fixed_width = identity_width + separator_width + MIN_GAP + display_width(&elapsed);
     let row_style = Theme::activity_rail();
-
-    if fixed_width >= content_width {
-        let detail = truncate_one_line(
-            &format!("{command} {short_id}{SEPARATOR}{activity}  {elapsed}"),
-            content_width,
-        );
-        return Line::from(vec![
-            Span::styled(connector, Theme::dim().patch(row_style)),
-            Span::styled(detail, Theme::dim().patch(row_style)),
-        ]);
+    activity::RailRow {
+        connector,
+        identity: vec![
+            Span::styled(command.to_owned(), Theme::text_strong().patch(row_style)),
+            Span::styled(" ", row_style),
+            Span::styled(short_id.to_owned(), Theme::dim().patch(row_style)),
+        ],
+        activity: activity_text.to_owned(),
+        trailing: subagent::format_elapsed_secs(process.elapsed_seconds),
+        row_style,
     }
-
-    let activity_width = content_width.saturating_sub(fixed_width);
-    let activity = truncate_one_line(activity, activity_width);
-    let gap = " ".repeat(content_width.saturating_sub(
-        identity_width + separator_width + display_width(&activity) + display_width(&elapsed),
-    ));
-    Line::from(vec![
-        Span::styled(connector, Theme::dim().patch(row_style)),
-        Span::styled(command.to_owned(), Theme::text_strong().patch(row_style)),
-        Span::styled(" ", row_style),
-        Span::styled(short_id.to_owned(), Theme::dim().patch(row_style)),
-        Span::styled(SEPARATOR, Theme::dim().patch(row_style)),
-        Span::styled(activity, Theme::text().patch(row_style)),
-        Span::styled(gap, row_style),
-        Span::styled(elapsed, Theme::dim().patch(row_style)),
-    ])
+    .into_line(width)
 }
 
 fn command_identity(command: &str) -> &str {
@@ -149,11 +114,13 @@ fn short_process_id(process_id: &str) -> &str {
         .unwrap_or(process_id)
 }
 
-fn state_label(state: State) -> Option<&'static str> {
+fn state_label(state: State) -> &'static str {
     match state {
-        State::Starting => Some("starting"),
-        State::Running => Some("running"),
-        State::Exited | State::Terminated | State::TimedOut | State::FailedToStart => None,
+        State::Starting => "starting",
+        State::Running => "running",
+        // `live_summaries` never yields terminal states; still label so the
+        // reserved rail row cannot go blank.
+        State::Exited | State::Terminated | State::TimedOut | State::FailedToStart => "done",
     }
 }
 
