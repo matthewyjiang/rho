@@ -557,3 +557,12 @@ fn cross_process_out_of_order_writes_keep_newer() {
     assert_eq!(only(&loaded).observed_nonce, "proc-new");
     assert_eq!(only(&loaded).observed_at_nanos, secs(7_000) + 500);
 }
+
+// Covers: epoch-zero timestamps must not format as multi-decade ages.
+// Owner: pure unit
+#[test]
+fn format_age_since_ignores_sentinel_timestamps() {
+    assert_eq!(format_age_since(0, 1_800_000_000), None);
+    assert_eq!(format_age_since(-12, 1_800_000_000), None);
+    assert!(format_age_since(1_799_999_995, 1_800_000_000).is_some());
+}

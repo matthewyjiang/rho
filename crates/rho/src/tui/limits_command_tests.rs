@@ -53,12 +53,10 @@ fn opening_limits_does_not_queue_model_context() {
         super::super::ComposerMode::Limits(_)
     ));
     assert!(
-        app.history.entries().is_empty()
-            || app
-                .history
-                .entries()
-                .iter()
-                .all(|entry| !matches!(entry, super::super::Entry::Error(_))),
+        app.history
+            .entries()
+            .iter()
+            .all(|entry| !matches!(entry, super::super::Entry::Error(_))),
         "limits overlay must not dump a transcript error, got {:?}",
         app.history.entries()
     );
@@ -132,6 +130,37 @@ fn applying_one_provider_leaves_others_checking() {
         }
     ));
     assert!(overlay.sections[1].windows.is_empty());
+}
+
+// Covers: reopening /limits after a live fetch must not invent an epoch-zero
+// age when the on-disk cache is missing.
+// Owner: pure unit
+#[test]
+fn live_ready_section_uses_in_memory_fetch_time_not_cache() {
+    let limits = ProviderUsageLimits {
+        provider: UsageProviderKind::Codex.label().into(),
+        windows: vec![codex_window()],
+    };
+    let mut live = BTreeMap::new();
+    live.insert(
+        UsageProviderKind::Codex,
+        LiveUsage::Ready {
+            limits,
+            fetched_at_unix: 1_700,
+        },
+    );
+    let section = provider_section(
+        UsageProviderKind::Codex,
+        &live,
+        &[],
+        &UsageLimitsCache::default(),
+    );
+    assert_eq!(
+        section.status,
+        LimitsSectionStatus::Live {
+            fetched_at_unix: 1_700
+        }
+    );
 }
 
 // Covers: Claude observations appear without a live probe even with no OAuth.

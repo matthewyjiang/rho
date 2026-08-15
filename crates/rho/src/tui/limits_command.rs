@@ -10,7 +10,8 @@ use rho_providers::credentials::CredentialStore;
 use super::{
     activity::LoadingSpinner,
     overlay_panel::{
-        clamp_panel_scroll, overlay_panel_layout, render_overlay_panel, OverlayPanelFrame,
+        clamp_panel_scroll, overlay_panel_inner_width, overlay_panel_layout, render_overlay_panel,
+        OverlayPanelFrame,
     },
     render::{display_width, wrap_line_at_whitespace},
     theme::Theme,
@@ -40,8 +41,18 @@ pub(super) struct PendingUsageFetch {
 
 #[derive(Clone, Debug)]
 pub(super) enum LiveUsage {
-    Ready(crate::usage_limits::ProviderUsageLimits),
+    Ready {
+        limits: crate::usage_limits::ProviderUsageLimits,
+        fetched_at_unix: i64,
+    },
     Failed,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum LimitsScrollTarget {
+    Delta(isize),
+    Page(isize),
+    Absolute(usize),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -192,7 +203,7 @@ impl App {
         let spinner = overlay
             .is_checking()
             .then(|| LoadingSpinner::frame_since(overlay.checking_started, now));
-        let inner_width = overlay_panel_layout(area, 1).inner_width;
+        let inner_width = overlay_panel_inner_width(area);
         let body = overlay_body_lines(overlay, inner_width, spinner, now_unix());
         Some(render_overlay_panel(
             TITLE,
@@ -265,10 +276,7 @@ impl App {
     }
 
     fn scroll_limits_overlay(&mut self, terminal: &ratatui::DefaultTerminal, delta: isize) {
-        let Ok(size) = terminal.size() else {
-            return;
-        };
-        self.scroll_limits_overlay_area(Rect::new(0, 0, size.width, size.height), delta);
+        self.apply_limits_scroll(terminal, LimitsScrollTarget::Delta(delta));
     }
 
     fn scroll_limits_overlay_page(
@@ -276,36 +284,56 @@ impl App {
         terminal: &ratatui::DefaultTerminal,
         direction: isize,
     ) {
-        let Ok(size) = terminal.size() else {
-            return;
-        };
-        let area = Rect::new(0, 0, size.width, size.height);
-        let body_rows = overlay_panel_layout(area, 1).body_rows.max(1) as isize;
-        self.scroll_limits_overlay_area(area, direction.saturating_mul(body_rows));
+        self.apply_limits_scroll(terminal, LimitsScrollTarget::Page(direction));
     }
 
     fn set_limits_overlay_scroll(&mut self, terminal: &ratatui::DefaultTerminal, scroll: usize) {
+        self.apply_limits_scroll(terminal, LimitsScrollTarget::Absolute(scroll));
+    }
+
+    fn apply_limits_scroll(
+        &mut self,
+        terminal: &ratatui::DefaultTerminal,
+        target: LimitsScrollTarget,
+    ) {
         let Ok(size) = terminal.size() else {
             return;
         };
-        let area = Rect::new(0, 0, size.width, size.height);
-        let ComposerMode::Limits(overlay) = self.input_ui.composer_mut() else {
-            return;
-        };
-        let inner_width = overlay_panel_layout(area, 1).inner_width;
-        let body_len = overlay_body_lines(overlay, inner_width, None, now_unix()).len();
-        let body_rows = overlay_panel_layout(area, body_len).body_rows;
-        overlay.scroll = clamp_panel_scroll(scroll, body_len, body_rows);
+        self.apply_limits_scroll_area(Rect::new(0, 0, size.width, size.height), target);
     }
 
     fn scroll_limits_overlay_area(&mut self, area: Rect, delta: isize) {
+        self.apply_limits_scroll_area(area, LimitsScrollTarget::Delta(delta));
+    }
+
+    fn apply_limits_scroll_area(&mut self, area: Rect, target: LimitsScrollTarget) {
+        let Some((body_len, body_rows)) = self.limits_scroll_metrics(area) else {
+            return;
+        };
         let ComposerMode::Limits(overlay) = self.input_ui.composer_mut() else {
             return;
         };
-        let inner_width = overlay_panel_layout(area, 1).inner_width;
+        match target {
+            LimitsScrollTarget::Delta(delta) => overlay.scroll_by(delta, body_len, body_rows),
+            LimitsScrollTarget::Page(direction) => overlay.scroll_by(
+                direction.saturating_mul(body_rows.max(1) as isize),
+                body_len,
+                body_rows,
+            ),
+            LimitsScrollTarget::Absolute(scroll) => {
+                overlay.scroll = clamp_panel_scroll(scroll, body_len, body_rows);
+            }
+        }
+    }
+
+    fn limits_scroll_metrics(&self, area: Rect) -> Option<(usize, usize)> {
+        let ComposerMode::Limits(overlay) = self.input_ui.composer() else {
+            return None;
+        };
+        let inner_width = overlay_panel_inner_width(area);
         let body_len = overlay_body_lines(overlay, inner_width, None, now_unix()).len();
         let body_rows = overlay_panel_layout(area, body_len).body_rows;
-        overlay.scroll_by(delta, body_len, body_rows);
+        Some((body_len, body_rows))
     }
 
     fn open_limits_overlay(&mut self) {
@@ -375,8 +403,13 @@ impl App {
                 usage_limits_cache::record_success(&mut cache, kind, limits.windows.clone());
                 let _ = usage_limits_cache::save(&cache);
                 let fetched_at_unix = now_unix();
-                self.usage_limits_live
-                    .insert(kind, LiveUsage::Ready(limits.clone()));
+                self.usage_limits_live.insert(
+                    kind,
+                    LiveUsage::Ready {
+                        limits: limits.clone(),
+                        fetched_at_unix,
+                    },
+                );
                 if let ComposerMode::Limits(overlay) = self.input_ui.composer_mut() {
                     overlay.apply_live(kind, limits.windows, fetched_at_unix);
                 }
@@ -466,14 +499,17 @@ fn provider_section(
     let cached = cache.get(kind);
     let checking = pending.contains(&kind);
     match live.get(&kind) {
-        Some(LiveUsage::Ready(limits)) if !checking => LimitsSection {
+        Some(LiveUsage::Ready {
+            limits,
+            fetched_at_unix,
+        }) if !checking => LimitsSection {
             id: LimitsSectionId::Provider(kind),
             label: kind.label().into(),
             status: if limits.windows.is_empty() {
                 LimitsSectionStatus::Empty
             } else {
                 LimitsSectionStatus::Live {
-                    fetched_at_unix: cached.map(|entry| entry.fetched_at_unix).unwrap_or(0),
+                    fetched_at_unix: *fetched_at_unix,
                 }
             },
             windows: limits.windows.clone(),
@@ -525,10 +561,12 @@ fn claude_provider_limits(
             if window.info.is_using_overage == Some(true) {
                 note_parts.push("using overage".into());
             }
-            note_parts.push(format!(
-                "observed {}",
-                crate::claude_runtime::rate_limit::format_age(window.age_seconds(now_unix))
-            ));
+            if let Some(age) = crate::claude_runtime::rate_limit::format_age_since(
+                window.observed_at_unix,
+                now_unix,
+            ) {
+                note_parts.push(format!("observed {age}"));
+            }
             UsageLimitWindow {
                 label: window.info.window_label(),
                 remaining_percent: window.info.remaining_percent(),
@@ -578,13 +616,10 @@ fn overlay_body_lines(
                 LimitsSectionStatus::Checking { .. } => {
                     lines.push(placeholder_window_line(label_width, width));
                 }
-                LimitsSectionStatus::Empty | LimitsSectionStatus::Failed { .. } => {
-                    lines.push(Line::from(Span::styled(
-                        "  no active usage limit windows reported",
-                        Theme::dim(),
-                    )));
-                }
-                LimitsSectionStatus::Live { .. } | LimitsSectionStatus::Observed { .. } => {
+                LimitsSectionStatus::Empty
+                | LimitsSectionStatus::Failed { .. }
+                | LimitsSectionStatus::Live { .. }
+                | LimitsSectionStatus::Observed { .. } => {
                     lines.push(Line::from(Span::styled(
                         "  no active usage limit windows reported",
                         Theme::dim(),
@@ -630,33 +665,20 @@ fn heading_status(section: &LimitsSection, spinner: Option<&str>, now_unix: i64)
     match section.status {
         LimitsSectionStatus::Checking { cached_at_unix } => {
             let spin = spinner.unwrap_or("⠙");
-            match cached_at_unix {
-                Some(cached_at) => format!(
-                    "{spin} updating · {}",
-                    crate::claude_runtime::rate_limit::format_age(
-                        now_unix.saturating_sub(cached_at).max(0)
-                    )
-                ),
+            match cached_at_unix.and_then(|cached_at| {
+                crate::claude_runtime::rate_limit::format_age_since(cached_at, now_unix)
+            }) {
+                Some(age) => format!("{spin} updating · {age}"),
                 None => format!("{spin} checking"),
             }
         }
-        LimitsSectionStatus::Live { fetched_at_unix } => {
-            let age = now_unix.saturating_sub(fetched_at_unix).max(0);
-            if age < 5 {
-                String::new()
-            } else {
-                format!(
-                    "updated {}",
-                    crate::claude_runtime::rate_limit::format_age(age)
-                )
+        LimitsSectionStatus::Live { .. } => String::new(),
+        LimitsSectionStatus::Observed { observed_at_unix } => {
+            match crate::claude_runtime::rate_limit::format_age_since(observed_at_unix, now_unix) {
+                Some(age) => format!("last seen {age}"),
+                None => String::new(),
             }
         }
-        LimitsSectionStatus::Observed { observed_at_unix } => format!(
-            "last seen {}",
-            crate::claude_runtime::rate_limit::format_age(
-                now_unix.saturating_sub(observed_at_unix).max(0)
-            )
-        ),
         LimitsSectionStatus::Failed { cached_at_unix } => match cached_at_unix {
             Some(_) => "update failed".into(),
             None => "unavailable".into(),

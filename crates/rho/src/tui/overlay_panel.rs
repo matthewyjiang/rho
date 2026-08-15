@@ -42,6 +42,14 @@ pub(super) fn overlay_panel_layout(area: Rect, body_line_count: usize) -> Overla
     layout_for_outer(outer_rect(area, body_line_count))
 }
 
+/// Inner content width for `area`. Independent of body length; outer width never
+/// depends on how many body rows the panel will draw.
+pub(super) fn overlay_panel_inner_width(area: Rect) -> usize {
+    (overlay_outer_width(area) as usize)
+        .saturating_sub(2)
+        .max(1)
+}
+
 pub(super) fn render_overlay_panel(
     title: &str,
     footer: &str,
@@ -114,16 +122,22 @@ pub(super) fn clamp_panel_scroll(scroll: usize, body_len: usize, body_rows: usiz
     clamp_overlay_scroll(scroll, body_len, body_rows)
 }
 
+fn overlay_outer_width(area: Rect) -> u16 {
+    if area.width == 0 {
+        return 0;
+    }
+    let horizontal_margin = ((area.width as usize) / 20).clamp(1, 4) as u16;
+    area.width
+        .saturating_sub(horizontal_margin.saturating_mul(2))
+        .max(1)
+}
+
 fn outer_rect(area: Rect, body_line_count: usize) -> Rect {
     if area.width == 0 || area.height == 0 {
         return Rect::new(area.x, area.y, 0, 0);
     }
-    let horizontal_margin = ((area.width as usize) / 20).clamp(1, 4) as u16;
     let vertical_margin = ((area.height as usize) / 12).clamp(1, 3) as u16;
-    let width = area
-        .width
-        .saturating_sub(horizontal_margin.saturating_mul(2))
-        .max(1);
+    let width = overlay_outer_width(area);
     let max_height = area
         .height
         .saturating_sub(vertical_margin.saturating_mul(2))

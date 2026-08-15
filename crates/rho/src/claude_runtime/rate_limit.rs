@@ -444,7 +444,12 @@ fn nanos_to_seconds(nanos: u64) -> i64 {
     i64::try_from(nanos / 1_000_000_000).unwrap_or(i64::MAX)
 }
 
+/// Formats a non-negative age. Sentinel timestamps (`<= 0`) must not be passed
+/// in; use [`format_age_since`] so those cannot render as multi-decade ages.
 pub(crate) fn format_age(seconds: i64) -> String {
+    if seconds < 0 {
+        return "0s ago".into();
+    }
     if seconds < 60 {
         return format!("{seconds}s ago");
     }
@@ -458,6 +463,13 @@ pub(crate) fn format_age(seconds: i64) -> String {
     }
     let days = hours / 24;
     format!("{days}d ago")
+}
+
+pub(crate) fn format_age_since(at_unix: i64, now_unix: i64) -> Option<String> {
+    if at_unix <= 0 {
+        return None;
+    }
+    Some(format_age(now_unix.saturating_sub(at_unix).max(0)))
 }
 
 #[cfg(test)]

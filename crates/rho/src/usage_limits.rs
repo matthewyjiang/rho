@@ -20,12 +20,6 @@ const XAI_TOKEN_AUTH_HEADER: &str = "xai-grok-cli";
 const XAI_CLIENT_VERSION: &str = "0.2.93";
 const OPENCODE_GO_USAGE_URL: &str = "https://opencode.ai/zen/go/v1/usage";
 
-#[cfg(test)]
-#[derive(Clone, Debug, PartialEq)]
-pub struct ProviderLimits {
-    pub providers: Vec<ProviderUsageLimits>,
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProviderUsageLimits {
     pub provider: String,
@@ -637,50 +631,6 @@ pub async fn fetch_usage_provider(
         }
         UsageProviderKind::Xai => XaiUsageLimitsSource::new(client).fetch(store).await,
     }
-}
-
-#[cfg(test)]
-async fn fetch_usage_limits_from_sources(
-    store: &dyn CredentialStore,
-    first: &(dyn UsageLimitsSource + Sync),
-    second: &(dyn UsageLimitsSource + Sync),
-) -> Result<(ProviderLimits, Vec<UsageLimitsError>), UsageLimitsError> {
-    let (first, second) = tokio::join!(first.fetch(store), second.fetch(store));
-    aggregate_usage_limits([first, second])
-}
-
-#[cfg(test)]
-fn aggregate_usage_limits(
-    results: impl IntoIterator<Item = Result<Option<ProviderUsageLimits>, UsageLimitsError>>,
-) -> Result<(ProviderLimits, Vec<UsageLimitsError>), UsageLimitsError> {
-    let mut providers = Vec::new();
-    let mut errors = Vec::new();
-    let mut saw_connected = false;
-    for result in results {
-        match result {
-            Ok(None) => {}
-            Ok(Some(limits)) => {
-                saw_connected = true;
-                providers.push(limits);
-            }
-            Err(error) => {
-                saw_connected = true;
-                errors.push(error);
-            }
-        }
-    }
-    providers.sort_by(|left, right| {
-        left.provider
-            .to_ascii_lowercase()
-            .cmp(&right.provider.to_ascii_lowercase())
-    });
-    if !saw_connected {
-        return Ok((ProviderLimits { providers }, errors));
-    }
-    if providers.is_empty() {
-        return Err(errors.into_iter().next().expect("connected provider error"));
-    }
-    Ok((ProviderLimits { providers }, errors))
 }
 
 #[derive(Deserialize)]

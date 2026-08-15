@@ -1,7 +1,9 @@
 use pretty_assertions::assert_eq;
 use ratatui::layout::Rect;
 
-use super::{clamp_panel_scroll, overlay_panel_layout, render_overlay_panel};
+use super::{
+    clamp_panel_scroll, overlay_panel_inner_width, overlay_panel_layout, render_overlay_panel,
+};
 
 // Covers: a short body must not fill the terminal, and overflow must clamp scroll.
 // Owner: pure unit
@@ -14,6 +16,8 @@ fn overlay_panel_sizes_to_body_and_clamps_scroll() {
     assert_eq!(clamp_panel_scroll(99, 2, layout.body_rows), 0);
 
     let long_layout = overlay_panel_layout(area, 40);
+    assert_eq!(overlay_panel_inner_width(area), layout.inner_width);
+    assert_eq!(overlay_panel_inner_width(area), long_layout.inner_width);
     assert_eq!(long_layout.outer.height, area.height.saturating_sub(4));
     let max_scroll = 40usize.saturating_sub(long_layout.body_rows);
     assert_eq!(
