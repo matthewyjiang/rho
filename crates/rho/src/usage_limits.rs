@@ -6,8 +6,8 @@ use thiserror::Error;
 use {
     rho_providers::auth::{kimi_oauth::refresh_kimi_tokens, xai_token::refresh_xai_tokens},
     rho_providers::credentials::{
-        load_codex_tokens, load_kimi_tokens, load_xai_tokens, save_kimi_tokens, save_xai_tokens,
-        CodexTokens, CredentialStore, KimiTokens, XaiTokens,
+        load_codex_tokens, load_kimi_tokens, load_provider_api_key, load_xai_tokens,
+        save_kimi_tokens, save_xai_tokens, CodexTokens, CredentialStore, KimiTokens, XaiTokens,
     },
     rho_providers::providers::openai::auth::{refresh_codex_token, CodexAuthSource},
 };
@@ -18,6 +18,7 @@ const KIMI_USAGE_URL: &str = "https://api.kimi.com/coding/v1/usages";
 const XAI_BILLING_URL: &str = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
 const XAI_TOKEN_AUTH_HEADER: &str = "xai-grok-cli";
 const XAI_CLIENT_VERSION: &str = "0.2.93";
+const OPENCODE_GO_USAGE_URL: &str = "https://opencode.ai/zen/go/v1/usage";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProviderLimits {
@@ -61,7 +62,7 @@ pub enum UsageLimitsError {
         provider: &'static str,
         detail: String,
     },
-    #[error("{provider} OAuth credentials are no longer valid; run {login}")]
+    #[error("{provider} credentials are no longer valid; run {login}")]
     Unauthorized {
         provider: &'static str,
         login: &'static str,
@@ -154,7 +155,7 @@ impl UsageEndpoint {
     }
 }
 
-/// Supplies normalized OAuth usage windows for one connected provider.
+/// Supplies normalized usage windows for one connected provider.
 ///
 /// Implementors should return only limits reported by the provider. Missing
 /// windows must not be synthesized because an absent window may be temporary.
@@ -299,6 +300,7 @@ impl<P: UsageProvider> UsageLimitsSource for TokenUsageSource<P> {
 type CodexUsageLimitsSource = TokenUsageSource<CodexUsage>;
 type KimiUsageLimitsSource = TokenUsageSource<KimiUsage>;
 type XaiUsageLimitsSource = TokenUsageSource<XaiUsage>;
+type OpenCodeGoUsageLimitsSource = TokenUsageSource<OpenCodeGoUsage>;
 
 struct CodexUsage;
 
@@ -522,15 +524,78 @@ impl UsageProvider for XaiUsage {
     }
 }
 
+struct OpenCodeGoUsage;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct OpenCodeGoKey(String);
+
+impl OpenCodeGoUsage {
+    fn configured_tokens_from(
+        store: &dyn CredentialStore,
+        env_api_key: Option<String>,
+    ) -> ConfiguredTokens<OpenCodeGoKey, OpenCodeGoAuthSource> {
+        if let Some(api_key) = env_api_key.filter(|key| !key.trim().is_empty()) {
+            return Ok(Some((OpenCodeGoKey(api_key), OpenCodeGoAuthSource::Env)));
+        }
+        Ok(load_provider_api_key(store, "opencode-go")?
+            .filter(|key| !key.trim().is_empty())
+            .map(|key| (OpenCodeGoKey(key), OpenCodeGoAuthSource::Store)))
+    }
+}
+
+impl UsageProvider for OpenCodeGoUsage {
+    type Tokens = OpenCodeGoKey;
+    type Source = OpenCodeGoAuthSource;
+    type Payload = OpenCodeGoUsagePayload;
+
+    const PROVIDER: &'static str = "OpenCode Go";
+    const LOGIN: &'static str = "/login opencode-go";
+    const URL: &'static str = OPENCODE_GO_USAGE_URL;
+
+    fn configured_tokens(
+        store: &dyn CredentialStore,
+    ) -> ConfiguredTokens<OpenCodeGoKey, OpenCodeGoAuthSource> {
+        Self::configured_tokens_from(store, std::env::var("OPENCODE_API_KEY").ok())
+    }
+
+    fn authorize(
+        request: reqwest::RequestBuilder,
+        tokens: &OpenCodeGoKey,
+    ) -> reqwest::RequestBuilder {
+        request
+            .bearer_auth(&tokens.0)
+            .header(reqwest::header::ACCEPT, "application/json")
+    }
+
+    fn refresh<'a>(
+        _client: &'a reqwest::Client,
+        _store: &'a dyn CredentialStore,
+        _tokens: &'a OpenCodeGoKey,
+        _source: OpenCodeGoAuthSource,
+    ) -> RefreshFuture<'a, OpenCodeGoKey> {
+        Box::pin(async move { Ok(None) })
+    }
+
+    fn windows(payload: OpenCodeGoUsagePayload) -> Vec<UsageLimitWindow> {
+        payload.windows()
+    }
+}
+
 pub async fn fetch_connected_usage_limits(
     store: &dyn CredentialStore,
     client: reqwest::Client,
 ) -> Result<(ProviderLimits, Vec<UsageLimitsError>), UsageLimitsError> {
     let codex = CodexUsageLimitsSource::new(client.clone());
     let kimi = KimiUsageLimitsSource::new(client.clone());
-    let xai = XaiUsageLimitsSource::new(client);
-    let (codex, kimi, xai) = tokio::join!(codex.fetch(store), kimi.fetch(store), xai.fetch(store));
-    aggregate_usage_limits([codex, kimi, xai])
+    let xai = XaiUsageLimitsSource::new(client.clone());
+    let opencode_go = OpenCodeGoUsageLimitsSource::new(client);
+    let (codex, kimi, xai, opencode_go) = tokio::join!(
+        codex.fetch(store),
+        kimi.fetch(store),
+        xai.fetch(store),
+        opencode_go.fetch(store)
+    );
+    aggregate_usage_limits([codex, kimi, xai, opencode_go])
 }
 
 #[cfg(test)]
@@ -574,6 +639,12 @@ fn aggregate_usage_limits(
         return Err(errors.into_iter().next().expect("connected provider error"));
     }
     Ok((ProviderLimits { providers }, errors))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OpenCodeGoAuthSource {
+    Env,
+    Store,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -782,6 +853,57 @@ impl XaiBillingPayload {
             resets_at_unix: Some(resets_at_unix),
             note: None,
         }]
+    }
+}
+
+#[derive(Deserialize)]
+struct OpenCodeGoUsagePayload {
+    usage: Option<OpenCodeGoUsageWindows>,
+}
+
+#[derive(Deserialize)]
+struct OpenCodeGoUsageWindows {
+    rolling: Option<OpenCodeGoUsageWindow>,
+    weekly: Option<OpenCodeGoUsageWindow>,
+    monthly: Option<OpenCodeGoUsageWindow>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenCodeGoUsageWindow {
+    status: Option<String>,
+    percent: Option<f64>,
+    resets_at: Option<String>,
+}
+
+impl OpenCodeGoUsagePayload {
+    fn windows(self) -> Vec<UsageLimitWindow> {
+        let Some(usage) = self.usage else {
+            return Vec::new();
+        };
+        [
+            ("5-hour", usage.rolling),
+            ("Weekly", usage.weekly),
+            ("Monthly", usage.monthly),
+        ]
+        .into_iter()
+        .filter_map(|(label, window)| window.and_then(|window| window.into_window(label)))
+        .collect()
+    }
+}
+
+impl OpenCodeGoUsageWindow {
+    fn into_window(self, label: &str) -> Option<UsageLimitWindow> {
+        let used = self.percent?;
+        Some(UsageLimitWindow {
+            label: label.into(),
+            remaining_percent: Some((100.0 - used).clamp(0.0, 100.0)),
+            resets_at_unix: self.resets_at.as_deref().and_then(parse_unix_timestamp),
+            note: match self.status.as_deref() {
+                Some("rate-limited") => Some("rate-limited".into()),
+                _ => None,
+            },
+        })
     }
 }
 

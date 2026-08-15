@@ -53,4 +53,6 @@ Use `/config` and choose **Refresh model lists** to fetch the current Go catalog
 
 Cost, context, and reasoning controls come from models.dev under `opencode-go`. The same catalog names the AI SDK package for each model. Rho uses that package to choose Chat Completions, OpenAI Responses, or Anthropic Messages. New Go models work after a models.dev refresh without a Rho update, as long as they use one of those packages.
 
+Use [`/limits`](/interactive-tui#commands) to inspect the rolling 5-hour, weekly, and monthly usage windows when you are logged in.
+
 See OpenCode's [Go documentation](https://opencode.ai/docs/go/) for subscription limits and the live model list.

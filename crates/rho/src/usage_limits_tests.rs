@@ -12,7 +12,9 @@ use tokio::{
 };
 
 use super::*;
-use rho_providers::credentials::{save_kimi_tokens, save_xai_tokens, CredentialResult};
+use rho_providers::credentials::{
+    save_kimi_tokens, save_provider_api_key, save_xai_tokens, CredentialResult,
+};
 
 #[derive(Default)]
 struct TestStore {
@@ -465,5 +467,70 @@ async fn xai_source_sends_oauth_cli_headers() {
                 note: None,
             }],
         }
+    );
+}
+
+// Covers: OpenCode Go reports used percent; bars must show remaining, skip
+// incomplete windows, and keep a rate-limited note.
+// Owner: usage limit parser
+#[test]
+fn parses_opencode_go_windows_from_used_percent() {
+    let payload: OpenCodeGoUsagePayload = serde_json::from_value(serde_json::json!({
+        "usage": {
+            "rolling": {
+                "status": "ok",
+                "percent": 25.0,
+                "resetsAt": "2026-08-15T12:00:00.000Z"
+            },
+            "weekly": {
+                "status": "rate-limited",
+                "percent": 100.0,
+                "resetsAt": "2026-08-16T00:00:00.000Z"
+            },
+            "monthly": {
+                "status": "ok"
+            }
+        }
+    }))
+    .unwrap();
+
+    assert_eq!(
+        payload.windows(),
+        vec![
+            UsageLimitWindow {
+                label: "5-hour".into(),
+                remaining_percent: Some(75.0),
+                resets_at_unix: Some(
+                    chrono::DateTime::parse_from_rfc3339("2026-08-15T12:00:00.000Z")
+                        .unwrap()
+                        .timestamp()
+                ),
+                note: None,
+            },
+            UsageLimitWindow {
+                label: "Weekly".into(),
+                remaining_percent: Some(0.0),
+                resets_at_unix: Some(
+                    chrono::DateTime::parse_from_rfc3339("2026-08-16T00:00:00.000Z")
+                        .unwrap()
+                        .timestamp()
+                ),
+                note: Some("rate-limited".into()),
+            },
+        ]
+    );
+}
+
+#[test]
+fn blank_opencode_go_env_key_falls_back_to_stored_api_key() {
+    let store = TestStore::default();
+    save_provider_api_key(&store, "opencode-go", "stored-key").unwrap();
+
+    assert_eq!(
+        OpenCodeGoUsage::configured_tokens_from(&store, Some("  ".into())).unwrap(),
+        Some((
+            OpenCodeGoKey("stored-key".into()),
+            OpenCodeGoAuthSource::Store
+        ))
     );
 }
