@@ -41,6 +41,24 @@ pub struct CommandSpec {
     pub argument_choices: &'static [CommandArgumentChoice],
 }
 
+impl CommandSpec {
+    /// A slash name that only resolves to `target`. No unique id or handler.
+    const fn alias(
+        name: &'static str,
+        usage: &'static str,
+        description: &'static str,
+        target: CommandId,
+    ) -> Self {
+        Self {
+            id: target,
+            name,
+            usage,
+            description,
+            argument_choices: &[],
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CommandArgumentChoice {
     pub completion: &'static str,
@@ -130,6 +148,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         description: "show release notes for this install, or the latest published release",
         argument_choices: CHANGELOG_ARGUMENT_CHOICES,
     },
+    CommandSpec::alias("clear", "/clear", "alias for /new", CommandId::New),
     CommandSpec {
         id: CommandId::Compact,
         name: "compact",
@@ -298,6 +317,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         description: "navigate this session's conversation tree",
         argument_choices: &[],
     },
+    CommandSpec::alias("usage", "/usage", "alias for /limits", CommandId::Limits),
     CommandSpec {
         id: CommandId::Workflow,
         name: "workflow",
@@ -519,6 +539,30 @@ mod tests {
         sorted.sort_unstable();
 
         assert_eq!(names, sorted);
+    }
+
+    // Covers: alias names must dispatch as their target command and stay
+    // discoverable by prefix in the palette.
+    // Owner: command table
+    #[test]
+    fn aliases_resolve_to_target_commands() {
+        let cases = [
+            ("/clear", CommandId::New, "clear"),
+            ("/CLEAR", CommandId::New, "clear"),
+            ("/usage", CommandId::Limits, "usage"),
+        ];
+        for (input, id, name) in cases {
+            let invocation = parse_command(input).unwrap().unwrap();
+            assert_eq!(invocation.id, id);
+            assert_eq!(invocation.name, name);
+        }
+
+        assert!(matching_commands("cl")
+            .iter()
+            .any(|command| command.name == "clear"));
+        assert!(matching_commands("us")
+            .iter()
+            .any(|command| command.name == "usage"));
     }
 
     #[test]
