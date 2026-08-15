@@ -424,7 +424,7 @@ impl SessionTree {
     }
 
     /// Applies one already-persisted tree mutation without re-reading the file.
-    pub(crate) fn apply_persisted_entry(&mut self, entry: SessionEntry) -> anyhow::Result<()> {
+    pub(super) fn apply_persisted_entry(&mut self, entry: SessionEntry) -> anyhow::Result<()> {
         let expected = self.session_id.clone();
         let mut legacy_state = PersistedSessionState::default();
         self.apply_entry(entry, 0, &mut legacy_state, expected.as_deref())?;
@@ -664,7 +664,7 @@ impl SessionTree {
                     anyhow::bail!("compaction node '{}' must store a full snapshot", node.id);
                 }
                 let snapshot = match (&parent.state.snapshot, transition) {
-                    (Some(parent_snapshot), StoredStateTransition::Snapshot { snapshot }) => {
+                    (Some(_parent_snapshot), StoredStateTransition::Snapshot { snapshot }) => {
                         snapshot.as_ref().clone()
                     }
                     (Some(parent_snapshot), StoredStateTransition::SnapshotDelta { delta }) => {

@@ -493,11 +493,6 @@ pub(super) fn set_title_if_absent(
     Ok(updated > 0)
 }
 
-pub(super) fn record_snapshot(session: &Session) -> anyhow::Result<()> {
-    let record = summarize_session_file(&session.path, &session.cwd)?;
-    record_snapshot_record(session, &record)
-}
-
 pub(super) fn record_snapshot_record(
     session: &Session,
     record: &SessionIndexRecord,
