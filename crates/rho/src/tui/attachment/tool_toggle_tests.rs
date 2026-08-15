@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 use rho_tools::tool_card::{ToolBody, ToolCard, ToolFamily, ToolHeader, ToolStatus};
 
-use super::{latest_toggle_target, tool_target_at_line, HistoryItem, ToggleTarget};
+use super::{latest_toggle_target, tool_card_at_line, HistoryItem, ToggleTarget};
 use crate::tui::{Entry, ToolEntry};
 
 fn long_card() -> ToolCard {
@@ -40,7 +40,7 @@ fn paint_height(item: &HistoryItem<'_>, width: usize, max_tool_output_lines: usi
 // Covers: click maps onto the card that owns the line, including spacer
 // Owner: attach tool hit-test
 #[test]
-fn tool_target_at_line_maps_header_body_spacer_and_neighbors() {
+fn tool_card_at_line_maps_header_body_spacer_and_neighbors() {
     let long = Entry::Tool(tool_entry(long_card()));
     let notice = Entry::Notice("after".into());
     let pending = tool_entry(short_card());
@@ -71,7 +71,7 @@ fn tool_target_at_line_maps_header_body_spacer_and_neighbors() {
     ];
     for (line, expected) in cases {
         assert_eq!(
-            tool_target_at_line(
+            tool_card_at_line(
                 [
                     HistoryItem::Transcript {
                         index: 0,
@@ -89,7 +89,8 @@ fn tool_target_at_line_maps_header_body_spacer_and_neighbors() {
                 line,
                 80,
                 10
-            ),
+            )
+            .map(|(target, _)| target),
             expected,
             "line {line}"
         );

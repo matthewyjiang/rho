@@ -469,7 +469,7 @@ impl Theme {
     pub(super) fn contrasting_ink_on(background: Color) -> Color {
         match background {
             Color::Rgb(red, green, blue) => block_foreground(Some(Rgb::new(red, green, blue))),
-            Color::White | Color::Gray | Color::Yellow => Color::Black,
+            _ if is_light_surface(background) => Color::Black,
             _ => Color::White,
         }
     }
@@ -678,14 +678,9 @@ impl Theme {
         let palette = Palette::current();
         // Surface luminance picks the lift direction. Unsampled terminal
         // themes leave the surface to the host; assume dark, the common case.
-        let dark_surface = palette.surface.is_none_or(|surface| match surface {
-            Color::Rgb(red, green, blue) => {
-                !is_light_background(Rgb::new(red, green, blue).luminance())
-            }
-            // Named fallback surfaces are only used on light hosts.
-            Color::White | Color::Gray | Color::Yellow => false,
-            _ => true,
-        });
+        let dark_surface = palette
+            .surface
+            .is_none_or(|surface| !is_light_surface(surface));
         let target = if dark_surface {
             Rgb::new(255, 255, 255)
         } else {
@@ -878,6 +873,17 @@ fn block_foreground(background: Option<Rgb>) -> Color {
 
 fn is_light_background(luminance: f32) -> bool {
     luminance > LIGHT_BACKGROUND_LUMINANCE
+}
+
+/// Light-host classification shared by contrasting ink and hover lift.
+/// White, gray, and yellow are light-host chrome; every other named color
+/// is dark.
+fn is_light_surface(color: Color) -> bool {
+    match color {
+        Color::Rgb(red, green, blue) => is_light_background(Rgb::new(red, green, blue).luminance()),
+        Color::White | Color::Gray | Color::Yellow => true,
+        _ => false,
+    }
 }
 
 fn blended_or_fallback(

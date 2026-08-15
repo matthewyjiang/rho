@@ -39,8 +39,7 @@ use super::super::{
     HISTORY_SCROLLBAR_REVEAL_DURATION,
 };
 use super::tool_toggle::{
-    latest_toggle_target, status_fallback_items, tool_card_at_line, tool_target_at_line,
-    HistoryItem, ToggleTarget,
+    latest_toggle_target, status_fallback_items, tool_card_at_line, HistoryItem, ToggleTarget,
 };
 
 const REFRESH_INTERVAL: Duration = Duration::from_millis(100);
@@ -514,12 +513,7 @@ impl AttachmentApp {
                                 .and_then(|target| self.tool_key_for_target(&target))
                         };
                     }
-                    MouseEventKind::Drag(MouseButton::Left) => {
-                        if self.press_cell != Some((mouse.column, mouse.row)) {
-                            self.press_tool_key = None;
-                        }
-                    }
-                    MouseEventKind::Moved => {
+                    MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Moved => {
                         if self.press_cell != Some((mouse.column, mouse.row)) {
                             self.press_tool_key = None;
                         }
@@ -627,19 +621,12 @@ impl AttachmentApp {
         // Hover lift derives from the remembered pointer cell against this
         // frame's layout, so scroll, promotion, and toggles re-anchor it every
         // draw instead of caching stale content-line spans.
-        let hovered = self
+        if let Some(hovered) = self
             .last_mouse_position
-            .and_then(|(column, row)| self.tool_card_span_at_pointer(column, row))
-            .filter(|span| span.start < end);
-        if let Some(hovered) = hovered {
-            let visible = hovered.start.max(start)..hovered.end.min(end);
-            if visible.start < visible.end {
-                tool_card_hover::lift_rows(
-                    frame.buffer_mut(),
-                    chunks[1],
-                    visible.start - start..visible.end - start,
-                );
-            }
+            .and_then(|(column, row)| self.tool_card_at_pointer(column, row))
+            .map(|(_, span)| span)
+        {
+            tool_card_hover::lift_lines(frame.buffer_mut(), chunks[1], start, hovered);
         }
 
         let now = Instant::now();
@@ -722,17 +709,12 @@ impl AttachmentApp {
     }
 
     fn toggle_target_at_pointer(&self, column: u16, row: u16) -> Option<ToggleTarget> {
-        let line = self.pointer_history_line(column, row)?;
-        tool_target_at_line(
-            self.history_items(self.status.as_ref()),
-            line,
-            self.toggle_width(),
-            self.display.max_tool_output_lines(),
-        )
+        self.tool_card_at_pointer(column, row)
+            .map(|(target, _)| target)
     }
 
-    /// Hover lift span for the toggleable card under the pointer, if any.
-    fn tool_card_span_at_pointer(&self, column: u16, row: u16) -> Option<Range<usize>> {
+    /// Toggleable card under the pointer: click target and hover-lift span.
+    fn tool_card_at_pointer(&self, column: u16, row: u16) -> Option<(ToggleTarget, Range<usize>)> {
         let line = self.pointer_history_line(column, row)?;
         tool_card_at_line(
             self.history_items(self.status.as_ref()),
@@ -740,7 +722,6 @@ impl AttachmentApp {
             self.toggle_width(),
             self.display.max_tool_output_lines(),
         )
-        .map(|(_, span)| span)
     }
 
     fn toggle_latest_tool(&mut self) {

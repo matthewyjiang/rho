@@ -1,7 +1,4 @@
-use std::{
-    ops::Range,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use crossterm::event::{MouseButton, MouseEventKind};
 use ratatui::{
@@ -9,7 +6,6 @@ use ratatui::{
     layout::{Position, Rect},
     Terminal,
 };
-use rho_sdk::ToolCallId;
 
 use super::{
     copy_interaction::{selection_position, selection_position_clamped},
@@ -17,27 +13,13 @@ use super::{
     picker_input::PickerMouseEvent,
     render::tool_entry_lines,
     text_selection::{screen_lines, CopyNotice, TextSelection},
+    tool_card_hover::{ToolCardHit, ToolCardTarget},
     tool_output_ui::{expandable_tool_entry, tool_output_toggleable},
     App, ComposerMode,
 };
 
 /// Max gap between presses that still counts as a double-click in the composer.
 const COMPOSER_DOUBLE_CLICK: Duration = Duration::from_millis(500);
-
-/// Which toggleable tool card a history line belongs to.
-#[derive(Clone, Debug)]
-pub(super) enum ToolCardTarget {
-    Transcript(usize),
-    Preview(usize),
-    Running(ToolCallId),
-}
-
-/// A toggleable tool card under the pointer, with the absolute history lines
-/// covering the whole clickable card.
-pub(super) struct ToolCardHit {
-    pub(super) target: ToolCardTarget,
-    pub(super) lines: Range<usize>,
-}
 
 impl App {
     /// Drops both the history-anchored and screen-space text selections.

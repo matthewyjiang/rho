@@ -150,25 +150,23 @@ impl App {
         // Hover lift derives from the remembered pointer cell against this
         // frame's layout, so scroll, streaming appends, and toggles re-anchor
         // it every draw instead of caching stale absolute lines.
-        let pointer = self.last_mouse_position;
-        let hovered_lines = pointer
+        // Hover lift paints under text selection: an active drag keeps its
+        // reverse-video highlight on overlapping rows.
+        if let Some(lines) = self
+            .last_mouse_position
             .filter(|position| layout.history_content.contains((*position).into()))
             .and_then(|(_, row)| {
                 let line = history_start + usize::from(row - layout.history_content.y);
                 self.tool_card_hit_at_history_line(line, width)
                     .map(|hit| hit.lines)
-            });
-        if let Some(lines) =
-            hovered_lines.filter(|lines| lines.start < history_start.saturating_add(history_count))
+            })
         {
-            // Hover lift paints under text selection: an active drag keeps
-            // its reverse-video highlight on overlapping rows.
-            let visible =
-                lines.start.max(history_start)..lines.end.min(history_start + history_count);
-            if visible.start < visible.end {
-                let rows = visible.start - history_start..visible.end - history_start;
-                tool_card_hover::lift_rows(frame.buffer_mut(), layout.history_content, rows);
-            }
+            tool_card_hover::lift_lines(
+                frame.buffer_mut(),
+                layout.history_content,
+                history_start,
+                lines,
+            );
         }
         if let Some(selection) = self.history.text_selection() {
             highlight_selection(

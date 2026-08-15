@@ -135,19 +135,6 @@ where
     None
 }
 
-/// Map a visible history line onto a toggleable tool, if any.
-pub(super) fn tool_target_at_line<'a, I>(
-    items: I,
-    line: usize,
-    width: usize,
-    max_tool_output_lines: usize,
-) -> Option<ToggleTarget>
-where
-    I: IntoIterator<Item = HistoryItem<'a>>,
-{
-    tool_card_at_line(items, line, width, max_tool_output_lines).map(|(target, _)| target)
-}
-
 /// Latest Ctrl+O target in paint order.
 ///
 /// Pending cards paint after transcript. While any pending card exists, only

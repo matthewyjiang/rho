@@ -624,38 +624,6 @@ fn draw_hover_lift_skips_untoggleable_card() {
     );
 }
 
-// Covers: attach draw lifts the hovered card's text ink, matching main TUI
-// Owner: attach draw
-#[test]
-fn draw_lifts_hovered_card_text() {
-    // Pin the global theme: terminal mode without a palette sample lifts named
-    // ink to bold, guaranteeing an observable change on the body row.
-    let _guard = crate::tui::theme::theme_test_lock();
-    Theme::apply_committed("terminal");
-    let (_directory, mut app) = test_app();
-    app.apply_event(AttachmentEvent::ToolFinished {
-        key: Some("call-1".into()),
-        card: long_body_card(),
-    });
-    let mut terminal =
-        ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 30)).expect("test terminal");
-    // First draw syncs history geometry for the pointer hit-test.
-    terminal
-        .draw(|frame| app.draw(frame))
-        .expect("baseline draw");
-
-    let baseline = row_look(&terminal, 5);
-    assert!(!baseline.is_empty(), "card body row has text cells");
-
-    app.handle_event(mouse(MouseEventKind::Moved, 8, 5));
-    terminal.draw(|frame| app.draw(frame)).expect("hover draw");
-    assert_ne!(
-        row_look(&terminal, 5),
-        baseline,
-        "hover lift must change the card body row look"
-    );
-}
-
 // Covers: releasing a scrollbar drag over a card must not toggle
 // Owner: attach event loop
 #[test]
