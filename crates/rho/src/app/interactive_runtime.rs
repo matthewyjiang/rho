@@ -800,6 +800,10 @@ impl InteractiveRuntime {
         self.tools.subagents()
     }
 
+    pub(crate) fn processes(&self) -> Option<&crate::tools::process::ProcessManager> {
+        self.tools.processes()
+    }
+
     /// Advisor session store when this run can offer the advisor tool.
     pub(crate) fn advisor(&self) -> Option<&crate::tools::advisor::AdvisorSessionStore> {
         self.tools.advisor()

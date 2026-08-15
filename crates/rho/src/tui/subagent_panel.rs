@@ -154,6 +154,7 @@ impl SubagentPanel {
         width: usize,
         height: usize,
         action_hint: &str,
+        continues_below: bool,
     ) -> Vec<Line<'static>> {
         if self.agents.is_empty() || width == 0 || height == 0 {
             return Vec::new();
@@ -168,11 +169,8 @@ impl SubagentPanel {
                 RunState::Running => activity_label(agent.last_activity.as_deref()),
                 RunState::Ok | RunState::Error | RunState::Stopped => continue,
             };
-            let connector = if index + 1 == visible_count {
-                "  └ "
-            } else {
-                "  ├ "
-            };
+            let connector =
+                super::activity::tree_connector(index + 1 == visible_count && !continues_below);
             let row_state = self.row_state(agent);
             lines.push(agent_line(
                 agent,

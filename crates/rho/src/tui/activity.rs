@@ -10,6 +10,15 @@ pub(super) const ACTIVITY_RAIL_ROWS: usize = 1;
 /// Blank breathing room kept above the rail while bottom-following.
 pub(super) const ACTIVITY_CONTENT_GAP_ROWS: usize = 1;
 
+/// Tree connector for stacked activity-rail rows.
+pub(super) fn tree_connector(is_last: bool) -> &'static str {
+    if is_last {
+        "  └ "
+    } else {
+        "  ├ "
+    }
+}
+
 /// Transcript rows reserved under the history panel while bottom-following with
 /// activity chrome. Manual scroll keeps the full panel so content can sit under
 /// the overlay.

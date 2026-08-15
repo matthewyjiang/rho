@@ -136,6 +136,7 @@ mod skill_actions;
 mod skill_picker;
 // Always compiled: display_version() is used in release TUI chrome.
 // Matrix/herdr injection paths stay no-ops outside debug builds.
+mod process_panel;
 mod smoke_injection;
 mod status_overlay;
 mod statusline;
@@ -205,6 +206,7 @@ use picker::{
     PickerBadgePlacement, PickerBadgeTone, PickerCursor, PickerItem, PickerKeyHints, PickerLayout,
     UiPicker,
 };
+use process_panel::ProcessPanel;
 use prompt_turn::FailedTurn;
 #[cfg(test)]
 use questionnaire::QuestionnaireComposer;
@@ -329,7 +331,7 @@ impl RuntimeModelView {
     /// Whether tool cards and reasoning blocks are visible in the transcript.
     ///
     /// Zen mode suppresses that work chrome while keeping the live activity rail
-    /// and subagent rows so the session still shows progress. Reasoning text vs
+    /// and live subagent or process rows so the session still shows progress. Reasoning text vs
     /// `Thinking...` vs neither is [`Self::reasoning_chrome`].
     pub(crate) fn shows_work_chrome(&self) -> bool {
         !self.zen_mode
@@ -443,6 +445,7 @@ struct App {
     terminal_session: Option<TerminalSession>,
     statusline: StatusLine,
     subagent_panel: SubagentPanel,
+    process_panel: ProcessPanel,
     subagent_inbox: subagent_inbox::SubagentInbox,
     pending_subagent_questionnaire: Option<PendingSubagentQuestionnaire>,
     input_ui: InputUi,

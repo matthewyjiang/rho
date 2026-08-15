@@ -74,7 +74,7 @@ impl App {
             }
             needs_redraw |= shell_changed;
             needs_redraw |= background_ready;
-            needs_redraw |= self.update_subagent_panel(agent);
+            needs_redraw |= self.update_activity_panels(agent);
             needs_redraw |= self.poll_pending_subagent_attaches(Instant::now());
             needs_redraw |= self
                 .poll_subagent_questionnaires(agent.session_id())
@@ -104,7 +104,7 @@ impl App {
                 || self.history.images().has_pending()
             {
                 Duration::from_millis(100)
-            } else if subagents_active {
+            } else if subagents_active || self.process_panel.is_active() {
                 Duration::from_millis(500)
             } else {
                 Duration::from_secs(3600)
@@ -219,6 +219,7 @@ impl App {
     pub(super) fn animation_active(&self, now: Instant) -> bool {
         self.loading_active()
             || self.subagent_panel.is_active()
+            || self.process_panel.is_active()
             || self
                 .history
                 .copy_notice()
@@ -306,8 +307,9 @@ impl App {
         )
     }
 
-    pub(super) fn update_subagent_panel(&mut self, agent: &InteractiveRuntime) -> bool {
+    pub(super) fn update_activity_panels(&mut self, agent: &InteractiveRuntime) -> bool {
         let mut changed = self.subagent_panel.update(agent.subagents());
+        changed |= self.process_panel.update(agent.processes());
         // Fold terminal subagent/advisor costs on every panel refresh path (idle
         // poll, in-turn wait, goal wait). Claiming is idempotent per run/call.
         changed |= self.claim_non_main_costs(agent);

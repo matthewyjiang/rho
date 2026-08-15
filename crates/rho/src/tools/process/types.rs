@@ -63,3 +63,12 @@ pub(super) fn terminal(s: State) -> bool {
         State::Exited | State::Terminated | State::TimedOut | State::FailedToStart
     )
 }
+
+/// Host-side view of one live process for UI rails. Not a tool action.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LiveProcessSummary {
+    pub(crate) process_id: String,
+    pub(crate) command: String,
+    pub(crate) state: State,
+    pub(crate) elapsed_seconds: u64,
+}

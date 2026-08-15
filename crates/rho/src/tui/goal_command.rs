@@ -465,7 +465,7 @@ impl App {
                 }
                 _ = tokio::time::sleep(Duration::from_millis(100)) => {
                     self.flush_due_paste_burst();
-                    self.update_subagent_panel(agent);
+                    self.update_activity_panels(agent);
                     self.poll_pending_subagent_attaches(Instant::now());
                 }
             }

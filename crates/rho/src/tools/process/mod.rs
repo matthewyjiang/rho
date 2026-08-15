@@ -18,12 +18,18 @@ pub use manager::ProcessManager;
 pub(crate) use platform::{prepare_child_command, ProcessTree};
 pub use tools::Process;
 pub(super) use tools::ProcessArgs;
-pub(crate) use types::Stream;
+pub(crate) use types::{LiveProcessSummary, Stream};
 pub use types::{Chunk, ProcessLimits, Snapshot, State};
 
 pub(super) struct SdkProcessBundle {
     tools: Vec<Arc<dyn SdkTool>>,
     manager: ProcessManager,
+}
+
+impl SdkProcessBundle {
+    pub(super) fn manager_handle(&self) -> ProcessManager {
+        self.manager.clone()
+    }
 }
 
 impl ToolBundle for SdkProcessBundle {

@@ -297,6 +297,7 @@ impl App {
                     width,
                     layout.subagents.height as usize,
                     self.subagent_action_hint(),
+                    /*continues_below*/ layout.processes.height > 0,
                 ))
                 .style(Theme::activity_rail()),
                 layout.subagents,
@@ -310,6 +311,7 @@ impl App {
                 }
             }
         }
+        self.render_process_rail(frame, layout.processes, width);
         if layout.top_divider.height > 0 {
             frame.render_widget(
                 Paragraph::new(vec![self.divider_line(width, /*shell_label*/ true)])
@@ -503,8 +505,13 @@ impl App {
                 width,
                 layout.subagents.height as usize,
                 self.subagent_action_hint(),
+                /*continues_below*/ layout.processes.height > 0,
             ));
         }
+        lines.extend(
+            self.process_panel
+                .lines(width, layout.processes.height as usize),
+        );
         if layout.top_divider.height > 0 {
             lines.push(self.divider_line(width, /*shell_label*/ true));
         }

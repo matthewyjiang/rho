@@ -249,6 +249,37 @@ impl ProcessManager {
         }
     }
 
+    /// Live `Starting`/`Running` records, oldest first.
+    ///
+    /// Host UI uses this to render the activity rail. It is not a tool action.
+    pub(crate) fn live_summaries(&self) -> Vec<super::LiveProcessSummary> {
+        let records = {
+            let inner = self.inner.lock().unwrap();
+            inner.records.values().cloned().collect::<Vec<_>>()
+        };
+        let mut live = records
+            .into_iter()
+            .filter_map(|record| {
+                let record = record.lock().unwrap();
+                if terminal(record.state) {
+                    return None;
+                }
+                Some((
+                    record.started,
+                    record.id.clone(),
+                    super::LiveProcessSummary {
+                        process_id: record.id.clone(),
+                        command: record.command.clone(),
+                        state: record.state,
+                        elapsed_seconds: record.started.elapsed().as_secs(),
+                    },
+                ))
+            })
+            .collect::<Vec<_>>();
+        live.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+        live.into_iter().map(|(_, _, summary)| summary).collect()
+    }
+
     fn get(&self, id: &str) -> Result<SharedRecord, String> {
         self.inner
             .lock()
