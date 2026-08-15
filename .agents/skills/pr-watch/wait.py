@@ -56,11 +56,6 @@ KIND_FIELDS = {
     "comment": "action",
 }
 
-# react skips these so credit-limit / scanner nags do not end the wait.
-# pullfrog is the review we want to wake on.
-_NOISE = ("greptile", "coderabbit", "github-actions", "dependabot", "cursor[bot]")
-
-
 def parse_until(raw: str) -> tuple[Rule, ...]:
     if raw in PRESETS:
         return PRESETS[raw]
@@ -99,15 +94,27 @@ def event_actor(event: dict[str, Any]) -> str:
     return ""
 
 
-def is_react_noise(event: dict[str, Any]) -> bool:
+def is_react_noise(event: dict[str, Any], self_login: str = "") -> bool:
     if str(event.get("kind") or "") not in {"review", "review_comment", "comment"}:
         return False
     actor = event_actor(event)
     if not actor or "pullfrog" in actor:
         return False
-    if "[bot]" in actor:
+    if self_login and actor == self_login:
         return True
-    return any(name in actor for name in _NOISE)
+    return "[bot]" in actor
+
+
+def current_login() -> str:
+    try:
+        out = subprocess.check_output(
+            ["gh", "api", "user", "--jq", ".login"],
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return out.strip().lower()
 
 
 def event_matches(event: dict[str, Any], rules: tuple[Rule, ...]) -> bool:
@@ -147,6 +154,8 @@ def _note_cursor(cursor: str) -> None:
 
 def run(pr: int, until: str, repo: str | None, since: str | None) -> int:
     rules = parse_until(until)
+    skip_noise = "react" in {part.strip() for part in until.split(",")}
+    self_login = current_login() if skip_noise else ""
     cmd = watch_command(pr, repo, since)
     proc = subprocess.Popen(
         cmd,
@@ -180,7 +189,7 @@ def run(pr: int, until: str, repo: str | None, since: str | None) -> int:
                 last_cursor = str(cursor)
                 _note_cursor(last_cursor)
             if event_matches(event, rules):
-                if until == "react" and is_react_noise(event):
+                if skip_noise and is_react_noise(event, self_login):
                     continue
                 json.dump(event, sys.stdout, separators=(",", ":"))
                 sys.stdout.write("\n")
