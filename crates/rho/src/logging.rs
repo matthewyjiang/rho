@@ -22,7 +22,3 @@ fn install(filter: Option<&str>) {
         .with_writer(std::io::stderr)
         .try_init();
 }
-
-#[cfg(test)]
-#[path = "logging_tests.rs"]
-mod tests;

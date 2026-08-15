@@ -51,7 +51,7 @@ fn mode_item(report: &McpSessionReport, config_path: &std::path::Path) -> Picker
     } else {
         match summary.mode {
             McpLoadMode::Native if summary.connecting > 0 => (
-                if summary.connecting > 0 && summary.connected == 0 {
+                if summary.connected == 0 {
                     "connecting".into()
                 } else {
                     format!(

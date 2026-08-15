@@ -36,9 +36,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Some(Command::Run { output, .. }) => Some(*output),
         _ => None,
     };
-    let result = run_inner(cli)
-        .instrument(tracing::info_span!("startup"))
-        .await;
+    let result = Box::pin(run_inner(cli).instrument(tracing::info_span!("startup"))).await;
     let Err(error) = result else {
         return Ok(());
     };
@@ -240,6 +238,12 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
     let definition = Arc::new(catalog.find(selected_agent)?.definition.clone());
 
     let store = AppCredentialStore;
+    // Interactive sessions refresh custom-provider models after the first frame
+    // so a slow host cannot hold up paint. Every other command resolves the
+    // model list up front, because it has one shot to pick a model.
+    if automation_prompt.is_some() || matches!(cli.command, Some(Command::Acp)) {
+        cli_config::refresh_custom_provider_models(&config, &store).await;
+    }
     let provider_refresh = cli_config::refresh_model_cache(&cli, &config, &store).await?;
     let permission_mode_before_override = config.permission_mode;
     let config_changed = cli_config::apply_overrides(&mut config, &cli)?;
