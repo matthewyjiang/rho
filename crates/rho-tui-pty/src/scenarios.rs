@@ -28,6 +28,7 @@ mod sessions_hub;
 mod startup;
 mod statusline;
 mod subagent_rail;
+mod supervised_approval;
 mod text_selection;
 mod tool_card_hover;
 mod workflow;
@@ -76,8 +77,9 @@ use runtime_info::RUNTIME_INFO_STEPS;
 use sessions_hub::{setup_sessions_hub, SESSIONS_HUB_STEPS};
 use startup::{STARTUP_FIRST_FRAME_SCENARIO, STARTUP_STREAM_EXIT_SCENARIO};
 use statusline::STATUSLINE_HIERARCHY_STEPS;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use subagent_rail::SUBAGENT_RAIL_MOUSE_STEPS;
+use supervised_approval::SUPERVISED_APPROVAL_STEPS;
 use text_selection::{SCREEN_TEXT_SELECTION_STEPS, TEXT_SELECTION_DRAG_STEPS};
 use tool_card_hover::TOOL_CARD_HOVER_STEPS;
 use workflow::{WORKFLOW_CANCEL_RESUME_ID, WORKFLOW_RUN_ID};
@@ -86,7 +88,7 @@ use workspace_rewind::WORKSPACE_REWIND_SCENARIO;
 use anyhow::Result;
 
 use crate::{
-    harness::{PtyHarness, WaitTimeout},
+    harness::WaitTimeout,
     keys::Key,
     pty::PtySize,
     scenario::{Scenario, ScenarioOutcome, ScenarioRunner, Step},
@@ -330,161 +332,6 @@ const QUESTIONNAIRE_STEPS: &[Step] = &[
     },
     Step::ExitCommand,
 ];
-
-const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::Phase("enable_supervised_mode"),
-    Step::SubmitText("/config"),
-    Step::WaitText {
-        text: "Agent behavior",
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Down),
-    Step::Key(Key::Enter),
-    Step::WaitText {
-        text: "Config / Agent behavior",
-        timeout: SETTLE,
-    },
-    Step::AssertText("Permission mode"),
-    Step::Key(Key::Enter),
-    // Short terminals only show part of the nested mode list; move onto
-    // Supervised instead of requiring every label to fit at once.
-    Step::WaitText {
-        text: "No permission checks",
-        timeout: SETTLE,
-    },
-    Step::AssertText("Auto"),
-    Step::AssertText("Plan"),
-    Step::Key(Key::Down),
-    Step::Key(Key::Down),
-    Step::WaitText {
-        text: "Ask before writes and processes",
-        timeout: SETTLE,
-    },
-    Step::AssertText("Supervised"),
-    Step::Key(Key::Enter),
-    // Selection returns to the agent-behavior category with the label badge.
-    Step::WaitText {
-        text: "Config / Agent behavior",
-        timeout: SETTLE,
-    },
-    Step::AssertText("Permission mode"),
-    Step::AssertText("Supervised"),
-    Step::Key(Key::Esc),
-    Step::WaitText {
-        text: "Models & reasoning",
-        timeout: SETTLE,
-    },
-    Step::WaitText {
-        text: "permissions: supervised",
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Esc),
-    // Mode changes are routine status text without a toast; the statusline
-    // segment is the observable signal.
-    Step::WaitText {
-        text: "Supervised ·",
-        timeout: SETTLE,
-    },
-    Step::Phase("inspect_long_process_approval"),
-    Step::SubmitText("fixture approval long"),
-    Step::WaitText {
-        text: "bash wants to run a command",
-        timeout: STREAM,
-    },
-    Step::WaitText {
-        text: "reviewing harmless fixture",
-        timeout: SETTLE,
-    },
-    Step::WaitText {
-        text: "Allow for session",
-        timeout: SETTLE,
-    },
-    Step::WaitText {
-        text: "→ Deny",
-        timeout: SETTLE,
-    },
-    Step::WaitText {
-        text: "PgUp/PgDn details",
-        timeout: SETTLE,
-    },
-    Step::WaitText {
-        text: "↓ later",
-        timeout: SETTLE,
-    },
-    // Page size depends on terminal chrome; scroll until the suffix is visible
-    // instead of hard-coding a PageDown count.
-    Step::Custom(scroll_approval_detail_until_suffix_visible),
-    Step::WaitText {
-        text: "↑ earlier",
-        timeout: SETTLE,
-    },
-    Step::Key(Key::PageUp),
-    Step::WaitText {
-        text: "reviewing harmless fixture",
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Esc),
-    // Esc always denies the pending call, but whether the turn is also
-    // interrupted races the instant fixture response. Each outcome renders
-    // different text, so accept either durable form.
-    Step::Custom(wait_for_denied_or_interrupted),
-    Step::Phase("continue_session"),
-    Step::SubmitText("fixture stream"),
-    Step::WaitText {
-        text: "assistant stream part one",
-        timeout: STREAM,
-    },
-    Step::WaitText {
-        text: "part two",
-        timeout: STREAM,
-    },
-    Step::ExitCommand,
-];
-
-fn wait_for_denied_or_interrupted(harness: &mut PtyHarness) -> Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        harness.poll(Duration::from_millis(30));
-        let screen = harness.screen();
-        if screen.contains_text("model interrupted")
-            || screen.contains_text("capability denied: cancelled by user")
-        {
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
-            anyhow::bail!(
-                "approval Esc produced neither an interrupt nor a denial:\n{}",
-                harness.screen().contents()
-            );
-        }
-    }
-}
-
-fn scroll_approval_detail_until_suffix_visible(harness: &mut PtyHarness) -> Result<()> {
-    const MARKER: &str = "DANGEROUS_SUFFIX_INSPECTABLE";
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline {
-        harness.poll(Duration::from_millis(30));
-        if harness.screen().contains_text(MARKER) {
-            return Ok(());
-        }
-        harness.inject_key(&Key::PageDown)?;
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    harness.poll(Duration::from_millis(50));
-    if harness.screen().contains_text(MARKER) {
-        return Ok(());
-    }
-    anyhow::bail!(
-        "approval detail suffix never became visible after PageDown scrolling\n{}",
-        harness.screen().contents()
-    )
-}
 
 const PROGRESS_TOOL_STEPS: &[Step] = &[
     Step::Phase("startup"),

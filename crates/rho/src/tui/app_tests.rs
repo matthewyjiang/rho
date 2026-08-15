@@ -73,6 +73,7 @@ pub(super) fn test_bootstrap() -> TuiBootstrap {
         },
         services: ApplicationServices {
             config_repository: ConfigRepository::temporary_for_tests().unwrap(),
+            theme: "terminal".into(),
             first_run: None,
             auth_unavailable: None,
             update_notice: None,

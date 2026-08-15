@@ -84,6 +84,10 @@ impl SqliteUsageRecorder {
         )?;
         connection.busy_timeout(BUSY_TIMEOUT)?;
         connection.pragma_update(None, "synchronous", "NORMAL")?;
+        // sqlite's default page cache is 2 MB per connection (cache_size
+        // -2000). The recorder lives for the whole process and touches a
+        // handful of pages per event, so cap the cache at 512 KB.
+        connection.pragma_update(None, "cache_size", -512)?;
         Ok(connection)
     }
 }

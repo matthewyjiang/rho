@@ -34,6 +34,7 @@ pub(super) async fn initialize(
 ) -> anyhow::Result<InteractiveRuntime> {
     let InteractiveRuntimeOptions {
         config,
+        catalog,
         config_path,
         cwd,
         no_system_prompt,
@@ -49,6 +50,10 @@ pub(super) async fn initialize(
     } = options;
     let agent_id = agent.id().to_string();
     let agent_fingerprint = agent.fingerprint().to_string();
+    // Warm the usage ledger (sqlite open + migrate) while tools and MCP
+    // connect; the await further down then finds the cell already initialized
+    // instead of serializing the open behind the rest of startup.
+    tokio::spawn(crate::usage::default_recording());
     let sdk_options = crate::app::sdk_config::SdkBootstrapOptions::from_config(config, &cwd)?;
     // Catalog-constructed providers must wait for the models.dev hydrate
     // instead of racing it; a no-op for the rest.
@@ -63,6 +68,7 @@ pub(super) async fn initialize(
         mcp_sampling,
     } = assemble_tools_and_prompt(ToolsAndPromptOptions {
         config,
+        catalog: catalog.as_ref(),
         config_path,
         cwd: &cwd,
         no_system_prompt,

@@ -166,6 +166,9 @@ where
         ..
     } = assemble_tools_and_prompt(ToolsAndPromptOptions {
         config,
+        // Subagent and automation assembly can run from a different cwd than
+        // bootstrap discovery; let the delegation tools rediscover.
+        catalog: None,
         config_path,
         cwd,
         no_system_prompt,

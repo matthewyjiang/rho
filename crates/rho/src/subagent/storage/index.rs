@@ -42,6 +42,10 @@ fn initialize_index_once(path: &Path) -> anyhow::Result<Connection> {
     let mut connection = open_index(path)?;
     connection.pragma_update(None, "journal_mode", "WAL")?;
     connection.pragma_update(None, "synchronous", "NORMAL")?;
+    // sqlite's default page cache is 2 MB per connection (cache_size -2000).
+    // The index lives for the whole process and touches a handful of pages per
+    // run, so cap the cache at 512 KB.
+    connection.pragma_update(None, "cache_size", -512)?;
     let current: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
     anyhow::ensure!(
         current <= INDEX_SCHEMA_VERSION,

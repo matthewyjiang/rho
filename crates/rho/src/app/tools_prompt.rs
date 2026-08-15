@@ -19,6 +19,10 @@ use super::agent_binding::BoundAgent;
 
 pub(crate) struct ToolsAndPromptOptions<'a> {
     pub(crate) config: &'a Config,
+    /// Bootstrap's discovered agent catalog. `None` when assembly may run from
+    /// a different cwd (subagents, automation); the delegation tool set then
+    /// rediscovers on its own.
+    pub(crate) catalog: Option<&'a crate::agent::DiscoveredAgentCatalog>,
     pub(crate) config_path: PathBuf,
     pub(crate) cwd: &'a Path,
     pub(crate) no_system_prompt: bool,
@@ -180,6 +184,9 @@ pub(crate) async fn assemble_tools_and_prompt(
                 options.cwd.to_path_buf(),
                 options.config_path.clone(),
                 options.background_subagents,
+                options
+                    .catalog
+                    .and_then(|discovered| discovered.for_cwd(options.cwd)),
             ));
         }
         if options

@@ -367,6 +367,9 @@ pub struct SessionBootstrap {
 
 pub struct ApplicationServices {
     pub(crate) config_repository: ConfigRepository,
+    /// Theme id from the already-loaded startup config, so the TUI does not
+    /// re-read and re-parse the config file for one field.
+    pub(crate) theme: String,
     /// Set when this launch should open the first-run setup screen, and at
     /// which step. `None` for a returning session.
     pub(crate) first_run: Option<first_run::SetupEntry>,
@@ -388,13 +391,7 @@ pub(crate) use attachment::{
 pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::Result<TuiResult> {
     let mut terminal = ratatui::init();
     Theme::initialize_from_terminal();
-    let startup_theme = info
-        .services
-        .config_repository
-        .load()
-        .map(|config| config.theme)
-        .unwrap_or_else(|_| "terminal".into());
-    Theme::apply_committed(&startup_theme);
+    Theme::apply_committed(&info.services.theme);
     let herdr = info.services.herdr.clone();
     let pending_herdr_graphics = {
         let herdr = herdr.clone();
@@ -490,7 +487,9 @@ struct App {
         limits_command::LiveUsage,
     >,
     pending_changelog: Option<tokio::task::JoinHandle<changelog_command::ChangelogFetchResult>>,
-    usage_limits_client: reqwest::Client,
+    /// Built on first `/limits` use; constructing a client loads TLS roots,
+    /// which startup should not pay for a feature that may never run.
+    usage_limits_client: std::sync::OnceLock<reqwest::Client>,
     usage: UsageUi,
     model_metadata: Option<ModelMetadata>,
     pending_model_metadata: Option<tokio::task::JoinHandle<Option<ModelMetadata>>>,

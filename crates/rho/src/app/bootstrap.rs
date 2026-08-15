@@ -76,6 +76,7 @@ async fn run_inner(cli: Cli) -> anyhow::Result<()> {
 
     let PreparedStartup {
         cli,
+        catalog,
         mut config,
         config_repository,
         first_run,
@@ -124,6 +125,7 @@ async fn run_inner(cli: Cli) -> anyhow::Result<()> {
     }
     run_interactive_startup(InteractiveStartup {
         cli: &cli,
+        catalog,
         config,
         config_repository,
         first_run,
@@ -196,6 +198,7 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
 
 struct PreparedStartup {
     cli: Cli,
+    catalog: crate::agent::DiscoveredAgentCatalog,
     config: crate::config::Config,
     config_repository: ConfigRepository,
     first_run: Option<SetupEntry>,
@@ -233,9 +236,11 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
         }) => (output_file.clone(), *output, *max_steps, *timeout),
         _ => (None, OutputFormat::Text, None, None),
     };
-    let catalog = crate::agent::AgentCatalog::discover(&cwd)?;
+    let catalog = Arc::new(crate::agent::AgentCatalog::discover(&cwd)?);
     let selected_agent = cli.agent.as_deref().unwrap_or("default");
     let definition = Arc::new(catalog.find(selected_agent)?.definition.clone());
+    // The walk is reused for the delegation tool set so startup discovers once.
+    let catalog = crate::agent::DiscoveredAgentCatalog::new(cwd.clone(), catalog);
 
     let store = AppCredentialStore;
     // Interactive sessions refresh custom-provider models after the first frame
@@ -294,6 +299,7 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
 
     Ok(PreparedStartup {
         cli,
+        catalog,
         config,
         config_repository,
         first_run,
@@ -382,6 +388,7 @@ async fn run_acp_startup(startup: AcpCommandStartup) -> anyhow::Result<()> {
 
 struct InteractiveStartup<'a> {
     cli: &'a Cli,
+    catalog: crate::agent::DiscoveredAgentCatalog,
     config: crate::config::Config,
     config_repository: ConfigRepository,
     first_run: Option<SetupEntry>,
@@ -426,6 +433,7 @@ async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Res
     };
     interactive::run(interactive::Startup {
         cli: startup.cli,
+        catalog: startup.catalog,
         config: startup.config,
         config_path: absolute_config_path(&startup.config_repository)?,
         config_repository: startup.config_repository,

@@ -112,6 +112,16 @@ windows-sys = { version = "0.61", features = [
 default = ["bundled-sqlite"]
 bundled-sqlite = ["rusqlite/bundled", "rho-providers/bundled-sqlite"]
 
+# Cargo reads profiles only from the root package. Workspace builds use the
+# copy in the repo-root Cargo.toml; this copy applies when the published crate
+# is the root (`cargo install rho-coding-agent`). Keep both tables in sync.
+# Do not add `panic = "abort"`: the TUI recovers from renderer panics with
+# `catch_unwind` (tui/markdown/math.rs, mermaid.rs).
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
 [dev-dependencies]
 pretty_assertions = "1"
 rho-tui-pty = { path = "../rho-tui-pty" }

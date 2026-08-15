@@ -175,7 +175,12 @@ fn notification_prompts_bound_many_large_utf8_results_and_keep_run_statuses() {
 }
 
 async fn spawn_background_run(manager: &SubagentManager, root: &Path) -> String {
-    let tool = AgentTool::new(manager.clone(), root, BackgroundSubagents::Enabled);
+    let tool = AgentTool::new(
+        manager.clone(),
+        root,
+        BackgroundSubagents::Enabled,
+        /*catalog*/ None,
+    );
     let output = call_agent(
         &tool,
         root,
@@ -321,7 +326,12 @@ async fn agent_and_agents_prepare_subagent_manager_resources() {
     let root = tempfile::tempdir().unwrap();
     let fixture = manager(root.path());
     let manager = fixture.manager();
-    let agent = AgentTool::new(manager.clone(), root.path(), BackgroundSubagents::Enabled);
+    let agent = AgentTool::new(
+        manager.clone(),
+        root.path(),
+        BackgroundSubagents::Enabled,
+        /*catalog*/ None,
+    );
     let agents = AgentsTool::new(manager);
 
     let launch = agent
@@ -397,7 +407,12 @@ async fn concurrent_background_launches_register_together() {
     let root = tempfile::tempdir().unwrap();
     let fixture = manager(root.path());
     let manager = fixture.manager();
-    let tool = AgentTool::new(manager.clone(), root.path(), BackgroundSubagents::Enabled);
+    let tool = AgentTool::new(
+        manager.clone(),
+        root.path(),
+        BackgroundSubagents::Enabled,
+        /*catalog*/ None,
+    );
     let first = call_agent(
         &tool,
         root.path(),
@@ -434,7 +449,12 @@ fn agent_list_never_names_an_agent_model() {
     let root = tempfile::tempdir().unwrap();
     let fixture = manager(root.path());
     let manager = fixture.manager();
-    let tool = AgentTool::new(manager.clone(), root.path(), BackgroundSubagents::Enabled);
+    let tool = AgentTool::new(
+        manager.clone(),
+        root.path(),
+        BackgroundSubagents::Enabled,
+        /*catalog*/ None,
+    );
     let baseline = tool.spec().description;
 
     let agents = baseline

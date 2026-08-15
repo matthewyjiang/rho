@@ -514,6 +514,10 @@ fn open_index(session_root: &Path) -> anyhow::Result<Arc<Mutex<Connection>>> {
     fs::create_dir_all(session_root)?;
     set_private_dir_permissions(session_root)?;
     let mut connection = Connection::open(&path)?;
+    // sqlite's default page cache is 2 MB per connection (cache_size -2000).
+    // Index connections are cached for the whole process, so cap the cache at
+    // 512 KB; reconciliation touches a handful of pages per session.
+    connection.pragma_update(None, "cache_size", -512)?;
     set_private_file_permissions(&path)?;
     migrate_index(&mut connection)?;
     let connection = Arc::new(Mutex::new(connection));

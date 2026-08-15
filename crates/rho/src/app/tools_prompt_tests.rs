@@ -61,6 +61,7 @@ async fn assemble(config: &Config, cwd: &std::path::Path) -> (bool, String) {
     let diagnostics = RuntimeDiagnostics::new(config);
     let agent = bound_agent(config);
     let assembled = assemble_tools_and_prompt(ToolsAndPromptOptions {
+        catalog: None,
         config,
         config_path: cwd.join("config.toml"),
         cwd,
@@ -128,6 +129,7 @@ async fn the_advisor_receives_the_executor_system_prompt() {
     let agent = bound_agent(&config);
 
     let assembled = assemble_tools_and_prompt(ToolsAndPromptOptions {
+        catalog: None,
         config: &config,
         config_path: cwd.path().join("config.toml"),
         cwd: cwd.path(),
@@ -168,6 +170,7 @@ async fn system_prompt_stays_advisor_agnostic() {
         let agent = bound_agent(&config);
 
         let prompt = assemble_tools_and_prompt(ToolsAndPromptOptions {
+            catalog: None,
             config: &config,
             config_path: cwd.path().join("config.toml"),
             cwd: cwd.path(),

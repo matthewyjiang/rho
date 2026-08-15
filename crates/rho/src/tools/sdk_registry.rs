@@ -46,19 +46,28 @@ impl ToolBundle for StaticToolBundle {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct DelegationConfig {
     cwd: PathBuf,
     config_path: PathBuf,
     background: BackgroundSubagents,
+    /// Catalog already discovered for `cwd`; the agent tool rediscovers when
+    /// absent.
+    catalog: Option<Arc<crate::agent::AgentCatalog>>,
 }
 
 impl DelegationConfig {
-    pub fn new(cwd: PathBuf, config_path: PathBuf, background: BackgroundSubagents) -> Self {
+    pub fn new(
+        cwd: PathBuf,
+        config_path: PathBuf,
+        background: BackgroundSubagents,
+        catalog: Option<Arc<crate::agent::AgentCatalog>>,
+    ) -> Self {
         Self {
             cwd,
             config_path,
             background,
+            catalog,
         }
     }
 }
@@ -253,6 +262,7 @@ impl AppToolSet {
                     tools: selection,
                     config_path: delegation.config_path,
                     background: delegation.background,
+                    catalog: delegation.catalog,
                 },
                 tool_set.checkpoint_tracker.clone(),
             );
