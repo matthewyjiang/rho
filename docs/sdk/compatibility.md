@@ -133,7 +133,7 @@ Public extensible event, policy, capability, operation, error-category, state, a
 
 ### Stable persistence boundary
 
-`SessionSnapshot` JSON is the intended versioned 1.0 persistence boundary. Schema version 2 adds an optional opaque prompt-cache key. Schema version 1 remains supported and migrates in memory; serialization always emits version 2. Deserialization rejects malformed, older-than-supported, and newer schemas. New and imported snapshots sanitize raw aborted-assistant reasoning.
+`SessionSnapshot` JSON is the intended versioned 1.0 persistence boundary. Schema version 2 adds an optional opaque prompt-cache key. Schema version 1 remains supported and migrates in memory; serialization always emits version 2. Deserialization rejects malformed, older-than-supported, and newer schemas. New and imported snapshots sanitize raw aborted-assistant reasoning. Hosts can apply the same rule with `SessionSnapshot::sanitize_history`.
 
 Nested provider-neutral message history preserves Rho's historical externally tagged enum representation, including legacy assistant messages, enriched assistants, and aborted assistants. Opaque provider context is data, not a public provider wire contract, and is replayable only to an exact identity.
 

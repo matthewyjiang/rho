@@ -941,17 +941,9 @@ fn snapshot_less_parent_state_changed(
     parent: &PersistedSessionState,
 ) -> bool {
     let normalize = |history: Vec<Message>| {
-        SessionSnapshot::new(
-            snapshot.session_id().clone(),
-            snapshot.revision(),
-            drop_incomplete_tool_turn_tail(history),
-            snapshot.provider().clone(),
-            snapshot.compaction().clone(),
-        )
+        SessionSnapshot::sanitize_history(drop_incomplete_tool_turn_tail(history))
     };
-    let parent_history = normalize(parent.model.clone());
-    let child_history = normalize(snapshot.history().to_vec());
-    child_history.history() != parent_history.history()
+    normalize(snapshot.history().to_vec()) != normalize(parent.model.clone())
         || snapshot.compaction() != &parent.compaction
         || snapshot.revision() != parent.revision
 }

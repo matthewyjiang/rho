@@ -16,22 +16,26 @@ use super::{
 const SNAPSHOT_V1: &str = include_str!("fixtures/session-snapshot-v1.json");
 const SNAPSHOT_V2: &str = include_str!("fixtures/session-snapshot-v2.json");
 
+fn aborted_history(identity: &ModelIdentity) -> Vec<Message> {
+    vec![Message::AbortedAssistant(Box::new(AbortedAssistant {
+        content: vec![ContentBlock::Text("partial".into())],
+        reasoning: "raw reasoning must not persist".into(),
+        provider_context: vec![ProviderContextBlock {
+            identity: identity.clone(),
+            kind: "encrypted_reasoning".into(),
+            position: Some(0),
+            data: json!({"encrypted": "opaque"}),
+        }],
+        ..AbortedAssistant::default()
+    }))]
+}
+
 fn snapshot() -> SessionSnapshot {
     let identity = ModelIdentity::new("openai", "responses", "gpt-5");
     SessionSnapshot::new(
         SessionId::from_str("session-1").unwrap(),
         Revision::from_u64(4),
-        vec![Message::AbortedAssistant(Box::new(AbortedAssistant {
-            content: vec![ContentBlock::Text("partial".into())],
-            reasoning: "raw reasoning must not persist".into(),
-            provider_context: vec![ProviderContextBlock {
-                identity: identity.clone(),
-                kind: "encrypted_reasoning".into(),
-                position: Some(0),
-                data: json!({"encrypted": "opaque"}),
-            }],
-            ..AbortedAssistant::default()
-        }))],
+        aborted_history(&identity),
         identity,
         crate::CompactionState::default(),
     )
@@ -55,6 +59,10 @@ fn snapshot_json_round_trip_preserves_replay_context_but_omits_raw_reasoning() {
         [Message::AbortedAssistant(message)]
             if message.reasoning.is_empty() && message.provider_context.len() == 1
     ));
+    assert_eq!(
+        SessionSnapshot::sanitize_history(aborted_history(snapshot.provider())).as_slice(),
+        snapshot.history()
+    );
 }
 
 #[test]
