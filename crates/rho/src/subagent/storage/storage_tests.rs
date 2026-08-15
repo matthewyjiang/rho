@@ -11,8 +11,8 @@ use super::{
     index::{
         initialize_index, insert_parent_lock_for_test, unix_timestamp_secs, PARENT_LOCK_TTL_SECS,
     },
-    lock_parent_for_cleanup_in_root, reserve_run_directory_in_root, resolve_run_directory_in_root,
-    RunPlacement,
+    list_running_runs_in_root, lock_parent_for_cleanup_in_root, reserve_run_directory_in_root,
+    resolve_run_directory_in_root, RunPlacement,
 };
 use crate::session::Session;
 use std::path::{Path, PathBuf};
@@ -294,4 +294,84 @@ fn failed_cleanup_releases_parent_lock() {
     )
     .unwrap();
     assert_eq!(directory, subagents_dir.join("abcdef"));
+}
+
+// Covers: rho attach picker must not list subagents from another directory.
+// Owner: delegated-run index listing
+#[test]
+fn list_running_runs_keeps_only_the_current_workspace() {
+    let temp = TempDir::new().unwrap();
+    let here = TempDir::new().unwrap();
+    let there = TempDir::new().unwrap();
+    let here_session = Session::create_in_root(&temp.path().join("sessions"), here.path()).unwrap();
+    let there_session =
+        Session::create_in_root(&temp.path().join("sessions"), there.path()).unwrap();
+    let here_nested = reserve_running(
+        temp.path(),
+        RunPlacement::Session {
+            parent_session_id: here_session.id().to_string(),
+            subagents_dir: here_session.subagents_dir().unwrap(),
+        },
+        "aaaaaa",
+        "here-worker",
+    );
+    let there_nested = reserve_running(
+        temp.path(),
+        RunPlacement::Session {
+            parent_session_id: there_session.id().to_string(),
+            subagents_dir: there_session.subagents_dir().unwrap(),
+        },
+        "bbbbbb",
+        "there-worker",
+    );
+    let here_global = reserve_running(
+        temp.path(),
+        RunPlacement::Global {
+            parent_session_id: Some(here_session.id().to_string()),
+        },
+        "cccccc",
+        "here-legacy",
+    );
+    reserve_running(
+        temp.path(),
+        RunPlacement::Global {
+            parent_session_id: None,
+        },
+        "dddddd",
+        "orphan",
+    );
+
+    let here_ids = running_ids(temp.path(), here.path());
+    let there_ids = running_ids(temp.path(), there.path());
+
+    assert_eq!(
+        here_ids,
+        std::collections::BTreeSet::from([here_nested, here_global])
+    );
+    assert_eq!(there_ids, std::collections::BTreeSet::from([there_nested]));
+}
+
+fn reserve_running(rho_root: &Path, placement: RunPlacement, id: &str, agent_id: &str) -> String {
+    let next_id = id.to_string();
+    let (id, directory) =
+        reserve_run_directory_in_root(rho_root, &placement, move || next_id.clone()).unwrap();
+    crate::subagent::write_status(
+        &directory.join(crate::subagent::RESULT_FILE_NAME),
+        &crate::subagent::RunStatus {
+            state: crate::subagent::RunState::Running,
+            agent_id: Some(agent_id.into()),
+            started_at: Some(1),
+            ..crate::subagent::RunStatus::default()
+        },
+    )
+    .unwrap();
+    id
+}
+
+fn running_ids(rho_root: &Path, cwd: &Path) -> std::collections::BTreeSet<String> {
+    list_running_runs_in_root(rho_root, cwd)
+        .unwrap()
+        .into_iter()
+        .map(|run| run.id)
+        .collect()
 }

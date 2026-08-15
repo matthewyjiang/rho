@@ -15,9 +15,11 @@ use super::super::{
 pub(super) async fn select_running_run(
     terminal: &mut DefaultTerminal,
 ) -> anyhow::Result<Option<String>> {
-    let candidates = tokio::task::spawn_blocking(subagent::list_running_runs).await??;
+    let cwd = std::env::current_dir()?;
+    let candidates =
+        tokio::task::spawn_blocking(move || subagent::list_running_runs(&cwd)).await??;
     if candidates.is_empty() {
-        anyhow::bail!("no running subagents");
+        anyhow::bail!("no running subagents in this directory");
     }
     let candidates = candidates
         .into_iter()

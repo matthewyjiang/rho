@@ -187,8 +187,8 @@ The rail stays visible in zen mode.
 
 ## Watch a subagent
 
-Run `rho attach` to pick a running subagent, or `rho attach <id>` to watch one
-reported by the `agent` tool:
+Run `rho attach` to pick a running subagent from the current directory, or
+`rho attach <id>` to watch one reported by the `agent` tool:
 
 ```bash
 rho attach

@@ -98,6 +98,11 @@ impl SessionTarget {
     }
 }
 
+/// Encoded workspace identity used for session folders and attach scoping.
+pub(crate) fn workspace_identity(cwd: &Path) -> String {
+    workspace_key(cwd)
+}
+
 impl SessionSummary {
     pub fn target(&self) -> SessionTarget {
         SessionTarget::new(self.id.clone(), self.cwd.clone())
