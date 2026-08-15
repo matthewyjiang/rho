@@ -41,7 +41,7 @@ pub(super) struct PendingUsageFetch {
 #[derive(Clone, Debug)]
 pub(super) enum LiveUsage {
     Ready(crate::usage_limits::ProviderUsageLimits),
-    Failed(String),
+    Failed,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -170,10 +170,7 @@ impl App {
                     let cached_at = usage_limits_cache::load()
                         .get(fetch.kind)
                         .map(|entry| entry.fetched_at_unix);
-                    self.usage_limits_live.insert(
-                        fetch.kind,
-                        LiveUsage::Failed("background task failed".into()),
-                    );
+                    self.usage_limits_live.insert(fetch.kind, LiveUsage::Failed);
                     if let ComposerMode::Limits(overlay) = self.input_ui.composer_mut() {
                         overlay.apply_failed(fetch.kind, cached_at);
                     }
@@ -395,9 +392,8 @@ impl App {
                     }
                 }
             }
-            Err(error) => {
-                self.usage_limits_live
-                    .insert(kind, LiveUsage::Failed(error.to_string()));
+            Err(_) => {
+                self.usage_limits_live.insert(kind, LiveUsage::Failed);
                 let cached_at = usage_limits_cache::load()
                     .get(kind)
                     .map(|entry| entry.fetched_at_unix);
@@ -482,7 +478,7 @@ fn provider_section(
             },
             windows: limits.windows.clone(),
         },
-        Some(LiveUsage::Failed(_)) if !checking => LimitsSection {
+        Some(LiveUsage::Failed) if !checking => LimitsSection {
             id: LimitsSectionId::Provider(kind),
             label: kind.label().into(),
             status: LimitsSectionStatus::Failed {

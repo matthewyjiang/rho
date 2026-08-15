@@ -9,9 +9,7 @@ use ratatui::{
     Terminal,
 };
 
-use super::{
-    activity, App, ComposerMode, HistoryScrollbar, Theme, HISTORY_SCROLLBAR_REVEAL_DURATION,
-};
+use super::{activity, App, HistoryScrollbar, Theme, HISTORY_SCROLLBAR_REVEAL_DURATION};
 
 impl App {
     pub(super) fn scroll_history_to_bottom(&mut self) {

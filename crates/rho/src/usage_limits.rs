@@ -20,6 +20,7 @@ const XAI_TOKEN_AUTH_HEADER: &str = "xai-grok-cli";
 const XAI_CLIENT_VERSION: &str = "0.2.93";
 const OPENCODE_GO_USAGE_URL: &str = "https://opencode.ai/zen/go/v1/usage";
 
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProviderLimits {
     pub providers: Vec<ProviderUsageLimits>,
@@ -648,6 +649,7 @@ async fn fetch_usage_limits_from_sources(
     aggregate_usage_limits([first, second])
 }
 
+#[cfg(test)]
 fn aggregate_usage_limits(
     results: impl IntoIterator<Item = Result<Option<ProviderUsageLimits>, UsageLimitsError>>,
 ) -> Result<(ProviderLimits, Vec<UsageLimitsError>), UsageLimitsError> {

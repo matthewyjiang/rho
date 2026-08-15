@@ -145,6 +145,10 @@ const TYPE_DURING_STREAM_STEPS: &[Step] = &[
         timeout: STREAM,
     },
     Step::Key(Key::Esc),
+    Step::WaitQuiet {
+        quiet_for: Duration::from_millis(150),
+        timeout: SETTLE,
+    },
     Step::Phase("type_draft"),
     Step::TypeText("draft while streaming"),
     Step::WaitText {
@@ -174,9 +178,6 @@ const CANCEL_AND_RESUBMIT_STEPS: &[Step] = &[
     },
     Step::Phase("cancel"),
     Step::Key(Key::Esc),
-    // WaitQuiet can pass while cancellation is still tearing down. Esc then
-    // Enter queues a steer that interrupt restores into the composer, so the
-    // resubmit never starts a turn. Wait for the durable interrupt outcome.
     Step::WaitText {
         text: "model interrupted",
         timeout: STREAM,
