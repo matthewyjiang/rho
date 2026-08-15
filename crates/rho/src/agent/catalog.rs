@@ -1,6 +1,7 @@
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use thiserror::Error;
@@ -64,16 +65,16 @@ pub struct AgentCatalog {
 #[derive(Clone, Debug)]
 pub struct DiscoveredAgentCatalog {
     cwd: PathBuf,
-    catalog: std::sync::Arc<AgentCatalog>,
+    catalog: Arc<AgentCatalog>,
 }
 
 impl DiscoveredAgentCatalog {
-    pub fn new(cwd: PathBuf, catalog: std::sync::Arc<AgentCatalog>) -> Self {
+    pub fn new(cwd: PathBuf, catalog: Arc<AgentCatalog>) -> Self {
         Self { cwd, catalog }
     }
 
-    pub fn for_cwd(&self, cwd: &Path) -> Option<std::sync::Arc<AgentCatalog>> {
-        (self.cwd == cwd).then(|| std::sync::Arc::clone(&self.catalog))
+    pub fn for_cwd(&self, cwd: &Path) -> Option<Arc<AgentCatalog>> {
+        (self.cwd == cwd).then(|| Arc::clone(&self.catalog))
     }
 }
 

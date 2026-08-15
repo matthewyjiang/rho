@@ -8,6 +8,8 @@ resolver = "2"
 # cost of link time. Symbols are stripped for size; panic messages still carry
 # their location. Do not add `panic = "abort"`: the TUI recovers from renderer
 # panics with `catch_unwind` (tui/markdown/math.rs, mermaid.rs).
+# Keep this table in sync with crates/rho/Cargo.toml so `cargo install
+# rho-coding-agent` (published crate as root) gets the same profile.
 [profile.release]
 lto = "thin"
 codegen-units = 1
