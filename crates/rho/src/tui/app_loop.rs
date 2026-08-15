@@ -330,6 +330,9 @@ impl App {
 
     pub(super) fn update_activity_panels(&mut self, agent: &InteractiveRuntime) -> bool {
         let mut changed = self.subagent_panel.update(agent.subagents());
+        if changed {
+            self.refresh_attach_picker();
+        }
         changed |= self.process_panel.update(agent.processes());
         // Fold terminal subagent/advisor costs on every panel refresh path (idle
         // poll, in-turn wait, goal wait). Claiming is idempotent per run/call.

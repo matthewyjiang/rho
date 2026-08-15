@@ -599,6 +599,13 @@ fn subagent_rail_mouse_activation_uses_release_and_survives_refresh() {
     assert_pass("subagent_rail_mouse");
 }
 
+// Covers: /attach must open a full-screen picker of running subagents by role.
+// Owner: interactive TUI
+#[test]
+fn attach_opens_a_picker_of_running_subagents() {
+    assert_pass("attach_picker");
+}
+
 // Covers: a started process must stay on the activity rail after the turn ends.
 // Owner: interactive TUI
 #[test]

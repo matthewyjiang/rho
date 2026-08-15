@@ -95,6 +95,9 @@ async fn fixture_stream(
     events: ProviderEventSender,
 ) -> Result<ModelResponse, ProviderError> {
     let prompt = last_user_text(&request).unwrap_or_default();
+    if is_subagent_title_request(&request) {
+        return completed("Fixture run title");
+    }
     if let Some(response) = docs_demo::intercept(&prompt, &request, &events).await {
         return response;
     }
@@ -558,6 +561,9 @@ async fn fixture_stream(
 }
 
 fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, ProviderError> {
+    if is_subagent_title_request(request) {
+        return completed("Fixture run title");
+    }
     if let Some(review) = advisor::review(request) {
         return review;
     }
@@ -718,6 +724,16 @@ fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, Provide
         return completed("steering applied exactly once: fixture steer detail");
     }
     completed(format!("fixture response: {prompt}"))
+}
+
+fn is_subagent_title_request(request: &ModelRequest<'_>) -> bool {
+    let is_title_agent = request.messages.iter().any(|message| {
+        matches!(
+            message,
+            Message::System(text) if text.contains("Generate a concise title for this chat session")
+        )
+    });
+    is_title_agent && last_user_text(request).is_some_and(|text| !text.starts_with("First turn:"))
 }
 
 fn last_user_text(request: &ModelRequest<'_>) -> Option<String> {

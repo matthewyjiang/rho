@@ -131,8 +131,10 @@ pub enum Command {
     /// Watch a delegated agent run in a read-only TUI.
     Attach {
         /// Delegated run ID shown when the agent was started.
+        ///
+        /// Omit to pick from running subagents.
         #[arg(value_name = "ID")]
-        id: String,
+        id: Option<String>,
     },
     /// Log in to a provider from a browser or device-code flow.
     Login {

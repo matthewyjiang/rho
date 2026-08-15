@@ -113,6 +113,7 @@ A single `/` as the first character opens the command palette. Any later `/` cha
 | `/theme` | Preview and apply a color theme. Lists the host terminal theme, built-in light/dark schemes, and custom files from `~/.rho/themes/`. Moving the selection previews colors; Enter saves. See [Theme](/interactive-tui/theme). |
 | `/hooks` | Reload [lifecycle hooks](/hooks) and show what each one will run: the resolved argv, working directory, timeout, and environment. Also names any project hooks file ignored because the workspace is not trusted. |
 | `/agents` | Reload agent definitions and browse their descriptions, sources, runtime (`rho` or `claude-cli`), model policies, reasoning levels, tools (Rho capabilities or Claude tool names), Claude config inheritance, prompt policies, and prompt previews. Select a reserved internal agent to configure its model. |
+| `/attach` | Open a full-screen picker of running subagents. Rows show the agent role, generated title, and current tool or action. Enter attaches the same way as clicking the activity rail. |
 | `/diff` | Show local Git status plus staged and unstaged worktree patches without invoking the model. |
 | `/doctor` | Check provider authentication, the selected model, config and session writability, model caches, clipboard image helpers, rtk, Herdr integration, and Claude Code binary/auth health without displaying secrets. |
 | `/limits` | Open a single-pane overlay with the usage windows reported by connected providers. Codex OAuth, Kimi Code OAuth, xAI OAuth, and OpenCode Go are supported when logged in; absent windows are omitted. The overlay opens immediately with cached or last-observed values, then fills in live windows as each provider responds. Also shows the last Claude Code rate-limit observation from a prior `claude-cli` run (window, status, reset, age) without percentages or a probe. Press `esc` or `enter` to close. |
@@ -178,16 +179,19 @@ While a goal is active, the status line shows an `◎ /goal active` indicator wi
 ## Activity rail
 
 While a background `agent` run or a `process` job is live, Rho keeps a short
-activity rail above the composer. Subagent rows show the agent id, run id, and
-elapsed time, and can be clicked to attach. Process rows show the command, a
-short process id, state, and elapsed time. Process rows are display-only: there
-is no attach or stop action from the rail. The rail stays visible in zen mode.
+activity rail above the composer. Subagent rows show the agent role, generated
+title, current tool or action, and elapsed time, and can be clicked to attach.
+Process rows show the command, a short process id, state, and elapsed time.
+Process rows are display-only: there is no attach or stop action from the rail.
+The rail stays visible in zen mode.
 
 ## Watch a subagent
 
-Run `rho attach <id>` to watch a subagent reported by the `agent` tool:
+Run `rho attach` to pick a running subagent, or `rho attach <id>` to watch one
+reported by the `agent` tool:
 
 ```bash
+rho attach
 rho attach abc123
 ```
 

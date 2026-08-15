@@ -682,12 +682,14 @@ impl RunReporter {
         prompt: &str,
         stream_output: bool,
         status_tx: Option<tokio::sync::watch::Sender<RunStatus>>,
+        live_title: Option<crate::run_artifacts::LiveRunTitle>,
     ) -> anyhow::Result<Self> {
         let sink = crate::run_artifacts::RunArtifactSink::continue_from(
             path,
             started_status,
             prompt,
             status_tx,
+            live_title,
         )?;
         Ok(Self {
             sink,

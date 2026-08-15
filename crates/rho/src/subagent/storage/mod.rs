@@ -29,6 +29,82 @@ pub(crate) use paths::is_trusted_directory;
 
 const MAX_ALLOCATION_ATTEMPTS: usize = 100;
 
+/// One row from the global delegated-run index.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct IndexedRun {
+    pub id: String,
+    pub directory: PathBuf,
+}
+
+/// A non-terminal indexed run, ready for attach.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RunningRun {
+    pub id: String,
+    pub agent_id: String,
+    pub title: Option<String>,
+    pub last_activity: Option<String>,
+    pub state: super::RunState,
+    pub elapsed_seconds: u64,
+}
+
+/// Every indexed run the current process can still resolve on disk.
+pub(crate) fn list_indexed_runs() -> anyhow::Result<Vec<IndexedRun>> {
+    let rho_root = crate::paths::rho_dir()?;
+    list_indexed_runs_in_root(&rho_root)
+}
+
+fn list_indexed_runs_in_root(rho_root: &Path) -> anyhow::Result<Vec<IndexedRun>> {
+    let index_path = rho_root.join("subagents").join(INDEX_FILE_NAME);
+    if !index_path.is_file() {
+        return Ok(Vec::new());
+    }
+    let connection = initialize_index(&index_path)?;
+    let mut statement =
+        connection.prepare("SELECT run_id, path FROM runs ORDER BY created_at DESC")?;
+    let rows = statement.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut runs = Vec::new();
+    for row in rows {
+        let (id, path) = row?;
+        let directory = PathBuf::from(path);
+        if validate_run_directory(rho_root, &id, &directory).is_ok()
+            && is_trusted_directory(&directory)
+        {
+            runs.push(IndexedRun { id, directory });
+        }
+    }
+    Ok(runs)
+}
+
+/// Indexed runs that have not reached a terminal state.
+pub(crate) fn list_running_runs() -> anyhow::Result<Vec<RunningRun>> {
+    let now = super::unix_now_secs();
+    let mut running = Vec::new();
+    for indexed in list_indexed_runs()? {
+        let Some(status) = super::read_status(&indexed.directory.join(super::RESULT_FILE_NAME))
+        else {
+            continue;
+        };
+        if status.state.is_terminal() {
+            continue;
+        }
+        let elapsed_seconds = status
+            .elapsed_duration(now)
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0);
+        running.push(RunningRun {
+            id: indexed.id,
+            agent_id: status.agent_id.unwrap_or_else(|| "agent".into()),
+            title: status.title,
+            last_activity: status.last_activity,
+            state: status.state,
+            elapsed_seconds,
+        });
+    }
+    Ok(running)
+}
+
 /// Where a delegated run's artifact directory should live.
 #[derive(Clone, Debug)]
 pub(crate) enum RunPlacement {

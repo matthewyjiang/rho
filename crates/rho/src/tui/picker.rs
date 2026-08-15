@@ -166,6 +166,7 @@ pub(super) enum PickerAction {
     SelectTheme,
     EditAgent,
     Workflow,
+    AttachSubagent,
     Dismiss,
 }
 
@@ -191,7 +192,8 @@ impl PickerAction {
             | PickerAction::ConfirmRewindCheckpoint
             | PickerAction::SelectTheme
             | PickerAction::EditAgent
-            | PickerAction::Workflow => false,
+            | PickerAction::Workflow
+            | PickerAction::AttachSubagent => false,
         }
     }
 
@@ -213,7 +215,8 @@ impl PickerAction {
             | PickerAction::SwitchAuthMode
             | PickerAction::RefreshModelList
             | PickerAction::EditAgent
-            | PickerAction::Workflow => true,
+            | PickerAction::Workflow
+            | PickerAction::AttachSubagent => true,
             PickerAction::SelectModel
             | PickerAction::SelectInternalAgentModel
             | PickerAction::SelectTheme => false,
@@ -497,7 +500,8 @@ impl UiPicker {
             | PickerAction::SelectRewindCheckpoint
             | PickerAction::ConfirmRewindCheckpoint
             | PickerAction::EditAgent
-            | PickerAction::Workflow => "select",
+            | PickerAction::Workflow
+            | PickerAction::AttachSubagent => "select",
             PickerAction::RefreshModelList => "refresh",
         }
     }

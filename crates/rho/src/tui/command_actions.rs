@@ -83,6 +83,7 @@ impl App {
             CommandId::Skills => self.execute_skills_command(),
             CommandId::Theme => self.open_theme_picker(),
             CommandId::Agents => self.execute_agents_command(),
+            CommandId::Attach => self.execute_attach_command(),
             CommandId::Changelog => self.execute_changelog_command(&invocation, terminal),
             CommandId::Diff => self.execute_diff_command(),
             CommandId::Doctor => self.execute_doctor_command_with_probes(terminal).await,

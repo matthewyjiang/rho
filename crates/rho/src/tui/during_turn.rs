@@ -369,6 +369,7 @@ impl App {
             CommandId::Help => self.execute_help_command(),
             CommandId::Skills => self.execute_skills_command(),
             CommandId::Agents => self.execute_agents_command(),
+            CommandId::Attach => self.execute_attach_command(),
             CommandId::Changelog => self.execute_changelog_command(&invocation, terminal),
             CommandId::Diff => self.execute_diff_command(),
             CommandId::Doctor => self.execute_doctor_command(),
@@ -487,6 +488,7 @@ impl App {
                     "workflow and session navigation are unavailable while a model turn is running",
                 );
             }
+            PickerAction::AttachSubagent => self.submit_attach_selection(&value),
             PickerAction::Config => self.submit_config_selection_during_turn(&value)?,
             PickerAction::Dismiss | PickerAction::ViewAgent => {
                 self.set_status("running");

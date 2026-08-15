@@ -32,6 +32,27 @@ fn item(label: &str) -> PickerItem {
     }
 }
 
+// Covers: shifted letters must reach the filter; crossterm reports uppercase
+// with SHIFT set, and generated titles are Title Case.
+// Owner: tui picker key dispatch
+#[test]
+fn filter_accepts_shift_modified_characters() {
+    let mut picker = UiPicker::new("attach", vec![item("Quoted Title")], PickerAction::Config);
+    let mut shift = key(KeyCode::Char('Q'));
+    shift.modifiers = KeyModifiers::SHIFT;
+
+    let effect = apply_picker_key(&mut picker, shift, None, /*space_confirms*/ false);
+
+    assert_eq!(effect, PickerKeyEffect::Handled);
+    assert_eq!(picker.filter, "Q");
+
+    let mut ctrl = key(KeyCode::Char('q'));
+    ctrl.modifiers = KeyModifiers::CONTROL;
+    let effect = apply_picker_key(&mut picker, ctrl, None, /*space_confirms*/ false);
+    assert_eq!(effect, PickerKeyEffect::None);
+    assert_eq!(picker.filter, "Q");
+}
+
 // Covers: Tab must not complete the filter when tab_complete is disabled.
 // Owner: tui picker key dispatch
 #[test]

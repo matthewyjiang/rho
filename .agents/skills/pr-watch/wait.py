@@ -98,7 +98,7 @@ def is_react_noise(event: dict[str, Any]) -> bool:
     if str(event.get("kind") or "") not in {"review", "review_comment", "comment"}:
         return False
     actor = event_actor(event)
-    if not actor or "pullfrog" in actor:
+    if not actor or "pullfrog" in actor or "coderabbit" in actor:
         return False
     return "[bot]" in actor
 

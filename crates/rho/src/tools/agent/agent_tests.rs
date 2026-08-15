@@ -119,6 +119,7 @@ fn notification(id: &str, agent_id: &str, state: RunState) -> SubagentNotificati
         snapshot: SubagentSnapshot {
             id: id.into(),
             agent_id: agent_id.into(),
+            title: None,
             elapsed: Duration::from_secs(5),
             status: crate::subagent::RunStatus {
                 state,
