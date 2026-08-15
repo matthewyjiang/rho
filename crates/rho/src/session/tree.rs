@@ -182,9 +182,6 @@ impl SessionTree {
 
     fn observe_timestamp(&mut self, timestamp: u64) {
         self.updated_at = Some(self.updated_at.map_or(timestamp, |u| u.max(timestamp)));
-        if self.created_at.is_none() {
-            self.created_at = Some(timestamp);
-        }
     }
 
     pub(super) fn load_with_entry_visitor(
@@ -554,7 +551,11 @@ impl SessionTree {
         }
         match entry {
             SessionEntry::Session {
-                version, id, cwd, ..
+                version,
+                id,
+                cwd,
+                timestamp,
+                ..
             } => {
                 validate_session_version(version, Path::new("session"))?;
                 if let Some(expected) = expected_session_id {
@@ -569,6 +570,9 @@ impl SessionTree {
                 }
                 self.version = Some(version);
                 self.cwd = Some(cwd);
+                if let Some(created) = parse_timestamp(&timestamp) {
+                    self.created_at = Some(created);
+                }
             }
             SessionEntry::Node { node } => {
                 self.require_explicit_phase("node")?;
@@ -727,24 +731,19 @@ impl SessionTree {
 
         let id = NodeId::legacy(offset);
         let parent_id = self.active_leaf_id.clone();
-        let snapshot = state.snapshot.clone().or(previous.snapshot);
-        let (transition, synthetic) = match snapshot {
-            Some(snapshot) => (
-                StoredStateTransition::Snapshot {
-                    snapshot: Box::new(snapshot),
-                },
-                None,
-            ),
-            None => {
+        let snapshot = state.snapshot.clone().or(previous.snapshot).ok_or_else(|| {
+            anyhow::anyhow!("legacy state at byte offset {offset} has no snapshot transition")
+        });
+        let transition = match snapshot {
+            Ok(snapshot) => StoredStateTransition::Snapshot {
+                snapshot: Box::new(snapshot),
+            },
+            Err(_) => {
                 // Message-only v1 records predate snapshots. Their restored state is retained
                 // directly on the virtual node and the transition is never serialized.
-                let synth = synthetic_snapshot(self.session_id.as_deref(), state)?;
-                (
-                    StoredStateTransition::Snapshot {
-                        snapshot: Box::new(synth.clone()),
-                    },
-                    Some(synth),
-                )
+                StoredStateTransition::Snapshot {
+                    snapshot: Box::new(synthetic_snapshot(self.session_id.as_deref(), state)?),
+                }
             }
         };
         let node = SessionNode {
@@ -756,11 +755,7 @@ impl SessionTree {
             transition,
             display_messages,
         };
-        let mut node_state = state.clone();
-        if let Some(synth) = synthetic {
-            node_state.snapshot = Some(synth);
-        }
-        self.insert_restored_node(node, node_state)
+        self.insert_restored_node(node, state.clone())
     }
 
     fn insert_explicit_node(&mut self, node: SessionNode) -> anyhow::Result<()> {
@@ -784,6 +779,7 @@ impl SessionTree {
                 let parent = self.nodes.get(parent_id).ok_or_else(|| {
                     anyhow::anyhow!("node '{}' names missing parent '{parent_id}'", node.id)
                 })?;
+                let parent_snapshot = parent.state.snapshot.as_ref();
                 if node.kind == SessionNodeKind::Compaction
                     && !matches!(transition, StoredStateTransition::Snapshot { .. })
                 {
@@ -792,25 +788,29 @@ impl SessionTree {
                 let snapshot = match transition {
                     StoredStateTransition::Snapshot { snapshot } => snapshot.as_ref().clone(),
                     StoredStateTransition::SnapshotDelta { delta } => {
-                        let parent_snapshot = parent.state.snapshot.as_ref().ok_or_else(|| {
+                        let base = parent_snapshot.ok_or_else(|| {
                             anyhow::anyhow!("parent '{parent_id}' has no complete snapshot")
                         })?;
-                        delta.restore(parent_snapshot)?
+                        delta.restore(base)?
                     }
                 };
-                let state_changed = snapshot.history() != parent.state.model
-                    || snapshot.compaction() != &parent.state.compaction;
-                if state_changed && snapshot.revision() <= parent.state.revision {
+                if let Some(parent_snapshot) = parent_snapshot {
+                    if snapshot != *parent_snapshot && snapshot.revision() <= parent.state.revision
+                    {
+                        anyhow::bail!(
+                            "node '{}' changed state without advancing parent revision {}",
+                            node.id,
+                            parent.state.revision
+                        );
+                    }
+                } else if snapshot.revision() <= parent.state.revision {
                     anyhow::bail!(
                         "node '{}' changed state without advancing parent revision {}",
                         node.id,
                         parent.state.revision
                     );
                 }
-                let compaction_changed =
-                    parent.state.snapshot.as_ref().is_some_and(|parent_snap| {
-                        snapshot.compaction() != parent_snap.compaction()
-                    });
+                let compaction_changed = snapshot.compaction() != &parent.state.compaction;
                 if compaction_changed != (node.kind == SessionNodeKind::Compaction) {
                     anyhow::bail!(
                         "node '{}' kind does not match its compaction state transition",

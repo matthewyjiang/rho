@@ -1,14 +1,17 @@
 use rho_providers::model::{Message, ModelIdentity};
 use rho_sdk::{SessionId, SessionSnapshot};
 
-use super::persistence::{read_session_state, timestamp, SessionEntry, StoredDisplayMessage};
+use super::persistence::{
+    drop_incomplete_tool_turn_tail, read_session_state, timestamp, SessionEntry,
+    StoredDisplayMessage,
+};
 use super::snapshot_delta::{SnapshotDeltaBase, StoredSnapshotDelta};
 #[cfg(test)]
 use super::tree::SessionTreeFacts;
 use super::tree::{
     NodeId, SessionNode, SessionNodeKind, SessionTree, StoredCompactionFacts, StoredStateTransition,
 };
-use super::{drop_incomplete_tool_turn_tail, index, Session};
+use super::{index, Session};
 
 impl Session {
     /// Persists one SDK snapshot state and its newly visible transcript tail.
@@ -135,15 +138,28 @@ impl Session {
         if tree.needs_upgrade_marker() {
             if let Some(active_leaf_id) = tree.active_leaf_id().cloned() {
                 let upgrade_ts = timestamp();
-                let _ = tree.apply_upgrade(active_leaf_id, &upgrade_ts);
+                if let Err(err) = tree.apply_upgrade(active_leaf_id, &upgrade_ts) {
+                    tracing::warn!(
+                        "failed to apply upgrade marker to in-memory session tree: {err:#}"
+                    );
+                }
             }
         }
-        tree.apply_explicit_node(node)?;
-
-        let record = tree.summary_record(&self.path, &self.cwd)?;
+        if let Err(err) = tree.apply_explicit_node(node) {
+            tracing::warn!("failed to apply explicit node to in-memory session tree: {err:#}");
+        } else {
+            match tree.summary_record(&self.path, &self.cwd) {
+                Ok(record) => {
+                    let _ = index::record_snapshot_record(self, &record);
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        "failed to generate session index summary from in-memory tree: {err:#}"
+                    );
+                }
+            }
+        }
         drop(cursor);
-
-        let _ = index::record_snapshot_record(self, &record);
         Ok(())
     }
 
@@ -222,15 +238,28 @@ impl Session {
         if tree.needs_upgrade_marker() {
             if let Some(active_leaf_id) = tree.active_leaf_id().cloned() {
                 let upgrade_ts = timestamp();
-                let _ = tree.apply_upgrade(active_leaf_id, &upgrade_ts);
+                if let Err(err) = tree.apply_upgrade(active_leaf_id, &upgrade_ts) {
+                    tracing::warn!(
+                        "failed to apply upgrade marker to in-memory session tree: {err:#}"
+                    );
+                }
             }
         }
-        tree.apply_set_leaf(target_id.clone(), &ts)?;
-
-        let record = tree.summary_record(&self.path, &self.cwd)?;
+        if let Err(err) = tree.apply_set_leaf(target_id.clone(), &ts) {
+            tracing::warn!("failed to apply set_leaf to in-memory session tree: {err:#}");
+        } else {
+            match tree.summary_record(&self.path, &self.cwd) {
+                Ok(record) => {
+                    let _ = index::record_snapshot_record(self, &record);
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        "failed to generate session index summary from in-memory tree: {err:#}"
+                    );
+                }
+            }
+        }
         drop(cursor);
-
-        let _ = index::record_snapshot_record(self, &record);
         Ok(())
     }
 

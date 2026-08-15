@@ -130,7 +130,7 @@ pub struct SessionExport {
     pub messages: Vec<ExportedMessage>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct SessionIndexRecord {
     pub(super) summary: SessionSummary,
     pub(super) file_size: Option<i64>,
@@ -706,5 +706,3 @@ impl Session {
         &self.cwd
     }
 }
-
-pub(crate) use persistence::drop_incomplete_tool_turn_tail;

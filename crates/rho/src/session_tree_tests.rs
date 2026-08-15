@@ -617,3 +617,166 @@ fn truncated_set_leaf_does_not_change_the_active_leaf() {
         Some(&active)
     );
 }
+
+#[test]
+fn mirrored_tree_index_record_equals_reloaded_file_summary() {
+    let root = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let session = Session::create_in_root(root.path(), cwd.path()).unwrap();
+
+    // Turn 1: Initial user message and assistant reply
+    let first = snapshot(
+        &session,
+        1,
+        vec![
+            Message::user_text("first question"),
+            Message::assistant_text("first answer"),
+        ],
+        CompactionState::default(),
+    );
+    session.save_snapshot(&first, first.history()).unwrap();
+    let tree = session.session_tree().unwrap();
+    let in_memory_record = tree.summary_record(session.path(), session.cwd()).unwrap();
+    let reloaded_record = summarize_session_file(session.path(), session.cwd()).unwrap();
+    pretty_assertions::assert_eq!(in_memory_record, reloaded_record);
+
+    let first_leaf_id = tree.active_leaf_id().unwrap().clone();
+
+    // Turn 2: Follow-up turn
+    let second = snapshot(
+        &session,
+        2,
+        vec![
+            Message::user_text("first question"),
+            Message::assistant_text("first answer"),
+            Message::user_text("second question"),
+            Message::assistant_text("second answer"),
+        ],
+        CompactionState::default(),
+    );
+    session
+        .save_snapshot(&second, &second.history()[2..])
+        .unwrap();
+    let tree = session.session_tree().unwrap();
+    let in_memory_record = tree.summary_record(session.path(), session.cwd()).unwrap();
+    let reloaded_record = summarize_session_file(session.path(), session.cwd()).unwrap();
+    pretty_assertions::assert_eq!(in_memory_record, reloaded_record);
+
+    // Turn 3: Compaction turn
+    let compaction_state = CompactionState::from_accounting(
+        1,
+        2,
+        100,
+        0,
+        Some(150),
+        Some(50),
+        Some(Revision::from_u64(3)),
+    );
+    let third = snapshot(
+        &session,
+        3,
+        vec![
+            Message::user_text("summary of earlier turns"),
+            Message::user_text("third question"),
+        ],
+        compaction_state,
+    );
+    session
+        .save_snapshot(&third, &third.history()[1..])
+        .unwrap();
+    let tree = session.session_tree().unwrap();
+    let in_memory_record = tree.summary_record(session.path(), session.cwd()).unwrap();
+    let reloaded_record = summarize_session_file(session.path(), session.cwd()).unwrap();
+    pretty_assertions::assert_eq!(in_memory_record, reloaded_record);
+
+    // Turn 4: set_leaf back to first turn (branching)
+    session.set_leaf(&first_leaf_id).unwrap();
+    let tree = session.session_tree().unwrap();
+    let in_memory_record = tree.summary_record(session.path(), session.cwd()).unwrap();
+    let reloaded_record = summarize_session_file(session.path(), session.cwd()).unwrap();
+    pretty_assertions::assert_eq!(in_memory_record, reloaded_record);
+
+    // Turn 5: New turn on the branch
+    let branched = snapshot(
+        &session,
+        4,
+        vec![
+            Message::user_text("first question"),
+            Message::assistant_text("first answer"),
+            Message::user_text("alternate branch question"),
+            Message::assistant_text("alternate answer"),
+        ],
+        CompactionState::default(),
+    );
+    session
+        .save_snapshot(&branched, &branched.history()[2..])
+        .unwrap();
+    let tree = session.session_tree().unwrap();
+    let in_memory_record = tree.summary_record(session.path(), session.cwd()).unwrap();
+    let reloaded_record = summarize_session_file(session.path(), session.cwd()).unwrap();
+    pretty_assertions::assert_eq!(in_memory_record, reloaded_record);
+}
+
+#[test]
+fn mirrored_tree_legacy_upgrade_index_record_equals_reloaded_file_summary() {
+    let root = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let id = "33333333-3333-4333-8333-333333333333";
+    let dir = session_dir_in_root(root.path(), cwd.path());
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("1_{id}.jsonl"));
+    let fixture = include_str!("session/fixtures/session-v3.jsonl");
+    let mut lines = fixture.lines();
+    let mut header = serde_json::from_str::<serde_json::Value>(lines.next().unwrap()).unwrap();
+    header["cwd"] = serde_json::Value::String(cwd.path().to_string_lossy().into_owned());
+    let transcript = std::iter::once(header.to_string())
+        .chain(lines.map(str::to_owned))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(&path, format!("{transcript}\n")).unwrap();
+
+    let (session, _) = Session::open_by_id_in_root(root.path(), cwd.path(), id).unwrap();
+
+    // Verify equivalence on legacy load
+    let tree = session.session_tree().unwrap();
+    let in_memory_record = tree.summary_record(session.path(), session.cwd()).unwrap();
+    let reloaded_record = summarize_session_file(session.path(), session.cwd()).unwrap();
+    pretty_assertions::assert_eq!(in_memory_record, reloaded_record);
+
+    let legacy_leaf_id = tree.active_leaf_id().unwrap().clone();
+
+    // Save a new turn triggering the upgrade marker path
+    let resumed = session
+        .snapshot_for_resume(
+            ModelIdentity::new("provider", "api", "model"),
+            "prompt-key".into(),
+        )
+        .unwrap();
+    let mut history = resumed.history().to_vec();
+    history.push(Message::user_text("new turn after upgrade"));
+    let upgraded_snapshot = SessionSnapshot::new(
+        SessionId::from_string(session.id().to_owned()).unwrap(),
+        Revision::from_u64(resumed.revision().get() + 1),
+        history.clone(),
+        resumed.provider().clone(),
+        resumed.compaction().clone(),
+    );
+    session
+        .save_snapshot(
+            &upgraded_snapshot,
+            &[Message::user_text("new turn after upgrade")],
+        )
+        .unwrap();
+
+    let tree = session.session_tree().unwrap();
+    let in_memory_record = tree.summary_record(session.path(), session.cwd()).unwrap();
+    let reloaded_record = summarize_session_file(session.path(), session.cwd()).unwrap();
+    pretty_assertions::assert_eq!(in_memory_record, reloaded_record);
+
+    // Test set_leaf back to the legacy leaf
+    session.set_leaf(&legacy_leaf_id).unwrap();
+    let tree = session.session_tree().unwrap();
+    let in_memory_record = tree.summary_record(session.path(), session.cwd()).unwrap();
+    let reloaded_record = summarize_session_file(session.path(), session.cwd()).unwrap();
+    pretty_assertions::assert_eq!(in_memory_record, reloaded_record);
+}
