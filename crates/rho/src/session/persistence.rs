@@ -708,6 +708,7 @@ pub(crate) fn drop_incomplete_tool_turn_tail(mut messages: Vec<Message>) -> Vec<
 ///
 /// TODO(rho-sdk-release): call SessionSnapshot::sanitize_history and delete this
 /// local copy when `crates/rho/Cargo.toml` moves off `rho-sdk = "4.0.0"`.
+/// Keep `resume_normalized_history_matches_sdk_sanitize_history` until then.
 pub(crate) fn resume_normalized_history(history: Vec<Message>) -> Vec<Message> {
     let mut history = drop_incomplete_tool_turn_tail(history);
     for message in &mut history {

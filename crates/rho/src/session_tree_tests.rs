@@ -1,3 +1,4 @@
+use super::persistence::{drop_incomplete_tool_turn_tail, resume_normalized_history};
 use super::tree::{NodeId, SessionNode, SessionNodeKind, StoredStateTransition};
 use super::*;
 use rho_providers::model::AbortedAssistant;
@@ -867,6 +868,29 @@ fn aborted_assistant_with_reasoning() -> Message {
         reasoning: "cleared-on-resume".into(),
         ..AbortedAssistant::default()
     }))
+}
+
+// Covers: local resume normalizer must match drop_incomplete plus SDK sanitize_history
+// Owner: session persistence
+#[test]
+fn resume_normalized_history_matches_sdk_sanitize_history() {
+    let cases = [
+        Vec::new(),
+        vec![Message::user_text("hello")],
+        vec![incomplete_tool_tail()],
+        vec![aborted_assistant_with_reasoning()],
+        vec![
+            Message::user_text("hello"),
+            aborted_assistant_with_reasoning(),
+            incomplete_tool_tail(),
+        ],
+    ];
+    for history in cases {
+        pretty_assertions::assert_eq!(
+            resume_normalized_history(history.clone()),
+            SessionSnapshot::sanitize_history(drop_incomplete_tool_turn_tail(history))
+        );
+    }
 }
 
 // Covers: v1 same-revision upgrade must stay loadable and index the new leaf
