@@ -58,7 +58,7 @@ pub async fn collect_stream(
 
 #[derive(Default)]
 struct SseEventDecoder {
-    data: Vec<String>,
+    buffer: String,
 }
 
 impl SseEventDecoder {
@@ -78,8 +78,11 @@ impl SseEventDecoder {
         let Some(data) = line.strip_prefix("data:") else {
             return Ok(false);
         };
-        self.data
-            .push(data.strip_prefix(' ').unwrap_or(data).into());
+        let payload = data.strip_prefix(' ').unwrap_or(data);
+        if !self.buffer.is_empty() {
+            self.buffer.push('\n');
+        }
+        self.buffer.push_str(payload);
         Ok(true)
     }
 
@@ -96,15 +99,17 @@ impl SseEventDecoder {
         collector: &mut ResponseCollector,
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<(), ModelError> {
-        if self.data.is_empty() {
+        if self.buffer.is_empty() {
             return Ok(());
         }
-        let data = self.data.join("\n");
-        self.data.clear();
-        if data.trim() == "[DONE]" {
+        if self.buffer.trim() == "[DONE]" {
+            self.buffer.clear();
             return Ok(());
         }
-        let response: GenerateContentResponse = serde_json::from_str(&data).map_err(|error| {
+        let response_result: Result<GenerateContentResponse, _> =
+            serde_json::from_str(&self.buffer);
+        self.buffer.clear();
+        let response = response_result.map_err(|error| {
             ModelError::InvalidResponse(format!("invalid Gemini stream event: {error}"))
         })?;
         collector.apply(response, Some(on_event))

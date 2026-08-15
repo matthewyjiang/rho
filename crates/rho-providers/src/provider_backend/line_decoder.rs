@@ -71,8 +71,10 @@ impl From<std::str::Utf8Error> for LineDecodeError {
 /// Incrementally decodes LF- or CRLF-terminated UTF-8 lines without moving the
 /// unprocessed buffer after every line.
 ///
-/// Complete lines borrow the decoder's buffer. Before appending another chunk,
-/// the decoder compacts at most the unconsumed tail from the previous chunk.
+/// Complete lines borrow the decoder's buffer. Compaction of consumed prefixes
+/// is deferred until the buffer is fully drained or the consumed offset exceeds
+/// 4096 bytes or half the buffer length, avoiding per-chunk memory moves while
+/// bounding buffer growth.
 ///
 /// `push` stays infallible. Bound and UTF-8 failures surface on `next_line` /
 /// `finish`. Callers must treat `finish` errors the same as `next_line` errors.
@@ -118,7 +120,7 @@ impl LineDecoder {
         if self.pending_error.is_some() || chunk.is_empty() {
             return;
         }
-        self.compact();
+        self.compact_if_needed();
 
         let Some(limit) = self.max_line_bytes.limit() else {
             self.buffer.extend_from_slice(chunk);
@@ -136,7 +138,7 @@ impl LineDecoder {
             let rest = &chunk[offset..];
             let current_len = self.buffer.len() - line_start;
 
-            if let Some(newline_at) = rest.iter().position(|byte| *byte == b'\n') {
+            if let Some(newline_at) = memchr::memchr(b'\n', rest) {
                 let total = current_len.saturating_add(newline_at);
                 if total > limit {
                     self.pending_error = Some(LineDecodeError::LineTooLong {
@@ -168,10 +170,16 @@ impl LineDecoder {
 
     /// Return the next complete line, if any.
     pub fn next_line(&mut self) -> Result<Option<&str>, LineDecodeError> {
-        if let Some(relative_end) = self.buffer[self.start..]
-            .iter()
-            .position(|byte| *byte == b'\n')
-        {
+        if self.start >= self.buffer.len() {
+            self.buffer.clear();
+            self.start = 0;
+            if let Some(error) = self.pending_error.clone() {
+                return Err(error);
+            }
+            return Ok(None);
+        }
+
+        if let Some(relative_end) = memchr::memchr(b'\n', &self.buffer[self.start..]) {
             if let Some(limit) = self.max_line_bytes.limit() {
                 if relative_end > limit {
                     let end = self.start + relative_end;
@@ -226,6 +234,22 @@ impl LineDecoder {
         Ok(Some(line))
     }
 
+    /// Defer compaction until either the entire buffer is consumed (O(1) clear)
+    /// or the consumed prefix exceeds 4096 bytes or half the buffer length,
+    /// bounding wasted buffer capacity without paying O(N) copy overhead on
+    /// every chunk.
+    fn compact_if_needed(&mut self) {
+        if self.start == 0 {
+            return;
+        }
+        if self.start == self.buffer.len() {
+            self.buffer.clear();
+            self.start = 0;
+        } else if self.start >= 4096 || self.start >= self.buffer.len() / 2 {
+            self.compact();
+        }
+    }
+
     fn compact(&mut self) {
         if self.start == 0 {
             return;
@@ -241,9 +265,7 @@ impl LineDecoder {
 }
 
 fn current_line_start(buffer: &[u8], start: usize) -> usize {
-    buffer[start..]
-        .iter()
-        .rposition(|byte| *byte == b'\n')
+    memchr::memrchr(b'\n', &buffer[start..])
         .map(|relative| start + relative + 1)
         .unwrap_or(start)
 }

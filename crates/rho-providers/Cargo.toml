@@ -22,6 +22,7 @@ futures-util = "0.3"
 tokio-tungstenite = { version = "0.27", features = ["rustls-tls-native-roots"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rusqlite = { version = "0.32" }
+memchr = "2"
 keyring = "4.1.2"
 libc = "0.2"
 rand = "0.8"
