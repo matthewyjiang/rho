@@ -39,7 +39,6 @@ impl SoftSettingsDelta {
             | Entry::Notice(_)
             | Entry::RuntimeInfo(_)
             | Entry::Changelog(_)
-            | Entry::UsageLimits(_)
             | Entry::Error(_) => false,
         }
     }

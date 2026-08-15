@@ -141,12 +141,21 @@ pub(super) enum ComposerMode {
     InlineChoice(InlineChoiceModal),
     Questionnaire(QuestionnaireComposer),
     Approval(ApprovalComposer),
+    Limits(limits_command::LimitsOverlay),
 }
 
 impl ComposerMode {
     pub(super) fn blocks_auto_continue(&self) -> bool {
         match self {
             Self::InlineChoice(modal) => modal.blocks_auto_continue(),
+            _ => false,
+        }
+    }
+
+    pub(super) fn is_centered_overlay(&self) -> bool {
+        match self {
+            Self::Picker(picker) => picker.is_overlay(),
+            Self::Limits(_) => true,
             _ => false,
         }
     }
@@ -304,7 +313,6 @@ pub(super) enum Entry {
     Notice(String),
     RuntimeInfo(Box<info_command::RuntimeInfo>),
     Changelog(Box<crate::changelog::ChangelogDisplay>),
-    UsageLimits(limits_command::LimitsDisplay),
     Error(String),
 }
 

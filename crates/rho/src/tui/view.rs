@@ -401,10 +401,10 @@ impl App {
             area,
             width,
             layout,
-            ..
+            now,
         } = surface;
-        let popup_cursor = if let ComposerMode::Picker(picker) = self.input_ui.composer() {
-            picker_overlay_frame(picker, area).map(|overlay| {
+        let popup_cursor = match self.input_ui.composer() {
+            ComposerMode::Picker(picker) => picker_overlay_frame(picker, area).map(|overlay| {
                 // Clear punches host defaults; fixed themes must repaint their surface
                 // or light schemes leave dark holes under dark body ink.
                 frame.render_widget(Clear, overlay.outer);
@@ -413,9 +413,16 @@ impl App {
                     overlay.outer,
                 );
                 overlay.cursor
-            })
-        } else {
-            None
+            }),
+            ComposerMode::Limits(_) => self.limits_overlay_frame(area, now).map(|overlay| {
+                frame.render_widget(Clear, overlay.outer);
+                frame.render_widget(
+                    Paragraph::new(overlay.lines).style(Theme::surface()),
+                    overlay.outer,
+                );
+                overlay.cursor
+            }),
+            _ => None,
         };
 
         if let Some(position) = popup_cursor {

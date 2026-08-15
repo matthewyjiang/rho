@@ -99,10 +99,7 @@ impl App {
         key: KeyEvent,
         terminal: &mut Terminal<B>,
     ) -> Result<bool, B::Error> {
-        if matches!(
-            self.input_ui.composer(),
-            ComposerMode::Picker(picker) if picker.is_overlay()
-        ) {
+        if self.input_ui.composer().is_centered_overlay() {
             return Ok(false);
         }
         let size = terminal.size()?;

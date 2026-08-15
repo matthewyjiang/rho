@@ -1,16 +1,10 @@
 use pretty_assertions::assert_eq;
+use rho_providers::credentials::MemoryCredentialStore;
+use std::{collections::BTreeMap, time::Instant};
 
 use super::*;
-
-fn limits_display(view: &LimitsView) -> &LimitsDisplay {
-    view.items
-        .iter()
-        .find_map(|item| match item {
-            LimitsViewItem::UsageLimits(limits) => Some(limits),
-            _ => None,
-        })
-        .expect("usage limits block")
-}
+use crate::usage_limits::{ProviderUsageLimits, UsageLimitWindow, UsageProviderKind};
+use crate::usage_limits_cache::UsageLimitsCache;
 
 fn sample_claude_state(observed_at_unix: i64) -> crate::claude_runtime::rate_limit::RateLimitState {
     let mut state = crate::claude_runtime::rate_limit::RateLimitState::default();
@@ -34,40 +28,38 @@ fn sample_claude_state(observed_at_unix: i64) -> crate::claude_runtime::rate_lim
     state
 }
 
-fn oauth_codex_limits() -> ProviderLimits {
-    ProviderLimits {
-        providers: vec![ProviderUsageLimits {
-            provider: "Codex".into(),
-            windows: vec![UsageLimitWindow {
-                label: "Weekly".into(),
-                remaining_percent: Some(40.0),
-                resets_at_unix: Some(now_unix() + 3_600),
-                note: None,
-            }],
-        }],
+fn codex_window() -> UsageLimitWindow {
+    UsageLimitWindow {
+        label: "Weekly".into(),
+        remaining_percent: Some(40.0),
+        resets_at_unix: Some(now_unix() + 3_600),
+        note: None,
     }
 }
 
+// Covers: /limits must open a popup instead of inserting a transcript row or
+// queuing a model turn.
+// Owner: interactive TUI (unit seam; PTY covers the visible overlay)
 #[test]
-fn running_limits_query_does_not_queue_model_context() {
+fn opening_limits_does_not_queue_model_context() {
     let mut app = super::super::tests::test_app();
     app.begin_provider_turn_ui();
-
-    app.render_limits_result(Ok((
-        ProviderLimits {
-            providers: Vec::new(),
-        },
-        Vec::new(),
-    )));
+    app.start_limits_command();
 
     assert!(app.pending.steering_prompts().is_empty());
     assert!(app.pending.queued_prompts().is_empty());
+    assert!(matches!(
+        app.input_ui.composer(),
+        super::super::ComposerMode::Limits(_)
+    ));
     assert!(
-        app.history
-            .entries()
-            .iter()
-            .any(|entry| matches!(entry, Entry::UsageLimits(_))),
-        "expected a UsageLimits block, got {:?}",
+        app.history.entries().is_empty()
+            || app
+                .history
+                .entries()
+                .iter()
+                .all(|entry| !matches!(entry, super::super::Entry::Error(_))),
+        "limits overlay must not dump a transcript error, got {:?}",
         app.history.entries()
     );
 }
@@ -77,14 +69,17 @@ async fn cancelling_limits_query_waits_for_background_task_to_stop() {
     let mut app = super::super::tests::test_app();
     let task_marker = std::sync::Arc::new(());
     let captured_marker = task_marker.clone();
-    app.pending_usage_limits = Some(tokio::spawn(async move {
-        let _marker = captured_marker;
-        std::future::pending::<LimitsFetchResult>().await
-    }));
+    app.pending_usage_limits.push(PendingUsageFetch {
+        kind: UsageProviderKind::Codex,
+        handle: tokio::spawn(async move {
+            let _marker = captured_marker;
+            std::future::pending::<Result<Option<ProviderUsageLimits>, UsageLimitsError>>().await
+        }),
+    });
 
     app.cancel_limits_command().await;
 
-    assert!(app.pending_usage_limits.is_none());
+    assert!(app.pending_usage_limits.is_empty());
     assert_eq!(std::sync::Arc::strong_count(&task_marker), 1);
 }
 
@@ -94,66 +89,78 @@ fn formats_reset_relative_only_within_one_day() {
     assert!(!format_reset_at(200_000, 0).starts_with("in "));
 }
 
-fn claude_provider(display: &LimitsDisplay) -> &ProviderUsageLimits {
-    display
-        .providers
-        .iter()
-        .find(|provider| provider.provider == "Claude Code")
-        .expect("Claude Code provider")
-}
-
+// Covers: a live fetch for one provider must not wait on the others.
+// Owner: pure unit
 #[test]
-fn present_limits_without_claude_cache_states_unknown_even_with_oauth_data() {
-    let view = present_limits_result(Ok((oauth_codex_limits(), Vec::new())), None, 2_000);
-    let display = limits_display(&view);
-    assert!(display
-        .providers
-        .iter()
-        .all(|p| p.provider != "Claude Code"));
-    assert_eq!(display.providers.len(), 1);
-    assert!(display.empty_note.is_none());
-}
-
-#[test]
-fn present_limits_with_claude_cache_omits_allowed_and_keeps_age() {
-    let state = sample_claude_state(1_000);
-    let view = present_limits_result(
-        Ok((oauth_codex_limits(), Vec::new())),
-        Some(&state),
-        1_000 + 125,
-    );
-    let display = limits_display(&view);
-    let claude = claude_provider(display);
-    assert_eq!(claude.windows.len(), 1);
-    assert_eq!(claude.windows[0].label, "Five hour");
-    assert!(claude.windows[0].note.is_some());
-    assert!(claude.windows[0].remaining_percent.is_none());
-}
-
-#[test]
-fn present_limits_claude_only_when_no_oauth_providers() {
-    let state = sample_claude_state(500);
-    let view = present_limits_result(
-        Ok((
-            ProviderLimits {
-                providers: Vec::new(),
+fn applying_one_provider_leaves_others_checking() {
+    let mut overlay = LimitsOverlay {
+        sections: vec![
+            LimitsSection {
+                id: LimitsSectionId::Provider(UsageProviderKind::Codex),
+                label: UsageProviderKind::Codex.label().into(),
+                status: LimitsSectionStatus::Checking {
+                    cached_at_unix: None,
+                },
+                windows: Vec::new(),
             },
-            Vec::new(),
-        )),
-        Some(&state),
-        560,
+            LimitsSection {
+                id: LimitsSectionId::Provider(UsageProviderKind::KimiCode),
+                label: UsageProviderKind::KimiCode.label().into(),
+                status: LimitsSectionStatus::Checking {
+                    cached_at_unix: None,
+                },
+                windows: Vec::new(),
+            },
+        ],
+        empty_note: None,
+        scroll: 0,
+        checking_started: Instant::now(),
+    };
+    overlay.apply_live(UsageProviderKind::Codex, vec![codex_window()], 1_000);
+
+    assert!(matches!(
+        overlay.sections[0].status,
+        LimitsSectionStatus::Live {
+            fetched_at_unix: 1_000
+        }
+    ));
+    assert_eq!(overlay.sections[0].windows.len(), 1);
+    assert!(matches!(
+        overlay.sections[1].status,
+        LimitsSectionStatus::Checking {
+            cached_at_unix: None
+        }
+    ));
+    assert!(overlay.sections[1].windows.is_empty());
+}
+
+// Covers: Claude observations appear without a live probe even with no OAuth.
+// Owner: pure unit
+#[test]
+fn claude_section_is_present_without_oauth() {
+    let overlay = build_limits_overlay(
+        &MemoryCredentialStore::default(),
+        &BTreeMap::new(),
+        &[],
+        UsageLimitsCache::default(),
+        Some(&sample_claude_state(1_000)),
+        1_125,
     );
-    assert_eq!(view.items.len(), 1);
-    let display = limits_display(&view);
-    assert_eq!(display.providers.len(), 1);
-    assert!(display.empty_note.is_none());
-    let claude = claude_provider(display);
-    assert_eq!(claude.windows[0].label, "Five hour");
-    assert!(claude.windows[0].note.is_some());
+    assert_eq!(overlay.sections.len(), 1);
+    assert_eq!(overlay.sections[0].id, LimitsSectionId::ClaudeCode);
+    assert_eq!(overlay.sections[0].windows.len(), 1);
+    assert_eq!(overlay.sections[0].windows[0].label, "Five hour");
+    assert!(overlay.sections[0].windows[0].remaining_percent.is_none());
+    assert!(matches!(
+        overlay.sections[0].status,
+        LimitsSectionStatus::Observed {
+            observed_at_unix: 1_000
+        }
+    ));
 }
 
 #[test]
-fn present_limits_surfaces_utilization_and_warning_status() {
+fn claude_section_surfaces_utilization_without_allowed_status() {
     let mut state = crate::claude_runtime::rate_limit::RateLimitState::default();
     let mut five = sample_claude_state(1_000).windows.remove(0);
     five.info.utilization = Some(0.25);
@@ -167,27 +174,85 @@ fn present_limits_surfaces_utilization_and_warning_status() {
     state.merge_window(five);
     state.merge_window(weekly);
 
-    let view = present_limits_result(Ok((oauth_codex_limits(), Vec::new())), Some(&state), 1_100);
-    let display = limits_display(&view);
-    let claude = claude_provider(display);
-    assert_eq!(claude.windows[0].label, "Five hour");
-    assert_eq!(claude.windows[0].remaining_percent, Some(75.0));
-    assert!(claude.windows[0].note.is_some());
-    assert_eq!(claude.windows[1].label, "Seven day");
-    assert_eq!(claude.windows[1].remaining_percent, Some(60.0));
-    assert!(claude.windows[1].note.is_some());
+    let section = claude_provider_limits(Some(&state), 1_100).expect("claude");
+    assert_eq!(section.windows[0].label, "Five hour");
+    assert_eq!(section.windows[0].remaining_percent, Some(75.0));
+    assert_eq!(section.windows[1].label, "Seven day");
+    assert_eq!(section.windows[1].remaining_percent, Some(60.0));
 }
 
 #[test]
-fn present_limits_never_spawns_or_probes_claude() {
-    // Pure helper: injecting None must not invent an observation.
-    let view = present_limits_result(
-        Err(UsageLimitsError::Unauthorized {
-            provider: "Codex",
-            login: "/login openai-codex",
-        }),
+fn missing_claude_state_does_not_invent_a_section() {
+    let overlay = build_limits_overlay(
+        &MemoryCredentialStore::default(),
+        &BTreeMap::new(),
+        &[],
+        UsageLimitsCache::default(),
         None,
         0,
     );
-    assert!(matches!(view.items.as_slice(), [LimitsViewItem::Error(_)]));
+    assert!(overlay.sections.is_empty());
+    assert!(overlay.empty_note.is_some());
+}
+
+// Covers: bars share one label column across providers so they line up.
+// Owner: pure unit
+#[test]
+fn overlay_body_uses_global_window_label_column() {
+    let overlay = LimitsOverlay {
+        sections: vec![
+            LimitsSection {
+                id: LimitsSectionId::Provider(UsageProviderKind::Codex),
+                label: UsageProviderKind::Codex.label().into(),
+                status: LimitsSectionStatus::Live { fetched_at_unix: 1 },
+                windows: vec![UsageLimitWindow {
+                    label: "5-hour".into(),
+                    remaining_percent: Some(40.0),
+                    resets_at_unix: None,
+                    note: None,
+                }],
+            },
+            LimitsSection {
+                id: LimitsSectionId::Provider(UsageProviderKind::Xai),
+                label: UsageProviderKind::Xai.label().into(),
+                status: LimitsSectionStatus::Live { fetched_at_unix: 1 },
+                windows: vec![UsageLimitWindow {
+                    label: "Monthly".into(),
+                    remaining_percent: Some(80.0),
+                    resets_at_unix: None,
+                    note: None,
+                }],
+            },
+        ],
+        empty_note: None,
+        scroll: 0,
+        checking_started: Instant::now(),
+    };
+    let lines = overlay_body_lines(&overlay, 80, None, 10);
+    let texts: Vec<String> = lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect()
+        })
+        .collect();
+    let five = texts
+        .iter()
+        .find(|text| text.contains("5-hour"))
+        .expect("5-hour row");
+    let monthly = texts
+        .iter()
+        .find(|text| text.contains("Monthly"))
+        .expect("Monthly row");
+    let five_bar = five
+        .find('█')
+        .or_else(|| five.find('░'))
+        .expect("codex bar");
+    let monthly_bar = monthly
+        .find('█')
+        .or_else(|| monthly.find('░'))
+        .expect("xai bar");
+    assert_eq!(five_bar, monthly_bar);
 }

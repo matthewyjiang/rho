@@ -97,6 +97,7 @@ mod model_performance;
 mod model_picker;
 mod mouse;
 mod mouse_capture;
+mod overlay_panel;
 mod paste_burst;
 mod pending_input;
 #[cfg(test)]
@@ -471,7 +472,11 @@ struct App {
     /// Active step of the first-launch setup screen, or `None` for a normal
     /// session. While set, the screen replaces all session chrome.
     setup_screen: Option<setup_screen::SetupStep>,
-    pending_usage_limits: Option<tokio::task::JoinHandle<limits_command::LimitsFetchResult>>,
+    pending_usage_limits: Vec<limits_command::PendingUsageFetch>,
+    usage_limits_live: std::collections::BTreeMap<
+        crate::usage_limits::UsageProviderKind,
+        limits_command::LiveUsage,
+    >,
     pending_changelog: Option<tokio::task::JoinHandle<changelog_command::ChangelogFetchResult>>,
     usage_limits_client: reqwest::Client,
     usage: UsageUi,

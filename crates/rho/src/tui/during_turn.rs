@@ -84,6 +84,9 @@ impl App {
         if self.handle_running_picker_key(key, terminal)? {
             return Ok(false);
         }
+        if self.handle_limits_overlay_key(key, terminal) {
+            return Ok(false);
+        }
         if self
             .handle_running_command_palette_key(key, terminal)
             .await?
@@ -775,6 +778,7 @@ impl App {
                 Event::Resize(_, _) => {
                     self.flush_pending_paste_burst();
                     self.clamp_overlay_detail_scroll(terminal);
+                    self.clamp_limits_overlay_scroll(terminal);
                     self.clear_selections();
                     self.history.set_hovered_code_block_copy(None);
                     self.subagent_panel.clear_pointer_state();

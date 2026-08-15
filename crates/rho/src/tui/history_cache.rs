@@ -32,7 +32,6 @@ fn incremental_entry_source(entry: &Entry) -> Option<(&str, EntryContentRender)>
         | Entry::Notice(_)
         | Entry::RuntimeInfo(_)
         | Entry::Changelog(_)
-        | Entry::UsageLimits(_)
         | Entry::Error(_) => None,
     }
 }
@@ -787,7 +786,6 @@ fn prepare_cache_entry_render(
         | Entry::Notice(_)
         | Entry::RuntimeInfo(_)
         | Entry::Changelog(_)
-        | Entry::UsageLimits(_)
         | Entry::Error(_) => rendered.image_placement.is_some(),
     };
     let code_blocks = rendered
