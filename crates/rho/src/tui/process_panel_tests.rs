@@ -26,7 +26,7 @@ fn desired_height_caps_at_two_oldest() {
     assert_eq!(panel.desired_height(), 2);
     let visible = panel
         .visible_processes(8)
-        .into_iter()
+        .iter()
         .map(|process| process.process_id.as_str())
         .collect::<Vec<_>>();
     assert_eq!(visible, ["aaaaaaaa-1111", "bbbbbbbb-2222"]);
