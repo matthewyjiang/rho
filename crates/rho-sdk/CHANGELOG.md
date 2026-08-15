@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.0.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v4.0.0...rho-sdk-v4.0.1) (2026-08-15)
+
+
+### Bug Fixes
+
+* **session:** v1 upgrades no longer write an unloadable transcript ([#939](https://github.com/matthewyjiang/rho/issues/939)) ([1dc1002](https://github.com/matthewyjiang/rho/commit/1dc1002c5c60ddc2a2889a12d92ead905cd4b6d3))
+
 ## [4.0.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v3.1.0...rho-sdk-v4.0.0) (2026-08-12)
 
 

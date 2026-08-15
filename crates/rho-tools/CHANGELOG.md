@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.17.1](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.17.0...rho-agent-tools-v0.17.1) (2026-08-15)
+
+
+### Performance Improvements
+
+* **tools:** stream hashline digest, zero-alloc grep lines, and dirty-check shell stream ([#927](https://github.com/matthewyjiang/rho/issues/927)) ([580a774](https://github.com/matthewyjiang/rho/commit/580a7742e6f268240874bf0df4987353c90bf4b4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 4.0.0 to 4.0.1
+
 ## [0.17.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.16.0...rho-agent-tools-v0.17.0) (2026-08-12)
 
 
