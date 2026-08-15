@@ -263,8 +263,10 @@ impl Session {
     /// Appends a tree-mutating entry, emitting a legacy upgrade marker first when
     /// the tree still needs one. This is the only path for `Node` / `SetLeaf`.
     ///
-    /// When a marker is required, the marker and entry are written as one append
-    /// so a failed entry write cannot leave a bare upgrade marker on disk.
+    /// The in-memory tree is updated before the file write so a rejected node
+    /// never remains in the transcript. When a marker is required, the marker
+    /// and entry are written as one append so a failed entry write cannot leave
+    /// a bare upgrade marker on disk.
     pub(super) fn append_tree_entry(
         &self,
         cursor: &mut AppendCursor,
@@ -282,38 +284,25 @@ impl Session {
                 anyhow::bail!("append_tree_entry only accepts Node or SetLeaf entries");
             }
         }
-        if tree.needs_upgrade_marker() {
+        let upgrade = if tree.needs_upgrade_marker() {
             let active_leaf_id = tree.active_leaf_id().cloned().ok_or_else(|| {
                 anyhow::anyhow!("legacy session has no state node to upgrade from")
             })?;
             let upgrade_ts = timestamp();
-            let upgrade = SessionEntry::Upgrade {
-                timestamp: upgrade_ts.clone(),
-                active_leaf_id: active_leaf_id.clone(),
-            };
-            self.write_jsonl_entries(cursor, &[&upgrade, &entry])?;
-            if let Err(err) = tree.apply_upgrade(active_leaf_id, &upgrade_ts) {
-                tracing::warn!("failed to apply upgrade marker to in-memory session tree: {err:#}");
-            }
+            tree.apply_upgrade(active_leaf_id.clone(), &upgrade_ts)?;
+            Some(SessionEntry::Upgrade {
+                timestamp: upgrade_ts,
+                active_leaf_id,
+            })
         } else {
-            self.write_jsonl_entry(cursor, &entry)?;
-        }
-        match entry {
-            SessionEntry::Node { node } => {
-                if let Err(err) = tree.apply_explicit_node(node) {
-                    tracing::warn!(
-                        "failed to apply explicit node to in-memory session tree: {err:#}"
-                    );
-                }
-            }
+            None
+        };
+        match &entry {
+            SessionEntry::Node { node } => tree.apply_explicit_node(node.clone())?,
             SessionEntry::SetLeaf {
                 timestamp,
                 target_id,
-            } => {
-                if let Err(err) = tree.apply_set_leaf(target_id, &timestamp) {
-                    tracing::warn!("failed to apply set_leaf to in-memory session tree: {err:#}");
-                }
-            }
+            } => tree.apply_set_leaf(target_id.clone(), timestamp)?,
             SessionEntry::Session { .. }
             | SessionEntry::Message { .. }
             | SessionEntry::ReplaceHistory { .. }
@@ -322,6 +311,11 @@ impl Session {
             | SessionEntry::Upgrade { .. } => {
                 anyhow::bail!("append_tree_entry only accepts Node or SetLeaf entries");
             }
+        }
+        if let Some(upgrade) = upgrade.as_ref() {
+            self.write_jsonl_entries(cursor, &[upgrade, &entry])?;
+        } else {
+            self.write_jsonl_entry(cursor, &entry)?;
         }
         Ok(())
     }
@@ -708,6 +702,21 @@ pub(crate) fn drop_incomplete_tool_turn_tail(mut messages: Vec<Message>) -> Vec<
     let valid_len = complete_message_len(&messages);
     messages.truncate(valid_len);
     messages
+}
+
+/// History after the same resume normalization `snapshot_for_resume` applies.
+///
+/// TODO(rho-sdk-release): call SessionSnapshot::sanitize_history and delete this
+/// local copy when `crates/rho/Cargo.toml` moves off `rho-sdk = "4.0.0"`.
+/// Keep `resume_normalized_history_matches_sdk_sanitize_history` until then.
+pub(crate) fn resume_normalized_history(history: Vec<Message>) -> Vec<Message> {
+    let mut history = drop_incomplete_tool_turn_tail(history);
+    for message in &mut history {
+        if let Message::AbortedAssistant(assistant) = message {
+            assistant.reasoning.clear();
+        }
+    }
+    history
 }
 
 /// Collapses id-prefix matches to at most one, erroring on an ambiguous prefix.

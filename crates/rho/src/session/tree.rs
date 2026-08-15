@@ -10,8 +10,8 @@ use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use uuid::Uuid;
 
 use super::persistence::{
-    next_revision, parse_timestamp, session_id_from_path, validate_session_version,
-    PersistedSessionState, SessionEntry, StoredDisplayMessage,
+    next_revision, parse_timestamp, resume_normalized_history, session_id_from_path,
+    validate_session_version, PersistedSessionState, SessionEntry, StoredDisplayMessage,
 };
 use super::snapshot_delta::StoredSnapshotDelta;
 use super::{SessionIndexRecord, SessionSummary};
@@ -794,16 +794,15 @@ impl SessionTree {
                         delta.restore(base)?
                     }
                 };
-                if let Some(parent_snapshot) = parent_snapshot {
-                    if snapshot != *parent_snapshot && snapshot.revision() <= parent.state.revision
-                    {
-                        anyhow::bail!(
-                            "node '{}' changed state without advancing parent revision {}",
-                            node.id,
-                            parent.state.revision
-                        );
-                    }
-                } else if snapshot.revision() <= parent.state.revision {
+                let state_changed = match parent_snapshot {
+                    Some(parent_snapshot) => snapshot != *parent_snapshot,
+                    // Message-only v1 parents keep restored state without a
+                    // complete snapshot. A full snapshot child may restate that
+                    // current revision when materializing the explicit tree,
+                    // including resume-time history normalization.
+                    None => snapshot_less_parent_state_changed(&snapshot, &parent.state),
+                };
+                if state_changed && snapshot.revision() <= parent.state.revision {
                     anyhow::bail!(
                         "node '{}' changed state without advancing parent revision {}",
                         node.id,
@@ -934,4 +933,14 @@ fn synthetic_snapshot(
         ModelIdentity::new("legacy", "legacy", "legacy"),
         state.compaction.clone(),
     ))
+}
+
+fn snapshot_less_parent_state_changed(
+    snapshot: &SessionSnapshot,
+    parent: &PersistedSessionState,
+) -> bool {
+    resume_normalized_history(snapshot.history().to_vec())
+        != resume_normalized_history(parent.model.clone())
+        || snapshot.compaction() != &parent.compaction
+        || snapshot.revision() != parent.revision
 }

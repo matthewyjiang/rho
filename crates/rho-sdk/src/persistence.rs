@@ -72,7 +72,7 @@ impl SessionSnapshot {
             schema_version: SESSION_SNAPSHOT_SCHEMA_VERSION,
             session_id,
             revision,
-            history: sanitized_history(history),
+            history: Self::sanitize_history(history),
             provider,
             compaction,
             metadata: BTreeMap::new(),
@@ -94,6 +94,19 @@ impl SessionSnapshot {
 
     pub fn history(&self) -> &[Message] {
         &self.history
+    }
+
+    /// Returns history after the same sanitization [`Self::new`] and snapshot
+    /// deserialization apply.
+    ///
+    /// Raw aborted-assistant reasoning is cleared. Other messages are unchanged.
+    pub fn sanitize_history(mut history: Vec<Message>) -> Vec<Message> {
+        for message in &mut history {
+            if let Message::AbortedAssistant(assistant) = message {
+                assistant.reasoning.clear();
+            }
+        }
+        history
     }
 
     pub fn provider(&self) -> &ModelIdentity {
@@ -183,22 +196,13 @@ impl<'de> Deserialize<'de> for SessionSnapshot {
             schema_version: SESSION_SNAPSHOT_SCHEMA_VERSION,
             session_id: wire.session_id,
             revision: wire.revision,
-            history: sanitized_history(wire.history),
+            history: Self::sanitize_history(wire.history),
             provider: wire.provider,
             compaction: wire.compaction,
             metadata: wire.metadata,
             prompt_cache_key: wire.prompt_cache_key,
         })
     }
-}
-
-fn sanitized_history(mut history: Vec<Message>) -> Vec<Message> {
-    for message in &mut history {
-        if let Message::AbortedAssistant(assistant) = message {
-            assistant.reasoning.clear();
-        }
-    }
-    history
 }
 
 /// Future returned by [`SessionStore`] operations.
