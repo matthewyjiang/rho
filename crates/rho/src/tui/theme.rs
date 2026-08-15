@@ -12,7 +12,10 @@ use super::{
         self, is_terminal_theme_id, normalize_theme_id, resolve_fixed_scheme, ColorScheme, Rgb,
         TERMINAL_THEME_ID,
     },
-    theme_terminal::{query_terminal_palette, AnsiColor, TerminalPalette},
+    theme_terminal::{
+        collect_terminal_palette_response, write_terminal_palette_queries, AnsiColor,
+        TerminalPalette,
+    },
 };
 
 #[path = "theme_diff.rs"]
@@ -368,15 +371,25 @@ pub(super) struct Theme;
 
 impl Theme {
     pub(super) fn initialize_from_terminal() {
-        if let Some(palette) = query_terminal_palette() {
-            let _ = TERMINAL_SAMPLE.set(palette);
-            // The sample feeds the terminal-mode palette; drop any derived
-            // palette computed before the sample landed.
-            THEME_STATE
-                .lock()
-                .unwrap_or_else(|error| error.into_inner())
-                .palette = None;
+        let _ = write_terminal_palette_queries();
+    }
+
+    /// Drain OSC replies after the first frame. Returns whether a sample landed
+    /// and the committed theme should be redrawn.
+    pub(super) fn collect_terminal_palette() -> bool {
+        let Some(palette) = collect_terminal_palette_response() else {
+            return false;
+        };
+        if TERMINAL_SAMPLE.set(palette).is_err() {
+            return false;
         }
+        THEME_STATE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .palette = None;
+        let id = Theme::committed_id();
+        apply_theme_id(&id, /*commit*/ true);
+        true
     }
 
     /// Retain fixed schemes from the open theme picker so preview uses them

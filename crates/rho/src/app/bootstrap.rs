@@ -5,6 +5,8 @@ use std::{
     time::Duration,
 };
 
+use tracing::Instrument;
+
 use {
     crate::cli::{Cli, Command, CredentialStoreCommand, OutputFormat},
     crate::credential_store::AppCredentialStore,
@@ -26,6 +28,7 @@ use super::{
 };
 
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
+    crate::logging::install_from_env();
     if workflow_cli::planner_worker_requested(&cli) {
         return workflow_cli::run_planner_worker().await;
     }
@@ -66,6 +69,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
 }
 
 async fn run_inner(cli: Cli) -> anyhow::Result<()> {
+    let _startup = tracing::info_span!("startup").entered();
     cli_config::validate(&cli)?;
     if let EarlyDispatch::Handled(result) = dispatch_early_command(&cli).await? {
         return result;
@@ -235,14 +239,13 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
     let definition = Arc::new(catalog.find(selected_agent)?.definition.clone());
 
     let store = AppCredentialStore;
-    cli_config::refresh_custom_provider_models(&config, &store).await;
     let provider_refresh = cli_config::refresh_model_cache(&cli, &config, &store).await?;
     let permission_mode_before_override = config.permission_mode;
     let config_changed = cli_config::apply_overrides(&mut config, &cli)?;
     cli_config::prepare_model_metadata(&config, &store, &provider_refresh).await;
     // Full models.dev snapshot fills in the background for subagent and status
-    // labels. The interactive system prompt awaits the same hydrate before it
-    // prints permanent model lines; see `await_catalog_names` on tools assembly.
+    // labels. Interactive sessions stay cache-only on the first frame, then
+    // rewrite the startup prompt once if hydrate lands before the first request.
     tokio::spawn(rho_providers::model::models_dev::ensure_models_dev_catalog());
     cli_config::normalize_reasoning_for_cli(
         &mut config,
@@ -390,6 +393,15 @@ async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Res
         .config
         .check_for_updates
         .then(|| tokio::spawn(update::update_notice(env!("CARGO_PKG_VERSION"))));
+    let pending_custom_models = (!startup.config.providers.custom.is_empty()).then(|| {
+        let config = startup.config.clone();
+        tokio::spawn(
+            async move {
+                cli_config::refresh_custom_provider_models(&config, &AppCredentialStore).await;
+            }
+            .instrument(tracing::info_span!("startup.custom_models")),
+        )
+    });
 
     let _scope = startup.config.providers.thread_scope()?;
     let sdk_options = SdkBootstrapOptions::from_config(&startup.config, &startup.cwd)?;
@@ -417,6 +429,7 @@ async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Res
         missing_auth_error,
         missing_auth_model_error,
         pending_update_notice,
+        pending_custom_models,
         diagnostics,
         herdr: startup.herdr,
         agent: startup.bound_agent,

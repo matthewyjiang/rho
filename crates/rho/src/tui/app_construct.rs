@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use rho_providers::credentials::{available_auth_modes, CredentialStore};
+use rho_providers::credentials::CredentialStore;
 
 use crate::credential_store::AppCredentialStore;
 
@@ -58,7 +58,9 @@ impl App {
         mcp_catalog: crate::tools::mcp::McpCatalog,
         plugins_report: crate::plugins::PluginLoadReport,
     ) -> Self {
-        let available_auths = available_auth_modes(credential_store.as_ref());
+        // Pickers call `refresh_available_auths()` on open. Sweeping the
+        // keyring here would stall the first frame on D-Bus.
+        let available_auths = Vec::new();
         let using_unavailable_provider = info.services.auth_unavailable.is_some();
         let mut info = info;
         info.runtime.max_tool_output_lines = info.runtime.max_tool_output_lines.max(1);
@@ -68,6 +70,7 @@ impl App {
             .as_ref()
             .map(|_| "no providers configured; run /login to sign in".to_string());
         let pending_update_notice = info.services.pending_update_notice.take();
+        let pending_custom_models = info.services.pending_custom_models.take();
         let statusline = StatusLine::new(&info.runtime);
         let mut app = Self {
             info,
@@ -104,6 +107,8 @@ impl App {
             pending_model_metadata: None,
             pending_model_metadata_reasoning: None,
             pending_update_notice,
+            pending_custom_models,
+            pending_herdr_graphics: None,
             pending_model_selection: None,
             internal_agent_model_target: None,
             pending_auto_classifier_demote: false,

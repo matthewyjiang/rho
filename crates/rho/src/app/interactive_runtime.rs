@@ -17,6 +17,8 @@ use {
 mod advisor;
 #[path = "interactive_runtime_edit_tool.rs"]
 pub(crate) mod edit_tool;
+#[path = "interactive_runtime_mcp.rs"]
+mod mcp;
 #[path = "interactive_runtime_provider.rs"]
 mod provider;
 #[path = "interactive_runtime_hooks.rs"]
@@ -74,6 +76,11 @@ pub(crate) struct InteractiveRuntime {
     /// The model MCP sampling runs against, rebound whenever it changes.
     mcp_sampling: crate::tools::mcp::McpSamplingBridge,
     mcp_report: crate::tools::mcp::McpSessionReport,
+    pending_mcp: Option<tokio::task::JoinHandle<crate::tools::mcp::McpConnectOutcome>>,
+    pending_catalog_names: Option<tokio::task::JoinHandle<usize>>,
+    /// Fresh sessions may replace the startup system prompt once before the
+    /// first request. Resumed snapshots keep the stored prompt.
+    may_rewrite_startup_prompt: bool,
     plugins_report: crate::plugins::PluginLoadReport,
     workspace: Workspace,
     system_prompt: rho_sdk::SystemPrompt,

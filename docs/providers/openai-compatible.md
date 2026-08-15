@@ -29,7 +29,7 @@ model = "composer-2.5"
 auth = "none"
 ```
 
-Or, after a restart, Rho fetches `/v1/models` for each custom host so the picker is populated. You can also refresh by hand in `/config` if the host was down at startup.
+Or, after a restart, Rho fetches `/v1/models` in the background for each custom host so the picker can fill in. You can also refresh by hand in `/config` if the host was down at startup.
 
 ```text
 /model composer/composer-2.5
@@ -39,7 +39,7 @@ Do not run `/login`. There is no API key and no credential store entry.
 
 ## Models
 
-Rho fetches `/v1/models` at startup for every custom host. A down host is skipped so startup still succeeds; refresh later in `/config` once it is up. The host must support tool calls if you want a coding agent.
+Rho fetches `/v1/models` in the background at startup for every custom host so the picker can fill in. A down host is skipped so startup still succeeds; refresh later in `/config` once it is up. Opening `/model` before the fetch lands can show a stale or empty custom list. The host must support tool calls if you want a coding agent.
 
 Rho sends `reasoning_effort` on each turn, including `"none"` when reasoning is off. Shift+Tab and `/config` cycle the level. Hosts that do not accept that field may reject the request; pin levels in `~/.rho/models.toml` if you need a smaller set.
 

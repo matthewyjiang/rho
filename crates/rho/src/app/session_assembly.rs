@@ -174,8 +174,8 @@ where
         questionnaire_enabled,
         mcp_elicitation,
         mcp_sampling,
-        // Do not block startup on models.dev; use whatever cache is warm.
         await_catalog_names: false,
+        defer_mcp_connect: false,
         background_subagents,
         diagnostics,
         agent,

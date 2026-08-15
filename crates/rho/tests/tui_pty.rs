@@ -42,6 +42,20 @@ fn smoke_startup_stream_exit() {
     assert_pass("startup_stream_exit");
 }
 
+// Covers: first session chrome must paint without waiting on MCP, catalog, or keyring tails.
+// Owner: interactive TUI
+#[test]
+fn startup_first_frame_paints_session_chrome() {
+    assert_pass("startup_first_frame");
+}
+
+// Covers: Enter must not start a turn while MCP is connecting; /mcp still opens.
+// Owner: interactive TUI
+#[test]
+fn mcp_connecting_blocks_submit_and_stays_inspectable() {
+    assert_pass("mcp_connecting");
+}
+
 #[test]
 fn smoke_cancel_and_resubmit() {
     assert_pass("cancel_and_resubmit");

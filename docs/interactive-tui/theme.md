@@ -7,8 +7,8 @@ Rho can match the host terminal or use a named color theme. Open the picker with
 
 ## Default: terminal
 
-The default theme is `terminal`. Rho samples the host background and standard
-ANSI color slots at startup (when the host supports that query) and maps them
+The default theme is `terminal`. Rho paints the first frame with the configured theme, then samples the host background and standard
+ANSI color slots (when the host supports that query) and maps them
 into UI roles:
 
 | Role | Typical use |

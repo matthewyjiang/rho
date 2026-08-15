@@ -71,6 +71,7 @@ async fn assemble(config: &Config, cwd: &std::path::Path) -> (bool, String) {
         mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
         mcp_sampling: super::McpSamplingSupport::Unavailable,
         await_catalog_names: false,
+        defer_mcp_connect: false,
         background_subagents: BackgroundSubagents::Disabled,
         diagnostics: &diagnostics,
         agent: &agent,
@@ -137,6 +138,7 @@ async fn the_advisor_receives_the_executor_system_prompt() {
         mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
         mcp_sampling: super::McpSamplingSupport::Unavailable,
         await_catalog_names: false,
+        defer_mcp_connect: false,
         background_subagents: BackgroundSubagents::Disabled,
         diagnostics: &diagnostics,
         agent: &agent,
@@ -176,6 +178,7 @@ async fn system_prompt_stays_advisor_agnostic() {
             mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
             mcp_sampling: super::McpSamplingSupport::Unavailable,
             await_catalog_names: false,
+            defer_mcp_connect: false,
             background_subagents: BackgroundSubagents::Disabled,
             diagnostics: &diagnostics,
             agent: &agent,
@@ -216,4 +219,99 @@ async fn the_assembled_prompt_names_the_bound_model() {
 
     // The seam, not the wording: the bound model reaches the assembled prompt.
     assert!(prompt.contains("openai/gpt-5.6-sol"), "{prompt}");
+}
+
+// Covers: interactive prompt assembly must not wait on a stuck models.dev hydrate.
+// Owner: root tool/prompt assembly
+#[tokio::test(flavor = "current_thread")]
+async fn deferred_catalog_names_do_not_wait_on_a_stuck_hydrate() {
+    let catalog = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let _cache =
+        rho_providers::model::models_dev::ModelsDevCacheDirGuard::new(catalog.path().to_path_buf());
+    let _lock = rho_providers::model::models_dev::catalog_hydrate_lock_for_tests()
+        .lock()
+        .await;
+    let config = Config::default();
+    let assembled = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        assemble(&config, cwd.path()),
+    )
+    .await;
+    assert!(
+        assembled.is_ok(),
+        "interactive prompt assembly awaited a stuck catalog hydrate"
+    );
+}
+
+// Covers: interactive MCP connect must return a pending inventory instead of
+// waiting on a slow stdio handshake.
+// Owner: root tool/prompt assembly
+#[tokio::test]
+async fn deferred_mcp_connect_returns_pending_inventory_without_waiting() {
+    use std::collections::BTreeMap;
+
+    use crate::tools::mcp::{
+        config::{McpConfig, McpSamplingPolicy, McpServerConfig, McpToolFilter, McpTransport},
+        McpServerStatus,
+    };
+
+    let cwd = tempfile::tempdir().unwrap();
+    let mut config = Config::default();
+    config.mcp = McpConfig {
+        servers: BTreeMap::from([(
+            "slow".into(),
+            McpServerConfig {
+                enabled: true,
+                tools: McpToolFilter::default(),
+                log_level: None,
+                sampling: McpSamplingPolicy::Deny,
+                transport: McpTransport::Stdio {
+                    command: "sleep".into(),
+                    args: vec!["120".into()],
+                    cwd: None,
+                    env: BTreeMap::new(),
+                    env_from_env: BTreeMap::new(),
+                },
+                filesystem: None,
+            },
+        )]),
+        invalid_servers: Vec::new(),
+    };
+    let diagnostics = RuntimeDiagnostics::new(&config);
+    let agent = bound_agent(&config);
+    let assembled = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        assemble_tools_and_prompt(ToolsAndPromptOptions {
+            config: &config,
+            config_path: cwd.path().join("config.toml"),
+            cwd: cwd.path(),
+            no_system_prompt: false,
+            no_tools: false,
+            no_subagents: true,
+            questionnaire_enabled: false,
+            mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
+            mcp_sampling: super::McpSamplingSupport::Unavailable,
+            await_catalog_names: false,
+            defer_mcp_connect: true,
+            background_subagents: BackgroundSubagents::Disabled,
+            diagnostics: &diagnostics,
+            agent: &agent,
+        }),
+    )
+    .await
+    .expect("deferred MCP connect awaited the handshake")
+    .unwrap();
+    assert_eq!(
+        assembled
+            .inventory
+            .mcp
+            .find("slow")
+            .map(|server| server.status()),
+        Some(McpServerStatus::Connecting)
+    );
+    let handle = assembled
+        .pending_mcp
+        .expect("deferred connect should leave a join handle");
+    handle.abort();
 }

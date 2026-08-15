@@ -59,6 +59,7 @@ pub(super) async fn initialize(
         tools,
         system_prompt,
         inventory,
+        pending_mcp,
         mcp_sampling,
     } = assemble_tools_and_prompt(ToolsAndPromptOptions {
         config,
@@ -79,8 +80,8 @@ pub(super) async fn initialize(
         // Interactive sessions bind a model below, so opted-in servers may ask
         // for completions.
         mcp_sampling: crate::app::tools_prompt::McpSamplingSupport::Available,
-        // Permanent system-prompt labels never rewrite; wait for catalog names.
-        await_catalog_names: true,
+        await_catalog_names: false,
+        defer_mcp_connect: true,
         background_subagents: BackgroundSubagents::Enabled,
         diagnostics: &diagnostics,
         agent: &agent,
@@ -162,6 +163,10 @@ pub(super) async fn initialize(
     };
     bind_subagent_parent(&tools, session.id(), storage.as_ref());
     bind_mcp_sampling(&mcp_sampling, &provider, session.id(), &cwd);
+    let may_rewrite_startup_prompt =
+        storage.is_none() && !matches!(system_prompt, rho_sdk::SystemPrompt::None);
+    let pending_catalog_names = may_rewrite_startup_prompt
+        .then(|| tokio::spawn(async { rho_providers::model::ensure_model_catalog_names().await }));
     Ok(InteractiveRuntime {
         runtime,
         hooks,
@@ -176,6 +181,9 @@ pub(super) async fn initialize(
         tools,
         mcp_sampling,
         mcp_report,
+        pending_mcp,
+        pending_catalog_names,
+        may_rewrite_startup_prompt,
         plugins_report,
         workspace,
         system_prompt,

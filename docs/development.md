@@ -16,6 +16,8 @@ cargo run -- run "summarize this repository"
 
 Use the local binary to test the [interactive TUI](/interactive-tui), [automation mode](/automation-cli), [configuration](/configuration), and [tools](/tools-workspace) behavior while developing.
 
+Set `RHO_LOG` to a tracing env-filter to print spans on stderr. It is off by default. Examples: `RHO_LOG=rho=info` or `RHO_LOG=rho=debug`.
+
 ```mermaid
 flowchart LR
     edit[Edit] --> fast[validate.py fast]
@@ -168,7 +170,10 @@ cargo run -p rho-tui-pty --bin rho-pty-scenario -- --list
 cargo run -p rho-tui-pty --bin rho-pty-scenario -- --bin target/debug/rho startup_stream_exit
 cargo run -p rho-tui-pty --bin rho-pty-scenario -- --bin target/debug/rho --smoke
 cargo run -p rho-tui-pty --bin rho-pty-scenario -- --bin target/debug/rho --timing startup_stream_exit
+cargo run -p rho-tui-pty --bin rho-pty-scenario -- --bin target/debug/rho --timing startup_first_frame
 ```
+
+`--timing` records wait latency samples. For first-frame paint, compare the named `wait_for_text:rho` sample rather than mixed p50/p95/p99 across unrelated waits. Do not treat those milliseconds as a CI budget.
 
 Failure artifacts default to a temp directory (or `--artifacts <dir>`). Successful runs do not retain artifacts.
 

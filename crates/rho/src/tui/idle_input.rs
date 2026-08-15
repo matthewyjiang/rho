@@ -341,6 +341,11 @@ impl App {
             }
         }
 
+        if agent.mcp_connect_pending() {
+            self.notify_status("connecting MCP servers");
+            return Ok(());
+        }
+
         if !self.setup_state().signed_in {
             return self.offer_login_instead_of_turn(turn);
         }

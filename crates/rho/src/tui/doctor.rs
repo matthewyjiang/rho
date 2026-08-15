@@ -397,6 +397,17 @@ fn mcp_check(report: &crate::tools::mcp::McpSessionReport) -> DoctorCheck {
             )
         } else {
             match summary.mode {
+            McpLoadMode::Native if summary.connecting > 0 && summary.problems == 0 => (
+                "connecting".into(),
+                true,
+                format!(
+                    "{} connecting, {} connected, {} exported tool{}.",
+                    summary.connecting,
+                    summary.connected,
+                    summary.exported_tools,
+                    super::plural_suffix(summary.exported_tools),
+                ),
+            ),
             McpLoadMode::Native if summary.problems == 0 => (
                 if summary.connected > 0 { "connected" } else { "idle" }.into(),
                 true,

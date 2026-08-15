@@ -37,7 +37,7 @@ If you need auth or a model first, use `/login` and `/model`, or follow [getting
 
 ### Send a prompt
 
-Type a request and press `enter` to send it.
+Type a request and press `enter` to send it. Slash commands, pickers, and the inline shell stay available while MCP servers connect. A model prompt waits until those servers finish connecting or time out; `enter` keeps the composer text until then.
 
 ```text
 summarize this repository
@@ -115,6 +115,7 @@ A single `/` as the first character opens the command palette. Any later `/` cha
 | `/agents` | Reload agent definitions and browse their descriptions, sources, runtime (`rho` or `claude-cli`), model policies, reasoning levels, tools (Rho capabilities or Claude tool names), Claude config inheritance, prompt policies, and prompt previews. Select a reserved internal agent to configure its model. |
 | `/diff` | Show local Git status plus staged and unstaged worktree patches without invoking the model. |
 | `/doctor` | Check provider authentication, the selected model, config and session writability, model caches, clipboard image helpers, rtk, Herdr integration, and Claude Code binary/auth health without displaying secrets. |
+| `/mcp` | List configured MCP servers for this session, including in-flight connects. Connecting servers are not treated as failures. `/doctor` includes the same MCP health row. See [Model Context Protocol](/integrations/mcp). |
 | `/limits` | Open a single-pane overlay with the usage windows reported by connected providers. Codex OAuth, Kimi Code OAuth, xAI OAuth, and OpenCode Go are supported when logged in; absent windows are omitted. The overlay opens immediately with cached or last-observed values, then fills in live windows as each provider responds. Also shows the last Claude Code rate-limit observation from a prior `claude-cli` run (window, status, reset, age) without percentages or a probe. Press `esc` or `enter` to close. |
 | `/usage` | Alias for `/limits`. |
 | `/export [path]` | Export the current session transcript. Formats: HTML (default), Markdown (`.md`), JSON (`.json`). Omit the path to write a timestamped file under `~/.rho/exports/` (or `$RHO_HOME/exports/`). A directory argument receives that default file name. The path extension selects the format. Existing files are not overwritten; choose a new path. HTML exports render assistant Markdown math (inline `$...$` or `\(...\)`, display `$$...$$` or `\[...\]`) with KaTeX. Live TUI math uses a narrower TXM path; see [Math rendering](/interactive-tui/math). |

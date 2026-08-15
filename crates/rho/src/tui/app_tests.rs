@@ -77,6 +77,7 @@ pub(super) fn test_bootstrap() -> TuiBootstrap {
             auth_unavailable: None,
             update_notice: None,
             pending_update_notice: None,
+            pending_custom_models: None,
             diagnostics: crate::diagnostics::test_diagnostics("openai", "gpt-test"),
             herdr: HerdrReporter::default(),
         },
