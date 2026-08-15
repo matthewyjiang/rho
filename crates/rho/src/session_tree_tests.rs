@@ -780,3 +780,67 @@ fn mirrored_tree_legacy_upgrade_index_record_equals_reloaded_file_summary() {
     let reloaded_record = summarize_session_file(session.path(), session.cwd()).unwrap();
     pretty_assertions::assert_eq!(in_memory_record, reloaded_record);
 }
+
+#[test]
+fn mirrored_tree_legacy_v1_no_parent_snapshot_upgrade_index_record_equals_reloaded_file_summary() {
+    let root = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let id = "11111111-1111-4111-8111-111111111111";
+    let dir = session_dir_in_root(root.path(), cwd.path());
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("1_{id}.jsonl"));
+    let fixture = include_str!("session/fixtures/session-v1.jsonl");
+    let mut lines = fixture.lines();
+    let mut header = serde_json::from_str::<serde_json::Value>(lines.next().unwrap()).unwrap();
+    header["cwd"] = serde_json::Value::String(cwd.path().to_string_lossy().into_owned());
+    let transcript = std::iter::once(header.to_string())
+        .chain(lines.map(str::to_owned))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(&path, format!("{transcript}\n")).unwrap();
+
+    let (session, _) = Session::open_by_id_in_root(root.path(), cwd.path(), id).unwrap();
+
+    // Verify equivalence on legacy v1 load (virtual leaf has no parent snapshot)
+    let tree = session.session_tree().unwrap();
+    let in_memory_record = tree.summary_record(session.path(), session.cwd()).unwrap();
+    let reloaded_record = summarize_session_file(session.path(), session.cwd()).unwrap();
+    pretty_assertions::assert_eq!(in_memory_record, reloaded_record);
+
+    let legacy_leaf_id = tree.active_leaf_id().unwrap().clone();
+
+    // Save a new turn attaching an explicit node to the legacy virtual leaf with no parent snapshot
+    let resumed = session
+        .snapshot_for_resume(
+            ModelIdentity::new("provider", "api", "model"),
+            "prompt-key".into(),
+        )
+        .unwrap();
+    let mut history = resumed.history().to_vec();
+    history.push(Message::user_text("new turn after v1 upgrade"));
+    let upgraded_snapshot = SessionSnapshot::new(
+        SessionId::from_string(session.id().to_owned()).unwrap(),
+        Revision::from_u64(resumed.revision().get() + 1),
+        history.clone(),
+        resumed.provider().clone(),
+        resumed.compaction().clone(),
+    );
+    session
+        .save_snapshot(
+            &upgraded_snapshot,
+            &[Message::user_text("new turn after v1 upgrade")],
+        )
+        .unwrap();
+
+    let tree = session.session_tree().unwrap();
+    let in_memory_record = tree.summary_record(session.path(), session.cwd()).unwrap();
+    let reloaded_record = summarize_session_file(session.path(), session.cwd()).unwrap();
+    pretty_assertions::assert_eq!(in_memory_record, reloaded_record);
+
+    // Test set_leaf back to the legacy leaf
+    session.set_leaf(&legacy_leaf_id).unwrap();
+    let tree = session.session_tree().unwrap();
+    let in_memory_record = tree.summary_record(session.path(), session.cwd()).unwrap();
+    let reloaded_record = summarize_session_file(session.path(), session.cwd()).unwrap();
+    pretty_assertions::assert_eq!(in_memory_record, reloaded_record);
+}

@@ -90,6 +90,9 @@ impl Session {
                 cost_usd_micros: None,
             })
         });
+        // Force a full snapshot if compaction changed or if upgrading a legacy (< v4)
+        // session. Legacy sessions and compacted baselines do not share delta continuity
+        // with their predecessor.
         let transition = if compaction_changed || tree.needs_upgrade_marker() {
             StoredStateTransition::Snapshot {
                 snapshot: Box::new(snapshot.clone()),
@@ -128,35 +131,17 @@ impl Session {
             display_messages,
         };
 
-        self.append_tree_entry(
-            &mut cursor,
-            &tree,
-            &SessionEntry::Node { node: node.clone() },
-        )?;
+        self.append_tree_entry(&mut cursor, &mut tree, &SessionEntry::Node { node })?;
         cursor.last_snapshot = Some(SnapshotDeltaBase::from_snapshot(snapshot));
 
-        if tree.needs_upgrade_marker() {
-            if let Some(active_leaf_id) = tree.active_leaf_id().cloned() {
-                let upgrade_ts = timestamp();
-                if let Err(err) = tree.apply_upgrade(active_leaf_id, &upgrade_ts) {
-                    tracing::warn!(
-                        "failed to apply upgrade marker to in-memory session tree: {err:#}"
-                    );
-                }
+        match tree.summary_record(&self.path, &self.cwd) {
+            Ok(record) => {
+                let _ = index::record_snapshot_record(self, &record);
             }
-        }
-        if let Err(err) = tree.apply_explicit_node(node) {
-            tracing::warn!("failed to apply explicit node to in-memory session tree: {err:#}");
-        } else {
-            match tree.summary_record(&self.path, &self.cwd) {
-                Ok(record) => {
-                    let _ = index::record_snapshot_record(self, &record);
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        "failed to generate session index summary from in-memory tree: {err:#}"
-                    );
-                }
+            Err(err) => {
+                tracing::warn!(
+                    "failed to generate session index summary from in-memory tree: {err:#}"
+                );
             }
         }
         drop(cursor);
@@ -224,9 +209,9 @@ impl Session {
         let ts = timestamp();
         self.append_tree_entry(
             &mut cursor,
-            &tree,
+            &mut tree,
             &SessionEntry::SetLeaf {
-                timestamp: ts.clone(),
+                timestamp: ts,
                 target_id: target_id.clone(),
             },
         )?;
@@ -235,28 +220,14 @@ impl Session {
             .and_then(|node| node.state().snapshot.as_ref())
             .map(SnapshotDeltaBase::from_snapshot);
 
-        if tree.needs_upgrade_marker() {
-            if let Some(active_leaf_id) = tree.active_leaf_id().cloned() {
-                let upgrade_ts = timestamp();
-                if let Err(err) = tree.apply_upgrade(active_leaf_id, &upgrade_ts) {
-                    tracing::warn!(
-                        "failed to apply upgrade marker to in-memory session tree: {err:#}"
-                    );
-                }
+        match tree.summary_record(&self.path, &self.cwd) {
+            Ok(record) => {
+                let _ = index::record_snapshot_record(self, &record);
             }
-        }
-        if let Err(err) = tree.apply_set_leaf(target_id.clone(), &ts) {
-            tracing::warn!("failed to apply set_leaf to in-memory session tree: {err:#}");
-        } else {
-            match tree.summary_record(&self.path, &self.cwd) {
-                Ok(record) => {
-                    let _ = index::record_snapshot_record(self, &record);
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        "failed to generate session index summary from in-memory tree: {err:#}"
-                    );
-                }
+            Err(err) => {
+                tracing::warn!(
+                    "failed to generate session index summary from in-memory tree: {err:#}"
+                );
             }
         }
         drop(cursor);

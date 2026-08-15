@@ -268,7 +268,7 @@ impl Session {
     pub(super) fn append_tree_entry(
         &self,
         cursor: &mut AppendCursor,
-        tree: &super::tree::SessionTree,
+        tree: &mut super::tree::SessionTree,
         entry: &SessionEntry,
     ) -> anyhow::Result<()> {
         match entry {
@@ -286,14 +286,37 @@ impl Session {
             let active_leaf_id = tree.active_leaf_id().cloned().ok_or_else(|| {
                 anyhow::anyhow!("legacy session has no state node to upgrade from")
             })?;
+            let upgrade_ts = timestamp();
             let upgrade = SessionEntry::Upgrade {
-                timestamp: timestamp(),
-                active_leaf_id,
+                timestamp: upgrade_ts.clone(),
+                active_leaf_id: active_leaf_id.clone(),
             };
-            self.write_jsonl_entries(cursor, &[&upgrade, entry])
+            self.write_jsonl_entries(cursor, &[&upgrade, entry])?;
+            if let Err(err) = tree.apply_upgrade(active_leaf_id, &upgrade_ts) {
+                tracing::warn!("failed to apply upgrade marker to in-memory session tree: {err:#}");
+            }
         } else {
-            self.write_jsonl_entry(cursor, entry)
+            self.write_jsonl_entry(cursor, entry)?;
         }
+        match entry {
+            SessionEntry::Node { node } => {
+                if let Err(err) = tree.apply_explicit_node(node.clone()) {
+                    tracing::warn!(
+                        "failed to apply explicit node to in-memory session tree: {err:#}"
+                    );
+                }
+            }
+            SessionEntry::SetLeaf {
+                timestamp,
+                target_id,
+            } => {
+                if let Err(err) = tree.apply_set_leaf(target_id.clone(), timestamp) {
+                    tracing::warn!("failed to apply set_leaf to in-memory session tree: {err:#}");
+                }
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
     pub(super) fn append_entry_unlocked(
