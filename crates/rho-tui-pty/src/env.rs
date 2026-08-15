@@ -195,28 +195,38 @@ pub fn resolve_rho_binary() -> Result<PathBuf> {
         }
     }
 
+    // Only debug binaries are discovered implicitly: matrix fixtures are
+    // compiled under cfg(debug_assertions), so a release binary silently runs
+    // without them and every scenario fails as "not signed in". A release
+    // binary is still usable through an explicit RHO_PTY_BIN.
     let mut candidates = Vec::new();
+    let mut release_fallbacks = Vec::new();
     if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
         let manifest = PathBuf::from(manifest_dir);
         // crates/rho-tui-pty -> workspace root
         if let Some(workspace) = manifest.parent().and_then(Path::parent) {
             candidates.push(workspace.join("target/debug/rho"));
-            candidates.push(workspace.join("target/release/rho"));
-        }
-        // crates/rho -> workspace root
-        if let Some(workspace) = manifest.parent().and_then(Path::parent) {
-            candidates.push(workspace.join("target/debug/rho"));
+            release_fallbacks.push(workspace.join("target/release/rho"));
         }
     }
     if let Ok(cwd) = env::current_dir() {
         candidates.push(cwd.join("target/debug/rho"));
-        candidates.push(cwd.join("target/release/rho"));
+        release_fallbacks.push(cwd.join("target/release/rho"));
     }
 
-    for candidate in candidates {
+    for candidate in &candidates {
         if candidate.is_file() {
-            return Ok(candidate);
+            return Ok(candidate.clone());
         }
+    }
+    if let Some(release) = release_fallbacks.iter().find(|path| path.is_file()) {
+        bail!(
+            "found only a release binary at {}; matrix fixtures are compiled with \
+             debug_assertions, so scenarios would fail as \"not signed in\". Build a \
+             debug binary (`cargo build -p rho-coding-agent`) or point RHO_PTY_BIN at \
+             a binary you intend to run without fixtures.",
+            release.display()
+        );
     }
 
     // Last resort: ask cargo for the bin path.
