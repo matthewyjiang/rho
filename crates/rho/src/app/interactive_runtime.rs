@@ -809,6 +809,10 @@ impl InteractiveRuntime {
         self.tools.workflow_tracker()
     }
 
+    pub(crate) fn processes(&self) -> Option<&crate::tools::process::ProcessManager> {
+        self.tools.processes()
+    }
+
     #[cfg(test)]
     fn observe_event(&mut self, event: &RunEvent) {
         self.runs.observe_event(event, self.context_window);
