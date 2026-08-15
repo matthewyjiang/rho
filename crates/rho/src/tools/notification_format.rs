@@ -17,13 +17,17 @@ where
     for (index, section) in sections.iter().enumerate() {
         let section = section.as_ref();
         let separator = if index == 0 { "" } else { separator };
-        if body.len() + separator.len() + section.len() > budget {
-            let omission = omit(sections.len() - index);
-            let omission = if body.is_empty() {
-                omission
+        let remaining = sections.len() - index;
+        let omission = {
+            let text = omit(remaining);
+            if body.is_empty() {
+                text
             } else {
-                format!("{separator}{omission}")
-            };
+                format!("{separator}{text}")
+            }
+        };
+        // Reserve the omission marker so truncation is never silent.
+        if body.len() + separator.len() + section.len() + omission.len() > budget {
             if body.len() + omission.len() <= budget {
                 body.push_str(&omission);
             }
