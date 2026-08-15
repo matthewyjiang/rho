@@ -390,7 +390,7 @@ impl AppToolSet {
         self.subagents.as_ref()
     }
 
-    pub(crate) fn processes(&self) -> Option<&super::process::ProcessManager> {
+    pub fn processes(&self) -> Option<&super::process::ProcessManager> {
         self.processes.as_ref()
     }
 

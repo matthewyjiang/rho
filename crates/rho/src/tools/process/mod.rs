@@ -7,6 +7,7 @@ use super::sdk_registry::ToolBundle;
 mod display;
 mod exact;
 mod manager;
+mod notify;
 mod platform;
 pub(super) mod sdk_process;
 mod supervisor;
@@ -15,6 +16,7 @@ mod types;
 
 pub(crate) use exact::{ExactProcessExit, WorkflowCommandTool};
 pub use manager::ProcessManager;
+pub(crate) use notify::{notification_prompts, ProcessNotification};
 pub(crate) use platform::{prepare_child_command, ProcessTree};
 pub use tools::Process;
 pub(super) use tools::ProcessArgs;

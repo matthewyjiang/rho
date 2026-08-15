@@ -28,7 +28,7 @@ pub(super) fn tree_connector(is_last: bool) -> &'static str {
 /// Visible stacked rows shared by the subagent and process rails.
 pub(super) const MAX_VISIBLE_RAIL_ROWS: usize = 2;
 /// Content width clamp shared by stacked activity-rail rows.
-pub(super) const MAX_RAIL_CONTENT_WIDTH: usize = 52;
+const MAX_RAIL_CONTENT_WIDTH: usize = 52;
 
 /// One stacked activity-rail row. Identity styling stays at the call site.
 pub(super) struct RailRow {

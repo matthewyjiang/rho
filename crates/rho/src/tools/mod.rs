@@ -3,6 +3,10 @@ pub mod agent;
 mod agent_output;
 mod coding;
 pub(crate) mod mcp;
+mod notification_format;
+#[cfg(test)]
+#[path = "notification_format_tests.rs"]
+mod notification_format_tests;
 pub(crate) mod process;
 pub mod rho;
 mod sdk_features;

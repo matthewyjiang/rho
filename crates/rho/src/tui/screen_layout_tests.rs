@@ -3,7 +3,8 @@ use ratatui::layout::Rect;
 
 use super::{
     bottom_chrome_heights, split_interactive_budget, terminal_meets_minimum,
-    visible_composer_start, BottomChrome, MIN_TERMINAL_HEIGHT, MIN_TERMINAL_WIDTH,
+    visible_composer_start, BottomChrome, InteractiveBudget, MIN_TERMINAL_HEIGHT,
+    MIN_TERMINAL_WIDTH,
 };
 
 // Covers: moving the caret within the visible composer must not move the text
@@ -135,21 +136,42 @@ fn bottom_chrome_keeps_composer_row_before_statusline() {
 // Owner: pure layout
 #[test]
 fn interactive_split_follows_claim_priority() {
-    let split = split_interactive_budget(8, 3, 5, 2, 2, 1);
+    let split = split_interactive_budget(InteractiveBudget {
+        budget: 8,
+        composer_lines: 3,
+        desired_pending: 5,
+        desired_subagents: 2,
+        desired_processes: 2,
+        activity_floor: 1,
+    });
     assert_eq!(split.composer, 1);
     assert_eq!(split.pending_input, 2);
     assert_eq!(split.subagents, 2);
     assert_eq!(split.processes, 2);
     assert_eq!(split.history, 1);
 
-    let grown = split_interactive_budget(10, 1, 5, 2, 2, 1);
+    let grown = split_interactive_budget(InteractiveBudget {
+        budget: 10,
+        composer_lines: 1,
+        desired_pending: 5,
+        desired_subagents: 2,
+        desired_processes: 2,
+        activity_floor: 1,
+    });
     assert_eq!(grown.composer, 1);
     assert_eq!(grown.pending_input, 4);
     assert_eq!(grown.subagents, 2);
     assert_eq!(grown.processes, 2);
     assert_eq!(grown.history, 1);
 
-    let starved = split_interactive_budget(4, 2, 3, 2, 2, 1);
+    let starved = split_interactive_budget(InteractiveBudget {
+        budget: 4,
+        composer_lines: 2,
+        desired_pending: 3,
+        desired_subagents: 2,
+        desired_processes: 2,
+        activity_floor: 1,
+    });
     assert_eq!(starved.composer, 1);
     assert_eq!(starved.pending_input, 2);
     assert_eq!(starved.subagents, 0);

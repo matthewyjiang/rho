@@ -97,24 +97,14 @@ pub(super) fn format_snapshot(snapshot: &SubagentSnapshot, format: SnapshotForma
 pub(super) fn format_notification(snapshots: &[&SubagentSnapshot]) -> String {
     let body_bytes = MODEL_NOTIFICATION_BYTES
         .saturating_sub(NOTIFICATION_HEADER.len() + NOTIFICATION_FOOTER.len());
-    let mut body = String::new();
-
-    for (index, snapshot) in snapshots.iter().enumerate() {
-        let separator = if index == 0 { "" } else { "\n" };
-        let summary = completion_summary(snapshot).join("\n");
-        let remaining_runs = snapshots.len() - index;
-        let omission = format!(
-            "{separator}... {remaining_runs} run status section(s) omitted; use `agents status`"
-        );
-        if body.len() + separator.len() + summary.len() + omission.len() > body_bytes {
-            if body.len() + omission.len() <= body_bytes {
-                body.push_str(&omission);
-            }
-            break;
-        }
-        body.push_str(separator);
-        body.push_str(&summary);
-    }
+    let mut body = super::notification_format::join_budgeted_sections(
+        snapshots
+            .iter()
+            .map(|snapshot| completion_summary(snapshot).join("\n")),
+        "\n",
+        body_bytes,
+        |remaining| format!("... {remaining} run status section(s) omitted; use `agents status`"),
+    );
 
     let results = snapshots
         .iter()
