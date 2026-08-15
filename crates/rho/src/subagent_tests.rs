@@ -433,6 +433,35 @@ fn write_status_stamps_finished_at_for_terminal_snapshots() {
     assert!(loaded.finished_at.unwrap() >= loaded.started_at.unwrap());
 }
 
+// Covers: a late title stamp must not rewrite result, activity, or finish time.
+// Owner: subagent status persistence
+#[test]
+fn apply_generated_title_preserves_other_fields() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join(RESULT_FILE_NAME);
+    write_status(
+        &path,
+        &RunStatus {
+            state: RunState::Ok,
+            agent_id: Some("worker".into()),
+            result: Some("done".into()),
+            last_activity: Some("finished".into()),
+            finished_at: Some(1_700_000_042),
+            ..RunStatus::default()
+        },
+    )
+    .unwrap();
+
+    apply_generated_title(&path, "Review the auth path").unwrap();
+
+    let loaded = read_status(&path).unwrap();
+    assert_eq!(loaded.title.as_deref(), Some("Review the auth path"));
+    assert_eq!(loaded.state, RunState::Ok);
+    assert_eq!(loaded.result.as_deref(), Some("done"));
+    assert_eq!(loaded.last_activity.as_deref(), Some("finished"));
+    assert_eq!(loaded.finished_at, Some(1_700_000_042));
+}
+
 #[test]
 fn write_status_preserves_existing_terminal_finished_at() {
     let directory = tempfile::tempdir().unwrap();

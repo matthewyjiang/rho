@@ -169,6 +169,9 @@ fn continue_from_keeps_a_title_written_during_construction() {
         Some(Arc::clone(&live_title)),
     )
     .unwrap();
+    assert_eq!(rx.borrow().title.as_deref(), Some("Review the auth path"));
+    assert_eq!(rx.borrow().last_activity.as_deref(), Some("starting"));
+
     sink.mark_running("tool: read");
 
     assert_eq!(sink.status.title.as_deref(), Some("Review the auth path"));

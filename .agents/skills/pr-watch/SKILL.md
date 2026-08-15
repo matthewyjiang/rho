@@ -52,9 +52,9 @@ empty. Resolve a missing PR number from `gh pr view --json number` or
 ask. Pass `owner/repo` before `--pr` if the cwd remote is wrong.
 `bunx` then `npx`.
 
-`--until react,ci` wakes on pullfrog or human review/comment (not
-`[bot]` scanners), a finished check, or close/merge. That includes
-comments from the `gh` token owner. `react` alone misses a fully
+`--until react,ci` wakes on pullfrog, CodeRabbit, or human
+review/comment (not other `[bot]` scanners), a finished check, or
+close/merge. That includes comments from the `gh` token owner. `react` alone misses a fully
 green suite. `approval` is a review decision or check failure. `ci`
 is a finished check. `merged` is close or merge. Or pass
 `kind` / `kind:value,...`.

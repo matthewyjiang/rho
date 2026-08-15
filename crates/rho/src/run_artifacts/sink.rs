@@ -171,10 +171,10 @@ impl RunArtifactSink {
         let attachment_enabled = status.attachment_error.is_none();
         let attachment_error = Arc::new(Mutex::new(status.attachment_error.clone()));
         let status_write_failed = Arc::new(AtomicBool::new(false));
+        merge_title_from_slot(&mut status, live_title.as_ref());
         if status.attachment_error.is_some() {
             write_status_best_effort(&path, &status, &status_write_failed);
         }
-        merge_title_from_slot(&mut status, live_title.as_ref());
         if let Some(tx) = &status_tx {
             tx.send_replace(status.clone());
         }

@@ -210,20 +210,27 @@ pub fn initialize_status(path: &Path, status: &RunStatus) -> std::io::Result<()>
 /// Stamp a generated title onto the current on-disk status without regressing
 /// other fields.
 pub fn apply_generated_title(path: &Path, title: &str) -> std::io::Result<()> {
+    let _guard = status_write_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let Some(mut status) = read_status(path) else {
         return Ok(());
     };
-    if status.title.is_none() {
-        status.title = Some(title.to_owned());
-        write_status(path, &status)?;
+    if status.title.is_some() {
+        return Ok(());
     }
-    Ok(())
+    status.title = Some(title.to_owned());
+    write_status_locked(path, &status, /*force*/ false)
 }
 
 fn write_status_inner(path: &Path, status: &RunStatus, force: bool) -> std::io::Result<()> {
     let _guard = status_write_lock()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    write_status_locked(path, status, force)
+}
+
+fn write_status_locked(path: &Path, status: &RunStatus, force: bool) -> std::io::Result<()> {
     // One read covers monotonicity and finish-time preservation for same-run updates.
     let existing = if force { None } else { read_status(path) };
     if !force
