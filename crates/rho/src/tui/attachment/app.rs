@@ -129,7 +129,7 @@ pub(crate) async fn run(
     let _restore_terminal = RestoreTerminal {
         mouse_capture: mouse_capture::Guard::acquire(),
     };
-    Theme::initialize_from_terminal(&display.theme);
+    Theme::initialize_from_terminal();
     Theme::apply_committed(&display.theme);
     let message = format!("attached to agent run {id}");
     herdr

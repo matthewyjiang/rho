@@ -36,9 +36,19 @@ impl InteractiveRuntime {
         if let Some(handle) = self.pending_mcp.as_mut() {
             if handle.is_finished() {
                 if let Some(handle) = self.pending_mcp.take() {
-                    if let Some(Ok(outcome)) = handle.now_or_never() {
-                        self.apply_mcp_connect(outcome).await?;
-                        changed = true;
+                    match handle.now_or_never() {
+                        Some(Ok(outcome)) => {
+                            self.apply_mcp_connect(outcome).await?;
+                            changed = true;
+                        }
+                        // The connect task died without reporting. Say so, or
+                        // `/mcp` sits on `connecting` until the session ends.
+                        Some(Err(error)) => {
+                            self.mcp_report
+                                .fail_connecting(&format!("MCP connect did not finish: {error}"));
+                            changed = true;
+                        }
+                        None => {}
                     }
                 }
             }

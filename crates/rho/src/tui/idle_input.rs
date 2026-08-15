@@ -378,7 +378,10 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
-        if self.pending_mcp_submission.is_none() || agent.mcp_connect_pending() {
+        if self.pending_mcp_submission.is_none()
+            || agent.mcp_connect_pending()
+            || self.input_ui.composer().blocks_held_turn_start()
+        {
             return Ok(false);
         }
         let Some(PendingMcpSubmission { turn, media }) = self.pending_mcp_submission.take() else {

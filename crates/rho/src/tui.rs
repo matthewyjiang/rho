@@ -390,7 +390,7 @@ pub(crate) use attachment::{
 
 pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::Result<TuiResult> {
     let mut terminal = ratatui::init();
-    Theme::initialize_from_terminal(&info.services.theme);
+    Theme::initialize_from_terminal();
     Theme::apply_committed(&info.services.theme);
     let herdr = info.services.herdr.clone();
     let pending_herdr_graphics = {

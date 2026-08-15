@@ -27,7 +27,7 @@ pub(super) const MCP_INVENTORY_SCENARIO: Scenario = Scenario::new(
 
 pub(super) const MCP_CONNECTING_SCENARIO: Scenario = Scenario::new(
     "mcp_connecting",
-    "Paint while MCP connects, accept a submit, and still open /mcp",
+    "Paint while MCP connects and still open /mcp",
     PtySize {
         rows: 30,
         cols: 120,
@@ -83,12 +83,8 @@ const MCP_CONNECTING_STEPS: &[Step] = &[
         text: "gpt-5.5",
         timeout: STARTUP,
     },
-    // Submitting while the servers are still connecting must leave the session
-    // usable. That the turn is held rather than dropped is proved by
-    // `mcp_connect_release`, which watches one actually start.
-    Step::Phase("submit_during_connect"),
-    Step::TypeText("hold-turn-xyz"),
-    Step::Key(Key::Enter),
+    // Slash commands and pickers stay usable while the servers are still
+    // connecting. Submitting a prompt in that window is `mcp_connect_release`.
     Step::Phase("open_mcp"),
     Step::SubmitText("/mcp"),
     Step::WaitText {

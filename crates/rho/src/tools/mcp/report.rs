@@ -577,6 +577,19 @@ impl McpSessionReport {
         }
     }
 
+    /// Mark every still-connecting server as failed. Used when the deferred
+    /// connect never reports back, so `/mcp` says what happened instead of
+    /// showing `connecting` for the rest of the session.
+    pub(crate) fn fail_connecting(&mut self, error: &str) {
+        for server in &mut self.servers {
+            if matches!(server.state, McpServerState::Connecting) {
+                server.state = McpServerState::Failed {
+                    error: error.to_string(),
+                };
+            }
+        }
+    }
+
     pub(crate) fn from_config_unloaded(config: &McpConfig, mode: McpLoadMode) -> Self {
         let mut servers = config
             .invalid_servers

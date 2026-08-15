@@ -367,17 +367,13 @@ pub(super) enum SyntaxRole {
 pub(super) struct Theme;
 
 impl Theme {
-    /// Sample the terminal palette for `theme_id`, before any terminal event
-    /// reader starts.
+    /// Sample the terminal palette before any terminal event reader starts.
     ///
-    /// The sample only feeds the `terminal` theme, so a fixed scheme skips the
-    /// OSC round trip and paints its first frame without waiting. The query
-    /// reads stdin directly and must run before crossterm owns it, or the two
-    /// race for the same bytes and user keys go missing.
-    pub(super) fn initialize_from_terminal(theme_id: &str) {
-        if !is_terminal_theme_id(theme_id) {
-            return;
-        }
+    /// The query reads stdin directly, so it must run before crossterm owns
+    /// that descriptor, or the two race for the same bytes and user keys go
+    /// missing. It runs whatever the configured theme is, because `/theme` can
+    /// select `terminal` later and this is the only safe moment to ask.
+    pub(super) fn initialize_from_terminal() {
         if let Some(palette) = query_terminal_palette() {
             let _ = TERMINAL_SAMPLE.set(palette);
             // The sample feeds the terminal-mode palette; drop any derived

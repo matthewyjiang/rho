@@ -108,8 +108,6 @@ impl App {
                     if open_resume_after_draw {
                         self.open_resume_picker()?;
                         needs_redraw = true;
-                    }
-                    if needs_redraw {
                         continue;
                     }
                 }

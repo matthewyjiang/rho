@@ -49,7 +49,7 @@ fn startup_first_frame_paints_session_chrome() {
     assert_pass("startup_first_frame");
 }
 
-// Covers: submitting while MCP connects must leave the session usable; /mcp still opens.
+// Covers: /mcp must open and report in-flight servers while connect is still running.
 // Owner: interactive TUI
 #[test]
 fn mcp_connecting_keeps_the_session_inspectable() {

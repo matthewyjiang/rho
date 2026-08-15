@@ -41,7 +41,7 @@ pub(crate) async fn run(
     let _terminal_restore = RestoreTerminal {
         mouse_capture: mouse_capture::Guard::acquire(),
     };
-    Theme::initialize_from_terminal(&Theme::committed_id());
+    Theme::initialize_from_terminal();
     let session = adapter.session();
     let initial = adapter.initial_snapshot();
     let mut app = WorkflowUiState::new(session, initial, adapter.run_directory());
