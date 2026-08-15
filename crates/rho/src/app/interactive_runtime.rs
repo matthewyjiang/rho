@@ -48,6 +48,9 @@ use startup::{
 
 pub(crate) struct InteractiveRuntimeOptions<'a> {
     pub(crate) config: &'a Config,
+    /// Agent catalog discovered during bootstrap, reused by the delegation
+    /// tool set when the session cwd still matches the discovery cwd.
+    pub(crate) catalog: Option<crate::agent::DiscoveredAgentCatalog>,
     pub(crate) config_path: PathBuf,
     pub(crate) cwd: PathBuf,
     pub(crate) no_system_prompt: bool,

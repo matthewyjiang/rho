@@ -98,7 +98,7 @@ impl App {
             pending_usage_limits: Vec::new(),
             usage_limits_live: std::collections::BTreeMap::new(),
             pending_changelog: None,
-            usage_limits_client: reqwest::Client::new(),
+            usage_limits_client: std::sync::OnceLock::new(),
             usage: UsageUi::default(),
             model_metadata: None,
             pending_model_metadata: None,

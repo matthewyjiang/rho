@@ -1,6 +1,7 @@
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use thiserror::Error;
@@ -53,6 +54,28 @@ pub struct AgentCatalogEntry {
 pub struct AgentCatalog {
     entries: BTreeMap<AgentId, AgentCatalogEntry>,
     internal_entries: BTreeMap<AgentId, AgentCatalogEntry>,
+}
+
+/// A catalog discovered at startup, tagged with the cwd it was walked from.
+///
+/// Discovery walks the project ancestor chain, so a catalog is only valid for
+/// the directory it was discovered from. Resume can move the session cwd;
+/// [`Self::for_cwd`] hands the catalog back only when the directories match,
+/// and consumers rediscover otherwise.
+#[derive(Clone, Debug)]
+pub struct DiscoveredAgentCatalog {
+    cwd: PathBuf,
+    catalog: Arc<AgentCatalog>,
+}
+
+impl DiscoveredAgentCatalog {
+    pub fn new(cwd: PathBuf, catalog: Arc<AgentCatalog>) -> Self {
+        Self { cwd, catalog }
+    }
+
+    pub fn for_cwd(&self, cwd: &Path) -> Option<Arc<AgentCatalog>> {
+        (self.cwd == cwd).then(|| Arc::clone(&self.catalog))
+    }
 }
 
 #[derive(Default)]
