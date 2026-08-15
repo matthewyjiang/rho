@@ -205,7 +205,7 @@ fn blank_xai_env_token_falls_back_to_stored_oauth_tokens() {
                 expires_at_unix: None,
                 id_token: None,
             },
-            XaiAuthSource::Store,
+            TokenAuthSource::Store,
         ))
     );
 }
@@ -344,7 +344,7 @@ fn blank_kimi_env_token_falls_back_to_stored_oauth_tokens() {
 
     assert_eq!(
         KimiUsage::configured_tokens_from(&store, Some("  ".into())).unwrap(),
-        Some((tokens, KimiAuthSource::Store))
+        Some((tokens, TokenAuthSource::Store))
     );
 }
 
@@ -384,7 +384,7 @@ async fn kimi_source_sends_oauth_header() {
                 token_type: "Bearer".into(),
                 expires_in: None,
             },
-            KimiAuthSource::Store,
+            TokenAuthSource::Store,
         )
         .await
         .unwrap();
@@ -446,7 +446,7 @@ async fn xai_source_sends_oauth_cli_headers() {
                 expires_at_unix: None,
                 id_token: None,
             },
-            XaiAuthSource::Store,
+            TokenAuthSource::Store,
         )
         .await
         .unwrap();
@@ -528,9 +528,6 @@ fn blank_opencode_go_env_key_falls_back_to_stored_api_key() {
 
     assert_eq!(
         OpenCodeGoUsage::configured_tokens_from(&store, Some("  ".into())).unwrap(),
-        Some((
-            OpenCodeGoKey("stored-key".into()),
-            OpenCodeGoAuthSource::Store
-        ))
+        Some((OpenCodeGoKey("stored-key".into()), TokenAuthSource::Store))
     );
 }

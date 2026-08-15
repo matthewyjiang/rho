@@ -167,6 +167,14 @@ pub trait UsageLimitsSource {
 /// `Ok(None)` means the provider is not connected.
 type ConfiguredTokens<T, S> = Result<Option<(T, S)>, UsageLimitsError>;
 
+/// Where an env-or-store provider found its active credentials. Only stored
+/// credentials may be refreshed and persisted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TokenAuthSource {
+    Env,
+    Store,
+}
+
 /// Boxed future returned by [`UsageProvider::refresh`].
 type RefreshFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<Option<T>, UsageLimitsError>> + Send + 'a>>;
@@ -374,7 +382,7 @@ impl KimiUsage {
     fn configured_tokens_from(
         store: &dyn CredentialStore,
         env_access_token: Option<String>,
-    ) -> ConfiguredTokens<KimiTokens, KimiAuthSource> {
+    ) -> ConfiguredTokens<KimiTokens, TokenAuthSource> {
         if let Some(access_token) = env_access_token.filter(|token| !token.trim().is_empty()) {
             return Ok(Some((
                 KimiTokens {
@@ -385,16 +393,16 @@ impl KimiUsage {
                     token_type: "Bearer".into(),
                     expires_in: None,
                 },
-                KimiAuthSource::Env,
+                TokenAuthSource::Env,
             )));
         }
-        Ok(load_kimi_tokens(store)?.map(|tokens| (tokens, KimiAuthSource::Store)))
+        Ok(load_kimi_tokens(store)?.map(|tokens| (tokens, TokenAuthSource::Store)))
     }
 }
 
 impl UsageProvider for KimiUsage {
     type Tokens = KimiTokens;
-    type Source = KimiAuthSource;
+    type Source = TokenAuthSource;
     type Payload = KimiUsagePayload;
 
     const PROVIDER: &'static str = "Kimi Code";
@@ -403,7 +411,7 @@ impl UsageProvider for KimiUsage {
 
     fn configured_tokens(
         store: &dyn CredentialStore,
-    ) -> ConfiguredTokens<KimiTokens, KimiAuthSource> {
+    ) -> ConfiguredTokens<KimiTokens, TokenAuthSource> {
         Self::configured_tokens_from(store, std::env::var("KIMI_ACCESS_TOKEN").ok())
     }
 
@@ -417,10 +425,10 @@ impl UsageProvider for KimiUsage {
         client: &'a reqwest::Client,
         store: &'a dyn CredentialStore,
         tokens: &'a KimiTokens,
-        source: KimiAuthSource,
+        source: TokenAuthSource,
     ) -> RefreshFuture<'a, KimiTokens> {
         Box::pin(async move {
-            let (KimiAuthSource::Store, Some(refresh_token)) =
+            let (TokenAuthSource::Store, Some(refresh_token)) =
                 (source, tokens.refresh_token.clone())
             else {
                 return Ok(None);
@@ -447,7 +455,7 @@ impl XaiUsage {
     fn configured_tokens_from(
         store: &dyn CredentialStore,
         env_access_token: Option<String>,
-    ) -> ConfiguredTokens<XaiTokens, XaiAuthSource> {
+    ) -> ConfiguredTokens<XaiTokens, TokenAuthSource> {
         if let Some(access_token) = env_access_token.filter(|token| !token.trim().is_empty()) {
             return Ok(Some((
                 XaiTokens {
@@ -456,16 +464,16 @@ impl XaiUsage {
                     expires_at_unix: None,
                     id_token: None,
                 },
-                XaiAuthSource::Env,
+                TokenAuthSource::Env,
             )));
         }
-        Ok(load_xai_tokens(store)?.map(|tokens| (tokens, XaiAuthSource::Store)))
+        Ok(load_xai_tokens(store)?.map(|tokens| (tokens, TokenAuthSource::Store)))
     }
 }
 
 impl UsageProvider for XaiUsage {
     type Tokens = XaiTokens;
-    type Source = XaiAuthSource;
+    type Source = TokenAuthSource;
     type Payload = XaiBillingPayload;
 
     const PROVIDER: &'static str = "xAI";
@@ -478,7 +486,7 @@ impl UsageProvider for XaiUsage {
 
     fn configured_tokens(
         store: &dyn CredentialStore,
-    ) -> ConfiguredTokens<XaiTokens, XaiAuthSource> {
+    ) -> ConfiguredTokens<XaiTokens, TokenAuthSource> {
         Self::configured_tokens_from(store, std::env::var("XAI_ACCESS_TOKEN").ok())
     }
 
@@ -501,10 +509,10 @@ impl UsageProvider for XaiUsage {
         client: &'a reqwest::Client,
         store: &'a dyn CredentialStore,
         tokens: &'a XaiTokens,
-        source: XaiAuthSource,
+        source: TokenAuthSource,
     ) -> RefreshFuture<'a, XaiTokens> {
         Box::pin(async move {
-            let (XaiAuthSource::Store, Some(refresh_token)) =
+            let (TokenAuthSource::Store, Some(refresh_token)) =
                 (source, tokens.refresh_token.clone())
             else {
                 return Ok(None);
@@ -526,26 +534,34 @@ impl UsageProvider for XaiUsage {
 
 struct OpenCodeGoUsage;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 struct OpenCodeGoKey(String);
+
+/// Redacted so assertion and log output never print the secret; credential
+/// types in this codebase must not expose their value through `Debug`.
+impl std::fmt::Debug for OpenCodeGoKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("OpenCodeGoKey(redacted)")
+    }
+}
 
 impl OpenCodeGoUsage {
     fn configured_tokens_from(
         store: &dyn CredentialStore,
         env_api_key: Option<String>,
-    ) -> ConfiguredTokens<OpenCodeGoKey, OpenCodeGoAuthSource> {
+    ) -> ConfiguredTokens<OpenCodeGoKey, TokenAuthSource> {
         if let Some(api_key) = env_api_key.filter(|key| !key.trim().is_empty()) {
-            return Ok(Some((OpenCodeGoKey(api_key), OpenCodeGoAuthSource::Env)));
+            return Ok(Some((OpenCodeGoKey(api_key), TokenAuthSource::Env)));
         }
         Ok(load_provider_api_key(store, "opencode-go")?
             .filter(|key| !key.trim().is_empty())
-            .map(|key| (OpenCodeGoKey(key), OpenCodeGoAuthSource::Store)))
+            .map(|key| (OpenCodeGoKey(key), TokenAuthSource::Store)))
     }
 }
 
 impl UsageProvider for OpenCodeGoUsage {
     type Tokens = OpenCodeGoKey;
-    type Source = OpenCodeGoAuthSource;
+    type Source = TokenAuthSource;
     type Payload = OpenCodeGoUsagePayload;
 
     const PROVIDER: &'static str = "OpenCode Go";
@@ -554,7 +570,7 @@ impl UsageProvider for OpenCodeGoUsage {
 
     fn configured_tokens(
         store: &dyn CredentialStore,
-    ) -> ConfiguredTokens<OpenCodeGoKey, OpenCodeGoAuthSource> {
+    ) -> ConfiguredTokens<OpenCodeGoKey, TokenAuthSource> {
         Self::configured_tokens_from(store, std::env::var("OPENCODE_API_KEY").ok())
     }
 
@@ -571,7 +587,7 @@ impl UsageProvider for OpenCodeGoUsage {
         _client: &'a reqwest::Client,
         _store: &'a dyn CredentialStore,
         _tokens: &'a OpenCodeGoKey,
-        _source: OpenCodeGoAuthSource,
+        _source: TokenAuthSource,
     ) -> RefreshFuture<'a, OpenCodeGoKey> {
         Box::pin(async move { Ok(None) })
     }
@@ -639,24 +655,6 @@ fn aggregate_usage_limits(
         return Err(errors.into_iter().next().expect("connected provider error"));
     }
     Ok((ProviderLimits { providers }, errors))
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum OpenCodeGoAuthSource {
-    Env,
-    Store,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum XaiAuthSource {
-    Env,
-    Store,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum KimiAuthSource {
-    Env,
-    Store,
 }
 
 #[derive(Deserialize)]
