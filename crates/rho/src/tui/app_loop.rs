@@ -93,9 +93,9 @@ impl App {
             }) || agent
                 .workflow_tracker()
                 .has_active_or_pending_notification(agent.session_id().as_str())
-                || agent.processes().is_some_and(
-                    crate::tools::process::ProcessManager::has_active_or_pending_notification,
-                )
+                || agent
+                    .processes()
+                    .is_some_and(crate::tools::process::ProcessManager::has_pending_notification)
                 || self.pending_subagent_questionnaire.is_some()
                 || self.subagent_inbox.has_queued_questionnaires()
                 || self.subagent_inbox.has_pending_notices();

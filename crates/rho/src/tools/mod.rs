@@ -3,6 +3,7 @@ pub mod agent;
 mod agent_output;
 mod coding;
 pub(crate) mod mcp;
+mod notification_format;
 pub(crate) mod process;
 pub mod rho;
 mod sdk_features;

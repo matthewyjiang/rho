@@ -760,3 +760,24 @@ async fn terminal_poll_observes_and_suppresses_notification() {
         "poll of a finished process must consume the automatic delivery"
     );
 }
+
+// Covers: a live background process must not pin the idle loop
+// Owner: process manager
+#[tokio::test]
+async fn running_process_is_not_a_pending_notification() {
+    let manager = ProcessManager::new(ProcessLimits::default());
+    let started = manager
+        .start(LONG_RUNNING_COMMAND.into(), std::path::Path::new("."), None)
+        .await
+        .unwrap();
+    assert!(
+        !manager.has_pending_notification(),
+        "running jobs wait on Notify, not the 500ms idle tick"
+    );
+    manager
+        .stop(&started.process_id, Duration::ZERO)
+        .await
+        .unwrap();
+    let _ = wait_for_exit_notification(&manager).await;
+    assert!(manager.take_notifications().is_empty());
+}

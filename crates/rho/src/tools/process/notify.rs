@@ -24,23 +24,12 @@ pub(crate) struct ProcessNotification {
 pub(crate) fn notification_prompts(notifications: &[ProcessNotification]) -> (String, String) {
     let body_budget = MODEL_NOTIFICATION_BYTES
         .saturating_sub(NOTIFICATION_HEADER.len() + NOTIFICATION_FOOTER.len());
-    let mut body = String::new();
-    for (index, notification) in notifications.iter().enumerate() {
-        let separator = if index == 0 { "" } else { "\n\n" };
-        let summary = format_notification_summary(notification);
-        if body.len() + separator.len() + summary.len() > body_budget {
-            let remaining = notifications.len() - index;
-            let omission = format!(
-                "{separator}... {remaining} process status section(s) omitted; use process poll"
-            );
-            if body.len() + omission.len() <= body_budget {
-                body.push_str(&omission);
-            }
-            break;
-        }
-        body.push_str(separator);
-        body.push_str(&summary);
-    }
+    let body = crate::tools::notification_format::join_budgeted_sections(
+        notifications.iter().map(format_notification_summary),
+        "\n\n",
+        body_budget,
+        |remaining| format!("... {remaining} process status section(s) omitted; use process poll"),
+    );
     let model = format!("{NOTIFICATION_HEADER}{body}{NOTIFICATION_FOOTER}");
     let display = notifications
         .iter()

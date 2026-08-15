@@ -230,10 +230,12 @@ impl ProcessManager {
         self.exited.clone().notified_owned()
     }
 
-    pub fn has_active_or_pending_notification(&self) -> bool {
+    /// True when a finished process is waiting to be delivered to the model.
+    /// Running jobs are excluded: the idle loop sleeps on [`Self::notified_owned`].
+    pub fn has_pending_notification(&self) -> bool {
         self.inner.lock().unwrap().records.values().any(|record| {
             let record = record.lock().unwrap();
-            !terminal(record.state) || !record.observed
+            terminal(record.state) && !record.observed
         })
     }
 
