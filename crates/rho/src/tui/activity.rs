@@ -275,10 +275,7 @@ impl LoadingSpinner {
         self.started_at = None;
     }
 
-    fn frame_at(&self, now: Instant) -> &'static str {
-        let Some(started_at) = self.started_at else {
-            return Self::FRAMES[0];
-        };
+    pub(super) fn frame_since(started_at: Instant, now: Instant) -> &'static str {
         let interval_ms = Self::FRAME_INTERVAL.as_millis().max(1);
         let frame = now
             .saturating_duration_since(started_at)
@@ -286,6 +283,13 @@ impl LoadingSpinner {
             .checked_div(interval_ms)
             .unwrap_or(0) as usize;
         Self::FRAMES[frame % Self::FRAMES.len()]
+    }
+
+    fn frame_at(&self, now: Instant) -> &'static str {
+        let Some(started_at) = self.started_at else {
+            return Self::FRAMES[0];
+        };
+        Self::frame_since(started_at, now)
     }
 
     pub(super) fn line(

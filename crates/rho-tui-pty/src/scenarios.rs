@@ -14,6 +14,7 @@ mod file_palette;
 mod first_run;
 mod goal;
 mod hooks;
+mod limits;
 mod login;
 mod markdown_stream;
 mod mcp;
@@ -58,6 +59,7 @@ use goal::{
     GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS, GOAL_WAITS_FOR_SUBAGENTS_STEPS,
 };
 use hooks::HOOKS_CONTRACT_SCENARIO;
+use limits::LIMITS_OVERLAY_SCENARIO;
 use login::LOGIN_PROVIDER_GROUPS_STEPS;
 use markdown_stream::{MARKDOWN_HEADINGS_SCENARIO, STREAMING_MARKDOWN_STABILITY_SCENARIO};
 use mcp::MCP_INVENTORY_SCENARIO;
@@ -139,8 +141,13 @@ const TYPE_DURING_STREAM_STEPS: &[Step] = &[
     Step::Phase("query_limits"),
     Step::SubmitText("/limits"),
     Step::WaitText {
-        text: "no supported providers are connected",
+        text: "Usage limits",
         timeout: STREAM,
+    },
+    Step::Key(Key::Esc),
+    Step::WaitQuiet {
+        quiet_for: Duration::from_millis(150),
+        timeout: SETTLE,
     },
     Step::Phase("type_draft"),
     Step::TypeText("draft while streaming"),
@@ -171,9 +178,6 @@ const CANCEL_AND_RESUBMIT_STEPS: &[Step] = &[
     },
     Step::Phase("cancel"),
     Step::Key(Key::Esc),
-    // WaitQuiet can pass while cancellation is still tearing down. Esc then
-    // Enter queues a steer that interrupt restores into the composer, so the
-    // resubmit never starts a turn. Wait for the durable interrupt outcome.
     Step::WaitText {
         text: "model interrupted",
         timeout: STREAM,
@@ -737,6 +741,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     SPINNER_ACTIVITY_ANCHOR_SCENARIO,
     SPINNER_ACTIVITY_JUMP_RAIL_SCENARIO,
     HELP_OVERLAY_SCENARIO,
+    LIMITS_OVERLAY_SCENARIO,
     SLASH_COMMAND_PALETTE_SCENARIO,
     FILE_PATH_AUTOCOMPLETE_SCENARIO,
     Scenario::new(

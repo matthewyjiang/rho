@@ -37,6 +37,7 @@ mod tui;
 mod update;
 mod usage;
 mod usage_limits;
+mod usage_limits_cache;
 pub(crate) mod workflow;
 mod workspace;
 

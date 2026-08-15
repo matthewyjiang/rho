@@ -65,12 +65,16 @@ fn row_containing(harness: &mut PtyHarness, needle: &str) -> Result<u16> {
     }
 }
 
+fn prompt_row(harness: &mut PtyHarness) -> Result<u16> {
+    row_containing(harness, "more lines, ctrl+o to expand")
+}
+
 // Covers: hovering a collapsed tool card lifts its text ink on pointer entry
 // and reverts on pointer exit; a completed click still expands the card and
 // the lift survives the click without any pointer motion.
 // Owner: interactive UX (PTY).
 fn assert_hover_lift_and_click_expand(harness: &mut PtyHarness) -> Result<()> {
-    let row = row_containing(harness, "more lines, ctrl+o to expand")?;
+    let row = prompt_row(harness)?;
     let baseline = row_look(harness, row);
     assert!(
         !baseline.is_empty(),
@@ -79,7 +83,8 @@ fn assert_hover_lift_and_click_expand(harness: &mut PtyHarness) -> Result<()> {
     );
 
     // SGR mouse coordinates are 1-based.
-    let (column, sgr_row) = (6u16, row + 1);
+    let column = 6u16;
+    let sgr_row = row + 1;
     let unlifted = baseline
         .first()
         .copied()
@@ -94,6 +99,9 @@ fn assert_hover_lift_and_click_expand(harness: &mut PtyHarness) -> Result<()> {
     )?;
 
     harness.mouse_move(column, 1)?;
+    // A late session-title notice can insert a history row and shift the
+    // card; re-resolve so we do not sample a different line as "unlifted".
+    let row = prompt_row(harness)?;
     wait_for_row_look(
         harness,
         row,
@@ -103,6 +111,7 @@ fn assert_hover_lift_and_click_expand(harness: &mut PtyHarness) -> Result<()> {
 
     // Wheel scrolling shifts content under the stationary pointer; the lift
     // must re-anchor from the frame layout, not only from mouse moves.
+    let sgr_row = row + 1;
     harness.mouse_move(column, sgr_row)?;
     for _ in 0..4 {
         harness.mouse(MouseButton::WheelUp, column, sgr_row, true)?;
@@ -163,6 +172,10 @@ pub(super) const TOOL_CARD_HOVER_STEPS: &[Step] = &[
     },
     Step::WaitText {
         text: "hover tool lifecycle complete",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "session titled:",
         timeout: STREAM,
     },
     Step::Custom(assert_hover_lift_and_click_expand),

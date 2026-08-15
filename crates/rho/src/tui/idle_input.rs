@@ -42,6 +42,7 @@ impl App {
             ComposerMode::ConfigNumberInput(_) => self.handle_config_number_key(key, terminal),
             ComposerMode::TextInput(_) => self.handle_text_input_key(key),
             ComposerMode::Picker(_) => self.handle_picker_key(key, terminal, agent).await,
+            ComposerMode::Limits(_) => Ok(self.handle_limits_overlay_key(key, terminal)),
             // Approvals are handled on the during-turn path, not idle input.
             ComposerMode::Approval(_) => Ok(false),
         }

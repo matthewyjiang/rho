@@ -1,6 +1,6 @@
 use std::{future::Future, marker::PhantomData, pin::Pin, time::SystemTime};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use {
@@ -21,17 +21,12 @@ const XAI_CLIENT_VERSION: &str = "0.2.93";
 const OPENCODE_GO_USAGE_URL: &str = "https://opencode.ai/zen/go/v1/usage";
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct ProviderLimits {
-    pub providers: Vec<ProviderUsageLimits>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
 pub struct ProviderUsageLimits {
     pub provider: String,
     pub windows: Vec<UsageLimitWindow>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct UsageLimitWindow {
     pub label: String,
     /// Remaining percent when the source reported utilization.
@@ -40,6 +35,15 @@ pub struct UsageLimitWindow {
     pub resets_at_unix: Option<i64>,
     /// Optional status note (warning, overage, observation age, …).
     pub note: Option<String>,
+}
+
+/// One connected source `/limits` can query live.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum UsageProviderKind {
+    Codex,
+    KimiCode,
+    OpenCodeGo,
+    Xai,
 }
 
 /// Boxed future returned by [`UsageLimitsSource::fetch`].
@@ -155,10 +159,7 @@ impl UsageEndpoint {
     }
 }
 
-/// Supplies normalized usage windows for one connected provider.
-///
-/// Implementors should return only limits reported by the provider. Missing
-/// windows must not be synthesized because an absent window may be temporary.
+/// Normalized usage windows for one connected provider. Missing windows must not be synthesized.
 pub trait UsageLimitsSource {
     fn fetch<'a>(&'a self, store: &'a dyn CredentialStore) -> UsageLimitsFuture<'a>;
 }
@@ -179,20 +180,11 @@ enum TokenAuthSource {
 type RefreshFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<Option<T>, UsageLimitsError>> + Send + 'a>>;
 
-/// Describes one token-authenticated usage endpoint.
-///
-/// Implementors supply only what differs between providers: where the endpoint
-/// lives, how a request carries the token, how credentials are discovered and
-/// refreshed, and how a decoded payload becomes windows. [`TokenUsageSource`]
-/// owns the shared request, refresh, retry, and decode ladder, so adding a
-/// provider never restates it.
+/// Token-authenticated usage endpoint. [`TokenUsageSource`] owns the shared ladder.
 trait UsageProvider: Send + Sync + 'static {
-    /// Credentials the endpoint authenticates with.
     type Tokens: Send + Sync;
-    /// Where the active credentials came from. This governs whether a refresh
-    /// is allowed to replace stored tokens.
+    /// Whether a refresh may replace stored tokens.
     type Source: Copy + Send + Sync;
-    /// Decoded response body.
     type Payload: serde::de::DeserializeOwned + Send;
 
     /// Name shown to the user and carried on [`UsageLimitsError`].
@@ -218,9 +210,7 @@ trait UsageProvider: Send + Sync + 'static {
         tokens: &Self::Tokens,
     ) -> reqwest::RequestBuilder;
 
-    /// Exchanges rejected credentials for fresh ones, persisting them when the
-    /// source allows it. `Ok(None)` means no refresh is possible, which the
-    /// caller reports as [`UsageLimitsError::Unauthorized`].
+    /// Refresh rejected credentials; `Ok(None)` becomes unauthorized.
     fn refresh<'a>(
         client: &'a reqwest::Client,
         store: &'a dyn CredentialStore,
@@ -228,7 +218,7 @@ trait UsageProvider: Send + Sync + 'static {
         source: Self::Source,
     ) -> RefreshFuture<'a, Self::Tokens>;
 
-    /// Normalizes a decoded payload into the windows the provider reported.
+    /// Decoded payload → reported windows.
     fn windows(payload: Self::Payload) -> Vec<UsageLimitWindow>;
 }
 
@@ -597,64 +587,50 @@ impl UsageProvider for OpenCodeGoUsage {
     }
 }
 
-pub async fn fetch_connected_usage_limits(
-    store: &dyn CredentialStore,
-    client: reqwest::Client,
-) -> Result<(ProviderLimits, Vec<UsageLimitsError>), UsageLimitsError> {
-    let codex = CodexUsageLimitsSource::new(client.clone());
-    let kimi = KimiUsageLimitsSource::new(client.clone());
-    let xai = XaiUsageLimitsSource::new(client.clone());
-    let opencode_go = OpenCodeGoUsageLimitsSource::new(client);
-    let (codex, kimi, xai, opencode_go) = tokio::join!(
-        codex.fetch(store),
-        kimi.fetch(store),
-        xai.fetch(store),
-        opencode_go.fetch(store)
-    );
-    aggregate_usage_limits([codex, kimi, xai, opencode_go])
-}
+impl UsageProviderKind {
+    pub const ALL: [Self; 4] = [Self::Codex, Self::KimiCode, Self::OpenCodeGo, Self::Xai];
 
-#[cfg(test)]
-async fn fetch_usage_limits_from_sources(
-    store: &dyn CredentialStore,
-    first: &(dyn UsageLimitsSource + Sync),
-    second: &(dyn UsageLimitsSource + Sync),
-) -> Result<(ProviderLimits, Vec<UsageLimitsError>), UsageLimitsError> {
-    let (first, second) = tokio::join!(first.fetch(store), second.fetch(store));
-    aggregate_usage_limits([first, second])
-}
-
-fn aggregate_usage_limits(
-    results: impl IntoIterator<Item = Result<Option<ProviderUsageLimits>, UsageLimitsError>>,
-) -> Result<(ProviderLimits, Vec<UsageLimitsError>), UsageLimitsError> {
-    let mut providers = Vec::new();
-    let mut errors = Vec::new();
-    let mut saw_connected = false;
-    for result in results {
-        match result {
-            Ok(None) => {}
-            Ok(Some(limits)) => {
-                saw_connected = true;
-                providers.push(limits);
-            }
-            Err(error) => {
-                saw_connected = true;
-                errors.push(error);
-            }
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Codex => CodexUsage::PROVIDER,
+            Self::KimiCode => KimiUsage::PROVIDER,
+            Self::OpenCodeGo => OpenCodeGoUsage::PROVIDER,
+            Self::Xai => XaiUsage::PROVIDER,
         }
     }
-    providers.sort_by(|left, right| {
-        left.provider
-            .to_ascii_lowercase()
-            .cmp(&right.provider.to_ascii_lowercase())
-    });
-    if !saw_connected {
-        return Ok((ProviderLimits { providers }, errors));
+}
+
+pub fn usage_provider_is_connected(
+    kind: UsageProviderKind,
+    store: &dyn CredentialStore,
+) -> Result<bool, UsageLimitsError> {
+    match kind {
+        UsageProviderKind::Codex => {
+            CodexUsage::configured_tokens(store).map(|tokens| tokens.is_some())
+        }
+        UsageProviderKind::KimiCode => {
+            KimiUsage::configured_tokens(store).map(|tokens| tokens.is_some())
+        }
+        UsageProviderKind::OpenCodeGo => {
+            OpenCodeGoUsage::configured_tokens(store).map(|tokens| tokens.is_some())
+        }
+        UsageProviderKind::Xai => XaiUsage::configured_tokens(store).map(|tokens| tokens.is_some()),
     }
-    if providers.is_empty() {
-        return Err(errors.into_iter().next().expect("connected provider error"));
+}
+
+pub async fn fetch_usage_provider(
+    kind: UsageProviderKind,
+    store: &dyn CredentialStore,
+    client: reqwest::Client,
+) -> Result<Option<ProviderUsageLimits>, UsageLimitsError> {
+    match kind {
+        UsageProviderKind::Codex => CodexUsageLimitsSource::new(client).fetch(store).await,
+        UsageProviderKind::KimiCode => KimiUsageLimitsSource::new(client).fetch(store).await,
+        UsageProviderKind::OpenCodeGo => {
+            OpenCodeGoUsageLimitsSource::new(client).fetch(store).await
+        }
+        UsageProviderKind::Xai => XaiUsageLimitsSource::new(client).fetch(store).await,
     }
-    Ok((ProviderLimits { providers }, errors))
 }
 
 #[derive(Deserialize)]

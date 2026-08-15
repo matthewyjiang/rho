@@ -90,6 +90,7 @@ fn is_routine_status(message: &str) -> bool {
             | "loading models"
             | "refreshing model list"
             | "checking usage limits"
+            | "usage limits"
             | "checking provider connections"
             | "fetching latest changelog"
             | "waiting for delegated agents"

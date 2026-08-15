@@ -33,6 +33,7 @@ impl App {
                 )
             }
             ComposerMode::Picker(_)
+            | ComposerMode::Limits(_)
             | ComposerMode::Questionnaire(_)
             | ComposerMode::Approval(_)
             | ComposerMode::InlineChoice(_) => (Theme::input_prompt(), None),
@@ -86,6 +87,7 @@ impl App {
                 lines
             }
             ComposerMode::Picker(picker) if picker.is_overlay() => Vec::new(),
+            ComposerMode::Limits(_) => Vec::new(),
             ComposerMode::Picker(picker) => picker_lines(picker, width, viewport_height),
             ComposerMode::SecretInput(secret) => secret_input_lines(secret, width),
             ComposerMode::ConfigNumberInput(input) => config_number_input_lines(input, width),
@@ -132,7 +134,8 @@ impl App {
             }
             ComposerMode::InteractivePending(_)
             | ComposerMode::Approval(_)
-            | ComposerMode::InlineChoice(_) => Position { x: 0, y: 0 },
+            | ComposerMode::InlineChoice(_)
+            | ComposerMode::Limits(_) => Position { x: 0, y: 0 },
             ComposerMode::Picker(picker) => Position {
                 x: display_width(&picker.filter)
                     .saturating_add(2)

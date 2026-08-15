@@ -51,8 +51,8 @@ impl App {
                     .is_some_and(|pending| pending.handle.is_finished())
                 || self
                     .pending_usage_limits
-                    .as_ref()
-                    .is_some_and(|handle| handle.is_finished())
+                    .iter()
+                    .any(|fetch| fetch.handle.is_finished())
                 || self
                     .pending_changelog
                     .as_ref()
@@ -103,7 +103,7 @@ impl App {
                 || self.pending_update_notice.is_some()
                 || self.pending_session_title.is_some()
                 || self.pending_interactive_login.is_some()
-                || self.pending_usage_limits.is_some()
+                || !self.pending_usage_limits.is_empty()
                 || self.pending_changelog.is_some()
                 || self.mcp_argument_completions.is_pending()
                 || self.has_pending_subagent_attach()
@@ -182,6 +182,7 @@ impl App {
             Event::Resize(_, _) => {
                 self.flush_pending_paste_burst();
                 self.clamp_overlay_detail_scroll(terminal);
+                self.clamp_limits_overlay_scroll(terminal);
                 self.clear_selections();
                 self.history.set_hovered_code_block_copy(None);
                 self.subagent_panel.clear_pointer_state();
@@ -243,6 +244,10 @@ impl App {
                 .status_overlay
                 .as_ref()
                 .is_some_and(|overlay| overlay.is_visible(now))
+            || matches!(
+                self.input_ui.composer(),
+                ComposerMode::Limits(overlay) if overlay.is_checking()
+            )
             || self.history.scrollbar_hovered()
             || self.history.scrollbar_drag().is_some()
             || self
@@ -274,6 +279,7 @@ impl App {
             ComposerMode::Questionnaire(_) => Some(HerdrUserWait::Questionnaire),
             ComposerMode::Input
             | ComposerMode::Picker(_)
+            | ComposerMode::Limits(_)
             | ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::TextInput(_)

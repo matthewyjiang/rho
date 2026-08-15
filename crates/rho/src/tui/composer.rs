@@ -82,6 +82,7 @@ impl App {
             | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::TextInput(_)
             | ComposerMode::Picker(_)
+            | ComposerMode::Limits(_)
             | ComposerMode::InlineChoice(_)
             | ComposerMode::InteractivePending(_) => {}
         }
@@ -113,6 +114,7 @@ impl App {
             | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::TextInput(_)
             | ComposerMode::Picker(_)
+            | ComposerMode::Limits(_)
             | ComposerMode::InlineChoice(_)
             | ComposerMode::InteractivePending(_) => false,
         }
@@ -131,6 +133,7 @@ impl App {
             | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::TextInput(_)
             | ComposerMode::Picker(_)
+            | ComposerMode::Limits(_)
             | ComposerMode::InlineChoice(_)
             | ComposerMode::InteractivePending(_) => false,
         }
@@ -700,6 +703,7 @@ impl App {
             }
             ComposerMode::Approval(_)
             | ComposerMode::Picker(_)
+            | ComposerMode::Limits(_)
             | ComposerMode::InteractivePending(_)
             | ComposerMode::InlineChoice(_) => {}
         }

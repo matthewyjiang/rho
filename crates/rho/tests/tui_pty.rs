@@ -463,6 +463,13 @@ fn runtime_info_reflows_after_narrow_resize() {
     assert_pass("runtime_info");
 }
 
+// Covers: /limits must open a single-pane overlay and Esc must return to the session.
+// Owner: interactive TUI
+#[test]
+fn limits_overlay_opens_and_dismisses() {
+    assert_pass("limits_overlay");
+}
+
 // Covers: fragile interactive surfaces from issue #711.
 // Owner: interactive TUI
 #[test]
