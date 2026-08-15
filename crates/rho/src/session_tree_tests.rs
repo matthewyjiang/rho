@@ -821,3 +821,49 @@ fn mirrored_tree_legacy_v1_no_parent_snapshot_upgrade_index_record_equals_reload
     let branched_record = session.set_leaf_mirrored_record(&legacy_leaf_id).unwrap();
     assert_mirrored_record_matches_file(&session, &branched_record);
 }
+
+// Covers: v1 same-revision upgrade must stay loadable and index the new leaf
+// Owner: session persistence
+#[test]
+fn v1_same_revision_upgrade_stays_loadable_and_indexes_the_new_leaf() {
+    let root = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let id = "11111111-1111-4111-8111-111111111111";
+    let dir = session_dir_in_root(root.path(), cwd.path());
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("1_{id}.jsonl"));
+    let fixture = include_str!("session/fixtures/session-v1.jsonl");
+    let mut lines = fixture.lines();
+    let mut header = serde_json::from_str::<serde_json::Value>(lines.next().unwrap()).unwrap();
+    header["cwd"] = serde_json::Value::String(cwd.path().to_string_lossy().into_owned());
+    let transcript = std::iter::once(header.to_string())
+        .chain(lines.map(str::to_owned))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(&path, format!("{transcript}\n")).unwrap();
+
+    let (session, _) = Session::open_by_id_in_root(root.path(), cwd.path(), id).unwrap();
+    let before = session.session_tree().unwrap();
+    let before_leaf = before.active_leaf_id().unwrap().clone();
+    let before_nodes = before.facts().node_count;
+
+    let snapshot = session
+        .snapshot_for_resume(
+            ModelIdentity::new("target", "api", "model"),
+            "rho:migrated-v1".into(),
+        )
+        .unwrap();
+    let mirrored = session
+        .save_snapshot_mirrored_record(&snapshot, &[])
+        .unwrap();
+    assert_mirrored_record_matches_file(&session, &mirrored);
+
+    let tree = session.session_tree().unwrap();
+    let facts = tree.facts();
+    assert_eq!(facts.node_count, before_nodes + 1);
+    assert_ne!(facts.active_leaf_id.as_ref(), Some(&before_leaf));
+    assert_eq!(
+        facts.active_leaf_id.map(|id| id.to_string()),
+        mirrored.active_leaf_id
+    );
+}

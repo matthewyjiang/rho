@@ -794,16 +794,18 @@ impl SessionTree {
                         delta.restore(base)?
                     }
                 };
-                if let Some(parent_snapshot) = parent_snapshot {
-                    if snapshot != *parent_snapshot && snapshot.revision() <= parent.state.revision
-                    {
-                        anyhow::bail!(
-                            "node '{}' changed state without advancing parent revision {}",
-                            node.id,
-                            parent.state.revision
-                        );
+                let state_changed = match parent_snapshot {
+                    Some(parent_snapshot) => snapshot != *parent_snapshot,
+                    // Message-only v1 parents keep restored state without a
+                    // complete snapshot. A full snapshot child may restate that
+                    // current revision when materializing the explicit tree.
+                    None => {
+                        snapshot.history() != parent.state.model.as_slice()
+                            || snapshot.compaction() != &parent.state.compaction
+                            || snapshot.revision() != parent.state.revision
                     }
-                } else if snapshot.revision() <= parent.state.revision {
+                };
+                if state_changed && snapshot.revision() <= parent.state.revision {
                     anyhow::bail!(
                         "node '{}' changed state without advancing parent revision {}",
                         node.id,
