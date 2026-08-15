@@ -42,7 +42,7 @@ pub(crate) mod workspace_checkpoint;
 use layout::encode_cwd;
 use persistence::{
     parse_timestamp, session_dir_in_root, session_root, session_web_dir, unix_timestamp_secs,
-    workspace_key, AppendCursor, SessionStore,
+    AppendCursor, SessionStore,
 };
 #[cfg(test)]
 use persistence::{
@@ -99,8 +99,8 @@ impl SessionTarget {
 }
 
 /// Encoded workspace identity used for session folders and attach scoping.
-pub(crate) fn workspace_identity(cwd: &Path) -> String {
-    workspace_key(cwd)
+pub(crate) fn workspace_key(cwd: &Path) -> String {
+    layout::workspace_key(cwd)
 }
 
 impl SessionSummary {

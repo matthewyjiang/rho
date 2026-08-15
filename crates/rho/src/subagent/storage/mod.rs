@@ -34,7 +34,6 @@ const MAX_ALLOCATION_ATTEMPTS: usize = 100;
 pub(crate) struct IndexedRun {
     pub id: String,
     pub directory: PathBuf,
-    pub parent_session_id: Option<String>,
 }
 
 /// A non-terminal indexed run, ready for attach.
@@ -48,55 +47,48 @@ pub(crate) struct RunningRun {
     pub elapsed_seconds: u64,
 }
 
-fn list_indexed_runs_in_root(rho_root: &Path) -> anyhow::Result<Vec<IndexedRun>> {
+fn list_indexed_runs_in_root(
+    rho_root: &Path,
+    workspace_key: &str,
+) -> anyhow::Result<Vec<IndexedRun>> {
     let index_path = rho_root.join("subagents").join(INDEX_FILE_NAME);
     if !index_path.is_file() {
         return Ok(Vec::new());
     }
     let connection = initialize_index(&index_path)?;
-    let mut statement = connection
-        .prepare("SELECT run_id, path, parent_session_id FROM runs ORDER BY created_at DESC")?;
-    let rows = statement.query_map([], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, Option<String>>(2)?,
-        ))
+    let mut statement = connection.prepare(
+        "SELECT run_id, path FROM runs WHERE workspace_key = ?1 ORDER BY created_at DESC",
+    )?;
+    let rows = statement.query_map(params![workspace_key], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
     })?;
     let mut runs = Vec::new();
     for row in rows {
-        let (id, path, parent_session_id) = row?;
+        let (id, path) = row?;
         let directory = PathBuf::from(path);
         if validate_run_directory(rho_root, &id, &directory).is_ok()
             && is_trusted_directory(&directory)
         {
-            runs.push(IndexedRun {
-                id,
-                directory,
-                parent_session_id,
-            });
+            runs.push(IndexedRun { id, directory });
         }
     }
     Ok(runs)
 }
 
-/// Indexed non-terminal runs that belong to the current workspace.
+/// Indexed non-terminal runs started in `cwd`.
 ///
-/// Session-owned runs must live under this directory's session folder. Global
-/// runs are included only when their parent session belongs to the same
-/// workspace. Parentless global runs stay out of the picker; `rho attach <id>`
-/// still finds them from any directory.
+/// Membership comes from the workspace key written at reservation. Rows with a
+/// missing key (pre-migration) stay out of the picker; `rho attach <id>` still
+/// finds them from any directory.
 pub(crate) fn list_running_runs(cwd: &Path) -> anyhow::Result<Vec<RunningRun>> {
     list_running_runs_in_root(&crate::paths::rho_dir()?, cwd)
 }
 
 fn list_running_runs_in_root(rho_root: &Path, cwd: &Path) -> anyhow::Result<Vec<RunningRun>> {
     let now = super::unix_now_secs();
+    let workspace_key = crate::session::workspace_key(cwd);
     let mut running = Vec::new();
-    for indexed in list_indexed_runs_in_root(rho_root)? {
-        if !run_belongs_to_cwd(rho_root, cwd, &indexed) {
-            continue;
-        }
+    for indexed in list_indexed_runs_in_root(rho_root, &workspace_key)? {
         let Some(status) = super::read_status(&indexed.directory.join(super::RESULT_FILE_NAME))
         else {
             continue;
@@ -118,40 +110,6 @@ fn list_running_runs_in_root(rho_root: &Path, cwd: &Path) -> anyhow::Result<Vec<
         });
     }
     Ok(running)
-}
-
-fn run_belongs_to_cwd(rho_root: &Path, cwd: &Path, run: &IndexedRun) -> bool {
-    let workspace_dir = rho_root
-        .join("sessions")
-        .join(crate::session::workspace_identity(cwd));
-    if run.directory.starts_with(&workspace_dir) {
-        return true;
-    }
-    let global_root = rho_root.join("subagents");
-    if run.directory.parent() != Some(global_root.as_path()) {
-        return false;
-    }
-    run.parent_session_id
-        .as_deref()
-        .is_some_and(|id| workspace_owns_parent_session(rho_root, cwd, id))
-}
-
-fn workspace_owns_parent_session(rho_root: &Path, cwd: &Path, parent_session_id: &str) -> bool {
-    let workspace_dir = rho_root
-        .join("sessions")
-        .join(crate::session::workspace_identity(cwd));
-    let Ok(entries) = fs::read_dir(workspace_dir) else {
-        return false;
-    };
-    entries
-        .flatten()
-        .any(|entry| unit_session_id(&entry.path()).as_deref() == Some(parent_session_id))
-}
-
-fn unit_session_id(path: &Path) -> Option<String> {
-    let name = path.file_name()?.to_str()?;
-    let stem = name.strip_suffix(".jsonl").unwrap_or(name);
-    stem.rsplit_once('_').map(|(_, id)| id.to_string())
 }
 
 /// Where a delegated run's artifact directory should live.
@@ -245,13 +203,17 @@ impl Drop for ParentRunCleanupGuard {
     }
 }
 
-pub(crate) fn reserve_run_directory(placement: &RunPlacement) -> anyhow::Result<(String, PathBuf)> {
+pub(crate) fn reserve_run_directory(
+    placement: &RunPlacement,
+    cwd: &Path,
+) -> anyhow::Result<(String, PathBuf)> {
     let rho_root = crate::paths::rho_dir()?;
-    reserve_run_directory_in_root(&rho_root, placement, new_run_id)
+    reserve_run_directory_in_root(&rho_root, cwd, placement, new_run_id)
 }
 
 fn reserve_run_directory_in_root(
     rho_root: &Path,
+    cwd: &Path,
     placement: &RunPlacement,
     mut next_id: impl FnMut() -> String,
 ) -> anyhow::Result<(String, PathBuf)> {
@@ -271,12 +233,14 @@ fn reserve_run_directory_in_root(
             ensure_parent_not_locked(&transaction, parent_session_id, unix_timestamp_secs())?;
         }
         let inserted = transaction.execute(
-            "INSERT OR IGNORE INTO runs (run_id, path, parent_session_id, created_at) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT OR IGNORE INTO runs (run_id, path, parent_session_id, created_at, workspace_key)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
                 id,
                 directory.to_string_lossy(),
                 placement.parent_session_id(),
                 unix_timestamp_secs(),
+                crate::session::workspace_key(cwd),
             ],
         )?;
         if inserted == 0 {
