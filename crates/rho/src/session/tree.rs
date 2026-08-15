@@ -5,13 +5,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use rho_providers::model::Message;
 use rho_sdk::SessionSnapshot;
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use uuid::Uuid;
 
 use super::persistence::{
-    next_revision, parse_timestamp, session_id_from_path, validate_session_version,
-    PersistedSessionState, SessionEntry, StoredDisplayMessage,
+    drop_incomplete_tool_turn_tail, next_revision, parse_timestamp, session_id_from_path,
+    validate_session_version, PersistedSessionState, SessionEntry, StoredDisplayMessage,
 };
 use super::snapshot_delta::StoredSnapshotDelta;
 use super::{SessionIndexRecord, SessionSummary};
@@ -798,12 +799,9 @@ impl SessionTree {
                     Some(parent_snapshot) => snapshot != *parent_snapshot,
                     // Message-only v1 parents keep restored state without a
                     // complete snapshot. A full snapshot child may restate that
-                    // current revision when materializing the explicit tree.
-                    None => {
-                        snapshot.history() != parent.state.model.as_slice()
-                            || snapshot.compaction() != &parent.state.compaction
-                            || snapshot.revision() != parent.state.revision
-                    }
+                    // current revision when materializing the explicit tree,
+                    // including resume-time history normalization.
+                    None => snapshot_less_parent_state_changed(&snapshot, &parent.state),
                 };
                 if state_changed && snapshot.revision() <= parent.state.revision {
                     anyhow::bail!(
@@ -936,4 +934,24 @@ fn synthetic_snapshot(
         ModelIdentity::new("legacy", "legacy", "legacy"),
         state.compaction.clone(),
     ))
+}
+
+fn snapshot_less_parent_state_changed(
+    snapshot: &SessionSnapshot,
+    parent: &PersistedSessionState,
+) -> bool {
+    let normalize = |history: Vec<Message>| {
+        SessionSnapshot::new(
+            snapshot.session_id().clone(),
+            snapshot.revision(),
+            drop_incomplete_tool_turn_tail(history),
+            snapshot.provider().clone(),
+            snapshot.compaction().clone(),
+        )
+    };
+    let parent_history = normalize(parent.model.clone());
+    let child_history = normalize(snapshot.history().to_vec());
+    child_history.history() != parent_history.history()
+        || snapshot.compaction() != &parent.compaction
+        || snapshot.revision() != parent.revision
 }

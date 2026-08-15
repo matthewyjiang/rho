@@ -1,5 +1,7 @@
 use super::tree::{NodeId, SessionNode, SessionNodeKind, StoredStateTransition};
 use super::*;
+use rho_providers::model::AbortedAssistant;
+use rho_tools::tool::ToolCall;
 
 fn assert_mirrored_record_matches_file(session: &Session, mirrored: &SessionIndexRecord) {
     let reloaded = summarize_session_file(session.path(), session.cwd()).unwrap();
@@ -822,10 +824,7 @@ fn mirrored_tree_legacy_v1_no_parent_snapshot_upgrade_index_record_equals_reload
     assert_mirrored_record_matches_file(&session, &branched_record);
 }
 
-// Covers: v1 same-revision upgrade must stay loadable and index the new leaf
-// Owner: session persistence
-#[test]
-fn v1_same_revision_upgrade_stays_loadable_and_indexes_the_new_leaf() {
+fn open_v1_session_with_tail(extra: &[Message]) -> (tempfile::TempDir, tempfile::TempDir, Session) {
     let root = tempfile::tempdir().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let id = "11111111-1111-4111-8111-111111111111";
@@ -836,34 +835,117 @@ fn v1_same_revision_upgrade_stays_loadable_and_indexes_the_new_leaf() {
     let mut lines = fixture.lines();
     let mut header = serde_json::from_str::<serde_json::Value>(lines.next().unwrap()).unwrap();
     header["cwd"] = serde_json::Value::String(cwd.path().to_string_lossy().into_owned());
-    let transcript = std::iter::once(header.to_string())
+    let mut transcript = std::iter::once(header.to_string())
         .chain(lines.map(str::to_owned))
-        .collect::<Vec<_>>()
-        .join("\n");
-    fs::write(&path, format!("{transcript}\n")).unwrap();
-
+        .collect::<Vec<_>>();
+    for (offset, message) in extra.iter().enumerate() {
+        transcript.push(
+            serde_json::to_string(&SessionEntry::Message {
+                timestamp: (200 + offset).to_string(),
+                message: message.clone(),
+                display_message: None,
+            })
+            .unwrap(),
+        );
+    }
+    fs::write(&path, format!("{}\n", transcript.join("\n"))).unwrap();
     let (session, _) = Session::open_by_id_in_root(root.path(), cwd.path(), id).unwrap();
+    (root, cwd, session)
+}
+
+fn incomplete_tool_tail() -> Message {
+    Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
+        id: "call-1".into(),
+        name: "bash".into(),
+        arguments: serde_json::json!({"command": "echo hi"}),
+    })])
+}
+
+fn aborted_assistant_with_reasoning() -> Message {
+    Message::AbortedAssistant(Box::new(AbortedAssistant {
+        content: vec![ContentBlock::Text("partial".into())],
+        reasoning: "cleared-on-resume".into(),
+        ..AbortedAssistant::default()
+    }))
+}
+
+// Covers: v1 same-revision upgrade must stay loadable and index the new leaf
+// Owner: session persistence
+#[test]
+fn v1_same_revision_upgrade_stays_loadable_and_indexes_the_new_leaf() {
+    let cases = [
+        ("fixture", Vec::new()),
+        ("incomplete tool tail", vec![incomplete_tool_tail()]),
+        (
+            "aborted assistant reasoning",
+            vec![aborted_assistant_with_reasoning()],
+        ),
+    ];
+    for (name, extra) in cases {
+        let (_root, _cwd, session) = open_v1_session_with_tail(&extra);
+        let before = session.session_tree().unwrap();
+        let before_leaf = before.active_leaf_id().unwrap().clone();
+        let before_nodes = before.facts().node_count;
+        let parent_model = before.active_state().unwrap().model.clone();
+
+        let snapshot = session
+            .snapshot_for_resume(
+                ModelIdentity::new("target", "api", "model"),
+                "rho:migrated-v1".into(),
+            )
+            .unwrap();
+        if !extra.is_empty() {
+            assert_ne!(
+                snapshot.history(),
+                parent_model.as_slice(),
+                "{name}: resume must normalize history so this case stays distinct"
+            );
+        }
+        let mirrored = session
+            .save_snapshot_mirrored_record(&snapshot, &[])
+            .unwrap();
+        assert_mirrored_record_matches_file(&session, &mirrored);
+
+        let tree = session.session_tree().unwrap();
+        let facts = tree.facts();
+        assert_eq!(facts.node_count, before_nodes + 1, "{name}");
+        assert_ne!(facts.active_leaf_id.as_ref(), Some(&before_leaf), "{name}");
+        assert_eq!(
+            facts.active_leaf_id.map(|id| id.to_string()),
+            mirrored.active_leaf_id,
+            "{name}"
+        );
+    }
+}
+
+// Covers: a rejected same-revision v1 state change must not leave an unloadable transcript
+// Owner: session persistence
+#[test]
+fn rejected_v1_same_revision_state_change_leaves_transcript_loadable() {
+    let (_root, _cwd, session) = open_v1_session_with_tail(&[]);
     let before = session.session_tree().unwrap();
     let before_leaf = before.active_leaf_id().unwrap().clone();
     let before_nodes = before.facts().node_count;
-
-    let snapshot = session
+    let resumed = session
         .snapshot_for_resume(
             ModelIdentity::new("target", "api", "model"),
             "rho:migrated-v1".into(),
         )
         .unwrap();
-    let mirrored = session
-        .save_snapshot_mirrored_record(&snapshot, &[])
-        .unwrap();
-    assert_mirrored_record_matches_file(&session, &mirrored);
+    let mut history = resumed.history().to_vec();
+    history.push(Message::user_text("unsaved extra turn"));
+    let changed = SessionSnapshot::new(
+        resumed.session_id().clone(),
+        resumed.revision(),
+        history,
+        resumed.provider().clone(),
+        resumed.compaction().clone(),
+    )
+    .with_prompt_cache_key(resumed.prompt_cache_key().unwrap_or("rho:migrated-v1"));
 
-    let tree = session.session_tree().unwrap();
-    let facts = tree.facts();
-    assert_eq!(facts.node_count, before_nodes + 1);
-    assert_ne!(facts.active_leaf_id.as_ref(), Some(&before_leaf));
-    assert_eq!(
-        facts.active_leaf_id.map(|id| id.to_string()),
-        mirrored.active_leaf_id
-    );
+    assert!(session.save_snapshot(&changed, &[]).is_err());
+
+    let after = session.session_tree().unwrap();
+    assert_eq!(after.facts().node_count, before_nodes);
+    assert_eq!(after.active_leaf_id(), Some(&before_leaf));
 }
