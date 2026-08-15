@@ -60,7 +60,7 @@ impl Session {
             .write_lock
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let tree = SessionTree::load(&self.path)?;
+        let mut tree = SessionTree::load(&self.path)?;
         let parent_id = tree.active_leaf_id().cloned();
         let parent_snapshot = tree
             .active_state()
@@ -87,7 +87,7 @@ impl Session {
                 cost_usd_micros: None,
             })
         });
-        let transition = if compaction_changed {
+        let transition = if compaction_changed || tree.needs_upgrade_marker() {
             StoredStateTransition::Snapshot {
                 snapshot: Box::new(snapshot.clone()),
             }
@@ -105,32 +105,45 @@ impl Session {
                     },
                 )
         };
+        let node_timestamp = timestamp();
         let display_messages = display_tail
             .iter()
             .cloned()
             .map(|message| StoredDisplayMessage {
-                timestamp: timestamp(),
+                timestamp: node_timestamp.clone(),
                 message,
             })
             .collect();
 
+        let node = SessionNode {
+            id: NodeId::new(),
+            parent_id,
+            timestamp: node_timestamp,
+            kind,
+            compaction_facts,
+            transition,
+            display_messages,
+        };
+
         self.append_tree_entry(
             &mut cursor,
             &tree,
-            &SessionEntry::Node {
-                node: SessionNode {
-                    id: NodeId::new(),
-                    parent_id,
-                    timestamp: timestamp(),
-                    kind,
-                    compaction_facts,
-                    transition,
-                    display_messages,
-                },
-            },
+            &SessionEntry::Node { node: node.clone() },
         )?;
         cursor.last_snapshot = Some(SnapshotDeltaBase::from_snapshot(snapshot));
-        let _ = index::record_snapshot(self);
+
+        if tree.needs_upgrade_marker() {
+            if let Some(active_leaf_id) = tree.active_leaf_id().cloned() {
+                let upgrade_ts = timestamp();
+                let _ = tree.apply_upgrade(active_leaf_id, &upgrade_ts);
+            }
+        }
+        tree.apply_explicit_node(node)?;
+
+        let record = tree.summary_record(&self.path, &self.cwd)?;
+        drop(cursor);
+
+        let _ = index::record_snapshot_record(self, &record);
         Ok(())
     }
 
@@ -185,18 +198,19 @@ impl Session {
             .write_lock
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let tree = SessionTree::load(&self.path)?;
+        let mut tree = SessionTree::load(&self.path)?;
         if tree.node(target_id).is_none() {
             anyhow::bail!("cannot select missing session node '{target_id}'");
         }
         if tree.active_leaf_id() == Some(target_id) {
             return Ok(());
         }
+        let ts = timestamp();
         self.append_tree_entry(
             &mut cursor,
             &tree,
             &SessionEntry::SetLeaf {
-                timestamp: timestamp(),
+                timestamp: ts.clone(),
                 target_id: target_id.clone(),
             },
         )?;
@@ -204,7 +218,19 @@ impl Session {
             .node(target_id)
             .and_then(|node| node.state().snapshot.as_ref())
             .map(SnapshotDeltaBase::from_snapshot);
-        let _ = index::record_snapshot(self);
+
+        if tree.needs_upgrade_marker() {
+            if let Some(active_leaf_id) = tree.active_leaf_id().cloned() {
+                let upgrade_ts = timestamp();
+                let _ = tree.apply_upgrade(active_leaf_id, &upgrade_ts);
+            }
+        }
+        tree.apply_set_leaf(target_id.clone(), &ts)?;
+
+        let record = tree.summary_record(&self.path, &self.cwd)?;
+        drop(cursor);
+
+        let _ = index::record_snapshot_record(self, &record);
         Ok(())
     }
 
