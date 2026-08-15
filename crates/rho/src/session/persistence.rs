@@ -706,9 +706,8 @@ pub(crate) fn drop_incomplete_tool_turn_tail(mut messages: Vec<Message>) -> Vec<
 
 /// History after the same resume normalization `snapshot_for_resume` applies.
 ///
-/// Keep this aligned with `drop_incomplete_tool_turn_tail` plus
-/// `SessionSnapshot::sanitize_history`. The application crate cannot call that
-/// SDK method until the next `rho-sdk` crates.io release.
+/// TODO(rho-sdk-release): call SessionSnapshot::sanitize_history and delete this
+/// local copy when `crates/rho/Cargo.toml` moves off `rho-sdk = "4.0.0"`.
 pub(crate) fn resume_normalized_history(history: Vec<Message>) -> Vec<Message> {
     let mut history = drop_incomplete_tool_turn_tail(history);
     for message in &mut history {
