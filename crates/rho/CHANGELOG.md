@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.41.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.40.1...rho-coding-agent-v1.41.0) (2026-08-15)
+
+
+### Features
+
+* **tui:** lift tool-card text on hover in main TUI and attach ([#928](https://github.com/matthewyjiang/rho/issues/928)) ([344f79a](https://github.com/matthewyjiang/rho/commit/344f79a49cf5c4fa754c87a18d6b53b34bcffe5d))
+* **tui:** show /limits in a single-pane overlay ([#940](https://github.com/matthewyjiang/rho/issues/940)) ([273b830](https://github.com/matthewyjiang/rho/commit/273b830d42b8225eb7dbc416515aacbeb1567590))
+* **tui:** show live background processes in the activity rail ([#935](https://github.com/matthewyjiang/rho/issues/935)) ([f396b72](https://github.com/matthewyjiang/rho/commit/f396b72542abf17c2ef108c91bfa04351125031a))
+* **tui:** show OpenCode Go usage bars in /limits ([#930](https://github.com/matthewyjiang/rho/issues/930)) ([2ea9628](https://github.com/matthewyjiang/rho/commit/2ea9628e05f6118677bc7f508d125a389150c98e))
+* **tui:** wake the agent when a background process exits ([#934](https://github.com/matthewyjiang/rho/issues/934)) ([b3b4ada](https://github.com/matthewyjiang/rho/commit/b3b4adac05f09390f475b7a9bde2d07976d09d5d))
+
+
+### Bug Fixes
+
+* **cli:** show changelog for dependency-only releases ([#919](https://github.com/matthewyjiang/rho/issues/919)) ([3488499](https://github.com/matthewyjiang/rho/commit/34884997edf2f582cbd1952ef530214786f19b51))
+* **session:** v1 upgrades no longer write an unloadable transcript ([#939](https://github.com/matthewyjiang/rho/issues/939)) ([1dc1002](https://github.com/matthewyjiang/rho/commit/1dc1002c5c60ddc2a2889a12d92ead905cd4b6d3))
+
+
+### Performance Improvements
+
+* **session:** eliminate double transcript deserialization and message clones during turn save ([#936](https://github.com/matthewyjiang/rho/issues/936)) ([4c60e8d](https://github.com/matthewyjiang/rho/commit/4c60e8d346d8318bee6bbde984e69bcee2049bf3))
+* **tui:** stop recompiling search regex on every painted line ([#938](https://github.com/matthewyjiang/rho/issues/938)) ([74689ae](https://github.com/matthewyjiang/rho/commit/74689ae30ec784b5a49fcbfb3df8e0bcddc0fd4e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 4.0.0 to 4.0.1
+    * rho-providers bumped from 1.3.1 to 1.4.0
+
 ## [1.40.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.40.0...rho-coding-agent-v1.40.1) (2026-08-14)
 
 

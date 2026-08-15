@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.4.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.3.1...rho-providers-v1.4.0) (2026-08-15)
+
+
+### Features
+
+* **tui:** lift tool-card text on hover in main TUI and attach ([#928](https://github.com/matthewyjiang/rho/issues/928)) ([344f79a](https://github.com/matthewyjiang/rho/commit/344f79a49cf5c4fa754c87a18d6b53b34bcffe5d))
+* **tui:** show live background processes in the activity rail ([#935](https://github.com/matthewyjiang/rho/issues/935)) ([f396b72](https://github.com/matthewyjiang/rho/commit/f396b72542abf17c2ef108c91bfa04351125031a))
+
+
+### Performance Improvements
+
+* **providers:** avoid cloning message history and batch SQLite model metadata caching ([#929](https://github.com/matthewyjiang/rho/issues/929)) ([e40926c](https://github.com/matthewyjiang/rho/commit/e40926c4449051c23340dca5fd9afe436d22d3dc))
+* **providers:** eliminate LineDecoder per-chunk compaction, SIMD-accelerate newlines, and optimize Gemini SSE decoder ([#931](https://github.com/matthewyjiang/rho/issues/931)) ([76957a5](https://github.com/matthewyjiang/rho/commit/76957a55b4d475a718d78f3c109893d1bd6d6cce))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 4.0.0 to 4.0.1
+
 ## [1.3.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.3.0...rho-providers-v1.3.1) (2026-08-14)
 
 
