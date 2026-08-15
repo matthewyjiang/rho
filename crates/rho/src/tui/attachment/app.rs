@@ -179,9 +179,6 @@ struct AttachmentApp {
     /// pending→transcript promotion and provider resets that shift indexes.
     press_tool_key: Option<String>,
     press_cell: Option<(u16, u16)>,
-    /// Toggleable tool-card line span under the pointer. Content-line indexes,
-    /// not screen rows, so scrolling keeps the hover lift pinned to the card.
-    hovered_tool_lines: Option<Range<usize>>,
     /// Current transcript index for each finished tool key.
     finished_tool_index: BTreeMap<String, usize>,
     viewport_height: usize,
@@ -218,7 +215,6 @@ impl AttachmentApp {
             last_mouse_position: None,
             press_tool_key: None,
             press_cell: None,
-            hovered_tool_lines: None,
             finished_tool_index: BTreeMap::new(),
             viewport_height: 0,
             history_area: Rect::default(),
@@ -376,9 +372,6 @@ impl AttachmentApp {
             .remove(&key)
             .is_some_and(|entry| entry.expanded);
         self.pending_order.retain(|pending| pending != &key);
-        // The card moves from the pending tail into the transcript, shifting
-        // line spans; re-anchor the hover lift on the next pointer move.
-        self.hovered_tool_lines = None;
         self.transcript.push(Entry::Tool(ToolEntry {
             card,
             expanded,
@@ -440,7 +433,6 @@ impl AttachmentApp {
     fn clear_pending_tools(&mut self) {
         self.pending_tools.clear();
         self.pending_order.clear();
-        self.hovered_tool_lines = None;
     }
 
     fn handle_event(&mut self, event: Event) -> bool {
@@ -531,7 +523,6 @@ impl AttachmentApp {
                         if self.press_cell != Some((mouse.column, mouse.row)) {
                             self.press_tool_key = None;
                         }
-                        self.update_tool_card_hover(mouse.column, mouse.row);
                     }
                     MouseEventKind::Up(MouseButton::Left) => {
                         let same_cell = self.press_cell.take() == Some((mouse.column, mouse.row));
@@ -563,8 +554,6 @@ impl AttachmentApp {
             }
             Event::Resize(_, _) => {
                 self.clear_press();
-                // Reflow changes card heights; re-anchor on the next move.
-                self.hovered_tool_lines = None;
                 true
             }
             _ => false,
@@ -635,11 +624,14 @@ impl AttachmentApp {
             .visible_start(self.content_len, self.viewport_height);
         let end = start.saturating_add(self.viewport_height).min(lines.len());
         frame.render_widget(Paragraph::new(lines[start..end].to_vec()), chunks[1]);
-        if let Some(hovered) = self
-            .hovered_tool_lines
-            .clone()
-            .filter(|span| span.start < end)
-        {
+        // Hover lift derives from the remembered pointer cell against this
+        // frame's layout, so scroll, promotion, and toggles re-anchor it every
+        // draw instead of caching stale content-line spans.
+        let hovered = self
+            .last_mouse_position
+            .and_then(|(column, row)| self.tool_card_span_at_pointer(column, row))
+            .filter(|span| span.start < end);
+        if let Some(hovered) = hovered {
             let visible = hovered.start.max(start)..hovered.end.min(end);
             if visible.start < visible.end {
                 tool_card_hover::lift_rows(
@@ -751,10 +743,6 @@ impl AttachmentApp {
         .map(|(_, span)| span)
     }
 
-    fn update_tool_card_hover(&mut self, column: u16, row: u16) {
-        self.hovered_tool_lines = self.tool_card_span_at_pointer(column, row);
-    }
-
     fn toggle_latest_tool(&mut self) {
         let Some(target) = latest_toggle_target(
             self.history_items(self.status.as_ref()),
@@ -778,8 +766,6 @@ impl AttachmentApp {
             tool.expanded =
                 expand && matches!(&target, ToggleTarget::Pending(pending) if pending == key);
         }
-        // Expanded height shifts following lines; re-anchor on the next move.
-        self.hovered_tool_lines = None;
     }
 
     fn is_expanded(&self, target: &ToggleTarget) -> bool {

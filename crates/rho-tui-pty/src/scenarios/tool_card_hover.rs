@@ -45,7 +45,8 @@ fn wait_for_row_look(
     }
 }
 
-fn prompt_row(harness: &mut PtyHarness) -> Result<u16> {
+/// Screen row containing `needle`, polling until it renders.
+fn row_containing(harness: &mut PtyHarness, needle: &str) -> Result<u16> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         harness.poll(Duration::from_millis(20));
@@ -53,25 +54,23 @@ fn prompt_row(harness: &mut PtyHarness) -> Result<u16> {
             .screen()
             .rows_text()
             .iter()
-            .position(|line| line.contains("more lines, ctrl+o to expand"))
+            .position(|line| line.contains(needle))
         {
             return Ok(row as u16);
         }
         if Instant::now() >= deadline {
-            anyhow::bail!(
-                "collapsed tool card prompt not found:\n{}",
-                harness.screen().debug_dump()
-            );
+            anyhow::bail!("{needle:?} not found:\n{}", harness.screen().debug_dump());
         }
         std::thread::sleep(Duration::from_millis(10));
     }
 }
 
 // Covers: hovering a collapsed tool card lifts its text ink on pointer entry
-// and reverts on pointer exit; a completed click still expands the card.
+// and reverts on pointer exit; a completed click still expands the card and
+// the lift survives the click without any pointer motion.
 // Owner: interactive UX (PTY).
 fn assert_hover_lift_and_click_expand(harness: &mut PtyHarness) -> Result<()> {
-    let row = prompt_row(harness)?;
+    let row = row_containing(harness, "more lines, ctrl+o to expand")?;
     let baseline = row_look(harness, row);
     assert!(
         !baseline.is_empty(),
@@ -81,17 +80,16 @@ fn assert_hover_lift_and_click_expand(harness: &mut PtyHarness) -> Result<()> {
 
     // SGR mouse coordinates are 1-based.
     let (column, sgr_row) = (6u16, row + 1);
+    let unlifted = baseline
+        .first()
+        .copied()
+        .unwrap_or((false, CellColor::Default));
+    let lifted_from_baseline = |look: &(bool, CellColor)| *look != unlifted;
     harness.mouse_move(column, sgr_row)?;
     wait_for_row_look(
         harness,
         row,
-        &|look| {
-            *look
-                != baseline
-                    .first()
-                    .copied()
-                    .unwrap_or((false, CellColor::Default))
-        },
+        &lifted_from_baseline,
         "hover did not lift the tool card prompt row",
     )?;
 
@@ -99,14 +97,25 @@ fn assert_hover_lift_and_click_expand(harness: &mut PtyHarness) -> Result<()> {
     wait_for_row_look(
         harness,
         row,
-        &|look| {
-            *look
-                == baseline
-                    .first()
-                    .copied()
-                    .unwrap_or((false, CellColor::Default))
-        },
+        &|look| *look == unlifted,
         "hover lift did not revert after the pointer left the card",
+    )?;
+
+    // Wheel scrolling shifts content under the stationary pointer; the lift
+    // must re-anchor from the frame layout, not only from mouse moves.
+    harness.mouse_move(column, sgr_row)?;
+    for _ in 0..4 {
+        harness.mouse(MouseButton::WheelUp, column, sgr_row, true)?;
+    }
+    harness.poll(Duration::from_millis(100));
+    for _ in 0..4 {
+        harness.mouse(MouseButton::WheelDown, column, sgr_row, true)?;
+    }
+    wait_for_row_look(
+        harness,
+        row,
+        &lifted_from_baseline,
+        "scrolling away and back did not restore the hover lift",
     )?;
 
     harness.mouse(MouseButton::Left, column, sgr_row, true)?;
@@ -115,6 +124,27 @@ fn assert_hover_lift_and_click_expand(harness: &mut PtyHarness) -> Result<()> {
     harness.wait_for_text(
         "ctrl+o to collapse",
         WaitTimeout::secs(2, "click expanded the tool card"),
+    )?;
+
+    // The lift must survive the click with no pointer motion. The expanded
+    // card fills most of the viewport, so track its collapse-prompt row and
+    // leave the card for the statusline row below the history area. Capture
+    // the lifted look while the pointer still rests on the card, then require
+    // the away-move to change it; if the click had dropped the lift, there
+    // would be nothing left to change.
+    let prompt_row_after_click = row_containing(harness, "ctrl+o to collapse")?;
+    let lifted = row_look(harness, prompt_row_after_click);
+    let lifted_first = lifted
+        .first()
+        .copied()
+        .unwrap_or((false, CellColor::Default));
+    let statusline_row = harness.screen().rows() - 1;
+    harness.mouse_move(column, statusline_row + 1)?;
+    wait_for_row_look(
+        harness,
+        prompt_row_after_click,
+        &|look| *look != lifted_first,
+        "click toggle dropped the hover lift until the pointer moved",
     )?;
     Ok(())
 }

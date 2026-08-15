@@ -529,41 +529,99 @@ fn click_ignores_under_budget_card() {
     assert!(!transcript_tool(&app, 0).expanded);
 }
 
-// Covers: hover lift span tracks the pointer over toggleable cards only, and
-// clears on toggle like the main TUI
-// Owner: attach event loop
+/// Bold flag plus ink color of every text cell in `row`: the look the hover
+/// lift changes without changing text.
+fn row_look(
+    terminal: &ratatui::Terminal<ratatui::backend::TestBackend>,
+    row: u16,
+) -> Vec<(bool, ratatui::style::Color)> {
+    (0..80u16)
+        .filter_map(|column| {
+            let cell = &terminal.backend().buffer()[(column, row)];
+            (!cell.symbol().trim().is_empty()).then_some((
+                cell.modifier.contains(ratatui::style::Modifier::BOLD),
+                cell.fg,
+            ))
+        })
+        .collect()
+}
+
+// Covers: hover lift derives from the pointer at draw time, so it follows the
+// pointer off-card and re-anchors after a click toggle reshapes the card
+// Owner: attach draw
 #[test]
-fn hover_span_covers_clickable_card_and_clears_on_toggle() {
+fn draw_hover_lift_follows_pointer_and_survives_toggle() {
+    // Pin the global theme: terminal mode without a palette sample lifts named
+    // ink to bold, guaranteeing an observable change on the body row.
+    let _guard = crate::tui::theme::theme_test_lock();
+    Theme::apply_committed("terminal");
     let (_directory, mut app) = test_app();
     app.apply_event(AttachmentEvent::ToolFinished {
         key: Some("call-1".into()),
         card: long_body_card(),
     });
-    sync_view(&mut app, 80, 30);
-    let card_len = app.history_lines(80, None).len();
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 30)).expect("test terminal");
+    terminal
+        .draw(|frame| app.draw(frame))
+        .expect("baseline draw");
 
-    app.handle_event(mouse(MouseEventKind::Moved, 8, 5));
-    assert_eq!(app.hovered_tool_lines, Some(0..card_len));
+    let baseline = row_look(&terminal, 5);
+    assert!(!baseline.is_empty(), "card body row has text cells");
 
-    // Header area is outside the history viewport: lift clears.
+    // Pointer over the header, outside the history viewport: no lift.
     app.handle_event(mouse(MouseEventKind::Moved, 8, 1));
-    assert_eq!(app.hovered_tool_lines, None);
+    terminal.draw(|frame| app.draw(frame)).expect("header draw");
+    assert_eq!(
+        row_look(&terminal, 5),
+        baseline,
+        "pointer off-card must not lift"
+    );
 
+    // Pointer over the card: lift.
     app.handle_event(mouse(MouseEventKind::Moved, 8, 5));
-    assert_eq!(app.hovered_tool_lines, Some(0..card_len));
-    click_card(&mut app, 8, 5);
-    assert_eq!(app.hovered_tool_lines, None, "toggle must drop the lift");
+    terminal.draw(|frame| app.draw(frame)).expect("hover draw");
+    assert_ne!(
+        row_look(&terminal, 5),
+        baseline,
+        "pointer on-card must lift"
+    );
 
-    // Hover exists exactly where click would toggle: under-budget cards have
-    // neither.
+    // Click expands the card; the next draw re-anchors the lift to the
+    // reshaped card under the stationary pointer instead of dropping it.
+    click_card(&mut app, 8, 5);
+    terminal.draw(|frame| app.draw(frame)).expect("toggle draw");
+    assert!(transcript_tool(&app, 0).expanded);
+    assert_ne!(
+        row_look(&terminal, 5),
+        baseline,
+        "lift must re-anchor after toggle"
+    );
+}
+
+// Covers: under-budget cards are neither click-toggleable nor hover-liftable
+// Owner: attach draw
+#[test]
+fn draw_hover_lift_skips_untoggleable_card() {
     let (_directory, mut app) = test_app();
     app.apply_event(AttachmentEvent::ToolFinished {
         key: Some("call-1".into()),
         card: short_body_card(),
     });
-    sync_view(&mut app, 80, 20);
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 30)).expect("test terminal");
+    terminal
+        .draw(|frame| app.draw(frame))
+        .expect("baseline draw");
+    let baseline = row_look(&terminal, 5);
+
     app.handle_event(mouse(MouseEventKind::Moved, 8, 5));
-    assert_eq!(app.hovered_tool_lines, None);
+    terminal.draw(|frame| app.draw(frame)).expect("hover draw");
+    assert_eq!(
+        row_look(&terminal, 5),
+        baseline,
+        "under-budget card must not lift"
+    );
 }
 
 // Covers: attach draw lifts the hovered card's text ink, matching main TUI
@@ -586,26 +644,14 @@ fn draw_lifts_hovered_card_text() {
         .draw(|frame| app.draw(frame))
         .expect("baseline draw");
 
-    let body_row = 5usize;
-    let row_look = |terminal: &ratatui::Terminal<ratatui::backend::TestBackend>| {
-        (0..80u16)
-            .filter_map(|column| {
-                let cell = &terminal.backend().buffer()[(column, body_row as u16)];
-                (!cell.symbol().trim().is_empty()).then_some((
-                    cell.modifier.contains(ratatui::style::Modifier::BOLD),
-                    cell.fg,
-                ))
-            })
-            .collect::<Vec<_>>()
-    };
-    let baseline = row_look(&terminal);
+    let baseline = row_look(&terminal, 5);
     assert!(!baseline.is_empty(), "card body row has text cells");
 
     app.handle_event(mouse(MouseEventKind::Moved, 8, 5));
     terminal.draw(|frame| app.draw(frame)).expect("hover draw");
-    let lifted = row_look(&terminal);
     assert_ne!(
-        baseline, lifted,
+        row_look(&terminal, 5),
+        baseline,
         "hover lift must change the card body row look"
     );
 }

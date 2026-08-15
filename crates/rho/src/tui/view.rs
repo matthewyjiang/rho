@@ -147,10 +147,19 @@ impl App {
             Paragraph::new(history_visible).style(Style::default()),
             layout.history_content,
         );
-        if let Some(lines) = self
-            .history
-            .hovered_tool_card_lines()
-            .filter(|lines| lines.start < history_start.saturating_add(history_count))
+        // Hover lift derives from the remembered pointer cell against this
+        // frame's layout, so scroll, streaming appends, and toggles re-anchor
+        // it every draw instead of caching stale absolute lines.
+        let pointer = self.last_mouse_position;
+        let hovered_lines = pointer
+            .filter(|position| layout.history_content.contains((*position).into()))
+            .and_then(|(_, row)| {
+                let line = history_start + usize::from(row - layout.history_content.y);
+                self.tool_card_hit_at_history_line(line, width)
+                    .map(|hit| hit.lines)
+            });
+        if let Some(lines) =
+            hovered_lines.filter(|lines| lines.start < history_start.saturating_add(history_count))
         {
             // Hover lift paints under text selection: an active drag keeps
             // its reverse-video highlight on overlapping rows.

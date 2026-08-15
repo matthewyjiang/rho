@@ -26,7 +26,7 @@ const COMPOSER_DOUBLE_CLICK: Duration = Duration::from_millis(500);
 
 /// Which toggleable tool card a history line belongs to.
 #[derive(Clone, Debug)]
-enum ToolCardTarget {
+pub(super) enum ToolCardTarget {
     Transcript(usize),
     Preview(usize),
     Running(ToolCallId),
@@ -34,9 +34,9 @@ enum ToolCardTarget {
 
 /// A toggleable tool card under the pointer, with the absolute history lines
 /// covering the whole clickable card.
-struct ToolCardHit {
-    target: ToolCardTarget,
-    lines: Range<usize>,
+pub(super) struct ToolCardHit {
+    pub(super) target: ToolCardTarget,
+    pub(super) lines: Range<usize>,
 }
 
 impl App {
@@ -80,7 +80,6 @@ impl App {
                 }
                 self.screen_selection = None;
                 self.history.set_hovered_code_block_copy(None);
-                self.history.set_hovered_tool_card_lines(None);
                 self.subagent_panel.clear_pointer_state();
                 self.reveal_history_scrollbar(now);
                 self.history.set_scrollbar_drag(None);
@@ -104,7 +103,6 @@ impl App {
                 }
                 self.screen_selection = None;
                 self.history.set_hovered_code_block_copy(None);
-                self.history.set_hovered_tool_card_lines(None);
                 self.subagent_panel.clear_pointer_state();
                 self.reveal_history_scrollbar(now);
                 self.history.set_scrollbar_drag(None);
@@ -422,7 +420,6 @@ impl App {
                     )
                     .map(|target| target.line);
                 self.history.set_hovered_code_block_copy(hovered);
-                self.update_tool_card_hover(history, history_start, row, width);
                 let subagent_hover = matches!(self.input_ui.composer(), ComposerMode::Input)
                     .then(|| {
                         self.subagent_panel
@@ -455,9 +452,6 @@ impl App {
         let Some(hit) = self.tool_card_hit_at_history_line(line, width) else {
             return Ok(false);
         };
-        // Card heights change on toggle; drop the hover lift until the next
-        // pointer move re-anchors it.
-        self.history.set_hovered_tool_card_lines(None);
         match hit.target {
             ToolCardTarget::Transcript(index) => {
                 self.toggle_transcript_tool_output(index);
@@ -501,10 +495,15 @@ impl App {
 
     /// The toggleable tool card covering absolute history `line`, if any.
     ///
-    /// Shared by click toggling and hover lift so both agree on the clickable
-    /// card span. Transcript cards resolve through the history cache; pending
-    /// live cards walk the same paint order as `history_live_lines`.
-    fn tool_card_hit_at_history_line(&mut self, line: usize, width: usize) -> Option<ToolCardHit> {
+    /// Shared by click toggling and the draw-time hover lift so both agree on
+    /// the clickable card span. Transcript cards resolve through the history
+    /// cache; pending live cards walk the same paint order as
+    /// `history_live_lines`.
+    pub(super) fn tool_card_hit_at_history_line(
+        &mut self,
+        line: usize,
+        width: usize,
+    ) -> Option<ToolCardHit> {
         if !self.info.runtime.shows_work_chrome() {
             return None;
         }
@@ -594,24 +593,6 @@ impl App {
             pending_start = pending_end;
         }
         None
-    }
-
-    /// Update the hovered tool-card lift from a pointer position.
-    fn update_tool_card_hover(
-        &mut self,
-        history: Rect,
-        history_start: usize,
-        row: u16,
-        width: usize,
-    ) {
-        let lines = if (history.y..history.bottom()).contains(&row) {
-            let line = history_start.saturating_add(row.saturating_sub(history.y) as usize);
-            self.tool_card_hit_at_history_line(line, width)
-                .map(|hit| hit.lines)
-        } else {
-            None
-        };
-        self.history.set_hovered_tool_card_lines(lines);
     }
 
     pub(super) fn copy_text(&mut self, text: &str, now: Instant) {
