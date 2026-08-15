@@ -86,7 +86,9 @@ pub(crate) fn list_running_runs(cwd: &Path) -> anyhow::Result<Vec<RunningRun>> {
 
 fn list_running_runs_in_root(rho_root: &Path, cwd: &Path) -> anyhow::Result<Vec<RunningRun>> {
     let now = super::unix_now_secs();
-    let workspace_key = crate::session::workspace_key(cwd);
+    let Some(workspace_key) = run_workspace_key(cwd) else {
+        return Ok(Vec::new());
+    };
     let mut running = Vec::new();
     for indexed in list_indexed_runs_in_root(rho_root, &workspace_key)? {
         let Some(status) = super::read_status(&indexed.directory.join(super::RESULT_FILE_NAME))
@@ -203,6 +205,19 @@ impl Drop for ParentRunCleanupGuard {
     }
 }
 
+/// Workspace key used for attach-picker membership.
+///
+/// Canonicalize first so a reserved run and a later `rho attach` from the same
+/// directory share a key even when one caller passed `Workspace::root()` and
+/// the other passed `current_dir()`. Empty paths have no key.
+fn run_workspace_key(cwd: &Path) -> Option<String> {
+    if cwd.as_os_str().is_empty() {
+        return None;
+    }
+    let path = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    Some(crate::session::workspace_key(&path))
+}
+
 pub(crate) fn reserve_run_directory(
     placement: &RunPlacement,
     cwd: &Path,
@@ -240,7 +255,7 @@ fn reserve_run_directory_in_root(
                 directory.to_string_lossy(),
                 placement.parent_session_id(),
                 unix_timestamp_secs(),
-                crate::session::workspace_key(cwd),
+                run_workspace_key(cwd),
             ],
         )?;
         if inserted == 0 {

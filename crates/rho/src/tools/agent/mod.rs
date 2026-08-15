@@ -538,6 +538,7 @@ impl AgentTool {
         let cwd = context
             .workspace_root()
             .map(Path::to_path_buf)
+            .or_else(|| std::env::current_dir().ok())
             .unwrap_or_default();
 
         let spawn = self

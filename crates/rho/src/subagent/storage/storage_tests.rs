@@ -17,7 +17,7 @@ use super::{
 use crate::session::Session;
 use std::path::{Path, PathBuf};
 
-fn reserve_run_directory_in_root(
+fn reserve_in_default_workspace(
     rho_root: &Path,
     placement: &RunPlacement,
     next_id: impl FnMut() -> String,
@@ -40,7 +40,7 @@ fn skips_ids_used_by_unindexed_target_path() {
     fs::create_dir_all(&existing).unwrap();
     let mut ids = ["111111", "222222"].into_iter();
 
-    let (id, directory) = reserve_run_directory_in_root(
+    let (id, directory) = reserve_in_default_workspace(
         temp.path(),
         &RunPlacement::Global {
             parent_session_id: None,
@@ -123,7 +123,7 @@ fn reservation_fails_after_parent_session_is_deleted() {
     };
 
     let error =
-        reserve_run_directory_in_root(temp.path(), &placement, || "abcdef".into()).unwrap_err();
+        reserve_in_default_workspace(temp.path(), &placement, || "abcdef".into()).unwrap_err();
 
     assert!(error
         .to_string()
@@ -154,7 +154,7 @@ fn parent_cleanup_lock_blocks_reservations_for_that_parent() {
     let (reserve_started_tx, reserve_started_rx) = mpsc::channel();
     let reserve_root = rho_root.clone();
     let reserve = thread::spawn(move || {
-        reserve_run_directory_in_root(
+        reserve_in_default_workspace(
             &reserve_root,
             &RunPlacement::Session {
                 parent_session_id: "session-id".into(),
@@ -186,7 +186,7 @@ fn parent_cleanup_lock_does_not_block_unrelated_parents() {
     let other_subagents = create_session_subagents(rho_root);
     let _guard = lock_parent_for_cleanup_in_root(&subagents_root, "deleting-session").unwrap();
 
-    let (_, directory) = reserve_run_directory_in_root(
+    let (_, directory) = reserve_in_default_workspace(
         rho_root,
         &RunPlacement::Session {
             parent_session_id: "other-session".into(),
@@ -207,7 +207,7 @@ fn stale_parent_lock_is_ignored_by_reserve() {
     let stale_at = unix_timestamp_secs() - PARENT_LOCK_TTL_SECS - 1;
     insert_parent_lock_for_test(&subagents_root, "session-id", stale_at).unwrap();
 
-    let (_, directory) = reserve_run_directory_in_root(
+    let (_, directory) = reserve_in_default_workspace(
         temp.path(),
         &RunPlacement::Session {
             parent_session_id: "session-id".into(),
@@ -271,7 +271,7 @@ fn stale_index_row_falls_through_to_legacy_global() {
         parent_session_id: "session".into(),
         subagents_dir: indexed.parent().unwrap().to_path_buf(),
     };
-    reserve_run_directory_in_root(temp.path(), &placement, || "abcdef".into()).unwrap();
+    reserve_in_default_workspace(temp.path(), &placement, || "abcdef".into()).unwrap();
     fs::remove_dir(&indexed).unwrap();
     let legacy = temp.path().join("subagents/abcdef");
     fs::create_dir_all(&legacy).unwrap();
@@ -292,7 +292,7 @@ fn failed_cleanup_releases_parent_lock() {
         let _guard = lock_parent_for_cleanup_in_root(&subagents_root, "session-id").unwrap();
     }
 
-    let (_, directory) = reserve_run_directory_in_root(
+    let (_, directory) = reserve_in_default_workspace(
         temp.path(),
         &RunPlacement::Session {
             parent_session_id: "session-id".into(),
@@ -363,6 +363,62 @@ fn list_running_runs_keeps_only_the_current_workspace() {
     assert_eq!(
         there_ids,
         std::collections::BTreeSet::from([there_nested, there_parentless])
+    );
+    assert_eq!(
+        running_ids(temp.path(), &here.path().canonicalize().unwrap()),
+        here_ids
+    );
+}
+
+// Covers: a v3 index must upgrade and keep unscoped rows out of the picker.
+// Owner: delegated-run index listing
+#[test]
+fn v3_index_upgrades_and_hides_unscoped_rows_from_the_picker() {
+    let temp = TempDir::new().unwrap();
+    let cwd = TempDir::new().unwrap();
+    let directory = temp.path().join("subagents/eeeeee");
+    fs::create_dir_all(&directory).unwrap();
+    crate::subagent::write_status(
+        &directory.join(crate::subagent::RESULT_FILE_NAME),
+        &crate::subagent::RunStatus {
+            state: crate::subagent::RunState::Running,
+            agent_id: Some("legacy".into()),
+            started_at: Some(1),
+            ..crate::subagent::RunStatus::default()
+        },
+    )
+    .unwrap();
+
+    let index_path = temp.path().join("subagents/index.sqlite3");
+    let connection = rusqlite::Connection::open(&index_path).unwrap();
+    connection
+        .execute_batch(
+            "CREATE TABLE runs (
+                 run_id TEXT PRIMARY KEY NOT NULL,
+                 path TEXT NOT NULL UNIQUE,
+                 parent_session_id TEXT,
+                 created_at INTEGER NOT NULL
+             );
+             CREATE TABLE parent_locks (
+                 parent_session_id TEXT PRIMARY KEY NOT NULL,
+                 locked_at INTEGER NOT NULL
+             );
+             PRAGMA user_version = 3;",
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO runs (run_id, path, parent_session_id, created_at)
+             VALUES (?1, ?2, NULL, ?3)",
+            rusqlite::params!["eeeeee", directory.to_string_lossy(), unix_timestamp_secs()],
+        )
+        .unwrap();
+    drop(connection);
+
+    assert!(running_ids(temp.path(), cwd.path()).is_empty());
+    assert_eq!(
+        resolve_run_directory_in_root(temp.path(), "eeeeee").unwrap(),
+        directory
     );
 }
 
