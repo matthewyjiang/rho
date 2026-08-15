@@ -130,7 +130,7 @@ pub struct SessionExport {
     pub messages: Vec<ExportedMessage>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct SessionIndexRecord {
     pub(super) summary: SessionSummary,
     pub(super) file_size: Option<i64>,
@@ -289,10 +289,7 @@ impl Session {
             Some(active_leaf_id) => tree.projected_display(active_leaf_id)?,
             None => Vec::new(),
         };
-        let complete_len = drop_incomplete_tool_turn_tail(
-            messages.iter().map(|entry| entry.message.clone()).collect(),
-        )
-        .len();
+        let complete_len = persistence::complete_turn_tail_len(&messages, |entry| &entry.message);
         messages.truncate(complete_len);
         Ok(SessionExport {
             id: record.summary.id,
@@ -708,46 +705,4 @@ impl Session {
     pub(crate) fn cwd(&self) -> &Path {
         &self.cwd
     }
-}
-
-fn drop_incomplete_tool_turn_tail(mut messages: Vec<Message>) -> Vec<Message> {
-    let mut index = 0usize;
-    while index < messages.len() {
-        let Some(blocks) = messages[index].completed_assistant_content() else {
-            index += 1;
-            continue;
-        };
-        let tool_call_ids = blocks
-            .iter()
-            .filter_map(|block| match block {
-                rho_providers::model::ContentBlock::ToolCall(call) => Some(call.id.as_str()),
-                rho_providers::model::ContentBlock::Text(_)
-                | rho_providers::model::ContentBlock::Image(_) => None,
-            })
-            .collect::<Vec<_>>();
-        if tool_call_ids.is_empty() {
-            index += 1;
-            continue;
-        }
-
-        let results_start = index + 1;
-        let results_end = results_start + tool_call_ids.len();
-        if results_end > messages.len() {
-            messages.truncate(index);
-            return messages;
-        }
-
-        let complete = tool_call_ids.iter().enumerate().all(|(offset, id)| {
-            matches!(
-                &messages[results_start + offset],
-                Message::ToolResult(result) if result.id == *id
-            )
-        });
-        if !complete {
-            messages.truncate(index);
-            return messages;
-        }
-        index = results_end;
-    }
-    messages
 }

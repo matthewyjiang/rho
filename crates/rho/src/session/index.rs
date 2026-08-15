@@ -493,13 +493,15 @@ pub(super) fn set_title_if_absent(
     Ok(updated > 0)
 }
 
-pub(super) fn record_snapshot(session: &Session) -> anyhow::Result<()> {
+pub(super) fn record_snapshot_record(
+    session: &Session,
+    record: &SessionIndexRecord,
+) -> anyhow::Result<()> {
     let connection = open_index(&session.session_root)?;
     let connection = connection
         .lock()
         .expect("session index connection poisoned");
-    let record = summarize_session_file(&session.path, &session.cwd)?;
-    upsert_record(&connection, &session.workspace_key, &record)
+    upsert_record(&connection, &session.workspace_key, record)
 }
 
 fn open_index(session_root: &Path) -> anyhow::Result<Arc<Mutex<Connection>>> {

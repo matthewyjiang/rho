@@ -231,7 +231,7 @@ pub(super) enum SessionEntry {
 
 impl SessionEntry {
     /// Event timestamp used for summary `updated_at` / `created_at` accumulation.
-    fn event_timestamp(&self) -> &str {
+    pub(crate) fn event_timestamp(&self) -> &str {
         match self {
             SessionEntry::Session { timestamp, .. }
             | SessionEntry::Message { timestamp, .. }
@@ -241,44 +241,6 @@ impl SessionEntry {
             | SessionEntry::SetLeaf { timestamp, .. }
             | SessionEntry::Upgrade { timestamp, .. } => timestamp,
             SessionEntry::Node { node } => node.timestamp.as_str(),
-        }
-    }
-}
-
-/// Metadata collected while the tree parses a transcript; messages come from the tree.
-#[derive(Debug)]
-struct SessionSummaryMeta {
-    cwd: PathBuf,
-    created_at: u64,
-    updated_at: u64,
-}
-
-impl SessionSummaryMeta {
-    fn new(path: &Path, fallback_cwd: &Path) -> Self {
-        let created_at = timestamp_from_filename(path).unwrap_or_default();
-        Self {
-            cwd: fallback_cwd.to_path_buf(),
-            created_at,
-            updated_at: created_at,
-        }
-    }
-
-    fn observe(&mut self, entry: &SessionEntry) {
-        if let SessionEntry::Session {
-            timestamp,
-            cwd: session_cwd,
-            ..
-        } = entry
-        {
-            self.cwd.clone_from(session_cwd);
-            if let Some(timestamp) = parse_timestamp(timestamp) {
-                self.created_at = timestamp;
-                self.updated_at = self.updated_at.max(timestamp);
-            }
-            return;
-        }
-        if let Some(timestamp) = parse_timestamp(entry.event_timestamp()) {
-            self.updated_at = self.updated_at.max(timestamp);
         }
     }
 }
@@ -306,10 +268,10 @@ impl Session {
     pub(super) fn append_tree_entry(
         &self,
         cursor: &mut AppendCursor,
-        tree: &super::tree::SessionTree,
-        entry: &SessionEntry,
+        tree: &mut super::tree::SessionTree,
+        entry: SessionEntry,
     ) -> anyhow::Result<()> {
-        match entry {
+        match &entry {
             SessionEntry::Node { .. } | SessionEntry::SetLeaf { .. } => {}
             SessionEntry::Session { .. }
             | SessionEntry::Message { .. }
@@ -324,14 +286,44 @@ impl Session {
             let active_leaf_id = tree.active_leaf_id().cloned().ok_or_else(|| {
                 anyhow::anyhow!("legacy session has no state node to upgrade from")
             })?;
+            let upgrade_ts = timestamp();
             let upgrade = SessionEntry::Upgrade {
-                timestamp: timestamp(),
-                active_leaf_id,
+                timestamp: upgrade_ts.clone(),
+                active_leaf_id: active_leaf_id.clone(),
             };
-            self.write_jsonl_entries(cursor, &[&upgrade, entry])
+            self.write_jsonl_entries(cursor, &[&upgrade, &entry])?;
+            if let Err(err) = tree.apply_upgrade(active_leaf_id, &upgrade_ts) {
+                tracing::warn!("failed to apply upgrade marker to in-memory session tree: {err:#}");
+            }
         } else {
-            self.write_jsonl_entry(cursor, entry)
+            self.write_jsonl_entry(cursor, &entry)?;
         }
+        match entry {
+            SessionEntry::Node { node } => {
+                if let Err(err) = tree.apply_explicit_node(node) {
+                    tracing::warn!(
+                        "failed to apply explicit node to in-memory session tree: {err:#}"
+                    );
+                }
+            }
+            SessionEntry::SetLeaf {
+                timestamp,
+                target_id,
+            } => {
+                if let Err(err) = tree.apply_set_leaf(target_id, &timestamp) {
+                    tracing::warn!("failed to apply set_leaf to in-memory session tree: {err:#}");
+                }
+            }
+            SessionEntry::Session { .. }
+            | SessionEntry::Message { .. }
+            | SessionEntry::ReplaceHistory { .. }
+            | SessionEntry::Snapshot { .. }
+            | SessionEntry::SnapshotDelta { .. }
+            | SessionEntry::Upgrade { .. } => {
+                anyhow::bail!("append_tree_entry only accepts Node or SetLeaf entries");
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn append_entry_unlocked(
@@ -363,9 +355,8 @@ impl Session {
     ) -> anyhow::Result<()> {
         let mut serialized = Vec::new();
         for entry in entries {
-            let mut bytes = serde_json::to_vec(entry)?;
-            bytes.push(b'\n');
-            serialized.extend_from_slice(&bytes);
+            serde_json::to_writer(&mut serialized, entry)?;
+            serialized.push(b'\n');
         }
         let mut options = OpenOptions::new();
         options.create(true).read(true).append(true);
@@ -660,61 +651,19 @@ fn summarize_session_file_with_tree(
     path: &Path,
     fallback_cwd: &Path,
 ) -> anyhow::Result<(SessionIndexRecord, super::tree::SessionTree)> {
-    let id = session_id_from_path(path)
-        .ok_or_else(|| anyhow::anyhow!("session file has invalid name: {}", path.display()))?;
-    let mut meta = SessionSummaryMeta::new(path, fallback_cwd);
-    let tree = super::tree::SessionTree::load_with_entry_visitor(path, |entry| {
-        meta.observe(entry);
-        Ok(())
-    })?;
-
-    // Canonical summary messages: active leaf display after incomplete tool tails.
-    let messages = drop_incomplete_tool_turn_tail(
-        tree.active_state()
-            .map(|state| {
-                state
-                    .display
-                    .iter()
-                    .map(|entry| entry.message.clone())
-                    .collect()
-            })
-            .unwrap_or_default(),
-    );
-    let (file_size, file_mtime) = session_file_stats(path);
-    if meta.updated_at == 0 {
-        meta.updated_at = file_mtime.map(|mtime| mtime as u64).unwrap_or_default();
-    }
-    if meta.created_at == 0 {
-        meta.created_at = meta.updated_at;
-    }
-
-    let facts = tree.facts();
-    let record = SessionIndexRecord {
-        summary: SessionSummary {
-            id,
-            path: path.to_path_buf(),
-            cwd: meta.cwd,
-            created_at: meta.created_at,
-            updated_at: meta.updated_at,
-            message_count: messages.len() as u64,
-            title: None,
-            first_user_message: messages.iter().find_map(user_message_text),
-            last_user_message: messages.iter().rev().find_map(user_message_text),
-        },
-        file_size,
-        file_mtime,
-        node_count: facts.node_count as u64,
-        branch_count: facts.branch_count as u64,
-        active_leaf_id: facts.active_leaf_id.map(|id| id.to_string()),
-        effective_format_version: tree.effective_format_version(),
-    };
+    let tree = super::tree::SessionTree::load(path)?;
+    let record = tree.summary_record(path, fallback_cwd)?;
     Ok((record, tree))
 }
 
-fn drop_incomplete_tool_turn_tail(mut messages: Vec<Message>) -> Vec<Message> {
+pub(crate) fn complete_turn_tail_len<T, F>(items: &[T], get_message: F) -> usize
+where
+    F: Fn(&T) -> &Message,
+{
     let mut index = 0usize;
-    while index < messages.len() {
-        let Some(blocks) = messages[index].completed_assistant_content() else {
+    while index < items.len() {
+        let message = get_message(&items[index]);
+        let Some(blocks) = message.completed_assistant_content() else {
             index += 1;
             continue;
         };
@@ -733,23 +682,31 @@ fn drop_incomplete_tool_turn_tail(mut messages: Vec<Message>) -> Vec<Message> {
 
         let results_start = index + 1;
         let results_end = results_start + tool_call_ids.len();
-        if results_end > messages.len() {
-            messages.truncate(index);
-            return messages;
+        if results_end > items.len() {
+            return index;
         }
 
         let complete = tool_call_ids.iter().enumerate().all(|(offset, id)| {
             matches!(
-                &messages[results_start + offset],
+                get_message(&items[results_start + offset]),
                 Message::ToolResult(result) if result.id == *id
             )
         });
         if !complete {
-            messages.truncate(index);
-            return messages;
+            return index;
         }
         index = results_end;
     }
+    items.len()
+}
+
+pub(crate) fn complete_message_len(messages: &[Message]) -> usize {
+    complete_turn_tail_len(messages, |m| m)
+}
+
+pub(crate) fn drop_incomplete_tool_turn_tail(mut messages: Vec<Message>) -> Vec<Message> {
+    let valid_len = complete_message_len(&messages);
+    messages.truncate(valid_len);
     messages
 }
 
@@ -832,7 +789,7 @@ pub(super) fn clamp_u64_to_i64(value: u64) -> i64 {
     value.min(i64::MAX as u64) as i64
 }
 
-fn timestamp_from_filename(path: &Path) -> Option<u64> {
+pub(super) fn timestamp_from_filename(path: &Path) -> Option<u64> {
     SessionUnit::from_path(path)?.created_at_from_name()
 }
 

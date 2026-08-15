@@ -1,6 +1,11 @@
 use super::tree::{NodeId, SessionNode, SessionNodeKind, StoredStateTransition};
 use super::*;
 
+fn assert_mirrored_record_matches_file(session: &Session, mirrored: &SessionIndexRecord) {
+    let reloaded = summarize_session_file(session.path(), session.cwd()).unwrap();
+    pretty_assertions::assert_eq!(mirrored, &reloaded);
+}
+
 fn snapshot(
     session: &Session,
     revision: u64,
@@ -616,4 +621,203 @@ fn truncated_set_leaf_does_not_change_the_active_leaf() {
         session.session_tree().unwrap().active_leaf_id(),
         Some(&active)
     );
+}
+
+// Covers: the record built from the mutated tree after save/set_leaf must match a file reload
+// Owner: session persistence
+#[test]
+fn mirrored_tree_index_record_equals_reloaded_file_summary() {
+    let root = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let session = Session::create_in_root(root.path(), cwd.path()).unwrap();
+
+    // Turn 1: Initial user message and assistant reply
+    let first = snapshot(
+        &session,
+        1,
+        vec![
+            Message::user_text("first question"),
+            Message::assistant_text("first answer"),
+        ],
+        CompactionState::default(),
+    );
+    let first_record = session
+        .save_snapshot_mirrored_record(&first, first.history())
+        .unwrap();
+    assert_mirrored_record_matches_file(&session, &first_record);
+    let first_leaf_id = NodeId::from_string(first_record.active_leaf_id.clone().unwrap()).unwrap();
+
+    // Turn 2: Follow-up turn
+    let second = snapshot(
+        &session,
+        2,
+        vec![
+            Message::user_text("first question"),
+            Message::assistant_text("first answer"),
+            Message::user_text("second question"),
+            Message::assistant_text("second answer"),
+        ],
+        CompactionState::default(),
+    );
+    let second_record = session
+        .save_snapshot_mirrored_record(&second, &second.history()[2..])
+        .unwrap();
+    assert_mirrored_record_matches_file(&session, &second_record);
+
+    // Turn 3: Compaction turn
+    let compaction_state = CompactionState::from_accounting(
+        1,
+        2,
+        100,
+        0,
+        Some(150),
+        Some(50),
+        Some(Revision::from_u64(3)),
+    );
+    let third = snapshot(
+        &session,
+        3,
+        vec![
+            Message::user_text("summary of earlier turns"),
+            Message::user_text("third question"),
+        ],
+        compaction_state,
+    );
+    let third_record = session
+        .save_snapshot_mirrored_record(&third, &third.history()[1..])
+        .unwrap();
+    assert_mirrored_record_matches_file(&session, &third_record);
+
+    // Turn 4: set_leaf back to first turn (branching)
+    let branched_record = session.set_leaf_mirrored_record(&first_leaf_id).unwrap();
+    assert_mirrored_record_matches_file(&session, &branched_record);
+
+    // Turn 5: New turn on the branch
+    let branched = snapshot(
+        &session,
+        4,
+        vec![
+            Message::user_text("first question"),
+            Message::assistant_text("first answer"),
+            Message::user_text("alternate branch question"),
+            Message::assistant_text("alternate answer"),
+        ],
+        CompactionState::default(),
+    );
+    let after_branch_record = session
+        .save_snapshot_mirrored_record(&branched, &branched.history()[2..])
+        .unwrap();
+    assert_mirrored_record_matches_file(&session, &after_branch_record);
+}
+
+// Covers: upgrade-marker save and set_leaf on a v3 transcript must mirror the file
+// Owner: session persistence
+#[test]
+fn mirrored_tree_legacy_upgrade_index_record_equals_reloaded_file_summary() {
+    let root = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let id = "33333333-3333-4333-8333-333333333333";
+    let dir = session_dir_in_root(root.path(), cwd.path());
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("1_{id}.jsonl"));
+    let fixture = include_str!("session/fixtures/session-v3.jsonl");
+    let mut lines = fixture.lines();
+    let mut header = serde_json::from_str::<serde_json::Value>(lines.next().unwrap()).unwrap();
+    header["cwd"] = serde_json::Value::String(cwd.path().to_string_lossy().into_owned());
+    let transcript = std::iter::once(header.to_string())
+        .chain(lines.map(str::to_owned))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(&path, format!("{transcript}\n")).unwrap();
+
+    let (session, _) = Session::open_by_id_in_root(root.path(), cwd.path(), id).unwrap();
+    let legacy_leaf_id = session
+        .session_tree()
+        .unwrap()
+        .active_leaf_id()
+        .unwrap()
+        .clone();
+
+    // Save a new turn triggering the upgrade marker path
+    let resumed = session
+        .snapshot_for_resume(
+            ModelIdentity::new("provider", "api", "model"),
+            "prompt-key".into(),
+        )
+        .unwrap();
+    let mut history = resumed.history().to_vec();
+    history.push(Message::user_text("new turn after upgrade"));
+    let upgraded_snapshot = SessionSnapshot::new(
+        SessionId::from_string(session.id().to_owned()).unwrap(),
+        Revision::from_u64(resumed.revision().get() + 1),
+        history.clone(),
+        resumed.provider().clone(),
+        resumed.compaction().clone(),
+    );
+    let upgraded_record = session
+        .save_snapshot_mirrored_record(
+            &upgraded_snapshot,
+            &[Message::user_text("new turn after upgrade")],
+        )
+        .unwrap();
+    assert_mirrored_record_matches_file(&session, &upgraded_record);
+
+    let branched_record = session.set_leaf_mirrored_record(&legacy_leaf_id).unwrap();
+    assert_mirrored_record_matches_file(&session, &branched_record);
+}
+
+// Covers: attaching to a parentless v1 virtual leaf and set_leaf must mirror the file
+// Owner: session persistence
+#[test]
+fn mirrored_tree_legacy_v1_no_parent_snapshot_upgrade_index_record_equals_reloaded_file_summary() {
+    let root = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let id = "11111111-1111-4111-8111-111111111111";
+    let dir = session_dir_in_root(root.path(), cwd.path());
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("1_{id}.jsonl"));
+    let fixture = include_str!("session/fixtures/session-v1.jsonl");
+    let mut lines = fixture.lines();
+    let mut header = serde_json::from_str::<serde_json::Value>(lines.next().unwrap()).unwrap();
+    header["cwd"] = serde_json::Value::String(cwd.path().to_string_lossy().into_owned());
+    let transcript = std::iter::once(header.to_string())
+        .chain(lines.map(str::to_owned))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(&path, format!("{transcript}\n")).unwrap();
+
+    let (session, _) = Session::open_by_id_in_root(root.path(), cwd.path(), id).unwrap();
+    let legacy_leaf_id = session
+        .session_tree()
+        .unwrap()
+        .active_leaf_id()
+        .unwrap()
+        .clone();
+
+    // Save a new turn attaching an explicit node to the legacy virtual leaf with no parent snapshot
+    let resumed = session
+        .snapshot_for_resume(
+            ModelIdentity::new("provider", "api", "model"),
+            "prompt-key".into(),
+        )
+        .unwrap();
+    let mut history = resumed.history().to_vec();
+    history.push(Message::user_text("new turn after v1 upgrade"));
+    let upgraded_snapshot = SessionSnapshot::new(
+        SessionId::from_string(session.id().to_owned()).unwrap(),
+        Revision::from_u64(resumed.revision().get() + 1),
+        history.clone(),
+        resumed.provider().clone(),
+        resumed.compaction().clone(),
+    );
+    let upgraded_record = session
+        .save_snapshot_mirrored_record(
+            &upgraded_snapshot,
+            &[Message::user_text("new turn after v1 upgrade")],
+        )
+        .unwrap();
+    assert_mirrored_record_matches_file(&session, &upgraded_record);
+
+    let branched_record = session.set_leaf_mirrored_record(&legacy_leaf_id).unwrap();
+    assert_mirrored_record_matches_file(&session, &branched_record);
 }

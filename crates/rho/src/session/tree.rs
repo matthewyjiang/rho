@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt, fs,
     io::{BufRead, BufReader, Seek},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use rho_sdk::SessionSnapshot;
@@ -10,10 +10,11 @@ use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use uuid::Uuid;
 
 use super::persistence::{
-    next_revision, session_id_from_path, validate_session_version, PersistedSessionState,
-    SessionEntry, StoredDisplayMessage,
+    next_revision, parse_timestamp, session_id_from_path, validate_session_version,
+    PersistedSessionState, SessionEntry, StoredDisplayMessage,
 };
 use super::snapshot_delta::StoredSnapshotDelta;
+use super::{SessionIndexRecord, SessionSummary};
 
 /// Stable identity for one durable state in a session tree.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize)]
@@ -164,6 +165,9 @@ pub(crate) struct SessionTree {
     order: Vec<NodeId>,
     active_leaf_id: Option<NodeId>,
     session_id: Option<String>,
+    cwd: Option<PathBuf>,
+    created_at: Option<u64>,
+    updated_at: Option<u64>,
     version: Option<u32>,
     upgraded: bool,
     /// Cached count of parent nodes with more than one child, maintained in
@@ -174,6 +178,10 @@ pub(crate) struct SessionTree {
 impl SessionTree {
     pub(crate) fn load(path: &Path) -> anyhow::Result<Self> {
         Self::load_with_entry_visitor(path, |_| Ok(()))
+    }
+
+    fn observe_timestamp(&mut self, timestamp: u64) {
+        self.updated_at = Some(self.updated_at.map_or(timestamp, |u| u.max(timestamp)));
     }
 
     pub(super) fn load_with_entry_visitor(
@@ -423,6 +431,114 @@ impl SessionTree {
         self.version.is_some_and(|version| version < 4) && !self.upgraded
     }
 
+    pub(crate) fn apply_explicit_node(&mut self, node: SessionNode) -> anyhow::Result<()> {
+        self.require_explicit_phase("node")?;
+        if let Some(ts) = parse_timestamp(&node.timestamp) {
+            self.observe_timestamp(ts);
+        }
+        self.insert_explicit_node(node)
+    }
+
+    pub(crate) fn apply_set_leaf(
+        &mut self,
+        target_id: NodeId,
+        timestamp_str: &str,
+    ) -> anyhow::Result<()> {
+        self.require_explicit_phase("set_leaf")?;
+        if let Some(ts) = parse_timestamp(timestamp_str) {
+            self.observe_timestamp(ts);
+        }
+        self.set_active_leaf(target_id)
+    }
+
+    pub(crate) fn apply_upgrade(
+        &mut self,
+        active_leaf_id: NodeId,
+        timestamp_str: &str,
+    ) -> anyhow::Result<()> {
+        if self.version == Some(4) {
+            anyhow::bail!("version 4 session cannot contain a legacy upgrade marker");
+        }
+        if self.version.is_none() {
+            anyhow::bail!("legacy upgrade marker appears before the session header");
+        }
+        if self.upgraded {
+            anyhow::bail!("session contains more than one legacy upgrade marker");
+        }
+        if self.active_leaf_id.as_ref() != Some(&active_leaf_id) {
+            anyhow::bail!("legacy upgrade marker must target the current virtual leaf");
+        }
+        if let Some(ts) = parse_timestamp(timestamp_str) {
+            self.observe_timestamp(ts);
+        }
+        self.upgraded = true;
+        Ok(())
+    }
+
+    pub(crate) fn summary_record(
+        &self,
+        path: &Path,
+        fallback_cwd: &Path,
+    ) -> anyhow::Result<SessionIndexRecord> {
+        let id = session_id_from_path(path)
+            .or_else(|| self.session_id.clone())
+            .ok_or_else(|| anyhow::anyhow!("session file has invalid name: {}", path.display()))?;
+        let (file_size, file_mtime) = super::persistence::session_file_stats(path);
+        let mut updated_at = self.updated_at.unwrap_or_default();
+        if updated_at == 0 {
+            updated_at = file_mtime.map(|mtime| mtime as u64).unwrap_or_default();
+        }
+        let mut created_at = self
+            .created_at
+            .or_else(|| super::persistence::timestamp_from_filename(path))
+            .unwrap_or(updated_at);
+        if created_at == 0 {
+            created_at = updated_at;
+        }
+
+        let (message_count, first_user_message, last_user_message) = if let Some(state) =
+            self.active_state()
+        {
+            let valid_len =
+                super::persistence::complete_turn_tail_len(&state.display, |entry| &entry.message);
+            let valid_display = &state.display[..valid_len];
+            let first = valid_display
+                .iter()
+                .find_map(|entry| super::persistence::user_message_text(&entry.message));
+            let last = valid_display
+                .iter()
+                .rev()
+                .find_map(|entry| super::persistence::user_message_text(&entry.message));
+            (valid_display.len() as u64, first, last)
+        } else {
+            (0, None, None)
+        };
+
+        let facts = self.facts();
+        Ok(SessionIndexRecord {
+            summary: SessionSummary {
+                id,
+                path: path.to_path_buf(),
+                cwd: self
+                    .cwd
+                    .clone()
+                    .unwrap_or_else(|| fallback_cwd.to_path_buf()),
+                created_at,
+                updated_at,
+                message_count,
+                title: None,
+                first_user_message,
+                last_user_message,
+            },
+            file_size,
+            file_mtime,
+            node_count: facts.node_count as u64,
+            branch_count: facts.branch_count as u64,
+            active_leaf_id: facts.active_leaf_id.map(|id| id.to_string()),
+            effective_format_version: self.effective_format_version(),
+        })
+    }
+
     fn apply_entry(
         &mut self,
         entry: SessionEntry,
@@ -430,8 +546,17 @@ impl SessionTree {
         legacy_state: &mut PersistedSessionState,
         expected_session_id: Option<&str>,
     ) -> anyhow::Result<()> {
+        if let Some(ts) = parse_timestamp(entry.event_timestamp()) {
+            self.observe_timestamp(ts);
+        }
         match entry {
-            SessionEntry::Session { version, id, .. } => {
+            SessionEntry::Session {
+                version,
+                id,
+                cwd,
+                timestamp,
+                ..
+            } => {
                 validate_session_version(version, Path::new("session"))?;
                 if let Some(expected) = expected_session_id {
                     if expected != id {
@@ -444,6 +569,10 @@ impl SessionTree {
                     anyhow::bail!("session log contains more than one session header");
                 }
                 self.version = Some(version);
+                self.cwd = Some(cwd);
+                if let Some(created) = parse_timestamp(&timestamp) {
+                    self.created_at = Some(created);
+                }
             }
             SessionEntry::Node { node } => {
                 self.require_explicit_phase("node")?;
@@ -650,9 +779,7 @@ impl SessionTree {
                 let parent = self.nodes.get(parent_id).ok_or_else(|| {
                     anyhow::anyhow!("node '{}' names missing parent '{parent_id}'", node.id)
                 })?;
-                let parent_snapshot = parent.state.snapshot.as_ref().ok_or_else(|| {
-                    anyhow::anyhow!("parent '{parent_id}' has no complete snapshot")
-                })?;
+                let parent_snapshot = parent.state.snapshot.as_ref();
                 if node.kind == SessionNodeKind::Compaction
                     && !matches!(transition, StoredStateTransition::Snapshot { .. })
                 {
@@ -661,10 +788,22 @@ impl SessionTree {
                 let snapshot = match transition {
                     StoredStateTransition::Snapshot { snapshot } => snapshot.as_ref().clone(),
                     StoredStateTransition::SnapshotDelta { delta } => {
-                        delta.restore(parent_snapshot)?
+                        let base = parent_snapshot.ok_or_else(|| {
+                            anyhow::anyhow!("parent '{parent_id}' has no complete snapshot")
+                        })?;
+                        delta.restore(base)?
                     }
                 };
-                if snapshot != *parent_snapshot && snapshot.revision() <= parent.state.revision {
+                if let Some(parent_snapshot) = parent_snapshot {
+                    if snapshot != *parent_snapshot && snapshot.revision() <= parent.state.revision
+                    {
+                        anyhow::bail!(
+                            "node '{}' changed state without advancing parent revision {}",
+                            node.id,
+                            parent.state.revision
+                        );
+                    }
+                } else if snapshot.revision() <= parent.state.revision {
                     anyhow::bail!(
                         "node '{}' changed state without advancing parent revision {}",
                         node.id,
@@ -757,7 +896,7 @@ impl SessionTree {
 }
 
 fn continuation_is_valid(messages: &[rho_providers::model::Message]) -> bool {
-    super::drop_incomplete_tool_turn_tail(messages.to_vec()).len() == messages.len()
+    super::persistence::complete_message_len(messages) == messages.len()
 }
 
 fn refresh_snapshot_state(state: &mut PersistedSessionState) {

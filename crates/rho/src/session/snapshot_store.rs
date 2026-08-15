@@ -1,14 +1,17 @@
 use rho_providers::model::{Message, ModelIdentity};
 use rho_sdk::{SessionId, SessionSnapshot};
 
-use super::persistence::{read_session_state, timestamp, SessionEntry, StoredDisplayMessage};
+use super::persistence::{
+    drop_incomplete_tool_turn_tail, read_session_state, timestamp, SessionEntry,
+    StoredDisplayMessage,
+};
 use super::snapshot_delta::{SnapshotDeltaBase, StoredSnapshotDelta};
 #[cfg(test)]
 use super::tree::SessionTreeFacts;
 use super::tree::{
     NodeId, SessionNode, SessionNodeKind, SessionTree, StoredCompactionFacts, StoredStateTransition,
 };
-use super::{drop_incomplete_tool_turn_tail, index, Session};
+use super::{index, Session};
 
 impl Session {
     /// Persists one SDK snapshot state and its newly visible transcript tail.
@@ -21,7 +24,8 @@ impl Session {
         snapshot: &SessionSnapshot,
         display_tail: &[Message],
     ) -> anyhow::Result<()> {
-        self.save_snapshot_with_compaction_facts(snapshot, display_tail, None)
+        self.save_snapshot_with_compaction_facts(snapshot, display_tail, None)?;
+        Ok(())
     }
 
     pub(crate) fn save_compaction_snapshot(
@@ -40,7 +44,8 @@ impl Session {
                 current_tokens: outcome.current_tokens(),
                 cost_usd_micros: outcome.cost_usd_micros(),
             }),
-        )
+        )?;
+        Ok(())
     }
 
     fn save_snapshot_with_compaction_facts(
@@ -48,7 +53,7 @@ impl Session {
         snapshot: &SessionSnapshot,
         display_tail: &[Message],
         supplied_compaction_facts: Option<StoredCompactionFacts>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Option<super::SessionIndexRecord>> {
         if snapshot.session_id().as_str() != self.id {
             anyhow::bail!(
                 "snapshot session id '{}' does not match store id '{}'",
@@ -60,7 +65,7 @@ impl Session {
             .write_lock
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let tree = SessionTree::load(&self.path)?;
+        let mut tree = SessionTree::load(&self.path)?;
         let parent_id = tree.active_leaf_id().cloned();
         let parent_snapshot = tree
             .active_state()
@@ -87,7 +92,10 @@ impl Session {
                 cost_usd_micros: None,
             })
         });
-        let transition = if compaction_changed {
+        // Force a full snapshot if compaction changed or if upgrading a legacy (< v4)
+        // session. Legacy sessions and compacted baselines do not share delta continuity
+        // with their predecessor.
+        let transition = if compaction_changed || tree.needs_upgrade_marker() {
             StoredStateTransition::Snapshot {
                 snapshot: Box::new(snapshot.clone()),
             }
@@ -105,33 +113,65 @@ impl Session {
                     },
                 )
         };
+        let node_timestamp = timestamp();
         let display_messages = display_tail
             .iter()
             .cloned()
             .map(|message| StoredDisplayMessage {
-                timestamp: timestamp(),
+                timestamp: node_timestamp.clone(),
                 message,
             })
             .collect();
 
-        self.append_tree_entry(
-            &mut cursor,
-            &tree,
-            &SessionEntry::Node {
-                node: SessionNode {
-                    id: NodeId::new(),
-                    parent_id,
-                    timestamp: timestamp(),
-                    kind,
-                    compaction_facts,
-                    transition,
-                    display_messages,
-                },
-            },
-        )?;
+        let node = SessionNode {
+            id: NodeId::new(),
+            parent_id,
+            timestamp: node_timestamp,
+            kind,
+            compaction_facts,
+            transition,
+            display_messages,
+        };
+
+        self.append_tree_entry(&mut cursor, &mut tree, SessionEntry::Node { node })?;
         cursor.last_snapshot = Some(SnapshotDeltaBase::from_snapshot(snapshot));
-        let _ = index::record_snapshot(self);
-        Ok(())
+        let record = self.record_mirrored_index(&tree);
+        drop(cursor);
+        Ok(record)
+    }
+
+    fn record_mirrored_index(&self, tree: &SessionTree) -> Option<super::SessionIndexRecord> {
+        match tree.summary_record(&self.path, &self.cwd) {
+            Ok(record) => {
+                let _ = index::record_snapshot_record(self, &record);
+                Some(record)
+            }
+            Err(err) => {
+                tracing::warn!(
+                    "failed to generate session index summary from in-memory tree: {err:#}"
+                );
+                None
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn save_snapshot_mirrored_record(
+        &self,
+        snapshot: &SessionSnapshot,
+        display_tail: &[Message],
+    ) -> anyhow::Result<super::SessionIndexRecord> {
+        self.save_snapshot_with_compaction_facts(snapshot, display_tail, None)?
+            .ok_or_else(|| anyhow::anyhow!("save produced no mirrored index record"))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_leaf_mirrored_record(
+        &self,
+        target_id: &NodeId,
+    ) -> anyhow::Result<super::SessionIndexRecord> {
+        self.set_leaf_and_record(target_id)?
+            .ok_or_else(|| anyhow::anyhow!("set_leaf produced no mirrored index record"))
     }
 
     pub(crate) fn session_tree(&self) -> anyhow::Result<SessionTree> {
@@ -181,22 +221,31 @@ impl Session {
 
     /// Selects an existing valid node without changing any stored state.
     pub(crate) fn set_leaf(&self, target_id: &NodeId) -> anyhow::Result<()> {
+        self.set_leaf_and_record(target_id)?;
+        Ok(())
+    }
+
+    fn set_leaf_and_record(
+        &self,
+        target_id: &NodeId,
+    ) -> anyhow::Result<Option<super::SessionIndexRecord>> {
         let mut cursor = self
             .write_lock
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let tree = SessionTree::load(&self.path)?;
+        let mut tree = SessionTree::load(&self.path)?;
         if tree.node(target_id).is_none() {
             anyhow::bail!("cannot select missing session node '{target_id}'");
         }
         if tree.active_leaf_id() == Some(target_id) {
-            return Ok(());
+            return Ok(None);
         }
+        let ts = timestamp();
         self.append_tree_entry(
             &mut cursor,
-            &tree,
-            &SessionEntry::SetLeaf {
-                timestamp: timestamp(),
+            &mut tree,
+            SessionEntry::SetLeaf {
+                timestamp: ts,
                 target_id: target_id.clone(),
             },
         )?;
@@ -204,8 +253,9 @@ impl Session {
             .node(target_id)
             .and_then(|node| node.state().snapshot.as_ref())
             .map(SnapshotDeltaBase::from_snapshot);
-        let _ = index::record_snapshot(self);
-        Ok(())
+        let record = self.record_mirrored_index(&tree);
+        drop(cursor);
+        Ok(record)
     }
 
     pub(crate) fn snapshot_for_resume(
