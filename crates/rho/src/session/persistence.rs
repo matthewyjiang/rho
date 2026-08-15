@@ -314,7 +314,14 @@ impl Session {
                     tracing::warn!("failed to apply set_leaf to in-memory session tree: {err:#}");
                 }
             }
-            _ => {}
+            SessionEntry::Session { .. }
+            | SessionEntry::Message { .. }
+            | SessionEntry::ReplaceHistory { .. }
+            | SessionEntry::Snapshot { .. }
+            | SessionEntry::SnapshotDelta { .. }
+            | SessionEntry::Upgrade { .. } => {
+                anyhow::bail!("append_tree_entry only accepts Node or SetLeaf entries");
+            }
         }
         Ok(())
     }

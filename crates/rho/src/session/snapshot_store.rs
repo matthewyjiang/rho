@@ -24,7 +24,8 @@ impl Session {
         snapshot: &SessionSnapshot,
         display_tail: &[Message],
     ) -> anyhow::Result<()> {
-        self.save_snapshot_with_compaction_facts(snapshot, display_tail, None)
+        self.save_snapshot_with_compaction_facts(snapshot, display_tail, None)?;
+        Ok(())
     }
 
     pub(crate) fn save_compaction_snapshot(
@@ -43,7 +44,8 @@ impl Session {
                 current_tokens: outcome.current_tokens(),
                 cost_usd_micros: outcome.cost_usd_micros(),
             }),
-        )
+        )?;
+        Ok(())
     }
 
     fn save_snapshot_with_compaction_facts(
@@ -51,7 +53,7 @@ impl Session {
         snapshot: &SessionSnapshot,
         display_tail: &[Message],
         supplied_compaction_facts: Option<StoredCompactionFacts>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Option<super::SessionIndexRecord>> {
         if snapshot.session_id().as_str() != self.id {
             anyhow::bail!(
                 "snapshot session id '{}' does not match store id '{}'",
@@ -133,19 +135,43 @@ impl Session {
 
         self.append_tree_entry(&mut cursor, &mut tree, &SessionEntry::Node { node })?;
         cursor.last_snapshot = Some(SnapshotDeltaBase::from_snapshot(snapshot));
+        let record = self.record_mirrored_index(&tree);
+        drop(cursor);
+        Ok(record)
+    }
 
+    fn record_mirrored_index(&self, tree: &SessionTree) -> Option<super::SessionIndexRecord> {
         match tree.summary_record(&self.path, &self.cwd) {
             Ok(record) => {
                 let _ = index::record_snapshot_record(self, &record);
+                Some(record)
             }
             Err(err) => {
                 tracing::warn!(
                     "failed to generate session index summary from in-memory tree: {err:#}"
                 );
+                None
             }
         }
-        drop(cursor);
-        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn save_snapshot_mirrored_record(
+        &self,
+        snapshot: &SessionSnapshot,
+        display_tail: &[Message],
+    ) -> anyhow::Result<super::SessionIndexRecord> {
+        self.save_snapshot_with_compaction_facts(snapshot, display_tail, None)?
+            .ok_or_else(|| anyhow::anyhow!("save produced no mirrored index record"))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_leaf_mirrored_record(
+        &self,
+        target_id: &NodeId,
+    ) -> anyhow::Result<super::SessionIndexRecord> {
+        self.set_leaf_and_record(target_id)?
+            .ok_or_else(|| anyhow::anyhow!("set_leaf produced no mirrored index record"))
     }
 
     pub(crate) fn session_tree(&self) -> anyhow::Result<SessionTree> {
@@ -195,6 +221,14 @@ impl Session {
 
     /// Selects an existing valid node without changing any stored state.
     pub(crate) fn set_leaf(&self, target_id: &NodeId) -> anyhow::Result<()> {
+        self.set_leaf_and_record(target_id)?;
+        Ok(())
+    }
+
+    fn set_leaf_and_record(
+        &self,
+        target_id: &NodeId,
+    ) -> anyhow::Result<Option<super::SessionIndexRecord>> {
         let mut cursor = self
             .write_lock
             .lock()
@@ -204,7 +238,7 @@ impl Session {
             anyhow::bail!("cannot select missing session node '{target_id}'");
         }
         if tree.active_leaf_id() == Some(target_id) {
-            return Ok(());
+            return Ok(None);
         }
         let ts = timestamp();
         self.append_tree_entry(
@@ -219,19 +253,9 @@ impl Session {
             .node(target_id)
             .and_then(|node| node.state().snapshot.as_ref())
             .map(SnapshotDeltaBase::from_snapshot);
-
-        match tree.summary_record(&self.path, &self.cwd) {
-            Ok(record) => {
-                let _ = index::record_snapshot_record(self, &record);
-            }
-            Err(err) => {
-                tracing::warn!(
-                    "failed to generate session index summary from in-memory tree: {err:#}"
-                );
-            }
-        }
+        let record = self.record_mirrored_index(&tree);
         drop(cursor);
-        Ok(())
+        Ok(record)
     }
 
     pub(crate) fn snapshot_for_resume(

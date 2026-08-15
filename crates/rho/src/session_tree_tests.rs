@@ -1,6 +1,11 @@
 use super::tree::{NodeId, SessionNode, SessionNodeKind, StoredStateTransition};
 use super::*;
 
+fn assert_mirrored_record_matches_file(session: &Session, mirrored: &SessionIndexRecord) {
+    let reloaded = summarize_session_file(session.path(), session.cwd()).unwrap();
+    pretty_assertions::assert_eq!(mirrored, &reloaded);
+}
+
 fn snapshot(
     session: &Session,
     revision: u64,
@@ -618,6 +623,8 @@ fn truncated_set_leaf_does_not_change_the_active_leaf() {
     );
 }
 
+// Covers: the record built from the mutated tree after save/set_leaf must match a file reload
+// Owner: session persistence
 #[test]
 fn mirrored_tree_index_record_equals_reloaded_file_summary() {
     let root = tempfile::tempdir().unwrap();
@@ -634,13 +641,11 @@ fn mirrored_tree_index_record_equals_reloaded_file_summary() {
         ],
         CompactionState::default(),
     );
-    session.save_snapshot(&first, first.history()).unwrap();
-    let tree = session.session_tree().unwrap();
-    let in_memory_record = tree.summary_record(session.path(), session.cwd()).unwrap();
-    let reloaded_record = summarize_session_file(session.path(), session.cwd()).unwrap();
-    pretty_assertions::assert_eq!(in_memory_record, reloaded_record);
-
-    let first_leaf_id = tree.active_leaf_id().unwrap().clone();
+    let first_record = session
+        .save_snapshot_mirrored_record(&first, first.history())
+        .unwrap();
+    assert_mirrored_record_matches_file(&session, &first_record);
+    let first_leaf_id = NodeId::from_string(first_record.active_leaf_id.clone().unwrap()).unwrap();
 
     // Turn 2: Follow-up turn
     let second = snapshot(
@@ -654,13 +659,10 @@ fn mirrored_tree_index_record_equals_reloaded_file_summary() {
         ],
         CompactionState::default(),
     );
-    session
-        .save_snapshot(&second, &second.history()[2..])
+    let second_record = session
+        .save_snapshot_mirrored_record(&second, &second.history()[2..])
         .unwrap();
-    let tree = session.session_tree().unwrap();
-    let in_memory_record = tree.summary_record(session.path(), session.cwd()).unwrap();
-    let reloaded_record = summarize_session_file(session.path(), session.cwd()).unwrap();
-    pretty_assertions::assert_eq!(in_memory_record, reloaded_record);
+    assert_mirrored_record_matches_file(&session, &second_record);
 
     // Turn 3: Compaction turn
     let compaction_state = CompactionState::from_accounting(
@@ -681,20 +683,14 @@ fn mirrored_tree_index_record_equals_reloaded_file_summary() {
         ],
         compaction_state,
     );
-    session
-        .save_snapshot(&third, &third.history()[1..])
+    let third_record = session
+        .save_snapshot_mirrored_record(&third, &third.history()[1..])
         .unwrap();
-    let tree = session.session_tree().unwrap();
-    let in_memory_record = tree.summary_record(session.path(), session.cwd()).unwrap();
-    let reloaded_record = summarize_session_file(session.path(), session.cwd()).unwrap();
-    pretty_assertions::assert_eq!(in_memory_record, reloaded_record);
+    assert_mirrored_record_matches_file(&session, &third_record);
 
     // Turn 4: set_leaf back to first turn (branching)
-    session.set_leaf(&first_leaf_id).unwrap();
-    let tree = session.session_tree().unwrap();
-    let in_memory_record = tree.summary_record(session.path(), session.cwd()).unwrap();
-    let reloaded_record = summarize_session_file(session.path(), session.cwd()).unwrap();
-    pretty_assertions::assert_eq!(in_memory_record, reloaded_record);
+    let branched_record = session.set_leaf_mirrored_record(&first_leaf_id).unwrap();
+    assert_mirrored_record_matches_file(&session, &branched_record);
 
     // Turn 5: New turn on the branch
     let branched = snapshot(
@@ -708,15 +704,14 @@ fn mirrored_tree_index_record_equals_reloaded_file_summary() {
         ],
         CompactionState::default(),
     );
-    session
-        .save_snapshot(&branched, &branched.history()[2..])
+    let after_branch_record = session
+        .save_snapshot_mirrored_record(&branched, &branched.history()[2..])
         .unwrap();
-    let tree = session.session_tree().unwrap();
-    let in_memory_record = tree.summary_record(session.path(), session.cwd()).unwrap();
-    let reloaded_record = summarize_session_file(session.path(), session.cwd()).unwrap();
-    pretty_assertions::assert_eq!(in_memory_record, reloaded_record);
+    assert_mirrored_record_matches_file(&session, &after_branch_record);
 }
 
+// Covers: upgrade-marker save and set_leaf on a v3 transcript must mirror the file
+// Owner: session persistence
 #[test]
 fn mirrored_tree_legacy_upgrade_index_record_equals_reloaded_file_summary() {
     let root = tempfile::tempdir().unwrap();
@@ -736,14 +731,12 @@ fn mirrored_tree_legacy_upgrade_index_record_equals_reloaded_file_summary() {
     fs::write(&path, format!("{transcript}\n")).unwrap();
 
     let (session, _) = Session::open_by_id_in_root(root.path(), cwd.path(), id).unwrap();
-
-    // Verify equivalence on legacy load
-    let tree = session.session_tree().unwrap();
-    let in_memory_record = tree.summary_record(session.path(), session.cwd()).unwrap();
-    let reloaded_record = summarize_session_file(session.path(), session.cwd()).unwrap();
-    pretty_assertions::assert_eq!(in_memory_record, reloaded_record);
-
-    let legacy_leaf_id = tree.active_leaf_id().unwrap().clone();
+    let legacy_leaf_id = session
+        .session_tree()
+        .unwrap()
+        .active_leaf_id()
+        .unwrap()
+        .clone();
 
     // Save a new turn triggering the upgrade marker path
     let resumed = session
@@ -761,26 +754,20 @@ fn mirrored_tree_legacy_upgrade_index_record_equals_reloaded_file_summary() {
         resumed.provider().clone(),
         resumed.compaction().clone(),
     );
-    session
-        .save_snapshot(
+    let upgraded_record = session
+        .save_snapshot_mirrored_record(
             &upgraded_snapshot,
             &[Message::user_text("new turn after upgrade")],
         )
         .unwrap();
+    assert_mirrored_record_matches_file(&session, &upgraded_record);
 
-    let tree = session.session_tree().unwrap();
-    let in_memory_record = tree.summary_record(session.path(), session.cwd()).unwrap();
-    let reloaded_record = summarize_session_file(session.path(), session.cwd()).unwrap();
-    pretty_assertions::assert_eq!(in_memory_record, reloaded_record);
-
-    // Test set_leaf back to the legacy leaf
-    session.set_leaf(&legacy_leaf_id).unwrap();
-    let tree = session.session_tree().unwrap();
-    let in_memory_record = tree.summary_record(session.path(), session.cwd()).unwrap();
-    let reloaded_record = summarize_session_file(session.path(), session.cwd()).unwrap();
-    pretty_assertions::assert_eq!(in_memory_record, reloaded_record);
+    let branched_record = session.set_leaf_mirrored_record(&legacy_leaf_id).unwrap();
+    assert_mirrored_record_matches_file(&session, &branched_record);
 }
 
+// Covers: attaching to a parentless v1 virtual leaf and set_leaf must mirror the file
+// Owner: session persistence
 #[test]
 fn mirrored_tree_legacy_v1_no_parent_snapshot_upgrade_index_record_equals_reloaded_file_summary() {
     let root = tempfile::tempdir().unwrap();
@@ -800,14 +787,12 @@ fn mirrored_tree_legacy_v1_no_parent_snapshot_upgrade_index_record_equals_reload
     fs::write(&path, format!("{transcript}\n")).unwrap();
 
     let (session, _) = Session::open_by_id_in_root(root.path(), cwd.path(), id).unwrap();
-
-    // Verify equivalence on legacy v1 load (virtual leaf has no parent snapshot)
-    let tree = session.session_tree().unwrap();
-    let in_memory_record = tree.summary_record(session.path(), session.cwd()).unwrap();
-    let reloaded_record = summarize_session_file(session.path(), session.cwd()).unwrap();
-    pretty_assertions::assert_eq!(in_memory_record, reloaded_record);
-
-    let legacy_leaf_id = tree.active_leaf_id().unwrap().clone();
+    let legacy_leaf_id = session
+        .session_tree()
+        .unwrap()
+        .active_leaf_id()
+        .unwrap()
+        .clone();
 
     // Save a new turn attaching an explicit node to the legacy virtual leaf with no parent snapshot
     let resumed = session
@@ -825,22 +810,14 @@ fn mirrored_tree_legacy_v1_no_parent_snapshot_upgrade_index_record_equals_reload
         resumed.provider().clone(),
         resumed.compaction().clone(),
     );
-    session
-        .save_snapshot(
+    let upgraded_record = session
+        .save_snapshot_mirrored_record(
             &upgraded_snapshot,
             &[Message::user_text("new turn after v1 upgrade")],
         )
         .unwrap();
+    assert_mirrored_record_matches_file(&session, &upgraded_record);
 
-    let tree = session.session_tree().unwrap();
-    let in_memory_record = tree.summary_record(session.path(), session.cwd()).unwrap();
-    let reloaded_record = summarize_session_file(session.path(), session.cwd()).unwrap();
-    pretty_assertions::assert_eq!(in_memory_record, reloaded_record);
-
-    // Test set_leaf back to the legacy leaf
-    session.set_leaf(&legacy_leaf_id).unwrap();
-    let tree = session.session_tree().unwrap();
-    let in_memory_record = tree.summary_record(session.path(), session.cwd()).unwrap();
-    let reloaded_record = summarize_session_file(session.path(), session.cwd()).unwrap();
-    pretty_assertions::assert_eq!(in_memory_record, reloaded_record);
+    let branched_record = session.set_leaf_mirrored_record(&legacy_leaf_id).unwrap();
+    assert_mirrored_record_matches_file(&session, &branched_record);
 }
