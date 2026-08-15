@@ -11,10 +11,9 @@ use super::{
     copy_interaction::{selection_position, selection_position_clamped},
     paste_burst::word_range_at,
     picker_input::PickerMouseEvent,
-    render::tool_entry_lines,
     text_selection::{screen_lines, CopyNotice, TextSelection},
     tool_card_hover::{ToolCardHit, ToolCardTarget},
-    tool_output_ui::{expandable_tool_entry, tool_output_toggleable},
+    tool_output_ui::expandable_tool_entry,
     App, ComposerMode,
 };
 
@@ -522,59 +521,13 @@ impl App {
         }
 
         let static_len = self.history_static_len(width);
-        let mut pending_start = static_len;
-        let shells = self.running_inline_shell_entries().collect::<Vec<_>>();
-        let has_pending_tools =
-            !shells.is_empty() || self.turn.tool_calls().live_entries().next().is_some();
-        // Match history_live_lines: open stream tails need one blank before live tools.
-        if has_pending_tools && self.open_stream_tail_active() {
-            pending_start = pending_start.saturating_add(1);
-        }
-        for shell in &shells {
-            pending_start = pending_start.saturating_add(
-                tool_entry_lines(
-                    shell,
-                    width,
-                    max_tool_output_lines,
-                    self.feed_image_row_budget(width),
-                )
-                .len(),
-            );
-        }
-        let entries = self
-            .turn
-            .tool_calls()
-            .previews
-            .iter()
-            .map(|(index, entry)| (ToolCardTarget::Preview(*index), entry))
-            .chain(
-                self.turn
-                    .tool_calls()
-                    .running
-                    .iter()
-                    .map(|(call_id, entry)| (ToolCardTarget::Running(call_id.clone()), entry)),
-            );
-        for (target, pending) in entries {
-            let pending_end = pending_start.saturating_add(
-                tool_entry_lines(
-                    pending,
-                    width,
-                    max_tool_output_lines,
-                    self.feed_image_row_budget(width),
-                )
-                .len(),
-            );
-            if (pending_start..pending_end).contains(&line)
-                && tool_output_toggleable(pending, max_tool_output_lines, width)
-            {
-                return Some(ToolCardHit {
-                    target,
-                    lines: pending_start..pending_end,
-                });
-            }
-            pending_start = pending_end;
-        }
-        None
+        let live = self.live_history_layout(width, self.feed_image_row_budget(width));
+        live.card_hit_at(line.saturating_sub(static_len))
+            .filter(|_| line >= static_len)
+            .map(|(target, range)| ToolCardHit {
+                target,
+                lines: (static_len + range.start)..(static_len + range.end),
+            })
     }
 
     pub(super) fn copy_text(&mut self, text: &str, now: Instant) {

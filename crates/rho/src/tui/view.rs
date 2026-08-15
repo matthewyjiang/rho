@@ -1,3 +1,4 @@
+use std::ops::Range;
 use std::time::Instant;
 
 use ratatui::{
@@ -8,6 +9,9 @@ use ratatui::{
     DefaultTerminal, Frame,
 };
 
+use super::tool_call_batch::LiveToolKey;
+use super::tool_card_hover::ToolCardTarget;
+use super::tool_output_ui::tool_output_toggleable;
 use super::{
     highlight_selection,
     message_history::{recovered_history_tail, transcript_entries_from_messages},
@@ -24,6 +28,37 @@ use super::{
 };
 #[cfg(test)]
 use super::{ActiveFrame, DEFAULT_TUI_HEIGHT};
+
+/// Live history paint output: lines plus toggleable card spans in that walk.
+pub(super) struct LiveHistory {
+    pub(super) lines: Vec<Line<'static>>,
+    /// Ranges are relative to the start of `lines`.
+    cards: Vec<(ToolCardTarget, Range<usize>)>,
+}
+
+impl LiveHistory {
+    fn card_at(&self, live_line: usize) -> Option<Range<usize>> {
+        self.cards
+            .iter()
+            .find_map(|(_, range)| range.contains(&live_line).then(|| range.clone()))
+    }
+
+    pub(super) fn card_hit_at(&self, live_line: usize) -> Option<(ToolCardTarget, Range<usize>)> {
+        self.cards
+            .iter()
+            .find(|(_, range)| range.contains(&live_line))
+            .map(|(target, range)| (target.clone(), range.clone()))
+    }
+}
+
+impl From<LiveToolKey> for ToolCardTarget {
+    fn from(key: LiveToolKey) -> Self {
+        match key {
+            LiveToolKey::Preview(index) => Self::Preview(index),
+            LiveToolKey::Running(call_id) => Self::Running(call_id),
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
 struct DrawSurface<'a> {
@@ -84,10 +119,10 @@ impl App {
             composer_lines.len(),
             command_lines.len(),
         );
-        let live_history = self.history_live_lines_with_budget(width, settings.max_image_height);
+        let live_history = self.live_history_layout(width, settings.max_image_height);
         let history_len = self
             .history_static_len_with_settings(width, settings)
-            .saturating_add(live_history.len());
+            .saturating_add(live_history.lines.len());
         let layout = self.screen_layout_for_history_len(
             area,
             history_len,
@@ -128,7 +163,7 @@ impl App {
         settings: HistoryRenderSettings,
         layout: &super::screen_layout::ScreenLayout,
         slice: HistoryLineSlice,
-        live_history: &[Line<'static>],
+        live_history: &LiveHistory,
     ) {
         let HistoryLineSlice {
             start: history_start,
@@ -139,7 +174,7 @@ impl App {
             settings,
             history_start,
             history_count,
-            live_history,
+            &live_history.lines,
         );
         let visible_images =
             self.visible_history_image_placements(width, settings, history_start, history_count);
@@ -154,11 +189,23 @@ impl App {
         // reverse-video highlight on overlapping rows.
         if let Some(lines) = self
             .last_mouse_position
-            .filter(|position| layout.history_content.contains((*position).into()))
+            .filter(|position| {
+                layout.history_content.contains((*position).into())
+                    && layout
+                        .history_scrollbar
+                        .is_none_or(|scrollbar| !scrollbar.contains(position.0, position.1))
+            })
             .and_then(|(_, row)| {
                 let line = history_start + usize::from(row - layout.history_content.y);
-                self.tool_card_hit_at_history_line(line, width)
-                    .map(|hit| hit.lines)
+                let static_len = self.history_static_len_with_settings(width, settings);
+                if line >= static_len {
+                    live_history
+                        .card_at(line - static_len)
+                        .map(|range| (static_len + range.start)..(static_len + range.end))
+                } else {
+                    self.tool_card_hit_at_history_line(line, width)
+                        .map(|hit| hit.lines)
+                }
             })
         {
             tool_card_hover::lift_lines(
@@ -769,15 +816,14 @@ impl App {
     }
 
     pub(super) fn history_live_lines(&self, width: usize, _now: Instant) -> Vec<Line<'static>> {
-        self.history_live_lines_with_budget(width, self.feed_image_row_budget(width))
+        self.live_history_layout(width, self.feed_image_row_budget(width))
+            .lines
     }
 
-    fn history_live_lines_with_budget(
-        &self,
-        width: usize,
-        max_image_height: u16,
-    ) -> Vec<Line<'static>> {
+    /// Live feed lines plus the clickable card spans in the same walk that paints them.
+    pub(super) fn live_history_layout(&self, width: usize, max_image_height: u16) -> LiveHistory {
         let mut lines = Vec::new();
+        let mut cards = Vec::new();
         let show_tools = self.info.runtime.shows_work_chrome();
         let shells = if show_tools {
             self.running_inline_shell_entries().collect::<Vec<_>>()
@@ -785,7 +831,7 @@ impl App {
             Vec::new()
         };
         let tools = if show_tools {
-            self.turn.tool_calls().live_entries().collect::<Vec<_>>()
+            self.turn.tool_calls().live_cards().collect::<Vec<_>>()
         } else {
             Vec::new()
         };
@@ -804,13 +850,19 @@ impl App {
                 max_image_height,
             ));
         }
-        for pending in tools {
+        let max_tool_output_lines = self.info.runtime.max_tool_output_lines;
+        for (key, pending) in tools {
+            let start = lines.len();
             lines.extend(tool_entry_lines(
                 pending,
                 width,
-                self.info.runtime.max_tool_output_lines,
+                max_tool_output_lines,
                 max_image_height,
             ));
+            let end = lines.len();
+            if tool_output_toggleable(pending, max_tool_output_lines, width) {
+                cards.push((ToolCardTarget::from(key), start..end));
+            }
         }
         if let Some(preview) = &self.streams.live_stream_preview {
             let show_preview = match preview.kind {
@@ -835,7 +887,7 @@ impl App {
                 LineFill::Natural,
             )));
         }
-        lines
+        LiveHistory { lines, cards }
     }
 
     pub(super) fn open_stream_tail_active(&self) -> bool {

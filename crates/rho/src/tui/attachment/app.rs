@@ -509,8 +509,8 @@ impl AttachmentApp {
                         self.press_tool_key = if self.scroll.drag().is_some() {
                             None
                         } else {
-                            self.toggle_target_at_pointer(mouse.column, mouse.row)
-                                .and_then(|target| self.tool_key_for_target(&target))
+                            self.tool_card_at_pointer(mouse.column, mouse.row)
+                                .and_then(|(target, _)| self.tool_key_for_target(&target))
                         };
                     }
                     MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Moved => {
@@ -706,11 +706,6 @@ impl AttachmentApp {
                 .visible_start(self.content_len, self.viewport_height)
                 .saturating_add(usize::from(row.saturating_sub(self.history_area.y))),
         )
-    }
-
-    fn toggle_target_at_pointer(&self, column: u16, row: u16) -> Option<ToggleTarget> {
-        self.tool_card_at_pointer(column, row)
-            .map(|(target, _)| target)
     }
 
     /// Toggleable card under the pointer: click target and hover-lift span.

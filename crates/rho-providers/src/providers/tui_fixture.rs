@@ -19,6 +19,13 @@ use rho_sdk::{
     CancellationToken, ProviderError, ProviderErrorKind, Retryability,
 };
 
+use goal::{
+    delegation_result_was_reviewed, is_blocked_goal_evaluation, is_delegation_goal_evaluation,
+    is_delegation_retry_goal_evaluation, is_goal_delegation_prompt,
+    is_goal_delegation_retry_continuation, is_goal_questionnaire_evaluation,
+    is_goal_questionnaire_prompt, is_goal_retry_prompt, DELEGATION_REVIEW_RESPONSE,
+};
+
 const MODE_ENV: &str = "RHO_TUI_TEST_MODE";
 const MATRIX_MODE: &str = "matrix";
 const TOOL_CALL_ID: &str = "tui-fixture-tool";
@@ -538,13 +545,6 @@ async fn fixture_stream(
         }
     }
 }
-
-use goal::{
-    delegation_result_was_reviewed, is_blocked_goal_evaluation, is_delegation_goal_evaluation,
-    is_delegation_retry_goal_evaluation, is_goal_delegation_prompt,
-    is_goal_delegation_retry_continuation, is_goal_questionnaire_evaluation,
-    is_goal_questionnaire_prompt, is_goal_retry_prompt, DELEGATION_REVIEW_RESPONSE,
-};
 
 fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, ProviderError> {
     if let Some(review) = advisor::review(request) {
