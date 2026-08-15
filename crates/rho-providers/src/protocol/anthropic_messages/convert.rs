@@ -38,7 +38,7 @@ pub(crate) enum ProviderContextReplay {
 }
 
 pub(crate) fn split_system_and_messages(
-    messages: Vec<Message>,
+    messages: &[Message],
     target: &crate::model::ModelIdentity,
     provider_context_replay: ProviderContextReplay,
 ) -> Result<(Option<String>, Vec<AnthropicMessage>), ModelError> {
@@ -46,26 +46,26 @@ pub(crate) fn split_system_and_messages(
     let mut converted = Vec::new();
     for message in messages {
         match message {
-            Message::System(content) => system.push(content),
+            Message::System(content) => system.push(content.as_str()),
             Message::User(blocks) => push_message(
                 &mut converted,
                 AnthropicRole::User,
-                blocks.into_iter().map(user_block).collect(),
+                blocks.iter().map(user_block).collect(),
             ),
             Message::Assistant(blocks) => push_message(
                 &mut converted,
                 AnthropicRole::Assistant,
-                blocks.into_iter().map(assistant_block).collect(),
+                blocks.iter().map(assistant_block).collect(),
             ),
             Message::EnrichedAssistant(message) => {
-                let mut message = *message;
+                let mut message = (**message).clone();
                 if provider_context_replay == ProviderContextReplay::Disabled {
                     message.retain_portable_context();
                 }
                 let prepared = prepare_assistant(message, target);
                 let mut content = prepared
                     .content
-                    .into_iter()
+                    .iter()
                     .map(assistant_block)
                     .collect::<Vec<_>>();
                 for block in prepared.replay_context {
@@ -86,17 +86,17 @@ pub(crate) fn split_system_and_messages(
             Message::AbortedAssistant(message) => {
                 let content = message
                     .content
-                    .into_iter()
+                    .iter()
                     .map(|block| match block {
-                        ContentBlock::ToolCall(call) => ContentBlock::Text(render_tool_call(&call)),
-                        other => other,
+                        ContentBlock::ToolCall(call) => ContentBlock::Text(render_tool_call(call)),
+                        other => other.clone(),
                     })
                     .collect::<Vec<_>>();
                 let mut enriched = crate::model::AssistantMessage {
                     content,
-                    provenance: message.provenance,
-                    reasoning_summary: message.reasoning_summary,
-                    provider_context: message.provider_context,
+                    provenance: message.provenance.clone(),
+                    reasoning_summary: message.reasoning_summary.clone(),
+                    provider_context: message.provider_context.clone(),
                 };
                 enriched
                     .content
@@ -107,7 +107,7 @@ pub(crate) fn split_system_and_messages(
                 let prepared = prepare_assistant(enriched, target);
                 let mut content = prepared
                     .content
-                    .into_iter()
+                    .iter()
                     .map(assistant_block)
                     .collect::<Vec<_>>();
                 for block in prepared.replay_context {
@@ -128,8 +128,8 @@ pub(crate) fn split_system_and_messages(
                 &mut converted,
                 AnthropicRole::User,
                 vec![AnthropicContentBlock::ToolResult {
-                    tool_use_id: result.id,
-                    content: result.content,
+                    tool_use_id: result.id.clone(),
+                    content: result.content.clone(),
                     is_error: !result.ok,
                     cache_control: None,
                 }],
@@ -152,30 +152,30 @@ fn push_message(
     }
 }
 
-fn user_block(block: ContentBlock) -> AnthropicContentBlock {
+fn user_block(block: &ContentBlock) -> AnthropicContentBlock {
     match block {
         ContentBlock::Text(text) => AnthropicContentBlock::Text {
-            text,
+            text: text.clone(),
             cache_control: None,
         },
         ContentBlock::Image(image) => AnthropicContentBlock::Image {
             source: AnthropicImageSource {
                 kind: "base64".into(),
-                media_type: image.mime_type,
-                data: image.data,
+                media_type: image.mime_type.clone(),
+                data: image.data.clone(),
             },
         },
         ContentBlock::ToolCall(call) => AnthropicContentBlock::Text {
-            text: render_tool_call(&call),
+            text: render_tool_call(call),
             cache_control: None,
         },
     }
 }
 
-fn assistant_block(block: ContentBlock) -> AnthropicContentBlock {
+fn assistant_block(block: &ContentBlock) -> AnthropicContentBlock {
     match block {
         ContentBlock::Text(text) => AnthropicContentBlock::Text {
-            text,
+            text: text.clone(),
             cache_control: None,
         },
         ContentBlock::Image(image) => AnthropicContentBlock::Text {
@@ -183,9 +183,9 @@ fn assistant_block(block: ContentBlock) -> AnthropicContentBlock {
             cache_control: None,
         },
         ContentBlock::ToolCall(call) => AnthropicContentBlock::ToolUse {
-            id: call.id,
-            name: call.name,
-            input: call.arguments,
+            id: call.id.clone(),
+            name: call.name.clone(),
+            input: call.arguments.clone(),
         },
     }
 }
@@ -304,7 +304,7 @@ mod tests {
     #[test]
     fn marks_failed_tool_results_as_errors() {
         let (_system, messages) = split_system_and_messages(
-            vec![Message::ToolResult(ToolResult {
+            &[Message::ToolResult(ToolResult {
                 id: "toolu_1".into(),
                 ok: false,
                 content: "failed".into(),
@@ -328,7 +328,7 @@ mod tests {
     #[test]
     fn merges_consecutive_same_role_messages() {
         let (_system, messages) = split_system_and_messages(
-            vec![
+            &[
                 Message::user_text("one"),
                 Message::user_text("two"),
                 Message::assistant_text("three"),
@@ -348,7 +348,7 @@ mod tests {
         let source =
             crate::model::ModelIdentity::new("openai-codex", "openai-responses", "gpt-test");
         let (_, messages) = split_system_and_messages(
-            vec![Message::assistant(crate::model::AssistantMessage {
+            &[Message::assistant(crate::model::AssistantMessage {
                 content: vec![ContentBlock::Text("answer".into())],
                 provenance: Some(source.clone()),
                 reasoning_summary: Some("verified it".into()),
@@ -389,7 +389,7 @@ mod tests {
         .with_portable_fallback("portable notice");
 
         let (_, messages) = split_system_and_messages(
-            vec![Message::assistant(message)],
+            &[Message::assistant(message)],
             &target(),
             ProviderContextReplay::Disabled,
         )
@@ -405,7 +405,7 @@ mod tests {
     fn exact_anthropic_handoff_replays_signed_thinking_in_original_position() {
         let target = target();
         let (_, messages) = split_system_and_messages(
-            vec![Message::assistant(crate::model::AssistantMessage {
+            &[Message::assistant(crate::model::AssistantMessage {
                 content: vec![ContentBlock::Text("answer".into())],
                 provenance: Some(target.clone()),
                 reasoning_summary: None,
@@ -436,7 +436,7 @@ mod tests {
     fn exact_anthropic_handoff_omits_thinking_when_reasoning_is_disabled() {
         let target = target();
         let (_, messages) = split_system_and_messages(
-            vec![Message::assistant(crate::model::AssistantMessage {
+            &[Message::assistant(crate::model::AssistantMessage {
                 content: vec![ContentBlock::Text("answer".into())],
                 provenance: Some(target.clone()),
                 reasoning_summary: Some("safe summary".into()),

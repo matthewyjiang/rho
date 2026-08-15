@@ -237,24 +237,24 @@ pub(crate) fn to_responses_lite_tool(
 }
 
 pub(crate) fn codex_input_items(
-    messages: Vec<Message>,
+    messages: &[Message],
     instructions: &mut Vec<String>,
 ) -> Result<Vec<serde_json::Value>, ModelError> {
     codex_input_items_for_target(messages, instructions, None)
 }
 
 pub(crate) fn codex_input_items_for_target(
-    messages: Vec<Message>,
+    messages: &[Message],
     instructions: &mut Vec<String>,
     target: Option<&crate::model::ModelIdentity>,
 ) -> Result<Vec<serde_json::Value>, ModelError> {
     let mut input = Vec::new();
     for message in messages {
         match message {
-            Message::System(content) => instructions.push(content),
+            Message::System(content) => instructions.push(content.clone()),
             Message::User(blocks) => input.push(json!({
                 "role": "user",
-                "content": codex_content_blocks(&blocks),
+                "content": codex_content_blocks(blocks),
             })),
             Message::Assistant(blocks) => {
                 append_codex_assistant(&mut input, blocks)?;
@@ -263,15 +263,16 @@ pub(crate) fn codex_input_items_for_target(
                 let fallback_target = message.provenance.clone().unwrap_or_else(|| {
                     crate::model::ModelIdentity::new("foreign", "openai-responses", "foreign")
                 });
-                let prepared = prepare_assistant(*message, target.unwrap_or(&fallback_target));
+                let prepared =
+                    prepare_assistant((**message).clone(), target.unwrap_or(&fallback_target));
                 append_codex_prepared_assistant(&mut input, prepared)?;
             }
             Message::AbortedAssistant(message) => {
                 let mut enriched = crate::model::AssistantMessage {
-                    content: aborted_content_as_non_executable(&message),
-                    provenance: message.provenance,
-                    reasoning_summary: message.reasoning_summary,
-                    provider_context: message.provider_context,
+                    content: aborted_content_as_non_executable(message),
+                    provenance: message.provenance.clone(),
+                    reasoning_summary: message.reasoning_summary.clone(),
+                    provider_context: message.provider_context.clone(),
                 };
                 enriched
                     .content
@@ -284,8 +285,8 @@ pub(crate) fn codex_input_items_for_target(
             }
             Message::ToolResult(result) => input.push(json!({
                 "type": "function_call_output",
-                "call_id": result.id,
-                "output": result.content,
+                "call_id": &result.id,
+                "output": &result.content,
             })),
         }
     }
@@ -299,7 +300,7 @@ fn append_codex_prepared_assistant(
     let mut assistant_items = Vec::new();
     // `prepare_assistant` already suppresses portable fallback when opaque
     // context can replay, so converters only append the lowered content.
-    append_codex_assistant(&mut assistant_items, prepared.content)?;
+    append_codex_assistant(&mut assistant_items, &prepared.content)?;
     insert_replay_items(&mut assistant_items, prepared.replay_context);
     input.extend(assistant_items);
     Ok(())
@@ -330,9 +331,9 @@ fn insert_replay_items(
 
 fn append_codex_assistant(
     input: &mut Vec<serde_json::Value>,
-    blocks: Vec<ContentBlock>,
+    blocks: &[ContentBlock],
 ) -> Result<(), ModelError> {
-    let text = assistant_text(&blocks);
+    let text = assistant_text(blocks);
     if !text.is_empty() {
         input.push(json!({ "role": "assistant", "content": text }));
     }
@@ -340,8 +341,8 @@ fn append_codex_assistant(
         if let ContentBlock::ToolCall(call) = block {
             input.push(json!({
                 "type": "function_call",
-                "call_id": call.id,
-                "name": call.name,
+                "call_id": &call.id,
+                "name": &call.name,
                 "arguments": serde_json::to_string(&call.arguments).map_err(|e| ModelError::InvalidResponse(format!("invalid tool call arguments: {e}")))?,
             }));
         }
@@ -349,10 +350,10 @@ fn append_codex_assistant(
     Ok(())
 }
 
-fn openai_assistant_message(blocks: Vec<ContentBlock>) -> Result<OpenAiMessage, ModelError> {
+fn openai_assistant_message(blocks: &[ContentBlock]) -> Result<OpenAiMessage, ModelError> {
     openai_prepared_assistant(
         PreparedAssistant {
-            content: blocks,
+            content: blocks.to_vec(),
             replay_context: Vec::new(),
         },
         // Plain assistant history carries no provenance, so it never gets
@@ -386,7 +387,7 @@ fn openai_prepared_assistant(
     let content = assistant_text(&prepared.content);
     let tool_calls = prepared
         .content
-        .into_iter()
+        .iter()
         .filter_map(|block| match block {
             ContentBlock::ToolCall(call) => Some(tool_call_to_openai(call)),
             ContentBlock::Text(_) | ContentBlock::Image(_) => None,
@@ -404,14 +405,14 @@ fn openai_prepared_assistant(
 }
 
 pub(crate) fn to_openai_message_for_target(
-    message: Message,
+    message: &Message,
     target: Option<&crate::model::ModelIdentity>,
 ) -> Result<OpenAiMessage, ModelError> {
     match message {
-        Message::System(content) => Ok(openai_text_message("system", content)),
+        Message::System(content) => Ok(openai_text_message("system", content.clone())),
         Message::User(blocks) => Ok(OpenAiMessage {
             role: "user".into(),
-            content: Some(chat_content_blocks(&blocks)),
+            content: Some(chat_content_blocks(blocks)),
             reasoning_content: None,
             tool_calls: None,
             tool_call_id: None,
@@ -423,14 +424,14 @@ pub(crate) fn to_openai_message_for_target(
             });
             let target = target.unwrap_or(&fallback_target);
             let synthesize = synthesizes_tool_reasoning(message.provenance.as_ref(), target);
-            openai_prepared_assistant(prepare_assistant(*message, target), synthesize)
+            openai_prepared_assistant(prepare_assistant((**message).clone(), target), synthesize)
         }
         Message::AbortedAssistant(message) => {
             let mut enriched = crate::model::AssistantMessage {
-                content: aborted_content_as_non_executable(&message),
-                provenance: message.provenance,
-                reasoning_summary: message.reasoning_summary,
-                provider_context: message.provider_context,
+                content: aborted_content_as_non_executable(message),
+                provenance: message.provenance.clone(),
+                reasoning_summary: message.reasoning_summary.clone(),
+                provider_context: message.provider_context.clone(),
             };
             enriched
                 .content
@@ -447,7 +448,7 @@ pub(crate) fn to_openai_message_for_target(
             content: Some(json!(result.content)),
             reasoning_content: None,
             tool_calls: None,
-            tool_call_id: Some(result.id),
+            tool_call_id: Some(result.id.clone()),
         }),
     }
 }
@@ -462,14 +463,14 @@ fn openai_text_message(role: &str, content: String) -> OpenAiMessage {
     }
 }
 
-fn tool_call_to_openai(call: ToolCall) -> Result<OpenAiToolCall, ModelError> {
+fn tool_call_to_openai(call: &ToolCall) -> Result<OpenAiToolCall, ModelError> {
     let arguments = serde_json::to_string(&call.arguments)
         .map_err(|e| ModelError::InvalidResponse(format!("invalid tool call arguments: {e}")))?;
     Ok(OpenAiToolCall {
-        id: call.id,
+        id: call.id.clone(),
         kind: "function".into(),
         function: OpenAiFunctionCall {
-            name: call.name,
+            name: call.name.clone(),
             arguments,
         },
     })

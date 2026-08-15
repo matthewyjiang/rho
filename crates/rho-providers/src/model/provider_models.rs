@@ -94,9 +94,35 @@ pub fn cached_provider_model(provider: &str, model: &str) -> Option<ProviderMode
 }
 
 fn cached_provider_model_exact(provider: &str, model: &str) -> Option<ProviderModel> {
-    cached_provider_models(provider)
-        .into_iter()
-        .find(|entry| entry.model == model)
+    let connection = open_provider_models_cache().ok()?;
+    let mut statement = connection
+        .prepare(
+            "select model, display_name, context_window, max_output_tokens, reasoning_capabilities_json from provider_models where provider = ?1 and model = ?2",
+        )
+        .ok()?;
+    statement
+        .query_row(params![provider, model], |row| {
+            let model: String = row.get(0)?;
+            let display_name: String = row.get(1)?;
+            let context_window: Option<u64> = row.get(2)?;
+            let max_output_tokens: Option<u64> = row.get(3)?;
+            let reasoning_capabilities = row
+                .get::<_, Option<String>>(4)?
+                .and_then(|value| serde_json::from_str(&value).ok())
+                .unwrap_or_default();
+            let model = provider::provider_descriptor(provider)
+                .map(|descriptor| descriptor.canonicalize_model_id(&model))
+                .unwrap_or(model);
+            Ok(ProviderModel {
+                provider: provider.to_string(),
+                model,
+                display_name,
+                context_window,
+                max_output_tokens,
+                reasoning_capabilities,
+            })
+        })
+        .ok()
 }
 
 fn canonicalize_cached_model_id(provider: &str, model: &str) -> String {

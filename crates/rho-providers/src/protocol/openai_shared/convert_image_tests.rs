@@ -19,8 +19,8 @@ fn assistant_image() -> Message {
 fn openai_converters_replace_assistant_image_history_with_placeholder() {
     let expected = format!("generated image\n{ASSISTANT_IMAGE_OMITTED_TEXT}");
 
-    let responses = codex_input_items(vec![assistant_image()], &mut Vec::new()).unwrap();
-    let chat = to_openai_message_for_target(assistant_image(), None).unwrap();
+    let responses = codex_input_items(&[assistant_image()], &mut Vec::new()).unwrap();
+    let chat = to_openai_message_for_target(&assistant_image(), None).unwrap();
 
     assert_eq!(
         responses,

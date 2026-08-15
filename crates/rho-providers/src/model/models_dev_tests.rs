@@ -839,7 +839,7 @@ fn local_reasoning_override_replaces_provider_levels_exactly() {
         toml::from_str::<toml::Value>(r#"supported_reasoning_levels = ["medium", "xhigh"]"#)
             .unwrap();
 
-    let metadata = merge_toml_override(provider_metadata, table.as_table().unwrap());
+    let metadata = overrides::merge_toml_override(provider_metadata, table.as_table().unwrap());
 
     assert_eq!(
         metadata.supported_reasoning_levels,
@@ -1148,6 +1148,138 @@ fn hydrate_writes_opencode_go_rows_that_only_advertise_sdk_package() {
         assert_eq!(
             metadata.supported_reasoning_levels,
             Some(vec![ReasoningLevel::Off, ReasoningLevel::Max])
+        );
+    });
+}
+
+// Covers: batch metadata writes insert all records in one transaction
+// Owner: models.dev cache
+#[test]
+fn batch_metadata_writes_inserts_all_records() {
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        let meta_a = ModelMetadata {
+            display_name: Some("Model A".into()),
+            advertised_context_window: Some(100_000),
+            reasoning_capabilities_known: true,
+            reasoning_metadata_complete: true,
+            ..ModelMetadata::default()
+        };
+        let meta_b = ModelMetadata {
+            display_name: Some("Model B".into()),
+            advertised_context_window: Some(200_000),
+            reasoning_capabilities_known: true,
+            reasoning_metadata_complete: true,
+            ..ModelMetadata::default()
+        };
+
+        let written = write_cached_upstream_model_metadata_batch([
+            ("provider-x", "model-1", &meta_a),
+            ("provider-x", "model-2", &meta_b),
+        ]);
+        assert_eq!(written, 2);
+
+        assert_eq!(
+            cached_upstream_model_metadata("provider-x", "model-1")
+                .unwrap()
+                .display_name,
+            Some("Model A".into())
+        );
+        assert_eq!(
+            cached_upstream_model_metadata("provider-x", "model-2")
+                .unwrap()
+                .display_name,
+            Some("Model B".into())
+        );
+    });
+}
+
+// Covers: batch metadata writes return 0 and leave no rows when commit fails
+// Owner: models.dev cache
+#[test]
+fn batch_metadata_writes_returns_zero_on_commit_failure() {
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        {
+            let conn = open_models_dev_cache().unwrap();
+            conn.execute_batch(
+                "PRAGMA foreign_keys = ON;
+                 CREATE TABLE parent_fk (id INTEGER PRIMARY KEY);
+                 DROP TABLE model_metadata;
+                 CREATE TABLE model_metadata (
+                     provider text not null,
+                     model text not null,
+                     metadata_json text not null,
+                     updated_at integer not null,
+                     cache_version integer not null default 1,
+                     parent_id integer references parent_fk(id) deferrable initially deferred default 999,
+                     primary key (provider, model)
+                 );",
+            )
+            .unwrap();
+        }
+
+        let meta = ModelMetadata {
+            display_name: Some("Model A".into()),
+            advertised_context_window: Some(100_000),
+            reasoning_capabilities_known: true,
+            reasoning_metadata_complete: true,
+            ..ModelMetadata::default()
+        };
+
+        let written =
+            write_cached_upstream_model_metadata_batch([("provider-x", "model-1", &meta)]);
+        assert_eq!(written, 0, "must report 0 written rows when commit fails");
+
+        assert!(
+            cached_upstream_model_metadata("provider-x", "model-1").is_none(),
+            "uncommitted rows must not be readable"
+        );
+    });
+}
+
+// Covers: failed catalog hydrate must not advance on-disk snapshot or process readiness
+// Owner: models.dev cache
+#[test]
+fn failed_hydrate_does_not_advance_readiness() {
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        {
+            let conn = open_models_dev_cache().unwrap();
+            conn.execute_batch(
+                "PRAGMA foreign_keys = ON;
+                 CREATE TABLE parent_fk (id INTEGER PRIMARY KEY);
+                 DROP TABLE model_metadata;
+                 CREATE TABLE model_metadata (
+                     provider text not null,
+                     model text not null,
+                     metadata_json text not null,
+                     updated_at integer not null,
+                     cache_version integer not null default 1,
+                     parent_id integer references parent_fk(id) deferrable initially deferred default 999,
+                     primary key (provider, model)
+                 );",
+            )
+            .unwrap();
+        }
+
+        let api = serde_json::json!({
+            "openai": {
+                "models": {
+                    "gpt-4o": {
+                        "name": "GPT-4o",
+                        "limit": { "context": 128000, "output": 4096 },
+                        "reasoning": false
+                    }
+                }
+            }
+        });
+
+        let written = hydrate::hydrate_catalog_from_api(&api);
+        assert_eq!(written, 0);
+        assert!(
+            !hydrate::catalog_snapshot_is_ready(),
+            "snapshot must not be marked ready after failed hydrate"
         );
     });
 }

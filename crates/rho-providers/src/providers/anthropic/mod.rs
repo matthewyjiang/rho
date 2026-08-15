@@ -119,7 +119,7 @@ impl AnthropicProvider {
             max_tokens,
         )?;
         let (system, mut messages) = split_system_and_messages(
-            request.messages.to_vec(),
+            request.messages,
             &target,
             provider_context_replay(thinking.as_ref()),
         )?;

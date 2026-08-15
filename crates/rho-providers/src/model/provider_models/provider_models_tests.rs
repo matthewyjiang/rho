@@ -446,3 +446,43 @@ fn provider_model_cache_migrates_old_schema() {
     });
     let _ = fs::remove_dir_all(cache_dir);
 }
+
+// Covers: exact model lookup returns the targeted model directly from SQLite
+// Owner: provider models cache
+#[test]
+fn cached_provider_model_exact_returns_single_model() {
+    let cache_dir = unique_test_cache_dir("exact_lookup");
+    with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
+        replace_cached_provider_models(
+            "test-provider",
+            &[
+                ProviderModel {
+                    provider: "test-provider".into(),
+                    model: "model-a".into(),
+                    display_name: "Model A".into(),
+                    context_window: Some(128_000),
+                    max_output_tokens: Some(4096),
+                    reasoning_capabilities: ReasoningCapabilities::Unknown,
+                },
+                ProviderModel {
+                    provider: "test-provider".into(),
+                    model: "model-b".into(),
+                    display_name: "Model B".into(),
+                    context_window: Some(256_000),
+                    max_output_tokens: Some(8192),
+                    reasoning_capabilities: ReasoningCapabilities::Unknown,
+                },
+            ],
+        )
+        .unwrap();
+
+        let model = cached_provider_model("test-provider", "model-b").unwrap();
+        assert_eq!(model.model, "model-b");
+        assert_eq!(model.display_name, "Model B");
+        assert_eq!(model.context_window, Some(256_000));
+        assert_eq!(model.max_output_tokens, Some(8192));
+
+        assert!(cached_provider_model("test-provider", "model-c").is_none());
+    });
+    let _ = fs::remove_dir_all(cache_dir);
+}
