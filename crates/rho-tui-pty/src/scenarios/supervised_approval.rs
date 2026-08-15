@@ -35,21 +35,14 @@ pub(super) const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
     Step::AssertText("Permission mode"),
     Step::Key(Key::Enter),
     // Short terminals only show two mode rows (Bypass selected plus Auto);
-    // move down the full PermissionMode::ALL order to Supervised instead of
-    // requiring every label to fit at once.
+    // move onto Supervised by its detail text instead of requiring every
+    // label to fit at once.
     Step::WaitText {
         text: "No permission checks",
         timeout: SETTLE,
     },
     Step::AssertText("Auto"),
-    Step::Key(Key::Down),
-    Step::Key(Key::Down),
-    Step::Key(Key::Down),
-    Step::Key(Key::Down),
-    Step::WaitText {
-        text: "Ask before writes and processes",
-        timeout: SETTLE,
-    },
+    Step::Custom(move_down_to_supervised_mode),
     Step::AssertText("Supervised"),
     Step::Key(Key::Enter),
     // Selection returns to the agent-behavior category with the label badge.
@@ -130,6 +123,31 @@ pub(super) const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
     },
     Step::ExitCommand,
 ];
+
+/// Presses Down until the Supervised detail text is on screen, so the step
+/// survives mode-list reordering: a literal press count re-encodes the
+/// `PermissionMode::ALL` order and silently breaks when a mode lands ahead of
+/// Supervised, which is exactly how #870 broke this scenario. Supervised is
+/// the only mode whose detail contains the marker, so overshoot cannot
+/// false-positive.
+fn move_down_to_supervised_mode(harness: &mut PtyHarness) -> Result<()> {
+    const MARKER: &str = "Ask before writes and processes";
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        harness.poll(Duration::from_millis(30));
+        if harness.screen().contains_text(MARKER) {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            anyhow::bail!(
+                "Supervised mode detail never became visible while pressing Down:\n{}",
+                harness.screen().contents()
+            );
+        }
+        harness.inject_key(&Key::Down)?;
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
 
 fn wait_for_denied_or_interrupted(harness: &mut PtyHarness) -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(20);
