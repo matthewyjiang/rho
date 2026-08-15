@@ -1,7 +1,5 @@
 //! Standalone overlay used by `rho attach` when no run id is given.
 
-use std::time::Duration;
-
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{widgets::Clear, DefaultTerminal, Frame};
 
@@ -28,10 +26,7 @@ pub(super) async fn select_running_run(
     let mut picker = attach_picker::picker(&candidates);
     loop {
         terminal.draw(|frame| draw_picker(frame, &picker))?;
-        let Some(event) = next_event().await? else {
-            continue;
-        };
-        match event {
+        match next_event().await? {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
                 if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     return Ok(None);
@@ -66,13 +61,6 @@ fn draw_picker(frame: &mut Frame<'_>, picker: &UiPicker) {
     }
 }
 
-async fn next_event() -> anyhow::Result<Option<Event>> {
-    Ok(tokio::task::spawn_blocking(|| {
-        if event::poll(Duration::from_millis(100))? {
-            event::read().map(Some)
-        } else {
-            Ok(None)
-        }
-    })
-    .await??)
+async fn next_event() -> anyhow::Result<Event> {
+    Ok(tokio::task::spawn_blocking(event::read).await??)
 }

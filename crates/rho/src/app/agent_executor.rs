@@ -479,10 +479,12 @@ impl AgentExecutor {
                 title_prompt,
                 title_agent_id,
                 title_run_id,
-                title_output,
                 title_cwd,
-                task_status_tx.clone(),
-                title_slot,
+                RunTitleSinks {
+                    output_file: title_output,
+                    status_tx: task_status_tx.clone(),
+                    live_title: title_slot,
+                },
             );
 
             let started_status = task_status_tx.borrow().clone();
@@ -872,15 +874,19 @@ async fn acquire_permit_or_cancel(
     }
 }
 
+struct RunTitleSinks {
+    output_file: PathBuf,
+    status_tx: tokio::sync::watch::Sender<RunStatus>,
+    live_title: crate::run_artifacts::LiveRunTitle,
+}
+
 fn spawn_run_title(
     config: &Config,
     prompt: String,
     agent_id: String,
     run_id: String,
-    output_file: PathBuf,
     workspace_path: PathBuf,
-    status_tx: tokio::sync::watch::Sender<RunStatus>,
-    live_title: crate::run_artifacts::LiveRunTitle,
+    sinks: RunTitleSinks,
 ) {
     let model = crate::title::title_model_from_config(config);
     let session_id =
@@ -901,19 +907,20 @@ fn spawn_run_title(
             return;
         };
         {
-            let mut slot = live_title
+            let mut slot = sinks
+                .live_title
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             if slot.is_none() {
                 *slot = Some(title.clone());
             }
         }
-        status_tx.send_modify(|status| {
+        sinks.status_tx.send_modify(|status| {
             if status.title.is_none() {
                 status.title = Some(title.clone());
             }
         });
-        let _ = subagent::apply_generated_title(&output_file, &title);
+        let _ = subagent::apply_generated_title(&sinks.output_file, &title);
     });
 }
 
