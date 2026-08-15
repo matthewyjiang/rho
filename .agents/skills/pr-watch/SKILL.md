@@ -5,31 +5,36 @@ description: >
   need a reaction. Use when the user says watch a PR, babysit a PR, wait
   on review or checks, sit on a PR until it merges, or keep an eye on PR
   activity. Prefer this over polling `gh` or the GitHub API. Start the
-  blocking wait helper as a background process and end the turn; do not
-  poll it.
+  wait helper as a background process, then either do other work or end
+  the turn. Never poll that process. The harness delivers the event when
+  it exits.
 compatibility: bun or npx, python3, `gh auth login`, Pullfrog GitHub App on the repo.
 ---
 
 # Watch / babysit a PR
 
-Start a waiter that exits on the event you care about, then stop. When that
-process returns, the harness delivers the event to you. Do not poll GitHub.
-Do not poll the waiter. Do not hold the turn on a foreground watch.
+Start a waiter that exits on the event you care about. Then either work
+on something else or end the turn. When the waiter exits, the harness
+delivers the event. That delivery is the only way you learn the result.
+
+Do not poll GitHub. Do not poll the waiter. Do not call process `poll` /
+`status` on it. Do not hold the turn on a foreground watch.
 
 https://docs.pullfrog.com/watch.md
 
 ## Wait
 
 1. Snapshot once (below).
-2. Start the helper as a **background process** with a long timeout (900s is
-   a good default):
+2. Start the helper as a **background process** with a long timeout (900s
+   is a good default):
 
 ```bash
 python3 .agents/skills/pr-watch/wait.py --pr <number> --until approval
 ```
 
-3. End the turn. Do not `poll` the process. Do not loop `gh pr view`.
-4. When the process exits, you get its stdout: one JSON event. Act on that.
+3. After `start` returns an id, you may do unrelated work, or you must
+   end the turn. You may not wait on that id.
+4. When the process exits, you get its stdout: one JSON event. Act then.
 
 | `--until` | Exits on |
 | --- | --- |
@@ -64,6 +69,9 @@ or ask.
 
 ## After the waiter returns
 
+This section applies only after the harness delivers the process result.
+Do not fetch or check in the meantime.
+
 Read the JSON event. Fetch full detail from `data.url` only when you will act.
 stderr ends with `last_cursor=...`.
 
@@ -75,7 +83,8 @@ stderr ends with `last_cursor=...`.
 | `check` / `success` | report only if that was the wait |
 | `pr` closed or merged | stop and return the PR URL |
 
-To wait again after a timeout or a push, start another background waiter:
+To wait again after a timeout or a push, start another background waiter
+and again either do other work or end the turn:
 
 ```bash
 python3 .agents/skills/pr-watch/wait.py --pr <number> --until approval --since <cursor>
@@ -86,8 +95,8 @@ No `--since` means start from now, no history.
 ## Do not
 
 - Run the waiter in the foreground and sit on the turn.
-- Start it and then `poll` every 30s. That is just polling.
-- Loop on `gh pr view` / `gh pr checks`.
+- `poll`, `status`, or otherwise wait on the background process.
+- Loop on `gh pr view` / `gh pr checks` while the waiter is running.
 - Swallow auth, missing-app, or stream errors. Fail loud.
 
 Auth, missing app, or stream errors: fail loud. Do not fall back to polling.
