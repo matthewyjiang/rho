@@ -84,25 +84,18 @@ fn bottom_position_uses_bottom_scroll_state() {
 fn unmeasured_prefix_scroll_need_triggers_at_measured_body() {
     let cases = [
         (
-            /*start*/ 80, /*delta*/ -3, /*body*/ 12, /*unmeasured*/ true,
-            /*need*/ 0,
+            /*start*/ 80, /*delta*/ -3, /*unmeasured*/ true, /*need*/ 0,
         ),
-        (12, -3, 12, true, 3),
-        (14, -5, 12, true, 3),
-        (12, -3, 12, false, 0),
-        (12, 3, 12, true, 0),
-        (0, -3, 12, true, 3),
+        (0, -3, true, 3),
+        (2, -5, true, 3),
+        (12, -3, false, 0),
+        (12, 3, true, 0),
     ];
-    for (start, delta, measured_body_start, has_unmeasured_prefix, expected) in cases {
+    for (start, delta, has_unmeasured_prefix, expected) in cases {
         assert_eq!(
-            unmeasured_prefix_scroll_need(
-                start,
-                delta,
-                measured_body_start,
-                has_unmeasured_prefix,
-            ),
+            unmeasured_prefix_scroll_need(start, delta, has_unmeasured_prefix),
             expected,
-            "start={start} delta={delta} body={measured_body_start} unmeasured={has_unmeasured_prefix}"
+            "start={start} delta={delta} unmeasured={has_unmeasured_prefix}"
         );
     }
 }

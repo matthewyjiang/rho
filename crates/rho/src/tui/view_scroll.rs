@@ -62,12 +62,7 @@ impl App {
         let history_len = self.history_len(width, now);
         let start = self.visible_history_start(history_len, content_height);
         let had_unmeasured = self.history.has_unmeasured_prefix();
-        let overflow = unmeasured_prefix_scroll_need(
-            start,
-            delta,
-            self.visible_session_header_len(width),
-            had_unmeasured,
-        );
+        let overflow = unmeasured_prefix_scroll_need(start, delta, had_unmeasured);
         if overflow > 0 {
             // One extra pane so the next wheel ticks do not wrap immediately.
             let prepended =

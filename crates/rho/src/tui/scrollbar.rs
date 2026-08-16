@@ -444,20 +444,17 @@ impl HistoryScrollbar {
 
 /// Extra unmeasured rows to wrap when scrolling up through a suffix-lazy transcript.
 ///
-/// The session header sits above the measured body. A wheel tick is a few
-/// rows, so growth must start at the body, not document line 0.
+/// While a prefix is unmeasured the session header is not in the scroll
+/// document, so line 0 is the measured body start.
 pub(super) fn unmeasured_prefix_scroll_need(
     start: usize,
     delta: isize,
-    measured_body_start: usize,
     has_unmeasured_prefix: bool,
 ) -> usize {
     if delta >= 0 || !has_unmeasured_prefix {
         return 0;
     }
-    delta
-        .unsigned_abs()
-        .saturating_sub(start.saturating_sub(measured_body_start))
+    delta.unsigned_abs().saturating_sub(start)
 }
 
 pub(super) fn scroll_state_for_top_line(
