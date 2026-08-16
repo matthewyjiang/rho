@@ -111,9 +111,7 @@ impl App {
             return Ok(());
         }
         match claude_login::SignInTarget::parse(&invocation.args) {
-            claude_login::SignInTarget::ClaudeCode => {
-                self.execute_claude_code_login(terminal).await
-            }
+            claude_login::SignInTarget::ClaudeCode => self.execute_claude_code_login().await,
             claude_login::SignInTarget::Provider(provider) => {
                 self.start_login_for_provider(&provider, terminal, agent)
                     .await

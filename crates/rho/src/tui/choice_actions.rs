@@ -28,6 +28,10 @@ impl App {
                         self.resolve_context_handoff(Some(&value), *pending, terminal, agent)
                             .await?;
                     }
+                    InlineChoicePending::ClaudeCodeLogin => {
+                        self.submit_claude_code_login_choice(modal.choice, terminal)
+                            .await?;
+                    }
                     InlineChoicePending::ClaudeCodeRelogin => {
                         self.submit_claude_code_relogin_choice(modal.choice, terminal)
                             .await?;
@@ -67,6 +71,7 @@ impl App {
                 };
                 match modal.pending {
                     InlineChoicePending::CredentialStore { .. }
+                    | InlineChoicePending::ClaudeCodeLogin
                     | InlineChoicePending::ClaudeCodeRelogin
                     | InlineChoicePending::ClaudeCodeLogout => {
                         self.set_status(self.busy_status_label());

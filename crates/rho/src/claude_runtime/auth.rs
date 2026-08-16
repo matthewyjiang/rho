@@ -480,7 +480,14 @@ pub(crate) fn login_handoff_notice() -> &'static str {
 Claude Code runs the sign-in and stores the credential. Rho never sees or \
 stores your token. To sign out later, run `/logout claude-code` or \
 `claude auth logout` yourself.\n\n\
-The terminal comes back to Rho when it finishes."
+If you did not mean to sign in, stop the claude process from another \
+terminal or close this prompt. Rho resumes when that process exits. \
+There is no cancel key inside the Claude sign-in prompt."
+}
+
+/// Status printed on the main screen after Rho leaves the alternate buffer.
+pub(crate) fn login_handoff_status() -> String {
+    format!("Signing in to Claude Code…\n\n{}", login_handoff_notice())
 }
 
 /// Notice shown in the logout confirmation choice.
