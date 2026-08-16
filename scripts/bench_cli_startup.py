@@ -5,8 +5,8 @@ Measures wall time and peak RSS for each tool's help invocation.
 This is CLI process overhead only, not interactive TUI cost or model latency.
 
 Peak RSS probe (issue #958):
-- Linux: wait4 ru_maxrss (already KiB)
-- macOS and the BSDs: wait4 ru_maxrss (bytes, converted to KiB)
+- Linux and the BSDs: wait4 ru_maxrss (already KiB)
+- macOS: wait4 ru_maxrss (bytes, converted to KiB)
 - Windows: GetProcessMemoryInfo PeakWorkingSetSize
 """
 
@@ -106,9 +106,9 @@ def summarize(values: list[float]) -> dict[str, float]:
 def peak_rss_kib_from_rusage(ru_maxrss: int, *, platform_name: str) -> int:
     """Convert wait4 ru_maxrss to KiB.
 
-    Linux reports KiB. Darwin and the BSDs report bytes.
+    Linux and the BSDs report KiB. Darwin reports bytes.
     """
-    if platform_name == "darwin" or platform_name.startswith(("freebsd", "netbsd", "openbsd")):
+    if platform_name == "darwin":
         return ru_maxrss // 1024
     return ru_maxrss
 
@@ -116,7 +116,7 @@ def peak_rss_kib_from_rusage(ru_maxrss: int, *, platform_name: str) -> int:
 def rss_method_label(platform_name: str) -> str:
     if platform_name == "win32":
         return "GetProcessMemoryInfo PeakWorkingSetSize KiB"
-    if platform_name == "darwin" or platform_name.startswith(("freebsd", "netbsd", "openbsd")):
+    if platform_name == "darwin":
         return "ru_maxrss bytes from wait4, reported as KiB"
     return "ru_maxrss KiB from wait4"
 
@@ -179,8 +179,15 @@ def _windows_peak_working_set_kib(proc: subprocess.Popen[Any]) -> int:
 
     counters = PROCESS_MEMORY_COUNTERS()
     counters.cb = ctypes.sizeof(counters)
-    if not ctypes.windll.psapi.GetProcessMemoryInfo(
-        int(handle), ctypes.byref(counters), counters.cb
+    get_process_memory_info = ctypes.windll.psapi.GetProcessMemoryInfo
+    get_process_memory_info.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(PROCESS_MEMORY_COUNTERS),
+        wintypes.DWORD,
+    ]
+    get_process_memory_info.restype = wintypes.BOOL
+    if not get_process_memory_info(
+        wintypes.HANDLE(int(handle)), ctypes.byref(counters), counters.cb
     ):
         raise OSError("GetProcessMemoryInfo failed")
     return int(counters.PeakWorkingSetSize) // 1024
