@@ -10,8 +10,10 @@ use ratatui::{
 };
 
 use super::{
-    activity, history_cache::HistoryRenderSettings, scrollbar::unmeasured_prefix_scroll_need, App,
-    HistoryScrollbar, Theme, HISTORY_SCROLLBAR_REVEAL_DURATION,
+    activity,
+    history_cache::HistoryRenderSettings,
+    scrollbar::{unmeasured_prefix_scroll_need, unmeasured_prefix_scrollbar_top_need},
+    App, HistoryScrollbar, Theme, HISTORY_SCROLLBAR_REVEAL_DURATION,
 };
 
 impl App {
@@ -88,24 +90,28 @@ impl App {
             .scroll_by(history_len, content_height, delta);
     }
 
-    /// Dragging the bar to the measured top must reach the transcript start,
-    /// the same as repeated page-up.
+    /// Dragging the bar to the measured top wraps one more pane of prefix.
+    ///
+    /// Same bound as page-up so a long resume does not wrap the whole
+    /// transcript on one click. Another drag at line 0 pulls the next pane.
     pub(super) fn reveal_unmeasured_history_at_scrollbar_top(
         &mut self,
         width: usize,
         height: usize,
         now: Instant,
     ) {
-        if !self.history.has_unmeasured_prefix() {
-            return;
-        }
         let content_height = self.history_content_height_for_screen(width, height, now);
         let history_len = self.history_len(width, now);
-        if self.visible_history_start(history_len, content_height) > 0 {
+        let extra = unmeasured_prefix_scrollbar_top_need(
+            self.visible_history_start(history_len, content_height),
+            self.history.has_unmeasured_prefix(),
+            content_height,
+        );
+        if extra == 0 {
             return;
         }
         let settings = self.history_render_settings(width);
-        if self.grow_measured_history_prefix(settings, usize::MAX) == 0 {
+        if self.grow_measured_history_prefix(settings, extra) == 0 {
             return;
         }
         let new_len = self.history_len(width, now);

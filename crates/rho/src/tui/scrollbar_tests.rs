@@ -100,6 +100,27 @@ fn unmeasured_prefix_scroll_need_triggers_at_measured_body() {
     }
 }
 
+// Covers: a scrollbar click at the measured top wraps one pane, not the rest.
+// Owner: history scroll range
+#[test]
+fn unmeasured_prefix_scrollbar_top_need_is_one_viewport() {
+    let cases = [
+        (
+            /*start*/ 0, /*unmeasured*/ true, /*viewport*/ 20, /*need*/ 20,
+        ),
+        (4, true, 20, 0),
+        (0, false, 20, 0),
+        (0, true, 0, 1),
+    ];
+    for (start, has_unmeasured_prefix, viewport, expected) in cases {
+        assert_eq!(
+            unmeasured_prefix_scrollbar_top_need(start, has_unmeasured_prefix, viewport),
+            expected,
+            "start={start} unmeasured={has_unmeasured_prefix} viewport={viewport}"
+        );
+    }
+}
+
 #[test]
 fn scroll_chrome_scroll_by_clamps_to_bottom_without_auto_reveal() {
     use std::time::{Duration, Instant};
