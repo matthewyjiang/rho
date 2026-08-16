@@ -44,7 +44,8 @@ fn confirm_claude_code_login(harness: &mut PtyHarness) {
             WaitTimeout::secs(10, "login confirmation"),
         )
         .unwrap();
-    harness.inject_key(&Key::Enter).unwrap();
+    // Cancel is the default option, so pick Continue by its shortcut.
+    harness.inject_key(&Key::Char('2')).unwrap();
 }
 
 #[test]
@@ -449,7 +450,8 @@ credential_store = "file"
             WaitTimeout::secs(10, "login confirmation"),
         )
         .unwrap();
-    harness.inject_key(&Key::Esc).unwrap();
+    // A stray Enter must take the default option, and the default must be Cancel.
+    harness.inject_key(&Key::Enter).unwrap();
     harness
         .wait_for_quiet(
             Duration::from_millis(150),

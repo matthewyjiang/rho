@@ -244,15 +244,15 @@ impl App {
             "Rho will suspend and run `claude auth login --claudeai`. \
 Cancel if you did not mean to sign in.",
             vec![
+                InlineChoiceOption::available(CANCEL_LOGIN_VALUE, '1', "Cancel", "Stay in Rho")
+                    .with_alternate_shortcut('n'),
                 InlineChoiceOption::available(
                     RELAY_LOGIN_VALUE,
-                    '1',
+                    '2',
                     "Continue",
                     "Hand the terminal to claude auth login",
                 )
                 .with_alternate_shortcut('s'),
-                InlineChoiceOption::available(CANCEL_LOGIN_VALUE, '2', "Cancel", "Stay in Rho")
-                    .with_alternate_shortcut('n'),
             ],
         )
         .expect("claude code login choice has available options");
