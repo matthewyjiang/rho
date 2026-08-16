@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.5.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.4.0...rho-providers-v1.5.0) (2026-08-16)
+
+
+### Features
+
+* **tui:** pick running subagents by title instead of run id ([#950](https://github.com/matthewyjiang/rho/issues/950)) ([dffd205](https://github.com/matthewyjiang/rho/commit/dffd2053eb4d22bc0b86d364c31fc44c8317667d))
+
+
+### Bug Fixes
+
+* **tui:** let you type while compact runs on the main loop ([#957](https://github.com/matthewyjiang/rho/issues/957)) ([07ef7c1](https://github.com/matthewyjiang/rho/commit/07ef7c14719427e4a77a23056761ca6f7532954f))
+
+
+### Performance Improvements
+
+* **tui:** paint the first frame before MCP connect and other startup tails ([#948](https://github.com/matthewyjiang/rho/issues/948)) ([cdc1bbf](https://github.com/matthewyjiang/rho/commit/cdc1bbfeabd93bf2bf5b615911048a2eebb6a947))
+
 ## [1.4.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.3.1...rho-providers-v1.4.0) (2026-08-15)
 
 
