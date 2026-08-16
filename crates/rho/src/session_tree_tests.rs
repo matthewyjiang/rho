@@ -100,6 +100,74 @@ fn v4_nodes_restore_declared_parent_and_support_branching() {
     );
 }
 
+// Covers: /tree restore must rebuild that node's own prefix, not the active leaf
+// Owner: session tree
+#[test]
+fn state_for_rebuilds_each_nodes_own_history() {
+    let root = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let session = Session::create_in_root(root.path(), cwd.path()).unwrap();
+    let first = snapshot(
+        &session,
+        1,
+        vec![Message::user_text("root")],
+        CompactionState::default(),
+    );
+    session.save_snapshot(&first, first.history()).unwrap();
+    let first_id = session
+        .session_tree()
+        .unwrap()
+        .active_leaf_id()
+        .unwrap()
+        .clone();
+    let second = snapshot(
+        &session,
+        2,
+        vec![Message::user_text("root"), Message::assistant_text("left")],
+        CompactionState::default(),
+    );
+    session
+        .save_snapshot(&second, &second.history()[1..])
+        .unwrap();
+    let second_id = session
+        .session_tree()
+        .unwrap()
+        .active_leaf_id()
+        .unwrap()
+        .clone();
+
+    let linear = session.session_tree().unwrap();
+    pretty_assertions::assert_eq!(linear.state_for(&first_id).unwrap().model, first.history());
+    pretty_assertions::assert_eq!(
+        linear.state_for(&second_id).unwrap().model,
+        second.history()
+    );
+    pretty_assertions::assert_eq!(linear.active_state().unwrap().model, second.history());
+
+    session.set_leaf(&first_id).unwrap();
+    let compaction =
+        CompactionState::from_accounting(1, 0, 4, 0, Some(8), Some(4), Some(Revision::from_u64(3)));
+    let compact = snapshot(&session, 3, vec![Message::user_text("summary")], compaction);
+    session.save_snapshot(&compact, compact.history()).unwrap();
+    let compact_id = session
+        .session_tree()
+        .unwrap()
+        .active_leaf_id()
+        .unwrap()
+        .clone();
+
+    let tree = session.session_tree().unwrap();
+    let cases = [
+        (&first_id, first.history()),
+        (&second_id, second.history()),
+        (&compact_id, compact.history()),
+    ];
+    for (id, history) in cases {
+        pretty_assertions::assert_eq!(tree.state_for(id).unwrap().model, history);
+    }
+    pretty_assertions::assert_eq!(tree.active_state().unwrap().model, compact.history());
+}
+
 #[test]
 fn compaction_state_change_writes_a_full_compaction_node() {
     let root = tempfile::tempdir().unwrap();
