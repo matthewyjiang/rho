@@ -111,11 +111,12 @@ fn compact_holds_are_not_releasable_until_promoted() {
     app.held_turns
         .push_back(held_turn("during compact", HeldTurnWait::Compact));
 
-    assert_eq!(app.first_releasable_held_wait(false), None);
+    assert_eq!(app.first_releasable_held_wait(false, false), None);
 
     app.promote_compact_holds();
     assert_eq!(
-        app.first_releasable_held_wait(false),
+        app.first_releasable_held_wait(false, false),
         Some(HeldTurnWait::Ready)
     );
+    assert_eq!(app.first_releasable_held_wait(false, true), None);
 }

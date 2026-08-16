@@ -441,11 +441,15 @@ impl App {
         }
     }
 
-    fn first_releasable_held_wait(&self, mcp_pending: bool) -> Option<HeldTurnWait> {
+    fn first_releasable_held_wait(
+        &self,
+        mcp_pending: bool,
+        compacting: bool,
+    ) -> Option<HeldTurnWait> {
         match self.held_turns.front()?.wait {
             HeldTurnWait::McpConnect if !mcp_pending => Some(HeldTurnWait::McpConnect),
-            HeldTurnWait::Ready => Some(HeldTurnWait::Ready),
-            HeldTurnWait::McpConnect | HeldTurnWait::Compact => None,
+            HeldTurnWait::Ready if !compacting => Some(HeldTurnWait::Ready),
+            HeldTurnWait::McpConnect | HeldTurnWait::Compact | HeldTurnWait::Ready => None,
         }
     }
 
@@ -460,7 +464,9 @@ impl App {
         if self.input_ui.composer().blocks_held_turn_start() {
             return Ok(false);
         }
-        let Some(wait) = self.first_releasable_held_wait(agent.mcp_connect_pending()) else {
+        let Some(wait) =
+            self.first_releasable_held_wait(agent.mcp_connect_pending(), agent.is_compacting())
+        else {
             return Ok(false);
         };
         let Some(HeldTurn { turn, media, .. }) = self.held_turns.pop_front() else {

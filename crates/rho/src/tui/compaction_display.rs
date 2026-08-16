@@ -69,6 +69,16 @@ impl CompactionUiOutcome {
         }
     }
 
+    pub(super) fn from_task_result(
+        result: anyhow::Result<Option<rho_sdk::CompactionOutcome>>,
+    ) -> Self {
+        match result {
+            Ok(Some(outcome)) => Self::from_sdk_outcome(&outcome),
+            Ok(None) => Self::unchanged(),
+            Err(err) => Self::failed(err.to_string()),
+        }
+    }
+
     pub(super) fn failed(detail: impl Into<String>) -> Self {
         Self::Failed {
             detail: detail.into(),

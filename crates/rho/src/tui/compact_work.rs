@@ -74,12 +74,7 @@ impl App {
         if let Some(CompactTaskPoll::Finished(result)) = agent.abort_compact_task().await {
             // Persist succeeded; do not apply handoff/turn follow-ups on teardown.
             let _ = std::mem::take(&mut self.compact_follow_up);
-            let outcome = match result {
-                Ok(Some(outcome)) => CompactionUiOutcome::from_sdk_outcome(&outcome),
-                Ok(None) => CompactionUiOutcome::unchanged(),
-                Err(err) => CompactionUiOutcome::failed(err.to_string()),
-            };
-            self.finish_compact_ui(outcome);
+            self.finish_compact_ui(CompactionUiOutcome::from_task_result(result));
             return true;
         }
         self.compact_follow_up = CompactFollowUp::None;
@@ -107,16 +102,11 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        let (outcome, succeeded) = match poll {
-            CompactTaskPoll::Cancelled => (CompactionUiOutcome::Cancelled, false),
-            CompactTaskPoll::Finished(Ok(Some(outcome))) => {
-                (CompactionUiOutcome::from_sdk_outcome(&outcome), true)
-            }
-            CompactTaskPoll::Finished(Ok(None)) => (CompactionUiOutcome::unchanged(), false),
-            CompactTaskPoll::Finished(Err(err)) => {
-                (CompactionUiOutcome::failed(err.to_string()), false)
-            }
+        let outcome = match poll {
+            CompactTaskPoll::Cancelled => CompactionUiOutcome::Cancelled,
+            CompactTaskPoll::Finished(result) => CompactionUiOutcome::from_task_result(result),
         };
+        let succeeded = matches!(outcome, CompactionUiOutcome::Completed(_));
         let cancelled = matches!(outcome, CompactionUiOutcome::Cancelled);
         if let Some(context) = agent.take_context_usage() {
             self.record_agent_event(ViewModelEvent::ContextUsage(context));
