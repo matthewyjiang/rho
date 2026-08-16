@@ -50,7 +50,7 @@ pub(super) struct SessionHeaderCache {
     pub(in crate::tui) lines: Vec<Line<'static>>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct InteractiveModelSelection {
     pub(in crate::tui) selection: ModelSelection,
     pub(in crate::tui) alias: Option<String>,

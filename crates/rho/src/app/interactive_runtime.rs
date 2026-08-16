@@ -90,8 +90,8 @@ pub(crate) struct InteractiveRuntime {
     workspace: Workspace,
     system_prompt: rho_sdk::SystemPrompt,
     compaction: CompactionConfig,
-    /// True while a manual or TUI auto-compact task owns the session.
-    compacting: bool,
+    /// Spawned manual / TUI auto-compact work. Presence means the session is busy.
+    pending_compact: Option<tokio::task::JoinHandle<compact::CompactTaskResult>>,
     context_window: Option<u64>,
     usage_recording: rho_sdk::ProviderRequestUsageRecording,
     config: Config,
@@ -356,7 +356,7 @@ impl InteractiveRuntime {
         display_user: Option<Message>,
         prelude: TurnPrelude,
     ) -> Result<(), Error> {
-        if self.runs.state() != InteractiveState::Idle {
+        if self.runs.state() != InteractiveState::Idle || self.is_compacting() {
             return Err(Error::SessionBusy);
         }
         if let Some(source) = self.sessions.pending_replacement() {
@@ -945,7 +945,7 @@ struct RebuiltPermission {
     pending: Option<(crate::permission::SessionWriteLog, startup::ApprovalChannel)>,
 }
 
-pub(crate) use compact::CompactTaskResult;
+pub(crate) use compact::CompactTaskPoll;
 
 #[cfg(test)]
 #[path = "interactive_runtime_tests.rs"]

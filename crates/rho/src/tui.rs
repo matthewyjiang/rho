@@ -501,12 +501,9 @@ struct App {
     pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
     pending_custom_models: Option<tokio::task::JoinHandle<()>>,
     pending_herdr_graphics: Option<tokio::task::JoinHandle<HerdrGraphicsCapability>>,
-    /// Turns submitted while MCP connect was still in flight, released in order
-    /// once the servers settle.
-    pending_mcp_submissions: VecDeque<idle_input::PendingMcpSubmission>,
-    pending_compact: Option<compact_work::PendingCompact>,
-    pending_compact_submissions: VecDeque<compact_work::PendingCompactSubmission>,
-    last_compact_ok: bool,
+    /// Turns held until MCP connect settles or a compact job finishes.
+    held_turns: VecDeque<idle_input::HeldTurn>,
+    compact_follow_up: compact_work::CompactFollowUp,
     pending_model_selection: Option<InteractiveModelSelection>,
     internal_agent_model_target: Option<agent_picker::InternalAgentModelTarget>,
     /// Set when the user dismisses the startup Auto classifier picker. The next

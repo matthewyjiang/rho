@@ -9,13 +9,24 @@ use super::{
     InputSubmissionMode, InteractiveRuntime, PasteSegment, QueuedPrompt, TurnOutcome, TurnPrompt,
 };
 
-/// A turn submitted while MCP connect was still in flight. Released once the
-/// servers settle so the prompt starts without a second `enter`.
-pub(super) struct PendingMcpSubmission {
+/// Why a submitted turn is waiting instead of starting.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum HeldTurnWait {
+    /// MCP connect is still in flight.
+    McpConnect,
+    /// A compact job is still running. Not auto-released if that job is cancelled.
+    Compact,
+    /// Compact finished (not cancelled). Start when the composer allows it.
+    Ready,
+}
+
+/// A turn held until MCP connect settles or a compact job finishes.
+pub(super) struct HeldTurn {
     pub(super) turn: TurnPrompt,
     pub(super) media: Vec<ChatMedia>,
     /// Kept so `esc` can hand the prompt back exactly as it was typed.
     pub(super) paste_segments: Vec<PasteSegment>,
+    pub(super) wait: HeldTurnWait,
 }
 
 impl App {
@@ -121,8 +132,8 @@ impl App {
                 }
             }
             (_, KeyCode::Esc) => {
-                if self.cancel_compact(agent).await {
-                    let _ = self.take_back_compact_held_turn();
+                if self.cancel_compact(terminal, agent).await? {
+                    self.take_back_held_turn();
                 } else if !self.cancel_inline_shells() && !self.exit_shell_mode() {
                     self.take_back_held_turn();
                 }
@@ -370,37 +381,48 @@ impl App {
         if agent.mcp_connect_pending() {
             // Queue rather than replace: someone who submits twice while the
             // servers are still connecting must not lose the first prompt.
-            self.pending_mcp_submissions
-                .push_back(PendingMcpSubmission {
-                    turn,
-                    media,
-                    paste_segments,
-                });
+            self.hold_turn(turn, media, paste_segments, HeldTurnWait::McpConnect);
             self.set_mcp_connecting_status();
             return Ok(());
         }
 
-        if self.pending_compact.is_some() || agent.is_compacting() {
-            self.hold_turn_for_compact(turn, media);
+        if agent.is_compacting() {
+            self.hold_turn(turn, media, paste_segments, HeldTurnWait::Compact);
             return Ok(());
         }
 
         self.run_turn_sequence(turn, media, terminal, agent).await
     }
 
+    fn hold_turn(
+        &mut self,
+        turn: TurnPrompt,
+        media: Vec<ChatMedia>,
+        paste_segments: Vec<PasteSegment>,
+        wait: HeldTurnWait,
+    ) {
+        self.held_turns.push_back(HeldTurn {
+            turn,
+            media,
+            paste_segments,
+            wait,
+        });
+    }
+
     /// Hand the most recently held turn back to the composer, so `esc` unwinds
-    /// prompts waiting on MCP connect newest first instead of leaving them to
-    /// run. Does nothing unless the composer is empty, so it cannot overwrite
-    /// something the person has started typing since.
+    /// prompts newest first instead of leaving them to run. Does nothing unless
+    /// the composer is empty, so it cannot overwrite something the person has
+    /// started typing since.
     fn take_back_held_turn(&mut self) {
         if !self.input_ui.text().is_empty() || !self.input_ui.attachments().is_empty() {
             return;
         }
-        let Some(PendingMcpSubmission {
+        let Some(HeldTurn {
             turn,
             media,
             paste_segments,
-        }) = self.pending_mcp_submissions.pop_back()
+            ..
+        }) = self.held_turns.pop_back()
         else {
             return;
         };
@@ -409,7 +431,7 @@ impl App {
             display_prompt: turn.display,
             paste_segments,
         });
-        if !self.pending_mcp_submissions.is_empty() {
+        if !self.held_turns.is_empty() {
             // Older holds are still waiting. Leave their status alone: writing
             // any status here would hand `status_source` back to `Other`, and
             // `poll_startup_hydrates` would never retire the indicator.
@@ -424,30 +446,49 @@ impl App {
         }
     }
 
-    /// Start the next turn held during MCP connect, once the servers settle.
-    /// One per call, so several held turns run in submission order. Reports
-    /// whether anything changed so the caller can redraw.
-    pub(super) async fn release_pending_mcp_submission(
+    fn first_releasable_held_wait(&self, mcp_pending: bool) -> Option<HeldTurnWait> {
+        match self.held_turns.front()?.wait {
+            HeldTurnWait::McpConnect if !mcp_pending => Some(HeldTurnWait::McpConnect),
+            HeldTurnWait::Ready => Some(HeldTurnWait::Ready),
+            HeldTurnWait::McpConnect | HeldTurnWait::Compact => None,
+        }
+    }
+
+    /// Start the next held turn whose wait is over. One per call, so several
+    /// held turns run in submission order. Reports whether anything changed so
+    /// the caller can redraw.
+    pub(super) async fn release_pending_held_turn(
         &mut self,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
-        if agent.mcp_connect_pending() || self.input_ui.composer().blocks_held_turn_start() {
+        if self.input_ui.composer().blocks_held_turn_start() {
             return Ok(false);
         }
-        let Some(PendingMcpSubmission { turn, media, .. }) =
-            self.pending_mcp_submissions.pop_front()
-        else {
+        let Some(wait) = self.first_releasable_held_wait(agent.mcp_connect_pending()) else {
             return Ok(false);
         };
-        self.set_status_quiet("");
-        self.run_turn_sequence(turn, media, terminal, agent).await?;
+        let Some(HeldTurn { turn, media, .. }) = self.held_turns.pop_front() else {
+            return Ok(false);
+        };
+        if wait == HeldTurnWait::McpConnect {
+            self.set_status_quiet("");
+        }
+        match wait {
+            HeldTurnWait::Ready => {
+                self.run_turn_sequence_without_auto_compact(turn, media, terminal, agent)
+                    .await?;
+            }
+            HeldTurnWait::McpConnect | HeldTurnWait::Compact => {
+                self.run_turn_sequence(turn, media, terminal, agent).await?;
+            }
+        }
         Ok(true)
     }
 
     /// Run a submitted turn plus any goal resumption or queued follow-ups it
-    /// triggers. Entered directly on submit, or later when a turn that arrived
-    /// during MCP connect is released.
+    /// triggers. Entered directly on submit, or later when a held turn is
+    /// released.
     pub(super) async fn run_turn_sequence(
         &mut self,
         turn: TurnPrompt,
@@ -455,11 +496,22 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        if !turn.skip_auto_compact && agent.should_auto_compact() {
-            self.start_compact(agent)?;
-            self.hold_turn_for_compact(turn, media);
+        if agent.should_auto_compact() {
+            self.start_compact(agent, super::compact_work::CompactFollowUp::None)?;
+            self.hold_turn(turn, media, Vec::new(), HeldTurnWait::Compact);
             return Ok(());
         }
+        self.run_turn_sequence_without_auto_compact(turn, media, terminal, agent)
+            .await
+    }
+
+    async fn run_turn_sequence_without_auto_compact(
+        &mut self,
+        turn: TurnPrompt,
+        media: Vec<ChatMedia>,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
         let turn = self.prepare_goal_resumption_turn(turn);
         let mut outcome = self.run_prompt_turn(turn, media, terminal, agent).await?;
         self.finish_goal_resumption_turn(outcome.kind());

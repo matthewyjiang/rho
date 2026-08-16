@@ -5,7 +5,6 @@ pub(super) struct TurnPrompt {
     pub(super) history: String,
     pub(super) persisted_display: Option<String>,
     pub(super) initial_tool_call: Option<rho_sdk::model::ToolCall>,
-    pub(super) skip_auto_compact: bool,
 }
 
 impl TurnPrompt {
@@ -16,7 +15,6 @@ impl TurnPrompt {
             display,
             persisted_display: None,
             initial_tool_call: None,
-            skip_auto_compact: false,
         }
     }
 
@@ -27,7 +25,6 @@ impl TurnPrompt {
             history: command.clone(),
             persisted_display: Some(command),
             initial_tool_call: None,
-            skip_auto_compact: false,
         }
     }
 

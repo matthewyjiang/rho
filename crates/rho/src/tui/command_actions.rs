@@ -66,7 +66,9 @@ impl App {
             CommandId::Config => self.execute_config_command(terminal),
             CommandId::Info => self.execute_info_command().await,
             CommandId::Help => self.execute_help_command(),
-            CommandId::Compact => self.start_compact(agent),
+            CommandId::Compact => {
+                self.start_compact(agent, super::compact_work::CompactFollowUp::None)
+            }
             CommandId::Goal => {
                 invocation.raw_args = slash_command_args(&expanded_input).to_string();
                 invocation.args = invocation.raw_args.trim().to_string();
@@ -102,15 +104,6 @@ impl App {
         self.set_status("unknown command");
     }
 
-    pub(super) async fn execute_compact_command(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<bool> {
-        self.start_compact(agent)?;
-        Box::pin(self.drive_compact(terminal, agent)).await
-    }
-
     pub(super) fn execute_exit_command(&mut self) -> anyhow::Result<()> {
         self.should_quit = true;
         self.set_status("exiting rho");
@@ -122,8 +115,8 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        self.cancel_compact(agent).await;
-        self.pending_compact_submissions.clear();
+        self.abort_compact(agent).await;
+        self.held_turns.clear();
         agent.reset().await?;
         self.info.session.session_id = None;
         self.input_ui.set_composer(ComposerMode::Input);

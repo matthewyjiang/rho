@@ -149,7 +149,6 @@ fn command_prompt_resumes_blocked_goal_without_exposing_expanded_context() {
             history: "/skill:release".into(),
             persisted_display: Some("/skill:release".into()),
             initial_tool_call: None,
-            skip_auto_compact: false,
         }
     );
 }

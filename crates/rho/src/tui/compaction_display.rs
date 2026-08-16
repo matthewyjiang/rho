@@ -56,9 +56,8 @@ pub(super) enum CompactionUiOutcome {
 
 impl CompactionUiOutcome {
     pub(super) fn from_sdk_outcome(outcome: &rho_sdk::CompactionOutcome) -> Self {
-        let facts = CompactionDisplayFacts::from_outcome(outcome);
-        if facts.removed_messages() > 0 || facts.removed_tokens() > 0 {
-            Self::Completed(facts)
+        if outcome.reduced_context() {
+            Self::Completed(CompactionDisplayFacts::from_outcome(outcome))
         } else {
             Self::unchanged()
         }

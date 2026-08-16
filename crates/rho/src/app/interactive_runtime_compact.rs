@@ -4,13 +4,38 @@ use crate::session::Session as StoredSession;
 
 use super::InteractiveRuntime;
 
+pub(super) struct CompactTaskResult {
+    checkpoint: Option<(StoredSession, rho_sdk::SessionSnapshot)>,
+    outcome: Result<rho_sdk::CompactionOutcome, Error>,
+}
+
+pub(crate) enum CompactTaskPoll {
+    Finished(anyhow::Result<Option<rho_sdk::CompactionOutcome>>),
+    Cancelled,
+}
+
+/// Session-owned compact work that can run off the TUI input loop.
+struct CompactTask {
+    session: rho_sdk::Session,
+    checkpoint: Option<(StoredSession, rho_sdk::SessionSnapshot)>,
+}
+
+impl CompactTask {
+    async fn run(self) -> CompactTaskResult {
+        CompactTaskResult {
+            checkpoint: self.checkpoint,
+            outcome: self.session.compact().await,
+        }
+    }
+}
+
 impl InteractiveRuntime {
     pub(crate) fn is_compacting(&self) -> bool {
-        self.compacting
+        self.pending_compact.is_some()
     }
 
     pub(crate) fn is_session_busy(&self) -> bool {
-        self.runs.is_active() || self.compacting
+        self.runs.is_active() || self.is_compacting()
     }
 
     pub(crate) fn can_compact(&self) -> bool {
@@ -48,29 +73,68 @@ impl InteractiveRuntime {
         .is_some()
     }
 
-    pub(crate) fn begin_compact_task(&mut self) -> anyhow::Result<CompactTask> {
+    pub(crate) fn begin_compact_task(&mut self) -> anyhow::Result<()> {
         if self.is_session_busy() {
             anyhow::bail!("session is busy");
         }
-        self.compacting = true;
-        Ok(CompactTask {
+        let task = CompactTask {
             session: self.sessions.session().clone(),
             checkpoint: self.capture_durable_session()?,
+        };
+        self.pending_compact = Some(tokio::spawn(task.run()));
+        Ok(())
+    }
+
+    pub(crate) async fn abort_compact_task(&mut self) {
+        if let Some(handle) = self.pending_compact.take() {
+            handle.abort();
+            let _ = handle.await;
+        }
+    }
+
+    pub(crate) async fn poll_compact_task(&mut self) -> Option<CompactTaskPoll> {
+        let Some(handle) = self.pending_compact.as_mut() else {
+            return None;
+        };
+        if !handle.is_finished() {
+            return None;
+        }
+        let Some(handle) = self.pending_compact.take() else {
+            return None;
+        };
+        Some(match handle.await {
+            Ok(result) => CompactTaskPoll::Finished(self.complete_compact_task(result).await),
+            Err(error) if error.is_cancelled() => CompactTaskPoll::Cancelled,
+            Err(error) => CompactTaskPoll::Finished(Err(anyhow::anyhow!(error))),
         })
     }
 
-    pub(crate) fn abort_compact_task(&mut self) {
-        self.compacting = false;
+    /// Inline compact for tests and non-TUI callers. Does not pin a busy flag
+    /// across `.await`, so dropping the future leaves the runtime idle.
+    pub(crate) async fn compact(&mut self) -> anyhow::Result<Option<rho_sdk::CompactionOutcome>> {
+        if self.is_session_busy() {
+            anyhow::bail!("session is busy");
+        }
+        let checkpoint = self.capture_durable_session()?;
+        let outcome = self.sessions.session().compact().await?;
+        self.apply_compact_outcome(checkpoint, outcome).await
     }
 
-    pub(crate) async fn complete_compact_task(
+    async fn complete_compact_task(
         &mut self,
         result: CompactTaskResult,
     ) -> anyhow::Result<Option<rho_sdk::CompactionOutcome>> {
-        self.compacting = false;
         let outcome = result.outcome?;
+        self.apply_compact_outcome(result.checkpoint, outcome).await
+    }
+
+    async fn apply_compact_outcome(
+        &mut self,
+        checkpoint: Option<(StoredSession, rho_sdk::SessionSnapshot)>,
+        outcome: rho_sdk::CompactionOutcome,
+    ) -> anyhow::Result<Option<rho_sdk::CompactionOutcome>> {
         if let Err(error) = self.sessions.save_compaction_snapshot(&[], &outcome) {
-            let rollback = self.restore_durable_session(result.checkpoint).await;
+            let rollback = self.restore_durable_session(checkpoint).await;
             return match rollback {
                 Ok(()) => Err(error),
                 Err(rollback_error) => Err(anyhow::anyhow!(
@@ -78,40 +142,12 @@ impl InteractiveRuntime {
                 )),
             };
         }
-        let reduced = outcome.current_messages() < outcome.previous_messages()
-            || outcome.removed_tokens() > 0;
-        if reduced {
+        if outcome.reduced_context() {
             self.runs.note_manual_compaction(self.context_window);
             self.invalidate_live_context();
             Ok(Some(outcome))
         } else {
             Ok(None)
-        }
-    }
-
-    pub(crate) async fn compact(&mut self) -> anyhow::Result<Option<rho_sdk::CompactionOutcome>> {
-        let task = self.begin_compact_task()?;
-        let result = task.run().await;
-        self.complete_compact_task(result).await
-    }
-}
-
-/// Session-owned compact work that can run off the TUI input loop.
-pub(crate) struct CompactTask {
-    session: rho_sdk::Session,
-    checkpoint: Option<(StoredSession, rho_sdk::SessionSnapshot)>,
-}
-
-pub(crate) struct CompactTaskResult {
-    checkpoint: Option<(StoredSession, rho_sdk::SessionSnapshot)>,
-    outcome: Result<rho_sdk::CompactionOutcome, Error>,
-}
-
-impl CompactTask {
-    pub(crate) async fn run(self) -> CompactTaskResult {
-        CompactTaskResult {
-            checkpoint: self.checkpoint,
-            outcome: self.session.compact().await,
         }
     }
 }
