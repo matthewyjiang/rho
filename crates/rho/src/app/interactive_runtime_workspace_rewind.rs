@@ -45,8 +45,12 @@ impl InteractiveRuntime {
         &mut self,
         target_id: &crate::session::tree::NodeId,
     ) -> anyhow::Result<crate::session::workspace_checkpoint::RestoreAudit> {
-        if self.runs.is_active() {
-            anyhow::bail!("workspace rewind is unavailable while a provider run is active");
+        if self.is_session_busy() {
+            anyhow::bail!(if self.runs.is_active() {
+                "workspace rewind is unavailable while a provider run is active"
+            } else {
+                "workspace rewind is unavailable while compaction is active"
+            });
         }
         if self.permission_mode == PermissionMode::Plan {
             anyhow::bail!("workspace rewind is unavailable in plan permission mode");

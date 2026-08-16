@@ -467,6 +467,17 @@ async fn session_changes_are_rejected_while_compaction_is_in_flight() {
         .unwrap_err();
     assert!(matches!(replace_error, rho_sdk::Error::SessionBusy));
 
+    let rewind_error = interactive
+        .restore_workspace_rewind(&crate::session::tree::NodeId::from_string("leaf-1").unwrap())
+        .await
+        .unwrap_err();
+    assert!(
+        rewind_error
+            .to_string()
+            .contains("while compaction is active"),
+        "{rewind_error}"
+    );
+
     let _ = interactive.abort_compact_task().await;
 }
 
