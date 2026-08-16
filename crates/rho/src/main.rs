@@ -1,3 +1,6 @@
+// Same startup `Instrumented<run_inner()>` layout as `lib.rs`.
+#![recursion_limit = "256"]
+
 use std::process::ExitCode;
 
 use clap::Parser;

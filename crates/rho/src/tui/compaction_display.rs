@@ -1,7 +1,8 @@
-//! Compaction tool cards.
+//! Shared compact card and view events.
 //!
-//! Compaction is shown like a tool call: a running card while work is in
-//! flight, then a finished card with the outcome facts we actually have.
+//! Main-loop compact (`/compact`, pre-turn auto-compact) and in-run auto-compact
+//! both show this card. They differ only in who owns the session: idle work vs
+//! the live turn.
 
 use rho_sdk::ToolCallId;
 use rho_tools::tool_card::{ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
@@ -54,6 +55,36 @@ pub(super) enum CompactionUiOutcome {
 }
 
 impl CompactionUiOutcome {
+    pub(super) fn from_sdk_outcome(outcome: &rho_sdk::CompactionOutcome) -> Self {
+        if crate::compaction::outcome_reduced_context(outcome) {
+            Self::Completed(CompactionDisplayFacts::from_outcome(outcome))
+        } else {
+            Self::unchanged()
+        }
+    }
+
+    pub(super) fn unchanged() -> Self {
+        Self::Unchanged {
+            detail: "compaction ran but did not reduce context".into(),
+        }
+    }
+
+    pub(super) fn from_task_result(
+        result: anyhow::Result<Option<rho_sdk::CompactionOutcome>>,
+    ) -> Self {
+        match result {
+            Ok(Some(outcome)) => Self::from_sdk_outcome(&outcome),
+            Ok(None) => Self::unchanged(),
+            Err(err) => Self::failed(err.to_string()),
+        }
+    }
+
+    pub(super) fn failed(detail: impl Into<String>) -> Self {
+        Self::Failed {
+            detail: detail.into(),
+        }
+    }
+
     pub(super) fn card(&self) -> ToolCard {
         match self {
             Self::Completed(facts) => completed_card(*facts),
@@ -61,6 +92,21 @@ impl CompactionUiOutcome {
             Self::Failed { detail } => failed_card(detail.clone()),
             Self::Cancelled => cancelled_card(),
         }
+    }
+
+    pub(super) fn status_label(&self) -> &'static str {
+        match self {
+            Self::Completed(_) => "context compacted",
+            Self::Unchanged { .. } => "context not compacted",
+            Self::Failed { .. } => "context compaction failed",
+            Self::Cancelled => "context compaction cancelled",
+        }
+    }
+
+    /// Auto-compact parks the triggering turn as a follow-up. Start it after
+    /// any settlement except a user cancel.
+    pub(super) fn starts_follow_ups(&self) -> bool {
+        !matches!(self, Self::Cancelled)
     }
 }
 

@@ -10,6 +10,7 @@ fn prompt(text: &str) -> QueuedPrompt {
         prompt: text.into(),
         display_prompt: text.into(),
         paste_segments: Vec::new(),
+        media: Vec::new(),
     }
 }
 

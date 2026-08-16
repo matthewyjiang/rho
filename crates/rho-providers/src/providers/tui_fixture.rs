@@ -15,7 +15,10 @@ use rho_sdk::{
     model::{
         ContentBlock, Message, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ToolCall,
     },
-    provider::{ModelProvider, ProviderEventSender, ProviderFuture},
+    provider::{
+        ModelProvider, NativeCompactionFuture, NativeCompactionResponse, ProviderEventSender,
+        ProviderFuture,
+    },
     CancellationToken, ProviderError, ProviderErrorKind, Retryability,
 };
 
@@ -87,6 +90,25 @@ impl ModelProvider for TuiFixtureProvider {
         events: ProviderEventSender,
     ) -> ProviderFuture<'a> {
         Box::pin(async move { fixture_stream(request, events).await })
+    }
+
+    fn native_compact<'a>(
+        &'a self,
+        request: ModelRequest<'a>,
+    ) -> Option<NativeCompactionFuture<'a>> {
+        if !history_has_compact_delay(&request) {
+            return None;
+        }
+        Some(Box::pin(async move {
+            match fixture_sleep(&request.cancellation, Duration::from_secs(3)).await {
+                Ok(()) => NativeCompactionResponse::failure(ProviderError::new(
+                    ProviderErrorKind::Unavailable,
+                    "fixture compact delay finished",
+                    Retryability::Permanent,
+                )),
+                Err(error) => NativeCompactionResponse::failure(error),
+            }
+        }))
     }
 }
 
@@ -734,6 +756,10 @@ fn is_subagent_title_request(request: &ModelRequest<'_>) -> bool {
         )
     });
     is_title_agent && last_user_text(request).is_some_and(|text| !text.starts_with("First turn:"))
+}
+
+fn history_has_compact_delay(request: &ModelRequest<'_>) -> bool {
+    last_user_text(request).is_some_and(|text| text.contains("fixture compact delay"))
 }
 
 fn last_user_text(request: &ModelRequest<'_>) -> Option<String> {

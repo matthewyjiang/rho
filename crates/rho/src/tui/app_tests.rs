@@ -314,6 +314,7 @@ fn queued_pasted_prompt_keeps_marker_when_recalled_for_editing() {
         prompt: app.expanded_input(),
         display_prompt: app.input_ui.text().to_string(),
         paste_segments: app.input_ui.paste_segments().to_vec(),
+        media: Vec::new(),
     };
     app.input_ui.clear_text();
     app.input_ui.clear_paste_segments();
@@ -334,6 +335,7 @@ fn queued_pasted_prompt_preserves_leading_space_segment_offsets() {
         prompt: app.expanded_input().trim().to_string(),
         display_prompt: app.input_ui.text().to_string(),
         paste_segments: app.input_ui.paste_segments().to_vec(),
+        media: Vec::new(),
     };
     app.input_ui.clear_text();
     app.input_ui.clear_paste_segments();

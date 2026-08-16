@@ -71,6 +71,11 @@ enum ContextHandoffDecision {
     ContinueDirect,
 }
 
+enum HandoffExec {
+    Done,
+    StartCompact { had_source: bool },
+}
+
 impl ContextHandoffImpact {
     fn should_prompt(&self) -> bool {
         self.omissions.has_omissions() || (self.cache_warm && self.can_compact)
@@ -477,19 +482,38 @@ impl App {
         if let Some(value) = value {
             let decision =
                 decision_from_value(value).unwrap_or(ContextHandoffDecision::ContinueDirect);
-            if let Err(err) = self
+            match self
                 .execute_context_handoff(
                     decision,
                     source_selection,
-                    target_selection,
+                    target_selection.clone(),
                     materialize,
                     terminal,
                     agent,
                 )
                 .await
             {
-                self.insert_entry(&Entry::Error(format!("model handoff failed: {err}")));
-                self.set_status("model handoff failed");
+                Ok(HandoffExec::Done) => {}
+                Ok(HandoffExec::StartCompact { had_source }) => {
+                    if let Err(err) =
+                        self.start_compact(agent, super::compact_work::CompactFollowUp::None)
+                    {
+                        self.insert_entry(&Entry::Error(format!("model handoff failed: {err}")));
+                        self.set_status("model handoff failed");
+                    } else {
+                        self.compact_follow_up =
+                            super::compact_work::CompactFollowUp::ContextHandoff {
+                                target_selection,
+                                had_source,
+                                after,
+                            };
+                        return Ok(());
+                    }
+                }
+                Err(err) => {
+                    self.insert_entry(&Entry::Error(format!("model handoff failed: {err}")));
+                    self.set_status("model handoff failed");
+                }
             }
         } else {
             self.set_status(match kind {
@@ -514,7 +538,7 @@ impl App {
         materialize: Option<ResumeMaterialize>,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<HandoffExec> {
         match decision {
             ContextHandoffDecision::UseSourceModel => {
                 let Some(source) = source_selection else {
@@ -523,6 +547,7 @@ impl App {
                 self.select_model(source, agent).await?;
                 self.materialize_if_needed(materialize, terminal, agent)
                     .await?;
+                Ok(HandoffExec::Done)
             }
             ContextHandoffDecision::CompactThenContinue => {
                 let had_source = source_selection.is_some();
@@ -533,24 +558,10 @@ impl App {
                 }
                 self.materialize_if_needed(materialize, terminal, agent)
                     .await?;
-                match self.execute_compact_command(terminal, agent).await {
-                    Ok(true) => {
-                        if let Some(target) = target_selection {
-                            if !selection_matches_runtime(self, &target) {
-                                self.select_model(target, agent).await?;
-                            }
-                        }
-                    }
-                    Ok(false) => {
-                        let notice = if had_source {
-                            "kept the session model because context was not compacted"
-                        } else {
-                            "model unchanged because context was not compacted"
-                        };
-                        self.insert_entry(&Entry::Notice(notice.into()));
-                    }
-                    Err(err) => return Err(err),
+                if agent.is_compacting() {
+                    anyhow::bail!("already compacting context");
                 }
+                Ok(HandoffExec::StartCompact { had_source })
             }
             ContextHandoffDecision::ContinueDirect => {
                 let materialized = materialize.is_some();
@@ -563,9 +574,36 @@ impl App {
                         self.set_status("ready");
                     }
                 }
+                Ok(HandoffExec::Done)
             }
         }
-        Ok(())
+    }
+
+    pub(super) async fn complete_compact_handoff(
+        &mut self,
+        succeeded: bool,
+        target_selection: Option<InteractiveModelSelection>,
+        had_source: bool,
+        after: AfterHandoff,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        if succeeded {
+            if let Some(target) = target_selection {
+                if !selection_matches_runtime(self, &target) {
+                    self.select_model(target, agent).await?;
+                }
+            }
+        } else {
+            let notice = if had_source {
+                "kept the session model because context was not compacted"
+            } else {
+                "model unchanged because context was not compacted"
+            };
+            self.insert_entry(&Entry::Notice(notice.into()));
+        }
+        self.finish_after_handoff(after, terminal, agent).await?;
+        self.reconcile_auto_classifier_gate(agent).await
     }
 
     async fn materialize_if_needed(
@@ -668,9 +706,10 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        if let Some(prompt) = self.pending.pop_follow_up() {
-            self.restore_pending_prompt(prompt);
-            return self.submit(terminal, agent).await;
+        if self.pending.has_follow_ups() {
+            self.start_follow_ups = Some(true);
+            self.start_next_follow_up(terminal, agent).await?;
+            return Ok(());
         }
         if self.goal.is_some() && !self.should_quit {
             self.continue_goal(terminal, agent, std::collections::VecDeque::new())

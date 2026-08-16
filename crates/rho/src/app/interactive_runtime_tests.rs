@@ -214,6 +214,7 @@ async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime {
         workspace,
         system_prompt: SystemPrompt::None,
         compaction: CompactionConfig::default(),
+        pending_compact: None,
         context_window: None,
         usage_recording: Default::default(),
         config: Config::default(),
@@ -423,6 +424,61 @@ async fn permission_mode_switch_rejects_an_active_run_without_mutation() {
     assert!(error.to_string().contains("while a run is active"));
     assert_eq!(interactive.permission_mode(), PermissionMode::Auto);
     assert!(interactive.approval_receiver().is_none());
+}
+
+// Covers: session-changing APIs must not run while a compact job holds a cloned session.
+// Owner: interactive runtime compact lifecycle
+#[tokio::test]
+async fn session_changes_are_rejected_while_compaction_is_in_flight() {
+    let mut interactive = pending_compaction_runtime("done").await;
+    interactive.begin_compact_task().unwrap();
+    assert!(interactive.is_compacting());
+
+    let permission_error = interactive
+        .set_permission_mode(PermissionMode::Supervised)
+        .await
+        .unwrap_err();
+    assert!(
+        permission_error
+            .to_string()
+            .contains("while compaction is active"),
+        "{permission_error}"
+    );
+    assert_eq!(interactive.permission_mode(), PermissionMode::Auto);
+
+    let reset_error = interactive.reset().await.unwrap_err();
+    assert!(
+        reset_error
+            .to_string()
+            .contains("while a run or compaction is active"),
+        "{reset_error}"
+    );
+
+    let replacement: Arc<dyn ModelProvider> = Arc::new(ScriptedProvider::new(
+        ModelIdentity::new("replacement", "test", "model"),
+        Vec::<ScriptedTurn>::new(),
+    ));
+    let replace_error = interactive
+        .replace_provider(
+            Arc::clone(&replacement),
+            rho_sdk::ReasoningLevel::Low,
+            "test-auth",
+        )
+        .unwrap_err();
+    assert!(matches!(replace_error, rho_sdk::Error::SessionBusy));
+
+    let rewind_error = interactive
+        .restore_workspace_rewind(&crate::session::tree::NodeId::from_string("leaf-1").unwrap())
+        .await
+        .unwrap_err();
+    assert!(
+        rewind_error
+            .to_string()
+            .contains("while compaction is active"),
+        "{rewind_error}"
+    );
+
+    let _ = interactive.abort_compact_task().await;
 }
 
 // Covers: remembered workspace writes stay bound to the session and grantor

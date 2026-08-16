@@ -1,11 +1,8 @@
-use std::sync::atomic::AtomicBool;
-
 use ratatui::DefaultTerminal;
 
 use super::{
-    command_palette::slash_command_args, ActivityPhase, App, ChatMedia, CommandId,
-    CommandInvocation, ComposerMode, Entry, InteractiveRuntime, LoadingSpinner, RunningInputMode,
-    StreamControl, ToolEntry, ViewModelEvent,
+    command_palette::slash_command_args, App, ChatMedia, CommandId, CommandInvocation,
+    ComposerMode, Entry, InteractiveRuntime,
 };
 
 /// Fully-owned composer state transferred to a slash command.
@@ -69,10 +66,9 @@ impl App {
             CommandId::Config => self.execute_config_command(terminal),
             CommandId::Info => self.execute_info_command().await,
             CommandId::Help => self.execute_help_command(),
-            CommandId::Compact => self
-                .execute_compact_command(terminal, agent)
-                .await
-                .map(|_| ()),
+            CommandId::Compact => {
+                self.start_compact(agent, super::compact_work::CompactFollowUp::None)
+            }
             CommandId::Goal => {
                 invocation.raw_args = slash_command_args(&expanded_input).to_string();
                 invocation.args = invocation.raw_args.trim().to_string();
@@ -108,100 +104,6 @@ impl App {
         self.set_status("unknown command");
     }
 
-    pub(super) async fn execute_compact_command(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<bool> {
-        use super::compaction_display::{
-            compaction_call_id, running_card, CompactionDisplayFacts, CompactionUiOutcome,
-        };
-
-        self.pending.steering_prompts_mut().clear();
-        self.pending_input_changed();
-        self.set_status("compacting context");
-        self.begin_compact_ui();
-        self.turn.set_activity_phase(ActivityPhase::Compacting);
-        self.turn.start_loading();
-        self.turn.tool_started(compaction_call_id(), running_card());
-        terminal.draw(|frame| self.draw(frame))?;
-
-        let interrupt_requested = AtomicBool::new(false);
-        let tool_call_active = AtomicBool::new(false);
-        let mut compact_future = Box::pin(agent.compact());
-        let compacted = loop {
-            tokio::select! {
-                result = &mut compact_future => break result,
-                terminal_event = self.terminal_session.as_mut().expect("terminal session initialized").next_event() => {
-                    match self.handle_running_terminal_events(
-                        terminal_event?,
-                        terminal,
-                        &interrupt_requested,
-                        &tool_call_active,
-                        RunningInputMode::Compacting,
-                    )
-                    .await
-                    .map_err(super::during_turn::RunningTerminalError::into_anyhow)?
-                    {
-                        StreamControl::Interrupt => {
-                            break Err(anyhow::anyhow!("compaction interrupted"));
-                        }
-                        StreamControl::Continue
-                        | StreamControl::Resize
-                        | StreamControl::ApprovalResolved => {}
-                    }
-                    self.clamp_history_scroll_for_terminal(terminal)?;
-                    terminal.draw(|frame| self.draw(frame))?;
-                }
-                _ = tokio::time::sleep(LoadingSpinner::FRAME_INTERVAL) => {
-                    terminal.draw(|frame| self.draw(frame))?;
-                }
-            }
-        };
-        drop(compact_future);
-        if let Some(context) = agent.take_context_usage() {
-            self.record_agent_event(ViewModelEvent::ContextUsage(context));
-        }
-        self.end_busy_ui();
-        self.turn.stop_loading();
-        let expanded = self.turn.tool_finished(&compaction_call_id());
-
-        let (outcome, status, succeeded) = match compacted {
-            Ok(Some(outcome)) => (
-                CompactionUiOutcome::Completed(CompactionDisplayFacts::from_outcome(&outcome)),
-                "context compacted",
-                true,
-            ),
-            Ok(None) => (
-                CompactionUiOutcome::Unchanged {
-                    detail: "not enough conversation history to compact, or the model context window is unknown".into(),
-                },
-                "context not compacted",
-                false,
-            ),
-            Err(err) if err.to_string().contains("interrupted") => (
-                CompactionUiOutcome::Cancelled,
-                "context compaction cancelled",
-                false,
-            ),
-            Err(err) => (
-                CompactionUiOutcome::Failed {
-                    detail: err.to_string(),
-                },
-                "context compaction failed",
-                false,
-            ),
-        };
-        self.insert_entry(&Entry::Tool(ToolEntry {
-            card: outcome.card(),
-            expanded,
-            image: None,
-            started_at: None,
-        }));
-        self.set_status(status);
-        Ok(succeeded)
-    }
-
     pub(super) fn execute_exit_command(&mut self) -> anyhow::Result<()> {
         self.should_quit = true;
         self.set_status("exiting rho");
@@ -213,6 +115,9 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        self.abort_compact(agent).await;
+        self.held_turns.clear();
+        self.start_follow_ups = None;
         agent.reset().await?;
         self.info.session.session_id = None;
         self.input_ui.set_composer(ComposerMode::Input);

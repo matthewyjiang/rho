@@ -365,7 +365,6 @@ impl App {
                         terminal,
                         &interrupt_requested,
                         &tool_call_active,
-                        RunningInputMode::Turn,
                     ).await {
                         Ok(StreamControl::Interrupt) => agent.cancel(),
                         Ok(StreamControl::ApprovalResolved) => {

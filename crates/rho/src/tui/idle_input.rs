@@ -9,9 +9,8 @@ use super::{
     InputSubmissionMode, InteractiveRuntime, PasteSegment, QueuedPrompt, TurnOutcome, TurnPrompt,
 };
 
-/// A turn submitted while MCP connect was still in flight. Released once the
-/// servers settle so the prompt starts without a second `enter`.
-pub(super) struct PendingMcpSubmission {
+/// A turn held until MCP connect settles.
+pub(super) struct HeldTurn {
     pub(super) turn: TurnPrompt,
     pub(super) media: Vec<ChatMedia>,
     /// Kept so `esc` can hand the prompt back exactly as it was typed.
@@ -121,7 +120,8 @@ impl App {
                 }
             }
             (_, KeyCode::Esc) => {
-                if !self.cancel_inline_shells() && !self.exit_shell_mode() {
+                let cancelled_compact = self.cancel_compact(terminal, agent).await?;
+                if cancelled_compact || (!self.cancel_inline_shells() && !self.exit_shell_mode()) {
                     self.take_back_held_turn();
                 }
                 self.ctrl_c_streak = 0;
@@ -177,7 +177,11 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Enter) => {
-                self.insert_input_char('\n');
+                if agent.is_compacting() {
+                    self.queue_prompt_after_turn()?;
+                } else {
+                    self.insert_input_char('\n');
+                }
                 self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
             }
@@ -368,32 +372,42 @@ impl App {
         if agent.mcp_connect_pending() {
             // Queue rather than replace: someone who submits twice while the
             // servers are still connecting must not lose the first prompt.
-            self.pending_mcp_submissions
-                .push_back(PendingMcpSubmission {
-                    turn,
-                    media,
-                    paste_segments,
-                });
+            self.hold_turn(turn, media, paste_segments);
             self.set_mcp_connecting_status();
             return Ok(());
         }
 
-        self.run_turn_sequence(turn, media, terminal, agent).await
+        self.run_turn_sequence_held(turn, media, paste_segments, terminal, agent)
+            .await
+    }
+
+    fn hold_turn(
+        &mut self,
+        turn: TurnPrompt,
+        media: Vec<ChatMedia>,
+        paste_segments: Vec<PasteSegment>,
+    ) {
+        self.held_turns.push_back(HeldTurn {
+            turn,
+            media,
+            paste_segments,
+        });
     }
 
     /// Hand the most recently held turn back to the composer, so `esc` unwinds
-    /// prompts waiting on MCP connect newest first instead of leaving them to
-    /// run. Does nothing unless the composer is empty, so it cannot overwrite
-    /// something the person has started typing since.
+    /// prompts newest first instead of leaving them to run. Does nothing unless
+    /// the composer is empty, so it cannot overwrite something the person has
+    /// started typing since.
     fn take_back_held_turn(&mut self) {
         if !self.input_ui.text().is_empty() || !self.input_ui.attachments().is_empty() {
             return;
         }
-        let Some(PendingMcpSubmission {
+        let Some(HeldTurn {
             turn,
             media,
             paste_segments,
-        }) = self.pending_mcp_submissions.pop_back()
+            ..
+        }) = self.held_turns.pop_back()
         else {
             return;
         };
@@ -401,8 +415,9 @@ impl App {
             prompt: turn.model,
             display_prompt: turn.display,
             paste_segments,
+            media: Vec::new(),
         });
-        if !self.pending_mcp_submissions.is_empty() {
+        if !self.held_turns.is_empty() {
             // Older holds are still waiting. Leave their status alone: writing
             // any status here would hand `status_source` back to `Other`, and
             // `poll_startup_hydrates` would never retire the indicator.
@@ -417,31 +432,110 @@ impl App {
         }
     }
 
-    /// Start the next turn held during MCP connect, once the servers settle.
-    /// One per call, so several held turns run in submission order. Reports
-    /// whether anything changed so the caller can redraw.
-    pub(super) async fn release_pending_mcp_submission(
+    fn first_held_turn_is_releasable(&self, mcp_pending: bool, compacting: bool) -> bool {
+        !self.held_turns.is_empty() && !mcp_pending && !compacting
+    }
+
+    /// Start the next held turn whose wait is over. One per call, so several
+    /// held turns run in submission order. Reports whether anything changed so
+    /// the caller can redraw.
+    pub(super) async fn release_pending_held_turn(
         &mut self,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
-        if agent.mcp_connect_pending() || self.input_ui.composer().blocks_held_turn_start() {
+        if self.input_ui.composer().blocks_held_turn_start() {
             return Ok(false);
         }
-        let Some(PendingMcpSubmission { turn, media, .. }) =
-            self.pending_mcp_submissions.pop_front()
+        if !self.first_held_turn_is_releasable(agent.mcp_connect_pending(), agent.is_compacting()) {
+            return Ok(false);
+        }
+        let Some(HeldTurn {
+            turn,
+            media,
+            paste_segments,
+        }) = self.held_turns.pop_front()
         else {
             return Ok(false);
         };
         self.set_status_quiet("");
-        self.run_turn_sequence(turn, media, terminal, agent).await?;
+        self.run_turn_sequence_held(turn, media, paste_segments, terminal, agent)
+            .await?;
+        Ok(true)
+    }
+
+    /// Start the next queued follow-up once armed and the composer is free.
+    /// Compact arms this with auto-compact off; model-switch handoff arms it on.
+    pub(super) async fn start_next_follow_up(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<bool> {
+        let Some(allow_auto_compact) = self.start_follow_ups else {
+            return Ok(false);
+        };
+        if agent.is_compacting() || agent.mcp_connect_pending() {
+            return Ok(false);
+        }
+        if self.input_ui.composer().blocks_held_turn_start() {
+            return Ok(false);
+        }
+        if self.is_ui_busy() {
+            self.start_follow_ups = None;
+            return Ok(false);
+        }
+        let Some(prompt) = self.pending.pop_follow_up() else {
+            self.start_follow_ups = None;
+            return Ok(false);
+        };
+        self.start_follow_ups = None;
+        self.pending_input_changed();
+        self.select_pending_recall_target();
+        let turn = TurnPrompt::standard(prompt.prompt, prompt.display_prompt);
+        if allow_auto_compact {
+            self.run_turn_sequence(turn, prompt.media, terminal, agent)
+                .await?;
+        } else {
+            self.run_turn_sequence_without_auto_compact(turn, prompt.media, terminal, agent)
+                .await?;
+        }
         Ok(true)
     }
 
     /// Run a submitted turn plus any goal resumption or queued follow-ups it
-    /// triggers. Entered directly on submit, or later when a turn that arrived
-    /// during MCP connect is released.
+    /// triggers. Entered directly on submit, or later when a held turn is
+    /// released.
     pub(super) async fn run_turn_sequence(
+        &mut self,
+        turn: TurnPrompt,
+        media: Vec<ChatMedia>,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        self.run_turn_sequence_held(turn, media, Vec::new(), terminal, agent)
+            .await
+    }
+
+    async fn run_turn_sequence_held(
+        &mut self,
+        turn: TurnPrompt,
+        media: Vec<ChatMedia>,
+        paste_segments: Vec<PasteSegment>,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        if agent.is_compacting() {
+            return self.queue_prompt(turn.model, turn.display, paste_segments, media);
+        }
+        if agent.should_auto_compact() {
+            self.start_compact(agent, super::compact_work::CompactFollowUp::None)?;
+            return self.queue_prompt(turn.model, turn.display, paste_segments, media);
+        }
+        self.run_turn_sequence_without_auto_compact(turn, media, terminal, agent)
+            .await
+    }
+
+    async fn run_turn_sequence_without_auto_compact(
         &mut self,
         turn: TurnPrompt,
         media: Vec<ChatMedia>,
@@ -481,7 +575,7 @@ impl App {
             outcome = self
                 .run_prompt_turn(
                     TurnPrompt::standard(prompt.prompt, prompt.display_prompt),
-                    Vec::new(),
+                    prompt.media,
                     terminal,
                     agent,
                 )

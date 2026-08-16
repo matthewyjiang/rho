@@ -98,7 +98,11 @@ impl App {
             ),
             PendingInputRef::FollowUp(index) => (
                 "NEXT",
-                "after turn",
+                if self.turn.is_compacting() {
+                    "after compact"
+                } else {
+                    "after turn"
+                },
                 &self.pending.queued_prompts()[index].display_prompt,
                 Theme::accent(),
             ),

@@ -38,6 +38,11 @@ impl CompactionConfig {
     }
 }
 
+/// True when a finished compact removed messages or estimated tokens.
+pub(crate) fn outcome_reduced_context(outcome: &rho_sdk::CompactionOutcome) -> bool {
+    outcome.current_messages() < outcome.previous_messages() || outcome.removed_tokens() > 0
+}
+
 #[derive(Clone, Debug)]
 pub struct CompactionPartition {
     pub leading_messages: Vec<Message>,

@@ -15,7 +15,7 @@ use super::{
     questionnaire::{QuestionnaireChoice, QuestionnaireQuestion, QuestionnaireRequest},
 };
 
-pub(super) use super::compaction_display::{CompactionDisplayFacts, CompactionUiOutcome};
+pub(super) use super::compaction_display::CompactionUiOutcome;
 
 // NEXT_MAJOR(rho): consume the SDK's explicit generation-output metric and
 // remove this 1.x ProviderActivity bridge.
@@ -167,7 +167,7 @@ impl SdkEventAdapter {
             return None;
         }
         self.compaction_open = false;
-        Some(ViewEvent::Update(compaction_finished(outcome)))
+        Some(ViewEvent::Update(compact_finished_event(outcome)))
     }
 
     /// Stable attachment key for a streaming preview, reusing the index slot when
@@ -390,12 +390,12 @@ impl SdkEventAdapter {
             }
             RunEvent::CompactionStarted { .. } => {
                 self.compaction_open = true;
-                vec![ViewEvent::Update(compaction_started())]
+                vec![ViewEvent::Update(compact_started_event())]
             }
             RunEvent::CompactionCompleted { outcome, .. } => {
                 self.compaction_open = false;
-                vec![ViewEvent::Update(compaction_finished(
-                    CompactionUiOutcome::Completed(CompactionDisplayFacts::from_outcome(&outcome)),
+                vec![ViewEvent::Update(compact_finished_event(
+                    CompactionUiOutcome::from_sdk_outcome(&outcome),
                 ))]
             }
             RunEvent::Completed { .. } => {
@@ -418,9 +418,9 @@ impl SdkEventAdapter {
             }
             RunEvent::Failed { message, .. } => {
                 let mut events = Vec::new();
-                if let Some(finished) = self.close_compaction(CompactionUiOutcome::Failed {
-                    detail: message.clone(),
-                }) {
+                if let Some(finished) =
+                    self.close_compaction(CompactionUiOutcome::failed(message.clone()))
+                {
                     events.push(finished);
                 }
                 events.push(ViewEvent::Failed(message));
@@ -431,7 +431,8 @@ impl SdkEventAdapter {
     }
 }
 
-fn compaction_started() -> ViewModelEvent {
+/// Same compact-card open the main-loop job applies.
+pub(super) fn compact_started_event() -> ViewModelEvent {
     ViewModelEvent::ToolStarted {
         call_id: compaction_call_id(),
         card: super::compaction_display::running_card(),
@@ -469,7 +470,8 @@ fn provider_native_activity_finished(name: &str, detail: String, family: ToolFam
     })
 }
 
-fn compaction_finished(outcome: CompactionUiOutcome) -> ViewModelEvent {
+/// Same compact-card close the main-loop job applies.
+pub(super) fn compact_finished_event(outcome: CompactionUiOutcome) -> ViewModelEvent {
     ViewModelEvent::ToolFinished {
         call_id: compaction_call_id(),
         card: outcome.card(),

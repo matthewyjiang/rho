@@ -194,6 +194,7 @@ pub(super) async fn initialize(
         workspace,
         system_prompt,
         compaction,
+        pending_compact: None,
         context_window,
         usage_recording,
         config: config.clone(),

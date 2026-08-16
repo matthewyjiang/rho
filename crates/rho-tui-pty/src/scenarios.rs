@@ -150,6 +150,75 @@ const TYPE_DURING_STREAM_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+const TYPE_DURING_COMPACT_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("seed_history"),
+    Step::SubmitText("fixture compact delay"),
+    Step::WaitText {
+        text: "fixture response: fixture compact delay",
+        timeout: STREAM,
+    },
+    Step::Phase("compact"),
+    Step::SubmitText("/compact"),
+    Step::WaitText {
+        text: "compacting context",
+        timeout: STREAM,
+    },
+    Step::Phase("type_draft"),
+    Step::TypeText("draft during compact"),
+    Step::WaitText {
+        text: "draft during compact",
+        timeout: WaitTimeout::secs(2, "composer input during compact"),
+    },
+    Step::Phase("cancel_compact"),
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "context compaction cancelled",
+        timeout: WaitTimeout::secs(2, "esc cancels compact"),
+    },
+    Step::WaitText {
+        text: "draft during compact",
+        timeout: WaitTimeout::secs(2, "draft survives compact cancel"),
+    },
+    Step::CtrlCExit,
+];
+
+const SUBMIT_DURING_COMPACT_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("seed_history"),
+    Step::SubmitText("fixture compact delay"),
+    Step::WaitText {
+        text: "fixture response: fixture compact delay",
+        timeout: STREAM,
+    },
+    Step::Phase("compact"),
+    Step::SubmitText("/compact"),
+    Step::WaitText {
+        text: "compacting context",
+        timeout: STREAM,
+    },
+    Step::Phase("submit_follow_up"),
+    Step::SubmitText("after compact please"),
+    Step::WaitText {
+        text: "after compact",
+        timeout: WaitTimeout::secs(2, "queued follow-up during compact"),
+    },
+    Step::Phase("drain_after_failed_compact"),
+    Step::WaitText {
+        text: "fixture response: after compact please",
+        timeout: STREAM,
+    },
+    Step::CtrlCExit,
+];
+
 const CANCEL_AND_RESUBMIT_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
@@ -451,6 +520,20 @@ const ALL_SCENARIOS: &[Scenario] = &[
         DEFAULT_SIZE,
         TYPE_DURING_STREAM_STEPS,
         true,
+    ),
+    Scenario::new(
+        "type_during_compact",
+        "Keep composer input responsive while /compact is running",
+        DEFAULT_SIZE,
+        TYPE_DURING_COMPACT_STEPS,
+        false,
+    ),
+    Scenario::new(
+        "submit_during_compact",
+        "A prompt submitted during /compact starts after compaction ends",
+        DEFAULT_SIZE,
+        SUBMIT_DURING_COMPACT_STEPS,
+        false,
     ),
     Scenario::new(
         "resize_during_stream",

@@ -93,6 +93,10 @@ impl TurnUi {
         self.session_ui.is_provider_turn()
     }
 
+    pub(in crate::tui) fn is_compacting(&self) -> bool {
+        matches!(self.session_ui, SessionUiPhase::Compacting)
+    }
+
     pub(in crate::tui) fn enter_provider_turn(&mut self) {
         self.session_ui = SessionUiPhase::ProviderTurn;
     }

@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use super::{
     approval::ApprovalComposer,
+    chat_media::ChatMedia,
     commands::{self, CommandSpec},
     config_editor::ConfigNumberInput,
     feed_image::FeedImage,
@@ -50,7 +51,7 @@ pub(super) struct SessionHeaderCache {
     pub(in crate::tui) lines: Vec<Line<'static>>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct InteractiveModelSelection {
     pub(in crate::tui) selection: ModelSelection,
     pub(in crate::tui) alias: Option<String>,
@@ -197,11 +198,12 @@ pub(super) struct PasteSegment {
     pub(in crate::tui) content: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct QueuedPrompt {
     pub(in crate::tui) prompt: String,
     pub(in crate::tui) display_prompt: String,
     pub(in crate::tui) paste_segments: Vec<PasteSegment>,
+    pub(in crate::tui) media: Vec<ChatMedia>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -232,6 +234,7 @@ impl From<&str> for QueuedPrompt {
             prompt: prompt.to_string(),
             display_prompt: prompt.to_string(),
             paste_segments: Vec::new(),
+            media: Vec::new(),
         }
     }
 }
@@ -442,12 +445,6 @@ impl HerdrUserWait {
             Self::Questionnaire => "waiting for your answers",
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum RunningInputMode {
-    Turn,
-    Compacting,
 }
 
 #[derive(Clone, Copy, Debug)]
