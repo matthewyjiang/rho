@@ -17,19 +17,15 @@ use super::{
 };
 
 /// Work to run after the current compact job settles.
+#[derive(Default)]
 pub(super) enum CompactFollowUp {
+    #[default]
     None,
     ContextHandoff {
         target_selection: Option<InteractiveModelSelection>,
         had_source: bool,
         after: AfterHandoff,
     },
-}
-
-impl Default for CompactFollowUp {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 impl App {
@@ -63,22 +59,29 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
-        if !agent.is_compacting() {
+        let Some(poll) = agent.abort_compact_task().await else {
             return Ok(false);
-        }
-        agent.abort_compact_task().await;
-        self.finish_compact_ui(CompactionUiOutcome::Cancelled);
-        let follow_up = std::mem::take(&mut self.compact_follow_up);
-        self.apply_compact_follow_up(follow_up, false, terminal, agent)
-            .await?;
+        };
+        self.settle_compact_poll(poll, terminal, agent).await?;
         Ok(true)
     }
 
     /// Drop the job and its follow-up. Used by `/new` and process exit.
+    /// A finished result is still persisted so quit cannot lose a committed compact.
     pub(super) async fn abort_compact(&mut self, agent: &mut InteractiveRuntime) -> bool {
         let started =
             agent.is_compacting() || !matches!(self.compact_follow_up, CompactFollowUp::None);
-        agent.abort_compact_task().await;
+        if let Some(CompactTaskPoll::Finished(result)) = agent.abort_compact_task().await {
+            // Persist succeeded; do not apply handoff/turn follow-ups on teardown.
+            let _ = std::mem::take(&mut self.compact_follow_up);
+            let outcome = match result {
+                Ok(Some(outcome)) => CompactionUiOutcome::from_sdk_outcome(&outcome),
+                Ok(None) => CompactionUiOutcome::unchanged(),
+                Err(err) => CompactionUiOutcome::failed(err.to_string()),
+            };
+            self.finish_compact_ui(outcome);
+            return true;
+        }
         self.compact_follow_up = CompactFollowUp::None;
         if started {
             self.finish_compact_ui(CompactionUiOutcome::Cancelled);
@@ -94,6 +97,16 @@ impl App {
         let Some(poll) = agent.poll_compact_task().await else {
             return Ok(false);
         };
+        self.settle_compact_poll(poll, terminal, agent).await?;
+        Ok(true)
+    }
+
+    async fn settle_compact_poll(
+        &mut self,
+        poll: CompactTaskPoll,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
         let (outcome, succeeded) = match poll {
             CompactTaskPoll::Cancelled => (CompactionUiOutcome::Cancelled, false),
             CompactTaskPoll::Finished(Ok(Some(outcome))) => {
@@ -114,8 +127,7 @@ impl App {
             self.promote_compact_holds();
         }
         self.apply_compact_follow_up(follow_up, succeeded, terminal, agent)
-            .await?;
-        Ok(true)
+            .await
     }
 
     async fn apply_compact_follow_up(

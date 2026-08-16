@@ -132,9 +132,8 @@ impl App {
                 }
             }
             (_, KeyCode::Esc) => {
-                if self.cancel_compact(terminal, agent).await? {
-                    self.take_back_held_turn();
-                } else if !self.cancel_inline_shells() && !self.exit_shell_mode() {
+                let cancelled_compact = self.cancel_compact(terminal, agent).await?;
+                if cancelled_compact || (!self.cancel_inline_shells() && !self.exit_shell_mode()) {
                     self.take_back_held_turn();
                 }
                 self.ctrl_c_streak = 0;
@@ -386,12 +385,8 @@ impl App {
             return Ok(());
         }
 
-        if agent.is_compacting() {
-            self.hold_turn(turn, media, paste_segments, HeldTurnWait::Compact);
-            return Ok(());
-        }
-
-        self.run_turn_sequence(turn, media, terminal, agent).await
+        self.run_turn_sequence_held(turn, media, paste_segments, terminal, agent)
+            .await
     }
 
     fn hold_turn(
@@ -496,9 +491,25 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        self.run_turn_sequence_held(turn, media, Vec::new(), terminal, agent)
+            .await
+    }
+
+    async fn run_turn_sequence_held(
+        &mut self,
+        turn: TurnPrompt,
+        media: Vec<ChatMedia>,
+        paste_segments: Vec<PasteSegment>,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        if agent.is_compacting() {
+            self.hold_turn(turn, media, paste_segments, HeldTurnWait::Compact);
+            return Ok(());
+        }
         if agent.should_auto_compact() {
             self.start_compact(agent, super::compact_work::CompactFollowUp::None)?;
-            self.hold_turn(turn, media, Vec::new(), HeldTurnWait::Compact);
+            self.hold_turn(turn, media, paste_segments, HeldTurnWait::Compact);
             return Ok(());
         }
         self.run_turn_sequence_without_auto_compact(turn, media, terminal, agent)

@@ -416,11 +416,6 @@ impl CompactionOutcome {
         self.previous_tokens.saturating_sub(self.current_tokens)
     }
 
-    /// True when this compaction removed messages or estimated tokens.
-    pub fn reduced_context(&self) -> bool {
-        self.current_messages < self.previous_messages || self.removed_tokens() > 0
-    }
-
     /// Optional cost charged by the host-supplied compactor for this operation.
     pub fn cost_usd_micros(&self) -> Option<u64> {
         self.cost_usd_micros

@@ -56,7 +56,7 @@ pub(super) enum CompactionUiOutcome {
 
 impl CompactionUiOutcome {
     pub(super) fn from_sdk_outcome(outcome: &rho_sdk::CompactionOutcome) -> Self {
-        if outcome.reduced_context() {
+        if crate::compaction::outcome_reduced_context(outcome) {
             Self::Completed(CompactionDisplayFacts::from_outcome(outcome))
         } else {
             Self::unchanged()
@@ -65,9 +65,7 @@ impl CompactionUiOutcome {
 
     pub(super) fn unchanged() -> Self {
         Self::Unchanged {
-            detail:
-                "not enough conversation history to compact, or the model context window is unknown"
-                    .into(),
+            detail: "compaction ran but did not reduce context".into(),
         }
     }
 

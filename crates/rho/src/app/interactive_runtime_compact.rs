@@ -85,23 +85,25 @@ impl InteractiveRuntime {
         Ok(())
     }
 
-    pub(crate) async fn abort_compact_task(&mut self) {
-        if let Some(handle) = self.pending_compact.take() {
-            handle.abort();
-            let _ = handle.await;
-        }
-    }
-
     pub(crate) async fn poll_compact_task(&mut self) -> Option<CompactTaskPoll> {
-        let Some(handle) = self.pending_compact.as_mut() else {
-            return None;
-        };
+        let handle = self.pending_compact.as_mut()?;
         if !handle.is_finished() {
             return None;
         }
-        let Some(handle) = self.pending_compact.take() else {
-            return None;
-        };
+        self.take_compact_task(false).await
+    }
+
+    /// Abort an in-flight job. If the join handle already finished, persist that
+    /// result instead of discarding a committed compact.
+    pub(crate) async fn abort_compact_task(&mut self) -> Option<CompactTaskPoll> {
+        self.take_compact_task(true).await
+    }
+
+    async fn take_compact_task(&mut self, abort_if_running: bool) -> Option<CompactTaskPoll> {
+        let handle = self.pending_compact.take()?;
+        if abort_if_running && !handle.is_finished() {
+            handle.abort();
+        }
         Some(match handle.await {
             Ok(result) => CompactTaskPoll::Finished(self.complete_compact_task(result).await),
             Err(error) if error.is_cancelled() => CompactTaskPoll::Cancelled,
@@ -109,8 +111,9 @@ impl InteractiveRuntime {
         })
     }
 
-    /// Inline compact for tests and non-TUI callers. Does not pin a busy flag
-    /// across `.await`, so dropping the future leaves the runtime idle.
+    /// Inline compact for tests. Does not pin a busy flag across `.await`, so
+    /// dropping the future leaves the runtime idle.
+    #[cfg(test)]
     pub(crate) async fn compact(&mut self) -> anyhow::Result<Option<rho_sdk::CompactionOutcome>> {
         if self.is_session_busy() {
             anyhow::bail!("session is busy");
@@ -142,7 +145,7 @@ impl InteractiveRuntime {
                 )),
             };
         }
-        if outcome.reduced_context() {
+        if crate::compaction::outcome_reduced_context(&outcome) {
             self.runs.note_manual_compaction(self.context_window);
             self.invalidate_live_context();
             Ok(Some(outcome))
