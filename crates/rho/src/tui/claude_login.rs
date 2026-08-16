@@ -21,6 +21,7 @@ pub(super) const CLAUDE_CODE_TARGET: &str = "claude-code";
 
 pub(super) const RELAY_LOGIN_VALUE: &str = "continue";
 pub(super) const KEEP_LOGIN_VALUE: &str = "keep";
+pub(super) const CANCEL_LOGIN_VALUE: &str = "cancel";
 pub(super) const CONFIRM_LOGOUT_VALUE: &str = "confirm";
 pub(super) const CANCEL_LOGOUT_VALUE: &str = "cancel";
 
@@ -89,23 +90,35 @@ impl ClaudeLoginAuthOutcome {
 }
 
 impl App {
-    pub(super) async fn execute_claude_code_login(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<()> {
+    pub(super) async fn execute_claude_code_login(&mut self) -> anyhow::Result<()> {
         match auth::query().await {
             Ok(status) if status.logged_in => {
                 self.prompt_claude_code_relogin(status);
                 Ok(())
             }
             Ok(_) | Err(ClaudeAuthError::BinaryMissing) => {
-                // Missing binary still goes through the handoff path so the
-                // user sees the ownership notice and a clear spawn failure.
-                self.run_claude_code_login(terminal).await
+                // Confirm before the first-time handoff. Missing binary still
+                // uses this path so a later confirm shows a clear spawn failure.
+                self.prompt_claude_code_login();
+                Ok(())
             }
             Err(error) => {
                 self.insert_entry(&Entry::Error(error.to_string()));
                 self.set_status("claude code login failed");
+                Ok(())
+            }
+        }
+    }
+
+    pub(super) async fn submit_claude_code_login_choice(
+        &mut self,
+        choice: InlineChoice,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        match choice.selected_value() {
+            RELAY_LOGIN_VALUE => self.run_claude_code_login(terminal).await,
+            _ => {
+                self.set_status("claude code login cancelled");
                 Ok(())
             }
         }
@@ -225,6 +238,33 @@ impl App {
         Ok(())
     }
 
+    fn prompt_claude_code_login(&mut self) {
+        let choice = InlineChoice::new(
+            "Hand the terminal to Claude Code?",
+            "Rho will suspend and run `claude auth login --claudeai`. \
+Cancel if you did not mean to sign in.",
+            vec![
+                InlineChoiceOption::available(CANCEL_LOGIN_VALUE, '1', "Cancel", "Stay in Rho")
+                    .with_alternate_shortcut('n'),
+                InlineChoiceOption::available(
+                    RELAY_LOGIN_VALUE,
+                    '2',
+                    "Continue",
+                    "Hand the terminal to claude auth login",
+                )
+                .with_alternate_shortcut('s'),
+            ],
+        )
+        .expect("claude code login choice has available options");
+        self.input_ui
+            .set_composer(ComposerMode::InlineChoice(InlineChoiceModal {
+                choice,
+                pending: InlineChoicePending::ClaudeCodeLogin,
+                parent_picker: None,
+            }));
+        self.set_status("confirm claude code login");
+    }
+
     fn prompt_claude_code_relogin(&mut self, status: ClaudeAuthStatus) {
         let choice = InlineChoice::new(
             "Claude Code is already signed in",
@@ -273,7 +313,7 @@ impl App {
             .take()
             .context("terminal session is unavailable")?;
         let suspended_run = terminal_session
-            .run_suspended(terminal, "Signing in to Claude Code…", || async move {
+            .run_suspended(terminal, &auth::login_handoff_status(), || async move {
                 let executable = executable::resolve().map_err(anyhow::Error::new)?;
                 let mut command = executable
                     .try_command(auth::login_args().iter().copied())

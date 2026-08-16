@@ -127,7 +127,7 @@ fn hand_off_terminal(handoff_status: &str) -> io::Result<()> {
         Clear(ClearType::All),
         MoveTo(0, 0),
         Show,
-        Print(handoff_status),
+        Print(handoff_status.replace("\r\n", "\n").replace('\n', "\r\n")),
         Print("\r\n"),
     )?;
     Ok(())

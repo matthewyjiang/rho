@@ -301,7 +301,7 @@ impl App {
                 if let super::claude_login::SignInTarget::ClaudeCode =
                     super::claude_login::SignInTarget::parse(&value)
                 {
-                    return self.execute_claude_code_login(terminal).await;
+                    return self.execute_claude_code_login().await;
                 }
                 let Some(group) = catalog::login_group(&value) else {
                     self.insert_entry(&Entry::Error(format!(
@@ -323,7 +323,7 @@ impl App {
             }
             PickerAction::LoginProvider => match super::claude_login::SignInTarget::parse(&value) {
                 super::claude_login::SignInTarget::ClaudeCode => {
-                    self.execute_claude_code_login(terminal).await
+                    self.execute_claude_code_login().await
                 }
                 super::claude_login::SignInTarget::Provider(provider) => {
                     self.start_login_for_provider(&provider, terminal, agent)

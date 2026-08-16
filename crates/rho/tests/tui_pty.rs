@@ -37,6 +37,17 @@ fn assert_pass(name: &str) {
     );
 }
 
+fn confirm_claude_code_login(harness: &mut PtyHarness) {
+    harness
+        .wait_for_text(
+            "Hand the terminal to Claude Code?",
+            WaitTimeout::secs(10, "login confirmation"),
+        )
+        .unwrap();
+    // Cancel is the default option, so pick Continue by its shortcut.
+    harness.inject_key(&Key::Char('2')).unwrap();
+}
+
 #[test]
 fn smoke_startup_stream_exit() {
     assert_pass("startup_stream_exit");
@@ -202,6 +213,7 @@ credential_store = "file"
         .unwrap();
 
     harness.submit_text("/login claude-code").unwrap();
+    confirm_claude_code_login(&mut harness);
     harness
         .wait_for_text(
             "handing the terminal to the claude binary",
@@ -397,6 +409,7 @@ web_search_provider = "disabled"
         .unwrap();
 
     harness.submit_text("/login claude-code").unwrap();
+    confirm_claude_code_login(&mut harness);
     harness
         .wait_for_text(
             "handing the terminal to the claude binary",
@@ -422,6 +435,63 @@ web_search_provider = "disabled"
         !config.contains("credential_store"),
         "claude login must not write Rho credential_store:\n{config}"
     );
+}
+
+// Covers: first-time /login claude-code cancel must not start the claude binary
+// Owner: interactive UX
+#[test]
+fn login_claude_code_cancel_stays_in_rho() {
+    let home = IsolatedHome::new().unwrap();
+    std::fs::write(
+        &home.config_path,
+        r#"provider = "openai"
+model = "gpt-5.5"
+auth = "api-key"
+check_for_updates = false
+web_search_provider = "disabled"
+
+[behavior]
+credential_store = "file"
+"#,
+    )
+    .unwrap();
+
+    let fake = claude_e2e::install_fake_claude_login();
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
+    let plan = RhoLaunchPlan::matrix(
+        binary,
+        &home,
+        PtySize {
+            rows: 28,
+            cols: 100,
+        },
+    )
+    .with_env("PATH", &fake.path);
+    let mut harness = PtyHarness::spawn_named(&plan, "claude_code_login_cancel").unwrap();
+    harness
+        .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
+        .unwrap();
+
+    harness.submit_text("/login claude-code").unwrap();
+    harness
+        .wait_for_text(
+            "Hand the terminal to Claude Code?",
+            WaitTimeout::secs(10, "login confirmation"),
+        )
+        .unwrap();
+    // A stray Enter must take the default option, and the default must be Cancel.
+    harness.inject_key(&Key::Enter).unwrap();
+    harness
+        .wait_for_quiet(
+            Duration::from_millis(150),
+            WaitTimeout::secs(5, "after cancel"),
+        )
+        .unwrap();
+    assert!(
+        !fake.marker.exists(),
+        "cancel must not run claude auth login"
+    );
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 }
 
 #[test]

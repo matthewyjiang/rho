@@ -76,6 +76,7 @@ pub(super) enum InlineChoicePending {
         next: super::login::StoreChoiceNext,
     },
     ContextHandoff(Box<super::context_handoff::PendingContextHandoff>),
+    ClaudeCodeLogin,
     ClaudeCodeRelogin,
     ClaudeCodeLogout,
     DeleteSession {
