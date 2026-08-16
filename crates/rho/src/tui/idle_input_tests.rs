@@ -120,3 +120,17 @@ fn compact_holds_are_not_releasable_until_promoted() {
     );
     assert_eq!(app.first_releasable_held_wait(false, true), None);
 }
+
+#[test]
+fn mcp_holds_are_not_releasable_while_compacting() {
+    let mut app = test_app();
+    app.held_turns
+        .push_back(held_turn("after mcp", HeldTurnWait::McpConnect));
+
+    assert_eq!(
+        app.first_releasable_held_wait(false, false),
+        Some(HeldTurnWait::McpConnect)
+    );
+    assert_eq!(app.first_releasable_held_wait(false, true), None);
+    assert_eq!(app.first_releasable_held_wait(true, false), None);
+}

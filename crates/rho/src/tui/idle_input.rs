@@ -447,7 +447,9 @@ impl App {
         compacting: bool,
     ) -> Option<HeldTurnWait> {
         match self.held_turns.front()?.wait {
-            HeldTurnWait::McpConnect if !mcp_pending => Some(HeldTurnWait::McpConnect),
+            HeldTurnWait::McpConnect if !mcp_pending && !compacting => {
+                Some(HeldTurnWait::McpConnect)
+            }
             HeldTurnWait::Ready if !compacting => Some(HeldTurnWait::Ready),
             HeldTurnWait::McpConnect | HeldTurnWait::Compact | HeldTurnWait::Ready => None,
         }
