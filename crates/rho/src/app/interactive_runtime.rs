@@ -15,6 +15,8 @@ use {
 
 #[path = "interactive_runtime_advisor.rs"]
 mod advisor;
+#[path = "interactive_runtime_compact.rs"]
+mod compact;
 #[path = "interactive_runtime_edit_tool.rs"]
 pub(crate) mod edit_tool;
 #[path = "interactive_runtime_mcp.rs"]
@@ -88,6 +90,8 @@ pub(crate) struct InteractiveRuntime {
     workspace: Workspace,
     system_prompt: rho_sdk::SystemPrompt,
     compaction: CompactionConfig,
+    /// True while a manual or TUI auto-compact task owns the session.
+    compacting: bool,
     context_window: Option<u64>,
     usage_recording: rho_sdk::ProviderRequestUsageRecording,
     config: Config,
@@ -244,23 +248,6 @@ impl InteractiveRuntime {
 
     pub(crate) fn history(&self) -> Vec<Message> {
         self.sessions.history()
-    }
-
-    pub(crate) fn can_compact(&self) -> bool {
-        self.can_compact_messages(&self.sessions.history())
-    }
-
-    pub(crate) fn can_compact_messages(&self, messages: &[Message]) -> bool {
-        let target_tokens = self
-            .context_window
-            .map(|window| self.compaction.target_tokens(window))
-            .unwrap_or(u64::MAX / 2);
-        crate::compaction::partition_messages_for_compaction(
-            messages,
-            &self.tools.specs(),
-            target_tokens,
-        )
-        .is_some()
     }
 
     pub(crate) fn provider_identity(&self) -> rho_sdk::model::ModelIdentity {
@@ -556,34 +543,8 @@ impl InteractiveRuntime {
         Ok(finished.outcome?)
     }
 
-    pub(crate) async fn compact(&mut self) -> anyhow::Result<Option<rho_sdk::CompactionOutcome>> {
-        if self.runs.is_active() {
-            anyhow::bail!("session is busy");
-        }
-        let checkpoint = self.capture_durable_session()?;
-        let outcome = self.sessions.session().compact().await?;
-        if let Err(error) = self.sessions.save_compaction_snapshot(&[], &outcome) {
-            let rollback = self.restore_durable_session(checkpoint).await;
-            return match rollback {
-                Ok(()) => Err(error),
-                Err(rollback_error) => Err(anyhow::anyhow!(
-                    "{error}; could not restore durable state: {rollback_error}"
-                )),
-            };
-        }
-        let reduced = outcome.current_messages() < outcome.previous_messages()
-            || outcome.removed_tokens() > 0;
-        if reduced {
-            self.runs.note_manual_compaction(self.context_window);
-            self.invalidate_live_context();
-            Ok(Some(outcome))
-        } else {
-            Ok(None)
-        }
-    }
-
     pub(crate) async fn reset(&mut self) -> anyhow::Result<()> {
-        if self.runs.is_active() {
+        if self.is_session_busy() {
             anyhow::bail!("cannot reset while a run is active");
         }
         self.runtime
@@ -983,6 +944,8 @@ struct RebuiltPermission {
     approval_session: Option<ApprovalSession>,
     pending: Option<(crate::permission::SessionWriteLog, startup::ApprovalChannel)>,
 }
+
+pub(crate) use compact::CompactTaskResult;
 
 #[cfg(test)]
 #[path = "interactive_runtime_tests.rs"]

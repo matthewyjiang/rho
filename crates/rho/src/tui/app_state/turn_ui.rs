@@ -33,10 +33,6 @@ impl SessionUiPhase {
         matches!(self, Self::ProviderTurn)
     }
 
-    pub(in crate::tui) const fn is_compacting(self) -> bool {
-        matches!(self, Self::Compacting)
-    }
-
     pub(in crate::tui) const fn allows_idle_subagent_delivery(self) -> bool {
         matches!(self, Self::Idle)
     }
@@ -95,10 +91,6 @@ impl TurnUi {
 
     pub(in crate::tui) fn is_provider_turn(&self) -> bool {
         self.session_ui.is_provider_turn()
-    }
-
-    pub(in crate::tui) fn is_compacting(&self) -> bool {
-        self.session_ui.is_compacting()
     }
 
     pub(in crate::tui) fn enter_provider_turn(&mut self) {

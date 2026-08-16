@@ -1,8 +1,8 @@
-//! Input and command handling while a model turn or `/compact` is running.
+//! Input and command handling while a model turn is running.
 //!
 //! Owns key routing, steering/follow-up queues, during-turn slash commands,
 //! running picker/config overlays, and terminal event routing for the live
-//! turn and compaction loops.
+//! turn loop.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
@@ -219,13 +219,7 @@ impl App {
                     .await?;
             }
             Ok(None) => {
-                // Compaction has no provider run to steer. Queue a follow-up
-                // so Enter during /compact is the same as a later idle send.
-                if self.turn.is_compacting() {
-                    self.queue_prompt(prompt, display_prompt, paste_segments)?;
-                } else {
-                    self.queue_steering_prompt(prompt, display_prompt, paste_segments)?;
-                }
+                self.queue_steering_prompt(prompt, display_prompt, paste_segments)?;
             }
             Err(commands::CommandParseError::Unknown(name)) => {
                 self.clear_submitted_input();

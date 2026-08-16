@@ -72,6 +72,10 @@ impl App {
             self.poll_model_metadata_fetch(agent).await;
             needs_redraw |= self.poll_startup_hydrates(agent).await?;
             needs_redraw |= self.release_pending_mcp_submission(terminal, agent).await?;
+            needs_redraw |= self.poll_compact(agent).await?;
+            needs_redraw |= self
+                .release_pending_compact_submission(terminal, agent)
+                .await?;
             self.poll_update_notice();
             self.poll_custom_provider_models();
             self.poll_herdr_graphics();
@@ -136,6 +140,7 @@ impl App {
                 || !self.pending_inline_shells.is_empty()
                 || self.history.images().has_pending()
                 || agent.startup_hydrate_pending()
+                || self.loading_active()
             {
                 Duration::from_millis(100)
             } else if subagents_active || self.process_panel.is_active() {
@@ -174,6 +179,7 @@ impl App {
                 }
             }
         }
+        self.cancel_compact(agent).await;
         self.cancel_limits_command().await;
         self.cancel_changelog_command().await;
         agent.cancel_startup_hydrates();

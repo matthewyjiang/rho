@@ -121,7 +121,9 @@ impl App {
                 }
             }
             (_, KeyCode::Esc) => {
-                if !self.cancel_inline_shells() && !self.exit_shell_mode() {
+                if self.cancel_compact(agent).await {
+                    let _ = self.take_back_compact_held_turn();
+                } else if !self.cancel_inline_shells() && !self.exit_shell_mode() {
                     self.take_back_held_turn();
                 }
                 self.ctrl_c_streak = 0;
@@ -378,6 +380,11 @@ impl App {
             return Ok(());
         }
 
+        if self.pending_compact.is_some() || agent.is_compacting() {
+            self.hold_turn_for_compact(turn, media);
+            return Ok(());
+        }
+
         self.run_turn_sequence(turn, media, terminal, agent).await
     }
 
@@ -438,31 +445,6 @@ impl App {
         Ok(true)
     }
 
-    /// Start follow-ups queued while the session was busy but idle of a
-    /// provider run, such as `/compact`. Leaves them queued when quitting or
-    /// when a modal still owns the composer.
-    pub(super) async fn start_follow_ups_after_idle_work(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        if self.should_quit || self.input_ui.composer().blocks_auto_continue() {
-            return Ok(());
-        }
-        let Some(prompt) = self.pending.pop_follow_up() else {
-            return Ok(());
-        };
-        self.pending_input_changed();
-        self.select_pending_recall_target();
-        self.run_turn_sequence(
-            TurnPrompt::standard(prompt.prompt, prompt.display_prompt),
-            Vec::new(),
-            terminal,
-            agent,
-        )
-        .await
-    }
-
     /// Run a submitted turn plus any goal resumption or queued follow-ups it
     /// triggers. Entered directly on submit, or later when a turn that arrived
     /// during MCP connect is released.
@@ -473,6 +455,11 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        if !turn.skip_auto_compact && agent.should_auto_compact() {
+            self.start_compact(agent)?;
+            self.hold_turn_for_compact(turn, media);
+            return Ok(());
+        }
         let turn = self.prepare_goal_resumption_turn(turn);
         let mut outcome = self.run_prompt_turn(turn, media, terminal, agent).await?;
         self.finish_goal_resumption_turn(outcome.kind());

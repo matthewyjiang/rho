@@ -214,6 +214,7 @@ async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime {
         workspace,
         system_prompt: SystemPrompt::None,
         compaction: CompactionConfig::default(),
+        compacting: false,
         context_window: None,
         usage_recording: Default::default(),
         config: Config::default(),
