@@ -111,6 +111,7 @@ async fn run_with_fake(
             frozen_argv: None,
             auth_status: Some(Ok(logged_in())),
             rate_limit_state_path: Some(rate_limit_state_path),
+            live_title: None,
             before_spawn: None,
         },
     })
@@ -154,6 +155,7 @@ async fn run_with_fake_prompt(
             frozen_argv: None,
             auth_status: Some(Ok(logged_in())),
             rate_limit_state_path: Some(rate_limit_state_path),
+            live_title: None,
             before_spawn: None,
         },
     })
@@ -251,6 +253,7 @@ async fn frozen_bypass_argv_narrows_to_auto_dont_ask() {
             frozen_argv: Some(frozen),
             auth_status: Some(Ok(logged_in())),
             rate_limit_state_path: Some(rate_limit_dir.path().join("rate-limits.json")),
+            live_title: None,
             before_spawn: Some(Box::new(move |command| {
                 let args = command
                     .as_std()

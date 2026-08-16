@@ -29,6 +29,91 @@ pub(crate) use paths::is_trusted_directory;
 
 const MAX_ALLOCATION_ATTEMPTS: usize = 100;
 
+/// One row from the global delegated-run index.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct IndexedRun {
+    pub id: String,
+    pub directory: PathBuf,
+}
+
+/// A non-terminal indexed run, ready for attach.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RunningRun {
+    pub id: String,
+    pub agent_id: String,
+    pub title: Option<String>,
+    pub last_activity: Option<String>,
+    pub state: super::RunState,
+    pub elapsed_seconds: u64,
+}
+
+fn list_indexed_runs_in_root(
+    rho_root: &Path,
+    workspace_key: &str,
+) -> anyhow::Result<Vec<IndexedRun>> {
+    let index_path = rho_root.join("subagents").join(INDEX_FILE_NAME);
+    if !index_path.is_file() {
+        return Ok(Vec::new());
+    }
+    let connection = initialize_index(&index_path)?;
+    let mut statement = connection.prepare(
+        "SELECT run_id, path FROM runs WHERE workspace_key = ?1 ORDER BY created_at DESC",
+    )?;
+    let rows = statement.query_map(params![workspace_key], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut runs = Vec::new();
+    for row in rows {
+        let (id, path) = row?;
+        let directory = PathBuf::from(path);
+        if validate_run_directory(rho_root, &id, &directory).is_ok()
+            && is_trusted_directory(&directory)
+        {
+            runs.push(IndexedRun { id, directory });
+        }
+    }
+    Ok(runs)
+}
+
+/// Indexed non-terminal runs started in `cwd`.
+///
+/// Membership comes from the workspace key written at reservation. Rows with a
+/// missing key (pre-migration) stay out of the picker; `rho attach <id>` still
+/// finds them from any directory.
+pub(crate) fn list_running_runs(cwd: &Path) -> anyhow::Result<Vec<RunningRun>> {
+    list_running_runs_in_root(&crate::paths::rho_dir()?, cwd)
+}
+
+fn list_running_runs_in_root(rho_root: &Path, cwd: &Path) -> anyhow::Result<Vec<RunningRun>> {
+    let now = super::unix_now_secs();
+    let Some(workspace_key) = run_workspace_key(cwd) else {
+        return Ok(Vec::new());
+    };
+    let mut running = Vec::new();
+    for indexed in list_indexed_runs_in_root(rho_root, &workspace_key)? {
+        let Some(status) = super::read_status(&indexed.directory.join(super::RESULT_FILE_NAME))
+        else {
+            continue;
+        };
+        if status.state.is_terminal() {
+            continue;
+        }
+        let elapsed_seconds = status
+            .elapsed_duration(now)
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0);
+        running.push(RunningRun {
+            id: indexed.id,
+            agent_id: status.agent_id.unwrap_or_else(|| "agent".into()),
+            title: status.title,
+            last_activity: status.last_activity,
+            state: status.state,
+            elapsed_seconds,
+        });
+    }
+    Ok(running)
+}
+
 /// Where a delegated run's artifact directory should live.
 #[derive(Clone, Debug)]
 pub(crate) enum RunPlacement {
@@ -120,13 +205,30 @@ impl Drop for ParentRunCleanupGuard {
     }
 }
 
-pub(crate) fn reserve_run_directory(placement: &RunPlacement) -> anyhow::Result<(String, PathBuf)> {
+/// Workspace key used for attach-picker membership.
+///
+/// Canonicalize first so a reserved run and a later `rho attach` from the same
+/// directory share a key even when one caller passed `Workspace::root()` and
+/// the other passed `current_dir()`. Empty paths have no key.
+fn run_workspace_key(cwd: &Path) -> Option<String> {
+    if cwd.as_os_str().is_empty() {
+        return None;
+    }
+    let path = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    Some(crate::session::workspace_key(&path))
+}
+
+pub(crate) fn reserve_run_directory(
+    placement: &RunPlacement,
+    cwd: &Path,
+) -> anyhow::Result<(String, PathBuf)> {
     let rho_root = crate::paths::rho_dir()?;
-    reserve_run_directory_in_root(&rho_root, placement, new_run_id)
+    reserve_run_directory_in_root(&rho_root, cwd, placement, new_run_id)
 }
 
 fn reserve_run_directory_in_root(
     rho_root: &Path,
+    cwd: &Path,
     placement: &RunPlacement,
     mut next_id: impl FnMut() -> String,
 ) -> anyhow::Result<(String, PathBuf)> {
@@ -146,12 +248,14 @@ fn reserve_run_directory_in_root(
             ensure_parent_not_locked(&transaction, parent_session_id, unix_timestamp_secs())?;
         }
         let inserted = transaction.execute(
-            "INSERT OR IGNORE INTO runs (run_id, path, parent_session_id, created_at) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT OR IGNORE INTO runs (run_id, path, parent_session_id, created_at, workspace_key)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
                 id,
                 directory.to_string_lossy(),
                 placement.parent_session_id(),
                 unix_timestamp_secs(),
+                run_workspace_key(cwd),
             ],
         )?;
         if inserted == 0 {

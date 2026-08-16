@@ -3,6 +3,7 @@
 mod activity_anchor;
 mod advisor;
 mod assert_helpers;
+mod attach_picker;
 mod background_agents;
 mod changelog;
 mod command_palette;
@@ -39,6 +40,7 @@ use advisor::{
     setup_advisor_ready, setup_advisor_without_model, ADVISOR_COMMAND_STEPS,
     ADVISOR_MISSING_MODEL_STEPS, ADVISOR_REVIEW_STEPS, XAI_KEY_ENV,
 };
+use attach_picker::ATTACH_PICKER_SCENARIO;
 use background_agents::{
     BACKGROUND_AGENT_AUTO_DELIVERY_STEPS, BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
 };
@@ -81,7 +83,7 @@ use sessions_hub::{setup_sessions_hub, SESSIONS_HUB_STEPS};
 use startup::{STARTUP_FIRST_FRAME_SCENARIO, STARTUP_STREAM_EXIT_SCENARIO};
 use statusline::STATUSLINE_HIERARCHY_STEPS;
 use std::time::Duration;
-use subagent_rail::SUBAGENT_RAIL_MOUSE_STEPS;
+use subagent_rail::SUBAGENT_RAIL_MOUSE_SCENARIO;
 use supervised_approval::SUPERVISED_APPROVAL_STEPS;
 use text_selection::{SCREEN_TEXT_SELECTION_STEPS, TEXT_SELECTION_DRAG_STEPS};
 use tool_card_hover::TOOL_CARD_HOVER_STEPS;
@@ -726,13 +728,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
         BACKGROUND_AGENT_AUTO_DELIVERY_STEPS,
         false,
     ),
-    Scenario::new(
-        "subagent_rail_mouse",
-        "Keep hover through refreshes and activate rows on a completed click",
-        DEFAULT_SIZE,
-        SUBAGENT_RAIL_MOUSE_STEPS,
-        false,
-    ),
+    SUBAGENT_RAIL_MOUSE_SCENARIO,
+    ATTACH_PICKER_SCENARIO,
     PROCESS_RAIL_SCENARIO,
     Scenario::new(
         "tool_card_hover",

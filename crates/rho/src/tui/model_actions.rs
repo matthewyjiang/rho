@@ -373,6 +373,10 @@ impl App {
                 self.submit_workflow_selection(&value, terminal, agent)
                     .await
             }
+            PickerAction::AttachSubagent => {
+                self.submit_attach_selection(&value);
+                Ok(())
+            }
             PickerAction::Dismiss | PickerAction::ViewMcpServers => Ok(()),
         };
         if let (true, Some((picker, selected_value))) = (result.is_ok(), other_return_picker) {
@@ -520,6 +524,7 @@ impl App {
             | PickerAction::SelectTheme
             | PickerAction::EditAgent
             | PickerAction::Workflow
+            | PickerAction::AttachSubagent
             | PickerAction::Dismiss
             | PickerAction::ViewMcpServers => return Ok(()),
         };
@@ -588,6 +593,7 @@ impl App {
             | PickerAction::Config
             | PickerAction::EditAgent
             | PickerAction::Workflow
+            | PickerAction::AttachSubagent
             | PickerAction::Dismiss
             | PickerAction::ViewMcpServers => return None,
         };

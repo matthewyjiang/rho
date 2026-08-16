@@ -20,6 +20,7 @@ pub enum CommandId {
     Theme,
     Hooks,
     Agents,
+    Attach,
     Changelog,
     Diff,
     Doctor,
@@ -139,6 +140,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "agents",
         usage: "/agents",
         description: "reload agents and show runtime, tools, and other details",
+        argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Attach,
+        name: "attach",
+        usage: "/attach",
+        description: "attach to a running subagent",
         argument_choices: &[],
     },
     CommandSpec {

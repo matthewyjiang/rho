@@ -171,7 +171,7 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
             &ConfigRepository::new(cli.config.clone()).load()?,
         );
         return Ok(EarlyDispatch::Handled(
-            crate::tui::run_attachment(id, display, HerdrReporter::from_env()).await,
+            crate::tui::run_attachment(id.as_deref(), display, HerdrReporter::from_env()).await,
         ));
     }
     if matches!(cli.command, Some(Command::Update)) {

@@ -5,8 +5,14 @@ Parent: [Agents and delegation](/subagents).
 Observe any delegated run without owning its execution:
 
 ```bash
+rho attach
 rho attach abc123
 ```
+
+`rho attach` without an id opens a full-screen picker of running subagents
+from the current directory. Rows show the agent role, generated title, and
+current tool or action. Enter attaches to the selected run. Escape leaves
+without attaching. `rho attach <id>` still finds a run from any directory.
 
 ```mermaid
 flowchart TD

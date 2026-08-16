@@ -32,6 +32,7 @@ mod session;
 mod skills;
 mod stdio;
 mod subagent;
+mod title;
 mod tools;
 mod transcript;
 mod tui;

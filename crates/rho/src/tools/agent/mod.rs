@@ -41,6 +41,7 @@ const AGENTS_TOOL: &str = "agents";
 pub struct SubagentSnapshot {
     pub id: String,
     pub agent_id: String,
+    pub title: Option<String>,
     pub elapsed: Duration,
     pub status: RunStatus,
     pub done: bool,
@@ -68,6 +69,7 @@ impl AgentEntry {
         SubagentSnapshot {
             id: id.to_string(),
             agent_id: self.agent_id.clone(),
+            title: status.title.clone(),
             elapsed,
             done: status.state.is_terminal(),
             status,
@@ -153,7 +155,7 @@ impl SubagentManager {
         definition: &AgentDefinition,
         prompt: &str,
         background: bool,
-        _cwd: &Path,
+        cwd: &Path,
     ) -> anyhow::Result<(String, PathBuf)> {
         let placement = self
             .parent_placement
@@ -165,8 +167,9 @@ impl SubagentManager {
             .map(str::to_owned)
             .and_then(|id| rho_sdk::SessionId::from_string(id).ok());
         let session_id = placement.parent_session_id().map(str::to_owned);
+        let cwd = cwd.to_path_buf();
         let (id, directory) =
-            tokio::task::spawn_blocking(move || subagent::reserve_run_directory(&placement))
+            tokio::task::spawn_blocking(move || subagent::reserve_run_directory(&placement, &cwd))
                 .await??;
         let output_file = directory.join(subagent::RESULT_FILE_NAME);
         let launch = AgentLaunchRequest {
@@ -535,6 +538,7 @@ impl AgentTool {
         let cwd = context
             .workspace_root()
             .map(Path::to_path_buf)
+            .or_else(|| std::env::current_dir().ok())
             .unwrap_or_default();
 
         let spawn = self

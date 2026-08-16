@@ -76,6 +76,9 @@ pub(crate) struct ClaudeSessionOverrides {
     /// Rate-limit cache path. Tests inject a temp path so settle never touches
     /// the host default cache.
     pub(crate) rate_limit_state_path: Option<std::path::PathBuf>,
+    /// Title generated for this run. The artifact sink reads it; the watch
+    /// channel stays one-way.
+    pub(crate) live_title: Option<crate::run_artifacts::LiveRunTitle>,
     /// A frozen caller can verify process facts and configure the child at the spawn boundary.
     pub(crate) before_spawn: Option<BeforeSpawn>,
 }
@@ -94,6 +97,7 @@ pub(crate) async fn run_session(mut request: ClaudeSessionRequest) -> anyhow::Re
             status,
             &request.prompt,
             request.status_tx.take(),
+            request.overrides.live_title.clone(),
             request.overrides.rate_limit_state_path.clone(),
         )?,
         None => StatusSink::new(
