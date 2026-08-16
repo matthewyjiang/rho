@@ -1,8 +1,8 @@
-//! Input and command handling while a model turn is running.
+//! Input and command handling while a model turn or `/compact` is running.
 //!
 //! Owns key routing, steering/follow-up queues, during-turn slash commands,
 //! running picker/config overlays, and terminal event routing for the live
-//! turn loop.
+//! turn and compaction loops.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
@@ -18,7 +18,7 @@ use super::{
     paste_burst::normalize_paste,
     App, ApprovalKeyOutcome, ComposerMode, Entry, HistoryDirection, InputSubmissionMode,
     InteractiveModelSelection, InteractiveRuntime, PasteSegment, PickerAction, QueuedPrompt,
-    RunningInputMode, StreamControl,
+    StreamControl,
 };
 
 pub(super) enum RunningTerminalError {
@@ -219,7 +219,13 @@ impl App {
                     .await?;
             }
             Ok(None) => {
-                self.queue_steering_prompt(prompt, display_prompt, paste_segments)?;
+                // Compaction has no provider run to steer. Queue a follow-up
+                // so Enter during /compact is the same as a later idle send.
+                if self.turn.is_compacting() {
+                    self.queue_prompt(prompt, display_prompt, paste_segments)?;
+                } else {
+                    self.queue_steering_prompt(prompt, display_prompt, paste_segments)?;
+                }
             }
             Err(commands::CommandParseError::Unknown(name)) => {
                 self.clear_submitted_input();
@@ -704,7 +710,6 @@ impl App {
         terminal: &mut DefaultTerminal,
         interrupt_requested: &AtomicBool,
         tool_call_active: &AtomicBool,
-        input_mode: RunningInputMode,
     ) -> Result<StreamControl, RunningTerminalError> {
         let mut control = StreamControl::Continue;
         let mut approval_resolved = false;
@@ -739,30 +744,26 @@ impl App {
                             self.request_running_interrupt(interrupt_requested, tool_call_active)
                         );
                     }
-                    if input_mode == RunningInputMode::Turn
-                        && self.external_editor_shortcut_matches(key)
-                    {
+                    if self.external_editor_shortcut_matches(key) {
                         self.open_composer_in_editor(terminal)
                             .await
                             .map_err(RunningTerminalError::Terminal)?;
                         control = StreamControl::Resize;
                         break 'event;
                     }
-                    if input_mode == RunningInputMode::Turn {
-                        let resolved =
-                            self.handle_key_during_turn(key, terminal)
-                                .await
-                                .map_err(|err| {
-                                    RunningTerminalError::Recoverable(
-                                        rho_providers::model::ModelError::InvalidResponse(
-                                            err.to_string(),
-                                        ),
-                                    )
-                                })?;
-                        approval_resolved |= resolved;
-                        if self.pending.input_action().is_some() {
-                            break 'event;
-                        }
+                    let resolved =
+                        self.handle_key_during_turn(key, terminal)
+                            .await
+                            .map_err(|err| {
+                                RunningTerminalError::Recoverable(
+                                    rho_providers::model::ModelError::InvalidResponse(
+                                        err.to_string(),
+                                    ),
+                                )
+                            })?;
+                    approval_resolved |= resolved;
+                    if self.pending.input_action().is_some() {
+                        break 'event;
                     }
                     if self.should_quit {
                         return Ok(
@@ -770,7 +771,7 @@ impl App {
                         );
                     }
                 }
-                Event::Paste(text) if input_mode == RunningInputMode::Turn => {
+                Event::Paste(text) => {
                     self.input_ui.cancel_pointer_click_sequence();
                     let text = normalize_paste(&text);
                     self.flush_pending_paste_burst();
@@ -789,7 +790,7 @@ impl App {
                     self.drain_streams(terminal)?;
                     control = StreamControl::Resize;
                 }
-                Event::Mouse(mouse) if input_mode == RunningInputMode::Turn => {
+                Event::Mouse(mouse) => {
                     self.flush_pending_paste_burst();
                     self.handle_mouse_event(mouse.kind, mouse.column, mouse.row, terminal)?;
                 }

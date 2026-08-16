@@ -92,6 +92,13 @@ fn smoke_type_during_stream() {
     assert_pass("type_during_stream");
 }
 
+// Covers: /compact must keep the composer usable so typed keys are not dropped.
+// Owner: interactive TUI
+#[test]
+fn type_during_compact() {
+    assert_pass("type_during_compact");
+}
+
 #[test]
 fn smoke_resize_during_stream() {
     assert_pass("resize_during_stream");

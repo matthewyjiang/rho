@@ -4,8 +4,8 @@ use ratatui::DefaultTerminal;
 
 use super::{
     command_palette::slash_command_args, ActivityPhase, App, ChatMedia, CommandId,
-    CommandInvocation, ComposerMode, Entry, InteractiveRuntime, LoadingSpinner, RunningInputMode,
-    StreamControl, ToolEntry, ViewModelEvent,
+    CommandInvocation, ComposerMode, Entry, InteractiveRuntime, StreamControl, ToolEntry,
+    ViewModelEvent,
 };
 
 /// Fully-owned composer state transferred to a slash command.
@@ -69,10 +69,10 @@ impl App {
             CommandId::Config => self.execute_config_command(terminal),
             CommandId::Info => self.execute_info_command().await,
             CommandId::Help => self.execute_help_command(),
-            CommandId::Compact => self
-                .execute_compact_command(terminal, agent)
-                .await
-                .map(|_| ()),
+            CommandId::Compact => {
+                self.execute_compact_command(terminal, agent).await?;
+                self.start_follow_ups_after_idle_work(terminal, agent).await
+            }
             CommandId::Goal => {
                 invocation.raw_args = slash_command_args(&expanded_input).to_string();
                 invocation.args = invocation.raw_args.trim().to_string();
@@ -130,6 +130,7 @@ impl App {
         let tool_call_active = AtomicBool::new(false);
         let mut compact_future = Box::pin(agent.compact());
         let compacted = loop {
+            let frame_deadline = self.next_running_frame_deadline(None);
             tokio::select! {
                 result = &mut compact_future => break result,
                 terminal_event = self.terminal_session.as_mut().expect("terminal session initialized").next_event() => {
@@ -138,7 +139,6 @@ impl App {
                         terminal,
                         &interrupt_requested,
                         &tool_call_active,
-                        RunningInputMode::Compacting,
                     )
                     .await
                     .map_err(super::during_turn::RunningTerminalError::into_anyhow)?
@@ -153,7 +153,8 @@ impl App {
                     self.clamp_history_scroll_for_terminal(terminal)?;
                     terminal.draw(|frame| self.draw(frame))?;
                 }
-                _ = tokio::time::sleep(LoadingSpinner::FRAME_INTERVAL) => {
+                _ = tokio::time::sleep_until(frame_deadline) => {
+                    self.flush_due_paste_burst();
                     terminal.draw(|frame| self.draw(frame))?;
                 }
             }

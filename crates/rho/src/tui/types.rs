@@ -444,12 +444,6 @@ impl HerdrUserWait {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum RunningInputMode {
-    Turn,
-    Compacting,
-}
-
 #[derive(Clone, Copy, Debug)]
 pub(super) enum HistoryDirection {
     Previous,

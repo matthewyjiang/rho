@@ -314,7 +314,6 @@ impl App {
                                 terminal,
                                 &interrupt_requested,
                                 &tool_call_active,
-                                RunningInputMode::Turn,
                             )
                     .await
                     .map_err(super::during_turn::RunningTerminalError::into_anyhow)?;
@@ -451,7 +450,6 @@ impl App {
                         terminal,
                         &interrupt_requested,
                         &tool_call_active,
-                        RunningInputMode::Turn,
                     )
                     .await
                     .map_err(super::during_turn::RunningTerminalError::into_anyhow)?;
@@ -525,7 +523,6 @@ impl App {
                         terminal,
                         &interrupt_requested,
                         &tool_call_active,
-                        RunningInputMode::Turn,
                     )
                     .await
                     .map_err(super::during_turn::RunningTerminalError::into_anyhow)?;

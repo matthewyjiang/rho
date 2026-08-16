@@ -438,6 +438,31 @@ impl App {
         Ok(true)
     }
 
+    /// Start follow-ups queued while the session was busy but idle of a
+    /// provider run, such as `/compact`. Leaves them queued when quitting or
+    /// when a modal still owns the composer.
+    pub(super) async fn start_follow_ups_after_idle_work(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        if self.should_quit || self.input_ui.composer().blocks_auto_continue() {
+            return Ok(());
+        }
+        let Some(prompt) = self.pending.pop_follow_up() else {
+            return Ok(());
+        };
+        self.pending_input_changed();
+        self.select_pending_recall_target();
+        self.run_turn_sequence(
+            TurnPrompt::standard(prompt.prompt, prompt.display_prompt),
+            Vec::new(),
+            terminal,
+            agent,
+        )
+        .await
+    }
+
     /// Run a submitted turn plus any goal resumption or queued follow-ups it
     /// triggers. Entered directly on submit, or later when a turn that arrived
     /// during MCP connect is released.

@@ -148,6 +148,33 @@ const TYPE_DURING_STREAM_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+const TYPE_DURING_COMPACT_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("seed_history"),
+    Step::SubmitText("fixture compact delay"),
+    Step::WaitText {
+        text: "fixture response: fixture compact delay",
+        timeout: STREAM,
+    },
+    Step::Phase("compact"),
+    Step::SubmitText("/compact"),
+    Step::WaitText {
+        text: "compacting context",
+        timeout: STREAM,
+    },
+    Step::Phase("type_draft"),
+    Step::TypeText("draft during compact"),
+    Step::WaitText {
+        text: "draft during compact",
+        timeout: WaitTimeout::secs(2, "composer input during compact"),
+    },
+    Step::CtrlCExit,
+];
+
 const CANCEL_AND_RESUBMIT_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
@@ -449,6 +476,13 @@ const ALL_SCENARIOS: &[Scenario] = &[
         DEFAULT_SIZE,
         TYPE_DURING_STREAM_STEPS,
         true,
+    ),
+    Scenario::new(
+        "type_during_compact",
+        "Keep composer input responsive while /compact is running",
+        DEFAULT_SIZE,
+        TYPE_DURING_COMPACT_STEPS,
+        false,
     ),
     Scenario::new(
         "resize_during_stream",

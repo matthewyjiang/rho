@@ -170,7 +170,7 @@ impl InteractiveRuntime {
     /// Returns whether a model run is active on the interactive run controller.
     ///
     /// Prefer this for provider-lifecycle decisions. TUI busy UI uses
-    /// `SessionUiPhase` (`App::is_ui_busy`) because compaction blocks the UI
+    /// `SessionUiPhase` (`App::is_ui_busy`) because compaction is busy UI
     /// without an active provider run.
     pub(crate) fn is_run_active(&self) -> bool {
         self.runs.is_active()
