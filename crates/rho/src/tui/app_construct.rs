@@ -112,6 +112,7 @@ impl App {
             pending_herdr_graphics: None,
             held_turns: std::collections::VecDeque::new(),
             compact_follow_up: super::compact_work::CompactFollowUp::None,
+            arm_queued_after_compact: false,
             pending_model_selection: None,
             internal_agent_model_target: None,
             pending_auto_classifier_demote: false,

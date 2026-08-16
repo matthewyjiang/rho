@@ -5,6 +5,7 @@ fn prompt(model: &str, display: &str) -> QueuedPrompt {
         prompt: model.into(),
         display_prompt: display.into(),
         paste_segments: Vec::new(),
+        media: Vec::new(),
     }
 }
 

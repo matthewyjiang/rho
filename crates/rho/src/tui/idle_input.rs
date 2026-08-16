@@ -14,13 +14,9 @@ use super::{
 pub(super) enum HeldTurnWait {
     /// MCP connect is still in flight.
     McpConnect,
-    /// A compact job is still running. Not auto-released if that job is cancelled.
-    Compact,
-    /// Compact finished (not cancelled). Start when the composer allows it.
-    Ready,
 }
 
-/// A turn held until MCP connect settles or a compact job finishes.
+/// A turn held until MCP connect settles.
 pub(super) struct HeldTurn {
     pub(super) turn: TurnPrompt,
     pub(super) media: Vec<ChatMedia>,
@@ -189,7 +185,11 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
             (KeyModifiers::ALT, KeyCode::Enter) => {
-                self.insert_input_char('\n');
+                if agent.is_compacting() {
+                    self.queue_prompt_after_turn()?;
+                } else {
+                    self.insert_input_char('\n');
+                }
                 self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
             }
@@ -199,7 +199,11 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::Enter) => {
-                self.submit(terminal, agent).await?;
+                if agent.is_compacting() {
+                    self.submit_during_turn(terminal).await?;
+                } else {
+                    self.submit(terminal, agent).await?;
+                }
                 self.ctrl_c_streak = 0;
             }
             (modifiers, KeyCode::Char(ch))
@@ -425,6 +429,7 @@ impl App {
             prompt: turn.model,
             display_prompt: turn.display,
             paste_segments,
+            media: Vec::new(),
         });
         if !self.held_turns.is_empty() {
             // Older holds are still waiting. Leave their status alone: writing
@@ -450,8 +455,7 @@ impl App {
             HeldTurnWait::McpConnect if !mcp_pending && !compacting => {
                 Some(HeldTurnWait::McpConnect)
             }
-            HeldTurnWait::Ready if !compacting => Some(HeldTurnWait::Ready),
-            HeldTurnWait::McpConnect | HeldTurnWait::Compact | HeldTurnWait::Ready => None,
+            HeldTurnWait::McpConnect => None,
         }
     }
 
@@ -477,15 +481,44 @@ impl App {
         if wait == HeldTurnWait::McpConnect {
             self.set_status_quiet("");
         }
-        match wait {
-            HeldTurnWait::Ready => {
-                self.run_turn_sequence_without_auto_compact(turn, media, terminal, agent)
-                    .await?;
-            }
-            HeldTurnWait::McpConnect | HeldTurnWait::Compact => {
-                self.run_turn_sequence(turn, media, terminal, agent).await?;
-            }
+        self.run_turn_sequence(turn, media, terminal, agent).await?;
+        Ok(true)
+    }
+
+    /// After a finished compact, run the next queued follow-up. Cancelled
+    /// compact leaves the list for edit/discard; it does not auto-start.
+    pub(super) async fn start_queued_after_compact(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<bool> {
+        if !self.arm_queued_after_compact {
+            return Ok(false);
         }
+        if agent.is_compacting() || agent.mcp_connect_pending() {
+            return Ok(false);
+        }
+        if self.input_ui.composer().blocks_held_turn_start() {
+            return Ok(false);
+        }
+        if self.is_ui_busy() {
+            self.arm_queued_after_compact = false;
+            return Ok(false);
+        }
+        let Some(prompt) = self.pending.pop_follow_up() else {
+            self.arm_queued_after_compact = false;
+            return Ok(false);
+        };
+        self.arm_queued_after_compact = false;
+        self.pending_input_changed();
+        self.select_pending_recall_target();
+        self.run_turn_sequence_without_auto_compact(
+            TurnPrompt::standard(prompt.prompt, prompt.display_prompt),
+            prompt.media,
+            terminal,
+            agent,
+        )
+        .await?;
         Ok(true)
     }
 
@@ -512,13 +545,11 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         if agent.is_compacting() {
-            self.hold_turn(turn, media, paste_segments, HeldTurnWait::Compact);
-            return Ok(());
+            return self.queue_prompt(turn.model, turn.display, paste_segments, media);
         }
         if agent.should_auto_compact() {
             self.start_compact(agent, super::compact_work::CompactFollowUp::None)?;
-            self.hold_turn(turn, media, paste_segments, HeldTurnWait::Compact);
-            return Ok(());
+            return self.queue_prompt(turn.model, turn.display, paste_segments, media);
         }
         self.run_turn_sequence_without_auto_compact(turn, media, terminal, agent)
             .await
@@ -564,7 +595,7 @@ impl App {
             outcome = self
                 .run_prompt_turn(
                     TurnPrompt::standard(prompt.prompt, prompt.display_prompt),
-                    Vec::new(),
+                    prompt.media,
                     terminal,
                     agent,
                 )

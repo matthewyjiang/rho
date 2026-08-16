@@ -244,6 +244,7 @@ impl App {
             prompt,
             display_prompt,
             paste_segments,
+            media: Vec::new(),
         });
         self.select_pending_recall_target();
         self.set_status(format!(
@@ -261,7 +262,7 @@ impl App {
             self.clear_submitted_input();
             return Ok(());
         }
-        self.queue_prompt(prompt, display_prompt, paste_segments)
+        self.queue_prompt(prompt, display_prompt, paste_segments, Vec::new())
     }
 
     pub(super) fn queue_prompt(
@@ -269,6 +270,7 @@ impl App {
         prompt: String,
         display_prompt: String,
         paste_segments: Vec<PasteSegment>,
+        media: Vec<super::ChatMedia>,
     ) -> anyhow::Result<()> {
         self.reset_input_history_navigation();
         self.clear_submitted_input();
@@ -276,10 +278,17 @@ impl App {
             prompt,
             display_prompt,
             paste_segments,
+            media,
         });
         self.select_pending_recall_target();
+        self.pending_input_changed();
+        let when = if self.turn.is_compacting() {
+            "after compact"
+        } else {
+            "after the current turn"
+        };
         self.set_status(format!(
-            "queued message {} for after the current turn",
+            "queued message {} for {when}",
             self.pending.queued_prompts().len()
         ));
         Ok(())

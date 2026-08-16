@@ -117,6 +117,7 @@ impl App {
     ) -> anyhow::Result<()> {
         self.abort_compact(agent).await;
         self.held_turns.clear();
+        self.arm_queued_after_compact = false;
         agent.reset().await?;
         self.info.session.session_id = None;
         self.input_ui.set_composer(ComposerMode::Input);

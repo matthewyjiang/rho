@@ -1,6 +1,6 @@
-use super::super::{
-    commands, goal, tests::test_app, ChatMedia, ChatTextDocument, PasteSegment, TurnPrompt,
-};
+use ratatui::text::Line;
+
+use super::super::{commands, goal, tests::test_app, ChatMedia, ChatTextDocument, TurnPrompt};
 use super::{HeldTurn, HeldTurnWait};
 
 fn attached_document() -> ChatMedia {
@@ -81,44 +81,38 @@ fn esc_takes_back_held_turns_newest_first() {
     assert_eq!(app.held_turns.len(), 1);
 }
 
-// Covers: compact-held turns keep paste segments so esc restores the typed prompt.
-// Owner: idle input key handling
-#[test]
-fn esc_restores_compact_held_paste_segments() {
-    let mut app = test_app();
-    app.held_turns.push_back(HeldTurn {
-        turn: TurnPrompt::standard("secret".into(), "aaaa".into()),
-        media: Vec::new(),
-        paste_segments: vec![PasteSegment {
-            start: 0,
-            marker_len: 4,
-            content: "secret".into(),
-        }],
-        wait: HeldTurnWait::Compact,
-    });
-
-    app.take_back_held_turn();
-    assert_eq!(app.input_ui.text(), "aaaa");
-    assert_eq!(app.input_ui.paste_segments().len(), 1);
+fn line_text(line: &Line<'_>) -> String {
+    line.spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect()
 }
 
-// Covers: cancelling compact must not auto-start held turns; only a finished
-// compact promotes them to Ready.
-// Owner: idle input hold/release
+// Covers: compact-time Enter/Alt+Enter use the pending-input list, not held turns.
+// Owner: idle input key handling
 #[test]
-fn compact_holds_are_not_releasable_until_promoted() {
+fn compact_prompts_use_the_pending_input_list() {
     let mut app = test_app();
-    app.held_turns
-        .push_back(held_turn("during compact", HeldTurnWait::Compact));
+    app.begin_compact_ui();
+    app.queue_steering_prompt("steer me".into(), "steer me".into(), Vec::new())
+        .unwrap();
+    app.queue_prompt(
+        "next turn".into(),
+        "next turn".into(),
+        Vec::new(),
+        Vec::new(),
+    )
+    .unwrap();
 
-    assert_eq!(app.first_releasable_held_wait(false, false), None);
-
-    app.promote_compact_holds();
-    assert_eq!(
-        app.first_releasable_held_wait(false, false),
-        Some(HeldTurnWait::Ready)
-    );
-    assert_eq!(app.first_releasable_held_wait(false, true), None);
+    assert!(app.held_turns.is_empty());
+    assert_eq!(app.pending.steering_prompts().len(), 1);
+    assert_eq!(app.pending.queued_prompts().len(), 1);
+    let lines = app.pending_input_lines(80);
+    assert!(line_text(&lines[0]).contains("1 steer"));
+    assert!(line_text(&lines[0]).contains("1 follow-up"));
+    assert!(line_text(&lines[1]).contains("STEER"));
+    assert!(line_text(&lines[2]).contains("NEXT"));
+    assert!(line_text(&lines[2]).contains("after compact"));
 }
 
 // Covers: an MCP hold must not start a turn while a compact job holds the session.

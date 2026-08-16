@@ -386,8 +386,13 @@ impl App {
             }
             PendingInputRef::FollowUp(index) => {
                 if let Some(prompt) = self.pending.remove_follow_up(index) {
+                    let had_media = !prompt.media.is_empty();
                     self.restore_pending_prompt(prompt);
-                    self.notify_status("editing queued follow-up");
+                    self.notify_status(if had_media {
+                        "editing queued follow-up; attach the files again"
+                    } else {
+                        "editing queued follow-up"
+                    });
                 }
             }
         }

@@ -12,7 +12,6 @@ use super::{
     compaction_display::CompactionUiOutcome,
     context_handoff::AfterHandoff,
     event_adapter::{compact_finished_event, compact_started_event},
-    idle_input::HeldTurnWait,
     App, InteractiveModelSelection, InteractiveRuntime, ViewModelEvent,
 };
 
@@ -52,8 +51,8 @@ impl App {
         Ok(())
     }
 
-    /// User cancel (`esc`). Parks compact-held turns for take-back and finishes
-    /// a handoff follow-up as "not compacted".
+    /// User cancel (`esc`). Leaves queued follow-ups in the pending-input list
+    /// and finishes a handoff follow-up as "not compacted".
     pub(super) async fn cancel_compact(
         &mut self,
         terminal: &mut DefaultTerminal,
@@ -107,14 +106,13 @@ impl App {
             CompactTaskPoll::Finished(result) => CompactionUiOutcome::from_task_result(result),
         };
         let succeeded = matches!(outcome, CompactionUiOutcome::Completed(_));
-        let cancelled = matches!(outcome, CompactionUiOutcome::Cancelled);
         if let Some(context) = agent.take_context_usage() {
             self.record_agent_event(ViewModelEvent::ContextUsage(context));
         }
         self.finish_compact_ui(outcome);
         let follow_up = std::mem::take(&mut self.compact_follow_up);
-        if !cancelled {
-            self.promote_compact_holds();
+        if succeeded {
+            self.arm_queued_after_compact = true;
         }
         self.apply_compact_follow_up(follow_up, succeeded, terminal, agent)
             .await
@@ -162,13 +160,5 @@ impl App {
         self.end_busy_ui();
         self.turn.stop_loading();
         self.set_status(status);
-    }
-
-    pub(super) fn promote_compact_holds(&mut self) {
-        for held in &mut self.held_turns {
-            if held.wait == HeldTurnWait::Compact {
-                held.wait = HeldTurnWait::Ready;
-            }
-        }
     }
 }
