@@ -113,6 +113,17 @@ fn compact_prompts_use_the_pending_input_list() {
     assert!(line_text(&lines[2]).contains("after compact"));
 }
 
+// Covers: Unchanged/Failed compaction still starts the parked follow-up; cancel does not.
+// Owner: compact follow-up drain
+#[test]
+fn unchanged_and_failed_compact_start_follow_ups_cancel_does_not() {
+    use super::super::compaction_display::CompactionUiOutcome;
+
+    assert!(CompactionUiOutcome::unchanged().starts_follow_ups());
+    assert!(CompactionUiOutcome::failed("boom").starts_follow_ups());
+    assert!(!CompactionUiOutcome::Cancelled.starts_follow_ups());
+}
+
 // Covers: an MCP hold must not start a turn while a compact job holds the session.
 // Owner: idle input hold/release
 #[test]

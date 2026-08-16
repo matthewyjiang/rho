@@ -1,3 +1,5 @@
+// rustc overflows the default 128-query limit laying out
+// `Instrumented<{async fn body of run_inner()}>` at startup.
 #![recursion_limit = "256"]
 
 mod agent;

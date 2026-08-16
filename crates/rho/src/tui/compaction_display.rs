@@ -102,6 +102,12 @@ impl CompactionUiOutcome {
             Self::Cancelled => "context compaction cancelled",
         }
     }
+
+    /// Auto-compact parks the triggering turn as a follow-up. Start it after
+    /// any settlement except a user cancel.
+    pub(super) fn starts_follow_ups(&self) -> bool {
+        !matches!(self, Self::Cancelled)
+    }
 }
 
 /// Running compaction card.

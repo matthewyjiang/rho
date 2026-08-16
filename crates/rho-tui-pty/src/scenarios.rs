@@ -185,6 +185,38 @@ const TYPE_DURING_COMPACT_STEPS: &[Step] = &[
     Step::CtrlCExit,
 ];
 
+const SUBMIT_DURING_COMPACT_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("seed_history"),
+    Step::SubmitText("fixture compact delay"),
+    Step::WaitText {
+        text: "fixture response: fixture compact delay",
+        timeout: STREAM,
+    },
+    Step::Phase("compact"),
+    Step::SubmitText("/compact"),
+    Step::WaitText {
+        text: "compacting context",
+        timeout: STREAM,
+    },
+    Step::Phase("submit_follow_up"),
+    Step::SubmitText("after compact please"),
+    Step::WaitText {
+        text: "after compact",
+        timeout: WaitTimeout::secs(2, "queued follow-up during compact"),
+    },
+    Step::Phase("drain_after_failed_compact"),
+    Step::WaitText {
+        text: "fixture response: after compact please",
+        timeout: STREAM,
+    },
+    Step::CtrlCExit,
+];
+
 const CANCEL_AND_RESUBMIT_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
@@ -492,6 +524,13 @@ const ALL_SCENARIOS: &[Scenario] = &[
         "Keep composer input responsive while /compact is running",
         DEFAULT_SIZE,
         TYPE_DURING_COMPACT_STEPS,
+        false,
+    ),
+    Scenario::new(
+        "submit_during_compact",
+        "A prompt submitted during /compact starts after compaction ends",
+        DEFAULT_SIZE,
+        SUBMIT_DURING_COMPACT_STEPS,
         false,
     ),
     Scenario::new(

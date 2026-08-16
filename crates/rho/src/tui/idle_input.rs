@@ -191,7 +191,7 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::Enter) => {
-                self.submit_from_composer(terminal, agent).await?;
+                self.submit(terminal, agent).await?;
                 self.ctrl_c_streak = 0;
             }
             (modifiers, KeyCode::Char(ch))
@@ -264,7 +264,7 @@ impl App {
                 }
                 self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
-                self.submit_from_composer(terminal, agent).await?;
+                self.submit(terminal, agent).await?;
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Esc) => {
@@ -379,18 +379,6 @@ impl App {
 
         self.run_turn_sequence_held(turn, media, paste_segments, terminal, agent)
             .await
-    }
-
-    async fn submit_from_composer(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        if agent.is_compacting() {
-            self.submit_during_turn(terminal).await
-        } else {
-            self.submit(terminal, agent).await
-        }
     }
 
     fn hold_turn(
