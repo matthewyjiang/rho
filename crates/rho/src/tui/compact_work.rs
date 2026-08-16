@@ -112,7 +112,7 @@ impl App {
         self.finish_compact_ui(outcome);
         let follow_up = std::mem::take(&mut self.compact_follow_up);
         if succeeded {
-            self.arm_queued_after_compact = true;
+            self.start_follow_ups = Some(false);
         }
         self.apply_compact_follow_up(follow_up, succeeded, terminal, agent)
             .await

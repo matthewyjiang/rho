@@ -716,9 +716,10 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        if let Some(prompt) = self.pending.pop_follow_up() {
-            self.restore_pending_prompt(prompt);
-            return self.submit(terminal, agent).await;
+        if self.pending.has_follow_ups() {
+            self.start_follow_ups = Some(true);
+            self.start_next_follow_up(terminal, agent).await?;
+            return Ok(());
         }
         if self.goal.is_some() && !self.should_quit {
             self.continue_goal(terminal, agent, std::collections::VecDeque::new())

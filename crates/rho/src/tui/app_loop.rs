@@ -73,7 +73,7 @@ impl App {
             needs_redraw |= self.poll_startup_hydrates(agent).await?;
             needs_redraw |= self.poll_compact(terminal, agent).await?;
             needs_redraw |= self.release_pending_held_turn(terminal, agent).await?;
-            needs_redraw |= self.start_queued_after_compact(terminal, agent).await?;
+            needs_redraw |= self.start_next_follow_up(terminal, agent).await?;
             self.poll_update_notice();
             self.poll_custom_provider_models();
             self.poll_herdr_graphics();

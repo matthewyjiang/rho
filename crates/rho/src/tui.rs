@@ -504,8 +504,9 @@ struct App {
     /// Turns held until MCP connect settles.
     held_turns: VecDeque<idle_input::HeldTurn>,
     compact_follow_up: compact_work::CompactFollowUp,
-    /// After a finished compact, start queued follow-ups from the pending-input list.
-    arm_queued_after_compact: bool,
+    /// When set, start the next queued follow-up once the composer is free.
+    /// The bool is whether that start may auto-compact.
+    start_follow_ups: Option<bool>,
     pending_model_selection: Option<InteractiveModelSelection>,
     internal_agent_model_target: Option<agent_picker::InternalAgentModelTarget>,
     /// Set when the user dismisses the startup Auto classifier picker. The next

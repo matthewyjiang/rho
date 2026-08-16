@@ -1,7 +1,7 @@
 use ratatui::text::Line;
 
 use super::super::{commands, goal, tests::test_app, ChatMedia, ChatTextDocument, TurnPrompt};
-use super::{HeldTurn, HeldTurnWait};
+use super::HeldTurn;
 
 fn attached_document() -> ChatMedia {
     ChatMedia::TextDocument(ChatTextDocument {
@@ -50,12 +50,11 @@ fn invalid_overlong_goal_takes_queued_media() {
     assert_goal_command_takes_media(&format!("/goal {condition}"));
 }
 
-fn held_turn(display: &str, wait: HeldTurnWait) -> HeldTurn {
+fn held_turn(display: &str) -> HeldTurn {
     HeldTurn {
         turn: TurnPrompt::standard(display.to_owned(), display.to_owned()),
         media: Vec::new(),
         paste_segments: Vec::new(),
-        wait,
     }
 }
 
@@ -65,10 +64,8 @@ fn held_turn(display: &str, wait: HeldTurnWait) -> HeldTurn {
 #[test]
 fn esc_takes_back_held_turns_newest_first() {
     let mut app = test_app();
-    app.held_turns
-        .push_back(held_turn("first", HeldTurnWait::McpConnect));
-    app.held_turns
-        .push_back(held_turn("second", HeldTurnWait::McpConnect));
+    app.held_turns.push_back(held_turn("first"));
+    app.held_turns.push_back(held_turn("second"));
 
     app.take_back_held_turn();
     assert_eq!(app.input_ui.text(), "second");
@@ -120,13 +117,9 @@ fn compact_prompts_use_the_pending_input_list() {
 #[test]
 fn mcp_holds_are_not_releasable_while_compacting() {
     let mut app = test_app();
-    app.held_turns
-        .push_back(held_turn("after mcp", HeldTurnWait::McpConnect));
+    app.held_turns.push_back(held_turn("after mcp"));
 
-    assert_eq!(
-        app.first_releasable_held_wait(false, false),
-        Some(HeldTurnWait::McpConnect)
-    );
-    assert_eq!(app.first_releasable_held_wait(false, true), None);
-    assert_eq!(app.first_releasable_held_wait(true, false), None);
+    assert!(app.first_held_turn_is_releasable(false, false));
+    assert!(!app.first_held_turn_is_releasable(false, true));
+    assert!(!app.first_held_turn_is_releasable(true, false));
 }

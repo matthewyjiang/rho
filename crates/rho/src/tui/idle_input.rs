@@ -9,20 +9,12 @@ use super::{
     InputSubmissionMode, InteractiveRuntime, PasteSegment, QueuedPrompt, TurnOutcome, TurnPrompt,
 };
 
-/// Why a submitted turn is waiting instead of starting.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum HeldTurnWait {
-    /// MCP connect is still in flight.
-    McpConnect,
-}
-
 /// A turn held until MCP connect settles.
 pub(super) struct HeldTurn {
     pub(super) turn: TurnPrompt,
     pub(super) media: Vec<ChatMedia>,
     /// Kept so `esc` can hand the prompt back exactly as it was typed.
     pub(super) paste_segments: Vec<PasteSegment>,
-    pub(super) wait: HeldTurnWait,
 }
 
 impl App {
@@ -199,11 +191,7 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::Enter) => {
-                if agent.is_compacting() {
-                    self.submit_during_turn(terminal).await?;
-                } else {
-                    self.submit(terminal, agent).await?;
-                }
+                self.submit_from_composer(terminal, agent).await?;
                 self.ctrl_c_streak = 0;
             }
             (modifiers, KeyCode::Char(ch))
@@ -276,7 +264,7 @@ impl App {
                 }
                 self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
-                self.submit(terminal, agent).await?;
+                self.submit_from_composer(terminal, agent).await?;
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Esc) => {
@@ -384,7 +372,7 @@ impl App {
         if agent.mcp_connect_pending() {
             // Queue rather than replace: someone who submits twice while the
             // servers are still connecting must not lose the first prompt.
-            self.hold_turn(turn, media, paste_segments, HeldTurnWait::McpConnect);
+            self.hold_turn(turn, media, paste_segments);
             self.set_mcp_connecting_status();
             return Ok(());
         }
@@ -393,18 +381,28 @@ impl App {
             .await
     }
 
+    async fn submit_from_composer(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        if agent.is_compacting() {
+            self.submit_during_turn(terminal).await
+        } else {
+            self.submit(terminal, agent).await
+        }
+    }
+
     fn hold_turn(
         &mut self,
         turn: TurnPrompt,
         media: Vec<ChatMedia>,
         paste_segments: Vec<PasteSegment>,
-        wait: HeldTurnWait,
     ) {
         self.held_turns.push_back(HeldTurn {
             turn,
             media,
             paste_segments,
-            wait,
         });
     }
 
@@ -446,17 +444,8 @@ impl App {
         }
     }
 
-    fn first_releasable_held_wait(
-        &self,
-        mcp_pending: bool,
-        compacting: bool,
-    ) -> Option<HeldTurnWait> {
-        match self.held_turns.front()?.wait {
-            HeldTurnWait::McpConnect if !mcp_pending && !compacting => {
-                Some(HeldTurnWait::McpConnect)
-            }
-            HeldTurnWait::McpConnect => None,
-        }
+    fn first_held_turn_is_releasable(&self, mcp_pending: bool, compacting: bool) -> bool {
+        !self.held_turns.is_empty() && !mcp_pending && !compacting
     }
 
     /// Start the next held turn whose wait is over. One per call, so several
@@ -470,31 +459,27 @@ impl App {
         if self.input_ui.composer().blocks_held_turn_start() {
             return Ok(false);
         }
-        let Some(wait) =
-            self.first_releasable_held_wait(agent.mcp_connect_pending(), agent.is_compacting())
-        else {
+        if !self.first_held_turn_is_releasable(agent.mcp_connect_pending(), agent.is_compacting()) {
             return Ok(false);
-        };
+        }
         let Some(HeldTurn { turn, media, .. }) = self.held_turns.pop_front() else {
             return Ok(false);
         };
-        if wait == HeldTurnWait::McpConnect {
-            self.set_status_quiet("");
-        }
+        self.set_status_quiet("");
         self.run_turn_sequence(turn, media, terminal, agent).await?;
         Ok(true)
     }
 
-    /// After a finished compact, run the next queued follow-up. Cancelled
-    /// compact leaves the list for edit/discard; it does not auto-start.
-    pub(super) async fn start_queued_after_compact(
+    /// Start the next queued follow-up once armed and the composer is free.
+    /// Compact arms this with auto-compact off; model-switch handoff arms it on.
+    pub(super) async fn start_next_follow_up(
         &mut self,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
-        if !self.arm_queued_after_compact {
+        let Some(allow_auto_compact) = self.start_follow_ups else {
             return Ok(false);
-        }
+        };
         if agent.is_compacting() || agent.mcp_connect_pending() {
             return Ok(false);
         }
@@ -502,23 +487,24 @@ impl App {
             return Ok(false);
         }
         if self.is_ui_busy() {
-            self.arm_queued_after_compact = false;
+            self.start_follow_ups = None;
             return Ok(false);
         }
         let Some(prompt) = self.pending.pop_follow_up() else {
-            self.arm_queued_after_compact = false;
+            self.start_follow_ups = None;
             return Ok(false);
         };
-        self.arm_queued_after_compact = false;
+        self.start_follow_ups = None;
         self.pending_input_changed();
         self.select_pending_recall_target();
-        self.run_turn_sequence_without_auto_compact(
-            TurnPrompt::standard(prompt.prompt, prompt.display_prompt),
-            prompt.media,
-            terminal,
-            agent,
-        )
-        .await?;
+        let turn = TurnPrompt::standard(prompt.prompt, prompt.display_prompt);
+        if allow_auto_compact {
+            self.run_turn_sequence(turn, prompt.media, terminal, agent)
+                .await?;
+        } else {
+            self.run_turn_sequence_without_auto_compact(turn, prompt.media, terminal, agent)
+                .await?;
+        }
         Ok(true)
     }
 
