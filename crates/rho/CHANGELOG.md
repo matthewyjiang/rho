@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.42.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.41.0...rho-coding-agent-v1.42.0) (2026-08-16)
+
+
+### Features
+
+* **tui:** add /clear and /usage command aliases ([#942](https://github.com/matthewyjiang/rho/issues/942)) ([312ada1](https://github.com/matthewyjiang/rho/commit/312ada1608d93984904e1b3481d86b8aa0128397))
+* **tui:** pick running subagents by title instead of run id ([#950](https://github.com/matthewyjiang/rho/issues/950)) ([dffd205](https://github.com/matthewyjiang/rho/commit/dffd2053eb4d22bc0b86d364c31fc44c8317667d))
+
+
+### Bug Fixes
+
+* **attach:** list only this directory's subagents in the picker ([#951](https://github.com/matthewyjiang/rho/issues/951)) ([9fc35d9](https://github.com/matthewyjiang/rho/commit/9fc35d99b6c0d004788d802cacfd3fd8920210d9))
+* **attach:** open an empty picker and include finished runs ([#955](https://github.com/matthewyjiang/rho/issues/955)) ([7055695](https://github.com/matthewyjiang/rho/commit/7055695654674f4b051e3adcc589ed6adb049acf))
+* **tui:** keep full resume scrollback ([#956](https://github.com/matthewyjiang/rho/issues/956)) ([553f3fc](https://github.com/matthewyjiang/rho/commit/553f3fc0d5305189f6cadf5c003fd2d5b6eb4b89))
+* **tui:** let you cancel claude-code login before the handoff ([#953](https://github.com/matthewyjiang/rho/issues/953)) ([849ba3b](https://github.com/matthewyjiang/rho/commit/849ba3b74ad3eb34afd20e0bb9ab1e17addb4d72))
+* **tui:** let you type while compact runs on the main loop ([#957](https://github.com/matthewyjiang/rho/issues/957)) ([07ef7c1](https://github.com/matthewyjiang/rho/commit/07ef7c14719427e4a77a23056761ca6f7532954f))
+
+
+### Performance Improvements
+
+* shrink release binary 38% and stop repeating startup work ([#947](https://github.com/matthewyjiang/rho/issues/947)) ([3fc397d](https://github.com/matthewyjiang/rho/commit/3fc397dd8d2926c20354471741a4d74a873a82c1))
+* **tui:** paint the first frame before MCP connect and other startup tails ([#948](https://github.com/matthewyjiang/rho/issues/948)) ([cdc1bbf](https://github.com/matthewyjiang/rho/commit/cdc1bbfeabd93bf2bf5b615911048a2eebb6a947))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 1.4.0 to 1.5.0
+
 ## [1.41.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.40.1...rho-coding-agent-v1.41.0) (2026-08-15)
 
 
