@@ -21,6 +21,10 @@ pub enum Step {
         text: &'static str,
         timeout: WaitTimeout,
     },
+    WaitTextGone {
+        text: &'static str,
+        timeout: WaitTimeout,
+    },
     WaitQuiet {
         quiet_for: Duration,
         timeout: WaitTimeout,
@@ -202,6 +206,7 @@ fn apply_step(harness: &mut PtyHarness, step: &Step) -> Result<()> {
             Ok(())
         }
         Step::WaitText { text, timeout } => harness.wait_for_text(text, *timeout),
+        Step::WaitTextGone { text, timeout } => harness.wait_for_text_gone(text, *timeout),
         Step::WaitQuiet { quiet_for, timeout } => harness.wait_for_quiet(*quiet_for, *timeout),
         Step::TypeText(text) => harness.type_text(text),
         Step::SubmitText(text) => harness.submit_text(text),

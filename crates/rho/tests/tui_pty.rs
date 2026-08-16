@@ -64,6 +64,13 @@ fn mcp_connect_release_starts_the_held_turn() {
     assert_pass("mcp_connect_release");
 }
 
+// Covers: esc must return a turn held during MCP connect to the composer.
+// Owner: interactive TUI
+#[test]
+fn mcp_hold_take_back_returns_the_prompt() {
+    assert_pass("mcp_hold_take_back");
+}
+
 #[test]
 fn smoke_cancel_and_resubmit() {
     assert_pass("cancel_and_resubmit");

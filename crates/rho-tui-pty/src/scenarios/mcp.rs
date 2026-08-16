@@ -37,6 +37,18 @@ pub(super) const MCP_CONNECTING_SCENARIO: Scenario = Scenario::new(
 )
 .with_setup(setup_slow_mcp);
 
+pub(super) const MCP_HOLD_TAKE_BACK_SCENARIO: Scenario = Scenario::new(
+    "mcp_hold_take_back",
+    "Esc returns a turn held during MCP connect to the composer",
+    PtySize {
+        rows: 30,
+        cols: 120,
+    },
+    MCP_HOLD_TAKE_BACK_STEPS,
+    /* smoke */ false,
+)
+.with_setup(setup_slow_mcp);
+
 pub(super) const MCP_CONNECT_RELEASE_SCENARIO: Scenario = Scenario::new(
     "mcp_connect_release",
     "Start a turn held during MCP connect once the servers settle",
@@ -96,6 +108,30 @@ const MCP_CONNECTING_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Key(Key::Enter),
+    Step::CtrlCExit,
+];
+
+const MCP_HOLD_TAKE_BACK_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("submit_during_connect"),
+    Step::TypeText("hold-turn-xyz"),
+    Step::Key(Key::Enter),
+    // The prompt leaving the composer is what proves it was accepted and held,
+    // and it is the state the take-back has to reverse.
+    Step::WaitTextGone {
+        text: "hold-turn-xyz",
+        timeout: SETTLE,
+    },
+    Step::Phase("take_back_with_esc"),
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "hold-turn-xyz",
+        timeout: SETTLE,
+    },
     Step::CtrlCExit,
 ];
 

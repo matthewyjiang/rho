@@ -404,10 +404,11 @@ impl App {
         });
         // Attachments cannot go back into the composer, so say so rather than
         // let them disappear with the hold.
-        if media.is_empty() {
-            self.set_status_quiet("");
-        } else {
+        if !media.is_empty() {
             self.notify_status("prompt returned to the composer; attach the files again");
+        } else if self.pending_mcp_submissions.is_empty() {
+            // Older holds are still waiting, so leave their status up.
+            self.set_status_quiet("");
         }
     }
 
