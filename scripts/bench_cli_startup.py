@@ -4,7 +4,10 @@
 Measures wall time and peak RSS for each tool's help invocation.
 This is CLI process overhead only, not interactive TUI cost or model latency.
 
-Linux only (uses os.wait4 ru_maxrss).
+Peak RSS probe (issue #958):
+- Linux: wait4 ru_maxrss (already KiB)
+- macOS and the BSDs: wait4 ru_maxrss (bytes, converted to KiB)
+- Windows: GetProcessMemoryInfo PeakWorkingSetSize
 """
 
 from __future__ import annotations
@@ -100,8 +103,25 @@ def summarize(values: list[float]) -> dict[str, float]:
     }
 
 
-def run_once(cmd: list[str], *, timeout_s: float = 30.0) -> tuple[float, int, int]:
-    """Run cmd once; return (elapsed_ms, max_rss_kib, exit_code)."""
+def peak_rss_kib_from_rusage(ru_maxrss: int, *, platform_name: str) -> int:
+    """Convert wait4 ru_maxrss to KiB.
+
+    Linux reports KiB. Darwin and the BSDs report bytes.
+    """
+    if platform_name == "darwin" or platform_name.startswith(("freebsd", "netbsd", "openbsd")):
+        return ru_maxrss // 1024
+    return ru_maxrss
+
+
+def rss_method_label(platform_name: str) -> str:
+    if platform_name == "win32":
+        return "GetProcessMemoryInfo PeakWorkingSetSize KiB"
+    if platform_name == "darwin" or platform_name.startswith(("freebsd", "netbsd", "openbsd")):
+        return "ru_maxrss bytes from wait4, reported as KiB"
+    return "ru_maxrss KiB from wait4"
+
+
+def _run_once_unix(cmd: list[str], *, timeout_s: float) -> tuple[float, int, int]:
     start = time.perf_counter()
     pid = os.fork()
     if pid == 0:
@@ -123,7 +143,8 @@ def run_once(cmd: list[str], *, timeout_s: float = 30.0) -> tuple[float, int, in
         wpid, status, rusage = os.wait4(pid, os.WNOHANG)
         if wpid == pid:
             elapsed_ms = (time.perf_counter() - start) * 1000.0
-            return elapsed_ms, int(rusage.ru_maxrss), os.waitstatus_to_exitcode(status)
+            rss_kib = peak_rss_kib_from_rusage(int(rusage.ru_maxrss), platform_name=sys.platform)
+            return elapsed_ms, rss_kib, os.waitstatus_to_exitcode(status)
         if time.perf_counter() >= deadline:
             try:
                 os.kill(pid, signal.SIGKILL)
@@ -132,6 +153,64 @@ def run_once(cmd: list[str], *, timeout_s: float = 30.0) -> tuple[float, int, in
             os.wait4(pid, 0)
             raise TimeoutError(f"timed out after {timeout_s:g}s: {' '.join(cmd)}")
         time.sleep(0.001)
+
+
+def _windows_peak_working_set_kib(proc: subprocess.Popen[Any]) -> int:
+    import ctypes
+    from ctypes import wintypes
+
+    class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("PageFaultCount", wintypes.DWORD),
+            ("PeakWorkingSetSize", ctypes.c_size_t),
+            ("WorkingSetSize", ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t),
+            ("PeakPagefileUsage", ctypes.c_size_t),
+        ]
+
+    handle = getattr(proc, "_handle", None)
+    if handle is None:
+        raise OSError("Windows process handle is unavailable")
+
+    counters = PROCESS_MEMORY_COUNTERS()
+    counters.cb = ctypes.sizeof(counters)
+    if not ctypes.windll.psapi.GetProcessMemoryInfo(
+        int(handle), ctypes.byref(counters), counters.cb
+    ):
+        raise OSError("GetProcessMemoryInfo failed")
+    return int(counters.PeakWorkingSetSize) // 1024
+
+
+def _run_once_windows(cmd: list[str], *, timeout_s: float) -> tuple[float, int, int]:
+    start = time.perf_counter()
+    proc = subprocess.Popen(
+        cmd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        returncode = proc.wait(timeout=timeout_s)
+    except subprocess.TimeoutExpired as exc:
+        proc.kill()
+        proc.wait()
+        raise TimeoutError(f"timed out after {timeout_s:g}s: {' '.join(cmd)}") from exc
+    elapsed_ms = (time.perf_counter() - start) * 1000.0
+    return elapsed_ms, _windows_peak_working_set_kib(proc), int(returncode)
+
+
+def run_once(cmd: list[str], *, timeout_s: float = 30.0) -> tuple[float, int, int]:
+    """Run cmd once; return (elapsed_ms, max_rss_kib, exit_code)."""
+    if sys.platform == "win32":
+        return _run_once_windows(cmd, timeout_s=timeout_s)
+    if not hasattr(os, "fork") or not hasattr(os, "wait4"):
+        raise RuntimeError(f"peak RSS probe does not support {sys.platform}")
+    return _run_once_unix(cmd, timeout_s=timeout_s)
 
 
 def measure(
@@ -330,13 +409,13 @@ def render_svg(results: list[dict[str, Any]], *, samples: int) -> str:
     parts: list[str] = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" role="img" aria-labelledby="title desc">',
         '  <title id="title">CLI startup and memory comparison</title>',
-        '  <desc id="desc">Side-by-side bar chart of median help startup time and peak RSS for rho and other agent CLIs on Linux.</desc>',
+        '  <desc id="desc">Side-by-side bar chart of median help startup time and peak RSS for rho and other agent CLIs.</desc>',
         '  <rect width="100%" height="100%" rx="12" fill="#0d1117"/>',
         text(pad_x, 24, "CLI process overhead", fill="#f0f3f6", size=18, font=sans, weight="700"),
         text(
             pad_x,
             44,
-            f"Median of {samples} help-startup runs on Linux x86_64. Not TUI cost or model latency.",
+            f"Median of {samples} help-startup runs on {platform.system()} {platform.machine()}. Not TUI cost or model latency.",
             fill="#8b949e",
             size=12,
             font=sans,
@@ -428,8 +507,8 @@ def render_svg(results: list[dict[str, Any]], *, samples: int) -> str:
 
 
 def main() -> int:
-    if not hasattr(os, "wait4") or not hasattr(os, "fork"):
-        print("this benchmark requires Linux fork/wait4 support", file=sys.stderr)
+    if sys.platform != "win32" and (not hasattr(os, "wait4") or not hasattr(os, "fork")):
+        print(f"this benchmark has no peak RSS probe for {sys.platform}", file=sys.stderr)
         return 2
 
     parser = argparse.ArgumentParser(description=__doc__)
@@ -500,8 +579,8 @@ def main() -> int:
             "opencode": "opencode --help",
             "warmup": args.warmup,
             "samples": args.samples,
-            "time": "wall clock around fork/exec/wait4",
-            "rss": "ru_maxrss KiB from wait4 (Linux)",
+            "time": "wall clock around process start/wait",
+            "rss": rss_method_label(sys.platform),
             "scope": "CLI process overhead for help startup only; not interactive TUI or model latency",
         },
         "results": results,
