@@ -172,6 +172,16 @@ const TYPE_DURING_COMPACT_STEPS: &[Step] = &[
         text: "draft during compact",
         timeout: WaitTimeout::secs(2, "composer input during compact"),
     },
+    Step::Phase("cancel_compact"),
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "context compaction cancelled",
+        timeout: WaitTimeout::secs(2, "esc cancels compact"),
+    },
+    Step::WaitText {
+        text: "draft during compact",
+        timeout: WaitTimeout::secs(2, "draft survives compact cancel"),
+    },
     Step::CtrlCExit,
 ];
 

@@ -90,25 +90,29 @@ impl InteractiveRuntime {
         if !handle.is_finished() {
             return None;
         }
-        self.take_compact_task(false).await
+        let handle = self.pending_compact.take()?;
+        Some(self.join_compact_task(handle).await)
     }
 
     /// Abort an in-flight job. If the join handle already finished, persist that
     /// result instead of discarding a committed compact.
     pub(crate) async fn abort_compact_task(&mut self) -> Option<CompactTaskPoll> {
-        self.take_compact_task(true).await
-    }
-
-    async fn take_compact_task(&mut self, abort_if_running: bool) -> Option<CompactTaskPoll> {
         let handle = self.pending_compact.take()?;
-        if abort_if_running && !handle.is_finished() {
+        if !handle.is_finished() {
             handle.abort();
         }
-        Some(match handle.await {
+        Some(self.join_compact_task(handle).await)
+    }
+
+    async fn join_compact_task(
+        &mut self,
+        handle: tokio::task::JoinHandle<CompactTaskResult>,
+    ) -> CompactTaskPoll {
+        match handle.await {
             Ok(result) => CompactTaskPoll::Finished(self.complete_compact_task(result).await),
             Err(error) if error.is_cancelled() => CompactTaskPoll::Cancelled,
             Err(error) => CompactTaskPoll::Finished(Err(anyhow::anyhow!(error))),
-        })
+        }
     }
 
     /// Inline compact for tests. Does not pin a busy flag across `.await`, so

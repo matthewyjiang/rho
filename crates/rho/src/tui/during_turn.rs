@@ -219,7 +219,24 @@ impl App {
                     .await?;
             }
             Ok(None) => {
-                self.queue_steering_prompt(prompt, display_prompt, paste_segments)?;
+                // Idle compact is not a turn: local steers have no consumer
+                // until a later run. Mid-turn compact stays on ProviderTurn
+                // and still steers through this function.
+                if self.turn.is_compacting() {
+                    if self.input_ui.has_pending_attachments() {
+                        self.notify_status(
+                            "wait for document extraction to finish before submitting",
+                        );
+                        return Ok(());
+                    }
+                    let media = self
+                        .input_ui
+                        .take_ready_media()
+                        .expect("pending attachments block submission");
+                    self.queue_prompt(prompt, display_prompt, paste_segments, media)?;
+                } else {
+                    self.queue_steering_prompt(prompt, display_prompt, paste_segments)?;
+                }
             }
             Err(commands::CommandParseError::Unknown(name)) => {
                 self.clear_submitted_input();

@@ -462,11 +462,17 @@ impl App {
         if !self.first_held_turn_is_releasable(agent.mcp_connect_pending(), agent.is_compacting()) {
             return Ok(false);
         }
-        let Some(HeldTurn { turn, media, .. }) = self.held_turns.pop_front() else {
+        let Some(HeldTurn {
+            turn,
+            media,
+            paste_segments,
+        }) = self.held_turns.pop_front()
+        else {
             return Ok(false);
         };
         self.set_status_quiet("");
-        self.run_turn_sequence(turn, media, terminal, agent).await?;
+        self.run_turn_sequence_held(turn, media, paste_segments, terminal, agent)
+            .await?;
         Ok(true)
     }
 

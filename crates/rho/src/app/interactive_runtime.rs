@@ -182,8 +182,12 @@ impl InteractiveRuntime {
 
     /// Rebuilds the SDK runtime so the requested permission mode applies to the next turn.
     pub(crate) async fn set_permission_mode(&mut self, mode: PermissionMode) -> anyhow::Result<()> {
-        if self.runs.is_active() {
-            anyhow::bail!("permission mode cannot change while a run is active");
+        if self.is_session_busy() {
+            anyhow::bail!(if self.runs.is_active() {
+                "permission mode cannot change while a run is active"
+            } else {
+                "permission mode cannot change while compaction is active"
+            });
         }
         if self.permission_mode == mode {
             return Ok(());
@@ -545,7 +549,7 @@ impl InteractiveRuntime {
 
     pub(crate) async fn reset(&mut self) -> anyhow::Result<()> {
         if self.is_session_busy() {
-            anyhow::bail!("cannot reset while a run is active");
+            anyhow::bail!("cannot reset while a run or compaction is active");
         }
         self.runtime
             .hooks()
@@ -563,12 +567,15 @@ impl InteractiveRuntime {
         storage: StoredSession,
         _history: Vec<Message>,
     ) -> anyhow::Result<()> {
-        if self.runs.is_active() {
-            debug_assert_eq!(
-                active_run_disposition(ActiveRunCommand::SwitchSession),
-                ActiveRunDisposition::RejectUntilFinished
-            );
-            anyhow::bail!("cannot switch sessions while a run is active");
+        if self.is_session_busy() {
+            if self.runs.is_active() {
+                debug_assert_eq!(
+                    active_run_disposition(ActiveRunCommand::SwitchSession),
+                    ActiveRunDisposition::RejectUntilFinished
+                );
+                anyhow::bail!("cannot switch sessions while a run is active");
+            }
+            anyhow::bail!("cannot switch sessions while compaction is active");
         }
         self.runtime
             .hooks()
@@ -599,8 +606,12 @@ impl InteractiveRuntime {
         storage: StoredSession,
         target_id: &crate::session::tree::NodeId,
     ) -> anyhow::Result<()> {
-        if self.runs.is_active() {
-            anyhow::bail!("cannot navigate the session tree while a run is active");
+        if self.is_session_busy() {
+            anyhow::bail!(if self.runs.is_active() {
+                "cannot navigate the session tree while a run is active"
+            } else {
+                "cannot navigate the session tree while compaction is active"
+            });
         }
         let identity = self.provider.provider().identity();
         let id = storage.id().to_string();

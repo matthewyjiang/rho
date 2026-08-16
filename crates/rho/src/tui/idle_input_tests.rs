@@ -85,7 +85,8 @@ fn line_text(line: &Line<'_>) -> String {
         .collect()
 }
 
-// Covers: compact-time Enter/Alt+Enter use the pending-input list, not held turns.
+// Covers: compact-time prompts use the pending-input list, not held turns.
+// Enter during idle compact is a follow-up; Alt+Enter is the same list.
 // Owner: idle input key handling
 #[test]
 fn compact_prompts_use_the_pending_input_list() {

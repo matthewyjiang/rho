@@ -105,13 +105,17 @@ impl App {
             CompactTaskPoll::Cancelled => CompactionUiOutcome::Cancelled,
             CompactTaskPoll::Finished(result) => CompactionUiOutcome::from_task_result(result),
         };
+        let cancelled = matches!(outcome, CompactionUiOutcome::Cancelled);
         let succeeded = matches!(outcome, CompactionUiOutcome::Completed(_));
         if let Some(context) = agent.take_context_usage() {
             self.record_agent_event(ViewModelEvent::ContextUsage(context));
         }
         self.finish_compact_ui(outcome);
         let follow_up = std::mem::take(&mut self.compact_follow_up);
-        if succeeded {
+        // Auto-compact parks the triggering turn as a follow-up before the job
+        // starts. Unchanged/Failed must still start it; only a user cancel
+        // leaves the queue for edit/discard.
+        if !cancelled {
             self.start_follow_ups = Some(false);
         }
         self.apply_compact_follow_up(follow_up, succeeded, terminal, agent)

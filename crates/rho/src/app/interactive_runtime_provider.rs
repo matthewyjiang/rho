@@ -21,11 +21,13 @@ impl InteractiveRuntime {
         reasoning: rho_sdk::ReasoningLevel,
         auth: &str,
     ) -> Result<rho_sdk::model::handoff::HandoffReport, Error> {
-        if self.runs.is_active() {
-            debug_assert_eq!(
-                active_run_disposition(ActiveRunCommand::ReplaceProvider),
-                ActiveRunDisposition::DeferUntilFinished
-            );
+        if self.is_session_busy() {
+            if self.runs.is_active() {
+                debug_assert_eq!(
+                    active_run_disposition(ActiveRunCommand::ReplaceProvider),
+                    ActiveRunDisposition::DeferUntilFinished
+                );
+            }
             return Err(Error::SessionBusy);
         }
         self.runs.begin_provider_switch()?;
