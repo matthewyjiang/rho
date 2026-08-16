@@ -67,14 +67,14 @@ fn renders_requests_replies_tool_calls_and_results_in_order() {
     );
 }
 
-// Covers: zero-arg tool payloads must not render as `arguments: {}`, and
-// interrupted calls with no argument bytes must not render a blank
-// `arguments:` line. Both made advisor runs invent "empty args failed"
-// guidance. Only `{}` and empty buffers are omitted; null/[]/"" and non-empty
-// incomplete JSON stay visible as diagnostic evidence.
+// Covers: zero-arg payloads must render as a finished call (`name {}`), not a
+// bare line and not `arguments: {}`. A bare line looked unfinished; a
+// separate empty object looked like a missing payload. Both made advisor
+// runs invent "empty args failed" guidance. Empty incomplete buffers stay
+// bare; null/[]/"" and non-empty incomplete JSON stay on an arguments line.
 // Owner: advisor transcript renderer
 #[test]
-fn omits_empty_object_tool_arguments_but_renders_other_emptyish_values() {
+fn keeps_empty_object_args_on_the_call_line() {
     let messages = vec![
         Message::assistant(AssistantMessage::from_content(vec![
             ContentBlock::Text("Checking with the advisor.".into()),
@@ -136,7 +136,7 @@ fn omits_empty_object_tool_arguments_but_renders_other_emptyish_values() {
          ## assistant\n\
          \n\
          Checking with the advisor.\n\
-         tool call: advisor (id call-a)\n\
+         tool call: advisor (id call-a) {}\n\
          tool call: rho (id call-b)\n\
          arguments: {\"action\":\"info\"}\n\
          tool call: broken (id call-null)\n\
@@ -149,7 +149,7 @@ fn omits_empty_object_tool_arguments_but_renders_other_emptyish_values() {
          ## assistant (interrupted)\n\
          \n\
          Interrupted mid-call.\n\
-         tool call (incomplete): advisor\n\
+         tool call (incomplete): advisor {}\n\
          tool call (incomplete): advisor\n\
          tool call (incomplete): grep\n\
          arguments: {\"pattern\":\n"
