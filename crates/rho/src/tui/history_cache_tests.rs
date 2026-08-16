@@ -846,10 +846,12 @@ fn ensure_suffix_does_not_render_unmeasured_prefix() {
     // Each user entry is one content line + trailing blank (2 rows).
     assert_eq!(cache.line_count(&entries, settings(80), &no_images), 10);
     assert_eq!(cache.entry_render_count(), 5);
-    assert_eq!(
-        cache.entry_index_at_line(&entries, settings(80), 0, &no_images),
-        Some(15)
-    );
+    let first_visible = cache
+        .entry_index_at_line(&entries, settings(80), 0, &no_images)
+        .expect("measured suffix starts at line 0");
+    assert_eq!(first_visible, 15);
+    assert_eq!(cache.entry_line_range(first_visible), Some(0..2));
+    assert_eq!(cache.entry_line_range(0), None);
 }
 
 // Covers: scrolling above the measured suffix must wrap earlier entries only.

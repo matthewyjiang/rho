@@ -255,9 +255,24 @@ impl HistoryLineCache {
         self.ensure_current(entries, settings, image_resolver);
         let before = self.total_lines();
         let target = before.saturating_add(extra_lines);
-        while self.measured_from > 0 && self.total_lines() < target {
-            self.prepend_entry(entries, settings, image_resolver);
+        let mut prepended = Vec::new();
+        let mut added_lines = 0usize;
+        while self.measured_from > 0 && before.saturating_add(added_lines) < target {
+            let Some(cached) =
+                self.take_previous_unmeasured_entry(entries, settings, image_resolver)
+            else {
+                break;
+            };
+            added_lines = added_lines.saturating_add(cached.lines.len());
+            prepended.push(cached);
         }
+        if prepended.is_empty() {
+            return 0;
+        }
+        prepended.reverse();
+        prepended.append(&mut self.entries);
+        self.entries = prepended;
+        self.recompute_ranges();
         self.total_lines().saturating_sub(before)
     }
 
@@ -318,10 +333,14 @@ impl HistoryLineCache {
             .map(|_| index.saturating_add(self.measured_from))
     }
 
-    /// Cached transcript line span of `index`. Valid only while the cache is
+    /// Cached line span of transcript `index`. Valid only while the cache is
     /// current (call after [`Self::entry_index_at_line`] ensured it).
-    pub(super) fn entry_line_range(&self, index: usize) -> Option<Range<usize>> {
-        self.entry_ranges.get(index).cloned()
+    ///
+    /// `index` is a transcript index, the same space [`Self::entry_index_at_line`]
+    /// returns. Unmeasured prefix entries have no range.
+    pub(super) fn entry_line_range(&self, transcript_index: usize) -> Option<Range<usize>> {
+        let cache_index = self.cache_index(transcript_index)?;
+        self.entry_ranges.get(cache_index).cloned()
     }
 
     #[cfg(test)]
@@ -468,18 +487,16 @@ impl HistoryLineCache {
         transcript_index.checked_sub(self.measured_from)
     }
 
-    fn prepend_entry(
+    fn take_previous_unmeasured_entry(
         &mut self,
         entries: &[Entry],
         settings: HistoryRenderSettings,
         image_resolver: EntryImageResolver<'_>,
-    ) {
-        let Some(index) = self.measured_from.checked_sub(1) else {
-            return;
-        };
+    ) -> Option<CachedEntry> {
+        let index = self.measured_from.checked_sub(1)?;
         let Some(entry) = entries.get(index) else {
             self.measured_from = 0;
-            return;
+            return None;
         };
         #[cfg(test)]
         {
@@ -499,8 +516,7 @@ impl HistoryLineCache {
             settings.width,
         );
         self.measured_from = index;
-        self.entries.insert(0, cached);
-        self.recompute_ranges();
+        Some(cached)
     }
 
     fn soft_resplice_indices(&self, delta: SoftSettingsDelta, entries: &[Entry]) -> Vec<usize> {

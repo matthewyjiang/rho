@@ -24,6 +24,8 @@ const SIZE: PtySize = PtySize {
 const SEED_PROMPT: &str = "fixture bulk one";
 const EARLY_LINE: &str = "fixture bulk one line 001";
 const LATE_LINE: &str = "fixture bulk one line 180";
+// Brand/version row is unique to the session header. Tip copy is not locked.
+const SESSION_HEADER_MARK: &str = "rho  v";
 
 // Covers: resume wheel scroll reaches early rows, then the session header.
 // Owner: interactive TUI
@@ -95,13 +97,13 @@ credential_store = "file"
             harness.mouse(MouseButton::WheelUp, 40, 10, true)?;
         }
         harness.poll(Duration::from_millis(50));
-        if harness.screen().contains_text("Cycle reasoning") {
+        if harness.screen().contains_text(SESSION_HEADER_MARK) {
             anyhow::bail!("session header must stay off the measured resume tail");
         }
         harness.set_phase("wheel_to_early_line");
         wheel_up_until_text(&mut harness, EARLY_LINE, STREAM)?;
         harness.set_phase("wheel_to_header");
-        wheel_up_until_text(&mut harness, "Cycle reasoning", STREAM)?;
+        wheel_up_until_text(&mut harness, SESSION_HEADER_MARK, STREAM)?;
         let code = harness.quit_with_exit_command()?;
         if code != 0 {
             anyhow::bail!("resume session exited with code {code}");

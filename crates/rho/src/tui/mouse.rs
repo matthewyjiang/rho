@@ -162,6 +162,7 @@ impl App {
                         now,
                         super::HISTORY_SCROLLBAR_REVEAL_DURATION,
                     );
+                    self.reveal_unmeasured_history_at_scrollbar_top(width, height, now);
                 } else if layout.jump_to_bottom.is_some_and(|rect| {
                     rect.contains(ratatui::layout::Position { x: column, y: row })
                 }) {
@@ -250,6 +251,7 @@ impl App {
                     self.history.set_hovered_code_block_copy(None);
                     if let Some(scrollbar) = layout.history_scrollbar {
                         self.history.scroll_chrome_mut().drag_to(scrollbar, row);
+                        self.reveal_unmeasured_history_at_scrollbar_top(width, height, now);
                     }
                 } else if self.input_ui.selection_dragging() {
                     if let Some(index) =

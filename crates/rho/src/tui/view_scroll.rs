@@ -93,6 +93,32 @@ impl App {
             .scroll_by(history_len, content_height, delta);
     }
 
+    /// Dragging the bar to the measured top must reach the transcript start,
+    /// the same as repeated page-up.
+    pub(super) fn reveal_unmeasured_history_at_scrollbar_top(
+        &mut self,
+        width: usize,
+        height: usize,
+        now: Instant,
+    ) {
+        if !self.history.has_unmeasured_prefix() {
+            return;
+        }
+        let content_height = self.history_content_height_for_screen(width, height, now);
+        let history_len = self.history_len(width, now);
+        if self.visible_history_start(history_len, content_height) > 0 {
+            return;
+        }
+        let settings = self.history_render_settings(width);
+        if self.grow_measured_history_prefix(settings, usize::MAX) == 0 {
+            return;
+        }
+        let new_len = self.history_len(width, now);
+        self.history
+            .scroll_chrome_mut()
+            .pin_top_line(new_len, content_height, 0);
+    }
+
     pub(super) fn reveal_history_scrollbar(&mut self, now: Instant) {
         self.history
             .reveal_scrollbar(now, HISTORY_SCROLLBAR_REVEAL_DURATION);
