@@ -1,8 +1,8 @@
 use pretty_assertions::assert_eq;
 
 use super::{
-    candidate_agent_id, candidate_item, merge_live_candidates, picker, visible_candidates,
-    AttachCandidate, WorkspaceRunFilter,
+    candidate_agent_id, candidate_item, merge_live_candidates, picker, retire_departed_live_runs,
+    visible_candidates, AttachCandidate, WorkspaceRunFilter,
 };
 use crate::subagent::RunState;
 
@@ -139,4 +139,26 @@ fn finished_run_agent_id_comes_from_candidates() {
 
     assert_eq!(candidate_agent_id(&[finished], "aaaaaa"), Some("explorer"));
     assert_eq!(candidate_agent_id(&[], "aaaaaa"), None);
+}
+
+// Covers: a run that leaves the live panel must not stay listed as running.
+// Owner: attach picker
+#[test]
+fn departed_live_run_is_no_longer_running() {
+    let mut candidates = vec![
+        candidate("aaaaaa", RunState::Running),
+        candidate("bbbbbb", RunState::Running),
+    ];
+    let previously_live = ["aaaaaa".into(), "bbbbbb".into()].into();
+    let live_ids = ["bbbbbb".into()].into();
+
+    retire_departed_live_runs(&mut candidates, &live_ids, &previously_live);
+
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|run| (run.run_id.as_str(), run.state))
+            .collect::<Vec<_>>(),
+        [("aaaaaa", RunState::Stopped), ("bbbbbb", RunState::Running)]
+    );
 }

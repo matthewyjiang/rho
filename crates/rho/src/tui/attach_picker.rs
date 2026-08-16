@@ -94,11 +94,23 @@ pub(super) fn merge_live_candidates(
             missing.push(live_run);
         }
     }
-    if missing.is_empty() {
-        return candidates;
-    }
     missing.extend(candidates);
     missing
+}
+
+pub(super) fn retire_departed_live_runs(
+    candidates: &mut [AttachCandidate],
+    live_ids: &std::collections::HashSet<String>,
+    previously_live: &std::collections::HashSet<String>,
+) {
+    for candidate in candidates {
+        if previously_live.contains(&candidate.run_id)
+            && !live_ids.contains(&candidate.run_id)
+            && !candidate.state.is_terminal()
+        {
+            candidate.state = RunState::Stopped;
+        }
+    }
 }
 
 pub(super) fn candidate_agent_id<'a>(
@@ -195,13 +207,13 @@ impl App {
             return;
         }
         let cursor = open.cursor();
-        let mut next = picker(&self.attach_candidates(), self.attach_run_filter);
+        let mut next = picker(&self.sync_attach_candidates(), self.attach_run_filter);
         next.restore_cursor(&cursor);
         self.input_ui.set_composer(ComposerMode::Picker(next));
     }
 
     pub(super) fn submit_attach_selection(&mut self, run_id: &str) {
-        let agent_id = candidate_agent_id(&self.attach_candidates(), run_id)
+        let agent_id = candidate_agent_id(&self.sync_attach_candidates(), run_id)
             .unwrap_or("agent")
             .to_owned();
         self.activate_subagent_row(
@@ -214,6 +226,7 @@ impl App {
     }
 
     fn open_attach_picker(&mut self) {
+        self.attach_seen_live.clear();
         let listing_error = match workspace_candidates(&self.info.runtime.cwd) {
             Ok(disk) => {
                 self.attach_disk_candidates = disk;
@@ -224,8 +237,9 @@ impl App {
                 Some(error)
             }
         };
+        let candidates = self.sync_attach_candidates();
         self.input_ui.set_composer(ComposerMode::Picker(picker(
-            &self.attach_candidates(),
+            &candidates,
             self.attach_run_filter,
         )));
         match listing_error {
@@ -234,11 +248,21 @@ impl App {
         }
     }
 
-    fn attach_candidates(&self) -> Vec<AttachCandidate> {
-        merge_live_candidates(
-            self.attach_disk_candidates.clone(),
-            self.subagent_panel.candidates(),
-        )
+    fn sync_attach_candidates(&mut self) -> Vec<AttachCandidate> {
+        let live = self.subagent_panel.candidates();
+        let live_ids = live
+            .iter()
+            .map(|candidate| candidate.run_id.clone())
+            .collect::<std::collections::HashSet<_>>();
+        self.attach_disk_candidates =
+            merge_live_candidates(std::mem::take(&mut self.attach_disk_candidates), live);
+        retire_departed_live_runs(
+            &mut self.attach_disk_candidates,
+            &live_ids,
+            &self.attach_seen_live,
+        );
+        self.attach_seen_live.extend(live_ids);
+        self.attach_disk_candidates.clone()
     }
 }
 

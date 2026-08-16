@@ -125,6 +125,7 @@ impl App {
             pending_subagent_attaches: Vec::new(),
             attach_run_filter: super::attach_picker::WorkspaceRunFilter::RunningOnly,
             attach_disk_candidates: Vec::new(),
+            attach_seen_live: std::collections::HashSet::new(),
             last_mouse_position: None,
             screen_selection: None,
             mcp_report,
