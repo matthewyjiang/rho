@@ -47,21 +47,19 @@ pub(crate) struct RunningRun {
     pub elapsed_seconds: u64,
 }
 
-/// Every indexed run the current process can still resolve on disk.
-pub(crate) fn list_indexed_runs() -> anyhow::Result<Vec<IndexedRun>> {
-    let rho_root = crate::paths::rho_dir()?;
-    list_indexed_runs_in_root(&rho_root)
-}
-
-fn list_indexed_runs_in_root(rho_root: &Path) -> anyhow::Result<Vec<IndexedRun>> {
+fn list_indexed_runs_in_root(
+    rho_root: &Path,
+    workspace_key: &str,
+) -> anyhow::Result<Vec<IndexedRun>> {
     let index_path = rho_root.join("subagents").join(INDEX_FILE_NAME);
     if !index_path.is_file() {
         return Ok(Vec::new());
     }
     let connection = initialize_index(&index_path)?;
-    let mut statement =
-        connection.prepare("SELECT run_id, path FROM runs ORDER BY created_at DESC")?;
-    let rows = statement.query_map([], |row| {
+    let mut statement = connection.prepare(
+        "SELECT run_id, path FROM runs WHERE workspace_key = ?1 ORDER BY created_at DESC",
+    )?;
+    let rows = statement.query_map(params![workspace_key], |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
     })?;
     let mut runs = Vec::new();
@@ -77,11 +75,22 @@ fn list_indexed_runs_in_root(rho_root: &Path) -> anyhow::Result<Vec<IndexedRun>>
     Ok(runs)
 }
 
-/// Indexed runs that have not reached a terminal state.
-pub(crate) fn list_running_runs() -> anyhow::Result<Vec<RunningRun>> {
+/// Indexed non-terminal runs started in `cwd`.
+///
+/// Membership comes from the workspace key written at reservation. Rows with a
+/// missing key (pre-migration) stay out of the picker; `rho attach <id>` still
+/// finds them from any directory.
+pub(crate) fn list_running_runs(cwd: &Path) -> anyhow::Result<Vec<RunningRun>> {
+    list_running_runs_in_root(&crate::paths::rho_dir()?, cwd)
+}
+
+fn list_running_runs_in_root(rho_root: &Path, cwd: &Path) -> anyhow::Result<Vec<RunningRun>> {
     let now = super::unix_now_secs();
+    let Some(workspace_key) = run_workspace_key(cwd) else {
+        return Ok(Vec::new());
+    };
     let mut running = Vec::new();
-    for indexed in list_indexed_runs()? {
+    for indexed in list_indexed_runs_in_root(rho_root, &workspace_key)? {
         let Some(status) = super::read_status(&indexed.directory.join(super::RESULT_FILE_NAME))
         else {
             continue;
@@ -196,13 +205,30 @@ impl Drop for ParentRunCleanupGuard {
     }
 }
 
-pub(crate) fn reserve_run_directory(placement: &RunPlacement) -> anyhow::Result<(String, PathBuf)> {
+/// Workspace key used for attach-picker membership.
+///
+/// Canonicalize first so a reserved run and a later `rho attach` from the same
+/// directory share a key even when one caller passed `Workspace::root()` and
+/// the other passed `current_dir()`. Empty paths have no key.
+fn run_workspace_key(cwd: &Path) -> Option<String> {
+    if cwd.as_os_str().is_empty() {
+        return None;
+    }
+    let path = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    Some(crate::session::workspace_key(&path))
+}
+
+pub(crate) fn reserve_run_directory(
+    placement: &RunPlacement,
+    cwd: &Path,
+) -> anyhow::Result<(String, PathBuf)> {
     let rho_root = crate::paths::rho_dir()?;
-    reserve_run_directory_in_root(&rho_root, placement, new_run_id)
+    reserve_run_directory_in_root(&rho_root, cwd, placement, new_run_id)
 }
 
 fn reserve_run_directory_in_root(
     rho_root: &Path,
+    cwd: &Path,
     placement: &RunPlacement,
     mut next_id: impl FnMut() -> String,
 ) -> anyhow::Result<(String, PathBuf)> {
@@ -222,12 +248,14 @@ fn reserve_run_directory_in_root(
             ensure_parent_not_locked(&transaction, parent_session_id, unix_timestamp_secs())?;
         }
         let inserted = transaction.execute(
-            "INSERT OR IGNORE INTO runs (run_id, path, parent_session_id, created_at) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT OR IGNORE INTO runs (run_id, path, parent_session_id, created_at, workspace_key)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
                 id,
                 directory.to_string_lossy(),
                 placement.parent_session_id(),
                 unix_timestamp_secs(),
+                run_workspace_key(cwd),
             ],
         )?;
         if inserted == 0 {

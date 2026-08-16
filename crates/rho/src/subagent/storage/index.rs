@@ -15,7 +15,7 @@ use super::super::create_private_file;
 use super::paths::prepare_private_directory;
 
 pub(super) const INDEX_FILE_NAME: &str = "index.sqlite3";
-const INDEX_SCHEMA_VERSION: i64 = 3;
+const INDEX_SCHEMA_VERSION: i64 = 4;
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// How long a crashed cleanup may block the same parent before the lease is
@@ -88,6 +88,16 @@ fn initialize_index_once(path: &Path) -> anyhow::Result<Connection> {
                  );",
             )?;
             transaction.pragma_update(None, "user_version", 3)?;
+            current = 3;
+        }
+        if current < 4 {
+            // Workspace identity for attach-picker scoping. Existing rows stay
+            // NULL and stay out of the directory picker; attach by id still finds them.
+            transaction.execute_batch(
+                "ALTER TABLE runs ADD COLUMN workspace_key TEXT;
+                 CREATE INDEX IF NOT EXISTS runs_workspace_idx ON runs(workspace_key);",
+            )?;
+            transaction.pragma_update(None, "user_version", 4)?;
         }
         transaction.commit()?;
     }

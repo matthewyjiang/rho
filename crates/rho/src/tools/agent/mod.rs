@@ -155,7 +155,7 @@ impl SubagentManager {
         definition: &AgentDefinition,
         prompt: &str,
         background: bool,
-        _cwd: &Path,
+        cwd: &Path,
     ) -> anyhow::Result<(String, PathBuf)> {
         let placement = self
             .parent_placement
@@ -167,8 +167,9 @@ impl SubagentManager {
             .map(str::to_owned)
             .and_then(|id| rho_sdk::SessionId::from_string(id).ok());
         let session_id = placement.parent_session_id().map(str::to_owned);
+        let cwd = cwd.to_path_buf();
         let (id, directory) =
-            tokio::task::spawn_blocking(move || subagent::reserve_run_directory(&placement))
+            tokio::task::spawn_blocking(move || subagent::reserve_run_directory(&placement, &cwd))
                 .await??;
         let output_file = directory.join(subagent::RESULT_FILE_NAME);
         let launch = AgentLaunchRequest {
@@ -537,6 +538,7 @@ impl AgentTool {
         let cwd = context
             .workspace_root()
             .map(Path::to_path_buf)
+            .or_else(|| std::env::current_dir().ok())
             .unwrap_or_default();
 
         let spawn = self

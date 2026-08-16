@@ -106,7 +106,11 @@ Full guide: [Claude Code as a delegated runtime](/subagents/claude-cli).
 
 ## Attachment and artifacts
 
-Watch a delegated run with `rho attach` or `rho attach <id>`. Detaching does not cancel the run. Artifacts live under the parent session folder when available, otherwise under `~/.rho/subagents/<id>/`. The title model names each run so the activity rail and attach picker can show role and title instead of a run id.
+Watch a delegated run with `rho attach` or `rho attach <id>`. The picker lists
+runs from the current directory. Detaching does not cancel the run. Artifacts
+live under the parent session folder when available, otherwise under
+`~/.rho/subagents/<id>/`. The title model names each run so the activity rail
+and attach picker can show role and title instead of a run id.
 
 Details: [Attachment and artifacts](/subagents/attachment-and-artifacts).
 
