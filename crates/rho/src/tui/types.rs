@@ -122,6 +122,16 @@ impl UsageUi {
     }
 }
 
+/// Who put the current status text up. Lets background polls retire their own
+/// message without comparing the status against a copy string that a rewording
+/// would silently break.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum StatusSource {
+    #[default]
+    Other,
+    McpConnecting,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum InputSubmissionMode {
     #[default]

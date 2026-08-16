@@ -58,6 +58,14 @@ fn bound_agent(config: &Config) -> crate::app::agent_binding::BoundAgent {
 }
 
 async fn assemble(config: &Config, cwd: &std::path::Path) -> (bool, String) {
+    assemble_awaiting_catalog(config, cwd, /*await_catalog_names*/ false).await
+}
+
+async fn assemble_awaiting_catalog(
+    config: &Config,
+    cwd: &std::path::Path,
+    await_catalog_names: bool,
+) -> (bool, String) {
     let diagnostics = RuntimeDiagnostics::new(config);
     let agent = bound_agent(config);
     let assembled = assemble_tools_and_prompt(ToolsAndPromptOptions {
@@ -71,7 +79,7 @@ async fn assemble(config: &Config, cwd: &std::path::Path) -> (bool, String) {
         questionnaire_enabled: false,
         mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
         mcp_sampling: super::McpSamplingSupport::Unavailable,
-        await_catalog_names: false,
+        await_catalog_names,
         defer_mcp_connect: false,
         background_subagents: BackgroundSubagents::Disabled,
         diagnostics: &diagnostics,
@@ -224,27 +232,35 @@ async fn the_assembled_prompt_names_the_bound_model() {
     assert!(prompt.contains("openai/gpt-5.6-sol"), "{prompt}");
 }
 
-// Covers: interactive prompt assembly must not wait on a stuck models.dev hydrate.
+// Covers: `await_catalog_names` must decide whether assembly blocks on a stuck
+// models.dev hydrate. Interactive passes false to keep the first frame free;
+// this pins the flag itself, so making it a no-op fails here.
 // Owner: root tool/prompt assembly
 #[tokio::test(flavor = "current_thread")]
-async fn deferred_catalog_names_do_not_wait_on_a_stuck_hydrate() {
+async fn await_catalog_names_decides_whether_assembly_waits_for_a_hydrate() {
     let catalog = tempfile::tempdir().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let _cache =
         rho_providers::model::models_dev::ModelsDevCacheDirGuard::new(catalog.path().to_path_buf());
+    // Held for the whole test, so the hydrate every case would await never lands.
     let _lock = rho_providers::model::models_dev::catalog_hydrate_lock_for_tests()
         .lock()
         .await;
     let config = Config::default();
-    let assembled = tokio::time::timeout(
-        std::time::Duration::from_millis(500),
-        assemble(&config, cwd.path()),
-    )
-    .await;
-    assert!(
-        assembled.is_ok(),
-        "interactive prompt assembly awaited a stuck catalog hydrate"
-    );
+
+    for (await_catalog_names, finishes) in [(false, true), (true, false)] {
+        let assembled = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            assemble_awaiting_catalog(&config, cwd.path(), await_catalog_names),
+        )
+        .await;
+
+        assert_eq!(
+            assembled.is_ok(),
+            finishes,
+            "await_catalog_names = {await_catalog_names}"
+        );
+    }
 }
 
 // Covers: interactive MCP connect must return a pending inventory instead of

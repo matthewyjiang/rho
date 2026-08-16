@@ -26,7 +26,7 @@ pub(super) fn picker(context: McpPickerContext<'_>) -> UiPicker {
             .map(|server| server_item(server, context.catalog)),
     );
 
-    UiPicker::new("MCP servers", items, PickerAction::Dismiss)
+    UiPicker::new("MCP servers", items, PickerAction::ViewMcpServers)
         .with_layout(PickerLayout::Overlay)
         .with_badge_placement(super::PickerBadgePlacement::Detail)
         .with_overlay_chrome(OverlayChrome {

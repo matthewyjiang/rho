@@ -541,7 +541,16 @@ impl App {
         self.write_status(status.as_ref(), /*allow_toast*/ false);
     }
 
+    /// Put up the MCP connect indicator and record that it is ours, so the
+    /// hydrate poll can retire it later without matching on its wording.
+    pub(super) fn set_mcp_connecting_status(&mut self) {
+        self.set_status("connecting MCP servers");
+        self.status_source = super::StatusSource::McpConnecting;
+    }
+
     fn write_status(&mut self, status: &str, allow_toast: bool) {
+        // Any other status takes ownership, including a clear.
+        self.status_source = super::StatusSource::Other;
         if status.is_empty() {
             self.last_status.clear();
             self.status_overlay = None;

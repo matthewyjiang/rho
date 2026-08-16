@@ -13,7 +13,7 @@ use super::{
     process_panel::ProcessPanel,
     statusline::StatusLine,
     subagent_panel::SubagentPanel,
-    App, StreamUi, TuiBootstrap, UsageUi,
+    App, StatusSource, StreamUi, TuiBootstrap, UsageUi,
 };
 
 #[cfg(debug_assertions)]
@@ -83,6 +83,7 @@ impl App {
             input_ui: InputUi::default(),
             status_overlay: None,
             last_status: String::new(),
+            status_source: StatusSource::default(),
             should_quit: false,
             ctrl_c_streak: 0,
             streams: StreamUi::default(),

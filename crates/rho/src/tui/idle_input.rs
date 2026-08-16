@@ -374,7 +374,7 @@ impl App {
                     media,
                     paste_segments,
                 });
-            self.notify_status("connecting MCP servers");
+            self.set_mcp_connecting_status();
             return Ok(());
         }
 

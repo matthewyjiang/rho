@@ -4,7 +4,9 @@ use futures_util::FutureExt;
 use rho_providers::model::models_dev::fetch_model_metadata;
 use rho_providers::model::ReasoningRequestSource::PersistedOrDefault;
 
-use super::{reasoning_metadata, App, ComposerMode, Entry, InteractiveRuntime};
+use super::{
+    reasoning_metadata, App, ComposerMode, Entry, InteractiveRuntime, PickerAction, StatusSource,
+};
 
 impl App {
     pub(super) async fn poll_startup_hydrates(
@@ -18,12 +20,16 @@ impl App {
         }
         self.mcp_report = agent.mcp_report().clone();
         self.mcp_catalog = agent.mcp_catalog().clone();
-        if pending && !agent.mcp_connect_pending() && self.last_status == "connecting MCP servers" {
+        if pending
+            && !agent.mcp_connect_pending()
+            && self.status_source == StatusSource::McpConnecting
+        {
             self.set_status_quiet("");
         }
-        if matches!(self.input_ui.composer(), ComposerMode::Picker(_))
-            && self.last_status == "mcp servers"
-        {
+        if matches!(
+            self.input_ui.composer(),
+            ComposerMode::Picker(picker) if picker.action == PickerAction::ViewMcpServers
+        ) {
             let _ = self.execute_mcp_command();
         }
         Ok(true)

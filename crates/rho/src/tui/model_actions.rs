@@ -373,7 +373,7 @@ impl App {
                 self.submit_workflow_selection(&value, terminal, agent)
                     .await
             }
-            PickerAction::Dismiss => Ok(()),
+            PickerAction::Dismiss | PickerAction::ViewMcpServers => Ok(()),
         };
         if let (true, Some((picker, selected_value))) = (result.is_ok(), other_return_picker) {
             // Restore the parent picker first, then re-apply action feedback so
@@ -520,7 +520,8 @@ impl App {
             | PickerAction::SelectTheme
             | PickerAction::EditAgent
             | PickerAction::Workflow
-            | PickerAction::Dismiss => return Ok(()),
+            | PickerAction::Dismiss
+            | PickerAction::ViewMcpServers => return Ok(()),
         };
         Self::restore_picker_position(&mut picker, &value, filter);
         self.input_ui.set_composer(ComposerMode::Picker(picker));
@@ -587,7 +588,8 @@ impl App {
             | PickerAction::Config
             | PickerAction::EditAgent
             | PickerAction::Workflow
-            | PickerAction::Dismiss => return None,
+            | PickerAction::Dismiss
+            | PickerAction::ViewMcpServers => return None,
         };
         match self.input_ui.composer_mut() {
             ComposerMode::Picker(picker) => {

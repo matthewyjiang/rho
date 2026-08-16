@@ -464,6 +464,8 @@ struct App {
     status_overlay: Option<status_overlay::StatusOverlay>,
     /// Last status text for callers that inspect mode feedback.
     last_status: String,
+    /// Who owns `last_status`, so a poll can retire its own message.
+    status_source: StatusSource,
     should_quit: bool,
     ctrl_c_streak: u8,
     streams: StreamUi,
