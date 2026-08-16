@@ -100,13 +100,18 @@ impl HistoryRenderSettings {
 #[derive(Default)]
 pub(super) struct HistoryLineCache {
     settings: Option<HistoryRenderSettings>,
-    /// Per-entry rendered payload (lines + relative metadata).
+    /// First transcript index stored in [`Self::entries`]. Earlier entries stay
+    /// unmeasured until scroll asks for them.
+    measured_from: usize,
+    /// Rendered payload for `transcript[measured_from..]`.
     entries: Vec<CachedEntry>,
-    /// Prefix ranges derived from [`CachedEntry::lines`] lengths.
+    /// Prefix ranges derived from [`CachedEntry::lines`] lengths, starting at
+    /// line 0 of the measured suffix.
     entry_ranges: Vec<Range<usize>>,
+    /// Transcript index to rebuild from. Never points into the unmeasured prefix.
     dirty_from: Option<usize>,
-    /// Entry indices to re-render in place (height may change). Applied on the
-    /// next `ensure_current` without rebuilding the history suffix when the
+    /// Transcript indices to re-render in place (height may change). Applied on
+    /// the next `ensure_current` without rebuilding the history suffix when the
     /// cache is already warm — used by tool expand/collapse.
     resplice: Vec<usize>,
     appended_entry: Option<usize>,
@@ -123,6 +128,14 @@ pub(super) struct HistoryLineCache {
 }
 
 impl HistoryLineCache {
+    /// Drop measured rows and treat `len` as the next unmeasured transcript
+    /// length. The next paint measures a suffix instead of wrapping 0..len.
+    pub(super) fn mark_unmeasured(&mut self, len: usize) {
+        self.measured_from = len;
+        self.clear_rendered();
+        self.dirty_from = None;
+    }
+
     pub(super) fn invalidate_from(&mut self, index: usize) {
         self.appended_entry = None;
         // Fold pending surgical marks into the suffix rebuild so an earlier
@@ -133,10 +146,11 @@ impl HistoryLineCache {
             dirty = dirty.min(resplice_index);
         }
         self.resplice.clear();
-        self.dirty_from = Some(
-            self.dirty_from
-                .map_or(dirty, |existing| existing.min(dirty)),
-        );
+        // Unmeasured prefix has no cached rows; start at the measured suffix.
+        dirty = dirty.max(self.measured_from);
+        self.dirty_from = Some(self.dirty_from.map_or(dirty, |existing| {
+            existing.min(dirty).max(self.measured_from)
+        }));
     }
 
     /// Re-render these entries on the next paint without dropping the cached
@@ -166,7 +180,7 @@ impl HistoryLineCache {
             return;
         }
         self.open_stream_tail = open;
-        if let Some(last) = self.entry_ranges.len().checked_sub(1) {
+        if let Some(last) = self.cached_transcript_end().checked_sub(1) {
             // Surgical: only the last entry's trailing blank changes.
             self.resplice_entries([last]);
         }
@@ -175,12 +189,12 @@ impl HistoryLineCache {
     /// Mark the last entry as text-appended (streaming assistant or reasoning)
     /// so the next paint extends its rendered lines instead of re-rendering.
     pub(super) fn entry_appended(&mut self, index: usize) {
-        let can_extend = index + 1 == self.entry_ranges.len()
+        let can_extend = index + 1 == self.cached_transcript_end()
             && self.dirty_from.is_none()
             && self.resplice.is_empty()
             && self
-                .entries
-                .get(index)
+                .cache_index(index)
+                .and_then(|cache_index| self.entries.get(cache_index))
                 .is_some_and(|entry| entry.incremental.is_some());
         if can_extend {
             self.appended_entry = Some(index);
@@ -198,6 +212,48 @@ impl HistoryLineCache {
     ) -> usize {
         self.ensure_current(entries, settings, image_resolver);
         self.total_lines()
+    }
+
+    /// Measure from the tail until `min_lines` rows exist or the transcript
+    /// starts. Leaves earlier entries unmeasured.
+    pub(super) fn ensure_suffix(
+        &mut self,
+        entries: &[Entry],
+        settings: HistoryRenderSettings,
+        min_lines: usize,
+        image_resolver: EntryImageResolver<'_>,
+    ) {
+        self.ensure_current(entries, settings, image_resolver);
+        if self.total_lines() >= min_lines || self.measured_from == 0 {
+            return;
+        }
+        self.grow_prefix(
+            entries,
+            settings,
+            min_lines.saturating_sub(self.total_lines()),
+            image_resolver,
+        );
+    }
+
+    /// Render earlier entries until `extra_lines` more rows exist or the
+    /// transcript starts. Returns how many lines were prepended.
+    pub(super) fn grow_prefix(
+        &mut self,
+        entries: &[Entry],
+        settings: HistoryRenderSettings,
+        extra_lines: usize,
+        image_resolver: EntryImageResolver<'_>,
+    ) -> usize {
+        if extra_lines == 0 || self.measured_from == 0 {
+            return 0;
+        }
+        self.ensure_current(entries, settings, image_resolver);
+        let before = self.total_lines();
+        let target = before.saturating_add(extra_lines);
+        while self.measured_from > 0 && self.total_lines() < target {
+            self.prepend_entry(entries, settings, image_resolver);
+        }
+        self.total_lines().saturating_sub(before)
     }
 
     /// Absolute-line code-block projection, sorted by line. Test helper for
@@ -254,7 +310,7 @@ impl HistoryLineCache {
         self.entry_ranges
             .get(index)
             .filter(|range| range.contains(&line))
-            .map(|_| index)
+            .map(|_| index.saturating_add(self.measured_from))
     }
 
     /// Cached transcript line span of `index`. Valid only while the cache is
@@ -399,6 +455,49 @@ impl HistoryLineCache {
         blocks
     }
 
+    fn cached_transcript_end(&self) -> usize {
+        self.measured_from.saturating_add(self.entries.len())
+    }
+
+    fn cache_index(&self, transcript_index: usize) -> Option<usize> {
+        transcript_index.checked_sub(self.measured_from)
+    }
+
+    fn prepend_entry(
+        &mut self,
+        entries: &[Entry],
+        settings: HistoryRenderSettings,
+        image_resolver: EntryImageResolver<'_>,
+    ) {
+        let Some(index) = self.measured_from.checked_sub(1) else {
+            return;
+        };
+        let Some(entry) = entries.get(index) else {
+            self.measured_from = 0;
+            return;
+        };
+        #[cfg(test)]
+        {
+            self.entry_renders = self.entry_renders.saturating_add(1);
+        }
+        let cached = cached_entry_from_render(
+            prepare_cache_entry_render(
+                entry,
+                index,
+                entries.len(),
+                settings,
+                self.open_stream_tail,
+                image_resolver,
+            ),
+            entry,
+            index + 1 == entries.len(),
+            settings.width,
+        );
+        self.measured_from = index;
+        self.entries.insert(0, cached);
+        self.recompute_ranges();
+    }
+
     fn soft_resplice_indices(&self, delta: SoftSettingsDelta, entries: &[Entry]) -> Vec<usize> {
         let mut indices = Vec::new();
         if delta.image_height {
@@ -406,14 +505,18 @@ impl HistoryLineCache {
                 self.entries
                     .iter()
                     .enumerate()
-                    .filter_map(|(index, entry)| entry.depends_on_image_height.then_some(index)),
+                    .filter_map(|(index, entry)| {
+                        entry
+                            .depends_on_image_height
+                            .then_some(index.saturating_add(self.measured_from))
+                    }),
             );
             if delta.image_only() {
                 return indices;
             }
         }
         if delta.tool_output || delta.zen {
-            for (index, entry) in entries.iter().enumerate() {
+            for (index, entry) in entries.iter().enumerate().skip(self.measured_from) {
                 if delta.needs_entry(entry) {
                     indices.push(index);
                 }
@@ -448,10 +551,17 @@ impl HistoryLineCache {
             }
         }
 
-        match entries.len().cmp(&self.entry_ranges.len()) {
-            std::cmp::Ordering::Less => self.invalidate_from(entries.len()),
+        let cached_end = self.cached_transcript_end();
+        match entries.len().cmp(&cached_end) {
+            std::cmp::Ordering::Less => {
+                if entries.len() < self.measured_from {
+                    self.mark_unmeasured(entries.len());
+                } else {
+                    self.invalidate_from(entries.len());
+                }
+            }
             std::cmp::Ordering::Equal => {}
-            std::cmp::Ordering::Greater => self.invalidate_from(self.entry_ranges.len()),
+            std::cmp::Ordering::Greater => self.invalidate_from(cached_end),
         }
 
         // Prefer surgical resplice when the cache is warm and only discrete
@@ -479,13 +589,14 @@ impl HistoryLineCache {
         let Some(dirty_from) = self.dirty_from.take() else {
             return;
         };
-        let rebuild_from = dirty_from.min(entries.len()).min(self.entry_ranges.len());
+        let rebuild_from = dirty_from.max(self.measured_from).min(entries.len());
         if self.appended_entry.take() == Some(rebuild_from)
             && self.try_extend_last_entry(entries, rebuild_from, settings.width)
         {
             return;
         }
-        self.truncate_entries_to(rebuild_from);
+        let cache_rebuild = rebuild_from.saturating_sub(self.measured_from);
+        self.truncate_entries_to(cache_rebuild);
 
         for (entry_index, entry) in entries.iter().enumerate().skip(rebuild_from) {
             self.push_rendered_entry(entry_index, entry, entries.len(), settings, image_resolver);
@@ -504,25 +615,28 @@ impl HistoryLineCache {
         if indices.is_empty() {
             return true;
         }
-        if self.entries.len() != entries.len()
-            || self.entry_ranges.len() != entries.len()
+        if self.entries.len() != entries.len().saturating_sub(self.measured_from)
+            || self.entry_ranges.len() != self.entries.len()
             || self.settings != Some(settings)
         {
             return false;
         }
         for &index in indices {
-            if index >= entries.len() {
+            if index >= entries.len() || self.cache_index(index).is_none() {
                 return false;
             }
         }
 
         for &index in indices {
+            let Some(cache_index) = self.cache_index(index) else {
+                return false;
+            };
             #[cfg(test)]
             {
                 self.entry_renders = self.entry_renders.saturating_add(1);
             }
             let entry = &entries[index];
-            self.entries[index] = cached_entry_from_render(
+            self.entries[cache_index] = cached_entry_from_render(
                 prepare_cache_entry_render(
                     entry,
                     index,
@@ -575,13 +689,16 @@ impl HistoryLineCache {
     }
 
     fn try_extend_last_entry(&mut self, entries: &[Entry], index: usize, width: usize) -> bool {
+        let Some(cache_index) = self.cache_index(index) else {
+            return false;
+        };
         let Some((text, render)) = entries.get(index).and_then(incremental_entry_source) else {
             return false;
         };
-        let Some(range) = self.entry_ranges.get(index).cloned() else {
+        let Some(range) = self.entry_ranges.get(cache_index).cloned() else {
             return false;
         };
-        let Some(cached) = self.entries.get(index) else {
+        let Some(cached) = self.entries.get(cache_index) else {
             return false;
         };
         let Some(cache) = cached.incremental else {
@@ -623,7 +740,7 @@ impl HistoryLineCache {
         }
 
         let previous_stable_source_len = cache.stable_source_len;
-        let entry = &mut self.entries[index];
+        let entry = &mut self.entries[cache_index];
         // Extend in place: keep the already-rendered stable prefix and replace
         // only the mutable tail, so an append costs the new lines rather than a
         // clone of everything rendered so far.

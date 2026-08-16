@@ -50,10 +50,12 @@ impl HistoryUi {
 
     pub(in crate::tui) fn clear_entries(&mut self) {
         self.transcript.clear();
+        self.lines.mark_unmeasured(0);
     }
 
     pub(in crate::tui) fn set_entries(&mut self, entries: Vec<Entry>) {
         self.transcript = entries;
+        self.lines.mark_unmeasured(self.transcript.len());
     }
 
     pub(in crate::tui) fn push(&mut self, entry: Entry) {

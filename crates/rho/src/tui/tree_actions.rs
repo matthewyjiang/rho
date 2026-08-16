@@ -3,10 +3,9 @@ use ratatui::DefaultTerminal;
 use crate::session::tree::{NodeId, SessionTreeItem};
 
 use super::{
-    message_history::{recovered_history_tail, transcript_entries_from_messages},
-    picker_overlay::OverlayChrome,
-    App, ComposerMode, InteractiveRuntime, PickerAction, PickerBadge, PickerBadgeTone, PickerItem,
-    PickerLayout, UiPicker, ViewModelEvent, RECOVERED_HISTORY_LINE_LIMIT,
+    message_history::transcript_entries_from_messages, picker_overlay::OverlayChrome, App,
+    ComposerMode, InteractiveRuntime, PickerAction, PickerBadge, PickerBadgeTone, PickerItem,
+    PickerLayout, UiPicker, ViewModelEvent,
 };
 
 pub(super) fn tree_picker(items: Vec<SessionTreeItem>) -> UiPicker {
@@ -107,13 +106,7 @@ impl App {
         let histories = storage.histories_for_node(&target_id)?;
         let entries = transcript_entries_from_messages(&histories.display, &self.info.runtime.cwd);
         let size = terminal.size()?;
-        let width = size.width as usize;
-        self.note_terminal_geometry(width, size.height as usize);
-        let (_, visible_entries) = recovered_history_tail(
-            &entries,
-            RECOVERED_HISTORY_LINE_LIMIT,
-            self.history_render_settings(width),
-        );
+        self.note_terminal_geometry(size.width as usize, size.height as usize);
         agent.select_tree_node(storage, &target_id).await?;
 
         self.info.session.recovered_messages = histories.display.clone();
@@ -127,9 +120,8 @@ impl App {
         self.goal = None;
         self.reset_usage();
         self.usage.current_context = None;
-        self.history.set_entries(visible_entries);
+        self.history.set_entries(entries);
         self.history.images_mut().clear();
-        self.history.invalidate_from(0);
         self.scroll_history_to_bottom();
         if let Some(context) = agent.take_context_usage() {
             self.record_agent_event(ViewModelEvent::ContextUsage(context));

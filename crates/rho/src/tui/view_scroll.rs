@@ -9,9 +9,42 @@ use ratatui::{
     Terminal,
 };
 
-use super::{activity, App, HistoryScrollbar, Theme, HISTORY_SCROLLBAR_REVEAL_DURATION};
+use super::{
+    activity, history_cache::HistoryRenderSettings, App, HistoryScrollbar, Theme,
+    HISTORY_SCROLLBAR_REVEAL_DURATION,
+};
 
 impl App {
+    pub(super) fn ensure_measured_history_suffix(
+        &mut self,
+        settings: HistoryRenderSettings,
+        viewport: usize,
+    ) {
+        // One extra pane so wheel/page-up does not wrap on the first notch.
+        let min_lines = viewport.saturating_add(viewport.max(1));
+        let cwd = self.info.runtime.cwd.clone();
+        self.history
+            .with_lines_and_images_mut(|cache, entries, images| {
+                cache.ensure_suffix(entries, settings, min_lines, &|index, sources| {
+                    images.ready_images(index, sources, &cwd)
+                });
+            });
+    }
+
+    pub(super) fn grow_measured_history_prefix(
+        &mut self,
+        settings: HistoryRenderSettings,
+        extra_lines: usize,
+    ) -> usize {
+        let cwd = self.info.runtime.cwd.clone();
+        self.history
+            .with_lines_and_images_mut(|cache, entries, images| {
+                cache.grow_prefix(entries, settings, extra_lines, &|index, sources| {
+                    images.ready_images(index, sources, &cwd)
+                })
+            })
+    }
+
     pub(super) fn scroll_history_to_bottom(&mut self) {
         self.history.scroll_to_bottom();
     }
@@ -23,8 +56,25 @@ impl App {
         now: Instant,
         delta: isize,
     ) {
-        let history_len = self.history_len(width, now);
         let content_height = self.history_content_height_for_screen(width, height, now);
+        let settings = self.history_render_settings(width);
+        self.ensure_measured_history_suffix(settings, content_height);
+        let history_len = self.history_len(width, now);
+        let start = self.visible_history_start(history_len, content_height);
+        let overflow = if delta < 0 {
+            delta.unsigned_abs().saturating_sub(start)
+        } else {
+            0
+        };
+        if overflow > 0 {
+            let prepended = self.grow_measured_history_prefix(settings, overflow);
+            let new_len = self.history_len(width, now);
+            let new_start = start.saturating_add(prepended).saturating_add_signed(delta);
+            self.history
+                .scroll_chrome_mut()
+                .set_top_line(new_len, content_height, new_start);
+            return;
+        }
         self.history
             .scroll_chrome_mut()
             .scroll_by(history_len, content_height, delta);
@@ -55,8 +105,10 @@ impl App {
     }
 
     pub(super) fn clamp_history_scroll(&mut self, width: usize, height: usize, now: Instant) {
-        let history_len = self.history_len(width, now);
         let content_height = self.history_content_height_for_screen(width, height, now);
+        let settings = self.history_render_settings(width);
+        self.ensure_measured_history_suffix(settings, content_height);
+        let history_len = self.history_len(width, now);
         self.history
             .scroll_chrome_mut()
             .clamp(history_len, content_height);
