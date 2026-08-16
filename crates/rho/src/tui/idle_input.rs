@@ -402,13 +402,18 @@ impl App {
             display_prompt: turn.display,
             paste_segments,
         });
+        if !self.pending_mcp_submissions.is_empty() {
+            // Older holds are still waiting. Leave their status alone: it is
+            // also the message `poll_startup_hydrates` looks for when connect
+            // lands, and replacing it would strand it on screen.
+            return;
+        }
         // Attachments cannot go back into the composer, so say so rather than
         // let them disappear with the hold.
-        if !media.is_empty() {
-            self.notify_status("prompt returned to the composer; attach the files again");
-        } else if self.pending_mcp_submissions.is_empty() {
-            // Older holds are still waiting, so leave their status up.
+        if media.is_empty() {
             self.set_status_quiet("");
+        } else {
+            self.notify_status("prompt returned to the composer; attach the files again");
         }
     }
 
