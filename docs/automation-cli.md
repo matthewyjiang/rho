@@ -206,7 +206,7 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | `rho` | Start an interactive TUI session in the current working directory. |
 | `rho run [OPTIONS] [PROMPT]...` | Send one prompt, optionally append stdin, print the final answer, and exit. |
 | `rho acp` | Serve Agent Client Protocol over stdio for an editor host. See [ACP](/integrations/acp). |
-| `rho attach [ID]` | Watch a delegated agent run in a read-only TUI. Omit the id to pick from running subagents in the current directory. See [subagents](/subagents/attachment-and-artifacts). |
+| `rho attach [ID]` | Watch a delegated agent run in a read-only TUI. Omit the id to pick from subagents in the current directory. The picker starts on running runs; Ctrl-R shows finished transcripts. See [subagents](/subagents/attachment-and-artifacts). |
 | `rho workflow <COMMAND>` | Use `list`, `validate`, `plan`, `run`, `status`, `cancel`, or `resume <RUN_ID>` for a [durable workflow](/workflows). |
 | `rho sessions list [--all-projects] [--search TEXT] [--limit N] [--json]` | List saved sessions for the current workspace, or every workspace with cwd context. |
 | `rho sessions export <ID> [--output PATH] [--format html\|markdown\|json] [--force]` | Export a saved session transcript. Default path is under `$RHO_HOME/exports/` when `RHO_HOME` is set, otherwise `~/.rho/exports/`. |

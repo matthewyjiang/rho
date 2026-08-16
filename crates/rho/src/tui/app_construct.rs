@@ -123,6 +123,7 @@ impl App {
             terminal_height: 0,
             composer_attachment_layout_cache: None,
             pending_subagent_attaches: Vec::new(),
+            attach_run_filter: crate::subagent::WorkspaceRunFilter::RunningOnly,
             last_mouse_position: None,
             screen_selection: None,
             mcp_report,

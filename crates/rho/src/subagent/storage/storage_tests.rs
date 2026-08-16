@@ -11,8 +11,9 @@ use super::{
     index::{
         initialize_index, insert_parent_lock_for_test, unix_timestamp_secs, PARENT_LOCK_TTL_SECS,
     },
-    list_running_runs_in_root, lock_parent_for_cleanup_in_root,
+    list_workspace_runs_in_root, lock_parent_for_cleanup_in_root,
     reserve_run_directory_in_root as reserve_at, resolve_run_directory_in_root, RunPlacement,
+    WorkspaceRunFilter,
 };
 use crate::session::Session;
 use std::path::{Path, PathBuf};
@@ -370,6 +371,43 @@ fn list_running_runs_keeps_only_the_current_workspace() {
     );
 }
 
+// Covers: attach listing can include finished transcripts for the same workspace.
+// Owner: delegated-run index listing
+#[test]
+fn list_workspace_runs_can_include_finished_runs() {
+    let temp = TempDir::new().unwrap();
+    let cwd = TempDir::new().unwrap();
+    let running = reserve_running(
+        temp.path(),
+        cwd.path(),
+        RunPlacement::parentless(),
+        "aaaaaa",
+        "worker",
+    );
+    let finished = reserve_running(
+        temp.path(),
+        cwd.path(),
+        RunPlacement::parentless(),
+        "bbbbbb",
+        "explorer",
+    );
+    write_terminal(temp.path(), &finished, crate::subagent::RunState::Ok);
+
+    assert_eq!(
+        running_ids(temp.path(), cwd.path()),
+        std::collections::BTreeSet::from([running.clone()])
+    );
+    let all_ids = list_workspace_runs_in_root(temp.path(), cwd.path(), WorkspaceRunFilter::All)
+        .unwrap()
+        .into_iter()
+        .map(|run| run.id)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        all_ids,
+        std::collections::BTreeSet::from([running, finished])
+    );
+}
+
 // Covers: a v3 index must upgrade and keep unscoped rows out of the picker.
 // Owner: delegated-run index listing
 #[test]
@@ -444,8 +482,23 @@ fn reserve_running(
     id
 }
 
+fn write_terminal(rho_root: &Path, id: &str, state: crate::subagent::RunState) {
+    let directory = resolve_run_directory_in_root(rho_root, id).unwrap();
+    crate::subagent::write_status(
+        &directory.join(crate::subagent::RESULT_FILE_NAME),
+        &crate::subagent::RunStatus {
+            state,
+            agent_id: Some("explorer".into()),
+            started_at: Some(1),
+            finished_at: Some(2),
+            ..crate::subagent::RunStatus::default()
+        },
+    )
+    .unwrap();
+}
+
 fn running_ids(rho_root: &Path, cwd: &Path) -> std::collections::BTreeSet<String> {
-    list_running_runs_in_root(rho_root, cwd)
+    list_workspace_runs_in_root(rho_root, cwd, WorkspaceRunFilter::RunningOnly)
         .unwrap()
         .into_iter()
         .map(|run| run.id)

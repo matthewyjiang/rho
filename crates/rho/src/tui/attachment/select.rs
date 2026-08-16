@@ -3,7 +3,7 @@
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{widgets::Clear, DefaultTerminal, Frame};
 
-use crate::subagent;
+use crate::subagent::WorkspaceRunFilter;
 
 use super::super::{
     attach_picker::{self, AttachCandidate},
@@ -17,21 +17,20 @@ pub(super) async fn select_running_run(
 ) -> anyhow::Result<Option<String>> {
     let cwd = std::env::current_dir()?;
     let candidates =
-        tokio::task::spawn_blocking(move || subagent::list_running_runs(&cwd)).await??;
-    if candidates.is_empty() {
-        anyhow::bail!("no running subagents in this directory");
-    }
-    let candidates = candidates
-        .into_iter()
-        .map(AttachCandidate::from)
-        .collect::<Vec<_>>();
-    let mut picker = attach_picker::picker(&candidates);
+        tokio::task::spawn_blocking(move || attach_picker::workspace_candidates(&cwd)).await??;
+    let mut filter = WorkspaceRunFilter::RunningOnly;
+    let mut picker = attach_picker::picker(&candidates, filter);
     loop {
         terminal.draw(|frame| draw_picker(frame, &picker))?;
         match next_event().await? {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
                 if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     return Ok(None);
+                }
+                if attach_picker::is_running_filter_toggle(key) {
+                    filter = filter.toggled();
+                    picker = restore_picker(&candidates, filter, &picker);
+                    continue;
                 }
                 let targets = overlay_scroll_targets(&picker, terminal);
                 match apply_picker_key(&mut picker, key, targets, /*space_confirms*/ false) {
@@ -49,6 +48,17 @@ pub(super) async fn select_running_run(
             _ => {}
         }
     }
+}
+
+fn restore_picker(
+    candidates: &[AttachCandidate],
+    filter: WorkspaceRunFilter,
+    current: &UiPicker,
+) -> UiPicker {
+    let cursor = current.cursor();
+    let mut next = attach_picker::picker(candidates, filter);
+    next.restore_cursor(&cursor);
+    next
 }
 
 fn draw_picker(frame: &mut Frame<'_>, picker: &UiPicker) {

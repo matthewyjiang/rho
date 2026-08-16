@@ -36,7 +36,7 @@ pub(crate) struct IndexedRun {
     pub directory: PathBuf,
 }
 
-/// A non-terminal indexed run, ready for attach.
+/// An indexed workspace run for attach listing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RunningRun {
     pub id: String,
@@ -45,6 +45,22 @@ pub(crate) struct RunningRun {
     pub last_activity: Option<String>,
     pub state: super::RunState,
     pub elapsed_seconds: u64,
+}
+
+/// Which indexed workspace runs the attach picker should load.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WorkspaceRunFilter {
+    RunningOnly,
+    All,
+}
+
+impl WorkspaceRunFilter {
+    pub(crate) fn toggled(self) -> Self {
+        match self {
+            Self::RunningOnly => Self::All,
+            Self::All => Self::RunningOnly,
+        }
+    }
 }
 
 fn list_indexed_runs_in_root(
@@ -75,34 +91,41 @@ fn list_indexed_runs_in_root(
     Ok(runs)
 }
 
-/// Indexed non-terminal runs started in `cwd`.
+/// Indexed runs started in `cwd`, optionally including finished transcripts.
 ///
 /// Membership comes from the workspace key written at reservation. Rows with a
 /// missing key (pre-migration) stay out of the picker; `rho attach <id>` still
 /// finds them from any directory.
-pub(crate) fn list_running_runs(cwd: &Path) -> anyhow::Result<Vec<RunningRun>> {
-    list_running_runs_in_root(&crate::paths::rho_dir()?, cwd)
+pub(crate) fn list_workspace_runs(
+    cwd: &Path,
+    filter: WorkspaceRunFilter,
+) -> anyhow::Result<Vec<RunningRun>> {
+    list_workspace_runs_in_root(&crate::paths::rho_dir()?, cwd, filter)
 }
 
-fn list_running_runs_in_root(rho_root: &Path, cwd: &Path) -> anyhow::Result<Vec<RunningRun>> {
+fn list_workspace_runs_in_root(
+    rho_root: &Path,
+    cwd: &Path,
+    filter: WorkspaceRunFilter,
+) -> anyhow::Result<Vec<RunningRun>> {
     let now = super::unix_now_secs();
     let Some(workspace_key) = run_workspace_key(cwd) else {
         return Ok(Vec::new());
     };
-    let mut running = Vec::new();
+    let mut runs = Vec::new();
     for indexed in list_indexed_runs_in_root(rho_root, &workspace_key)? {
         let Some(status) = super::read_status(&indexed.directory.join(super::RESULT_FILE_NAME))
         else {
             continue;
         };
-        if status.state.is_terminal() {
+        if matches!(filter, WorkspaceRunFilter::RunningOnly) && status.state.is_terminal() {
             continue;
         }
         let elapsed_seconds = status
             .elapsed_duration(now)
             .map(|duration| duration.as_secs())
             .unwrap_or(0);
-        running.push(RunningRun {
+        runs.push(RunningRun {
             id: indexed.id,
             agent_id: status.agent_id.unwrap_or_else(|| "agent".into()),
             title: status.title,
@@ -111,7 +134,7 @@ fn list_running_runs_in_root(rho_root: &Path, cwd: &Path) -> anyhow::Result<Vec<
             elapsed_seconds,
         });
     }
-    Ok(running)
+    Ok(runs)
 }
 
 /// Where a delegated run's artifact directory should live.

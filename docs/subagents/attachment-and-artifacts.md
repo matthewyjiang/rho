@@ -9,10 +9,12 @@ rho attach
 rho attach abc123
 ```
 
-`rho attach` without an id opens a full-screen picker of running subagents
-from the current directory. Rows show the agent role, generated title, and
-current tool or action. Enter attaches to the selected run. Escape leaves
-without attaching. `rho attach <id>` still finds a run from any directory.
+`rho attach` without an id opens a full-screen picker of subagents from the
+current directory, even when none are running. It starts on running runs.
+Ctrl-R shows finished transcripts from this directory so you can reopen an
+old run. Rows show the agent role, generated title, and current tool or
+final state. Enter attaches to the selected run. Escape leaves without
+attaching. `rho attach <id>` still finds a run from any directory.
 
 ```mermaid
 flowchart TD
