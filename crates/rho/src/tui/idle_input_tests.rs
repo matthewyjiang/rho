@@ -121,6 +121,8 @@ fn compact_holds_are_not_releasable_until_promoted() {
     assert_eq!(app.first_releasable_held_wait(false, true), None);
 }
 
+// Covers: an MCP hold must not start a turn while a compact job holds the session.
+// Owner: idle input hold/release
 #[test]
 fn mcp_holds_are_not_releasable_while_compacting() {
     let mut app = test_app();
