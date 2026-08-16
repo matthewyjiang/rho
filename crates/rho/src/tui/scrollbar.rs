@@ -442,6 +442,37 @@ impl HistoryScrollbar {
     }
 }
 
+/// Extra unmeasured rows to wrap when scrolling up through a suffix-lazy transcript.
+///
+/// While a prefix is unmeasured the session header is not in the scroll
+/// document, so line 0 is the measured body start.
+pub(super) fn unmeasured_prefix_scroll_need(
+    start: usize,
+    delta: isize,
+    has_unmeasured_prefix: bool,
+) -> usize {
+    if delta >= 0 || !has_unmeasured_prefix {
+        return 0;
+    }
+    delta.unsigned_abs().saturating_sub(start)
+}
+
+/// Extra unmeasured rows to wrap when the scrollbar sits at the measured top.
+///
+/// Same bound as one page-up: a long resume must not wrap the whole transcript
+/// on a single click. Continued drag at line 0 pulls the next pane.
+pub(super) fn unmeasured_prefix_scrollbar_top_need(
+    start: usize,
+    has_unmeasured_prefix: bool,
+    viewport: usize,
+) -> usize {
+    if start > 0 || !has_unmeasured_prefix {
+        0
+    } else {
+        viewport.max(1)
+    }
+}
+
 pub(super) fn scroll_state_for_top_line(
     content_len: usize,
     viewport_len: usize,

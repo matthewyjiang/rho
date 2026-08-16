@@ -5,44 +5,7 @@ use {
     rho_providers::model::{image_summary, ContentBlock, Message, ToolCall},
 };
 
-use super::{
-    history_cache::HistoryRenderSettings, render::entry_lines, ChatMedia, Entry, ToolEntry,
-};
-
-pub(super) fn recovered_history_tail(
-    entries: &[Entry],
-    line_limit: usize,
-    settings: HistoryRenderSettings,
-) -> (usize, Vec<Entry>) {
-    let mut selected_start = entries.len();
-    let mut line_count = 0usize;
-    // Hidden zen entries contribute 0 lines. Require at least one visible entry
-    // before enforcing the budget so a hidden suffix cannot drop the latest
-    // visible message even when that message alone exceeds `line_limit`.
-    let mut selected_visible = false;
-
-    for (index, entry) in entries.iter().enumerate().rev() {
-        let entry_line_count = if settings.hides_entry(entry) {
-            0
-        } else {
-            entry_lines(
-                entry,
-                settings.width,
-                settings.max_tool_output_lines,
-                settings.max_image_height,
-            )
-            .len()
-        };
-        if selected_visible && line_count + entry_line_count > line_limit {
-            break;
-        }
-        selected_start = index;
-        line_count += entry_line_count;
-        selected_visible |= entry_line_count > 0;
-    }
-
-    (selected_start, entries[selected_start..].to_vec())
-}
+use super::{ChatMedia, Entry, ToolEntry};
 
 pub(super) fn text_blocks(blocks: &[ContentBlock]) -> String {
     blocks

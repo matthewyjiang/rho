@@ -272,7 +272,7 @@ credential_store = "file"
     })
 }
 
-fn find_latest_session(
+pub(super) fn find_latest_session(
     home: &crate::env::IsolatedHome,
 ) -> anyhow::Result<(String, std::path::PathBuf)> {
     use std::fs;

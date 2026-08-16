@@ -24,6 +24,7 @@ mod paste;
 mod pickers;
 mod process_rail;
 mod resume_delete;
+mod resume_scrollback;
 mod runtime_info;
 mod sessions_hub;
 mod startup;
@@ -80,6 +81,7 @@ use pickers::{
 };
 use process_rail::PROCESS_RAIL_SCENARIO;
 use resume_delete::RESUME_PICKER_DELETE_STEPS;
+use resume_scrollback::RESUME_SCROLLBACK_ID;
 use runtime_info::RUNTIME_INFO_STEPS;
 use sessions_hub::{setup_sessions_hub, SESSIONS_HUB_STEPS};
 use startup::{STARTUP_FIRST_FRAME_SCENARIO, STARTUP_STREAM_EXIT_SCENARIO};
@@ -617,6 +619,13 @@ const ALL_SCENARIOS: &[Scenario] = &[
         false,
     ),
     Scenario::new(
+        RESUME_SCROLLBACK_ID,
+        "Resume a long session and page up to earlier transcript rows",
+        DEFAULT_SIZE,
+        &[],
+        /*smoke*/ false,
+    ),
+    Scenario::new(
         "sessions_hub",
         "Inspect a foreign session safely, then browse, resume, and delete locally",
         DEFAULT_SIZE,
@@ -815,6 +824,9 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
     }
     if config::is_auto_recovered_handoff_scenario(name) {
         return config::run_auto_recovered_handoff(runner);
+    }
+    if resume_scrollback::is_resume_scrollback_scenario(name) {
+        return resume_scrollback::run_resume_scrollback(runner);
     }
     runner.run(scenario)
 }

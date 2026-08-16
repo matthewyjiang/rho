@@ -14,7 +14,7 @@ use super::tool_card_hover::ToolCardTarget;
 use super::tool_output_ui::tool_output_toggleable;
 use super::{
     highlight_selection,
-    message_history::{recovered_history_tail, transcript_entries_from_messages},
+    message_history::transcript_entries_from_messages,
     picker_overlay::picker_overlay_frame,
     render::{pad_display_line, padded_content_width, truncate_one_line},
     render_copy_notice,
@@ -24,7 +24,7 @@ use super::{
 use super::{
     history_cache::{HistoryLineSlice, HistoryRenderSettings},
     App, CodeBlockCopyTarget, ComposerMode, Entry, GoalStatus, LineFill, ReasoningChrome,
-    SessionHeaderCache, StreamKind, Theme, RECOVERED_HISTORY_LINE_LIMIT,
+    SessionHeaderCache, StreamKind, Theme,
 };
 #[cfg(test)]
 use super::{ActiveFrame, DEFAULT_TUI_HEIGHT};
@@ -114,6 +114,8 @@ impl App {
             command_lines.len(),
         );
         let live_history = self.live_history_layout(width, settings.max_image_height);
+        let viewport = self.history_content_height_for_screen(width, height, now);
+        self.ensure_measured_history_suffix(settings, viewport);
         let history_len = self
             .history_static_len_with_settings(width, settings)
             .saturating_add(live_history.lines.len());
@@ -573,6 +575,16 @@ impl App {
         &self.history.session_header_cache().unwrap().lines
     }
 
+    /// Session intro rows in the scroll document. Hidden until the unmeasured
+    /// prefix is gone so resume does not glue tips to the measured tail.
+    pub(super) fn visible_session_header_len(&mut self, width: usize) -> usize {
+        if self.history.has_unmeasured_prefix() {
+            0
+        } else {
+            self.session_header_lines(width).len()
+        }
+    }
+
     pub(super) fn history_len(&mut self, width: usize, now: Instant) -> usize {
         let live = self.history_live_lines(width, now);
         self.history_len_with_live(width, &live)
@@ -669,7 +681,7 @@ impl App {
             return lines;
         }
 
-        let header_len = self.session_header_lines(width).len();
+        let header_len = self.visible_session_header_len(width);
         if start < header_len {
             let header_count = count.min(header_len - start);
             lines.extend(
@@ -741,8 +753,7 @@ impl App {
         width: usize,
         settings: HistoryRenderSettings,
     ) -> usize {
-        self.session_header_lines(width)
-            .len()
+        self.visible_session_header_len(width)
             .saturating_add(self.cached_transcript_line_count_with_settings(settings))
     }
 
@@ -780,7 +791,7 @@ impl App {
         line: usize,
     ) -> Option<CodeBlockCopyTarget> {
         self.sync_open_stream_tail();
-        let header_len = self.session_header_lines(width).len();
+        let header_len = self.visible_session_header_len(width);
         let transcript_line = line.checked_sub(header_len)?;
         let cwd = self.info.runtime.cwd.clone();
         self.history
@@ -975,24 +986,9 @@ impl App {
         }
 
         let size = terminal.size()?;
-        let width = size.width as usize;
-        self.note_terminal_geometry(width, size.height as usize);
-        let (omitted, visible_entries) = recovered_history_tail(
-            &entries,
-            RECOVERED_HISTORY_LINE_LIMIT,
-            self.history_render_settings(width),
-        );
-        let mut transcript = Vec::new();
-        if omitted > 0 {
-            transcript.push(Entry::Notice(format!(
-                "resumed session; showing last {} messages, omitted {omitted} earlier messages",
-                visible_entries.len()
-            )));
-        }
-        transcript.extend(visible_entries);
-        self.history.set_entries(transcript);
+        self.note_terminal_geometry(size.width as usize, size.height as usize);
+        self.history.set_entries(entries);
         self.history.images_mut().clear();
-        self.history.invalidate_from(0);
         Ok(())
     }
 }

@@ -9,9 +9,44 @@ use ratatui::{
     Terminal,
 };
 
-use super::{activity, App, HistoryScrollbar, Theme, HISTORY_SCROLLBAR_REVEAL_DURATION};
+use super::{
+    activity,
+    history_cache::HistoryRenderSettings,
+    scrollbar::{unmeasured_prefix_scroll_need, unmeasured_prefix_scrollbar_top_need},
+    App, HistoryScrollbar, Theme, HISTORY_SCROLLBAR_REVEAL_DURATION,
+};
 
 impl App {
+    pub(super) fn ensure_measured_history_suffix(
+        &mut self,
+        settings: HistoryRenderSettings,
+        viewport: usize,
+    ) {
+        // One extra pane so wheel/page-up does not wrap on the first notch.
+        let min_lines = viewport.saturating_add(viewport.max(1));
+        let cwd = self.info.runtime.cwd.clone();
+        self.history
+            .with_lines_and_images_mut(|cache, entries, images| {
+                cache.ensure_suffix(entries, settings, min_lines, &|index, sources| {
+                    images.ready_images(index, sources, &cwd)
+                });
+            });
+    }
+
+    pub(super) fn grow_measured_history_prefix(
+        &mut self,
+        settings: HistoryRenderSettings,
+        extra_lines: usize,
+    ) -> usize {
+        let cwd = self.info.runtime.cwd.clone();
+        self.history
+            .with_lines_and_images_mut(|cache, entries, images| {
+                cache.grow_prefix(entries, settings, extra_lines, &|index, sources| {
+                    images.ready_images(index, sources, &cwd)
+                })
+            })
+    }
+
     pub(super) fn scroll_history_to_bottom(&mut self) {
         self.history.scroll_to_bottom();
     }
@@ -23,11 +58,66 @@ impl App {
         now: Instant,
         delta: isize,
     ) {
-        let history_len = self.history_len(width, now);
         let content_height = self.history_content_height_for_screen(width, height, now);
+        let settings = self.history_render_settings(width);
+        self.ensure_measured_history_suffix(settings, content_height);
+        let history_len = self.history_len(width, now);
+        let start = self.visible_history_start(history_len, content_height);
+        let had_unmeasured = self.history.has_unmeasured_prefix();
+        let overflow = unmeasured_prefix_scroll_need(start, delta, had_unmeasured);
+        if overflow > 0 {
+            // One extra pane so the next wheel ticks do not wrap immediately.
+            let prepended =
+                self.grow_measured_history_prefix(settings, overflow.max(content_height.max(1)));
+            let header_inserted = had_unmeasured && !self.history.has_unmeasured_prefix();
+            let header_shift = if header_inserted {
+                self.visible_session_header_len(width)
+            } else {
+                0
+            };
+            let new_len = self.history_len(width, now);
+            let new_start = start
+                .saturating_add(prepended)
+                .saturating_add(header_shift)
+                .saturating_add_signed(delta);
+            self.history
+                .scroll_chrome_mut()
+                .set_top_line(new_len, content_height, new_start);
+            return;
+        }
         self.history
             .scroll_chrome_mut()
             .scroll_by(history_len, content_height, delta);
+    }
+
+    /// Dragging the bar to the measured top wraps one more pane of prefix.
+    ///
+    /// Same bound as page-up so a long resume does not wrap the whole
+    /// transcript on one click. Another drag at line 0 pulls the next pane.
+    pub(super) fn reveal_unmeasured_history_at_scrollbar_top(
+        &mut self,
+        width: usize,
+        height: usize,
+        now: Instant,
+    ) {
+        let content_height = self.history_content_height_for_screen(width, height, now);
+        let history_len = self.history_len(width, now);
+        let extra = unmeasured_prefix_scrollbar_top_need(
+            self.visible_history_start(history_len, content_height),
+            self.history.has_unmeasured_prefix(),
+            content_height,
+        );
+        if extra == 0 {
+            return;
+        }
+        let settings = self.history_render_settings(width);
+        if self.grow_measured_history_prefix(settings, extra) == 0 {
+            return;
+        }
+        let new_len = self.history_len(width, now);
+        self.history
+            .scroll_chrome_mut()
+            .pin_top_line(new_len, content_height, 0);
     }
 
     pub(super) fn reveal_history_scrollbar(&mut self, now: Instant) {
@@ -55,8 +145,10 @@ impl App {
     }
 
     pub(super) fn clamp_history_scroll(&mut self, width: usize, height: usize, now: Instant) {
-        let history_len = self.history_len(width, now);
         let content_height = self.history_content_height_for_screen(width, height, now);
+        let settings = self.history_render_settings(width);
+        self.ensure_measured_history_suffix(settings, content_height);
+        let history_len = self.history_len(width, now);
         self.history
             .scroll_chrome_mut()
             .clamp(history_len, content_height);

@@ -78,6 +78,49 @@ fn bottom_position_uses_bottom_scroll_state() {
     );
 }
 
+// Covers: wheel ticks at the measured body start must still request earlier rows.
+// Owner: history scroll range
+#[test]
+fn unmeasured_prefix_scroll_need_triggers_at_measured_body() {
+    let cases = [
+        (
+            /*start*/ 80, /*delta*/ -3, /*unmeasured*/ true, /*need*/ 0,
+        ),
+        (0, -3, true, 3),
+        (2, -5, true, 3),
+        (12, -3, false, 0),
+        (12, 3, true, 0),
+    ];
+    for (start, delta, has_unmeasured_prefix, expected) in cases {
+        assert_eq!(
+            unmeasured_prefix_scroll_need(start, delta, has_unmeasured_prefix),
+            expected,
+            "start={start} delta={delta} unmeasured={has_unmeasured_prefix}"
+        );
+    }
+}
+
+// Covers: a scrollbar click at the measured top wraps one pane, not the rest.
+// Owner: history scroll range
+#[test]
+fn unmeasured_prefix_scrollbar_top_need_is_one_viewport() {
+    let cases = [
+        (
+            /*start*/ 0, /*unmeasured*/ true, /*viewport*/ 20, /*need*/ 20,
+        ),
+        (4, true, 20, 0),
+        (0, false, 20, 0),
+        (0, true, 0, 1),
+    ];
+    for (start, has_unmeasured_prefix, viewport, expected) in cases {
+        assert_eq!(
+            unmeasured_prefix_scrollbar_top_need(start, has_unmeasured_prefix, viewport),
+            expected,
+            "start={start} unmeasured={has_unmeasured_prefix} viewport={viewport}"
+        );
+    }
+}
+
 #[test]
 fn scroll_chrome_scroll_by_clamps_to_bottom_without_auto_reveal() {
     use std::time::{Duration, Instant};

@@ -830,3 +830,48 @@ fn entry_index_at_line_finds_ranges_across_transcript() {
         None
     );
 }
+
+// Covers: resume-style unmeasured transcripts must wrap only a tail, not 0..n.
+// Owner: history line cache
+#[test]
+fn ensure_suffix_does_not_render_unmeasured_prefix() {
+    let mut cache = HistoryLineCache::default();
+    let entries = (0..20)
+        .map(|index| Entry::User(format!("message {index}")))
+        .collect::<Vec<_>>();
+    cache.mark_unmeasured(entries.len());
+
+    cache.ensure_suffix(&entries, settings(80), 9, &no_images);
+
+    // Each user entry is one content line + trailing blank (2 rows).
+    assert_eq!(cache.line_count(&entries, settings(80), &no_images), 10);
+    assert_eq!(cache.entry_render_count(), 5);
+    let first_visible = cache
+        .entry_index_at_line(&entries, settings(80), 0, &no_images)
+        .expect("measured suffix starts at line 0");
+    assert_eq!(first_visible, 15);
+    assert_eq!(cache.entry_line_range(first_visible), Some(0..2));
+    assert_eq!(cache.entry_line_range(0), None);
+}
+
+// Covers: scrolling above the measured suffix must wrap earlier entries only.
+// Owner: history line cache
+#[test]
+fn grow_prefix_renders_earlier_entries_and_shifts_line_zero() {
+    let mut cache = HistoryLineCache::default();
+    let entries = (0..20)
+        .map(|index| Entry::User(format!("message {index}")))
+        .collect::<Vec<_>>();
+    cache.mark_unmeasured(entries.len());
+    cache.ensure_suffix(&entries, settings(80), 9, &no_images);
+    let rendered = cache.entry_render_count();
+    let prepended = cache.grow_prefix(&entries, settings(80), 4, &no_images);
+
+    assert_eq!(prepended, 4);
+    assert_eq!(cache.entry_render_count(), rendered + 2);
+    assert_eq!(cache.line_count(&entries, settings(80), &no_images), 14);
+    assert_eq!(
+        cache.entry_index_at_line(&entries, settings(80), 0, &no_images),
+        Some(13)
+    );
+}

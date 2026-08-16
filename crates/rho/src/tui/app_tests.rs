@@ -1,6 +1,6 @@
 use super::{
     command_palette::{complete_slash_command, slash_command_args},
-    message_history::{recovered_history_tail, transcript_entries_from_messages},
+    message_history::transcript_entries_from_messages,
     paste_burst::normalize_paste,
     tool_output_ui::expandable_tool_entry,
     transcript_events::final_answer_delta,
@@ -202,78 +202,6 @@ fn sanitizes_generated_session_title() {
         Some("Implement resume picker".into())
     );
     assert_eq!(session_title::sanitize_session_title("\n\n"), None);
-}
-
-#[test]
-fn recovered_history_tail_limits_initial_redraw() {
-    let entries = (0..10)
-        .map(|index| Entry::User(format!("message {index}")))
-        .collect::<Vec<_>>();
-
-    let (omitted, visible) = recovered_history_tail(
-        &entries,
-        9,
-        crate::tui::history_cache::HistoryRenderSettings {
-            width: 80,
-            max_tool_output_lines: 10,
-            zen_mode: false,
-            theme_generation: 0,
-            max_image_height: crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT,
-        },
-    );
-
-    // Each user entry is one content line + trailing blank (2 rows). A 9-line
-    // budget therefore keeps four tail messages.
-    assert_eq!(omitted, 6);
-    assert!(matches!(visible.as_slice(), [
-            Entry::User(a),
-            Entry::User(b),
-            Entry::User(c),
-            Entry::User(d),
-        ] if a == "message 6" && b == "message 7" && c == "message 8" && d == "message 9"));
-}
-
-// Covers: zen-hidden suffix must not drop an oversized latest visible entry.
-// Owner: pure recovery selection policy.
-#[test]
-fn recovered_history_tail_keeps_oversized_visible_before_hidden_suffix() {
-    use crate::tui::{ReasoningEntry, ToolEntry};
-
-    let oversized = Entry::Assistant("line\n".repeat(40));
-    let tool = Entry::Tool(ToolEntry {
-        card: rho_tools::tool_card::ToolCard::new(
-            rho_tools::tool_card::ToolStatus::Running,
-            rho_tools::tool_card::ToolFamily::Default,
-            rho_tools::tool_card::ToolHeader::call("read_file(a.rs)", None),
-        ),
-        expanded: false,
-        image: None,
-        started_at: None,
-    });
-    let entries = vec![
-        Entry::User("earlier".into()),
-        oversized,
-        tool,
-        Entry::Reasoning(ReasoningEntry::new("hidden plan")),
-    ];
-
-    let (omitted, visible) = recovered_history_tail(
-        &entries,
-        5,
-        crate::tui::history_cache::HistoryRenderSettings {
-            width: 40,
-            max_tool_output_lines: 10,
-            zen_mode: true,
-            theme_generation: 0,
-            max_image_height: crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT,
-        },
-    );
-
-    assert_eq!(omitted, 1);
-    assert_eq!(visible.len(), 3);
-    assert!(matches!(visible[0], Entry::Assistant(_)));
-    assert!(matches!(visible[1], Entry::Tool(_)));
-    assert!(matches!(visible[2], Entry::Reasoning(_)));
 }
 
 #[test]
