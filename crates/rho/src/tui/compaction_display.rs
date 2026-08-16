@@ -1,7 +1,8 @@
-//! Compaction tool cards.
+//! Shared compact card and view events.
 //!
-//! Compaction is shown like a tool call: a running card while work is in
-//! flight, then a finished card with the outcome facts we actually have.
+//! Main-loop compact (`/compact`, pre-turn auto-compact) and in-run auto-compact
+//! both show this card. They differ only in who owns the session: idle work vs
+//! the live turn.
 
 use rho_sdk::ToolCallId;
 use rho_tools::tool_card::{ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
@@ -54,12 +55,44 @@ pub(super) enum CompactionUiOutcome {
 }
 
 impl CompactionUiOutcome {
+    pub(super) fn from_sdk_outcome(outcome: &rho_sdk::CompactionOutcome) -> Self {
+        let facts = CompactionDisplayFacts::from_outcome(outcome);
+        if facts.removed_messages() > 0 || facts.removed_tokens() > 0 {
+            Self::Completed(facts)
+        } else {
+            Self::unchanged()
+        }
+    }
+
+    pub(super) fn unchanged() -> Self {
+        Self::Unchanged {
+            detail:
+                "not enough conversation history to compact, or the model context window is unknown"
+                    .into(),
+        }
+    }
+
+    pub(super) fn failed(detail: impl Into<String>) -> Self {
+        Self::Failed {
+            detail: detail.into(),
+        }
+    }
+
     pub(super) fn card(&self) -> ToolCard {
         match self {
             Self::Completed(facts) => completed_card(*facts),
             Self::Unchanged { detail } => unchanged_card(detail.clone()),
             Self::Failed { detail } => failed_card(detail.clone()),
             Self::Cancelled => cancelled_card(),
+        }
+    }
+
+    pub(super) fn status_label(&self) -> &'static str {
+        match self {
+            Self::Completed(_) => "context compacted",
+            Self::Unchanged { .. } => "context not compacted",
+            Self::Failed { .. } => "context compaction failed",
+            Self::Cancelled => "context compaction cancelled",
         }
     }
 }

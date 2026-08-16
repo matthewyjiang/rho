@@ -1,7 +1,8 @@
-//! Main-loop compaction: `/compact` and auto-compact share one job.
+//! Main-loop compact job.
 //!
-//! Compact is not a model tool, but it uses the same card. The work runs off
-//! the input loop so the composer stays idle input.
+//! `/compact` and pre-turn auto-compact start this job. In-run auto-compact
+//! stays inside the SDK turn and applies the same card events from
+//! `compaction_display` / `event_adapter`.
 
 use std::time::Duration;
 
@@ -10,11 +11,9 @@ use ratatui::DefaultTerminal;
 use crate::app::interactive_runtime::CompactTaskResult;
 
 use super::{
-    activity::ActivityPhase,
-    compaction_display::{
-        compaction_call_id, running_card, CompactionDisplayFacts, CompactionUiOutcome,
-    },
-    App, ChatMedia, Entry, InteractiveRuntime, ToolEntry, TurnPrompt, ViewModelEvent,
+    compaction_display::CompactionUiOutcome,
+    event_adapter::{compact_finished_event, compact_started_event},
+    App, ChatMedia, InteractiveRuntime, TurnPrompt, ViewModelEvent,
 };
 
 pub(super) struct PendingCompact {
@@ -38,9 +37,8 @@ impl App {
         self.pending_input_changed();
         self.set_status("compacting context");
         self.begin_compact_ui();
-        self.turn.set_activity_phase(ActivityPhase::Compacting);
         self.turn.start_loading();
-        self.turn.tool_started(compaction_call_id(), running_card());
+        self.apply_compact_view_event(compact_started_event());
         self.pending_compact = Some(PendingCompact {
             handle: tokio::spawn(task.run()),
         });
@@ -54,10 +52,7 @@ impl App {
         pending.handle.abort();
         let _ = pending.handle.await;
         agent.abort_compact_task();
-        self.finish_compact_ui(
-            CompactionUiOutcome::Cancelled,
-            "context compaction cancelled",
-        );
+        self.finish_compact_ui(CompactionUiOutcome::Cancelled);
         true
     }
 
@@ -78,19 +73,11 @@ impl App {
             Ok(result) => self.complete_compact(agent, result).await?,
             Err(error) if error.is_cancelled() => {
                 agent.abort_compact_task();
-                self.finish_compact_ui(
-                    CompactionUiOutcome::Cancelled,
-                    "context compaction cancelled",
-                );
+                self.finish_compact_ui(CompactionUiOutcome::Cancelled);
             }
             Err(error) => {
                 agent.abort_compact_task();
-                self.finish_compact_ui(
-                    CompactionUiOutcome::Failed {
-                        detail: error.to_string(),
-                    },
-                    "context compaction failed",
-                );
+                self.finish_compact_ui(CompactionUiOutcome::failed(error.to_string()));
             }
         }
         Ok(true)
@@ -182,39 +169,30 @@ impl App {
         if let Some(context) = agent.take_context_usage() {
             self.record_agent_event(ViewModelEvent::ContextUsage(context));
         }
-        let (outcome, status) = match agent.complete_compact_task(result).await {
-            Ok(Some(outcome)) => (
-                CompactionUiOutcome::Completed(CompactionDisplayFacts::from_outcome(&outcome)),
-                "context compacted",
-            ),
-            Ok(None) => (
-                CompactionUiOutcome::Unchanged {
-                    detail: "not enough conversation history to compact, or the model context window is unknown".into(),
-                },
-                "context not compacted",
-            ),
-            Err(err) => (
-                CompactionUiOutcome::Failed {
-                    detail: err.to_string(),
-                },
-                "context compaction failed",
-            ),
+        let outcome = match agent.complete_compact_task(result).await {
+            Ok(Some(outcome)) => CompactionUiOutcome::from_sdk_outcome(&outcome),
+            Ok(None) => CompactionUiOutcome::unchanged(),
+            Err(err) => CompactionUiOutcome::failed(err.to_string()),
         };
-        self.finish_compact_ui(outcome, status);
+        self.finish_compact_ui(outcome);
         Ok(())
     }
 
-    fn finish_compact_ui(&mut self, outcome: CompactionUiOutcome, status: &'static str) {
+    fn apply_compact_view_event(&mut self, event: super::ViewModelEvent) {
+        if let Some(phase) = event.activity_phase() {
+            self.turn.set_activity_phase(phase);
+        }
+        if let Some(entry) = self.record_agent_event(event) {
+            self.insert_entry(&entry);
+        }
+    }
+
+    fn finish_compact_ui(&mut self, outcome: CompactionUiOutcome) {
         self.last_compact_ok = matches!(outcome, CompactionUiOutcome::Completed(_));
+        let status = outcome.status_label();
+        self.apply_compact_view_event(compact_finished_event(outcome));
         self.end_busy_ui();
         self.turn.stop_loading();
-        let expanded = self.turn.tool_finished(&compaction_call_id());
-        self.insert_entry(&Entry::Tool(ToolEntry {
-            card: outcome.card(),
-            expanded,
-            image: None,
-            started_at: None,
-        }));
         self.set_status(status);
     }
 
