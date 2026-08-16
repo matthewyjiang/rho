@@ -403,9 +403,9 @@ impl App {
             paste_segments,
         });
         if !self.pending_mcp_submissions.is_empty() {
-            // Older holds are still waiting. Leave their status alone: it is
-            // also the message `poll_startup_hydrates` looks for when connect
-            // lands, and replacing it would strand it on screen.
+            // Older holds are still waiting. Leave their status alone: writing
+            // any status here would hand `status_source` back to `Other`, and
+            // `poll_startup_hydrates` would never retire the indicator.
             return;
         }
         // Attachments cannot go back into the composer, so say so rather than
