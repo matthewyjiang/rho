@@ -442,21 +442,22 @@ impl HistoryScrollbar {
     }
 }
 
-/// Lowest top line that may show the session header.
+/// Extra unmeasured rows to wrap when scrolling up through a suffix-lazy transcript.
 ///
-/// The header is intro chrome. Once the transcript body is taller than the
-/// pane, scroll cannot move into those hint rows.
-pub(super) fn history_scroll_min_start(
-    header_len: usize,
-    history_len: usize,
-    viewport_len: usize,
+/// The session header sits above the measured body. A wheel tick is a few
+/// rows, so growth must start at the body, not document line 0.
+pub(super) fn unmeasured_prefix_scroll_need(
+    start: usize,
+    delta: isize,
+    measured_body_start: usize,
+    has_unmeasured_prefix: bool,
 ) -> usize {
-    let body_len = history_len.saturating_sub(header_len);
-    if body_len >= viewport_len {
-        header_len.min(history_len.saturating_sub(viewport_len))
-    } else {
-        0
+    if delta >= 0 || !has_unmeasured_prefix {
+        return 0;
     }
+    delta
+        .unsigned_abs()
+        .saturating_sub(start.saturating_sub(measured_body_start))
 }
 
 pub(super) fn scroll_state_for_top_line(

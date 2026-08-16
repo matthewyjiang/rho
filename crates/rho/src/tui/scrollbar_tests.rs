@@ -78,26 +78,31 @@ fn bottom_position_uses_bottom_scroll_state() {
     );
 }
 
-#[test]
-// Covers: a tall transcript must not scroll into the session header.
+// Covers: wheel ticks at the measured body start must still request earlier rows.
 // Owner: history scroll range
 #[test]
-fn history_scroll_min_start_hides_header_once_body_overflows() {
+fn unmeasured_prefix_scroll_need_triggers_at_measured_body() {
     let cases = [
         (
-            /*header*/ 8, /*history*/ 20, /*viewport*/ 20, /*min*/ 0,
+            /*start*/ 80, /*delta*/ -3, /*body*/ 12, /*unmeasured*/ true,
+            /*need*/ 0,
         ),
-        (8, 28, 20, 8),
-        (8, 40, 20, 8),
-        (8, 21, 20, 0),
-        (8, 29, 20, 8),
-        (0, 40, 20, 0),
+        (12, -3, 12, true, 3),
+        (14, -5, 12, true, 3),
+        (12, -3, 12, false, 0),
+        (12, 3, 12, true, 0),
+        (0, -3, 12, true, 3),
     ];
-    for (header_len, history_len, viewport_len, expected) in cases {
+    for (start, delta, measured_body_start, has_unmeasured_prefix, expected) in cases {
         assert_eq!(
-            history_scroll_min_start(header_len, history_len, viewport_len),
+            unmeasured_prefix_scroll_need(
+                start,
+                delta,
+                measured_body_start,
+                has_unmeasured_prefix,
+            ),
             expected,
-            "header={header_len} history={history_len} viewport={viewport_len}"
+            "start={start} delta={delta} body={measured_body_start} unmeasured={has_unmeasured_prefix}"
         );
     }
 }

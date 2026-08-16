@@ -19,7 +19,6 @@ use super::{
     render::{pad_display_line, padded_content_width, truncate_one_line},
     render_copy_notice,
     screen_layout::{terminal_meets_minimum, MIN_TERMINAL_HEIGHT, MIN_TERMINAL_WIDTH},
-    scrollbar::history_scroll_min_start,
     session_header_lines, styled_line, tool_card_hover, tool_entry_lines,
 };
 use super::{
@@ -576,6 +575,16 @@ impl App {
         &self.history.session_header_cache().unwrap().lines
     }
 
+    /// Session intro rows in the scroll document. Hidden until the unmeasured
+    /// prefix is gone so resume does not glue tips to the measured tail.
+    pub(super) fn visible_session_header_len(&mut self, width: usize) -> usize {
+        if self.history.has_unmeasured_prefix() {
+            0
+        } else {
+            self.session_header_lines(width).len()
+        }
+    }
+
     pub(super) fn history_len(&mut self, width: usize, now: Instant) -> usize {
         let live = self.history_live_lines(width, now);
         self.history_len_with_live(width, &live)
@@ -672,7 +681,7 @@ impl App {
             return lines;
         }
 
-        let header_len = self.session_header_lines(width).len();
+        let header_len = self.visible_session_header_len(width);
         if start < header_len {
             let header_count = count.min(header_len - start);
             lines.extend(
@@ -744,8 +753,7 @@ impl App {
         width: usize,
         settings: HistoryRenderSettings,
     ) -> usize {
-        self.session_header_lines(width)
-            .len()
+        self.visible_session_header_len(width)
             .saturating_add(self.cached_transcript_line_count_with_settings(settings))
     }
 
@@ -783,7 +791,7 @@ impl App {
         line: usize,
     ) -> Option<CodeBlockCopyTarget> {
         self.sync_open_stream_tail();
-        let header_len = self.session_header_lines(width).len();
+        let header_len = self.visible_session_header_len(width);
         let transcript_line = line.checked_sub(header_len)?;
         let cwd = self.info.runtime.cwd.clone();
         self.history
@@ -919,21 +927,9 @@ impl App {
     }
 
     pub(super) fn visible_history_start(&self, history_len: usize, height: usize) -> usize {
-        let start = self
-            .history
-            .scroll_chrome()
-            .visible_start(history_len, height);
-        start.max(history_scroll_min_start(
-            self.session_header_line_count(),
-            history_len,
-            height,
-        ))
-    }
-
-    fn session_header_line_count(&self) -> usize {
         self.history
-            .session_header_cache()
-            .map_or(0, |cache| cache.lines.len())
+            .scroll_chrome()
+            .visible_start(history_len, height)
     }
 
     fn goal_status(&self) -> Option<GoalStatus> {

@@ -506,7 +506,7 @@ impl App {
             return None;
         }
         let max_tool_output_lines = self.info.runtime.max_tool_output_lines;
-        let header_len = self.session_header_lines(width).len();
+        let header_len = self.visible_session_header_len(width);
         if let Some(transcript_line) = line.checked_sub(header_len) {
             let cwd = self.info.runtime.cwd.clone();
             let settings = self.history_render_settings(width);

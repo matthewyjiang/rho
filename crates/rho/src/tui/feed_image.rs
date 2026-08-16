@@ -368,7 +368,7 @@ impl super::App {
             return Vec::new();
         }
         self.sync_open_stream_tail();
-        let header_len = self.session_header_lines(width).len();
+        let header_len = self.visible_session_header_len(width);
         let visible_header_lines = if start < header_len {
             count.min(header_len - start)
         } else {

@@ -10,7 +10,7 @@ use ratatui::{
 };
 
 use super::{
-    activity, history_cache::HistoryRenderSettings, scrollbar::history_scroll_min_start, App,
+    activity, history_cache::HistoryRenderSettings, scrollbar::unmeasured_prefix_scroll_need, App,
     HistoryScrollbar, Theme, HISTORY_SCROLLBAR_REVEAL_DURATION,
 };
 
@@ -61,25 +61,36 @@ impl App {
         self.ensure_measured_history_suffix(settings, content_height);
         let history_len = self.history_len(width, now);
         let start = self.visible_history_start(history_len, content_height);
-        let overflow = if delta < 0 {
-            delta.unsigned_abs().saturating_sub(start)
-        } else {
-            0
-        };
+        let had_unmeasured = self.history.has_unmeasured_prefix();
+        let overflow = unmeasured_prefix_scroll_need(
+            start,
+            delta,
+            self.visible_session_header_len(width),
+            had_unmeasured,
+        );
         if overflow > 0 {
-            let prepended = self.grow_measured_history_prefix(settings, overflow);
+            // One extra pane so the next wheel ticks do not wrap immediately.
+            let prepended =
+                self.grow_measured_history_prefix(settings, overflow.max(content_height.max(1)));
+            let header_inserted = had_unmeasured && !self.history.has_unmeasured_prefix();
+            let header_shift = if header_inserted {
+                self.visible_session_header_len(width)
+            } else {
+                0
+            };
             let new_len = self.history_len(width, now);
-            let new_start = start.saturating_add(prepended).saturating_add_signed(delta);
+            let new_start = start
+                .saturating_add(prepended)
+                .saturating_add(header_shift)
+                .saturating_add_signed(delta);
             self.history
                 .scroll_chrome_mut()
                 .set_top_line(new_len, content_height, new_start);
-            self.clamp_history_scroll_away_from_header(width, new_len, content_height);
             return;
         }
         self.history
             .scroll_chrome_mut()
             .scroll_by(history_len, content_height, delta);
-        self.clamp_history_scroll_away_from_header(width, history_len, content_height);
     }
 
     pub(super) fn reveal_history_scrollbar(&mut self, now: Instant) {
@@ -114,29 +125,6 @@ impl App {
         self.history
             .scroll_chrome_mut()
             .clamp(history_len, content_height);
-        self.clamp_history_scroll_away_from_header(width, history_len, content_height);
-    }
-
-    fn clamp_history_scroll_away_from_header(
-        &mut self,
-        width: usize,
-        history_len: usize,
-        viewport: usize,
-    ) {
-        let min_start = history_scroll_min_start(
-            self.session_header_lines(width).len(),
-            history_len,
-            viewport,
-        );
-        let start = self
-            .history
-            .scroll_chrome()
-            .visible_start(history_len, viewport);
-        if start < min_start {
-            self.history
-                .scroll_chrome_mut()
-                .set_top_line(history_len, viewport, min_start);
-        }
     }
 
     pub(super) fn clamp_history_scroll_for_terminal<B: Backend>(

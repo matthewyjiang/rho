@@ -70,6 +70,10 @@ impl HistoryUi {
         &mut self.lines
     }
 
+    pub(in crate::tui) fn has_unmeasured_prefix(&self) -> bool {
+        self.lines.has_unmeasured_prefix()
+    }
+
     /// Borrow lines mutably with entries and images for cache updates.
     pub(in crate::tui) fn with_lines_and_images_mut<R>(
         &mut self,

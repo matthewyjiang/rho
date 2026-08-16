@@ -136,6 +136,11 @@ impl HistoryLineCache {
         self.dirty_from = None;
     }
 
+    /// Earlier transcript entries exist but have no wrapped rows yet.
+    pub(super) fn has_unmeasured_prefix(&self) -> bool {
+        self.measured_from > 0
+    }
+
     pub(super) fn invalidate_from(&mut self, index: usize) {
         self.appended_entry = None;
         // Fold pending surgical marks into the suffix rebuild so an earlier
