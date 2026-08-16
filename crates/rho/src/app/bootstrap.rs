@@ -5,6 +5,8 @@ use std::{
     time::Duration,
 };
 
+use tracing::Instrument;
+
 use {
     crate::cli::{Cli, Command, CredentialStoreCommand, OutputFormat},
     crate::credential_store::AppCredentialStore,
@@ -26,6 +28,7 @@ use super::{
 };
 
 pub async fn run(cli: Cli) -> anyhow::Result<()> {
+    crate::logging::install_from_env();
     if workflow_cli::planner_worker_requested(&cli) {
         return workflow_cli::run_planner_worker().await;
     }
@@ -33,7 +36,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Some(Command::Run { output, .. }) => Some(*output),
         _ => None,
     };
-    let result = run_inner(cli).await;
+    let result = Box::pin(run_inner(cli).instrument(tracing::info_span!("startup"))).await;
     let Err(error) = result else {
         return Ok(());
     };
@@ -239,15 +242,28 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
     // The walk is reused for the delegation tool set so startup discovers once.
     let catalog = crate::agent::DiscoveredAgentCatalog::new(cwd.clone(), catalog);
 
+    // Only automation, ACP, and interactive sessions reach here; every other
+    // command dispatches early.
+    let role = if automation_prompt.is_some() || matches!(cli.command, Some(Command::Acp)) {
+        AgentRole::AutomationRoot
+    } else {
+        AgentRole::InteractiveRoot
+    };
+
     let store = AppCredentialStore;
-    cli_config::refresh_custom_provider_models(&config, &store).await;
+    // Interactive sessions refresh custom-provider models after the first frame
+    // so a slow host cannot hold up paint. Automation and ACP resolve the model
+    // list up front, because they get one shot to pick a model.
+    if matches!(role, AgentRole::AutomationRoot) {
+        cli_config::refresh_custom_provider_models(&config, &store).await;
+    }
     let provider_refresh = cli_config::refresh_model_cache(&cli, &config, &store).await?;
     let permission_mode_before_override = config.permission_mode;
     let config_changed = cli_config::apply_overrides(&mut config, &cli)?;
     cli_config::prepare_model_metadata(&config, &store, &provider_refresh).await;
     // Full models.dev snapshot fills in the background for subagent and status
-    // labels. The interactive system prompt awaits the same hydrate before it
-    // prints permanent model lines; see `await_catalog_names` on tools assembly.
+    // labels. Interactive sessions stay cache-only on the first frame, then
+    // rewrite the startup prompt once if hydrate lands before the first request.
     tokio::spawn(rho_providers::model::models_dev::ensure_models_dev_catalog());
     cli_config::normalize_reasoning_for_cli(
         &mut config,
@@ -268,11 +284,6 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
         config.permission_mode = session_permission_mode;
     }
     let reasoning_before_binding = config.reasoning;
-    let role = if automation_prompt.is_some() || matches!(cli.command, Some(Command::Acp)) {
-        AgentRole::AutomationRoot
-    } else {
-        AgentRole::InteractiveRoot
-    };
     let bound_agent = AgentBinder::bind(
         definition,
         AgentInvocation {
@@ -397,6 +408,15 @@ async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Res
         .config
         .check_for_updates
         .then(|| tokio::spawn(update::update_notice(env!("CARGO_PKG_VERSION"))));
+    let pending_custom_models = (!startup.config.providers.custom.is_empty()).then(|| {
+        let config = startup.config.clone();
+        tokio::spawn(
+            async move {
+                cli_config::refresh_custom_provider_models(&config, &AppCredentialStore).await;
+            }
+            .instrument(tracing::info_span!("startup.custom_models")),
+        )
+    });
 
     let _scope = startup.config.providers.thread_scope()?;
     let sdk_options = SdkBootstrapOptions::from_config(&startup.config, &startup.cwd)?;
@@ -425,6 +445,7 @@ async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Res
         missing_auth_error,
         missing_auth_model_error,
         pending_update_notice,
+        pending_custom_models,
         diagnostics,
         herdr: startup.herdr,
         agent: startup.bound_agent,

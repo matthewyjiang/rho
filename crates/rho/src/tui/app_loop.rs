@@ -27,15 +27,18 @@ impl App {
         self.start_model_metadata_fetch(agent);
         self.insert_recovered_history(terminal)?;
         self.maybe_offer_loaded_session_context_handoff(agent)?;
-        if self.info.session.open_resume_picker {
-            self.open_resume_picker()?;
-        }
+        let open_resume_after_draw = self.info.session.open_resume_picker;
+        self.info.session.open_resume_picker = false;
         // A first launch opens the full-screen setup instead of a session.
         // Afterwards the header and statusline carry setup state, so a
         // signed-out session needs no history entry that would scroll away.
         self.start_setup_screen(terminal);
         self.reconcile_auto_classifier_gate(agent).await?;
+        if agent.mcp_connect_pending() {
+            self.set_status_quiet("connecting MCP servers");
+        }
         let mut needs_redraw = true;
+        let mut first_frame = true;
         while !self.should_quit {
             let background_ready = self
                 .pending_model_metadata
@@ -56,9 +59,22 @@ impl App {
                 || self
                     .pending_changelog
                     .as_ref()
-                    .is_some_and(|handle| handle.is_finished());
+                    .is_some_and(|handle| handle.is_finished())
+                || self
+                    .pending_custom_models
+                    .as_ref()
+                    .is_some_and(|handle| handle.is_finished())
+                || self
+                    .pending_herdr_graphics
+                    .as_ref()
+                    .is_some_and(|handle| handle.is_finished())
+                || agent.startup_hydrate_pending();
             self.poll_model_metadata_fetch(agent).await;
+            needs_redraw |= self.poll_startup_hydrates(agent).await?;
+            needs_redraw |= self.release_pending_mcp_submission(terminal, agent).await?;
             self.poll_update_notice();
+            self.poll_custom_provider_models();
+            self.poll_herdr_graphics();
             needs_redraw |= self.poll_pending_session_title()?;
             self.poll_pending_interactive_login(terminal, agent).await?;
             needs_redraw |= self.poll_limits_command().await?;
@@ -87,6 +103,14 @@ impl App {
             if needs_redraw {
                 terminal.draw(|frame| self.draw(frame))?;
                 needs_redraw = false;
+                if first_frame {
+                    first_frame = false;
+                    if open_resume_after_draw {
+                        self.open_resume_picker()?;
+                        needs_redraw = true;
+                        continue;
+                    }
+                }
             }
             let subagents_active = agent.subagents().is_some_and(|manager| {
                 manager.has_active_or_pending_notification(agent.session_id().as_str())
@@ -101,6 +125,8 @@ impl App {
                 || self.subagent_inbox.has_pending_notices();
             let idle_timeout = if self.pending_model_metadata.is_some()
                 || self.pending_update_notice.is_some()
+                || self.pending_custom_models.is_some()
+                || self.pending_herdr_graphics.is_some()
                 || self.pending_session_title.is_some()
                 || self.pending_interactive_login.is_some()
                 || !self.pending_usage_limits.is_empty()
@@ -109,6 +135,7 @@ impl App {
                 || self.has_pending_subagent_attach()
                 || !self.pending_inline_shells.is_empty()
                 || self.history.images().has_pending()
+                || agent.startup_hydrate_pending()
             {
                 Duration::from_millis(100)
             } else if subagents_active || self.process_panel.is_active() {
@@ -149,6 +176,7 @@ impl App {
         }
         self.cancel_limits_command().await;
         self.cancel_changelog_command().await;
+        agent.cancel_startup_hydrates();
         self.mcp_argument_completions.cancel();
         if let Some(mut pending) = self.pending_session_title.take() {
             pending.cancel();

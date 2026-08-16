@@ -157,6 +157,9 @@ pub(super) enum PickerAction {
     RefreshModelList,
     InsertSkillCommand,
     ViewAgent,
+    /// Read-only MCP server inventory. Distinct from `Dismiss` so background
+    /// refreshes can tell this picker apart without reading its title.
+    ViewMcpServers,
     ResumeSession,
     ManageSessions,
     SelectTreeNode,
@@ -176,6 +179,7 @@ impl PickerAction {
             PickerAction::Config => true,
             // Dismiss overlays accept regex filters, so space must type into the filter.
             PickerAction::Dismiss
+            | PickerAction::ViewMcpServers
             | PickerAction::SelectModel
             | PickerAction::SelectInternalAgentModel
             | PickerAction::LoginGroup
@@ -202,6 +206,7 @@ impl PickerAction {
         match self {
             PickerAction::Config
             | PickerAction::Dismiss
+            | PickerAction::ViewMcpServers
             | PickerAction::ViewAgent
             | PickerAction::InsertSkillCommand
             | PickerAction::ResumeSession
@@ -484,7 +489,7 @@ impl UiPicker {
         }
         match self.action {
             PickerAction::Config => "change",
-            PickerAction::Dismiss => "close",
+            PickerAction::Dismiss | PickerAction::ViewMcpServers => "close",
             PickerAction::ViewAgent => "close",
             PickerAction::SelectModel
             | PickerAction::SelectInternalAgentModel

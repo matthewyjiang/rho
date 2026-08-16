@@ -4,9 +4,60 @@ use futures_util::FutureExt;
 use rho_providers::model::models_dev::fetch_model_metadata;
 use rho_providers::model::ReasoningRequestSource::PersistedOrDefault;
 
-use super::{reasoning_metadata, App, Entry, InteractiveRuntime};
+use super::{
+    reasoning_metadata, App, ComposerMode, Entry, InteractiveRuntime, PickerAction, StatusSource,
+};
 
 impl App {
+    pub(super) async fn poll_startup_hydrates(
+        &mut self,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<bool> {
+        let pending = agent.mcp_connect_pending();
+        let changed = agent.poll_startup_hydrates().await?;
+        if !changed {
+            return Ok(false);
+        }
+        self.mcp_report = agent.mcp_report().clone();
+        self.mcp_catalog = agent.mcp_catalog().clone();
+        if pending
+            && !agent.mcp_connect_pending()
+            && self.status_source == StatusSource::McpConnecting
+        {
+            self.set_status_quiet("");
+        }
+        if matches!(
+            self.input_ui.composer(),
+            ComposerMode::Picker(picker) if picker.action == PickerAction::ViewMcpServers
+        ) {
+            let _ = self.execute_mcp_command();
+        }
+        Ok(true)
+    }
+
+    pub(super) fn poll_custom_provider_models(&mut self) {
+        let Some(handle) = self.pending_custom_models.as_mut() else {
+            return;
+        };
+        if !handle.is_finished() {
+            return;
+        }
+        self.pending_custom_models = None;
+    }
+
+    pub(super) fn poll_herdr_graphics(&mut self) {
+        let Some(handle) = self.pending_herdr_graphics.as_mut() else {
+            return;
+        };
+        let Some(result) = handle.now_or_never() else {
+            return;
+        };
+        self.pending_herdr_graphics = None;
+        if let Ok(capability) = result {
+            self.image_picker = super::feed_image::picker_from_environment(capability);
+        }
+    }
+
     pub(super) fn poll_update_notice(&mut self) {
         let Some(handle) = self.pending_update_notice.as_mut() else {
             return;

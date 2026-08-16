@@ -42,6 +42,35 @@ fn smoke_startup_stream_exit() {
     assert_pass("startup_stream_exit");
 }
 
+// Covers: first session chrome must paint without waiting on MCP, catalog, or keyring tails.
+// Owner: interactive TUI
+#[test]
+fn startup_first_frame_paints_session_chrome() {
+    assert_pass("startup_first_frame");
+}
+
+// Covers: /mcp must open and report in-flight servers while connect is still running.
+// Owner: interactive TUI
+#[test]
+fn mcp_connecting_keeps_the_session_inspectable() {
+    assert_pass("mcp_connecting");
+}
+
+// Covers: a turn held during MCP connect must start on its own once the
+// servers settle, without a second Enter.
+// Owner: interactive TUI
+#[test]
+fn mcp_connect_release_starts_the_held_turn() {
+    assert_pass("mcp_connect_release");
+}
+
+// Covers: esc must return a turn held during MCP connect to the composer.
+// Owner: interactive TUI
+#[test]
+fn mcp_hold_take_back_returns_the_prompt() {
+    assert_pass("mcp_hold_take_back");
+}
+
 #[test]
 fn smoke_cancel_and_resubmit() {
     assert_pass("cancel_and_resubmit");

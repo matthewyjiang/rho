@@ -15,6 +15,12 @@ mod overrides;
 #[path = "models_dev_sdk.rs"]
 mod sdk;
 pub use hydrate::{ensure_models_dev_catalog, prefetch_model_metadata};
+
+/// Holds the catalog hydrate mutex so tests can prove a caller does not await it.
+#[doc(hidden)]
+pub fn catalog_hydrate_lock_for_tests() -> &'static tokio::sync::Mutex<()> {
+    hydrate::catalog_hydrate_lock_for_parent()
+}
 use sdk::resolved_sdk_package;
 pub use sdk::CatalogSdkAdapter;
 

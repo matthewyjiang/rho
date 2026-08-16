@@ -26,7 +26,7 @@ pub(super) fn picker(context: McpPickerContext<'_>) -> UiPicker {
             .map(|server| server_item(server, context.catalog)),
     );
 
-    UiPicker::new("MCP servers", items, PickerAction::Dismiss)
+    UiPicker::new("MCP servers", items, PickerAction::ViewMcpServers)
         .with_layout(PickerLayout::Overlay)
         .with_badge_placement(super::PickerBadgePlacement::Detail)
         .with_overlay_chrome(OverlayChrome {
@@ -50,6 +50,25 @@ fn mode_item(report: &McpSessionReport, config_path: &std::path::Path) -> Picker
         )
     } else {
         match summary.mode {
+            McpLoadMode::Native if summary.connecting > 0 => (
+                if summary.connected == 0 {
+                    "connecting".into()
+                } else {
+                    format!(
+                        "{} connected, {} connecting",
+                        summary.connected, summary.connecting
+                    )
+                },
+                summary.problems == 0,
+                format!(
+                    "{} enabled, {} exported tool{}, {} problem{}. Config: {config}.",
+                    summary.enabled,
+                    summary.exported_tools,
+                    super::plural_suffix(summary.exported_tools),
+                    summary.problems,
+                    super::plural_suffix(summary.problems),
+                ),
+            ),
             McpLoadMode::Native => (
                 format!("{} connected", summary.connected),
                 summary.problems == 0,

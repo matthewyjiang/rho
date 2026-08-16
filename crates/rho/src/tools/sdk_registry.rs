@@ -275,12 +275,17 @@ impl AppToolSet {
 
     /// Attach MCP inventory and any live tool bundle from session assembly.
     pub(crate) fn with_mcp(mut self, outcome: super::mcp::McpConnectOutcome) -> Self {
+        self.attach_mcp(outcome);
+        self
+    }
+
+    /// Attach a finished MCP connect onto an already-built tool set.
+    pub(crate) fn attach_mcp(&mut self, outcome: super::mcp::McpConnectOutcome) {
         self.mcp_report = outcome.report;
         self.mcp_catalog = outcome.catalog;
         if let Some(bundle) = outcome.bundle {
             self.add_bundle(bundle);
         }
-        self
     }
 
     pub(crate) fn add_bundle(&mut self, bundle: impl ToolBundle + 'static) {

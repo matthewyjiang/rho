@@ -326,6 +326,33 @@ impl PtyHarness {
         }
     }
 
+    /// Wait until `needle` is off the screen. The counterpart to
+    /// [`Self::wait_for_text`], for steps that must know something is gone
+    /// before acting, such as a composer clearing on submit.
+    pub fn wait_for_text_gone(&mut self, needle: &str, timeout: WaitTimeout) -> Result<()> {
+        self.set_phase(format!("wait_for_text_gone:{needle}"));
+        let deadline = Instant::now() + timeout.duration;
+        loop {
+            self.poll(Duration::from_millis(25));
+            if !self.screen.contains_text(needle) {
+                self.log(format!("text {needle:?} left the screen"));
+                return Ok(());
+            }
+            if !self.pty.is_running() {
+                return self.fail_unit(format!(
+                    "child exited while text {:?} was still on screen during {}",
+                    needle, timeout.label
+                ));
+            }
+            if Instant::now() >= deadline {
+                return self.fail_unit(format!(
+                    "timeout waiting for text {:?} to leave the screen ({})",
+                    needle, timeout.label
+                ));
+            }
+        }
+    }
+
     pub fn wait_for_quiet(&mut self, quiet_for: Duration, timeout: WaitTimeout) -> Result<()> {
         self.set_phase("wait_for_quiet");
         let started = Instant::now();

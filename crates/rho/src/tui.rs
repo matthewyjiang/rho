@@ -12,6 +12,7 @@ use std::{
 use questionnaire::QuestionnaireCancelReason;
 use ratatui::DefaultTerminal;
 use tokio::sync::oneshot;
+use tracing::Instrument;
 mod activity;
 mod advisor_command;
 mod advisor_status;
@@ -237,7 +238,7 @@ use {
     crate::app::config_repository::ConfigRepository,
     crate::app::interactive_runtime::InteractiveRuntime,
     crate::commands::{self, CommandId, CommandInvocation},
-    crate::herdr::{HerdrReporter, HerdrState},
+    crate::herdr::{HerdrGraphicsCapability, HerdrReporter, HerdrState},
     crate::keybindings::Keybindings,
     crate::permission::PermissionMode,
     crate::session::Session,
@@ -376,6 +377,7 @@ pub struct ApplicationServices {
     pub auth_unavailable: Option<String>,
     pub update_notice: Option<String>,
     pub pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
+    pub pending_custom_models: Option<tokio::task::JoinHandle<()>>,
     pub diagnostics: crate::diagnostics::RuntimeDiagnostics,
     pub herdr: HerdrReporter,
 }
@@ -392,19 +394,28 @@ pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::
     Theme::initialize_from_terminal();
     Theme::apply_committed(&info.services.theme);
     let herdr = info.services.herdr.clone();
-    let herdr_graphics = herdr.graphics_capability().await;
+    let pending_herdr_graphics = {
+        let herdr = herdr.clone();
+        tokio::spawn(
+            async move { herdr.graphics_capability().await }
+                .instrument(tracing::info_span!("startup.herdr_graphics")),
+        )
+    };
     let initial_state = if info.services.auth_unavailable.is_some() {
         HerdrState::Blocked
     } else {
         HerdrState::Idle
     };
-    herdr
-        .report_state(
-            initial_state,
-            info.services.auth_unavailable.as_deref(),
-            info.session.session_id.as_deref(),
-        )
-        .await;
+    {
+        let herdr = herdr.clone();
+        let message = info.services.auth_unavailable.clone();
+        let session_id = info.session.session_id.clone();
+        tokio::spawn(async move {
+            herdr
+                .report_state(initial_state, message.as_deref(), session_id.as_deref())
+                .await;
+        });
+    }
     let result = {
         let injected = smoke_injection::after_terminal_init();
 
@@ -412,11 +423,12 @@ pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::
             Ok(()) => {
                 let mut app = App::new(
                     info,
-                    herdr_graphics,
+                    crate::herdr::HerdrGraphicsCapability::NotHerdr,
                     agent.mcp_report().clone(),
                     agent.mcp_catalog().clone(),
                     agent.plugins_report().clone(),
                 );
+                app.pending_herdr_graphics = Some(pending_herdr_graphics);
                 app.terminal_session = Some(TerminalSession::acquire());
                 if let Some(manager) = agent.subagents() {
                     app.subagent_inbox.bind(manager);
@@ -453,6 +465,8 @@ struct App {
     status_overlay: Option<status_overlay::StatusOverlay>,
     /// Last status text for callers that inspect mode feedback.
     last_status: String,
+    /// Who owns `last_status`, so a poll can retire its own message.
+    status_source: StatusSource,
     should_quit: bool,
     ctrl_c_streak: u8,
     streams: StreamUi,
@@ -484,6 +498,11 @@ struct App {
     pending_model_metadata: Option<tokio::task::JoinHandle<Option<ModelMetadata>>>,
     pending_model_metadata_reasoning: Option<(ReasoningLevel, ReasoningRequestSource)>,
     pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
+    pending_custom_models: Option<tokio::task::JoinHandle<()>>,
+    pending_herdr_graphics: Option<tokio::task::JoinHandle<HerdrGraphicsCapability>>,
+    /// Turns submitted while MCP connect was still in flight, released in order
+    /// once the servers settle.
+    pending_mcp_submissions: VecDeque<idle_input::PendingMcpSubmission>,
     pending_model_selection: Option<InteractiveModelSelection>,
     internal_agent_model_target: Option<agent_picker::InternalAgentModelTarget>,
     /// Set when the user dismisses the startup Auto classifier picker. The next

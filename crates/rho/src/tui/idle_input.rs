@@ -5,9 +5,18 @@ use ratatui::DefaultTerminal;
 
 use super::{
     command_actions::CommandSubmission, command_palette::slash_command_args, commands,
-    goal_command, skill_actions, App, ComposerMode, GoalState, HistoryDirection,
-    InputSubmissionMode, InteractiveRuntime, TurnOutcome, TurnPrompt,
+    goal_command, skill_actions, App, ChatMedia, ComposerMode, GoalState, HistoryDirection,
+    InputSubmissionMode, InteractiveRuntime, PasteSegment, QueuedPrompt, TurnOutcome, TurnPrompt,
 };
+
+/// A turn submitted while MCP connect was still in flight. Released once the
+/// servers settle so the prompt starts without a second `enter`.
+pub(super) struct PendingMcpSubmission {
+    pub(super) turn: TurnPrompt,
+    pub(super) media: Vec<ChatMedia>,
+    /// Kept so `esc` can hand the prompt back exactly as it was typed.
+    pub(super) paste_segments: Vec<PasteSegment>,
+}
 
 impl App {
     fn take_command_submission(
@@ -112,8 +121,8 @@ impl App {
                 }
             }
             (_, KeyCode::Esc) => {
-                if !self.cancel_inline_shells() {
-                    let _ = self.exit_shell_mode();
+                if !self.cancel_inline_shells() && !self.exit_shell_mode() {
+                    self.take_back_held_turn();
                 }
                 self.ctrl_c_streak = 0;
             }
@@ -349,7 +358,96 @@ impl App {
             .input_ui
             .take_ready_media()
             .expect("pending attachments block submission");
+        let paste_segments = self.input_ui.paste_segments().to_vec();
         self.clear_submitted_input();
+
+        // MCP connect now runs after the first frame, so a prompt can land
+        // before the servers report. Hold the turn and start it once connect
+        // settles; the alternative is a person watching a status line and
+        // pressing enter again for up to the full connect budget.
+        if agent.mcp_connect_pending() {
+            // Queue rather than replace: someone who submits twice while the
+            // servers are still connecting must not lose the first prompt.
+            self.pending_mcp_submissions
+                .push_back(PendingMcpSubmission {
+                    turn,
+                    media,
+                    paste_segments,
+                });
+            self.set_mcp_connecting_status();
+            return Ok(());
+        }
+
+        self.run_turn_sequence(turn, media, terminal, agent).await
+    }
+
+    /// Hand the most recently held turn back to the composer, so `esc` unwinds
+    /// prompts waiting on MCP connect newest first instead of leaving them to
+    /// run. Does nothing unless the composer is empty, so it cannot overwrite
+    /// something the person has started typing since.
+    fn take_back_held_turn(&mut self) {
+        if !self.input_ui.text().is_empty() || !self.input_ui.attachments().is_empty() {
+            return;
+        }
+        let Some(PendingMcpSubmission {
+            turn,
+            media,
+            paste_segments,
+        }) = self.pending_mcp_submissions.pop_back()
+        else {
+            return;
+        };
+        self.restore_pending_prompt(QueuedPrompt {
+            prompt: turn.model,
+            display_prompt: turn.display,
+            paste_segments,
+        });
+        if !self.pending_mcp_submissions.is_empty() {
+            // Older holds are still waiting. Leave their status alone: writing
+            // any status here would hand `status_source` back to `Other`, and
+            // `poll_startup_hydrates` would never retire the indicator.
+            return;
+        }
+        // Attachments cannot go back into the composer, so say so rather than
+        // let them disappear with the hold.
+        if media.is_empty() {
+            self.set_status_quiet("");
+        } else {
+            self.notify_status("prompt returned to the composer; attach the files again");
+        }
+    }
+
+    /// Start the next turn held during MCP connect, once the servers settle.
+    /// One per call, so several held turns run in submission order. Reports
+    /// whether anything changed so the caller can redraw.
+    pub(super) async fn release_pending_mcp_submission(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<bool> {
+        if agent.mcp_connect_pending() || self.input_ui.composer().blocks_held_turn_start() {
+            return Ok(false);
+        }
+        let Some(PendingMcpSubmission { turn, media, .. }) =
+            self.pending_mcp_submissions.pop_front()
+        else {
+            return Ok(false);
+        };
+        self.set_status_quiet("");
+        self.run_turn_sequence(turn, media, terminal, agent).await?;
+        Ok(true)
+    }
+
+    /// Run a submitted turn plus any goal resumption or queued follow-ups it
+    /// triggers. Entered directly on submit, or later when a turn that arrived
+    /// during MCP connect is released.
+    pub(super) async fn run_turn_sequence(
+        &mut self,
+        turn: TurnPrompt,
+        media: Vec<ChatMedia>,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
         let turn = self.prepare_goal_resumption_turn(turn);
         let mut outcome = self.run_prompt_turn(turn, media, terminal, agent).await?;
         self.finish_goal_resumption_turn(outcome.kind());

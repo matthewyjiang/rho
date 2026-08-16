@@ -490,7 +490,7 @@ impl App {
             }
             PickerAction::AttachSubagent => self.submit_attach_selection(&value),
             PickerAction::Config => self.submit_config_selection_during_turn(&value)?,
-            PickerAction::Dismiss | PickerAction::ViewAgent => {
+            PickerAction::Dismiss | PickerAction::ViewMcpServers | PickerAction::ViewAgent => {
                 self.set_status("running");
             }
             PickerAction::SelectInternalAgentModel | PickerAction::EditAgent => {

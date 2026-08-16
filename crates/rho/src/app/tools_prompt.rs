@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use rho_sdk::SystemPrompt;
+use tracing::Instrument;
 
 use {
     crate::agent::{PromptPolicy, ToolCapability},
@@ -33,11 +34,14 @@ pub(crate) struct ToolsAndPromptOptions<'a> {
     pub(crate) mcp_elicitation: crate::tools::mcp::McpElicitationSupport,
     /// Whether this run will bind a model that opted-in MCP servers may sample.
     pub(crate) mcp_sampling: McpSamplingSupport,
-    /// Whether permanent system-prompt model labels should wait on a models.dev
-    /// catalog hydrate. Interactive sessions await so names are not frozen as
-    /// bare ids. Automation stays cache-only so cold/offline launches do not
-    /// block on an unrelated network request.
+    /// Permanent system-prompt model labels should wait on a models.dev
+    /// catalog hydrate. Interactive sessions stay cache-only on the first
+    /// frame and rewrite once if the hydrate lands before the first request.
+    /// Automation stays cache-only so cold/offline launches do not block.
     pub(crate) await_catalog_names: bool,
+    /// Interactive sessions spawn MCP connect and paint a pending inventory so
+    /// a slow server cannot stall the first frame. Automation still awaits.
+    pub(crate) defer_mcp_connect: bool,
     pub(crate) background_subagents: BackgroundSubagents,
     pub(crate) diagnostics: &'a RuntimeDiagnostics,
     pub(crate) agent: &'a BoundAgent,
@@ -63,6 +67,9 @@ pub(crate) struct ToolsAndPrompt {
     /// tool-list changes (advisor / edit tool). Those changes use context notices.
     pub(crate) system_prompt: SystemPrompt,
     pub(crate) inventory: StartupInventory,
+    /// In-flight MCP connect when the interactive host deferred it off the
+    /// first frame. `None` when connect was awaited or skipped.
+    pub(crate) pending_mcp: Option<tokio::task::JoinHandle<crate::tools::mcp::McpConnectOutcome>>,
     /// Late-bound model handle for MCP sampling. Bound once the runtime exists,
     /// and rebound whenever the user changes models. Left unbound, every
     /// sampling request fails closed.
@@ -130,7 +137,39 @@ pub(crate) async fn assemble_tools_and_prompt(
         }
         McpSamplingSupport::Unavailable => {}
     }
-    let mcp = crate::tools::mcp::McpConnectOutcome::run(mcp_plan, &mcp_config, mcp_options).await;
+    let (mcp, pending_mcp) = if options.defer_mcp_connect
+        && matches!(mcp_plan, crate::tools::mcp::McpSessionPlan::Connect)
+        && mcp_config.has_enabled_servers()
+    {
+        let pending_report =
+            crate::tools::mcp::McpSessionReport::from_config_connecting(&mcp_config);
+        let connect_config = mcp_config.clone();
+        let connect_options = mcp_options.clone();
+        let handle = tokio::spawn(
+            async move {
+                crate::tools::mcp::McpConnectOutcome::run(
+                    crate::tools::mcp::McpSessionPlan::Connect,
+                    &connect_config,
+                    connect_options,
+                )
+                .await
+            }
+            .instrument(tracing::info_span!("startup.mcp_connect")),
+        );
+        (
+            crate::tools::mcp::McpConnectOutcome {
+                report: pending_report,
+                bundle: None,
+                catalog: crate::tools::mcp::McpCatalog::default(),
+            },
+            Some(handle),
+        )
+    } else {
+        (
+            crate::tools::mcp::McpConnectOutcome::run(mcp_plan, &mcp_config, mcp_options).await,
+            None,
+        )
+    };
     let tools = if options.no_tools {
         AppToolSet::disabled().with_mcp(mcp)
     } else {
@@ -179,9 +218,9 @@ pub(crate) async fn assemble_tools_and_prompt(
                     .then(|| crate::tools::advisor::advisor_model(options.config))
                     .flatten()
                     .map(crate::model_identity::PromptModel::from_internal_agent);
-                // System prompt lines are never rewritten. Interactive sessions
-                // await one full catalog hydrate so names are not frozen as bare
-                // ids for the whole session. Automation stays cache-only.
+                // Interactive sessions stay cache-only on the first frame. A
+                // later one-shot rewrite can land display names if hydrate
+                // finishes before the first request. Automation stays cache-only.
                 if options.await_catalog_names {
                     rho_providers::model::ensure_model_catalog_names().await;
                 }
@@ -236,6 +275,7 @@ pub(crate) async fn assemble_tools_and_prompt(
             mcp: mcp_report,
             plugins: plugins_report,
         },
+        pending_mcp,
         mcp_sampling: mcp_sampling_bridge,
     })
 }

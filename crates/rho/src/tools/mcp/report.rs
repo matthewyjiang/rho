@@ -76,6 +76,7 @@ pub(crate) enum McpLoadMode {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum McpServerStatus {
     Connected,
+    Connecting,
     Disabled,
     InvalidConfig,
     Failed,
@@ -87,6 +88,7 @@ impl McpServerStatus {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Connected => "connected",
+            Self::Connecting => "connecting",
             Self::Disabled => "disabled",
             Self::InvalidConfig => "invalid",
             Self::Failed => "failed",
@@ -96,7 +98,10 @@ impl McpServerStatus {
     }
 
     pub(crate) const fn is_healthy(self) -> bool {
-        matches!(self, Self::Connected | Self::Disabled | Self::NotLoaded)
+        matches!(
+            self,
+            Self::Connected | Self::Connecting | Self::Disabled | Self::NotLoaded
+        )
     }
 }
 
@@ -151,6 +156,7 @@ enum McpServerState {
         filtered_out_count: usize,
         collision_skipped_count: usize,
     },
+    Connecting,
     Disabled,
     InvalidConfig {
         error: String,
@@ -168,6 +174,7 @@ impl McpServerState {
     const fn status(&self) -> McpServerStatus {
         match self {
             Self::Connected { .. } => McpServerStatus::Connected,
+            Self::Connecting => McpServerStatus::Connecting,
             Self::Disabled => McpServerStatus::Disabled,
             Self::InvalidConfig { .. } => McpServerStatus::InvalidConfig,
             Self::Failed { .. } => McpServerStatus::Failed,
@@ -179,6 +186,7 @@ impl McpServerState {
     const fn enabled(&self) -> bool {
         match self {
             Self::Connected { .. }
+            | Self::Connecting
             | Self::Failed { .. }
             | Self::TimedOut { .. }
             | Self::NotLoaded => true,
@@ -191,14 +199,15 @@ impl McpServerState {
             Self::InvalidConfig { error } | Self::Failed { error } | Self::TimedOut { error } => {
                 Some(error)
             }
-            Self::Connected { .. } | Self::Disabled | Self::NotLoaded => None,
+            Self::Connected { .. } | Self::Connecting | Self::Disabled | Self::NotLoaded => None,
         }
     }
 
     fn tools(&self) -> &[McpToolReport] {
         match self {
             Self::Connected { tools, .. } => tools,
-            Self::Disabled
+            Self::Connecting
+            | Self::Disabled
             | Self::InvalidConfig { .. }
             | Self::Failed { .. }
             | Self::TimedOut { .. }
@@ -211,7 +220,8 @@ impl McpServerState {
             Self::Connected {
                 filtered_out_count, ..
             } => *filtered_out_count,
-            Self::Disabled
+            Self::Connecting
+            | Self::Disabled
             | Self::InvalidConfig { .. }
             | Self::Failed { .. }
             | Self::TimedOut { .. }
@@ -225,7 +235,8 @@ impl McpServerState {
                 collision_skipped_count,
                 ..
             } => *collision_skipped_count,
-            Self::Disabled
+            Self::Connecting
+            | Self::Disabled
             | Self::InvalidConfig { .. }
             | Self::Failed { .. }
             | Self::TimedOut { .. }
@@ -236,7 +247,8 @@ impl McpServerState {
     fn instructions(&self) -> Option<&str> {
         match self {
             Self::Connected { instructions, .. } => instructions.as_deref(),
-            Self::Disabled
+            Self::Connecting
+            | Self::Disabled
             | Self::InvalidConfig { .. }
             | Self::Failed { .. }
             | Self::TimedOut { .. }
@@ -247,7 +259,8 @@ impl McpServerState {
     fn live(&self) -> LiveServerFacts {
         match self {
             Self::Connected { live, .. } => live.snapshot(),
-            Self::Disabled
+            Self::Connecting
+            | Self::Disabled
             | Self::InvalidConfig { .. }
             | Self::Failed { .. }
             | Self::TimedOut { .. }
@@ -331,6 +344,18 @@ impl McpServerReport {
             transport: None,
             state: McpServerState::InvalidConfig {
                 error: error.into(),
+            },
+        }
+    }
+
+    pub(crate) fn connecting(identity: impl Into<String>, server: &McpServerConfig) -> Self {
+        Self {
+            identity: identity.into(),
+            transport: Some(McpTransportSummary::from_server(server)),
+            state: if server.enabled {
+                McpServerState::Connecting
+            } else {
+                McpServerState::Disabled
             },
         }
     }
@@ -463,6 +488,9 @@ impl McpServerReport {
                     .join(", ");
                 lines.push(format!("{} tool(s): {names}", self.tool_count()));
             }
+            McpServerStatus::Connecting => {
+                lines.push("connecting".into());
+            }
             McpServerStatus::Disabled => lines.push("enabled = false".into()),
             McpServerStatus::NotLoaded => {
                 lines.push("configured but not loaded in this session".into());
@@ -517,6 +545,7 @@ pub(crate) struct McpSessionSummary {
     pub(crate) mode: McpLoadMode,
     pub(crate) configured: bool,
     pub(crate) connected: usize,
+    pub(crate) connecting: usize,
     pub(crate) problems: usize,
     pub(crate) enabled: usize,
     pub(crate) exported_tools: usize,
@@ -529,6 +558,38 @@ pub(crate) struct McpSessionReport {
 }
 
 impl McpSessionReport {
+    pub(crate) fn from_config_connecting(config: &McpConfig) -> Self {
+        let mut servers = config
+            .invalid_servers
+            .iter()
+            .map(|invalid| McpServerReport::invalid(&invalid.identity, &invalid.error))
+            .chain(
+                config
+                    .servers
+                    .iter()
+                    .map(|(identity, server)| McpServerReport::connecting(identity, server)),
+            )
+            .collect::<Vec<_>>();
+        servers.sort_by(|left, right| left.identity.cmp(&right.identity));
+        Self {
+            mode: McpLoadMode::Native,
+            servers,
+        }
+    }
+
+    /// Mark every still-connecting server as failed. Used when the deferred
+    /// connect never reports back, so `/mcp` says what happened instead of
+    /// showing `connecting` for the rest of the session.
+    pub(crate) fn fail_connecting(&mut self, error: &str) {
+        for server in &mut self.servers {
+            if matches!(server.state, McpServerState::Connecting) {
+                server.state = McpServerState::Failed {
+                    error: error.to_string(),
+                };
+            }
+        }
+    }
+
     pub(crate) fn from_config_unloaded(config: &McpConfig, mode: McpLoadMode) -> Self {
         let mut servers = config
             .invalid_servers
@@ -556,6 +617,7 @@ impl McpSessionReport {
             mode: self.mode,
             configured: !self.servers.is_empty(),
             connected: 0,
+            connecting: 0,
             problems: 0,
             enabled: 0,
             exported_tools: 0,
@@ -565,6 +627,7 @@ impl McpSessionReport {
             summary.exported_tools += server.tool_count();
             match server.status() {
                 McpServerStatus::Connected => summary.connected += 1,
+                McpServerStatus::Connecting => summary.connecting += 1,
                 McpServerStatus::InvalidConfig
                 | McpServerStatus::Failed
                 | McpServerStatus::TimedOut => summary.problems += 1,
@@ -574,3 +637,7 @@ impl McpSessionReport {
         summary
     }
 }
+
+#[cfg(test)]
+#[path = "report_tests.rs"]
+mod tests;

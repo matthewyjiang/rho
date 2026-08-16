@@ -122,6 +122,16 @@ impl UsageUi {
     }
 }
 
+/// Who put the current status text up. Lets background polls retire their own
+/// message without comparing the status against a copy string that a rewording
+/// would silently break.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum StatusSource {
+    #[default]
+    Other,
+    McpConnecting,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum InputSubmissionMode {
     #[default]
@@ -145,6 +155,25 @@ pub(super) enum ComposerMode {
 }
 
 impl ComposerMode {
+    /// Whether a turn held during MCP connect must keep waiting. Every mode
+    /// except plain input owns the keyboard, and during-turn key routing has no
+    /// arm for them, so releasing underneath one would leave it painted but
+    /// deaf to its own keys.
+    pub(super) fn blocks_held_turn_start(&self) -> bool {
+        match self {
+            Self::Input => false,
+            Self::Picker(_)
+            | Self::SecretInput(_)
+            | Self::ConfigNumberInput(_)
+            | Self::TextInput(_)
+            | Self::InteractivePending(_)
+            | Self::InlineChoice(_)
+            | Self::Questionnaire(_)
+            | Self::Approval(_)
+            | Self::Limits(_) => true,
+        }
+    }
+
     pub(super) fn blocks_auto_continue(&self) -> bool {
         match self {
             Self::InlineChoice(modal) => modal.blocks_auto_continue(),

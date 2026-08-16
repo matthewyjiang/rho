@@ -1,4 +1,5 @@
-use super::super::{commands, goal, tests::test_app, ChatMedia, ChatTextDocument};
+use super::super::{commands, goal, tests::test_app, ChatMedia, ChatTextDocument, TurnPrompt};
+use super::PendingMcpSubmission;
 
 fn attached_document() -> ChatMedia {
     ChatMedia::TextDocument(ChatTextDocument {
@@ -45,4 +46,32 @@ fn goal_resume_takes_queued_media() {
 fn invalid_overlong_goal_takes_queued_media() {
     let condition = "x".repeat(goal::MAX_GOAL_CHARS + 1);
     assert_goal_command_takes_media(&format!("/goal {condition}"));
+}
+
+fn held_turn(display: &str) -> PendingMcpSubmission {
+    PendingMcpSubmission {
+        turn: TurnPrompt::standard(display.to_owned(), display.to_owned()),
+        media: Vec::new(),
+        paste_segments: Vec::new(),
+    }
+}
+
+// Covers: esc must hand turns held during MCP connect back to the composer,
+// newest first, and must not overwrite text typed since the hold.
+// Owner: idle input key handling
+#[test]
+fn esc_takes_back_held_turns_newest_first() {
+    let mut app = test_app();
+    app.pending_mcp_submissions.push_back(held_turn("first"));
+    app.pending_mcp_submissions.push_back(held_turn("second"));
+
+    app.take_back_held_turn();
+    assert_eq!(app.input_ui.text(), "second");
+    assert_eq!(app.pending_mcp_submissions.len(), 1);
+
+    // The composer now holds the recovered prompt, so a second esc must leave
+    // it alone rather than replace it with the older hold.
+    app.take_back_held_turn();
+    assert_eq!(app.input_ui.text(), "second");
+    assert_eq!(app.pending_mcp_submissions.len(), 1);
 }

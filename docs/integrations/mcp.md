@@ -130,7 +130,9 @@ Server log messages enter Rho's tracing output under the `rho::mcp::server` targ
 
 ## Discovery and tool calls
 
-Enabled servers initialize independently at session startup because Rho needs `tools/list` before the first model request. Each server has a two-minute startup budget for connection, handshake, and discovery. A timeout logs the server identity and limit. Rho does not retry during startup. A malformed entry, failed executable, failed connection, authentication error, handshake error, or `tools/list` error disables only that server. Other MCP servers and built-in tools continue to load. After a session is established, discovery failures and timeouts attempt a bounded close instead of relying only on Drop.
+Enabled servers initialize independently. Interactive sessions paint the TUI first and connect in the background. Composer text, slash commands, and pickers stay available while that happens. Pressing `enter` on a model prompt waits until connect finishes or times out, then starts the turn so the model sees the discovered tools. Automation (`rho run`) still connects before the first request.
+
+Each server has a two-minute startup budget for connection, handshake, and discovery. A timeout logs the server identity and limit. Rho does not retry during startup. A malformed entry, failed executable, failed connection, authentication error, handshake error, or `tools/list` error disables only that server. Other MCP servers and built-in tools continue to load. After a session is established, discovery failures and timeouts attempt a bounded close instead of relying only on Drop.
 
 Rho attaches a progress token to every tool call, so a server may report `notifications/progress` against it. Progress reaches the tool card while the call runs. Counts appear only when the server supplies a total.
 
@@ -345,7 +347,7 @@ A sampling call is bounded at three minutes. Cancelling the turn cancels it.
 
 There is no marketplace in Rho. Configure servers in the selected config file, then inspect config or live load status:
 
-- **Interactive:** `/mcp` lists configured servers, transport, status, errors, exported tool names, and any prompts and resources the server offers, for the current session. `/doctor` includes an MCP health row.
+- **Interactive:** `/mcp` lists configured servers, transport, status, errors, exported tool names, and any prompts and resources the server offers, for the current session. A server that is still connecting shows as connecting, not as a failure. `/doctor` includes an MCP health row.
 - **CLI:** `rho mcp list` prints configured servers from the selected config and plugins without starting them. `rho mcp show <id>` prints one server, including its prompts and resources when started with `--connect`. Pass `--connect` on either command to start enabled servers and report live status and discovered tools. Both accept `--json`.
 
 Use `/mcp` when you already have a session open. Use `rho mcp list` from a shell to verify config before starting the TUI, and `rho mcp list --connect` when you need a live probe.

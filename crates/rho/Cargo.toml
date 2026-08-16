@@ -67,6 +67,12 @@ tempfile = "3"
 fs2 = "0.4.3"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+    "ansi",
+    "env-filter",
+    "fmt",
+    "std",
+] }
 pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
 katex-rs = "0.2.4"
 syntect = { version = "5", default-features = false, features = ["regex-fancy", "parsing", "dump-load"] }

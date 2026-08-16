@@ -16,6 +16,7 @@ mod export;
 mod herdr;
 mod hooks;
 mod keybindings;
+mod logging;
 mod model_aliases;
 mod model_identity;
 mod paths;

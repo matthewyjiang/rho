@@ -141,6 +141,7 @@ impl App {
         provider_health: &[(String, ProviderModelHealth)],
         claude: &ClaudeProbeSnapshot,
     ) -> anyhow::Result<()> {
+        self.refresh_available_auths();
         let config_path = self.info.services.config_repository.configured_path()?;
         let session_root = crate::paths::rho_dir()?.join("sessions");
         let picker = doctor::picker(doctor::DoctorContext {

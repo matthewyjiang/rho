@@ -26,6 +26,7 @@ mod process_rail;
 mod resume_delete;
 mod runtime_info;
 mod sessions_hub;
+mod startup;
 mod statusline;
 mod subagent_rail;
 mod supervised_approval;
@@ -65,7 +66,10 @@ use hooks::HOOKS_CONTRACT_SCENARIO;
 use limits::LIMITS_OVERLAY_SCENARIO;
 use login::LOGIN_PROVIDER_GROUPS_STEPS;
 use markdown_stream::{MARKDOWN_HEADINGS_SCENARIO, STREAMING_MARKDOWN_STABILITY_SCENARIO};
-use mcp::MCP_INVENTORY_SCENARIO;
+use mcp::{
+    MCP_CONNECTING_SCENARIO, MCP_CONNECT_RELEASE_SCENARIO, MCP_HOLD_TAKE_BACK_SCENARIO,
+    MCP_INVENTORY_SCENARIO,
+};
 use mermaid::MERMAID_FLOWCHART_RESIZE_STEPS;
 use paste::PASTE_MULTILINE_SCENARIO;
 use pickers::{
@@ -76,6 +80,7 @@ use process_rail::PROCESS_RAIL_SCENARIO;
 use resume_delete::RESUME_PICKER_DELETE_STEPS;
 use runtime_info::RUNTIME_INFO_STEPS;
 use sessions_hub::{setup_sessions_hub, SESSIONS_HUB_STEPS};
+use startup::{STARTUP_FIRST_FRAME_SCENARIO, STARTUP_STREAM_EXIT_SCENARIO};
 use statusline::STATUSLINE_HIERARCHY_STEPS;
 use std::time::Duration;
 use subagent_rail::SUBAGENT_RAIL_MOUSE_SCENARIO;
@@ -100,35 +105,8 @@ const DEFAULT_SIZE: PtySize = PtySize {
 };
 
 pub(super) const STARTUP: WaitTimeout = WaitTimeout::secs(20, "startup");
-const STREAM: WaitTimeout = WaitTimeout::secs(20, "stream response");
+pub(super) const STREAM: WaitTimeout = WaitTimeout::secs(20, "stream response");
 pub(super) const SETTLE: WaitTimeout = WaitTimeout::secs(10, "ui settle");
-
-const STARTUP_STREAM_EXIT_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "rho",
-        timeout: STARTUP,
-    },
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::Phase("submit_stream"),
-    Step::SubmitText("fixture stream"),
-    Step::WaitText {
-        text: "assistant stream part one",
-        timeout: STREAM,
-    },
-    Step::WaitText {
-        text: "part two",
-        timeout: STREAM,
-    },
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(200),
-        timeout: SETTLE,
-    },
-    Step::ExitCommand,
-];
 
 const TYPE_DURING_STREAM_STEPS: &[Step] = &[
     Step::Phase("startup"),
@@ -447,13 +425,8 @@ const RETRACT_STEERING_DURING_TOOL_STEPS: &[Step] = &[
 
 /// All registered scenarios.
 const ALL_SCENARIOS: &[Scenario] = &[
-    Scenario::new(
-        "startup_stream_exit",
-        "Start, stream a fixture response, and exit cleanly",
-        DEFAULT_SIZE,
-        STARTUP_STREAM_EXIT_STEPS,
-        true,
-    ),
+    STARTUP_FIRST_FRAME_SCENARIO,
+    STARTUP_STREAM_EXIT_SCENARIO,
     Scenario::new(
         "cancel_and_resubmit",
         "Cancel a long fixture stream and submit another prompt",
@@ -631,6 +604,9 @@ const ALL_SCENARIOS: &[Scenario] = &[
     WORKSPACE_REWIND_SCENARIO,
     HOOKS_CONTRACT_SCENARIO,
     MCP_INVENTORY_SCENARIO,
+    MCP_CONNECTING_SCENARIO,
+    MCP_CONNECT_RELEASE_SCENARIO,
+    MCP_HOLD_TAKE_BACK_SCENARIO,
     Scenario::new(
         "resume_picker_delete",
         "Delete a saved session from the resume picker with confirm/cancel",
