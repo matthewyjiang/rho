@@ -132,7 +132,7 @@ pub enum Command {
     Attach {
         /// Delegated run ID shown when the agent was started.
         ///
-        /// Omit to pick from running subagents.
+        /// Omit to pick from subagents in this directory.
         #[arg(value_name = "ID")]
         id: Option<String>,
     },

@@ -705,6 +705,21 @@ fn attach_opens_a_picker_of_running_subagents() {
     assert_pass("attach_picker");
 }
 
+// Covers: /attach with no running subagents must still open an empty overlay.
+// Owner: interactive TUI
+#[test]
+fn attach_opens_an_empty_picker_when_nothing_is_running() {
+    assert_pass("attach_picker_empty");
+}
+
+// Covers: `rho attach` with no id must open the picker even when the directory
+// has no running subagents.
+// Owner: interactive TUI
+#[test]
+fn cli_attach_opens_an_empty_picker_when_nothing_is_running() {
+    assert_pass("attach_cli_empty");
+}
+
 // Covers: a started process must stay on the activity rail after the turn ends.
 // Owner: interactive TUI
 #[test]

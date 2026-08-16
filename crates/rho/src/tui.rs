@@ -521,6 +521,12 @@ struct App {
     /// Shared composer attachment layout for the current frame/width.
     composer_attachment_layout_cache: Option<composer_attachments::ComposerAttachmentLayoutCache>,
     pending_subagent_attaches: Vec<PendingSubagentAttach>,
+    /// `/attach` starts on running runs; Ctrl-R includes finished transcripts.
+    attach_run_filter: attach_picker::WorkspaceRunFilter,
+    /// Disk listing captured when `/attach` opens so panel ticks only rematch live rows.
+    attach_disk_candidates: Vec<attach_picker::AttachCandidate>,
+    /// Run ids seen on the live panel while the picker is open.
+    attach_seen_live: std::collections::HashSet<String>,
     last_mouse_position: Option<(u16, u16)>,
     /// Screen-space drag selection for text outside the history area.
     screen_selection: Option<TextSelection>,

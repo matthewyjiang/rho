@@ -13,7 +13,7 @@ use crate::agent::AgentRuntime;
 
 mod storage;
 pub(crate) use storage::{
-    is_trusted_directory, list_running_runs, lock_parent_for_cleanup, release_run_directory,
+    is_trusted_directory, list_workspace_runs, lock_parent_for_cleanup, release_run_directory,
     reserve_run_directory, resolve_run_directory, RunPlacement, RunningRun,
 };
 

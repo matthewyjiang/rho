@@ -89,6 +89,9 @@ pub(super) struct UiPicker {
     /// Nav row under the mouse pointer, in row space.
     hovered_nav_row: Option<usize>,
     pub(super) confirm_verb: Option<String>,
+    /// Inventory-empty copy when the filter is blank. Filter misses stay
+    /// "no matches".
+    empty_message: Option<String>,
     /// When set, overrides [`PickerAction::uses_regex_filter`] for this picker.
     pub(super) force_fuzzy_filter: bool,
     pub(super) overlay_chrome: Option<super::picker_overlay::OverlayChrome>,
@@ -262,6 +265,7 @@ impl UiPicker {
             overlay_scrollbar_drag: None,
             hovered_nav_row: None,
             confirm_verb: None,
+            empty_message: None,
             force_fuzzy_filter: false,
             overlay_chrome: None,
             parent: None,
@@ -571,9 +575,11 @@ impl UiPicker {
     }
 
     /// Empty-match message when the filter yields no rows.
-    pub(super) fn empty_match_message(&self) -> &'static str {
+    pub(super) fn empty_match_message(&self) -> &str {
         if self.filter_is_invalid_regex() {
             "invalid regex"
+        } else if self.filter.is_empty() {
+            self.empty_message.as_deref().unwrap_or("no matches")
         } else {
             "no matches"
         }
@@ -587,6 +593,11 @@ impl UiPicker {
 
     pub(super) fn with_confirm_verb(mut self, verb: impl Into<String>) -> Self {
         self.confirm_verb = Some(verb.into());
+        self
+    }
+
+    pub(super) fn with_empty_message(mut self, message: impl Into<String>) -> Self {
+        self.empty_message = Some(message.into());
         self
     }
 

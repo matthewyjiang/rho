@@ -113,7 +113,7 @@ A single `/` as the first character opens the command palette. Any later `/` cha
 | `/theme` | Preview and apply a color theme. Lists the host terminal theme, built-in light/dark schemes, and custom files from `~/.rho/themes/`. Moving the selection previews colors; Enter saves. See [Theme](/interactive-tui/theme). |
 | `/hooks` | Reload [lifecycle hooks](/hooks) and show what each one will run: the resolved argv, working directory, timeout, and environment. Also names any project hooks file ignored because the workspace is not trusted. |
 | `/agents` | Reload agent definitions and browse their descriptions, sources, runtime (`rho` or `claude-cli`), model policies, reasoning levels, tools (Rho capabilities or Claude tool names), Claude config inheritance, prompt policies, and prompt previews. Select a reserved internal agent to configure its model. |
-| `/attach` | Open a full-screen picker of running subagents. Rows show the agent role, generated title, and current tool or action. Enter attaches the same way as clicking the activity rail. |
+| `/attach` | Open a full-screen picker of subagents from this directory. Starts on running runs; Ctrl-R also shows finished transcripts. Rows show the agent role, generated title, and current tool or final state. Enter attaches the same way as clicking the activity rail. |
 | `/diff` | Show local Git status plus staged and unstaged worktree patches without invoking the model. |
 | `/doctor` | Check provider authentication, the selected model, config and session writability, model caches, clipboard image helpers, rtk, Herdr integration, and Claude Code binary/auth health without displaying secrets. |
 | `/mcp` | List configured MCP servers for this session, including in-flight connects. Connecting servers are not treated as failures. `/doctor` includes the same MCP health row. See [Model Context Protocol](/integrations/mcp). |
@@ -188,7 +188,8 @@ The rail stays visible in zen mode.
 
 ## Watch a subagent
 
-Run `rho attach` to pick a running subagent from the current directory, or
+Run `rho attach` to pick a subagent from the current directory. The picker
+starts on running runs; press Ctrl-R to include finished transcripts. Or run
 `rho attach <id>` to watch one reported by the `agent` tool:
 
 ```bash

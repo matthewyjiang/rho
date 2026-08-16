@@ -128,16 +128,6 @@ impl SubagentPanel {
             .map(|row| (row, SubagentRowState::Hovered))
     }
 
-    pub(super) fn attach_target(&self, run_id: &str) -> Option<SubagentAttachTarget> {
-        self.agents
-            .iter()
-            .find(|agent| agent.id == run_id)
-            .map(|agent| SubagentAttachTarget {
-                run_id: agent.id.clone(),
-                agent_id: agent.agent_id.clone(),
-            })
-    }
-
     pub(super) fn candidates(&self) -> Vec<super::attach_picker::AttachCandidate> {
         self.running_agents()
             .into_iter()

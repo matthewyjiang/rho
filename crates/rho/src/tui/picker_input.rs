@@ -398,6 +398,9 @@ impl App {
         if !matches!(self.input_ui.composer(), super::ComposerMode::Picker(_)) {
             return Ok(false);
         }
+        if self.toggle_attach_filter_if_requested(key) {
+            return Ok(true);
+        }
 
         let space_confirms = self.picker_space_confirms_selection();
         let delete_action = {
@@ -470,6 +473,9 @@ impl App {
     ) -> anyhow::Result<bool> {
         if !matches!(self.input_ui.composer(), super::ComposerMode::Picker(_)) {
             return Ok(false);
+        }
+        if self.toggle_attach_filter_if_requested(key) {
+            return Ok(true);
         }
 
         let space_confirms = self.picker_space_confirms_selection();

@@ -146,7 +146,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         id: CommandId::Attach,
         name: "attach",
         usage: "/attach",
-        description: "attach to a running subagent",
+        description: "attach to a subagent run",
         argument_choices: &[],
     },
     CommandSpec {

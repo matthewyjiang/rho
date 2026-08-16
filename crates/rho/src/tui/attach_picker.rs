@@ -1,4 +1,8 @@
-//! `/attach` overlay: pick a running subagent by role, title, and activity.
+//! `/attach` overlay: pick a workspace subagent by role, title, and activity.
+
+use std::path::Path;
+
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::subagent::{self, RunState, RunningRun};
 use crate::title::activity_label;
@@ -7,6 +11,25 @@ use super::{
     picker_overlay::OverlayChrome, App, ComposerMode, PickerAction, PickerBadge, PickerBadgeTone,
     PickerItem, PickerLayout, UiPicker,
 };
+
+const RUNNING_ONLY_KEYS_HINT: &str = "↑↓ runs · Ctrl-R show finished";
+const ALL_RUNS_KEYS_HINT: &str = "↑↓ runs · Ctrl-R running only";
+
+/// Which attach-picker rows are visible. Listing always returns every workspace run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum WorkspaceRunFilter {
+    RunningOnly,
+    All,
+}
+
+impl WorkspaceRunFilter {
+    pub(super) fn toggled(self) -> Self {
+        match self {
+            Self::RunningOnly => Self::All,
+            Self::All => Self::RunningOnly,
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct AttachCandidate {
@@ -31,15 +54,110 @@ impl From<RunningRun> for AttachCandidate {
     }
 }
 
-pub(super) fn picker(candidates: &[AttachCandidate]) -> UiPicker {
-    let items = candidates.iter().map(candidate_item).collect();
+pub(super) fn is_running_filter_toggle(key: KeyEvent) -> bool {
+    key.modifiers.contains(KeyModifiers::CONTROL)
+        && !key.modifiers.contains(KeyModifiers::ALT)
+        && matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R'))
+}
+
+pub(super) fn visible_candidates(
+    candidates: &[AttachCandidate],
+    filter: WorkspaceRunFilter,
+) -> Vec<&AttachCandidate> {
+    candidates
+        .iter()
+        .filter(|candidate| {
+            !matches!(filter, WorkspaceRunFilter::RunningOnly) || !candidate.state.is_terminal()
+        })
+        .collect()
+}
+
+pub(super) fn workspace_candidates(cwd: &Path) -> anyhow::Result<Vec<AttachCandidate>> {
+    Ok(subagent::list_workspace_runs(cwd)?
+        .into_iter()
+        .map(AttachCandidate::from)
+        .collect())
+}
+
+pub(super) fn merge_live_candidates(
+    mut candidates: Vec<AttachCandidate>,
+    live: Vec<AttachCandidate>,
+) -> Vec<AttachCandidate> {
+    let mut missing = Vec::new();
+    for live_run in live {
+        if let Some(existing) = candidates
+            .iter_mut()
+            .find(|candidate| candidate.run_id == live_run.run_id)
+        {
+            *existing = live_run;
+        } else {
+            missing.push(live_run);
+        }
+    }
+    missing.extend(candidates);
+    missing
+}
+
+pub(super) fn retire_departed_live_runs(
+    candidates: &mut [AttachCandidate],
+    live_ids: &std::collections::HashSet<String>,
+    previously_live: &std::collections::HashSet<String>,
+    mut terminal_state: impl FnMut(&str) -> RunState,
+) {
+    for candidate in candidates {
+        if previously_live.contains(&candidate.run_id)
+            && !live_ids.contains(&candidate.run_id)
+            && !candidate.state.is_terminal()
+        {
+            candidate.state = terminal_state(&candidate.run_id);
+        }
+    }
+}
+
+fn finished_run_state(run_id: &str) -> RunState {
+    let Ok(directory) = subagent::resolve_run_directory(run_id) else {
+        return RunState::Stopped;
+    };
+    subagent::read_status(&directory.join(subagent::RESULT_FILE_NAME))
+        .map(|status| status.state)
+        .filter(|state| state.is_terminal())
+        .unwrap_or(RunState::Stopped)
+}
+
+pub(super) fn candidate_agent_id<'a>(
+    candidates: &'a [AttachCandidate],
+    run_id: &str,
+) -> Option<&'a str> {
+    candidates
+        .iter()
+        .find(|candidate| candidate.run_id == run_id)
+        .map(|candidate| candidate.agent_id.as_str())
+        .filter(|agent_id| !agent_id.is_empty())
+}
+
+pub(super) fn picker(candidates: &[AttachCandidate], filter: WorkspaceRunFilter) -> UiPicker {
+    let items = visible_candidates(candidates, filter)
+        .into_iter()
+        .map(candidate_item)
+        .collect();
+    let running_only = matches!(filter, WorkspaceRunFilter::RunningOnly);
     UiPicker::new("attach subagent", items, PickerAction::AttachSubagent)
         .with_layout(PickerLayout::Overlay)
         .with_badge_placement(super::PickerBadgePlacement::Navigation)
         .with_overlay_chrome(OverlayChrome {
             nav_label: " SUBAGENTS".into(),
             detail_label: Some(" ACTIVITY".into()),
-            nav_keys_hint: "↑↓ runs".into(),
+            nav_keys_hint: if running_only {
+                RUNNING_ONLY_KEYS_HINT
+            } else {
+                ALL_RUNS_KEYS_HINT
+            }
+            .into(),
+        })
+        .with_empty_message(if running_only {
+            "no running subagents"
+        } else {
+            "no subagents in this directory"
         })
         .with_confirm_verb("attach")
 }
@@ -75,15 +193,21 @@ fn candidate_item(candidate: &AttachCandidate) -> PickerItem {
 
 impl App {
     pub(super) fn execute_attach_command(&mut self) -> anyhow::Result<()> {
-        let candidates = self.subagent_panel.candidates();
-        if candidates.is_empty() {
-            self.set_status("no running subagents");
-            return Ok(());
-        }
-        self.input_ui
-            .set_composer(ComposerMode::Picker(picker(&candidates)));
-        self.set_status("attach subagent");
+        self.attach_run_filter = WorkspaceRunFilter::RunningOnly;
+        self.open_attach_picker();
         Ok(())
+    }
+
+    pub(super) fn toggle_attach_filter_if_requested(&mut self, key: KeyEvent) -> bool {
+        let ComposerMode::Picker(picker) = self.input_ui.composer() else {
+            return false;
+        };
+        if picker.action != PickerAction::AttachSubagent || !is_running_filter_toggle(key) {
+            return false;
+        }
+        self.attach_run_filter = self.attach_run_filter.toggled();
+        self.refresh_attach_picker();
+        true
     }
 
     pub(super) fn refresh_attach_picker(&mut self) {
@@ -94,23 +218,63 @@ impl App {
             return;
         }
         let cursor = open.cursor();
-        let candidates = self.subagent_panel.candidates();
-        if candidates.is_empty() {
-            self.input_ui.set_composer(ComposerMode::Input);
-            self.set_status("no running subagents");
-            return;
-        }
-        let mut next = picker(&candidates);
+        let mut next = picker(&self.sync_attach_candidates(), self.attach_run_filter);
         next.restore_cursor(&cursor);
         self.input_ui.set_composer(ComposerMode::Picker(next));
     }
 
     pub(super) fn submit_attach_selection(&mut self, run_id: &str) {
-        let Some(target) = self.subagent_panel.attach_target(run_id) else {
-            self.set_status("that subagent is no longer running");
-            return;
+        let agent_id = candidate_agent_id(&self.sync_attach_candidates(), run_id)
+            .unwrap_or("agent")
+            .to_owned();
+        self.activate_subagent_row(
+            &super::subagent_panel::SubagentAttachTarget {
+                run_id: run_id.to_owned(),
+                agent_id,
+            },
+            std::time::Instant::now(),
+        );
+    }
+
+    fn open_attach_picker(&mut self) {
+        self.attach_seen_live.clear();
+        let listing_error = match workspace_candidates(&self.info.runtime.cwd) {
+            Ok(disk) => {
+                self.attach_disk_candidates = disk;
+                None
+            }
+            Err(error) => {
+                self.attach_disk_candidates.clear();
+                Some(error)
+            }
         };
-        self.activate_subagent_row(&target, std::time::Instant::now());
+        let candidates = self.sync_attach_candidates();
+        self.input_ui.set_composer(ComposerMode::Picker(picker(
+            &candidates,
+            self.attach_run_filter,
+        )));
+        match listing_error {
+            Some(error) => self.set_status(format!("could not list workspace runs: {error}")),
+            None => self.set_status("attach subagent"),
+        }
+    }
+
+    fn sync_attach_candidates(&mut self) -> Vec<AttachCandidate> {
+        let live = self.subagent_panel.candidates();
+        let live_ids = live
+            .iter()
+            .map(|candidate| candidate.run_id.clone())
+            .collect::<std::collections::HashSet<_>>();
+        self.attach_disk_candidates =
+            merge_live_candidates(std::mem::take(&mut self.attach_disk_candidates), live);
+        retire_departed_live_runs(
+            &mut self.attach_disk_candidates,
+            &live_ids,
+            &self.attach_seen_live,
+            finished_run_state,
+        );
+        self.attach_seen_live.extend(live_ids);
+        self.attach_disk_candidates.clone()
     }
 }
 

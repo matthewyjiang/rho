@@ -40,7 +40,9 @@ use advisor::{
     setup_advisor_ready, setup_advisor_without_model, ADVISOR_COMMAND_STEPS,
     ADVISOR_MISSING_MODEL_STEPS, ADVISOR_REVIEW_STEPS, XAI_KEY_ENV,
 };
-use attach_picker::ATTACH_PICKER_SCENARIO;
+use attach_picker::{
+    ATTACH_CLI_EMPTY_SCENARIO, ATTACH_PICKER_EMPTY_SCENARIO, ATTACH_PICKER_SCENARIO,
+};
 use background_agents::{
     BACKGROUND_AGENT_AUTO_DELIVERY_STEPS, BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
 };
@@ -730,6 +732,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     ),
     SUBAGENT_RAIL_MOUSE_SCENARIO,
     ATTACH_PICKER_SCENARIO,
+    ATTACH_PICKER_EMPTY_SCENARIO,
+    ATTACH_CLI_EMPTY_SCENARIO,
     PROCESS_RAIL_SCENARIO,
     Scenario::new(
         "tool_card_hover",

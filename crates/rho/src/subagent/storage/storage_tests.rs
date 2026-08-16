@@ -11,7 +11,7 @@ use super::{
     index::{
         initialize_index, insert_parent_lock_for_test, unix_timestamp_secs, PARENT_LOCK_TTL_SECS,
     },
-    list_running_runs_in_root, lock_parent_for_cleanup_in_root,
+    list_workspace_runs_in_root, lock_parent_for_cleanup_in_root,
     reserve_run_directory_in_root as reserve_at, resolve_run_directory_in_root, RunPlacement,
 };
 use crate::session::Session;
@@ -353,8 +353,8 @@ fn list_running_runs_keeps_only_the_current_workspace() {
         "there-orphan",
     );
 
-    let here_ids = running_ids(temp.path(), here.path());
-    let there_ids = running_ids(temp.path(), there.path());
+    let here_ids = workspace_ids(temp.path(), here.path());
+    let there_ids = workspace_ids(temp.path(), there.path());
 
     assert_eq!(
         here_ids,
@@ -365,8 +365,36 @@ fn list_running_runs_keeps_only_the_current_workspace() {
         std::collections::BTreeSet::from([there_nested, there_parentless])
     );
     assert_eq!(
-        running_ids(temp.path(), &here.path().canonicalize().unwrap()),
+        workspace_ids(temp.path(), &here.path().canonicalize().unwrap()),
         here_ids
+    );
+}
+
+// Covers: attach listing can include finished transcripts for the same workspace.
+// Owner: delegated-run index listing
+#[test]
+fn list_workspace_runs_can_include_finished_runs() {
+    let temp = TempDir::new().unwrap();
+    let cwd = TempDir::new().unwrap();
+    let running = reserve_running(
+        temp.path(),
+        cwd.path(),
+        RunPlacement::parentless(),
+        "aaaaaa",
+        "worker",
+    );
+    let finished = reserve_running(
+        temp.path(),
+        cwd.path(),
+        RunPlacement::parentless(),
+        "bbbbbb",
+        "explorer",
+    );
+    write_terminal(temp.path(), &finished, crate::subagent::RunState::Ok);
+
+    assert_eq!(
+        workspace_ids(temp.path(), cwd.path()),
+        std::collections::BTreeSet::from([running, finished])
     );
 }
 
@@ -415,7 +443,7 @@ fn v3_index_upgrades_and_hides_unscoped_rows_from_the_picker() {
         .unwrap();
     drop(connection);
 
-    assert!(running_ids(temp.path(), cwd.path()).is_empty());
+    assert!(workspace_ids(temp.path(), cwd.path()).is_empty());
     assert_eq!(
         resolve_run_directory_in_root(temp.path(), "eeeeee").unwrap(),
         directory
@@ -444,8 +472,23 @@ fn reserve_running(
     id
 }
 
-fn running_ids(rho_root: &Path, cwd: &Path) -> std::collections::BTreeSet<String> {
-    list_running_runs_in_root(rho_root, cwd)
+fn write_terminal(rho_root: &Path, id: &str, state: crate::subagent::RunState) {
+    let directory = resolve_run_directory_in_root(rho_root, id).unwrap();
+    crate::subagent::write_status(
+        &directory.join(crate::subagent::RESULT_FILE_NAME),
+        &crate::subagent::RunStatus {
+            state,
+            agent_id: Some("explorer".into()),
+            started_at: Some(1),
+            finished_at: Some(2),
+            ..crate::subagent::RunStatus::default()
+        },
+    )
+    .unwrap();
+}
+
+fn workspace_ids(rho_root: &Path, cwd: &Path) -> std::collections::BTreeSet<String> {
+    list_workspace_runs_in_root(rho_root, cwd)
         .unwrap()
         .into_iter()
         .map(|run| run.id)
