@@ -79,6 +79,30 @@ fn bottom_position_uses_bottom_scroll_state() {
 }
 
 #[test]
+// Covers: a tall transcript must not scroll into the session header.
+// Owner: history scroll range
+#[test]
+fn history_scroll_min_start_hides_header_once_body_overflows() {
+    let cases = [
+        (
+            /*header*/ 8, /*history*/ 20, /*viewport*/ 20, /*min*/ 0,
+        ),
+        (8, 28, 20, 8),
+        (8, 40, 20, 8),
+        (8, 21, 20, 0),
+        (8, 29, 20, 8),
+        (0, 40, 20, 0),
+    ];
+    for (header_len, history_len, viewport_len, expected) in cases {
+        assert_eq!(
+            history_scroll_min_start(header_len, history_len, viewport_len),
+            expected,
+            "header={header_len} history={history_len} viewport={viewport_len}"
+        );
+    }
+}
+
+#[test]
 fn scroll_chrome_scroll_by_clamps_to_bottom_without_auto_reveal() {
     use std::time::{Duration, Instant};
 

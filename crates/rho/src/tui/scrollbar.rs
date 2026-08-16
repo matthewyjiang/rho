@@ -442,6 +442,23 @@ impl HistoryScrollbar {
     }
 }
 
+/// Lowest top line that may show the session header.
+///
+/// The header is intro chrome. Once the transcript body is taller than the
+/// pane, scroll cannot move into those hint rows.
+pub(super) fn history_scroll_min_start(
+    header_len: usize,
+    history_len: usize,
+    viewport_len: usize,
+) -> usize {
+    let body_len = history_len.saturating_sub(header_len);
+    if body_len >= viewport_len {
+        header_len.min(history_len.saturating_sub(viewport_len))
+    } else {
+        0
+    }
+}
+
 pub(super) fn scroll_state_for_top_line(
     content_len: usize,
     viewport_len: usize,

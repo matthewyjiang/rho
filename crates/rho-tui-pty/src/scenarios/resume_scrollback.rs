@@ -92,6 +92,9 @@ credential_store = "file"
         harness.wait_for_text(LATE_LINE, STARTUP)?;
         harness.set_phase("page_to_early_line");
         page_up_until_text(&mut harness, EARLY_LINE, STREAM)?;
+        if harness.screen().contains_text("Cycle reasoning") {
+            anyhow::bail!("session header tips must stay out of a tall resumed transcript");
+        }
         let code = harness.quit_with_exit_command()?;
         if code != 0 {
             anyhow::bail!("resume session exited with code {code}");

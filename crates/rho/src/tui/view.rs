@@ -19,6 +19,7 @@ use super::{
     render::{pad_display_line, padded_content_width, truncate_one_line},
     render_copy_notice,
     screen_layout::{terminal_meets_minimum, MIN_TERMINAL_HEIGHT, MIN_TERMINAL_WIDTH},
+    scrollbar::history_scroll_min_start,
     session_header_lines, styled_line, tool_card_hover, tool_entry_lines,
 };
 use super::{
@@ -918,9 +919,21 @@ impl App {
     }
 
     pub(super) fn visible_history_start(&self, history_len: usize, height: usize) -> usize {
-        self.history
+        let start = self
+            .history
             .scroll_chrome()
-            .visible_start(history_len, height)
+            .visible_start(history_len, height);
+        start.max(history_scroll_min_start(
+            self.session_header_line_count(),
+            history_len,
+            height,
+        ))
+    }
+
+    fn session_header_line_count(&self) -> usize {
+        self.history
+            .session_header_cache()
+            .map_or(0, |cache| cache.lines.len())
     }
 
     fn goal_status(&self) -> Option<GoalStatus> {

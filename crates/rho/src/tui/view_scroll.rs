@@ -10,8 +10,8 @@ use ratatui::{
 };
 
 use super::{
-    activity, history_cache::HistoryRenderSettings, App, HistoryScrollbar, Theme,
-    HISTORY_SCROLLBAR_REVEAL_DURATION,
+    activity, history_cache::HistoryRenderSettings, scrollbar::history_scroll_min_start, App,
+    HistoryScrollbar, Theme, HISTORY_SCROLLBAR_REVEAL_DURATION,
 };
 
 impl App {
@@ -73,11 +73,13 @@ impl App {
             self.history
                 .scroll_chrome_mut()
                 .set_top_line(new_len, content_height, new_start);
+            self.clamp_history_scroll_away_from_header(width, new_len, content_height);
             return;
         }
         self.history
             .scroll_chrome_mut()
             .scroll_by(history_len, content_height, delta);
+        self.clamp_history_scroll_away_from_header(width, history_len, content_height);
     }
 
     pub(super) fn reveal_history_scrollbar(&mut self, now: Instant) {
@@ -112,6 +114,29 @@ impl App {
         self.history
             .scroll_chrome_mut()
             .clamp(history_len, content_height);
+        self.clamp_history_scroll_away_from_header(width, history_len, content_height);
+    }
+
+    fn clamp_history_scroll_away_from_header(
+        &mut self,
+        width: usize,
+        history_len: usize,
+        viewport: usize,
+    ) {
+        let min_start = history_scroll_min_start(
+            self.session_header_lines(width).len(),
+            history_len,
+            viewport,
+        );
+        let start = self
+            .history
+            .scroll_chrome()
+            .visible_start(history_len, viewport);
+        if start < min_start {
+            self.history
+                .scroll_chrome_mut()
+                .set_top_line(history_len, viewport, min_start);
+        }
     }
 
     pub(super) fn clamp_history_scroll_for_terminal<B: Backend>(
