@@ -144,21 +144,43 @@ fn finished_run_agent_id_comes_from_candidates() {
 // Covers: a run that leaves the live panel must not stay listed as running.
 // Owner: attach picker
 #[test]
-fn departed_live_run_is_no_longer_running() {
+fn departed_live_run_uses_real_terminal_state() {
     let mut candidates = vec![
         candidate("aaaaaa", RunState::Running),
         candidate("bbbbbb", RunState::Running),
+        candidate("cccccc", RunState::Running),
+        candidate("dddddd", RunState::Running),
     ];
-    let previously_live = ["aaaaaa".into(), "bbbbbb".into()].into();
-    let live_ids = ["bbbbbb".into()].into();
+    let previously_live = [
+        "aaaaaa".into(),
+        "bbbbbb".into(),
+        "cccccc".into(),
+        "dddddd".into(),
+    ]
+    .into();
+    let live_ids = ["dddddd".into()].into();
 
-    retire_departed_live_runs(&mut candidates, &live_ids, &previously_live);
+    retire_departed_live_runs(
+        &mut candidates,
+        &live_ids,
+        &previously_live,
+        |run_id| match run_id {
+            "aaaaaa" => RunState::Ok,
+            "bbbbbb" => RunState::Error,
+            _ => RunState::Stopped,
+        },
+    );
 
     assert_eq!(
         candidates
             .iter()
             .map(|run| (run.run_id.as_str(), run.state))
             .collect::<Vec<_>>(),
-        [("aaaaaa", RunState::Stopped), ("bbbbbb", RunState::Running)]
+        [
+            ("aaaaaa", RunState::Ok),
+            ("bbbbbb", RunState::Error),
+            ("cccccc", RunState::Stopped),
+            ("dddddd", RunState::Running),
+        ]
     );
 }

@@ -102,15 +102,26 @@ pub(super) fn retire_departed_live_runs(
     candidates: &mut [AttachCandidate],
     live_ids: &std::collections::HashSet<String>,
     previously_live: &std::collections::HashSet<String>,
+    mut terminal_state: impl FnMut(&str) -> RunState,
 ) {
     for candidate in candidates {
         if previously_live.contains(&candidate.run_id)
             && !live_ids.contains(&candidate.run_id)
             && !candidate.state.is_terminal()
         {
-            candidate.state = RunState::Stopped;
+            candidate.state = terminal_state(&candidate.run_id);
         }
     }
+}
+
+fn finished_run_state(run_id: &str) -> RunState {
+    let Ok(directory) = subagent::resolve_run_directory(run_id) else {
+        return RunState::Stopped;
+    };
+    subagent::read_status(&directory.join(subagent::RESULT_FILE_NAME))
+        .map(|status| status.state)
+        .filter(|state| state.is_terminal())
+        .unwrap_or(RunState::Stopped)
 }
 
 pub(super) fn candidate_agent_id<'a>(
@@ -260,6 +271,7 @@ impl App {
             &mut self.attach_disk_candidates,
             &live_ids,
             &self.attach_seen_live,
+            finished_run_state,
         );
         self.attach_seen_live.extend(live_ids);
         self.attach_disk_candidates.clone()
