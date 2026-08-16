@@ -82,6 +82,7 @@ fn push_message(out: &mut String, message: &Message, budget: TranscriptBudget) {
                 let name = call.name.as_deref().unwrap_or("unknown");
                 out.push_str("tool call (incomplete): ");
                 out.push_str(name);
+                push_empty_object_suffix(out, &call.arguments);
                 out.push('\n');
                 push_arguments_line(out, &call.arguments, budget.tool_call_bytes);
             }
@@ -117,16 +118,24 @@ fn push_blocks(out: &mut String, blocks: &[ContentBlock], budget: TranscriptBudg
 }
 
 fn push_tool_call(out: &mut String, call: &ToolCall, max_bytes: usize) {
+    let arguments = call.arguments.to_string();
     out.push_str("tool call: ");
     out.push_str(&call.name);
     out.push_str(" (id ");
     out.push_str(&call.id);
-    out.push_str(")\n");
-    // Zero-arg tools (notably advisor) serialize as `{}`. Incomplete calls may
-    // also arrive with no argument bytes yet. Omit both so they do not look like
-    // a missing payload. Malformed values such as null, [], or "" stay visible
-    // for advisor diagnostics.
-    push_arguments_line(out, &call.arguments.to_string(), max_bytes);
+    out.push(')');
+    // A bare call line looks unfinished; a separate `arguments: {}` line
+    // looks like a missing payload. Keep `{}` on the call so a zero-arg
+    // tool still reads as a complete call.
+    push_empty_object_suffix(out, &arguments);
+    out.push('\n');
+    push_arguments_line(out, &arguments, max_bytes);
+}
+
+fn push_empty_object_suffix(out: &mut String, rendered: &str) {
+    if rendered.trim() == "{}" {
+        out.push_str(" {}");
+    }
 }
 
 /// Omit empty buffers and the intended zero-argument payload (`{}`).
