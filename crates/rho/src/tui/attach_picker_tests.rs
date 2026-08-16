@@ -1,7 +1,10 @@
 use pretty_assertions::assert_eq;
 
-use super::{candidate_item, merge_live_candidates, picker, visible_candidates, AttachCandidate};
-use crate::subagent::{RunState, WorkspaceRunFilter};
+use super::{
+    candidate_agent_id, candidate_item, merge_live_candidates, picker, visible_candidates,
+    AttachCandidate, WorkspaceRunFilter,
+};
+use crate::subagent::RunState;
 
 // Covers: attach rows show role, title, and current activity instead of a run id.
 // Owner: attach picker
@@ -93,7 +96,7 @@ fn empty_inventory_still_builds_a_picker() {
     assert_eq!(empty.selected_item().map(|item| item.value.as_str()), None);
 }
 
-// Covers: live panel rows overlay matching disk rows and prepend unknown live runs.
+// Covers: live panel rows overlay matching disk rows and keep panel order for new lives.
 // Owner: attach picker
 #[test]
 fn live_candidates_replace_matching_disk_rows() {
@@ -104,9 +107,10 @@ fn live_candidates_replace_matching_disk_rows() {
     let mut live = candidate("bbbbbb", RunState::Running);
     live.title = Some("updated".into());
     live.elapsed_seconds = 9;
-    let extra = candidate("cccccc", RunState::Starting);
+    let first_missing = candidate("cccccc", RunState::Starting);
+    let second_missing = candidate("dddddd", RunState::Starting);
 
-    let merged = merge_live_candidates(disk, vec![live, extra]);
+    let merged = merge_live_candidates(disk, vec![live, first_missing, second_missing]);
 
     assert_eq!(
         merged
@@ -119,8 +123,20 @@ fn live_candidates_replace_matching_disk_rows() {
             .collect::<Vec<_>>(),
         [
             ("cccccc", Some("cccccc"), 1),
+            ("dddddd", Some("dddddd"), 1),
             ("aaaaaa", Some("aaaaaa"), 1),
             ("bbbbbb", Some("updated"), 9),
         ]
     );
+}
+
+// Covers: finished transcripts keep their role after the picker closes.
+// Owner: attach picker
+#[test]
+fn finished_run_agent_id_comes_from_candidates() {
+    let mut finished = candidate("aaaaaa", RunState::Ok);
+    finished.agent_id = "explorer".into();
+
+    assert_eq!(candidate_agent_id(&[finished], "aaaaaa"), Some("explorer"));
+    assert_eq!(candidate_agent_id(&[], "aaaaaa"), None);
 }

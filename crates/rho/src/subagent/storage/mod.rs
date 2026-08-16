@@ -47,22 +47,6 @@ pub(crate) struct RunningRun {
     pub elapsed_seconds: u64,
 }
 
-/// Which indexed workspace runs the attach picker should load.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum WorkspaceRunFilter {
-    RunningOnly,
-    All,
-}
-
-impl WorkspaceRunFilter {
-    pub(crate) fn toggled(self) -> Self {
-        match self {
-            Self::RunningOnly => Self::All,
-            Self::All => Self::RunningOnly,
-        }
-    }
-}
-
 fn list_indexed_runs_in_root(
     rho_root: &Path,
     workspace_key: &str,
@@ -91,23 +75,16 @@ fn list_indexed_runs_in_root(
     Ok(runs)
 }
 
-/// Indexed runs started in `cwd`, optionally including finished transcripts.
+/// Indexed runs started in `cwd`, including finished transcripts.
 ///
 /// Membership comes from the workspace key written at reservation. Rows with a
 /// missing key (pre-migration) stay out of the picker; `rho attach <id>` still
 /// finds them from any directory.
-pub(crate) fn list_workspace_runs(
-    cwd: &Path,
-    filter: WorkspaceRunFilter,
-) -> anyhow::Result<Vec<RunningRun>> {
-    list_workspace_runs_in_root(&crate::paths::rho_dir()?, cwd, filter)
+pub(crate) fn list_workspace_runs(cwd: &Path) -> anyhow::Result<Vec<RunningRun>> {
+    list_workspace_runs_in_root(&crate::paths::rho_dir()?, cwd)
 }
 
-fn list_workspace_runs_in_root(
-    rho_root: &Path,
-    cwd: &Path,
-    filter: WorkspaceRunFilter,
-) -> anyhow::Result<Vec<RunningRun>> {
+fn list_workspace_runs_in_root(rho_root: &Path, cwd: &Path) -> anyhow::Result<Vec<RunningRun>> {
     let now = super::unix_now_secs();
     let Some(workspace_key) = run_workspace_key(cwd) else {
         return Ok(Vec::new());
@@ -118,9 +95,6 @@ fn list_workspace_runs_in_root(
         else {
             continue;
         };
-        if matches!(filter, WorkspaceRunFilter::RunningOnly) && status.state.is_terminal() {
-            continue;
-        }
         let elapsed_seconds = status
             .elapsed_duration(now)
             .map(|duration| duration.as_secs())

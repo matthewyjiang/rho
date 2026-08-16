@@ -13,7 +13,6 @@ use super::{
     },
     list_workspace_runs_in_root, lock_parent_for_cleanup_in_root,
     reserve_run_directory_in_root as reserve_at, resolve_run_directory_in_root, RunPlacement,
-    WorkspaceRunFilter,
 };
 use crate::session::Session;
 use std::path::{Path, PathBuf};
@@ -354,8 +353,8 @@ fn list_running_runs_keeps_only_the_current_workspace() {
         "there-orphan",
     );
 
-    let here_ids = running_ids(temp.path(), here.path());
-    let there_ids = running_ids(temp.path(), there.path());
+    let here_ids = workspace_ids(temp.path(), here.path());
+    let there_ids = workspace_ids(temp.path(), there.path());
 
     assert_eq!(
         here_ids,
@@ -366,7 +365,7 @@ fn list_running_runs_keeps_only_the_current_workspace() {
         std::collections::BTreeSet::from([there_nested, there_parentless])
     );
     assert_eq!(
-        running_ids(temp.path(), &here.path().canonicalize().unwrap()),
+        workspace_ids(temp.path(), &here.path().canonicalize().unwrap()),
         here_ids
     );
 }
@@ -394,16 +393,7 @@ fn list_workspace_runs_can_include_finished_runs() {
     write_terminal(temp.path(), &finished, crate::subagent::RunState::Ok);
 
     assert_eq!(
-        running_ids(temp.path(), cwd.path()),
-        std::collections::BTreeSet::from([running.clone()])
-    );
-    let all_ids = list_workspace_runs_in_root(temp.path(), cwd.path(), WorkspaceRunFilter::All)
-        .unwrap()
-        .into_iter()
-        .map(|run| run.id)
-        .collect::<std::collections::BTreeSet<_>>();
-    assert_eq!(
-        all_ids,
+        workspace_ids(temp.path(), cwd.path()),
         std::collections::BTreeSet::from([running, finished])
     );
 }
@@ -453,7 +443,7 @@ fn v3_index_upgrades_and_hides_unscoped_rows_from_the_picker() {
         .unwrap();
     drop(connection);
 
-    assert!(running_ids(temp.path(), cwd.path()).is_empty());
+    assert!(workspace_ids(temp.path(), cwd.path()).is_empty());
     assert_eq!(
         resolve_run_directory_in_root(temp.path(), "eeeeee").unwrap(),
         directory
@@ -497,8 +487,8 @@ fn write_terminal(rho_root: &Path, id: &str, state: crate::subagent::RunState) {
     .unwrap();
 }
 
-fn running_ids(rho_root: &Path, cwd: &Path) -> std::collections::BTreeSet<String> {
-    list_workspace_runs_in_root(rho_root, cwd, WorkspaceRunFilter::RunningOnly)
+fn workspace_ids(rho_root: &Path, cwd: &Path) -> std::collections::BTreeSet<String> {
+    list_workspace_runs_in_root(rho_root, cwd)
         .unwrap()
         .into_iter()
         .map(|run| run.id)

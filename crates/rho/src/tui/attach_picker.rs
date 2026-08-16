@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::subagent::{self, RunState, RunningRun, WorkspaceRunFilter};
+use crate::subagent::{self, RunState, RunningRun};
 use crate::title::activity_label;
 
 use super::{
@@ -14,6 +14,22 @@ use super::{
 
 const RUNNING_ONLY_KEYS_HINT: &str = "↑↓ runs · Ctrl-R show finished";
 const ALL_RUNS_KEYS_HINT: &str = "↑↓ runs · Ctrl-R running only";
+
+/// Which attach-picker rows are visible. Listing always returns every workspace run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum WorkspaceRunFilter {
+    RunningOnly,
+    All,
+}
+
+impl WorkspaceRunFilter {
+    pub(super) fn toggled(self) -> Self {
+        match self {
+            Self::RunningOnly => Self::All,
+            Self::All => Self::RunningOnly,
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct AttachCandidate {
@@ -57,7 +73,7 @@ pub(super) fn visible_candidates(
 }
 
 pub(super) fn workspace_candidates(cwd: &Path) -> anyhow::Result<Vec<AttachCandidate>> {
-    Ok(subagent::list_workspace_runs(cwd, WorkspaceRunFilter::All)?
+    Ok(subagent::list_workspace_runs(cwd)?
         .into_iter()
         .map(AttachCandidate::from)
         .collect())
@@ -67,6 +83,7 @@ pub(super) fn merge_live_candidates(
     mut candidates: Vec<AttachCandidate>,
     live: Vec<AttachCandidate>,
 ) -> Vec<AttachCandidate> {
+    let mut missing = Vec::new();
     for live_run in live {
         if let Some(existing) = candidates
             .iter_mut()
@@ -74,10 +91,25 @@ pub(super) fn merge_live_candidates(
         {
             *existing = live_run;
         } else {
-            candidates.insert(0, live_run);
+            missing.push(live_run);
         }
     }
+    if missing.is_empty() {
+        return candidates;
+    }
+    missing.extend(candidates);
+    missing
+}
+
+pub(super) fn candidate_agent_id<'a>(
+    candidates: &'a [AttachCandidate],
+    run_id: &str,
+) -> Option<&'a str> {
     candidates
+        .iter()
+        .find(|candidate| candidate.run_id == run_id)
+        .map(|candidate| candidate.agent_id.as_str())
+        .filter(|agent_id| !agent_id.is_empty())
 }
 
 pub(super) fn picker(candidates: &[AttachCandidate], filter: WorkspaceRunFilter) -> UiPicker {
@@ -169,12 +201,9 @@ impl App {
     }
 
     pub(super) fn submit_attach_selection(&mut self, run_id: &str) {
-        let agent_id = self
-            .subagent_panel
-            .attach_target(run_id)
-            .map(|target| target.agent_id)
-            .or_else(|| self.selected_attach_agent_id())
-            .unwrap_or_else(|| "agent".into());
+        let agent_id = candidate_agent_id(&self.attach_candidates(), run_id)
+            .unwrap_or("agent")
+            .to_owned();
         self.activate_subagent_row(
             &super::subagent_panel::SubagentAttachTarget {
                 run_id: run_id.to_owned(),
@@ -185,26 +214,31 @@ impl App {
     }
 
     fn open_attach_picker(&mut self) {
+        let listing_error = match workspace_candidates(&self.info.runtime.cwd) {
+            Ok(disk) => {
+                self.attach_disk_candidates = disk;
+                None
+            }
+            Err(error) => {
+                self.attach_disk_candidates.clear();
+                Some(error)
+            }
+        };
         self.input_ui.set_composer(ComposerMode::Picker(picker(
             &self.attach_candidates(),
             self.attach_run_filter,
         )));
-        self.set_status("attach subagent");
+        match listing_error {
+            Some(error) => self.set_status(format!("could not list workspace runs: {error}")),
+            None => self.set_status("attach subagent"),
+        }
     }
 
     fn attach_candidates(&self) -> Vec<AttachCandidate> {
-        let disk = workspace_candidates(&self.info.runtime.cwd).unwrap_or_default();
-        merge_live_candidates(disk, self.subagent_panel.candidates())
-    }
-
-    fn selected_attach_agent_id(&self) -> Option<String> {
-        let ComposerMode::Picker(picker) = self.input_ui.composer() else {
-            return None;
-        };
-        picker
-            .selected_item()
-            .and_then(|item| item.section.clone())
-            .filter(|agent_id| !agent_id.is_empty())
+        merge_live_candidates(
+            self.attach_disk_candidates.clone(),
+            self.subagent_panel.candidates(),
+        )
     }
 }
 

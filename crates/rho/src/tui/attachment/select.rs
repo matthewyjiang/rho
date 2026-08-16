@@ -3,10 +3,8 @@
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{widgets::Clear, DefaultTerminal, Frame};
 
-use crate::subagent::WorkspaceRunFilter;
-
 use super::super::{
-    attach_picker::{self, AttachCandidate},
+    attach_picker::{self, AttachCandidate, WorkspaceRunFilter},
     picker_input::{apply_picker_key, overlay_scroll_targets, PickerKeyEffect},
     picker_overlay::picker_overlay_frame,
     Theme, UiPicker,
