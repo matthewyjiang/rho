@@ -14,6 +14,10 @@ use rho_sdk::{
 use super::last_user_text;
 
 /// Workspace-relative marker that releases a hanging compact fixture.
+///
+/// Mirrored as a literal in `crates/rho-tui-pty/src/scenarios.rs`
+/// (`release_compact_fixture`). The crates cannot share a const; keep both
+/// strings identical or `submit_during_compact` hangs until the STREAM timeout.
 const RELEASE_MARKER: &str = ".rho-fixture-release-compact";
 
 /// How often to look for [`RELEASE_MARKER`]. The signal is the file; this

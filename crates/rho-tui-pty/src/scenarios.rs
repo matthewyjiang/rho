@@ -900,6 +900,8 @@ pub fn smoke_scenario_ids() -> Vec<&'static str> {
 }
 
 /// Release the hanging compact fixture after the follow-up is queued.
+///
+/// Must match `RELEASE_MARKER` in `crates/rho-providers/src/providers/tui_fixture/compact.rs`.
 fn release_compact_fixture(harness: &mut crate::harness::PtyHarness) -> anyhow::Result<()> {
     let cwd = harness
         .working_directory()
