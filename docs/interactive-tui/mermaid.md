@@ -66,8 +66,9 @@ malformed input stay as source.
 Flowcharts and state diagrams keep the direction you asked for (`TD`, `LR`, and
 so on) when it fits. When the normal layout is wider than the pane, Rho wraps
 node labels more tightly and lays the diagram out again, down to a readable
-limit. Compaction never shortens or truncates node label text. Edge labels and
-group titles compact with an ellipsis when they cannot fit the reserved slot.
+limit. Compaction never shortens or truncates node label text. Edge labels, group
+titles, and sequence participant labels compact with an ellipsis when they
+cannot fit the reserved slot.
 If a horizontal flowchart still cannot fit, Rho retries top-down. If even that
 cannot fit, the panel falls back to source with a narrow-pane title.
 
