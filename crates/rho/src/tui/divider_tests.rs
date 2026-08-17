@@ -10,52 +10,108 @@ fn line_text(line: &Line<'_>) -> String {
         .collect()
 }
 
-fn caption<'a>(candidates: &'a [&'a str], style: Style) -> DividerCaption<'a> {
-    DividerCaption { candidates, style }
+fn caption(candidates: &[&str]) -> Option<DividerCaption> {
+    DividerCaption::new(candidates.iter().copied(), Style::new())
 }
 
-// Covers: right captions stay on the trailing rule, and scarce width drops them
-// before a left caption so the two labels cannot collide.
+// Covers: both-side fitting keeps the longest right caption, shrinking the
+// left first, then degrades/drops the right before dropping the left.
 // Owner: composer divider layout
 #[test]
-fn right_caption_stays_flush_and_yields_to_the_left_caption() {
+fn captions_keep_the_right_identity_and_shrink_the_left_first() {
     let rule = Style::new();
-    let left_style = Style::new();
-    let right_style = Style::new();
-    let left = caption(&["shell"], left_style);
-    let right = caption(&["advisor: m"], right_style);
+    // Same longest-first chain shell mode supplies. Copied here so layout
+    // policy does not import the feature module.
+    let shell: &[&str] = &["shell · included in context", "shell · in context", "shell"];
+    let advisor: &[&str] = &["advisor: grok-4.5", "advisor"];
+    let advisor_m: &[&str] = &["advisor: m"];
+    let shell_only: &[&str] = &["shell"];
 
-    assert_eq!(
-        line_text(&labeled_divider_line(None, Some(right), rule, 20)),
-        "─────── advisor: m ─"
-    );
-    assert_eq!(
-        line_text(&labeled_divider_line(Some(left), Some(right), rule, 24)),
-        "─ shell ─── advisor: m ─"
-    );
-    assert_eq!(
-        line_text(&labeled_divider_line(Some(left), Some(right), rule, 20)),
-        "─ shell ────────────"
-    );
-    assert_eq!(
-        line_text(&labeled_divider_line(Some(left), Some(right), rule, 4)),
-        "────"
-    );
-}
+    let cases: [(&str, Option<&[&str]>, Option<&[&str]>, usize, &str); 12] = [
+        (
+            "full both",
+            Some(shell),
+            Some(advisor),
+            52,
+            "─ shell · included in context ── advisor: grok-4.5 ─",
+        ),
+        // Discriminator vs longest-left-first: at 43 the long shell still
+        // fits with "advisor", but the policy must keep the model name.
+        (
+            "shrink shell, keep model",
+            Some(shell),
+            Some(advisor),
+            43,
+            "─ shell · in context ── advisor: grok-4.5 ─",
+        ),
+        (
+            "shortest shell, keep model",
+            Some(shell),
+            Some(advisor),
+            30,
+            "─ shell ── advisor: grok-4.5 ─",
+        ),
+        (
+            "degrade advisor",
+            Some(shell),
+            Some(advisor),
+            29,
+            "─ shell ─────────── advisor ─",
+        ),
+        (
+            "drop advisor",
+            Some(shell),
+            Some(advisor),
+            19,
+            "─ shell ───────────",
+        ),
+        ("bare rule", Some(shell), Some(advisor), 4, "────"),
+        (
+            "right only long",
+            None,
+            Some(advisor),
+            22,
+            "── advisor: grok-4.5 ─",
+        ),
+        (
+            "right only flush",
+            None,
+            Some(advisor_m),
+            20,
+            "─────── advisor: m ─",
+        ),
+        (
+            "both short labels",
+            Some(shell_only),
+            Some(advisor_m),
+            24,
+            "─ shell ─── advisor: m ─",
+        ),
+        (
+            "right yields when pair is too wide",
+            Some(shell_only),
+            Some(advisor_m),
+            20,
+            "─ shell ────────────",
+        ),
+        (
+            "left fallback without right",
+            Some(shell),
+            None,
+            24,
+            "─ shell · in context ───",
+        ),
+        ("shortest left only", Some(shell), None, 10, "─ shell ──"),
+    ];
 
-// Covers: left-only captions keep the historical `─ label ────` shape.
-// Owner: composer divider layout
-#[test]
-fn left_caption_keeps_prefix_and_trailing_fill() {
-    let rule = Style::new();
-    let left = caption(&["shell · in context", "shell"], rule);
-
-    assert_eq!(
-        line_text(&labeled_divider_line(Some(left), None, rule, 24)),
-        "─ shell · in context ───"
-    );
-    assert_eq!(
-        line_text(&labeled_divider_line(Some(left), None, rule, 10)),
-        "─ shell ──"
-    );
+    for (name, left, right, width, expected) in cases {
+        let line =
+            labeled_divider_line(left.and_then(caption), right.and_then(caption), rule, width);
+        assert_eq!(line_text(&line), expected, "{name} width={width}");
+        assert_eq!(
+            display_width(&line_text(&line)),
+            width,
+            "{name} painted width {width}"
+        );
+    }
 }

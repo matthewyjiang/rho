@@ -18,16 +18,16 @@ fn each_advisor_state_reads_the_same_way_on_every_surface() {
     let cases = [
         (
             AdvisorStatus::new(/*advisor_mode*/ false, None),
-            (None, "off", "off", false),
+            (Vec::new(), "off", "off", false),
         ),
         (
             AdvisorStatus::new(/*advisor_mode*/ false, Some(&model())),
-            (None, "off", "off", false),
+            (Vec::new(), "off", "off", false),
         ),
         (
             AdvisorStatus::new(/*advisor_mode*/ true, None),
             (
-                Some("advisor: no model"),
+                vec!["advisor: no model".into(), "advisor".into()],
                 "on · no model",
                 "on, but no advisor model is selected",
                 true,
@@ -36,7 +36,7 @@ fn each_advisor_state_reads_the_same_way_on_every_surface() {
         (
             AdvisorStatus::new(/*advisor_mode*/ true, Some(&model())),
             (
-                Some("advisor: anthropic/claude-fable-5"),
+                vec!["advisor: anthropic/claude-fable-5".into(), "advisor".into()],
                 "on · anthropic/claude-fable-5",
                 "on, anthropic/claude-fable-5 reviews the session",
                 false,
@@ -48,7 +48,7 @@ fn each_advisor_state_reads_the_same_way_on_every_surface() {
                 Some(&InternalAgentModelConfig::claude_cli(Some("opus".into()))),
             ),
             (
-                Some("advisor: claude-code/opus"),
+                vec!["advisor: claude-code/opus".into(), "advisor".into()],
                 "on · claude-code/opus",
                 "on, claude-code/opus reviews the session",
                 false,
@@ -60,7 +60,7 @@ fn each_advisor_state_reads_the_same_way_on_every_surface() {
                 Some(&InternalAgentModelConfig::claude_cli(None)),
             ),
             (
-                Some("advisor: claude-code/default"),
+                vec!["advisor: claude-code/default".into(), "advisor".into()],
                 "on · claude-code/default",
                 "on, claude-code/default reviews the session",
                 false,
@@ -68,15 +68,15 @@ fn each_advisor_state_reads_the_same_way_on_every_surface() {
         ),
     ];
 
-    for (status, (indicator, badge, detail, needs_model)) in cases {
+    for (status, (labels, badge, detail, needs_model)) in cases {
         assert_eq!(
             (
-                status.indicator_text().as_deref(),
+                status.divider_labels(),
                 status.badge().as_str(),
                 status.detail().as_str(),
                 status.needs_model(),
             ),
-            (indicator, badge, detail, needs_model),
+            (labels, badge, detail, needs_model),
             "{status:?}"
         );
     }

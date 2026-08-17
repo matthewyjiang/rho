@@ -38,13 +38,12 @@ impl AdvisorStatus {
         )
     }
 
-    /// Short chrome label, or `None` while advisor mode is off. Off is the
-    /// default, so it stays out of the composer divider.
-    pub(super) fn indicator_text(&self) -> Option<String> {
+    /// Longest-first composer-divider labels. Empty while the mode is off.
+    pub(super) fn divider_labels(&self) -> Vec<String> {
         match self {
-            Self::Off => None,
-            Self::Reviewing { model } => Some(format!("advisor: {model}")),
-            Self::MissingModel => Some("advisor: no model".into()),
+            Self::Off => Vec::new(),
+            Self::Reviewing { model } => vec![format!("advisor: {model}"), "advisor".into()],
+            Self::MissingModel => vec!["advisor: no model".into(), "advisor".into()],
         }
     }
 

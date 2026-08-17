@@ -41,21 +41,26 @@ impl App {
             && matches!(self.input_ui.composer(), ComposerMode::Input))
         .then(|| self.input_ui.shell_mode())
         .flatten()
-        .map(inline_shell::mode_divider_labels)
-        .map(|candidates| DividerCaption { candidates, style });
-        let advisor = (slot == ComposerDividerSlot::Top)
-            .then(|| AdvisorStatus::from_runtime(&self.info.runtime));
-        let advisor_text = advisor.as_ref().and_then(AdvisorStatus::indicator_text);
-        let advisor_style = if advisor.as_ref().is_some_and(AdvisorStatus::needs_model) {
-            Theme::warning()
-        } else {
-            Theme::reasoning_input_border(self.info.runtime.reasoning)
-        };
-        let advisor_label = advisor_text.as_deref();
-        let right = advisor_label.as_ref().map(|text| DividerCaption {
-            candidates: std::slice::from_ref(text),
-            style: advisor_style,
+        .and_then(|mode| {
+            DividerCaption::new(
+                inline_shell::mode_divider_labels(mode).iter().copied(),
+                style,
+            )
         });
+        // Stay on the top rule in every composer mode so overlays do not hide
+        // the reviewer. Follow the rule color; warning only when no model.
+        let right = (slot == ComposerDividerSlot::Top)
+            .then(|| AdvisorStatus::from_runtime(&self.info.runtime))
+            .and_then(|status| {
+                DividerCaption::new(
+                    status.divider_labels(),
+                    if status.needs_model() {
+                        Theme::warning()
+                    } else {
+                        style
+                    },
+                )
+            });
         labeled_divider_line(left, right, style, width)
     }
 
