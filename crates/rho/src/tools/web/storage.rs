@@ -115,6 +115,7 @@ impl MemoryCache {
             .insert(response_id, CachedContent { content, bytes });
     }
 
+    #[cfg(test)]
     fn contains(&self, response_id: &str) -> bool {
         self.entries.contains_key(response_id)
     }
