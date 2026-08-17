@@ -194,9 +194,9 @@ const SUBMIT_DURING_COMPACT_STEPS: &[Step] = &[
         timeout: STARTUP,
     },
     Step::Phase("seed_history"),
-    Step::SubmitText("fixture compact delay"),
+    Step::SubmitText("fixture compact until release"),
     Step::WaitText {
-        text: "fixture response: fixture compact delay",
+        text: "fixture response: fixture compact until release",
         timeout: STREAM,
     },
     Step::Phase("compact"),
@@ -211,6 +211,8 @@ const SUBMIT_DURING_COMPACT_STEPS: &[Step] = &[
         text: "after compact",
         timeout: WaitTimeout::secs(2, "queued follow-up during compact"),
     },
+    Step::Phase("release_compact"),
+    Step::Custom(release_compact_fixture),
     Step::Phase("drain_after_failed_compact"),
     Step::WaitText {
         text: "fixture response: after compact please",
@@ -895,6 +897,15 @@ pub fn smoke_scenario_ids() -> Vec<&'static str> {
         .filter(|scenario| scenario.smoke)
         .map(|scenario| scenario.id)
         .collect()
+}
+
+/// Release the hanging compact fixture after the follow-up is queued.
+fn release_compact_fixture(harness: &mut crate::harness::PtyHarness) -> anyhow::Result<()> {
+    let cwd = harness
+        .working_directory()
+        .ok_or_else(|| anyhow::anyhow!("pty harness has no working directory"))?;
+    std::fs::write(cwd.join(".rho-fixture-release-compact"), b"")
+        .map_err(|error| anyhow::anyhow!("write compact release marker: {error}"))
 }
 
 pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome> {
