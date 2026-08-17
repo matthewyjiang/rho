@@ -258,6 +258,7 @@ impl SessionTree {
                 expected_session_id.as_deref(),
             )?;
         }
+        tree.ensure_active_state()?;
         tree.validate_active_leaf()?;
         Ok(tree)
     }
@@ -858,9 +859,9 @@ impl SessionTree {
             anyhow::bail!("active leaf names missing node '{target_id}'");
         }
         if self.active_leaf_id.as_ref() != Some(&target_id) {
-            self.active_state = Some(self.reconstruct_state(&target_id)?);
+            self.active_leaf_id = Some(target_id);
+            self.active_state = None;
         }
-        self.active_leaf_id = Some(target_id);
         Ok(())
     }
 

@@ -163,9 +163,76 @@ fn state_for_rebuilds_each_nodes_own_history() {
         (&compact_id, compact.history()),
     ];
     for (id, history) in cases {
-        pretty_assertions::assert_eq!(tree.state_for(id).unwrap().model, history);
+        let state = tree.state_for(id).unwrap();
+        pretty_assertions::assert_eq!(state.model, history);
+        assert!(
+            state.snapshot.is_some(),
+            "explicit v4 nodes keep a real snapshot"
+        );
     }
     pretty_assertions::assert_eq!(tree.active_state().unwrap().model, compact.history());
+}
+
+// Covers: /tree restore of a message-only v1 node must not invent a delta base
+// Owner: session tree
+#[test]
+fn v1_tree_restore_then_save_stays_loadable() {
+    let (_root, _cwd, session) = open_v1_session_with_tail(&[]);
+    let tree = session.session_tree().unwrap();
+    let ids = tree
+        .nodes_in_storage_order()
+        .map(|node| node.id().clone())
+        .collect::<Vec<_>>();
+    assert!(
+        ids.len() >= 2,
+        "v1 fixture must have an ancestor to restore"
+    );
+    let ancestor = &ids[0];
+    assert!(
+        tree.state_for(ancestor).unwrap().snapshot.is_none(),
+        "message-only v1 nodes have no serialized snapshot"
+    );
+
+    session.set_leaf(ancestor).unwrap();
+    assert!(session
+        .session_tree()
+        .unwrap()
+        .active_state()
+        .unwrap()
+        .snapshot
+        .is_none());
+
+    let resumed = session
+        .snapshot_for_resume(
+            ModelIdentity::new("provider", "api", "model"),
+            "rho:v1-restore".into(),
+        )
+        .unwrap();
+    let mut history = resumed.history().to_vec();
+    history.push(Message::user_text("after v1 restore"));
+    let next = SessionSnapshot::new(
+        SessionId::from_string(session.id().to_owned()).unwrap(),
+        resumed.revision().checked_next().unwrap(),
+        history.clone(),
+        resumed.provider().clone(),
+        resumed.compaction().clone(),
+    )
+    .with_prompt_cache_key(resumed.prompt_cache_key().unwrap_or("rho:v1-restore"));
+    session
+        .save_snapshot(&next, std::slice::from_ref(history.last().unwrap()))
+        .unwrap();
+
+    let reloaded = session.session_tree().unwrap();
+    pretty_assertions::assert_eq!(reloaded.active_state().unwrap().model, next.history());
+    assert!(matches!(
+        read_entries(session.path()).unwrap().last(),
+        Some(SessionEntry::Node {
+            node: SessionNode {
+                transition: StoredStateTransition::Snapshot { .. },
+                ..
+            }
+        })
+    ));
 }
 
 #[test]

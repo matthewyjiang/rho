@@ -83,13 +83,13 @@ impl super::SessionTree {
         self.insert_restored_node(node, state)
     }
 
-    /// Restores one node's full state. The active leaf is already materialized.
+    /// Restores one node's full state. The active leaf is already materialized
+    /// after load; a pending `set_leaf` reconstructs on demand.
     pub(crate) fn state_for(&self, id: &NodeId) -> anyhow::Result<PersistedSessionState> {
         if self.active_leaf_id.as_ref() == Some(id) {
-            return self
-                .active_state
-                .clone()
-                .ok_or_else(|| anyhow::anyhow!("active leaf '{id}' has no materialized state"));
+            if let Some(state) = self.active_state.clone() {
+                return Ok(state);
+            }
         }
         self.reconstruct_state(id)
     }
@@ -100,8 +100,27 @@ impl super::SessionTree {
     ) -> anyhow::Result<PersistedSessionState> {
         let snapshot = self.reconstruct_snapshot(target_id)?;
         let mut state = self.state_from_snapshot(&snapshot, &[])?;
+        // Message-only v1 nodes store a synthetic snapshot on the transition
+        // that was never serialized. They must not look like a delta base.
+        if !self
+            .nodes
+            .get(target_id)
+            .is_some_and(|node| node.facts().has_snapshot)
+        {
+            state.snapshot = None;
+        }
         state.display = self.accumulated_display(target_id)?;
         Ok(state)
+    }
+
+    pub(crate) fn ensure_active_state(&mut self) -> anyhow::Result<()> {
+        let Some(id) = self.active_leaf_id.clone() else {
+            return Ok(());
+        };
+        if self.active_state.is_none() {
+            self.active_state = Some(self.reconstruct_state(&id)?);
+        }
+        Ok(())
     }
 
     /// Sequential load parents the next node on the current leaf, so this is a
@@ -118,10 +137,9 @@ impl super::SessionTree {
             return Ok(None);
         }
         if self.active_leaf_id.as_ref() == Some(parent_id) {
-            return Ok(self
-                .active_state
-                .as_ref()
-                .and_then(|state| state.snapshot.clone()));
+            if let Some(state) = &self.active_state {
+                return Ok(state.snapshot.clone());
+            }
         }
         Ok(Some(self.reconstruct_snapshot(parent_id)?))
     }
@@ -132,11 +150,9 @@ impl super::SessionTree {
         parent_id: &NodeId,
     ) -> anyhow::Result<Vec<StoredDisplayMessage>> {
         if self.active_leaf_id.as_ref() == Some(parent_id) {
-            return Ok(self
-                .active_state
-                .as_mut()
-                .map(|state| std::mem::take(&mut state.display))
-                .unwrap_or_default());
+            if let Some(state) = self.active_state.as_mut() {
+                return Ok(std::mem::take(&mut state.display));
+            }
         }
         self.accumulated_display(parent_id)
     }

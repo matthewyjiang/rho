@@ -302,7 +302,10 @@ impl Session {
             SessionEntry::SetLeaf {
                 timestamp,
                 target_id,
-            } => tree.apply_set_leaf(target_id.clone(), timestamp)?,
+            } => {
+                tree.apply_set_leaf(target_id.clone(), timestamp)?;
+                tree.ensure_active_state()?;
+            }
             SessionEntry::Session { .. }
             | SessionEntry::Message { .. }
             | SessionEntry::ReplaceHistory { .. }
