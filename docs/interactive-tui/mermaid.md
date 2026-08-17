@@ -44,7 +44,7 @@ flowchart LR
 ## What the terminal painter supports
 
 Rho parses with `mermaid-rs-renderer` **0.3.1**. The terminal painter aims for
-lossless, readable art on a core subset:
+readable art on a core subset:
 
 | Family | Terminal art |
 | --- | --- |
@@ -65,9 +65,10 @@ malformed input stay as source.
 
 Flowcharts and state diagrams keep the direction you asked for (`TD`, `LR`, and
 so on) when it fits. When the normal layout is wider than the pane, Rho wraps
-node and edge labels more tightly and lays the diagram out again, down to a
-readable limit. Compaction never shortens or truncates node label text. If a
-horizontal flowchart still cannot fit, Rho retries top-down. If even that
+node labels more tightly and lays the diagram out again, down to a readable
+limit. Compaction never shortens or truncates node label text. Edge labels and
+group titles compact with an ellipsis when they cannot fit the reserved slot.
+If a horizontal flowchart still cannot fit, Rho retries top-down. If even that
 cannot fit, the panel falls back to source with a narrow-pane title.
 
 ## Fallback titles

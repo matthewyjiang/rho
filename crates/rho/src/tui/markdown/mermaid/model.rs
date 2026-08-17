@@ -6,21 +6,22 @@ use mermaid_rs_renderer::{
 };
 
 use crate::tui::terminal_graph::{
-    wrap_label, Direction, Edge, EdgeHead, EdgeLine, Node, NodeShape, NodeStyle, RankOrdering,
-    MAX_LINES, WRAP_WIDTH,
+    Direction, Edge, EdgeHead, EdgeLine, Node, NodeShape, NodeStyle, RankOrdering,
 };
 
 use super::{
     policy::{diagram_policy, DiagramPolicy},
-    sequence::{NoteAnchor, SeqHead, SeqItem, Sequence},
+    sequence::Sequence,
 };
 
+#[derive(Clone)]
 pub(super) struct Group {
     pub(super) id: String,
     pub(super) label: String,
     pub(super) parent: Option<usize>,
 }
 
+#[derive(Clone)]
 pub(super) struct Graph {
     pub(super) nodes: Vec<Node>,
     pub(super) edges: Vec<Edge>,
@@ -31,6 +32,13 @@ pub(super) struct Graph {
 }
 
 impl Graph {
+    pub(super) fn with_dir(&self, dir: Direction) -> Self {
+        Self {
+            dir,
+            ..self.clone()
+        }
+    }
+
     pub(super) fn layout_graph(&self) -> crate::tui::terminal_graph::Graph {
         crate::tui::terminal_graph::Graph::from_parts(
             self.nodes.clone(),
@@ -151,7 +159,16 @@ pub(super) fn from_ir(ir: &mermaid_rs_renderer::Graph) -> Option<TerminalModel> 
 
     let class_info =
         matches!(ir.kind, DiagramKind::Class | DiagramKind::Er).then(|| class_info(ir, &ids));
-    let sequence = (ir.kind == DiagramKind::Sequence).then(|| sequence(ir));
+    let sequence = match ir.kind {
+        DiagramKind::Sequence => {
+            let sequence = super::sequence::from_ir(ir);
+            if sequence.labels.is_empty() {
+                return None;
+            }
+            Some(sequence)
+        }
+        _ => None,
+    };
     Some(TerminalModel {
         graph,
         class_info,
@@ -269,179 +286,6 @@ fn class_info(ir: &mermaid_rs_renderer::Graph, ids: &[&String]) -> Vec<ClassInfo
         .collect()
 }
 
-fn sequence(ir: &mermaid_rs_renderer::Graph) -> Sequence {
-    let labels = ir
-        .sequence_participants
-        .iter()
-        .map(|id| {
-            ir.nodes
-                .get(id)
-                .map(|node| node.label.clone())
-                .unwrap_or_else(|| id.clone())
-        })
-        .collect::<Vec<_>>();
-    let index = ir
-        .sequence_participants
-        .iter()
-        .enumerate()
-        .map(|(position, id)| (id.clone(), position))
-        .collect::<HashMap<_, _>>();
-    let mut items = Vec::new();
-    let mut next_number = ir.sequence_autonumber;
-    let mut edge_item = HashMap::new();
-    for edge_index in 0..=ir.edges.len() {
-        for frame in &ir.sequence_frames {
-            if frame.start_idx == edge_index {
-                items.push(SeqItem::Divider {
-                    text: frame_divider_label(frame),
-                });
-            }
-            for section in &frame.sections {
-                if section.start_idx == edge_index && section.start_idx != frame.start_idx {
-                    items.push(SeqItem::Divider {
-                        text: section.label.clone().unwrap_or_else(|| "else".to_owned()),
-                    });
-                }
-            }
-        }
-        for note in ir
-            .sequence_notes
-            .iter()
-            .filter(|note| note.index == edge_index)
-        {
-            let participants = note
-                .participants
-                .iter()
-                .filter_map(|id| index.get(id).copied())
-                .collect::<Vec<_>>();
-            let anchor = match note.position {
-                mermaid_rs_renderer::ir::SequenceNotePosition::Over => {
-                    let first = participants.first().copied().unwrap_or(0);
-                    let last = participants.last().copied().unwrap_or(first);
-                    NoteAnchor::Over(first.min(last), first.max(last))
-                }
-                mermaid_rs_renderer::ir::SequenceNotePosition::LeftOf => {
-                    NoteAnchor::Left(participants.first().copied().unwrap_or(0))
-                }
-                mermaid_rs_renderer::ir::SequenceNotePosition::RightOf => {
-                    NoteAnchor::Right(participants.first().copied().unwrap_or(0))
-                }
-            };
-            items.push(SeqItem::Note {
-                anchor,
-                text: note.label.clone(),
-            });
-        }
-        if let Some(edge) = ir.edges.get(edge_index) {
-            if let (Some(&from), Some(&to)) = (index.get(&edge.from), index.get(&edge.to)) {
-                edge_item.insert(edge_index, items.len());
-                items.push(SeqItem::Message {
-                    from,
-                    to,
-                    text: numbered_message(edge.label.clone(), &mut next_number),
-                    dashed: edge.style == EdgeStyle::Dotted,
-                    head: if edge.end_decoration == Some(EdgeDecoration::Cross) {
-                        SeqHead::Cross
-                    } else {
-                        SeqHead::Arrow
-                    },
-                });
-            }
-        }
-        for frame in ir
-            .sequence_frames
-            .iter()
-            .filter(|frame| frame.end_idx == edge_index)
-        {
-            let _ = frame;
-            items.push(SeqItem::Divider {
-                text: "end".to_owned(),
-            });
-        }
-    }
-    let activations = activation_ranges(ir, &index, &edge_item, items.len());
-    Sequence {
-        labels,
-        items,
-        activations,
-    }
-}
-
-fn frame_divider_label(frame: &mermaid_rs_renderer::ir::SequenceFrame) -> String {
-    let kind = match frame.kind {
-        mermaid_rs_renderer::ir::SequenceFrameKind::Alt => "alt",
-        mermaid_rs_renderer::ir::SequenceFrameKind::Opt => "opt",
-        mermaid_rs_renderer::ir::SequenceFrameKind::Loop => "loop",
-        mermaid_rs_renderer::ir::SequenceFrameKind::Par => "par",
-        mermaid_rs_renderer::ir::SequenceFrameKind::Rect => "rect",
-        mermaid_rs_renderer::ir::SequenceFrameKind::Critical => "critical",
-        mermaid_rs_renderer::ir::SequenceFrameKind::Break => "break",
-    };
-    match frame
-        .sections
-        .first()
-        .and_then(|section| section.label.as_deref())
-        .filter(|label| !label.is_empty())
-    {
-        Some(label) => format!("{kind} {label}"),
-        None => kind.to_owned(),
-    }
-}
-
-fn numbered_message(label: Option<String>, next_number: &mut Option<usize>) -> Option<String> {
-    let Some(number) = *next_number else {
-        return label;
-    };
-    *next_number = Some(number.saturating_add(1));
-    Some(match label {
-        Some(label) if !label.is_empty() => format!("{number} {label}"),
-        _ => number.to_string(),
-    })
-}
-
-fn activation_ranges(
-    ir: &mermaid_rs_renderer::Graph,
-    participants: &HashMap<String, usize>,
-    edge_item: &HashMap<usize, usize>,
-    item_count: usize,
-) -> Vec<super::sequence::Activation> {
-    let mut open: HashMap<usize, usize> = HashMap::new();
-    let mut ranges = Vec::new();
-    let mut events = ir.sequence_activations.clone();
-    events.sort_by_key(|activation| activation.index);
-    for activation in events {
-        let Some(&participant) = participants.get(&activation.participant) else {
-            continue;
-        };
-        let item = edge_item
-            .get(&activation.index)
-            .copied()
-            .unwrap_or(item_count.saturating_sub(1));
-        match activation.kind {
-            mermaid_rs_renderer::ir::SequenceActivationKind::Activate => {
-                open.entry(participant).or_insert(item);
-            }
-            mermaid_rs_renderer::ir::SequenceActivationKind::Deactivate => {
-                if let Some(start) = open.remove(&participant) {
-                    ranges.push(super::sequence::Activation {
-                        participant,
-                        start_item: start,
-                        end_item: item,
-                    });
-                }
-            }
-        }
-    }
-    for (participant, start) in open {
-        ranges.push(super::sequence::Activation {
-            participant,
-            start_item: start,
-            end_item: item_count.saturating_sub(1),
-        });
-    }
-    ranges
-}
-
 pub(super) fn complexity(ir: &mermaid_rs_renderer::Graph) -> (usize, usize, usize, usize) {
     let details = match diagram_policy(ir.kind) {
         DiagramPolicy::PaintSequence => {
@@ -455,54 +299,6 @@ pub(super) fn complexity(ir: &mermaid_rs_renderer::Graph) -> (usize, usize, usiz
         DiagramPolicy::PaintFlow | DiagramPolicy::PaintState | DiagramPolicy::RawFallback => 0,
     };
     (ir.nodes.len(), ir.edges.len(), ir.subgraphs.len(), details)
-}
-
-/// Return true when the terminal painter can draw this IR without dropping
-/// structure. Cosmetic styles are ignored. Parallel edges, long labels, and
-/// common shapes are approximated instead of refused.
-pub(super) fn can_paint(ir: &mermaid_rs_renderer::Graph) -> bool {
-    for edge in &ir.edges {
-        if !ir.nodes.contains_key(&edge.from) || !ir.nodes.contains_key(&edge.to) {
-            return false;
-        }
-        if !plain_label_fits(&composed_edge_label(ir.kind, edge).unwrap_or_default()) {
-            return false;
-        }
-    }
-
-    match diagram_policy(ir.kind) {
-        DiagramPolicy::PaintFlow => {
-            ir.nodes.values().all(|node| plain_label_fits(&node.label))
-                && ir
-                    .subgraphs
-                    .iter()
-                    .all(|group| plain_label_fits(&group.label))
-        }
-        DiagramPolicy::PaintState => ir
-            .nodes
-            .values()
-            .all(|node| !node.label.contains("\n---") && plain_label_fits(&node.label)),
-        DiagramPolicy::PaintClass | DiagramPolicy::PaintEr => {
-            ir.nodes.values().all(|node| plain_label_fits(&node.label))
-        }
-        DiagramPolicy::PaintSequence => {
-            !ir.sequence_participants.is_empty()
-                && ir.sequence_participants.iter().all(|id| {
-                    ir.nodes.get(id).is_some_and(|node| {
-                        node.shape == MermaidNodeShape::ActorBox && plain_label_fits(&node.label)
-                    })
-                })
-                && ir.sequence_notes.iter().all(|note| {
-                    !note.participants.is_empty()
-                        && note
-                            .participants
-                            .iter()
-                            .all(|id| ir.sequence_participants.contains(id))
-                        && plain_label_fits(&note.label)
-                })
-        }
-        DiagramPolicy::RawFallback => false,
-    }
 }
 
 fn composed_edge_label(kind: DiagramKind, edge: &mermaid_rs_renderer::Edge) -> Option<String> {
@@ -521,6 +317,8 @@ fn composed_edge_label(kind: DiagramKind, edge: &mermaid_rs_renderer::Edge) -> O
     (!label.is_empty()).then_some(label)
 }
 
+/// The compact router shares one track per directed pair. Join labels onto the
+/// first edge and drop later geometry rather than refusing the diagram.
 fn merge_parallel_edges(edges: Vec<Edge>) -> Vec<Edge> {
     let mut merged: Vec<Edge> = Vec::new();
     let mut index: HashMap<(usize, usize), usize> = HashMap::new();
@@ -542,8 +340,4 @@ fn merge_labels(left: Option<String>, right: Option<String>) -> Option<String> {
         (Some(left), Some(right)) if left == right => Some(left),
         (Some(left), Some(right)) => Some(format!("{left} / {right}")),
     }
-}
-
-fn plain_label_fits(label: &str) -> bool {
-    wrap_label(label, WRAP_WIDTH, usize::MAX).len() <= MAX_LINES
 }

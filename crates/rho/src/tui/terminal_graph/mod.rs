@@ -13,14 +13,16 @@ mod ordering;
 mod painter;
 mod placement;
 
-pub(in crate::tui) use canvas::{Canvas, Cls as CellClass, D, L, R, U};
-pub(in crate::tui) use drawing::{draw_box, draw_seq_text, fit_label, wrap_label};
+pub(in crate::tui) use canvas::{Canvas, Cls as CellClass, D, L, R, STY_SOLID, STY_THICK, U};
+pub(in crate::tui) use drawing::{draw_box, draw_seq_text, fit_label};
 pub(in crate::tui) use flow::{
     art_from_layout, flow_labels_fit, flow_wrap_widths, layout_canvas, layout_flow, NodeExtra,
     Placed,
 };
+#[cfg(test)]
+pub(in crate::tui) use painter::MAX_LINES;
 pub(in crate::tui) use painter::{
-    GraphArt, GraphStyles, Oversize, MAX_CANVAS_CELLS, MAX_LINES, PAD, WRAP_WIDTH,
+    GraphArt, GraphStyles, Oversize, MAX_CANVAS_CELLS, PAD, WRAP_WIDTH,
 };
 
 /// A node's independent border and text styles.

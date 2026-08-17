@@ -196,10 +196,14 @@ impl Canvas {
         for i in 0..self.ch.len() {
             if self.mask[i] != 0 && self.ch[i] == ' ' {
                 let c = mask_char(self.mask[i]);
-                self.ch[i] = match self.style[i] {
-                    STY_DOT => dotted_char(c),
-                    STY_THICK => thick_char(c),
-                    _ => c,
+                // Thick wins over solid when a later pass restyles an existing
+                // mask stroke. Dotted stays distinct from both.
+                self.ch[i] = if self.style[i] & STY_THICK != 0 {
+                    thick_char(c)
+                } else if self.style[i] & STY_DOT != 0 {
+                    dotted_char(c)
+                } else {
+                    c
                 };
             }
         }

@@ -20,6 +20,28 @@ pub(super) fn layout_flow(
     styles: &GraphStyles,
     max_width: Option<usize>,
 ) -> Result<MermaidArt, Oversize> {
+    match layout_flow_in(graph, styles, max_width) {
+        Err(Oversize::Width)
+            if matches!(
+                graph.dir,
+                terminal_graph::Direction::LeftRight | terminal_graph::Direction::RightLeft
+            ) =>
+        {
+            layout_flow_in(
+                &graph.with_dir(terminal_graph::Direction::TopDown),
+                styles,
+                max_width,
+            )
+        }
+        other => other,
+    }
+}
+
+fn layout_flow_in(
+    graph: &Graph,
+    styles: &GraphStyles,
+    max_width: Option<usize>,
+) -> Result<MermaidArt, Oversize> {
     if graph.groups.is_empty() {
         let art = terminal_graph::layout_flow(&graph.layout_graph(), styles, max_width)?;
         return Ok(MermaidArt {
@@ -29,14 +51,8 @@ pub(super) fn layout_flow(
     }
 
     let layout_graph = graph.layout_graph();
-
     for wrap_width in terminal_graph::flow_wrap_widths() {
-        if !terminal_graph::flow_labels_fit(&layout_graph, wrap_width)
-            || graph.groups.iter().any(|group| {
-                terminal_graph::wrap_label(&group.label, wrap_width, usize::MAX).len()
-                    > terminal_graph::MAX_LINES
-            })
-        {
+        if !terminal_graph::flow_labels_fit(&layout_graph, wrap_width) {
             continue;
         }
         match groups::render_grouped(graph, styles, max_width, wrap_width) {

@@ -4,7 +4,7 @@ use ratatui::text::Line;
 
 use super::super::{render::display_width, theme::Theme};
 use super::panel::ClosedPanel;
-use crate::tui::terminal_graph::{Direction, GraphStyles, Oversize};
+use crate::tui::terminal_graph::{GraphStyles, Oversize};
 
 mod flow;
 mod model;
@@ -115,9 +115,6 @@ fn render_inner(source: &str, inner_width: usize) -> MermaidRender {
     if !parsed.graph.node_links.is_empty() {
         return MermaidRender::Fallback(MermaidFallback::UnsafeContent);
     }
-    if !model::can_paint(&parsed.graph) {
-        return MermaidRender::Fallback(MermaidFallback::Unsupported);
-    }
     let (primary, relationships, groups, details) = model::complexity(&parsed.graph);
     if primary > MAX_PRIMARY_ENTITIES
         || relationships > MAX_RELATIONSHIPS
@@ -127,7 +124,7 @@ fn render_inner(source: &str, inner_width: usize) -> MermaidRender {
         return MermaidRender::Fallback(MermaidFallback::StructuralLimit);
     }
 
-    let Some(mut model) = model::from_ir(&parsed.graph) else {
+    let Some(model) = model::from_ir(&parsed.graph) else {
         return MermaidRender::Fallback(MermaidFallback::Unsupported);
     };
     let style = Theme::code_text();
@@ -139,18 +136,6 @@ fn render_inner(source: &str, inner_width: usize) -> MermaidRender {
         node_styles: Vec::new(),
     };
     let result = layout_model(&model, diagram_policy, &styles, inner_width);
-    let result = match result {
-        Err(Oversize::Width)
-            if matches!(
-                diagram_policy,
-                policy::DiagramPolicy::PaintFlow | policy::DiagramPolicy::PaintState
-            ) && matches!(model.graph.dir, Direction::LeftRight | Direction::RightLeft) =>
-        {
-            model.graph.dir = Direction::TopDown;
-            layout_model(&model, diagram_policy, &styles, inner_width)
-        }
-        other => other,
-    };
     let art = match result {
         Ok(art) => art,
         Err(Oversize::Width) => {

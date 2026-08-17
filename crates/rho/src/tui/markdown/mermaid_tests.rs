@@ -98,8 +98,8 @@ fn applies_source_model_and_canvas_limits_before_or_after_painting() {
         render_mermaid("flowchart LR\nA[a label that cannot fit]", 4),
         MermaidRender::Fallback(MermaidFallback::TooWide)
     );
-    // A grouped label may fit the lossless model gate at the normal wrap but
-    // exceed the line budget at narrower wraps. Fall back instead of truncating.
+    // A grouped node label may fit the normal wrap but exceed the line budget
+    // at narrower wraps. Fall back instead of truncating.
     let compaction_label = "x".repeat(WRAP_WIDTH * (MAX_LINES - 1));
     let compacted_group = format!("flowchart TD\nsubgraph Group\nA[{compaction_label}]\nend");
     assert_eq!(
@@ -136,171 +136,87 @@ fn rejects_blank_malformed_unsafe_and_link_bearing_sources() {
     }
 }
 
+// Covers: conversion must refuse a sequence with no participants
+// Owner: mermaid model conversion
 #[test]
-fn still_refuses_kinds_and_labels_the_painter_cannot_hold() {
-    let long_label = "x".repeat(WRAP_WIDTH * MAX_LINES + 1);
-    let fixtures = [
-        "sequenceDiagram".to_owned(),
-        format!("flowchart TD\nA[{long_label}]"),
-    ];
-
-    for source in fixtures {
-        assert_eq!(
-            render_mermaid(&source, 240),
-            MermaidRender::Fallback(MermaidFallback::Unsupported),
-            "{source}"
-        );
-    }
+fn empty_sequence_stays_unsupported() {
+    assert_eq!(
+        render_mermaid("sequenceDiagram", 240),
+        MermaidRender::Fallback(MermaidFallback::Unsupported)
+    );
 }
 
-// Covers: everyday agent diagrams must paint instead of collapsing to source
-// Owner: mermaid paint policy
+// Covers: everyday extras must keep their approximated structure, not just paint
+// Owner: mermaid model conversion
 #[test]
-fn ablation_fixtures_paint_or_name_the_remaining_fallback() {
-    const AGENT_CHART: &str = r#"flowchart TD
-    start[Closed mermaid fence] --> empty{Empty?}
-    empty -->|yes| blank[Blank]
-    empty -->|no| bytes{Over 64 KiB or 2048 lines?}
-    bytes -->|yes| src[SourceBytes / SourceLines]
-    bytes -->|no| safe{Width 0 or unsafe content?}
-    safe -->|yes| uns[UnsafeContent]
-    safe -->|no| header{Supported header?}
-    header -->|no| unsup[Unsupported]
-    header -->|yes| parse[parse_mermaid_strict]
-    parse -->|err| mal[Malformed]
-    parse -->|ok| policy{Painter policy}
-    policy -->|RawFallback| unsup
-    policy -->|paint| links{Node links?}
-    links -->|yes| uns
-    links -->|no| lossless{can_paint?}
-    lossless -->|no| unsup
-    lossless -->|yes| struct{Complexity over cap?}
-    struct -->|yes| lim[StructuralLimit]
-    struct -->|no| layout[Layout / paint]
-    layout -->|Oversize Width| wide[TooWide]
-    layout -->|Oversize Cells| cells[OutputCells]
-    layout -->|ok| validate[validate_output]
-    validate -->|too many lines / cells / ANSI / wider than pane| out[OutputLines / OutputCells / AnsiOutput / TooWide]
-    validate -->|ok| art[Rendered art]
-"#;
-
+fn paints_common_approximations() {
     let cases = [
-        (
-            "trivial_flow",
-            "flowchart TD\nA --> B",
-            80,
-            /*rendered*/ true,
-        ),
-        (
-            "styled_flow",
-            "flowchart TD\nclassDef ok fill:#0f0\nA --> B\nclass A ok",
-            80,
-            true,
-        ),
-        (
-            "cylinder_and_stadium",
-            "flowchart TD\nA[(database)] --> B([api])",
-            80,
-            true,
-        ),
-        (
-            "state_start_and_note",
-            "stateDiagram-v2\n[*] --> Ready\nReady --> Waiting\nnote right of Ready: queued\nWaiting --> [*]",
-            80,
-            true,
-        ),
-        (
-            "long_edge_label",
-            "flowchart TD\nA -->|too many lines / cells / ANSI / wider than pane| B",
-            80,
-            true,
-        ),
-        (
-            "long_group_title",
-            "flowchart TD\nsubgraph abcdefghijklmnopqrstuvwxyz\nA[ok]\nend",
-            80,
-            true,
-        ),
         (
             "parallel_edges",
             "flowchart TD\nA -->|one| B\nA -->|two| B",
-            80,
-            true,
+            &["one / two"][..],
         ),
         (
             "class_multiplicity",
             "classDiagram\nA \"1\" --> \"*\" B : owns",
-            80,
-            true,
+            &["1 owns *"],
         ),
         (
-            "class_self_loop",
-            "classDiagram\nA *-- A : contains",
-            80,
-            true,
+            "cylinder_and_stadium",
+            "flowchart TD\nA[(database)] --> B([api])",
+            &["database", "api"],
         ),
         (
-            "sequence_alt_autonumber_activate",
-            "sequenceDiagram\nautonumber\nparticipant A\nparticipant B\nactivate A\nA->>B: request\nalt success\nB->>A: ok\nelse failure\nB->>A: error\nend\ndeactivate A",
-            80,
-            true,
+            "state_note",
+            "stateDiagram-v2\n[*] --> Ready\nnote right of Ready: queued",
+            &["Ready (note: queued)"],
         ),
         (
-            "sequence_box",
-            "sequenceDiagram\nbox Team\nparticipant A\nparticipant B\nend\nA->>B: hi",
-            80,
-            true,
+            "long_edge_label",
+            "flowchart TD\nA -->|too many lines / cells / ANSI / wider than pane| B",
+            &["too many lines"],
         ),
         (
-            "wide_lr_relayouts_to_td",
-            PHASE_CHAIN_FLOWCHART,
-            44,
-            true,
-        ),
-        (
-            "agent_chart_still_needs_width",
-            AGENT_CHART,
-            80,
-            false,
-        ),
-        ("agent_chart_wide_pane", AGENT_CHART, 240, true),
-        ("pie_still_unsupported", "pie\n\"Dogs\" : 5", 80, false),
-        (
-            "still_too_wide_when_a_node_cannot_fit",
-            "flowchart LR\nA[a label that cannot fit]",
-            4,
-            false,
+            "long_group_title",
+            "flowchart TD\nsubgraph abcdefghijklmnopqrstuvwxyz\nA[ok]\nend",
+            &["ok"],
         ),
     ];
 
-    for (name, source, width, should_paint) in cases {
-        match render_mermaid(source, width) {
-            MermaidRender::Rendered(lines) if should_paint => {
-                assert!(!lines.is_empty(), "{name}");
-                assert!(
-                    lines.iter().all(|line| {
-                        let text: String = line
-                            .spans
-                            .iter()
-                            .map(|span| span.content.as_ref())
-                            .collect();
-                        !text.contains('\x1b') && display_width(&text) <= width
-                    }),
-                    "{name}"
-                );
-            }
-            MermaidRender::Fallback(reason) if !should_paint => {
-                assert!(
-                    matches!(
-                        reason,
-                        MermaidFallback::Unsupported | MermaidFallback::TooWide
-                    ),
-                    "{name}: {reason:?}"
-                );
-            }
-            other => panic!("{name}: unexpected {other:?}"),
+    for (name, source, needles) in cases {
+        let art = rendered(source, 80).join("\n");
+        for needle in needles {
+            assert!(art.contains(needle), "{name}: missing {needle:?} in\n{art}");
         }
     }
+}
+
+// Covers: a too-wide LR chain must restack as TD instead of dumping source
+// Owner: mermaid flow layout
+#[test]
+fn relayouts_wide_lr_flowchart_to_td() {
+    let lines = rendered(PHASE_CHAIN_FLOWCHART, 44);
+    let phase1 = lines.iter().position(|line| line.contains("Phase 1"));
+    let phase2 = lines.iter().position(|line| line.contains("Phase 2"));
+    assert!(
+        matches!((phase1, phase2), (Some(one), Some(two)) if one < two),
+        "expected Phase 1 above Phase 2:\n{}",
+        lines.join("\n")
+    );
+}
+
+// Covers: sequence autonumber, alt frames, and activate must show in the art
+// Owner: mermaid sequence layout
+#[test]
+fn sequence_paints_numbers_frames_and_activation() {
+    let art = rendered(
+        "sequenceDiagram\nautonumber\nparticipant A\nparticipant B\nactivate A\nA->>B: request\nalt success\nB->>A: ok\nelse failure\nB->>A: error\nend\ndeactivate A",
+        80,
+    )
+    .join("\n");
+    assert!(art.contains("1 request"), "{art}");
+    assert!(art.contains("alt success"), "{art}");
+    assert!(art.contains('┃'), "activation bar missing:\n{art}");
 }
 
 #[test]

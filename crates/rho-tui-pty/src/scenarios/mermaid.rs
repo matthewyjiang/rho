@@ -32,6 +32,7 @@ pub(super) const MERMAID_FLOWCHART_RESIZE_STEPS: &[Step] = &[
     Step::Resize { rows: 40, cols: 32 },
     // Wait for the reflowed fallback, not merely a quiet frame. Resize can leave
     // the previous wide art clipped until history rebuilds at the new width.
+    // 32 columns truncates the header before "NARROW" to keep COPY on the row.
     Step::WaitText {
         text: "PANE TOO",
         timeout: SETTLE,
