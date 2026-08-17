@@ -179,10 +179,7 @@ fn push_generated_image_entries(
 
 impl super::App {
     pub(super) fn transcript_entries(&self, messages: &[Message]) -> Vec<Entry> {
-        let picker = self.image_picker.as_ref();
-        transcript_entries_from_messages(messages, &self.info.runtime.cwd, |image| {
-            super::feed_image::preview_generated_image(image, picker)
-        })
+        transcript_entries_from_messages(messages, &self.info.runtime.cwd, |_| Ok(None))
     }
 
     pub(super) fn set_history_entries(&mut self, entries: Vec<Entry>) {

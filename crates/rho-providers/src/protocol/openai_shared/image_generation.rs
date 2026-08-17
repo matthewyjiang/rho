@@ -27,13 +27,10 @@ pub(super) fn image_from_generation_call(item: &serde_json::Value) -> Option<Ima
     let data = item
         .get("result")
         .and_then(|value| value.as_str())
-        .map(str::trim)
+        .map(normalize_image_base64)
         .filter(|value| !value.is_empty())?;
-    let mime_type = image_mime_from_base64(data)?.to_owned();
-    Some(ImageContent {
-        mime_type,
-        data: data.to_owned(),
-    })
+    let mime_type = image_mime_from_base64(&data)?.to_owned();
+    Some(ImageContent { mime_type, data })
 }
 
 /// Rebuilds `result` on slim replay items from assistant Image blocks, in order.
@@ -68,35 +65,31 @@ pub(super) fn restore_image_generation_results(
     }
 }
 
-fn image_mime_from_base64(data: &str) -> Option<&'static str> {
-    // 16 base64 chars decode to 12 bytes, enough for PNG/JPEG/GIF/WebP.
-    const PREFIX_CHARS: usize = 16;
-    let mut prefix = String::with_capacity(PREFIX_CHARS);
-    for byte in data.bytes() {
-        if byte.is_ascii_whitespace() {
-            continue;
-        }
-        prefix.push(char::from(byte));
-        if prefix.len() == PREFIX_CHARS {
-            break;
-        }
+fn normalize_image_base64(data: &str) -> String {
+    let mut normalized: String = data
+        .bytes()
+        .filter(|byte| !byte.is_ascii_whitespace())
+        .map(|byte| match byte {
+            b'-' => '+',
+            b'_' => '/',
+            other => char::from(other),
+        })
+        .collect();
+    while !normalized.len().is_multiple_of(4) {
+        normalized.push('=');
     }
-    ImageContent::mime_type_from_bytes(&decode_base64_prefix(&prefix)?)
+    normalized
 }
 
-fn decode_base64_prefix(data: &str) -> Option<Vec<u8>> {
+fn image_mime_from_base64(data: &str) -> Option<&'static str> {
     use base64::Engine as _;
-    if data.is_empty() {
-        return None;
-    }
-    let mut padded = data.to_string();
-    while !padded.len().is_multiple_of(4) {
-        padded.push('=');
-    }
-    base64::engine::general_purpose::STANDARD
-        .decode(&padded)
-        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(&padded))
-        .ok()
+    // 16 base64 chars decode to 12 bytes, enough for PNG/JPEG/GIF/WebP.
+    const PREFIX_CHARS: usize = 16;
+    let prefix = data.get(..data.len().min(PREFIX_CHARS))?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(prefix)
+        .ok()?;
+    ImageContent::mime_type_from_bytes(&bytes)
 }
 
 #[cfg(test)]

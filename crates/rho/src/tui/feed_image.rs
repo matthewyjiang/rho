@@ -349,17 +349,22 @@ pub(super) fn preview_generated_image(
     image: &rho_providers::model::ImageContent,
     picker: Option<&Picker>,
 ) -> Result<Option<FeedImage>, String> {
-    let Some(picker) = picker else {
-        return Ok(None);
-    };
     use base64::Engine as _;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(image.data.trim())
         .map_err(|_| "generated image was not valid base64".to_string())?;
-    let asset = ToolAsset::new(&image.mime_type, bytes);
-    FeedImage::load(&asset, picker)
-        .map(Some)
+    load_optional_feed_image(picker, &ToolAsset::new(&image.mime_type, bytes))
         .map_err(|error| error.to_string())
+}
+
+fn load_optional_feed_image(
+    picker: Option<&Picker>,
+    asset: &ToolAsset,
+) -> image::ImageResult<Option<FeedImage>> {
+    let Some(picker) = picker else {
+        return Ok(None);
+    };
+    FeedImage::load(asset, picker).map(Some)
 }
 
 impl super::App {
@@ -367,11 +372,7 @@ impl super::App {
         &mut self,
         asset: &ToolAsset,
     ) -> image::ImageResult<Option<FeedImage>> {
-        let Some(picker) = &self.image_picker else {
-            return Ok(None);
-        };
-        let image = FeedImage::load(asset, picker)?;
-        Ok(Some(image))
+        load_optional_feed_image(self.image_picker.as_ref(), asset)
     }
 
     pub(super) fn visible_history_image_placements(

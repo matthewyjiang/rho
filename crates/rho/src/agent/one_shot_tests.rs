@@ -110,10 +110,6 @@ fn rejects_definitions_without_reasoning() {
 
 #[tokio::test]
 async fn assembles_messages_extracts_text_and_records_usage_purpose() {
-    let image = rho_sdk::model::ImageContent {
-        data: "/9j/4AAQ".into(),
-        mime_type: "image/jpeg".into(),
-    };
     let provider = ScriptedProvider::new(
         ModelIdentity::new("provider", "api", "model"),
         [ScriptedTurn::streaming(
@@ -131,7 +127,10 @@ async fn assembles_messages_extracts_text_and_records_usage_purpose() {
                     arguments: json!({}),
                 }),
                 ContentBlock::Text("second".into()),
-                ContentBlock::Image(image.clone()),
+                ContentBlock::Image(rho_sdk::model::ImageContent {
+                    data: "/9j/4AAQ".into(),
+                    mime_type: "image/jpeg".into(),
+                }),
             ]),
         )],
     );
@@ -148,14 +147,7 @@ async fn assembles_messages_extracts_text_and_records_usage_purpose() {
     .await
     .unwrap();
 
-    assert_eq!(
-        result.texts,
-        [
-            "first".to_string(),
-            "second".to_string(),
-            format!("[image: {}]", rho_providers::model::image_summary(&image)),
-        ]
-    );
+    assert_eq!(result.texts, ["first", "second", "[image: image/jpeg 6 B]"]);
     assert_eq!(
         result.usage,
         ModelUsage {
