@@ -76,7 +76,7 @@ then force-kills if needed.
 | `pending` | More retained output exists past this window |
 | `exit: …` | Non-zero or failed exit code |
 | `detail: …` | Extra detail for failed or forced ends |
-| `stdout:` / `stderr:` | Coalesced stream text; omitted when empty |
+| `stdout:` / `stderr:` | Coalesced stream text after a blank line; omitted when empty |
 
 ## Limits
 

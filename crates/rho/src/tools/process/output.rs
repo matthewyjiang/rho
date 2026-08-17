@@ -20,8 +20,12 @@ pub(super) fn format_snapshot(snapshot: &Snapshot) -> String {
     if let Some(detail) = &snapshot.terminal_detail {
         lines.push(format!("detail: {detail}"));
     }
+    let header_len = lines.len();
     push_stream(&mut lines, "stdout", snapshot, Stream::Stdout);
     push_stream(&mut lines, "stderr", snapshot, Stream::Stderr);
+    if lines.len() > header_len {
+        lines.insert(header_len, String::new());
+    }
     lines.join("\n")
 }
 

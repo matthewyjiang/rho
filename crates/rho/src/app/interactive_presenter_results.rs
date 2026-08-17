@@ -402,8 +402,9 @@ pub(super) fn process_result_card(content: &str, status: ToolStatus) -> ToolCard
 }
 
 fn compact_process_card(content: &str, status: ToolStatus) -> ToolCard {
-    if let Some(process_id) = header_value(content, "process_id") {
-        if content.lines().any(|line| line == "stop requested") {
+    let header = compact_header_block(content);
+    if let Some(process_id) = header_value(header, "process_id") {
+        if header.lines().any(|line| line == "stop requested") {
             let mut card = draft_card(
                 status,
                 ToolFamily::Default,
@@ -414,21 +415,21 @@ fn compact_process_card(content: &str, status: ToolStatus) -> ToolCard {
             });
             return card;
         }
-        let state = header_value(content, "state");
+        let state = header_value(header, "state");
         let mut card = draft_card(
             status,
             ToolFamily::Default,
             ToolHeader::call("process", state.clone()),
         );
         let mut meta = process_id;
-        if let Some(next) = header_value(content, "next") {
+        if let Some(next) = header_value(header, "next") {
             meta.push_str(&format!(" · next {next}"));
         }
-        if let Some(code) = header_value(content, "exit") {
+        if let Some(code) = header_value(header, "exit") {
             meta.push_str(&format!(" · exit {code}"));
         }
         card.push_fact(ToolFact::Meta { text: meta });
-        if content.lines().any(|line| line == "pending") {
+        if header.lines().any(|line| line == "pending") {
             card.push_fact(ToolFact::Meta {
                 text: "more output available".into(),
             });
@@ -830,5 +831,25 @@ mod tests {
                 "{content}"
             );
         }
+    }
+
+    // Covers: process stdout must not spoof pending / exit / stop header facts
+    // Owner: pure unit (presenter)
+    #[test]
+    fn compact_process_ignores_header_tokens_in_streams() {
+        let card = compact_process_card(
+            "process_id: proc-1\nstate: running\nnext: 2\n\nstdout:\npending\nexit: 1\nstop requested",
+            ToolStatus::Ok,
+        );
+        assert_eq!(
+            card.header,
+            ToolHeader::call("process", Some("running".into()))
+        );
+        assert_eq!(
+            card.facts,
+            vec![ToolFact::Meta {
+                text: "proc-1 · next 2".into(),
+            }]
+        );
     }
 }

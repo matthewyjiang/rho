@@ -37,7 +37,7 @@ fn snapshot() -> Snapshot {
 fn snapshot_text_keeps_id_state_cursor_and_streams() {
     assert_eq!(
         format_snapshot(&snapshot()),
-        "process_id: proc-1\nstate: running\nnext: 2\nstdout:\nout\nstderr:\nerr"
+        "process_id: proc-1\nstate: running\nnext: 2\n\nstdout:\nout\nstderr:\nerr"
     );
 }
 
