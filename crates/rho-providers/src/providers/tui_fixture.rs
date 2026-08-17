@@ -7,6 +7,7 @@ use std::{
 };
 
 mod advisor;
+mod compact;
 mod docs_demo;
 mod edit;
 mod goal;
@@ -15,10 +16,7 @@ use rho_sdk::{
     model::{
         ContentBlock, Message, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ToolCall,
     },
-    provider::{
-        ModelProvider, NativeCompactionFuture, NativeCompactionResponse, ProviderEventSender,
-        ProviderFuture,
-    },
+    provider::{ModelProvider, NativeCompactionFuture, ProviderEventSender, ProviderFuture},
     CancellationToken, ProviderError, ProviderErrorKind, Retryability,
 };
 
@@ -96,27 +94,7 @@ impl ModelProvider for TuiFixtureProvider {
         &'a self,
         request: ModelRequest<'a>,
     ) -> Option<NativeCompactionFuture<'a>> {
-        if history_has_user_text(&request, "fixture compact hold") {
-            return Some(Box::pin(async move {
-                request.cancellation.cancelled().await;
-                NativeCompactionResponse::failure(ProviderError::interrupted(
-                    "fixture compact hold cancelled",
-                ))
-            }));
-        }
-        if !history_has_user_text(&request, "fixture compact delay") {
-            return None;
-        }
-        Some(Box::pin(async move {
-            match fixture_sleep(&request.cancellation, Duration::from_secs(3)).await {
-                Ok(()) => NativeCompactionResponse::failure(ProviderError::new(
-                    ProviderErrorKind::Unavailable,
-                    "fixture compact delay finished",
-                    Retryability::Permanent,
-                )),
-                Err(error) => NativeCompactionResponse::failure(error),
-            }
-        }))
+        compact::native_compact(request)
     }
 }
 
@@ -764,10 +742,6 @@ fn is_subagent_title_request(request: &ModelRequest<'_>) -> bool {
         )
     });
     is_title_agent && last_user_text(request).is_some_and(|text| !text.starts_with("First turn:"))
-}
-
-fn history_has_user_text(request: &ModelRequest<'_>, needle: &str) -> bool {
-    last_user_text(request).is_some_and(|text| text.contains(needle))
 }
 
 fn last_user_text(request: &ModelRequest<'_>) -> Option<String> {

@@ -562,11 +562,7 @@ impl InteractiveRuntime {
         Ok(())
     }
 
-    pub(crate) async fn resume(
-        &mut self,
-        storage: StoredSession,
-        _history: Vec<Message>,
-    ) -> anyhow::Result<()> {
+    pub(crate) async fn resume(&mut self, storage: StoredSession) -> anyhow::Result<()> {
         if self.is_session_busy() {
             if self.runs.is_active() {
                 debug_assert_eq!(

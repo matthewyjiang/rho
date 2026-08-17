@@ -33,7 +33,6 @@ pub(super) struct PendingContextHandoff {
 #[derive(Debug)]
 struct ResumeMaterialize {
     session: Session,
-    model_history: Vec<Message>,
     display_history: Vec<Message>,
 }
 
@@ -353,7 +352,6 @@ impl App {
                 target_selection: Some(current_runtime_selection(self)),
                 materialize: Some(ResumeMaterialize {
                     session: session.clone(),
-                    model_history: model_history.to_vec(),
                     display_history: display_history.to_vec(),
                 }),
                 after: AfterHandoff::None,
@@ -365,11 +363,12 @@ impl App {
     pub(super) fn maybe_offer_loaded_session_context_handoff(
         &mut self,
         agent: &mut InteractiveRuntime,
+        had_recovered_messages: bool,
     ) -> anyhow::Result<()> {
         if !matches!(self.input_ui.composer(), ComposerMode::Input) {
             return Ok(());
         }
-        if self.info.session.recovered_messages.is_empty() {
+        if !had_recovered_messages {
             self.insert_runtime_notices(agent);
             return Ok(());
         }
@@ -617,7 +616,6 @@ impl App {
         };
         self.apply_resume_session(
             materialize.session,
-            materialize.model_history,
             materialize.display_history,
             terminal,
             agent,
@@ -628,7 +626,6 @@ impl App {
     pub(super) async fn apply_resume_session(
         &mut self,
         session: Session,
-        model_history: Vec<Message>,
         display_history: Vec<Message>,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
@@ -636,12 +633,11 @@ impl App {
         let full_id = session.id().to_string();
         let short_id = short_session_id(&full_id);
 
-        agent.resume(session, model_history).await?;
+        agent.resume(session).await?;
         // User already confirmed handoff when this path runs after a prompt; drop
         // the structured omission so we do not re-announce it as a string notice.
         let _ = agent.take_pending_omission();
         self.info.session.session_id = Some(full_id);
-        self.info.session.recovered_messages = display_history.clone();
         self.pending_session_title = None;
         self.session_title_locked = false;
         self.input_ui.set_composer(ComposerMode::Input);

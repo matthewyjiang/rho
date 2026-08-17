@@ -109,7 +109,6 @@ impl App {
         self.note_terminal_geometry(size.width as usize, size.height as usize);
         agent.select_tree_node(storage, &target_id).await?;
 
-        self.info.session.recovered_messages = histories.display.clone();
         self.input_ui.set_composer(ComposerMode::Input);
         self.input_ui.clear_text();
         self.input_ui.clear_paste_segments();
