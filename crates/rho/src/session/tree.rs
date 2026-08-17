@@ -5,9 +5,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use rho_sdk::SessionSnapshot;
+use rho_sdk::{CompactionState, Revision, SessionSnapshot};
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use uuid::Uuid;
+
+#[path = "tree_restore.rs"]
+mod restore;
 
 use super::persistence::{
     next_revision, parse_timestamp, resume_normalized_history, session_id_from_path,
@@ -99,10 +102,33 @@ pub(crate) struct SessionNode {
     pub(crate) display_messages: Vec<StoredDisplayMessage>,
 }
 
+/// Compact facts kept on every node so picker labels and tree checks do not
+/// need a full `PersistedSessionState` prefix.
+#[derive(Clone, Debug)]
+pub(crate) struct NodeFacts {
+    pub(crate) revision: Revision,
+    pub(crate) model_len: usize,
+    pub(crate) continuable: bool,
+    pub(crate) has_snapshot: bool,
+    pub(crate) compaction: CompactionState,
+}
+
+impl NodeFacts {
+    fn from_state(state: &PersistedSessionState) -> Self {
+        Self {
+            revision: state.revision,
+            model_len: state.model.len(),
+            continuable: continuation_is_valid(&state.model),
+            has_snapshot: state.snapshot.is_some(),
+            compaction: state.compaction.clone(),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct RestoredNode {
     node: SessionNode,
-    state: PersistedSessionState,
+    facts: NodeFacts,
 }
 
 impl RestoredNode {
@@ -127,8 +153,20 @@ impl RestoredNode {
         &self.node.display_messages
     }
 
-    pub(crate) fn state(&self) -> &PersistedSessionState {
-        &self.state
+    pub(crate) fn revision(&self) -> Revision {
+        self.facts.revision
+    }
+
+    pub(super) fn facts(&self) -> &NodeFacts {
+        &self.facts
+    }
+
+    pub(super) fn transition(&self) -> &StoredStateTransition {
+        &self.node.transition
+    }
+
+    pub(super) fn compaction_facts(&self) -> Option<&StoredCompactionFacts> {
+        self.node.compaction_facts.as_ref()
     }
 }
 
@@ -173,6 +211,8 @@ pub(crate) struct SessionTree {
     /// Cached count of parent nodes with more than one child, maintained in
     /// `insert_restored_node` so `facts()` avoids scanning every child list.
     branch_count: usize,
+    /// Full state for `active_leaf_id` only. Other nodes reconstruct on demand.
+    active_state: Option<PersistedSessionState>,
 }
 
 impl SessionTree {
@@ -218,6 +258,7 @@ impl SessionTree {
                 expected_session_id.as_deref(),
             )?;
         }
+        tree.ensure_active_state()?;
         tree.validate_active_leaf()?;
         Ok(tree)
     }
@@ -227,10 +268,7 @@ impl SessionTree {
     }
 
     pub(crate) fn active_state(&self) -> Option<&PersistedSessionState> {
-        self.active_leaf_id
-            .as_ref()
-            .and_then(|id| self.nodes.get(id))
-            .map(RestoredNode::state)
+        self.active_state.as_ref()
     }
 
     pub(crate) fn node(&self, id: &NodeId) -> Option<&RestoredNode> {
@@ -291,7 +329,7 @@ impl SessionTree {
         for node in self.path_to(target_id)? {
             display.extend(node.display_messages().iter().cloned());
             if node.kind() == SessionNodeKind::Compaction {
-                let detail = if let Some(facts) = node.node.compaction_facts.as_ref() {
+                let detail = if let Some(facts) = node.compaction_facts() {
                     let cost = facts.cost_usd_micros.map_or_else(String::new, |micros| {
                         format!("\n${:.6} compaction cost", micros as f64 / 1_000_000.0)
                     });
@@ -303,10 +341,9 @@ impl SessionTree {
                         facts.current_tokens,
                     )
                 } else {
-                    let compaction = &node.state.compaction;
                     match (
-                        compaction.last_previous_tokens(),
-                        compaction.last_current_tokens(),
+                        node.facts().compaction.last_previous_tokens(),
+                        node.facts().compaction.last_current_tokens(),
                     ) {
                         (Some(previous), Some(current)) => {
                             format!("\n{previous} → {current} estimated tokens")
@@ -356,7 +393,7 @@ impl SessionTree {
             let node = self
                 .node(&id)
                 .ok_or_else(|| anyhow::anyhow!("session tree is missing node '{id}'"))?;
-            if continuation_is_valid(&node.state.model) {
+            if node.facts().continuable {
                 let kind = match node.kind() {
                     SessionNodeKind::Commit => SessionTreeItemKind::Turn,
                     SessionNodeKind::Compaction => SessionTreeItemKind::Compaction,
@@ -368,22 +405,21 @@ impl SessionTree {
                         .unwrap_or_else(|| "completed turn".into())
                 });
                 let compaction_facts = (kind == SessionTreeItemKind::Compaction).then(|| {
-                    node.node
-                        .compaction_facts
-                        .clone()
+                    node.compaction_facts()
+                        .cloned()
                         .unwrap_or_else(|| StoredCompactionFacts {
                             previous_messages: node
                                 .parent_id()
                                 .and_then(|id| self.node(id))
-                                .map_or(0, |parent| parent.state.model.len()),
-                            current_messages: node.state.model.len(),
+                                .map_or(0, |parent| parent.facts().model_len),
+                            current_messages: node.facts().model_len,
                             previous_tokens: node
-                                .state
+                                .facts()
                                 .compaction
                                 .last_previous_tokens()
                                 .unwrap_or_default(),
                             current_tokens: node
-                                .state
+                                .facts()
                                 .compaction
                                 .last_current_tokens()
                                 .unwrap_or_default(),
@@ -723,8 +759,10 @@ impl SessionTree {
             if let Some(active) = self.active_leaf_id.as_ref() {
                 if let Some(node) = self.nodes.get_mut(active) {
                     node.node.display_messages.extend(display_messages);
-                    node.state.display = state.display.clone();
                 }
+            }
+            if let Some(active_state) = self.active_state.as_mut() {
+                active_state.display = state.display.clone();
             }
             return Ok(());
         }
@@ -756,73 +794,6 @@ impl SessionTree {
             display_messages,
         };
         self.insert_restored_node(node, state.clone())
-    }
-
-    fn insert_explicit_node(&mut self, node: SessionNode) -> anyhow::Result<()> {
-        if node.kind == SessionNodeKind::Commit && node.compaction_facts.is_some() {
-            anyhow::bail!("commit node '{}' cannot store compaction facts", node.id);
-        }
-        if node.parent_id.is_none() && !self.nodes.is_empty() {
-            anyhow::bail!("session node '{}' creates a disconnected root", node.id);
-        }
-        let state = match (&node.parent_id, &node.transition) {
-            (None, StoredStateTransition::Snapshot { snapshot }) => {
-                if node.kind == SessionNodeKind::Compaction {
-                    anyhow::bail!("root node '{}' cannot be a compaction", node.id);
-                }
-                self.state_from_snapshot(snapshot.as_ref(), &node.display_messages)?
-            }
-            (None, StoredStateTransition::SnapshotDelta { .. }) => {
-                anyhow::bail!("root node '{}' cannot store a snapshot delta", node.id)
-            }
-            (Some(parent_id), transition) => {
-                let parent = self.nodes.get(parent_id).ok_or_else(|| {
-                    anyhow::anyhow!("node '{}' names missing parent '{parent_id}'", node.id)
-                })?;
-                let parent_snapshot = parent.state.snapshot.as_ref();
-                if node.kind == SessionNodeKind::Compaction
-                    && !matches!(transition, StoredStateTransition::Snapshot { .. })
-                {
-                    anyhow::bail!("compaction node '{}' must store a full snapshot", node.id);
-                }
-                let snapshot = match transition {
-                    StoredStateTransition::Snapshot { snapshot } => snapshot.as_ref().clone(),
-                    StoredStateTransition::SnapshotDelta { delta } => {
-                        let base = parent_snapshot.ok_or_else(|| {
-                            anyhow::anyhow!("parent '{parent_id}' has no complete snapshot")
-                        })?;
-                        delta.restore(base)?
-                    }
-                };
-                let state_changed = match parent_snapshot {
-                    Some(parent_snapshot) => snapshot != *parent_snapshot,
-                    // Message-only v1 parents keep restored state without a
-                    // complete snapshot. A full snapshot child may restate that
-                    // current revision when materializing the explicit tree,
-                    // including resume-time history normalization.
-                    None => snapshot_less_parent_state_changed(&snapshot, &parent.state),
-                };
-                if state_changed && snapshot.revision() <= parent.state.revision {
-                    anyhow::bail!(
-                        "node '{}' changed state without advancing parent revision {}",
-                        node.id,
-                        parent.state.revision
-                    );
-                }
-                let compaction_changed = snapshot.compaction() != &parent.state.compaction;
-                if compaction_changed != (node.kind == SessionNodeKind::Compaction) {
-                    anyhow::bail!(
-                        "node '{}' kind does not match its compaction state transition",
-                        node.id
-                    );
-                }
-                let mut state = self.state_from_snapshot(&snapshot, &[])?;
-                state.display = parent.state.display.clone();
-                state.display.extend(node.display_messages.clone());
-                state
-            }
-        };
-        self.insert_restored_node(node, state)
     }
 
     fn state_from_snapshot(
@@ -871,8 +842,15 @@ impl SessionTree {
         }
         let id = node.id.clone();
         self.order.push(id.clone());
-        self.nodes.insert(id.clone(), RestoredNode { node, state });
+        self.nodes.insert(
+            id.clone(),
+            RestoredNode {
+                node,
+                facts: NodeFacts::from_state(&state),
+            },
+        );
         self.active_leaf_id = Some(id);
+        self.active_state = Some(state);
         Ok(())
     }
 
@@ -880,17 +858,27 @@ impl SessionTree {
         if !self.nodes.contains_key(&target_id) {
             anyhow::bail!("active leaf names missing node '{target_id}'");
         }
-        self.active_leaf_id = Some(target_id);
+        if self.active_leaf_id.as_ref() != Some(&target_id) {
+            self.active_leaf_id = Some(target_id);
+            self.active_state = None;
+        }
         Ok(())
     }
 
     fn validate_active_leaf(&self) -> anyhow::Result<()> {
-        if let Some(active) = &self.active_leaf_id {
-            if !self.nodes.contains_key(active) {
-                anyhow::bail!("active leaf names missing node '{active}'");
+        match (&self.active_leaf_id, &self.active_state) {
+            (Some(active), Some(_)) => {
+                if !self.nodes.contains_key(active) {
+                    anyhow::bail!("active leaf names missing node '{active}'");
+                }
+                Ok(())
             }
+            (None, None) => Ok(()),
+            (Some(active), None) => {
+                anyhow::bail!("active leaf '{active}' has no materialized state")
+            }
+            (None, Some(_)) => anyhow::bail!("materialized state exists without an active leaf"),
         }
-        Ok(())
     }
 }
 

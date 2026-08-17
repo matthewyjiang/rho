@@ -6,6 +6,53 @@ const STARTUP: WaitTimeout = WaitTimeout::secs(20, "startup");
 const STREAM: WaitTimeout = WaitTimeout::secs(20, "stream response");
 const SETTLE: WaitTimeout = WaitTimeout::secs(10, "ui settle");
 
+fn assert_transcript_has(screen: &str, text: &str, missing: &str) -> Result<()> {
+    if !screen.contains(text) {
+        anyhow::bail!("{missing}:\n{screen}");
+    }
+    Ok(())
+}
+
+fn assert_transcript_lacks(screen: &str, text: &str, present: &str) -> Result<()> {
+    if screen.contains(text) {
+        anyhow::bail!("{present}:\n{screen}");
+    }
+    Ok(())
+}
+
+fn assert_restored_first_turn_transcript(harness: &mut PtyHarness) -> Result<()> {
+    let screen = harness.screen().contents();
+    assert_transcript_has(
+        &screen,
+        "fixture response: tree first",
+        "restored transcript missing first turn",
+    )?;
+    assert_transcript_lacks(
+        &screen,
+        "tree second",
+        "restored transcript still showed the later turn",
+    )
+}
+
+fn assert_branch_kept_selected_parent(harness: &mut PtyHarness) -> Result<()> {
+    let screen = harness.screen().contents();
+    assert_transcript_has(
+        &screen,
+        "fixture response: tree first",
+        "branched transcript missing restored parent",
+    )?;
+    assert_transcript_has(
+        &screen,
+        "fixture response: tree branch",
+        "branched transcript missing new turn",
+    )?;
+    assert_transcript_lacks(
+        &screen,
+        "tree second",
+        "branched transcript included the abandoned turn",
+    )
+}
+
 fn assert_tree_list_only_popup(harness: &mut PtyHarness) -> Result<()> {
     let screen = harness.screen().contents();
     if !screen.contains("Conversation tree") {
@@ -69,12 +116,14 @@ pub(super) const CONVERSATION_TREE_STEPS: &[Step] = &[
         text: "restored conversation state",
         timeout: STREAM,
     },
+    Step::Custom(assert_restored_first_turn_transcript),
     Step::Phase("create_branch"),
     Step::SubmitText("tree branch"),
     Step::WaitText {
         text: "fixture response: tree branch",
         timeout: STREAM,
     },
+    Step::Custom(assert_branch_kept_selected_parent),
     Step::SubmitText("/tree"),
     Step::WaitText {
         text: "tree second",

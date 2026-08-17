@@ -192,13 +192,10 @@ impl Session {
         target_id: &NodeId,
     ) -> anyhow::Result<super::SessionHistories> {
         let tree = self.session_tree()?;
-        let state = tree
-            .node(target_id)
-            .ok_or_else(|| anyhow::anyhow!("session tree is missing node '{target_id}'"))?
-            .state();
+        let state = tree.state_for(target_id)?;
         let display = tree.projected_display(target_id)?;
         Ok(super::SessionHistories {
-            model: drop_incomplete_tool_turn_tail(state.model.clone()),
+            model: drop_incomplete_tool_turn_tail(state.model),
             display: drop_incomplete_tool_turn_tail(
                 display.into_iter().map(|entry| entry.message).collect(),
             ),
@@ -212,11 +209,8 @@ impl Session {
         prompt_cache_key: String,
     ) -> anyhow::Result<SessionSnapshot> {
         let tree = self.session_tree()?;
-        let state = tree
-            .node(target_id)
-            .ok_or_else(|| anyhow::anyhow!("session tree is missing node '{target_id}'"))?
-            .state();
-        self.snapshot_from_state(state.clone(), provider, prompt_cache_key)
+        let state = tree.state_for(target_id)?;
+        self.snapshot_from_state(state, provider, prompt_cache_key)
     }
 
     /// Selects an existing valid node without changing any stored state.
@@ -249,10 +243,12 @@ impl Session {
                 target_id: target_id.clone(),
             },
         )?;
-        cursor.last_snapshot = tree
-            .node(target_id)
-            .and_then(|node| node.state().snapshot.as_ref())
-            .map(SnapshotDeltaBase::from_snapshot);
+        cursor.last_snapshot = tree.state_for(target_id).ok().and_then(|state| {
+            state
+                .snapshot
+                .as_ref()
+                .map(SnapshotDeltaBase::from_snapshot)
+        });
         let record = self.record_mirrored_index(&tree);
         drop(cursor);
         Ok(record)
