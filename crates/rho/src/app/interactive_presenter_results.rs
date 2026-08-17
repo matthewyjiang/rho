@@ -459,6 +459,12 @@ fn header_value(content: &str, key: &str) -> Option<String> {
     })
 }
 
+fn compact_header_block(content: &str) -> &str {
+    content
+        .split_once("\n\n")
+        .map_or(content, |(header, _)| header)
+}
+
 fn compact_web_search_summary(content: &str) -> Option<String> {
     let mut lines = content.lines();
     if !lines
@@ -478,10 +484,11 @@ fn push_compact_fetch_fact(card: &mut ToolCard, content: &str) {
         });
         return;
     }
-    let count = header_value(content, "items")
+    let header = compact_header_block(content);
+    let count = header_value(header, "items")
         .and_then(|value| value.parse().ok())
         .unwrap_or(1);
-    let truncated = content.lines().any(|line| line == "truncated");
+    let truncated = header.lines().any(|line| line == "truncated");
     card.push_fact(ToolFact::Count {
         label: if count == 1 {
             "item".into()
@@ -778,44 +785,50 @@ fn push_shell_timeout_fact(card: &mut ToolCard, arguments: &serde_json::Value) {
 mod tests {
     use super::*;
 
-    // Covers: numbered list lines in a single-fetch body are not counted as items
+    // Covers: fetch card facts come from the header block, not the inlined body
     // Owner: pure unit (presenter)
     #[test]
-    fn compact_fetch_uses_items_header_not_numbered_body_lines() {
-        let mut inferred = draft_card(
-            ToolStatus::Ok,
-            ToolFamily::Web,
-            ToolHeader::call("fetch_content", None),
-        );
-        push_compact_fetch_fact(
-            &mut inferred,
-            "responseId: 0123456789abcdef0123456789abcdef\nurl: https://example.com\n\n1. first\n2. second",
-        );
-        assert_eq!(
-            inferred.facts,
-            vec![ToolFact::Count {
-                label: "item".into(),
-                value: 1,
-                detail: None,
-            }]
-        );
-
-        let mut listed = draft_card(
-            ToolStatus::Ok,
-            ToolFamily::Web,
-            ToolHeader::call("fetch_content", None),
-        );
-        push_compact_fetch_fact(
-            &mut listed,
-            "responseId: 0123456789abcdef0123456789abcdef\nitems: 2\n0. https://a.example\n1. https://b.example",
-        );
-        assert_eq!(
-            listed.facts,
-            vec![ToolFact::Count {
-                label: "items".into(),
-                value: 2,
-                detail: None,
-            }]
-        );
+    fn compact_fetch_reads_only_header_fields() {
+        let id = "0123456789abcdef0123456789abcdef";
+        let cases = [
+            (
+                format!("responseId: {id}\nurl: https://example.com\n\n1. first\n2. second"),
+                1_u64,
+                None,
+            ),
+            (
+                format!("responseId: {id}\nitems: 2\n0. https://a.example\n1. https://b.example"),
+                2,
+                None,
+            ),
+            (
+                format!("responseId: {id}\nurl: https://example.com\n\nitems: 7\ntruncated"),
+                1,
+                None,
+            ),
+            (
+                format!("responseId: {id}\nurl: https://example.com\ntruncated\n\nbody"),
+                1,
+                Some("truncated".into()),
+            ),
+        ];
+        for (content, value, detail) in cases {
+            let mut card = draft_card(
+                ToolStatus::Ok,
+                ToolFamily::Web,
+                ToolHeader::call("fetch_content", None),
+            );
+            push_compact_fetch_fact(&mut card, &content);
+            let label = if value == 1 { "item" } else { "items" };
+            assert_eq!(
+                card.facts,
+                vec![ToolFact::Count {
+                    label: label.into(),
+                    value,
+                    detail,
+                }],
+                "{content}"
+            );
+        }
     }
 }
