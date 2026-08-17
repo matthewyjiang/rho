@@ -230,6 +230,35 @@ fn shell_content_treats_bare_success_output_as_stdout() {
     assert_eq!(parsed.exit_code, None);
 }
 
+// Covers: success keeps the stdout label and duration, not exit 0
+// Owner: pure unit (shell process)
+#[cfg(unix)]
+#[test]
+fn finished_success_keeps_time_and_stdout_label() {
+    use std::os::unix::process::ExitStatusExt;
+
+    let result = finished_result(
+        "call_1".into(),
+        std::process::ExitStatus::from_raw(0),
+        b"hello",
+        b"",
+        Duration::from_millis(200),
+        /*max_output_bytes*/ 12_000,
+    );
+    assert!(result.ok);
+    assert_eq!(result.content, "stdout:\nhello\n\ntime: 0.2s");
+}
+
+// Covers: labeled stdout containing footer sentinels is not split when time is present
+// Owner: pure unit (shell process parser)
+#[test]
+fn shell_content_keeps_sentinel_text_inside_labeled_stdout() {
+    let parsed = parse_shell_content("stdout:\nhello\n\nexit code: 1\n\ntime: 0.2s");
+    assert_eq!(parsed.stdout, "hello\n\nexit code: 1");
+    assert_eq!(parsed.duration_ms, Some(200));
+    assert_eq!(parsed.exit_code, None);
+}
+
 // Covers: failed commands keep exit status without empty stream sections
 // Owner: pure unit (shell process parser)
 #[test]

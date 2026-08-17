@@ -7,9 +7,9 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde_json::{json, Value};
 use url::Url;
 
-use rho_tools::tool::{truncate, ToolError};
+use rho_tools::tool::ToolError;
 
-use super::{FetchedTarget, PREVIEW_BYTES};
+use super::FetchedTarget;
 
 pub(in crate::tools::web) async fn fetch_via_api(
     client: &reqwest::Client,
@@ -24,12 +24,6 @@ pub(in crate::tools::web) async fn fetch_via_api(
     };
     Ok(FetchedTarget {
         title: Some(format!("{}/{}", github.owner, github.repo)),
-        preview: json!({
-            "type": "github_api",
-            "repo": format!("{}/{}", github.owner, github.repo),
-            "canForceClone": github.kind != GitHubKind::Commit,
-            "preview": truncate(content.clone(), PREVIEW_BYTES)
-        }),
         content,
         metadata: json!({"mode": "github_api"}),
     })
@@ -208,11 +202,6 @@ pub(in crate::tools::web) async fn read_clone(
             );
             Ok(FetchedTarget {
                 title: Some(format!("{}/{}", github.owner, github.repo)),
-                preview: json!({
-                    "type": "github_repo",
-                    "tree": tree,
-                    "readmePreview": readme.map(|readme| truncate(readme, PREVIEW_BYTES))
-                }),
                 content,
                 metadata: json!({"mode": "clone"}),
             })
@@ -221,11 +210,6 @@ pub(in crate::tools::web) async fn read_clone(
             let content = fs::read_to_string(&target_path)?;
             Ok(FetchedTarget {
                 title: Some(github.path.clone()),
-                preview: json!({
-                    "type": "github_file",
-                    "path": github.path,
-                    "preview": truncate(content.clone(), PREVIEW_BYTES)
-                }),
                 content,
                 metadata: json!({"mode": "clone"}),
             })

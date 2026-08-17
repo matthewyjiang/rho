@@ -79,6 +79,12 @@ pub(super) fn shell_result_card(
         card.push_fact(ToolFact::Meta {
             text: "running".into(),
         });
+    } else if let Some(ms) = parsed.duration_ms {
+        // Success omits `exit code: 0` on the wire; the card still shows timing.
+        card.push_fact(ToolFact::Exit {
+            code: 0,
+            duration_ms: Some(ms),
+        });
     }
     if !parsed.stdout.trim().is_empty() {
         card.body = ToolBody::Lines(split_body_lines(&parsed.stdout));
@@ -472,16 +478,9 @@ fn push_compact_fetch_fact(card: &mut ToolCard, content: &str) {
         });
         return;
     }
-    let count = content
-        .lines()
-        .filter(|line| {
-            line.bytes()
-                .next()
-                .is_some_and(|byte| byte.is_ascii_digit())
-                && line.contains(". ")
-        })
-        .count()
-        .max(1) as u64;
+    let count = header_value(content, "items")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(1);
     let truncated = content.lines().any(|line| line == "truncated");
     card.push_fact(ToolFact::Count {
         label: if count == 1 {
@@ -773,4 +772,50 @@ fn push_shell_timeout_fact(card: &mut ToolCard, arguments: &serde_json::Value) {
         .get("timeout_seconds")
         .and_then(|value| value.as_u64());
     card.push_fact(ToolFact::Timeout { seconds });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Covers: numbered list lines in a single-fetch body are not counted as items
+    // Owner: pure unit (presenter)
+    #[test]
+    fn compact_fetch_uses_items_header_not_numbered_body_lines() {
+        let mut inferred = draft_card(
+            ToolStatus::Ok,
+            ToolFamily::Web,
+            ToolHeader::call("fetch_content", None),
+        );
+        push_compact_fetch_fact(
+            &mut inferred,
+            "responseId: 0123456789abcdef0123456789abcdef\nurl: https://example.com\n\n1. first\n2. second",
+        );
+        assert_eq!(
+            inferred.facts,
+            vec![ToolFact::Count {
+                label: "item".into(),
+                value: 1,
+                detail: None,
+            }]
+        );
+
+        let mut listed = draft_card(
+            ToolStatus::Ok,
+            ToolFamily::Web,
+            ToolHeader::call("fetch_content", None),
+        );
+        push_compact_fetch_fact(
+            &mut listed,
+            "responseId: 0123456789abcdef0123456789abcdef\nitems: 2\n0. https://a.example\n1. https://b.example",
+        );
+        assert_eq!(
+            listed.facts,
+            vec![ToolFact::Count {
+                label: "items".into(),
+                value: 2,
+                detail: None,
+            }]
+        );
+    }
 }

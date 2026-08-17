@@ -64,6 +64,6 @@ fn multi_fetch_lists_urls() {
     ];
     assert_eq!(
         format_multi_fetch("0123456789abcdef0123456789abcdef", &items, 12_000),
-        "responseId: 0123456789abcdef0123456789abcdef\n0. https://a.example\n1. https://b.example"
+        "responseId: 0123456789abcdef0123456789abcdef\nitems: 2\n0. https://a.example\n1. https://b.example"
     );
 }

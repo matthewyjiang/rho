@@ -307,7 +307,7 @@ fn finished_result(
     status: std::process::ExitStatus,
     stdout: &[u8],
     stderr: &[u8],
-    _elapsed: Duration,
+    elapsed: Duration,
     max_output_bytes: usize,
 ) -> ToolResult {
     let exit_code = status
@@ -319,10 +319,9 @@ fn finished_result(
         format_shell_output(
             &String::from_utf8_lossy(stdout),
             &String::from_utf8_lossy(stderr),
-            if status.success() {
-                ShellFooter::None
-            } else {
-                ShellFooter::Exit(&exit_code)
+            ShellFooter::Finished {
+                elapsed,
+                exit: (!status.success()).then_some(exit_code.as_str()),
             },
         ),
         max_output_bytes,
@@ -358,20 +357,20 @@ fn timeout_error(
 enum ShellFooter<'a> {
     None,
     Running,
-    Exit(&'a str),
+    Finished {
+        elapsed: Duration,
+        exit: Option<&'a str>,
+    },
+}
+
+fn format_elapsed(elapsed: Duration) -> String {
+    format!("{:.1}s", elapsed.as_secs_f64())
 }
 
 fn format_shell_output(stdout: &str, stderr: &str, footer: ShellFooter<'_>) -> String {
     let mut sections = Vec::new();
-    let label_streams = !stderr.is_empty()
-        || matches!(footer, ShellFooter::Running | ShellFooter::Exit(_))
-        || stdout.is_empty();
     if !stdout.is_empty() {
-        if label_streams {
-            sections.push(format!("stdout:\n{stdout}"));
-        } else {
-            sections.push(stdout.to_string());
-        }
+        sections.push(format!("stdout:\n{stdout}"));
     }
     if !stderr.is_empty() {
         sections.push(format!("stderr:\n{stderr}"));
@@ -379,7 +378,19 @@ fn format_shell_output(stdout: &str, stderr: &str, footer: ShellFooter<'_>) -> S
     match footer {
         ShellFooter::None => {}
         ShellFooter::Running => sections.push("time: running".into()),
-        ShellFooter::Exit(code) => sections.push(format!("exit code: {code}")),
+        ShellFooter::Finished {
+            elapsed,
+            exit: None,
+        } => {
+            sections.push(format!("time: {}", format_elapsed(elapsed)));
+        }
+        ShellFooter::Finished {
+            elapsed,
+            exit: Some(code),
+        } => sections.push(format!(
+            "time: {}  exit code: {code}",
+            format_elapsed(elapsed)
+        )),
     }
     sections.join("\n\n")
 }

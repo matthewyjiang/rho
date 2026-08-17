@@ -36,7 +36,7 @@ pub(super) fn format_multi_fetch(
     items: &[StoredItem],
     max_output_bytes: usize,
 ) -> String {
-    let mut out = format!("responseId: {response_id}");
+    let mut out = format!("responseId: {response_id}\nitems: {}", items.len());
     for (index, item) in items.iter().enumerate() {
         let label = item
             .url

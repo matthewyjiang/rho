@@ -36,6 +36,6 @@ fn multi_target_keeps_selectors_and_requires_retrieve() {
     let rendered = build_fetch_content_output("0123456789abcdef0123456789abcdef", &items, 12_000);
     assert_eq!(
         rendered,
-        "responseId: 0123456789abcdef0123456789abcdef\n0. https://a.example\n1. https://b.example"
+        "responseId: 0123456789abcdef0123456789abcdef\nitems: 2\n0. https://a.example\n1. https://b.example"
     );
 }
