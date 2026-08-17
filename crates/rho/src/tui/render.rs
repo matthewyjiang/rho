@@ -873,36 +873,6 @@ pub(super) fn slice_spans_by_bytes(
     out
 }
 
-pub(super) fn labeled_divider_line(
-    labels: &[&str],
-    style: Style,
-    width: usize,
-) -> Option<Line<'static>> {
-    const PREFIX: &str = "─ ";
-    const MIN_SUFFIX: usize = 2;
-    let prefix_width = display_width(PREFIX);
-    for label in labels {
-        let label_width = display_width(label);
-        let needed = prefix_width
-            .saturating_add(label_width)
-            .saturating_add(1)
-            .saturating_add(MIN_SUFFIX);
-        if needed > width {
-            continue;
-        }
-        let suffix_width = width
-            .saturating_sub(prefix_width)
-            .saturating_sub(label_width)
-            .saturating_sub(1);
-        return Some(Line::from(vec![
-            Span::styled(PREFIX.to_string(), style),
-            Span::styled(format!("{label} "), style),
-            Span::styled("─".repeat(suffix_width), style),
-        ]));
-    }
-    None
-}
-
 /// Width left for content after [`pad_display_line`] takes a column on each side.
 pub(super) fn padded_content_width(width: usize) -> usize {
     width.saturating_sub(2).max(1)

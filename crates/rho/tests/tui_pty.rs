@@ -1490,7 +1490,7 @@ advisor_mode = true
     harness
         .wait_for_text(
             "advisor: claude-code/opus",
-            WaitTimeout::secs(10, "advisor statusline"),
+            WaitTimeout::secs(10, "advisor divider"),
         )
         .unwrap();
 

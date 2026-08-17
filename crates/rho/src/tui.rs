@@ -39,6 +39,7 @@ mod config_input;
 mod config_picker;
 mod context_handoff;
 mod copy_interaction;
+mod divider;
 mod doctor;
 pub(crate) mod event_adapter;
 mod external_editor;
@@ -219,9 +220,8 @@ use questionnaire::{
     QuestionAnswerRequest, QuestionnaireReply, QuestionnaireResponseChannel,
 };
 use render::{
-    char_prefix_display_width, display_width, input_cursor_position, input_lines,
-    labeled_divider_line, picker_lines, session_header_lines, styled_line, tool_entry_lines,
-    truncate_one_line, LineFill,
+    char_prefix_display_width, display_width, input_cursor_position, input_lines, picker_lines,
+    session_header_lines, styled_line, tool_entry_lines, truncate_one_line, LineFill,
 };
 use scrollbar::HistoryScrollbar;
 use session_title::PendingSessionTitle;

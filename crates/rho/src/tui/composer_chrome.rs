@@ -10,6 +10,15 @@ pub(super) const SELECTION_MARKER_INACTIVE: &str = " ";
 /// Separator between key-hint segments in composer footers.
 pub(super) const FOOTER_SEPARATOR: &str = " · ";
 
+/// Which composer rule may carry captions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ComposerDividerSlot {
+    /// Above the composer. May show shell mode and advisor captions.
+    Top,
+    /// Below the composer. Rule only.
+    Bottom,
+}
+
 /// Join non-empty footer segments with [`FOOTER_SEPARATOR`].
 pub(super) fn join_footer_parts<'a>(parts: impl IntoIterator<Item = &'a str>) -> String {
     parts

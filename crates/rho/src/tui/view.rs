@@ -13,6 +13,7 @@ use super::tool_call_batch::LiveToolKey;
 use super::tool_card_hover::ToolCardTarget;
 use super::tool_output_ui::tool_output_toggleable;
 use super::{
+    composer_chrome::ComposerDividerSlot,
     highlight_selection,
     picker_overlay::picker_overlay_frame,
     render::{pad_display_line, padded_content_width, truncate_one_line},
@@ -315,7 +316,7 @@ impl App {
         self.render_process_rail(frame, layout.processes, width);
         if layout.top_divider.height > 0 {
             frame.render_widget(
-                Paragraph::new(vec![self.divider_line(width, /*shell_label*/ true)])
+                Paragraph::new(vec![self.divider_line(width, ComposerDividerSlot::Top)])
                     .style(Style::default()),
                 layout.top_divider,
             );
@@ -357,7 +358,7 @@ impl App {
         self.render_composer_images(frame, layout.composer, width, layout.composer_start);
         if layout.bottom_divider.height > 0 {
             frame.render_widget(
-                Paragraph::new(vec![self.divider_line(width, /*shell_label*/ false)])
+                Paragraph::new(vec![self.divider_line(width, ComposerDividerSlot::Bottom)])
                     .style(Style::default()),
                 layout.bottom_divider,
             );
@@ -521,7 +522,7 @@ impl App {
                 .lines(width, layout.processes.height as usize),
         );
         if layout.top_divider.height > 0 {
-            lines.push(self.divider_line(width, /*shell_label*/ true));
+            lines.push(self.divider_line(width, ComposerDividerSlot::Top));
         }
         lines.extend(
             command_lines
@@ -535,7 +536,7 @@ impl App {
                 .take(layout.composer.height as usize),
         );
         if layout.bottom_divider.height > 0 {
-            lines.push(self.divider_line(width, /*shell_label*/ false));
+            lines.push(self.divider_line(width, ComposerDividerSlot::Bottom));
         }
         lines.extend(
             self.statusline_lines(width)

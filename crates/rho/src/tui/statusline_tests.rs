@@ -388,23 +388,3 @@ fn fit_cwd_handles_branch_names_with_parentheses() {
     );
     assert!(display_width(&fitted) <= 30, "{fitted}");
 }
-
-#[test]
-fn advisor_drops_before_the_model_and_permission_fields() {
-    // Covers: the widest optional field must yield first when width is scarce
-    // Owner: statusline field hierarchy
-    let mut statusline = fully_populated_statusline();
-    statusline.state.advisor = crate::tui::advisor_status::AdvisorStatus::Reviewing {
-        model: "anthropic/claude-fable-5".into(),
-    };
-    let state = &statusline.state;
-
-    assert!(packed_keys(state, 140).contains(&FieldKey::Advisor));
-    let narrow = packed_keys(state, 30);
-    assert!(
-        !narrow.contains(&FieldKey::Advisor)
-            && narrow.contains(&FieldKey::Permission)
-            && narrow.contains(&FieldKey::Model),
-        "advisor drops before model and permission: {narrow:?}"
-    );
-}
