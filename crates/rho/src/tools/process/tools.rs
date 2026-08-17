@@ -1,4 +1,4 @@
-use super::*;
+use super::{output, *};
 use rho_tools::tool::*;
 use serde::Deserialize;
 use serde_json::json;
@@ -6,14 +6,12 @@ use std::time::Duration;
 
 const STOP_GRACE: Duration = Duration::from_secs(2);
 
-macro_rules! result {
-    ($id:expr,$value:expr) => {
-        Ok(ToolResult {
-            id: $id,
-            ok: true,
-            content: serde_json::to_string(&$value).unwrap(),
-        })
-    };
+fn result(id: String, content: String) -> Result<ToolResult, ToolError> {
+    Ok(ToolResult {
+        id,
+        ok: true,
+        content,
+    })
 }
 
 #[derive(Clone)]
@@ -134,7 +132,7 @@ impl Process {
                     .await
                     .map_err(ToolError::Message)?;
                 on_update(display::snapshot_progress_lines(&snapshot));
-                result!(id, snapshot)
+                result(id, output::format_snapshot(&snapshot))
             }
             ProcessArgs::Poll {
                 process_id,
@@ -152,7 +150,7 @@ impl Process {
                     .await
                     .map_err(ToolError::Message)?;
                 on_update(display::snapshot_progress_lines(&snapshot));
-                result!(id, snapshot)
+                result(id, output::format_snapshot(&snapshot))
             }
             ProcessArgs::Stop { process_id } => {
                 self.0
@@ -160,7 +158,7 @@ impl Process {
                     .await
                     .map_err(ToolError::Message)?;
                 on_update(vec![format!("stop requested: {process_id}")]);
-                result!(id, json!({"process_id":process_id,"stop_requested":true}))
+                result(id, output::format_stop(&process_id))
             }
         }
     }

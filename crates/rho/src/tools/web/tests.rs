@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::json;
 
 use {
     crate::config::Config,
@@ -40,6 +40,22 @@ fn parses_github_root_tree_blob_and_commit_urls() {
     assert_eq!(blob.kind, GitHubKind::Blob);
     assert_eq!(blob.path, "README.md");
 
+    assert_eq!(
+        github::format_github_api(&json!([
+            {"type": "dir", "name": "src"},
+            {"type": "file", "name": "README.md"}
+        ])),
+        "dir src\nfile README.md"
+    );
+    assert_eq!(
+        github::format_github_api(&json!({
+            "sha": "abc123",
+            "commit": {"message": "fix bug\n\nbody"},
+            "files": [{"filename": "src/lib.rs", "status": "modified", "patch": "-old\n+new"}]
+        })),
+        "commit abc123\nfix bug\nmodified src/lib.rs"
+    );
+
     let commit = github::parse_url("https://github.com/owner/repo/commit/abc123").unwrap();
     assert_eq!(commit.kind, GitHubKind::Commit);
     assert_eq!(commit.ref_name.as_deref(), Some("abc123"));
@@ -80,11 +96,11 @@ async fn web_search_stores_stub_content_when_provider_is_unavailable() {
     let store = WebAccessStore::new();
     let web_search = super::access_tools_with_store(&Config::default(), store.clone());
     let result = web_search.call(args, ctx, "call_1".into()).await.unwrap();
-    let value: Value = serde_json::from_str(&result.content).unwrap();
-    assert_eq!(value["fullContentAvailable"], false);
-    assert_eq!(value["sourceContentAvailable"], false);
-    assert_eq!(value["storedContentAvailable"], true);
-    let response_id = value["responseId"].as_str().unwrap();
+    let response_id = result
+        .content
+        .strip_prefix("responseId: ")
+        .and_then(|rest| rest.lines().next())
+        .expect("search result starts with responseId");
 
     let retrieved = GetSearchContent::new(store)
         .call(

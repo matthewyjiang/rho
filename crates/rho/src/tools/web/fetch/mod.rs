@@ -40,6 +40,7 @@ enum DocumentSource {
 pub(super) struct FetchedTarget {
     pub(super) title: Option<String>,
     pub(super) content: String,
+    #[allow(dead_code)]
     pub(super) preview: Value,
     pub(super) metadata: Value,
 }

@@ -220,6 +220,25 @@ fn shell_content_preserves_signal_exit_status() {
     assert_eq!(parsed.duration_ms, Some(1500));
 }
 
+// Covers: successful stdout-only output has no stream labels or exit footer
+// Owner: pure unit (shell process parser)
+#[test]
+fn shell_content_treats_bare_success_output_as_stdout() {
+    let parsed = parse_shell_content("hello");
+    assert_eq!(parsed.stdout, "hello");
+    assert_eq!(parsed.notice, None);
+    assert_eq!(parsed.exit_code, None);
+}
+
+// Covers: failed commands keep exit status without empty stream sections
+// Owner: pure unit (shell process parser)
+#[test]
+fn shell_content_parses_exit_only_failure() {
+    let parsed = parse_shell_content("exit code: 2");
+    assert_eq!(parsed.exit_code, Some(2));
+    assert!(parsed.stdout.is_empty());
+}
+
 // Covers: timeout notices must not swallow nested stderr sections
 // Owner: pure unit (shell process parser)
 #[test]

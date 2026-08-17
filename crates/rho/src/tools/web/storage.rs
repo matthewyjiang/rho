@@ -34,12 +34,6 @@ pub(super) struct StoredItem {
     pub(super) metadata: Value,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub(super) struct ContentAvailability {
-    pub(super) snippets: bool,
-    pub(super) sources: bool,
-}
-
 /// Session-scoped (or fallback) root for durable web-access blobs.
 ///
 /// Owned by the app tool set / interactive runtime and injected into web tools.
@@ -261,20 +255,6 @@ impl WebAccessStore {
             .expect("web access store lock poisoned")
             .memory
             .contains(response_id)
-    }
-}
-
-pub(super) fn content_availability(items: &[StoredItem]) -> ContentAvailability {
-    ContentAvailability {
-        snippets: items.iter().any(|item| {
-            matches!(
-                item.metadata.get("contentKind").and_then(Value::as_str),
-                Some("snippet") | Some("snippet_with_fetch_warning")
-            )
-        }),
-        sources: items.iter().any(|item| {
-            item.metadata.get("contentKind").and_then(Value::as_str) == Some("source_page")
-        }),
     }
 }
 

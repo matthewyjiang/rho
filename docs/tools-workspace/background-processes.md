@@ -28,8 +28,8 @@ flowchart TD
 
 | Action | Required | Optional | Result |
 | --- | --- | --- | --- |
-| `start` | `command` | `timeout_seconds` (≥ 1) | Snapshot with `process_id` and early output |
-| `poll` | `process_id` | `cursor`, `wait_seconds` (0–30) | Snapshot of retained chunks from the cursor |
+| `start` | `command` | `timeout_seconds` (≥ 1) | Compact snapshot with `process_id` and early output |
+| `poll` | `process_id` | `cursor`, `wait_seconds` (0–30) | Compact snapshot of retained output from the cursor |
 | `stop` | `process_id` | | Stop request for that managed process tree |
 
 ### `start`
@@ -41,9 +41,9 @@ Launches the command through the platform shell with:
 - stdout and stderr captured on pipes
 - the same user permissions as Rho
 
-Returns a JSON snapshot that includes `process_id`. Optional `timeout_seconds`
-bounds how long the process may run before Rho marks it timed out and stops the
-tree.
+Returns a compact text snapshot that includes `process_id`. Optional
+`timeout_seconds` bounds how long the process may run before Rho marks it timed
+out and stops the tree.
 
 ### `poll`
 
@@ -65,19 +65,18 @@ then force-kills if needed.
 
 ## Snapshot fields
 
-Typical fields on `start` and `poll` results:
+`start` and `poll` return compact text, not JSON. Typical lines:
 
-| Field | Meaning |
+| Line | Meaning |
 | --- | --- |
-| `process_id` | Handle for later `poll` / `stop` |
-| `command` | Started command string |
-| `state` | `starting`, `running`, `exited`, `terminated`, `timed_out`, or `failed_to_start` |
-| `runtime_seconds` | Elapsed wall time |
-| `first_cursor` / `next_cursor` / `available_cursor` | Retained output range and read position |
-| `chunks` | Ordered stdout/stderr pieces with per-chunk cursors |
-| `exit_code` | Set when the process has exited |
-| `terminal_detail` | Extra detail for failed or forced ends |
-| `truncated` / `output_pending` | Retention and pagination flags |
+| `process_id: …` | Handle for later `poll` / `stop` |
+| `state: …` | `starting`, `running`, `exited`, `terminated`, `timed_out`, or `failed_to_start` |
+| `next: …` | Pass this as `cursor` on the next `poll` |
+| `truncated: first=…` | Requested cursor is older than the retained range |
+| `pending` | More retained output exists past this window |
+| `exit: …` | Non-zero or failed exit code |
+| `detail: …` | Extra detail for failed or forced ends |
+| `stdout:` / `stderr:` | Coalesced stream text; omitted when empty |
 
 ## Limits
 

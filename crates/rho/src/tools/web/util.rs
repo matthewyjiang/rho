@@ -1,7 +1,6 @@
 use std::{sync::LazyLock, time::Duration};
 
 use regex::Regex;
-use serde_json::Value;
 use url::Url;
 
 use rho_tools::tool::ToolError;
@@ -23,10 +22,6 @@ static TITLE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?is)<title[^>]*>(.*?)</title>").expect("valid title regex"));
 static DOMAIN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$").expect("valid domain regex"));
-
-pub(super) fn to_pretty_json(value: &Value) -> String {
-    serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
-}
 
 /// Shared HTTP client for provider API calls to fixed hosts.
 ///

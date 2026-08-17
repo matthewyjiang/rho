@@ -201,11 +201,9 @@ impl FetchPlan {
         max_output_bytes: usize,
     ) -> Result<ToolOutput, ToolError> {
         let mut items = Vec::with_capacity(self.targets.len());
-        let mut previews = Vec::with_capacity(self.targets.len());
         for target in self.targets {
             let requested = target.requested().to_owned();
             let fetched = target.execute(github_client, context).await?;
-            previews.push(fetched.preview.clone());
             items.push(StoredItem {
                 url: Some(requested),
                 query: self.prompt.clone(),
@@ -215,8 +213,7 @@ impl FetchPlan {
             });
         }
 
-        let content =
-            build_fetch_content_output(&self.response_id, &items, &previews, max_output_bytes);
+        let content = build_fetch_content_output(&self.response_id, &items, max_output_bytes);
         self.store
             .store(
                 self.response_id,

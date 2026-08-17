@@ -476,7 +476,23 @@ fn snapshot_bounded(rec: &SharedRecord, cursor: u64, max_output_bytes: usize) ->
         .filter(|item| item.chunk.cursor >= requested)
     {
         chunks.push(retained.chunk.clone());
-        if serde_json::to_vec(&chunks).map_or(true, |json| json.len() > max_output_bytes) {
+        let candidate = Snapshot {
+            process_id: r.id.clone(),
+            command: r.command.clone(),
+            state: r.state,
+            runtime_seconds: r.started.elapsed().as_secs_f64(),
+            first_cursor: first,
+            next_cursor: retained.chunk.cursor + 1,
+            available_cursor: r.next,
+            truncated: cursor < first,
+            // Size as if more output remains so adding a later chunk cannot get
+            // cheaper by dropping the pending line.
+            output_pending: true,
+            chunks: chunks.clone(),
+            exit_code: r.exit_code,
+            terminal_detail: r.detail.clone(),
+        };
+        if super::output::format_snapshot(&candidate).len() > max_output_bytes {
             chunks.pop();
             if chunks.is_empty() {
                 // A chunk that cannot fit by itself must still be consumed, or

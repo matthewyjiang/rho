@@ -10,7 +10,6 @@ use url::Url;
 use rho_tools::tool::{truncate, ToolError};
 
 use super::{FetchedTarget, PREVIEW_BYTES};
-use crate::tools::web::util::to_pretty_json;
 
 pub(in crate::tools::web) async fn fetch_via_api(
     client: &reqwest::Client,
@@ -20,7 +19,7 @@ pub(in crate::tools::web) async fn fetch_via_api(
     let content = match github.kind {
         GitHubKind::Blob => github_api_file_content(client, &api_url).await?,
         GitHubKind::Root | GitHubKind::Tree | GitHubKind::Commit => {
-            to_pretty_json(&github_api_json(client, &api_url).await?)
+            format_github_api(&github_api_json(client, &api_url).await?)
         }
     };
     Ok(FetchedTarget {
@@ -84,6 +83,64 @@ pub(in crate::tools::web) fn clone_credential_environment() -> Vec<(String, Stri
         ),
         ("GIT_CONFIG_VALUE_0".into(), header),
     ]
+}
+
+pub(in crate::tools::web) fn format_github_api(value: &Value) -> String {
+    if let Some(entries) = value.as_array() {
+        return entries
+            .iter()
+            .filter_map(format_github_entry)
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+    if let Some(formatted) = format_github_commit(value) {
+        return formatted;
+    }
+    serde_json::to_string(value).unwrap_or_else(|_| value.to_string())
+}
+
+fn format_github_entry(value: &Value) -> Option<String> {
+    let name = value
+        .get("name")
+        .or_else(|| value.get("path"))
+        .and_then(Value::as_str)?;
+    let kind = match value.get("type").and_then(Value::as_str) {
+        Some("dir") => "dir",
+        Some("file") => "file",
+        Some(other) => other,
+        None => "file",
+    };
+    Some(format!("{kind} {name}"))
+}
+
+fn format_github_commit(value: &Value) -> Option<String> {
+    let sha = value.get("sha").and_then(Value::as_str)?;
+    value.get("commit")?;
+    let message = value
+        .pointer("/commit/message")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .lines()
+        .next()
+        .unwrap_or("");
+    let mut lines = vec![format!("commit {sha}")];
+    if !message.is_empty() {
+        lines.push(message.to_string());
+    }
+    if let Some(files) = value.get("files").and_then(Value::as_array) {
+        for file in files {
+            let path = file
+                .get("filename")
+                .and_then(Value::as_str)
+                .unwrap_or("file");
+            let status = file
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("changed");
+            lines.push(format!("{status} {path}"));
+        }
+    }
+    Some(lines.join("\n"))
 }
 
 async fn github_api_file_content(client: &reqwest::Client, url: &str) -> Result<String, ToolError> {

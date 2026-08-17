@@ -295,10 +295,10 @@ async fn read_stream<R>(
 }
 
 fn running_content(stdout: &[u8], stderr: &[u8]) -> String {
-    format!(
-        "stdout:\n{}\n\nstderr:\n{}\n\ntime: running",
-        String::from_utf8_lossy(stdout),
-        String::from_utf8_lossy(stderr)
+    format_shell_output(
+        &String::from_utf8_lossy(stdout),
+        &String::from_utf8_lossy(stderr),
+        ShellFooter::Running,
     )
 }
 
@@ -307,7 +307,7 @@ fn finished_result(
     status: std::process::ExitStatus,
     stdout: &[u8],
     stderr: &[u8],
-    elapsed: Duration,
+    _elapsed: Duration,
     max_output_bytes: usize,
 ) -> ToolResult {
     let exit_code = status
@@ -315,12 +315,15 @@ fn finished_result(
         .as_ref()
         .map(ToString::to_string)
         .unwrap_or_else(|| "signal".into());
-    let elapsed_secs = elapsed.as_secs_f64();
     let content = truncate(
-        format!(
-            "stdout:\n{}\n\nstderr:\n{}\n\ntime: {elapsed_secs:.1}s  exit code: {exit_code}",
-            String::from_utf8_lossy(stdout),
-            String::from_utf8_lossy(stderr)
+        format_shell_output(
+            &String::from_utf8_lossy(stdout),
+            &String::from_utf8_lossy(stderr),
+            if status.success() {
+                ShellFooter::None
+            } else {
+                ShellFooter::Exit(&exit_code)
+            },
         ),
         max_output_bytes,
     );
@@ -338,14 +341,47 @@ fn timeout_error(
     max_output_bytes: usize,
 ) -> ToolError {
     let secs = timeout.as_secs();
-    ToolError::Message(truncate(
-        format!(
-            "command timed out after {secs}s\n\nstdout:\n{}\n\nstderr:\n{}",
-            String::from_utf8_lossy(stdout),
-            String::from_utf8_lossy(stderr)
-        ),
-        max_output_bytes,
-    ))
+    let streams = format_shell_output(
+        &String::from_utf8_lossy(stdout),
+        &String::from_utf8_lossy(stderr),
+        ShellFooter::None,
+    );
+    let message = if streams.is_empty() {
+        format!("command timed out after {secs}s")
+    } else {
+        format!("command timed out after {secs}s\n\n{streams}")
+    };
+    ToolError::Message(truncate(message, max_output_bytes))
+}
+
+#[derive(Clone, Copy)]
+enum ShellFooter<'a> {
+    None,
+    Running,
+    Exit(&'a str),
+}
+
+fn format_shell_output(stdout: &str, stderr: &str, footer: ShellFooter<'_>) -> String {
+    let mut sections = Vec::new();
+    let label_streams = !stderr.is_empty()
+        || matches!(footer, ShellFooter::Running | ShellFooter::Exit(_))
+        || stdout.is_empty();
+    if !stdout.is_empty() {
+        if label_streams {
+            sections.push(format!("stdout:\n{stdout}"));
+        } else {
+            sections.push(stdout.to_string());
+        }
+    }
+    if !stderr.is_empty() {
+        sections.push(format!("stderr:\n{stderr}"));
+    }
+    match footer {
+        ShellFooter::None => {}
+        ShellFooter::Running => sections.push("time: running".into()),
+        ShellFooter::Exit(code) => sections.push(format!("exit code: {code}")),
+    }
+    sections.join("\n\n")
 }
 
 /// Structured view of the shell tool's stable output envelope.
@@ -363,52 +399,108 @@ pub struct ShellContent {
 /// Parse output produced by this module into presentation fields.
 pub fn parse_shell_content(content: &str) -> ShellContent {
     let mut parsed = ShellContent::default();
-    let (notice, rest) = if let Some(stdout) = content.strip_prefix("stdout:\n") {
-        (None, stdout)
-    } else if let Some((notice, stdout)) = content.split_once("\n\nstdout:\n") {
-        (Some(notice.to_string()), stdout)
-    } else if content.trim().is_empty() {
+    if content.trim().is_empty() {
         return parsed;
-    } else {
-        parsed.notice = Some(content.trim().to_string());
-        return parsed;
-    };
+    }
+
+    let (notice, rest) = split_shell_notice(content);
     parsed.notice = notice;
 
-    let (stdout_and_maybe_more, footer) = rest
-        .rsplit_once("\n\ntime:")
-        .map_or((rest, None), |(body, footer)| (body, Some(footer.trim())));
-    parsed.stdout = stdout_and_maybe_more
-        .rsplit_once("\n\nstderr:")
-        .map_or(stdout_and_maybe_more, |(stdout, _)| stdout)
-        .trim_end()
-        .to_string();
+    let (body, footer) = split_shell_footer(rest);
+    apply_shell_footer(&mut parsed, footer);
+    apply_shell_body(&mut parsed, body);
+    parsed
+}
 
-    if let Some(footer) = footer {
-        if footer.starts_with("running") {
-            parsed.running = true;
+fn split_shell_notice(content: &str) -> (Option<String>, &str) {
+    if content.starts_with("stdout:\n")
+        || content.starts_with("stderr:\n")
+        || content.starts_with("exit code:")
+        || content.starts_with("time:")
+    {
+        return (None, content);
+    }
+    if let Some((notice, _)) = content
+        .split_once("\n\nstdout:\n")
+        .or_else(|| content.split_once("\n\nstderr:\n"))
+        .or_else(|| content.split_once("\n\nexit code:"))
+    {
+        return (Some(notice.to_string()), &content[notice.len() + 2..]);
+    }
+    if content.starts_with("command timed out") {
+        if let Some((notice, rest)) = content.split_once("\n\n") {
+            return (Some(notice.to_string()), rest);
+        }
+        return (Some(content.trim().to_string()), "");
+    }
+    (None, content)
+}
+
+fn split_shell_footer(rest: &str) -> (&str, Option<&str>) {
+    if let Some((body, footer)) = rest.rsplit_once("\n\ntime:") {
+        return (body, Some(footer.trim()));
+    }
+    if let Some((body, _)) = rest.rsplit_once("\n\nexit code:") {
+        return (body, Some(&rest[body.len() + 2..]));
+    }
+    if let Some(footer) = rest.strip_prefix("time:") {
+        return ("", Some(footer.trim()));
+    }
+    if rest.starts_with("exit code:") {
+        return ("", Some(rest));
+    }
+    (rest, None)
+}
+
+fn apply_shell_footer(parsed: &mut ShellContent, footer: Option<&str>) {
+    let Some(footer) = footer else {
+        return;
+    };
+    if footer.starts_with("running") || footer == "time: running" {
+        parsed.running = true;
+        return;
+    }
+    let footer = footer.strip_prefix("time:").unwrap_or(footer).trim();
+    parsed.duration_ms = footer
+        .split_whitespace()
+        .next()
+        .and_then(|token| token.strip_suffix('s'))
+        .and_then(|seconds| seconds.parse::<f64>().ok())
+        .map(|seconds| (seconds * 1000.0).round() as u64);
+    if let Some(raw) = footer
+        .strip_prefix("exit code:")
+        .or_else(|| footer.split("exit code:").nth(1))
+        .map(str::trim)
+        .filter(|code| !code.is_empty())
+    {
+        if let Ok(code) = raw.parse::<i64>() {
+            parsed.exit_code = Some(code);
         } else {
-            parsed.duration_ms = footer
-                .split_whitespace()
-                .next()
-                .and_then(|token| token.strip_suffix('s'))
-                .and_then(|seconds| seconds.parse::<f64>().ok())
-                .map(|seconds| (seconds * 1000.0).round() as u64);
-            if let Some(raw) = footer
-                .split("exit code:")
-                .nth(1)
-                .map(str::trim)
-                .filter(|code| !code.is_empty())
-            {
-                if let Ok(code) = raw.parse::<i64>() {
-                    parsed.exit_code = Some(code);
-                } else {
-                    parsed.exit_status = Some(raw.to_string());
-                }
-            }
+            parsed.exit_status = Some(raw.to_string());
         }
     }
-    parsed
+}
+
+fn apply_shell_body(parsed: &mut ShellContent, body: &str) {
+    if body.is_empty() {
+        return;
+    }
+    if let Some(stdout) = body.strip_prefix("stdout:\n") {
+        parsed.stdout = stdout
+            .rsplit_once("\n\nstderr:")
+            .map_or(stdout, |(stdout, _)| stdout)
+            .trim_end()
+            .to_string();
+        return;
+    }
+    if body.starts_with("stderr:\n") {
+        return;
+    }
+    parsed.stdout = body
+        .rsplit_once("\n\nstderr:")
+        .map_or(body, |(stdout, _)| stdout)
+        .trim_end()
+        .to_string();
 }
 
 #[cfg(test)]

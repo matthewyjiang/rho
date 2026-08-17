@@ -30,6 +30,19 @@ pub enum State {
     TimedOut,
     FailedToStart,
 }
+
+impl State {
+    pub(crate) const fn as_wire_str(self) -> &'static str {
+        match self {
+            Self::Starting => "starting",
+            Self::Running => "running",
+            Self::Exited => "exited",
+            Self::Terminated => "terminated",
+            Self::TimedOut => "timed_out",
+            Self::FailedToStart => "failed_to_start",
+        }
+    }
+}
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Stream {

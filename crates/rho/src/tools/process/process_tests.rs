@@ -54,6 +54,14 @@ fn tool_context() -> ToolContext {
         max_output_bytes: 1024 * 1024,
     }
 }
+
+fn header_field(content: &str, key: &str) -> String {
+    let prefix = format!("{key}: ");
+    content
+        .lines()
+        .find_map(|line| line.strip_prefix(&prefix).map(str::to_string))
+        .unwrap_or_else(|| panic!("missing {key} in:\n{content}"))
+}
 #[tokio::test]
 async fn process_tool_dispatches_start_poll_and_stop() {
     let manager = ProcessManager::new(ProcessLimits::default());
@@ -66,8 +74,7 @@ async fn process_tool_dispatches_start_poll_and_stop() {
         )
         .await
         .unwrap();
-    let started: serde_json::Value = serde_json::from_str(&started.content).unwrap();
-    let process_id = started["process_id"].as_str().unwrap().to_owned();
+    let process_id = header_field(&started.content, "process_id");
 
     let polled = tool
         .call(
@@ -77,8 +84,7 @@ async fn process_tool_dispatches_start_poll_and_stop() {
         )
         .await
         .unwrap();
-    let polled: serde_json::Value = serde_json::from_str(&polled.content).unwrap();
-    assert_eq!(polled["state"], "running");
+    assert_eq!(header_field(&polled.content, "state"), "running");
 
     let stopped = tool
         .call(
@@ -88,8 +94,11 @@ async fn process_tool_dispatches_start_poll_and_stop() {
         )
         .await
         .unwrap();
-    let stopped: serde_json::Value = serde_json::from_str(&stopped.content).unwrap();
-    assert_eq!(stopped["stop_requested"], true);
+    assert!(
+        stopped.content.lines().any(|line| line == "stop requested"),
+        "{}",
+        stopped.content
+    );
     eventually(&manager, &process_id).await;
 }
 
@@ -637,8 +646,31 @@ async fn bounded_poll_advances_only_over_delivered_chunks() {
         .await
         .unwrap();
     eventually(&manager, &started.process_id).await;
+    let all = manager
+        .poll(&started.process_id, Some(0), Duration::ZERO)
+        .await
+        .unwrap();
+    assert!(all.chunks.len() >= 2, "{all:?}");
+    let budget = all
+        .chunks
+        .iter()
+        .map(|chunk| {
+            let mut one = all.clone();
+            one.chunks = vec![chunk.clone()];
+            one.next_cursor = chunk.cursor + 1;
+            one.output_pending = true;
+            super::output::format_snapshot(&one).len()
+        })
+        .max()
+        .unwrap();
+    let mut both = all.clone();
+    both.output_pending = true;
+    assert!(
+        budget < super::output::format_snapshot(&both).len(),
+        "one-chunk budget {budget} must not fit both chunks"
+    );
     let one = manager
-        .poll_bounded(&started.process_id, Some(0), Duration::ZERO, 70)
+        .poll_bounded(&started.process_id, Some(0), Duration::ZERO, budget)
         .await
         .unwrap();
     assert_eq!(one.chunks.len(), 1);
@@ -649,7 +681,7 @@ async fn bounded_poll_advances_only_over_delivered_chunks() {
             &started.process_id,
             Some(one.next_cursor),
             Duration::ZERO,
-            70,
+            budget,
         )
         .await
         .unwrap();
