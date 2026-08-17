@@ -345,6 +345,23 @@ pub(super) struct VisibleImagePlacement {
     pub(super) height: usize,
 }
 
+pub(super) fn preview_generated_image(
+    image: &rho_providers::model::ImageContent,
+    picker: Option<&Picker>,
+) -> Result<Option<FeedImage>, String> {
+    let Some(picker) = picker else {
+        return Ok(None);
+    };
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(image.data.trim())
+        .map_err(|_| "generated image was not valid base64".to_string())?;
+    let asset = ToolAsset::new(&image.mime_type, bytes);
+    FeedImage::load(&asset, picker)
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
 impl super::App {
     pub(super) fn load_feed_image(
         &mut self,

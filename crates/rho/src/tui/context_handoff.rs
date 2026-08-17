@@ -10,9 +10,9 @@ use rho_sdk::model::handoff::HandoffReport;
 use rho_sdk::model::ModelIdentity;
 
 use super::{
-    catalog, message_history::transcript_entries_from_messages, session_picker::short_session_id,
-    App, ComposerMode, Entry, InlineChoice, InlineChoiceModal, InlineChoiceOption,
-    InlineChoicePending, InteractiveModelSelection, InteractiveRuntime, UiPicker,
+    catalog, session_picker::short_session_id, App, ComposerMode, Entry, InlineChoice,
+    InlineChoiceModal, InlineChoiceOption, InlineChoicePending, InteractiveModelSelection,
+    InteractiveRuntime, UiPicker,
 };
 
 pub(super) const ACTION_USE_SOURCE: &str = "use-source";
@@ -654,11 +654,10 @@ impl App {
         self.goal = None;
         self.reset_usage();
         self.usage.current_context = None;
-        let entries = transcript_entries_from_messages(&display_history, &self.info.runtime.cwd);
+        let entries = self.transcript_entries(&display_history);
         let size = terminal.size()?;
         self.note_terminal_geometry(size.width as usize, size.height as usize);
-        self.history.set_entries(entries);
-        self.history.images_mut().clear();
+        self.set_history_entries(entries);
         self.scroll_history_to_bottom();
         self.clamp_history_scroll_for_terminal(terminal)?;
         self.set_status(format!("resumed session {short_id}"));

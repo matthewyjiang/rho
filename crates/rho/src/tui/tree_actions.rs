@@ -3,9 +3,8 @@ use ratatui::DefaultTerminal;
 use crate::session::tree::{NodeId, SessionTreeItem};
 
 use super::{
-    message_history::transcript_entries_from_messages, picker_overlay::OverlayChrome, App,
-    ComposerMode, InteractiveRuntime, PickerAction, PickerBadge, PickerBadgeTone, PickerItem,
-    PickerLayout, UiPicker, ViewModelEvent,
+    picker_overlay::OverlayChrome, App, ComposerMode, InteractiveRuntime, PickerAction,
+    PickerBadge, PickerBadgeTone, PickerItem, PickerLayout, UiPicker, ViewModelEvent,
 };
 
 pub(super) fn tree_picker(items: Vec<SessionTreeItem>) -> UiPicker {
@@ -104,7 +103,7 @@ impl App {
             .stored_session()
             .ok_or_else(|| anyhow::anyhow!("active session storage is unavailable"))?;
         let histories = storage.histories_for_node(&target_id)?;
-        let entries = transcript_entries_from_messages(&histories.display, &self.info.runtime.cwd);
+        let entries = self.transcript_entries(&histories.display);
         let size = terminal.size()?;
         self.note_terminal_geometry(size.width as usize, size.height as usize);
         agent.select_tree_node(storage, &target_id).await?;
@@ -119,8 +118,7 @@ impl App {
         self.goal = None;
         self.reset_usage();
         self.usage.current_context = None;
-        self.history.set_entries(entries);
-        self.history.images_mut().clear();
+        self.set_history_entries(entries);
         self.scroll_history_to_bottom();
         if let Some(context) = agent.take_context_usage() {
             self.record_agent_event(ViewModelEvent::ContextUsage(context));

@@ -260,6 +260,23 @@ pub struct ImageContent {
     pub mime_type: String,
 }
 
+impl ImageContent {
+    /// Detects PNG, JPEG, GIF, or WebP from leading magic bytes.
+    pub fn mime_type_from_bytes(header: &[u8]) -> Option<&'static str> {
+        if header.starts_with(b"\x89PNG\r\n\x1a\n") {
+            Some("image/png")
+        } else if header.starts_with(&[0xff, 0xd8, 0xff]) {
+            Some("image/jpeg")
+        } else if header.starts_with(b"GIF87a") || header.starts_with(b"GIF89a") {
+            Some("image/gif")
+        } else if header.starts_with(b"RIFF") && header.get(8..12) == Some(b"WEBP") {
+            Some("image/webp")
+        } else {
+            None
+        }
+    }
+}
+
 /// Provider service class requested for one model turn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[non_exhaustive]

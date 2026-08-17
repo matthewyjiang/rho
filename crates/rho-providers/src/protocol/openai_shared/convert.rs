@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use serde::Deserialize;
 use serde_json::json;
 
@@ -11,10 +13,8 @@ use crate::protocol::openai_chat::{
     ChatResponse, OpenAiFunctionCall, OpenAiMessage, OpenAiTool, OpenAiToolCall, OpenAiToolFunction,
 };
 
-use super::compact::COMPACTION_OUTPUT_ITEM_KIND;
+use super::image_generation::{is_image_generation_replay, restore_image_generation_results};
 use super::tool_calls::{finalize_chat_tool_calls, ChatToolCallPolicy, RawChatToolCall};
-
-const IMAGE_GENERATION_CALL: &str = "image_generation_call";
 
 /// Provider-context kind for chat-completions `reasoning_content`.
 ///
@@ -260,7 +260,7 @@ pub(crate) fn codex_input_items_for_target(
                 "content": codex_content_blocks(blocks),
             })),
             Message::Assistant(blocks) => {
-                append_codex_assistant(&mut input, blocks, /*skip_images*/ false)?;
+                append_codex_assistant(&mut input, blocks)?;
             }
             Message::EnrichedAssistant(message) => {
                 let fallback_target = message.provenance.clone().unwrap_or_else(|| {
@@ -301,52 +301,34 @@ fn append_codex_prepared_assistant(
     mut prepared: PreparedAssistant,
 ) -> Result<(), ModelError> {
     restore_image_generation_results(&mut prepared.replay_context, &prepared.content);
-    let skip_images = prepared
-        .replay_context
-        .iter()
-        .any(is_image_generation_replay);
+    let content = portable_assistant_blocks(&prepared);
     let mut assistant_items = Vec::new();
     // `prepare_assistant` already suppresses portable fallback when opaque
     // context can replay, so converters only append the lowered content.
-    // Native `image_generation_call` replay already carries the image, so
-    // assistant Image blocks must not also become omitted-image placeholders.
-    append_codex_assistant(&mut assistant_items, &prepared.content, skip_images)?;
+    append_codex_assistant(&mut assistant_items, &content)?;
     insert_replay_items(&mut assistant_items, prepared.replay_context);
     input.extend(assistant_items);
     Ok(())
 }
 
-fn is_image_generation_replay(block: &ProviderContextBlock) -> bool {
-    block.kind == COMPACTION_OUTPUT_ITEM_KIND
-        && block.data.get("type").and_then(serde_json::Value::as_str) == Some(IMAGE_GENERATION_CALL)
-}
-
-/// Rebuilds `result` on slim replay items from assistant Image blocks, in order.
-///
-/// Live persist strips the base64 payload so the session does not store it
-/// twice. Older sessions that already kept `result` are left alone.
-fn restore_image_generation_results(replay: &mut [ProviderContextBlock], content: &[ContentBlock]) {
-    let mut images = content.iter().filter_map(|block| match block {
-        ContentBlock::Image(image) => Some(image.data.as_str()),
-        ContentBlock::Text(_) | ContentBlock::ToolCall(_) => None,
-    });
-    for block in replay {
-        if !is_image_generation_replay(block) {
-            continue;
-        }
-        let Some(obj) = block.data.as_object_mut() else {
-            continue;
-        };
-        let has_result = obj
-            .get("result")
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|value| !value.trim().is_empty());
-        if has_result {
-            continue;
-        }
-        if let Some(data) = images.next() {
-            obj.insert("result".into(), json!(data));
-        }
+/// Native `image_generation_call` replay already carries the image, so those
+/// assistant Image blocks must not also become omitted-image placeholders.
+fn portable_assistant_blocks(prepared: &PreparedAssistant) -> Cow<'_, [ContentBlock]> {
+    if prepared
+        .replay_context
+        .iter()
+        .any(is_image_generation_replay)
+    {
+        Cow::Owned(
+            prepared
+                .content
+                .iter()
+                .filter(|block| !matches!(block, ContentBlock::Image(_)))
+                .cloned()
+                .collect(),
+        )
+    } else {
+        Cow::Borrowed(&prepared.content)
     }
 }
 
@@ -376,9 +358,8 @@ fn insert_replay_items(
 fn append_codex_assistant(
     input: &mut Vec<serde_json::Value>,
     blocks: &[ContentBlock],
-    skip_images: bool,
 ) -> Result<(), ModelError> {
-    let text = assistant_text(blocks, skip_images);
+    let text = assistant_text(blocks);
     if !text.is_empty() {
         input.push(json!({ "role": "assistant", "content": text }));
     }
@@ -429,7 +410,7 @@ fn openai_prepared_assistant(
     synthesize_tool_reasoning: bool,
 ) -> Result<OpenAiMessage, ModelError> {
     let replay = chat_replay(prepared.replay_context)?;
-    let content = assistant_text(&prepared.content, /*skip_images*/ false);
+    let content = assistant_text(&prepared.content);
     let tool_calls = prepared
         .content
         .iter()
@@ -564,12 +545,11 @@ pub(crate) const ASSISTANT_IMAGE_OMITTED_TEXT: &str =
 /// Neither OpenAI wire protocol has an assistant image slot. Images degrade to
 /// text so history keeps a trace of the content instead of dropping it silently
 /// or failing the whole turn.
-fn assistant_text(blocks: &[ContentBlock], skip_images: bool) -> String {
+fn assistant_text(blocks: &[ContentBlock]) -> String {
     blocks
         .iter()
         .filter_map(|block| match block {
             ContentBlock::Text(text) => Some(text.as_str()),
-            ContentBlock::Image(_) if skip_images => None,
             ContentBlock::Image(_) => Some(ASSISTANT_IMAGE_OMITTED_TEXT),
             ContentBlock::ToolCall(_) => None,
         })

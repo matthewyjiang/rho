@@ -23,8 +23,7 @@ use super::{
     },
     App, Entry, FinalAnswerDelta, LiveStreamPreview, ReasoningEntry, StreamKind, ToolEntry,
 };
-use rho_providers::model::{ContentBlock, ImageContent};
-use rho_sdk::tool::ToolAsset;
+use rho_providers::model::ContentBlock;
 
 pub(super) fn final_answer_delta<'a>(emitted_text: &str, answer: &'a str) -> FinalAnswerDelta<'a> {
     match answer.strip_prefix(emitted_text) {
@@ -474,53 +473,16 @@ impl App {
     }
 
     pub(super) fn insert_assistant_images(&mut self, content: &[ContentBlock]) {
-        let images = content
-            .iter()
-            .filter_map(|block| match block {
-                ContentBlock::Image(image) => Some(image),
-                ContentBlock::Text(_) | ContentBlock::ToolCall(_) => None,
-            })
-            .collect::<Vec<_>>();
-        if images.is_empty() {
-            return;
+        for block in content {
+            let ContentBlock::Image(image) = block else {
+                continue;
+            };
+            let preview =
+                super::feed_image::preview_generated_image(image, self.image_picker.as_ref());
+            self.insert_entry(&super::message_history::generated_image_entry(
+                preview, image,
+            ));
         }
-        let unfilled = self
-            .history
-            .entries()
-            .iter()
-            .enumerate()
-            .filter(|(_, entry)| {
-                super::message_history::is_image_generation_card(entry)
-                    && matches!(entry, Entry::Tool(tool) if tool.image.is_none())
-            })
-            .map(|(index, _)| index)
-            .collect::<Vec<_>>();
-        for (offset, image) in images.into_iter().enumerate() {
-            let preview = self.load_generated_feed_image(image);
-            if let Some(index) = unfilled.get(offset).copied() {
-                if let Some(entry) = self.history.entries_mut().get_mut(index) {
-                    super::message_history::apply_generated_image_to_entry(entry, preview, image);
-                    self.history.invalidate_from(index);
-                }
-            } else {
-                self.insert_entry(&super::message_history::generated_image_entry(
-                    preview, image,
-                ));
-            }
-        }
-    }
-
-    fn load_generated_feed_image(
-        &mut self,
-        image: &ImageContent,
-    ) -> Result<Option<super::feed_image::FeedImage>, String> {
-        use base64::Engine as _;
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(image.data.trim())
-            .map_err(|_| "generated image was not valid base64".to_string())?;
-        let asset = ToolAsset::new(&image.mime_type, bytes);
-        self.load_feed_image(&asset)
-            .map_err(|error| error.to_string())
     }
 
     pub(super) fn insert_final_answer_suffix(&mut self, answer: &str) {

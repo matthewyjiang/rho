@@ -15,6 +15,9 @@ use rho_sdk::model::ToolCall;
 
 use super::compact::COMPACTION_OUTPUT_ITEM_KIND;
 use super::convert::{extract_response_text, ResponsesResponse};
+use super::image_generation::{
+    image_from_generation_call, is_image_generation_call, slim_image_generation_item,
+};
 use super::stream::{line_decode_error, sse_data};
 use super::usage::{extract_usage_report, GenerationTokenContext, HiddenReasoningRisk};
 
@@ -298,16 +301,8 @@ fn emit_codex_search_activity(
     emit_hosted_activity(item, event, state, on_event)
 }
 
-const IMAGE_GENERATION_CALL: &str = "image_generation_call";
-
-fn is_image_generation_call(item: &serde_json::Value) -> bool {
-    item.get("type").and_then(|value| value.as_str()) == Some(IMAGE_GENERATION_CALL)
-}
-
-fn handle_image_generation_item(
+fn emit_image_generation_activity(
     item: &serde_json::Value,
-    position: Option<usize>,
-    persist: bool,
     state: &mut CodexSseState,
     on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
 ) -> Result<(), ModelError> {
@@ -325,8 +320,16 @@ fn handle_image_generation_item(
         ModelEvent::hosted_tool_activity("image_generation", detail),
         state,
         on_event,
-    )?;
-    if !persist {
+    )
+}
+
+fn persist_image_generation_item(
+    item: &serde_json::Value,
+    position: Option<usize>,
+    state: &mut CodexSseState,
+    on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
+) -> Result<(), ModelError> {
+    if !is_image_generation_call(item) {
         return Ok(());
     }
     let Some(image) = image_from_generation_call(item) else {
@@ -365,49 +368,6 @@ fn emit_output_item_replay(
         })?;
     }
     Ok(())
-}
-
-fn slim_image_generation_item(item: &serde_json::Value) -> serde_json::Value {
-    let mut data = item.clone();
-    if let Some(obj) = data.as_object_mut() {
-        obj.remove("result");
-    }
-    data
-}
-
-fn image_from_generation_call(item: &serde_json::Value) -> Option<ImageContent> {
-    let data = item
-        .get("result")
-        .and_then(|value| value.as_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())?;
-    let mime_type = image_mime_from_base64(data)?.to_owned();
-    Some(ImageContent {
-        mime_type,
-        data: data.to_owned(),
-    })
-}
-
-fn image_mime_from_base64(data: &str) -> Option<&'static str> {
-    use base64::Engine as _;
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(data)
-        .ok()?;
-    image_mime_from_bytes(&bytes)
-}
-
-fn image_mime_from_bytes(header: &[u8]) -> Option<&'static str> {
-    if header.starts_with(b"\x89PNG\r\n\x1a\n") {
-        Some("image/png")
-    } else if header.starts_with(&[0xff, 0xd8, 0xff]) {
-        Some("image/jpeg")
-    } else if header.starts_with(b"GIF87a") || header.starts_with(b"GIF89a") {
-        Some("image/gif")
-    } else if header.starts_with(b"RIFF") && header.get(8..12) == Some(b"WEBP") {
-        Some("image/webp")
-    } else {
-        None
-    }
 }
 
 /// Bare semantic detail for a hosted search card (shown as a child fact).
@@ -714,7 +674,8 @@ pub(crate) fn handle_codex_sse_value(
             emit_output_item_replay(item.clone(), position, on_event)?;
         }
         emit_codex_search_activity(item, state, on_event)?;
-        handle_image_generation_item(item, position, /*persist*/ true, state, on_event)?;
+        emit_image_generation_activity(item, state, on_event)?;
+        persist_image_generation_item(item, position, state, on_event)?;
         if let Some(call) = extract_codex_function_call(item)? {
             // The finished item is the authoritative argument text. Identity is
             // repeated so a stream that never announced the call still reaches
@@ -786,11 +747,11 @@ pub(crate) fn handle_codex_sse_value(
         {
             for item in output {
                 emit_codex_search_activity(item, state, on_event)?;
-                let persist = !codex_output_item_was_processed(state, item);
-                handle_image_generation_item(item, None, persist, state, on_event)?;
-                if !persist {
+                emit_image_generation_activity(item, state, on_event)?;
+                if codex_output_item_was_processed(state, item) {
                     continue;
                 }
+                persist_image_generation_item(item, None, state, on_event)?;
                 state.output_items.push(item.clone());
                 if item.get("type").and_then(|value| value.as_str()) == Some("reasoning") {
                     emit_output_item_replay(item.clone(), None, on_event)?;

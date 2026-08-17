@@ -154,3 +154,33 @@ fn provider_retry_status_includes_rate_limit_reset_hint() {
         "retrying provider response"
     );
 }
+
+// Covers: a later generated image must not attach to an earlier unfilled card.
+// Owner: tui transcript events
+#[test]
+fn insert_assistant_images_appends_a_card_per_image() {
+    use rho_providers::model::ImageContent;
+    use rho_sdk::model::ContentBlock;
+
+    let first = ImageContent {
+        data: "aW1n".into(),
+        mime_type: "image/png".into(),
+    };
+    let second = ImageContent {
+        data: "aW1nMg==".into(),
+        mime_type: "image/png".into(),
+    };
+    let mut app = test_app();
+    app.history
+        .set_entries(vec![crate::tui::message_history::generated_image_entry(
+            Ok(None),
+            &first,
+        )]);
+    app.insert_assistant_images(&[ContentBlock::Image(second)]);
+    assert_eq!(app.history.entries().len(), 2);
+    assert!(app
+        .history
+        .entries()
+        .iter()
+        .all(|entry| matches!(entry, crate::tui::Entry::Tool(tool) if tool.image.is_none())));
+}

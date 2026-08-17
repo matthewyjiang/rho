@@ -394,6 +394,7 @@ fn recovered_session_messages_become_transcript_entries() {
             }),
         ],
         std::path::Path::new(""),
+        |_| Ok(None),
     );
 
     assert!(matches!(entries[0], Entry::User(ref text) if text == "hello\n[image: image/png 3 B]"));
@@ -407,6 +408,58 @@ fn recovered_session_messages_become_transcript_entries() {
             && card.header_text().contains("src/main.rs")
             && card.status == rho_tools::tool_card::ToolStatus::Error
     ));
+}
+
+// Covers: recovered assistant images become image cards via the preview loader.
+// Owner: tui transcript reconstruction
+#[test]
+fn recovered_assistant_images_use_preview_loader() {
+    use rho_providers::model::image_summary;
+    use rho_tools::tool_card::{ToolFact, ToolHeader};
+
+    let image = ImageContent {
+        data: "aW1n".into(),
+        mime_type: "image/png".into(),
+    };
+    let messages = [Message::Assistant(vec![ContentBlock::Image(image.clone())])];
+
+    let summary =
+        transcript_entries_from_messages(&messages, std::path::Path::new(""), |_| Ok(None));
+    let Entry::Tool(tool) = &summary[0] else {
+        panic!("expected generated image card");
+    };
+    assert_eq!(tool.card.header, ToolHeader::call("image_generation", None));
+    assert!(tool.image.is_none());
+    assert_eq!(
+        tool.card.facts,
+        vec![
+            ToolFact::Text {
+                text: image_summary(&image),
+            },
+            ToolFact::Meta {
+                text: "finished".into(),
+            },
+        ]
+    );
+
+    let failed = transcript_entries_from_messages(&messages, std::path::Path::new(""), |_| {
+        Err("boom".into())
+    });
+    let Entry::Tool(tool) = &failed[0] else {
+        panic!("expected generated image card");
+    };
+    assert!(tool.image.is_none());
+    assert_eq!(
+        tool.card.facts,
+        vec![
+            ToolFact::Error {
+                text: "image preview unavailable: boom".into(),
+            },
+            ToolFact::Meta {
+                text: "finished".into(),
+            },
+        ]
+    );
 }
 
 #[test]

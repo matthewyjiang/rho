@@ -2,8 +2,8 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 
 use super::{
-    AbortedAssistant, AssistantMessage, ContentBlock, Message, ModelIdentity, ModelUsage,
-    PartialToolCall, ProviderContextBlock,
+    AbortedAssistant, AssistantMessage, ContentBlock, ImageContent, Message, ModelIdentity,
+    ModelUsage, PartialToolCall, ProviderContextBlock,
 };
 
 #[test]
@@ -114,4 +114,27 @@ fn provider_context_replays_only_to_exact_identity() {
 
     assert!(block.is_replayable_to(&ModelIdentity::new("openai", "responses", "gpt-5")));
     assert!(!block.is_replayable_to(&ModelIdentity::new("openai", "responses", "gpt-5-mini")));
+}
+
+// Covers: image payloads are typed from magic bytes; unknown bytes stay untyped.
+// Owner: sdk model
+#[test]
+fn image_content_recognizes_supported_signatures() {
+    assert_eq!(
+        ImageContent::mime_type_from_bytes(b"\x89PNG\r\n\x1a\nrest"),
+        Some("image/png")
+    );
+    assert_eq!(
+        ImageContent::mime_type_from_bytes(b"\xff\xd8\xffrest"),
+        Some("image/jpeg")
+    );
+    assert_eq!(
+        ImageContent::mime_type_from_bytes(b"GIF89arest"),
+        Some("image/gif")
+    );
+    assert_eq!(
+        ImageContent::mime_type_from_bytes(b"RIFFxxxxWEBP"),
+        Some("image/webp")
+    );
+    assert_eq!(ImageContent::mime_type_from_bytes(b"plain text"), None);
 }

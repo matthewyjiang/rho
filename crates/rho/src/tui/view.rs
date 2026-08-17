@@ -14,7 +14,6 @@ use super::tool_card_hover::ToolCardTarget;
 use super::tool_output_ui::tool_output_toggleable;
 use super::{
     highlight_selection,
-    message_history::transcript_entries_from_messages,
     picker_overlay::picker_overlay_frame,
     render::{pad_display_line, padded_content_width, truncate_one_line},
     render_copy_notice,
@@ -979,15 +978,14 @@ impl App {
     ) -> std::io::Result<bool> {
         let messages = std::mem::take(&mut self.info.session.recovered_messages);
         let had_recovered_messages = !messages.is_empty();
-        let entries = transcript_entries_from_messages(&messages, &self.info.runtime.cwd);
+        let entries = self.transcript_entries(&messages);
         if entries.is_empty() {
             return Ok(had_recovered_messages);
         }
 
         let size = terminal.size()?;
         self.note_terminal_geometry(size.width as usize, size.height as usize);
-        self.history.set_entries(entries);
-        self.history.images_mut().clear();
+        self.set_history_entries(entries);
         Ok(had_recovered_messages)
     }
 }
