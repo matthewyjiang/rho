@@ -121,7 +121,7 @@ async fn the_advisor_tool_needs_both_the_mode_and_a_model() {
             "advisor_mode={advisor_mode} with_model={with_model}"
         );
         assert!(
-            !prompt.contains("Call advisor BEFORE substantive work"),
+            !prompt.contains("Do not call advisor as your first action"),
             "system prompt must stay advisor-agnostic; advisor_mode={advisor_mode} with_model={with_model}"
         );
     }
@@ -204,7 +204,7 @@ async fn system_prompt_stays_advisor_agnostic() {
             _ => String::new(),
         };
         assert!(
-            !text.contains("Call advisor BEFORE substantive work"),
+            !text.contains("Do not call advisor as your first action"),
             "advisor_mode={advisor_mode}"
         );
         assert!(
