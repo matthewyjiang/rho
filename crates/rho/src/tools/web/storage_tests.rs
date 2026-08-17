@@ -81,3 +81,115 @@ fn available_selectors_lists_exact_keys() {
     assert!(listing.contains("urlIndex=1"));
     assert!(listing.contains("queryIndex=1"));
 }
+
+// Covers: the in-memory cache must evict oldest entries and oversized blobs
+// Owner: web storage
+#[test]
+fn memory_cache_evicts_by_count_bytes_and_recency() {
+    struct Case {
+        entry_limit: usize,
+        byte_limit: usize,
+        insert: &'static [&'static str],
+        touch: Option<&'static str>,
+        extra: Option<(&'static str, &'static str)>,
+        retain: &'static [&'static str],
+        drop: &'static [&'static str],
+    }
+
+    let cases = [
+        Case {
+            entry_limit: 2,
+            byte_limit: 64,
+            insert: &["a", "b"],
+            touch: None,
+            extra: Some(("c", "c")),
+            retain: &["b", "c"],
+            drop: &["a"],
+        },
+        Case {
+            entry_limit: 2,
+            byte_limit: 64,
+            insert: &["a", "b"],
+            touch: Some("a"),
+            extra: Some(("c", "c")),
+            retain: &["a", "c"],
+            drop: &["b"],
+        },
+        Case {
+            entry_limit: 2,
+            byte_limit: 8,
+            insert: &["a", "b"],
+            touch: None,
+            extra: Some(("big", "0123456789")),
+            retain: &["a", "b"],
+            drop: &["big"],
+        },
+        Case {
+            entry_limit: 2,
+            byte_limit: 16,
+            insert: &["aaaaaaaa"],
+            touch: None,
+            extra: Some(("overflow", "0123456789")),
+            retain: &["overflow"],
+            drop: &["aaaaaaaa"],
+        },
+    ];
+
+    for case in cases {
+        let mut cache = MemoryCache::new(
+            /*entry_limit*/ case.entry_limit,
+            /*byte_limit*/ case.byte_limit,
+        );
+        for id in case.insert {
+            cache.insert((*id).to_owned(), stored_body(id));
+        }
+        if let Some(id) = case.touch {
+            assert!(cache.get(id).is_some());
+        }
+        if let Some((id, body)) = case.extra {
+            cache.insert(id.to_owned(), stored_body(body));
+        }
+        for id in case.retain {
+            assert!(cache.contains(id), "expected {id} retained");
+        }
+        for id in case.drop {
+            assert!(!cache.contains(id), "expected {id} evicted");
+        }
+    }
+}
+
+// Covers: get_search_content must still load a body after RAM eviction
+// Owner: web storage
+#[test]
+fn evicted_memory_entry_still_loads_from_disk() {
+    let root = tempfile::tempdir().unwrap();
+    let store = WebAccessStore::with_root(root.path().to_path_buf());
+    let mut ids = Vec::new();
+    for index in 0..=MEMORY_ENTRY_LIMIT {
+        let response_id = new_response_id();
+        store
+            .store(response_id.clone(), stored_body(&format!("body-{index}")))
+            .unwrap();
+        ids.push(response_id);
+    }
+
+    assert!(!store.memory_contains(&ids[0]));
+    assert!(store.memory_contains(ids.last().expect("inserted ids")));
+
+    let loaded = store.load(&ids[0]).unwrap();
+    assert_eq!(loaded, stored_body("body-0"));
+    assert!(store.memory_contains(&ids[0]));
+}
+
+fn stored_body(content: &str) -> StoredContent {
+    StoredContent {
+        kind: String::new(),
+        items: vec![StoredItem {
+            url: None,
+            query: None,
+            title: None,
+            content: content.into(),
+            metadata: json!({}),
+        }],
+    }
+}
