@@ -27,7 +27,7 @@ fn captions_keep_the_right_identity_and_shrink_the_left_first() {
     let advisor_m: &[&str] = &["advisor: m"];
     let shell_only: &[&str] = &["shell"];
 
-    let cases: [(&str, Option<&[&str]>, Option<&[&str]>, usize, &str); 12] = [
+    let cases = [
         (
             "full both",
             Some(shell),
