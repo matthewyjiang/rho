@@ -39,7 +39,7 @@ fn validate_resume_agent(
 }
 
 fn syntax_warmup_inputs(messages: &[rho_providers::model::Message]) -> (Vec<String>, Vec<String>) {
-    use rho_providers::model::{ContentBlock, Message};
+    use rho_providers::model::Message;
 
     let mut tokens = Vec::new();
     let mut paths = Vec::new();
