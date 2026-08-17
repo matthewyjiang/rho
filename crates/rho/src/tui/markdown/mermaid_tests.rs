@@ -179,7 +179,7 @@ fn paints_common_approximations() {
         (
             "long_group_title",
             "flowchart TD\nsubgraph abcdefghijklmnopqrstuvwxyz\nA[ok]\nend",
-            &["ok"],
+            &["abcdefghijklmnopqrstuvwxyz", "ok"],
         ),
     ];
 
