@@ -179,6 +179,7 @@ fn fact_wrap_breaks_on_whitespace() {
 // Owner: pure TUI (tool card diff highlighting)
 #[test]
 fn file_diff_body_highlights_rust_from_header_path() {
+    crate::tui::syntax::warm_syntax_set();
     // Theme is process-global; hold the lock so a parallel scheme test cannot
     // inject row-wash backgrounds into exact style comparisons.
     let _guard = crate::tui::theme::theme_test_lock();
@@ -420,6 +421,7 @@ fn toggle_check_does_not_highlight() {
 // Owner: pure TUI (grep search highlight)
 #[test]
 fn grep_body_highlights_language_and_match() {
+    crate::tui::syntax::warm_syntax_set();
     let card = ToolCard::new(
         ToolStatus::Ok,
         ToolFamily::FileCommand,

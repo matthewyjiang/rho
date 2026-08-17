@@ -22,116 +22,38 @@ use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet
 
 use super::theme::{SyntaxRole, Theme};
 
-#[cfg(not(test))]
-use std::sync::atomic::{AtomicBool, Ordering};
-
 static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
-#[cfg(not(test))]
-static LOOKUP_WHILE_UNREADY: AtomicBool = AtomicBool::new(false);
 
-fn load_syntax_set() -> SyntaxSet {
-    two_face::syntax::extra_newlines()
-}
-
-/// Ready set, or `None` until [`warm_syntax_set`] finishes (or a test inits it).
+/// Ready set, or `None` until [`warm_syntax_set`] finishes.
 fn syntax_set() -> Option<&'static SyntaxSet> {
-    #[cfg(test)]
-    {
-        return Some(SYNTAX_SET.get_or_init(load_syntax_set));
-    }
-    #[cfg(not(test))]
-    match SYNTAX_SET.get() {
-        Some(set) => Some(set),
-        None => {
-            LOOKUP_WHILE_UNREADY.store(true, Ordering::Relaxed);
-            None
-        }
-    }
+    SYNTAX_SET.get()
 }
 
-/// Whether a paint asked for the dump before warmup finished.
-pub(crate) fn take_syntax_lookup_while_unready() -> bool {
-    #[cfg(test)]
-    {
-        return false;
-    }
-    #[cfg(not(test))]
-    LOOKUP_WHILE_UNREADY.swap(false, Ordering::Relaxed)
+fn ready_syntax_set() -> &'static SyntaxSet {
+    SYNTAX_SET
+        .get()
+        .expect("BlockHighlighter is only built after the syntax set is ready")
 }
 
 /// Inflate the bat dump and role selectors. Safe to call more than once.
 pub(crate) fn warm_syntax_set() {
-    let _ = SYNTAX_SET.get_or_init(load_syntax_set);
+    let _ = SYNTAX_SET.get_or_init(two_face::syntax::extra_newlines);
     LazyLock::force(&ROLE_SELECTORS);
 }
 
-/// Load the dump (and any recovered fence languages) off the UI thread.
-pub(crate) fn spawn_syntax_warmup(
-    tokens: Vec<String>,
-    paths: Vec<String>,
-) -> tokio::task::JoinHandle<()> {
-    tokio::task::spawn_blocking(move || {
-        let _span = tracing::info_span!("startup.syntax_set").entered();
-        warm_syntax_set();
-        for token in tokens {
-            warm_highlighter(BlockHighlighter::for_language(&token));
-        }
-        for path in paths {
-            warm_highlighter(BlockHighlighter::for_path(&path));
-        }
-    })
-}
-
-fn warm_highlighter(highlighter: Option<BlockHighlighter>) {
-    if let Some(mut highlighter) = highlighter {
-        // Empty lines often skip the contexts we actually compile on first paint.
-        let _ = highlighter.highlight_line("x = 1");
-    }
-}
-
-/// Fence info tokens worth inflating before the first resume paint.
-///
-/// Skip Markdown and mermaid: the TUI does not highlight prose with the
-/// Markdown grammar, and those dumps are the expensive long tail.
-pub(crate) fn warmup_tokens_from_text(text: &str) -> Vec<String> {
-    let mut tokens = Vec::new();
-    for line in text.lines() {
-        let Some(token) = super::markdown::opening_fence_info_token(line) else {
-            continue;
-        };
-        if !should_warmup_token(&token) || tokens.iter().any(|seen| seen == &token) {
-            continue;
-        }
-        tokens.push(token);
-    }
-    tokens
-}
-
-/// Display paths from recovered tool payloads so diffs/search compile off-thread.
-pub(crate) fn warmup_paths_from_text(text: &str) -> Vec<String> {
-    let mut paths = Vec::new();
-    for candidate in text.split(|character: char| {
-        character.is_whitespace() || matches!(character, '"' | '\'' | '`' | ',' | ']' | '}')
-    }) {
-        let path = candidate.trim_matches(|character: char| {
-            matches!(character, '"' | '\'' | '`' | '[' | '(' | ')' | '\\')
-        });
-        if path.len() < 3 || !path.contains('.') || path.contains("://") {
-            continue;
-        }
-        if paths.iter().any(|seen| seen == path) {
-            continue;
-        }
-        paths.push(path.to_string());
-    }
-    paths
-}
-
-fn should_warmup_token(token: &str) -> bool {
-    !matches!(
-        token,
-        "md" | "markdown" | "mermaid" | "text" | "plaintext" | "plain"
+/// Dump-native syntax name for a fence token, when the set is ready and known.
+pub(in crate::tui) fn syntax_name_for_language(token: &str) -> Option<&'static str> {
+    Some(
+        syntax_set()?
+            .find_syntax_by_token(canonical_language_token(token))?
+            .name
+            .as_str(),
     )
+}
+
+/// Dump-native syntax name for a display path, when the set is ready and known.
+pub(in crate::tui) fn syntax_name_for_path(path: &str) -> Option<&'static str> {
+    Some(syntax_for_path(path)?.name.as_str())
 }
 
 /// Soft cap on language-aware lines painted in one tool-card body pass. Beyond
@@ -230,13 +152,7 @@ impl BlockHighlighter {
         let mut text = String::with_capacity(line.len() + 1);
         text.push_str(line);
         text.push('\n');
-        let Some(set) = syntax_set() else {
-            return vec![HighlightSegment {
-                text: line.to_string(),
-                role: None,
-            }];
-        };
-        let Ok(ops) = self.parse.parse_line(&text, set) else {
+        let Ok(ops) = self.parse.parse_line(&text, ready_syntax_set()) else {
             return vec![HighlightSegment {
                 text: line.to_string(),
                 role: None,
@@ -273,10 +189,7 @@ impl BlockHighlighter {
         let mut text = String::with_capacity(line.len() + 1);
         text.push_str(line);
         text.push('\n');
-        let Some(set) = syntax_set() else {
-            return;
-        };
-        let Ok(ops) = self.parse.parse_line(&text, set) else {
+        let Ok(ops) = self.parse.parse_line(&text, ready_syntax_set()) else {
             return;
         };
         for (_, op) in ops {

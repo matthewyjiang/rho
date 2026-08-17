@@ -49,6 +49,7 @@ fn classifies_path_and_content_rows() {
 // Owner: pure unit (grep language highlight)
 #[test]
 fn paints_rust_from_path_header() {
+    crate::tui::syntax::warm_syntax_set();
     // Styles are derived from the theme at paint time and re-derived at assert
     // time; hold the lock so theme-switching tests cannot flip them in between.
     let _guard = crate::tui::theme::theme_test_lock();

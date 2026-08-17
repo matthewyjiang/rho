@@ -126,6 +126,7 @@ fn code_block_header_shows_language_label_and_copy_button() {
 
 #[test]
 fn highlighted_code_blocks_style_tokens_and_keep_literal_text() {
+    crate::tui::syntax::warm_syntax_set();
     let mut fence_state = CodeFenceState::default();
     let lines = markdown_lines(
         "```rust\nlet answer = 42; // note\n```",
@@ -194,6 +195,7 @@ fn streamed_code_fence_state_preserves_marker_length_and_language_across_chunks(
 // Owner: pure unit (markdown fence-state render path)
 #[test]
 fn fence_state_continuation_highlights_with_carried_language() {
+    crate::tui::syntax::warm_syntax_set();
     let mut state = CodeFenceState::default();
     update_code_block_state("```rust\n", &mut state);
     assert!(state.is_open());
@@ -217,6 +219,7 @@ fn fence_state_continuation_highlights_with_carried_language() {
 // Owner: pure unit (markdown streamed fence highlight)
 #[test]
 fn streamed_fence_preserves_multiline_string_highlight_across_chunks() {
+    crate::tui::syntax::warm_syntax_set();
     let mut state = CodeFenceState::default();
     // Production path: committed fragment advances fence + highlighter state.
     update_code_block_state("```rust\nlet text = \"open\n", &mut state);
@@ -244,6 +247,7 @@ fn streamed_fence_preserves_multiline_string_highlight_across_chunks() {
 // Owner: pure unit (markdown fence render path)
 #[test]
 fn render_chunks_preserve_multiline_string_highlight() {
+    crate::tui::syntax::warm_syntax_set();
     let mut state = CodeFenceState::default();
     let first = markdown_lines("```rust\nlet text = \"open\n", 80, &mut state);
     assert!(first.iter().any(|line| line_text(line).contains("open")));

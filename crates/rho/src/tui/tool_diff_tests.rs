@@ -42,6 +42,7 @@ fn single_file_path_from_file_diff_header() {
 // Owner: pure unit (diff syntax highlighting)
 #[test]
 fn highlights_rust_tokens_after_file_row() {
+    crate::tui::syntax::warm_syntax_set();
     let mut syntax = DiffSyntax::new(None);
     let file = DiffRow::new(DiffRowKind::File, None, "src/main.rs");
     assert!(syntax.paint_row(&file).is_none());
@@ -118,6 +119,7 @@ fn skips_language_paint_for_overlong_lines() {
 // Owner: pure unit (diff header path observe)
 #[test]
 fn paints_from_plus_plus_plus_header_path() {
+    crate::tui::syntax::warm_syntax_set();
     let mut syntax = DiffSyntax::new(None);
     let header = DiffRow::new(DiffRowKind::Context, None, "+++ b/app.ts");
     assert!(syntax.paint_row(&header).is_none());

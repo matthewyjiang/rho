@@ -131,7 +131,8 @@ mod session_title;
 mod sessions_hub;
 mod setup_screen;
 mod syntax;
-pub(crate) use syntax::{spawn_syntax_warmup, warmup_paths_from_text, warmup_tokens_from_text};
+mod syntax_warmup;
+pub(crate) use syntax_warmup::spawn_syntax_warmup;
 pub(in crate::tui) mod terminal_graph;
 mod transcript_events;
 pub(crate) use session_title::SESSION_TITLE_PROMPT;
@@ -382,7 +383,7 @@ pub struct ApplicationServices {
     pub pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
     pub pending_custom_models: Option<tokio::task::JoinHandle<()>>,
     /// Bat grammar dump loading off the UI thread. First paint stays plain if
-    /// this is still running; completion invalidates history so roles appear.
+    /// this is still running; completion rebuilds history so roles appear.
     pub pending_syntax_warmup: Option<tokio::task::JoinHandle<()>>,
     pub diagnostics: crate::diagnostics::RuntimeDiagnostics,
     pub herdr: HerdrReporter,

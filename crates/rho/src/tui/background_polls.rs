@@ -45,7 +45,7 @@ impl App {
         self.pending_custom_models = None;
     }
 
-    /// Rebuild history if the dump finished after a plain first paint.
+    /// Rebuild history once the dump is ready so a plain first paint gets roles.
     pub(super) fn poll_syntax_warmup(&mut self) -> bool {
         let Some(handle) = self.pending_syntax_warmup.as_mut() else {
             return false;
@@ -54,9 +54,6 @@ impl App {
             return false;
         }
         self.pending_syntax_warmup = None;
-        if !super::syntax::take_syntax_lookup_while_unready() {
-            return false;
-        }
         self.history.invalidate_from(0);
         true
     }
