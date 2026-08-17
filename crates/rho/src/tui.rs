@@ -187,8 +187,8 @@ use chat_media::{
 };
 use clipboard::ClipboardWriter;
 use config_editor::{
-    config_number_input_lines, resolve_web_search_editor_value, ConfigMutation, ConfigNumberInput,
-    ConfigNumberKey, ConfigTextKey, ConfigToggle,
+    config_number_input_lines, resolve_web_search_editor_value, ConfigNumberInput, ConfigNumberKey,
+    ConfigTextKey, ConfigToggle,
 };
 use copy_interaction::CodeBlockCopyTarget;
 use event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent};

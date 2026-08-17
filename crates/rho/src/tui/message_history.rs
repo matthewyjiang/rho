@@ -2,10 +2,11 @@ use std::collections::VecDeque;
 
 use {
     crate::app::interactive_presenter::InteractiveToolPresenter,
-    rho_providers::model::{image_summary, ContentBlock, Message, ToolCall},
+    rho_providers::model::{image_summary, ContentBlock, ImageContent, Message, ToolCall},
+    rho_tools::tool_card::{ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus},
 };
 
-use super::{ChatMedia, Entry, ToolEntry};
+use super::{feed_image::FeedImage, ChatMedia, Entry, ToolEntry};
 
 pub(super) fn text_blocks(blocks: &[ContentBlock]) -> String {
     blocks
@@ -28,6 +29,49 @@ pub(super) fn render_message_blocks(blocks: &[ContentBlock]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+pub(super) fn generated_image_entry(
+    preview: Result<Option<FeedImage>, String>,
+    source: &ImageContent,
+) -> Entry {
+    let mut card = ToolCard::new(
+        ToolStatus::Ok,
+        ToolFamily::Default,
+        ToolHeader::call("image_generation", None),
+    );
+    let image = apply_generated_image_preview(&mut card, preview, source);
+    card.push_fact(ToolFact::Meta {
+        text: "finished".into(),
+    });
+    Entry::Tool(ToolEntry {
+        card,
+        expanded: false,
+        image,
+        started_at: None,
+    })
+}
+
+fn apply_generated_image_preview(
+    card: &mut ToolCard,
+    preview: Result<Option<FeedImage>, String>,
+    source: &ImageContent,
+) -> Option<FeedImage> {
+    match preview {
+        Ok(None) => {
+            card.push_fact(ToolFact::Text {
+                text: image_summary(source),
+            });
+            None
+        }
+        Ok(image) => image,
+        Err(error) => {
+            card.push_fact(ToolFact::Error {
+                text: format!("image preview unavailable: {error}"),
+            });
+            None
+        }
+    }
 }
 
 pub(super) fn render_user_entry(prompt: &str, media: &[ChatMedia]) -> String {
@@ -65,6 +109,7 @@ pub(super) fn transcript_entries_from_messages(
                 if !text.is_empty() {
                     entries.push(Entry::Assistant(text));
                 }
+                push_generated_image_entries(&mut entries, blocks);
                 pending_tools.extend(blocks.iter().filter_map(|block| match block {
                     ContentBlock::ToolCall(call) => Some(call.clone()),
                     ContentBlock::Text(_) | ContentBlock::Image(_) => None,
@@ -76,6 +121,7 @@ pub(super) fn transcript_entries_from_messages(
                 if !text.is_empty() {
                     entries.push(Entry::Assistant(text));
                 }
+                push_generated_image_entries(&mut entries, blocks);
                 pending_tools.extend(blocks.iter().filter_map(|block| match block {
                     ContentBlock::ToolCall(call) => Some(call.clone()),
                     ContentBlock::Text(_) | ContentBlock::Image(_) => None,
@@ -86,6 +132,7 @@ pub(super) fn transcript_entries_from_messages(
                 if !text.is_empty() {
                     entries.push(Entry::Assistant(text));
                 }
+                push_generated_image_entries(&mut entries, &message.content);
                 if let Some(tool_call) = message.tool_calls.last() {
                     let presented =
                         presenter.interrupted(tool_call.name.as_deref(), &tool_call.arguments);
@@ -115,4 +162,23 @@ pub(super) fn transcript_entries_from_messages(
         }
     }
     entries
+}
+
+fn push_generated_image_entries(entries: &mut Vec<Entry>, blocks: &[ContentBlock]) {
+    for block in blocks {
+        if let ContentBlock::Image(image) = block {
+            entries.push(generated_image_entry(Ok(None), image));
+        }
+    }
+}
+
+impl super::App {
+    pub(super) fn transcript_entries(&self, messages: &[Message]) -> Vec<Entry> {
+        transcript_entries_from_messages(messages, &self.info.runtime.cwd)
+    }
+
+    pub(super) fn set_history_entries(&mut self, entries: Vec<Entry>) {
+        self.history.set_entries(entries);
+        self.history.images_mut().clear();
+    }
 }

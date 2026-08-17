@@ -39,6 +39,8 @@ pub struct ProviderBuildOptions {
     request_timeout: Option<Duration>,
     /// Prefer provider-hosted web search when the transport supports it.
     hosted_web_search: bool,
+    /// Prefer xAI hosted image generation when the transport supports it.
+    hosted_image_generation: bool,
 }
 
 impl ProviderBuildOptions {
@@ -69,6 +71,7 @@ impl ProviderBuildOptions {
             endpoint: None,
             request_timeout: None,
             hosted_web_search: true,
+            hosted_image_generation: true,
         })
     }
 
@@ -105,6 +108,12 @@ impl ProviderBuildOptions {
     /// Prefer the chat provider's hosted web search tool when supported.
     pub fn hosted_web_search(mut self, enabled: bool) -> Self {
         self.hosted_web_search = enabled;
+        self
+    }
+
+    /// Prefer xAI's hosted image generation tool when supported.
+    pub fn hosted_image_generation(mut self, enabled: bool) -> Self {
+        self.hosted_image_generation = enabled;
         self
     }
 
@@ -287,7 +296,10 @@ impl ProviderBuilder {
                     auth,
                     client,
                     endpoint.unwrap_or_else(|| XAI_API_BASE.into()),
-                    self.options.hosted_web_search,
+                    crate::providers::xai::XaiHostedTools {
+                        web_search: self.options.hosted_web_search,
+                        image_generation: self.options.hosted_image_generation,
+                    },
                 )))
             }
             _ => Err(ModelError::InvalidResponse(format!(

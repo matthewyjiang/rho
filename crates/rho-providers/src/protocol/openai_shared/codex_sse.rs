@@ -8,12 +8,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use futures_util::StreamExt;
 
 use crate::{
-    model::{ContentBlock, ModelError, ModelEvent, ModelResponse},
+    model::{ContentBlock, ImageContent, ModelError, ModelEvent, ModelResponse},
     provider_backend::line_decoder::LineDecoder,
 };
 use rho_sdk::model::ToolCall;
 
+use super::compact::COMPACTION_OUTPUT_ITEM_KIND;
 use super::convert::{extract_response_text, ResponsesResponse};
+use super::image_generation::{
+    image_from_generation_call, is_image_generation_call, slim_image_generation_item,
+};
 use super::stream::{line_decode_error, sse_data};
 use super::usage::{extract_usage_report, GenerationTokenContext, HiddenReasoningRisk};
 
@@ -88,6 +92,7 @@ pub(crate) struct CodexSseState {
     pub(crate) text: String,
     pub(crate) completed_text: Option<String>,
     pub(crate) tool_calls: Vec<ToolCall>,
+    pub(crate) images: Vec<ImageContent>,
     pub(crate) response_id: Option<String>,
     pub(crate) service_tier: Option<String>,
     pub(crate) output_items: Vec<serde_json::Value>,
@@ -105,12 +110,12 @@ pub(crate) struct CodexSseState {
     /// responses that carry arguments without incremental deltas, while never
     /// re-appending text consumers already hold.
     published_tool_arguments: BTreeMap<usize, String>,
-    /// Search activity keys already published from `output_item.done`.
+    /// Hosted-activity keys already published from `output_item.done`.
     ///
     /// `response.completed` may restate the same `output` items when the
     /// stream carried no text or function calls yet; skip those keys so
     /// WebSearch / HostedToolActivity are not dual-emitted.
-    emitted_search_keys: BTreeSet<String>,
+    emitted_activity_keys: BTreeSet<String>,
     /// True once a non-empty reasoning or reasoning-summary delta streamed.
     /// Decides whether reasoning wall time sits inside the generation window
     /// when the completed usage payload is converted to a throughput count.
@@ -124,7 +129,7 @@ impl CodexSseState {
                 .completed_text
                 .as_ref()
                 .is_some_and(|text| !text.is_empty());
-        if !has_text && self.tool_calls.is_empty() {
+        if !has_text && self.tool_calls.is_empty() && self.images.is_empty() {
             return Err(self.missing_response_content_error());
         }
 
@@ -137,6 +142,7 @@ impl CodexSseState {
         if !text.is_empty() {
             blocks.push(ContentBlock::Text(text));
         }
+        blocks.extend(self.images.into_iter().map(ContentBlock::Image));
         blocks.extend(self.tool_calls.into_iter().map(ContentBlock::ToolCall));
         Ok(CodexSseResponse {
             response: ModelResponse::Assistant(blocks),
@@ -169,6 +175,7 @@ impl CodexSseState {
             parts.push(format!("service_tier={service_tier}"));
         }
         parts.push(format!("streamed_text_chars={}", self.text.chars().count()));
+        parts.push(format!("images={}", self.images.len()));
         parts.push(format!("tool_calls={}", self.tool_calls.len()));
         let item_types = summarize_output_item_types(&self.output_items);
         if item_types.is_empty() {
@@ -261,7 +268,7 @@ fn is_hosted_x_search_custom_call(item: &serde_json::Value) -> bool {
 ///
 /// Prefer the wire `id`. Fall back to type+detail only when the item has no id,
 /// using the already-built event so detail is not extracted twice.
-fn codex_search_activity_key(item: &serde_json::Value, event: &ModelEvent) -> String {
+fn hosted_activity_key(item: &serde_json::Value, event: &ModelEvent) -> String {
     if let Some(id) = item
         .get("id")
         .and_then(|value| value.as_str())
@@ -291,12 +298,74 @@ fn emit_codex_search_activity(
     let Some(event) = extract_codex_search_activity(item) else {
         return Ok(());
     };
-    let key = codex_search_activity_key(item, &event);
-    if !state.emitted_search_keys.insert(key) {
+    emit_hosted_activity(item, event, state, on_event)
+}
+
+fn emit_image_generation_activity(
+    item: &serde_json::Value,
+    state: &mut CodexSseState,
+    on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
+) -> Result<(), ModelError> {
+    if !is_image_generation_call(item) {
+        return Ok(());
+    }
+    let detail = item
+        .get("prompt")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+        .map(|value| truncate_detail(value, DETAIL_MAX_CHARS))
+        .unwrap_or_default();
+    emit_hosted_activity(
+        item,
+        ModelEvent::hosted_tool_activity("image_generation", detail),
+        state,
+        on_event,
+    )
+}
+
+fn persist_image_generation_item(
+    item: &serde_json::Value,
+    position: Option<usize>,
+    state: &mut CodexSseState,
+    on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
+) -> Result<(), ModelError> {
+    if !is_image_generation_call(item) {
+        return Ok(());
+    }
+    let Some(image) = image_from_generation_call(item) else {
+        return Ok(());
+    };
+    state.images.push(image);
+    emit_output_item_replay(slim_image_generation_item(item), position, on_event)
+}
+
+fn emit_hosted_activity(
+    item: &serde_json::Value,
+    event: ModelEvent,
+    state: &mut CodexSseState,
+    on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
+) -> Result<(), ModelError> {
+    let key = hosted_activity_key(item, &event);
+    if !state.emitted_activity_keys.insert(key) {
         return Ok(());
     }
     if let Some(on_event) = on_event.as_mut() {
         on_event(event)?;
+    }
+    Ok(())
+}
+
+fn emit_output_item_replay(
+    data: serde_json::Value,
+    position: Option<usize>,
+    on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
+) -> Result<(), ModelError> {
+    if let Some(on_event) = on_event.as_mut() {
+        on_event(ModelEvent::ProviderContext {
+            kind: COMPACTION_OUTPUT_ITEM_KIND.into(),
+            position,
+            data,
+        })?;
     }
     Ok(())
 }
@@ -597,19 +666,16 @@ pub(crate) fn handle_codex_sse_value(
     } else if event_type == "response.output_item.done" {
         let item = value.get("item").unwrap_or(value);
         state.output_items.push(item.clone());
+        let position = value
+            .get("output_index")
+            .and_then(|value| value.as_u64())
+            .and_then(|value| usize::try_from(value).ok());
         if item.get("type").and_then(|value| value.as_str()) == Some("reasoning") {
-            if let Some(on_event) = on_event.as_mut() {
-                on_event(ModelEvent::ProviderContext {
-                    kind: "openai_response_output_item".into(),
-                    position: value
-                        .get("output_index")
-                        .and_then(|value| value.as_u64())
-                        .and_then(|value| usize::try_from(value).ok()),
-                    data: item.clone(),
-                })?;
-            }
+            emit_output_item_replay(item.clone(), position, on_event)?;
         }
         emit_codex_search_activity(item, state, on_event)?;
+        emit_image_generation_activity(item, state, on_event)?;
+        persist_image_generation_item(item, position, state, on_event)?;
         if let Some(call) = extract_codex_function_call(item)? {
             // The finished item is the authoritative argument text. Identity is
             // repeated so a stream that never announced the call still reaches
@@ -681,18 +747,14 @@ pub(crate) fn handle_codex_sse_value(
         {
             for item in output {
                 emit_codex_search_activity(item, state, on_event)?;
+                emit_image_generation_activity(item, state, on_event)?;
                 if codex_output_item_was_processed(state, item) {
                     continue;
                 }
+                persist_image_generation_item(item, None, state, on_event)?;
                 state.output_items.push(item.clone());
                 if item.get("type").and_then(|value| value.as_str()) == Some("reasoning") {
-                    if let Some(on_event) = on_event.as_mut() {
-                        on_event(ModelEvent::ProviderContext {
-                            kind: "openai_response_output_item".into(),
-                            position: None,
-                            data: item.clone(),
-                        })?;
-                    }
+                    emit_output_item_replay(item.clone(), None, on_event)?;
                 }
                 if let Some(call) = extract_codex_function_call(item)? {
                     state.tool_calls.push(call);
@@ -716,3 +778,7 @@ pub(crate) fn handle_codex_sse_value(
     }
     Ok(true)
 }
+
+#[cfg(test)]
+#[path = "codex_sse_image_tests.rs"]
+mod image_tests;

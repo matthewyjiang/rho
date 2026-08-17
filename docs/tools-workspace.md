@@ -95,7 +95,7 @@ Details: [Documents and images](/tools-workspace/documents-and-images).
 
 ## Web access and related tools
 
-Web tools store large bodies by `responseId`, refuse private destinations by default, and add provider amenities such as xAI `x_search` when relevant.
+Web tools store large bodies by `responseId`, refuse private destinations by default, and add provider amenities such as xAI `x_search` and `image_generation` when relevant.
 
 Details: [Web access and related tools](/tools-workspace/web-access).
 

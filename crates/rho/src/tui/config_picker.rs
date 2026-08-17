@@ -48,6 +48,11 @@ pub(super) const WEB_SEARCH_PROVIDER_VALUE: &str = "web_search_provider";
 pub(super) const WEB_SEARCH_OPENAI_KEY_VALUE: &str = "web_search_openai_api_key";
 pub(super) const WEB_SEARCH_EXA_KEY_VALUE: &str = "web_search_exa_api_key";
 pub(super) const WEB_SEARCH_BRAVE_KEY_VALUE: &str = "web_search_brave_api_key";
+pub(super) const XAI_IMAGE_GENERATION_VALUE: &str = "xai_image_generation";
+
+fn xai_image_generation_visible(provider: &str) -> bool {
+    provider == "xai"
+}
 
 fn badge(text: impl Into<String>) -> PickerBadge {
     PickerBadge {
@@ -168,11 +173,8 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
             ),
             item(
                 "Agent behavior",
-                    "Permission mode, classifier model, advisor, and delegation.",
-                Some(format!(
-                    "permissions: {}",
-                    info.permission_mode.as_str()
-                )),
+                "Permission mode, classifier model, advisor, and delegation.",
+                Some(format!("permissions: {}", info.permission_mode.as_str())),
                 AGENT_CATEGORY_VALUE,
             ),
             item(
@@ -188,12 +190,7 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
             item(
                 "Tools",
                 "Inline shell, edit tool, and web search (hosted + backup).",
-                Some(format!(
-                    "{} shell · {} · {}",
-                    config.inline_shell,
-                    config.edit_tool.display_label(&info.provider),
-                    web_search_summary(config)
-                )),
+                Some(tools_summary(info, config)),
                 TOOLS_CATEGORY_VALUE,
             ),
             item(
@@ -215,6 +212,23 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
         PickerAction::Config,
     )
     .with_confirm_verb("open")
+}
+
+fn tools_summary(info: &super::RuntimeModelView, config: &Config) -> String {
+    let summary = format!(
+        "{} shell · {} · {}",
+        config.inline_shell,
+        config.edit_tool.display_label(&info.provider),
+        web_search_summary(config)
+    );
+    if xai_image_generation_visible(&info.provider) {
+        format!(
+            "{summary} · image gen {}",
+            on_off(config.xai_image_generation)
+        )
+    } else {
+        summary
+    }
 }
 
 pub(super) fn category_picker(
@@ -359,9 +373,8 @@ pub(super) fn category_picker(
                 ),
             ],
         ),
-        TOOLS_CATEGORY_VALUE => (
-            "Config / Tools",
-            vec![
+        TOOLS_CATEGORY_VALUE => {
+            let mut items = vec![
                 item(
                     "Inline shell",
                     "Shell used by ! and !! commands.",
@@ -380,8 +393,17 @@ pub(super) fn category_picker(
                     Some(web_search_summary(config)),
                     WEB_SEARCH_VALUE,
                 ),
-            ],
-        ),
+            ];
+            if xai_image_generation_visible(&info.provider) {
+                items.push(item(
+                    "xAI image generation",
+                    "Attach xAI hosted image_generation on create turns. Space or Enter toggles. Applies to the next session.",
+                    Some(on_off(config.xai_image_generation)),
+                    XAI_IMAGE_GENERATION_VALUE,
+                ));
+            }
+            ("Config / Tools", items)
+        }
         PROVIDERS_CATEGORY_VALUE => {
             let mut items = vec![
                 item(
@@ -461,7 +483,9 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
         | COMPACT_TARGET_PERCENT_VALUE
         | MAX_OUTPUT_BYTES_VALUE
         | MAX_TOOL_OUTPUT_LINES_VALUE => Some(CONTEXT_CATEGORY_VALUE),
-        INLINE_SHELL_VALUE | EDIT_TOOL_VALUE | WEB_SEARCH_VALUE => Some(TOOLS_CATEGORY_VALUE),
+        INLINE_SHELL_VALUE | EDIT_TOOL_VALUE | WEB_SEARCH_VALUE | XAI_IMAGE_GENERATION_VALUE => {
+            Some(TOOLS_CATEGORY_VALUE)
+        }
         PROVIDER_LOGIN_VALUE
         | PROVIDER_LOGOUT_VALUE
         | SWITCH_AUTH_MODE_VALUE

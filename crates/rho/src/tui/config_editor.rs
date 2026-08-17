@@ -41,17 +41,7 @@ pub(super) enum ConfigToggle {
     ShowReasoningOutput,
     ZenMode,
     WebSearchHosted,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum ConfigMutation {
-    CheckForUpdates(bool),
-    EnableSubagents(bool),
-    AutoCompact(bool),
-    ShowReasoningOutput(bool),
-    ZenMode(bool),
-    WebSearchHosted(bool),
-    WebSearchProvider(String),
+    XaiImageGeneration,
 }
 
 pub(super) fn resolve_web_search_editor_value(
@@ -68,41 +58,45 @@ pub(super) fn resolve_web_search_editor_value(
 pub(super) fn toggle(
     config_repository: &ConfigRepository,
     setting: ConfigToggle,
-) -> anyhow::Result<ConfigMutation> {
+) -> anyhow::Result<bool> {
     config_repository.update(|config| match setting {
         ConfigToggle::CheckForUpdates => {
             config.check_for_updates = !config.check_for_updates;
-            ConfigMutation::CheckForUpdates(config.check_for_updates)
+            config.check_for_updates
         }
         ConfigToggle::EnableSubagents => {
             config.enable_subagents = !config.enable_subagents;
-            ConfigMutation::EnableSubagents(config.enable_subagents)
+            config.enable_subagents
         }
         ConfigToggle::AutoCompact => {
             config.auto_compact = !config.auto_compact;
-            ConfigMutation::AutoCompact(config.auto_compact)
+            config.auto_compact
         }
         ConfigToggle::ShowReasoningOutput => {
             config.show_reasoning_output = !config.show_reasoning_output;
-            ConfigMutation::ShowReasoningOutput(config.show_reasoning_output)
+            config.show_reasoning_output
         }
         ConfigToggle::ZenMode => {
             config.zen_mode = !config.zen_mode;
-            ConfigMutation::ZenMode(config.zen_mode)
+            config.zen_mode
         }
         ConfigToggle::WebSearchHosted => {
             config.web_search_hosted = !config.web_search_hosted;
-            ConfigMutation::WebSearchHosted(config.web_search_hosted)
+            config.web_search_hosted
+        }
+        ConfigToggle::XaiImageGeneration => {
+            config.xai_image_generation = !config.xai_image_generation;
+            config.xai_image_generation
         }
     })
 }
 
 pub(super) fn cycle_web_search_provider(
     config_repository: &ConfigRepository,
-) -> anyhow::Result<ConfigMutation> {
+) -> anyhow::Result<String> {
     config_repository.update(|config| {
         config.web_search_provider = config.web_search_provider.next_configurable();
-        ConfigMutation::WebSearchProvider(config.web_search_provider.to_string())
+        config.web_search_provider.to_string()
     })
 }
 

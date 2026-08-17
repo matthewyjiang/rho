@@ -1,6 +1,6 @@
 use super::{
     command_palette::{complete_slash_command, slash_command_args},
-    message_history::transcript_entries_from_messages,
+    message_history::{generated_image_entry, transcript_entries_from_messages},
     paste_burst::normalize_paste,
     tool_output_ui::expandable_tool_entry,
     transcript_events::final_answer_delta,
@@ -407,6 +407,67 @@ fn recovered_session_messages_become_transcript_entries() {
             && card.header_text().contains("src/main.rs")
             && card.status == rho_tools::tool_card::ToolStatus::Error
     ));
+}
+
+// Covers: recovered assistant images become summary cards, not decoded previews.
+// Owner: tui transcript reconstruction
+#[test]
+fn recovered_assistant_images_become_summary_cards() {
+    use rho_providers::model::image_summary;
+    use rho_tools::tool_card::{ToolFact, ToolHeader};
+
+    let image = ImageContent {
+        data: "aW1n".into(),
+        mime_type: "image/png".into(),
+    };
+    let entries = transcript_entries_from_messages(
+        &[Message::Assistant(vec![ContentBlock::Image(image.clone())])],
+        std::path::Path::new(""),
+    );
+    let Entry::Tool(tool) = &entries[0] else {
+        panic!("expected generated image card");
+    };
+    assert_eq!(tool.card.header, ToolHeader::call("image_generation", None));
+    assert!(tool.image.is_none());
+    assert_eq!(
+        tool.card.facts,
+        vec![
+            ToolFact::Text {
+                text: image_summary(&image),
+            },
+            ToolFact::Meta {
+                text: "finished".into(),
+            },
+        ]
+    );
+}
+
+// Covers: a failed live preview still becomes an image card with the error fact.
+// Owner: tui transcript reconstruction
+#[test]
+fn generated_image_entry_records_preview_errors() {
+    use rho_tools::tool_card::{ToolFact, ToolHeader};
+
+    let image = ImageContent {
+        data: "aW1n".into(),
+        mime_type: "image/png".into(),
+    };
+    let Entry::Tool(tool) = generated_image_entry(Err("boom".into()), &image) else {
+        panic!("expected generated image card");
+    };
+    assert_eq!(tool.card.header, ToolHeader::call("image_generation", None));
+    assert!(tool.image.is_none());
+    assert_eq!(
+        tool.card.facts,
+        vec![
+            ToolFact::Error {
+                text: "image preview unavailable: boom".into(),
+            },
+            ToolFact::Meta {
+                text: "finished".into(),
+            },
+        ]
+    );
 }
 
 #[test]

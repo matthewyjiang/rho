@@ -113,7 +113,8 @@ server-side. It is separate from client `web_search`:
   xAI
 - Activity streams as typed `HostedToolActivity` events with `name: "x_search"`
 
-Details: [xAI provider](/providers/xai).
+xAI sessions can also attach hosted `image_generation` (default on; see
+`[xai] image_generation`). Details: [xAI provider](/providers/xai).
 
 ## Related tools
 

@@ -28,13 +28,16 @@ fn unknown_grok_4_5_off_does_not_enable_reasoning_on_the_wire() {
             reasoning_level: ReasoningLevel::Off,
             prompt_cache_key: None,
         },
-        /*hosted_web_search*/ true,
+        XaiHostedTools::ALL,
     )
     .unwrap();
 
     assert!(body.get("reasoning").is_none());
     assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
-    assert_eq!(body["tools"], json!([{ "type": "x_search" }]));
+    assert_eq!(
+        body["tools"],
+        json!([{ "type": "x_search" }, { "type": "image_generation" }])
+    );
     assert_eq!(body["tool_choice"], "auto");
 }
 
@@ -66,7 +69,7 @@ fn responses_body_preserves_tools_cache_key_and_supported_reasoning() {
             reasoning_level: ReasoningLevel::High,
             prompt_cache_key: Some("rho:session"),
         },
-        /*hosted_web_search*/ true,
+        XaiHostedTools::ALL,
     )
     .unwrap();
 
@@ -84,6 +87,7 @@ fn responses_body_preserves_tools_cache_key_and_supported_reasoning() {
                 "strict": false,
             },
             { "type": "x_search" },
+            { "type": "image_generation" },
         ])
     );
     assert_eq!(body["tool_choice"], "auto");
@@ -107,6 +111,11 @@ fn responses_body_uses_hosted_web_search_and_adds_hosted_x_search() {
             description: "ignored client form".into(),
             input_schema: json!({"type": "object"}),
         },
+        ToolSpec {
+            name: "image_generation".into(),
+            description: "ignored client form".into(),
+            input_schema: json!({"type": "object"}),
+        },
     ];
     let profile = reasoning::XaiReasoningProfile::from_metadata("grok-4.5", None);
     let body = build_xai_responses_body(
@@ -120,7 +129,7 @@ fn responses_body_uses_hosted_web_search_and_adds_hosted_x_search() {
             reasoning_level: ReasoningLevel::Off,
             prompt_cache_key: None,
         },
-        /*hosted_web_search*/ true,
+        XaiHostedTools::ALL,
     )
     .unwrap();
 
@@ -129,6 +138,7 @@ fn responses_body_uses_hosted_web_search_and_adds_hosted_x_search() {
         json!([
             { "type": "web_search" },
             { "type": "x_search" },
+            { "type": "image_generation" },
         ])
     );
 }
@@ -152,7 +162,10 @@ fn responses_body_keeps_function_web_search_when_hosted_disabled() {
             reasoning_level: ReasoningLevel::Medium,
             prompt_cache_key: None,
         },
-        /*hosted_web_search*/ false,
+        XaiHostedTools {
+            web_search: false,
+            image_generation: true,
+        },
     )
     .unwrap();
 
@@ -167,6 +180,7 @@ fn responses_body_keeps_function_web_search_when_hosted_disabled() {
                 "strict": false,
             },
             { "type": "x_search" },
+            { "type": "image_generation" },
         ])
     );
 }
@@ -185,12 +199,56 @@ fn responses_body_always_includes_hosted_x_search() {
             reasoning_level: ReasoningLevel::Off,
             prompt_cache_key: None,
         },
-        /*hosted_web_search*/ true,
+        XaiHostedTools::ALL,
     )
     .unwrap();
 
-    assert_eq!(body["tools"], json!([{ "type": "x_search" }]));
+    assert_eq!(
+        body["tools"],
+        json!([{ "type": "x_search" }, { "type": "image_generation" }])
+    );
     assert_eq!(body["tool_choice"], "auto");
+}
+
+#[test]
+fn responses_body_omits_hosted_image_generation_when_disabled() {
+    let tools = [ToolSpec {
+        name: "image_generation".into(),
+        description: "client form kept when hosted is off".into(),
+        input_schema: json!({"type": "object"}),
+    }];
+    let profile = reasoning::XaiReasoningProfile::from_metadata("grok-4.5", None);
+    let body = build_xai_responses_body(
+        "xai",
+        "grok-4.5",
+        &profile,
+        ModelRequest {
+            messages: &[Message::user_text("hello")],
+            tools: &tools,
+            cancellation: Default::default(),
+            reasoning_level: ReasoningLevel::Off,
+            prompt_cache_key: None,
+        },
+        XaiHostedTools {
+            web_search: true,
+            image_generation: false,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        body["tools"],
+        json!([
+            {
+                "type": "function",
+                "name": "image_generation",
+                "description": "client form kept when hosted is off",
+                "parameters": {"type": "object"},
+                "strict": false,
+            },
+            { "type": "x_search" },
+        ])
+    );
 }
 
 #[test]

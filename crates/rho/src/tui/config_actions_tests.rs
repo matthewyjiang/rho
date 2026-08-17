@@ -165,3 +165,40 @@ fn agent_behavior_config_rows_include_classifier_model_and_optional_reasoning() 
         .iter()
         .any(|item| item.value == config_picker::PERMISSION_CLASSIFIER_REASONING_VALUE));
 }
+
+// Covers: xAI image generation lives under Tools and only when the
+// conversation provider is xAI.
+// Owner: tui config picker rows
+#[test]
+fn xai_image_generation_row_is_hidden_until_provider_is_xai() {
+    let mut app = test_app();
+    let config = app.info.services.config_repository.load().unwrap();
+
+    let tools = config_picker::category_picker(
+        config_picker::TOOLS_CATEGORY_VALUE,
+        &app.info.runtime,
+        &config,
+    )
+    .unwrap();
+    assert!(!tools
+        .items
+        .iter()
+        .any(|item| item.value == config_picker::XAI_IMAGE_GENERATION_VALUE));
+
+    app.info.runtime.provider = "xai".into();
+    let tools = config_picker::category_picker(
+        config_picker::TOOLS_CATEGORY_VALUE,
+        &app.info.runtime,
+        &config,
+    )
+    .unwrap();
+    let image_row = tools
+        .items
+        .iter()
+        .find(|item| item.value == config_picker::XAI_IMAGE_GENERATION_VALUE)
+        .expect("image generation row");
+    assert_eq!(
+        image_row.badge.as_ref().map(|badge| badge.text.as_str()),
+        Some("on")
+    );
+}

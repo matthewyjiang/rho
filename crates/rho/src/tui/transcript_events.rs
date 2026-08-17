@@ -23,6 +23,7 @@ use super::{
     },
     App, Entry, FinalAnswerDelta, LiveStreamPreview, ReasoningEntry, StreamKind, ToolEntry,
 };
+use rho_providers::model::ContentBlock;
 
 pub(super) fn final_answer_delta<'a>(emitted_text: &str, answer: &'a str) -> FinalAnswerDelta<'a> {
     match answer.strip_prefix(emitted_text) {
@@ -468,6 +469,19 @@ impl App {
             true
         } else {
             false
+        }
+    }
+
+    pub(super) fn insert_assistant_images(&mut self, content: &[ContentBlock]) {
+        for block in content {
+            let ContentBlock::Image(image) = block else {
+                continue;
+            };
+            let preview =
+                super::feed_image::preview_generated_image(image, self.image_picker.as_ref());
+            self.insert_entry(&super::message_history::generated_image_entry(
+                preview, image,
+            ));
         }
     }
 

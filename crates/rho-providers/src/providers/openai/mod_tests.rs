@@ -810,6 +810,7 @@ fn empty_codex_sse_content_error_includes_stream_summary() {
         "status=completed",
         "service_tier=default",
         "streamed_text_chars=0",
+        "images=0",
         "tool_calls=0",
         "output_items=[reasoning, web_search_call]",
         "events=[response.completed, response.output_item.done]",

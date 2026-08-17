@@ -127,6 +127,10 @@ async fn assembles_messages_extracts_text_and_records_usage_purpose() {
                     arguments: json!({}),
                 }),
                 ContentBlock::Text("second".into()),
+                ContentBlock::Image(rho_sdk::model::ImageContent {
+                    data: "/9j/4AAQ".into(),
+                    mime_type: "image/jpeg".into(),
+                }),
             ]),
         )],
     );
@@ -143,7 +147,7 @@ async fn assembles_messages_extracts_text_and_records_usage_purpose() {
     .await
     .unwrap();
 
-    assert_eq!(result.texts, ["first", "second"]);
+    assert_eq!(result.texts, ["first", "second", "[image: image/jpeg 6 B]"]);
     assert_eq!(
         result.usage,
         ModelUsage {

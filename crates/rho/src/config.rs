@@ -81,6 +81,8 @@ pub struct Config {
     pub web_search_hosted: bool,
     /// Client-side backup backend used when hosted search is off or unsupported.
     pub web_search_provider: SearchProvider,
+    /// Attach xAI's hosted image generation tool on xAI create turns.
+    pub xai_image_generation: bool,
     /// Selects the preferred built-in file edit tool exposed to models.
     ///
     /// [`EditTool::Auto`] resolves a concrete format from the active provider.
@@ -143,6 +145,7 @@ impl Default for Config {
             favorite_models: Vec::new(),
             web_search_hosted: true,
             web_search_provider: SearchProvider::Auto,
+            xai_image_generation: true,
             edit_tool: EditTool::default(),
             check_for_updates: true,
             enable_subagents: true,

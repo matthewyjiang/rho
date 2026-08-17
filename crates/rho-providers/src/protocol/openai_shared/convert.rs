@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use serde::Deserialize;
 use serde_json::json;
 
@@ -11,6 +13,7 @@ use crate::protocol::openai_chat::{
     ChatResponse, OpenAiFunctionCall, OpenAiMessage, OpenAiTool, OpenAiToolCall, OpenAiToolFunction,
 };
 
+use super::image_generation::{is_image_generation_replay, restore_image_generation_results};
 use super::tool_calls::{finalize_chat_tool_calls, ChatToolCallPolicy, RawChatToolCall};
 
 /// Provider-context kind for chat-completions `reasoning_content`.
@@ -295,15 +298,38 @@ pub(crate) fn codex_input_items_for_target(
 
 fn append_codex_prepared_assistant(
     input: &mut Vec<serde_json::Value>,
-    prepared: PreparedAssistant,
+    mut prepared: PreparedAssistant,
 ) -> Result<(), ModelError> {
+    restore_image_generation_results(&mut prepared.replay_context, &prepared.content);
+    let content = portable_assistant_blocks(&prepared);
     let mut assistant_items = Vec::new();
     // `prepare_assistant` already suppresses portable fallback when opaque
     // context can replay, so converters only append the lowered content.
-    append_codex_assistant(&mut assistant_items, &prepared.content)?;
+    append_codex_assistant(&mut assistant_items, &content)?;
     insert_replay_items(&mut assistant_items, prepared.replay_context);
     input.extend(assistant_items);
     Ok(())
+}
+
+/// Native `image_generation_call` replay already carries the image, so those
+/// assistant Image blocks must not also become omitted-image placeholders.
+fn portable_assistant_blocks(prepared: &PreparedAssistant) -> Cow<'_, [ContentBlock]> {
+    if prepared
+        .replay_context
+        .iter()
+        .any(is_image_generation_replay)
+    {
+        Cow::Owned(
+            prepared
+                .content
+                .iter()
+                .filter(|block| !matches!(block, ContentBlock::Image(_)))
+                .cloned()
+                .collect(),
+        )
+    } else {
+        Cow::Borrowed(&prepared.content)
+    }
 }
 
 fn insert_replay_items(
