@@ -141,8 +141,7 @@ Differences worth knowing before you choose it:
 The advisor receives a rendered transcript, not a free-form prompt from the
 executor:
 
-- the executor system prompt, including which model the `advisor` tool
-  consults when the mode is on
+- the executor system prompt
 - your requests
 - assistant messages, tool calls, and tool results
 - the live turn that issued the call
