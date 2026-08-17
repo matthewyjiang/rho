@@ -6,11 +6,15 @@ use ratatui::{
 };
 
 use super::{
+    advisor_status::AdvisorStatus,
     approval_lines, char_prefix_display_width,
+    composer_chrome::ComposerDividerSlot,
     composer_layout::{content_width, prompt_width, PROMPT_PREFIX},
-    config_number_input_lines, display_width, file_picker,
+    config_number_input_lines, display_width,
+    divider::{labeled_divider_line, DividerCaption},
+    file_picker,
     inline_choice::inline_choice_lines,
-    inline_shell, input_cursor_position, input_lines, labeled_divider_line,
+    inline_shell, input_cursor_position, input_lines,
     login::{interactive_pending_lines, secret_input_lines},
     picker_lines, questionnaire_cursor_position, questionnaire_lines, styled_line,
     text_input::text_input_lines,
@@ -19,35 +23,40 @@ use super::{
 };
 
 impl App {
-    pub(super) fn divider_line(&self, width: usize, shell_label: bool) -> Line<'static> {
+    pub(super) fn divider_line(&self, width: usize, slot: ComposerDividerSlot) -> Line<'static> {
         let width = width.max(1);
-        let (style, labels) = match self.input_ui.composer() {
-            ComposerMode::Input => {
-                let labels = shell_label
-                    .then_some(self.input_ui.shell_mode())
-                    .flatten()
-                    .map(inline_shell::mode_divider_labels);
-                (
-                    Theme::reasoning_input_border(self.info.runtime.reasoning),
-                    labels,
-                )
-            }
+        let style = match self.input_ui.composer() {
+            ComposerMode::Input => Theme::reasoning_input_border(self.info.runtime.reasoning),
             ComposerMode::Picker(_)
             | ComposerMode::Limits(_)
             | ComposerMode::Questionnaire(_)
             | ComposerMode::Approval(_)
-            | ComposerMode::InlineChoice(_) => (Theme::input_prompt(), None),
+            | ComposerMode::InlineChoice(_) => Theme::input_prompt(),
             ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::TextInput(_)
-            | ComposerMode::InteractivePending(_) => (Theme::dim(), None),
+            | ComposerMode::InteractivePending(_) => Theme::dim(),
         };
-        if let Some(labels) = labels {
-            if let Some(line) = labeled_divider_line(labels, style, width) {
-                return line;
-            }
-        }
-        Line::styled("─".repeat(width), style)
+        let left = (slot == ComposerDividerSlot::Top
+            && matches!(self.input_ui.composer(), ComposerMode::Input))
+        .then(|| self.input_ui.shell_mode())
+        .flatten()
+        .map(inline_shell::mode_divider_labels)
+        .map(|candidates| DividerCaption { candidates, style });
+        let advisor = (slot == ComposerDividerSlot::Top)
+            .then(|| AdvisorStatus::from_runtime(&self.info.runtime));
+        let advisor_text = advisor.as_ref().and_then(AdvisorStatus::indicator_text);
+        let advisor_style = if advisor.as_ref().is_some_and(AdvisorStatus::needs_model) {
+            Theme::warning()
+        } else {
+            Theme::reasoning_input_border(self.info.runtime.reasoning)
+        };
+        let advisor_label = advisor_text.as_deref();
+        let right = advisor_label.as_ref().map(|text| DividerCaption {
+            candidates: std::slice::from_ref(text),
+            style: advisor_style,
+        });
+        labeled_divider_line(left, right, style, width)
     }
 
     /// Composer rows for a `width` by `viewport_height` screen.

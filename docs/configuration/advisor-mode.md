@@ -50,9 +50,10 @@ Advisor mode needs both switches:
 1. `advisor_mode = true`
 2. an explicit advisor model under `[internal_agents.advisor]`
 
-With the mode on and no model, Rho shows `advisor: no model` in the status line
-and does not offer the tool. The advisor never falls back to the conversation
-model, because a reviewer that mirrors the executor adds nothing.
+With the mode on and no model, Rho shows `advisor: no model` on the top
+composer divider and does not offer the tool. The advisor never falls back to
+the conversation model, because a reviewer that mirrors the executor adds
+nothing.
 
 Ways to enable it:
 
@@ -169,10 +170,11 @@ declares done.
 
 ## In the TUI
 
-While advisor mode is on, the status line names the reviewing model, for
-example `advisor: anthropic/claude-fable-5`, or `advisor: claude-code/opus`
-when the advisor runs on Claude Code. It stays out of the status line
-while the mode is off. An in-flight `advisor` call uses an agent-style card:
+While advisor mode is on, the top composer divider names the reviewing model
+on the right, for example `advisor: anthropic/claude-fable-5`, or
+`advisor: claude-code/opus` when the advisor runs on Claude Code. It stays off
+that divider while the mode is off. An in-flight `advisor` call uses an
+agent-style card:
 `advisor  responding` on the header with streamed guidance below. Finished
 advice stays on the same card as `advisor  completed`, collapsed past the
 [tool output limit](/configuration#tool-output-limit) and expandable with

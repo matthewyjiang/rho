@@ -55,6 +55,36 @@ auth = "xai-api-key"
     Ok(())
 }
 
+/// The composer top divider, the row of `─` immediately above the prompt.
+fn top_composer_divider(harness: &PtyHarness) -> Result<String> {
+    let rows = harness.screen().rows_text();
+    let composer = rows.iter().position(|row| {
+        let trimmed = row.trim_start();
+        trimmed.starts_with("> ") || trimmed.contains("Type a message")
+    });
+    let Some(composer) = composer else {
+        return Err(anyhow::anyhow!(
+            "composer prompt not found:\n{}",
+            harness.screen().debug_dump()
+        ));
+    };
+    rows[..composer]
+        .iter()
+        .rev()
+        .find(|row| is_rule_row(row))
+        .map(|row| row.to_string())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "composer top divider not found:\n{}",
+                harness.screen().debug_dump()
+            )
+        })
+}
+
+fn is_rule_row(row: &str) -> bool {
+    row.trim_start().starts_with('─')
+}
+
 /// The statusline row, found by the permission field that never drops.
 fn status_row(harness: &PtyHarness) -> Result<String> {
     harness
@@ -72,11 +102,11 @@ fn status_row(harness: &PtyHarness) -> Result<String> {
         })
 }
 
-/// Polls the statusline until `check` passes or `timeout` elapses.
+/// Polls the top composer divider until `check` passes or `timeout` elapses.
 ///
-/// The toast can land a frame before the bottom statusline repaints after a
-/// mode change. One-shot reads flake on slower PTY hosts; wait for the row.
-fn wait_for_statusline(
+/// The toast can land a frame before the divider repaints after a mode change.
+/// One-shot reads flake on slower PTY hosts; wait for the row.
+fn wait_for_advisor_divider(
     harness: &mut PtyHarness,
     timeout: WaitTimeout,
     check: impl Fn(&str) -> bool,
@@ -85,7 +115,7 @@ fn wait_for_statusline(
     let deadline = Instant::now() + timeout.duration;
     loop {
         harness.poll(Duration::from_millis(25));
-        let last = status_row(harness).unwrap_or_default();
+        let last = top_composer_divider(harness).unwrap_or_default();
         if check(&last) {
             return Ok(());
         }
@@ -99,32 +129,49 @@ fn wait_for_statusline(
     }
 }
 
-fn assert_statusline_has_no_advisor(harness: &mut PtyHarness) -> Result<()> {
-    wait_for_statusline(
+fn assert_statusline_has_no_advisor(harness: &PtyHarness) -> Result<()> {
+    let row = status_row(harness)?;
+    ensure!(
+        !row.contains("advisor"),
+        "advisor must not remain on the statusline:\n{row}\n{}",
+        harness.screen().debug_dump()
+    );
+    Ok(())
+}
+
+fn assert_advisor_indicator_absent(harness: &mut PtyHarness) -> Result<()> {
+    wait_for_advisor_divider(
         harness,
         SETTLE,
         |row| !row.is_empty() && !row.contains("advisor"),
-        |row| format!("advisor mode is off, so the statusline must not claim a reviewer:\n{row}"),
-    )
+        |row| {
+            format!(
+                "advisor mode is off, so the composer divider must not claim a reviewer:\n{row}"
+            )
+        },
+    )?;
+    assert_statusline_has_no_advisor(harness)
 }
 
-fn assert_statusline_names_the_advisor_model(harness: &mut PtyHarness) -> Result<()> {
+fn assert_advisor_indicator_names_the_model(harness: &mut PtyHarness) -> Result<()> {
     let expected = format!("advisor: {ADVISOR_MODEL}");
-    wait_for_statusline(
+    wait_for_advisor_divider(
         harness,
         SETTLE,
         move |row| row.contains(&expected),
-        |row| format!("statusline must name the model reviewing the session:\n{row}"),
-    )
+        |row| format!("composer divider must name the model reviewing the session:\n{row}"),
+    )?;
+    assert_statusline_has_no_advisor(harness)
 }
 
-fn assert_statusline_warns_about_the_missing_model(harness: &mut PtyHarness) -> Result<()> {
-    wait_for_statusline(
+fn assert_advisor_indicator_warns_about_the_missing_model(harness: &mut PtyHarness) -> Result<()> {
+    wait_for_advisor_divider(
         harness,
         SETTLE,
         |row| row.contains("advisor: no model"),
         |row| format!("advisor mode with no model must read as unusable:\n{row}"),
-    )
+    )?;
+    assert_statusline_has_no_advisor(harness)
 }
 
 /// The advisor takes no arguments, so its card is the verb alone.
@@ -157,7 +204,7 @@ pub(super) const ADVISOR_COMMAND_STEPS: &[Step] = &[
         text: "gpt-5.5",
         timeout: STARTUP,
     },
-    Step::Custom(assert_statusline_has_no_advisor),
+    Step::Custom(assert_advisor_indicator_absent),
     Step::Phase("dismiss_model_prompt"),
     Step::SubmitText("/advisor on"),
     Step::WaitText {
@@ -170,7 +217,7 @@ pub(super) const ADVISOR_COMMAND_STEPS: &[Step] = &[
         text: "advisor mode stays off",
         timeout: SETTLE,
     },
-    Step::Custom(assert_statusline_has_no_advisor),
+    Step::Custom(assert_advisor_indicator_absent),
     Step::Phase("choose_advisor_model"),
     Step::SubmitText("/advisor on"),
     Step::WaitText {
@@ -191,7 +238,7 @@ pub(super) const ADVISOR_COMMAND_STEPS: &[Step] = &[
         text: "advisor: xai/grok-4.5",
         timeout: SETTLE,
     },
-    Step::Custom(assert_statusline_names_the_advisor_model),
+    Step::Custom(assert_advisor_indicator_names_the_model),
     Step::Phase("config_row_turns_it_off"),
     Step::SubmitText("/config"),
     Step::WaitText {
@@ -225,7 +272,7 @@ pub(super) const ADVISOR_COMMAND_STEPS: &[Step] = &[
         text: "Type a message",
         timeout: SETTLE,
     },
-    Step::Custom(assert_statusline_has_no_advisor),
+    Step::Custom(assert_advisor_indicator_absent),
     Step::Phase("model_survives_the_round_trip"),
     // The advisor model was chosen once, so turning the mode on again must not
     // ask for it a second time.
@@ -238,7 +285,7 @@ pub(super) const ADVISOR_COMMAND_STEPS: &[Step] = &[
         text: "advisor: xai/grok-4.5",
         timeout: SETTLE,
     },
-    Step::Custom(assert_statusline_names_the_advisor_model),
+    Step::Custom(assert_advisor_indicator_names_the_model),
     Step::ExitCommand,
 ];
 
@@ -255,7 +302,7 @@ pub(super) const ADVISOR_MISSING_MODEL_STEPS: &[Step] = &[
         text: "advisor: no model",
         timeout: STARTUP,
     },
-    Step::Custom(assert_statusline_warns_about_the_missing_model),
+    Step::Custom(assert_advisor_indicator_warns_about_the_missing_model),
     Step::Phase("command_asks_for_a_model"),
     Step::SubmitText("/advisor on"),
     Step::WaitText {
@@ -267,7 +314,7 @@ pub(super) const ADVISOR_MISSING_MODEL_STEPS: &[Step] = &[
         text: "Type a message",
         timeout: SETTLE,
     },
-    Step::Custom(assert_statusline_warns_about_the_missing_model),
+    Step::Custom(assert_advisor_indicator_warns_about_the_missing_model),
     Step::Phase("config_row_asks_for_a_model"),
     Step::SubmitText("/config"),
     Step::WaitText {
@@ -322,7 +369,7 @@ pub(super) const ADVISOR_REVIEW_STEPS: &[Step] = &[
         text: "advisor: xai/grok-4.5",
         timeout: STARTUP,
     },
-    Step::Custom(assert_statusline_names_the_advisor_model),
+    Step::Custom(assert_advisor_indicator_names_the_model),
     Step::Phase("advice_reaches_the_executor"),
     Step::SubmitText("fixture advisor"),
     Step::WaitText {

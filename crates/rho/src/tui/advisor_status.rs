@@ -38,9 +38,9 @@ impl AdvisorStatus {
         )
     }
 
-    /// Status-line text, or `None` while advisor mode is off. Off is the
-    /// default, so it stays out of the row.
-    pub(super) fn statusline_text(&self) -> Option<String> {
+    /// Short chrome label, or `None` while advisor mode is off. Off is the
+    /// default, so it stays out of the composer divider.
+    pub(super) fn indicator_text(&self) -> Option<String> {
         match self {
             Self::Off => None,
             Self::Reviewing { model } => Some(format!("advisor: {model}")),

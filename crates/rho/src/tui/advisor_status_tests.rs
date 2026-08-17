@@ -68,15 +68,15 @@ fn each_advisor_state_reads_the_same_way_on_every_surface() {
         ),
     ];
 
-    for (status, (statusline, badge, detail, needs_model)) in cases {
+    for (status, (indicator, badge, detail, needs_model)) in cases {
         assert_eq!(
             (
-                status.statusline_text().as_deref(),
+                status.indicator_text().as_deref(),
                 status.badge().as_str(),
                 status.detail().as_str(),
                 status.needs_model(),
             ),
-            (statusline, badge, detail, needs_model),
+            (indicator, badge, detail, needs_model),
             "{status:?}"
         );
     }
