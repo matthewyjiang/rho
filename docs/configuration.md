@@ -166,7 +166,7 @@ Rho resolves aliases to concrete ids before any model-specific behavior, holds n
 
 `~/.rho/models.toml` overrides catalog fields for one model. `RHO_HOME` moves this file with the rest of `~/.rho`. `RHO_MODELS_PATH` selects a different file.
 
-Without this file, Rho uses the catalog window. For GPT-5.6 that is the [models.dev](https://models.dev/) input limit. Set `usable_context_window` to raise or cap the budget Rho shows and uses for [auto compaction](#auto-compaction):
+Without this file, Rho uses the catalog window. For GPT-5.5 and GPT-5.6 that is the [models.dev](https://models.dev/) input limit. Codex GPT-5.5 keeps a 400k effective window because that is the product limit. Set `usable_context_window` to raise or cap the budget Rho shows and uses for [auto compaction](#auto-compaction):
 
 ```toml
 [models."openai-codex/gpt-5.6-sol"]
