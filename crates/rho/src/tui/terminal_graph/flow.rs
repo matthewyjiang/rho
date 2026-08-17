@@ -143,7 +143,13 @@ pub(in crate::tui) fn layout_canvas(
     let mut box_w: Vec<usize> = (0..n)
         .map(|i| match &extras[i] {
             NodeExtra::Frame(sub) => {
-                let title_w = super::fit_label(&graph.nodes[i].label, wrap_width).width();
+                // Reserve the real title when the pane can hold it. wrap_width
+                // is a node-label compaction knob, not a title budget; using it
+                // here ellipsized group titles even in a wide pane.
+                let title_w = match max_width {
+                    Some(max) => graph.nodes[i].label.width().min(max.saturating_sub(4)),
+                    None => graph.nodes[i].label.width(),
+                };
                 (sub.w + 2).max(title_w + 4)
             }
             NodeExtra::Compartments(compartments) => {

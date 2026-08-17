@@ -397,12 +397,15 @@ pub(in crate::tui) fn route_back_lr(
 }
 
 fn place_label(canvas: &mut Canvas, label: &str, row: usize, start_x: usize) {
+    place_label_line(canvas, &fit_label(label, MAX_LABEL), row, start_x);
+}
+
+fn place_label_line(canvas: &mut Canvas, label: &str, row: usize, start_x: usize) {
     if row >= canvas.h {
         return;
     }
-    let text = fit_label(label, MAX_LABEL);
     let mut x = start_x;
-    for grapheme in text.graphemes(true) {
+    for grapheme in label.graphemes(true) {
         let grapheme_width = grapheme.width();
         if grapheme_width == 0 {
             canvas.set_grapheme(x, row, grapheme, Cls::EdgeLabel);
