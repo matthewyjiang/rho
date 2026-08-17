@@ -41,6 +41,11 @@ fn malformed_catalog_rows_stay_lenient() {
                     "limit": { "context": "big", "output": 128 },
                     "cost": "free",
                     "reasoning_options": { "type": "effort" }
+                },
+                "bad-option": {
+                    "name": "Bad option",
+                    "reasoning": true,
+                    "reasoning_options": ["toggle"]
                 }
             }
         },
@@ -72,6 +77,12 @@ fn malformed_catalog_rows_stay_lenient() {
             sdk_package: Some("@ai-sdk/openai".to_string()),
         }
     );
+
+    let bad_option = model_metadata_from_api(&api, "openai", "bad-option").unwrap();
+    assert_eq!(bad_option.display_name, Some("Bad option".to_string()));
+    assert_eq!(bad_option.supported_reasoning_levels, None);
+    assert!(!bad_option.reasoning_capabilities_known);
+    assert!(!bad_option.reasoning_metadata_complete);
 }
 
 // Covers: first effort option wins; a missing values list still uses toggle
