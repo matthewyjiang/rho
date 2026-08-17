@@ -135,7 +135,13 @@ impl<'de> Deserialize<'de> for ModelsDevProvider {
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
                         "npm" => provider.npm = map.next_value::<LenientOptString>()?.0,
-                        "models" => provider.models = map.next_value::<LenientModelMap>()?.0,
+                        "models" => {
+                            provider.models = map
+                                .next_value::<SkipInvalid<ModelMap>>()?
+                                .0
+                                .map(|models| models.0)
+                                .unwrap_or_default();
+                        }
                         _ => {
                             let _ = map.next_value::<IgnoredAny>()?;
                         }
@@ -174,19 +180,6 @@ impl<'de> Deserialize<'de> for ModelMap {
         }
 
         deserializer.deserialize_map(ModelsVisitor)
-    }
-}
-
-struct LenientModelMap(HashMap<String, ModelsDevModel>);
-
-impl<'de> Deserialize<'de> for LenientModelMap {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Ok(Self(
-            SkipInvalid::<ModelMap>::deserialize(deserializer)?
-                .0
-                .map(|models| models.0)
-                .unwrap_or_default(),
-        ))
     }
 }
 
