@@ -83,4 +83,4 @@ Supported GPT-5.4, GPT-5.5, and GPT-5.6 Codex models can use OpenAI's faster pri
 
 - As a subscription auth mode, the statusline estimates an equivalent API cost from [models.dev](https://models.dev/) pricing (including long-context rate tiers when available) and labels it `(sub)`.
 - [`/limits`](/interactive-tui#commands) reports the usage windows for Codex OAuth when you are logged in.
-- Pricing-sensitive models such as `openai-codex/gpt-5.6-sol` use safer effective context windows below their advertised maximums to avoid long-context pricing thresholds.
+- Context windows come from cached model metadata. Set `usable_context_window` in `~/.rho/models.toml` to raise or cap a model. See [local model metadata](/configuration#local-model-metadata).

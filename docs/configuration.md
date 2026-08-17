@@ -24,6 +24,7 @@ flowchart TD
 | Edit tool | `[behavior].edit_tool` or `/config` → **Tools** |
 | MCP servers | `[mcp.servers]`; inspect with `/mcp` or `rho mcp list` — see [Model Context Protocol](/integrations/mcp) |
 | Auto compaction | `[compaction]` or `/config` → **Context & limits** |
+| Per-model context or reasoning | `~/.rho/models.toml` |
 | Keybindings | `[keybindings]` (restart required) |
 
 Secrets are never stored in config. See [authentication and models](/authentication-and-models).
@@ -99,7 +100,7 @@ Permission modes are application policy checks, not an operating-system sandbox.
 
 `reasoning` is the user-facing thinking level. Supported values are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. For supported OpenAI Responses providers, `off` omits the reasoning object and other levels send `reasoning.summary = "auto"` with the matching effort value.
 
-Rho reads each model's available effort values from cached [models.dev](https://models.dev/) metadata. The interactive reasoning control skips levels the current model does not advertise, so models without `minimal`, `xhigh`, or `max` do not expose those choices. `off` remains available for every model: Rho omits reasoning by default, or sends `effort: "none"` when the model explicitly advertises that value. Local Ollama and [config-defined OpenAI-compatible hosts](/providers/openai-compatible) send `reasoning_effort`, including `"none"`, when capability metadata is unavailable or the model supports reasoning. Rho omits the field for models whose metadata reports reasoning as not configurable, because those APIs treat a missing field as thinking on. Switching models also normalizes an unavailable selection to the closest lower supported level. When capability metadata is unavailable or uses an unsupported reasoning scheme, Rho preserves the full level list rather than guessing. You can override metadata locally with `supported_reasoning_levels = ["off", "low", "medium", "high"]` in a model entry in `~/.rho/models.toml` (or the file selected by `RHO_MODELS_PATH`).
+Rho reads each model's available effort values from cached [models.dev](https://models.dev/) metadata. The interactive reasoning control skips levels the current model does not advertise, so models without `minimal`, `xhigh`, or `max` do not expose those choices. `off` remains available for every model: Rho omits reasoning by default, or sends `effort: "none"` when the model explicitly advertises that value. Local Ollama and [config-defined OpenAI-compatible hosts](/providers/openai-compatible) send `reasoning_effort`, including `"none"`, when capability metadata is unavailable or the model supports reasoning. Rho omits the field for models whose metadata reports reasoning as not configurable, because those APIs treat a missing field as thinking on. Switching models also normalizes an unavailable selection to the closest lower supported level. When capability metadata is unavailable or uses an unsupported reasoning scheme, Rho preserves the full level list rather than guessing. You can override metadata locally with `supported_reasoning_levels = ["off", "low", "medium", "high"]` in a model entry in `~/.rho/models.toml`. See [Local model metadata](#local-model-metadata).
 
 `show_reasoning_output` controls whether streamed reasoning text is displayed and stored in the TUI transcript. When reasoning text is hidden, the TUI shows `Thinking...` in its place until the reasoning phase finishes, then replaces it with a `Thought for …` summary. When reasoning text is shown, the same summary is appended after the reasoning block. Durations use a compact progressive format such as `3.2s`, `2m 5s`, or `1h 2m`. It defaults to `true`. Changing it from `/config` applies immediately: later reasoning deltas in the current turn follow the new setting, and an in-flight live reasoning preview is cleared when hiding.
 
@@ -160,6 +161,21 @@ model = "@fast"
 The same syntax works with `rho --model @deep`, `/model @deep` in the interactive TUI, and `model: @deep` in [agent definition frontmatter](/subagents). Updating a model is then a one-line change to the alias table rather than an edit per file.
 
 Rho resolves aliases to concrete ids before any model-specific behavior, holds no opinion about which model a name should map to, and never rewrites your mapping. A concrete model id is always interpreted literally, even when an alias has the same name. The `/config` category browser shows the active mapping under **Models & reasoning**, and saving config preserves the `@deep` reference rather than its expansion while the selected concrete model still matches. Alias values must be concrete models and therefore cannot begin with `@`. Every provider-qualified alias is validated when configuration loads, including aliases that are not currently selected.
+
+## Local model metadata
+
+`~/.rho/models.toml` overrides catalog fields for one model. `RHO_HOME` moves this file with the rest of `~/.rho`. `RHO_MODELS_PATH` selects a different file.
+
+Without this file, Rho uses the catalog window. For GPT-5.5 and GPT-5.6 that is the [models.dev](https://models.dev/) input limit. Codex GPT-5.5 keeps a 400k effective window because that is the product limit. Set `usable_context_window` to raise or cap the budget Rho shows and uses for [auto compaction](#auto-compaction):
+
+```toml
+[models."openai-codex/gpt-5.6-sol"]
+usable_context_window = 272000
+```
+
+The key is `provider/model`. `usable_context_window` is the budget Rho displays and compacts against. You can also set `effective_context_window`. The same file can pin `supported_reasoning_levels`. Local values win over catalog data. Restart Rho or switch models after you edit the file.
+
+The catalog window can sit above a model's long-context price tier. Rho does not clamp it.
 
 ## Internal agent models
 
@@ -242,7 +258,7 @@ For `openai-codex` and API-key `openai`, Rho prefers OpenAI server-side compacti
 
 Auto compaction affects only future model context. Session files remain append-only and keep the original transcript entries, then append a replacement-history entry used for resume. It is not a privacy or deletion feature.
 
-Model metadata supplies the effective context window when available. Pricing-sensitive models such as `openai/gpt-5.6-sol` and `openai-codex/gpt-5.6-sol` use safer effective windows below the advertised maximum to avoid long-context pricing thresholds.
+Model metadata supplies the context window when available. Override a model's window in `~/.rho/models.toml`. See [Local model metadata](#local-model-metadata).
 
 ## Tool output limit
 

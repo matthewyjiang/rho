@@ -55,4 +55,4 @@ Provide `OPENAI_API_KEY` in the automation environment or log in once through th
 ## Notes
 
 - OpenAI API-key requests use the Chat Completions API and do not currently send a [reasoning](/configuration#reasoning-options) configuration.
-- Pricing-sensitive models such as `openai/gpt-5.6-sol` use safer effective context windows below their advertised maximums to avoid long-context pricing thresholds.
+- Context windows come from cached model metadata. Set `usable_context_window` in `~/.rho/models.toml` to raise or cap a model. See [local model metadata](/configuration#local-model-metadata).
