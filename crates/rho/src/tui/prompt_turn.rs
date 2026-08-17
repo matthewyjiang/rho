@@ -587,6 +587,7 @@ impl App {
                 self.turn.stop_loading();
                 self.finish_streams();
                 self.insert_final_answer_suffix(outcome.text());
+                self.insert_assistant_images(outcome.content());
                 if failed_turn.generate_session_title_after_completion {
                     self.start_session_title_generation(
                         &failed_turn.session_title_user_message(),

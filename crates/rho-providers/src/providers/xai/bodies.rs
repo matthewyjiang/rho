@@ -55,21 +55,30 @@ fn to_xai_responses_tool(
 
 /// Maps client tool specs onto the xAI Responses tools array.
 ///
-/// `x_search` is an xAI-hosted server-side tool for searching X (x.com). It is
-/// independent of the client `web_search` tool and is attached as a provider
-/// amenity on every xAI create turn, including when the client tool list is
-/// empty or restricted. It disappears as soon as the session switches away
-/// from xAI. Stock Rho never registers a client tool named `x_search`; any
-/// colliding custom function of that name is dropped so only the hosted form
-/// is advertised.
-fn xai_responses_tools(tools: &[ToolSpec], hosted_web_search: bool) -> Vec<Value> {
+/// Hosted `x_search` and `image_generation` are xAI server-side amenities,
+/// independent of client tools. `x_search` is attached on every create turn.
+/// `image_generation` is attached when the host enables it. Both disappear as
+/// soon as the session switches away from xAI. Stock Rho never registers
+/// client tools with those names. A colliding custom `x_search` is always
+/// dropped. A colliding custom `image_generation` is dropped only while the
+/// hosted tool is advertised.
+fn xai_responses_tools(
+    tools: &[ToolSpec],
+    hosted_web_search: bool,
+    hosted_image_generation: bool,
+) -> Vec<Value> {
     let mut out = tools
         .iter()
-        .filter(|tool| tool.name != "x_search")
+        .filter(|tool| {
+            tool.name != "x_search" && !(hosted_image_generation && tool.name == "image_generation")
+        })
         .cloned()
         .map(|tool| to_xai_responses_tool(tool, ToolStrictness::Explicit(false), hosted_web_search))
         .collect::<Vec<_>>();
     out.push(json!({ "type": "x_search" }));
+    if hosted_image_generation {
+        out.push(json!({ "type": "image_generation" }));
+    }
     out
 }
 
@@ -83,8 +92,9 @@ pub(super) fn build_xai_responses_body(
     reasoning: &reasoning::XaiReasoningProfile,
     request: ModelRequest<'_>,
     hosted_web_search: bool,
+    hosted_image_generation: bool,
 ) -> Result<Value, ModelError> {
-    let tools = xai_responses_tools(request.tools, hosted_web_search);
+    let tools = xai_responses_tools(request.tools, hosted_web_search, hosted_image_generation);
     let XaiCreateLowered {
         instructions,
         input,
@@ -98,7 +108,7 @@ pub(super) fn build_xai_responses_body(
         "stream": true,
         "include": ["reasoning.encrypted_content"],
     });
-    // Hosted x_search is always present on xAI create turns.
+    // Hosted x_search is always present. Image generation is host-gated.
     body["tools"] = json!(tools);
     body["tool_choice"] = json!("auto");
     if !instructions.is_empty() {

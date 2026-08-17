@@ -207,6 +207,11 @@ pub(super) fn parse_settings(text: &str) -> anyhow::Result<(Config, Vec<ConfigWa
             brave: group.brave_api_key.and_then(non_empty_secret),
         };
     }
+    if let Some(group) = file.xai {
+        if let Some(image_generation) = group.image_generation {
+            cfg.xai_image_generation = image_generation;
+        }
+    }
     if let Some(group) = file.behavior {
         if let Some(value) = group.check_for_updates {
             cfg.check_for_updates = value;
@@ -301,6 +306,7 @@ struct PartialConfig {
     title: Option<PartialTitleConfig>,
     internal_agents: Option<BTreeMap<String, PartialInternalAgentModelConfig>>,
     web_search: Option<PartialWebSearchConfig>,
+    xai: Option<PartialXaiConfig>,
     behavior: Option<PartialBehaviorConfig>,
     keybindings: Option<Keybindings>,
     prompt_templates: Option<crate::prompt_templates::PromptTemplates>,
@@ -656,6 +662,12 @@ struct PartialWebSearchConfig {
     openai_api_key: Option<String>,
     exa_api_key: Option<String>,
     brave_api_key: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PartialXaiConfig {
+    image_generation: Option<bool>,
 }
 
 #[derive(Deserialize)]

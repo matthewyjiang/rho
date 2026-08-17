@@ -143,7 +143,8 @@ pub(crate) async fn run_one_shot_with_provider(
             .into_iter()
             .filter_map(|block| match block {
                 ContentBlock::Text(text) => Some(text),
-                ContentBlock::Image(_) | ContentBlock::ToolCall(_) => None,
+                ContentBlock::Image(image) => Some(format!("[image: {}]", image.mime_type)),
+                ContentBlock::ToolCall(_) => None,
             })
             .collect(),
         usage,

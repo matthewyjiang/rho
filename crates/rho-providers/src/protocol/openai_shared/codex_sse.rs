@@ -8,11 +8,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use futures_util::StreamExt;
 
 use crate::{
-    model::{ContentBlock, ModelError, ModelEvent, ModelResponse},
+    model::{ContentBlock, ImageContent, ModelError, ModelEvent, ModelResponse},
     provider_backend::line_decoder::LineDecoder,
 };
 use rho_sdk::model::ToolCall;
 
+use super::compact::COMPACTION_OUTPUT_ITEM_KIND;
 use super::convert::{extract_response_text, ResponsesResponse};
 use super::stream::{line_decode_error, sse_data};
 use super::usage::{extract_usage_report, GenerationTokenContext, HiddenReasoningRisk};
@@ -88,6 +89,7 @@ pub(crate) struct CodexSseState {
     pub(crate) text: String,
     pub(crate) completed_text: Option<String>,
     pub(crate) tool_calls: Vec<ToolCall>,
+    pub(crate) images: Vec<ImageContent>,
     pub(crate) response_id: Option<String>,
     pub(crate) service_tier: Option<String>,
     pub(crate) output_items: Vec<serde_json::Value>,
@@ -124,7 +126,7 @@ impl CodexSseState {
                 .completed_text
                 .as_ref()
                 .is_some_and(|text| !text.is_empty());
-        if !has_text && self.tool_calls.is_empty() {
+        if !has_text && self.tool_calls.is_empty() && self.images.is_empty() {
             return Err(self.missing_response_content_error());
         }
 
@@ -137,6 +139,7 @@ impl CodexSseState {
         if !text.is_empty() {
             blocks.push(ContentBlock::Text(text));
         }
+        blocks.extend(self.images.into_iter().map(ContentBlock::Image));
         blocks.extend(self.tool_calls.into_iter().map(ContentBlock::ToolCall));
         Ok(CodexSseResponse {
             response: ModelResponse::Assistant(blocks),
@@ -169,6 +172,7 @@ impl CodexSseState {
             parts.push(format!("service_tier={service_tier}"));
         }
         parts.push(format!("streamed_text_chars={}", self.text.chars().count()));
+        parts.push(format!("images={}", self.images.len()));
         parts.push(format!("tool_calls={}", self.tool_calls.len()));
         let item_types = summarize_output_item_types(&self.output_items);
         if item_types.is_empty() {
@@ -299,6 +303,81 @@ fn emit_codex_search_activity(
         on_event(event)?;
     }
     Ok(())
+}
+
+fn emit_image_generation_activity(
+    item: &serde_json::Value,
+    state: &mut CodexSseState,
+    on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
+) -> Result<(), ModelError> {
+    if item.get("type").and_then(|value| value.as_str()) != Some("image_generation_call") {
+        return Ok(());
+    }
+    let detail = item
+        .get("prompt")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+        .map(|value| truncate_detail(value, DETAIL_MAX_CHARS))
+        .unwrap_or_default();
+    let event = ModelEvent::hosted_tool_activity("image_generation", detail);
+    let key = codex_search_activity_key(item, &event);
+    if !state.emitted_search_keys.insert(key) {
+        return Ok(());
+    }
+    if let Some(on_event) = on_event.as_mut() {
+        on_event(event)?;
+    }
+    Ok(())
+}
+
+fn persist_image_generation_item(
+    item: &serde_json::Value,
+    position: Option<usize>,
+    state: &mut CodexSseState,
+    on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
+) -> Result<(), ModelError> {
+    if item.get("type").and_then(|value| value.as_str()) != Some("image_generation_call") {
+        return Ok(());
+    }
+    let Some(image) = image_from_generation_call(item) else {
+        return Ok(());
+    };
+    state.images.push(image);
+    if let Some(on_event) = on_event.as_mut() {
+        on_event(ModelEvent::ProviderContext {
+            kind: COMPACTION_OUTPUT_ITEM_KIND.into(),
+            position,
+            data: item.clone(),
+        })?;
+    }
+    Ok(())
+}
+
+fn image_from_generation_call(item: &serde_json::Value) -> Option<ImageContent> {
+    let data = item
+        .get("result")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?
+        .to_owned();
+    Some(ImageContent {
+        mime_type: image_mime_from_base64(&data).to_owned(),
+        data,
+    })
+}
+
+fn image_mime_from_base64(data: &str) -> &'static str {
+    if data.starts_with("/9j/") {
+        "image/jpeg"
+    } else if data.starts_with("iVBOR") {
+        "image/png"
+    } else if data.starts_with("R0lGOD") {
+        "image/gif"
+    } else if data.starts_with("UklGR") {
+        "image/webp"
+    } else {
+        "image/jpeg"
+    }
 }
 
 /// Bare semantic detail for a hosted search card (shown as a child fact).
@@ -610,6 +689,16 @@ pub(crate) fn handle_codex_sse_value(
             }
         }
         emit_codex_search_activity(item, state, on_event)?;
+        emit_image_generation_activity(item, state, on_event)?;
+        persist_image_generation_item(
+            item,
+            value
+                .get("output_index")
+                .and_then(|value| value.as_u64())
+                .and_then(|value| usize::try_from(value).ok()),
+            state,
+            on_event,
+        )?;
         if let Some(call) = extract_codex_function_call(item)? {
             // The finished item is the authoritative argument text. Identity is
             // repeated so a stream that never announced the call still reaches
@@ -681,6 +770,7 @@ pub(crate) fn handle_codex_sse_value(
         {
             for item in output {
                 emit_codex_search_activity(item, state, on_event)?;
+                emit_image_generation_activity(item, state, on_event)?;
                 if codex_output_item_was_processed(state, item) {
                     continue;
                 }
@@ -694,6 +784,7 @@ pub(crate) fn handle_codex_sse_value(
                         })?;
                     }
                 }
+                persist_image_generation_item(item, None, state, on_event)?;
                 if let Some(call) = extract_codex_function_call(item)? {
                     state.tool_calls.push(call);
                 }

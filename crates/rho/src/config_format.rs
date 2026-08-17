@@ -43,6 +43,8 @@ struct GroupedConfig<'a> {
     output: OutputConfig,
     compaction: CompactionSection,
     web_search: WebSearchConfig<'a>,
+    #[serde(skip_serializing_if = "xai_config_is_default")]
+    xai: XaiConfig,
     behavior: BehaviorConfig<'a>,
     keybindings: &'a Keybindings,
     prompt_templates: &'a crate::prompt_templates::PromptTemplates,
@@ -137,6 +139,15 @@ pub const CLAUDE_CLI_RUNTIME_KEY: &str = "claude-cli";
 pub const RHO_RUNTIME_KEY: &str = "rho";
 
 #[derive(Serialize)]
+struct XaiConfig {
+    image_generation: bool,
+}
+
+fn xai_config_is_default(config: &XaiConfig) -> bool {
+    config.image_generation
+}
+
+#[derive(Serialize)]
 struct WebSearchConfig<'a> {
     hosted: bool,
     provider: SearchProvider,
@@ -204,6 +215,9 @@ impl<'a> From<&'a Config> for GroupedConfig<'a> {
                 openai_api_key: config.legacy_web_search_credentials.openai.as_deref(),
                 exa_api_key: config.legacy_web_search_credentials.exa.as_deref(),
                 brave_api_key: config.legacy_web_search_credentials.brave.as_deref(),
+            },
+            xai: XaiConfig {
+                image_generation: config.xai_image_generation,
             },
             behavior: BehaviorConfig {
                 check_for_updates: config.check_for_updates,

@@ -184,6 +184,32 @@ provider = "exa"
     assert_eq!(config.web_search_provider, super::SearchProvider::Exa);
 }
 
+// Covers: omitted [xai] stays on; explicit image_generation = false disables it.
+// Owner: config load
+#[test]
+fn grouped_xai_image_generation_defaults_on_and_can_disable() {
+    let dir = tempfile::tempdir().unwrap();
+    let default_path = dir.path().join("default.toml");
+    std::fs::write(&default_path, "").unwrap();
+    assert!(
+        Config::load(Some(default_path))
+            .unwrap()
+            .xai_image_generation
+    );
+
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+[xai]
+image_generation = false
+"#,
+    )
+    .unwrap();
+
+    assert!(!Config::load(Some(path)).unwrap().xai_image_generation);
+}
+
 #[test]
 fn grouped_web_search_preserves_omitted_legacy_keys() {
     let dir = tempfile::tempdir().unwrap();

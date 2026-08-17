@@ -109,7 +109,8 @@ fn provider_options_with_transport(
     let mut provider =
         ProviderBuildOptions::new(&config.provider, &config.model, config.reasoning)?
             .with_auth(&config.auth)?
-            .hosted_web_search(crate::tools::web::hosted_web_search_active(config));
+            .hosted_web_search(crate::tools::web::hosted_web_search_active(config))
+            .hosted_image_generation(config.xai_image_generation);
     if let Some(endpoint) = endpoint {
         provider = provider.endpoint(endpoint)?;
     }

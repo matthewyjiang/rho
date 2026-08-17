@@ -664,6 +664,7 @@ impl App {
             config_picker::WEB_SEARCH_BRAVE_KEY_VALUE => {
                 self.open_web_search_api_key_editor(ConfigTextKey::Brave)?;
             }
+            config_picker::XAI_IMAGE_GENERATION_VALUE => self.toggle_xai_image_generation()?,
             _ => {}
         }
         Ok(())

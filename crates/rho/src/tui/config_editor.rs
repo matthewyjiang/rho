@@ -41,6 +41,7 @@ pub(super) enum ConfigToggle {
     ShowReasoningOutput,
     ZenMode,
     WebSearchHosted,
+    XaiImageGeneration,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,6 +53,7 @@ pub(super) enum ConfigMutation {
     ZenMode(bool),
     WebSearchHosted(bool),
     WebSearchProvider(String),
+    XaiImageGeneration(bool),
 }
 
 pub(super) fn resolve_web_search_editor_value(
@@ -93,6 +95,10 @@ pub(super) fn toggle(
         ConfigToggle::WebSearchHosted => {
             config.web_search_hosted = !config.web_search_hosted;
             ConfigMutation::WebSearchHosted(config.web_search_hosted)
+        }
+        ConfigToggle::XaiImageGeneration => {
+            config.xai_image_generation = !config.xai_image_generation;
+            ConfigMutation::XaiImageGeneration(config.xai_image_generation)
         }
     })
 }

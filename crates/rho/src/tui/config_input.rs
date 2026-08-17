@@ -301,11 +301,8 @@ impl App {
             .update_max_tool_output_lines(self.info.runtime.max_tool_output_lines);
         self.info.runtime.show_reasoning_output = config.show_reasoning_output;
         self.info.runtime.zen_mode = config.zen_mode;
-        self.input_ui
-            .set_composer(ComposerMode::Picker(config_picker::config_picker(
-                &self.info.runtime,
-                &config,
-            )));
+        let picker = self.config_root_picker(&config);
+        self.input_ui.set_composer(ComposerMode::Picker(picker));
         self.set_status("config");
         terminal.draw(|frame| self.draw(frame))?;
         Ok(())

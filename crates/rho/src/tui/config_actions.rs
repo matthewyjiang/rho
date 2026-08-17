@@ -162,6 +162,7 @@ impl App {
             config_picker::WEB_SEARCH_BRAVE_KEY_VALUE => {
                 self.open_web_search_api_key_editor(ConfigTextKey::Brave)
             }
+            config_picker::XAI_IMAGE_GENERATION_VALUE => self.toggle_xai_image_generation(),
             _ => Ok(()),
         }
     }
@@ -233,7 +234,7 @@ impl App {
         filter: String,
     ) -> anyhow::Result<()> {
         let config = self.info.services.config_repository.load()?;
-        let mut root = config_picker::config_picker(&self.info.runtime, &config);
+        let mut root = self.config_root_picker(&config);
         let Some(category) = config_picker::category_for_setting(selected_value) else {
             Self::restore_picker_position(&mut root, selected_value, filter);
             self.input_ui.set_composer(ComposerMode::Picker(root));
@@ -249,6 +250,15 @@ impl App {
         self.set_status_quiet(picker.title.clone());
         self.input_ui.set_composer(ComposerMode::Picker(picker));
         Ok(())
+    }
+
+    pub(super) fn config_root_picker(&mut self, config: &crate::config::Config) -> super::UiPicker {
+        self.refresh_available_auths();
+        config_picker::config_picker(
+            &self.info.runtime,
+            config,
+            config_picker::xai_settings_visible(&self.info.runtime.provider, &self.available_auths),
+        )
     }
 
     pub(super) fn open_config_category(&mut self, category: &str) -> anyhow::Result<()> {
@@ -317,7 +327,8 @@ impl App {
                 | ConfigMutation::ShowReasoningOutput(_)
                 | ConfigMutation::ZenMode(_)
                 | ConfigMutation::WebSearchHosted(_)
-                | ConfigMutation::WebSearchProvider(_),
+                | ConfigMutation::WebSearchProvider(_)
+                | ConfigMutation::XaiImageGeneration(_),
             ) => unreachable!("toggle returned a mismatched config mutation"),
         }
         Ok(())
@@ -349,7 +360,8 @@ impl App {
                 | ConfigMutation::ShowReasoningOutput(_)
                 | ConfigMutation::ZenMode(_)
                 | ConfigMutation::WebSearchHosted(_)
-                | ConfigMutation::WebSearchProvider(_),
+                | ConfigMutation::WebSearchProvider(_)
+                | ConfigMutation::XaiImageGeneration(_),
             ) => unreachable!("toggle returned a mismatched config mutation"),
         }
         Ok(())
@@ -434,7 +446,8 @@ impl App {
                 | ConfigMutation::ShowReasoningOutput(_)
                 | ConfigMutation::ZenMode(_)
                 | ConfigMutation::WebSearchHosted(_)
-                | ConfigMutation::WebSearchProvider(_),
+                | ConfigMutation::WebSearchProvider(_)
+                | ConfigMutation::XaiImageGeneration(_),
             ) => unreachable!("toggle returned a mismatched config mutation"),
         }
         Ok(())
@@ -472,7 +485,8 @@ impl App {
                 | ConfigMutation::AutoCompact(_)
                 | ConfigMutation::ZenMode(_)
                 | ConfigMutation::WebSearchHosted(_)
-                | ConfigMutation::WebSearchProvider(_),
+                | ConfigMutation::WebSearchProvider(_)
+                | ConfigMutation::XaiImageGeneration(_),
             ) => unreachable!("toggle returned a mismatched config mutation"),
         }
         Ok(())
@@ -505,7 +519,42 @@ impl App {
                 | ConfigMutation::AutoCompact(_)
                 | ConfigMutation::ShowReasoningOutput(_)
                 | ConfigMutation::WebSearchHosted(_)
-                | ConfigMutation::WebSearchProvider(_),
+                | ConfigMutation::WebSearchProvider(_)
+                | ConfigMutation::XaiImageGeneration(_),
+            ) => unreachable!("toggle returned a mismatched config mutation"),
+        }
+        Ok(())
+    }
+
+    pub(super) fn toggle_xai_image_generation(&mut self) -> anyhow::Result<()> {
+        match config_editor::toggle(
+            &self.info.services.config_repository,
+            ConfigToggle::XaiImageGeneration,
+        ) {
+            Ok(ConfigMutation::XaiImageGeneration(enabled)) => {
+                self.refresh_main_config_picker_if_open(config_picker::XAI_IMAGE_GENERATION_VALUE)?;
+                self.set_status(if enabled {
+                    "xAI image generation: on next session"
+                } else {
+                    "xAI image generation: off next session"
+                });
+            }
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not save xAI image generation setting: {err}"
+                )));
+                self.refresh_main_config_picker_if_open(config_picker::XAI_IMAGE_GENERATION_VALUE)?;
+                self.set_status("config save failed");
+            }
+            Ok(
+                ConfigMutation::CheckForUpdates(_)
+                | ConfigMutation::EnableSubagents(_)
+                | ConfigMutation::AutoCompact(_)
+                | ConfigMutation::ShowReasoningOutput(_)
+                | ConfigMutation::ZenMode(_)
+                | ConfigMutation::WebSearchHosted(_)
+                | ConfigMutation::WebSearchProvider(_)
+                | ConfigMutation::XaiImageGeneration(_),
             ) => unreachable!("toggle returned a mismatched config mutation"),
         }
         Ok(())
@@ -535,7 +584,8 @@ impl App {
                 | ConfigMutation::AutoCompact(_)
                 | ConfigMutation::ShowReasoningOutput(_)
                 | ConfigMutation::ZenMode(_)
-                | ConfigMutation::WebSearchProvider(_),
+                | ConfigMutation::WebSearchProvider(_)
+                | ConfigMutation::XaiImageGeneration(_),
             ) => unreachable!("toggle returned a mismatched config mutation"),
         }
         self.refresh_web_search_config_picker(config_picker::WEB_SEARCH_HOSTED_VALUE)?;

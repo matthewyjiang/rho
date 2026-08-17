@@ -677,7 +677,8 @@ fn esc_from_nested_web_search_config_returns_to_tools_category() {
     app.info.services.config_repository =
         ConfigRepository::new(Some(config_dir.path().join("config.toml")));
     let config = app.info.services.config_repository.load().unwrap();
-    let mut root = config_picker::config_picker(&app.info.runtime, &config);
+    let mut root =
+        config_picker::config_picker(&app.info.runtime, &config, /*xai_configured*/ false);
     App::restore_picker_position(
         &mut root,
         config_picker::TOOLS_CATEGORY_VALUE,
@@ -718,6 +719,7 @@ fn esc_from_main_config_still_closes_picker() {
         .set_composer(ComposerMode::Picker(config_picker::config_picker(
             &app.info.runtime,
             &config,
+            /*xai_configured*/ false,
         )));
 
     app.handle_picker_escape(/*running*/ false).unwrap();

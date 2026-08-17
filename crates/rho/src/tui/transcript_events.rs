@@ -23,6 +23,44 @@ use super::{
     },
     App, Entry, FinalAnswerDelta, LiveStreamPreview, ReasoningEntry, StreamKind, ToolEntry,
 };
+use rho_providers::model::{image_summary, ContentBlock, ImageContent};
+use rho_sdk::tool::ToolAsset;
+use rho_tools::tool_card::{ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
+
+fn generated_image_entry(
+    preview: Result<Option<super::feed_image::FeedImage>, String>,
+    source: &ImageContent,
+) -> Entry {
+    let mut card = ToolCard::new(
+        ToolStatus::Ok,
+        ToolFamily::Default,
+        ToolHeader::call("image_generation", None),
+    );
+    let image = match preview {
+        Ok(None) => {
+            card.push_fact(ToolFact::Text {
+                text: image_summary(source),
+            });
+            None
+        }
+        Ok(image) => image,
+        Err(error) => {
+            card.push_fact(ToolFact::Error {
+                text: format!("image preview unavailable: {error}"),
+            });
+            None
+        }
+    };
+    card.push_fact(ToolFact::Meta {
+        text: "finished".into(),
+    });
+    Entry::Tool(ToolEntry {
+        card,
+        expanded: false,
+        image,
+        started_at: None,
+    })
+}
 
 pub(super) fn final_answer_delta<'a>(emitted_text: &str, answer: &'a str) -> FinalAnswerDelta<'a> {
     match answer.strip_prefix(emitted_text) {
@@ -469,6 +507,29 @@ impl App {
         } else {
             false
         }
+    }
+
+    pub(super) fn insert_assistant_images(&mut self, content: &[ContentBlock]) {
+        for block in content {
+            let ContentBlock::Image(image) = block else {
+                continue;
+            };
+            let preview = self.load_generated_feed_image(image);
+            self.insert_entry(&generated_image_entry(preview, image));
+        }
+    }
+
+    fn load_generated_feed_image(
+        &mut self,
+        image: &ImageContent,
+    ) -> Result<Option<super::feed_image::FeedImage>, String> {
+        use base64::Engine as _;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(image.data.trim())
+            .map_err(|_| "generated image was not valid base64".to_string())?;
+        let asset = ToolAsset::new(&image.mime_type, bytes);
+        self.load_feed_image(&asset)
+            .map_err(|error| error.to_string())
     }
 
     pub(super) fn insert_final_answer_suffix(&mut self, answer: &str) {

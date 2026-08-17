@@ -41,6 +41,7 @@ pub struct XaiProvider {
     api_base: String,
     reasoning: reasoning::XaiReasoningProfile,
     hosted_web_search: bool,
+    hosted_image_generation: bool,
 }
 
 impl XaiProvider {
@@ -51,6 +52,7 @@ impl XaiProvider {
         client: reqwest::Client,
         api_base: String,
         hosted_web_search: bool,
+        hosted_image_generation: bool,
     ) -> Self {
         let reasoning = reasoning::XaiReasoningProfile::from_metadata(
             &model,
@@ -64,6 +66,7 @@ impl XaiProvider {
             api_base,
             reasoning,
             hosted_web_search,
+            hosted_image_generation,
         }
     }
 
@@ -80,6 +83,7 @@ impl XaiProvider {
             provider_client(),
             api_base,
             /*hosted_web_search*/ true,
+            /*hosted_image_generation*/ true,
         ))
     }
 
@@ -98,6 +102,7 @@ impl XaiProvider {
             &self.reasoning,
             request,
             self.hosted_web_search,
+            self.hosted_image_generation,
         )?;
         let mut on_request_event = on_request_event;
         let result = self

@@ -79,6 +79,7 @@ fn runtime_updates_do_not_replace_restart_only_config() {
             "compact_target_percent": 40,
             "web_search_hosted": true,
             "web_search_provider": "auto",
+            "xai_image_generation": true,
             "check_for_updates": false,
             "enable_subagents": true,
             "advisor_mode": false,
