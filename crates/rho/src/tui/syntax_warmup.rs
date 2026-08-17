@@ -93,30 +93,6 @@ impl SyntaxWarmupPlan {
     }
 }
 
-/// Dump-native names this plan will compile, after [`warm_syntax_set`].
-#[cfg(test)]
-fn syntax_names_to_warm(plan: &SyntaxWarmupPlan) -> Vec<&'static str> {
-    let mut budget = WarmBudget::default();
-    let mut names = Vec::new();
-    for token in &plan.tokens {
-        if !should_warmup_token(token) {
-            continue;
-        }
-        if let Some(name) = budget.claim(syntax_name_for_language(token)) {
-            names.push(name);
-        }
-    }
-    for path in &plan.paths {
-        if !should_warmup_path(path) {
-            continue;
-        }
-        if let Some(name) = budget.claim(syntax_name_for_path(path)) {
-            names.push(name);
-        }
-    }
-    names
-}
-
 /// Load the dump and recovered grammars off the UI thread.
 pub(crate) fn spawn_syntax_warmup(messages: &[Message]) -> tokio::task::JoinHandle<()> {
     let plan = SyntaxWarmupPlan::from_messages(messages);
@@ -128,23 +104,33 @@ pub(crate) fn spawn_syntax_warmup(messages: &[Message]) -> tokio::task::JoinHand
 
 fn warm_plan(plan: SyntaxWarmupPlan) {
     warm_syntax_set();
+    for (_, highlighter) in planned_warmups(&plan) {
+        warm_highlighter(highlighter);
+    }
+}
+
+/// Resolve tokens then paths through [`WarmBudget`]. Filters already ran in
+/// [`SyntaxWarmupPlan::from_messages`]; this is only identity dedup and cap.
+fn planned_warmups(plan: &SyntaxWarmupPlan) -> Vec<(&'static str, BlockHighlighter)> {
     let mut budget = WarmBudget::default();
-    for token in plan.tokens {
-        if !should_warmup_token(&token) {
+    let mut planned = Vec::new();
+    for token in &plan.tokens {
+        let Some(name) = budget.claim(syntax_name_for_language(token)) else {
             continue;
-        }
-        if budget.claim(syntax_name_for_language(&token)).is_some() {
-            warm_highlighter(BlockHighlighter::for_language(&token));
+        };
+        if let Some(highlighter) = BlockHighlighter::for_language(token) {
+            planned.push((name, highlighter));
         }
     }
-    for path in plan.paths {
-        if !should_warmup_path(&path) {
+    for path in &plan.paths {
+        let Some(name) = budget.claim(syntax_name_for_path(path)) else {
             continue;
-        }
-        if budget.claim(syntax_name_for_path(&path)).is_some() {
-            warm_highlighter(BlockHighlighter::for_path(&path));
+        };
+        if let Some(highlighter) = BlockHighlighter::for_path(path) {
+            planned.push((name, highlighter));
         }
     }
+    planned
 }
 
 #[derive(Default)]
@@ -162,12 +148,10 @@ impl WarmBudget {
     }
 }
 
-fn warm_highlighter(highlighter: Option<BlockHighlighter>) {
-    if let Some(mut highlighter) = highlighter {
-        // Force a typical source context. An empty line often stays in the
-        // grammar's initial state and misses the compile first paint pays for.
-        let _ = highlighter.highlight_line("x = 1");
-    }
+fn warm_highlighter(mut highlighter: BlockHighlighter) {
+    // Force a typical source context. An empty line often stays in the
+    // grammar's initial state and misses the compile first paint pays for.
+    let _ = highlighter.highlight_line("x = 1");
 }
 
 fn tool_argument_path(arguments: &Value) -> Option<&str> {

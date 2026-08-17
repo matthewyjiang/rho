@@ -71,11 +71,7 @@ fn warmup_names_dedup_skip_markdown_and_cap() {
         "rust", "ts", "py", "go", "bash", "java", "c", "cpp", "ruby", "php", "swift", "kotlin",
         "lua", "json", "yaml", "toml", "html", "css", "sql", "markdown",
     ];
-    let tokens: Vec<String> = candidates
-        .iter()
-        .map(|token| (*token).to_string())
-        .collect();
-    let resolvable = tokens
+    let resolvable = candidates
         .iter()
         .filter(|token| should_warmup_token(token) && syntax_name_for_language(token).is_some())
         .count();
@@ -84,10 +80,18 @@ fn warmup_names_dedup_skip_markdown_and_cap() {
         "need more bundled languages than the cap, got {resolvable}"
     );
 
-    let names = syntax_names_to_warm(&SyntaxWarmupPlan {
-        tokens,
-        paths: vec!["src/lib.rs".into(), "README.md".into()],
-    });
+    let fences = candidates
+        .iter()
+        .map(|token| format!("```{token}\n"))
+        .collect::<String>();
+    let names: Vec<_> = planned_warmups(&SyntaxWarmupPlan::from_messages(&[
+        user_text(&fences),
+        tool_call_path("src/lib.rs"),
+        tool_call_path("README.md"),
+    ]))
+    .into_iter()
+    .map(|(name, _)| name)
+    .collect();
 
     assert_eq!(names.iter().filter(|name| **name == rust).count(), 1);
     assert!(
