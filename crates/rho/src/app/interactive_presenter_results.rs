@@ -79,6 +79,12 @@ pub(super) fn shell_result_card(
         card.push_fact(ToolFact::Meta {
             text: "running".into(),
         });
+    } else if let Some(ms) = parsed.duration_ms {
+        // Success omits `exit code: 0` on the wire; the card still shows timing.
+        card.push_fact(ToolFact::Exit {
+            code: 0,
+            duration_ms: Some(ms),
+        });
     }
     if !parsed.stdout.trim().is_empty() {
         card.body = ToolBody::Lines(split_body_lines(&parsed.stdout));
@@ -346,15 +352,7 @@ pub(super) fn process_result_card(content: &str, status: ToolStatus) -> ToolCard
         }
     }
     let Ok(snapshot) = serde_json::from_str::<crate::tools::process::Snapshot>(content) else {
-        let mut card = draft_card(
-            status,
-            ToolFamily::Default,
-            ToolHeader::call("process", None),
-        );
-        if !content.trim().is_empty() {
-            card.body = ToolBody::Lines(split_body_lines(content));
-        }
-        return card;
+        return compact_process_card(content, status);
     };
 
     let mut card = draft_card(
@@ -403,6 +401,122 @@ pub(super) fn process_result_card(content: &str, status: ToolStatus) -> ToolCard
     card
 }
 
+fn compact_process_card(content: &str, status: ToolStatus) -> ToolCard {
+    let header = compact_header_block(content);
+    if let Some(process_id) = header_value(header, "process_id") {
+        if header.lines().any(|line| line == "stop requested") {
+            let mut card = draft_card(
+                status,
+                ToolFamily::Default,
+                ToolHeader::call("process", Some("stop".into())),
+            );
+            card.push_fact(ToolFact::Meta {
+                text: format!("stop requested: {process_id}"),
+            });
+            return card;
+        }
+        let state = header_value(header, "state");
+        let mut card = draft_card(
+            status,
+            ToolFamily::Default,
+            ToolHeader::call("process", state.clone()),
+        );
+        let mut meta = process_id;
+        if let Some(next) = header_value(header, "next") {
+            meta.push_str(&format!(" · next {next}"));
+        }
+        if let Some(code) = header_value(header, "exit") {
+            meta.push_str(&format!(" · exit {code}"));
+        }
+        card.push_fact(ToolFact::Meta { text: meta });
+        if header.lines().any(|line| line == "pending") {
+            card.push_fact(ToolFact::Meta {
+                text: "more output available".into(),
+            });
+        }
+        let body = stream_body_lines(content);
+        if !body.is_empty() {
+            card.body = ToolBody::Lines(body);
+        }
+        return card;
+    }
+    let mut card = draft_card(
+        status,
+        ToolFamily::Default,
+        ToolHeader::call("process", None),
+    );
+    if !content.trim().is_empty() {
+        card.body = ToolBody::Lines(split_body_lines(content));
+    }
+    card
+}
+
+fn header_value(content: &str, key: &str) -> Option<String> {
+    let prefix = format!("{key}: ");
+    content.lines().find_map(|line| {
+        line.strip_prefix(&prefix)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    })
+}
+
+fn compact_header_block(content: &str) -> &str {
+    content
+        .split_once("\n\n")
+        .map_or(content, |(header, _)| header)
+}
+
+fn compact_web_search_summary(content: &str) -> Option<String> {
+    let mut lines = content.lines();
+    if !lines
+        .next()
+        .is_some_and(|line| line.starts_with("responseId: "))
+    {
+        return None;
+    }
+    let body = lines.collect::<Vec<_>>().join("\n");
+    (!body.trim().is_empty()).then_some(body)
+}
+
+fn push_compact_fetch_fact(card: &mut ToolCard, content: &str) {
+    if !content.starts_with("responseId: ") {
+        card.push_fact(ToolFact::Meta {
+            text: "finished".into(),
+        });
+        return;
+    }
+    let header = compact_header_block(content);
+    let count = header_value(header, "items")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(1);
+    let truncated = header.lines().any(|line| line == "truncated");
+    card.push_fact(ToolFact::Count {
+        label: if count == 1 {
+            "item".into()
+        } else {
+            "items".into()
+        },
+        value: count,
+        detail: truncated.then(|| "truncated".into()),
+    });
+}
+
+fn stream_body_lines(content: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut take = false;
+    for line in content.lines() {
+        if line == "stdout:" || line == "stderr:" {
+            take = true;
+            lines.push(line.to_string());
+            continue;
+        }
+        if take {
+            lines.push(line.to_string());
+        }
+    }
+    lines
+}
+
 fn process_state(state: crate::tools::process::State) -> &'static str {
     use crate::tools::process::State;
     match state {
@@ -439,7 +553,8 @@ pub(super) fn web_search_card(
                 .get("answer")
                 .and_then(|answer| answer.as_str())
                 .map(str::to_string)
-        });
+        })
+        .or_else(|| compact_web_search_summary(content));
     match summary.as_deref() {
         Some(answer) if answer.starts_with("No configured search provider") => {
             card.push_fact(ToolFact::Meta {
@@ -486,9 +601,7 @@ pub(super) fn fetch_content_card(
         return card;
     }
     let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
-        card.push_fact(ToolFact::Meta {
-            text: "finished".into(),
-        });
+        push_compact_fetch_fact(&mut card, content);
         return card;
     };
     if let Some(count) = value.get("itemCount").and_then(|count| count.as_u64()) {
@@ -555,8 +668,14 @@ pub(super) fn get_search_content_card(content: &str, status: ToolStatus) -> Tool
         return card;
     }
     let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
+        if let Some(label) = header_value(content, "title")
+            .or_else(|| header_value(content, "url"))
+            .or_else(|| header_value(content, "query"))
+        {
+            card.header = ToolHeader::call("get_search_content", Some(truncate(&label, 80)));
+        }
         card.push_fact(ToolFact::Meta {
-            text: "retrieved stored content".into(),
+            text: "retrieved".into(),
         });
         return card;
     };
@@ -661,4 +780,76 @@ fn push_shell_timeout_fact(card: &mut ToolCard, arguments: &serde_json::Value) {
         .get("timeout_seconds")
         .and_then(|value| value.as_u64());
     card.push_fact(ToolFact::Timeout { seconds });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Covers: fetch card facts come from the header block, not the inlined body
+    // Owner: pure unit (presenter)
+    #[test]
+    fn compact_fetch_reads_only_header_fields() {
+        let id = "0123456789abcdef0123456789abcdef";
+        let cases = [
+            (
+                format!("responseId: {id}\nurl: https://example.com\n\n1. first\n2. second"),
+                1_u64,
+                None,
+            ),
+            (
+                format!("responseId: {id}\nitems: 2\n0. https://a.example\n1. https://b.example"),
+                2,
+                None,
+            ),
+            (
+                format!("responseId: {id}\nurl: https://example.com\n\nitems: 7\ntruncated"),
+                1,
+                None,
+            ),
+            (
+                format!("responseId: {id}\nurl: https://example.com\ntruncated\n\nbody"),
+                1,
+                Some("truncated".into()),
+            ),
+        ];
+        for (content, value, detail) in cases {
+            let mut card = draft_card(
+                ToolStatus::Ok,
+                ToolFamily::Web,
+                ToolHeader::call("fetch_content", None),
+            );
+            push_compact_fetch_fact(&mut card, &content);
+            let label = if value == 1 { "item" } else { "items" };
+            assert_eq!(
+                card.facts,
+                vec![ToolFact::Count {
+                    label: label.into(),
+                    value,
+                    detail,
+                }],
+                "{content}"
+            );
+        }
+    }
+
+    // Covers: process stdout must not spoof pending / exit / stop header facts
+    // Owner: pure unit (presenter)
+    #[test]
+    fn compact_process_ignores_header_tokens_in_streams() {
+        let card = compact_process_card(
+            "process_id: proc-1\nstate: running\nnext: 2\n\nstdout:\npending\nexit: 1\nstop requested",
+            ToolStatus::Ok,
+        );
+        assert_eq!(
+            card.header,
+            ToolHeader::call("process", Some("running".into()))
+        );
+        assert_eq!(
+            card.facts,
+            vec![ToolFact::Meta {
+                text: "proc-1 · next 2".into(),
+            }]
+        );
+    }
 }

@@ -42,8 +42,8 @@ flowchart TD
 - Stores snippets by default under the returned `responseId`.
 - Stores full source pages only when `includeContent` succeeds and the provider
   returned fetchable URLs.
-- The summary stays inline. Call `get_search_content` for stored snippets or
-  pages.
+- The summary stays inline as numbered `title` / url / snippet lines under a
+  `responseId` header. Call `get_search_content` for stored snippets or pages.
 
 ### `fetch_content`
 
@@ -57,10 +57,11 @@ Accepts `url` or `urls`, plus optional `prompt`, `timestamp`, `frames`, and
 | GitHub repo, tree, file, or commit | Uses the GitHub API by default. Set `forceClone` to clone a repo, tree, or file URL locally instead (not commit URLs). |
 | YouTube or local video | Optional video path. `timestamp` is a point or range such as `23:41` or `23:41-25:00`. `frames` defaults to 6 and clamps to 1–12. |
 
-A single successful target returns readable content inline when it fits the
-[tool output limit](/configuration#tool-output-limit). Oversized bodies and
-multi-target results keep a `responseId` and instruct the agent to call
-`get_search_content`.
+A single successful target returns compact text: a `responseId` header, optional
+`url` / `title` lines, then the readable body when it fits the
+[tool output limit](/configuration#tool-output-limit). Oversized bodies add a
+`truncated` line and keep a prefix. Multi-target results list `urlIndex`
+selectors under the same `responseId` for `get_search_content`.
 
 ### `get_search_content`
 

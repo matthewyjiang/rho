@@ -8,6 +8,7 @@ mod display;
 mod exact;
 mod manager;
 mod notify;
+mod output;
 mod platform;
 pub(super) mod sdk_process;
 mod supervisor;

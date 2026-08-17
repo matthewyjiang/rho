@@ -138,9 +138,10 @@ impl SdkProcess {
                 break;
             }
         }
-        let content = serde_json::to_string(&snapshot)
-            .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
-        Ok(ToolOutput::text(content).metadata(process_metadata()))
+        Ok(
+            ToolOutput::text(super::output::format_snapshot(&snapshot))
+                .metadata(process_metadata()),
+        )
     }
 }
 

@@ -1,6 +1,6 @@
 pub(super) mod github;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use futures_util::StreamExt;
 use serde_json::{json, Value};
@@ -11,12 +11,11 @@ use rho_tools::{
         extract_document_from_bytes_async, extract_document_from_path_async,
         render_extracted_document, ExtractedDocument,
     },
-    tool::{truncate, ToolError},
+    tool::ToolError,
 };
 
 use super::util::{extract_title, html_to_text, is_video_extension};
 
-pub(super) const PREVIEW_BYTES: usize = 8_000;
 const MAX_FETCH_BYTES: usize = 2 * 1024 * 1024;
 
 pub(super) struct DownloadedResponse {
@@ -33,14 +32,13 @@ pub(super) enum PdfDetection {
 }
 
 enum DocumentSource {
-    Http { url: String, prompt: Option<String> },
-    Local { path: PathBuf, bytes: u64 },
+    Http { prompt: Option<String> },
+    Local { bytes: u64 },
 }
 
 pub(super) struct FetchedTarget {
     pub(super) title: Option<String>,
     pub(super) content: String,
-    pub(super) preview: Value,
     pub(super) metadata: Value,
 }
 
@@ -68,7 +66,6 @@ pub(super) async fn fetch_http_url(
         return Ok(fetched_document(
             document,
             DocumentSource::Http {
-                url: url.to_string(),
                 prompt: prompt.map(str::to_owned),
             },
         ));
@@ -77,14 +74,8 @@ pub(super) async fn fetch_http_url(
     let title = extract_title(&content);
     let markdown = html_to_text(&content);
     Ok(FetchedTarget {
-        title: title.clone(),
-        content: markdown.clone(),
-        preview: json!({
-            "type": "webpage",
-            "url": url.as_str(),
-            "title": title,
-            "preview": truncate(markdown.clone(), PREVIEW_BYTES)
-        }),
+        title,
+        content: markdown,
         metadata: json!({"mode": "http_fetch", "prompt": prompt}),
     })
 }
@@ -207,8 +198,7 @@ pub(super) async fn fetch_local_path(
             title: path
                 .file_name()
                 .map(|name| name.to_string_lossy().to_string()),
-            content: content.clone(),
-            preview: json!({"type": "local_video", "path": path, "warning": content}),
+            content,
             metadata: json!({"mode": "video_placeholder", "bytes": metadata.len()}),
         });
     }
@@ -216,7 +206,6 @@ pub(super) async fn fetch_local_path(
         Ok(document) => Ok(fetched_document(
             document,
             DocumentSource::Local {
-                path: path.to_path_buf(),
                 bytes: metadata.len(),
             },
         )),
@@ -226,49 +215,27 @@ pub(super) async fn fetch_local_path(
 
 fn fetched_document(document: ExtractedDocument, source: DocumentSource) -> FetchedTarget {
     let content = render_extracted_document(&document);
-    let content_preview = truncate(content.clone(), PREVIEW_BYTES);
-    let (preview, metadata) = match source {
-        DocumentSource::Http { url, prompt } => (
-            json!({
-                "type": "pdf",
-                "url": url,
-                "mime": document.mime,
-                "truncated": document.truncated,
-                "warnings": document.warnings,
-                "preview": content_preview,
-            }),
-            json!({
-                "mode": "document_extract",
-                "source": "http",
-                "prompt": prompt,
-                "mime": document.mime,
-                "truncated": document.truncated,
-                "warnings": document.warnings,
-            }),
-        ),
-        DocumentSource::Local { path, bytes } => (
-            json!({
-                "type": "local_file",
-                "path": path,
-                "mime": document.mime,
-                "truncated": document.truncated,
-                "warnings": document.warnings,
-                "preview": content_preview,
-            }),
-            json!({
-                "mode": "document_extract",
-                "source": "local",
-                "bytes": bytes,
-                "mime": document.mime,
-                "truncated": document.truncated,
-                "warnings": document.warnings,
-            }),
-        ),
+    let metadata = match source {
+        DocumentSource::Http { prompt } => json!({
+            "mode": "document_extract",
+            "source": "http",
+            "prompt": prompt,
+            "mime": document.mime,
+            "truncated": document.truncated,
+            "warnings": document.warnings,
+        }),
+        DocumentSource::Local { bytes } => json!({
+            "mode": "document_extract",
+            "source": "local",
+            "bytes": bytes,
+            "mime": document.mime,
+            "truncated": document.truncated,
+            "warnings": document.warnings,
+        }),
     };
     FetchedTarget {
         title: Some(document.name),
         content,
-        preview,
         metadata,
     }
 }
@@ -286,8 +253,7 @@ pub(super) fn youtube_placeholder(
     );
     FetchedTarget {
         title: Some("youtube video".into()),
-        content: content.clone(),
-        preview: json!({"type": "youtube_video", "warning": content}),
+        content,
         metadata: json!({"mode": "video_placeholder", "timestamp": timestamp, "frames": frames}),
     }
 }

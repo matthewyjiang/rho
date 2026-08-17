@@ -9,9 +9,9 @@ use {
 };
 
 use super::{
+    output::{format_stored_item, format_web_search},
     search::{self, SearchBackendConfig},
     storage::{self, StoredContent, StoredItem, WebAccessStore},
-    util::to_pretty_json,
 };
 
 pub struct WebSearch {
@@ -171,8 +171,6 @@ impl Tool for WebSearch {
                 }
             }
 
-            let availability = storage::content_availability(&items);
-            let stored_content_available = !items.is_empty();
             self.store.store(
                 response_id.clone(),
                 StoredContent {
@@ -181,23 +179,13 @@ impl Tool for WebSearch {
                 },
             )?;
 
-            let content = json!({
-                "responseId": response_id,
-                "type": "web_search",
-                "provider": provider,
-                "workflow": workflow,
-                "answer": summaries.join("\n"),
-                "storedContentAvailable": stored_content_available,
-                "snippetContentAvailable": availability.snippets,
-                "sourceContentAvailable": availability.sources,
-                "fullContentAvailable": availability.sources,
-                "note": "Summary is inline. Call get_search_content with only responseId (or an exact original query / queryIndex / url / urlIndex) for stored snippets; full source pages exist only when includeContent succeeded."
-            });
-
             Ok(ToolResult {
                 id,
                 ok: true,
-                content: truncate(to_pretty_json(&content), ctx.max_output_bytes),
+                content: truncate(
+                    format_web_search(&response_id, &summaries),
+                    ctx.max_output_bytes,
+                ),
             })
         })
     }
@@ -239,19 +227,10 @@ impl GetSearchContent {
     ) -> Result<ToolResult, ToolError> {
         let stored = self.store.load(&args.response_id)?;
         let item = select_stored_item(&stored, &args)?;
-        let content = json!({
-            "responseId": args.response_id,
-            "type": stored.kind,
-            "title": item.title,
-            "url": item.url,
-            "query": item.query,
-            "metadata": item.metadata,
-            "content": item.content,
-        });
         Ok(ToolResult {
             id,
             ok: true,
-            content: truncate(to_pretty_json(&content), max_output_bytes),
+            content: format_stored_item(item, max_output_bytes),
         })
     }
 }
