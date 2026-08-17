@@ -143,7 +143,10 @@ pub(crate) async fn run_one_shot_with_provider(
             .into_iter()
             .filter_map(|block| match block {
                 ContentBlock::Text(text) => Some(text),
-                ContentBlock::Image(image) => Some(format!("[image: {}]", image.mime_type)),
+                ContentBlock::Image(image) => Some(format!(
+                    "[image: {}]",
+                    rho_providers::model::image_summary(&image)
+                )),
                 ContentBlock::ToolCall(_) => None,
             })
             .collect(),

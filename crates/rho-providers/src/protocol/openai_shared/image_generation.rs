@@ -69,9 +69,36 @@ pub(super) fn restore_image_generation_results(
 }
 
 fn image_mime_from_base64(data: &str) -> Option<&'static str> {
-    use base64::Engine as _;
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(data)
-        .ok()?;
-    ImageContent::mime_type_from_bytes(&bytes)
+    // 16 base64 chars decode to 12 bytes, enough for PNG/JPEG/GIF/WebP.
+    const PREFIX_CHARS: usize = 16;
+    let mut prefix = String::with_capacity(PREFIX_CHARS);
+    for byte in data.bytes() {
+        if byte.is_ascii_whitespace() {
+            continue;
+        }
+        prefix.push(char::from(byte));
+        if prefix.len() == PREFIX_CHARS {
+            break;
+        }
+    }
+    ImageContent::mime_type_from_bytes(&decode_base64_prefix(&prefix)?)
 }
+
+fn decode_base64_prefix(data: &str) -> Option<Vec<u8>> {
+    use base64::Engine as _;
+    if data.is_empty() {
+        return None;
+    }
+    let mut padded = data.to_string();
+    while !padded.len().is_multiple_of(4) {
+        padded.push('=');
+    }
+    base64::engine::general_purpose::STANDARD
+        .decode(&padded)
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(&padded))
+        .ok()
+}
+
+#[cfg(test)]
+#[path = "image_generation_tests.rs"]
+mod tests;
