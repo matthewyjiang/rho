@@ -21,12 +21,9 @@ pub(super) struct ModelsDevCatalog {
     providers: HashMap<String, ModelsDevProvider>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
-#[serde(default)]
+#[derive(Clone, Debug, Default)]
 pub(super) struct ModelsDevProvider {
-    #[serde(deserialize_with = "de::lenient_or_default")]
     pub npm: Option<String>,
-    #[serde(deserialize_with = "de::lenient_model_map")]
     pub models: HashMap<String, ModelsDevModel>,
 }
 
@@ -71,16 +68,13 @@ struct ModelsDevLimit {
 
 #[derive(Clone, Debug, Default)]
 struct ModelsDevCost {
-    input: Option<f64>,
-    output: Option<f64>,
-    cache_read: Option<f64>,
-    cache_write: Option<f64>,
-    tiers: Vec<ModelsDevCostTier>,
-    context_over: BTreeMap<String, ModelsDevCostRates>,
+    default: Option<ModelCost>,
+    long_context_threshold: Option<u64>,
+    long_context: Option<ModelCost>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-struct ModelsDevCostRates {
+pub(super) struct ModelsDevCostRates {
     input: Option<f64>,
     output: Option<f64>,
     cache_read: Option<f64>,
@@ -88,7 +82,7 @@ struct ModelsDevCostRates {
 }
 
 #[derive(Clone, Debug, Default)]
-struct ModelsDevCostTier {
+pub(super) struct ModelsDevCostTier {
     size: Option<u64>,
     rates: ModelsDevCostRates,
 }
@@ -134,7 +128,6 @@ pub(super) fn model_metadata_from_catalog(
     reasoning_policy: CatalogReasoningPolicy,
 ) -> Option<ModelMetadata> {
     let (provider_doc, model) = api.model(provider, model)?;
-    let (long_context_threshold, cost_long_context) = long_context_cost(model.cost.as_ref());
     Some(ModelMetadata {
         display_name: model
             .name
@@ -145,10 +138,13 @@ pub(super) fn model_metadata_from_catalog(
         advertised_context_window: model.limit.context,
         effective_context_window: model.limit.input.or(model.limit.context),
         usable_context_window: None,
-        long_context_threshold,
+        long_context_threshold: model
+            .cost
+            .as_ref()
+            .and_then(|cost| cost.long_context_threshold),
         max_output_tokens: model.limit.output,
-        cost_default: model_cost(model.cost.as_ref().map(ModelsDevCost::rates)),
-        cost_long_context,
+        cost_default: model.cost.as_ref().and_then(|cost| cost.default),
+        cost_long_context: model.cost.as_ref().and_then(|cost| cost.long_context),
         supported_reasoning_levels: supported_reasoning_levels(model, reasoning_policy),
         reasoning_off_behavior: if advertised_none_effort(model) {
             ReasoningOffBehavior::EffortNone
@@ -157,21 +153,18 @@ pub(super) fn model_metadata_from_catalog(
         },
         reasoning_capabilities_known: reasoning_capabilities_known(model, reasoning_policy),
         reasoning_metadata_complete: reasoning_metadata_complete(model, reasoning_policy),
-        sdk_package: resolved_sdk_package(Some(provider_doc), model),
+        sdk_package: resolved_sdk_package(provider_doc, model),
     })
 }
 
 /// models.dev provider `npm`, overridden by per-model `provider.npm` or `npm`.
-pub(super) fn resolved_sdk_package(
-    provider: Option<&ModelsDevProvider>,
-    model: &ModelsDevModel,
-) -> Option<String> {
+fn resolved_sdk_package(provider: &ModelsDevProvider, model: &ModelsDevModel) -> Option<String> {
     model
         .provider
         .npm
         .as_deref()
         .or(model.npm.as_deref())
-        .or_else(|| provider.and_then(|provider| provider.npm.as_deref()))
+        .or(provider.npm.as_deref())
         .map(str::trim)
         .filter(|package| !package.is_empty())
         .map(str::to_string)
@@ -333,18 +326,21 @@ fn supported_reasoning_levels(
 }
 
 impl ModelsDevCost {
-    fn rates(&self) -> ModelsDevCostRates {
-        ModelsDevCostRates {
-            input: self.input,
-            output: self.output,
-            cache_read: self.cache_read,
-            cache_write: self.cache_write,
+    pub(super) fn from_parts(
+        rates: ModelsDevCostRates,
+        tiers: Vec<ModelsDevCostTier>,
+        context_over: BTreeMap<String, ModelsDevCostRates>,
+    ) -> Self {
+        let (long_context_threshold, long_context) = long_context_cost(&tiers, &context_over);
+        Self {
+            default: model_cost(rates),
+            long_context_threshold,
+            long_context,
         }
     }
 }
 
-fn model_cost(rates: Option<ModelsDevCostRates>) -> Option<ModelCost> {
-    let rates = rates?;
+fn model_cost(rates: ModelsDevCostRates) -> Option<ModelCost> {
     let model_cost = ModelCost {
         input_micros_per_m: rates.input.and_then(cost_micros_per_million),
         output_micros_per_m: rates.output.and_then(cost_micros_per_million),
@@ -354,26 +350,25 @@ fn model_cost(rates: Option<ModelsDevCostRates>) -> Option<ModelCost> {
     model_cost_has_rates(&model_cost).then_some(model_cost)
 }
 
-fn long_context_cost(cost: Option<&ModelsDevCost>) -> (Option<u64>, Option<ModelCost>) {
-    let Some(cost) = cost else {
-        return (None, None);
-    };
-
-    for tier in &cost.tiers {
+fn long_context_cost(
+    tiers: &[ModelsDevCostTier],
+    context_over: &BTreeMap<String, ModelsDevCostRates>,
+) -> (Option<u64>, Option<ModelCost>) {
+    for tier in tiers {
         let Some(threshold) = tier.size else {
             continue;
         };
-        let Some(model_cost) = model_cost(Some(tier.rates)) else {
+        let Some(model_cost) = model_cost(tier.rates) else {
             continue;
         };
         return (Some(threshold), Some(model_cost));
     }
 
-    for (key, rates) in &cost.context_over {
+    for (key, rates) in context_over {
         let Some(threshold) = context_over_threshold(key) else {
             continue;
         };
-        let Some(model_cost) = model_cost(Some(*rates)) else {
+        let Some(model_cost) = model_cost(*rates) else {
             continue;
         };
         return (Some(threshold), Some(model_cost));

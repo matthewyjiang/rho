@@ -2,11 +2,19 @@
 //!
 //! Field type mismatches become `None` / empty instead of failing the catalog.
 //! One junk model or provider must not poison the rest of the snapshot.
+//!
+//! Large objects stream through `visit_map`. `#[serde(untagged)]` `Maybe<T>` is
+//! only used for leaf scalars and small objects, where Content buffering stays
+//! bounded.
 
-use std::{collections::HashMap, fmt};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt,
+    marker::PhantomData,
+};
 
 use serde::{
-    de::{IgnoredAny, MapAccess, SeqAccess, Visitor},
+    de::{value::MapAccessDeserializer, IgnoredAny, MapAccess, SeqAccess, Visitor},
     Deserialize, Deserializer,
 };
 
@@ -15,11 +23,74 @@ use super::{
     ModelsDevCostRates, ModelsDevCostTier, ModelsDevModel, ModelsDevProvider,
 };
 
+/// Accept `T` or ignore a type mismatch. Untagged, so serde buffers `T` into
+/// `Content` first. Use only for values whose size is bounded.
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum Maybe<T> {
     Value(T),
     Invalid(IgnoredAny),
+}
+
+/// Skip a non-object without buffering it. Objects deserialize as `T` in place.
+struct SkipInvalid<T>(Option<T>);
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for SkipInvalid<T> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct SkipVisitor<T>(PhantomData<T>);
+
+        impl<'de, T: Deserialize<'de>> Visitor<'de> for SkipVisitor<T> {
+            type Value = SkipInvalid<T>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("an object or a skipped value")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
+                T::deserialize(MapAccessDeserializer::new(map))
+                    .map(|value| SkipInvalid(Some(value)))
+            }
+
+            fn visit_bool<E>(self, _: bool) -> Result<Self::Value, E> {
+                Ok(SkipInvalid(None))
+            }
+
+            fn visit_i64<E>(self, _: i64) -> Result<Self::Value, E> {
+                Ok(SkipInvalid(None))
+            }
+
+            fn visit_u64<E>(self, _: u64) -> Result<Self::Value, E> {
+                Ok(SkipInvalid(None))
+            }
+
+            fn visit_f64<E>(self, _: f64) -> Result<Self::Value, E> {
+                Ok(SkipInvalid(None))
+            }
+
+            fn visit_str<E>(self, _: &str) -> Result<Self::Value, E> {
+                Ok(SkipInvalid(None))
+            }
+
+            fn visit_bytes<E>(self, _: &[u8]) -> Result<Self::Value, E> {
+                Ok(SkipInvalid(None))
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                Ok(SkipInvalid(None))
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                Ok(SkipInvalid(None))
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                while seq.next_element::<IgnoredAny>()?.is_some() {}
+                Ok(SkipInvalid(None))
+            }
+        }
+
+        deserializer.deserialize_any(SkipVisitor(PhantomData))
+    }
 }
 
 impl<'de> Deserialize<'de> for ModelsDevCatalog {
@@ -36,7 +107,7 @@ impl<'de> Deserialize<'de> for ModelsDevCatalog {
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
                 let mut providers = HashMap::new();
                 while let Some(key) = map.next_key::<String>()? {
-                    if let Maybe::Value(provider) = map.next_value::<Maybe<ModelsDevProvider>>()? {
+                    if let SkipInvalid(Some(provider)) = map.next_value()? {
                         providers.insert(key, provider);
                     }
                 }
@@ -46,6 +117,92 @@ impl<'de> Deserialize<'de> for ModelsDevCatalog {
 
         deserializer.deserialize_map(CatalogVisitor)
     }
+}
+
+impl<'de> Deserialize<'de> for ModelsDevProvider {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ProviderVisitor;
+
+        impl<'de> Visitor<'de> for ProviderVisitor {
+            type Value = ModelsDevProvider;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a models.dev provider object")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let mut provider = ModelsDevProvider::default();
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "npm" => provider.npm = map.next_value::<LenientOptString>()?.0,
+                        "models" => provider.models = map.next_value::<LenientModelMap>()?.0,
+                        _ => {
+                            let _ = map.next_value::<IgnoredAny>()?;
+                        }
+                    }
+                }
+                Ok(provider)
+            }
+        }
+
+        deserializer.deserialize_map(ProviderVisitor)
+    }
+}
+
+struct ModelMap(HashMap<String, ModelsDevModel>);
+
+impl<'de> Deserialize<'de> for ModelMap {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ModelsVisitor;
+
+        impl<'de> Visitor<'de> for ModelsVisitor {
+            type Value = ModelMap;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a models.dev model map")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let mut models = HashMap::new();
+                while let Some(key) = map.next_key::<String>()? {
+                    if let SkipInvalid(Some(model)) = map.next_value()? {
+                        models.insert(key, model);
+                    }
+                }
+                Ok(ModelMap(models))
+            }
+        }
+
+        deserializer.deserialize_map(ModelsVisitor)
+    }
+}
+
+struct LenientModelMap(HashMap<String, ModelsDevModel>);
+
+impl<'de> Deserialize<'de> for LenientModelMap {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Self(
+            SkipInvalid::<ModelMap>::deserialize(deserializer)?
+                .0
+                .map(|models| models.0)
+                .unwrap_or_default(),
+        ))
+    }
+}
+
+fn read_rate_key<'de, A: MapAccess<'de>>(
+    rates: &mut ModelsDevCostRates,
+    key: &str,
+    map: &mut A,
+) -> Result<bool, A::Error> {
+    match key {
+        "input" => rates.input = map.next_value::<LenientF64>()?.0,
+        "output" => rates.output = map.next_value::<LenientF64>()?.0,
+        "cache_read" => rates.cache_read = map.next_value::<LenientF64>()?.0,
+        "cache_write" => rates.cache_write = map.next_value::<LenientF64>()?.0,
+        _ => return Ok(false),
+    }
+    Ok(true)
 }
 
 impl<'de> Deserialize<'de> for ModelsDevCost {
@@ -60,19 +217,20 @@ impl<'de> Deserialize<'de> for ModelsDevCost {
             }
 
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
-                let mut cost = ModelsDevCost::default();
+                let mut rates = ModelsDevCostRates::default();
+                let mut tiers = Vec::new();
+                let mut context_over = BTreeMap::new();
                 while let Some(key) = map.next_key::<String>()? {
+                    if read_rate_key(&mut rates, key.as_str(), &mut map)? {
+                        continue;
+                    }
                     match key.as_str() {
-                        "input" => cost.input = map.next_value::<LenientF64>()?.0,
-                        "output" => cost.output = map.next_value::<LenientF64>()?.0,
-                        "cache_read" => cost.cache_read = map.next_value::<LenientF64>()?.0,
-                        "cache_write" => cost.cache_write = map.next_value::<LenientF64>()?.0,
-                        "tiers" => cost.tiers = map.next_value::<LenientTiers>()?.0,
+                        "tiers" => tiers = map.next_value::<LenientTiers>()?.0,
                         key if context_over_threshold(key).is_some() => {
-                            if let Maybe::Value(rates) =
+                            if let Maybe::Value(tier_rates) =
                                 map.next_value::<Maybe<ModelsDevCostRates>>()?
                             {
-                                cost.context_over.insert(key.to_string(), rates);
+                                context_over.insert(key.to_string(), tier_rates);
                             }
                         }
                         _ => {
@@ -80,7 +238,7 @@ impl<'de> Deserialize<'de> for ModelsDevCost {
                         }
                     }
                 }
-                Ok(cost)
+                Ok(ModelsDevCost::from_parts(rates, tiers, context_over))
             }
         }
 
@@ -102,14 +260,8 @@ impl<'de> Deserialize<'de> for ModelsDevCostRates {
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
                 let mut rates = ModelsDevCostRates::default();
                 while let Some(key) = map.next_key::<String>()? {
-                    match key.as_str() {
-                        "input" => rates.input = map.next_value::<LenientF64>()?.0,
-                        "output" => rates.output = map.next_value::<LenientF64>()?.0,
-                        "cache_read" => rates.cache_read = map.next_value::<LenientF64>()?.0,
-                        "cache_write" => rates.cache_write = map.next_value::<LenientF64>()?.0,
-                        _ => {
-                            let _ = map.next_value::<IgnoredAny>()?;
-                        }
+                    if !read_rate_key(&mut rates, key.as_str(), &mut map)? {
+                        let _ = map.next_value::<IgnoredAny>()?;
                     }
                 }
                 Ok(rates)
@@ -134,11 +286,10 @@ impl<'de> Deserialize<'de> for ModelsDevCostTier {
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
                 let mut tier = ModelsDevCostTier::default();
                 while let Some(key) = map.next_key::<String>()? {
+                    if read_rate_key(&mut tier.rates, key.as_str(), &mut map)? {
+                        continue;
+                    }
                     match key.as_str() {
-                        "input" => tier.rates.input = map.next_value::<LenientF64>()?.0,
-                        "output" => tier.rates.output = map.next_value::<LenientF64>()?.0,
-                        "cache_read" => tier.rates.cache_read = map.next_value::<LenientF64>()?.0,
-                        "cache_write" => tier.rates.cache_write = map.next_value::<LenientF64>()?.0,
                         "tier" => {
                             if let Maybe::Value(size) = map.next_value::<Maybe<TierSize>>()? {
                                 tier.size = size.size;
@@ -205,26 +356,6 @@ where
         Maybe::Value(value) => value,
         Maybe::Invalid(_) => T::default(),
     })
-}
-
-pub(super) fn lenient_model_map<'de, D>(
-    deserializer: D,
-) -> Result<HashMap<String, ModelsDevModel>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    Ok(
-        match Maybe::<HashMap<String, Maybe<ModelsDevModel>>>::deserialize(deserializer)? {
-            Maybe::Value(models) => models
-                .into_iter()
-                .filter_map(|(id, model)| match model {
-                    Maybe::Value(model) => Some((id, model)),
-                    Maybe::Invalid(_) => None,
-                })
-                .collect(),
-            Maybe::Invalid(_) => HashMap::new(),
-        },
-    )
 }
 
 struct LenientF64(Option<f64>);

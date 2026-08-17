@@ -770,10 +770,11 @@ fn models_dev_parses_long_context_cost_tiers() {
                             "cache_read": 1.0,
                             "tier": { "type": "context", "size": 200000 }
                         }],
+                        // Different rates so a context_over-first parse cannot pass.
                         "context_over_200k": {
-                            "input": 4.0,
-                            "output": 12.0,
-                            "cache_read": 1.0
+                            "input": 9.0,
+                            "output": 18.0,
+                            "cache_read": 3.0
                         }
                     }
                 }
