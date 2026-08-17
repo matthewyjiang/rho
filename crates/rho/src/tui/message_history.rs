@@ -91,7 +91,6 @@ pub(super) fn render_user_entry(prompt: &str, media: &[ChatMedia]) -> String {
 pub(super) fn transcript_entries_from_messages(
     messages: &[Message],
     cwd: &std::path::Path,
-    mut preview_image: impl FnMut(&ImageContent) -> Result<Option<FeedImage>, String>,
 ) -> Vec<Entry> {
     let presenter = InteractiveToolPresenter::new(cwd.to_path_buf());
     let mut entries = Vec::new();
@@ -110,7 +109,7 @@ pub(super) fn transcript_entries_from_messages(
                 if !text.is_empty() {
                     entries.push(Entry::Assistant(text));
                 }
-                push_generated_image_entries(&mut entries, blocks, &mut preview_image);
+                push_generated_image_entries(&mut entries, blocks);
                 pending_tools.extend(blocks.iter().filter_map(|block| match block {
                     ContentBlock::ToolCall(call) => Some(call.clone()),
                     ContentBlock::Text(_) | ContentBlock::Image(_) => None,
@@ -122,7 +121,7 @@ pub(super) fn transcript_entries_from_messages(
                 if !text.is_empty() {
                     entries.push(Entry::Assistant(text));
                 }
-                push_generated_image_entries(&mut entries, blocks, &mut preview_image);
+                push_generated_image_entries(&mut entries, blocks);
                 pending_tools.extend(blocks.iter().filter_map(|block| match block {
                     ContentBlock::ToolCall(call) => Some(call.clone()),
                     ContentBlock::Text(_) | ContentBlock::Image(_) => None,
@@ -133,7 +132,7 @@ pub(super) fn transcript_entries_from_messages(
                 if !text.is_empty() {
                     entries.push(Entry::Assistant(text));
                 }
-                push_generated_image_entries(&mut entries, &message.content, &mut preview_image);
+                push_generated_image_entries(&mut entries, &message.content);
                 if let Some(tool_call) = message.tool_calls.last() {
                     let presented =
                         presenter.interrupted(tool_call.name.as_deref(), &tool_call.arguments);
@@ -165,21 +164,17 @@ pub(super) fn transcript_entries_from_messages(
     entries
 }
 
-fn push_generated_image_entries(
-    entries: &mut Vec<Entry>,
-    blocks: &[ContentBlock],
-    preview_image: &mut impl FnMut(&ImageContent) -> Result<Option<FeedImage>, String>,
-) {
+fn push_generated_image_entries(entries: &mut Vec<Entry>, blocks: &[ContentBlock]) {
     for block in blocks {
         if let ContentBlock::Image(image) = block {
-            entries.push(generated_image_entry(preview_image(image), image));
+            entries.push(generated_image_entry(Ok(None), image));
         }
     }
 }
 
 impl super::App {
     pub(super) fn transcript_entries(&self, messages: &[Message]) -> Vec<Entry> {
-        transcript_entries_from_messages(messages, &self.info.runtime.cwd, |_| Ok(None))
+        transcript_entries_from_messages(messages, &self.info.runtime.cwd)
     }
 
     pub(super) fn set_history_entries(&mut self, entries: Vec<Entry>) {

@@ -1,6 +1,6 @@
 use super::{
     command_palette::{complete_slash_command, slash_command_args},
-    message_history::transcript_entries_from_messages,
+    message_history::{generated_image_entry, transcript_entries_from_messages},
     paste_burst::normalize_paste,
     tool_output_ui::expandable_tool_entry,
     transcript_events::final_answer_delta,
@@ -394,7 +394,6 @@ fn recovered_session_messages_become_transcript_entries() {
             }),
         ],
         std::path::Path::new(""),
-        |_| Ok(None),
     );
 
     assert!(matches!(entries[0], Entry::User(ref text) if text == "hello\n[image: image/png 3 B]"));
@@ -410,10 +409,10 @@ fn recovered_session_messages_become_transcript_entries() {
     ));
 }
 
-// Covers: recovered assistant images become image cards via the preview loader.
+// Covers: recovered assistant images become summary cards, not decoded previews.
 // Owner: tui transcript reconstruction
 #[test]
-fn recovered_assistant_images_use_preview_loader() {
+fn recovered_assistant_images_become_summary_cards() {
     use rho_providers::model::image_summary;
     use rho_tools::tool_card::{ToolFact, ToolHeader};
 
@@ -421,11 +420,11 @@ fn recovered_assistant_images_use_preview_loader() {
         data: "aW1n".into(),
         mime_type: "image/png".into(),
     };
-    let messages = [Message::Assistant(vec![ContentBlock::Image(image.clone())])];
-
-    let summary =
-        transcript_entries_from_messages(&messages, std::path::Path::new(""), |_| Ok(None));
-    let Entry::Tool(tool) = &summary[0] else {
+    let entries = transcript_entries_from_messages(
+        &[Message::Assistant(vec![ContentBlock::Image(image.clone())])],
+        std::path::Path::new(""),
+    );
+    let Entry::Tool(tool) = &entries[0] else {
         panic!("expected generated image card");
     };
     assert_eq!(tool.card.header, ToolHeader::call("image_generation", None));
@@ -441,13 +440,22 @@ fn recovered_assistant_images_use_preview_loader() {
             },
         ]
     );
+}
 
-    let failed = transcript_entries_from_messages(&messages, std::path::Path::new(""), |_| {
-        Err("boom".into())
-    });
-    let Entry::Tool(tool) = &failed[0] else {
+// Covers: a failed live preview still becomes an image card with the error fact.
+// Owner: tui transcript reconstruction
+#[test]
+fn generated_image_entry_records_preview_errors() {
+    use rho_tools::tool_card::{ToolFact, ToolHeader};
+
+    let image = ImageContent {
+        data: "aW1n".into(),
+        mime_type: "image/png".into(),
+    };
+    let Entry::Tool(tool) = generated_image_entry(Err("boom".into()), &image) else {
         panic!("expected generated image card");
     };
+    assert_eq!(tool.card.header, ToolHeader::call("image_generation", None));
     assert!(tool.image.is_none());
     assert_eq!(
         tool.card.facts,
