@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.1.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v4.0.1...rho-sdk-v4.1.0) (2026-08-17)
+
+
+### Features
+
+* **xai:** let grok generate and edit images in the conversation ([#967](https://github.com/matthewyjiang/rho/issues/967)) ([47c03c1](https://github.com/matthewyjiang/rho/commit/47c03c1d2b13864d32a69b27c21da4db54572e0e))
+
 ## [4.0.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v4.0.0...rho-sdk-v4.0.1) (2026-08-15)
 
 
