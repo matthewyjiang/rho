@@ -45,6 +45,16 @@ fn string_state_carries_across_lines() {
         .all(|segment| segment.role == Some(SyntaxRole::String)));
 }
 
+// Covers: resume warmup collects fence languages and skips markdown
+// Owner: pure unit (syntax warmup token scan)
+#[test]
+fn warmup_tokens_collect_fences_and_skip_markdown() {
+    let tokens = warmup_tokens_from_text(
+        "```rust\nfn x() {}\n```\n```md\n# h\n```\n```ts\nconst n = 1\n```\n```mermaid\ngraph TD\n```",
+    );
+    assert_eq!(tokens, vec!["rust".to_string(), "ts".to_string()]);
+}
+
 // Covers: unknown fence language falls back to no highlighter
 // Owner: pure unit (syntax language lookup)
 #[test]

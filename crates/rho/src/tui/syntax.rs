@@ -7,8 +7,14 @@
 //!
 //! Language grammars come from [`two_face`]'s bat-derived dump (defaults plus
 //! extras such as TypeScript and TOML), not syntect's smaller default set.
+//! Interactive startup loads that dump off the UI thread; lookups stay `None`
+//! until it is ready so the first resume frame does not hitch.
 
-use std::{cell::Cell, path::Path, sync::LazyLock};
+use std::{
+    cell::Cell,
+    path::Path,
+    sync::{LazyLock, OnceLock},
+};
 
 use ratatui::{style::Style, text::Span};
 use regex::{Regex, RegexBuilder};
@@ -16,7 +22,110 @@ use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet
 
 use super::theme::{SyntaxRole, Theme};
 
-static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(two_face::syntax::extra_newlines);
+#[cfg(not(test))]
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
+#[cfg(not(test))]
+static LOOKUP_WHILE_UNREADY: AtomicBool = AtomicBool::new(false);
+
+fn load_syntax_set() -> SyntaxSet {
+    two_face::syntax::extra_newlines()
+}
+
+/// Ready set, or `None` until [`warm_syntax_set`] finishes (or a test inits it).
+fn syntax_set() -> Option<&'static SyntaxSet> {
+    #[cfg(test)]
+    {
+        return Some(SYNTAX_SET.get_or_init(load_syntax_set));
+    }
+    #[cfg(not(test))]
+    match SYNTAX_SET.get() {
+        Some(set) => Some(set),
+        None => {
+            LOOKUP_WHILE_UNREADY.store(true, Ordering::Relaxed);
+            None
+        }
+    }
+}
+
+/// Whether a paint asked for the dump before warmup finished.
+pub(crate) fn take_syntax_lookup_while_unready() -> bool {
+    #[cfg(test)]
+    {
+        return false;
+    }
+    #[cfg(not(test))]
+    LOOKUP_WHILE_UNREADY.swap(false, Ordering::Relaxed)
+}
+
+/// Inflate the bat dump and role selectors. Safe to call more than once.
+pub(crate) fn warm_syntax_set() {
+    let _ = SYNTAX_SET.get_or_init(load_syntax_set);
+    LazyLock::force(&ROLE_SELECTORS);
+}
+
+/// Load the dump (and any recovered fence languages) off the UI thread.
+pub(crate) fn spawn_syntax_warmup(tokens: Vec<String>) -> tokio::task::JoinHandle<()> {
+    tokio::task::spawn_blocking(move || {
+        let _span = tracing::info_span!("startup.syntax_set").entered();
+        warm_syntax_set();
+        for token in tokens {
+            if let Some(mut highlighter) = BlockHighlighter::for_language(&token) {
+                let _ = highlighter.highlight_line("");
+            }
+        }
+    })
+}
+
+/// Fence info tokens worth inflating before the first resume paint.
+///
+/// Skip Markdown and mermaid: the TUI does not highlight prose with the
+/// Markdown grammar, and those dumps are the expensive long tail.
+pub(crate) fn warmup_tokens_from_text(text: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    for line in text.lines() {
+        let Some(token) = fence_info_token(line) else {
+            continue;
+        };
+        if !should_warmup_token(&token) || tokens.iter().any(|seen| seen == &token) {
+            continue;
+        }
+        tokens.push(token);
+    }
+    tokens
+}
+
+fn fence_info_token(line: &str) -> Option<String> {
+    let indent = line.len() - line.trim_start_matches(' ').len();
+    if indent > 3 {
+        return None;
+    }
+    let rest = &line[indent..];
+    let marker = rest.chars().next()?;
+    if !matches!(marker, '`' | '~') {
+        return None;
+    }
+    let length = rest
+        .chars()
+        .take_while(|&character| character == marker)
+        .count();
+    if length < 3 {
+        return None;
+    }
+    let info = &rest[length..];
+    if marker == '`' && info.contains('`') {
+        return None;
+    }
+    info.split_whitespace().next().map(str::to_ascii_lowercase)
+}
+
+fn should_warmup_token(token: &str) -> bool {
+    !matches!(
+        token,
+        "md" | "markdown" | "mermaid" | "text" | "plaintext" | "plain"
+    )
+}
 
 /// Soft cap on language-aware lines painted in one tool-card body pass. Beyond
 /// this, remaining rows keep solid row colors so huge write/edit cards stay
@@ -86,7 +195,7 @@ impl BlockHighlighter {
     /// styling).
     pub(in crate::tui) fn for_language(token: &str) -> Option<Self> {
         Some(Self::from_syntax(
-            SYNTAX_SET.find_syntax_by_token(canonical_language_token(token))?,
+            syntax_set()?.find_syntax_by_token(canonical_language_token(token))?,
         ))
     }
 
@@ -114,7 +223,13 @@ impl BlockHighlighter {
         let mut text = String::with_capacity(line.len() + 1);
         text.push_str(line);
         text.push('\n');
-        let Ok(ops) = self.parse.parse_line(&text, &SYNTAX_SET) else {
+        let Some(set) = syntax_set() else {
+            return vec![HighlightSegment {
+                text: line.to_string(),
+                role: None,
+            }];
+        };
+        let Ok(ops) = self.parse.parse_line(&text, set) else {
             return vec![HighlightSegment {
                 text: line.to_string(),
                 role: None,
@@ -151,7 +266,10 @@ impl BlockHighlighter {
         let mut text = String::with_capacity(line.len() + 1);
         text.push_str(line);
         text.push('\n');
-        let Ok(ops) = self.parse.parse_line(&text, &SYNTAX_SET) else {
+        let Some(set) = syntax_set() else {
+            return;
+        };
+        let Ok(ops) = self.parse.parse_line(&text, set) else {
             return;
         };
         for (_, op) in ops {
@@ -208,10 +326,11 @@ fn syntax_for_path(path: &str) -> Option<&'static SyntaxReference> {
     }
     let path = Path::new(path);
     let file_name = path.file_name()?.to_str()?;
-    SYNTAX_SET.find_syntax_by_extension(file_name).or_else(|| {
+    let set = syntax_set()?;
+    set.find_syntax_by_extension(file_name).or_else(|| {
         path.extension()
             .and_then(|ext| ext.to_str())
-            .and_then(|ext| SYNTAX_SET.find_syntax_by_extension(ext))
+            .and_then(|ext| set.find_syntax_by_extension(ext))
     })
 }
 
@@ -366,13 +485,6 @@ pub(in crate::tui) fn take_highlight_line_calls() -> usize {
 #[cfg(test)]
 pub(in crate::tui) fn reset_highlight_line_calls() {
     HIGHLIGHT_LINE_CALLS.with(|cell| cell.set(0));
-}
-
-/// Warm the lazy syntax dump so first-paint benches exclude load cost.
-#[cfg(test)]
-pub(in crate::tui) fn warm_syntax_set() {
-    LazyLock::force(&SYNTAX_SET);
-    LazyLock::force(&ROLE_SELECTORS);
 }
 
 #[cfg(test)]

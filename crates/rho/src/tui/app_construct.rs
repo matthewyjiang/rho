@@ -71,6 +71,7 @@ impl App {
             .map(|_| "no providers configured; run /login to sign in".to_string());
         let pending_update_notice = info.services.pending_update_notice.take();
         let pending_custom_models = info.services.pending_custom_models.take();
+        let pending_syntax_warmup = info.services.pending_syntax_warmup.take();
         let statusline = StatusLine::new(&info.runtime);
         let mut app = Self {
             info,
@@ -109,6 +110,7 @@ impl App {
             pending_model_metadata_reasoning: None,
             pending_update_notice,
             pending_custom_models,
+            pending_syntax_warmup,
             pending_herdr_graphics: None,
             held_turns: std::collections::VecDeque::new(),
             compact_follow_up: super::compact_work::CompactFollowUp::None,

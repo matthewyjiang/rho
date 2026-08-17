@@ -45,6 +45,22 @@ impl App {
         self.pending_custom_models = None;
     }
 
+    /// Rebuild history if the dump finished after a plain first paint.
+    pub(super) fn poll_syntax_warmup(&mut self) -> bool {
+        let Some(handle) = self.pending_syntax_warmup.as_mut() else {
+            return false;
+        };
+        if !handle.is_finished() {
+            return false;
+        }
+        self.pending_syntax_warmup = None;
+        if !super::syntax::take_syntax_lookup_while_unready() {
+            return false;
+        }
+        self.history.invalidate_from(0);
+        true
+    }
+
     pub(super) fn poll_herdr_graphics(&mut self) {
         let Some(handle) = self.pending_herdr_graphics.as_mut() else {
             return;

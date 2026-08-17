@@ -65,6 +65,10 @@ impl App {
                     .as_ref()
                     .is_some_and(|handle| handle.is_finished())
                 || self
+                    .pending_syntax_warmup
+                    .as_ref()
+                    .is_some_and(|handle| handle.is_finished())
+                || self
                     .pending_herdr_graphics
                     .as_ref()
                     .is_some_and(|handle| handle.is_finished())
@@ -76,6 +80,7 @@ impl App {
             needs_redraw |= self.start_next_follow_up(terminal, agent).await?;
             self.poll_update_notice();
             self.poll_custom_provider_models();
+            needs_redraw |= self.poll_syntax_warmup();
             self.poll_herdr_graphics();
             needs_redraw |= self.poll_pending_session_title()?;
             self.poll_pending_interactive_login(terminal, agent).await?;
@@ -128,6 +133,7 @@ impl App {
             let idle_timeout = if self.pending_model_metadata.is_some()
                 || self.pending_update_notice.is_some()
                 || self.pending_custom_models.is_some()
+                || self.pending_syntax_warmup.is_some()
                 || self.pending_herdr_graphics.is_some()
                 || self.pending_session_title.is_some()
                 || self.pending_interactive_login.is_some()

@@ -38,6 +38,31 @@ fn validate_resume_agent(
     session.validate_agent_definition_identity(agent.definition())
 }
 
+fn syntax_warmup_tokens(messages: &[rho_providers::model::Message]) -> Vec<String> {
+    use rho_providers::model::{ContentBlock, Message};
+
+    let mut tokens = Vec::new();
+    for message in messages {
+        let blocks: &[ContentBlock] = match message {
+            Message::User(blocks) | Message::Assistant(blocks) => blocks,
+            Message::EnrichedAssistant(message) => &message.content,
+            Message::AbortedAssistant(message) => &message.content,
+            Message::System(_) | Message::ToolResult(_) => continue,
+        };
+        for block in blocks {
+            let ContentBlock::Text(text) = block else {
+                continue;
+            };
+            for token in tui::warmup_tokens_from_text(text) {
+                if !tokens.iter().any(|seen| seen == &token) {
+                    tokens.push(token);
+                }
+            }
+        }
+    }
+    tokens
+}
+
 pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
     let Startup {
         cli,
@@ -73,6 +98,9 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
         }
         None => (None, Vec::new(), None),
     };
+    let pending_syntax_warmup = Some(tui::spawn_syntax_warmup(syntax_warmup_tokens(
+        &recovered_messages,
+    )));
     let mut prompt_templates = crate::prompt_templates::discover(&cwd);
     crate::prompt_templates::merge(&mut prompt_templates, config.prompt_templates.clone());
     let theme = config.theme.clone();
@@ -130,6 +158,7 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
                 update_notice: None,
                 pending_update_notice,
                 pending_custom_models,
+                pending_syntax_warmup,
                 diagnostics,
                 herdr,
             },
