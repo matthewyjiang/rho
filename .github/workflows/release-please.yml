@@ -233,24 +233,53 @@ jobs:
             args+=(--app)
           fi
           ./scripts/publish_workspace_crates.sh "${args[@]}"
-      - name: Publish draft SDK release after crates.io success
-        if: ${{ needs.release.outputs.sdk_release_created == 'true' }}
+      - name: Publish draft crate releases after crates.io success
+        if: ${{ needs.release.outputs.sdk_release_created == 'true' || needs.release.outputs.tools_release_created == 'true' || needs.release.outputs.providers_release_created == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
+          PUBLISH_SDK: ${{ needs.release.outputs.sdk_release_created }}
+          PUBLISH_TOOLS: ${{ needs.release.outputs.tools_release_created }}
+          PUBLISH_PROVIDERS: ${{ needs.release.outputs.providers_release_created }}
           SDK_TAG: ${{ needs.release.outputs.sdk_tag_name }}
-        run: gh release edit "$SDK_TAG" --draft=false
-      - name: Publish draft rho-agent-tools release after crates.io success
-        if: ${{ needs.release.outputs.tools_release_created == 'true' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
           TOOLS_TAG: ${{ needs.release.outputs.tools_tag_name }}
-        run: gh release edit "$TOOLS_TAG" --draft=false
-      - name: Publish draft rho-providers release after crates.io success
-        if: ${{ needs.release.outputs.providers_release_created == 'true' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
           PROVIDERS_TAG: ${{ needs.release.outputs.providers_tag_name }}
-        run: gh release edit "$PROVIDERS_TAG" --draft=false
+        run: |
+          set -euo pipefail
+          # GitHub API 503s should not leave crates.io public while drafts stay unpublished.
+          publish_draft() {
+            local tag="$1"
+            local attempt=1
+            local max_attempts=5
+            local delay_seconds=15
+
+            while true; do
+              if gh release edit "$tag" --draft=false; then
+                return 0
+              fi
+              if [[ "$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null || true)" == "false" ]]; then
+                echo "Release ${tag} is already published"
+                return 0
+              fi
+              if (( attempt >= max_attempts )); then
+                echo "Failed to publish ${tag} after ${max_attempts} attempts" >&2
+                return 1
+              fi
+              echo "Publish attempt ${attempt} for ${tag} failed; retrying in ${delay_seconds}s..." >&2
+              sleep "$delay_seconds"
+              attempt=$((attempt + 1))
+              delay_seconds=$((delay_seconds * 2))
+            done
+          }
+
+          if [[ "$PUBLISH_SDK" == "true" ]]; then
+            publish_draft "$SDK_TAG"
+          fi
+          if [[ "$PUBLISH_TOOLS" == "true" ]]; then
+            publish_draft "$TOOLS_TAG"
+          fi
+          if [[ "$PUBLISH_PROVIDERS" == "true" ]]; then
+            publish_draft "$PROVIDERS_TAG"
+          fi
 
   # Binary assets upload to the draft app release. They do not need crates.io.
   # Start beside publish-crates; publish-app-release still waits on both.
@@ -595,7 +624,28 @@ jobs:
           GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.release.outputs.tag_name }}
-        run: gh release edit "$TAG" --draft=false
+        run: |
+          set -euo pipefail
+          attempt=1
+          max_attempts=5
+          delay_seconds=15
+          while true; do
+            if gh release edit "$TAG" --draft=false; then
+              exit 0
+            fi
+            if [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || true)" == "false" ]]; then
+              echo "Release ${TAG} is already published"
+              exit 0
+            fi
+            if (( attempt >= max_attempts )); then
+              echo "Failed to publish ${TAG} after ${max_attempts} attempts" >&2
+              exit 1
+            fi
+            echo "Publish attempt ${attempt} for ${TAG} failed; retrying in ${delay_seconds}s..." >&2
+            sleep "$delay_seconds"
+            attempt=$((attempt + 1))
+            delay_seconds=$((delay_seconds * 2))
+          done
 
 
   update-scoop-manifest:
