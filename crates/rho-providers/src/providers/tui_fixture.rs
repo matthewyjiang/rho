@@ -96,11 +96,12 @@ impl ModelProvider for TuiFixtureProvider {
         &'a self,
         request: ModelRequest<'a>,
     ) -> Option<NativeCompactionFuture<'a>> {
-        if history_has_user_text(&request, "fixture compact hold") {
+        // Timed compact finishes while type_during_compact is still typing on macOS CI.
+        if history_has_user_text(&request, "fixture compact until cancel") {
             return Some(Box::pin(async move {
                 request.cancellation.cancelled().await;
                 NativeCompactionResponse::failure(ProviderError::interrupted(
-                    "fixture compact hold cancelled",
+                    "fixture provider cancelled",
                 ))
             }));
         }
