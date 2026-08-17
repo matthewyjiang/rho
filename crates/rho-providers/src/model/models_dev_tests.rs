@@ -7,7 +7,116 @@ use crate::model::{
     ReasoningLevelSet,
 };
 use pretty_assertions::assert_eq;
-use serde_json::json;
+use serde_json::{json, Value};
+
+fn catalog(api: &Value) -> super::document::ModelsDevCatalog {
+    super::document::ModelsDevCatalog::from_json_value(api)
+}
+
+fn upstream_metadata_from_api(api: &Value, provider: &str, model: &str) -> Option<ModelMetadata> {
+    super::upstream_metadata_from_api(&catalog(api), provider, model)
+}
+
+fn deprecated_provider_models_from_api(api: &Value, provider: &str) -> HashSet<String> {
+    super::document::deprecated_provider_models(&catalog(api), provider)
+}
+
+fn hydrate_catalog_from_api(api: &Value) -> usize {
+    hydrate::hydrate_catalog_from_api(&catalog(api))
+}
+
+// Covers: one junk models.dev row or field type must not fail the catalog
+// Owner: models.dev catalog parse
+#[test]
+fn malformed_catalog_rows_stay_lenient() {
+    let api = json!({
+        "openai": {
+            "npm": "@ai-sdk/openai",
+            "models": {
+                "good": { "name": "Good", "reasoning": false },
+                "not-object": "nope",
+                "bad-fields": {
+                    "name": 7,
+                    "reasoning": "yes",
+                    "limit": { "context": "big", "output": 128 },
+                    "cost": "free",
+                    "reasoning_options": { "type": "effort" }
+                }
+            }
+        },
+        "not-a-provider": ["skip"]
+    });
+
+    assert_eq!(
+        model_metadata_from_api(&api, "openai", "good").and_then(|metadata| metadata.display_name),
+        Some("Good".to_string())
+    );
+    assert_eq!(model_metadata_from_api(&api, "openai", "not-object"), None);
+
+    let bad = model_metadata_from_api(&api, "openai", "bad-fields").unwrap();
+    assert_eq!(
+        bad,
+        ModelMetadata {
+            display_name: None,
+            advertised_context_window: None,
+            effective_context_window: None,
+            usable_context_window: None,
+            long_context_threshold: None,
+            max_output_tokens: Some(128),
+            cost_default: None,
+            cost_long_context: None,
+            supported_reasoning_levels: None,
+            reasoning_off_behavior: ReasoningOffBehavior::Omit,
+            reasoning_capabilities_known: false,
+            reasoning_metadata_complete: false,
+            sdk_package: Some("@ai-sdk/openai".to_string()),
+        }
+    );
+}
+
+// Covers: first effort option wins; a missing values list still uses toggle
+// Owner: models.dev catalog parse
+#[test]
+fn first_effort_option_wins_and_missing_values_use_toggle() {
+    let first_effort = json!({
+        "openai": {
+            "models": {
+                "gpt-test": {
+                    "reasoning": true,
+                    "reasoning_options": [
+                        {"type": "effort", "values": ["low"]},
+                        {"type": "effort", "values": ["high"]},
+                    ]
+                }
+            }
+        }
+    });
+    assert_eq!(
+        model_metadata_from_api(&first_effort, "openai", "gpt-test")
+            .and_then(|metadata| metadata.supported_reasoning_levels),
+        Some(vec![ReasoningLevel::Low])
+    );
+
+    let effort_without_values = json!({
+        "openai": {
+            "models": {
+                "gpt-test": {
+                    "reasoning": true,
+                    "reasoning_options": [
+                        {"type": "effort"},
+                        {"type": "toggle"},
+                    ]
+                }
+            }
+        }
+    });
+    let metadata = model_metadata_from_api(&effort_without_values, "openai", "gpt-test").unwrap();
+    assert_eq!(
+        metadata.supported_reasoning_levels,
+        Some(vec![ReasoningLevel::Off, ReasoningLevel::Max])
+    );
+    assert!(metadata.reasoning_metadata_complete);
+}
 
 #[test]
 fn deprecated_provider_models_only_returns_exact_deprecation_flags() {
@@ -1079,7 +1188,7 @@ fn hydrate_writes_complete_rows_for_every_registered_provider() {
 
     let cache = tempfile::tempdir().unwrap();
     with_models_dev_cache_dir(cache.path().to_path_buf(), || {
-        let written = hydrate::hydrate_catalog_from_api(&api);
+        let written = hydrate_catalog_from_api(&api);
         assert!(
             written >= 3,
             "expected multiple provider-facing rows, wrote {written}"
@@ -1135,7 +1244,7 @@ fn hydrate_writes_opencode_go_rows_that_only_advertise_sdk_package() {
 
     let cache = tempfile::tempdir().unwrap();
     with_models_dev_cache_dir(cache.path().to_path_buf(), || {
-        assert!(hydrate::hydrate_catalog_from_api(&api) >= 1);
+        assert!(hydrate_catalog_from_api(&api) >= 1);
         let metadata = cached_model_metadata("opencode-go", "minimax-m3").expect("hydrated");
         assert_eq!(metadata.sdk_package.as_deref(), Some("@ai-sdk/anthropic"));
         assert_eq!(
@@ -1275,7 +1384,7 @@ fn failed_hydrate_does_not_advance_readiness() {
             }
         });
 
-        let written = hydrate::hydrate_catalog_from_api(&api);
+        let written = hydrate_catalog_from_api(&api);
         assert_eq!(written, 0);
         assert!(
             !hydrate::catalog_snapshot_is_ready(),

@@ -12,14 +12,13 @@ use std::{
 };
 
 use rusqlite::params;
-use serde_json::Value;
 use tokio::sync::Mutex;
 
 use crate::provider::{CatalogConstruction, ProviderDescriptor, ProviderId};
 
 use super::{
-    fetch_models_dev_api, model_metadata_needs_refresh, open_models_dev_cache,
-    upstream_metadata_from_api, write_cached_upstream_model_metadata_batch,
+    document::ModelsDevCatalog, fetch_models_dev_api, model_metadata_needs_refresh,
+    open_models_dev_cache, upstream_metadata_from_api, write_cached_upstream_model_metadata_batch,
     MODEL_METADATA_CACHE_VERSION,
 };
 
@@ -84,7 +83,7 @@ pub async fn prefetch_model_metadata(targets: impl IntoIterator<Item = (String, 
 /// Cache keys stay provider-facing (`openai-codex` / model), not upstream. OpenRouter
 /// rows use the aggregator model ids (`anthropic/claude-…`). Kimi Code's `k3`
 /// alias is written beside the upstream `kimi-k3` id.
-pub(super) fn hydrate_catalog_from_api(api: &Value) -> usize {
+pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
     let mut entries = Vec::new();
     let mut touched_providers = HashSet::new();
     for descriptor in crate::provider::providers() {
@@ -114,7 +113,7 @@ pub(super) fn hydrate_catalog_from_api(api: &Value) -> usize {
 }
 
 fn catalog_model_ids_for_provider(
-    api: &Value,
+    api: &ModelsDevCatalog,
     descriptor: &crate::provider::ProviderDescriptor,
 ) -> Vec<String> {
     let upstream = match descriptor.id {
@@ -124,10 +123,8 @@ fn catalog_model_ids_for_provider(
         ProviderId::OpenRouter => "openrouter",
         _ => descriptor.metadata_upstream,
     };
-    api.get(upstream)
-        .and_then(|provider| provider.get("models"))
-        .and_then(Value::as_object)
-        .map(|models| models.keys().cloned().collect())
+    api.provider(upstream)
+        .map(|provider| provider.models.keys().cloned().collect())
         .unwrap_or_default()
 }
 
@@ -136,7 +133,7 @@ fn catalog_model_ids_for_provider(
 /// reasoning-incomplete rows, because the builder needs `sdk_package` even
 /// when reasoning levels stay unknown.
 fn extract_complete_upstream_metadata(
-    api: &Value,
+    api: &ModelsDevCatalog,
     descriptor: &ProviderDescriptor,
     model: &str,
 ) -> Option<super::ModelMetadata> {
