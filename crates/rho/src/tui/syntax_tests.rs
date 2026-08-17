@@ -1,6 +1,11 @@
 use super::*;
 use crate::tui::theme::{SyntaxRole, Theme};
 
+fn highlighter(token: &str) -> BlockHighlighter {
+    warm_syntax_set();
+    BlockHighlighter::for_language(token).expect("bundled syntax")
+}
+
 fn segment_texts(segments: &[HighlightSegment]) -> Vec<&str> {
     segments
         .iter()
@@ -20,7 +25,7 @@ fn role_of(segments: &[HighlightSegment], text: &str) -> Option<SyntaxRole> {
 // Owner: pure unit (syntax highlight)
 #[test]
 fn rust_tokens_map_to_distinct_roles() {
-    let mut highlighter = BlockHighlighter::for_language("rust").expect("bundled rust syntax");
+    let mut highlighter = highlighter("rust");
     let segments = highlighter.highlight_line("let answer = 42; // note");
 
     assert_eq!(
@@ -36,7 +41,7 @@ fn rust_tokens_map_to_distinct_roles() {
 // Owner: pure unit (syntax highlight)
 #[test]
 fn string_state_carries_across_lines() {
-    let mut highlighter = BlockHighlighter::for_language("rust").expect("bundled rust syntax");
+    let mut highlighter = highlighter("rust");
     highlighter.highlight_line("let text = \"open");
     let segments = highlighter.highlight_line("still inside");
 
@@ -49,6 +54,7 @@ fn string_state_carries_across_lines() {
 // Owner: pure unit (syntax language lookup)
 #[test]
 fn unknown_language_has_no_highlighter() {
+    warm_syntax_set();
     assert!(BlockHighlighter::for_language("no-such-language").is_none());
 }
 
@@ -56,6 +62,7 @@ fn unknown_language_has_no_highlighter() {
 // Owner: pure unit (syntax language lookup)
 #[test]
 fn typescript_fence_tokens_resolve() {
+    warm_syntax_set();
     for token in ["ts", "tsx", "typescript"] {
         assert!(
             BlockHighlighter::for_language(token).is_some(),
@@ -68,6 +75,7 @@ fn typescript_fence_tokens_resolve() {
 // Owner: pure unit (syntax language lookup)
 #[test]
 fn common_fence_aliases_resolve() {
+    warm_syntax_set();
     for token in ["jsx", "shell", "console", "toml"] {
         assert!(
             BlockHighlighter::for_language(token).is_some(),
@@ -80,7 +88,7 @@ fn common_fence_aliases_resolve() {
 // Owner: pure unit (syntax highlight)
 #[test]
 fn typescript_tokens_map_to_roles() {
-    let mut highlighter = BlockHighlighter::for_language("ts").expect("bundled typescript syntax");
+    let mut highlighter = highlighter("ts");
     let segments = highlighter.highlight_line("const answer: number = 42; // note");
 
     assert_eq!(
@@ -96,7 +104,7 @@ fn typescript_tokens_map_to_roles() {
 // Owner: pure unit (syntax highlight)
 #[test]
 fn empty_line_yields_one_empty_plain_segment() {
-    let mut highlighter = BlockHighlighter::for_language("rust").expect("bundled rust syntax");
+    let mut highlighter = highlighter("rust");
     let segments = highlighter.highlight_line("");
 
     assert_eq!(segment_texts(&segments), vec![""]);
@@ -107,6 +115,7 @@ fn empty_line_yields_one_empty_plain_segment() {
 // Owner: pure unit (path syntax lookup)
 #[test]
 fn path_extension_resolves_highlighter() {
+    warm_syntax_set();
     for path in ["src/lib.rs", "foo.ts", "pkg/main.py", "Makefile"] {
         assert!(
             BlockHighlighter::for_path(path).is_some(),

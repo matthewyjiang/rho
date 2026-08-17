@@ -7,8 +7,14 @@
 //!
 //! Language grammars come from [`two_face`]'s bat-derived dump (defaults plus
 //! extras such as TypeScript and TOML), not syntect's smaller default set.
+//! Interactive startup loads that dump off the UI thread; lookups stay `None`
+//! until it is ready so the first resume frame does not hitch.
 
-use std::{cell::Cell, path::Path, sync::LazyLock};
+use std::{
+    cell::Cell,
+    path::Path,
+    sync::{LazyLock, OnceLock},
+};
 
 use ratatui::{style::Style, text::Span};
 use regex::{Regex, RegexBuilder};
@@ -16,7 +22,39 @@ use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet
 
 use super::theme::{SyntaxRole, Theme};
 
-static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(two_face::syntax::extra_newlines);
+static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
+
+/// Ready set, or `None` until [`warm_syntax_set`] finishes.
+fn syntax_set() -> Option<&'static SyntaxSet> {
+    SYNTAX_SET.get()
+}
+
+fn ready_syntax_set() -> &'static SyntaxSet {
+    SYNTAX_SET
+        .get()
+        .expect("BlockHighlighter is only built after the syntax set is ready")
+}
+
+/// Inflate the bat dump and role selectors. Safe to call more than once.
+pub(crate) fn warm_syntax_set() {
+    let _ = SYNTAX_SET.get_or_init(two_face::syntax::extra_newlines);
+    LazyLock::force(&ROLE_SELECTORS);
+}
+
+/// Dump-native syntax name for a fence token, when the set is ready and known.
+pub(in crate::tui) fn syntax_name_for_language(token: &str) -> Option<&'static str> {
+    Some(
+        syntax_set()?
+            .find_syntax_by_token(canonical_language_token(token))?
+            .name
+            .as_str(),
+    )
+}
+
+/// Dump-native syntax name for a display path, when the set is ready and known.
+pub(in crate::tui) fn syntax_name_for_path(path: &str) -> Option<&'static str> {
+    Some(syntax_for_path(path)?.name.as_str())
+}
 
 /// Soft cap on language-aware lines painted in one tool-card body pass. Beyond
 /// this, remaining rows keep solid row colors so huge write/edit cards stay
@@ -86,7 +124,7 @@ impl BlockHighlighter {
     /// styling).
     pub(in crate::tui) fn for_language(token: &str) -> Option<Self> {
         Some(Self::from_syntax(
-            SYNTAX_SET.find_syntax_by_token(canonical_language_token(token))?,
+            syntax_set()?.find_syntax_by_token(canonical_language_token(token))?,
         ))
     }
 
@@ -114,7 +152,7 @@ impl BlockHighlighter {
         let mut text = String::with_capacity(line.len() + 1);
         text.push_str(line);
         text.push('\n');
-        let Ok(ops) = self.parse.parse_line(&text, &SYNTAX_SET) else {
+        let Ok(ops) = self.parse.parse_line(&text, ready_syntax_set()) else {
             return vec![HighlightSegment {
                 text: line.to_string(),
                 role: None,
@@ -151,7 +189,7 @@ impl BlockHighlighter {
         let mut text = String::with_capacity(line.len() + 1);
         text.push_str(line);
         text.push('\n');
-        let Ok(ops) = self.parse.parse_line(&text, &SYNTAX_SET) else {
+        let Ok(ops) = self.parse.parse_line(&text, ready_syntax_set()) else {
             return;
         };
         for (_, op) in ops {
@@ -208,10 +246,11 @@ fn syntax_for_path(path: &str) -> Option<&'static SyntaxReference> {
     }
     let path = Path::new(path);
     let file_name = path.file_name()?.to_str()?;
-    SYNTAX_SET.find_syntax_by_extension(file_name).or_else(|| {
+    let set = syntax_set()?;
+    set.find_syntax_by_extension(file_name).or_else(|| {
         path.extension()
             .and_then(|ext| ext.to_str())
-            .and_then(|ext| SYNTAX_SET.find_syntax_by_extension(ext))
+            .and_then(|ext| set.find_syntax_by_extension(ext))
     })
 }
 
@@ -366,13 +405,6 @@ pub(in crate::tui) fn take_highlight_line_calls() -> usize {
 #[cfg(test)]
 pub(in crate::tui) fn reset_highlight_line_calls() {
     HIGHLIGHT_LINE_CALLS.with(|cell| cell.set(0));
-}
-
-/// Warm the lazy syntax dump so first-paint benches exclude load cost.
-#[cfg(test)]
-pub(in crate::tui) fn warm_syntax_set() {
-    LazyLock::force(&SYNTAX_SET);
-    LazyLock::force(&ROLE_SELECTORS);
 }
 
 #[cfg(test)]

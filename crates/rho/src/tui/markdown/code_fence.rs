@@ -101,7 +101,7 @@ pub(in crate::tui) fn is_closing_fence(line: &str, opening: CodeFence) -> bool {
 }
 
 /// Lowercased first info-string token of an opening fence line, when present.
-pub(super) fn opening_fence_info_token(line: &str) -> Option<String> {
+pub(in crate::tui) fn opening_fence_info_token(line: &str) -> Option<String> {
     let fence = parse_opening_fence(line)?;
     let indent = line.len() - line.trim_start_matches(' ').len();
     let rest = &line[indent + fence.length..];

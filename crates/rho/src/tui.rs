@@ -131,6 +131,8 @@ mod session_title;
 mod sessions_hub;
 mod setup_screen;
 mod syntax;
+mod syntax_warmup;
+pub(crate) use syntax_warmup::spawn_syntax_warmup;
 pub(in crate::tui) mod terminal_graph;
 mod transcript_events;
 pub(crate) use session_title::SESSION_TITLE_PROMPT;
@@ -380,6 +382,9 @@ pub struct ApplicationServices {
     pub update_notice: Option<String>,
     pub pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
     pub pending_custom_models: Option<tokio::task::JoinHandle<()>>,
+    /// Bat grammar dump loading off the UI thread. First paint stays plain if
+    /// this is still running; completion rebuilds history so roles appear.
+    pub pending_syntax_warmup: Option<tokio::task::JoinHandle<()>>,
     pub diagnostics: crate::diagnostics::RuntimeDiagnostics,
     pub herdr: HerdrReporter,
 }
@@ -501,6 +506,7 @@ struct App {
     pending_model_metadata_reasoning: Option<(ReasoningLevel, ReasoningRequestSource)>,
     pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
     pending_custom_models: Option<tokio::task::JoinHandle<()>>,
+    pending_syntax_warmup: Option<tokio::task::JoinHandle<()>>,
     pending_herdr_graphics: Option<tokio::task::JoinHandle<HerdrGraphicsCapability>>,
     /// Turns held until MCP connect settles.
     held_turns: VecDeque<idle_input::HeldTurn>,

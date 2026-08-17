@@ -73,6 +73,7 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
         }
         None => (None, Vec::new(), None),
     };
+    let pending_syntax_warmup = Some(tui::spawn_syntax_warmup(&recovered_messages));
     let mut prompt_templates = crate::prompt_templates::discover(&cwd);
     crate::prompt_templates::merge(&mut prompt_templates, config.prompt_templates.clone());
     let theme = config.theme.clone();
@@ -130,6 +131,7 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
                 update_notice: None,
                 pending_update_notice,
                 pending_custom_models,
+                pending_syntax_warmup,
                 diagnostics,
                 herdr,
             },

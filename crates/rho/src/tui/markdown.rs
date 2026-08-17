@@ -17,9 +17,10 @@ mod txm;
 pub(crate) use mermaid::PHASE_CHAIN_FLOWCHART;
 
 pub(in crate::tui) use code_fence::{
-    is_closing_fence, parse_opening_fence, update_code_block_state, CodeFenceState,
+    is_closing_fence, opening_fence_info_token, parse_opening_fence, update_code_block_state,
+    CodeFenceState,
 };
-use code_fence::{mermaid_opening_fence, opening_fence_info_token, CodeFence};
+use code_fence::{mermaid_opening_fence, CodeFence};
 
 use super::markdown_image::standalone_markdown_image;
 use super::syntax::BlockHighlighter;
