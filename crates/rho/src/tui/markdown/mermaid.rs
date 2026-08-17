@@ -4,7 +4,7 @@ use ratatui::text::Line;
 
 use super::super::{render::display_width, theme::Theme};
 use super::panel::ClosedPanel;
-use crate::tui::terminal_graph::{GraphStyles, Oversize};
+use crate::tui::terminal_graph::{Direction, GraphStyles, Oversize};
 
 mod flow;
 mod model;
@@ -46,17 +46,16 @@ impl MermaidFallback {
     pub(super) fn panel_title(self) -> &'static str {
         match self {
             Self::TooWide => "MERMAID · PANE TOO NARROW",
-            Self::Blank
-            | Self::SourceBytes
+            Self::Unsupported => "MERMAID · UNSUPPORTED",
+            Self::Malformed => "MERMAID · INVALID",
+            Self::SourceBytes
             | Self::SourceLines
-            | Self::UnsafeContent
-            | Self::Unsupported
-            | Self::Malformed
             | Self::StructuralLimit
-            | Self::Panic
             | Self::OutputLines
-            | Self::OutputCells
-            | Self::AnsiOutput => "MERMAID · NOT RENDERED",
+            | Self::OutputCells => "MERMAID · TOO LARGE",
+            Self::Blank | Self::UnsafeContent | Self::Panic | Self::AnsiOutput => {
+                "MERMAID · NOT RENDERED"
+            }
         }
     }
 }
@@ -116,7 +115,7 @@ fn render_inner(source: &str, inner_width: usize) -> MermaidRender {
     if !parsed.graph.node_links.is_empty() {
         return MermaidRender::Fallback(MermaidFallback::UnsafeContent);
     }
-    if !model::can_paint_losslessly(&parsed.graph) {
+    if !model::can_paint(&parsed.graph) {
         return MermaidRender::Fallback(MermaidFallback::Unsupported);
     }
     let (primary, relationships, groups, details) = model::complexity(&parsed.graph);
@@ -128,7 +127,7 @@ fn render_inner(source: &str, inner_width: usize) -> MermaidRender {
         return MermaidRender::Fallback(MermaidFallback::StructuralLimit);
     }
 
-    let Some(model) = model::from_ir(&parsed.graph) else {
+    let Some(mut model) = model::from_ir(&parsed.graph) else {
         return MermaidRender::Fallback(MermaidFallback::Unsupported);
     };
     let style = Theme::code_text();
@@ -139,28 +138,18 @@ fn render_inner(source: &str, inner_width: usize) -> MermaidRender {
         edge_label: style,
         node_styles: Vec::new(),
     };
-    let result = match diagram_policy {
-        policy::DiagramPolicy::PaintSequence => sequence::layout_sequence(
-            model
-                .sequence
-                .as_ref()
-                .expect("sequence policy has sequence model"),
-            &styles,
-            Some(inner_width),
-        ),
-        policy::DiagramPolicy::PaintClass | policy::DiagramPolicy::PaintEr => flow::render_class(
-            &model.graph,
-            model
-                .class_info
-                .as_ref()
-                .expect("class policy has class model"),
-            &styles,
-            Some(inner_width),
-        ),
-        policy::DiagramPolicy::PaintFlow | policy::DiagramPolicy::PaintState => {
-            flow::layout_flow(&model.graph, &styles, Some(inner_width))
+    let result = layout_model(&model, diagram_policy, &styles, inner_width);
+    let result = match result {
+        Err(Oversize::Width)
+            if matches!(
+                diagram_policy,
+                policy::DiagramPolicy::PaintFlow | policy::DiagramPolicy::PaintState
+            ) && matches!(model.graph.dir, Direction::LeftRight | Direction::RightLeft) =>
+        {
+            model.graph.dir = Direction::TopDown;
+            layout_model(&model, diagram_policy, &styles, inner_width)
         }
-        policy::DiagramPolicy::RawFallback => unreachable!("handled before model conversion"),
+        other => other,
     };
     let art = match result {
         Ok(art) => art,
@@ -175,6 +164,37 @@ fn render_inner(source: &str, inner_width: usize) -> MermaidRender {
         return fallback;
     }
     MermaidRender::Rendered(art.styled_lines)
+}
+
+fn layout_model(
+    model: &model::TerminalModel,
+    diagram_policy: policy::DiagramPolicy,
+    styles: &GraphStyles,
+    inner_width: usize,
+) -> Result<MermaidArt, Oversize> {
+    match diagram_policy {
+        policy::DiagramPolicy::PaintSequence => sequence::layout_sequence(
+            model
+                .sequence
+                .as_ref()
+                .expect("sequence policy has sequence model"),
+            styles,
+            Some(inner_width),
+        ),
+        policy::DiagramPolicy::PaintClass | policy::DiagramPolicy::PaintEr => flow::render_class(
+            &model.graph,
+            model
+                .class_info
+                .as_ref()
+                .expect("class policy has class model"),
+            styles,
+            Some(inner_width),
+        ),
+        policy::DiagramPolicy::PaintFlow | policy::DiagramPolicy::PaintState => {
+            flow::layout_flow(&model.graph, styles, Some(inner_width))
+        }
+        policy::DiagramPolicy::RawFallback => unreachable!("handled before model conversion"),
+    }
 }
 
 fn validate_output(lines: &[String], inner_width: usize) -> Result<(), MermaidRender> {

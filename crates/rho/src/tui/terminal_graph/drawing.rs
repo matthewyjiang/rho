@@ -7,7 +7,7 @@ use unicode_width::UnicodeWidthStr;
 use super::{
     canvas::{Canvas, Cls, D, L, R, U},
     flow::Placed,
-    painter::{LABEL_BREAK_CHARS, MAX_LABEL, PAD},
+    painter::{LABEL_BREAK_CHARS, MAX_LABEL, MAX_LINES, PAD},
     Compartment, Direction, Edge, EdgeHead as Head, EdgeLine as LineKind, Graph, NodeRect,
     NodeShape as Shape, TextAlignment,
 };
@@ -397,12 +397,19 @@ pub(in crate::tui) fn route_back_lr(
 }
 
 fn place_label(canvas: &mut Canvas, label: &str, row: usize, start_x: usize) {
+    let lines = wrap_label(label, MAX_LABEL, MAX_LINES);
+    let start_row = row.saturating_sub(lines.len().saturating_sub(1));
+    for (offset, line) in lines.iter().enumerate() {
+        place_label_line(canvas, line, start_row + offset, start_x);
+    }
+}
+
+fn place_label_line(canvas: &mut Canvas, label: &str, row: usize, start_x: usize) {
     if row >= canvas.h {
         return;
     }
-    let text = fit_label(label, MAX_LABEL);
     let mut x = start_x;
-    for grapheme in text.graphemes(true) {
+    for grapheme in label.graphemes(true) {
         let grapheme_width = grapheme.width();
         if grapheme_width == 0 {
             canvas.set_grapheme(x, row, grapheme, Cls::EdgeLabel);

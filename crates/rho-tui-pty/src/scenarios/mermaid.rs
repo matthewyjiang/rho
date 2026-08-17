@@ -23,12 +23,17 @@ pub(super) const MERMAID_FLOWCHART_RESIZE_STEPS: &[Step] = &[
         timeout: STREAM,
     },
     Step::Custom(wait_until_diagram_art),
-    Step::Phase("narrow_pane"),
+    Step::Phase("split_pane"),
     Step::Resize { rows: 40, cols: 44 },
+    // A typical split pane used to dump this LR chain as source. It should now
+    // relayout as TD art instead of showing a fallback title.
+    Step::Custom(wait_until_diagram_art),
+    Step::Phase("narrow_pane"),
+    Step::Resize { rows: 40, cols: 32 },
     // Wait for the reflowed fallback, not merely a quiet frame. Resize can leave
     // the previous wide art clipped until history rebuilds at the new width.
     Step::WaitText {
-        text: "PANE TOO NARROW",
+        text: "PANE TOO",
         timeout: SETTLE,
     },
     Step::WaitText {
@@ -64,7 +69,7 @@ fn wait_until_diagram_art(harness: &mut PtyHarness) -> Result<()> {
 fn diagram_art_visible(harness: &PtyHarness) -> bool {
     let screen = harness.screen().contents();
     !screen.contains("flowchart LR")
-        && !screen.contains("PANE TOO NARROW")
+        && !screen.contains("PANE TOO")
         && screen.contains("Phase 1")
         && screen.contains("Phase 5")
 }
@@ -72,7 +77,7 @@ fn diagram_art_visible(harness: &PtyHarness) -> bool {
 fn assert_narrow_pane_explains_fallback(harness: &mut PtyHarness) -> Result<()> {
     let screen = harness.screen().contents();
     ensure!(
-        screen.contains("PANE TOO NARROW"),
+        screen.contains("PANE TOO"),
         "narrow pane fallback did not explain itself:\n{}",
         harness.screen().debug_dump()
     );

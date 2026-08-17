@@ -1,5 +1,3 @@
-use unicode_width::UnicodeWidthStr;
-
 use crate::tui::{
     markdown::mermaid::{model::Graph, MermaidArt},
     terminal_graph::{self, GraphStyles, Oversize},
@@ -34,10 +32,10 @@ pub(super) fn layout_flow(
 
     for wrap_width in terminal_graph::flow_wrap_widths() {
         if !terminal_graph::flow_labels_fit(&layout_graph, wrap_width)
-            || graph
-                .groups
-                .iter()
-                .any(|group| group.label.width() > wrap_width)
+            || graph.groups.iter().any(|group| {
+                terminal_graph::wrap_label(&group.label, wrap_width, usize::MAX).len()
+                    > terminal_graph::MAX_LINES
+            })
         {
             continue;
         }

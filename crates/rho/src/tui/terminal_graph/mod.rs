@@ -20,7 +20,7 @@ pub(in crate::tui) use flow::{
     Placed,
 };
 pub(in crate::tui) use painter::{
-    GraphArt, GraphStyles, Oversize, MAX_CANVAS_CELLS, MAX_LABEL, MAX_LINES, PAD, WRAP_WIDTH,
+    GraphArt, GraphStyles, Oversize, MAX_CANVAS_CELLS, MAX_LINES, PAD, WRAP_WIDTH,
 };
 
 /// A node's independent border and text styles.

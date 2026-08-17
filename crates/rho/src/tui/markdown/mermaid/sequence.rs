@@ -40,9 +40,16 @@ pub(super) enum SeqItem {
     },
 }
 
+pub(super) struct Activation {
+    pub(super) participant: usize,
+    pub(super) start_item: usize,
+    pub(super) end_item: usize,
+}
+
 pub(super) struct Sequence {
     pub(super) labels: Vec<String>,
     pub(super) items: Vec<SeqItem>,
+    pub(super) activations: Vec<Activation>,
 }
 
 fn note_geometry(xs: &[usize], anchor: &NoteAnchor, text_w: usize) -> (usize, usize) {
@@ -221,6 +228,22 @@ pub(super) fn layout_sequence(
         canvas.junction(x, box_h - 1, D);
         canvas.seg_v(x, box_h, bottom_top - 1);
         canvas.junction(x, bottom_top, U);
+    }
+    for activation in &seq.activations {
+        let Some(&x) = xs.get(activation.participant) else {
+            continue;
+        };
+        let start_y = rows.get(activation.start_item).copied().unwrap_or(box_h);
+        let end_y = rows
+            .get(activation.end_item)
+            .copied()
+            .unwrap_or(bottom_top.saturating_sub(1))
+            .max(start_y);
+        for y in start_y..=end_y.min(bottom_top.saturating_sub(1)) {
+            if canvas.ch[canvas.idx(x, y)] == '│' {
+                canvas.set(x, y, '┃', Cls::Edge);
+            }
+        }
     }
 
     for (item, &r) in seq.items.iter().zip(&rows) {

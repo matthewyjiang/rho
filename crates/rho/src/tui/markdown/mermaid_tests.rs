@@ -106,13 +106,6 @@ fn applies_source_model_and_canvas_limits_before_or_after_painting() {
         render_mermaid(&compacted_group, 20),
         MermaidRender::Fallback(MermaidFallback::TooWide)
     );
-    assert_eq!(
-        render_mermaid(
-            "flowchart TD\nsubgraph abcdefghijklmnopqrst\nA[ok]\nend",
-            16,
-        ),
-        MermaidRender::Fallback(MermaidFallback::TooWide)
-    );
 }
 
 #[test]
@@ -144,22 +137,10 @@ fn rejects_blank_malformed_unsafe_and_link_bearing_sources() {
 }
 
 #[test]
-fn raw_falls_back_when_terminal_painter_cannot_preserve_semantics() {
+fn still_refuses_kinds_and_labels_the_painter_cannot_hold() {
     let long_label = "x".repeat(WRAP_WIDTH * MAX_LINES + 1);
     let fixtures = [
-        "stateDiagram-v2\n[*] --> Ready\nReady --> [*]".to_owned(),
-        "stateDiagram-v2\nReady --> Waiting\nnote right of Ready: queued".to_owned(),
-        "classDiagram\nA \"1\" --> \"*\" B : owns".to_owned(),
-        "classDiagram\nA *-- A : contains".to_owned(),
-        "sequenceDiagram\nparticipant A\nparticipant B\nactivate A\nA->>B: work\ndeactivate A"
-            .to_owned(),
-        "sequenceDiagram\nautonumber\nA->>B: work".to_owned(),
-        "sequenceDiagram\nbox Team\nparticipant A\nend".to_owned(),
-        "sequenceDiagram\nA->>B: request\nalt success\nB->>A: ok\nelse failure\nB->>A: error\nend"
-            .to_owned(),
         "sequenceDiagram".to_owned(),
-        "flowchart TD\nA -->|one| B\nA -->|two| B".to_owned(),
-        "flowchart TD\nA[(database)]".to_owned(),
         format!("flowchart TD\nA[{long_label}]"),
     ];
 
@@ -169,6 +150,156 @@ fn raw_falls_back_when_terminal_painter_cannot_preserve_semantics() {
             MermaidRender::Fallback(MermaidFallback::Unsupported),
             "{source}"
         );
+    }
+}
+
+// Covers: everyday agent diagrams must paint instead of collapsing to source
+// Owner: mermaid paint policy
+#[test]
+fn ablation_fixtures_paint_or_name_the_remaining_fallback() {
+    const AGENT_CHART: &str = r#"flowchart TD
+    start[Closed mermaid fence] --> empty{Empty?}
+    empty -->|yes| blank[Blank]
+    empty -->|no| bytes{Over 64 KiB or 2048 lines?}
+    bytes -->|yes| src[SourceBytes / SourceLines]
+    bytes -->|no| safe{Width 0 or unsafe content?}
+    safe -->|yes| uns[UnsafeContent]
+    safe -->|no| header{Supported header?}
+    header -->|no| unsup[Unsupported]
+    header -->|yes| parse[parse_mermaid_strict]
+    parse -->|err| mal[Malformed]
+    parse -->|ok| policy{Painter policy}
+    policy -->|RawFallback| unsup
+    policy -->|paint| links{Node links?}
+    links -->|yes| uns
+    links -->|no| lossless{can_paint?}
+    lossless -->|no| unsup
+    lossless -->|yes| struct{Complexity over cap?}
+    struct -->|yes| lim[StructuralLimit]
+    struct -->|no| layout[Layout / paint]
+    layout -->|Oversize Width| wide[TooWide]
+    layout -->|Oversize Cells| cells[OutputCells]
+    layout -->|ok| validate[validate_output]
+    validate -->|too many lines / cells / ANSI / wider than pane| out[OutputLines / OutputCells / AnsiOutput / TooWide]
+    validate -->|ok| art[Rendered art]
+"#;
+
+    let cases = [
+        (
+            "trivial_flow",
+            "flowchart TD\nA --> B",
+            80,
+            /*rendered*/ true,
+        ),
+        (
+            "styled_flow",
+            "flowchart TD\nclassDef ok fill:#0f0\nA --> B\nclass A ok",
+            80,
+            true,
+        ),
+        (
+            "cylinder_and_stadium",
+            "flowchart TD\nA[(database)] --> B([api])",
+            80,
+            true,
+        ),
+        (
+            "state_start_and_note",
+            "stateDiagram-v2\n[*] --> Ready\nReady --> Waiting\nnote right of Ready: queued\nWaiting --> [*]",
+            80,
+            true,
+        ),
+        (
+            "long_edge_label",
+            "flowchart TD\nA -->|too many lines / cells / ANSI / wider than pane| B",
+            80,
+            true,
+        ),
+        (
+            "long_group_title",
+            "flowchart TD\nsubgraph abcdefghijklmnopqrstuvwxyz\nA[ok]\nend",
+            80,
+            true,
+        ),
+        (
+            "parallel_edges",
+            "flowchart TD\nA -->|one| B\nA -->|two| B",
+            80,
+            true,
+        ),
+        (
+            "class_multiplicity",
+            "classDiagram\nA \"1\" --> \"*\" B : owns",
+            80,
+            true,
+        ),
+        (
+            "class_self_loop",
+            "classDiagram\nA *-- A : contains",
+            80,
+            true,
+        ),
+        (
+            "sequence_alt_autonumber_activate",
+            "sequenceDiagram\nautonumber\nparticipant A\nparticipant B\nactivate A\nA->>B: request\nalt success\nB->>A: ok\nelse failure\nB->>A: error\nend\ndeactivate A",
+            80,
+            true,
+        ),
+        (
+            "sequence_box",
+            "sequenceDiagram\nbox Team\nparticipant A\nparticipant B\nend\nA->>B: hi",
+            80,
+            true,
+        ),
+        (
+            "wide_lr_relayouts_to_td",
+            PHASE_CHAIN_FLOWCHART,
+            44,
+            true,
+        ),
+        (
+            "agent_chart_still_needs_width",
+            AGENT_CHART,
+            80,
+            false,
+        ),
+        ("agent_chart_wide_pane", AGENT_CHART, 240, true),
+        ("pie_still_unsupported", "pie\n\"Dogs\" : 5", 80, false),
+        (
+            "still_too_wide_when_a_node_cannot_fit",
+            "flowchart LR\nA[a label that cannot fit]",
+            4,
+            false,
+        ),
+    ];
+
+    for (name, source, width, should_paint) in cases {
+        match render_mermaid(source, width) {
+            MermaidRender::Rendered(lines) if should_paint => {
+                assert!(!lines.is_empty(), "{name}");
+                assert!(
+                    lines.iter().all(|line| {
+                        let text: String = line
+                            .spans
+                            .iter()
+                            .map(|span| span.content.as_ref())
+                            .collect();
+                        !text.contains('\x1b') && display_width(&text) <= width
+                    }),
+                    "{name}"
+                );
+            }
+            MermaidRender::Fallback(reason) if !should_paint => {
+                assert!(
+                    matches!(
+                        reason,
+                        MermaidFallback::Unsupported | MermaidFallback::TooWide
+                    ),
+                    "{name}: {reason:?}"
+                );
+            }
+            other => panic!("{name}: unexpected {other:?}"),
+        }
     }
 }
 
