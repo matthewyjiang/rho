@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.43.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.42.0...rho-coding-agent-v1.43.0) (2026-08-17)
+
+
+### Features
+
+* **tui:** show the advisor on the composer divider ([#968](https://github.com/matthewyjiang/rho/issues/968)) ([3af67ce](https://github.com/matthewyjiang/rho/commit/3af67ce3da780dedc0fe35c28e82bcaf0fc7e858))
+* **xai:** let grok generate and edit images in the conversation ([#967](https://github.com/matthewyjiang/rho/issues/967)) ([47c03c1](https://github.com/matthewyjiang/rho/commit/47c03c1d2b13864d32a69b27c21da4db54572e0e))
+
+
+### Bug Fixes
+
+* **advisor:** discourage first-turn advisor calls ([#969](https://github.com/matthewyjiang/rho/issues/969)) ([cec3198](https://github.com/matthewyjiang/rho/commit/cec3198841c18ae9d75459f3efd3c3a6f38ab011))
+* **advisor:** stop the reviewer from inventing empty-call failures ([#961](https://github.com/matthewyjiang/rho/issues/961)) ([061fbbe](https://github.com/matthewyjiang/rho/commit/061fbbe7040eebbc1caa07021b1e1c609fc6ea09))
+* **models:** stop clamping GPT-5.5 and GPT-5.6 context to 272k ([#966](https://github.com/matthewyjiang/rho/issues/966)) ([c5984e5](https://github.com/matthewyjiang/rho/commit/c5984e5d04d6f4ab1d24c250cb6b2e74c4362187))
+
+
+### Performance Improvements
+
+* **session:** keep one transcript in ram instead of one per turn ([#964](https://github.com/matthewyjiang/rho/issues/964)) ([c2a0c7d](https://github.com/matthewyjiang/rho/commit/c2a0c7d1a82036743789df3d571f9e062840bfa4))
+* **tui:** stop keeping a second transcript after resume ([#965](https://github.com/matthewyjiang/rho/issues/965)) ([52fd5c6](https://github.com/matthewyjiang/rho/commit/52fd5c68457c9114d258148c2ea8c10e86b70e4e))
+
 ## [1.42.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.41.0...rho-coding-agent-v1.42.0) (2026-08-16)
 
 

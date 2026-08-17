@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.6.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.5.0...rho-providers-v1.6.0) (2026-08-17)
+
+
+### Features
+
+* **xai:** let grok generate and edit images in the conversation ([#967](https://github.com/matthewyjiang/rho/issues/967)) ([47c03c1](https://github.com/matthewyjiang/rho/commit/47c03c1d2b13864d32a69b27c21da4db54572e0e))
+
+
+### Bug Fixes
+
+* **models:** stop clamping GPT-5.5 and GPT-5.6 context to 272k ([#966](https://github.com/matthewyjiang/rho/issues/966)) ([c5984e5](https://github.com/matthewyjiang/rho/commit/c5984e5d04d6f4ab1d24c250cb6b2e74c4362187))
+
+
+### Performance Improvements
+
+* **tui:** stop keeping a second transcript after resume ([#965](https://github.com/matthewyjiang/rho/issues/965)) ([52fd5c6](https://github.com/matthewyjiang/rho/commit/52fd5c68457c9114d258148c2ea8c10e86b70e4e))
+
 ## [1.5.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.4.0...rho-providers-v1.5.0) (2026-08-16)
 
 
