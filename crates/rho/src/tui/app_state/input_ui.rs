@@ -547,6 +547,15 @@ impl InputUi {
         self.reset_history_navigation();
     }
 
+    pub(in crate::tui) fn truncate_history_to_newest(&mut self, max_entries: usize) {
+        if max_entries == 0 || self.history.len() <= max_entries {
+            return;
+        }
+        let drop = self.history.len() - max_entries;
+        self.history.drain(..drop);
+        self.reset_history_navigation();
+    }
+
     pub(in crate::tui) fn history_cursor(&self) -> Option<usize> {
         self.history_cursor
     }

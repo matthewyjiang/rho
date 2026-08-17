@@ -7,7 +7,6 @@ use std::{
 };
 
 pub(crate) enum ParentDirectoryPrivacy {
-    #[cfg(test)]
     PreserveExisting,
     EnforcePrivate,
 }

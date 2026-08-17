@@ -4,7 +4,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::DefaultTerminal;
 
 use super::{
-    config_editor::{ConfigNumberInput, ConfigNumberSave},
+    config_editor::{ConfigNumberInput, ConfigNumberKey, ConfigNumberSave},
     config_picker, App, ComposerMode, Entry, InteractiveRuntime,
 };
 
@@ -104,6 +104,18 @@ impl App {
                 let ComposerMode::ConfigNumberInput(input) = self.input_ui.composer() else {
                     return Ok(true);
                 };
+                if input.key == ConfigNumberKey::PromptHistoryLimit {
+                    match input.parsed_value() {
+                        Ok(value) => self.propose_prompt_history_limit(
+                            value.min(crate::config::MAX_PROMPT_HISTORY_LIMIT),
+                        )?,
+                        Err(err) => {
+                            self.insert_entry(&Entry::Error(err.to_string()));
+                            self.set_status("config save failed");
+                        }
+                    }
+                    return Ok(true);
+                }
                 let saved = match input.save(&self.info.services.config_repository) {
                     Ok(saved) => saved,
                     Err(err) => {
@@ -144,6 +156,9 @@ impl App {
                             config_picker::COMPACT_TARGET_PERCENT_VALUE,
                         )?;
                         self.set_status(format!("compact target set to {value}%"));
+                    }
+                    ConfigNumberSave::PromptHistoryLimit(_) => {
+                        unreachable!("prompt history limit is proposed before save")
                     }
                 }
                 Ok(true)

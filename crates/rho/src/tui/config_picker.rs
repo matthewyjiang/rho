@@ -38,6 +38,8 @@ pub(super) const COMPACT_THRESHOLD_PERCENT_VALUE: &str = "compact_threshold_perc
 pub(super) const COMPACT_TARGET_PERCENT_VALUE: &str = "compact_target_percent";
 pub(super) const MAX_OUTPUT_BYTES_VALUE: &str = "max_output_bytes";
 pub(super) const MAX_TOOL_OUTPUT_LINES_VALUE: &str = "max_tool_output_lines";
+pub(super) const PROMPT_HISTORY_LIMIT_VALUE: &str = "prompt_history_limit";
+pub(super) const CLEAR_PROMPT_HISTORY_VALUE: &str = "clear_prompt_history";
 pub(super) const WEB_SEARCH_VALUE: &str = "web_search";
 pub(super) const INLINE_SHELL_VALUE: &str = "inline_shell";
 pub(super) const INLINE_SHELL_PREFIX: &str = "inline_shell:";
@@ -179,7 +181,7 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
             ),
             item(
                 "Context & limits",
-                "Auto compact, compact threshold, compact target, maximum output bytes, and tool output lines.",
+                "Auto compact, compact threshold, compact target, output limits, and prompt history.",
                 Some(if config.auto_compact {
                     format!("compacts at {}%", config.compact_threshold_percent)
                 } else {
@@ -371,6 +373,18 @@ pub(super) fn category_picker(
                     Some(config.max_tool_output_lines.to_string()),
                     MAX_TOOL_OUTPUT_LINES_VALUE,
                 ),
+                item(
+                    "Prompt history limit",
+                    "Saved composer prompts kept for up-arrow recall across sessions. 0 disables saving. Lowering the cap deletes older saved prompts after confirm.",
+                    Some(config.prompt_history_limit.to_string()),
+                    PROMPT_HISTORY_LIMIT_VALUE,
+                ),
+                item(
+                    "Clear prompt history",
+                    "Permanently delete every saved composer prompt used by up-arrow recall.",
+                    Some("run now".into()),
+                    CLEAR_PROMPT_HISTORY_VALUE,
+                ),
             ],
         ),
         TOOLS_CATEGORY_VALUE => {
@@ -482,7 +496,9 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
         | COMPACT_THRESHOLD_PERCENT_VALUE
         | COMPACT_TARGET_PERCENT_VALUE
         | MAX_OUTPUT_BYTES_VALUE
-        | MAX_TOOL_OUTPUT_LINES_VALUE => Some(CONTEXT_CATEGORY_VALUE),
+        | MAX_TOOL_OUTPUT_LINES_VALUE
+        | PROMPT_HISTORY_LIMIT_VALUE
+        | CLEAR_PROMPT_HISTORY_VALUE => Some(CONTEXT_CATEGORY_VALUE),
         INLINE_SHELL_VALUE | EDIT_TOOL_VALUE | WEB_SEARCH_VALUE | XAI_IMAGE_GENERATION_VALUE => {
             Some(TOOLS_CATEGORY_VALUE)
         }

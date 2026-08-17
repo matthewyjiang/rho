@@ -112,6 +112,8 @@ impl App {
                 self.set_status("edit max tool output lines");
                 Ok(())
             }
+            config_picker::PROMPT_HISTORY_LIMIT_VALUE => self.open_prompt_history_limit_editor(),
+            config_picker::CLEAR_PROMPT_HISTORY_VALUE => self.prompt_clear_prompt_history(),
             config_picker::INLINE_SHELL_VALUE => {
                 let config = self.info.services.config_repository.load()?;
                 let child = config_picker::inline_shell_picker(&config);

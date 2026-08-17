@@ -278,7 +278,7 @@ Model metadata supplies the context window when available. Override a model's wi
 
 `max_tool_output_lines` controls how many lines of a tool result are shown inline before the TUI collapses the rest. It defaults to `10` and is clamped to at least one line when config is loaded.
 
-`prompt_history_limit` controls how many sent composer prompts Rho keeps in `~/.rho/prompt-history.sqlite3` (`$RHO_HOME/prompt-history.sqlite3` when set) for up-arrow recall across sessions. It defaults to `1000`. `0` disables persistence. Values above `10000` clamp to `10000` when config is loaded. Run `/prompt-history clear` to wipe the shared history. This is separate from `/new` / `/clear`, which reset the conversation, not composer recall.
+`prompt_history_limit` controls how many sent composer prompts Rho keeps in `~/.rho/prompt-history.sqlite3` (`$RHO_HOME/prompt-history.sqlite3` when set) for up-arrow recall across sessions. It defaults to `1000`. `0` disables persistence. Values above `10000` clamp to `10000` when config is loaded. In the TUI, `/config` → **Context & limits** edits the cap and can clear the saved history. Lowering the cap below the number of stored prompts asks first, then deletes the oldest extras. Clear also asks first. This is separate from `/new` / `/clear`, which reset the conversation, not composer recall.
 
 ## Update checks
 

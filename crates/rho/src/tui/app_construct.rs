@@ -79,6 +79,12 @@ impl App {
         } else {
             None
         };
+        let prompt_history_limit = info
+            .services
+            .config_repository
+            .load()
+            .map(|config| config.prompt_history_limit)
+            .unwrap_or(0);
         let statusline = StatusLine::new(&info.runtime);
         let mut app = Self {
             info,
@@ -121,6 +127,8 @@ impl App {
             pending_prompt_history,
             prompt_history_tx,
             prompt_history_rx,
+            prompt_history_limit,
+            prompt_history_store_path: None,
             pending_herdr_graphics: None,
             held_turns: std::collections::VecDeque::new(),
             compact_follow_up: super::compact_work::CompactFollowUp::None,

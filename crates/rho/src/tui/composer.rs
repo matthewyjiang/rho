@@ -162,10 +162,14 @@ impl App {
             return;
         }
         if self.input_ui.push_history_if_new(prompt)
+            && self.prompt_history_limit > 0
             && super::prompt_history_persistence::eligible_for_persistence(prompt)
         {
             let _ = self.prompt_history_tx.send(
-                super::prompt_history_persistence::PromptHistoryOp::Append(prompt.to_string()),
+                super::prompt_history_persistence::PromptHistoryOp::Append {
+                    text: prompt.to_string(),
+                    max_entries: self.prompt_history_limit,
+                },
             );
         }
     }

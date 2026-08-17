@@ -513,6 +513,8 @@ struct App {
     pending_prompt_history: Option<crate::prompt_history::PromptHistoryLoadHandle>,
     prompt_history_tx: mpsc::UnboundedSender<prompt_history_persistence::PromptHistoryOp>,
     prompt_history_rx: Option<mpsc::UnboundedReceiver<prompt_history_persistence::PromptHistoryOp>>,
+    prompt_history_limit: usize,
+    prompt_history_store_path: Option<PathBuf>,
     pending_herdr_graphics: Option<tokio::task::JoinHandle<HerdrGraphicsCapability>>,
     /// Turns held until MCP connect settles.
     held_turns: VecDeque<idle_input::HeldTurn>,

@@ -88,7 +88,6 @@ impl App {
             CommandId::Title => self.execute_title_command(&invocation),
             CommandId::Limits => self.execute_limits_command(terminal),
             CommandId::Fast => self.execute_fast_command(invocation, agent),
-            CommandId::PromptHistory => self.execute_prompt_history_command(invocation),
             CommandId::Workflow => self.execute_workflow_command(terminal).await,
         }
     }

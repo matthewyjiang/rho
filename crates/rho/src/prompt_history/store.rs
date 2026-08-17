@@ -27,9 +27,13 @@ pub(crate) struct PromptHistoryStore {
 
 impl PromptHistoryStore {
     /// Opens or creates a history database at `path` and applies migrations.
+    pub(crate) fn open_path(path: impl Into<PathBuf>) -> Result<Self, PromptHistoryError> {
+        Self::new_with_parent_privacy(path.into(), ParentDirectoryPrivacy::PreserveExisting)
+    }
+
     #[cfg(test)]
     pub(crate) fn new(path: impl Into<PathBuf>) -> Result<Self, PromptHistoryError> {
-        Self::new_with_parent_privacy(path.into(), ParentDirectoryPrivacy::PreserveExisting)
+        Self::open_path(path)
     }
 
     /// Opens or creates the history database under Rho's configured data root.
@@ -116,6 +120,33 @@ impl PromptHistoryStore {
                 params![limit],
             )?;
         }
+        transaction.commit()?;
+        set_sidecar_permissions(&self.path)?;
+        Ok(())
+    }
+
+    pub(crate) fn count(&self) -> Result<usize, PromptHistoryError> {
+        let connection = self.open_write_connection()?;
+        let count: i64 =
+            connection.query_row("SELECT COUNT(*) FROM prompt_entries", [], |row| row.get(0))?;
+        usize::try_from(count).map_err(|_| {
+            PromptHistoryError::Sqlite(rusqlite::Error::IntegralValueOutOfRange(0, count))
+        })
+    }
+
+    /// Drops oldest rows until at most `max_entries` remain.
+    pub(crate) fn enforce_limit(&self, max_entries: usize) -> Result<(), PromptHistoryError> {
+        let mut connection = self.open_write_connection()?;
+        set_sidecar_permissions(&self.path)?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let limit = i64::try_from(max_entries).unwrap_or(i64::MAX);
+        transaction.execute(
+            "DELETE FROM prompt_entries
+             WHERE id NOT IN (
+                 SELECT id FROM prompt_entries ORDER BY id DESC LIMIT ?1
+             )",
+            params![limit],
+        )?;
         transaction.commit()?;
         set_sidecar_permissions(&self.path)?;
         Ok(())

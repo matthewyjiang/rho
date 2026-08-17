@@ -30,6 +30,21 @@ fn append_round_trips_oldest_first() {
     );
 }
 
+// Covers: enforce_limit drops oldest rows without inserting.
+// Owner: prompt history store
+#[test]
+fn enforce_limit_drops_oldest_rows() {
+    let (_directory, store) = store();
+    store.append("a", 1, 10).unwrap();
+    store.append("b", 2, 10).unwrap();
+    store.append("c", 3, 10).unwrap();
+    assert_eq!(store.count().unwrap(), 3);
+
+    store.enforce_limit(1).unwrap();
+    assert_eq!(store.load_tail(10).unwrap(), vec!["c".to_string()]);
+    assert_eq!(store.count().unwrap(), 1);
+}
+
 // Covers: trim happens in the same write as the insert and keeps the newest N.
 // Owner: prompt history store
 #[test]

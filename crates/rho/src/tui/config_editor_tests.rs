@@ -2,6 +2,21 @@ use super::*;
 use crate::tui::line_editor::LineEditor;
 use crate::tui::text_input::{TextInput, TextInputTarget};
 
+// Covers: prompt history limit 0 is valid and disables persistence.
+// Owner: config editor
+#[test]
+fn prompt_history_limit_allows_zero() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    let repository = ConfigRepository::new(Some(path));
+    let input = ConfigNumberInput::new(ConfigNumberKey::PromptHistoryLimit, 0);
+
+    let saved = input.save(&repository).unwrap();
+
+    assert_eq!(saved, ConfigNumberSave::PromptHistoryLimit(0));
+    assert_eq!(repository.load().unwrap().prompt_history_limit, 0);
+}
+
 #[test]
 fn number_input_accepts_only_ascii_digits() {
     let mut input = ConfigNumberInput::new(ConfigNumberKey::MaxOutputBytes, 42);

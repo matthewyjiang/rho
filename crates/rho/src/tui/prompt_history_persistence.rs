@@ -13,7 +13,7 @@ pub(in crate::tui) const MAX_PERSISTED_PROMPT_BYTES: usize = 10 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::tui) enum PromptHistoryOp {
-    Append(String),
+    Append { text: String, max_entries: usize },
     Clear,
 }
 
@@ -23,7 +23,6 @@ pub(in crate::tui) fn eligible_for_persistence(text: &str) -> bool {
 
 pub(in crate::tui) fn spawn_prompt_history_writer(
     store: PromptHistoryStore,
-    limit: usize,
     mut rx: UnboundedReceiver<PromptHistoryOp>,
 ) {
     tokio::spawn(async move {
@@ -33,13 +32,15 @@ pub(in crate::tui) fn spawn_prompt_history_writer(
             let store = store.clone();
             let kind = op.clone();
             let result = tokio::task::spawn_blocking(move || match op {
-                PromptHistoryOp::Append(text) => store.append(&text, now_ms(), limit),
+                PromptHistoryOp::Append { text, max_entries } => {
+                    store.append(&text, now_ms(), max_entries)
+                }
                 PromptHistoryOp::Clear => store.clear(),
             })
             .await;
             match (kind, result) {
                 (_, Ok(Ok(()))) => {}
-                (PromptHistoryOp::Append(_), error) if !warned_append => {
+                (PromptHistoryOp::Append { .. }, error) if !warned_append => {
                     warned_append = true;
                     tracing::warn!(?error, "failed to append prompt history");
                 }
@@ -75,11 +76,11 @@ impl App {
             return false;
         };
         match handle.now_or_never() {
-            Some(Ok(Some((store, tail, limit)))) => {
+            Some(Ok(Some((store, tail, _limit)))) => {
                 let seeded = !tail.is_empty();
                 self.input_ui.seed_history_front(tail);
                 if let Some(rx) = self.prompt_history_rx.take() {
-                    spawn_prompt_history_writer(store, limit, rx);
+                    spawn_prompt_history_writer(store, rx);
                 }
                 seeded
             }
