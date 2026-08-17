@@ -29,6 +29,7 @@ pub enum CommandId {
     Mcp,
     Title,
     Fast,
+    PromptHistory,
     Workflow,
     Exit,
 }
@@ -124,6 +125,12 @@ const CHANGELOG_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[CommandArgumentCh
     completion: "/changelog latest",
     usage: "/changelog latest",
     description: "fetch notes for the latest published release",
+}];
+
+const PROMPT_HISTORY_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[CommandArgumentChoice {
+    completion: "/prompt-history clear",
+    usage: "/prompt-history clear",
+    description: "clear the prompt history shared across sessions",
 }];
 
 // Keep alphabetical by `name` so the slash palette stays sorted as commands are added.
@@ -275,6 +282,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         usage: "/new",
         description: "start a new session",
         argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::PromptHistory,
+        name: "prompt-history",
+        usage: "/prompt-history clear",
+        description: "clear the prompt history shared across sessions",
+        argument_choices: PROMPT_HISTORY_ARGUMENT_CHOICES,
     },
     CommandSpec {
         id: CommandId::Resume,

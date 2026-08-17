@@ -72,6 +72,10 @@ impl App {
                     .pending_herdr_graphics
                     .as_ref()
                     .is_some_and(|handle| handle.is_finished())
+                || self
+                    .pending_prompt_history
+                    .as_ref()
+                    .is_some_and(|handle| handle.is_finished())
                 || agent.startup_hydrate_pending();
             self.poll_model_metadata_fetch(agent).await;
             needs_redraw |= self.poll_startup_hydrates(agent).await?;
@@ -82,6 +86,7 @@ impl App {
             self.poll_custom_provider_models();
             needs_redraw |= self.poll_syntax_warmup();
             self.poll_herdr_graphics();
+            needs_redraw |= self.poll_prompt_history();
             needs_redraw |= self.poll_pending_session_title()?;
             self.poll_pending_interactive_login(terminal, agent).await?;
             needs_redraw |= self.poll_limits_command().await?;
@@ -135,6 +140,7 @@ impl App {
                 || self.pending_custom_models.is_some()
                 || self.pending_syntax_warmup.is_some()
                 || self.pending_herdr_graphics.is_some()
+                || self.pending_prompt_history.is_some()
                 || self.pending_session_title.is_some()
                 || self.pending_interactive_login.is_some()
                 || !self.pending_usage_limits.is_empty()

@@ -96,6 +96,10 @@ pub(crate) fn usage_database_path() -> anyhow::Result<PathBuf> {
     Ok(rho_dir()?.join("usage.sqlite3"))
 }
 
+pub(crate) fn prompt_history_database_path() -> anyhow::Result<PathBuf> {
+    Ok(rho_dir()?.join("prompt-history.sqlite3"))
+}
+
 /// Process-wide lock for tests that read or mutate `RHO_HOME` / related env.
 ///
 /// Hold this for the entire critical section. Concurrent tests that only set the
@@ -137,6 +141,18 @@ mod tests {
                 .unwrap()
                 .join("usage.sqlite3"),
             PathBuf::from("/var/lib/rho/usage.sqlite3")
+        );
+    }
+
+    // Covers: prompt history lives under RHO_HOME, not a hardcoded ~/.rho.
+    // Owner: paths (pure unit).
+    #[test]
+    fn prompt_history_database_uses_data_root() {
+        assert_eq!(
+            rho_dir_from_env(|name| env(&[("RHO_HOME", "/var/lib/rho")], name))
+                .unwrap()
+                .join("prompt-history.sqlite3"),
+            PathBuf::from("/var/lib/rho/prompt-history.sqlite3")
         );
     }
 

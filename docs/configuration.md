@@ -278,6 +278,8 @@ Model metadata supplies the context window when available. Override a model's wi
 
 `max_tool_output_lines` controls how many lines of a tool result are shown inline before the TUI collapses the rest. It defaults to `10` and is clamped to at least one line when config is loaded.
 
+`prompt_history_limit` controls how many sent composer prompts Rho keeps in `~/.rho/prompt-history.sqlite3` (`$RHO_HOME/prompt-history.sqlite3` when set) for up-arrow recall across sessions. It defaults to `1000`. `0` disables persistence. Values above `10000` clamp to `10000` when config is loaded. Run `/prompt-history clear` to wipe the shared history. This is separate from `/new` / `/clear`, which reset the conversation, not composer recall.
+
 ## Update checks
 
 `check_for_updates` controls whether Rho checks the latest GitHub release at TUI startup. It defaults to `true`. When a newer version is available, the session header shows an update notice and points to `rho update`.

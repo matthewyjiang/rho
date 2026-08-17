@@ -90,6 +90,52 @@ max_tool_output_lines = 0
     );
 }
 
+// Covers: prompt_history_limit parses, defaults, and clamps above the max.
+// Owner: config load
+#[test]
+fn prompt_history_limit_parses_defaults_and_clamps() {
+    let (default_config, warnings) = parse_settings("").unwrap();
+    assert_eq!(default_config.prompt_history_limit, 1000);
+    assert!(warnings.is_empty());
+
+    let (config, warnings) = parse_settings(
+        r#"
+[display]
+prompt_history_limit = 0
+"#,
+    )
+    .unwrap();
+    assert_eq!(config.prompt_history_limit, 0);
+    assert!(warnings.is_empty());
+
+    let (config, warnings) = parse_settings(
+        r#"
+[display]
+prompt_history_limit = 250
+"#,
+    )
+    .unwrap();
+    assert_eq!(config.prompt_history_limit, 250);
+    assert!(warnings.is_empty());
+
+    let (config, warnings) = parse_settings(
+        r#"
+[display]
+prompt_history_limit = 50000
+"#,
+    )
+    .unwrap();
+    assert_eq!(config.prompt_history_limit, 10_000);
+    assert_eq!(
+        warnings,
+        vec![ConfigWarning::Clamped {
+            key: "display.prompt_history_limit",
+            from: "50000".into(),
+            to: "10000".into(),
+        }]
+    );
+}
+
 // Covers: unsupported web_search.provider normalizes to auto with a warning
 // Owner: config load
 #[test]

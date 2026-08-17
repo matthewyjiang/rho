@@ -161,7 +161,13 @@ impl App {
         if prompt.is_empty() {
             return;
         }
-        self.input_ui.push_history_if_new(prompt);
+        if self.input_ui.push_history_if_new(prompt)
+            && super::prompt_history_persistence::eligible_for_persistence(prompt)
+        {
+            let _ = self.prompt_history_tx.send(
+                super::prompt_history_persistence::PromptHistoryOp::Append(prompt.to_string()),
+            );
+        }
     }
 
     fn recall_input_history(&mut self, direction: HistoryDirection) -> bool {

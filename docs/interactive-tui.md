@@ -71,7 +71,7 @@ Most editing keys work the way they do in a normal terminal input. Run `/help` f
 | `/` at start | Open the command palette |
 | `/help` | Open the keyboard shortcuts overlay |
 | `@` | Open workspace file path autocomplete |
-| `up` / `down` | Re-enter previous prompts, or select a command or file while a picker is open |
+| `up` / `down` | Re-enter previous prompts from this and earlier sessions, or select a command or file while a picker is open |
 | `tab` | Complete the selected command or file path |
 | `enter` | Send a prompt, run a selected slash command, or steer after the current assistant turn while a response is running |
 | `alt-up` | Pull the most recent queued prompt back into the composer for editing |
@@ -122,6 +122,7 @@ A single `/` as the first character opens the command palette. Any later `/` cha
 | `/export [path]` | Export the current session transcript. Formats: HTML (default), Markdown (`.md`), JSON (`.json`). Omit the path to write a timestamped file under `~/.rho/exports/` (or `$RHO_HOME/exports/`). A directory argument receives that default file name. The path extension selects the format. Existing files are not overwritten; choose a new path. HTML exports render assistant Markdown math (inline `$...$` or `\(...\)`, display `$$...$$` or `\[...\]`) with KaTeX. Live TUI math uses a narrower TXM path; see [Math rendering](/interactive-tui/math). |
 | `/new` | Start a new session. Clears the transcript, composer, attachments, and active goal. The next message creates a new session folder. Unavailable while a model turn is running. |
 | `/clear` | Alias for `/new`. |
+| `/prompt-history clear` | Wipe the shared composer prompt history used by up-arrow recall. Does not reset the conversation. |
 | `/title <name>` | Rename the current session. Replaces any auto-generated title. |
 | `/help` | Show keyboard shortcuts and composer controls in a searchable overlay. |
 | `/exit` | Quit the TUI. |

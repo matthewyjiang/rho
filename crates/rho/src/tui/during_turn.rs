@@ -391,6 +391,7 @@ impl App {
                 self.start_limits_command();
                 Ok(())
             }
+            CommandId::PromptHistory => self.execute_prompt_history_command(invocation),
             CommandId::Advisor
             | CommandId::Hooks
             | CommandId::New

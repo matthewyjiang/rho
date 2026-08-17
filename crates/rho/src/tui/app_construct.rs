@@ -72,6 +72,13 @@ impl App {
         let pending_update_notice = info.services.pending_update_notice.take();
         let pending_custom_models = info.services.pending_custom_models.take();
         let pending_syntax_warmup = info.services.pending_syntax_warmup.take();
+        let pending_prompt_history = info.services.pending_prompt_history.take();
+        let (prompt_history_tx, prompt_history_rx) = tokio::sync::mpsc::unbounded_channel();
+        let prompt_history_rx = if cfg!(test) || pending_prompt_history.is_some() {
+            Some(prompt_history_rx)
+        } else {
+            None
+        };
         let statusline = StatusLine::new(&info.runtime);
         let mut app = Self {
             info,
@@ -111,6 +118,9 @@ impl App {
             pending_update_notice,
             pending_custom_models,
             pending_syntax_warmup,
+            pending_prompt_history,
+            prompt_history_tx,
+            prompt_history_rx,
             pending_herdr_graphics: None,
             held_turns: std::collections::VecDeque::new(),
             compact_follow_up: super::compact_work::CompactFollowUp::None,

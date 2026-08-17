@@ -22,6 +22,7 @@ Help the user configure rho. Determine what they want to change, then guide them
 - `sessions/` - saved session transcripts and workspace keys.
 - `subagents/` - global delegated runs.
 - `usage.sqlite3` - the usage ledger.
+- `prompt-history.sqlite3` - sent composer prompts for up-arrow recall across sessions.
 - `cache/`, `web-access/`, `workflows/` - cached and runtime data; do not edit these by hand.
 
 `RHO_HOME` also moves the usage ledger and other data roots. Credentials and the ledger live under `$RHO_HOME` too.
