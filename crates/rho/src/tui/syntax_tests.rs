@@ -55,6 +55,15 @@ fn warmup_tokens_collect_fences_and_skip_markdown() {
     assert_eq!(tokens, vec!["rust".to_string(), "ts".to_string()]);
 }
 
+// Covers: resume warmup pulls file paths out of recovered tool payloads
+// Owner: pure unit (syntax warmup path scan)
+#[test]
+fn warmup_paths_collect_display_paths() {
+    let paths =
+        warmup_paths_from_text(r#"{"path":"src/lib.rs"} also foo.ts and https://ex.com/a.rs"#);
+    assert_eq!(paths, vec!["src/lib.rs".to_string(), "foo.ts".to_string()]);
+}
+
 // Covers: unknown fence language falls back to no highlighter
 // Owner: pure unit (syntax language lookup)
 #[test]

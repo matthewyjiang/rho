@@ -38,29 +38,69 @@ fn validate_resume_agent(
     session.validate_agent_definition_identity(agent.definition())
 }
 
-fn syntax_warmup_tokens(messages: &[rho_providers::model::Message]) -> Vec<String> {
+fn syntax_warmup_inputs(messages: &[rho_providers::model::Message]) -> (Vec<String>, Vec<String>) {
     use rho_providers::model::{ContentBlock, Message};
 
     let mut tokens = Vec::new();
+    let mut paths = Vec::new();
     for message in messages {
-        let blocks: &[ContentBlock] = match message {
-            Message::User(blocks) | Message::Assistant(blocks) => blocks,
-            Message::EnrichedAssistant(message) => &message.content,
-            Message::AbortedAssistant(message) => &message.content,
-            Message::System(_) | Message::ToolResult(_) => continue,
-        };
-        for block in blocks {
-            let ContentBlock::Text(text) = block else {
-                continue;
-            };
-            for token in tui::warmup_tokens_from_text(text) {
-                if !tokens.iter().any(|seen| seen == &token) {
-                    tokens.push(token);
-                }
+        match message {
+            Message::User(blocks) | Message::Assistant(blocks) => {
+                collect_syntax_warmup(blocks, &mut tokens, &mut paths);
             }
+            Message::EnrichedAssistant(message) => {
+                collect_syntax_warmup(&message.content, &mut tokens, &mut paths);
+            }
+            Message::AbortedAssistant(message) => {
+                collect_syntax_warmup(&message.content, &mut tokens, &mut paths);
+            }
+            Message::ToolResult(result) => {
+                merge_warmup_paths(&mut paths, tui::warmup_paths_from_text(&result.content));
+            }
+            Message::System(_) => {}
         }
     }
-    tokens
+    (tokens, paths)
+}
+
+fn collect_syntax_warmup(
+    blocks: &[rho_providers::model::ContentBlock],
+    tokens: &mut Vec<String>,
+    paths: &mut Vec<String>,
+) {
+    use rho_providers::model::ContentBlock;
+
+    for block in blocks {
+        match block {
+            ContentBlock::Text(text) => {
+                merge_warmup_tokens(tokens, tui::warmup_tokens_from_text(text));
+                merge_warmup_paths(paths, tui::warmup_paths_from_text(text));
+            }
+            ContentBlock::ToolCall(call) => {
+                merge_warmup_paths(
+                    paths,
+                    tui::warmup_paths_from_text(&call.arguments.to_string()),
+                );
+            }
+            ContentBlock::Image(_) => {}
+        }
+    }
+}
+
+fn merge_warmup_tokens(tokens: &mut Vec<String>, extra: Vec<String>) {
+    for token in extra {
+        if !tokens.iter().any(|seen| seen == &token) {
+            tokens.push(token);
+        }
+    }
+}
+
+fn merge_warmup_paths(paths: &mut Vec<String>, extra: Vec<String>) {
+    for path in extra {
+        if !paths.iter().any(|seen| seen == &path) {
+            paths.push(path);
+        }
+    }
 }
 
 pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
@@ -98,9 +138,8 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
         }
         None => (None, Vec::new(), None),
     };
-    let pending_syntax_warmup = Some(tui::spawn_syntax_warmup(syntax_warmup_tokens(
-        &recovered_messages,
-    )));
+    let (warmup_tokens, warmup_paths) = syntax_warmup_inputs(&recovered_messages);
+    let pending_syntax_warmup = Some(tui::spawn_syntax_warmup(warmup_tokens, warmup_paths));
     let mut prompt_templates = crate::prompt_templates::discover(&cwd);
     crate::prompt_templates::merge(&mut prompt_templates, config.prompt_templates.clone());
     let theme = config.theme.clone();

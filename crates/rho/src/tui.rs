@@ -131,7 +131,7 @@ mod session_title;
 mod sessions_hub;
 mod setup_screen;
 mod syntax;
-pub(crate) use syntax::{spawn_syntax_warmup, warmup_tokens_from_text};
+pub(crate) use syntax::{spawn_syntax_warmup, warmup_paths_from_text, warmup_tokens_from_text};
 pub(in crate::tui) mod terminal_graph;
 mod transcript_events;
 pub(crate) use session_title::SESSION_TITLE_PROMPT;

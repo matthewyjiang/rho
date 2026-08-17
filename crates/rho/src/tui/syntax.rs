@@ -66,16 +66,27 @@ pub(crate) fn warm_syntax_set() {
 }
 
 /// Load the dump (and any recovered fence languages) off the UI thread.
-pub(crate) fn spawn_syntax_warmup(tokens: Vec<String>) -> tokio::task::JoinHandle<()> {
+pub(crate) fn spawn_syntax_warmup(
+    tokens: Vec<String>,
+    paths: Vec<String>,
+) -> tokio::task::JoinHandle<()> {
     tokio::task::spawn_blocking(move || {
         let _span = tracing::info_span!("startup.syntax_set").entered();
         warm_syntax_set();
         for token in tokens {
-            if let Some(mut highlighter) = BlockHighlighter::for_language(&token) {
-                let _ = highlighter.highlight_line("");
-            }
+            warm_highlighter(BlockHighlighter::for_language(&token));
+        }
+        for path in paths {
+            warm_highlighter(BlockHighlighter::for_path(&path));
         }
     })
+}
+
+fn warm_highlighter(highlighter: Option<BlockHighlighter>) {
+    if let Some(mut highlighter) = highlighter {
+        // Empty lines often skip the contexts we actually compile on first paint.
+        let _ = highlighter.highlight_line("x = 1");
+    }
 }
 
 /// Fence info tokens worth inflating before the first resume paint.
@@ -85,7 +96,7 @@ pub(crate) fn spawn_syntax_warmup(tokens: Vec<String>) -> tokio::task::JoinHandl
 pub(crate) fn warmup_tokens_from_text(text: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     for line in text.lines() {
-        let Some(token) = fence_info_token(line) else {
+        let Some(token) = super::markdown::opening_fence_info_token(line) else {
             continue;
         };
         if !should_warmup_token(&token) || tokens.iter().any(|seen| seen == &token) {
@@ -96,28 +107,24 @@ pub(crate) fn warmup_tokens_from_text(text: &str) -> Vec<String> {
     tokens
 }
 
-fn fence_info_token(line: &str) -> Option<String> {
-    let indent = line.len() - line.trim_start_matches(' ').len();
-    if indent > 3 {
-        return None;
+/// Display paths from recovered tool payloads so diffs/search compile off-thread.
+pub(crate) fn warmup_paths_from_text(text: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    for candidate in text.split(|character: char| {
+        character.is_whitespace() || matches!(character, '"' | '\'' | '`' | ',' | ']' | '}')
+    }) {
+        let path = candidate.trim_matches(|character: char| {
+            matches!(character, '"' | '\'' | '`' | '[' | '(' | ')' | '\\')
+        });
+        if path.len() < 3 || !path.contains('.') || path.contains("://") {
+            continue;
+        }
+        if paths.iter().any(|seen| seen == path) {
+            continue;
+        }
+        paths.push(path.to_string());
     }
-    let rest = &line[indent..];
-    let marker = rest.chars().next()?;
-    if !matches!(marker, '`' | '~') {
-        return None;
-    }
-    let length = rest
-        .chars()
-        .take_while(|&character| character == marker)
-        .count();
-    if length < 3 {
-        return None;
-    }
-    let info = &rest[length..];
-    if marker == '`' && info.contains('`') {
-        return None;
-    }
-    info.split_whitespace().next().map(str::to_ascii_lowercase)
+    paths
 }
 
 fn should_warmup_token(token: &str) -> bool {
