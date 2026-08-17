@@ -157,9 +157,9 @@ const TYPE_DURING_COMPACT_STEPS: &[Step] = &[
         timeout: STARTUP,
     },
     Step::Phase("seed_history"),
-    Step::SubmitText("fixture compact delay"),
+    Step::SubmitText("fixture compact hold"),
     Step::WaitText {
-        text: "fixture response: fixture compact delay",
+        text: "fixture response: fixture compact hold",
         timeout: STREAM,
     },
     Step::Phase("compact"),

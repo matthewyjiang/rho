@@ -96,7 +96,15 @@ impl ModelProvider for TuiFixtureProvider {
         &'a self,
         request: ModelRequest<'a>,
     ) -> Option<NativeCompactionFuture<'a>> {
-        if !history_has_compact_delay(&request) {
+        if history_has_user_text(&request, "fixture compact hold") {
+            return Some(Box::pin(async move {
+                request.cancellation.cancelled().await;
+                NativeCompactionResponse::failure(ProviderError::interrupted(
+                    "fixture compact hold cancelled",
+                ))
+            }));
+        }
+        if !history_has_user_text(&request, "fixture compact delay") {
             return None;
         }
         Some(Box::pin(async move {
@@ -758,8 +766,8 @@ fn is_subagent_title_request(request: &ModelRequest<'_>) -> bool {
     is_title_agent && last_user_text(request).is_some_and(|text| !text.starts_with("First turn:"))
 }
 
-fn history_has_compact_delay(request: &ModelRequest<'_>) -> bool {
-    last_user_text(request).is_some_and(|text| text.contains("fixture compact delay"))
+fn history_has_user_text(request: &ModelRequest<'_>, needle: &str) -> bool {
+    last_user_text(request).is_some_and(|text| text.contains(needle))
 }
 
 fn last_user_text(request: &ModelRequest<'_>) -> Option<String> {
