@@ -5,8 +5,8 @@ Parent: [Configuration](/configuration).
 Advisor mode gives the root agent an `advisor` tool backed by a second model.
 The executor keeps doing the work. The advisor only reviews the live session
 and returns guidance. Use a stronger or different model than the executor so
-the review adds a second judgment before the plan hardens, when the agent is
-stuck, and before it declares the work done.
+the review adds a second judgment after the agent has explored, when the
+agent is stuck, and before it declares the work done.
 
 ```mermaid
 flowchart TD
@@ -141,8 +141,8 @@ Differences worth knowing before you choose it:
 The advisor receives a rendered transcript, not a free-form prompt from the
 executor:
 
-- the executor system prompt, including the advisor steering text while the mode
-  is on
+- the executor system prompt, including which model the `advisor` tool
+  consults when the mode is on
 - your requests
 - assistant messages, tool calls, and tool results
 - the live turn that issued the call
@@ -153,19 +153,18 @@ Images become short placeholders such as `[image: image/png]`.
 
 ## When the executor should call it
 
-While the mode is active and a model is set, Rho adds steering text to the
-executor system prompt. The tool description and that text both steer the
-executor to call `advisor`:
+While the mode is active and a model is set, the `advisor` tool is registered
+and its description steers the executor. Call `advisor` after orientation, not
+as the first action:
 
-- before substantive work (writes, commits to an interpretation, or answers)
+- after exploring, before a plan or interpretation hardens
 - when stuck (recurring errors, a plan that is not converging)
 - when it considers a change of approach
 - when it believes the task is complete, after it has made the deliverable
   durable
 
-On short reactive tasks, a call is optional. On longer tasks, the prompt asks
-for at least one call before the approach hardens and one before the agent
-declares done.
+On short reactive tasks, a call is optional. Do not call advisor just because
+the tool is available.
 
 ## In the TUI
 
@@ -187,7 +186,7 @@ advice stays on the same card as `advisor  completed`, collapsed past the
   runs.
 - Provider-reported advisor cost folds into the parent session total in the TUI.
 - [Automation runs](/automation-cli) honor `advisor_mode`, so `rho run` gets the
-  same tool and steering text when a model is set.
+  same tool when a model is set.
 - Subagents and workflow runs do not. The advisor reviews the root session. A
   child run has its own history and does not receive the tool.
 
