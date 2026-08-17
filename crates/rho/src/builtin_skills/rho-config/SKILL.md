@@ -17,7 +17,7 @@ Help the user configure rho. Determine what they want to change, then guide them
 - `skills/` - skills available only to rho.
 - `prompts/` - prompt template files; each filename becomes a slash command.
 - `hooks.toml` - user hooks, always eligible.
-- `models.toml` - local model catalog overrides (or the file `RHO_MODELS_PATH` selects).
+- `models.toml` - local model catalog overrides (or the file `RHO_MODELS_PATH` selects). Use this to set a per-model `usable_context_window` or `supported_reasoning_levels`.
 - `credentials/` - secrets when the `file` credential backend is selected (`credentials/secrets.json`).
 - `sessions/` - saved session transcripts and workspace keys.
 - `subagents/` - global delegated runs.
@@ -40,7 +40,7 @@ Rho stores persistent config at `~/.rho/config.toml` by default. `RHO_HOME` over
 
 1. **Interactive TUI**: `/config` opens a category browser (Models & reasoning, Agent behavior, Context & limits, Tools, Providers, Updates). Type to filter, press `enter` to open a category, press `space` to toggle an on/off setting, and `esc` to return. `/login`, `/logout`, `/model`, and `/agents` are direct shortcuts. This is the easiest path for a user already in the TUI.
 2. **Command line**: `--provider`, `--model`, `--auth`, and `--reasoning` update the config file and become the future default. `rho credential-store` shows or sets the credential backend.
-3. **Direct file edit**: edit `~/.rho/config.toml` by hand. Group settings by purpose. Use this for settings the TUI does not expose, such as `[model.aliases]`, `[internal_agents]` overrides, `[prompt_templates]`, `[keybindings]`, `[providers.ollama].base_url`, and `[providers.custom.<name>].base_url`.
+3. **Direct file edit**: edit `~/.rho/config.toml` by hand. Group settings by purpose. Use this for settings the TUI does not expose, such as `[model.aliases]`, `[internal_agents]` overrides, `[prompt_templates]`, `[keybindings]`, `[providers.ollama].base_url`, and `[providers.custom.<name>].base_url`. Per-model context windows and reasoning lists live in `~/.rho/models.toml`, not `config.toml`.
 4. **Environment**: `RHO_CREDENTIAL_STORE=os|file` overrides the saved credential backend; `RHO_MODELS_PATH` selects a custom models file; `RHO_TRUST_PROJECT_AGENTS=1` and `RHO_TRUST_PROJECT_HOOKS=1` trust project agent definitions and hooks.
 
 ## Inspect the current live config
@@ -53,6 +53,7 @@ Use the read-only `rho` tool with action `config` to see the sanitized live conf
 - **Change reasoning**: cycle `reasoning` (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) in `/config` under Models & reasoning, or set it in config. `reasoning` applies to the current session; `show_reasoning_output` and `zen_mode` apply immediately when changed through `/config`. Direct configuration-file edits take effect on the next startup.
 - **Manage credentials**: `/login [provider]` and `/logout [provider]`. The credential backend is `behavior.credential_store` (`os` or `file`). When unset, rho asks where to store secrets at first login.
 - **Model aliases**: define `[model.aliases]` in config and reference them with an `@` prefix, for example `model = "@deep"`. Alias values must be concrete models and cannot begin with `@`. Update the alias table in one place to change the model everywhere it is referenced.
+- **Per-model context window**: edit `~/.rho/models.toml` (not `config.toml`). Example: `[models."openai-codex/gpt-5.6-sol"]` with `usable_context_window = 272000` to cap, or a larger value to raise. Restart rho or switch models after editing.
 - **Internal agent models**: use `/agents`, select `session-title` or `goal-judge`, and press `enter` to choose a model, or edit `[internal_agents.<role>]` in config. Pick **Use conversation model** to remove an override.
 - **Permission mode**: `permission_mode` must be `bypass`, `auto`, `allow_edits`, `plan`, or `supervised`. `allow-edits` is accepted as an alias of `allow_edits`. Set it under Agent behavior in `/config`, or in config. `bypass` allows every capability. `auto` uses the same write and process gate as `allow_edits` and classifies only the requests that gate does not allow. `allow_edits` allows in-workspace writes to git-tracked, non-symlink files and later writes to a path already allowed this session. Untracked and gitignored paths, writes outside the workspace, and process execution still ask first. `plan` denies file writes and process execution. `supervised` asks before file writes and process execution. The change applies before the next turn and clears session approvals.
 - **Auto compaction**: under Context & limits in `/config`. `compact_target_percent` must stay below `compact_threshold_percent`; values at or above the threshold are clamped.
