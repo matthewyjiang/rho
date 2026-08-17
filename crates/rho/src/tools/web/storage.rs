@@ -1,8 +1,8 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     fs,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex},
 };
 
 use serde::{Deserialize, Serialize};
@@ -11,15 +11,21 @@ use uuid::Uuid;
 
 use rho_tools::tool::ToolError;
 
-static CONTENT_STORE: OnceLock<Mutex<HashMap<String, StoredContent>>> = OnceLock::new();
+/// In-memory copies of sidecar blobs. Disk remains the source of truth.
+///
+/// 32 recent responses or 16 MiB, whichever binds first. A single blob larger
+/// than the byte budget stays on disk only so one huge fetch cannot flush the
+/// rest of the cache.
+const MEMORY_ENTRY_LIMIT: usize = 32;
+const MEMORY_BYTE_LIMIT: usize = 16 * 1024 * 1024;
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(super) struct StoredContent {
     pub(super) kind: String,
     pub(super) items: Vec<StoredItem>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(super) struct StoredItem {
     pub(super) url: Option<String>,
     pub(super) query: Option<String>,
@@ -46,8 +52,115 @@ pub struct WebAccessStore {
 #[derive(Debug, Default)]
 struct WebAccessStoreState {
     session_root: Option<PathBuf>,
+    memory: MemoryCache,
     #[cfg(test)]
     override_root: Option<PathBuf>,
+}
+
+/// Session-scoped LRU of stored web bodies. Eviction never deletes sidecar files.
+#[derive(Debug)]
+struct MemoryCache {
+    entries: HashMap<String, CachedContent>,
+    /// Oldest entry at the front.
+    order: VecDeque<String>,
+    bytes: usize,
+    entry_limit: usize,
+    byte_limit: usize,
+}
+
+#[derive(Clone, Debug)]
+struct CachedContent {
+    content: StoredContent,
+    bytes: usize,
+}
+
+impl Default for MemoryCache {
+    fn default() -> Self {
+        Self::new(MEMORY_ENTRY_LIMIT, MEMORY_BYTE_LIMIT)
+    }
+}
+
+impl MemoryCache {
+    fn new(entry_limit: usize, byte_limit: usize) -> Self {
+        Self {
+            entries: HashMap::new(),
+            order: VecDeque::new(),
+            bytes: 0,
+            entry_limit: entry_limit.max(1),
+            byte_limit: byte_limit.max(1),
+        }
+    }
+
+    fn get(&mut self, response_id: &str) -> Option<StoredContent> {
+        let content = self.entries.get(response_id)?.content.clone();
+        self.touch(response_id);
+        Some(content)
+    }
+
+    fn insert(&mut self, response_id: String, content: StoredContent) {
+        let bytes = memory_bytes(&content);
+        self.remove(&response_id);
+        if bytes > self.byte_limit {
+            return;
+        }
+        while !self.entries.is_empty()
+            && (self.entries.len() >= self.entry_limit
+                || self.bytes.saturating_add(bytes) > self.byte_limit)
+        {
+            self.evict_oldest();
+        }
+        self.bytes = self.bytes.saturating_add(bytes);
+        self.order.push_back(response_id.clone());
+        self.entries
+            .insert(response_id, CachedContent { content, bytes });
+    }
+
+    fn contains(&self, response_id: &str) -> bool {
+        self.entries.contains_key(response_id)
+    }
+
+    fn touch(&mut self, response_id: &str) {
+        if let Some(index) = self
+            .order
+            .iter()
+            .position(|existing| existing == response_id)
+        {
+            if let Some(id) = self.order.remove(index) {
+                self.order.push_back(id);
+            }
+        }
+    }
+
+    fn evict_oldest(&mut self) {
+        if let Some(id) = self.order.pop_front() {
+            self.remove_entry(&id);
+        }
+    }
+
+    fn remove(&mut self, response_id: &str) {
+        self.order.retain(|existing| existing != response_id);
+        self.remove_entry(response_id);
+    }
+
+    fn remove_entry(&mut self, response_id: &str) {
+        if let Some(entry) = self.entries.remove(response_id) {
+            self.bytes = self.bytes.saturating_sub(entry.bytes);
+        }
+    }
+}
+
+fn memory_bytes(content: &StoredContent) -> usize {
+    content.kind.len()
+        + content
+            .items
+            .iter()
+            .map(|item| {
+                item.content.len()
+                    + item.url.as_deref().map_or(0, str::len)
+                    + item.query.as_deref().map_or(0, str::len)
+                    + item.title.as_deref().map_or(0, str::len)
+            })
+            .sum::<usize>()
 }
 
 impl WebAccessStore {
@@ -57,10 +170,9 @@ impl WebAccessStore {
 
     /// Points durable web blobs at the active session sidecar directory.
     pub fn bind_session(&self, root: Option<PathBuf>) {
-        self.state
-            .lock()
-            .expect("web access store lock poisoned")
-            .session_root = root;
+        let mut state = self.state.lock().expect("web access store lock poisoned");
+        state.session_root = root;
+        state.memory = MemoryCache::default();
     }
 
     /// Durable sidecar root for web-access blobs and GitHub clones.
@@ -88,24 +200,29 @@ impl WebAccessStore {
         content: StoredContent,
     ) -> Result<(), ToolError> {
         write_at(&self.root(), &response_id, &content)?;
-        content_store()
+        self.state
             .lock()
-            .expect("content store lock poisoned")
+            .expect("web access store lock poisoned")
+            .memory
             .insert(response_id, content);
         Ok(())
     }
 
     pub(super) fn load(&self, response_id: &str) -> Result<StoredContent, ToolError> {
         validate_response_id(response_id)?;
-        if let Some(content) = content_store()
-            .lock()
-            .expect("content store lock poisoned")
-            .get(response_id)
-            .cloned()
         {
-            return Ok(content);
+            let mut state = self.state.lock().expect("web access store lock poisoned");
+            if let Some(content) = state.memory.get(response_id) {
+                return Ok(content);
+            }
         }
-        read_at(&self.root(), response_id)
+        let content = read_at(&self.root(), response_id)?;
+        self.state
+            .lock()
+            .expect("web access store lock poisoned")
+            .memory
+            .insert(response_id.to_owned(), content.clone());
+        Ok(content)
     }
 
     pub(super) fn create_private_dir_all(&self, path: &Path) -> Result<(), ToolError> {
@@ -134,6 +251,15 @@ impl WebAccessStore {
             .expect("web access store lock poisoned")
             .override_root = Some(path);
         store
+    }
+
+    #[cfg(test)]
+    fn memory_contains(&self, response_id: &str) -> bool {
+        self.state
+            .lock()
+            .expect("web access store lock poisoned")
+            .memory
+            .contains(response_id)
     }
 }
 
@@ -189,10 +315,6 @@ pub(super) fn available_selectors(stored: &StoredContent) -> String {
         lines.push(format!("- {}", parts.join(" ")));
     }
     lines.join("\n")
-}
-
-fn content_store() -> &'static Mutex<HashMap<String, StoredContent>> {
-    CONTENT_STORE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn default_web_access_cache_root() -> PathBuf {
