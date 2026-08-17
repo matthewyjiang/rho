@@ -25,8 +25,8 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<TuiResult> {
         self.start_model_metadata_fetch(agent);
-        self.insert_recovered_history(terminal)?;
-        self.maybe_offer_loaded_session_context_handoff(agent)?;
+        let had_recovered_messages = self.insert_recovered_history(terminal)?;
+        self.maybe_offer_loaded_session_context_handoff(agent, had_recovered_messages)?;
         let open_resume_after_draw = self.info.session.open_resume_picker;
         self.info.session.open_resume_picker = false;
         // A first launch opens the full-screen setup instead of a session.

@@ -244,7 +244,7 @@ impl App {
             return Ok(());
         }
 
-        self.apply_resume_session(session, histories.model, histories.display, terminal, agent)
+        self.apply_resume_session(session, histories.display, terminal, agent)
             .await
     }
 }

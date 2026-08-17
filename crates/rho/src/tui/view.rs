@@ -976,19 +976,18 @@ impl App {
     pub(super) fn insert_recovered_history(
         &mut self,
         terminal: &mut DefaultTerminal,
-    ) -> std::io::Result<()> {
-        let entries = transcript_entries_from_messages(
-            &self.info.session.recovered_messages,
-            &self.info.runtime.cwd,
-        );
+    ) -> std::io::Result<bool> {
+        let messages = std::mem::take(&mut self.info.session.recovered_messages);
+        let had_recovered_messages = !messages.is_empty();
+        let entries = transcript_entries_from_messages(&messages, &self.info.runtime.cwd);
         if entries.is_empty() {
-            return Ok(());
+            return Ok(had_recovered_messages);
         }
 
         let size = terminal.size()?;
         self.note_terminal_geometry(size.width as usize, size.height as usize);
         self.history.set_entries(entries);
         self.history.images_mut().clear();
-        Ok(())
+        Ok(had_recovered_messages)
     }
 }

@@ -529,7 +529,7 @@ async fn remembered_writes_do_not_cross_session_or_grantor_boundaries() {
     let cwd = root.path().join("workspace");
     std::fs::create_dir(&cwd).unwrap();
     let target = StoredSession::create_in_root(root.path(), &cwd).unwrap();
-    interactive.resume(target, Vec::new()).await.unwrap();
+    interactive.resume(target).await.unwrap();
     assert_eq!(
         interactive.workspace_policy().evaluate(&created_write),
         require_approval
@@ -851,7 +851,7 @@ async fn failed_resume_preserves_the_current_runtime() {
     )
     .unwrap();
 
-    assert!(interactive.resume(target, Vec::new()).await.is_err());
+    assert!(interactive.resume(target).await.is_err());
     interactive
         .start(UserInput::text("continue"), None)
         .await

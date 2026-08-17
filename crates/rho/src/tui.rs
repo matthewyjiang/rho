@@ -362,6 +362,8 @@ impl RuntimeModelView {
 
 pub struct SessionBootstrap {
     pub session_id: Option<String>,
+    /// Take-once startup buffer. `insert_recovered_history` converts this into
+    /// transcript entries and drops the `Message` vec.
     pub recovered_messages: Vec<Message>,
     pub open_resume_picker: bool,
 }
