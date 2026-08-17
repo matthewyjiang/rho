@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.43.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.43.0...rho-coding-agent-v1.43.1) (2026-08-17)
+
+
+### Performance Improvements
+
+* **tui:** keep first resume paint off the syntax dump ([#972](https://github.com/matthewyjiang/rho/issues/972)) ([81aa8fa](https://github.com/matthewyjiang/rho/commit/81aa8fa0248255efa6567a83095b05123a773b10))
+* **web:** stop keeping every fetched page in ram ([#977](https://github.com/matthewyjiang/rho/issues/977)) ([4b392e8](https://github.com/matthewyjiang/rho/commit/4b392e8c1dbeda2bbd7cbe206320962100514a60))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 1.6.0 to 1.6.1
+
 ## [1.43.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.42.0...rho-coding-agent-v1.43.0) (2026-08-17)
 
 
