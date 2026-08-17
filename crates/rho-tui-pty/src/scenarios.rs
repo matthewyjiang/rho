@@ -208,7 +208,7 @@ const SUBMIT_DURING_COMPACT_STEPS: &[Step] = &[
     Step::Phase("submit_follow_up"),
     Step::SubmitText("after compact please"),
     Step::WaitText {
-        text: "after compact",
+        text: "1 follow-up",
         timeout: WaitTimeout::secs(2, "queued follow-up during compact"),
     },
     Step::Phase("release_compact"),
