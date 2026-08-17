@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.6.0...rho-providers-v1.6.1) (2026-08-17)
+
+
+### Performance Improvements
+
+* **providers:** stop building a 40 MB JSON tree on catalog hydrate ([#971](https://github.com/matthewyjiang/rho/issues/971)) ([611fb08](https://github.com/matthewyjiang/rho/commit/611fb08bbfd93031135b35f0cd26cd0919e4032e))
+
 ## [1.6.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.5.0...rho-providers-v1.6.0) (2026-08-17)
 
 
