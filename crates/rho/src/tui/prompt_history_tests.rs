@@ -1,18 +1,20 @@
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
-use super::super::{
-    prompt_history_persistence::MAX_PERSISTED_PROMPT_BYTES, tests::test_app, ComposerMode,
-    HistoryDirection, InlineChoicePending,
-};
+use super::super::{tests::test_app, ComposerMode, HistoryDirection, InlineChoicePending};
+use super::MAX_PERSISTED_PROMPT_BYTES;
 use crate::prompt_history::PromptHistoryStore;
 
 fn app_with_store() -> (TempDir, super::super::App) {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("prompt-history.sqlite3");
     let mut app = test_app();
-    app.prompt_history_store_path = Some(path);
+    app.prompt_history.set_store_path(path);
     (directory, app)
+}
+
+fn store_for(app: &super::super::App) -> PromptHistoryStore {
+    PromptHistoryStore::open_path(app.prompt_history.store_path().unwrap()).unwrap()
 }
 
 // Covers: lowering the cap below stored rows asks before deleting them.
@@ -20,10 +22,9 @@ fn app_with_store() -> (TempDir, super::super::App) {
 #[test]
 fn lowering_limit_below_stored_count_confirms() {
     let (_directory, mut app) = app_with_store();
-    let store =
-        PromptHistoryStore::open_path(app.prompt_history_store_path.as_ref().unwrap()).unwrap();
-    store.append("one", 1, 10).unwrap();
-    store.append("two", 2, 10).unwrap();
+    let store = store_for(&app);
+    store.append("one", 10).unwrap();
+    store.append("two", 10).unwrap();
 
     app.propose_prompt_history_limit(1).unwrap();
 
@@ -39,18 +40,17 @@ fn lowering_limit_below_stored_count_confirms() {
 #[test]
 fn confirmed_lower_limit_trims_store() {
     let (_directory, mut app) = app_with_store();
-    let path = app.prompt_history_store_path.clone().unwrap();
-    let store = PromptHistoryStore::open_path(&path).unwrap();
-    store.append("one", 1, 10).unwrap();
-    store.append("two", 2, 10).unwrap();
-    store.append("three", 3, 10).unwrap();
+    let store = store_for(&app);
+    store.append("one", 10).unwrap();
+    store.append("two", 10).unwrap();
+    store.append("three", 10).unwrap();
 
     app.submit_prompt_history_limit_choice("confirm", 1)
         .unwrap();
 
-    let store = PromptHistoryStore::open_path(&path).unwrap();
+    let store = store_for(&app);
     assert_eq!(store.load_tail(10).unwrap(), vec!["three".to_string()]);
-    assert_eq!(app.prompt_history_limit, 1);
+    assert_eq!(app.prompt_history.limit(), 1);
 }
 
 // Covers: cancelling a destructive limit change does not trim.
@@ -58,14 +58,13 @@ fn confirmed_lower_limit_trims_store() {
 #[test]
 fn cancelled_lower_limit_leaves_store() {
     let (_directory, mut app) = app_with_store();
-    let path = app.prompt_history_store_path.clone().unwrap();
-    let store = PromptHistoryStore::open_path(&path).unwrap();
-    store.append("one", 1, 10).unwrap();
-    store.append("two", 2, 10).unwrap();
+    let store = store_for(&app);
+    store.append("one", 10).unwrap();
+    store.append("two", 10).unwrap();
 
     app.submit_prompt_history_limit_choice("cancel", 1).unwrap();
 
-    let store = PromptHistoryStore::open_path(&path).unwrap();
+    let store = store_for(&app);
     assert_eq!(
         store.load_tail(10).unwrap(),
         vec!["one".to_string(), "two".to_string()]
@@ -77,9 +76,8 @@ fn cancelled_lower_limit_leaves_store() {
 #[test]
 fn clear_confirms_then_wipes() {
     let (_directory, mut app) = app_with_store();
-    let path = app.prompt_history_store_path.clone().unwrap();
-    let store = PromptHistoryStore::open_path(&path).unwrap();
-    store.append("keep?", 1, 10).unwrap();
+    let store = store_for(&app);
+    store.append("keep?", 10).unwrap();
     app.push_input_history("local");
 
     app.prompt_clear_prompt_history().unwrap();
@@ -91,7 +89,7 @@ fn clear_confirms_then_wipes() {
 
     app.submit_clear_prompt_history_choice("confirm").unwrap();
     assert!(app.input_ui.history().is_empty());
-    let store = PromptHistoryStore::open_path(&path).unwrap();
+    let store = store_for(&app);
     assert!(store.load_tail(10).unwrap().is_empty());
 }
 
@@ -99,12 +97,11 @@ fn clear_confirms_then_wipes() {
 // Owner: tui prompt-history persistence policy
 #[test]
 fn oversized_prompt_stays_in_ring_only() {
-    let mut app = test_app();
+    let (_directory, mut app) = app_with_store();
     let oversized = "a".repeat(MAX_PERSISTED_PROMPT_BYTES + 1);
     app.push_input_history(&oversized);
     assert_eq!(app.input_ui.history(), &[oversized]);
-    let mut rx = app.take_prompt_history_rx().unwrap();
-    assert!(rx.try_recv().is_err());
+    assert!(store_for(&app).load_tail(10).unwrap().is_empty());
 }
 
 // Covers: seeding older entries in front of local history preserves recall
@@ -131,14 +128,44 @@ fn seed_history_front_offsets_in_progress_recall() {
     assert_eq!(app.input_ui.text(), "older");
 }
 
-// Covers: a disabled persist limit does not enqueue durable appends.
+// Covers: a disabled persist limit does not write durable appends.
 // Owner: tui prompt-history persistence policy
 #[test]
-fn zero_limit_does_not_enqueue_appends() {
-    let mut app = test_app();
-    app.prompt_history_limit = 0;
+fn zero_limit_does_not_persist_appends() {
+    let (_directory, mut app) = app_with_store();
+    app.prompt_history.set_limit(0);
     app.push_input_history("hello");
     assert_eq!(app.input_ui.history(), &["hello".to_string()]);
-    let mut rx = app.take_prompt_history_rx().unwrap();
-    assert!(rx.try_recv().is_err());
+    assert!(store_for(&app).load_tail(10).unwrap().is_empty());
+}
+
+// Covers: enabling persistence mid-session starts writing without a restart.
+// Owner: tui prompt-history persistence policy
+#[test]
+fn enabling_after_zero_persists_later_appends() {
+    let (_directory, mut app) = app_with_store();
+    app.prompt_history.set_limit(0);
+    app.push_input_history("skipped");
+    app.submit_prompt_history_limit_choice("confirm", 10)
+        .unwrap();
+    app.push_input_history("kept");
+
+    assert_eq!(
+        store_for(&app).load_tail(10).unwrap(),
+        vec!["kept".to_string()]
+    );
+}
+
+// Covers: a stale startup snapshot must not restore a confirmed clear.
+// Owner: tui prompt-history load
+#[test]
+fn clear_before_load_does_not_reseed() {
+    let (_directory, mut app) = app_with_store();
+    store_for(&app).append("old", 10).unwrap();
+    app.submit_clear_prompt_history_choice("confirm").unwrap();
+    assert!(app.input_ui.history().is_empty());
+
+    assert!(!app.apply_loaded_prompt_history_seed(vec!["old".into()]));
+    assert!(app.input_ui.history().is_empty());
+    assert!(store_for(&app).load_tail(10).unwrap().is_empty());
 }

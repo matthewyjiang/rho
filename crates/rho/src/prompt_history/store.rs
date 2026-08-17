@@ -17,9 +17,6 @@ const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Durable SQLite store for sent composer text. Each operation opens a
 /// short-lived connection so independent Rho processes can write concurrently.
-///
-/// Ops enqueued just before process exit may be dropped when the runtime
-/// tears down. The last prompt of a session may occasionally not persist.
 #[derive(Clone, Debug)]
 pub(crate) struct PromptHistoryStore {
     path: PathBuf,
@@ -29,11 +26,6 @@ impl PromptHistoryStore {
     /// Opens or creates a history database at `path` and applies migrations.
     pub(crate) fn open_path(path: impl Into<PathBuf>) -> Result<Self, PromptHistoryError> {
         Self::new_with_parent_privacy(path.into(), ParentDirectoryPrivacy::PreserveExisting)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn new(path: impl Into<PathBuf>) -> Result<Self, PromptHistoryError> {
-        Self::open_path(path)
     }
 
     /// Opens or creates the history database under Rho's configured data root.
@@ -90,12 +82,7 @@ impl PromptHistoryStore {
     }
 
     /// Inserts `text` unless it matches the newest row, then trims to `max_entries`.
-    pub(crate) fn append(
-        &self,
-        text: &str,
-        recorded_at_ms: i64,
-        max_entries: usize,
-    ) -> Result<(), PromptHistoryError> {
+    pub(crate) fn append(&self, text: &str, max_entries: usize) -> Result<(), PromptHistoryError> {
         let mut connection = self.open_write_connection()?;
         set_sidecar_permissions(&self.path)?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -108,17 +95,10 @@ impl PromptHistoryStore {
             .optional()?;
         if last.as_deref() != Some(text) {
             transaction.execute(
-                "INSERT INTO prompt_entries (recorded_at_ms, text) VALUES (?1, ?2)",
-                params![recorded_at_ms, text],
+                "INSERT INTO prompt_entries (text) VALUES (?1)",
+                params![text],
             )?;
-            let limit = i64::try_from(max_entries).unwrap_or(i64::MAX);
-            transaction.execute(
-                "DELETE FROM prompt_entries
-                 WHERE id NOT IN (
-                     SELECT id FROM prompt_entries ORDER BY id DESC LIMIT ?1
-                 )",
-                params![limit],
-            )?;
+            trim_to_newest(&transaction, max_entries)?;
         }
         transaction.commit()?;
         set_sidecar_permissions(&self.path)?;
@@ -139,14 +119,7 @@ impl PromptHistoryStore {
         let mut connection = self.open_write_connection()?;
         set_sidecar_permissions(&self.path)?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let limit = i64::try_from(max_entries).unwrap_or(i64::MAX);
-        transaction.execute(
-            "DELETE FROM prompt_entries
-             WHERE id NOT IN (
-                 SELECT id FROM prompt_entries ORDER BY id DESC LIMIT ?1
-             )",
-            params![limit],
-        )?;
+        trim_to_newest(&transaction, max_entries)?;
         transaction.commit()?;
         set_sidecar_permissions(&self.path)?;
         Ok(())
@@ -176,6 +149,21 @@ impl PromptHistoryStore {
         set_sidecar_permissions(&self.path)?;
         Ok(())
     }
+}
+
+fn trim_to_newest(
+    transaction: &rusqlite::Transaction<'_>,
+    max_entries: usize,
+) -> Result<(), PromptHistoryError> {
+    let limit = i64::try_from(max_entries).unwrap_or(i64::MAX);
+    transaction.execute(
+        "DELETE FROM prompt_entries
+         WHERE id NOT IN (
+             SELECT id FROM prompt_entries ORDER BY id DESC LIMIT ?1
+         )",
+        params![limit],
+    )?;
+    Ok(())
 }
 
 fn is_lock_contention(error: &PromptHistoryError) -> bool {

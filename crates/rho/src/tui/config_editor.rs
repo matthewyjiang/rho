@@ -107,7 +107,6 @@ pub(super) enum ConfigNumberSave {
     MaxToolOutputLines(usize),
     CompactThresholdPercent(u8),
     CompactTargetPercent(u8),
-    PromptHistoryLimit(usize),
 }
 
 impl ConfigNumberInput {
@@ -115,35 +114,28 @@ impl ConfigNumberInput {
         &self,
         config_repository: &ConfigRepository,
     ) -> anyhow::Result<ConfigNumberSave> {
-        let Ok(mut value) = self.value.parse::<usize>() else {
-            anyhow::bail!("{} must be a whole number", self.key.label());
-        };
-        if !matches!(self.key, ConfigNumberKey::PromptHistoryLimit) {
-            value = value.max(1);
-        }
-        config_repository.update(|config| match self.key {
-            ConfigNumberKey::MaxOutputBytes => {
+        let value = self.parsed_value()?;
+        match self.key {
+            ConfigNumberKey::PromptHistoryLimit => {
+                anyhow::bail!("prompt history limit is applied through the confirm flow");
+            }
+            ConfigNumberKey::MaxOutputBytes => config_repository.update(|config| {
                 config.max_output_bytes = value;
                 ConfigNumberSave::MaxOutputBytes(value)
-            }
-            ConfigNumberKey::MaxToolOutputLines => {
+            }),
+            ConfigNumberKey::MaxToolOutputLines => config_repository.update(|config| {
                 config.max_tool_output_lines = value;
                 ConfigNumberSave::MaxToolOutputLines(value)
-            }
-            ConfigNumberKey::CompactThresholdPercent => {
+            }),
+            ConfigNumberKey::CompactThresholdPercent => config_repository.update(|config| {
                 config.set_compact_threshold_percent(value.clamp(1, 100) as u8);
                 ConfigNumberSave::CompactThresholdPercent(config.compact_threshold_percent)
-            }
-            ConfigNumberKey::CompactTargetPercent => {
+            }),
+            ConfigNumberKey::CompactTargetPercent => config_repository.update(|config| {
                 config.set_compact_target_percent(value.clamp(1, 100) as u8);
                 ConfigNumberSave::CompactTargetPercent(config.compact_target_percent)
-            }
-            ConfigNumberKey::PromptHistoryLimit => {
-                let value = value.min(crate::config::MAX_PROMPT_HISTORY_LIMIT);
-                config.prompt_history_limit = value;
-                ConfigNumberSave::PromptHistoryLimit(value)
-            }
-        })
+            }),
+        }
     }
 }
 
@@ -167,6 +159,20 @@ impl ConfigNumberKey {
             }
             ConfigNumberKey::CompactTargetPercent => config_picker::COMPACT_TARGET_PERCENT_VALUE,
             ConfigNumberKey::PromptHistoryLimit => config_picker::PROMPT_HISTORY_LIMIT_VALUE,
+        }
+    }
+
+    pub(super) fn min_value(self) -> usize {
+        match self {
+            ConfigNumberKey::PromptHistoryLimit => 0,
+            _ => 1,
+        }
+    }
+
+    pub(super) fn max_value(self) -> Option<usize> {
+        match self {
+            ConfigNumberKey::PromptHistoryLimit => Some(crate::config::MAX_PROMPT_HISTORY_LIMIT),
+            _ => None,
         }
     }
 }
@@ -199,9 +205,15 @@ impl ConfigTextKey {
 
 impl ConfigNumberInput {
     pub(super) fn parsed_value(&self) -> anyhow::Result<usize> {
-        self.value
+        let value = self
+            .value
             .parse::<usize>()
-            .map_err(|_| anyhow::anyhow!("{} must be a whole number", self.key.label()))
+            .map_err(|_| anyhow::anyhow!("{} must be a whole number", self.key.label()))?;
+        let value = value.max(self.key.min_value());
+        Ok(match self.key.max_value() {
+            Some(max) => value.min(max),
+            None => value,
+        })
     }
 
     pub(super) fn new(key: ConfigNumberKey, value: usize) -> Self {

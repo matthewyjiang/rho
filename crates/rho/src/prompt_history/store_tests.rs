@@ -6,7 +6,8 @@ use super::*;
 
 fn store() -> (TempDir, PromptHistoryStore) {
     let directory = tempfile::tempdir().unwrap();
-    let store = PromptHistoryStore::new(directory.path().join("prompt-history.sqlite3")).unwrap();
+    let store =
+        PromptHistoryStore::open_path(directory.path().join("prompt-history.sqlite3")).unwrap();
     (directory, store)
 }
 
@@ -15,15 +16,15 @@ fn store() -> (TempDir, PromptHistoryStore) {
 #[test]
 fn append_round_trips_oldest_first() {
     let (_directory, store) = store();
-    store.append("first", 1, 10).unwrap();
-    store.append("second", 2, 10).unwrap();
+    store.append("first", 10).unwrap();
+    store.append("second", 10).unwrap();
 
     assert_eq!(
         store.load_tail(10).unwrap(),
         vec!["first".to_string(), "second".to_string()]
     );
 
-    let reopened = PromptHistoryStore::new(store.path()).unwrap();
+    let reopened = PromptHistoryStore::open_path(store.path()).unwrap();
     assert_eq!(
         reopened.load_tail(10).unwrap(),
         vec!["first".to_string(), "second".to_string()]
@@ -35,9 +36,9 @@ fn append_round_trips_oldest_first() {
 #[test]
 fn enforce_limit_drops_oldest_rows() {
     let (_directory, store) = store();
-    store.append("a", 1, 10).unwrap();
-    store.append("b", 2, 10).unwrap();
-    store.append("c", 3, 10).unwrap();
+    store.append("a", 10).unwrap();
+    store.append("b", 10).unwrap();
+    store.append("c", 10).unwrap();
     assert_eq!(store.count().unwrap(), 3);
 
     store.enforce_limit(1).unwrap();
@@ -50,10 +51,8 @@ fn enforce_limit_drops_oldest_rows() {
 #[test]
 fn append_trims_to_newest_max_entries() {
     let (_directory, store) = store();
-    for (index, text) in ["a", "b", "c", "d", "e"].into_iter().enumerate() {
-        store
-            .append(text, i64::try_from(index).unwrap(), 3)
-            .unwrap();
+    for text in ["a", "b", "c", "d", "e"] {
+        store.append(text, 3).unwrap();
     }
 
     assert_eq!(
@@ -67,10 +66,10 @@ fn append_trims_to_newest_max_entries() {
 #[test]
 fn consecutive_duplicate_is_skipped() {
     let (_directory, store) = store();
-    store.append("hello", 1, 10).unwrap();
-    store.append("hello", 2, 10).unwrap();
-    store.append("world", 3, 10).unwrap();
-    store.append("hello", 4, 10).unwrap();
+    store.append("hello", 10).unwrap();
+    store.append("hello", 10).unwrap();
+    store.append("world", 10).unwrap();
+    store.append("hello", 10).unwrap();
 
     assert_eq!(
         store.load_tail(10).unwrap(),
@@ -87,9 +86,9 @@ fn consecutive_duplicate_is_skipped() {
 #[test]
 fn load_tail_returns_newest_n() {
     let (_directory, store) = store();
-    store.append("one", 1, 10).unwrap();
-    store.append("two", 2, 10).unwrap();
-    store.append("three", 3, 10).unwrap();
+    store.append("one", 10).unwrap();
+    store.append("two", 10).unwrap();
+    store.append("three", 10).unwrap();
 
     assert_eq!(
         store.load_tail(2).unwrap(),
@@ -102,11 +101,11 @@ fn load_tail_returns_newest_n() {
 #[test]
 fn clear_empties_then_accepts_appends() {
     let (_directory, store) = store();
-    store.append("keep", 1, 10).unwrap();
+    store.append("keep", 10).unwrap();
     store.clear().unwrap();
     assert!(store.load_tail(10).unwrap().is_empty());
 
-    store.append("after", 2, 10).unwrap();
+    store.append("after", 10).unwrap();
     assert_eq!(store.load_tail(10).unwrap(), vec!["after".to_string()]);
 }
 
@@ -115,9 +114,9 @@ fn clear_empties_then_accepts_appends() {
 #[test]
 fn concurrent_handles_append_without_error() {
     let (_directory, first) = store();
-    let second = PromptHistoryStore::new(first.path()).unwrap();
-    first.append("from-first", 1, 10).unwrap();
-    second.append("from-second", 2, 10).unwrap();
+    let second = PromptHistoryStore::open_path(first.path()).unwrap();
+    first.append("from-first", 10).unwrap();
+    second.append("from-second", 10).unwrap();
 
     assert_eq!(
         first.load_tail(10).unwrap(),
@@ -131,7 +130,7 @@ fn concurrent_handles_append_without_error() {
 fn newer_schema_is_unsupported() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("prompt-history.sqlite3");
-    let store = PromptHistoryStore::new(&path).unwrap();
+    let store = PromptHistoryStore::open_path(&path).unwrap();
     drop(store);
 
     let connection = Connection::open(&path).unwrap();
@@ -140,7 +139,7 @@ fn newer_schema_is_unsupported() {
         .unwrap();
     drop(connection);
 
-    let error = PromptHistoryStore::new(&path).unwrap_err();
+    let error = PromptHistoryStore::open_path(&path).unwrap_err();
     assert!(matches!(
         error,
         PromptHistoryError::UnsupportedSchema {

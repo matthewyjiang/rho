@@ -424,7 +424,7 @@ async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Res
                 tokio::task::spawn_blocking(move || {
                     match crate::prompt_history::PromptHistoryStore::at_default_path() {
                         Ok(store) => match store.load_tail(prompt_history_limit) {
-                            Ok(tail) => Some((store, tail, prompt_history_limit)),
+                            Ok(tail) => Some((store, tail)),
                             Err(error) => {
                                 tracing::warn!(%error, "failed to load prompt history");
                                 None

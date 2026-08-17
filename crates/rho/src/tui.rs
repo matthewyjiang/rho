@@ -11,7 +11,7 @@ use std::{
 
 use questionnaire::QuestionnaireCancelReason;
 use ratatui::DefaultTerminal;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 use tracing::Instrument;
 mod activity;
 mod advisor_command;
@@ -113,8 +113,7 @@ mod picker_overlay;
 mod picker_overlay_layout;
 mod picker_rows;
 mod process_panel;
-mod prompt_history_command;
-mod prompt_history_persistence;
+mod prompt_history;
 mod prompt_turn;
 mod provider_actions;
 mod provider_attempt;
@@ -510,11 +509,7 @@ struct App {
     pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
     pending_custom_models: Option<tokio::task::JoinHandle<()>>,
     pending_syntax_warmup: Option<tokio::task::JoinHandle<()>>,
-    pending_prompt_history: Option<crate::prompt_history::PromptHistoryLoadHandle>,
-    prompt_history_tx: mpsc::UnboundedSender<prompt_history_persistence::PromptHistoryOp>,
-    prompt_history_rx: Option<mpsc::UnboundedReceiver<prompt_history_persistence::PromptHistoryOp>>,
-    prompt_history_limit: usize,
-    prompt_history_store_path: Option<PathBuf>,
+    prompt_history: prompt_history::PromptHistory,
     pending_herdr_graphics: Option<tokio::task::JoinHandle<HerdrGraphicsCapability>>,
     /// Turns held until MCP connect settles.
     held_turns: VecDeque<idle_input::HeldTurn>,

@@ -1,10 +1,134 @@
+//! Shared composer prompt history: one store handle, one mutation path.
+
+use std::path::PathBuf;
+
+use futures_util::FutureExt;
+
+use crate::prompt_history::{PromptHistoryError, PromptHistoryLoadHandle, PromptHistoryStore};
+
 use super::{
     config_picker, App, ComposerMode, ConfigNumberInput, ConfigNumberKey, Entry, InlineChoice,
     InlineChoiceModal, InlineChoiceOption, InlineChoicePending, UiPicker,
 };
 
+const MAX_PERSISTED_PROMPT_BYTES: usize = 10 * 1024;
 const CONFIRM_VALUE: &str = "confirm";
 const CANCEL_VALUE: &str = "cancel";
+
+pub(in crate::tui) struct PromptHistory {
+    store: Option<PromptHistoryStore>,
+    store_path: Option<PathBuf>,
+    limit: usize,
+    pending_load: Option<PromptHistoryLoadHandle>,
+    ring_invalidated: bool,
+}
+
+impl PromptHistory {
+    pub(in crate::tui) fn new(limit: usize, pending_load: Option<PromptHistoryLoadHandle>) -> Self {
+        Self {
+            store: None,
+            store_path: None,
+            limit,
+            pending_load,
+            ring_invalidated: false,
+        }
+    }
+
+    pub(in crate::tui) fn limit(&self) -> usize {
+        self.limit
+    }
+
+    pub(in crate::tui) fn set_limit(&mut self, limit: usize) {
+        self.limit = limit;
+    }
+
+    pub(in crate::tui) fn load_pending(&self) -> bool {
+        self.pending_load.is_some()
+    }
+
+    pub(in crate::tui) fn load_finished(&self) -> bool {
+        self.pending_load
+            .as_ref()
+            .is_some_and(tokio::task::JoinHandle::is_finished)
+    }
+
+    pub(in crate::tui) fn push(&mut self, text: &str) {
+        if self.limit == 0 || text.len() > MAX_PERSISTED_PROMPT_BYTES {
+            return;
+        }
+        let limit = self.limit;
+        if let Err(error) = self
+            .ensure_store()
+            .and_then(|store| store.append(text, limit))
+        {
+            tracing::warn!(%error, "failed to append prompt history");
+        }
+    }
+
+    pub(in crate::tui) fn clear(&mut self) -> Result<(), PromptHistoryError> {
+        self.ring_invalidated = true;
+        self.ensure_store()?.clear()
+    }
+
+    pub(in crate::tui) fn count(&mut self) -> Result<usize, PromptHistoryError> {
+        self.ensure_store()?.count()
+    }
+
+    pub(in crate::tui) fn enforce_limit(
+        &mut self,
+        max_entries: usize,
+    ) -> Result<(), PromptHistoryError> {
+        self.ring_invalidated = true;
+        self.ensure_store()?.enforce_limit(max_entries)
+    }
+
+    fn take_finished_seed(&mut self) -> Option<Vec<String>> {
+        let handle = self.pending_load.as_mut()?;
+        if !handle.is_finished() {
+            return None;
+        }
+        let handle = self.pending_load.take()?;
+        match handle.now_or_never() {
+            Some(Ok(Some((store, tail)))) => {
+                if self.store.is_none() {
+                    self.store = Some(store);
+                }
+                self.seed_from_load(tail)
+            }
+            _ => None,
+        }
+    }
+
+    fn seed_from_load(&self, tail: Vec<String>) -> Option<Vec<String>> {
+        if self.ring_invalidated {
+            None
+        } else {
+            Some(tail)
+        }
+    }
+
+    fn ensure_store(&mut self) -> Result<&PromptHistoryStore, PromptHistoryError> {
+        if self.store.is_none() {
+            let store = match &self.store_path {
+                Some(path) => PromptHistoryStore::open_path(path),
+                None => PromptHistoryStore::at_default_path(),
+            }?;
+            self.store = Some(store);
+        }
+        Ok(self.store.as_ref().expect("store just inserted"))
+    }
+
+    #[cfg(test)]
+    pub(in crate::tui) fn set_store_path(&mut self, path: PathBuf) {
+        self.store = None;
+        self.store_path = Some(path);
+    }
+
+    #[cfg(test)]
+    pub(in crate::tui) fn store_path(&self) -> Option<&std::path::Path> {
+        self.store_path.as_deref()
+    }
+}
 
 struct PromptHistoryChoice {
     title: String,
@@ -17,6 +141,29 @@ struct PromptHistoryChoice {
 }
 
 impl App {
+    pub(super) fn poll_prompt_history(&mut self) -> bool {
+        match self.prompt_history.take_finished_seed() {
+            Some(tail) => {
+                let seeded = !tail.is_empty();
+                self.input_ui.seed_history_front(tail);
+                seeded
+            }
+            None => false,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn apply_loaded_prompt_history_seed(&mut self, tail: Vec<String>) -> bool {
+        match self.prompt_history.seed_from_load(tail) {
+            Some(tail) => {
+                let seeded = !tail.is_empty();
+                self.input_ui.seed_history_front(tail);
+                seeded
+            }
+            None => false,
+        }
+    }
+
     pub(super) fn open_prompt_history_limit_editor(&mut self) -> anyhow::Result<()> {
         let config = self.info.services.config_repository.load()?;
         self.input_ui
@@ -29,7 +176,17 @@ impl App {
     }
 
     pub(super) fn propose_prompt_history_limit(&mut self, new_limit: usize) -> anyhow::Result<()> {
-        let stored = self.stored_prompt_history_count();
+        let stored = match self.prompt_history.count() {
+            Ok(count) => count,
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not read prompt history: {error}"
+                )));
+                self.restore_prompt_history_config(config_picker::PROMPT_HISTORY_LIMIT_VALUE)?;
+                self.set_status("prompt history unavailable");
+                return Ok(());
+            }
+        };
         if new_limit > 0 && stored > new_limit {
             let dropped = stored - new_limit;
             self.prompt_prompt_history_choice(PromptHistoryChoice {
@@ -62,7 +219,17 @@ impl App {
     }
 
     pub(super) fn prompt_clear_prompt_history(&mut self) -> anyhow::Result<()> {
-        let stored = self.stored_prompt_history_count();
+        let stored = match self.prompt_history.count() {
+            Ok(count) => count,
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not read prompt history: {error}"
+                )));
+                self.restore_prompt_history_config(config_picker::CLEAR_PROMPT_HISTORY_VALUE)?;
+                self.set_status("prompt history unavailable");
+                return Ok(());
+            }
+        };
         if stored == 0 && self.input_ui.history().is_empty() {
             self.set_status("prompt history is already empty");
             return Ok(());
@@ -142,11 +309,9 @@ impl App {
             self.set_status("config save failed");
             return Ok(());
         }
-        self.prompt_history_limit = new_limit;
+        self.prompt_history.set_limit(new_limit);
         if new_limit > 0 {
-            if let Err(error) =
-                self.with_prompt_history_store(|store| store.enforce_limit(new_limit))
-            {
+            if let Err(error) = self.prompt_history.enforce_limit(new_limit) {
                 self.insert_entry(&Entry::Error(format!(
                     "could not trim prompt history: {error}"
                 )));
@@ -164,10 +329,7 @@ impl App {
 
     fn clear_prompt_history(&mut self) -> anyhow::Result<()> {
         self.input_ui.clear_history();
-        let _ = self
-            .prompt_history_tx
-            .send(super::prompt_history_persistence::PromptHistoryOp::Clear);
-        if let Err(error) = self.with_prompt_history_store(|store| store.clear()) {
+        if let Err(error) = self.prompt_history.clear() {
             self.insert_entry(&Entry::Error(format!(
                 "could not clear prompt history: {error}"
             )));
@@ -178,33 +340,6 @@ impl App {
         self.restore_prompt_history_config(config_picker::CLEAR_PROMPT_HISTORY_VALUE)?;
         self.set_status("prompt history cleared");
         Ok(())
-    }
-
-    fn stored_prompt_history_count(&self) -> usize {
-        self.with_prompt_history_store(|store| store.count())
-            .unwrap_or(0)
-    }
-
-    fn with_prompt_history_store<T>(
-        &self,
-        op: impl FnOnce(
-            &crate::prompt_history::PromptHistoryStore,
-        ) -> Result<T, crate::prompt_history::PromptHistoryError>,
-    ) -> Result<T, crate::prompt_history::PromptHistoryError> {
-        let store = match &self.prompt_history_store_path {
-            Some(path) => crate::prompt_history::PromptHistoryStore::open_path(path),
-            None => crate::prompt_history::PromptHistoryStore::at_default_path(),
-        }?;
-        op(&store)
-    }
-
-    #[cfg(test)]
-    pub(super) fn take_prompt_history_rx(
-        &mut self,
-    ) -> Option<
-        tokio::sync::mpsc::UnboundedReceiver<super::prompt_history_persistence::PromptHistoryOp>,
-    > {
-        self.prompt_history_rx.take()
     }
 }
 
@@ -219,5 +354,5 @@ fn take_config_parent_picker(app: &mut App) -> Option<Box<UiPicker>> {
 }
 
 #[cfg(test)]
-#[path = "prompt_history_command_tests.rs"]
+#[path = "prompt_history_tests.rs"]
 mod tests;

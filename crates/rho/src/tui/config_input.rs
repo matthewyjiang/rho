@@ -106,9 +106,7 @@ impl App {
                 };
                 if input.key == ConfigNumberKey::PromptHistoryLimit {
                     match input.parsed_value() {
-                        Ok(value) => self.propose_prompt_history_limit(
-                            value.min(crate::config::MAX_PROMPT_HISTORY_LIMIT),
-                        )?,
+                        Ok(value) => self.propose_prompt_history_limit(value)?,
                         Err(err) => {
                             self.insert_entry(&Entry::Error(err.to_string()));
                             self.set_status("config save failed");
@@ -156,9 +154,6 @@ impl App {
                             config_picker::COMPACT_TARGET_PERCENT_VALUE,
                         )?;
                         self.set_status(format!("compact target set to {value}%"));
-                    }
-                    ConfigNumberSave::PromptHistoryLimit(_) => {
-                        unreachable!("prompt history limit is proposed before save")
                     }
                 }
                 Ok(true)

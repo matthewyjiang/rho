@@ -6,9 +6,8 @@ pub(crate) const SCHEMA_VERSION: i64 = 1;
 
 const MIGRATION_1: &str = r#"
 CREATE TABLE prompt_entries (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    recorded_at_ms INTEGER NOT NULL,
-    text           TEXT NOT NULL
+    id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    text TEXT NOT NULL
 );
 "#;
 

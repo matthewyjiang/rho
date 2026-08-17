@@ -5,8 +5,8 @@ mod store;
 
 pub(crate) use store::PromptHistoryStore;
 
-/// Tail load result: store handle, oldest-first entries, and the configured cap.
-pub(crate) type PromptHistorySnapshot = (PromptHistoryStore, Vec<String>, usize);
+/// Tail load result: store handle and oldest-first entries.
+pub(crate) type PromptHistorySnapshot = (PromptHistoryStore, Vec<String>);
 pub(crate) type PromptHistoryLoadHandle = tokio::task::JoinHandle<Option<PromptHistorySnapshot>>;
 
 /// Failure to initialize or write the shared prompt history database.
