@@ -14,6 +14,20 @@ use crate::protocol::openai_responses::{
 use super::reasoning;
 use crate::model::{Message, ModelError, ModelIdentity, ModelRequest};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct XaiHostedTools {
+    pub(crate) web_search: bool,
+    pub(crate) image_generation: bool,
+}
+
+impl XaiHostedTools {
+    #[cfg(test)]
+    pub(crate) const ALL: Self = Self {
+        web_search: true,
+        image_generation: true,
+    };
+}
+
 /// Lowered fields used only by the Responses create body.
 struct XaiCreateLowered {
     instructions: String,
@@ -43,9 +57,9 @@ fn lower_xai_create_request(
 fn to_xai_responses_tool(
     tool: ToolSpec,
     strictness: ToolStrictness,
-    hosted_web_search: bool,
+    hosted: XaiHostedTools,
 ) -> Value {
-    if hosted_web_search && tool.name == "web_search" {
+    if hosted.web_search && tool.name == "web_search" {
         return json!({
             "type": "web_search",
         });
@@ -62,21 +76,17 @@ fn to_xai_responses_tool(
 /// client tools with those names. A colliding custom `x_search` is always
 /// dropped. A colliding custom `image_generation` is dropped only while the
 /// hosted tool is advertised.
-fn xai_responses_tools(
-    tools: &[ToolSpec],
-    hosted_web_search: bool,
-    hosted_image_generation: bool,
-) -> Vec<Value> {
+fn xai_responses_tools(tools: &[ToolSpec], hosted: XaiHostedTools) -> Vec<Value> {
     let mut out = tools
         .iter()
         .filter(|tool| {
-            tool.name != "x_search" && !(hosted_image_generation && tool.name == "image_generation")
+            tool.name != "x_search" && !(hosted.image_generation && tool.name == "image_generation")
         })
         .cloned()
-        .map(|tool| to_xai_responses_tool(tool, ToolStrictness::Explicit(false), hosted_web_search))
+        .map(|tool| to_xai_responses_tool(tool, ToolStrictness::Explicit(false), hosted))
         .collect::<Vec<_>>();
     out.push(json!({ "type": "x_search" }));
-    if hosted_image_generation {
+    if hosted.image_generation {
         out.push(json!({ "type": "image_generation" }));
     }
     out
@@ -91,10 +101,9 @@ pub(super) fn build_xai_responses_body(
     model: &str,
     reasoning: &reasoning::XaiReasoningProfile,
     request: ModelRequest<'_>,
-    hosted_web_search: bool,
-    hosted_image_generation: bool,
+    hosted: XaiHostedTools,
 ) -> Result<Value, ModelError> {
-    let tools = xai_responses_tools(request.tools, hosted_web_search, hosted_image_generation);
+    let tools = xai_responses_tools(request.tools, hosted);
     let XaiCreateLowered {
         instructions,
         input,

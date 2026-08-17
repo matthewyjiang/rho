@@ -29,6 +29,7 @@ mod reasoning;
 mod tests;
 
 use bodies::build_xai_responses_body;
+pub(crate) use bodies::XaiHostedTools;
 
 #[cfg(test)]
 use bodies::build_xai_compact_body;
@@ -40,8 +41,7 @@ pub struct XaiProvider {
     auth: XaiAuthManager,
     api_base: String,
     reasoning: reasoning::XaiReasoningProfile,
-    hosted_web_search: bool,
-    hosted_image_generation: bool,
+    hosted: XaiHostedTools,
 }
 
 impl XaiProvider {
@@ -51,8 +51,7 @@ impl XaiProvider {
         auth: XaiAuthManager,
         client: reqwest::Client,
         api_base: String,
-        hosted_web_search: bool,
-        hosted_image_generation: bool,
+        hosted: XaiHostedTools,
     ) -> Self {
         let reasoning = reasoning::XaiReasoningProfile::from_metadata(
             &model,
@@ -65,8 +64,7 @@ impl XaiProvider {
             auth,
             api_base,
             reasoning,
-            hosted_web_search,
-            hosted_image_generation,
+            hosted,
         }
     }
 
@@ -82,8 +80,7 @@ impl XaiProvider {
             XaiAuthManager::new(store)?,
             provider_client(),
             api_base,
-            /*hosted_web_search*/ true,
-            /*hosted_image_generation*/ true,
+            XaiHostedTools::ALL,
         ))
     }
 
@@ -101,8 +98,7 @@ impl XaiProvider {
             &self.model,
             &self.reasoning,
             request,
-            self.hosted_web_search,
-            self.hosted_image_generation,
+            self.hosted,
         )?;
         let mut on_request_event = on_request_event;
         let result = self

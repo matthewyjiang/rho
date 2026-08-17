@@ -1,12 +1,12 @@
 use super::*;
 use crate::model::{
-    AbortedAssistant, ContentBlock, ImageContent, Message, PartialToolCall, ReasoningCapabilities,
+    AbortedAssistant, ContentBlock, Message, PartialToolCall, ReasoningCapabilities,
     ReasoningLevelSet, ToolCall, ToolSpec,
 };
 use crate::protocol::openai_chat::{generation_output_tokens_event, ChatStreamAccumulator};
 use crate::protocol::openai_responses::{
     codex_input_items, codex_reasoning_param, extract_sse_text, handle_codex_sse_line,
-    CodexSseResponse, CodexSseState,
+    CodexSseState,
 };
 use crate::reasoning::ReasoningLevel;
 use pretty_assertions::assert_eq;
@@ -836,85 +836,6 @@ fn codex_sse_search_without_detail_still_emits_activity() {
     .unwrap();
 
     assert_eq!(searches, vec![("x_search".to_string(), String::new())]);
-}
-
-// Covers: hosted image_generation_call must surface activity, persist the item,
-// and keep the image so an image-only turn is valid content.
-// Owner: providers stream parse
-#[test]
-fn codex_sse_image_generation_call_emits_activity_and_image() {
-    let mut state = CodexSseState::default();
-    let mut activities = Vec::new();
-    let mut replay_items = 0;
-    handle_codex_sse_line(
-        r#"data: {"type":"response.output_item.done","output_index":0,"item":{"type":"image_generation_call","id":"ig_1","status":"completed","prompt":"a corgi surfing","result":"/9j/4AAQ"}}"#,
-        &mut state,
-        &mut Some(&mut |event| {
-            if let Some((name, detail)) = event.as_hosted_tool_activity() {
-                activities.push((name.to_owned(), detail.to_owned()));
-            }
-            if let ModelEvent::ProviderContext { kind, data, .. } = &event {
-                if kind == "openai_response_output_item"
-                    && data.get("type").and_then(|value| value.as_str())
-                        == Some("image_generation_call")
-                {
-                    replay_items += 1;
-                }
-            }
-            Ok(())
-        }),
-    )
-    .unwrap();
-    handle_codex_sse_line(
-        r#"data: {"type":"response.completed","response":{"id":"resp_1","output":[{"type":"image_generation_call","id":"ig_1","status":"completed","prompt":"a corgi surfing","result":"/9j/4AAQ"}]}}"#,
-        &mut state,
-        &mut Some(&mut |event| {
-            if let Some((name, detail)) = event.as_hosted_tool_activity() {
-                activities.push((name.to_owned(), detail.to_owned()));
-            }
-            Ok(())
-        }),
-    )
-    .unwrap();
-
-    assert_eq!(
-        activities,
-        vec![(
-            "image_generation".to_string(),
-            "a corgi surfing".to_string()
-        )]
-    );
-    assert_eq!(replay_items, 1);
-    let CodexSseResponse { response, .. } = state.into_response().unwrap();
-    assert_eq!(
-        response,
-        ModelResponse::Assistant(vec![ContentBlock::Image(ImageContent {
-            data: "/9j/4AAQ".into(),
-            mime_type: "image/jpeg".into(),
-        })])
-    );
-}
-
-// Covers: completed-only image_generation_call items still become assistant images.
-// Owner: providers stream parse
-#[test]
-fn codex_sse_completed_only_image_generation_is_content() {
-    let mut state = CodexSseState::default();
-    handle_codex_sse_line(
-        r#"data: {"type":"response.completed","response":{"id":"resp_1","output":[{"type":"image_generation_call","id":"ig_1","status":"completed","prompt":"night lighthouse","result":"iVBORw0K"}]}}"#,
-        &mut state,
-        &mut None,
-    )
-    .unwrap();
-
-    let CodexSseResponse { response, .. } = state.into_response().unwrap();
-    assert_eq!(
-        response,
-        ModelResponse::Assistant(vec![ContentBlock::Image(ImageContent {
-            data: "iVBORw0K".into(),
-            mime_type: "image/png".into(),
-        })])
-    );
 }
 
 #[test]

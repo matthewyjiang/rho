@@ -14,7 +14,6 @@ pub(super) const AGENT_CATEGORY_VALUE: &str = "config_category:agent";
 pub(super) const CONTEXT_CATEGORY_VALUE: &str = "config_category:context";
 pub(super) const TOOLS_CATEGORY_VALUE: &str = "config_category:tools";
 pub(super) const PROVIDERS_CATEGORY_VALUE: &str = "config_category:providers";
-pub(super) const XAI_CATEGORY_VALUE: &str = "config_category:xai";
 pub(super) const UPDATES_CATEGORY_VALUE: &str = "config_category:updates";
 pub(super) const CONVERSATION_MODEL_VALUE: &str = "conversation_model";
 pub(super) const REFRESH_MODEL_LIST_VALUE: &str = "refresh_model_list";
@@ -51,18 +50,8 @@ pub(super) const WEB_SEARCH_EXA_KEY_VALUE: &str = "web_search_exa_api_key";
 pub(super) const WEB_SEARCH_BRAVE_KEY_VALUE: &str = "web_search_brave_api_key";
 pub(super) const XAI_IMAGE_GENERATION_VALUE: &str = "xai_image_generation";
 
-/// xAI settings belong in `/config` only when xAI is the conversation provider
-/// or an xAI auth mode is already available.
-pub(super) fn xai_settings_visible(provider: &str, available_auths: &[String]) -> bool {
-    if provider == "xai" {
-        return true;
-    }
-    let Some(descriptor) = rho_providers::provider::provider_descriptor("xai") else {
-        return false;
-    };
-    descriptor
-        .auth_modes()
-        .any(|mode| available_auths.iter().any(|auth| auth == mode.id))
+fn xai_image_generation_visible(provider: &str) -> bool {
+    provider == "xai"
 }
 
 fn badge(text: impl Into<String>) -> PickerBadge {
@@ -172,74 +161,74 @@ fn conversation_model_badge(info: &super::RuntimeModelView, config: &Config) -> 
     }
 }
 
-pub(super) fn config_picker(
-    info: &super::RuntimeModelView,
-    config: &Config,
-    xai_configured: bool,
-) -> UiPicker {
-    let mut items = vec![
-        item(
-            "Models & reasoning",
-            "Conversation model, reasoning level, reasoning output, zen mode, and theme.",
-            Some(info.model.clone()),
-            MODELS_CATEGORY_VALUE,
-        ),
-        item(
-            "Agent behavior",
-            "Permission mode, classifier model, advisor, and delegation.",
-            Some(format!("permissions: {}", info.permission_mode.as_str())),
-            AGENT_CATEGORY_VALUE,
-        ),
-        item(
-            "Context & limits",
-            "Auto compact, compact threshold, compact target, maximum output bytes, and tool output lines.",
-            Some(if config.auto_compact {
-                format!("compacts at {}%", config.compact_threshold_percent)
-            } else {
-                "auto compaction off".into()
-            }),
-            CONTEXT_CATEGORY_VALUE,
-        ),
-        item(
-            "Tools",
-            "Inline shell, edit tool, and web search (hosted + backup).",
-            Some(format!(
-                "{} shell · {} · {}",
-                config.inline_shell,
-                config.edit_tool.display_label(&info.provider),
-                web_search_summary(config)
-            )),
-            TOOLS_CATEGORY_VALUE,
-        ),
-    ];
-    if xai_configured {
-        items.push(item(
-            "xAI",
-            "Hosted image generation and other xAI amenities.",
-            Some(format!(
-                "image generation {}",
-                on_off(config.xai_image_generation)
-            )),
-            XAI_CATEGORY_VALUE,
-        ));
+pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> UiPicker {
+    UiPicker::new(
+        "Config · saves automatically",
+        vec![
+            item(
+                "Models & reasoning",
+                "Conversation model, reasoning level, reasoning output, zen mode, and theme.",
+                Some(info.model.clone()),
+                MODELS_CATEGORY_VALUE,
+            ),
+            item(
+                "Agent behavior",
+                "Permission mode, classifier model, advisor, and delegation.",
+                Some(format!("permissions: {}", info.permission_mode.as_str())),
+                AGENT_CATEGORY_VALUE,
+            ),
+            item(
+                "Context & limits",
+                "Auto compact, compact threshold, compact target, maximum output bytes, and tool output lines.",
+                Some(if config.auto_compact {
+                    format!("compacts at {}%", config.compact_threshold_percent)
+                } else {
+                    "auto compaction off".into()
+                }),
+                CONTEXT_CATEGORY_VALUE,
+            ),
+            item(
+                "Tools",
+                "Inline shell, edit tool, and web search (hosted + backup).",
+                Some(tools_summary(info, config)),
+                TOOLS_CATEGORY_VALUE,
+            ),
+            item(
+                "Providers",
+                "Manage provider access and refresh cached model lists.",
+                None,
+                PROVIDERS_CATEGORY_VALUE,
+            ),
+            item(
+                "Updates",
+                "Check for Rho updates at startup.",
+                Some(format!(
+                    "startup checks {}",
+                    on_off(config.check_for_updates)
+                )),
+                UPDATES_CATEGORY_VALUE,
+            ),
+        ],
+        PickerAction::Config,
+    )
+    .with_confirm_verb("open")
+}
+
+fn tools_summary(info: &super::RuntimeModelView, config: &Config) -> String {
+    let summary = format!(
+        "{} shell · {} · {}",
+        config.inline_shell,
+        config.edit_tool.display_label(&info.provider),
+        web_search_summary(config)
+    );
+    if xai_image_generation_visible(&info.provider) {
+        format!(
+            "{summary} · image gen {}",
+            on_off(config.xai_image_generation)
+        )
+    } else {
+        summary
     }
-    items.push(item(
-        "Providers",
-        "Manage provider access and refresh cached model lists.",
-        None,
-        PROVIDERS_CATEGORY_VALUE,
-    ));
-    items.push(item(
-        "Updates",
-        "Check for Rho updates at startup.",
-        Some(format!(
-            "startup checks {}",
-            on_off(config.check_for_updates)
-        )),
-        UPDATES_CATEGORY_VALUE,
-    ));
-    UiPicker::new("Config · saves automatically", items, PickerAction::Config)
-        .with_confirm_verb("open")
 }
 
 pub(super) fn category_picker(
@@ -384,9 +373,8 @@ pub(super) fn category_picker(
                 ),
             ],
         ),
-        TOOLS_CATEGORY_VALUE => (
-            "Config / Tools",
-            vec![
+        TOOLS_CATEGORY_VALUE => {
+            let mut items = vec![
                 item(
                     "Inline shell",
                     "Shell used by ! and !! commands.",
@@ -405,17 +393,17 @@ pub(super) fn category_picker(
                     Some(web_search_summary(config)),
                     WEB_SEARCH_VALUE,
                 ),
-            ],
-        ),
-        XAI_CATEGORY_VALUE => (
-            "Config / xAI",
-            vec![item(
-                "Image generation",
-                "Attach xAI hosted image_generation on create turns. Space or Enter toggles. Applies to the next session.",
-                Some(on_off(config.xai_image_generation)),
-                XAI_IMAGE_GENERATION_VALUE,
-            )],
-        ),
+            ];
+            if xai_image_generation_visible(&info.provider) {
+                items.push(item(
+                    "xAI image generation",
+                    "Attach xAI hosted image_generation on create turns. Space or Enter toggles. Applies to the next session.",
+                    Some(on_off(config.xai_image_generation)),
+                    XAI_IMAGE_GENERATION_VALUE,
+                ));
+            }
+            ("Config / Tools", items)
+        }
         PROVIDERS_CATEGORY_VALUE => {
             let mut items = vec![
                 item(
@@ -471,7 +459,6 @@ pub(super) fn is_category(value: &str) -> bool {
             | AGENT_CATEGORY_VALUE
             | CONTEXT_CATEGORY_VALUE
             | TOOLS_CATEGORY_VALUE
-            | XAI_CATEGORY_VALUE
             | PROVIDERS_CATEGORY_VALUE
             | UPDATES_CATEGORY_VALUE
     )
@@ -496,8 +483,9 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
         | COMPACT_TARGET_PERCENT_VALUE
         | MAX_OUTPUT_BYTES_VALUE
         | MAX_TOOL_OUTPUT_LINES_VALUE => Some(CONTEXT_CATEGORY_VALUE),
-        INLINE_SHELL_VALUE | EDIT_TOOL_VALUE | WEB_SEARCH_VALUE => Some(TOOLS_CATEGORY_VALUE),
-        XAI_IMAGE_GENERATION_VALUE => Some(XAI_CATEGORY_VALUE),
+        INLINE_SHELL_VALUE | EDIT_TOOL_VALUE | WEB_SEARCH_VALUE | XAI_IMAGE_GENERATION_VALUE => {
+            Some(TOOLS_CATEGORY_VALUE)
+        }
         PROVIDER_LOGIN_VALUE
         | PROVIDER_LOGOUT_VALUE
         | SWITCH_AUTH_MODE_VALUE

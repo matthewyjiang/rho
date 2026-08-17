@@ -296,8 +296,10 @@ impl ProviderBuilder {
                     auth,
                     client,
                     endpoint.unwrap_or_else(|| XAI_API_BASE.into()),
-                    self.options.hosted_web_search,
-                    self.options.hosted_image_generation,
+                    crate::providers::xai::XaiHostedTools {
+                        web_search: self.options.hosted_web_search,
+                        image_generation: self.options.hosted_image_generation,
+                    },
                 )))
             }
             _ => Err(ModelError::InvalidResponse(format!(

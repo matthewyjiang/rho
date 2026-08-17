@@ -2,10 +2,22 @@ use std::collections::VecDeque;
 
 use {
     crate::app::interactive_presenter::InteractiveToolPresenter,
-    rho_providers::model::{image_summary, ContentBlock, Message, ToolCall},
+    rho_providers::model::{image_summary, ContentBlock, ImageContent, Message, ToolCall},
+    rho_tools::tool_card::{ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus},
 };
 
 use super::{ChatMedia, Entry, ToolEntry};
+
+pub(super) fn text_blocks(blocks: &[ContentBlock]) -> String {
+    blocks
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text(text) => Some(text.as_str()),
+            ContentBlock::Image(_) | ContentBlock::ToolCall(_) => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 pub(super) fn render_message_blocks(blocks: &[ContentBlock]) -> String {
     blocks
@@ -17,6 +29,70 @@ pub(super) fn render_message_blocks(blocks: &[ContentBlock]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+pub(super) fn is_image_generation_card(entry: &Entry) -> bool {
+    matches!(
+        entry,
+        Entry::Tool(tool) if matches!(
+            &tool.card.header,
+            ToolHeader::Call { verb, .. } if verb == "image_generation"
+        )
+    )
+}
+
+pub(super) fn generated_image_entry(
+    preview: Result<Option<super::feed_image::FeedImage>, String>,
+    source: &ImageContent,
+) -> Entry {
+    let mut card = ToolCard::new(
+        ToolStatus::Ok,
+        ToolFamily::Default,
+        ToolHeader::call("image_generation", None),
+    );
+    let image = apply_generated_image_preview(&mut card, preview, source);
+    card.push_fact(ToolFact::Meta {
+        text: "finished".into(),
+    });
+    Entry::Tool(ToolEntry {
+        card,
+        expanded: false,
+        image,
+        started_at: None,
+    })
+}
+
+pub(super) fn apply_generated_image_to_entry(
+    entry: &mut Entry,
+    preview: Result<Option<super::feed_image::FeedImage>, String>,
+    source: &ImageContent,
+) {
+    let Entry::Tool(tool) = entry else {
+        return;
+    };
+    tool.image = apply_generated_image_preview(&mut tool.card, preview, source);
+}
+
+fn apply_generated_image_preview(
+    card: &mut ToolCard,
+    preview: Result<Option<super::feed_image::FeedImage>, String>,
+    source: &ImageContent,
+) -> Option<super::feed_image::FeedImage> {
+    match preview {
+        Ok(None) => {
+            card.push_fact(ToolFact::Text {
+                text: image_summary(source),
+            });
+            None
+        }
+        Ok(image) => image,
+        Err(error) => {
+            card.push_fact(ToolFact::Error {
+                text: format!("image preview unavailable: {error}"),
+            });
+            None
+        }
+    }
 }
 
 pub(super) fn render_user_entry(prompt: &str, media: &[ChatMedia]) -> String {
@@ -50,10 +126,11 @@ pub(super) fn transcript_entries_from_messages(
                 }
             }
             Message::Assistant(blocks) => {
-                let text = render_message_blocks(blocks);
+                let text = text_blocks(blocks);
                 if !text.is_empty() {
                     entries.push(Entry::Assistant(text));
                 }
+                push_generated_image_entries(&mut entries, blocks);
                 pending_tools.extend(blocks.iter().filter_map(|block| match block {
                     ContentBlock::ToolCall(call) => Some(call.clone()),
                     ContentBlock::Text(_) | ContentBlock::Image(_) => None,
@@ -61,20 +138,22 @@ pub(super) fn transcript_entries_from_messages(
             }
             Message::EnrichedAssistant(message) => {
                 let blocks = &message.content;
-                let text = render_message_blocks(blocks);
+                let text = text_blocks(blocks);
                 if !text.is_empty() {
                     entries.push(Entry::Assistant(text));
                 }
+                push_generated_image_entries(&mut entries, blocks);
                 pending_tools.extend(blocks.iter().filter_map(|block| match block {
                     ContentBlock::ToolCall(call) => Some(call.clone()),
                     ContentBlock::Text(_) | ContentBlock::Image(_) => None,
                 }));
             }
             Message::AbortedAssistant(message) => {
-                let text = render_message_blocks(&message.content);
+                let text = text_blocks(&message.content);
                 if !text.is_empty() {
                     entries.push(Entry::Assistant(text));
                 }
+                push_generated_image_entries(&mut entries, &message.content);
                 if let Some(tool_call) = message.tool_calls.last() {
                     let presented =
                         presenter.interrupted(tool_call.name.as_deref(), &tool_call.arguments);
@@ -104,4 +183,12 @@ pub(super) fn transcript_entries_from_messages(
         }
     }
     entries
+}
+
+fn push_generated_image_entries(entries: &mut Vec<Entry>, blocks: &[ContentBlock]) {
+    for block in blocks {
+        if let ContentBlock::Image(image) = block {
+            entries.push(generated_image_entry(Ok(None), image));
+        }
+    }
 }

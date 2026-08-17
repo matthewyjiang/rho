@@ -23,44 +23,8 @@ use super::{
     },
     App, Entry, FinalAnswerDelta, LiveStreamPreview, ReasoningEntry, StreamKind, ToolEntry,
 };
-use rho_providers::model::{image_summary, ContentBlock, ImageContent};
+use rho_providers::model::{ContentBlock, ImageContent};
 use rho_sdk::tool::ToolAsset;
-use rho_tools::tool_card::{ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
-
-fn generated_image_entry(
-    preview: Result<Option<super::feed_image::FeedImage>, String>,
-    source: &ImageContent,
-) -> Entry {
-    let mut card = ToolCard::new(
-        ToolStatus::Ok,
-        ToolFamily::Default,
-        ToolHeader::call("image_generation", None),
-    );
-    let image = match preview {
-        Ok(None) => {
-            card.push_fact(ToolFact::Text {
-                text: image_summary(source),
-            });
-            None
-        }
-        Ok(image) => image,
-        Err(error) => {
-            card.push_fact(ToolFact::Error {
-                text: format!("image preview unavailable: {error}"),
-            });
-            None
-        }
-    };
-    card.push_fact(ToolFact::Meta {
-        text: "finished".into(),
-    });
-    Entry::Tool(ToolEntry {
-        card,
-        expanded: false,
-        image,
-        started_at: None,
-    })
-}
 
 pub(super) fn final_answer_delta<'a>(emitted_text: &str, answer: &'a str) -> FinalAnswerDelta<'a> {
     match answer.strip_prefix(emitted_text) {
@@ -510,12 +474,39 @@ impl App {
     }
 
     pub(super) fn insert_assistant_images(&mut self, content: &[ContentBlock]) {
-        for block in content {
-            let ContentBlock::Image(image) = block else {
-                continue;
-            };
+        let images = content
+            .iter()
+            .filter_map(|block| match block {
+                ContentBlock::Image(image) => Some(image),
+                ContentBlock::Text(_) | ContentBlock::ToolCall(_) => None,
+            })
+            .collect::<Vec<_>>();
+        if images.is_empty() {
+            return;
+        }
+        let unfilled = self
+            .history
+            .entries()
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| {
+                super::message_history::is_image_generation_card(entry)
+                    && matches!(entry, Entry::Tool(tool) if tool.image.is_none())
+            })
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        for (offset, image) in images.into_iter().enumerate() {
             let preview = self.load_generated_feed_image(image);
-            self.insert_entry(&generated_image_entry(preview, image));
+            if let Some(index) = unfilled.get(offset).copied() {
+                if let Some(entry) = self.history.entries_mut().get_mut(index) {
+                    super::message_history::apply_generated_image_to_entry(entry, preview, image);
+                    self.history.invalidate_from(index);
+                }
+            } else {
+                self.insert_entry(&super::message_history::generated_image_entry(
+                    preview, image,
+                ));
+            }
         }
     }
 

@@ -49,9 +49,9 @@ fn subagent_toggle_persists_for_the_next_session() {
     let path = dir.path().join("config.toml");
     let repository = ConfigRepository::new(Some(path));
 
-    let mutation = toggle(&repository, ConfigToggle::EnableSubagents).unwrap();
+    let enabled = toggle(&repository, ConfigToggle::EnableSubagents).unwrap();
 
-    assert_eq!(mutation, ConfigMutation::EnableSubagents(false));
+    assert!(!enabled);
     assert!(!repository.load().unwrap().enable_subagents);
 }
 
@@ -61,9 +61,9 @@ fn zen_mode_toggle_persists() {
     let path = dir.path().join("config.toml");
     let repository = ConfigRepository::new(Some(path));
 
-    let mutation = toggle(&repository, ConfigToggle::ZenMode).unwrap();
+    let enabled = toggle(&repository, ConfigToggle::ZenMode).unwrap();
 
-    assert_eq!(mutation, ConfigMutation::ZenMode(true));
+    assert!(enabled);
     assert!(repository.load().unwrap().zen_mode);
 }
 
@@ -73,9 +73,9 @@ fn xai_image_generation_toggle_persists() {
     let path = dir.path().join("config.toml");
     let repository = ConfigRepository::new(Some(path));
 
-    let mutation = toggle(&repository, ConfigToggle::XaiImageGeneration).unwrap();
+    let enabled = toggle(&repository, ConfigToggle::XaiImageGeneration).unwrap();
 
-    assert_eq!(mutation, ConfigMutation::XaiImageGeneration(false));
+    assert!(!enabled);
     assert!(!repository.load().unwrap().xai_image_generation);
 }
 

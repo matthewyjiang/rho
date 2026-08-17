@@ -21,7 +21,7 @@ flowchart TD
 | Permission mode | `[behavior].permission_mode` or `/config` → **Agent behavior** |
 | Prompt templates | `~/.rho/prompts/` files or `[prompt_templates]` |
 | Web search | `[web_search]` or `/config` → **Tools** |
-| xAI image generation | `[xai].image_generation` or `/config` → **xAI** |
+| xAI image generation | `[xai].image_generation` or `/config` → **Tools** |
 | Edit tool | `[behavior].edit_tool` or `/config` → **Tools** |
 | MCP servers | `[mcp.servers]`; inspect with `/mcp` or `rho mcp list` — see [Model Context Protocol](/integrations/mcp) |
 | Auto compaction | `[compaction]` or `/config` → **Context & limits** |
@@ -34,7 +34,7 @@ Unknown keys in `config.toml` are a load error so typos fail loudly. Values that
 
 ## TUI updates
 
-In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#commands) opens a category browser. **Models & reasoning** contains the conversation model, reasoning level, reasoning-output toggle, zen mode, and theme. **Agent behavior** contains permission mode, delegation, and advisor mode. **Context & limits** contains auto compaction and output limits. **Tools** contains the inline shell, edit tool, and Web search settings. **xAI** appears only when xAI is the conversation provider or an xAI login is already available, and contains hosted image generation. **Providers** contains login, logout, and model-list refresh actions. **Updates** contains the startup update check. Type in the category browser to find a category by any setting it contains, then press `enter` to open it. Press `esc` to return to the category browser.
+In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#commands) opens a category browser. **Models & reasoning** contains the conversation model, reasoning level, reasoning-output toggle, zen mode, and theme. **Agent behavior** contains permission mode, delegation, and advisor mode. **Context & limits** contains auto compaction and output limits. **Tools** contains the inline shell, edit tool, Web search settings, and xAI hosted image generation when the conversation provider is xAI. **Providers** contains login, logout, and model-list refresh actions. **Updates** contains the startup update check. Type in the category browser to find a category by any setting it contains, then press `enter` to open it. Press `esc` to return to the category browser.
 
 Settings save as soon as they change. The `permission_mode` row applies the selected policy before the next turn. The `reasoning` row cycles through `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` and applies to the current session. The `show_reasoning_output`, `zen_mode`, and `theme` rows apply immediately, including during the current model turn. The `check_for_updates` row controls startup checks against GitHub releases. The `enable_subagents` row applies to the next session. The `edit_tool` row applies before the next turn; Auto also follows provider changes mid-session. The `advisor_mode` row applies before the next turn; turning it on without an advisor model opens the model picker first. The auto-compaction rows edit its threshold and target percentages. The `max_output_bytes` row saves for the next session.
 
@@ -260,7 +260,7 @@ When the conversation provider is xAI, Rho attaches the hosted `image_generation
 image_generation = false
 ```
 
-The setting is xAI-only. Other providers ignore it. The omitted key means on, and Rho does not write the `[xai]` table unless the value is off. In the TUI, `/config` → **xAI** shows the same toggle when xAI is the conversation provider or an xAI auth mode is already available. The change applies to the next session. See [xAI](/providers/xai).
+The setting is xAI-only. Other providers ignore it. The omitted key means on, and Rho does not write the `[xai]` table unless the value is off. In the TUI, `/config` → **Tools** shows the same toggle when the conversation provider is xAI. The change applies to the next session. See [xAI](/providers/xai).
 
 ## Auto compaction
 

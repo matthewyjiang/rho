@@ -28,8 +28,7 @@ fn unknown_grok_4_5_off_does_not_enable_reasoning_on_the_wire() {
             reasoning_level: ReasoningLevel::Off,
             prompt_cache_key: None,
         },
-        /*hosted_web_search*/ true,
-        /*hosted_image_generation*/ true,
+        XaiHostedTools::ALL,
     )
     .unwrap();
 
@@ -70,8 +69,7 @@ fn responses_body_preserves_tools_cache_key_and_supported_reasoning() {
             reasoning_level: ReasoningLevel::High,
             prompt_cache_key: Some("rho:session"),
         },
-        /*hosted_web_search*/ true,
-        /*hosted_image_generation*/ true,
+        XaiHostedTools::ALL,
     )
     .unwrap();
 
@@ -131,8 +129,7 @@ fn responses_body_uses_hosted_web_search_and_adds_hosted_x_search() {
             reasoning_level: ReasoningLevel::Off,
             prompt_cache_key: None,
         },
-        /*hosted_web_search*/ true,
-        /*hosted_image_generation*/ true,
+        XaiHostedTools::ALL,
     )
     .unwrap();
 
@@ -165,8 +162,10 @@ fn responses_body_keeps_function_web_search_when_hosted_disabled() {
             reasoning_level: ReasoningLevel::Medium,
             prompt_cache_key: None,
         },
-        /*hosted_web_search*/ false,
-        /*hosted_image_generation*/ true,
+        XaiHostedTools {
+            web_search: false,
+            image_generation: true,
+        },
     )
     .unwrap();
 
@@ -200,8 +199,7 @@ fn responses_body_always_includes_hosted_x_search() {
             reasoning_level: ReasoningLevel::Off,
             prompt_cache_key: None,
         },
-        /*hosted_web_search*/ true,
-        /*hosted_image_generation*/ true,
+        XaiHostedTools::ALL,
     )
     .unwrap();
 
@@ -231,8 +229,10 @@ fn responses_body_omits_hosted_image_generation_when_disabled() {
             reasoning_level: ReasoningLevel::Off,
             prompt_cache_key: None,
         },
-        /*hosted_web_search*/ true,
-        /*hosted_image_generation*/ false,
+        XaiHostedTools {
+            web_search: true,
+            image_generation: false,
+        },
     )
     .unwrap();
 

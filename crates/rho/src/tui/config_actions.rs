@@ -2,8 +2,8 @@ use rho_providers::credentials::load_web_search_api_key;
 
 use super::{
     config_editor, config_picker, resolve_web_search_editor_value, App, ComposerMode,
-    ConfigMutation, ConfigNumberInput, ConfigNumberKey, ConfigTextKey, ConfigToggle, Entry,
-    InteractiveRuntime, PickerAction,
+    ConfigNumberInput, ConfigNumberKey, ConfigTextKey, ConfigToggle, Entry, InteractiveRuntime,
+    PickerAction,
 };
 
 impl App {
@@ -234,7 +234,7 @@ impl App {
         filter: String,
     ) -> anyhow::Result<()> {
         let config = self.info.services.config_repository.load()?;
-        let mut root = self.config_root_picker(&config);
+        let mut root = config_picker::config_picker(&self.info.runtime, &config);
         let Some(category) = config_picker::category_for_setting(selected_value) else {
             Self::restore_picker_position(&mut root, selected_value, filter);
             self.input_ui.set_composer(ComposerMode::Picker(root));
@@ -250,15 +250,6 @@ impl App {
         self.set_status_quiet(picker.title.clone());
         self.input_ui.set_composer(ComposerMode::Picker(picker));
         Ok(())
-    }
-
-    pub(super) fn config_root_picker(&mut self, config: &crate::config::Config) -> super::UiPicker {
-        self.refresh_available_auths();
-        config_picker::config_picker(
-            &self.info.runtime,
-            config,
-            config_picker::xai_settings_visible(&self.info.runtime.provider, &self.available_auths),
-        )
     }
 
     pub(super) fn open_config_category(&mut self, category: &str) -> anyhow::Result<()> {
@@ -299,7 +290,7 @@ impl App {
             &self.info.services.config_repository,
             ConfigToggle::CheckForUpdates,
         ) {
-            Ok(ConfigMutation::CheckForUpdates(check_for_updates)) => {
+            Ok(check_for_updates) => {
                 self.info
                     .services
                     .diagnostics
@@ -321,15 +312,6 @@ impl App {
                 self.refresh_main_config_picker_if_open(config_picker::CHECK_FOR_UPDATES_VALUE)?;
                 self.set_status("config save failed");
             }
-            Ok(
-                ConfigMutation::EnableSubagents(_)
-                | ConfigMutation::AutoCompact(_)
-                | ConfigMutation::ShowReasoningOutput(_)
-                | ConfigMutation::ZenMode(_)
-                | ConfigMutation::WebSearchHosted(_)
-                | ConfigMutation::WebSearchProvider(_)
-                | ConfigMutation::XaiImageGeneration(_),
-            ) => unreachable!("toggle returned a mismatched config mutation"),
         }
         Ok(())
     }
@@ -339,7 +321,7 @@ impl App {
             &self.info.services.config_repository,
             ConfigToggle::EnableSubagents,
         ) {
-            Ok(ConfigMutation::EnableSubagents(enable_subagents)) => {
+            Ok(enable_subagents) => {
                 self.refresh_main_config_picker_if_open(config_picker::ENABLE_SUBAGENTS_VALUE)?;
                 self.set_status(if enable_subagents {
                     "subagents: on next session"
@@ -354,15 +336,6 @@ impl App {
                 self.refresh_main_config_picker_if_open(config_picker::ENABLE_SUBAGENTS_VALUE)?;
                 self.set_status("config save failed");
             }
-            Ok(
-                ConfigMutation::CheckForUpdates(_)
-                | ConfigMutation::AutoCompact(_)
-                | ConfigMutation::ShowReasoningOutput(_)
-                | ConfigMutation::ZenMode(_)
-                | ConfigMutation::WebSearchHosted(_)
-                | ConfigMutation::WebSearchProvider(_)
-                | ConfigMutation::XaiImageGeneration(_),
-            ) => unreachable!("toggle returned a mismatched config mutation"),
         }
         Ok(())
     }
@@ -425,7 +398,7 @@ impl App {
             &self.info.services.config_repository,
             ConfigToggle::AutoCompact,
         ) {
-            Ok(ConfigMutation::AutoCompact(auto_compact)) => {
+            Ok(auto_compact) => {
                 self.refresh_main_config_picker_if_open(config_picker::AUTO_COMPACT_VALUE)?;
                 self.set_status(if auto_compact {
                     "auto compact: on"
@@ -440,15 +413,6 @@ impl App {
                 self.refresh_main_config_picker_if_open(config_picker::AUTO_COMPACT_VALUE)?;
                 self.set_status("config save failed");
             }
-            Ok(
-                ConfigMutation::CheckForUpdates(_)
-                | ConfigMutation::EnableSubagents(_)
-                | ConfigMutation::ShowReasoningOutput(_)
-                | ConfigMutation::ZenMode(_)
-                | ConfigMutation::WebSearchHosted(_)
-                | ConfigMutation::WebSearchProvider(_)
-                | ConfigMutation::XaiImageGeneration(_),
-            ) => unreachable!("toggle returned a mismatched config mutation"),
         }
         Ok(())
     }
@@ -458,7 +422,7 @@ impl App {
             &self.info.services.config_repository,
             ConfigToggle::ShowReasoningOutput,
         ) {
-            Ok(ConfigMutation::ShowReasoningOutput(show_reasoning_output)) => {
+            Ok(show_reasoning_output) => {
                 self.info.runtime.show_reasoning_output = show_reasoning_output;
                 self.apply_reasoning_output_visibility();
                 self.refresh_main_config_picker_if_open(
@@ -479,22 +443,13 @@ impl App {
                 )?;
                 self.set_status("config save failed");
             }
-            Ok(
-                ConfigMutation::CheckForUpdates(_)
-                | ConfigMutation::EnableSubagents(_)
-                | ConfigMutation::AutoCompact(_)
-                | ConfigMutation::ZenMode(_)
-                | ConfigMutation::WebSearchHosted(_)
-                | ConfigMutation::WebSearchProvider(_)
-                | ConfigMutation::XaiImageGeneration(_),
-            ) => unreachable!("toggle returned a mismatched config mutation"),
         }
         Ok(())
     }
 
     pub(super) fn toggle_zen_mode(&mut self) -> anyhow::Result<()> {
         match config_editor::toggle(&self.info.services.config_repository, ConfigToggle::ZenMode) {
-            Ok(ConfigMutation::ZenMode(zen_mode)) => {
+            Ok(zen_mode) => {
                 self.info.runtime.zen_mode = zen_mode;
                 // Zen is pure display policy over existing history; rebuild layout.
                 self.history.invalidate_from(0);
@@ -513,15 +468,6 @@ impl App {
                 self.refresh_main_config_picker_if_open(config_picker::ZEN_MODE_VALUE)?;
                 self.set_status("config save failed");
             }
-            Ok(
-                ConfigMutation::CheckForUpdates(_)
-                | ConfigMutation::EnableSubagents(_)
-                | ConfigMutation::AutoCompact(_)
-                | ConfigMutation::ShowReasoningOutput(_)
-                | ConfigMutation::WebSearchHosted(_)
-                | ConfigMutation::WebSearchProvider(_)
-                | ConfigMutation::XaiImageGeneration(_),
-            ) => unreachable!("toggle returned a mismatched config mutation"),
         }
         Ok(())
     }
@@ -531,7 +477,7 @@ impl App {
             &self.info.services.config_repository,
             ConfigToggle::XaiImageGeneration,
         ) {
-            Ok(ConfigMutation::XaiImageGeneration(enabled)) => {
+            Ok(enabled) => {
                 self.refresh_main_config_picker_if_open(config_picker::XAI_IMAGE_GENERATION_VALUE)?;
                 self.set_status(if enabled {
                     "xAI image generation: on next session"
@@ -546,16 +492,6 @@ impl App {
                 self.refresh_main_config_picker_if_open(config_picker::XAI_IMAGE_GENERATION_VALUE)?;
                 self.set_status("config save failed");
             }
-            Ok(
-                ConfigMutation::CheckForUpdates(_)
-                | ConfigMutation::EnableSubagents(_)
-                | ConfigMutation::AutoCompact(_)
-                | ConfigMutation::ShowReasoningOutput(_)
-                | ConfigMutation::ZenMode(_)
-                | ConfigMutation::WebSearchHosted(_)
-                | ConfigMutation::WebSearchProvider(_)
-                | ConfigMutation::XaiImageGeneration(_),
-            ) => unreachable!("toggle returned a mismatched config mutation"),
         }
         Ok(())
     }
@@ -565,7 +501,7 @@ impl App {
             &self.info.services.config_repository,
             ConfigToggle::WebSearchHosted,
         ) {
-            Ok(ConfigMutation::WebSearchHosted(hosted)) => {
+            Ok(hosted) => {
                 self.set_status(if hosted {
                     "hosted web search: on next session"
                 } else {
@@ -578,26 +514,14 @@ impl App {
                 )));
                 self.set_status("config save failed");
             }
-            Ok(
-                ConfigMutation::CheckForUpdates(_)
-                | ConfigMutation::EnableSubagents(_)
-                | ConfigMutation::AutoCompact(_)
-                | ConfigMutation::ShowReasoningOutput(_)
-                | ConfigMutation::ZenMode(_)
-                | ConfigMutation::WebSearchProvider(_)
-                | ConfigMutation::XaiImageGeneration(_),
-            ) => unreachable!("toggle returned a mismatched config mutation"),
         }
         self.refresh_web_search_config_picker(config_picker::WEB_SEARCH_HOSTED_VALUE)?;
         Ok(())
     }
 
     pub(super) fn cycle_web_search_provider(&mut self) -> anyhow::Result<()> {
-        let ConfigMutation::WebSearchProvider(provider) =
-            config_editor::cycle_web_search_provider(&self.info.services.config_repository)?
-        else {
-            unreachable!("provider cycle returned a mismatched config mutation");
-        };
+        let provider =
+            config_editor::cycle_web_search_provider(&self.info.services.config_repository)?;
         self.refresh_web_search_config_picker(config_picker::WEB_SEARCH_PROVIDER_VALUE)?;
         self.set_status(format!("backup web search: {provider}"));
         Ok(())
