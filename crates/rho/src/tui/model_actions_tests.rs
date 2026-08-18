@@ -29,7 +29,7 @@ fn model_refresh_prefers_a_stored_key_over_keyless() {
     let available = vec!["none".into(), "ollama-api-key".into()];
 
     assert_eq!(
-        super::refresh_auth_for_provider(descriptor, "api-key", &available),
+        super::refresh_auth_for_provider(descriptor, "none", &available),
         "ollama-api-key"
     );
 }

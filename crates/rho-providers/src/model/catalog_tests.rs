@@ -212,7 +212,7 @@ fn provider_selection_prefers_stored_key_over_keyless_default() {
             "ollama",
             "llama3.2",
             SelectionAuthContext {
-                current: Some("api-key"),
+                current: Some("none"),
                 available: &["none".into(), "ollama-api-key".into()],
             },
         )
