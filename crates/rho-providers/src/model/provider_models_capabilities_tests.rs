@@ -196,10 +196,10 @@ fn anthropic_dated_snapshots_reuse_the_parent_alias_for_freshness_and_pickers() 
     let _ = fs::remove_dir_all(cache_dir);
 }
 
-// Covers: unknown Ollama reasoning rows refresh; known levels stay cached
+// Covers: a successful Ollama refresh settles Unknown rows; only expiry retriggers
 // Owner: ollama native discovery
 #[test]
-fn ollama_unknown_reasoning_rows_need_refresh() {
+fn ollama_unknown_reasoning_rows_settle_after_a_fresh_refresh() {
     let cache_dir = unique_test_cache_dir("ollama-unknown-reasoning");
     with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
         replace_cached_provider_models(
@@ -214,10 +214,10 @@ fn ollama_unknown_reasoning_rows_need_refresh() {
             }],
         )
         .unwrap();
-        assert!(provider_model_capabilities_need_refresh(
-            "ollama",
-            "gemma4:31b"
-        ));
+        assert!(
+            !provider_model_capabilities_need_refresh("ollama", "gemma4:31b"),
+            "fallback-sourced Unknown must not retrigger a successful refresh"
+        );
 
         replace_cached_provider_models(
             "ollama",

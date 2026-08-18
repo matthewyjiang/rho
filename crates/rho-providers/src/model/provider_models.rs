@@ -218,9 +218,8 @@ const PROVIDER_MODEL_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 
 pub fn provider_model_capabilities_need_refresh(provider: &str, model: &str) -> bool {
     let capabilities_are_known = match provider {
-        "kimi-code" | "ollama" => {
-            reasoning_capabilities_are_known as fn(&CachedCapabilityRow) -> bool
-        }
+        "kimi-code" => reasoning_capabilities_are_known as fn(&CachedCapabilityRow) -> bool,
+        "ollama" => ollama_capabilities_are_known,
         "anthropic" => anthropic_capabilities_are_known,
         _ => return false,
     };
@@ -276,6 +275,13 @@ fn cached_capability_row(provider: &str, model: &str) -> Option<CachedCapability
             },
         )
         .ok()
+}
+
+// Native tags may omit `capabilities`, and the OpenAI-compatible fallback
+// always writes Unknown. A completed refresh still settles so startup does
+// not refetch forever.
+fn ollama_capabilities_are_known(_row: &CachedCapabilityRow) -> bool {
+    true
 }
 
 fn reasoning_capabilities_are_known(row: &CachedCapabilityRow) -> bool {
