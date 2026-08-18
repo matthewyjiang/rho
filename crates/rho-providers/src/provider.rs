@@ -537,17 +537,22 @@ pub fn visible_providers() -> Vec<&'static ProviderDescriptor> {
 
 /// Environment variable names used as provider credential overrides.
 ///
-/// Built-in auth kinds plus every interned custom host, recomputed on each
-/// call so a host added after first lookup is still stripped. Hosts should
-/// strip these from child process environments by default, for example with
-/// [`rho_sdk::ProcessEnvironment::inherit_except`].
-pub fn credential_env_vars() -> Vec<&'static str> {
-    let mut vars: Vec<&'static str> = providers()
+/// Built-in auth kinds, interned custom hosts, and any currently set
+/// `RHO_*_API_KEY`. Callers typically snapshot this into
+/// [`rho_sdk::ProcessEnvironment::inherit_except`] at tool-set construction;
+/// scanning the live environment covers an override for a host that `/login`
+/// interns later in the same session.
+pub fn credential_env_vars() -> Vec<String> {
+    let mut vars: Vec<String> = providers()
         .iter()
         .chain(custom_openai_compatible::interned_custom_providers())
         .flat_map(|descriptor| descriptor.auth_modes())
         .filter_map(|mode| mode.auth_kind.env_var())
+        .map(str::to_owned)
         .collect();
+    vars.extend(std::env::vars().filter_map(|(name, _)| {
+        (name.starts_with("RHO_") && name.ends_with("_API_KEY")).then_some(name)
+    }));
     vars.sort_unstable();
     vars.dedup();
     vars

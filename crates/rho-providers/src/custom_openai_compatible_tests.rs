@@ -207,7 +207,28 @@ fn credential_env_vars_include_interned_custom_hosts() {
     let _restore = RestoreCustomProviders;
     intern_custom_openai_compatible_providers(["envfilter-host"]).unwrap();
     assert!(
-        crate::credential_env_vars().contains(&"RHO_ENVFILTER_HOST_API_KEY"),
+        crate::credential_env_vars()
+            .iter()
+            .any(|name| name == "RHO_ENVFILTER_HOST_API_KEY"),
         "interned custom hosts must appear in the child-process strip list"
+    );
+}
+
+// Covers: a live RHO_*_API_KEY is stripped even before its host is interned
+// Owner: provider registry
+#[test]
+fn credential_env_vars_include_live_rho_api_key_overrides() {
+    const VAR: &str = "RHO_UNINTERNED_LIVE_API_KEY";
+    std::env::set_var(VAR, "secret");
+    struct Restore;
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            std::env::remove_var(VAR);
+        }
+    }
+    let _restore = Restore;
+    assert!(
+        crate::credential_env_vars().iter().any(|name| name == VAR),
+        "currently set RHO_*_API_KEY overrides must be stripped before intern"
     );
 }
