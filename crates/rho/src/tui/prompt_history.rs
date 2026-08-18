@@ -491,9 +491,8 @@ impl App {
                     done
                 }
             },
-            (follow_up, reply) => {
+            (_, _) => {
                 tracing::warn!("unexpected prompt history reply");
-                let _ = (follow_up, reply);
                 Ok(())
             }
         };
