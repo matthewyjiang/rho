@@ -64,6 +64,16 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
             "Move through the configured reasoning levels for the active model and save the selection.",
         ),
         entry(
+            "ctrl+p",
+            "Cycle pinned models",
+            "Switch to the next pinned model. ctrl+shift+p goes backward. Does nothing when no models are pinned. In a model picker, ctrl+p pins or unpins the highlighted model.",
+        ),
+        entry(
+            "ctrl+o",
+            "Toggle tools or model list",
+            "In the composer, expand or collapse the latest tool output. In a model picker, switch the list between all models and pinned models.",
+        ),
+        entry(
             "ctrl+c",
             "Clear composer",
             "Clear the message box on the first press. While idle, press again to quit Rho.",

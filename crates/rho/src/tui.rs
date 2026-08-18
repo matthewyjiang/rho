@@ -98,6 +98,7 @@ mod media_attach;
 mod message_history;
 mod message_render;
 mod model_actions;
+mod model_cycle;
 mod model_performance;
 mod model_picker;
 mod mouse;
@@ -519,6 +520,8 @@ struct App {
     /// The bool is whether that start may auto-compact.
     start_follow_ups: Option<bool>,
     pending_model_selection: Option<InteractiveModelSelection>,
+    /// Last all/pinned view for conversation and internal-agent model pickers.
+    model_picker_scope: Option<model_picker::ModelPickerScope>,
     internal_agent_model_target: Option<agent_picker::InternalAgentModelTarget>,
     /// Set when the user dismisses the startup Auto classifier picker. The next
     /// idle reconcile demotes Auto → Supervised so cancel stays sync and never

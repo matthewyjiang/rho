@@ -147,7 +147,7 @@ impl App {
     /// credentials offer no models to choose between.
     fn setup_model_picker(&mut self) -> Option<super::UiPicker> {
         self.refresh_available_auths();
-        let picker = super::model_picker::model_picker(&self.info.runtime, &self.available_auths);
+        let picker = self.conversation_model_picker();
         (!picker.items.is_empty()).then_some(picker)
     }
 

@@ -208,6 +208,7 @@ pub(super) fn hub_picker(
     UiPicker::new("Workflows", items, PickerAction::Workflow)
         .with_key_hints(super::PickerKeyHints {
             pin_toggle: false,
+            scope_toggle: false,
             tab_complete: false,
             row_delete: true,
         })

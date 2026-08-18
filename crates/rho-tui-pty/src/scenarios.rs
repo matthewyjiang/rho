@@ -76,7 +76,8 @@ use mcp::{
 use mermaid::MERMAID_FLOWCHART_RESIZE_STEPS;
 use paste::PASTE_MULTILINE_SCENARIO;
 use pickers::{
-    setup_edit_user_agent, EDIT_USER_AGENT_STEPS, OPENAI_KEY_ENV, OPEN_AGENTS_PICKER_STEPS,
+    setup_edit_user_agent, setup_pinned_models, CYCLE_AND_PINNED_MODEL_PICKER_STEPS,
+    EDIT_USER_AGENT_STEPS, OPENAI_AND_XAI_KEY_ENV, OPENAI_KEY_ENV, OPEN_AGENTS_PICKER_STEPS,
     OPEN_MODEL_PICKER_STEPS, OPEN_WORKFLOW_HUB_EMPTY_STEPS,
 };
 use process_rail::PROCESS_RAIL_SCENARIO;
@@ -726,6 +727,15 @@ const ALL_SCENARIOS: &[Scenario] = &[
         false,
     )
     .with_env(OPENAI_KEY_ENV),
+    Scenario::new(
+        "cycle_and_pinned_model_picker",
+        "Cycle pinned models from the composer and toggle the /model pinned view",
+        DEFAULT_SIZE,
+        CYCLE_AND_PINNED_MODEL_PICKER_STEPS,
+        false,
+    )
+    .with_setup(setup_pinned_models)
+    .with_env(OPENAI_AND_XAI_KEY_ENV),
     Scenario::new(
         "open_workflow_hub_empty",
         "Open the workflows hub when the workspace has no workflows yet",

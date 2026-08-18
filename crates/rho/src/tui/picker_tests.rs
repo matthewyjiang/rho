@@ -26,6 +26,7 @@ fn action_footer_parts_include_structured_key_hints() {
     )
     .with_key_hints(PickerKeyHints {
         pin_toggle: false,
+        scope_toggle: false,
         tab_complete: true,
         row_delete: true,
     })
@@ -54,6 +55,7 @@ fn action_footer_parts_include_structured_key_hints() {
     let model = UiPicker::new("select model", vec![item("m")], PickerAction::SelectModel)
         .with_key_hints(PickerKeyHints {
             pin_toggle: true,
+            scope_toggle: true,
             tab_complete: true,
             row_delete: false,
         });
@@ -62,6 +64,7 @@ fn action_footer_parts_include_structured_key_hints() {
         vec![
             "Enter select".to_string(),
             "Ctrl-P pin/unpin".to_string(),
+            "Ctrl-O all/pinned".to_string(),
             "Tab complete".to_string(),
             "Esc cancel".to_string(),
         ]

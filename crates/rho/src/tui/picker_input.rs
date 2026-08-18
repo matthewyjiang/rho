@@ -36,6 +36,7 @@ pub(in crate::tui) enum PickerKeyEffect {
     Submit,
     Escape,
     ToggleFavorite,
+    ToggleModelScope,
     DeleteRow,
 }
 
@@ -177,6 +178,11 @@ pub(in crate::tui) fn apply_picker_key(
         }
         (KeyModifiers::CONTROL, KeyCode::Char('p')) if picker.key_hints.pin_toggle => {
             PickerKeyEffect::ToggleFavorite
+        }
+        (KeyModifiers::CONTROL, KeyCode::Char('o') | KeyCode::Char('O'))
+            if picker.key_hints.scope_toggle =>
+        {
+            PickerKeyEffect::ToggleModelScope
         }
         (KeyModifiers::NONE, KeyCode::Char('d') | KeyCode::Delete)
             if picker.key_hints.row_delete =>
@@ -446,6 +452,12 @@ impl App {
                 self.toggle_selected_model_favorite()?;
                 Ok(true)
             }
+            PickerKeyEffect::ToggleModelScope => {
+                self.input_ui.clear_paste_burst();
+                self.ctrl_c_streak = 0;
+                self.toggle_model_picker_scope()?;
+                Ok(true)
+            }
             PickerKeyEffect::DeleteRow => {
                 self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
@@ -505,6 +517,10 @@ impl App {
             }
             PickerKeyEffect::ToggleFavorite => {
                 self.toggle_selected_model_favorite()?;
+                Ok(true)
+            }
+            PickerKeyEffect::ToggleModelScope => {
+                self.toggle_model_picker_scope()?;
                 Ok(true)
             }
             PickerKeyEffect::DeleteRow => {

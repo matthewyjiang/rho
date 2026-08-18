@@ -14,7 +14,7 @@ use super::{
     activity::LoadingSpinner,
     commands::{self, CommandId, CommandInvocation},
     config_editor::{ConfigNumberInput, ConfigNumberKey, ConfigTextKey},
-    config_picker, model_picker, mouse_capture,
+    config_picker, mouse_capture,
     paste_burst::normalize_paste,
     App, ApprovalKeyOutcome, ComposerMode, Entry, HistoryDirection, InputSubmissionMode,
     InteractiveModelSelection, InteractiveRuntime, PasteSegment, PickerAction, QueuedPrompt,
@@ -97,6 +97,9 @@ impl App {
             return Ok(false);
         }
         if self.handle_configurable_running_key(key, terminal)? {
+            return Ok(false);
+        }
+        if self.handle_running_favorite_cycle_key(key)? {
             return Ok(false);
         }
 
@@ -301,13 +304,7 @@ impl App {
         let model = invocation.args.trim();
         if model.is_empty() {
             self.refresh_available_auths();
-            let picker = model_picker::model_picker_during_run(
-                &self.info.runtime,
-                self.pending_model_selection
-                    .as_ref()
-                    .map(|pending| &pending.selection),
-                &self.available_auths,
-            );
+            let picker = self.conversation_model_picker_during_run();
             if picker.items.is_empty() {
                 self.set_status(
                     "no cached API models. refresh model lists from /config after the current run ends.",

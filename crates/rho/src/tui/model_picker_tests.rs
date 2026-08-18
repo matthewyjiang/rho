@@ -14,6 +14,7 @@ fn inputs(
         claude_code,
         favorite_models: &[],
         available_auths: &[],
+        scope: ModelPickerScope::All,
     }
 }
 
@@ -148,4 +149,51 @@ fn each_row_value_routes_to_its_runtime() {
         parse_internal_agent_model_row("anthropic/claude-fable-5"),
         InternalAgentModelRow::RhoModel("anthropic/claude-fable-5".into())
     );
+}
+
+// Covers: /model must open on pinned models when any pin has auth, and stay
+// on the catalogue when the pin list is empty or unusable.
+// Owner: model picker scope
+#[test]
+fn default_scope_is_pinned_only_when_a_pin_has_auth() {
+    assert_eq!(
+        default_model_picker_scope(&[], &["api-key".into()]),
+        ModelPickerScope::All
+    );
+    assert_eq!(
+        default_model_picker_scope(&["openai/gpt-5.5".into()], &[]),
+        ModelPickerScope::All
+    );
+    assert_eq!(
+        default_model_picker_scope(&["xai/grok-4.6".into()], &["xai-api-key".into()]),
+        ModelPickerScope::Pinned
+    );
+}
+
+// Covers: the pinned list must hide unpinned catalogue rows so /model can
+// stay short; empty pins must keep the full authenticated catalogue.
+// Owner: model picker scope
+#[test]
+fn pinned_scope_lists_only_usable_pins() {
+    let mut runtime = crate::tui::tests::test_bootstrap().runtime;
+    runtime.provider = "xai".into();
+    runtime.model = "grok-4.6".into();
+    runtime.auth = "xai-api-key".into();
+    runtime.favorite_models = vec!["xai/grok-4.6".into()];
+    let auths = vec!["xai-api-key".into()];
+    let pinned = model_picker(&runtime, &auths, ModelPickerScope::Pinned);
+    assert_eq!(
+        pinned
+            .items
+            .iter()
+            .map(|item| item.value.as_str())
+            .collect::<Vec<_>>(),
+        vec!["xai/grok-4.6"]
+    );
+    assert!(pinned.title.contains("pinned"));
+
+    runtime.favorite_models.clear();
+    let all = model_picker(&runtime, &auths, ModelPickerScope::Pinned);
+    assert!(all.items.len() > 1, "empty pins should keep the catalogue");
+    assert!(all.title.contains("all"));
 }

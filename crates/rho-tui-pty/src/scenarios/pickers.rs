@@ -9,6 +9,10 @@ use super::{SETTLE, STARTUP};
 /// Model pickers list models only for authenticated providers, so inject a
 /// fixture key the way the advisor scenarios do.
 pub(super) const OPENAI_KEY_ENV: &[(&str, &str)] = &[("OPENAI_API_KEY", "fixture-openai-key")];
+pub(super) const OPENAI_AND_XAI_KEY_ENV: &[(&str, &str)] = &[
+    ("OPENAI_API_KEY", "fixture-openai-key"),
+    ("XAI_API_KEY", "fixture-xai-key"),
+];
 
 pub(super) const OPEN_MODEL_PICKER_STEPS: &[Step] = &[
     Step::Phase("startup"),
@@ -20,6 +24,59 @@ pub(super) const OPEN_MODEL_PICKER_STEPS: &[Step] = &[
     Step::WaitText {
         text: "select model",
         timeout: STARTUP,
+    },
+    Step::Key(Key::Esc),
+    Step::WaitQuiet {
+        quiet_for: Duration::from_millis(150),
+        timeout: SETTLE,
+    },
+    Step::ExitCommand,
+];
+
+/// Two authenticated providers and two pins: cycle from the composer, then
+/// open /model on the pinned list and flip to all with Ctrl-O.
+pub(super) fn setup_pinned_models(home: &IsolatedHome) -> Result<()> {
+    std::fs::write(
+        &home.config_path,
+        r#"provider = "openai"
+model = "gpt-5.5"
+auth = "api-key"
+check_for_updates = false
+web_search_provider = "disabled"
+favorite_models = ["openai/gpt-5.5", "xai/grok-4.6"]
+
+[behavior]
+credential_store = "file"
+"#,
+    )?;
+    Ok(())
+}
+
+pub(super) const CYCLE_AND_PINNED_MODEL_PICKER_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("cycle_forward"),
+    Step::Key(Key::Ctrl('p')),
+    Step::WaitText {
+        text: "xai/grok-4.6",
+        timeout: SETTLE,
+    },
+    Step::Phase("open_pinned_picker"),
+    Step::SubmitText("/model"),
+    Step::WaitText {
+        text: "select model · pinned",
+        timeout: STARTUP,
+    },
+    Step::AssertText("openai/gpt-5.5"),
+    Step::AssertText("xai/grok-4.6"),
+    Step::Phase("toggle_all"),
+    Step::Key(Key::Ctrl('o')),
+    Step::WaitText {
+        text: "select model · all",
+        timeout: SETTLE,
     },
     Step::Key(Key::Esc),
     Step::WaitQuiet {

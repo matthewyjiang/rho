@@ -39,6 +39,7 @@ pub(super) async fn select_running_run(
                     PickerKeyEffect::Handled
                     | PickerKeyEffect::None
                     | PickerKeyEffect::ToggleFavorite
+                    | PickerKeyEffect::ToggleModelScope
                     | PickerKeyEffect::DeleteRow => {}
                 }
             }

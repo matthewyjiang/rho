@@ -19,6 +19,7 @@ pub(super) fn session_picker(
     )
     .with_key_hints(super::PickerKeyHints {
         pin_toggle: false,
+        scope_toggle: false,
         tab_complete: true,
         row_delete: true,
     })

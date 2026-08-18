@@ -60,6 +60,7 @@ impl Hint {
 /// Hints for a session that can already run a turn.
 const READY_HINTS: &[Hint] = &[
     Hint::reference(" shift+tab    Cycle reasoning level"),
+    Hint::reference(" ctrl+p       Cycle pinned models"),
     Hint::reference(" ctrl+c       Clear the composer"),
     Hint::reference(" /            Show available commands"),
     Hint::reference(" !            Run a shell command"),

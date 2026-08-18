@@ -6,7 +6,49 @@ use crate::claude_runtime::models as claude_models;
 use crate::config::CLAUDE_CLI_RUNTIME_KEY;
 use rho_providers::model::{catalog, favorites};
 
-pub(super) fn model_picker(info: &RuntimeModelView, available_auths: &[String]) -> UiPicker {
+/// Which models a conversation or internal-agent picker lists.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum ModelPickerScope {
+    #[default]
+    All,
+    Pinned,
+}
+
+impl ModelPickerScope {
+    pub(super) fn other(self) -> Self {
+        match self {
+            Self::All => Self::Pinned,
+            Self::Pinned => Self::All,
+        }
+    }
+
+    fn title_suffix(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Pinned => "pinned",
+        }
+    }
+}
+
+/// Open pinned when at least one pin has auth; otherwise the catalogue.
+pub(super) fn default_model_picker_scope(
+    favorite_models: &[String],
+    available_auths: &[String],
+) -> ModelPickerScope {
+    let favorites = favorites::normalized_favorite_models(favorite_models);
+    let available = catalog::available_models_for_auths(available_auths);
+    if favorites::available_favorites(&favorites, &available).is_empty() {
+        ModelPickerScope::All
+    } else {
+        ModelPickerScope::Pinned
+    }
+}
+
+pub(super) fn model_picker(
+    info: &RuntimeModelView,
+    available_auths: &[String],
+    scope: ModelPickerScope,
+) -> UiPicker {
     model_picker_for_current(
         "select model",
         CurrentModel {
@@ -17,6 +59,7 @@ pub(super) fn model_picker(info: &RuntimeModelView, available_auths: &[String]) 
         &info.favorite_models,
         available_auths,
         PickerAction::SelectModel,
+        scope,
     )
 }
 
@@ -24,6 +67,7 @@ pub(super) fn model_picker_during_run(
     info: &RuntimeModelView,
     pending: Option<&rho_providers::model::catalog::ModelSelection>,
     available_auths: &[String],
+    scope: ModelPickerScope,
 ) -> UiPicker {
     let (provider, model, badge) = pending
         .map(|selection| {
@@ -44,6 +88,7 @@ pub(super) fn model_picker_during_run(
         &info.favorite_models,
         available_auths,
         PickerAction::SelectModel,
+        scope,
     )
 }
 
@@ -147,6 +192,7 @@ pub(super) struct InternalAgentPickerInputs<'a> {
     pub(super) claude_code: ClaudeCodeRows,
     pub(super) favorite_models: &'a [String],
     pub(super) available_auths: &'a [String],
+    pub(super) scope: ModelPickerScope,
 }
 
 pub(super) fn internal_agent_model_picker(inputs: InternalAgentPickerInputs<'_>) -> UiPicker {
@@ -157,6 +203,7 @@ pub(super) fn internal_agent_model_picker(inputs: InternalAgentPickerInputs<'_>)
         claude_code,
         favorite_models,
         available_auths,
+        scope,
     } = inputs;
     let rho_current = match &current {
         InternalAgentSelection::RhoModel { provider, model } => (provider.as_str(), model.as_str()),
@@ -172,6 +219,7 @@ pub(super) fn internal_agent_model_picker(inputs: InternalAgentPickerInputs<'_>)
         favorite_models,
         available_auths,
         PickerAction::SelectInternalAgentModel,
+        scope,
     );
 
     let mut leading = Vec::new();
@@ -278,6 +326,7 @@ fn model_picker_for_current(
     favorite_models: &[String],
     available_auths: &[String],
     action: PickerAction,
+    scope: ModelPickerScope,
 ) -> UiPicker {
     let CurrentModel {
         provider: current_provider,
@@ -286,50 +335,73 @@ fn model_picker_for_current(
     } = current;
     let current = rho_providers::provider::model_reference(current_provider, current_model);
     let favorites = favorites::normalized_favorite_models(favorite_models);
-    let items = favorites::reorder_models_by_favorites(
-        catalog::available_models_for_auths(available_auths),
-        &favorites,
-    )
-    .into_iter()
-    .map(|entry| {
-        let value = rho_providers::provider::model_reference(&entry.provider, &entry.model);
-        let pinned = favorites
-            .iter()
-            .any(|favorite| favorite.matches(&entry.provider, &entry.model));
-        let selected = entry.provider == current_provider && entry.model == current_model;
-        let badge = match (pinned, selected) {
-            (true, true) => Some(PickerBadge {
-                text: format!("pinned, {selected_badge}"),
-                tone: PickerBadgeTone::Selected,
-            }),
-            (true, false) => Some(PickerBadge {
-                text: "pinned".into(),
-                tone: PickerBadgeTone::Favorite,
-            }),
-            (false, true) => Some(PickerBadge {
-                text: selected_badge.into(),
-                tone: PickerBadgeTone::Selected,
-            }),
-            (false, false) => None,
-        };
-        PickerItem {
-            section: None,
-            label: value.clone(),
-            detail: Some(if pinned {
-                "Press Ctrl-P to unpin this model.".into()
-            } else {
-                "Press Ctrl-P to pin this model to the top of model pickers.".into()
-            }),
-            preview: None,
-            badge,
-            value,
-            selection_verb: None,
+    let available = catalog::available_models_for_auths(available_auths);
+    let effective_scope = match scope {
+        ModelPickerScope::Pinned
+            if favorites::available_favorites(&favorites, &available).is_empty() =>
+        {
+            ModelPickerScope::All
         }
-    })
-    .collect::<Vec<_>>();
+        scope => scope,
+    };
+    let catalog_models = match effective_scope {
+        ModelPickerScope::All => favorites::reorder_models_by_favorites(available, &favorites),
+        ModelPickerScope::Pinned => favorites::reorder_models_by_favorites(available, &favorites)
+            .into_iter()
+            .filter(|entry| {
+                favorites
+                    .iter()
+                    .any(|favorite| favorite.matches(&entry.provider, &entry.model))
+            })
+            .collect(),
+    };
+    let catalog_items = catalog_models
+        .into_iter()
+        .map(|entry| {
+            let value = rho_providers::provider::model_reference(&entry.provider, &entry.model);
+            let pinned = favorites
+                .iter()
+                .any(|favorite| favorite.matches(&entry.provider, &entry.model));
+            let selected = entry.provider == current_provider && entry.model == current_model;
+            let badge = match (pinned, selected) {
+                (true, true) => Some(PickerBadge {
+                    text: format!("pinned, {selected_badge}"),
+                    tone: PickerBadgeTone::Selected,
+                }),
+                (true, false) => Some(PickerBadge {
+                    text: "pinned".into(),
+                    tone: PickerBadgeTone::Favorite,
+                }),
+                (false, true) => Some(PickerBadge {
+                    text: selected_badge.into(),
+                    tone: PickerBadgeTone::Selected,
+                }),
+                (false, false) => None,
+            };
+            PickerItem {
+                section: None,
+                label: value.clone(),
+                detail: Some(if pinned {
+                    "Press Ctrl-P to unpin this model.".into()
+                } else {
+                    "Press Ctrl-P to pin this model to the top of model pickers.".into()
+                }),
+                preview: None,
+                badge,
+                value,
+                selection_verb: None,
+            }
+        })
+        .collect::<Vec<_>>();
 
-    let mut picker = UiPicker::new(title, items, action).with_key_hints(PickerKeyHints {
+    let mut picker = UiPicker::new(
+        format!("{title} · {}", effective_scope.title_suffix()),
+        catalog_items,
+        action,
+    )
+    .with_key_hints(PickerKeyHints {
         pin_toggle: true,
+        scope_toggle: true,
         tab_complete: true,
         row_delete: false,
     });

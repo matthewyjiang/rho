@@ -253,6 +253,7 @@ fn manage_sessions_picker(title: impl Into<String>, items: Vec<PickerItem>) -> U
     UiPicker::new(title, items, PickerAction::ManageSessions)
         .with_key_hints(PickerKeyHints {
             pin_toggle: false,
+            scope_toggle: false,
             tab_complete: false,
             row_delete: true,
         })

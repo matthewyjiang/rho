@@ -68,6 +68,99 @@ fn reorders_available_models_by_favorites() {
     );
 }
 
+// Covers: composer cycle must walk only pins that currently have auth, wrap,
+// and stay put when the only usable pin is already selected.
+// Owner: pure unit (favorite cycle policy)
+#[test]
+fn cycles_usable_favorites_in_pin_order() {
+    let models = vec![
+        entry("anthropic", "claude"),
+        entry("openai", "gpt-5.5"),
+        entry("github-copilot", "gpt-4.1"),
+    ];
+    let favorites = normalized_favorite_models(&[
+        "openai/gpt-5.5".into(),
+        "unavailable/model".into(),
+        "anthropic/claude".into(),
+    ]);
+
+    let cases = [
+        (
+            "openai",
+            "gpt-5.5",
+            CycleDirection::Forward,
+            Some("anthropic/claude"),
+        ),
+        (
+            "anthropic",
+            "claude",
+            CycleDirection::Forward,
+            Some("openai/gpt-5.5"),
+        ),
+        (
+            "openai",
+            "gpt-5.5",
+            CycleDirection::Backward,
+            Some("anthropic/claude"),
+        ),
+        (
+            "github-copilot",
+            "gpt-4.1",
+            CycleDirection::Forward,
+            Some("openai/gpt-5.5"),
+        ),
+        (
+            "github-copilot",
+            "gpt-4.1",
+            CycleDirection::Backward,
+            Some("anthropic/claude"),
+        ),
+    ];
+    for (provider, model, direction, expected) in cases {
+        assert_eq!(
+            cycle_favorite(&favorites, &models, provider, model, direction)
+                .map(FavoriteModel::value),
+            expected.map(str::to_string),
+            "{provider}/{model} {direction:?}"
+        );
+    }
+}
+
+#[test]
+fn cycle_does_nothing_without_a_usable_or_different_pin() {
+    let models = vec![entry("openai", "gpt-5.5")];
+    assert_eq!(
+        cycle_favorite(
+            &normalized_favorite_models(&[]),
+            &models,
+            "openai",
+            "gpt-5.5",
+            CycleDirection::Forward
+        ),
+        None
+    );
+    assert_eq!(
+        cycle_favorite(
+            &normalized_favorite_models(&["unavailable/model".into()]),
+            &models,
+            "openai",
+            "gpt-5.5",
+            CycleDirection::Forward
+        ),
+        None
+    );
+    assert_eq!(
+        cycle_favorite(
+            &normalized_favorite_models(&["openai/gpt-5.5".into()]),
+            &models,
+            "openai",
+            "gpt-5.5",
+            CycleDirection::Forward
+        ),
+        None
+    );
+}
+
 #[test]
 fn toggles_favorites() {
     let mut favorites = vec!["openai/gpt-5.5".into()];

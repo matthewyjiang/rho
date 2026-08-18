@@ -82,6 +82,7 @@ fn tab_completes_filter_when_tab_complete_enabled() {
     )
     .with_key_hints(PickerKeyHints {
         pin_toggle: false,
+        scope_toggle: false,
         tab_complete: true,
         row_delete: false,
     });
@@ -96,6 +97,37 @@ fn tab_completes_filter_when_tab_complete_enabled() {
 
     assert_eq!(effect, PickerKeyEffect::Handled);
     assert_eq!(picker.filter, "openai/gpt-5.5");
+}
+
+// Covers: model pickers must treat Ctrl-O as a scope toggle, not a dead key
+// or a filter character.
+// Owner: tui picker key dispatch
+#[test]
+fn ctrl_o_toggles_model_scope_when_enabled() {
+    let mut picker = UiPicker::new(
+        "select model",
+        vec![item("openai/gpt-5.5")],
+        PickerAction::SelectModel,
+    )
+    .with_key_hints(PickerKeyHints {
+        pin_toggle: true,
+        scope_toggle: true,
+        tab_complete: true,
+        row_delete: false,
+    });
+    let mut key = key(KeyCode::Char('o'));
+    key.modifiers = KeyModifiers::CONTROL;
+
+    assert_eq!(
+        apply_picker_key(&mut picker, key, None, /*space_confirms*/ false),
+        PickerKeyEffect::ToggleModelScope
+    );
+
+    picker.key_hints.scope_toggle = false;
+    assert_eq!(
+        apply_picker_key(&mut picker, key, None, /*space_confirms*/ false),
+        PickerKeyEffect::None
+    );
 }
 
 fn overlay_picker_with_detail() -> UiPicker {

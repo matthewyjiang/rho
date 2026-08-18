@@ -77,6 +77,57 @@ pub fn reorder_models_by_favorites(
     ordered
 }
 
+/// Direction for walking the pin list from the composer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CycleDirection {
+    Forward,
+    Backward,
+}
+
+/// Pins that currently have auth, in pin order.
+pub fn available_favorites<'a>(
+    favorites: &'a [FavoriteModel],
+    available: &[ModelCatalogEntry],
+) -> Vec<&'a FavoriteModel> {
+    favorites
+        .iter()
+        .filter(|favorite| {
+            available
+                .iter()
+                .any(|entry| favorite.matches(&entry.provider, &entry.model))
+        })
+        .collect()
+}
+
+/// Next or previous usable pin. `None` when there is nothing to switch to.
+pub fn cycle_favorite<'a>(
+    favorites: &'a [FavoriteModel],
+    available: &[ModelCatalogEntry],
+    current_provider: &str,
+    current_model: &str,
+    direction: CycleDirection,
+) -> Option<&'a FavoriteModel> {
+    let usable = available_favorites(favorites, available);
+    if usable.is_empty() {
+        return None;
+    }
+    let current = usable
+        .iter()
+        .position(|favorite| favorite.matches(current_provider, current_model));
+    let next_index = match (current, direction) {
+        (Some(index), CycleDirection::Forward) => (index + 1) % usable.len(),
+        (Some(index), CycleDirection::Backward) => (index + usable.len() - 1) % usable.len(),
+        (None, CycleDirection::Forward) => 0,
+        (None, CycleDirection::Backward) => usable.len() - 1,
+    };
+    let next = usable[next_index];
+    if next.matches(current_provider, current_model) {
+        None
+    } else {
+        Some(next)
+    }
+}
+
 pub fn toggle_favorite(favorites: &mut Vec<String>, provider: &str, model: &str) -> bool {
     let mut normalized = normalized_favorite_models(favorites);
     if let Some(index) = normalized

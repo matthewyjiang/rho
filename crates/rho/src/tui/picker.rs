@@ -32,6 +32,8 @@ impl PartialEq<Vec<usize>> for PickerMatches<'_> {
 pub(super) struct PickerKeyHints {
     /// Ctrl-P pins or unpins the selected model.
     pub(super) pin_toggle: bool,
+    /// Ctrl-O switches the model list between all models and pinned models.
+    pub(super) scope_toggle: bool,
     /// Tab fills the filter from the selected row.
     pub(super) tab_complete: bool,
     /// `d` / Delete removes the selected row (sessions, workflows).
@@ -539,6 +541,9 @@ impl UiPicker {
         }
         if self.key_hints.pin_toggle {
             parts.push("Ctrl-P pin/unpin".into());
+        }
+        if self.key_hints.scope_toggle {
+            parts.push("Ctrl-O all/pinned".into());
         }
         if self.key_hints.tab_complete {
             parts.push("Tab complete".into());
