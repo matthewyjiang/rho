@@ -57,7 +57,7 @@ The agent still requested `git status`. The rewrite is an execution detail.
 rtk = true
 ```
 
-Set `rtk = false` to leave shell commands unchanged even when the binary is installed. The `/config` browser under **Agent behavior** exposes the same toggle. See [configuration](/configuration#rtk).
+Set `rtk = false` to leave shell commands unchanged even when the binary is installed. This toggle is not in the `/config` browser yet; edit `config.toml` or set `RTK_DISABLED=1`. See [configuration](/configuration#rtk).
 
 For a one-off disable without editing config, set `RTK_DISABLED=1` in the environment.
 

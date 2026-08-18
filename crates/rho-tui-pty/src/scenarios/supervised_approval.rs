@@ -23,10 +23,14 @@ pub(super) const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
     Step::Phase("enable_supervised_mode"),
     Step::SubmitText("/config"),
     Step::WaitText {
+        text: "Config · saves automatically",
+        timeout: SETTLE,
+    },
+    Step::TypeText("agent"),
+    Step::WaitText {
         text: "Agent behavior",
         timeout: SETTLE,
     },
-    Step::Key(Key::Down),
     Step::Key(Key::Enter),
     Step::WaitText {
         text: "Config / Agent behavior",
@@ -54,7 +58,7 @@ pub(super) const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
     Step::AssertText("Supervised"),
     Step::Key(Key::Esc),
     Step::WaitText {
-        text: "Models & reasoning",
+        text: "Appearance",
         timeout: SETTLE,
     },
     Step::WaitText {

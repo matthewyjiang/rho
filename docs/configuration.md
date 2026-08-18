@@ -17,7 +17,8 @@ flowchart TD
 
 | Goal | Where |
 | --- | --- |
-| Provider, model, reasoning | `[model]` or `/model`, `/config` → **Models & reasoning** |
+| Provider, model, reasoning | `[model]` or `/model`, `/config` → **Models** |
+| Theme, zen, reasoning display | `[display]` or `/config` → **Appearance** |
 | Permission mode | `[behavior].permission_mode` or `/config` → **Agent behavior** |
 | Prompt templates | `~/.rho/prompts/` files or `[prompt_templates]` |
 | Web search | `[web_search]` or `/config` → **Tools** |
@@ -34,7 +35,7 @@ Unknown keys in `config.toml` are a load error so typos fail loudly. Values that
 
 ## TUI updates
 
-In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#commands) opens a category browser. **Models & reasoning** contains the conversation model, reasoning level, reasoning-output toggle, zen mode, and theme. **Agent behavior** contains permission mode, delegation, and advisor mode. **Context & limits** contains auto compaction and output limits. **Tools** contains the inline shell, edit tool, Web search settings, and xAI hosted image generation when the conversation provider is xAI. **Providers** contains login, logout, and model-list refresh actions. **Updates** contains the startup update check. Type in the category browser to find a category by any setting it contains, then press `enter` to open it. Press `esc` to return to the category browser.
+In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#commands) opens a category browser. **Models** contains the conversation model and reasoning level. **Appearance** contains the color theme, zen mode, reasoning-output toggle, and collapsed tool-output lines. **Agent behavior** contains permission mode, the Auto classifier, advisor mode, and delegation. **Context & limits** contains auto compaction and the max output-bytes limit. **Tools** contains the inline shell, edit tool, Web search settings, and xAI hosted image generation when the conversation provider is xAI. **Providers** contains login, logout, model-list refresh, the startup update check, and prompt history. Type in the category browser to find a category by any setting it contains, then press `enter` to open it. Press `esc` to return to the category browser.
 
 Settings save as soon as they change. The `permission_mode` row applies the selected policy before the next turn. The `reasoning` row cycles through `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` and applies to the current session. The `show_reasoning_output`, `zen_mode`, and `theme` rows apply immediately, including during the current model turn. The `check_for_updates` row controls startup checks against GitHub releases. The `enable_subagents` row applies to the next session. The `edit_tool` row applies before the next turn; Auto also follows provider changes mid-session. The `advisor_mode` row applies before the next turn; turning it on without an advisor model opens the model picker first. The auto-compaction rows edit its threshold and target percentages. The `max_output_bytes` row saves for the next session.
 
@@ -107,7 +108,7 @@ Rho reads each model's available effort values from cached [models.dev](https://
 
 `zen_mode` hides tool cards, reasoning blocks, and the `Thinking...` placeholder so the transcript shows only message text. The live activity rail, subagent rows, and background-process rows stay visible so you can still see progress. It defaults to `false`. Changing it from `/config` applies immediately to the current transcript and live turn UI. Tools and reasoning still run; only their transcript display is suppressed.
 
-`theme` selects the interactive TUI color theme. The default is `terminal` (match the host palette). Built-in ids include `one-half-dark`, `one-half-light`, `monochrome-dark`, and `monochrome-light`. Custom schemes load from `~/.rho/themes/<id>.json` (or `$RHO_HOME/themes/`) in Windows Terminal color-scheme JSON form. Change it with `/theme` or `/config` → **Models & reasoning** → **Theme**. The picker previews live; Enter saves. Details: [Theme](/interactive-tui/theme).
+`theme` selects the interactive TUI color theme. The default is `terminal` (match the host palette). Built-in ids include `one-half-dark`, `one-half-light`, `monochrome-dark`, and `monochrome-light`. Custom schemes load from `~/.rho/themes/<id>.json` (or `$RHO_HOME/themes/`) in Windows Terminal color-scheme JSON form. Change it with `/theme` or `/config` → **Appearance** → **Theme**. The picker previews live; Enter saves. Details: [Theme](/interactive-tui/theme).
 
 ## Advisor mode
 
@@ -278,11 +279,11 @@ Model metadata supplies the context window when available. Override a model's wi
 
 `max_tool_output_lines` controls how many lines of a tool result are shown inline before the TUI collapses the rest. It defaults to `10` and is clamped to at least one line when config is loaded.
 
-`prompt_history_limit` controls how many sent composer prompts Rho keeps in `~/.rho/prompt-history.sqlite3` (`$RHO_HOME/prompt-history.sqlite3` when set) for up-arrow recall across sessions. It defaults to `1000`. `0` disables persistence. Values above `10000` clamp to `10000` when config is loaded. In the TUI, `/config` → **Context & limits** edits the cap and can clear the saved history. Lowering the cap below the number of stored prompts asks first, then deletes the oldest extras. Clear also asks first. This is separate from `/new` / `/clear`, which reset the conversation, not composer recall.
+`prompt_history_limit` controls how many sent composer prompts Rho keeps in `~/.rho/prompt-history.sqlite3` (`$RHO_HOME/prompt-history.sqlite3` when set) for up-arrow recall across sessions. It defaults to `1000`. `0` disables persistence. Values above `10000` clamp to `10000` when config is loaded. In the TUI, `/config` → **Providers** edits the cap and can clear the saved history. Lowering the cap below the number of stored prompts asks first, then deletes the oldest extras. Clear also asks first. This is separate from `/new` / `/clear`, which reset the conversation, not composer recall.
 
 ## Update checks
 
-`check_for_updates` controls whether Rho checks the latest GitHub release at TUI startup. It defaults to `true`. When a newer version is available, the session header shows an update notice and points to `rho update`.
+`check_for_updates` controls whether Rho checks the latest GitHub release at TUI startup. It defaults to `true`. When a newer version is available, the session header shows an update notice and points to `rho update`. Change it from **Providers** in `/config`.
 
 ## RTK
 

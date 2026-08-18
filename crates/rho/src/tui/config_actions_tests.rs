@@ -116,7 +116,7 @@ async fn failed_edit_tool_save_keeps_rollback_histories_aligned() {
 }
 
 // Covers: Agent behavior exposes the classifier model row, and exposes
-// classifier reasoning only after a model exists.
+// classifier reasoning immediately after that model once one exists.
 // Owner: tui config picker rows
 #[test]
 fn agent_behavior_config_rows_include_classifier_model_and_optional_reasoning() {
@@ -160,10 +160,20 @@ fn agent_behavior_config_rows_include_classifier_model_and_optional_reasoning() 
             .map(|badge| badge.text.as_str()),
         Some("openai/gpt-5.5")
     );
-    assert!(picker
+    let values: Vec<&str> = picker
         .items
         .iter()
-        .any(|item| item.value == config_picker::PERMISSION_CLASSIFIER_REASONING_VALUE));
+        .map(|item| item.value.as_str())
+        .collect();
+    let model = values
+        .iter()
+        .position(|value| *value == config_picker::PERMISSION_CLASSIFIER_MODEL_VALUE)
+        .expect("classifier model row");
+    let reasoning = values
+        .iter()
+        .position(|value| *value == config_picker::PERMISSION_CLASSIFIER_REASONING_VALUE)
+        .expect("classifier reasoning row");
+    assert_eq!(reasoning, model + 1);
 }
 
 // Covers: xAI image generation lives under Tools and only when the

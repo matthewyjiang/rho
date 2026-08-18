@@ -246,6 +246,7 @@ pub(super) const ADVISOR_COMMAND_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Key(Key::Down),
+    Step::Key(Key::Down),
     Step::Key(Key::Enter),
     Step::WaitText {
         text: "Config / Agent behavior",
@@ -253,8 +254,7 @@ pub(super) const ADVISOR_COMMAND_STEPS: &[Step] = &[
     },
     Step::AssertText("Advisor mode"),
     Step::AssertText("on · xai/grok-4.5"),
-    // Permission mode → classifier model → Delegation → Advisor mode
-    Step::Key(Key::Down),
+    // Permission mode → classifier model → Advisor mode
     Step::Key(Key::Down),
     Step::Key(Key::Down),
     Step::Key(Key::Char(' ')),
@@ -264,7 +264,7 @@ pub(super) const ADVISOR_COMMAND_STEPS: &[Step] = &[
     },
     Step::Key(Key::Esc),
     Step::WaitText {
-        text: "Models & reasoning",
+        text: "Appearance",
         timeout: SETTLE,
     },
     Step::Key(Key::Esc),
@@ -322,14 +322,14 @@ pub(super) const ADVISOR_MISSING_MODEL_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Key(Key::Down),
+    Step::Key(Key::Down),
     Step::Key(Key::Enter),
     Step::WaitText {
         text: "Config / Agent behavior",
         timeout: SETTLE,
     },
     Step::AssertText("on · no model"),
-    // Permission mode → classifier model → Delegation → Advisor mode
-    Step::Key(Key::Down),
+    // Permission mode → classifier model → Advisor mode
     Step::Key(Key::Down),
     Step::Key(Key::Down),
     Step::Key(Key::Char(' ')),
