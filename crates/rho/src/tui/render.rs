@@ -62,7 +62,7 @@ fn push_pad_spaces(buf: &mut String, width: usize) {
 /// `list_picker_lines` emits around the item rows.
 fn list_picker_chrome_rows(picker: &UiPicker, footer_rows: usize) -> usize {
     // filter + blank + count + blank + footer lines, plus detail + blank when shown.
-    4 + footer_rows.max(1) + if picker.has_item_details() { 2 } else { 0 }
+    4 + footer_rows + if picker.has_item_details() { 2 } else { 0 }
 }
 
 /// Item rows a picker can list in a `viewport_height` row terminal.
@@ -219,9 +219,10 @@ fn list_picker_lines(
 fn list_picker_footer_text(picker: &UiPicker, width: usize) -> Vec<String> {
     let parts = picker.list_footer_parts();
     let inner_width = width.saturating_sub(2);
+    let indent = width > 2;
     wrap_footer_parts(parts.iter().map(String::as_str), inner_width)
         .into_iter()
-        .map(|line| if width > 2 { format!("  {line}") } else { line })
+        .map(|line| if indent { format!("  {line}") } else { line })
         .collect()
 }
 
