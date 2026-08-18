@@ -490,7 +490,8 @@ impl super::App {
                 self.input_ui.clear_paste_segments();
                 self.input_ui.set_submission_mode(submission_mode);
                 self.input_ui.set_cursor(self.input_char_len());
-                self.input_changed();
+                self.clamp_command_selection();
+                self.clamp_file_selection();
                 return;
             }
         }
@@ -499,7 +500,8 @@ impl super::App {
         self.input_ui.set_paste_segments(paste_segments);
         self.input_ui.set_submission_mode(submission_mode);
         self.input_ui.set_cursor(self.input_char_len());
-        self.input_changed();
+        self.clamp_command_selection();
+        self.clamp_file_selection();
     }
 
     pub(super) async fn finish_completed_inline_shells(&mut self) -> anyhow::Result<bool> {

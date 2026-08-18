@@ -198,6 +198,8 @@ impl App {
                 });
                 self.input_ui.apply_input_draft(draft);
                 self.input_ui.set_history_cursor(None);
+                // The draft was live typed text, so palettes reopen if it
+                // still looks like a command or file mention.
                 self.input_changed();
                 return true;
             }
@@ -209,6 +211,10 @@ impl App {
             InputSubmissionMode::ParseCommands,
         );
         self.input_ui.set_history_cursor(Some(next_cursor));
+        // Recalled text is finished content, not a live search. Keep both
+        // palettes closed until the next typed edit.
+        self.input_ui.set_command_palette_dismissed(true);
+        self.input_ui.set_file_palette_dismissed(true);
         true
     }
 
