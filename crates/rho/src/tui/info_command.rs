@@ -51,6 +51,12 @@ pub(super) struct RuntimeInfo {
     branch: Option<String>,
     usage: Option<ModelUsage>,
     latest_usage: Option<ModelUsage>,
+    /// Session cache hit rate over durable usage only.
+    ///
+    /// Kept separate from [`Self::usage`], which folds in the display-only live
+    /// stream estimate. That estimate reports fabricated uncached input and no
+    /// cache fields, so folding it in would dilute the rate mid-turn.
+    session_cache_hit_percent: Option<f64>,
     cache_rebilled: super::cache_stats::CacheRebilled,
     model_performance: ModelPerformanceSummary,
     context_usage: Option<ContextUsage>,
@@ -111,6 +117,11 @@ impl App {
                 self.model_metadata.as_ref(),
             ),
             latest_usage: self.usage.latest_usage.clone(),
+            session_cache_hit_percent: self
+                .usage
+                .cumulative_usage
+                .as_ref()
+                .and_then(cache_hit_percent),
             cache_rebilled: self.usage.cache_stats.rebilled().clone(),
             model_performance: self
                 .usage
@@ -235,14 +246,8 @@ fn push_usage_fields(block: &mut CommandBlock, info: &RuntimeInfo) {
     push_optional_number(block, "Output tokens", usage.output_tokens);
     push_optional_number(block, "Cache read", usage.cache_read_tokens);
     push_optional_number(block, "Cache write", usage.cache_write_tokens);
-    if let Some(percent) = cache_hit_percent(info.latest_usage.as_ref()) {
-        block.push_field("Cache hit", &format!("{percent:.1}% on the latest request"));
-    }
-    if let Some(percent) = cache_hit_percent(Some(usage)) {
-        block.push_field(
-            "Session cache hit",
-            &format!("{percent:.1}% of prompt tokens"),
-        );
+    if let Some(hit) = format_cache_hit(info) {
+        block.push_field("Cache hit", &hit);
     }
     if let Some(rebilled) = format_cache_rebilled(&info.cache_rebilled, info.billing) {
         block.push_field("Cache re-billed", &rebilled);
@@ -331,11 +336,23 @@ fn push_optional_number(block: &mut CommandBlock, label: &str, value: Option<u64
     }
 }
 
-fn cache_hit_percent(usage: Option<&ModelUsage>) -> Option<f64> {
-    let usage = usage?;
+fn cache_hit_percent(usage: &ModelUsage) -> Option<f64> {
     let cache_read = usage.cache_read_tokens?;
     let prompt_tokens = usage.total_input_tokens()?;
     (prompt_tokens > 0).then(|| cache_read as f64 * 100.0 / prompt_tokens as f64)
+}
+
+/// Single cache-hit line covering session and latest-request rates.
+fn format_cache_hit(info: &RuntimeInfo) -> Option<String> {
+    let latest = info.latest_usage.as_ref().and_then(cache_hit_percent);
+    match (info.session_cache_hit_percent, latest) {
+        (Some(session), Some(latest)) => Some(format!(
+            "{session:.1}% session · {latest:.1}% latest request"
+        )),
+        (Some(session), None) => Some(format!("{session:.1}% session")),
+        (None, Some(latest)) => Some(format!("{latest:.1}% on the latest request")),
+        (None, None) => None,
+    }
 }
 
 /// Session re-bill line for `/info`. Hidden until at least one counted miss.
@@ -352,13 +369,14 @@ fn format_cache_rebilled(
         format!("{} misses", rebilled.miss_count)
     };
     let tokens = format_number(rebilled.missed_tokens);
-    Some(match rebilled.extra_cost_usd_micros {
-        Some(cost) => format!(
+    Some(if rebilled.extra_cost_usd_micros > 0 {
+        format!(
             "{} ({tokens} tokens, {miss_label}){}",
-            format_usd(cost),
+            format_usd(rebilled.extra_cost_usd_micros),
             cost_equivalent_suffix(billing)
-        ),
-        None => format!("{tokens} tokens ({miss_label})"),
+        )
+    } else {
+        format!("{tokens} tokens ({miss_label})")
     })
 }
 
@@ -456,7 +474,7 @@ mod tests {
     }
 
     #[test]
-    fn session_cache_hit_uses_cumulative_prompt_tokens() {
+    fn cache_hit_percent_uses_total_prompt_tokens() {
         let usage = ModelUsage {
             input_tokens: Some(5_000),
             cache_read_tokens: Some(95_000),
@@ -464,10 +482,11 @@ mod tests {
             ..ModelUsage::default()
         };
         assert_eq!(
-            cache_hit_percent(Some(&usage)).map(|percent| format!("{percent:.1}")),
+            cache_hit_percent(&usage).map(|percent| format!("{percent:.1}")),
             Some("95.0".into())
         );
-        assert_eq!(cache_hit_percent(None), None);
+        // Providers that do not report cache accounting have no rate at all.
+        assert_eq!(cache_hit_percent(&ModelUsage::default()), None);
     }
 
     #[test]
@@ -483,7 +502,7 @@ mod tests {
                 &CacheRebilled {
                     missed_tokens: 45_230,
                     miss_count: 3,
-                    extra_cost_usd_micros: Some(324_000),
+                    extra_cost_usd_micros: 324_000,
                 },
                 BillingInfo::Metered,
             ),
@@ -494,7 +513,7 @@ mod tests {
                 &CacheRebilled {
                     missed_tokens: 1_000,
                     miss_count: 1,
-                    extra_cost_usd_micros: None,
+                    extra_cost_usd_micros: 0,
                 },
                 BillingInfo::Metered,
             ),
@@ -505,7 +524,7 @@ mod tests {
                 &CacheRebilled {
                     missed_tokens: 2_000,
                     miss_count: 2,
-                    extra_cost_usd_micros: Some(100_000),
+                    extra_cost_usd_micros: 100_000,
                 },
                 BillingInfo::Subscription,
             ),

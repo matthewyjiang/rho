@@ -2,22 +2,94 @@ use std::time::{Duration, Instant};
 
 use pretty_assertions::assert_eq;
 use rho_providers::model::{models_dev::ModelCost, ModelMetadata, ModelUsage};
+use rho_sdk::{ModelCallMetrics, ModelCallProfile, ReasoningLevel};
 
 use super::{
-    notice_text, CacheMissCause, CacheMissNotice, CacheRebilled, CacheStatsTracker, ModelKey,
+    notice_text, CacheMissCause, CacheMissNotice, CacheRebilled, CacheStatsTracker,
     CACHE_MISS_NOISE_FLOOR_TOKENS, PROVIDER_CACHE_TTL_HINT, SIGNIFICANT_MISS_TOKENS,
 };
 
-fn model(id: &str) -> ModelKey {
-    ModelKey::new("anthropic", id)
+/// One completed model call, as the tracker observes it.
+#[derive(Clone, Copy)]
+struct Request {
+    model: &'static str,
+    /// Uncached input tokens billed at the full rate.
+    input: u64,
+    /// `None` means the provider does not report cache accounting at all.
+    cache_read: Option<u64>,
+    cache_write: Option<u64>,
+    /// Seconds from the session start to when this call completed.
+    at_secs: u64,
+    /// Wall time of the call itself, used to derive its start instant.
+    latency_secs: u64,
 }
 
-fn usage(input: u64, cache_read: Option<u64>, cache_write: Option<u64>) -> ModelUsage {
-    ModelUsage {
-        input_tokens: Some(input),
-        cache_read_tokens: cache_read,
-        cache_write_tokens: cache_write,
-        ..ModelUsage::default()
+impl Request {
+    /// Back-to-back request on the same model, one second after the last one.
+    const fn next(at_secs: u64, input: u64, cache_read: u64) -> Self {
+        Self {
+            model: "claude",
+            input,
+            cache_read: Some(cache_read),
+            cache_write: Some(0),
+            at_secs,
+            latency_secs: 1,
+        }
+    }
+
+    const fn warm(at_secs: u64, cache_write: u64) -> Self {
+        Self {
+            model: "claude",
+            input: 0,
+            cache_read: Some(0),
+            cache_write: Some(cache_write),
+            at_secs,
+            latency_secs: 1,
+        }
+    }
+
+    const fn on_model(mut self, model: &'static str) -> Self {
+        self.model = model;
+        self
+    }
+
+    /// Provider reports no cache fields at all (local model, plain OpenAI-compatible host).
+    const fn without_cache_reporting(mut self) -> Self {
+        self.cache_read = None;
+        self.cache_write = None;
+        self
+    }
+}
+
+fn play(
+    tracker: &mut CacheStatsTracker,
+    t0: Instant,
+    requests: &[Request],
+    metadata: Option<&ModelMetadata>,
+) {
+    for request in requests {
+        tracker.usage_updated(&ModelUsage {
+            input_tokens: Some(request.input),
+            cache_read_tokens: request.cache_read,
+            cache_write_tokens: request.cache_write,
+            ..ModelUsage::default()
+        });
+        tracker.record_request(
+            &ModelCallProfile {
+                provider: "anthropic".into(),
+                model: request.model.into(),
+                reasoning: ReasoningLevel::Off,
+                service_tier: None,
+            },
+            ModelCallMetrics {
+                output_tokens: None,
+                time_to_first_token: None,
+                generation_time: None,
+                total_latency: Duration::from_secs(request.latency_secs),
+            },
+            metadata,
+            t0 + Duration::from_secs(request.at_secs),
+        );
     }
 }
 
@@ -47,515 +119,203 @@ fn expensive_metadata() -> ModelMetadata {
     }
 }
 
-fn commit(
-    tracker: &mut CacheStatsTracker,
-    key: ModelKey,
-    step_usage: ModelUsage,
-    started: Instant,
-    completed: Instant,
-    metadata: Option<&ModelMetadata>,
-    retry: bool,
-) {
-    tracker.step_started(key, started, metadata);
-    if retry {
-        tracker.attempt_restarted();
-    }
-    tracker.usage_updated(&step_usage, completed);
-    tracker.run_finished(metadata, completed);
+struct Case {
+    name: &'static str,
+    requests: Vec<Request>,
+    metadata: Option<fn() -> ModelMetadata>,
+    rebilled: CacheRebilled,
+    notices: usize,
+    last_cause: Option<CacheMissCause>,
 }
 
-// Covers: first request, full hits, noise floor, silent providers, resets,
-// model switch, idle TTL, retry skip, shrunken prompts, and notice gating.
+const NONE: CacheRebilled = CacheRebilled {
+    missed_tokens: 0,
+    miss_count: 0,
+    extra_cost_usd_micros: 0,
+};
+
+// Covers: first request, full hits, the noise floor on both sides, providers
+// that never report cache, model switch, idle TTL, shrunken prompts, and both
+// notice tripwires.
 // Owner: tui cache-miss policy
 #[test]
 fn tracker_counts_only_real_misses() {
-    let t0 = Instant::now();
-    struct Case {
-        name: &'static str,
-        run: fn(&mut CacheStatsTracker, Instant),
-        rebilled: CacheRebilled,
-        notices: usize,
-        last_cause: Option<CacheMissCause>,
-    }
-
-    let cases = [
+    let cases = vec![
         Case {
             name: "first request is never a miss",
-            run: |tracker, t0| {
-                commit(
-                    tracker,
-                    model("claude"),
-                    usage(50_000, Some(0), Some(50_000)),
-                    t0,
-                    t0,
-                    None,
-                    false,
-                );
-            },
-            rebilled: CacheRebilled::default(),
+            requests: vec![Request::next(0, 50_000, 0)],
+            metadata: None,
+            rebilled: NONE,
             notices: 0,
             last_cause: None,
         },
         Case {
             name: "full cache hit is not a miss",
-            run: |tracker, t0| {
-                commit(
-                    tracker,
-                    model("claude"),
-                    usage(1_000, Some(0), Some(40_000)),
-                    t0,
-                    t0,
-                    None,
-                    false,
-                );
-                commit(
-                    tracker,
-                    model("claude"),
-                    usage(200, Some(40_000), Some(200)),
-                    t0 + Duration::from_secs(1),
-                    t0 + Duration::from_secs(2),
-                    None,
-                    false,
-                );
-            },
-            rebilled: CacheRebilled::default(),
+            requests: vec![Request::warm(0, 40_000), Request::next(2, 200, 40_000)],
+            metadata: None,
+            rebilled: NONE,
             notices: 0,
             last_cause: None,
         },
         Case {
-            name: "miss at the 1024-token floor is noise",
-            run: |tracker, t0| {
-                commit(
-                    tracker,
-                    model("claude"),
-                    usage(0, Some(0), Some(10_000)),
-                    t0,
-                    t0,
-                    None,
-                    false,
-                );
-                commit(
-                    tracker,
-                    model("claude"),
-                    usage(
-                        CACHE_MISS_NOISE_FLOOR_TOKENS,
-                        Some(10_000 - CACHE_MISS_NOISE_FLOOR_TOKENS),
-                        Some(0),
-                    ),
-                    t0 + Duration::from_secs(1),
-                    t0 + Duration::from_secs(2),
-                    None,
-                    false,
-                );
-            },
-            rebilled: CacheRebilled::default(),
+            name: "miss at the noise floor is ignored",
+            requests: vec![
+                Request::warm(0, 10_000),
+                Request::next(
+                    2,
+                    CACHE_MISS_NOISE_FLOOR_TOKENS,
+                    10_000 - CACHE_MISS_NOISE_FLOOR_TOKENS,
+                ),
+            ],
+            metadata: None,
+            rebilled: NONE,
             notices: 0,
             last_cause: None,
         },
         Case {
-            name: "one token over the floor counts",
-            run: |tracker, t0| {
-                commit(
-                    tracker,
-                    model("claude"),
-                    usage(0, Some(0), Some(10_000)),
-                    t0,
-                    t0,
-                    None,
-                    false,
-                );
-                commit(
-                    tracker,
-                    model("claude"),
-                    usage(
-                        CACHE_MISS_NOISE_FLOOR_TOKENS + 1,
-                        Some(10_000 - CACHE_MISS_NOISE_FLOOR_TOKENS - 1),
-                        Some(0),
-                    ),
-                    t0 + Duration::from_secs(1),
-                    t0 + Duration::from_secs(2),
-                    None,
-                    false,
-                );
-            },
+            name: "one token over the noise floor counts",
+            requests: vec![
+                Request::warm(0, 10_000),
+                Request::next(
+                    2,
+                    CACHE_MISS_NOISE_FLOOR_TOKENS + 1,
+                    10_000 - CACHE_MISS_NOISE_FLOOR_TOKENS - 1,
+                ),
+            ],
+            metadata: None,
             rebilled: CacheRebilled {
                 missed_tokens: CACHE_MISS_NOISE_FLOOR_TOKENS + 1,
                 miss_count: 1,
-                extra_cost_usd_micros: None,
+                extra_cost_usd_micros: 0,
             },
             notices: 0,
             last_cause: None,
         },
         Case {
-            name: "providers that never report cache stay silent",
-            run: |tracker, t0| {
-                commit(
-                    tracker,
-                    model("local"),
-                    usage(40_000, None, None),
-                    t0,
-                    t0,
-                    None,
-                    false,
-                );
-                commit(
-                    tracker,
-                    model("local"),
-                    usage(42_000, None, None),
-                    t0 + Duration::from_secs(1),
-                    t0 + Duration::from_secs(2),
-                    None,
-                    false,
-                );
-            },
-            rebilled: CacheRebilled::default(),
+            name: "providers that never report cache are never billed a miss",
+            requests: vec![
+                Request::next(0, 40_000, 0).without_cache_reporting(),
+                Request::next(2, 60_000, 0).without_cache_reporting(),
+            ],
+            metadata: None,
+            rebilled: NONE,
             notices: 0,
             last_cause: None,
         },
         Case {
-            name: "zero cache after a cached request is a miss",
-            run: |tracker, t0| {
-                commit(
-                    tracker,
-                    model("claude"),
-                    usage(0, Some(0), Some(30_000)),
-                    t0,
-                    t0,
-                    None,
-                    false,
-                );
-                commit(
-                    tracker,
-                    model("claude"),
-                    usage(30_000, Some(0), Some(0)),
-                    t0 + Duration::from_secs(1),
-                    t0 + Duration::from_secs(2),
-                    None,
-                    false,
-                );
-            },
-            rebilled: CacheRebilled {
-                missed_tokens: 30_000,
-                miss_count: 1,
-                extra_cost_usd_micros: None,
-            },
-            notices: 1,
-            last_cause: Some(CacheMissCause::Unattributed),
-        },
-        Case {
-            name: "compaction resets comparison but keeps totals",
-            run: |tracker, t0| {
-                commit(
-                    tracker,
-                    model("claude"),
-                    usage(0, Some(0), Some(30_000)),
-                    t0,
-                    t0,
-                    None,
-                    false,
-                );
-                commit(
-                    tracker,
-                    model("claude"),
-                    usage(30_000, Some(0), Some(0)),
-                    t0 + Duration::from_secs(1),
-                    t0 + Duration::from_secs(2),
-                    None,
-                    false,
-                );
-                tracker.compaction_reset();
-                commit(
-                    tracker,
-                    model("claude"),
-                    usage(8_000, Some(0), Some(8_000)),
-                    t0 + Duration::from_secs(3),
-                    t0 + Duration::from_secs(4),
-                    None,
-                    false,
-                );
-            },
-            rebilled: CacheRebilled {
-                missed_tokens: 30_000,
-                miss_count: 1,
-                extra_cost_usd_micros: None,
-            },
-            notices: 1,
-            last_cause: Some(CacheMissCause::Unattributed),
-        },
-        Case {
-            name: "full reset clears totals",
-            run: |tracker, t0| {
-                commit(
-                    tracker,
-                    model("claude"),
-                    usage(0, Some(0), Some(30_000)),
-                    t0,
-                    t0,
-                    None,
-                    false,
-                );
-                commit(
-                    tracker,
-                    model("claude"),
-                    usage(30_000, Some(0), Some(0)),
-                    t0 + Duration::from_secs(1),
-                    t0 + Duration::from_secs(2),
-                    None,
-                    false,
-                );
-                tracker.reset();
-            },
-            rebilled: CacheRebilled::default(),
+            // Regression: a session-scoped "saw cache" latch used to bill every
+            // later request on a non-reporting provider as a full miss.
+            name: "switching to a non-reporting provider after cache activity stays silent",
+            requests: vec![
+                Request::warm(0, 50_000),
+                Request::next(2, 200, 50_000),
+                Request::next(4, 60_000, 0)
+                    .on_model("local")
+                    .without_cache_reporting(),
+                Request::next(6, 70_000, 0)
+                    .on_model("local")
+                    .without_cache_reporting(),
+            ],
+            metadata: None,
+            rebilled: NONE,
             notices: 0,
             last_cause: None,
         },
         Case {
-            name: "model switch is a counted miss with that cause",
-            run: |tracker, t0| {
-                commit(
-                    tracker,
-                    model("claude"),
-                    usage(0, Some(0), Some(25_000)),
-                    t0,
-                    t0,
-                    None,
-                    false,
-                );
-                commit(
-                    tracker,
-                    ModelKey::new("openai", "gpt"),
-                    usage(25_000, Some(0), Some(0)),
-                    t0 + Duration::from_secs(1),
-                    t0 + Duration::from_secs(2),
-                    None,
-                    false,
-                );
-            },
+            name: "model switch is named as the cause",
+            requests: vec![
+                Request::warm(0, SIGNIFICANT_MISS_TOKENS),
+                Request::next(2, SIGNIFICANT_MISS_TOKENS, 0).on_model("sonnet"),
+            ],
+            metadata: None,
             rebilled: CacheRebilled {
-                missed_tokens: 25_000,
+                missed_tokens: SIGNIFICANT_MISS_TOKENS,
                 miss_count: 1,
-                extra_cost_usd_micros: None,
+                extra_cost_usd_micros: 0,
             },
             notices: 1,
             last_cause: Some(CacheMissCause::ModelSwitch),
         },
         Case {
-            name: "idle past the TTL hint names the gap",
-            run: |tracker, t0| {
-                commit(
-                    tracker,
-                    model("claude"),
-                    usage(0, Some(0), Some(25_000)),
-                    t0,
-                    t0,
-                    None,
-                    false,
-                );
-                let later = t0 + PROVIDER_CACHE_TTL_HINT + Duration::from_secs(30);
-                commit(
-                    tracker,
-                    model("claude"),
-                    usage(25_000, Some(0), Some(0)),
-                    later,
-                    later + Duration::from_secs(1),
-                    None,
-                    false,
-                );
-            },
+            name: "idle past the TTL is named as the cause",
+            requests: vec![
+                Request::warm(0, SIGNIFICANT_MISS_TOKENS),
+                Request::next(
+                    PROVIDER_CACHE_TTL_HINT.as_secs() + 61,
+                    SIGNIFICANT_MISS_TOKENS,
+                    0,
+                ),
+            ],
+            metadata: None,
             rebilled: CacheRebilled {
-                missed_tokens: 25_000,
+                missed_tokens: SIGNIFICANT_MISS_TOKENS,
                 miss_count: 1,
-                extra_cost_usd_micros: None,
+                extra_cost_usd_micros: 0,
             },
             notices: 1,
-            last_cause: Some(CacheMissCause::Idle(
-                PROVIDER_CACHE_TTL_HINT + Duration::from_secs(30),
-            )),
+            last_cause: Some(CacheMissCause::Idle(Duration::from_secs(
+                PROVIDER_CACHE_TTL_HINT.as_secs() + 60,
+            ))),
         },
         Case {
-            name: "idle under the TTL hint stays unattributed",
-            run: |tracker, t0| {
-                commit(
-                    tracker,
-                    model("claude"),
-                    usage(0, Some(0), Some(25_000)),
-                    t0,
-                    t0,
-                    None,
-                    false,
-                );
-                let later = t0 + PROVIDER_CACHE_TTL_HINT - Duration::from_secs(1);
-                commit(
-                    tracker,
-                    model("claude"),
-                    usage(25_000, Some(0), Some(0)),
-                    later,
-                    later + Duration::from_secs(1),
-                    None,
-                    false,
-                );
-            },
-            rebilled: CacheRebilled {
-                missed_tokens: 25_000,
-                miss_count: 1,
-                extra_cost_usd_micros: None,
-            },
-            notices: 1,
-            last_cause: Some(CacheMissCause::Unattributed),
-        },
-        Case {
-            name: "retry-tainted samples are not counted",
-            run: |tracker, t0| {
-                commit(
-                    tracker,
-                    model("claude"),
-                    usage(0, Some(0), Some(30_000)),
-                    t0,
-                    t0,
-                    None,
-                    false,
-                );
-                commit(
-                    tracker,
-                    model("claude"),
-                    usage(30_000, Some(0), Some(0)),
-                    t0 + Duration::from_secs(1),
-                    t0 + Duration::from_secs(2),
-                    None,
-                    true,
-                );
-            },
-            rebilled: CacheRebilled::default(),
-            notices: 0,
-            last_cause: None,
-        },
-        Case {
-            name: "shrunken prompts use the overlapping prefix",
-            run: |tracker, t0| {
-                commit(
-                    tracker,
-                    model("claude"),
-                    usage(0, Some(0), Some(40_000)),
-                    t0,
-                    t0,
-                    None,
-                    false,
-                );
-                commit(
-                    tracker,
-                    model("claude"),
-                    usage(8_000, Some(0), Some(0)),
-                    t0 + Duration::from_secs(1),
-                    t0 + Duration::from_secs(2),
-                    None,
-                    false,
-                );
-            },
+            name: "a shrunken prompt only re-bills what it actually sent",
+            requests: vec![Request::warm(0, 50_000), Request::next(2, 8_000, 0)],
+            metadata: None,
             rebilled: CacheRebilled {
                 missed_tokens: 8_000,
                 miss_count: 1,
-                extra_cost_usd_micros: None,
+                extra_cost_usd_micros: 0,
             },
             notices: 0,
             last_cause: None,
         },
         Case {
             name: "token tripwire emits a notice",
-            run: |tracker, t0| {
-                commit(
-                    tracker,
-                    model("claude"),
-                    usage(0, Some(0), Some(SIGNIFICANT_MISS_TOKENS)),
-                    t0,
-                    t0,
-                    None,
-                    false,
-                );
-                commit(
-                    tracker,
-                    model("claude"),
-                    usage(SIGNIFICANT_MISS_TOKENS, Some(0), Some(0)),
-                    t0 + Duration::from_secs(1),
-                    t0 + Duration::from_secs(2),
-                    None,
-                    false,
-                );
-            },
+            requests: vec![
+                Request::warm(0, SIGNIFICANT_MISS_TOKENS),
+                Request::next(2, SIGNIFICANT_MISS_TOKENS, 0),
+            ],
+            metadata: None,
             rebilled: CacheRebilled {
                 missed_tokens: SIGNIFICANT_MISS_TOKENS,
                 miss_count: 1,
-                extra_cost_usd_micros: None,
+                extra_cost_usd_micros: 0,
             },
             notices: 1,
             last_cause: Some(CacheMissCause::Unattributed),
         },
         Case {
-            name: "priced cost tripwire emits a notice below the token floor",
-            run: |tracker, t0| {
-                let metadata = expensive_metadata();
-                commit(
-                    tracker,
-                    model("claude"),
-                    usage(0, Some(0), Some(10_000)),
-                    t0,
-                    t0,
-                    Some(&metadata),
-                    false,
-                );
-                commit(
-                    tracker,
-                    model("claude"),
-                    usage(5_001, Some(4_999), Some(0)),
-                    t0 + Duration::from_secs(1),
-                    t0 + Duration::from_secs(2),
-                    Some(&metadata),
-                    false,
-                );
-            },
+            name: "cost tripwire emits a notice below the token floor",
+            requests: vec![Request::warm(0, 10_000), Request::next(2, 5_001, 4_999)],
+            metadata: Some(expensive_metadata),
             rebilled: CacheRebilled {
                 missed_tokens: 5_001,
                 miss_count: 1,
-                extra_cost_usd_micros: Some(100_020),
+                extra_cost_usd_micros: 100_020,
             },
             notices: 1,
             last_cause: Some(CacheMissCause::Unattributed),
         },
         Case {
-            name: "priced miss below both tripwires is counted without a notice",
-            run: |tracker, t0| {
-                let metadata = priced_metadata();
-                commit(
-                    tracker,
-                    model("claude"),
-                    usage(0, Some(0), Some(10_000)),
-                    t0,
-                    t0,
-                    Some(&metadata),
-                    false,
-                );
-                commit(
-                    tracker,
-                    model("claude"),
-                    usage(2_000, Some(8_000), Some(0)),
-                    t0 + Duration::from_secs(1),
-                    t0 + Duration::from_secs(2),
-                    Some(&metadata),
-                    false,
-                );
-            },
+            name: "a priced miss below both tripwires is counted without a notice",
+            requests: vec![Request::warm(0, 10_000), Request::next(2, 2_000, 8_000)],
+            metadata: Some(priced_metadata),
             rebilled: CacheRebilled {
                 missed_tokens: 2_000,
                 miss_count: 1,
-                extra_cost_usd_micros: Some(1_800),
+                extra_cost_usd_micros: 1_800,
             },
             notices: 0,
             last_cause: None,
         },
     ];
 
-    for case in cases {
+    let t0 = Instant::now() + Duration::from_secs(3_600);
+    for case in &cases {
         let mut tracker = CacheStatsTracker::default();
-        (case.run)(&mut tracker, t0);
+        let metadata = case.metadata.map(|build| build());
+        play(&mut tracker, t0, &case.requests, metadata.as_ref());
+
         assert_eq!(tracker.rebilled(), &case.rebilled, "{}", case.name);
         let notices = tracker.take_turn_notices();
         assert_eq!(notices.len(), case.notices, "{}", case.name);
@@ -567,6 +327,63 @@ fn tracker_counts_only_real_misses() {
         );
         assert!(tracker.take_turn_notices().is_empty(), "{}", case.name);
     }
+}
+
+// Covers: compaction rewrites the prefix, so the next request cannot be a miss,
+// while session totals survive.
+// Owner: tui cache-miss policy
+#[test]
+fn compaction_clears_the_prefix_but_keeps_session_totals() {
+    let t0 = Instant::now();
+    let mut tracker = CacheStatsTracker::default();
+
+    play(
+        &mut tracker,
+        t0,
+        &[
+            Request::warm(0, 50_000),
+            Request::next(2, SIGNIFICANT_MISS_TOKENS, 30_000),
+        ],
+        None,
+    );
+    let after_miss = tracker.rebilled().clone();
+    assert_eq!(after_miss.miss_count, 1);
+
+    tracker.prompt_prefix_reset();
+    play(&mut tracker, t0, &[Request::next(4, 60_000, 0)], None);
+
+    assert_eq!(tracker.rebilled(), &after_miss);
+}
+
+// Covers: a request that never reported usage is not sampled, and a stale delta
+// is not reused by the next call.
+// Owner: tui cache-miss policy
+#[test]
+fn a_request_without_reported_usage_is_not_sampled() {
+    let t0 = Instant::now();
+    let mut tracker = CacheStatsTracker::default();
+
+    let profile = ModelCallProfile {
+        provider: "anthropic".into(),
+        model: "claude".into(),
+        reasoning: ReasoningLevel::Off,
+        service_tier: None,
+    };
+    let metrics = ModelCallMetrics {
+        output_tokens: None,
+        time_to_first_token: None,
+        generation_time: None,
+        total_latency: Duration::from_secs(1),
+    };
+
+    tracker.record_request(&profile, metrics, None, t0);
+    assert_eq!(tracker.rebilled(), &NONE);
+
+    play(&mut tracker, t0, &[Request::warm(1, 50_000)], None);
+    // Second call reports no new usage, so the warm sample must not be replayed.
+    tracker.record_request(&profile, metrics, None, t0 + Duration::from_secs(2));
+
+    assert_eq!(tracker.rebilled(), &NONE);
 }
 
 // Covers: notice copy for each observable cause and the unpriced form.

@@ -95,6 +95,18 @@ fn on_off(value: bool) -> String {
     if value { "on" } else { "off" }.into()
 }
 
+/// Help text for the cache-miss row, built from the tripwires it describes so
+/// the numbers cannot drift from the thresholds that actually fire.
+fn cache_miss_notices_help() -> String {
+    use super::cache_stats::{SIGNIFICANT_MISS_EXTRA_COST_USD_MICROS, SIGNIFICANT_MISS_TOKENS};
+
+    format!(
+        "Show a transcript notice after a turn that re-billed a large uncached prompt (over {} tokens or {}). Space toggles.",
+        super::usage_cost::format_token_count(SIGNIFICANT_MISS_TOKENS),
+        super::usage_cost::format_usd(SIGNIFICANT_MISS_EXTRA_COST_USD_MICROS),
+    )
+}
+
 fn theme_badge(config: &Config) -> String {
     super::theme::theme_display_name(&config.theme)
 }
@@ -186,7 +198,7 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
             ),
             item(
                 "Appearance",
-                "Theme, zen mode, reasoning output, and collapsed tool output lines.",
+                "Theme, zen mode, reasoning output, cache miss notices, and collapsed tool output lines.",
                 Some(theme_badge(config)),
                 APPEARANCE_CATEGORY_VALUE,
             ),
@@ -198,7 +210,7 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
             ),
             item(
                 "Context & limits",
-                "Auto compact, compact threshold, compact target, cache miss notices, max output bytes, and prompt history.",
+                "Auto compact, compact threshold, compact target, max output bytes, and prompt history.",
                 Some(if config.auto_compact {
                     format!("compacts at {}%", config.compact_threshold_percent)
                 } else {
@@ -289,6 +301,12 @@ pub(super) fn category_picker(
                     "Show only message text. Hides tool cards, reasoning, and the Thinking... placeholder. Keeps the activity rail. Space toggles.",
                     Some(on_off(info.zen_mode)),
                     ZEN_MODE_VALUE,
+                ),
+                item(
+                    "Cache miss notices",
+                    cache_miss_notices_help(),
+                    Some(on_off(config.cache_miss_notices)),
+                    CACHE_MISS_NOTICES_VALUE,
                 ),
                 item(
                     "Show reasoning output",
@@ -386,12 +404,6 @@ pub(super) fn category_picker(
                     "Post-compaction target percent for text-summary compaction. Providers with native compaction use this budget only if that path falls back.",
                     Some(format!("{}%", config.compact_target_percent)),
                     COMPACT_TARGET_PERCENT_VALUE,
-                ),
-                item(
-                    "Cache miss notices",
-                    "Show a transcript notice after a turn that re-billed a large uncached prompt (over 20K tokens or $0.10). Space toggles.",
-                    Some(on_off(config.cache_miss_notices)),
-                    CACHE_MISS_NOTICES_VALUE,
                 ),
                 item(
                     "Max output bytes",
@@ -506,6 +518,7 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
         SHOW_REASONING_OUTPUT_VALUE
         | ZEN_MODE_VALUE
         | THEME_VALUE
+        | CACHE_MISS_NOTICES_VALUE
         | MAX_TOOL_OUTPUT_LINES_VALUE => Some(APPEARANCE_CATEGORY_VALUE),
         PERMISSION_MODE_VALUE
         | PERMISSION_CLASSIFIER_MODEL_VALUE
@@ -517,7 +530,6 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
         AUTO_COMPACT_VALUE
         | COMPACT_THRESHOLD_PERCENT_VALUE
         | COMPACT_TARGET_PERCENT_VALUE
-        | CACHE_MISS_NOTICES_VALUE
         | MAX_OUTPUT_BYTES_VALUE
         | PROMPT_HISTORY_LIMIT_VALUE
         | CLEAR_PROMPT_HISTORY_VALUE => Some(CONTEXT_CATEGORY_VALUE),

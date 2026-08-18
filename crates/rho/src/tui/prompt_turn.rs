@@ -651,12 +651,10 @@ impl App {
                 outcome
             }
         };
-        self.finish_cache_stats(
-            /*emit_notices*/ matches!(outcome, TurnOutcome::Completed),
-        );
         let completed = matches!(outcome, TurnOutcome::Completed);
         if completed {
             agent.mark_live_context_warm();
+            self.insert_cache_miss_notices();
         }
         if matches!(&outcome, TurnOutcome::Failed(_) | TurnOutcome::Cancelled) {
             self.preserve_unapplied_steering_as_follow_ups();
@@ -739,16 +737,17 @@ impl App {
         }
     }
 
-    /// Commit the last step's cache sample. Notices stay on completed turns only.
-    fn finish_cache_stats(&mut self, emit_notices: bool) {
-        self.usage
-            .cache_stats
-            .run_finished(self.model_metadata.as_ref(), Instant::now());
+    /// Drain significant misses detected during this turn into the transcript.
+    ///
+    /// Always drains so notices cannot leak into a later turn, and inserts only
+    /// when the user opted in.
+    fn insert_cache_miss_notices(&mut self) {
         let notices = self.usage.cache_stats.take_turn_notices();
-        if emit_notices && self.info.runtime.cache_miss_notices {
-            for notice in notices {
-                self.insert_entry(&Entry::Notice(super::cache_stats::notice_text(&notice)));
-            }
+        if !self.info.runtime.cache_miss_notices {
+            return;
+        }
+        for notice in notices {
+            self.insert_entry(&Entry::Notice(super::cache_stats::notice_text(&notice)));
         }
     }
 }

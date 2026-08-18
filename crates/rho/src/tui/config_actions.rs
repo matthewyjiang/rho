@@ -6,6 +6,20 @@ use super::{
     PickerAction,
 };
 
+/// Static description of one boolean `/config` row.
+///
+/// Every field here is data the row differs by; the shared save/refresh/report
+/// flow lives in [`App::apply_config_toggle`].
+struct BooleanConfigRow {
+    toggle: ConfigToggle,
+    /// Picker row to reselect and redraw after the save attempt.
+    picker_value: &'static str,
+    on_status: &'static str,
+    off_status: &'static str,
+    /// Reads as "could not save {error_noun} setting".
+    error_noun: &'static str,
+}
+
 impl App {
     pub(super) async fn submit_config_selection(
         &mut self,
@@ -288,59 +302,72 @@ impl App {
         Ok(())
     }
 
-    pub(super) fn toggle_check_for_updates(&mut self) -> anyhow::Result<()> {
-        match config_editor::toggle(
-            &self.info.services.config_repository,
-            ConfigToggle::CheckForUpdates,
-        ) {
-            Ok(check_for_updates) => {
-                self.info
-                    .services
-                    .diagnostics
-                    .update_check_for_updates(check_for_updates);
-                if !check_for_updates {
-                    self.info.services.update_notice = None;
-                }
-                self.refresh_main_config_picker_if_open(config_picker::CHECK_FOR_UPDATES_VALUE)?;
-                self.set_status(if check_for_updates {
-                    "check for updates: on"
+    /// Persist one boolean config row and reflect it in the open picker.
+    ///
+    /// Every boolean row shares this shape: flip the stored value, apply any
+    /// live session effect, refresh the picker so the row redraws (on success
+    /// *and* failure, so a failed save cannot leave a stale value on screen),
+    /// then report. `apply` carries the only per-row difference that is not
+    /// data: the immediate effect on live session state.
+    fn apply_config_toggle(
+        &mut self,
+        row: BooleanConfigRow,
+        apply: impl FnOnce(&mut Self, bool),
+    ) -> anyhow::Result<()> {
+        match config_editor::toggle(&self.info.services.config_repository, row.toggle) {
+            Ok(enabled) => {
+                apply(self, enabled);
+                self.refresh_main_config_picker_if_open(row.picker_value)?;
+                self.set_status(if enabled {
+                    row.on_status
                 } else {
-                    "check for updates: off"
+                    row.off_status
                 });
             }
             Err(err) => {
                 self.insert_entry(&Entry::Error(format!(
-                    "could not save update check setting: {err}"
+                    "could not save {} setting: {err}",
+                    row.error_noun
                 )));
-                self.refresh_main_config_picker_if_open(config_picker::CHECK_FOR_UPDATES_VALUE)?;
+                self.refresh_main_config_picker_if_open(row.picker_value)?;
                 self.set_status("config save failed");
             }
         }
         Ok(())
     }
 
+    pub(super) fn toggle_check_for_updates(&mut self) -> anyhow::Result<()> {
+        self.apply_config_toggle(
+            BooleanConfigRow {
+                toggle: ConfigToggle::CheckForUpdates,
+                picker_value: config_picker::CHECK_FOR_UPDATES_VALUE,
+                on_status: "check for updates: on",
+                off_status: "check for updates: off",
+                error_noun: "update check",
+            },
+            |app, check_for_updates| {
+                app.info
+                    .services
+                    .diagnostics
+                    .update_check_for_updates(check_for_updates);
+                if !check_for_updates {
+                    app.info.services.update_notice = None;
+                }
+            },
+        )
+    }
+
     pub(super) fn toggle_enable_subagents(&mut self) -> anyhow::Result<()> {
-        match config_editor::toggle(
-            &self.info.services.config_repository,
-            ConfigToggle::EnableSubagents,
-        ) {
-            Ok(enable_subagents) => {
-                self.refresh_main_config_picker_if_open(config_picker::ENABLE_SUBAGENTS_VALUE)?;
-                self.set_status(if enable_subagents {
-                    "subagents: on next session"
-                } else {
-                    "subagents: off next session"
-                });
-            }
-            Err(err) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "could not save subagent setting: {err}"
-                )));
-                self.refresh_main_config_picker_if_open(config_picker::ENABLE_SUBAGENTS_VALUE)?;
-                self.set_status("config save failed");
-            }
-        }
-        Ok(())
+        self.apply_config_toggle(
+            BooleanConfigRow {
+                toggle: ConfigToggle::EnableSubagents,
+                picker_value: config_picker::ENABLE_SUBAGENTS_VALUE,
+                on_status: "subagents: on next session",
+                off_status: "subagents: off next session",
+                error_noun: "subagent",
+            },
+            |_, _| {},
+        )
     }
 
     /// Advisor mode needs an advisor model, so turning it on from the config
@@ -397,131 +424,76 @@ impl App {
     }
 
     pub(super) fn toggle_auto_compact(&mut self) -> anyhow::Result<()> {
-        match config_editor::toggle(
-            &self.info.services.config_repository,
-            ConfigToggle::AutoCompact,
-        ) {
-            Ok(auto_compact) => {
-                self.refresh_main_config_picker_if_open(config_picker::AUTO_COMPACT_VALUE)?;
-                self.set_status(if auto_compact {
-                    "auto compact: on"
-                } else {
-                    "auto compact: off"
-                });
-            }
-            Err(err) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "could not save auto compact setting: {err}"
-                )));
-                self.refresh_main_config_picker_if_open(config_picker::AUTO_COMPACT_VALUE)?;
-                self.set_status("config save failed");
-            }
-        }
-        Ok(())
+        self.apply_config_toggle(
+            BooleanConfigRow {
+                toggle: ConfigToggle::AutoCompact,
+                picker_value: config_picker::AUTO_COMPACT_VALUE,
+                on_status: "auto compact: on",
+                off_status: "auto compact: off",
+                error_noun: "auto compact",
+            },
+            |_, _| {},
+        )
     }
 
     pub(super) fn toggle_cache_miss_notices(&mut self) -> anyhow::Result<()> {
-        match config_editor::toggle(
-            &self.info.services.config_repository,
-            ConfigToggle::CacheMissNotices,
-        ) {
-            Ok(cache_miss_notices) => {
-                self.info.runtime.cache_miss_notices = cache_miss_notices;
-                self.refresh_main_config_picker_if_open(config_picker::CACHE_MISS_NOTICES_VALUE)?;
-                self.set_status(if cache_miss_notices {
-                    "cache miss notices: on"
-                } else {
-                    "cache miss notices: off"
-                });
-            }
-            Err(err) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "could not save cache miss notices setting: {err}"
-                )));
-                self.refresh_main_config_picker_if_open(config_picker::CACHE_MISS_NOTICES_VALUE)?;
-                self.set_status("config save failed");
-            }
-        }
-        Ok(())
+        self.apply_config_toggle(
+            BooleanConfigRow {
+                toggle: ConfigToggle::CacheMissNotices,
+                picker_value: config_picker::CACHE_MISS_NOTICES_VALUE,
+                on_status: "cache miss notices: on",
+                off_status: "cache miss notices: off",
+                error_noun: "cache miss notices",
+            },
+            |app, enabled| app.info.runtime.cache_miss_notices = enabled,
+        )
     }
 
     pub(super) fn toggle_reasoning_output(&mut self) -> anyhow::Result<()> {
-        match config_editor::toggle(
-            &self.info.services.config_repository,
-            ConfigToggle::ShowReasoningOutput,
-        ) {
-            Ok(show_reasoning_output) => {
-                self.info.runtime.show_reasoning_output = show_reasoning_output;
-                self.apply_reasoning_output_visibility();
-                self.refresh_main_config_picker_if_open(
-                    config_picker::SHOW_REASONING_OUTPUT_VALUE,
-                )?;
-                self.set_status(if show_reasoning_output {
-                    "reasoning output: shown"
-                } else {
-                    "reasoning output: hidden"
-                });
-            }
-            Err(err) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "could not save reasoning output setting: {err}"
-                )));
-                self.refresh_main_config_picker_if_open(
-                    config_picker::SHOW_REASONING_OUTPUT_VALUE,
-                )?;
-                self.set_status("config save failed");
-            }
-        }
-        Ok(())
+        self.apply_config_toggle(
+            BooleanConfigRow {
+                toggle: ConfigToggle::ShowReasoningOutput,
+                picker_value: config_picker::SHOW_REASONING_OUTPUT_VALUE,
+                on_status: "reasoning output: shown",
+                off_status: "reasoning output: hidden",
+                error_noun: "reasoning output",
+            },
+            |app, show_reasoning_output| {
+                app.info.runtime.show_reasoning_output = show_reasoning_output;
+                app.apply_reasoning_output_visibility();
+            },
+        )
     }
 
     pub(super) fn toggle_zen_mode(&mut self) -> anyhow::Result<()> {
-        match config_editor::toggle(&self.info.services.config_repository, ConfigToggle::ZenMode) {
-            Ok(zen_mode) => {
-                self.info.runtime.zen_mode = zen_mode;
+        self.apply_config_toggle(
+            BooleanConfigRow {
+                toggle: ConfigToggle::ZenMode,
+                picker_value: config_picker::ZEN_MODE_VALUE,
+                on_status: "zen mode: on",
+                off_status: "zen mode: off",
+                error_noun: "zen mode",
+            },
+            |app, zen_mode| {
+                app.info.runtime.zen_mode = zen_mode;
                 // Zen is pure display policy over existing history; rebuild layout.
-                self.history.invalidate_from(0);
-                self.apply_reasoning_output_visibility();
-                self.refresh_main_config_picker_if_open(config_picker::ZEN_MODE_VALUE)?;
-                self.set_status(if zen_mode {
-                    "zen mode: on"
-                } else {
-                    "zen mode: off"
-                });
-            }
-            Err(err) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "could not save zen mode setting: {err}"
-                )));
-                self.refresh_main_config_picker_if_open(config_picker::ZEN_MODE_VALUE)?;
-                self.set_status("config save failed");
-            }
-        }
-        Ok(())
+                app.history.invalidate_from(0);
+                app.apply_reasoning_output_visibility();
+            },
+        )
     }
 
     pub(super) fn toggle_xai_image_generation(&mut self) -> anyhow::Result<()> {
-        match config_editor::toggle(
-            &self.info.services.config_repository,
-            ConfigToggle::XaiImageGeneration,
-        ) {
-            Ok(enabled) => {
-                self.refresh_main_config_picker_if_open(config_picker::XAI_IMAGE_GENERATION_VALUE)?;
-                self.set_status(if enabled {
-                    "xAI image generation: on next session"
-                } else {
-                    "xAI image generation: off next session"
-                });
-            }
-            Err(err) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "could not save xAI image generation setting: {err}"
-                )));
-                self.refresh_main_config_picker_if_open(config_picker::XAI_IMAGE_GENERATION_VALUE)?;
-                self.set_status("config save failed");
-            }
-        }
-        Ok(())
+        self.apply_config_toggle(
+            BooleanConfigRow {
+                toggle: ConfigToggle::XaiImageGeneration,
+                picker_value: config_picker::XAI_IMAGE_GENERATION_VALUE,
+                on_status: "xAI image generation: on next session",
+                off_status: "xAI image generation: off next session",
+                error_noun: "xAI image generation",
+            },
+            |_, _| {},
+        )
     }
 
     pub(super) fn toggle_web_search_hosted(&mut self) -> anyhow::Result<()> {

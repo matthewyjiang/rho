@@ -14,8 +14,6 @@ use ratatui::{backend::Backend, DefaultTerminal, Terminal};
 
 use super::{
     activity::ActivityPhase,
-    cache_stats::ModelKey,
-    compaction_display::compaction_call_id,
     event_adapter::ViewModelEvent,
     markdown::update_code_block_state,
     render::padded_content_width,
@@ -228,10 +226,12 @@ impl App {
     }
 
     pub(super) fn record_agent_event(&mut self, event: ViewModelEvent) -> Option<Entry> {
+        if event.rewrites_prompt_prefix() {
+            self.usage.cache_stats.prompt_prefix_reset();
+        }
         match event {
             ViewModelEvent::RunStarted => {
                 self.usage.usage_cost_tracker.run_started();
-                self.usage.cache_stats.run_started();
                 self.usage.usage_before_current_run = self.usage.cumulative_usage.clone();
                 self.usage.run_usage.clear();
                 self.usage.live_stream.clear();
@@ -240,11 +240,6 @@ impl App {
             ViewModelEvent::StepStarted(step) => {
                 self.usage.usage_cost_tracker.step_started();
                 self.usage.run_usage.step_started();
-                self.usage.cache_stats.step_started(
-                    ModelKey::new(&self.info.runtime.provider, &self.info.runtime.model),
-                    Instant::now(),
-                    self.model_metadata.as_ref(),
-                );
                 self.usage.live_stream.clear();
                 self.reset_streams();
                 self.turn.provider_attempt_mut().begin(self.history.len());
@@ -260,9 +255,6 @@ impl App {
                 None
             }
             ViewModelEvent::ToolStarted { call_id, card } => {
-                if call_id == compaction_call_id() {
-                    self.usage.cache_stats.compaction_reset();
-                }
                 self.turn.tool_started(call_id, card);
                 None
             }
@@ -285,13 +277,11 @@ impl App {
             ViewModelEvent::ProviderStreamReset(retry) => {
                 self.reset_provider_attempt_stream(retry);
                 self.reset_attempt_accounting();
-                self.usage.cache_stats.attempt_restarted();
                 self.usage.live_stream.clear();
                 None
             }
             ViewModelEvent::ProviderRetry => {
                 self.reset_attempt_accounting();
-                self.usage.cache_stats.attempt_restarted();
                 self.usage.live_stream.clear();
                 None
             }
@@ -315,6 +305,12 @@ impl App {
                 metrics,
                 generation_output_tokens,
             } => {
+                self.usage.cache_stats.record_request(
+                    &profile,
+                    metrics,
+                    self.model_metadata.as_ref(),
+                    Instant::now(),
+                );
                 self.usage
                     .model_performance
                     .record(profile, metrics, generation_output_tokens);
@@ -347,9 +343,7 @@ impl App {
                         current.cost_usd_micros = current_run_usage.cost_usd_micros;
                     }
                 }
-                self.usage
-                    .cache_stats
-                    .usage_updated(&latest_usage, Instant::now());
+                self.usage.cache_stats.usage_updated(&latest_usage);
                 self.usage.latest_usage = Some(latest_usage);
                 self.usage
                     .cumulative_usage
