@@ -39,7 +39,7 @@ Rho stores persistent config at `~/.rho/config.toml` by default. `RHO_HOME` over
 
 ## The four ways to configure
 
-1. **Interactive TUI**: `/config` opens a category browser (Models & reasoning, Agent behavior, Context & limits, Tools, Providers, Updates). Type to filter, press `enter` to open a category, press `space` to toggle an on/off setting, and `esc` to return. `/login`, `/logout`, `/model`, and `/agents` are direct shortcuts. This is the easiest path for a user already in the TUI.
+1. **Interactive TUI**: `/config` opens a category browser (Models, Appearance, Agent behavior, Context & limits, Tools, Providers). Type to filter, press `enter` to open a category, press `space` to toggle an on/off setting, and `esc` to return. `/login`, `/logout`, `/model`, and `/agents` are direct shortcuts. This is the easiest path for a user already in the TUI.
 2. **Command line**: `--provider`, `--model`, `--auth`, and `--reasoning` update the config file and become the future default. `rho credential-store` shows or sets the credential backend.
 3. **Direct file edit**: edit `~/.rho/config.toml` by hand. Group settings by purpose. Use this for settings the TUI does not expose, such as `[model.aliases]`, `[internal_agents]` overrides, `[prompt_templates]`, `[keybindings]`, `[providers.ollama].base_url`, and `[providers.custom.<name>].base_url`. Per-model context windows and reasoning lists live in `~/.rho/models.toml`, not `config.toml`.
 4. **Environment**: `RHO_CREDENTIAL_STORE=os|file` overrides the saved credential backend; `RHO_MODELS_PATH` selects a custom models file; `RHO_TRUST_PROJECT_AGENTS=1` and `RHO_TRUST_PROJECT_HOOKS=1` trust project agent definitions and hooks.
@@ -51,7 +51,7 @@ Use the read-only `rho` tool with action `config` to see the sanitized live conf
 ## Common tasks
 
 - **Set the default model or provider**: use `/model provider/model` in the TUI, or `rho --provider <provider> --model <model> --auth <auth>`. For the exact `--provider`/`--auth`/`--model` combination a provider expects, check the provider page.
-- **Change reasoning**: cycle `reasoning` (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) in `/config` under Models & reasoning, or set it in config. `reasoning` applies to the current session; `show_reasoning_output` and `zen_mode` apply immediately when changed through `/config`. Direct configuration-file edits take effect on the next startup.
+- **Change reasoning**: cycle `reasoning` (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) in `/config` under Models, or set it in config. `reasoning` applies to the current session. Change `show_reasoning_output`, `zen_mode`, and `theme` under Appearance; those apply immediately when changed through `/config`. Direct configuration-file edits take effect on the next startup.
 - **Manage credentials**: `/login [provider]` and `/logout [provider]`. The credential backend is `behavior.credential_store` (`os` or `file`). When unset, rho asks where to store secrets at first login.
 - **Model aliases**: define `[model.aliases]` in config and reference them with an `@` prefix, for example `model = "@deep"`. Alias values must be concrete models and cannot begin with `@`. Update the alias table in one place to change the model everywhere it is referenced.
 - **Per-model context window**: edit `~/.rho/models.toml` (not `config.toml`). Example: `[models."openai-codex/gpt-5.6-sol"]` with `usable_context_window = 272000` to cap, or a larger value to raise. Restart rho or switch models after editing.

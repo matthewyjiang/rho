@@ -16,10 +16,14 @@ pub(super) const AUTO_PERMISSION_MODE_CONFIG_STEPS: &[Step] = &[
     Step::Phase("auto_without_classifier_opens_model_picker"),
     Step::SubmitText("/config"),
     Step::WaitText {
+        text: "Config · saves automatically",
+        timeout: SETTLE,
+    },
+    Step::TypeText("agent"),
+    Step::WaitText {
         text: "Agent behavior",
         timeout: SETTLE,
     },
-    Step::Key(Key::Down),
     Step::Key(Key::Enter),
     Step::WaitText {
         text: "Config / Agent behavior",
@@ -53,7 +57,7 @@ pub(super) const AUTO_PERMISSION_MODE_CONFIG_STEPS: &[Step] = &[
     // Auto stays highlighted after cancel, so the detail line describes Auto
     // while Bypass remains the selected/runtime mode.
     Step::AssertText("selected"),
-    Step::AssertText("Classifier reviews writes and processes."),
+    Step::AssertText("Classifier reviews new files and processes"),
     Step::AssertText("Bypass ·"),
     Step::Phase("select_classifier_applies_auto"),
     // Cancel returns to the permission-mode list with Auto still highlighted.
@@ -76,7 +80,7 @@ pub(super) const AUTO_PERMISSION_MODE_CONFIG_STEPS: &[Step] = &[
     Step::AssertText("Auto"),
     Step::Key(Key::Esc),
     Step::WaitText {
-        text: "Models & reasoning",
+        text: "Appearance",
         timeout: SETTLE,
     },
     Step::WaitText {
@@ -428,20 +432,34 @@ pub(super) const OPEN_CONFIG_PICKER_STEPS: &[Step] = &[
     },
     Step::SubmitText("/config"),
     Step::WaitText {
-        text: "Models & reasoning",
+        text: "Appearance",
         timeout: SETTLE,
     },
+    Step::AssertText("Models"),
     Step::AssertText("Agent behavior"),
     Step::AssertText("Context & limits"),
     Step::AssertText("Tools"),
     Step::AssertText("Providers"),
-    Step::AssertText("Updates"),
     Step::Phase("open_models"),
     Step::Key(Key::Enter),
     Step::WaitText {
         text: "Conversation model",
         timeout: SETTLE,
     },
+    Step::AssertText("Reasoning"),
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "Appearance",
+        timeout: SETTLE,
+    },
+    Step::Phase("open_appearance"),
+    Step::Key(Key::Down),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "Theme",
+        timeout: SETTLE,
+    },
+    Step::AssertText("Zen mode"),
     Step::AssertText("Show reasoning output"),
     Step::Key(Key::Esc),
     Step::WaitText {
@@ -474,7 +492,7 @@ pub(super) const OPEN_CONFIG_PICKER_STEPS: &[Step] = &[
     },
     Step::Key(Key::Esc),
     Step::WaitText {
-        text: "Models & reasoning",
+        text: "Appearance",
         timeout: SETTLE,
     },
     Step::Phase("select_edit_tool"),
@@ -488,15 +506,20 @@ pub(super) const OPEN_CONFIG_PICKER_STEPS: &[Step] = &[
     Step::Key(Key::Down),
     Step::Key(Key::Enter),
     Step::WaitText {
-        text: "hashline",
+        text: "str_replace",
         timeout: SETTLE,
     },
-    Step::Key(Key::Down),
+    Step::TypeText("apply_patch"),
+    Step::WaitTextGone {
+        text: "str_replace",
+        timeout: SETTLE,
+    },
     Step::Key(Key::Enter),
     Step::WaitText {
-        text: "apply_patch",
+        text: "Config / Tools",
         timeout: SETTLE,
     },
+    Step::AssertText("apply_patch"),
     Step::Key(Key::Esc),
     Step::Key(Key::Esc),
     Step::ExitCommand,

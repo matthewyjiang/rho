@@ -10,11 +10,11 @@ use {
     },
 };
 pub(super) const MODELS_CATEGORY_VALUE: &str = "config_category:models";
+pub(super) const APPEARANCE_CATEGORY_VALUE: &str = "config_category:appearance";
 pub(super) const AGENT_CATEGORY_VALUE: &str = "config_category:agent";
 pub(super) const CONTEXT_CATEGORY_VALUE: &str = "config_category:context";
 pub(super) const TOOLS_CATEGORY_VALUE: &str = "config_category:tools";
 pub(super) const PROVIDERS_CATEGORY_VALUE: &str = "config_category:providers";
-pub(super) const UPDATES_CATEGORY_VALUE: &str = "config_category:updates";
 pub(super) const CONVERSATION_MODEL_VALUE: &str = "conversation_model";
 pub(super) const REFRESH_MODEL_LIST_VALUE: &str = "refresh_model_list";
 pub(super) const PROVIDER_LOGIN_VALUE: &str = "provider_login";
@@ -69,8 +69,18 @@ fn item(
     badge_text: Option<String>,
     value: &str,
 ) -> PickerItem {
+    sectioned_item(None, label, detail, badge_text, value)
+}
+
+fn sectioned_item(
+    section: Option<&str>,
+    label: &str,
+    detail: impl Into<String>,
+    badge_text: Option<String>,
+    value: &str,
+) -> PickerItem {
     PickerItem {
-        section: None,
+        section: section.map(str::to_string),
         label: label.into(),
         detail: Some(detail.into()),
         preview: None,
@@ -168,10 +178,16 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
         "Config · saves automatically",
         vec![
             item(
-                "Models & reasoning",
-                "Conversation model, reasoning level, reasoning output, zen mode, and theme.",
+                "Models",
+                "Conversation model and reasoning level.",
                 Some(info.model.clone()),
                 MODELS_CATEGORY_VALUE,
+            ),
+            item(
+                "Appearance",
+                "Theme, zen mode, reasoning output, and collapsed tool output lines.",
+                Some(theme_badge(config)),
+                APPEARANCE_CATEGORY_VALUE,
             ),
             item(
                 "Agent behavior",
@@ -181,7 +197,7 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
             ),
             item(
                 "Context & limits",
-                "Auto compact, compact threshold, compact target, output limits, and prompt history.",
+                "Auto compact, compact threshold, compact target, max output bytes, and prompt history.",
                 Some(if config.auto_compact {
                     format!("compacts at {}%", config.compact_threshold_percent)
                 } else {
@@ -197,18 +213,9 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
             ),
             item(
                 "Providers",
-                "Manage provider access and refresh cached model lists.",
+                "Provider login, logout, auth mode, refresh model lists, and startup update checks.",
                 None,
                 PROVIDERS_CATEGORY_VALUE,
-            ),
-            item(
-                "Updates",
-                "Check for Rho updates at startup.",
-                Some(format!(
-                    "startup checks {}",
-                    on_off(config.check_for_updates)
-                )),
-                UPDATES_CATEGORY_VALUE,
             ),
         ],
         PickerAction::Config,
@@ -261,6 +268,27 @@ pub(super) fn category_picker(
                     Some(info.reasoning.to_string()),
                     REASONING_VALUE,
                 ),
+            ];
+            if capabilities == rho_providers::model::ReasoningCapabilities::NotConfigurable {
+                items.retain(|item| item.value != REASONING_VALUE);
+            }
+            ("Config / Models", items)
+        }
+        APPEARANCE_CATEGORY_VALUE => (
+            "Config / Appearance",
+            vec![
+                item(
+                    "Theme",
+                    "Color theme for the interactive TUI. Enter opens a preview picker. Default matches the host terminal.",
+                    Some(theme_badge(config)),
+                    THEME_VALUE,
+                ),
+                item(
+                    "Zen mode",
+                    "Show only message text. Hides tool cards, reasoning, and the Thinking... placeholder. Keeps the activity rail. Space toggles.",
+                    Some(on_off(info.zen_mode)),
+                    ZEN_MODE_VALUE,
+                ),
                 item(
                     "Show reasoning output",
                     "Show model reasoning text in the TUI. Applies to the next turn. Space toggles.",
@@ -272,72 +300,69 @@ pub(super) fn category_picker(
                     SHOW_REASONING_OUTPUT_VALUE,
                 ),
                 item(
-                    "Zen mode",
-                    "Show only message text. Hides tool cards, reasoning, and the Thinking... placeholder. Keeps the activity rail. Space toggles.",
-                    Some(on_off(info.zen_mode)),
-                    ZEN_MODE_VALUE,
+                    "Max tool output lines",
+                    "Maximum collapsed tool output lines shown in the TUI.",
+                    Some(config.max_tool_output_lines.to_string()),
+                    MAX_TOOL_OUTPUT_LINES_VALUE,
                 ),
-                item(
-                    "Theme",
-                    "Color theme for the interactive TUI. Enter opens a preview picker. Default matches the host terminal.",
-                    Some(theme_badge(config)),
-                    THEME_VALUE,
-                ),
-            ];
-            if capabilities == rho_providers::model::ReasoningCapabilities::NotConfigurable {
-                items.retain(|item| item.value != REASONING_VALUE);
-            }
-            ("Config / Models & reasoning", items)
-        }
+            ],
+        ),
         AGENT_CATEGORY_VALUE => {
             let mut items = vec![
-                item(
+                sectioned_item(
+                    Some("Permissions"),
                     "Permission mode",
                     permission_mode_description(info.permission_mode),
                     Some(info.permission_mode.label().into()),
                     PERMISSION_MODE_VALUE,
                 ),
-                item(
+                sectioned_item(
+                    Some("Permissions"),
                     "Permission classifier model",
                     "Model used by Auto permission mode to review writes and processes. Enter opens a picker.",
                     Some(permission_classifier_model_badge(info)),
                     PERMISSION_CLASSIFIER_MODEL_VALUE,
                 ),
-                item(
-                    "Delegation",
-                    "Make agent tools available. Changes apply to the next session. Space toggles.",
-                    Some(on_off(config.enable_subagents)),
-                    ENABLE_SUBAGENTS_VALUE,
-                ),
-                item(
-                    "Advisor mode",
-                    "Let the agent ask an advisor model to review the session. Needs an advisor model; turning it on picks one. Space toggles.",
-                    Some(advisor_mode_badge(config, info)),
-                    ADVISOR_MODE_VALUE,
-                ),
-                item(
-                    "Advisor model",
-                    "Model used by the advisor tool. Enter opens a picker. Reasoning is set below when the model supports it.",
-                    Some(advisor_model_badge(info)),
-                    ADVISOR_MODEL_VALUE,
-                ),
             ];
-            if let Some((label, detail, badge_text)) = advisor_reasoning_row(info) {
-                items.push(item(
-                    &label,
-                    detail,
-                    Some(badge_text),
-                    ADVISOR_REASONING_VALUE,
-                ));
-            }
             if let Some((label, detail, badge_text)) = permission_classifier_reasoning_row(info) {
-                items.push(item(
+                items.push(sectioned_item(
+                    Some("Permissions"),
                     &label,
                     detail,
                     Some(badge_text),
                     PERMISSION_CLASSIFIER_REASONING_VALUE,
                 ));
             }
+            items.push(sectioned_item(
+                Some("Advisor"),
+                "Advisor mode",
+                "Let the agent ask an advisor model to review the session. Needs an advisor model; turning it on picks one. Space toggles.",
+                Some(advisor_mode_badge(config, info)),
+                ADVISOR_MODE_VALUE,
+            ));
+            items.push(sectioned_item(
+                Some("Advisor"),
+                "Advisor model",
+                "Model used by the advisor tool. Enter opens a picker. Reasoning is set below when the model supports it.",
+                Some(advisor_model_badge(info)),
+                ADVISOR_MODEL_VALUE,
+            ));
+            if let Some((label, detail, badge_text)) = advisor_reasoning_row(info) {
+                items.push(sectioned_item(
+                    Some("Advisor"),
+                    &label,
+                    detail,
+                    Some(badge_text),
+                    ADVISOR_REASONING_VALUE,
+                ));
+            }
+            items.push(sectioned_item(
+                Some("Subagents"),
+                "Delegation",
+                "Make agent tools available. Changes apply to the next session. Space toggles.",
+                Some(on_off(config.enable_subagents)),
+                ENABLE_SUBAGENTS_VALUE,
+            ));
             ("Config / Agent behavior", items)
         }
         CONTEXT_CATEGORY_VALUE => (
@@ -366,12 +391,6 @@ pub(super) fn category_picker(
                     "Maximum tool output retained in context. Changes apply to the next session.",
                     Some(config.max_output_bytes.to_string()),
                     MAX_OUTPUT_BYTES_VALUE,
-                ),
-                item(
-                    "Max tool output lines",
-                    "Maximum collapsed tool output lines shown in the TUI.",
-                    Some(config.max_tool_output_lines.to_string()),
-                    MAX_TOOL_OUTPUT_LINES_VALUE,
                 ),
                 item(
                     "Prompt history limit",
@@ -449,18 +468,14 @@ pub(super) fn category_picker(
                 Some("run now".into()),
                 REFRESH_MODEL_LIST_VALUE,
             ));
-            ("Config / Providers", items)
-        }
-
-        UPDATES_CATEGORY_VALUE => (
-            "Config / Updates",
-            vec![item(
+            items.push(item(
                 "Check for updates",
                 "Check GitHub releases at startup and show an update notice when available. Space toggles.",
                 Some(on_off(config.check_for_updates)),
                 CHECK_FOR_UPDATES_VALUE,
-            )],
-        ),
+            ));
+            ("Config / Providers", items)
+        }
         _ => return None,
     };
     Some(UiPicker::new(title, items, PickerAction::Config))
@@ -470,21 +485,21 @@ pub(super) fn is_category(value: &str) -> bool {
     matches!(
         value,
         MODELS_CATEGORY_VALUE
+            | APPEARANCE_CATEGORY_VALUE
             | AGENT_CATEGORY_VALUE
             | CONTEXT_CATEGORY_VALUE
             | TOOLS_CATEGORY_VALUE
             | PROVIDERS_CATEGORY_VALUE
-            | UPDATES_CATEGORY_VALUE
     )
 }
 
 pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
     match value {
-        CONVERSATION_MODEL_VALUE
-        | REASONING_VALUE
-        | SHOW_REASONING_OUTPUT_VALUE
+        CONVERSATION_MODEL_VALUE | REASONING_VALUE => Some(MODELS_CATEGORY_VALUE),
+        SHOW_REASONING_OUTPUT_VALUE
         | ZEN_MODE_VALUE
-        | THEME_VALUE => Some(MODELS_CATEGORY_VALUE),
+        | THEME_VALUE
+        | MAX_TOOL_OUTPUT_LINES_VALUE => Some(APPEARANCE_CATEGORY_VALUE),
         PERMISSION_MODE_VALUE
         | PERMISSION_CLASSIFIER_MODEL_VALUE
         | PERMISSION_CLASSIFIER_REASONING_VALUE
@@ -496,7 +511,6 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
         | COMPACT_THRESHOLD_PERCENT_VALUE
         | COMPACT_TARGET_PERCENT_VALUE
         | MAX_OUTPUT_BYTES_VALUE
-        | MAX_TOOL_OUTPUT_LINES_VALUE
         | PROMPT_HISTORY_LIMIT_VALUE
         | CLEAR_PROMPT_HISTORY_VALUE => Some(CONTEXT_CATEGORY_VALUE),
         INLINE_SHELL_VALUE | EDIT_TOOL_VALUE | WEB_SEARCH_VALUE | XAI_IMAGE_GENERATION_VALUE => {
@@ -505,8 +519,8 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
         PROVIDER_LOGIN_VALUE
         | PROVIDER_LOGOUT_VALUE
         | SWITCH_AUTH_MODE_VALUE
-        | REFRESH_MODEL_LIST_VALUE => Some(PROVIDERS_CATEGORY_VALUE),
-        CHECK_FOR_UPDATES_VALUE => Some(UPDATES_CATEGORY_VALUE),
+        | REFRESH_MODEL_LIST_VALUE
+        | CHECK_FOR_UPDATES_VALUE => Some(PROVIDERS_CATEGORY_VALUE),
         _ => None,
     }
 }

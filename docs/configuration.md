@@ -17,7 +17,8 @@ flowchart TD
 
 | Goal | Where |
 | --- | --- |
-| Provider, model, reasoning | `[model]` or `/model`, `/config` → **Models & reasoning** |
+| Provider, model, reasoning | `[model]` or `/model`, `/config` → **Models** |
+| Theme, zen, reasoning display | `[display]` or `/config` → **Appearance** |
 | Permission mode | `[behavior].permission_mode` or `/config` → **Agent behavior** |
 | Prompt templates | `~/.rho/prompts/` files or `[prompt_templates]` |
 | Web search | `[web_search]` or `/config` → **Tools** |
@@ -34,7 +35,7 @@ Unknown keys in `config.toml` are a load error so typos fail loudly. Values that
 
 ## TUI updates
 
-In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#commands) opens a category browser. **Models & reasoning** contains the conversation model, reasoning level, reasoning-output toggle, zen mode, and theme. **Agent behavior** contains permission mode, delegation, and advisor mode. **Context & limits** contains auto compaction and output limits. **Tools** contains the inline shell, edit tool, Web search settings, and xAI hosted image generation when the conversation provider is xAI. **Providers** contains login, logout, and model-list refresh actions. **Updates** contains the startup update check. Type in the category browser to find a category by any setting it contains, then press `enter` to open it. Press `esc` to return to the category browser.
+In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#commands) opens a category browser. **Models** contains the conversation model and reasoning level. **Appearance** contains the color theme, zen mode, reasoning-output toggle, and collapsed tool-output lines. **Agent behavior** contains permission mode, the Auto classifier, advisor mode, and delegation. **Context & limits** contains auto compaction, the max output-bytes limit, and prompt history. **Tools** contains the inline shell, edit tool, Web search settings, and xAI hosted image generation when the conversation provider is xAI. **Providers** contains login, logout, model-list refresh, and the startup update check. Type in the category browser to find a category by any setting it contains, then press `enter` to open it. Press `esc` to return to the category browser.
 
 Settings save as soon as they change. The `permission_mode` row applies the selected policy before the next turn. The `reasoning` row cycles through `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` and applies to the current session. The `show_reasoning_output`, `zen_mode`, and `theme` rows apply immediately, including during the current model turn. The `check_for_updates` row controls startup checks against GitHub releases. The `enable_subagents` row applies to the next session. The `edit_tool` row applies before the next turn; Auto also follows provider changes mid-session. The `advisor_mode` row applies before the next turn; turning it on without an advisor model opens the model picker first. The auto-compaction rows edit its threshold and target percentages. The `max_output_bytes` row saves for the next session.
 
@@ -107,7 +108,7 @@ Rho reads each model's available effort values from cached [models.dev](https://
 
 `zen_mode` hides tool cards, reasoning blocks, and the `Thinking...` placeholder so the transcript shows only message text. The live activity rail, subagent rows, and background-process rows stay visible so you can still see progress. It defaults to `false`. Changing it from `/config` applies immediately to the current transcript and live turn UI. Tools and reasoning still run; only their transcript display is suppressed.
 
-`theme` selects the interactive TUI color theme. The default is `terminal` (match the host palette). Built-in ids include `one-half-dark`, `one-half-light`, `monochrome-dark`, and `monochrome-light`. Custom schemes load from `~/.rho/themes/<id>.json` (or `$RHO_HOME/themes/`) in Windows Terminal color-scheme JSON form. Change it with `/theme` or `/config` → **Models & reasoning** → **Theme**. The picker previews live; Enter saves. Details: [Theme](/interactive-tui/theme).
+`theme` selects the interactive TUI color theme. The default is `terminal` (match the host palette). Built-in ids include `one-half-dark`, `one-half-light`, `monochrome-dark`, and `monochrome-light`. Custom schemes load from `~/.rho/themes/<id>.json` (or `$RHO_HOME/themes/`) in Windows Terminal color-scheme JSON form. Change it with `/theme` or `/config` → **Appearance** → **Theme**. The picker previews live; Enter saves. Details: [Theme](/interactive-tui/theme).
 
 ## Advisor mode
 
@@ -161,7 +162,7 @@ model = "@fast"
 
 The same syntax works with `rho --model @deep`, `/model @deep` in the interactive TUI, and `model: @deep` in [agent definition frontmatter](/subagents). Updating a model is then a one-line change to the alias table rather than an edit per file.
 
-Rho resolves aliases to concrete ids before any model-specific behavior, holds no opinion about which model a name should map to, and never rewrites your mapping. A concrete model id is always interpreted literally, even when an alias has the same name. The `/config` category browser shows the active mapping under **Models & reasoning**, and saving config preserves the `@deep` reference rather than its expansion while the selected concrete model still matches. Alias values must be concrete models and therefore cannot begin with `@`. Every provider-qualified alias is validated when configuration loads, including aliases that are not currently selected.
+Rho resolves aliases to concrete ids before any model-specific behavior, holds no opinion about which model a name should map to, and never rewrites your mapping. A concrete model id is always interpreted literally, even when an alias has the same name. The `/config` category browser shows the active mapping under **Models**, and saving config preserves the `@deep` reference rather than its expansion while the selected concrete model still matches. Alias values must be concrete models and therefore cannot begin with `@`. Every provider-qualified alias is validated when configuration loads, including aliases that are not currently selected.
 
 ## Local model metadata
 
@@ -282,7 +283,7 @@ Model metadata supplies the context window when available. Override a model's wi
 
 ## Update checks
 
-`check_for_updates` controls whether Rho checks the latest GitHub release at TUI startup. It defaults to `true`. When a newer version is available, the session header shows an update notice and points to `rho update`.
+`check_for_updates` controls whether Rho checks the latest GitHub release at TUI startup. It defaults to `true`. When a newer version is available, the session header shows an update notice and points to `rho update`. Change it from **Providers** in `/config`.
 
 ## RTK
 
