@@ -69,7 +69,7 @@ fn default_config_omits_ollama_endpoint_until_login_or_explicit_table() {
     let mut config = Config::default();
     config
         .providers
-        .set_endpoint("ollama", DEFAULT_OLLAMA_BASE_URL)
+        .set_endpoint("ollama", rho_providers::model::registry::OLLAMA_API_BASE)
         .unwrap();
     config.write_settings(path.clone()).unwrap();
     let saved = std::fs::read_to_string(&path).unwrap();
@@ -78,7 +78,10 @@ fn default_config_omits_ollama_endpoint_until_login_or_explicit_table() {
         "explicit Ollama login must persist the endpoint: {saved}"
     );
     assert!(
-        saved.contains(&format!("base_url = \"{DEFAULT_OLLAMA_BASE_URL}\"")),
+        saved.contains(&format!(
+            "base_url = \"{}\"",
+            rho_providers::model::registry::OLLAMA_API_BASE
+        )),
         "saved Ollama endpoint must keep the submitted URL: {saved}"
     );
 }

@@ -269,16 +269,7 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        if self.begin_store_choice_if_needed(StoreChoiceNext::Provider(provider.to_string())) {
-            return Ok(());
-        }
         let provider = provider.trim();
-        // Ollama needs its endpoint written before the optional key. The
-        // picker short-circuits a one-method group to `ollama-api-key`.
-        if matches!(provider, "ollama" | "ollama-api-key") {
-            self.start_ollama_onboarding();
-            return Ok(());
-        }
         // A fully keyless provider has no login target or group, so it would
         // otherwise fall through to the unsupported-provider error below.
         // `AuthenticationMethod::None` reports the same thing for targets that
@@ -295,11 +286,10 @@ impl App {
         //
         // Group lookup must not win over a unique provider target: the OpenAI
         // group also offers Codex, but `/login openai` means the OpenAI provider.
-        if let Some(target) = catalog::login_target_for_auth(provider) {
-            return self.start_login_for_target(target, terminal, agent).await;
-        }
-        if let Some(target) = catalog::login_target_for_provider(provider) {
-            return self.start_login_for_target(target, terminal, agent).await;
+        if let Some(target) = catalog::login_target_for_auth(provider)
+            .or_else(|| catalog::login_target_for_provider(provider))
+        {
+            return self.start_resolved_login(target, terminal, agent).await;
         }
         if let Some(group) = catalog::login_group(provider) {
             match super::provider_picker::login_group_next(group) {
@@ -313,7 +303,7 @@ impl App {
                         self.set_status("login failed");
                         return Ok(());
                     };
-                    return self.start_login_for_target(target, terminal, agent).await;
+                    return self.start_resolved_login(target, terminal, agent).await;
                 }
                 super::provider_picker::LoginGroupNext::MethodPicker(picker) => {
                     self.input_ui.set_composer(ComposerMode::Picker(*picker));
@@ -335,6 +325,26 @@ impl App {
         )));
         self.set_status("login failed");
         Ok(())
+    }
+
+    /// After a target is known: persist an endpoint if this host needs one,
+    /// then choose a credential store only when a key may be stored.
+    async fn start_resolved_login(
+        &mut self,
+        target: LoginTarget,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        if provider::provider_descriptor(&target.provider)
+            .is_some_and(|descriptor| descriptor.collects_login_endpoint())
+        {
+            self.start_endpoint_onboarding(&target.provider);
+            return Ok(());
+        }
+        if self.begin_store_choice_if_needed(StoreChoiceNext::Provider(target.provider.clone())) {
+            return Ok(());
+        }
+        self.start_login_for_target(target, terminal, agent).await
     }
 
     fn report_login_not_required(&mut self, provider: &str) {

@@ -15,10 +15,8 @@ use super::{
 pub(super) enum TextInputTarget {
     ConfigApiKey(ConfigTextKey),
     AgentField(AgentField),
-    /// One step of the custom-host `/login` wizard, which owns its own state.
+    /// One step of the `/login` endpoint wizard, which owns its own state.
     CustomHost(super::custom_provider_login::CustomHostStep),
-    /// Ollama API base collected before the optional key.
-    OllamaEndpoint,
 }
 
 /// Editable agent frontmatter fields that use the shared line editor.
@@ -84,13 +82,6 @@ impl TextInput {
         }
     }
 
-    pub(super) fn ollama_endpoint(value: impl Into<String>) -> Self {
-        Self {
-            target: TextInputTarget::OllamaEndpoint,
-            editor: LineEditor::new(value),
-        }
-    }
-
     pub(super) fn with_return_picker(mut self, picker: UiPicker) -> Self {
         self.editor = self.editor.with_return_picker(picker);
         self
@@ -109,14 +100,13 @@ impl TextInput {
             TextInputTarget::ConfigApiKey(key) => key.label(),
             TextInputTarget::AgentField(field) => field.label(),
             TextInputTarget::CustomHost(step) => step.label(),
-            TextInputTarget::OllamaEndpoint => "base URL",
         }
     }
 
     /// Footer verb for Enter. A wizard step advances; everything else saves.
     fn confirm_verb(&self) -> &'static str {
         match &self.target {
-            TextInputTarget::CustomHost(_) | TextInputTarget::OllamaEndpoint => "Enter continue",
+            TextInputTarget::CustomHost(_) => "Enter continue",
             TextInputTarget::ConfigApiKey(_) | TextInputTarget::AgentField(_) => "Enter save",
         }
     }

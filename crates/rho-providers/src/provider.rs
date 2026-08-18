@@ -501,6 +501,16 @@ impl ProviderDescriptor {
             && self.model_refresh == Some(ProviderModelRefreshKind::OpenAiCompatible)
     }
 
+    /// `/login` collects and persists this host's API base before the optional key.
+    ///
+    /// Built-in Ollama stores `[providers.ollama]`. Named custom hosts reuse
+    /// [`ProviderId::Ollama`] as a wire-family stand-in, so identity is the
+    /// provider name, not the id. Those hosts already collected a URL when
+    /// they were created.
+    pub fn collects_login_endpoint(self) -> bool {
+        self.name == "ollama"
+    }
+
     /// Auth mode used for unattended model discovery.
     ///
     /// Prefers a mode whose credentials are present so a keyed custom host is

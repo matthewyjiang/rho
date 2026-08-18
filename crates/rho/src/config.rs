@@ -38,7 +38,7 @@ pub(crate) use format::{CLAUDE_CLI_RUNTIME_KEY, RHO_RUNTIME_KEY};
 mod load;
 pub(crate) use load::ConfigWarning;
 
-pub(crate) use provider_config::{ProviderConfigs, DEFAULT_OLLAMA_BASE_URL};
+pub(crate) use provider_config::ProviderConfigs;
 
 /// Keep in lockstep with [`rho_tools::DEFAULT_MAX_OUTPUT_BYTES`].
 pub(crate) const DEFAULT_MAX_OUTPUT_BYTES: usize = rho_tools::DEFAULT_MAX_OUTPUT_BYTES;

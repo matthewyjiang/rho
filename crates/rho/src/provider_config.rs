@@ -5,8 +5,6 @@ use url::Url;
 
 use super::Config;
 
-pub(crate) const DEFAULT_OLLAMA_BASE_URL: &str = rho_providers::model::registry::OLLAMA_API_BASE;
-
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ProviderConfigs {
     /// Set only after `/login ollama` or an explicit `[providers.ollama]` table.

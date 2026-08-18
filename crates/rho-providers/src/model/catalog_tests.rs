@@ -203,6 +203,25 @@ fn provider_selection_keeps_current_auth_when_multiple_credentials_exist() {
     );
 }
 
+// Covers: switching to a keyless-capable host must use a stored key
+// Owner: model catalog
+#[test]
+fn provider_selection_prefers_stored_key_over_keyless_default() {
+    with_cached_provider_models("ollama", vec![provider_model("ollama", "llama3.2")], || {
+        let selection = resolve_model_selection_for_provider(
+            "ollama",
+            "llama3.2",
+            SelectionAuthContext {
+                current: Some("api-key"),
+                available: &["none".into(), "ollama-api-key".into()],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(selection.auth, "ollama-api-key");
+    });
+}
+
 #[test]
 fn provider_selection_ignores_current_auth_from_another_provider() {
     with_cached_provider_models(

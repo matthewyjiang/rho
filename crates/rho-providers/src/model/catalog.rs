@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 use crate::{
     model::provider_models,
-    provider::{self, ProviderAuthKind, ProviderModelSource},
+    provider::{self, ProviderAuthKind, ProviderModelSource, KEYLESS_AUTH},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -268,8 +268,9 @@ fn descriptor_default_model(provider: &str) -> Option<&'static str> {
 
 /// Auth context a caller resolves model selections against.
 ///
-/// Selection prefers `current` when the target provider offers it, then the
-/// first offered mode in `available`, then the provider default.
+/// Selection prefers `current` when the target provider offers it, then a
+/// stored key over a keyless mode, then the first offered mode in
+/// `available`, then the provider default.
 #[derive(Clone, Copy)]
 pub struct SelectionAuthContext<'a> {
     /// The auth mode active before the selection, if any.
@@ -288,21 +289,28 @@ impl SelectionAuthContext<'_> {
     }
 
     /// Selects the auth mode for a model selection from the given candidate
-    /// modes: current auth first, then the first credential-backed candidate,
+    /// modes: current auth first, then a stored key over [`crate::provider::KEYLESS_AUTH`],
     /// then the first candidate so callers without credential context keep the
     /// provider default.
-    fn select(&self, auth_modes: &[String]) -> String {
+    pub fn select(&self, auth_modes: &[String]) -> String {
         self.current
             .filter(|auth| auth_modes.iter().any(|mode| mode == auth))
             .map(str::to_string)
-            .or_else(|| {
-                auth_modes
-                    .iter()
-                    .find(|mode| self.available.contains(mode))
-                    .cloned()
-            })
+            .or_else(|| self.preferred_available(auth_modes))
             .or_else(|| auth_modes.first().cloned())
             .unwrap_or_else(|| "api-key".into())
+    }
+
+    fn preferred_available(&self, auth_modes: &[String]) -> Option<String> {
+        let matches: Vec<&String> = auth_modes
+            .iter()
+            .filter(|mode| self.available.contains(mode))
+            .collect();
+        matches
+            .iter()
+            .find(|mode| mode.as_str() != KEYLESS_AUTH)
+            .or_else(|| matches.first())
+            .map(|mode| (*mode).clone())
     }
 }
 
