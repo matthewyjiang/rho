@@ -356,7 +356,8 @@ pub(super) fn category_picker(
                     ADVISOR_REASONING_VALUE,
                 ));
             }
-            items.push(item(
+            items.push(sectioned_item(
+                Some("Subagents"),
                 "Delegation",
                 "Make agent tools available. Changes apply to the next session. Space toggles.",
                 Some(on_off(config.enable_subagents)),
