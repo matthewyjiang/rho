@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.44.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.43.1...rho-coding-agent-v1.44.0) (2026-08-18)
+
+
+### Features
+
+* **providers:** let /login add custom hosts that work with CLIProxyAPI ([#984](https://github.com/matthewyjiang/rho/issues/984)) ([5ec9a44](https://github.com/matthewyjiang/rho/commit/5ec9a445db5ff9c47cc814d2cbd282172c827a5a))
+* **tui:** keep up-arrow prompts across sessions ([#982](https://github.com/matthewyjiang/rho/issues/982)) ([5ec18c2](https://github.com/matthewyjiang/rho/commit/5ec18c240d49a4473203b10969b7e3445873a4e4))
+* **tui:** regroup the /config category browser ([#983](https://github.com/matthewyjiang/rho/issues/983)) ([bf0008b](https://github.com/matthewyjiang/rho/commit/bf0008bbef289d607f7fdaf2572de7005fd8efc8))
+
+
+### Performance Improvements
+
+* **tools:** cut tokens from web, process, and shell results ([#980](https://github.com/matthewyjiang/rho/issues/980)) ([c103ec0](https://github.com/matthewyjiang/rho/commit/c103ec0d6d46896f735074413369cc471c95a750))
+* **tui:** make rho attach scrolling smooth on long transcripts ([#985](https://github.com/matthewyjiang/rho/issues/985)) ([8e1e243](https://github.com/matthewyjiang/rho/commit/8e1e2430c026d9adc6b968dfed0ab89fcdc5513e))
+
 ## [1.43.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.43.0...rho-coding-agent-v1.43.1) (2026-08-17)
 
 
