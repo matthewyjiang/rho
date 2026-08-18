@@ -31,7 +31,7 @@ Names must be lowercase letters, digits, and hyphens, start with a letter, and m
 
 ## Authentication
 
-Custom hosts default to `auth = "none"` and send no `Authorization` header. If the host requires a key, store one with `/login <name>` or during onboarding. That selects `{name}-api-key` and sends `Authorization: Bearer <key>`. Secrets stay in the credential store, not in config.
+Custom hosts default to `auth = "none"` and send no `Authorization` header. If the host requires a key, store one with `/login <name>` or during onboarding. That selects `{name}-api-key` and sends `Authorization: Bearer <key>`. Restart keeps a keyed profile. Startup only promotes leftover `none` when a key is stored; it does not write `none` over a keyed profile. Secrets stay in the credential store, not in config.
 
 ```toml
 [model]

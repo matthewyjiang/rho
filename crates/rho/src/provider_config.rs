@@ -185,6 +185,31 @@ impl Config {
         Ok(())
     }
 
+    /// Promotes a custom host from `none` to `{name}-api-key` when a key is stored.
+    ///
+    /// Login can store the secret without rewriting `auth`. Keyless is the
+    /// default, so restart would keep sending no `Authorization` header unless
+    /// this runs. One-directional: a keyed profile is never written back to
+    /// `none`, including when the credential store errors or is empty.
+    pub(crate) fn promote_stored_custom_auth(
+        &mut self,
+        store: &dyn rho_providers::credentials::CredentialStore,
+    ) -> bool {
+        if self.auth != rho_providers::provider::KEYLESS_AUTH {
+            return false;
+        }
+        let Some(descriptor) = rho_providers::provider::interned_custom_provider(&self.provider)
+        else {
+            return false;
+        };
+        let selected = descriptor.discovery_auth(store).id;
+        if selected == rho_providers::provider::KEYLESS_AUTH {
+            return false;
+        }
+        self.auth = selected.to_string();
+        true
+    }
+
     /// Resolves the one API base shared by runtime requests, model discovery, and diagnostics.
     pub(crate) fn resolved_provider_endpoint(&self, provider: &str) -> Option<Url> {
         self.providers.endpoint(provider).cloned().or_else(|| {

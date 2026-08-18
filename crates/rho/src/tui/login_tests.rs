@@ -61,6 +61,63 @@ fn login_state_save_persists_reasoning_and_normalizes_auth_profile() {
     assert_eq!(saved.reasoning, ReasoningLevel::High);
 }
 
+// Covers: /login on an active custom host must persist `{name}-api-key`
+// Owner: login
+#[test]
+fn keyed_custom_login_persists_auth_mode_for_active_provider() {
+    let _lock = rho_providers::provider::custom_provider_registry_test_lock();
+    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
+
+    let mut app = test_app();
+    app.info.runtime.provider = "composer".into();
+    app.info.runtime.model = "composer-2.5".into();
+    app.info.runtime.auth = "none".into();
+    app.info
+        .services
+        .config_repository
+        .update(|config| {
+            config
+                .providers
+                .set_endpoint("composer", "http://127.0.0.1:8787/v1")
+                .unwrap();
+            config.provider = "composer".into();
+            config.model = "composer-2.5".into();
+            config.auth = "none".into();
+        })
+        .unwrap();
+
+    app.persist_login_auth(&LoginTarget {
+        provider: "composer".into(),
+        auth: "composer-api-key".into(),
+        label: "composer API key".into(),
+    });
+
+    assert_eq!(app.info.runtime.auth, "composer-api-key");
+    let saved = app.info.services.config_repository.load().unwrap();
+    assert_eq!(saved.auth, "composer-api-key");
+}
+
+// Covers: /login must not persist a foreign auth id next to the current provider
+// Owner: login
+#[test]
+fn keyed_custom_login_does_not_write_auth_for_a_different_runtime_provider() {
+    let mut app = test_app();
+    app.using_unavailable_provider = true;
+    let before = app.info.services.config_repository.load().unwrap();
+
+    app.persist_login_auth(&LoginTarget {
+        provider: "composer".into(),
+        auth: "composer-api-key".into(),
+        label: "composer API key".into(),
+    });
+
+    pretty_assertions::assert_eq!(app.info.runtime.provider.as_str(), "openai");
+    pretty_assertions::assert_eq!(app.info.runtime.auth.as_str(), "api-key");
+    let saved = app.info.services.config_repository.load().unwrap();
+    pretty_assertions::assert_eq!(saved.provider, before.provider);
+    pretty_assertions::assert_eq!(saved.auth, before.auth);
+}
+
 #[test]
 fn refreshed_login_capabilities_reject_explicit_and_normalize_persisted_reasoning() {
     let cache = tempfile::tempdir().unwrap();
