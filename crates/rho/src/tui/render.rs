@@ -6,6 +6,7 @@ pub(super) use entry_render::{
 
 use super::{
     changelog_command::changelog_lines,
+    composer_chrome::wrap_footer_parts,
     feed_image::{reserve_entry_image_rows, reserve_markdown_image_rows},
     first_run::SetupState,
     info_command::runtime_info_lines,
@@ -59,13 +60,9 @@ fn push_pad_spaces(buf: &mut String, width: usize) {
 
 /// Rows the inline list picker spends on its own chrome, matching what
 /// `list_picker_lines` emits around the item rows.
-fn list_picker_chrome_rows(picker: &UiPicker, width: usize) -> usize {
+fn list_picker_chrome_rows(picker: &UiPicker, footer_rows: usize) -> usize {
     // filter + blank + count + blank + footer lines, plus detail + blank when shown.
-    4 + list_picker_footer_row_count(picker, width) + if picker.has_item_details() { 2 } else { 0 }
-}
-
-fn list_picker_footer_row_count(picker: &UiPicker, width: usize) -> usize {
-    picker.list_footer_lines(width).len().max(1)
+    4 + footer_rows.max(1) + if picker.has_item_details() { 2 } else { 0 }
 }
 
 /// Item rows a picker can list in a `viewport_height` row terminal.
@@ -73,13 +70,13 @@ fn list_picker_footer_row_count(picker: &UiPicker, width: usize) -> usize {
 /// The list grows with the terminal instead of staying at the number that fits
 /// the default height fallback, so a tall window shows a long model or session
 /// list without scrolling.
-pub(super) fn picker_visible_item_cap(
+fn picker_visible_item_cap(
     picker: &UiPicker,
-    width: usize,
     viewport_height: usize,
+    footer_rows: usize,
 ) -> usize {
     viewport_height
-        .saturating_sub(list_picker_chrome_rows(picker, width))
+        .saturating_sub(list_picker_chrome_rows(picker, footer_rows))
         .saturating_sub(PICKER_RESERVED_FEED_ROWS)
         .max(1)
 }
@@ -152,7 +149,9 @@ fn list_picker_lines(
     width: usize,
     viewport_height: usize,
 ) -> Vec<Line<'static>> {
-    let item_cap = picker_visible_item_cap(picker, width, viewport_height);
+    let footer_text = list_picker_footer_text(picker, width);
+    let footer_lines = list_picker_footer_lines(&footer_text, width);
+    let item_cap = picker_visible_item_cap(picker, viewport_height, footer_text.len());
     let matching_indices = picker.matching_indices();
     let mut lines = Vec::with_capacity(item_cap + 7);
     lines.push(picker_filter_line(picker, width));
@@ -166,7 +165,7 @@ fn list_picker_lines(
             LineFill::Natural,
         ));
         lines.push(Line::raw(""));
-        lines.extend(list_picker_footer_lines(picker, width));
+        lines.extend(footer_lines);
         return lines;
     }
 
@@ -217,17 +216,31 @@ fn list_picker_lines(
         lines.push(styled_line(detail, width, Theme::dim(), LineFill::Natural));
         lines.push(Line::raw(""));
     }
-    lines.extend(list_picker_footer_lines(picker, width));
+    lines.extend(footer_lines);
     lines
 }
 
-fn list_picker_footer_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>> {
-    picker
-        .list_footer_lines(width)
+fn list_picker_footer_text(picker: &UiPicker, width: usize) -> Vec<String> {
+    let parts = picker.list_footer_parts();
+    let inner_width = width.saturating_sub(2);
+    wrap_footer_parts(parts.iter().map(String::as_str), inner_width)
         .into_iter()
         .map(|line| {
+            if width > 2 {
+                format!("  {line}")
+            } else {
+                line
+            }
+        })
+        .collect()
+}
+
+fn list_picker_footer_lines(footer_text: &[String], width: usize) -> Vec<Line<'static>> {
+    footer_text
+        .iter()
+        .map(|line| {
             styled_line(
-                truncate_one_line(&line, width),
+                truncate_one_line(line, width),
                 width,
                 Theme::dim(),
                 LineFill::Natural,

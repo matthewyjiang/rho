@@ -407,11 +407,31 @@ fn picker_reserves_wrapped_footer_rows() {
         },
     );
 
-    let item_rows = picker_lines(&picker, 80, 18)
+    let lines = picker_lines(&picker, 80, 18);
+    let item_rows = lines
         .iter()
         .filter(|line| line_text(line).contains("model-"))
         .count();
+    let footer: Vec<String> = lines
+        .iter()
+        .map(line_text)
+        .filter(|text| {
+            text.contains("Type to search")
+                || text.contains("Enter select")
+                || text.contains("Ctrl+P")
+                || text.contains("Tab complete")
+                || text.contains("Esc cancel")
+        })
+        .collect();
     assert_eq!(item_rows, 7);
+    assert_eq!(
+        footer,
+        vec![
+            "  select model · Type to search · Enter select · Ctrl+P pin/unpin".to_string(),
+            "  Ctrl+O all/pinned · Tab complete · Esc cancel".to_string(),
+        ]
+    );
+    assert!(footer.iter().all(|line| !line.contains('…')));
 }
 
 // Covers: side gutters must not extend link underlines past the URL text.

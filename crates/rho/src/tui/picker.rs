@@ -560,17 +560,10 @@ impl UiPicker {
     }
 
     /// Inline list footer: title plus shared action hints and search cue.
-    ///
-    /// Whole hint segments wrap onto extra lines instead of clipping mid-bind.
-    pub(super) fn list_footer_lines(&self, width: usize) -> Vec<String> {
-        let action_parts = self.action_footer_parts();
-        let mut parts = vec![self.title.as_str(), "Type to search"];
-        parts.extend(action_parts.iter().map(std::string::String::as_str));
-        let inner_width = width.saturating_sub(2);
-        super::composer_chrome::wrap_footer_parts(parts, inner_width)
-            .into_iter()
-            .map(|line| if width > 2 { format!("  {line}") } else { line })
-            .collect()
+    pub(super) fn list_footer_parts(&self) -> Vec<String> {
+        let mut parts = vec![self.title.clone(), "Type to search".into()];
+        parts.extend(self.action_footer_parts());
+        parts
     }
 
     fn escape_verb(&self) -> &'static str {

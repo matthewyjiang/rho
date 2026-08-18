@@ -91,26 +91,6 @@ fn empty_match_message_distinguishes_invalid_regex() {
     assert_eq!(picker.empty_match_message(), "invalid regex");
 }
 
-// Covers: a narrow inline list footer must wrap whole binds, not clip mid-hint.
-// Owner: tui picker footer layout
-#[test]
-fn list_footer_lines_wrap_whole_key_hints() {
-    let picker = UiPicker::new("select model", vec![item("m")], PickerAction::SelectModel)
-        .with_key_hints(PickerKeyHints {
-            pin_toggle: Some("Ctrl+P".into()),
-            scope_toggle: Some("Ctrl+O".into()),
-            ..Default::default()
-        });
-
-    assert_eq!(
-        picker.list_footer_lines(51),
-        vec![
-            "  select model · Type to search · Enter select".to_string(),
-            "  Ctrl+P pin/unpin · Ctrl+O all/pinned · Esc cancel".to_string(),
-        ]
-    );
-}
-
 // Covers: dismiss-only pickers keep a single Enter/Esc close hint.
 // Owner: tui picker policy
 #[test]

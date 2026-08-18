@@ -23,11 +23,10 @@ pub(super) enum ComposerDividerSlot {
 
 /// Join non-empty footer segments with [`FOOTER_SEPARATOR`].
 pub(super) fn join_footer_parts<'a>(parts: impl IntoIterator<Item = &'a str>) -> String {
-    parts
+    wrap_footer_parts(parts, usize::MAX)
         .into_iter()
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join(FOOTER_SEPARATOR)
+        .next()
+        .unwrap_or_default()
 }
 
 /// Pack footer segments onto as few lines as possible without splitting one.

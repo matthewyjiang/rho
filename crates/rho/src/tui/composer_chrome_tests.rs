@@ -37,4 +37,8 @@ fn wrap_footer_parts_keeps_segments_whole() {
         wrap_footer_parts(["", "Enter select", "", "Esc cancel"], 80),
         vec!["Enter select · Esc cancel".to_string()]
     );
+    assert_eq!(
+        wrap_footer_parts(["Ctrl+O all/pinned"], 8),
+        vec!["Ctrl+O all/pinned".to_string()]
+    );
 }
