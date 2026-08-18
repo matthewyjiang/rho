@@ -560,15 +560,10 @@ impl UiPicker {
     }
 
     /// Inline list footer: title plus shared action hints and search cue.
-    pub(super) fn list_footer_text(&self) -> String {
-        let mut parts = vec![self.title.as_str(), "Type to search"];
-        let action_parts = self.action_footer_parts();
-        let owned = action_parts
-            .iter()
-            .map(std::string::String::as_str)
-            .collect::<Vec<_>>();
-        parts.extend(owned);
-        format!("  {}", super::composer_chrome::join_footer_parts(parts))
+    pub(super) fn list_footer_parts(&self) -> Vec<String> {
+        let mut parts = vec![self.title.clone(), "Type to search".into()];
+        parts.extend(self.action_footer_parts());
+        parts
     }
 
     fn escape_verb(&self) -> &'static str {

@@ -380,6 +380,60 @@ fn picker_lists_more_items_on_a_taller_viewport() {
     assert_eq!(item_rows(4), 1);
 }
 
+// Covers: wrapped key-hint rows must reduce the item viewport so the extra
+// footer line is reserved instead of clipping the last bind.
+// Owner: pure unit (picker line generation)
+#[test]
+fn picker_reserves_wrapped_footer_rows() {
+    use crate::tui::PickerKeyHints;
+
+    let items = (0..20)
+        .map(|index| PickerItem {
+            section: None,
+            label: format!("model-{index}"),
+            detail: None,
+            preview: None,
+            badge: None,
+            value: format!("model-{index}"),
+            selection_verb: None,
+        })
+        .collect();
+    let picker = UiPicker::new("select model", items, PickerAction::SelectModel).with_key_hints(
+        PickerKeyHints {
+            pin_toggle: Some("Ctrl+P".into()),
+            scope_toggle: Some("Ctrl+O".into()),
+            tab_complete: true,
+            ..Default::default()
+        },
+    );
+
+    let lines = picker_lines(&picker, 80, 18);
+    let item_rows = lines
+        .iter()
+        .filter(|line| line_text(line).contains("model-"))
+        .count();
+    let footer: Vec<String> = lines
+        .iter()
+        .map(line_text)
+        .filter(|text| {
+            text.contains("Type to search")
+                || text.contains("Enter select")
+                || text.contains("Ctrl+P")
+                || text.contains("Tab complete")
+                || text.contains("Esc cancel")
+        })
+        .collect();
+    assert_eq!(item_rows, 7);
+    assert_eq!(
+        footer,
+        vec![
+            "  select model · Type to search · Enter select · Ctrl+P pin/unpin".to_string(),
+            "  Ctrl+O all/pinned · Tab complete · Esc cancel".to_string(),
+        ]
+    );
+    assert!(footer.iter().all(|line| !line.contains('…')));
+}
+
 // Covers: side gutters must not extend link underlines past the URL text.
 // Owner: pure TUI layout policy.
 #[test]
