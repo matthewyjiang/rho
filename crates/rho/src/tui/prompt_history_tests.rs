@@ -27,6 +27,7 @@ fn lowering_limit_below_stored_count_confirms() {
     store.append("two", 10).unwrap();
 
     app.propose_prompt_history_limit(1).unwrap();
+    app.settle_prompt_history();
 
     assert!(matches!(
         app.input_ui.composer(),
@@ -47,6 +48,7 @@ fn confirmed_lower_limit_trims_store() {
 
     app.submit_prompt_history_limit_choice("confirm", 1)
         .unwrap();
+    app.settle_prompt_history();
 
     let store = store_for(&app);
     assert_eq!(store.load_tail(10).unwrap(), vec!["three".to_string()]);
@@ -63,6 +65,7 @@ fn cancelled_lower_limit_leaves_store() {
     store.append("two", 10).unwrap();
 
     app.submit_prompt_history_limit_choice("cancel", 1).unwrap();
+    app.settle_prompt_history();
 
     let store = store_for(&app);
     assert_eq!(
@@ -81,6 +84,7 @@ fn clear_confirms_then_wipes() {
     app.push_input_history("local");
 
     app.prompt_clear_prompt_history().unwrap();
+    app.settle_prompt_history();
     assert!(matches!(
         app.input_ui.composer(),
         ComposerMode::InlineChoice(modal)
@@ -88,6 +92,7 @@ fn clear_confirms_then_wipes() {
     ));
 
     app.submit_clear_prompt_history_choice("confirm").unwrap();
+    app.settle_prompt_history();
     assert!(app.input_ui.history().is_empty());
     let store = store_for(&app);
     assert!(store.load_tail(10).unwrap().is_empty());
@@ -100,6 +105,7 @@ fn oversized_prompt_stays_in_ring_only() {
     let (_directory, mut app) = app_with_store();
     let oversized = "a".repeat(MAX_PERSISTED_PROMPT_BYTES + 1);
     app.push_input_history(&oversized);
+    app.settle_prompt_history();
     assert_eq!(app.input_ui.history(), &[oversized]);
     assert!(store_for(&app).load_tail(10).unwrap().is_empty());
 }
@@ -138,9 +144,11 @@ fn count_and_clear_do_not_create_missing_store() {
     app.prompt_history.set_store_path(path.clone());
 
     app.prompt_clear_prompt_history().unwrap();
+    app.settle_prompt_history();
     assert!(!path.exists());
 
     app.propose_prompt_history_limit(10).unwrap();
+    app.settle_prompt_history();
     assert!(!path.exists());
 }
 
@@ -151,6 +159,7 @@ fn zero_limit_does_not_persist_appends() {
     let (_directory, mut app) = app_with_store();
     app.prompt_history.set_limit(0);
     app.push_input_history("hello");
+    app.settle_prompt_history();
     assert_eq!(app.input_ui.history(), &["hello".to_string()]);
     assert!(store_for(&app).load_tail(10).unwrap().is_empty());
 }
@@ -164,7 +173,9 @@ fn enabling_after_zero_persists_later_appends() {
     app.push_input_history("skipped");
     app.submit_prompt_history_limit_choice("confirm", 10)
         .unwrap();
+    app.settle_prompt_history();
     app.push_input_history("kept");
+    app.settle_prompt_history();
 
     assert_eq!(
         store_for(&app).load_tail(10).unwrap(),
@@ -179,9 +190,20 @@ fn clear_before_load_does_not_reseed() {
     let (_directory, mut app) = app_with_store();
     store_for(&app).append("old", 10).unwrap();
     app.submit_clear_prompt_history_choice("confirm").unwrap();
+    app.settle_prompt_history();
     assert!(app.input_ui.history().is_empty());
 
     assert!(!app.apply_loaded_prompt_history_seed(vec!["old".into()]));
     assert!(app.input_ui.history().is_empty());
     assert!(store_for(&app).load_tail(10).unwrap().is_empty());
+}
+
+// Covers: lowering the cap before the startup seed lands keeps the newest N.
+// Owner: tui prompt-history load
+#[test]
+fn lower_limit_before_load_truncates_seed() {
+    let mut app = test_app();
+    app.prompt_history.set_limit(1);
+    assert!(app.apply_loaded_prompt_history_seed(vec!["one".into(), "two".into(), "three".into()]));
+    assert_eq!(app.input_ui.history(), &["three".to_string()]);
 }

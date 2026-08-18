@@ -1,6 +1,9 @@
-//! Shared composer prompt history: one store handle, one mutation path.
+//! Shared composer prompt history: one owner, one writer thread.
 
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    sync::mpsc::{self, Receiver, Sender},
+};
 
 use futures_util::FutureExt;
 
@@ -15,22 +18,53 @@ const MAX_PERSISTED_PROMPT_BYTES: usize = 10 * 1024;
 const CONFIRM_VALUE: &str = "confirm";
 const CANCEL_VALUE: &str = "cancel";
 
+enum StoreOp {
+    Append {
+        text: String,
+        max_entries: usize,
+    },
+    Count(Sender<StoreReply>),
+    Clear(Sender<StoreReply>),
+    Enforce {
+        max_entries: usize,
+        reply: Sender<StoreReply>,
+    },
+    SetPath(Option<PathBuf>),
+    Flush(Sender<()>),
+}
+
+enum StoreReply {
+    Count(Result<usize, PromptHistoryError>),
+    Done(Result<(), PromptHistoryError>),
+}
+
+enum FollowUp {
+    ProposeLimit { new_limit: usize },
+    FinishLimit { new_limit: usize },
+    PromptClear,
+    FinishClear,
+}
+
 pub(in crate::tui) struct PromptHistory {
-    store: Option<PromptHistoryStore>,
     store_path: Option<PathBuf>,
     limit: usize,
     pending_load: Option<PromptHistoryLoadHandle>,
     ring_invalidated: bool,
+    tx: Sender<StoreOp>,
+    pending_reply: Option<Receiver<StoreReply>>,
+    follow_up: Option<FollowUp>,
 }
 
 impl PromptHistory {
     pub(in crate::tui) fn new(limit: usize, pending_load: Option<PromptHistoryLoadHandle>) -> Self {
         Self {
-            store: None,
             store_path: None,
             limit,
             pending_load,
             ring_invalidated: false,
+            tx: spawn_writer(None),
+            pending_reply: None,
+            follow_up: None,
         }
     }
 
@@ -43,7 +77,7 @@ impl PromptHistory {
     }
 
     pub(in crate::tui) fn load_pending(&self) -> bool {
-        self.pending_load.is_some()
+        self.pending_load.is_some() || self.pending_reply.is_some()
     }
 
     pub(in crate::tui) fn load_finished(&self) -> bool {
@@ -56,38 +90,56 @@ impl PromptHistory {
         if self.limit == 0 || text.len() > MAX_PERSISTED_PROMPT_BYTES {
             return;
         }
-        let limit = self.limit;
-        if let Err(error) = self
-            .ensure_store()
-            .and_then(|store| store.append(text, limit))
+        if self
+            .tx
+            .send(StoreOp::Append {
+                text: text.to_string(),
+                max_entries: self.limit,
+            })
+            .is_err()
         {
-            tracing::warn!(%error, "failed to append prompt history");
+            tracing::warn!("prompt history writer is gone");
         }
     }
 
-    pub(in crate::tui) fn clear(&mut self) -> Result<(), PromptHistoryError> {
+    fn request_count(&mut self) -> bool {
+        self.request_reply(StoreOp::Count)
+    }
+
+    fn request_clear(&mut self) -> bool {
         self.ring_invalidated = true;
-        match self.store_if_present()? {
-            Some(store) => store.clear(),
-            None => Ok(()),
-        }
+        self.request_reply(StoreOp::Clear)
     }
 
-    pub(in crate::tui) fn count(&mut self) -> Result<usize, PromptHistoryError> {
-        match self.store_if_present()? {
-            Some(store) => store.count(),
-            None => Ok(0),
-        }
+    fn request_enforce(&mut self, max_entries: usize) -> bool {
+        self.request_reply(|reply| StoreOp::Enforce { max_entries, reply })
     }
 
-    pub(in crate::tui) fn enforce_limit(
-        &mut self,
-        max_entries: usize,
-    ) -> Result<(), PromptHistoryError> {
-        self.ring_invalidated = true;
-        match self.store_if_present()? {
-            Some(store) => store.enforce_limit(max_entries),
-            None => Ok(()),
+    fn request_reply(&mut self, op: impl FnOnce(Sender<StoreReply>) -> StoreOp) -> bool {
+        if self.pending_reply.is_some() {
+            return false;
+        }
+        let (reply_tx, reply_rx) = mpsc::channel();
+        if self.tx.send(op(reply_tx)).is_err() {
+            tracing::warn!("prompt history writer is gone");
+            return false;
+        }
+        self.pending_reply = Some(reply_rx);
+        true
+    }
+
+    fn take_ready_reply(&mut self) -> Option<StoreReply> {
+        let rx = self.pending_reply.as_ref()?;
+        match rx.try_recv() {
+            Ok(reply) => {
+                self.pending_reply = None;
+                Some(reply)
+            }
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.pending_reply = None;
+                Some(StoreReply::Done(Err(PromptHistoryError::DataDirectory)))
+            }
         }
     }
 
@@ -98,61 +150,121 @@ impl PromptHistory {
         }
         let handle = self.pending_load.take()?;
         match handle.now_or_never() {
-            Some(Ok(Some((store, tail)))) => {
-                if self.store.is_none() {
-                    self.store = Some(store);
-                }
-                self.seed_from_load(tail)
-            }
+            Some(Ok(Some((_store, tail)))) => self.seed_from_load(tail),
             _ => None,
         }
     }
 
-    fn seed_from_load(&self, tail: Vec<String>) -> Option<Vec<String>> {
+    fn seed_from_load(&self, mut tail: Vec<String>) -> Option<Vec<String>> {
         if self.ring_invalidated {
-            None
-        } else {
-            Some(tail)
+            return None;
         }
-    }
-
-    fn ensure_store(&mut self) -> Result<&PromptHistoryStore, PromptHistoryError> {
-        if self.store.is_none() {
-            self.store = Some(self.open_store()?);
+        if self.limit > 0 && tail.len() > self.limit {
+            tail = tail.split_off(tail.len() - self.limit);
         }
-        Ok(self.store.as_ref().expect("store just inserted"))
-    }
-
-    fn store_if_present(&mut self) -> Result<Option<&PromptHistoryStore>, PromptHistoryError> {
-        if self.store.is_none() {
-            self.store = self.open_existing_store()?;
-        }
-        Ok(self.store.as_ref())
-    }
-
-    fn open_store(&self) -> Result<PromptHistoryStore, PromptHistoryError> {
-        match &self.store_path {
-            Some(path) => PromptHistoryStore::open_path(path),
-            None => PromptHistoryStore::at_default_path(),
-        }
-    }
-
-    fn open_existing_store(&self) -> Result<Option<PromptHistoryStore>, PromptHistoryError> {
-        match &self.store_path {
-            Some(path) => PromptHistoryStore::open_path_if_exists(path),
-            None => PromptHistoryStore::at_default_path_if_exists(),
-        }
+        Some(tail)
     }
 
     #[cfg(test)]
     pub(in crate::tui) fn set_store_path(&mut self, path: PathBuf) {
-        self.store = None;
-        self.store_path = Some(path);
+        self.store_path = Some(path.clone());
+        let _ = self.tx.send(StoreOp::SetPath(Some(path)));
     }
 
     #[cfg(test)]
     pub(in crate::tui) fn store_path(&self) -> Option<&std::path::Path> {
         self.store_path.as_deref()
+    }
+
+    #[cfg(test)]
+    pub(in crate::tui) fn flush(&mut self) {
+        let (tx, rx) = mpsc::channel();
+        if self.tx.send(StoreOp::Flush(tx)).is_ok() {
+            let _ = rx.recv();
+        }
+    }
+}
+
+fn spawn_writer(path: Option<PathBuf>) -> Sender<StoreOp> {
+    let (tx, rx) = mpsc::channel();
+    let _ = std::thread::Builder::new()
+        .name("rho-prompt-history".into())
+        .spawn(move || writer_loop(rx, path));
+    tx
+}
+
+fn writer_loop(rx: Receiver<StoreOp>, path: Option<PathBuf>) {
+    let mut state = WriterState { store: None, path };
+    while let Ok(op) = rx.recv() {
+        match op {
+            StoreOp::Append { text, max_entries } => match state.ensure_create() {
+                Ok(store) => {
+                    if let Err(error) = store.append(&text, max_entries) {
+                        tracing::warn!(%error, "failed to append prompt history");
+                    }
+                }
+                Err(error) => tracing::warn!(%error, "failed to open prompt history"),
+            },
+            StoreOp::Count(reply) => {
+                let result = state
+                    .ensure_existing()
+                    .and_then(|store| store.map(PromptHistoryStore::count).transpose())
+                    .map(|count| count.unwrap_or(0));
+                let _ = reply.send(StoreReply::Count(result));
+            }
+            StoreOp::Clear(reply) => {
+                let result = state
+                    .ensure_existing()
+                    .and_then(|store| store.map(PromptHistoryStore::clear).transpose())
+                    .map(|_| ());
+                let _ = reply.send(StoreReply::Done(result));
+            }
+            StoreOp::Enforce { max_entries, reply } => {
+                let result = state
+                    .ensure_existing()
+                    .and_then(|store| {
+                        store
+                            .map(|store| store.enforce_limit(max_entries))
+                            .transpose()
+                    })
+                    .map(|_| ());
+                let _ = reply.send(StoreReply::Done(result));
+            }
+            StoreOp::SetPath(path) => {
+                state.store = None;
+                state.path = path;
+            }
+            StoreOp::Flush(reply) => {
+                let _ = reply.send(());
+            }
+        }
+    }
+}
+
+struct WriterState {
+    store: Option<PromptHistoryStore>,
+    path: Option<PathBuf>,
+}
+
+impl WriterState {
+    fn ensure_create(&mut self) -> Result<&PromptHistoryStore, PromptHistoryError> {
+        if self.store.is_none() {
+            self.store = Some(match &self.path {
+                Some(path) => PromptHistoryStore::open_path(path),
+                None => PromptHistoryStore::at_default_path(),
+            }?);
+        }
+        Ok(self.store.as_ref().expect("store just inserted"))
+    }
+
+    fn ensure_existing(&mut self) -> Result<Option<&PromptHistoryStore>, PromptHistoryError> {
+        if self.store.is_none() {
+            self.store = match &self.path {
+                Some(path) => PromptHistoryStore::open_path_if_exists(path)?,
+                None => PromptHistoryStore::at_default_path_if_exists()?,
+            };
+        }
+        Ok(self.store.as_ref())
     }
 }
 
@@ -168,13 +280,25 @@ struct PromptHistoryChoice {
 
 impl App {
     pub(super) fn poll_prompt_history(&mut self) -> bool {
-        match self.prompt_history.take_finished_seed() {
-            Some(tail) => {
-                let seeded = !tail.is_empty();
-                self.input_ui.seed_history_front(tail);
-                seeded
+        let mut changed = false;
+        if let Some(tail) = self.prompt_history.take_finished_seed() {
+            let seeded = !tail.is_empty();
+            self.input_ui.seed_history_front(tail);
+            changed |= seeded;
+        }
+        if let Some(reply) = self.prompt_history.take_ready_reply() {
+            changed |= self.handle_prompt_history_reply(reply);
+        }
+        changed
+    }
+
+    #[cfg(test)]
+    pub(super) fn settle_prompt_history(&mut self) {
+        for _ in 0..8 {
+            self.prompt_history.flush();
+            if !self.poll_prompt_history() && self.prompt_history.pending_reply.is_none() {
+                break;
             }
-            None => false,
         }
     }
 
@@ -202,73 +326,23 @@ impl App {
     }
 
     pub(super) fn propose_prompt_history_limit(&mut self, new_limit: usize) -> anyhow::Result<()> {
-        let stored = match self.prompt_history.count() {
-            Ok(count) => count,
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "could not read prompt history: {error}"
-                )));
-                self.open_main_config_picker_selected(config_picker::PROMPT_HISTORY_LIMIT_VALUE)?;
-                self.set_status("prompt history unavailable");
-                return Ok(());
-            }
-        };
-        if new_limit > 0 && stored > new_limit {
-            let dropped = stored - new_limit;
-            self.prompt_prompt_history_choice(PromptHistoryChoice {
-                title: format!("Keep only {new_limit} prompts?"),
-                description: format!(
-                    "This permanently deletes {dropped} older saved prompt{}.",
-                    if dropped == 1 { "" } else { "s" }
-                ),
-                confirm_label: "Delete older prompts",
-                confirm_detail: "This cannot be undone",
-                cancel_label: "Keep the current saved history",
-                pending: InlineChoicePending::PromptHistoryLimit { new_limit },
-                status: "confirm prompt history limit",
-            })
-        } else if new_limit == 0 && stored > 0 {
-            self.prompt_prompt_history_choice(PromptHistoryChoice {
-                title: "Stop saving prompt history?".into(),
-                description:
-                    "New prompts will not be stored. Existing history is kept until you clear it."
-                        .into(),
-                confirm_label: "Disable saving",
-                confirm_detail: "Existing prompts stay on disk",
-                cancel_label: "Keep saving prompts",
-                pending: InlineChoicePending::PromptHistoryLimit { new_limit },
-                status: "confirm disable prompt history",
-            })
-        } else {
-            self.apply_prompt_history_limit(new_limit)
+        if !self.prompt_history.request_count() {
+            self.set_status("prompt history is busy");
+            return Ok(());
         }
+        self.prompt_history.follow_up = Some(FollowUp::ProposeLimit { new_limit });
+        self.set_status("reading prompt history");
+        Ok(())
     }
 
     pub(super) fn prompt_clear_prompt_history(&mut self) -> anyhow::Result<()> {
-        let stored = match self.prompt_history.count() {
-            Ok(count) => count,
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "could not read prompt history: {error}"
-                )));
-                self.open_main_config_picker_selected(config_picker::CLEAR_PROMPT_HISTORY_VALUE)?;
-                self.set_status("prompt history unavailable");
-                return Ok(());
-            }
-        };
-        if stored == 0 && self.input_ui.history().is_empty() {
-            self.set_status("prompt history is already empty");
+        if !self.prompt_history.request_count() {
+            self.set_status("prompt history is busy");
             return Ok(());
         }
-        self.prompt_prompt_history_choice(PromptHistoryChoice {
-            title: "Clear prompt history?".into(),
-            description: "This permanently deletes every saved composer prompt, including this session's up-arrow recall.".into(),
-            confirm_label: "Clear history",
-            confirm_detail: "This cannot be undone",
-            cancel_label: "Keep the saved prompts",
-            pending: InlineChoicePending::ClearPromptHistory,
-            status: "confirm clear prompt history",
-        })
+        self.prompt_history.follow_up = Some(FollowUp::PromptClear);
+        self.set_status("reading prompt history");
+        Ok(())
     }
 
     fn prompt_prompt_history_choice(&mut self, prompt: PromptHistoryChoice) -> anyhow::Result<()> {
@@ -335,13 +409,17 @@ impl App {
         }
         self.prompt_history.set_limit(new_limit);
         if new_limit > 0 {
-            if let Err(error) = self.prompt_history.enforce_limit(new_limit) {
-                self.insert_entry(&Entry::Error(format!(
-                    "could not trim prompt history: {error}"
-                )));
-            }
             self.input_ui.truncate_history_to_newest(new_limit);
+            if self.prompt_history.request_enforce(new_limit) {
+                self.prompt_history.follow_up = Some(FollowUp::FinishLimit { new_limit });
+                self.set_status("updating prompt history");
+                return Ok(());
+            }
         }
+        self.finish_prompt_history_limit(new_limit)
+    }
+
+    fn finish_prompt_history_limit(&mut self, new_limit: usize) -> anyhow::Result<()> {
         self.open_main_config_picker_selected(config_picker::PROMPT_HISTORY_LIMIT_VALUE)?;
         self.set_status(if new_limit == 0 {
             "prompt history saving disabled".into()
@@ -353,17 +431,138 @@ impl App {
 
     fn clear_prompt_history(&mut self) -> anyhow::Result<()> {
         self.input_ui.clear_history();
-        if let Err(error) = self.prompt_history.clear() {
-            self.insert_entry(&Entry::Error(format!(
-                "could not clear prompt history: {error}"
-            )));
+        if !self.prompt_history.request_clear() {
+            self.insert_entry(&Entry::Error(
+                "could not clear prompt history: writer is busy".into(),
+            ));
             self.open_main_config_picker_selected(config_picker::CLEAR_PROMPT_HISTORY_VALUE)?;
             self.set_status("clear prompt history failed");
             return Ok(());
         }
-        self.open_main_config_picker_selected(config_picker::CLEAR_PROMPT_HISTORY_VALUE)?;
-        self.set_status("prompt history cleared");
+        self.prompt_history.follow_up = Some(FollowUp::FinishClear);
+        self.set_status("clearing prompt history");
         Ok(())
+    }
+
+    fn handle_prompt_history_reply(&mut self, reply: StoreReply) -> bool {
+        let follow_up = self.prompt_history.follow_up.take();
+        let result = match (follow_up, reply) {
+            (Some(FollowUp::ProposeLimit { new_limit }), StoreReply::Count(result)) => {
+                self.finish_propose_prompt_history_limit(new_limit, result)
+            }
+            (Some(FollowUp::PromptClear), StoreReply::Count(result)) => {
+                self.finish_prompt_clear_prompt_history(result)
+            }
+            (Some(FollowUp::FinishLimit { new_limit }), StoreReply::Done(result)) => {
+                if let Err(error) = result {
+                    self.insert_entry(&Entry::Error(format!(
+                        "could not trim prompt history: {error}"
+                    )));
+                }
+                self.finish_prompt_history_limit(new_limit)
+            }
+            (Some(FollowUp::FinishClear), StoreReply::Done(result)) => match result {
+                Ok(()) => {
+                    let done = self.open_main_config_picker_selected(
+                        config_picker::CLEAR_PROMPT_HISTORY_VALUE,
+                    );
+                    self.set_status("prompt history cleared");
+                    done
+                }
+                Err(error) => {
+                    self.insert_entry(&Entry::Error(format!(
+                        "could not clear prompt history: {error}"
+                    )));
+                    let done = self.open_main_config_picker_selected(
+                        config_picker::CLEAR_PROMPT_HISTORY_VALUE,
+                    );
+                    self.set_status("clear prompt history failed");
+                    done
+                }
+            },
+            _ => Ok(()),
+        };
+        if let Err(error) = result {
+            self.insert_entry(&Entry::Error(error.to_string()));
+        }
+        true
+    }
+
+    fn finish_propose_prompt_history_limit(
+        &mut self,
+        new_limit: usize,
+        stored: Result<usize, PromptHistoryError>,
+    ) -> anyhow::Result<()> {
+        let stored = match stored {
+            Ok(count) => count,
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not read prompt history: {error}"
+                )));
+                self.open_main_config_picker_selected(config_picker::PROMPT_HISTORY_LIMIT_VALUE)?;
+                self.set_status("prompt history unavailable");
+                return Ok(());
+            }
+        };
+        if new_limit > 0 && stored > new_limit {
+            let dropped = stored - new_limit;
+            self.prompt_prompt_history_choice(PromptHistoryChoice {
+                title: format!("Keep only {new_limit} prompts?"),
+                description: format!(
+                    "This permanently deletes {dropped} older saved prompt{}.",
+                    if dropped == 1 { "" } else { "s" }
+                ),
+                confirm_label: "Delete older prompts",
+                confirm_detail: "This cannot be undone",
+                cancel_label: "Keep the current saved history",
+                pending: InlineChoicePending::PromptHistoryLimit { new_limit },
+                status: "confirm prompt history limit",
+            })
+        } else if new_limit == 0 && stored > 0 {
+            self.prompt_prompt_history_choice(PromptHistoryChoice {
+                title: "Stop saving prompt history?".into(),
+                description:
+                    "New prompts will not be stored. Existing history is kept until you clear it."
+                        .into(),
+                confirm_label: "Disable saving",
+                confirm_detail: "Existing prompts stay on disk",
+                cancel_label: "Keep saving prompts",
+                pending: InlineChoicePending::PromptHistoryLimit { new_limit },
+                status: "confirm disable prompt history",
+            })
+        } else {
+            self.apply_prompt_history_limit(new_limit)
+        }
+    }
+
+    fn finish_prompt_clear_prompt_history(
+        &mut self,
+        stored: Result<usize, PromptHistoryError>,
+    ) -> anyhow::Result<()> {
+        let stored = match stored {
+            Ok(count) => count,
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not read prompt history: {error}"
+                )));
+                self.open_main_config_picker_selected(config_picker::CLEAR_PROMPT_HISTORY_VALUE)?;
+                self.set_status("prompt history unavailable");
+                return Ok(());
+            }
+        };
+        if stored == 0 && self.input_ui.history().is_empty() {
+            self.set_status("prompt history is already empty");
+            return Ok(());
+        }
+        self.prompt_prompt_history_choice(PromptHistoryChoice {
+            title: "Clear prompt history?".into(),
+            description: "This permanently deletes every saved composer prompt, including this session's up-arrow recall.".into(),
+            confirm_label: "Clear history",
+            confirm_detail: "This cannot be undone",
+            cancel_label: "Keep the saved prompts",
+            pending: InlineChoicePending::ClearPromptHistory,
+            status: "confirm clear prompt history",
+        })
     }
 }
 
