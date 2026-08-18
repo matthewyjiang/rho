@@ -39,6 +39,16 @@ Set a provider-specific API base in `~/.rho/config.toml`:
 base_url = "http://192.168.1.20:11434/v1"
 ```
 
+A mixed proxy or local catalog that is not listed under `ollama` on [models.dev](https://models.dev/) can borrow another provider for context windows, prices, and reasoning lists. Set `catalog` to that models.dev slug. Model ids must match the borrowed catalog:
+
+```toml
+[providers.ollama]
+base_url = "http://127.0.0.1:11434/v1"
+catalog = "llmgateway"
+```
+
+`llmgateway` is a mixed models.dev catalog with bare model ids. `openrouter` only matches if Ollama serves OpenRouter-style `owner/model` ids. Requests still go to the Ollama server; only metadata is borrowed. For one model that should use a different slug, set `catalog` on that row in `~/.rho/models.toml`.
+
 Keep the `/v1` suffix. Rho appends `/models` for discovery and `/chat/completions` for agent turns. The setting applies only to Ollama and is also used by `/doctor` when it checks the server. The URL must use `http` or `https` and cannot contain credentials, a query, or a fragment. Bearer tokens and custom headers for secured remote endpoints are not supported.
 
 ## Model compatibility

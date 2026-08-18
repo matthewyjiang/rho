@@ -207,7 +207,7 @@ fn custom_openai_compatible_loads_and_persists_catalog_slug() {
 // Covers: catalog is a models.dev slug, not a provider/model rematch
 // Owner: provider config
 #[test]
-fn custom_catalog_rejects_model_qualified_and_ollama_values() {
+fn custom_catalog_rejects_model_qualified_values() {
     let dir = tempfile::tempdir().unwrap();
     let slash = dir.path().join("slash.toml");
     std::fs::write(
@@ -240,22 +240,45 @@ fn custom_catalog_rejects_model_qualified_and_ollama_values() {
         format!("{comma_error:#}").contains("must not contain ','"),
         "{comma_error:#}"
     );
+}
 
-    let ollama = dir.path().join("ollama.toml");
+// Covers: built-in ollama accepts and persists the same catalog slug as custom hosts
+// Owner: provider config
+#[test]
+fn ollama_loads_and_persists_catalog_slug() {
+    let _lock = rho_providers::provider::custom_provider_registry_test_lock();
+    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
     std::fs::write(
-        &ollama,
+        &path,
         "[providers.ollama]\nbase_url = \"http://127.0.0.1:11434/v1\"\ncatalog = \"llmgateway\"\n",
     )
     .unwrap();
-    let ollama_error = Config::load_with_store(
-        ollama,
+
+    let config = Config::load_with_store(
+        path.clone(),
         &rho_providers::credentials::MemoryCredentialStore::default(),
     )
-    .unwrap_err();
-    assert!(
-        format!("{ollama_error:#}").contains("providers.ollama does not accept catalog"),
-        "{ollama_error:#}"
+    .unwrap();
+
+    assert_eq!(
+        config.providers.ollama.catalog.as_deref(),
+        Some("llmgateway")
     );
+    assert_eq!(
+        rho_providers::provider::interned_ollama_catalog_override()
+            .map(|descriptor| descriptor.metadata_upstream),
+        Some("llmgateway")
+    );
+
+    config.write_settings(path.clone()).unwrap();
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        saved.contains("catalog = \"llmgateway\""),
+        "saved config must keep catalog: {saved}"
+    );
+    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
 }
 
 // Covers: rewriting a custom host URL must not drop a configured catalog
@@ -276,4 +299,12 @@ fn set_endpoint_preserves_custom_catalog() {
         providers.custom["cliproxyapi"].catalog.as_deref(),
         Some("llmgateway")
     );
+
+    providers
+        .set_catalog("ollama", Some("openrouter".into()))
+        .unwrap();
+    providers
+        .set_endpoint("ollama", "http://127.0.0.1:11435/v1")
+        .unwrap();
+    assert_eq!(providers.ollama.catalog.as_deref(), Some("openrouter"));
 }

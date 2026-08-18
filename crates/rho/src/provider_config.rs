@@ -70,11 +70,19 @@ impl ProviderConfigs {
     }
 
     fn set_catalog(&mut self, provider: &str, catalog: Option<String>) -> anyhow::Result<()> {
-        let field = format!("providers.custom.{provider}.catalog");
+        let field = if provider == "ollama" {
+            format!("providers.{provider}.catalog")
+        } else {
+            format!("providers.custom.{provider}.catalog")
+        };
         let catalog = match catalog {
             Some(value) => Some(parse_provider_catalog(&field, &value)?),
             None => None,
         };
+        if provider == "ollama" {
+            self.ollama.catalog = catalog;
+            return Ok(());
+        }
         let Some(endpoint) = self.custom.get_mut(provider) else {
             anyhow::bail!("{field} requires a configured base_url");
         };
@@ -84,11 +92,11 @@ impl ProviderConfigs {
 
     pub(super) fn apply(&mut self, partial: PartialProviderConfigs) -> anyhow::Result<()> {
         if let Some(endpoint) = partial.ollama {
-            if endpoint.catalog.is_some() {
-                anyhow::bail!("providers.ollama does not accept catalog");
-            }
             if let Some(base_url) = endpoint.base_url {
                 self.set_endpoint("ollama", &base_url)?;
+            }
+            if endpoint.catalog.is_some() {
+                self.set_catalog("ollama", endpoint.catalog)?;
             }
         }
         if let Some(custom) = partial.custom {
@@ -113,11 +121,13 @@ impl ProviderConfigs {
 
     /// Interns config-defined hosts without changing the process-wide picker set.
     pub(crate) fn intern_names(&self) -> anyhow::Result<std::sync::Arc<[String]>> {
+        rho_providers::provider::install_ollama_catalog_override(self.ollama.catalog.as_deref());
         rho_providers::provider::intern_custom_openai_compatible_providers(self.specs())
     }
 
     /// Publishes config-defined hosts as the process-wide named provider set.
     pub(crate) fn activate(&self) -> anyhow::Result<()> {
+        rho_providers::provider::install_ollama_catalog_override(self.ollama.catalog.as_deref());
         rho_providers::provider::install_custom_openai_compatible_providers(self.specs())
     }
 
@@ -260,7 +270,7 @@ impl<'a> From<&'a ProviderConfigs> for PersistedProviderConfigs<'a> {
         Self {
             ollama: PersistedEndpointConfig {
                 base_url: config.ollama.base_url.as_str(),
-                catalog: None,
+                catalog: config.ollama.catalog.as_deref(),
             },
             custom: config
                 .custom

@@ -96,6 +96,8 @@ impl<'a> From<&'a str> for CustomProviderSpec<'a> {
 struct CustomRegistry {
     interned: BTreeMap<String, &'static ProviderDescriptor>,
     active: Vec<&'static ProviderDescriptor>,
+    /// Built-in Ollama when `[providers.ollama].catalog` borrows a models.dev slug.
+    ollama_catalog: Option<&'static ProviderDescriptor>,
 }
 
 fn registry() -> &'static RwLock<CustomRegistry> {
@@ -212,11 +214,46 @@ pub fn custom_provider_registry_test_lock() -> MutexGuard<'static, ()> {
     LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Drops the process-wide active set. Interned descriptors stay so parallel
-/// tests can still resolve unknown-effort policy for a previously interned name.
+/// Drops the process-wide active set and the Ollama catalog overlay. Interned
+/// custom descriptors stay so parallel tests can still resolve unknown-effort
+/// policy for a previously interned name.
 #[doc(hidden)]
 pub fn reset_custom_openai_compatible_providers_for_tests() {
-    lock_write().active.clear();
+    let mut registry = lock_write();
+    registry.active.clear();
+    registry.ollama_catalog = None;
+}
+
+/// Applies `[providers.ollama].catalog` without replacing the static Ollama row.
+///
+/// Built-in extract still walks [`PROVIDERS`]. Hydrate and rematch read this
+/// overlay so a borrowed slug writes and resolves like a custom host.
+pub fn install_ollama_catalog_override(catalog: Option<&str>) {
+    let catalog = catalog.map(str::trim).filter(|slug| !slug.is_empty());
+    let mut registry = lock_write();
+    let Some(slug) = catalog.filter(|slug| *slug != "ollama") else {
+        registry.ollama_catalog = None;
+        return;
+    };
+    if registry
+        .ollama_catalog
+        .is_some_and(|existing| existing.metadata_upstream == slug)
+    {
+        return;
+    }
+    let builtin = PROVIDERS
+        .iter()
+        .find(|descriptor| descriptor.name == "ollama")
+        .expect("ollama is a built-in provider");
+    registry.ollama_catalog = Some(Box::leak(Box::new(ProviderDescriptor {
+        metadata_upstream: leak_str(slug.to_string()),
+        ..*builtin
+    })));
+}
+
+#[doc(hidden)]
+pub fn interned_ollama_catalog_override() -> Option<&'static ProviderDescriptor> {
+    lock_read().ollama_catalog
 }
 
 pub fn custom_openai_compatible_providers() -> Vec<&'static ProviderDescriptor> {

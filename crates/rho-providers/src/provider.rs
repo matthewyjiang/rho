@@ -536,8 +536,9 @@ mod custom_openai_compatible;
 pub(crate) use custom_openai_compatible::interned_custom_providers;
 pub use custom_openai_compatible::{
     custom_provider_api_key_auth_id, custom_provider_registry_test_lock,
-    install_custom_openai_compatible_providers, intern_custom_openai_compatible_providers,
-    interned_custom_provider, is_custom_provider_api_key_auth,
+    install_custom_openai_compatible_providers, install_ollama_catalog_override,
+    intern_custom_openai_compatible_providers, interned_custom_provider,
+    interned_ollama_catalog_override, is_custom_provider_api_key_auth,
     reset_custom_openai_compatible_providers_for_tests, scope_custom_openai_compatible_providers,
     validate_custom_provider_name, CustomProviderSpec, CustomProviderThreadScope,
 };

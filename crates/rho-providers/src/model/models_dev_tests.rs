@@ -1659,6 +1659,48 @@ fn custom_provider_catalog_slug_borrows_upstream_metadata() {
     crate::provider::reset_custom_openai_compatible_providers_for_tests();
 }
 
+// Covers: [providers.ollama].catalog rematches the borrowed models.dev slug
+// Owner: models.dev catalog rematch
+#[test]
+fn ollama_catalog_slug_borrows_upstream_metadata() {
+    let _lock = crate::provider::custom_provider_registry_test_lock();
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+    crate::provider::install_ollama_catalog_override(Some("llmgateway"));
+
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        write_cached_upstream_model_metadata(
+            "llmgateway",
+            "gpt-5.6-sol",
+            &ModelMetadata {
+                display_name: Some("GPT-5.6 Sol".into()),
+                advertised_context_window: Some(1_050_000),
+                effective_context_window: Some(922_000),
+                cost_default: Some(ModelCost {
+                    input_micros_per_m: Some(5_000_000),
+                    output_micros_per_m: Some(30_000_000),
+                    ..ModelCost::default()
+                }),
+                reasoning_metadata_complete: true,
+                ..ModelMetadata::default()
+            },
+        );
+
+        let metadata =
+            current_model_metadata("ollama", "gpt-5.6-sol").expect("borrowed catalog row");
+        assert_eq!(metadata.display_name.as_deref(), Some("GPT-5.6 Sol"));
+        assert_eq!(metadata.effective_context_window, Some(922_000));
+        assert_eq!(
+            metadata
+                .cost_default
+                .and_then(|cost| cost.input_micros_per_m),
+            Some(5_000_000)
+        );
+        assert!(current_model_metadata("ollama", "missing").is_none());
+    });
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+}
+
 // Covers: models.toml catalog remaps provider and optional model id
 // Owner: models.dev catalog rematch
 #[test]

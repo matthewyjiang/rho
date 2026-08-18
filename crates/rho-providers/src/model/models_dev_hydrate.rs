@@ -89,13 +89,13 @@ pub async fn prefetch_model_metadata(targets: impl IntoIterator<Item = (String, 
 /// rows use the aggregator model ids (`anthropic/claude-…`). Kimi Code's `k3`
 /// alias is written beside the upstream `kimi-k3` id.
 ///
-/// models.dev slugs that interned custom hosts actually borrow (`catalog =
-/// "llmgateway"` or `catalog = "openrouter"`) are also written so those hosts
-/// can rematch cache rows by slug and model id. A slug that is also a built-in
-/// cache key (`openrouter`) is written under the borrowing host name instead,
-/// so extract for Rho's own provider is unchanged. Slugs with no document
-/// (`openai-codex`) keep extract and rematch. Unborrowed upstream providers
-/// stay out of sqlite.
+/// models.dev slugs that interned custom hosts or `[providers.ollama].catalog`
+/// actually borrow (`catalog = "llmgateway"` or `catalog = "openrouter"`) are
+/// also written so those hosts can rematch cache rows by slug and model id. A
+/// slug that is also a built-in cache key (`openrouter`) is written under the
+/// borrowing host name instead, so extract for Rho's own provider is unchanged.
+/// Slugs with no document (`openai-codex`) keep extract and rematch. Unborrowed
+/// upstream providers stay out of sqlite.
 pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
     let mut entries = Vec::new();
     let mut touched_providers = HashSet::new();
@@ -114,7 +114,7 @@ pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
             }
         }
     }
-    for host in crate::provider::interned_custom_providers() {
+    for host in borrowed_catalog_hosts() {
         let slug = host.metadata_upstream;
         if slug == host.name {
             continue;
@@ -166,8 +166,18 @@ fn catalog_model_ids_for_provider(
         .unwrap_or_default()
 }
 
+fn borrowed_catalog_hosts() -> Vec<&'static ProviderDescriptor> {
+    let mut hosts = crate::provider::interned_custom_providers();
+    if let Some(ollama) = crate::provider::interned_ollama_catalog_override() {
+        if ollama.metadata_upstream != ollama.name {
+            hosts.push(ollama);
+        }
+    }
+    hosts
+}
+
 fn borrowed_custom_catalog_slugs() -> HashSet<String> {
-    crate::provider::interned_custom_providers()
+    borrowed_catalog_hosts()
         .into_iter()
         .filter(|descriptor| descriptor.metadata_upstream != descriptor.name)
         .map(|descriptor| descriptor.metadata_upstream.to_string())

@@ -5,7 +5,8 @@ use super::super::{
 use super::{
     custom_openai_compatible_provider, custom_openai_compatible_providers,
     custom_provider_registry_test_lock, install_custom_openai_compatible_providers,
-    intern_custom_openai_compatible_providers, is_custom_provider_api_key_auth,
+    install_ollama_catalog_override, intern_custom_openai_compatible_providers,
+    interned_ollama_catalog_override, is_custom_provider_api_key_auth,
     reset_custom_openai_compatible_providers_for_tests, validate_custom_provider_name,
     CustomProviderSpec, CustomProviderThreadScope,
 };
@@ -174,6 +175,31 @@ fn custom_host_catalog_slug_becomes_metadata_upstream() {
             .metadata_upstream,
         "vllm"
     );
+}
+
+// Covers: [providers.ollama].catalog must overlay metadata_upstream without
+// replacing the static built-in descriptor used by extract.
+// Owner: provider registry
+#[test]
+fn ollama_catalog_override_borrows_slug_and_clears() {
+    let _lock = custom_provider_registry_test_lock();
+    restore_empty();
+    let _restore = RestoreCustomProviders;
+
+    install_ollama_catalog_override(Some("llmgateway"));
+    assert_eq!(
+        interned_ollama_catalog_override()
+            .map(|descriptor| (descriptor.name, descriptor.metadata_upstream)),
+        Some(("ollama", "llmgateway"))
+    );
+    assert_eq!(
+        crate::provider::provider_descriptor("ollama")
+            .map(|descriptor| descriptor.metadata_upstream),
+        Some("ollama")
+    );
+
+    install_ollama_catalog_override(Some("  "));
+    assert!(interned_ollama_catalog_override().is_none());
 }
 
 // Covers: repointing catalog must not keep serving the previously leaked slug

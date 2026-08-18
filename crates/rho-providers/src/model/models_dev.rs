@@ -218,15 +218,17 @@ pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMe
 
 /// models.dev provider and model id used for the sqlite catalog row.
 ///
-/// Custom hosts can borrow another slug (`catalog = "llmgateway"`). A models.toml
-/// `catalog` value wins and may also remap the model id (`anthropic/claude-sonnet-4-5`).
+/// Custom hosts and `[providers.ollama].catalog` can borrow another slug
+/// (`catalog = "llmgateway"`). A models.toml `catalog` value wins and may also
+/// remap the model id (`anthropic/claude-sonnet-4-5`).
 ///
 /// Built-in providers are deliberately left on their provider-facing name:
 /// hydrate writes their rows under that name, not under `metadata_upstream`
 /// (`openai-codex` rows, not `openai`), so borrowing the upstream slug here
-/// would miss the cache. Only config-defined hosts redirect, and only when
-/// that slug is not itself a built-in cache key. `catalog = "openrouter"`
-/// rows live under the custom host so they cannot replace Rho OpenRouter.
+/// would miss the cache. Only config-defined hosts and the Ollama catalog
+/// overlay redirect, and only when that slug is not itself a built-in cache
+/// key. `catalog = "openrouter"` rows live under the host so they cannot
+/// replace Rho OpenRouter.
 fn catalog_source_for(
     provider: &str,
     model: &str,
@@ -241,10 +243,7 @@ fn catalog_source_for(
     // (`openrouter`) is keyed by the host so extract is untouched.
     // `openai-codex` is a built-in name whose document is `openai`, so those
     // hosts still rematch the Codex extract rows.
-    let borrowed = crate::provider::provider_descriptor(provider)
-        .filter(|descriptor| descriptor.is_custom_openai_compatible())
-        .map(|descriptor| descriptor.metadata_upstream)
-        .filter(|upstream| *upstream != provider)
+    let borrowed = borrowed_catalog_upstream(provider)
         .filter(|upstream| !borrowed_slug_collides_with_builtin_extract(upstream));
     match borrowed {
         Some(upstream) => (upstream.to_string(), model.to_string()),
@@ -256,6 +255,21 @@ fn catalog_source_for(
 /// provider's extract keys (`openrouter`). Those rows go under the host name.
 /// `openai-codex` is a built-in name whose document is `openai`, so it still
 /// rematches extract rows and is not a collision.
+fn borrowed_catalog_upstream(provider: &str) -> Option<&'static str> {
+    if provider == "ollama" {
+        if let Some(upstream) = crate::provider::interned_ollama_catalog_override()
+            .map(|descriptor| descriptor.metadata_upstream)
+            .filter(|upstream| *upstream != "ollama")
+        {
+            return Some(upstream);
+        }
+    }
+    crate::provider::provider_descriptor(provider)
+        .filter(|descriptor| descriptor.is_custom_openai_compatible())
+        .map(|descriptor| descriptor.metadata_upstream)
+        .filter(|upstream| *upstream != provider)
+}
+
 fn borrowed_slug_collides_with_builtin_extract(slug: &str) -> bool {
     crate::provider::providers()
         .iter()
