@@ -228,7 +228,7 @@ pub enum UnknownEffortPolicy {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ProviderModelRefreshKind {
+pub(crate) enum ProviderModelRefreshKind {
     OpenAi,
     Anthropic,
     Google,

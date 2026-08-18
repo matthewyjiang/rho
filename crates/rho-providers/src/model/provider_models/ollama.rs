@@ -156,58 +156,39 @@ async fn hydrate_models(
     root: &Url,
     models: Vec<OllamaTagModel>,
 ) -> Vec<ProviderModel> {
-    let mut complete = Vec::new();
-    let mut incomplete = Vec::new();
-    for model in models {
-        let name = model.name.trim();
-        if name.is_empty() || !is_chat_model(model.capabilities.as_deref()) {
-            continue;
+    let mut show_budget = MAX_SHOW_LOOKUPS;
+    let lookups = models.into_iter().map(|model| {
+        let name = model.name.trim().to_string();
+        let skip = name.is_empty() || !is_chat_model(model.capabilities.as_deref());
+        let needs_show = !skip
+            && (model.details.context_length.filter(|window| *window > 0).is_none()
+                || model.capabilities.is_none());
+        let should_show = needs_show && show_budget > 0;
+        if should_show {
+            show_budget -= 1;
         }
-        let context_window = model.details.context_length.filter(|window| *window > 0);
-        if context_window.is_some() && model.capabilities.is_some() {
-            if let Some(record) = chat_provider_model(
-                descriptor,
-                name,
-                context_window,
-                model.capabilities.as_deref(),
-            ) {
-                complete.push(record);
+        async move {
+            if skip {
+                return None;
             }
-        } else {
-            incomplete.push(model);
-        }
-    }
-
-    let deferred = incomplete.split_off(incomplete.len().min(MAX_SHOW_LOOKUPS));
-    let show_lookups = incomplete.into_iter().map(|model| async move {
-        let mut capabilities = model.capabilities;
-        let mut context_window = model.details.context_length.filter(|window| *window > 0);
-        if let Some(shown) = fetch_show(root, model.name.trim()).await {
-            context_window = context_length_from_show(&shown).or(context_window);
-            if shown.capabilities.is_some() {
-                capabilities = shown.capabilities;
+            let mut capabilities = model.capabilities;
+            let mut context_window = model.details.context_length.filter(|window| *window > 0);
+            if should_show {
+                if let Some(shown) = fetch_show(root, &name).await {
+                    context_window = context_length_from_show(&shown).or(context_window);
+                    if shown.capabilities.is_some() {
+                        capabilities = shown.capabilities;
+                    }
+                }
             }
-        }
-        (model.name, context_window, capabilities)
-    });
-    for (name, context_window, capabilities) in futures_util::future::join_all(show_lookups).await {
-        if let Some(record) =
             chat_provider_model(descriptor, &name, context_window, capabilities.as_deref())
-        {
-            complete.push(record);
         }
-    }
-    for model in deferred {
-        if let Some(record) = chat_provider_model(
-            descriptor,
-            &model.name,
-            model.details.context_length.filter(|window| *window > 0),
-            model.capabilities.as_deref(),
-        ) {
-            complete.push(record);
-        }
-    }
-
+    });
+    let mut complete = futures_util::future::join_all(lookups)
+        .await
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
     complete.sort_by(|left, right| left.model.cmp(&right.model));
     complete.dedup_by(|left, right| left.model == right.model);
     complete

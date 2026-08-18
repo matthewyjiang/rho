@@ -112,7 +112,7 @@ async fn ollama_tags_complete_skips_show_and_hides_embedding_only() {
                 "{request}"
             );
             let body = r#"{"models":[
-                {"name":"qwen3.8:27b","details":{"parent_model":"qwen3.8:27b-q4_K_M","context_length":262144},"capabilities":["completion","tools","thinking","vision"]},
+                {"name":"qwen3.8:27b","details":{"context_length":262144},"capabilities":["completion","tools","thinking","vision"]},
                 {"name":"nomic-embed","details":{},"capabilities":["embedding"]}
             ]}"#;
             stream
@@ -164,9 +164,9 @@ async fn ollama_incomplete_tags_fill_context_from_show() {
                 .unwrap()
                 .push(request_target(&request).to_string());
             let body = if request.starts_with("GET /api/tags ") {
-                r#"{"models":[{"name":"gemma4:31b","details":{"parent_model":""},"capabilities":["completion","tools","thinking"]}]}"#
+                r#"{"models":[{"name":"gemma4:31b","details":{},"capabilities":["completion","tools","thinking"]}]}"#
             } else if request.starts_with("POST /api/show ") {
-                r#"{"details":{"parent_model":""},"capabilities":["completion","vision","tools","thinking"],"model_info":{"gemma4.context_length":262144}}"#
+                r#"{"details":{},"capabilities":["completion","vision","tools","thinking"],"model_info":{"gemma4.context_length":262144}}"#
             } else {
                 panic!("unexpected request: {request}");
             };
