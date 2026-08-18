@@ -34,6 +34,19 @@ pub fn custom_provider_api_key_auth_id(name: &str) -> String {
     format!("{name}-api-key")
 }
 
+/// Environment override for a named custom host's optional API key.
+pub(super) fn custom_provider_api_key_env_var(name: &str) -> String {
+    format!(
+        "RHO_{}_API_KEY",
+        name.to_ascii_uppercase().replace('-', "_")
+    )
+}
+
+/// True when `name` matches the `RHO_<NAME>_API_KEY` override convention.
+pub(super) fn is_provider_api_key_env_var(name: &str) -> bool {
+    name.starts_with("RHO_") && name.ends_with("_API_KEY")
+}
+
 /// Whether `value` is a syntactically valid `{name}-api-key` custom auth id.
 ///
 /// The host does not have to be interned yet. CLI `--auth` uses this because
@@ -296,10 +309,7 @@ fn intern(
     };
     let auth_id = leak_str(custom_provider_api_key_auth_id(name));
     let account = leak_str(format!("provider:{name}:api-key"));
-    let env_var = leak_str(format!(
-        "RHO_{}_API_KEY",
-        name.to_ascii_uppercase().replace('-', "_")
-    ));
+    let env_var = leak_str(custom_provider_api_key_env_var(name));
     let entry_label = leak_str(format!("{name} API key"));
     let missing_message = leak_str(format!(
         "missing {name} API key; run /login {name} in the TUI or set {env_var} as a CI/dev override"

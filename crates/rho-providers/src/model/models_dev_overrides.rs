@@ -38,18 +38,20 @@ pub(super) fn apply_local_overrides(
     model: &str,
     metadata: ModelMetadata,
 ) -> ModelMetadata {
-    let Some(table) = local_override_table(provider, model) else {
-        return metadata;
-    };
-    merge_toml_override(metadata, &table)
+    match local_override_table(provider, model) {
+        Some(table) => merge_toml_override(metadata, &table),
+        None => metadata,
+    }
 }
 
-/// Resolves `catalog` from `~/.rho/models.toml` for one provider-facing model.
+/// Resolves `catalog` from one `~/.rho/models.toml` model table.
 ///
 /// `anthropic` keeps the same model id under that slug. `anthropic/claude-sonnet-4-5`
 /// remaps both the models.dev provider and the catalog model id.
-pub(super) fn local_catalog_source(provider: &str, model: &str) -> Option<(String, String)> {
-    let table = local_override_table(provider, model)?;
+pub(super) fn local_catalog_source(
+    table: &toml::map::Map<String, toml::Value>,
+    model: &str,
+) -> Option<(String, String)> {
     parse_catalog_ref(table.get("catalog")?.as_str()?, model)
 }
 
@@ -67,7 +69,7 @@ pub(super) fn parse_catalog_ref(catalog: &str, fallback_model: &str) -> Option<(
     }
 }
 
-fn local_override_table(
+pub(super) fn local_override_table(
     provider: &str,
     model: &str,
 ) -> Option<toml::map::Map<String, toml::Value>> {

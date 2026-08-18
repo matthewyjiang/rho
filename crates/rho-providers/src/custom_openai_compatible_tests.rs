@@ -311,3 +311,25 @@ fn credential_env_vars_include_interned_custom_hosts() {
         "interned custom hosts must appear in the child-process strip list"
     );
 }
+
+// Covers: a live RHO_*_API_KEY is stripped even before its host is interned
+// Owner: provider registry
+#[test]
+fn credential_env_vars_include_live_rho_api_key_overrides() {
+    let vars = crate::provider::credential_env_vars_from([
+        "RHO_UNINTERNED_LIVE_API_KEY",
+        "PATH",
+        "RHO_AUDIT_API_KEY_7f3a",
+    ]);
+    assert!(
+        vars.iter()
+            .any(|name| name == "RHO_UNINTERNED_LIVE_API_KEY"),
+        "currently set RHO_*_API_KEY overrides must be stripped before intern"
+    );
+    assert!(
+        !vars
+            .iter()
+            .any(|name| name == "PATH" || name == "RHO_AUDIT_API_KEY_7f3a"),
+        "non-override names must not be stripped"
+    );
+}

@@ -87,10 +87,10 @@ pub async fn prefetch_model_metadata(targets: impl IntoIterator<Item = (String, 
 /// rows use the aggregator model ids (`anthropic/claude-…`). Kimi Code's `k3`
 /// alias is written beside the upstream `kimi-k3` id.
 ///
-/// models.dev slugs that are not Rho provider names (`llmgateway`, `azure`) are
-/// also written so a custom host can set `catalog = "llmgateway"` and borrow
-/// those rows. Rho names keep their existing extract policy and are not
-/// overwritten by this second pass.
+/// models.dev slugs that interned custom hosts actually borrow (`catalog =
+/// "llmgateway"`) are also written so those hosts can rematch cache rows. The
+/// rest of the upstream catalog stays out of sqlite. Rho names keep their
+/// existing extract policy and are not overwritten by this second pass.
 pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
     let mut entries = Vec::new();
     let mut touched_providers = HashSet::new();
@@ -111,8 +111,9 @@ pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
             }
         }
     }
+    let borrowed_slugs = borrowed_custom_catalog_slugs(&rho_names);
     for (slug, provider) in api.iter_providers() {
-        if rho_names.contains(slug) {
+        if rho_names.contains(slug) || !borrowed_slugs.contains(slug) {
             continue;
         }
         for model_id in provider.models.keys() {
@@ -155,6 +156,15 @@ fn catalog_model_ids_for_provider(
     api.provider(upstream)
         .map(|provider| provider.models.keys().cloned().collect())
         .unwrap_or_default()
+}
+
+fn borrowed_custom_catalog_slugs(rho_names: &HashSet<&str>) -> HashSet<String> {
+    crate::provider::interned_custom_providers()
+        .into_iter()
+        .map(|descriptor| descriptor.metadata_upstream)
+        .filter(|slug| !rho_names.contains(slug))
+        .map(str::to_string)
+        .collect()
 }
 
 /// Extracts metadata when its reasoning metadata is complete. Providers whose

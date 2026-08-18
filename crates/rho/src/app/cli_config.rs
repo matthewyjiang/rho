@@ -121,7 +121,7 @@ pub(super) async fn refresh_custom_provider_models(
         |(name, endpoint)| async move {
             let auth = provider::provider_descriptor(name)
                 .map(|descriptor| descriptor.discovery_auth(store).id)
-                .unwrap_or("none");
+                .unwrap_or(provider::KEYLESS_AUTH);
             let _ = refresh_provider_models_with_store(
                 name,
                 auth,

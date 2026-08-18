@@ -1405,10 +1405,17 @@ fn failed_hydrate_does_not_advance_readiness() {
     });
 }
 
-// Covers: models.dev slugs that are not Rho providers still get cache rows
+// Covers: hydrate writes only non-Rho slugs that a custom host borrowed
 // Owner: models.dev catalog hydrate
 #[test]
-fn hydrate_writes_non_rho_catalog_slugs() {
+fn hydrate_writes_borrowed_non_rho_catalog_slugs() {
+    let _lock = crate::provider::custom_provider_registry_test_lock();
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+    crate::provider::install_custom_openai_compatible_providers([
+        crate::provider::CustomProviderSpec::new("cliproxyapi", Some("llmgateway")),
+    ])
+    .unwrap();
+
     let api = json!({
         "llmgateway": {
             "models": {
@@ -1417,6 +1424,15 @@ fn hydrate_writes_non_rho_catalog_slugs() {
                     "reasoning": false,
                     "limit": { "context": 1050000, "input": 922000, "output": 128000 },
                     "cost": { "input": 5.0, "output": 30.0 }
+                }
+            }
+        },
+        "azure": {
+            "models": {
+                "gpt-4o": {
+                    "name": "Azure GPT-4o",
+                    "reasoning": false,
+                    "limit": { "context": 128000, "output": 4096 }
                 }
             }
         }
@@ -1435,7 +1451,12 @@ fn hydrate_writes_non_rho_catalog_slugs() {
                 .and_then(|cost| cost.input_micros_per_m),
             Some(5_000_000)
         );
+        assert!(
+            cached_upstream_model_metadata("azure", "gpt-4o").is_none(),
+            "unborrowed non-Rho slugs must stay out of the cache"
+        );
     });
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
 }
 
 // Covers: a custom host with catalog = slug borrows that models.dev row

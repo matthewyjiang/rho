@@ -533,6 +533,7 @@ mod provider_table;
 #[path = "custom_openai_compatible.rs"]
 mod custom_openai_compatible;
 
+pub(crate) use custom_openai_compatible::interned_custom_providers;
 pub use custom_openai_compatible::{
     custom_provider_api_key_auth_id, custom_provider_registry_test_lock,
     install_custom_openai_compatible_providers, intern_custom_openai_compatible_providers,
@@ -561,14 +562,22 @@ pub fn visible_providers() -> Vec<&'static ProviderDescriptor> {
 
 /// Environment variable names used as provider credential overrides.
 ///
-/// Derived from the built-in [`PROVIDERS`] auth kinds plus every interned
-/// custom host, so newly registered provider credentials are included
-/// automatically. Hosts should strip these from child process environments by
-/// default, for example with [`rho_sdk::ProcessEnvironment::inherit_except`].
+/// Built-in auth kinds, interned custom hosts, and any currently set
+/// `RHO_*_API_KEY`. Callers typically snapshot this into
+/// [`rho_sdk::ProcessEnvironment::inherit_except`] at tool-set construction;
+/// scanning the live environment covers an override for a host that `/login`
+/// interns later in the same session.
 ///
 /// Intern config-defined hosts before calling this: a host that has never been
-/// interned has no descriptor and therefore no override name to report.
+/// interned has no descriptor and therefore no override name to report, unless
+/// its `RHO_*_API_KEY` is already set.
 pub fn credential_env_vars() -> Vec<String> {
+    credential_env_vars_from(std::env::vars().map(|(name, _)| name))
+}
+
+pub(crate) fn credential_env_vars_from(
+    env: impl IntoIterator<Item = impl AsRef<str>>,
+) -> Vec<String> {
     let mut vars: Vec<String> = providers()
         .iter()
         .chain(custom_openai_compatible::interned_custom_providers())
@@ -576,6 +585,10 @@ pub fn credential_env_vars() -> Vec<String> {
         .filter_map(|mode| mode.auth_kind.env_var())
         .map(str::to_owned)
         .collect();
+    vars.extend(env.into_iter().filter_map(|name| {
+        let name = name.as_ref();
+        custom_openai_compatible::is_provider_api_key_env_var(name).then(|| name.to_owned())
+    }));
     vars.sort_unstable();
     vars.dedup();
     vars

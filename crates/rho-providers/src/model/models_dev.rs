@@ -225,8 +225,12 @@ pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMe
 /// hydrate writes their rows under that name, not under `metadata_upstream`
 /// (`openai-codex` rows, not `openai`), so borrowing the upstream slug here
 /// would miss the cache. Only config-defined hosts redirect.
-fn catalog_source_for(provider: &str, model: &str) -> (String, String) {
-    if let Some(source) = overrides::local_catalog_source(provider, model) {
+fn catalog_source_for(
+    provider: &str,
+    model: &str,
+    local: Option<&toml::map::Map<String, toml::Value>>,
+) -> (String, String) {
+    if let Some(source) = local.and_then(|table| overrides::local_catalog_source(table, model)) {
         return source;
     }
     let borrowed = crate::provider::provider_descriptor(provider)
@@ -244,7 +248,8 @@ fn load_model_metadata(
     model: &str,
     freshness: CacheFreshness,
 ) -> Option<ModelMetadata> {
-    let (source_provider, source_model) = catalog_source_for(provider, model);
+    let local = overrides::local_override_table(provider, model);
+    let (source_provider, source_model) = catalog_source_for(provider, model, local.as_ref());
     let remapped = source_provider != provider || source_model != model;
     let metadata = match freshness {
         CacheFreshness::CurrentOnly => {
@@ -260,7 +265,10 @@ fn load_model_metadata(
         overrides::apply_builtin_overrides(provider, model, metadata)
     };
     let metadata = apply_provider_capabilities(provider, model, metadata);
-    Some(overrides::apply_local_overrides(provider, model, metadata))
+    Some(match local.as_ref() {
+        Some(table) => overrides::merge_toml_override(metadata, table),
+        None => metadata,
+    })
 }
 
 fn upstream_metadata_from_api(
