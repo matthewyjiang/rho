@@ -35,6 +35,7 @@ pub(super) const PERMISSION_CLASSIFIER_REASONING_VALUE: &str = "permission_class
 pub(super) const AUTO_COMPACT_VALUE: &str = "auto_compact";
 pub(super) const COMPACT_THRESHOLD_PERCENT_VALUE: &str = "compact_threshold_percent";
 pub(super) const COMPACT_TARGET_PERCENT_VALUE: &str = "compact_target_percent";
+pub(super) const CACHE_MISS_NOTICES_VALUE: &str = "cache_miss_notices";
 pub(super) const MAX_OUTPUT_BYTES_VALUE: &str = "max_output_bytes";
 pub(super) const MAX_TOOL_OUTPUT_LINES_VALUE: &str = "max_tool_output_lines";
 pub(super) const PROMPT_HISTORY_LIMIT_VALUE: &str = "prompt_history_limit";
@@ -91,6 +92,18 @@ fn sectioned_item(
 
 fn on_off(value: bool) -> String {
     if value { "on" } else { "off" }.into()
+}
+
+/// Help text for the cache-miss row, built from the tripwires it describes so
+/// the numbers cannot drift from the thresholds that actually fire.
+fn cache_miss_notices_help() -> String {
+    use super::cache_stats::{SIGNIFICANT_MISS_EXTRA_COST_USD_MICROS, SIGNIFICANT_MISS_TOKENS};
+
+    format!(
+        "Show a transcript notice after a turn that re-billed a large uncached prompt (over {} tokens or {}). Space toggles.",
+        super::usage_cost::format_token_count(SIGNIFICANT_MISS_TOKENS),
+        super::usage_cost::format_usd(SIGNIFICANT_MISS_EXTRA_COST_USD_MICROS),
+    )
 }
 
 fn theme_badge(config: &Config) -> String {
@@ -184,7 +197,7 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
             ),
             item(
                 "Appearance",
-                "Theme, zen mode, reasoning output, and collapsed tool output lines.",
+                "Theme, zen mode, reasoning output, cache miss notices, and collapsed tool output lines.",
                 Some(theme_badge(config)),
                 APPEARANCE_CATEGORY_VALUE,
             ),
@@ -287,6 +300,12 @@ pub(super) fn category_picker(
                     "Show only message text. Hides tool cards, reasoning, and the Thinking... placeholder. Keeps the activity rail. Space toggles.",
                     Some(on_off(info.zen_mode)),
                     ZEN_MODE_VALUE,
+                ),
+                item(
+                    "Cache miss notices",
+                    cache_miss_notices_help(),
+                    Some(on_off(config.cache_miss_notices)),
+                    CACHE_MISS_NOTICES_VALUE,
                 ),
                 item(
                     "Show reasoning output",
@@ -498,6 +517,7 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
         SHOW_REASONING_OUTPUT_VALUE
         | ZEN_MODE_VALUE
         | THEME_VALUE
+        | CACHE_MISS_NOTICES_VALUE
         | MAX_TOOL_OUTPUT_LINES_VALUE => Some(APPEARANCE_CATEGORY_VALUE),
         PERMISSION_MODE_VALUE
         | PERMISSION_CLASSIFIER_MODEL_VALUE

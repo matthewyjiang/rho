@@ -291,7 +291,7 @@ pub(super) fn session_total_cost_usd_micros(
     }
 }
 
-fn cost_component(tokens: u64, micros_per_million: Option<u64>) -> u128 {
+pub(super) fn cost_component(tokens: u64, micros_per_million: Option<u64>) -> u128 {
     tokens as u128 * micros_per_million.unwrap_or_default() as u128 / 1_000_000
 }
 

@@ -99,6 +99,17 @@ impl ViewModelEvent {
             _ => None,
         }
     }
+
+    /// Compaction replaced older history, so the next request cannot hit the
+    /// prompt prefix the previous one established.
+    ///
+    /// Keyed on the synthetic compaction call id here, in the module that owns
+    /// that id, so consumers stay free of call-id equality checks. Both the
+    /// main-loop compact job and in-run auto-compact close the card through
+    /// this event, so one predicate covers both.
+    pub(super) fn rewrites_prompt_prefix(&self) -> bool {
+        matches!(self, Self::ToolFinished { call_id, .. } if call_id == &compaction_call_id())
+    }
 }
 
 #[derive(Clone, Debug)]

@@ -72,6 +72,7 @@ struct DisplayConfig {
     theme: String,
     max_tool_output_lines: usize,
     prompt_history_limit: usize,
+    cache_miss_notices: bool,
 }
 
 #[derive(Serialize)]
@@ -202,6 +203,7 @@ impl<'a> From<&'a Config> for GroupedConfig<'a> {
                 theme: config.theme.clone(),
                 max_tool_output_lines: config.max_tool_output_lines,
                 prompt_history_limit: config.prompt_history_limit,
+                cache_miss_notices: config.cache_miss_notices,
             },
             output: OutputConfig {
                 max_output_bytes: config.max_output_bytes,

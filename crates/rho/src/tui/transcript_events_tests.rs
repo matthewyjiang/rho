@@ -4,8 +4,14 @@ use rho_sdk::model::{ContextUsage, ModelUsage};
 use rho_sdk::ProviderStreamResetReason;
 
 use crate::tui::{
-    activity::ProviderRetryHint, app_state::SessionUiPhase, event_adapter::ViewModelEvent,
-    model_performance::GenerationOutputTokens, tests::test_app,
+    activity::ProviderRetryHint,
+    app_state::SessionUiPhase,
+    cache_stats::CacheRebilled,
+    compaction_display::CompactionUiOutcome,
+    event_adapter::{compact_finished_event, ViewModelEvent},
+    model_performance::GenerationOutputTokens,
+    tests::test_app,
+    App,
 };
 
 fn model_call_metrics() -> rho_sdk::ModelCallMetrics {
@@ -153,6 +159,77 @@ fn provider_retry_status_includes_rate_limit_reset_hint() {
         .status_label(),
         "retrying provider response"
     );
+}
+
+fn complete_model_call(app: &mut App) {
+    app.record_agent_event(ViewModelEvent::ModelCallCompleted {
+        profile: app.info.runtime.model_call_profile(),
+        metrics: model_call_metrics(),
+        generation_output_tokens: GenerationOutputTokens::Reported(1),
+    });
+}
+
+fn report_step_usage(app: &mut App, step: usize, usage: ModelUsage) {
+    app.record_agent_event(ViewModelEvent::StepStarted(step));
+    app.record_agent_event(ViewModelEvent::Usage(usage));
+    complete_model_call(app);
+}
+
+// Covers: the event path feeds the tracker a per-step delta, not a
+// cumulative snapshot, and compaction resets the prefix before the next call.
+// Owner: tui transcript events
+#[test]
+fn cache_stats_count_a_miss_from_usage_then_model_call_completed() {
+    let mut app = test_app();
+    app.record_agent_event(ViewModelEvent::RunStarted);
+    // Usage events are cumulative within the run. Step 1 establishes a 50K
+    // prefix; step 2's snapshot still includes that write plus a larger
+    // cache-read total. The per-step delta is a 20K miss; the raw snapshot
+    // would look like a full hit.
+    report_step_usage(
+        &mut app,
+        1,
+        ModelUsage {
+            cache_read_tokens: Some(40_000),
+            cache_write_tokens: Some(10_000),
+            ..ModelUsage::default()
+        },
+    );
+    report_step_usage(
+        &mut app,
+        2,
+        ModelUsage {
+            input_tokens: Some(20_000),
+            cache_read_tokens: Some(60_000),
+            cache_write_tokens: Some(10_000),
+            ..ModelUsage::default()
+        },
+    );
+
+    assert_eq!(
+        app.usage.cache_stats.rebilled(),
+        &CacheRebilled {
+            missed_tokens: 20_000,
+            miss_count: 1,
+            extra_cost_usd_micros: 0,
+            unpriced_miss_count: 1,
+        }
+    );
+
+    app.record_agent_event(compact_finished_event(CompactionUiOutcome::unchanged()));
+    report_step_usage(
+        &mut app,
+        3,
+        ModelUsage {
+            input_tokens: Some(80_000),
+            cache_read_tokens: Some(60_000),
+            cache_write_tokens: Some(10_000),
+            ..ModelUsage::default()
+        },
+    );
+
+    assert_eq!(app.usage.cache_stats.rebilled().miss_count, 1);
+    assert_eq!(app.usage.cache_stats.take_turn_notices().len(), 1);
 }
 
 // Covers: a later generated image must not attach to an earlier unfilled card.

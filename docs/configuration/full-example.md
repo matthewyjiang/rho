@@ -21,6 +21,7 @@ zen_mode = false
 theme = "terminal" # terminal, one-half-dark, one-half-light, monochrome-dark, monochrome-light, or a custom ~/.rho/themes/<id>.json stem
 max_tool_output_lines = 10
 prompt_history_limit = 1000
+cache_miss_notices = false
 
 [output]
 max_output_bytes = 64000

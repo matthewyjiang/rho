@@ -432,6 +432,7 @@ impl App {
         self.usage.advisor_total_cost_usd_micros = 0;
         self.usage.latest_usage = None;
         self.usage.model_performance.clear();
+        self.usage.cache_stats.reset();
     }
 
     pub(super) fn exit_summary(&self) -> Option<String> {

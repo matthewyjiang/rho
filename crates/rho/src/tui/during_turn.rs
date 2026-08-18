@@ -610,6 +610,9 @@ impl App {
             config_picker::AUTO_COMPACT_VALUE => {
                 self.toggle_auto_compact()?;
             }
+            config_picker::CACHE_MISS_NOTICES_VALUE => {
+                self.toggle_cache_miss_notices()?;
+            }
             config_picker::COMPACT_THRESHOLD_PERCENT_VALUE => {
                 let config = self.info.services.config_repository.load()?;
                 self.input_ui.set_composer(ComposerMode::ConfigNumberInput(

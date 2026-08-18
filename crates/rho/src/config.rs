@@ -79,6 +79,8 @@ pub struct Config {
     pub auto_compact: bool,
     pub compact_threshold_percent: u8,
     pub compact_target_percent: u8,
+    /// Show a transcript notice after a turn that re-billed a large uncached prompt.
+    pub cache_miss_notices: bool,
     /// Optional model selections for reserved internal agents, keyed by stable agent ID.
     pub internal_agents: BTreeMap<String, InternalAgentModelConfig>,
     pub favorite_models: Vec<String>,
@@ -147,6 +149,7 @@ impl Default for Config {
             auto_compact: false,
             compact_threshold_percent: 85,
             compact_target_percent: 50,
+            cache_miss_notices: false,
             internal_agents: BTreeMap::new(),
             favorite_models: Vec::new(),
             web_search_hosted: true,

@@ -655,6 +655,7 @@ impl App {
         if completed {
             agent.mark_live_context_warm();
         }
+        self.insert_cache_miss_notices(completed);
         if matches!(&outcome, TurnOutcome::Failed(_) | TurnOutcome::Cancelled) {
             self.preserve_unapplied_steering_as_follow_ups();
         }
@@ -733,6 +734,20 @@ impl App {
         self.set_status("ready");
         if let Some(boundary) = pending_boundary.take() {
             self.restore_turn_boundary_batch(agent, boundary.into_batch());
+        }
+    }
+
+    /// Drain significant misses detected during this turn into the transcript.
+    ///
+    /// Always drains so notices cannot leak into a later turn, and inserts only
+    /// on completed turns when the user opted in.
+    fn insert_cache_miss_notices(&mut self, turn_completed: bool) {
+        let notices = self.usage.cache_stats.take_turn_notices();
+        if !turn_completed || !self.info.runtime.cache_miss_notices {
+            return;
+        }
+        for notice in notices {
+            self.insert_entry(&Entry::Notice(super::cache_stats::notice_text(&notice)));
         }
     }
 }

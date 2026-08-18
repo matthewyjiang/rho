@@ -113,6 +113,7 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
                 show_reasoning_output: config.show_reasoning_output,
                 zen_mode: config.zen_mode,
                 advisor_mode: config.advisor_mode,
+                cache_miss_notices: config.cache_miss_notices,
                 auth: config.auth,
                 internal_agents: config.internal_agents,
                 favorite_models: config.favorite_models,

@@ -226,6 +226,9 @@ impl App {
     }
 
     pub(super) fn record_agent_event(&mut self, event: ViewModelEvent) -> Option<Entry> {
+        if event.rewrites_prompt_prefix() {
+            self.usage.cache_stats.prompt_prefix_reset();
+        }
         match event {
             ViewModelEvent::RunStarted => {
                 self.usage.usage_cost_tracker.run_started();
@@ -302,6 +305,12 @@ impl App {
                 metrics,
                 generation_output_tokens,
             } => {
+                self.usage.cache_stats.record_request(
+                    &profile,
+                    metrics,
+                    self.model_metadata.as_ref(),
+                    Instant::now(),
+                );
                 self.usage
                     .model_performance
                     .record(profile, metrics, generation_output_tokens);
@@ -334,6 +343,7 @@ impl App {
                         current.cost_usd_micros = current_run_usage.cost_usd_micros;
                     }
                 }
+                self.usage.cache_stats.usage_updated(&latest_usage);
                 self.usage.latest_usage = Some(latest_usage);
                 self.usage
                     .cumulative_usage

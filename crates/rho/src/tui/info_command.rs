@@ -51,6 +51,13 @@ pub(super) struct RuntimeInfo {
     branch: Option<String>,
     usage: Option<ModelUsage>,
     latest_usage: Option<ModelUsage>,
+    /// Session cache hit rate over durable usage only.
+    ///
+    /// Kept separate from [`Self::usage`], which folds in the display-only live
+    /// stream estimate. That estimate reports fabricated uncached input and no
+    /// cache fields, so folding it in would dilute the rate mid-turn.
+    session_cache_hit_percent: Option<f64>,
+    cache_rebilled: super::cache_stats::CacheRebilled,
     model_performance: ModelPerformanceSummary,
     context_usage: Option<ContextUsage>,
     model_metadata: Option<ModelMetadata>,
@@ -110,6 +117,12 @@ impl App {
                 self.model_metadata.as_ref(),
             ),
             latest_usage: self.usage.latest_usage.clone(),
+            session_cache_hit_percent: self
+                .usage
+                .cumulative_usage
+                .as_ref()
+                .and_then(cache_hit_percent),
+            cache_rebilled: self.usage.cache_stats.rebilled().clone(),
             model_performance: self
                 .usage
                 .model_performance
@@ -233,8 +246,11 @@ fn push_usage_fields(block: &mut CommandBlock, info: &RuntimeInfo) {
     push_optional_number(block, "Output tokens", usage.output_tokens);
     push_optional_number(block, "Cache read", usage.cache_read_tokens);
     push_optional_number(block, "Cache write", usage.cache_write_tokens);
-    if let Some(percent) = cache_hit_percent(info.latest_usage.as_ref()) {
-        block.push_field("Cache hit", &format!("{percent:.1}% on the latest request"));
+    if let Some(hit) = format_cache_hit(info) {
+        block.push_field("Cache hit", &hit);
+    }
+    if let Some(rebilled) = format_cache_rebilled(&info.cache_rebilled, info.billing) {
+        block.push_field("Cache re-billed", &rebilled);
     }
 
     let main_cost_micros = resolved_usage_cost_usd_micros(usage, info.model_metadata.as_ref());
@@ -320,11 +336,53 @@ fn push_optional_number(block: &mut CommandBlock, label: &str, value: Option<u64
     }
 }
 
-fn cache_hit_percent(usage: Option<&ModelUsage>) -> Option<f64> {
-    let usage = usage?;
+fn cache_hit_percent(usage: &ModelUsage) -> Option<f64> {
     let cache_read = usage.cache_read_tokens?;
     let prompt_tokens = usage.total_input_tokens()?;
     (prompt_tokens > 0).then(|| cache_read as f64 * 100.0 / prompt_tokens as f64)
+}
+
+/// Single cache-hit line covering session and latest-request rates.
+fn format_cache_hit(info: &RuntimeInfo) -> Option<String> {
+    let latest = info.latest_usage.as_ref().and_then(cache_hit_percent);
+    match (info.session_cache_hit_percent, latest) {
+        (Some(session), Some(latest)) => Some(format!(
+            "{session:.1}% session · {latest:.1}% latest request"
+        )),
+        (Some(session), None) => Some(format!("{session:.1}% session")),
+        (None, Some(latest)) => Some(format!("{latest:.1}% on the latest request")),
+        (None, None) => None,
+    }
+}
+
+/// Session re-bill line for `/info`. Hidden until at least one counted miss.
+fn format_cache_rebilled(
+    rebilled: &super::cache_stats::CacheRebilled,
+    billing: BillingInfo,
+) -> Option<String> {
+    if rebilled.miss_count == 0 {
+        return None;
+    }
+    let miss_label = if rebilled.miss_count == 1 {
+        "1 miss".to_string()
+    } else {
+        format!("{} misses", rebilled.miss_count)
+    };
+    let tokens = format_number(rebilled.missed_tokens);
+    Some(if rebilled.extra_cost_usd_micros > 0 {
+        let cost = format_usd(rebilled.extra_cost_usd_micros);
+        let cost = if rebilled.unpriced_miss_count > 0 {
+            format!("{cost} partial")
+        } else {
+            cost
+        };
+        format!(
+            "{cost} ({tokens} tokens, {miss_label}){}",
+            cost_equivalent_suffix(billing)
+        )
+    } else {
+        format!("{tokens} tokens ({miss_label})")
+    })
 }
 
 fn format_context(info: &RuntimeInfo) -> Option<String> {
@@ -417,6 +475,80 @@ mod tests {
         assert_eq!(
             labels(&cost_field_rows(None, 2_000, 3_000, 5_000, "", "")),
             ["Subagent cost", "Advisor cost", "Total cost"]
+        );
+    }
+
+    #[test]
+    fn cache_hit_percent_uses_total_prompt_tokens() {
+        let usage = ModelUsage {
+            input_tokens: Some(5_000),
+            cache_read_tokens: Some(95_000),
+            cache_write_tokens: Some(0),
+            ..ModelUsage::default()
+        };
+        assert_eq!(
+            cache_hit_percent(&usage).map(|percent| format!("{percent:.1}")),
+            Some("95.0".into())
+        );
+        // Providers that do not report cache accounting have no rate at all.
+        assert_eq!(cache_hit_percent(&ModelUsage::default()), None);
+    }
+
+    #[test]
+    fn cache_rebilled_field_covers_cost_and_count_forms() {
+        use super::super::cache_stats::CacheRebilled;
+
+        assert_eq!(
+            format_cache_rebilled(&CacheRebilled::default(), BillingInfo::Metered),
+            None
+        );
+        assert_eq!(
+            format_cache_rebilled(
+                &CacheRebilled {
+                    missed_tokens: 45_230,
+                    miss_count: 3,
+                    extra_cost_usd_micros: 324_000,
+                    unpriced_miss_count: 0,
+                },
+                BillingInfo::Metered,
+            ),
+            Some("$0.324 (45,230 tokens, 3 misses)".into())
+        );
+        assert_eq!(
+            format_cache_rebilled(
+                &CacheRebilled {
+                    missed_tokens: 1_000,
+                    miss_count: 1,
+                    extra_cost_usd_micros: 0,
+                    unpriced_miss_count: 1,
+                },
+                BillingInfo::Metered,
+            ),
+            Some("1,000 tokens (1 miss)".into())
+        );
+        assert_eq!(
+            format_cache_rebilled(
+                &CacheRebilled {
+                    missed_tokens: 2_000,
+                    miss_count: 2,
+                    extra_cost_usd_micros: 100_000,
+                    unpriced_miss_count: 0,
+                },
+                BillingInfo::Subscription,
+            ),
+            Some("$0.100 (2,000 tokens, 2 misses) API equivalent".into())
+        );
+        assert_eq!(
+            format_cache_rebilled(
+                &CacheRebilled {
+                    missed_tokens: 8_000,
+                    miss_count: 2,
+                    extra_cost_usd_micros: 1_800,
+                    unpriced_miss_count: 1,
+                },
+                BillingInfo::Metered,
+            ),
+            Some("$0.002 partial (8,000 tokens, 2 misses)".into())
         );
     }
 
