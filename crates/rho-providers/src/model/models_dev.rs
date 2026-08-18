@@ -525,11 +525,16 @@ pub(super) fn open_models_dev_cache() -> rusqlite::Result<Connection> {
         create table if not exists catalog_snapshot (
             id integer primary key check (id = 1),
             cache_version integer not null,
-            updated_at integer not null
+            updated_at integer not null,
+            borrowed_slugs text not null default ''
         );",
     )?;
     let _ = connection.execute(
         "alter table model_metadata add column cache_version integer not null default 1",
+        [],
+    );
+    let _ = connection.execute(
+        "alter table catalog_snapshot add column borrowed_slugs text not null default ''",
         [],
     );
     Ok(connection)

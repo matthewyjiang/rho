@@ -1459,6 +1459,60 @@ fn hydrate_writes_borrowed_non_rho_catalog_slugs() {
     crate::provider::reset_custom_openai_compatible_providers_for_tests();
 }
 
+// Covers: a newly borrowed catalog slug must refetch even when the snapshot is fresh
+// Owner: models.dev catalog hydrate
+#[test]
+fn fresh_snapshot_is_not_ready_for_a_new_borrowed_slug() {
+    let _lock = crate::provider::custom_provider_registry_test_lock();
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        mark_catalog_snapshot_current_for_tests();
+        assert!(
+            hydrate::catalog_snapshot_is_ready(),
+            "a current snapshot with no borrowed slugs is ready"
+        );
+
+        crate::provider::install_custom_openai_compatible_providers([
+            crate::provider::CustomProviderSpec::new("gate-host", Some("gate-catalog")),
+        ])
+        .unwrap();
+        assert!(
+            !hydrate::catalog_snapshot_is_ready(),
+            "a newly borrowed slug must refetch even when the snapshot is fresh"
+        );
+
+        let written = hydrate_catalog_from_api(&json!({
+            "gate-catalog": {
+                "models": {
+                    "gpt-5.6-sol": {
+                        "name": "GPT-5.6 Sol",
+                        "reasoning": false,
+                        "limit": { "context": 1050000, "input": 922000, "output": 128000 }
+                    }
+                }
+            }
+        }));
+        assert!(written >= 1);
+        mark_catalog_snapshot_current_for_tests();
+        assert!(
+            hydrate::catalog_snapshot_is_ready(),
+            "recording the borrowed slug must restore readiness"
+        );
+
+        crate::provider::install_custom_openai_compatible_providers([
+            crate::provider::CustomProviderSpec::new("gate-host", Some("gate-catalog-2")),
+        ])
+        .unwrap();
+        assert!(
+            !hydrate::catalog_snapshot_is_ready(),
+            "repointing catalog to a new slug must refetch"
+        );
+    });
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+}
+
 // Covers: a custom host with catalog = slug borrows that models.dev row
 // Owner: models.dev catalog rematch
 #[test]
