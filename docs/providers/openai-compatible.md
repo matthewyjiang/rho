@@ -49,7 +49,7 @@ model = "qwen2.5-coder"
 auth = "vllm-api-key"
 ```
 
-Leave the `/login` key field blank to keep a stored key, or to run keyless when none is stored. `/logout <name>` deletes a stored key. The CI/development override is `RHO_<NAME>_API_KEY`, with the provider name uppercased and hyphens turned into underscores (`RHO_VLLM_API_KEY`). The override applies to hosts defined in `config.toml`; Rho also strips those names from agent command environments so a tool cannot read them.
+Leave the `/login` key field blank to keep a stored or env-supplied key, or to run keyless when none is set. `/logout <name>` deletes a stored key. The CI/development override is `RHO_<NAME>_API_KEY`, with the provider name uppercased and hyphens turned into underscores (`RHO_VLLM_API_KEY`). The override applies to hosts defined in `config.toml`; Rho also strips those names from agent command environments so a tool cannot read them.
 
 ## Use it
 

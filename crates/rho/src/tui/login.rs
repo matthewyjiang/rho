@@ -21,25 +21,32 @@ pub(super) struct PendingInteractiveLogin {
 
 /// What Enter in the API-key overlay resolved to.
 ///
-/// Blank on an optional field means "do not write a new key": keep a stored
-/// key if one exists, otherwise run keyless. `/logout` is the wipe path.
+/// Blank on an optional field means "do not write a new key": keep a
+/// reachable key (store or env), otherwise run keyless. `/logout` is the
+/// wipe path.
 #[derive(Clone, Debug)]
 pub(super) enum ApiKeySubmission {
     /// Store this key for the target's auth mode.
     Save { target: LoginTarget, key: String },
-    /// No new key. Keep a stored key, or run keyless when none is stored.
+    /// No new key. Keep a reachable key, or run keyless when none exists.
     LeaveUnset { target: LoginTarget },
     /// Blank, but this target requires a key.
     Rejected,
 }
 
-/// Blank optional key: keep a stored key, otherwise run keyless. Never deletes.
-fn resolve_blank_optional_key(mut target: LoginTarget, has_stored_key: bool) -> LoginTarget {
-    if !has_stored_key {
-        target.auth = provider::KEYLESS_AUTH.into();
-        target.label = target.provider.clone();
+/// Blank optional key: keep a reachable key, otherwise run keyless. Never deletes.
+///
+/// `Err` means the lookup itself failed. Callers must not treat that as "no key".
+fn resolve_blank_optional_key(
+    mut target: LoginTarget,
+    has_reachable_key: Result<bool, String>,
+) -> Result<LoginTarget, String> {
+    if has_reachable_key? {
+        return Ok(target);
     }
-    target
+    target.auth = provider::KEYLESS_AUTH.into();
+    target.label = target.provider.clone();
+    Ok(target)
 }
 
 #[derive(Clone, Debug)]
@@ -376,7 +383,7 @@ impl App {
                 Ok(())
             }
             AuthenticationMethod::ApiKey { entry_label } => {
-                // A host that also runs keyless accepts a blank key as "no key".
+                // A host that also runs keyless accepts a blank key as "do not write a new key".
                 let optional = provider::provider_descriptor(&target.provider)
                     .is_some_and(|descriptor| descriptor.has_none_auth());
                 let (secret, status) = if optional {
@@ -412,17 +419,19 @@ impl App {
                 Ok(())
             }
             ApiKeySubmission::LeaveUnset { target } => {
-                let has_stored_key = ProviderAuthentication::has_stored_credentials(
+                let lookup = ProviderAuthentication::has_credentials(
                     self.credential_store.as_ref(),
                     &target.auth,
                 )
-                .unwrap_or(false);
-                self.finish_login(
-                    resolve_blank_optional_key(target, has_stored_key),
-                    terminal,
-                    agent,
-                )
-                .await
+                .map_err(|err| err.to_string());
+                match resolve_blank_optional_key(target, lookup) {
+                    Ok(target) => self.finish_login(target, terminal, agent).await,
+                    Err(err) => {
+                        self.insert_entry(&Entry::Error(err));
+                        self.set_status("login failed");
+                        Ok(())
+                    }
+                }
             }
             ApiKeySubmission::Save { target, key } => {
                 if self.begin_store_choice_if_needed(StoreChoiceNext::SaveApiKey {

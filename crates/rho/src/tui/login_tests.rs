@@ -12,10 +12,11 @@ use rho_providers::{
 
 use crate::{config::Config, tui::tests::test_app};
 
-// Covers: blank optional key on re-login must not drop a stored key
+// Covers: blank optional key must keep a reachable key and must not
+// treat a lookup error as "no key"
 // Owner: login policy
 #[test]
-fn blank_optional_key_keeps_a_stored_key_and_runs_keyless_when_none_is_stored() {
+fn blank_optional_key_keeps_a_reachable_key_and_fails_closed_on_lookup_error() {
     let keyed = LoginTarget {
         provider: "ollama".into(),
         auth: "ollama-api-key".into(),
@@ -23,16 +24,20 @@ fn blank_optional_key_keeps_a_stored_key_and_runs_keyless_when_none_is_stored() 
     };
 
     pretty_assertions::assert_eq!(
-        super::resolve_blank_optional_key(keyed.clone(), true),
-        keyed
+        super::resolve_blank_optional_key(keyed.clone(), Ok(true)),
+        Ok(keyed.clone())
     );
     pretty_assertions::assert_eq!(
-        super::resolve_blank_optional_key(keyed, false),
-        LoginTarget {
+        super::resolve_blank_optional_key(keyed.clone(), Ok(false)),
+        Ok(LoginTarget {
             provider: "ollama".into(),
             auth: "none".into(),
             label: "ollama".into(),
-        }
+        })
+    );
+    pretty_assertions::assert_eq!(
+        super::resolve_blank_optional_key(keyed, Err("store unavailable".into())),
+        Err("store unavailable".into())
     );
 }
 
