@@ -197,7 +197,7 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
             ),
             item(
                 "Context & limits",
-                "Auto compact, compact threshold, compact target, and max output bytes.",
+                "Auto compact, compact threshold, compact target, max output bytes, and prompt history.",
                 Some(if config.auto_compact {
                     format!("compacts at {}%", config.compact_threshold_percent)
                 } else {
@@ -213,11 +213,8 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
             ),
             item(
                 "Providers",
-                "Provider login, logout, auth mode, refresh model lists, startup update checks, and prompt history.",
-                Some(format!(
-                    "startup checks {}",
-                    on_off(config.check_for_updates)
-                )),
+                "Provider login, logout, auth mode, refresh model lists, and startup update checks.",
+                None,
                 PROVIDERS_CATEGORY_VALUE,
             ),
         ],
@@ -359,8 +356,7 @@ pub(super) fn category_picker(
                     ADVISOR_REASONING_VALUE,
                 ));
             }
-            items.push(sectioned_item(
-                Some("Delegation"),
+            items.push(item(
                 "Delegation",
                 "Make agent tools available. Changes apply to the next session. Space toggles.",
                 Some(on_off(config.enable_subagents)),
@@ -394,6 +390,18 @@ pub(super) fn category_picker(
                     "Maximum tool output retained in context. Changes apply to the next session.",
                     Some(config.max_output_bytes.to_string()),
                     MAX_OUTPUT_BYTES_VALUE,
+                ),
+                item(
+                    "Prompt history limit",
+                    "Saved composer prompts kept for up-arrow recall across sessions. 0 disables saving. Lowering the cap deletes older saved prompts after confirm.",
+                    Some(config.prompt_history_limit.to_string()),
+                    PROMPT_HISTORY_LIMIT_VALUE,
+                ),
+                item(
+                    "Clear prompt history",
+                    "Permanently delete every saved composer prompt used by up-arrow recall.",
+                    Some("run now".into()),
+                    CLEAR_PROMPT_HISTORY_VALUE,
                 ),
             ],
         ),
@@ -465,18 +473,6 @@ pub(super) fn category_picker(
                 Some(on_off(config.check_for_updates)),
                 CHECK_FOR_UPDATES_VALUE,
             ));
-            items.push(item(
-                "Prompt history limit",
-                "Saved composer prompts kept for up-arrow recall across sessions. 0 disables saving. Lowering the cap deletes older saved prompts after confirm.",
-                Some(config.prompt_history_limit.to_string()),
-                PROMPT_HISTORY_LIMIT_VALUE,
-            ));
-            items.push(item(
-                "Clear prompt history",
-                "Permanently delete every saved composer prompt used by up-arrow recall.",
-                Some("run now".into()),
-                CLEAR_PROMPT_HISTORY_VALUE,
-            ));
             ("Config / Providers", items)
         }
         _ => return None,
@@ -513,7 +509,9 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
         AUTO_COMPACT_VALUE
         | COMPACT_THRESHOLD_PERCENT_VALUE
         | COMPACT_TARGET_PERCENT_VALUE
-        | MAX_OUTPUT_BYTES_VALUE => Some(CONTEXT_CATEGORY_VALUE),
+        | MAX_OUTPUT_BYTES_VALUE
+        | PROMPT_HISTORY_LIMIT_VALUE
+        | CLEAR_PROMPT_HISTORY_VALUE => Some(CONTEXT_CATEGORY_VALUE),
         INLINE_SHELL_VALUE | EDIT_TOOL_VALUE | WEB_SEARCH_VALUE | XAI_IMAGE_GENERATION_VALUE => {
             Some(TOOLS_CATEGORY_VALUE)
         }
@@ -521,9 +519,7 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
         | PROVIDER_LOGOUT_VALUE
         | SWITCH_AUTH_MODE_VALUE
         | REFRESH_MODEL_LIST_VALUE
-        | CHECK_FOR_UPDATES_VALUE
-        | PROMPT_HISTORY_LIMIT_VALUE
-        | CLEAR_PROMPT_HISTORY_VALUE => Some(PROVIDERS_CATEGORY_VALUE),
+        | CHECK_FOR_UPDATES_VALUE => Some(PROVIDERS_CATEGORY_VALUE),
         _ => None,
     }
 }

@@ -254,10 +254,12 @@ pub(super) const ADVISOR_COMMAND_STEPS: &[Step] = &[
     },
     Step::AssertText("Advisor mode"),
     Step::AssertText("on · xai/grok-4.5"),
-    // Permission mode → classifier model → Advisor mode
-    Step::Key(Key::Down),
-    Step::Key(Key::Down),
-    Step::Key(Key::Char(' ')),
+    Step::TypeText("advisor_mode"),
+    Step::WaitTextGone {
+        text: "Permission mode",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
     Step::WaitText {
         text: "advisor mode is off",
         timeout: SETTLE,
@@ -329,17 +331,19 @@ pub(super) const ADVISOR_MISSING_MODEL_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::AssertText("on · no model"),
-    // Permission mode → classifier model → Advisor mode
-    Step::Key(Key::Down),
-    Step::Key(Key::Down),
-    Step::Key(Key::Char(' ')),
+    Step::TypeText("advisor_mode"),
+    Step::WaitTextGone {
+        text: "Permission mode",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
     Step::WaitText {
         text: "advisor mode is off",
         timeout: SETTLE,
     },
     // Turning it back on from the config row has no model to use, so the row
     // opens the picker rather than saving a mode that cannot run.
-    Step::Key(Key::Char(' ')),
+    Step::Key(Key::Enter),
     Step::WaitText {
         text: "select model for advisor",
         timeout: SETTLE,
