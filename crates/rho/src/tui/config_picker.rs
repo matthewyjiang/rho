@@ -36,6 +36,7 @@ pub(super) const PERMISSION_CLASSIFIER_REASONING_VALUE: &str = "permission_class
 pub(super) const AUTO_COMPACT_VALUE: &str = "auto_compact";
 pub(super) const COMPACT_THRESHOLD_PERCENT_VALUE: &str = "compact_threshold_percent";
 pub(super) const COMPACT_TARGET_PERCENT_VALUE: &str = "compact_target_percent";
+pub(super) const CACHE_MISS_NOTICES_VALUE: &str = "cache_miss_notices";
 pub(super) const MAX_OUTPUT_BYTES_VALUE: &str = "max_output_bytes";
 pub(super) const MAX_TOOL_OUTPUT_LINES_VALUE: &str = "max_tool_output_lines";
 pub(super) const PROMPT_HISTORY_LIMIT_VALUE: &str = "prompt_history_limit";
@@ -197,7 +198,7 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
             ),
             item(
                 "Context & limits",
-                "Auto compact, compact threshold, compact target, max output bytes, and prompt history.",
+                "Auto compact, compact threshold, compact target, cache miss notices, max output bytes, and prompt history.",
                 Some(if config.auto_compact {
                     format!("compacts at {}%", config.compact_threshold_percent)
                 } else {
@@ -387,6 +388,12 @@ pub(super) fn category_picker(
                     COMPACT_TARGET_PERCENT_VALUE,
                 ),
                 item(
+                    "Cache miss notices",
+                    "Show a transcript notice after a turn that re-billed a large uncached prompt (over 20K tokens or $0.10). Space toggles.",
+                    Some(on_off(config.cache_miss_notices)),
+                    CACHE_MISS_NOTICES_VALUE,
+                ),
+                item(
                     "Max output bytes",
                     "Maximum tool output retained in context. Changes apply to the next session.",
                     Some(config.max_output_bytes.to_string()),
@@ -510,6 +517,7 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
         AUTO_COMPACT_VALUE
         | COMPACT_THRESHOLD_PERCENT_VALUE
         | COMPACT_TARGET_PERCENT_VALUE
+        | CACHE_MISS_NOTICES_VALUE
         | MAX_OUTPUT_BYTES_VALUE
         | PROMPT_HISTORY_LIMIT_VALUE
         | CLEAR_PROMPT_HISTORY_VALUE => Some(CONTEXT_CATEGORY_VALUE),

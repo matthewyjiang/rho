@@ -147,6 +147,9 @@ pub(super) fn parse_settings(text: &str) -> anyhow::Result<(Config, Vec<ConfigWa
             }
             cfg.prompt_history_limit = clamped;
         }
+        if let Some(value) = group.cache_miss_notices {
+            cfg.cache_miss_notices = value;
+        }
     }
     if let Some(group) = file.output {
         if let Some(value) = group.max_output_bytes {
@@ -353,6 +356,7 @@ impl PartialConfig {
                 theme: None,
                 max_tool_output_lines: None,
                 prompt_history_limit: None,
+                cache_miss_notices: None,
             });
             self.display = Some(PartialDisplayConfig {
                 show_reasoning_output: group.show_reasoning_output.or(show_reasoning_output),
@@ -360,6 +364,7 @@ impl PartialConfig {
                 theme: group.theme,
                 max_tool_output_lines: group.max_tool_output_lines.or(max_tool_output_lines),
                 prompt_history_limit: group.prompt_history_limit,
+                cache_miss_notices: group.cache_miss_notices,
             });
         }
 
@@ -533,6 +538,7 @@ struct PartialDisplayConfig {
     theme: Option<String>,
     max_tool_output_lines: Option<usize>,
     prompt_history_limit: Option<usize>,
+    cache_miss_notices: Option<bool>,
 }
 
 #[derive(Deserialize)]

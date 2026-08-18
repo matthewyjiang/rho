@@ -39,6 +39,7 @@ pub(super) enum ConfigToggle {
     CheckForUpdates,
     EnableSubagents,
     AutoCompact,
+    CacheMissNotices,
     ShowReasoningOutput,
     ZenMode,
     WebSearchHosted,
@@ -72,6 +73,10 @@ pub(super) fn toggle(
         ConfigToggle::AutoCompact => {
             config.auto_compact = !config.auto_compact;
             config.auto_compact
+        }
+        ConfigToggle::CacheMissNotices => {
+            config.cache_miss_notices = !config.cache_miss_notices;
+            config.cache_miss_notices
         }
         ConfigToggle::ShowReasoningOutput => {
             config.show_reasoning_output = !config.show_reasoning_output;

@@ -51,6 +51,7 @@ pub(super) struct RuntimeInfo {
     branch: Option<String>,
     usage: Option<ModelUsage>,
     latest_usage: Option<ModelUsage>,
+    cache_rebilled: super::cache_stats::CacheRebilled,
     model_performance: ModelPerformanceSummary,
     context_usage: Option<ContextUsage>,
     model_metadata: Option<ModelMetadata>,
@@ -110,6 +111,7 @@ impl App {
                 self.model_metadata.as_ref(),
             ),
             latest_usage: self.usage.latest_usage.clone(),
+            cache_rebilled: self.usage.cache_stats.rebilled().clone(),
             model_performance: self
                 .usage
                 .model_performance
@@ -236,6 +238,15 @@ fn push_usage_fields(block: &mut CommandBlock, info: &RuntimeInfo) {
     if let Some(percent) = cache_hit_percent(info.latest_usage.as_ref()) {
         block.push_field("Cache hit", &format!("{percent:.1}% on the latest request"));
     }
+    if let Some(percent) = cache_hit_percent(Some(usage)) {
+        block.push_field(
+            "Session cache hit",
+            &format!("{percent:.1}% of prompt tokens"),
+        );
+    }
+    if let Some(rebilled) = format_cache_rebilled(&info.cache_rebilled, info.billing) {
+        block.push_field("Cache re-billed", &rebilled);
+    }
 
     let main_cost_micros = resolved_usage_cost_usd_micros(usage, info.model_metadata.as_ref());
     push_cost_fields(block, info, main_cost_micros);
@@ -325,6 +336,30 @@ fn cache_hit_percent(usage: Option<&ModelUsage>) -> Option<f64> {
     let cache_read = usage.cache_read_tokens?;
     let prompt_tokens = usage.total_input_tokens()?;
     (prompt_tokens > 0).then(|| cache_read as f64 * 100.0 / prompt_tokens as f64)
+}
+
+/// Session re-bill line for `/info`. Hidden until at least one counted miss.
+fn format_cache_rebilled(
+    rebilled: &super::cache_stats::CacheRebilled,
+    billing: BillingInfo,
+) -> Option<String> {
+    if rebilled.miss_count == 0 {
+        return None;
+    }
+    let miss_label = if rebilled.miss_count == 1 {
+        "1 miss".to_string()
+    } else {
+        format!("{} misses", rebilled.miss_count)
+    };
+    let tokens = format_number(rebilled.missed_tokens);
+    Some(match rebilled.extra_cost_usd_micros {
+        Some(cost) => format!(
+            "{} ({tokens} tokens, {miss_label}){}",
+            format_usd(cost),
+            cost_equivalent_suffix(billing)
+        ),
+        None => format!("{tokens} tokens ({miss_label})"),
+    })
 }
 
 fn format_context(info: &RuntimeInfo) -> Option<String> {
@@ -417,6 +452,64 @@ mod tests {
         assert_eq!(
             labels(&cost_field_rows(None, 2_000, 3_000, 5_000, "", "")),
             ["Subagent cost", "Advisor cost", "Total cost"]
+        );
+    }
+
+    #[test]
+    fn session_cache_hit_uses_cumulative_prompt_tokens() {
+        let usage = ModelUsage {
+            input_tokens: Some(5_000),
+            cache_read_tokens: Some(95_000),
+            cache_write_tokens: Some(0),
+            ..ModelUsage::default()
+        };
+        assert_eq!(
+            cache_hit_percent(Some(&usage)).map(|percent| format!("{percent:.1}")),
+            Some("95.0".into())
+        );
+        assert_eq!(cache_hit_percent(None), None);
+    }
+
+    #[test]
+    fn cache_rebilled_field_covers_cost_and_count_forms() {
+        use super::super::cache_stats::CacheRebilled;
+
+        assert_eq!(
+            format_cache_rebilled(&CacheRebilled::default(), BillingInfo::Metered),
+            None
+        );
+        assert_eq!(
+            format_cache_rebilled(
+                &CacheRebilled {
+                    missed_tokens: 45_230,
+                    miss_count: 3,
+                    extra_cost_usd_micros: Some(324_000),
+                },
+                BillingInfo::Metered,
+            ),
+            Some("$0.324 (45,230 tokens, 3 misses)".into())
+        );
+        assert_eq!(
+            format_cache_rebilled(
+                &CacheRebilled {
+                    missed_tokens: 1_000,
+                    miss_count: 1,
+                    extra_cost_usd_micros: None,
+                },
+                BillingInfo::Metered,
+            ),
+            Some("1,000 tokens (1 miss)".into())
+        );
+        assert_eq!(
+            format_cache_rebilled(
+                &CacheRebilled {
+                    missed_tokens: 2_000,
+                    miss_count: 2,
+                    extra_cost_usd_micros: Some(100_000),
+                },
+                BillingInfo::Subscription,
+            ),
+            Some("$0.100 (2,000 tokens, 2 misses) API equivalent".into())
         );
     }
 

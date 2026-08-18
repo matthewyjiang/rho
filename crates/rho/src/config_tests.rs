@@ -145,6 +145,27 @@ fn unsupported_web_search_config_providers_fall_back_to_auto() {
     }
 }
 
+// Covers: display.cache_miss_notices loads from grouped config and defaults off.
+// Owner: config load
+#[test]
+fn grouped_cache_miss_notices_load_from_display_section() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+[display]
+cache_miss_notices = true
+"#,
+    )
+    .unwrap();
+
+    let config = Config::load(Some(path)).unwrap();
+
+    assert!(config.cache_miss_notices);
+    assert!(!Config::default().cache_miss_notices);
+}
+
 #[test]
 fn grouped_web_search_loads_hosted_flag() {
     let dir = tempfile::tempdir().unwrap();

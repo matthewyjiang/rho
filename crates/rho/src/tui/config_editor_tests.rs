@@ -70,6 +70,20 @@ fn subagent_toggle_persists_for_the_next_session() {
     assert!(!repository.load().unwrap().enable_subagents);
 }
 
+// Covers: toggling cache miss notices must persist for the next session.
+// Owner: config editor
+#[test]
+fn cache_miss_notices_toggle_persists() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    let repository = ConfigRepository::new(Some(path));
+
+    let enabled = toggle(&repository, ConfigToggle::CacheMissNotices).unwrap();
+
+    assert!(enabled);
+    assert!(repository.load().unwrap().cache_miss_notices);
+}
+
 #[test]
 fn zen_mode_toggle_persists() {
     let dir = tempfile::tempdir().unwrap();

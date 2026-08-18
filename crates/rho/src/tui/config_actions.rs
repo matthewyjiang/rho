@@ -68,6 +68,7 @@ impl App {
                 Ok(())
             }
             config_picker::AUTO_COMPACT_VALUE => self.toggle_auto_compact(),
+            config_picker::CACHE_MISS_NOTICES_VALUE => self.toggle_cache_miss_notices(),
             config_picker::COMPACT_THRESHOLD_PERCENT_VALUE => {
                 let config = self.info.services.config_repository.load()?;
                 self.input_ui.set_composer(ComposerMode::ConfigNumberInput(
@@ -413,6 +414,31 @@ impl App {
                     "could not save auto compact setting: {err}"
                 )));
                 self.refresh_main_config_picker_if_open(config_picker::AUTO_COMPACT_VALUE)?;
+                self.set_status("config save failed");
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn toggle_cache_miss_notices(&mut self) -> anyhow::Result<()> {
+        match config_editor::toggle(
+            &self.info.services.config_repository,
+            ConfigToggle::CacheMissNotices,
+        ) {
+            Ok(cache_miss_notices) => {
+                self.info.runtime.cache_miss_notices = cache_miss_notices;
+                self.refresh_main_config_picker_if_open(config_picker::CACHE_MISS_NOTICES_VALUE)?;
+                self.set_status(if cache_miss_notices {
+                    "cache miss notices: on"
+                } else {
+                    "cache miss notices: off"
+                });
+            }
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not save cache miss notices setting: {err}"
+                )));
+                self.refresh_main_config_picker_if_open(config_picker::CACHE_MISS_NOTICES_VALUE)?;
                 self.set_status("config save failed");
             }
         }

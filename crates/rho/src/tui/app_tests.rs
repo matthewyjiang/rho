@@ -59,6 +59,7 @@ pub(super) fn test_bootstrap() -> TuiBootstrap {
             show_reasoning_output: true,
             zen_mode: false,
             advisor_mode: false,
+            cache_miss_notices: false,
             auth: "api-key".into(),
             internal_agents: Default::default(),
             favorite_models: Vec::new(),

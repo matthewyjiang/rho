@@ -24,6 +24,7 @@ mod approval;
 mod attach_picker;
 pub(crate) mod attachment;
 mod background_polls;
+mod cache_stats;
 mod clipboard;
 mod command_actions;
 mod command_block;
@@ -286,6 +287,8 @@ pub struct RuntimeModelView {
     pub zen_mode: bool,
     /// Offer the advisor tool, backed by the `advisor` internal agent's model.
     pub advisor_mode: bool,
+    /// Show a transcript notice after a turn that re-billed a large uncached prompt.
+    pub cache_miss_notices: bool,
     pub auth: String,
     pub internal_agents:
         std::collections::BTreeMap<String, crate::config::InternalAgentModelConfig>,
