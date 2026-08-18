@@ -438,7 +438,7 @@ pub struct ProviderDescriptor {
     /// Non-empty. First entry is the default auth mode.
     pub auth_modes: &'static [AuthMode],
     pub model_source: ProviderModelSource,
-    pub model_refresh: Option<ProviderModelRefreshKind>,
+    pub(crate) model_refresh: Option<ProviderModelRefreshKind>,
     pub model_id_codec: ModelIdCodec,
     pub metadata_upstream: &'static str,
     pub catalog_reasoning: CatalogReasoningPolicy,

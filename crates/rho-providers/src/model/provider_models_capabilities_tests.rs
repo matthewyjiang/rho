@@ -218,6 +218,23 @@ fn ollama_unknown_reasoning_rows_settle_after_a_fresh_refresh() {
             !provider_model_capabilities_need_refresh("ollama", "gemma4:31b"),
             "fallback-sourced Unknown must not retrigger a successful refresh"
         );
+        assert!(
+            provider_model_capabilities_need_refresh("ollama", "missing-model"),
+            "a missing Ollama row must still refresh"
+        );
+
+        let connection = open_provider_models_cache().unwrap();
+        connection
+            .execute(
+                "update provider_model_refresh set updated_at = 0 where provider = 'ollama'",
+                [],
+            )
+            .unwrap();
+        assert!(
+            provider_model_capabilities_need_refresh("ollama", "gemma4:31b"),
+            "an expired Ollama snapshot must refresh"
+        );
+        drop(connection);
 
         replace_cached_provider_models(
             "ollama",
