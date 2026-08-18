@@ -99,7 +99,7 @@ fn priced_metadata() -> ModelMetadata {
             input_micros_per_m: Some(1_000_000),
             output_micros_per_m: Some(2_000_000),
             cache_read_micros_per_m: Some(100_000),
-            cache_write_micros_per_m: None,
+            cache_write_micros_per_m: Some(1_250_000),
         }),
         ..ModelMetadata::default()
     }
@@ -132,6 +132,7 @@ const NONE: CacheRebilled = CacheRebilled {
     missed_tokens: 0,
     miss_count: 0,
     extra_cost_usd_micros: 0,
+    unpriced_miss_count: 0,
 };
 
 // Covers: first request, full hits, the noise floor on both sides, providers
@@ -187,6 +188,7 @@ fn tracker_counts_only_real_misses() {
                 missed_tokens: CACHE_MISS_NOISE_FLOOR_TOKENS + 1,
                 miss_count: 1,
                 extra_cost_usd_micros: 0,
+                unpriced_miss_count: 1,
             },
             notices: 0,
             last_cause: None,
@@ -232,6 +234,7 @@ fn tracker_counts_only_real_misses() {
                 missed_tokens: SIGNIFICANT_MISS_TOKENS,
                 miss_count: 1,
                 extra_cost_usd_micros: 0,
+                unpriced_miss_count: 1,
             },
             notices: 1,
             last_cause: Some(CacheMissCause::ModelSwitch),
@@ -251,6 +254,7 @@ fn tracker_counts_only_real_misses() {
                 missed_tokens: SIGNIFICANT_MISS_TOKENS,
                 miss_count: 1,
                 extra_cost_usd_micros: 0,
+                unpriced_miss_count: 1,
             },
             notices: 1,
             last_cause: Some(CacheMissCause::Idle(Duration::from_secs(
@@ -265,6 +269,7 @@ fn tracker_counts_only_real_misses() {
                 missed_tokens: 8_000,
                 miss_count: 1,
                 extra_cost_usd_micros: 0,
+                unpriced_miss_count: 1,
             },
             notices: 0,
             last_cause: None,
@@ -280,6 +285,7 @@ fn tracker_counts_only_real_misses() {
                 missed_tokens: SIGNIFICANT_MISS_TOKENS,
                 miss_count: 1,
                 extra_cost_usd_micros: 0,
+                unpriced_miss_count: 1,
             },
             notices: 1,
             last_cause: Some(CacheMissCause::Unattributed),
@@ -292,6 +298,7 @@ fn tracker_counts_only_real_misses() {
                 missed_tokens: 5_001,
                 miss_count: 1,
                 extra_cost_usd_micros: 100_020,
+                unpriced_miss_count: 0,
             },
             notices: 1,
             last_cause: Some(CacheMissCause::Unattributed),
@@ -304,6 +311,30 @@ fn tracker_counts_only_real_misses() {
                 missed_tokens: 2_000,
                 miss_count: 1,
                 extra_cost_usd_micros: 1_800,
+                unpriced_miss_count: 0,
+            },
+            notices: 0,
+            last_cause: None,
+        },
+        Case {
+            name: "a missed prefix written back to cache uses the write rate",
+            requests: vec![
+                Request::warm(0, 10_000),
+                Request {
+                    model: "claude",
+                    input: 0,
+                    cache_read: Some(0),
+                    cache_write: Some(2_000),
+                    at_secs: 2,
+                    latency_secs: 1,
+                },
+            ],
+            metadata: Some(priced_metadata),
+            rebilled: CacheRebilled {
+                missed_tokens: 2_000,
+                miss_count: 1,
+                extra_cost_usd_micros: 2_300,
+                unpriced_miss_count: 0,
             },
             notices: 0,
             last_cause: None,

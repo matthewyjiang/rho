@@ -45,13 +45,15 @@ pub(super) const PROVIDER_CACHE_TTL_HINT: Duration = Duration::from_secs(300);
 
 /// Session-level tokens and dollars re-billed by counted cache misses.
 ///
-/// `/info` copies this snapshot and renders nothing while `miss_count` is zero,
-/// so `extra_cost_usd_micros` needs no separate "unknown" state.
+/// `/info` copies this snapshot and renders nothing while `miss_count` is zero.
+/// `extra_cost_usd_micros` only sums priced misses; [`Self::unpriced_miss_count`]
+/// is how the row marks that dollar figure as partial.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct CacheRebilled {
     pub missed_tokens: u64,
     pub miss_count: u64,
     pub extra_cost_usd_micros: u64,
+    pub unpriced_miss_count: u64,
 }
 
 /// Why a counted miss happened, when the tracker can observe a cause.
@@ -197,13 +199,19 @@ impl CacheStatsTracker {
             return;
         }
 
-        let extra_cost = extra_cost_usd_micros(missed, prompt_tokens, metadata);
+        let extra_cost = extra_cost_usd_micros(missed, prompt_tokens, usage, metadata);
         self.rebilled.missed_tokens = self.rebilled.missed_tokens.saturating_add(missed);
         self.rebilled.miss_count = self.rebilled.miss_count.saturating_add(1);
-        self.rebilled.extra_cost_usd_micros = self
-            .rebilled
-            .extra_cost_usd_micros
-            .saturating_add(extra_cost.unwrap_or(0));
+        match extra_cost {
+            Some(cost) => {
+                self.rebilled.extra_cost_usd_micros =
+                    self.rebilled.extra_cost_usd_micros.saturating_add(cost);
+            }
+            None => {
+                self.rebilled.unpriced_miss_count =
+                    self.rebilled.unpriced_miss_count.saturating_add(1);
+            }
+        }
 
         if is_significant_miss(missed, extra_cost) {
             self.turn_notices.push(CacheMissNotice {
@@ -244,13 +252,21 @@ fn miss_cause(
 fn extra_cost_usd_micros(
     missed: u64,
     prompt_tokens: u64,
+    usage: &ModelUsage,
     metadata: Option<&ModelMetadata>,
 ) -> Option<u64> {
     let cost = metadata?.cost_for_input_tokens(prompt_tokens)?;
     let input = cost.input_micros_per_m?;
     let cache_read = cost.cache_read_micros_per_m?;
-    let premium_per_m = input.saturating_sub(cache_read);
-    Some(cost_component(missed, Some(premium_per_m)).min(u64::MAX as u128) as u64)
+    // A missed prefix that is written back into cache is billed at the write
+    // rate (1.25x input on Anthropic), not the plain input rate.
+    let write = cost.cache_write_micros_per_m.unwrap_or(input);
+    let written = usage.cache_write_tokens.unwrap_or(0).min(missed);
+    let uncached = missed - written;
+    let extra = cost_component(written, Some(write.saturating_sub(cache_read))).saturating_add(
+        cost_component(uncached, Some(input.saturating_sub(cache_read))),
+    );
+    Some(extra.min(u64::MAX as u128) as u64)
 }
 
 fn is_significant_miss(missed: u64, extra_cost: Option<u64>) -> bool {

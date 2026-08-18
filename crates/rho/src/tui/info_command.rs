@@ -370,9 +370,14 @@ fn format_cache_rebilled(
     };
     let tokens = format_number(rebilled.missed_tokens);
     Some(if rebilled.extra_cost_usd_micros > 0 {
+        let cost = format_usd(rebilled.extra_cost_usd_micros);
+        let cost = if rebilled.unpriced_miss_count > 0 {
+            format!("{cost} partial")
+        } else {
+            cost
+        };
         format!(
-            "{} ({tokens} tokens, {miss_label}){}",
-            format_usd(rebilled.extra_cost_usd_micros),
+            "{cost} ({tokens} tokens, {miss_label}){}",
             cost_equivalent_suffix(billing)
         )
     } else {
@@ -503,6 +508,7 @@ mod tests {
                     missed_tokens: 45_230,
                     miss_count: 3,
                     extra_cost_usd_micros: 324_000,
+                    unpriced_miss_count: 0,
                 },
                 BillingInfo::Metered,
             ),
@@ -514,6 +520,7 @@ mod tests {
                     missed_tokens: 1_000,
                     miss_count: 1,
                     extra_cost_usd_micros: 0,
+                    unpriced_miss_count: 1,
                 },
                 BillingInfo::Metered,
             ),
@@ -525,10 +532,23 @@ mod tests {
                     missed_tokens: 2_000,
                     miss_count: 2,
                     extra_cost_usd_micros: 100_000,
+                    unpriced_miss_count: 0,
                 },
                 BillingInfo::Subscription,
             ),
             Some("$0.100 (2,000 tokens, 2 misses) API equivalent".into())
+        );
+        assert_eq!(
+            format_cache_rebilled(
+                &CacheRebilled {
+                    missed_tokens: 8_000,
+                    miss_count: 2,
+                    extra_cost_usd_micros: 1_800,
+                    unpriced_miss_count: 1,
+                },
+                BillingInfo::Metered,
+            ),
+            Some("$0.002 partial (8,000 tokens, 2 misses)".into())
         );
     }
 
