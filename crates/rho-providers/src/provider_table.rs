@@ -11,8 +11,8 @@ use super::{
     ANTHROPIC_API_KEY_ACCOUNT, CODEX_TOKENS_ACCOUNT, GITHUB_COPILOT_TOKENS_ACCOUNT,
     GOOGLE_API_KEY_ACCOUNT, KIMI_CODE_API_BASE, KIMI_TOKENS_ACCOUNT, META_API_BASE,
     META_API_KEY_ACCOUNT, MOONSHOT_API_BASE, MOONSHOT_API_KEY_ACCOUNT, OLLAMA_API_BASE,
-    OLLAMA_CLOUD_API_BASE, OLLAMA_CLOUD_API_KEY_ACCOUNT, OPENAI_API_KEY_ACCOUNT,
-    OPENCODE_GO_API_BASE, OPENCODE_GO_API_KEY_ACCOUNT, OPENROUTER_API_BASE,
+    OLLAMA_API_KEY_ACCOUNT, OLLAMA_CLOUD_API_BASE, OLLAMA_CLOUD_API_KEY_ACCOUNT,
+    OPENAI_API_KEY_ACCOUNT, OPENCODE_GO_API_BASE, OPENCODE_GO_API_KEY_ACCOUNT, OPENROUTER_API_BASE,
     OPENROUTER_API_KEY_ACCOUNT, OPENROUTER_OAUTH_KEY_ACCOUNT, POOLSIDE_API_BASE,
     POOLSIDE_API_KEY_ACCOUNT, QWEN_TOKEN_PLAN_API_BASE, QWEN_TOKEN_PLAN_API_KEY_ACCOUNT,
     XAI_API_KEY_ACCOUNT, XAI_TOKENS_ACCOUNT,
@@ -34,6 +34,16 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
             id: "none",
             login_label: "No authentication required",
             auth_kind: ProviderAuthKind::None,
+        },
+        AuthMode {
+            id: "ollama-api-key",
+            login_label: "Ollama API key",
+            auth_kind: ProviderAuthKind::ApiKey {
+            env_var: "RHO_OLLAMA_API_KEY",
+            account: OLLAMA_API_KEY_ACCOUNT,
+            entry_label: "Ollama API key",
+            missing_message: "missing Ollama API key; run /login ollama in the TUI or set RHO_OLLAMA_API_KEY as a CI/dev override",
+        },
         }
         ],
         model_source: ProviderModelSource::CachedProviderModels,

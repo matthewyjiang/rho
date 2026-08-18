@@ -525,6 +525,14 @@ fn login_groups_include_meta_and_merge_openai_codex() {
     assert_eq!(opencode_go.methods.len(), 1);
     assert_eq!(opencode_go.methods[0].target.auth, "opencode-go-api-key");
 
+    let ollama = groups
+        .iter()
+        .find(|group| group.id == "ollama")
+        .expect("ollama login group");
+    assert_eq!(ollama.prompt, "Ollama");
+    assert_eq!(ollama.methods.len(), 1);
+    assert_eq!(ollama.methods[0].target.auth, "ollama-api-key");
+
     let openai = groups
         .iter()
         .find(|group| group.id == "openai")

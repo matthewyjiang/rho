@@ -104,6 +104,7 @@ mod model_performance;
 mod model_picker;
 mod mouse;
 mod mouse_capture;
+mod ollama_login;
 mod overlay_panel;
 mod paste_burst;
 mod pending_input;

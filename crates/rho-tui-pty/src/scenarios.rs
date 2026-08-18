@@ -67,7 +67,7 @@ use goal::{
 };
 use hooks::HOOKS_CONTRACT_SCENARIO;
 use limits::LIMITS_OVERLAY_SCENARIO;
-use login::{LOGIN_CUSTOM_PROVIDER_STEPS, LOGIN_PROVIDER_GROUPS_STEPS};
+use login::{LOGIN_CUSTOM_PROVIDER_STEPS, LOGIN_OLLAMA_STEPS, LOGIN_PROVIDER_GROUPS_STEPS};
 use markdown_stream::{MARKDOWN_HEADINGS_SCENARIO, STREAMING_MARKDOWN_STABILITY_SCENARIO};
 use mcp::{
     MCP_CONNECTING_SCENARIO, MCP_CONNECT_RELEASE_SCENARIO, MCP_HOLD_TAKE_BACK_SCENARIO,
@@ -804,6 +804,13 @@ const ALL_SCENARIOS: &[Scenario] = &[
         "Create a custom OpenAI-compatible host from /login without an API key",
         DEFAULT_SIZE,
         LOGIN_CUSTOM_PROVIDER_STEPS,
+        false,
+    ),
+    Scenario::new(
+        "login_ollama",
+        "Configure the Ollama endpoint from /login without an API key",
+        DEFAULT_SIZE,
+        LOGIN_OLLAMA_STEPS,
         false,
     ),
     Scenario::new(

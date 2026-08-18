@@ -1,6 +1,6 @@
 # Ollama
 
-Rho can use models served by Ollama through its OpenAI-compatible API. Ollama runs locally by default and needs no API key.
+Rho can use models served by Ollama through its OpenAI-compatible API. Ollama runs locally by default. An API key is optional.
 
 For direct hosted access with an API key or device key and no local server, see [Ollama Cloud](/providers/ollama-cloud). If a local Ollama install is signed in with `ollama signin`, cloud models pulled as `*-cloud` still work through this local provider.
 
@@ -9,9 +9,10 @@ For direct hosted access with an API key or device key and no local server, see 
 | Setting | Value |
 | --- | --- |
 | Provider | `ollama` |
-| Auth | None |
+| Auth | `none`, or optional `ollama-api-key` |
 | Default API base | `http://127.0.0.1:11434/v1` |
 | Model list | Models installed in Ollama, refreshed from `/v1/models` |
+| Environment override | `RHO_OLLAMA_API_KEY` (optional key) |
 
 ## Setup
 
@@ -22,24 +23,32 @@ ollama serve
 ollama pull <tool-capable-model>
 ```
 
-In Rho, open `/config` and choose **Refresh model lists**. The model picker then shows the models returned by Ollama. You can also select one directly:
+In Rho, run `/login ollama`. The first field is the API base, prefilled with the local default. Keep it or replace it with another host. The second field is an API key; leave it blank for a keyless local server.
+
+```text
+/login ollama
+```
+
+Then open `/config` and choose **Refresh model lists**, or select a model directly:
 
 ```text
 /model ollama/<tool-capable-model>
 ```
 
-Do not run `/login` for Ollama. Rho sends no `Authorization` header and does not read or write an Ollama credential.
+First-run setup does not write `[providers.ollama]`. The endpoint is stored only after this login, or when you add the table by hand.
 
 ## Use another server
 
-Set a provider-specific API base in `~/.rho/config.toml`:
+`/login ollama` is the usual way to set a custom API base. You can also edit `~/.rho/config.toml`:
 
 ```toml
 [providers.ollama]
 base_url = "http://192.168.1.20:11434/v1"
 ```
 
-Keep the `/v1` suffix. Rho appends `/models` for discovery and `/chat/completions` for agent turns. The setting applies only to Ollama and is also used by `/doctor` when it checks the server. The URL must use `http` or `https` and cannot contain credentials, a query, or a fragment. Bearer tokens and custom headers for secured remote endpoints are not supported.
+Keep the `/v1` suffix. Rho appends `/models` for discovery and `/chat/completions` for agent turns. The setting applies only to Ollama and is also used by `/doctor` when it checks the server. The URL must use `http` or `https` and cannot contain credentials, a query, or a fragment.
+
+A stored key is sent as a Bearer token. Leave the key blank, or omit it, when the host does not require one.
 
 ## Model compatibility
 

@@ -50,6 +50,7 @@ struct GroupedConfig<'a> {
     prompt_templates: &'a crate::prompt_templates::PromptTemplates,
     #[serde(skip_serializing_if = "crate::tools::mcp::config::McpConfig::is_empty")]
     mcp: &'a crate::tools::mcp::config::McpConfig,
+    #[serde(skip_serializing_if = "PersistedProviderConfigs::is_empty")]
     providers: PersistedProviderConfigs<'a>,
 }
 

@@ -265,6 +265,9 @@ impl App {
             super::text_input::TextInputTarget::CustomHost(step) => {
                 self.submit_custom_host_step(step, value)?;
             }
+            super::text_input::TextInputTarget::OllamaEndpoint => {
+                self.submit_ollama_endpoint(value)?;
+            }
         }
         Ok(true)
     }
@@ -283,6 +286,7 @@ impl App {
                 self.reopen_agent_field_picker(field.value());
             }
             super::text_input::TextInputTarget::CustomHost(_) => self.cancel_custom_host_step(),
+            super::text_input::TextInputTarget::OllamaEndpoint => self.cancel_ollama_endpoint(),
         }
         Ok(true)
     }

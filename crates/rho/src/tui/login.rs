@@ -273,6 +273,12 @@ impl App {
             return Ok(());
         }
         let provider = provider.trim();
+        // Ollama needs its endpoint written before the optional key. The
+        // picker short-circuits a one-method group to `ollama-api-key`.
+        if matches!(provider, "ollama" | "ollama-api-key") {
+            self.start_ollama_onboarding();
+            return Ok(());
+        }
         // A fully keyless provider has no login target or group, so it would
         // otherwise fall through to the unsupported-provider error below.
         // `AuthenticationMethod::None` reports the same thing for targets that

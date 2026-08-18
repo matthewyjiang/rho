@@ -53,6 +53,36 @@ fn config_canonicalizes_legacy_poolside_wire_model_ids() {
     assert_eq!(title.expect_rho().model, "laguna-m.1");
 }
 
+// Covers: first-run config must not invent a default Ollama endpoint
+// Owner: provider config
+#[test]
+fn default_config_omits_ollama_endpoint_until_login_or_explicit_table() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    Config::default().write_settings(path.clone()).unwrap();
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        !saved.contains("[providers.ollama]"),
+        "first-run config must not write a default Ollama endpoint: {saved}"
+    );
+
+    let mut config = Config::default();
+    config
+        .providers
+        .set_endpoint("ollama", DEFAULT_OLLAMA_BASE_URL)
+        .unwrap();
+    config.write_settings(path.clone()).unwrap();
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        saved.contains("[providers.ollama]"),
+        "explicit Ollama login must persist the endpoint: {saved}"
+    );
+    assert!(
+        saved.contains(&format!("base_url = \"{DEFAULT_OLLAMA_BASE_URL}\"")),
+        "saved Ollama endpoint must keep the submitted URL: {saved}"
+    );
+}
+
 // Covers: config load must use one validated endpoint write path
 // Owner: provider config
 #[test]
@@ -63,7 +93,12 @@ fn set_endpoint_updates_supported_providers_and_rejects_others() {
         .set_endpoint("ollama", "http://10.0.0.5:11434/v1")
         .unwrap();
     assert_eq!(
-        providers.ollama.base_url.as_str(),
+        providers
+            .ollama
+            .as_ref()
+            .expect("ollama endpoint")
+            .base_url
+            .as_str(),
         "http://10.0.0.5:11434/v1"
     );
 

@@ -174,3 +174,29 @@ pub(super) const LOGIN_CUSTOM_PROVIDER_STEPS: &[Step] = &[
     },
     Step::ExitCommand,
 ];
+
+pub(super) const LOGIN_OLLAMA_STEPS: &[Step] = &[
+    Step::Phase("open_ollama_onboarding"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("/login ollama"),
+    Step::WaitText {
+        text: "edit base URL",
+        timeout: SETTLE,
+    },
+    Step::AssertText("http://127.0.0.1:11434/v1"),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "enter API key (optional)",
+        timeout: SETTLE,
+    },
+    Step::AssertText("saved Ollama endpoint http://127.0.0.1:11434/v1"),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "ollama is ready",
+        timeout: STARTUP,
+    },
+    Step::ExitCommand,
+];
