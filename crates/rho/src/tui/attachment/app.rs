@@ -249,11 +249,6 @@ impl AttachmentApp {
                     let changed = self.refresh().await?;
                     let elapsed_advanced =
                         self.live_elapsed_secs() != self.last_drawn_elapsed_secs;
-                    // Live pending tool cards paint elapsed labels, so refresh
-                    // them on the same whole-second cadence as the header clock.
-                    if elapsed_advanced && !self.pending_tools.is_empty() {
-                        self.invalidate_painted();
-                    }
                     // Keep redrawing while the auto-hide scrollbar is visible, and
                     // when a live run's whole-second elapsed label advances without I/O.
                     changed
@@ -308,7 +303,14 @@ impl AttachmentApp {
     }
 
     fn apply_event(&mut self, event: AttachmentEvent) {
-        self.invalidate_painted();
+        if !matches!(
+            event,
+            AttachmentEvent::ContextUsage(_)
+                | AttachmentEvent::Usage(_)
+                | AttachmentEvent::StepStarted
+        ) {
+            self.invalidate_painted();
+        }
         match event {
             AttachmentEvent::Prompt(prompt) => self.transcript.push(Entry::User(prompt)),
             AttachmentEvent::AssistantTextDelta(text) => {
@@ -438,7 +440,7 @@ impl AttachmentApp {
 
     /// Rebuild the cached history render when missing or wrapped for another
     /// width. Content changes drop the cache via [`Self::invalidate_painted`].
-    fn ensure_painted(&mut self, width: usize) {
+    fn ensure_painted(&mut self, width: usize) -> &PaintedHistory {
         if self
             .painted
             .as_ref()
@@ -446,6 +448,7 @@ impl AttachmentApp {
         {
             self.painted = Some(self.paint_history(width));
         }
+        self.painted.as_ref().expect("painted history just ensured")
     }
 
     fn tool_key_for_target(&self, target: &ToggleTarget) -> Option<String> {
@@ -651,20 +654,20 @@ impl AttachmentApp {
         ];
         frame.render_widget(Paragraph::new(header), chunks[0]);
 
-        self.ensure_painted(width);
-        let content_len = self
-            .painted
-            .as_ref()
-            .map_or(0, |painted| painted.lines.len());
+        // Pending cards paint live elapsed labels. Invalidate here so a
+        // key-driven redraw on a second boundary still refreshes them.
+        if self.live_elapsed_secs() != self.last_drawn_elapsed_secs
+            && !self.pending_tools.is_empty()
+        {
+            self.invalidate_painted();
+        }
+        let content_len = self.ensure_painted(width).lines.len();
         self.sync_history_geometry(chunks[1], content_len, width);
         let start = self
             .scroll
             .visible_start(self.content_len, self.viewport_height);
         let end = start.saturating_add(self.viewport_height).min(content_len);
-        let visible = self
-            .painted
-            .as_ref()
-            .map_or_else(Vec::new, |painted| painted.lines[start..end].to_vec());
+        let visible = self.ensure_painted(width).lines[start..end].to_vec();
         frame.render_widget(Paragraph::new(visible), chunks[1]);
         // Hover lift derives from the remembered pointer cell against this
         // frame's layout, so scroll, promotion, and toggles re-anchor it every
@@ -768,18 +771,12 @@ impl AttachmentApp {
     ) -> Option<(ToggleTarget, Range<usize>)> {
         let line = self.pointer_history_line(column, row)?;
         let width = self.toggle_width();
-        self.ensure_painted(width);
-        tool_card_at_line(&self.painted.as_ref()?.cards, line)
+        tool_card_at_line(&self.ensure_painted(width).cards, line)
     }
 
     fn toggle_latest_tool(&mut self) {
         let width = self.toggle_width();
-        self.ensure_painted(width);
-        let Some(target) = self
-            .painted
-            .as_ref()
-            .and_then(|painted| latest_toggle_target(&painted.cards))
-        else {
+        let Some(target) = latest_toggle_target(&self.ensure_painted(width).cards) else {
             return;
         };
         self.toggle_tool_at(target);

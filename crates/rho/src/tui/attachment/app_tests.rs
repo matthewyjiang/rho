@@ -558,7 +558,30 @@ fn mouse_events_reuse_painted_history() {
     );
 
     terminal.draw(|frame| app.draw(frame)).expect("toggle draw");
-    assert!(app.painted.is_some());
+    let after_toggle_ptr = app
+        .painted
+        .as_ref()
+        .expect("painted after toggle draw")
+        .lines
+        .as_ptr();
+    app.apply_event(AttachmentEvent::Usage(ModelUsage {
+        input_tokens: Some(10),
+        ..ModelUsage::default()
+    }));
+    app.apply_event(AttachmentEvent::ContextUsage(ContextUsage::estimated(
+        10, None,
+    )));
+    app.apply_event(AttachmentEvent::StepStarted);
+    assert_eq!(
+        app.painted
+            .as_ref()
+            .expect("painted after header-only events")
+            .lines
+            .as_ptr(),
+        after_toggle_ptr,
+        "header-only events must not rebuild the painted history"
+    );
+
     app.apply_event(AttachmentEvent::Notice("new content".into()));
     assert!(
         app.painted.is_none(),

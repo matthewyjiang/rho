@@ -120,9 +120,9 @@ pub(super) struct PaintedHistory {
 
 /// Paint-order metadata for one tool card inside [`PaintedHistory`].
 pub(super) struct PaintedCard {
-    target: Option<ToggleTarget>,
+    /// Set only when the card is over budget and has a click/Ctrl+O target.
+    toggle: Option<ToggleTarget>,
     span: Range<usize>,
-    toggleable: bool,
     pending: bool,
 }
 
@@ -141,9 +141,11 @@ impl PaintedHistory {
             let span = lines.len()..lines.len().saturating_add(painted.len());
             if item.tool_entry().is_some() {
                 cards.push(PaintedCard {
-                    target: item.toggle_target(),
+                    toggle: item
+                        .is_toggleable(width, max_tool_output_lines)
+                        .then(|| item.toggle_target())
+                        .flatten(),
                     span,
-                    toggleable: item.is_toggleable(width, max_tool_output_lines),
                     pending: matches!(item, HistoryItem::Pending { .. }),
                 });
             }
@@ -166,10 +168,7 @@ pub(super) fn tool_card_at_line(
     line: usize,
 ) -> Option<(ToggleTarget, Range<usize>)> {
     let card = cards.iter().find(|card| card.span.contains(&line))?;
-    card.toggleable
-        .then(|| card.target.clone())
-        .flatten()
-        .map(|target| (target, card.span.clone()))
+    Some((card.toggle.clone()?, card.span.clone()))
 }
 
 /// Latest Ctrl+O target in paint order.
@@ -182,11 +181,8 @@ pub(super) fn latest_toggle_target(cards: &[PaintedCard]) -> Option<ToggleTarget
     let candidate = cards
         .iter()
         .rfind(|card| card.pending)
-        .or_else(|| cards.iter().rfind(|card| card.toggleable))?;
-    candidate
-        .toggleable
-        .then(|| candidate.target.clone())
-        .flatten()
+        .or_else(|| cards.iter().rfind(|card| card.toggle.is_some()))?;
+    candidate.toggle.clone()
 }
 
 #[cfg(test)]
