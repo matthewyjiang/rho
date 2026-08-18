@@ -195,3 +195,54 @@ fn anthropic_dated_snapshots_reuse_the_parent_alias_for_freshness_and_pickers() 
     });
     let _ = fs::remove_dir_all(cache_dir);
 }
+
+// Covers: unknown Ollama reasoning rows refresh; known levels stay cached
+// Owner: ollama native discovery
+#[test]
+fn ollama_unknown_reasoning_rows_need_refresh() {
+    let cache_dir = unique_test_cache_dir("ollama-unknown-reasoning");
+    with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
+        replace_cached_provider_models(
+            "ollama",
+            &[ProviderModel {
+                provider: "ollama".into(),
+                model: "gemma4:31b".into(),
+                display_name: "gemma4:31b".into(),
+                context_window: Some(262_144),
+                max_output_tokens: None,
+                reasoning_capabilities: ReasoningCapabilities::Unknown,
+            }],
+        )
+        .unwrap();
+        assert!(provider_model_capabilities_need_refresh(
+            "ollama",
+            "gemma4:31b"
+        ));
+
+        replace_cached_provider_models(
+            "ollama",
+            &[ProviderModel {
+                provider: "ollama".into(),
+                model: "gemma4:31b".into(),
+                display_name: "gemma4:31b".into(),
+                context_window: Some(262_144),
+                max_output_tokens: None,
+                reasoning_capabilities: ReasoningCapabilities::Levels(ReasoningLevelSet::new(
+                    vec![
+                        ReasoningLevel::Off,
+                        ReasoningLevel::Low,
+                        ReasoningLevel::Medium,
+                        ReasoningLevel::High,
+                        ReasoningLevel::Max,
+                    ],
+                )),
+            }],
+        )
+        .unwrap();
+        assert!(!provider_model_capabilities_need_refresh(
+            "ollama",
+            "gemma4:31b"
+        ));
+    });
+    let _ = fs::remove_dir_all(cache_dir);
+}

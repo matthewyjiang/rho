@@ -49,39 +49,194 @@ fn parses_github_copilot_models_from_data_objects_and_deduplicates() {
     );
 }
 
-#[tokio::test]
-async fn ollama_discovery_uses_resolved_v1_url_without_auth() {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let api_base = Url::parse(&format!("http://{}/v1", listener.local_addr().unwrap())).unwrap();
-    let server = tokio::spawn(async move {
-        let (mut stream, _) = listener.accept().await.unwrap();
-        let mut request = [0; 2048];
-        let bytes = stream.read(&mut request).await.unwrap();
-        let request = String::from_utf8_lossy(&request[..bytes]);
-        assert!(request.starts_with("GET /v1/models HTTP/1.1"));
-        assert!(!request.to_ascii_lowercase().contains("authorization:"));
-        let body = r#"{"data":[{"id":"qwen3-coder"},{"id":"qwen3-coder"},{"id":"devstral","name":"Devstral"}]}"#;
-        let response = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                body.len()
-            );
-        stream.write_all(response.as_bytes()).await.unwrap();
-    });
-    let descriptor = provider::provider_descriptor("ollama").unwrap();
-    let cache = tempfile::tempdir().unwrap();
-    set_provider_models_cache_dir_for_tests(Some(cache.path().to_path_buf()));
-    let store = MemoryCredentialStore::default();
+struct CacheDirReset;
 
-    let models = refresh_provider_models_with_store(
+impl Drop for CacheDirReset {
+    fn drop(&mut self) {
+        set_provider_models_cache_dir_for_tests(None);
+    }
+}
+
+fn http_json_response(status: &str, body: &str) -> String {
+    format!(
+        "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+        body.len()
+    )
+}
+
+async fn read_http_request(stream: &mut tokio::net::TcpStream) -> String {
+    let mut request = [0; 4096];
+    let bytes = stream.read(&mut request).await.unwrap();
+    String::from_utf8_lossy(&request[..bytes]).into_owned()
+}
+
+fn request_target(request: &str) -> &str {
+    request.lines().next().unwrap_or_default()
+}
+
+async fn refresh_ollama(api_base: &Url) -> Vec<ProviderModel> {
+    let descriptor = provider::provider_descriptor("ollama").unwrap();
+    let store = MemoryCredentialStore::default();
+    refresh_provider_models_with_store(
         descriptor.name,
         descriptor.default_auth().id,
         &store,
-        ProviderModelEndpoint::OpenAiCompatible(&api_base),
+        ProviderModelEndpoint::OpenAiCompatible(api_base),
     )
     .await
     .unwrap()
-    .models;
+    .models
+}
 
+// Covers: complete /api/tags rows must not N+1 /api/show, and embedding-only
+// models stay out of the picker
+// Owner: ollama native discovery
+#[tokio::test]
+async fn ollama_tags_complete_skips_show_and_hides_embedding_only() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api_base = Url::parse(&format!("http://{}/v1", listener.local_addr().unwrap())).unwrap();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen_for_server = seen.clone();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                break;
+            };
+            let request = read_http_request(&mut stream).await;
+            seen_for_server
+                .lock()
+                .unwrap()
+                .push(request_target(&request).to_string());
+            assert!(
+                !request.to_ascii_lowercase().contains("authorization:"),
+                "{request}"
+            );
+            let body = r#"{"models":[
+                {"name":"qwen3.8:27b","details":{"parent_model":"qwen3.8:27b-q4_K_M","context_length":262144},"capabilities":["completion","tools","thinking","vision"]},
+                {"name":"nomic-embed","details":{},"capabilities":["embedding"]}
+            ]}"#;
+            stream
+                .write_all(http_json_response("200 OK", body).as_bytes())
+                .await
+                .unwrap();
+        }
+    });
+    let cache = tempfile::tempdir().unwrap();
+    set_provider_models_cache_dir_for_tests(Some(cache.path().to_path_buf()));
+    let _cache_dir_reset = CacheDirReset;
+
+    let models = refresh_ollama(&api_base).await;
+    assert_eq!(
+        models,
+        vec![ProviderModel {
+            provider: "ollama".into(),
+            model: "qwen3.8:27b".into(),
+            display_name: "qwen3.8:27b".into(),
+            context_window: Some(262_144),
+            max_output_tokens: None,
+            reasoning_capabilities: ReasoningCapabilities::Levels(
+                crate::model::ReasoningLevelSet::new(
+                    crate::provider::OLLAMA_UNKNOWN_REASONING_LEVELS.to_vec()
+                )
+            ),
+        }]
+    );
+    assert_eq!(cached_provider_models("ollama"), models);
+    assert_eq!(seen.lock().unwrap().as_slice(), ["GET /api/tags HTTP/1.1"]);
+}
+
+// Covers: missing tags context_length must come from /api/show model_info
+// Owner: ollama native discovery
+#[tokio::test]
+async fn ollama_incomplete_tags_fill_context_from_show() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api_base = Url::parse(&format!("http://{}/v1", listener.local_addr().unwrap())).unwrap();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen_for_server = seen.clone();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                break;
+            };
+            let request = read_http_request(&mut stream).await;
+            seen_for_server
+                .lock()
+                .unwrap()
+                .push(request_target(&request).to_string());
+            let body = if request.starts_with("GET /api/tags ") {
+                r#"{"models":[{"name":"gemma4:31b","details":{"parent_model":""},"capabilities":["completion","tools","thinking"]}]}"#
+            } else if request.starts_with("POST /api/show ") {
+                r#"{"details":{"parent_model":""},"capabilities":["completion","vision","tools","thinking"],"model_info":{"gemma4.context_length":262144}}"#
+            } else {
+                panic!("unexpected request: {request}");
+            };
+            stream
+                .write_all(http_json_response("200 OK", body).as_bytes())
+                .await
+                .unwrap();
+        }
+    });
+    let cache = tempfile::tempdir().unwrap();
+    set_provider_models_cache_dir_for_tests(Some(cache.path().to_path_buf()));
+    let _cache_dir_reset = CacheDirReset;
+
+    let models = refresh_ollama(&api_base).await;
+    assert_eq!(
+        models,
+        vec![ProviderModel {
+            provider: "ollama".into(),
+            model: "gemma4:31b".into(),
+            display_name: "gemma4:31b".into(),
+            context_window: Some(262_144),
+            max_output_tokens: None,
+            reasoning_capabilities: ReasoningCapabilities::Levels(
+                crate::model::ReasoningLevelSet::new(
+                    crate::provider::OLLAMA_UNKNOWN_REASONING_LEVELS.to_vec()
+                )
+            ),
+        }]
+    );
+    assert_eq!(
+        seen.lock().unwrap().as_slice(),
+        ["GET /api/tags HTTP/1.1", "POST /api/show HTTP/1.1"]
+    );
+}
+
+// Covers: native tags failure still lists models from /v1/models without auth
+// Owner: ollama native discovery
+#[tokio::test]
+async fn ollama_discovery_falls_back_to_v1_models_without_auth() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api_base = Url::parse(&format!("http://{}/v1", listener.local_addr().unwrap())).unwrap();
+    tokio::spawn(async move {
+        for expected in ["GET /api/tags HTTP/1.1", "GET /v1/models HTTP/1.1"] {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let request = read_http_request(&mut stream).await;
+            assert!(
+                request.starts_with(expected),
+                "expected {expected}, got {request}"
+            );
+            assert!(!request.to_ascii_lowercase().contains("authorization:"));
+            let (status, body) = if expected.starts_with("GET /api/tags") {
+                ("404 Not Found", r#"{"error":"not found"}"#)
+            } else {
+                (
+                    "200 OK",
+                    r#"{"data":[{"id":"qwen3-coder"},{"id":"qwen3-coder"},{"id":"devstral","name":"Devstral"}]}"#,
+                )
+            };
+            stream
+                .write_all(http_json_response(status, body).as_bytes())
+                .await
+                .unwrap();
+        }
+    });
+    let cache = tempfile::tempdir().unwrap();
+    set_provider_models_cache_dir_for_tests(Some(cache.path().to_path_buf()));
+    let _cache_dir_reset = CacheDirReset;
+    let store = MemoryCredentialStore::default();
+
+    let models = refresh_ollama(&api_base).await;
     assert_eq!(
         models
             .iter()
@@ -89,18 +244,12 @@ async fn ollama_discovery_uses_resolved_v1_url_without_auth() {
             .collect::<Vec<_>>(),
         vec![("devstral", "Devstral"), ("qwen3-coder", "qwen3-coder")]
     );
-    assert_eq!(
-        cached_provider_models("ollama"),
-        models,
-        "refresh should persist models for the generic picker path"
-    );
+    assert_eq!(cached_provider_models("ollama"), models);
     assert!(crate::model::catalog::available_models_for_auths(
         &crate::credentials::available_auth_modes(&store)
     )
     .iter()
     .any(|model| model.provider == "ollama" && model.model == "qwen3-coder"));
-    set_provider_models_cache_dir_for_tests(None);
-    server.await.unwrap();
 }
 
 async fn serve_models_response(status: &str, body: &'static str) -> Url {
@@ -167,14 +316,6 @@ async fn ollama_probe_distinguishes_models_empty_invalid_and_unreachable() {
 
 #[tokio::test]
 async fn legacy_openrouter_refresh_writes_canonical_provider_models() {
-    struct CacheDirReset;
-
-    impl Drop for CacheDirReset {
-        fn drop(&mut self) {
-            set_provider_models_cache_dir_for_tests(None);
-        }
-    }
-
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let api_base = Url::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
     let server = tokio::spawn(async move {

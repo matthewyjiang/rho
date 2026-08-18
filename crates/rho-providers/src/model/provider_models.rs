@@ -35,11 +35,14 @@ mod google;
 pub(crate) use google::{thinking_policy, ThinkingPolicy};
 #[path = "provider_models/kimi_capabilities.rs"]
 mod kimi_capabilities;
+#[path = "provider_models/ollama.rs"]
+mod ollama;
 #[path = "provider_models/openai_compatible.rs"]
 mod openai_compatible;
+pub(crate) use ollama::cached_parent_model as cached_ollama_parent_model;
 pub use openai_compatible::probe_provider_models;
 
-pub(super) struct ProviderModelRecord {
+pub(crate) struct ProviderModelRecord {
     pub model: ProviderModel,
     pub raw_json: Value,
 }
@@ -216,7 +219,9 @@ const PROVIDER_MODEL_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 
 pub fn provider_model_capabilities_need_refresh(provider: &str, model: &str) -> bool {
     let capabilities_are_known = match provider {
-        "kimi-code" => kimi_capabilities_are_known as fn(&CachedCapabilityRow) -> bool,
+        "kimi-code" | "ollama" => {
+            reasoning_capabilities_are_known as fn(&CachedCapabilityRow) -> bool
+        }
         "anthropic" => anthropic_capabilities_are_known,
         _ => return false,
     };
@@ -274,7 +279,7 @@ fn cached_capability_row(provider: &str, model: &str) -> Option<CachedCapability
         .ok()
 }
 
-fn kimi_capabilities_are_known(row: &CachedCapabilityRow) -> bool {
+fn reasoning_capabilities_are_known(row: &CachedCapabilityRow) -> bool {
     row.reasoning_capabilities_json
         .as_deref()
         .and_then(|value| serde_json::from_str::<ReasoningCapabilities>(value).ok())
@@ -329,9 +334,16 @@ pub async fn refresh_provider_models_with_store(
                     descriptor.name
                 )));
             };
-            records_from_models(
-                openai_compatible::fetch(descriptor, auth_mode, api_base, store).await?,
-            )
+            // NEXT_MAJOR(rho-providers): promote Ollama native discovery to
+            // its own ProviderModelRefreshKind so this no longer branches on
+            // the built-in provider name inside the OpenAI-compatible arm.
+            if descriptor.name == "ollama" {
+                ollama::fetch(descriptor, auth_mode, api_base, store).await?
+            } else {
+                records_from_models(
+                    openai_compatible::fetch(descriptor, auth_mode, api_base, store).await?,
+                )
+            }
         }
         None => return Err(ModelError::UnsupportedProvider(provider.to_string())),
     };
@@ -699,6 +711,14 @@ pub fn replace_cached_provider_models_for_tests(
     models: &[ProviderModel],
 ) -> Result<(), ModelError> {
     replace_cached_provider_models(provider, models)
+}
+
+#[cfg(test)]
+pub(crate) fn replace_cached_provider_model_records_for_tests(
+    provider: &str,
+    records: &[ProviderModelRecord],
+) -> Result<(), ModelError> {
+    replace_cached_provider_model_records(provider, records)
 }
 
 #[cfg(test)]

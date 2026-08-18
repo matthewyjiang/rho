@@ -1,10 +1,10 @@
 use super::*;
 use crate::model::{
     provider_models::{
-        replace_cached_provider_models_for_tests, with_provider_models_cache_dir_for_tests,
-        ProviderModel,
+        replace_cached_provider_model_records_for_tests, replace_cached_provider_models_for_tests,
+        with_provider_models_cache_dir_for_tests, ProviderModel, ProviderModelRecord,
     },
-    ReasoningLevelSet,
+    ReasoningCapabilities, ReasoningLevelSet,
 };
 use pretty_assertions::assert_eq;
 use serde_json::{json, Value};
@@ -1707,4 +1707,65 @@ fn rematched_openai_codex_catalog_keeps_builtin_window() {
         assert_eq!(metadata.effective_context_window, Some(400_000));
     });
     crate::provider::reset_custom_openai_compatible_providers_for_tests();
+}
+
+// Covers: Ollama children borrow the parent's catalog name and keep live context
+// Owner: models.dev catalog rematch
+#[test]
+fn ollama_parent_model_falls_back_to_catalog_without_replacing_live_context() {
+    let catalog = tempfile::tempdir().unwrap();
+    let provider = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(catalog.path().to_path_buf(), || {
+        with_provider_models_cache_dir_for_tests(provider.path().to_path_buf(), || {
+            write_cached_model_metadata_for_tests(
+                "ollama",
+                "qwen3.8:27b-q4_K_M",
+                &ModelMetadata {
+                    display_name: Some("Qwen3.8 27B".into()),
+                    advertised_context_window: Some(32_768),
+                    effective_context_window: Some(32_768),
+                    reasoning_metadata_complete: true,
+                    ..ModelMetadata::default()
+                },
+            );
+            replace_cached_provider_model_records_for_tests(
+                "ollama",
+                &[ProviderModelRecord {
+                    model: ProviderModel {
+                        provider: "ollama".into(),
+                        model: "qwen3.8:27b".into(),
+                        display_name: "qwen3.8:27b".into(),
+                        context_window: Some(262_144),
+                        max_output_tokens: None,
+                        reasoning_capabilities: ReasoningCapabilities::Levels(
+                            ReasoningLevelSet::new(vec![
+                                ReasoningLevel::Off,
+                                ReasoningLevel::Low,
+                                ReasoningLevel::Medium,
+                                ReasoningLevel::High,
+                                ReasoningLevel::Max,
+                            ]),
+                        ),
+                    },
+                    raw_json: json!({"parent_model": "qwen3.8:27b-q4_K_M"}),
+                }],
+            )
+            .unwrap();
+
+            let metadata =
+                current_model_metadata("ollama", "qwen3.8:27b").expect("parent fallback");
+            assert_eq!(metadata.display_name.as_deref(), Some("Qwen3.8 27B"));
+            assert_eq!(metadata.effective_context_window, Some(262_144));
+            assert_eq!(
+                metadata.supported_reasoning_levels,
+                Some(vec![
+                    ReasoningLevel::Off,
+                    ReasoningLevel::Low,
+                    ReasoningLevel::Medium,
+                    ReasoningLevel::High,
+                    ReasoningLevel::Max,
+                ])
+            );
+        });
+    });
 }
