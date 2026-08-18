@@ -35,18 +35,13 @@ pub(super) enum ApiKeySubmission {
 }
 
 /// Blank optional key: keep a reachable key, otherwise run keyless. Never deletes.
-///
-/// `Err` means the lookup itself failed. Callers must not treat that as "no key".
-fn resolve_blank_optional_key(
-    mut target: LoginTarget,
-    has_reachable_key: Result<bool, String>,
-) -> Result<LoginTarget, String> {
-    if has_reachable_key? {
-        return Ok(target);
+fn resolve_blank_optional_key(mut target: LoginTarget, has_reachable_key: bool) -> LoginTarget {
+    if has_reachable_key {
+        return target;
     }
     target.auth = provider::KEYLESS_AUTH.into();
     target.label = target.provider.clone();
-    Ok(target)
+    target
 }
 
 #[derive(Clone, Debug)]
@@ -419,15 +414,20 @@ impl App {
                 Ok(())
             }
             ApiKeySubmission::LeaveUnset { target } => {
-                let lookup = ProviderAuthentication::has_credentials(
+                match ProviderAuthentication::has_credentials(
                     self.credential_store.as_ref(),
                     &target.auth,
-                )
-                .map_err(|err| err.to_string());
-                match resolve_blank_optional_key(target, lookup) {
-                    Ok(target) => self.finish_login(target, terminal, agent).await,
+                ) {
+                    Ok(has_key) => {
+                        self.finish_login(
+                            resolve_blank_optional_key(target, has_key),
+                            terminal,
+                            agent,
+                        )
+                        .await
+                    }
                     Err(err) => {
-                        self.insert_entry(&Entry::Error(err));
+                        self.insert_entry(&Entry::Error(err.to_string()));
                         self.set_status("login failed");
                         Ok(())
                     }
