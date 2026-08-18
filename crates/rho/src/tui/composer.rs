@@ -211,6 +211,10 @@ impl App {
             InputSubmissionMode::ParseCommands,
         );
         self.input_ui.set_history_cursor(Some(next_cursor));
+        // Recalled text is finished content, not a live search. Keep both
+        // palettes closed until the next typed edit.
+        self.input_ui.set_command_palette_dismissed(true);
+        self.input_ui.set_file_palette_dismissed(true);
         true
     }
 
@@ -625,15 +629,6 @@ impl App {
         self.input_ui.set_file_palette_dismissed(false);
         self.clamp_command_selection();
         self.clamp_file_selection();
-    }
-
-    /// Recalled history is finished content, not a live search. Keep both
-    /// palettes closed until the next typed edit.
-    pub(super) fn finish_history_restore(&mut self) {
-        self.clamp_command_selection();
-        self.clamp_file_selection();
-        self.input_ui.set_command_palette_dismissed(true);
-        self.input_ui.set_file_palette_dismissed(true);
     }
 
     pub(super) fn parse_input_command(
