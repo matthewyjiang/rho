@@ -151,21 +151,39 @@ fn each_row_value_routes_to_its_runtime() {
     );
 }
 
-// Covers: /model must open on pinned models when any pin has auth, and stay
-// on the catalogue when the pin list is empty or unusable.
+// Covers: the pinned scope is only usable when a pin has auth, and asking for
+// all must never be upgraded to pinned.
 // Owner: model picker scope
 #[test]
-fn default_scope_is_pinned_only_when_a_pin_has_auth() {
+fn pinned_scope_degrades_to_all_without_a_usable_pin() {
+    let cases = [
+        (ModelPickerScope::Pinned, vec![], vec!["api-key"]),
+        (ModelPickerScope::Pinned, vec!["openai/gpt-5.5"], vec![]),
+        (
+            ModelPickerScope::All,
+            vec!["xai/grok-4.6"],
+            vec!["xai-api-key"],
+        ),
+    ];
+    for (scope, pins, auths) in cases {
+        let pins = pins.iter().map(|pin| pin.to_string()).collect::<Vec<_>>();
+        let auths = auths
+            .iter()
+            .map(|auth| auth.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            effective_model_picker_scope(scope, &pins, &auths),
+            ModelPickerScope::All,
+            "{scope:?} {pins:?} {auths:?}"
+        );
+    }
+
     assert_eq!(
-        default_model_picker_scope(&[], &["api-key".into()]),
-        ModelPickerScope::All
-    );
-    assert_eq!(
-        default_model_picker_scope(&["openai/gpt-5.5".into()], &[]),
-        ModelPickerScope::All
-    );
-    assert_eq!(
-        default_model_picker_scope(&["xai/grok-4.6".into()], &["xai-api-key".into()]),
+        effective_model_picker_scope(
+            ModelPickerScope::Pinned,
+            &["xai/grok-4.6".into()],
+            &["xai-api-key".into()]
+        ),
         ModelPickerScope::Pinned
     );
 }
@@ -194,6 +212,16 @@ fn pinned_scope_lists_only_usable_pins() {
 
     runtime.favorite_models.clear();
     let all = model_picker(&runtime, &auths, ModelPickerScope::Pinned);
-    assert!(all.items.len() > 1, "empty pins should keep the catalogue");
+    assert_eq!(
+        all.items
+            .iter()
+            .map(|item| item.value.as_str())
+            .collect::<Vec<_>>(),
+        catalog::available_models_for_auths(&auths)
+            .iter()
+            .map(|entry| rho_providers::provider::model_reference(&entry.provider, &entry.model))
+            .collect::<Vec<_>>(),
+        "empty pins should keep the whole authenticated catalogue"
+    );
     assert!(all.title.contains("all"));
 }

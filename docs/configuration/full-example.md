@@ -91,6 +91,8 @@ insert_newline = "ctrl+j"
 paste_image = "ctrl+v"
 edit_pending_input = "alt+up"
 manage_pending_input = "alt+q"
+cycle_pinned_model = "ctrl+p"
+cycle_pinned_model_back = "ctrl+shift+p"
 ```
 
 Settings are grouped by purpose so the file is easier to scan and edit by hand. Rho still reads the previous flat format and rewrites it into groups the next time it saves config.

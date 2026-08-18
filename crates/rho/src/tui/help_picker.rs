@@ -26,6 +26,8 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
     let paste_image = keybindings.paste_image.to_string();
     let edit_pending = keybindings.edit_pending_input.to_string();
     let manage_pending = keybindings.manage_pending_input.to_string();
+    let cycle_pinned = keybindings.cycle_pinned_model.to_string();
+    let cycle_pinned_back = keybindings.cycle_pinned_model_back.to_string();
 
     vec![
         entry(
@@ -64,14 +66,11 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
             "Move through the configured reasoning levels for the active model and save the selection.",
         ),
         entry(
-            "ctrl+p",
+            cycle_pinned.clone(),
             "Cycle pinned models",
-            "Switch to the next pinned model. ctrl+shift+p goes backward. Does nothing when no models are pinned. In a model picker, ctrl+p pins or unpins the highlighted model.",
-        ),
-        entry(
-            "ctrl+o",
-            "Toggle tools or model list",
-            "In the composer, expand or collapse the latest tool output. In a model picker, switch the list between all models and pinned models.",
+            format!(
+                "Switch to the next pinned model. {cycle_pinned_back} goes backward, where the terminal reports it. Does nothing when no models are pinned. In a model picker, {cycle_pinned} pins or unpins the highlighted model."
+            ),
         ),
         entry(
             "ctrl+c",
@@ -114,9 +113,11 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
             "Jump the transcript viewport back to the live bottom and resume following new output. Also available from the on-screen jump control when scrolled up.",
         ),
         entry(
-            toggle_tools,
+            toggle_tools.clone(),
             "Toggle tools",
-            "Expand or collapse the latest tool output block when output is truncated.",
+            format!(
+                "Expand or collapse the latest tool output block when output is truncated. In a model picker, {toggle_tools} switches the list between all models and pinned models."
+            ),
         ),
         entry(
             edit_pending,
@@ -151,7 +152,7 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
     ]
 }
 
-fn entry(keys: impl Into<String>, summary: &str, detail: &str) -> PickerItem {
+fn entry(keys: impl Into<String>, summary: &str, detail: impl Into<String>) -> PickerItem {
     let keys = keys.into();
     PickerItem {
         section: None,

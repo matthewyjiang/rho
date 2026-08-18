@@ -499,10 +499,9 @@ impl App {
         self.info.runtime.favorite_models = favorite_models;
 
         self.refresh_available_auths();
-        self.sync_model_picker_scope_after_pin_change();
-        if !self.rebuild_open_model_picker(&value, filter) {
-            return Ok(());
-        }
+        // The pinned view degrades to all on its own when the last usable pin
+        // goes away, so no scope reconciliation is needed here.
+        self.rebuild_open_model_picker(&value, filter);
         let action = if pinned { "pinned" } else { "unpinned" };
         self.set_status(format!("{action} {value}"));
         Ok(())

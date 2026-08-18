@@ -14,6 +14,10 @@ pub struct Keybindings {
     pub paste_image: KeyBinding,
     pub edit_pending_input: KeyBinding,
     pub manage_pending_input: KeyBinding,
+    /// Also pins/unpins the highlighted row while a model picker is open.
+    pub cycle_pinned_model: KeyBinding,
+    /// Needs a terminal that reports ctrl+shift (kitty keyboard protocol).
+    pub cycle_pinned_model_back: KeyBinding,
 }
 
 impl Default for Keybindings {
@@ -27,6 +31,8 @@ impl Default for Keybindings {
             paste_image: KeyBinding::control('v'),
             edit_pending_input: KeyBinding::alt(KeyCode::Up),
             manage_pending_input: KeyBinding::alt(KeyCode::Char('q')),
+            cycle_pinned_model: KeyBinding::control('p'),
+            cycle_pinned_model_back: KeyBinding::control_shift('p'),
         }
     }
 }
@@ -42,6 +48,8 @@ struct PartialKeybindings {
     paste_image: Option<KeyBinding>,
     edit_pending_input: Option<KeyBinding>,
     manage_pending_input: Option<KeyBinding>,
+    cycle_pinned_model: Option<KeyBinding>,
+    cycle_pinned_model_back: Option<KeyBinding>,
 }
 
 impl<'de> Deserialize<'de> for Keybindings {
@@ -75,6 +83,12 @@ impl<'de> Deserialize<'de> for Keybindings {
             manage_pending_input: partial
                 .manage_pending_input
                 .unwrap_or(defaults.manage_pending_input),
+            cycle_pinned_model: partial
+                .cycle_pinned_model
+                .unwrap_or(defaults.cycle_pinned_model),
+            cycle_pinned_model_back: partial
+                .cycle_pinned_model_back
+                .unwrap_or(defaults.cycle_pinned_model_back),
         };
         if keybindings.open_editor == keybindings.jump_to_bottom {
             return Err(serde::de::Error::custom(
@@ -95,6 +109,13 @@ impl KeyBinding {
     const fn control(ch: char) -> Self {
         Self {
             modifiers: KeyModifiers::CONTROL,
+            code: KeyCode::Char(ch),
+        }
+    }
+
+    const fn control_shift(ch: char) -> Self {
+        Self {
+            modifiers: KeyModifiers::CONTROL.union(KeyModifiers::SHIFT),
             code: KeyCode::Char(ch),
         }
     }

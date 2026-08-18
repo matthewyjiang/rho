@@ -28,19 +28,47 @@ impl ModelPickerScope {
             Self::Pinned => "pinned",
         }
     }
+
+    pub(super) fn status_label(self) -> &'static str {
+        match self {
+            Self::All => "all models",
+            Self::Pinned => "pinned models",
+        }
+    }
 }
 
-/// Open pinned when at least one pin has auth; otherwise the catalogue.
-pub(super) fn default_model_picker_scope(
+/// The scope a picker can actually show: `Pinned` degrades to `All` when no
+/// pin has auth.
+///
+/// This is the single place that decides whether the pinned view is usable.
+/// Callers pass the result down; nothing re-derives it.
+pub(super) fn effective_model_picker_scope(
+    scope: ModelPickerScope,
     favorite_models: &[String],
     available_auths: &[String],
 ) -> ModelPickerScope {
-    let favorites = favorites::normalized_favorite_models(favorite_models);
-    let available = catalog::available_models_for_auths(available_auths);
-    if favorites::available_favorites(&favorites, &available).is_empty() {
-        ModelPickerScope::All
-    } else {
+    if scope == ModelPickerScope::All {
+        return ModelPickerScope::All;
+    }
+    resolve_scope(
+        scope,
+        &favorites::normalized_favorite_models(favorite_models),
+        &catalog::available_models_for_auths(available_auths),
+    )
+}
+
+/// [`effective_model_picker_scope`] for callers that already normalized.
+fn resolve_scope(
+    scope: ModelPickerScope,
+    favorites: &[favorites::FavoriteModel],
+    available: &[catalog::ModelCatalogEntry],
+) -> ModelPickerScope {
+    if scope == ModelPickerScope::Pinned
+        && !favorites::available_favorites(favorites, available).is_empty()
+    {
         ModelPickerScope::Pinned
+    } else {
+        ModelPickerScope::All
     }
 }
 
@@ -335,33 +363,16 @@ fn model_picker_for_current(
     } = current;
     let current = rho_providers::provider::model_reference(current_provider, current_model);
     let favorites = favorites::normalized_favorite_models(favorite_models);
-    let available = catalog::available_models_for_auths(available_auths);
-    let effective_scope = match scope {
-        ModelPickerScope::Pinned
-            if favorites::available_favorites(&favorites, &available).is_empty() =>
-        {
-            ModelPickerScope::All
-        }
-        scope => scope,
-    };
-    let catalog_models = match effective_scope {
-        ModelPickerScope::All => favorites::reorder_models_by_favorites(available, &favorites),
-        ModelPickerScope::Pinned => favorites::reorder_models_by_favorites(available, &favorites)
-            .into_iter()
-            .filter(|entry| {
-                favorites
-                    .iter()
-                    .any(|favorite| favorite.matches(&entry.provider, &entry.model))
-            })
-            .collect(),
-    };
-    let catalog_items = catalog_models
+    let mut available = catalog::available_models_for_auths(available_auths);
+    let effective_scope = resolve_scope(scope, &favorites, &available);
+    if effective_scope == ModelPickerScope::Pinned {
+        available.retain(|entry| favorites::is_favorite(&favorites, &entry.provider, &entry.model));
+    }
+    let catalog_items = favorites::reorder_models_by_favorites(available, &favorites)
         .into_iter()
         .map(|entry| {
             let value = rho_providers::provider::model_reference(&entry.provider, &entry.model);
-            let pinned = favorites
-                .iter()
-                .any(|favorite| favorite.matches(&entry.provider, &entry.model));
+            let pinned = favorites::is_favorite(&favorites, &entry.provider, &entry.model);
             let selected = entry.provider == current_provider && entry.model == current_model;
             let badge = match (pinned, selected) {
                 (true, true) => Some(PickerBadge {
@@ -403,7 +414,7 @@ fn model_picker_for_current(
         pin_toggle: true,
         scope_toggle: true,
         tab_complete: true,
-        row_delete: false,
+        ..Default::default()
     });
     if let Some(index) = picker.items.iter().position(|item| item.value == current) {
         picker.selected = index;

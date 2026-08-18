@@ -114,7 +114,17 @@ pub(in crate::tui) fn apply_picker_key(
     key: KeyEvent,
     targets: Option<OverlayScrollTargets>,
     space_confirms: bool,
+    keybindings: &crate::keybindings::Keybindings,
 ) -> PickerKeyEffect {
+    // Model-list keys reuse the composer bindings so a rebind moves both, and
+    // are checked before the tuple match so a rebind onto a plain character
+    // cannot be swallowed by the filter arm.
+    if picker.key_hints.pin_toggle && keybindings.cycle_pinned_model.matches(key) {
+        return PickerKeyEffect::ToggleFavorite;
+    }
+    if picker.key_hints.scope_toggle && keybindings.toggle_tool_output.matches(key) {
+        return PickerKeyEffect::ToggleModelScope;
+    }
     match (key.modifiers, key.code) {
         (KeyModifiers::NONE, KeyCode::Up) => {
             if let Some(viewport) =
@@ -175,14 +185,6 @@ pub(in crate::tui) fn apply_picker_key(
         (KeyModifiers::NONE, KeyCode::Backspace) => {
             picker.pop_filter_char();
             PickerKeyEffect::Handled
-        }
-        (KeyModifiers::CONTROL, KeyCode::Char('p')) if picker.key_hints.pin_toggle => {
-            PickerKeyEffect::ToggleFavorite
-        }
-        (KeyModifiers::CONTROL, KeyCode::Char('o') | KeyCode::Char('O'))
-            if picker.key_hints.scope_toggle =>
-        {
-            PickerKeyEffect::ToggleModelScope
         }
         (KeyModifiers::NONE, KeyCode::Char('d') | KeyCode::Delete)
             if picker.key_hints.row_delete =>
@@ -409,6 +411,7 @@ impl App {
         }
 
         let space_confirms = self.picker_space_confirms_selection();
+        let keybindings = self.info.runtime.keybindings.clone();
         let delete_action = {
             let super::ComposerMode::Picker(picker) = self.input_ui.composer() else {
                 return Ok(false);
@@ -420,7 +423,7 @@ impl App {
                 return Ok(false);
             };
             let targets = overlay_scroll_targets(picker, terminal);
-            apply_picker_key(picker, key, targets, space_confirms)
+            apply_picker_key(picker, key, targets, space_confirms, &keybindings)
         };
 
         match effect {
@@ -491,12 +494,13 @@ impl App {
         }
 
         let space_confirms = self.picker_space_confirms_selection();
+        let keybindings = self.info.runtime.keybindings.clone();
         let effect = {
             let super::ComposerMode::Picker(picker) = self.input_ui.composer_mut() else {
                 return Ok(false);
             };
             let targets = overlay_scroll_targets(picker, terminal);
-            apply_picker_key(picker, key, targets, space_confirms)
+            apply_picker_key(picker, key, targets, space_confirms, &keybindings)
         };
 
         match effect {

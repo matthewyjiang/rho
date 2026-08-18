@@ -64,6 +64,14 @@ pub(super) const CYCLE_AND_PINNED_MODEL_PICKER_STEPS: &[Step] = &[
         text: "xai/grok-4.6",
         timeout: SETTLE,
     },
+    // Wraps back to the first pin, proving the cycle is a ring and not a
+    // one-shot jump to the next entry.
+    Step::Phase("cycle_wraps"),
+    Step::Key(Key::Ctrl('p')),
+    Step::WaitText {
+        text: "openai/gpt-5.5",
+        timeout: SETTLE,
+    },
     Step::Phase("open_pinned_picker"),
     Step::SubmitText("/model"),
     Step::WaitText {
@@ -74,6 +82,20 @@ pub(super) const CYCLE_AND_PINNED_MODEL_PICKER_STEPS: &[Step] = &[
     Step::AssertText("xai/grok-4.6"),
     Step::Phase("toggle_all"),
     Step::Key(Key::Ctrl('o')),
+    Step::WaitText {
+        text: "select model · all",
+        timeout: SETTLE,
+    },
+    // Back to pinned, then unpin both rows: the list must fall back to the
+    // catalogue rather than stranding the user on an empty pinned view.
+    Step::Phase("unpin_falls_back_to_all"),
+    Step::Key(Key::Ctrl('o')),
+    Step::WaitText {
+        text: "select model · pinned",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Ctrl('p')),
+    Step::Key(Key::Ctrl('p')),
     Step::WaitText {
         text: "select model · all",
         timeout: SETTLE,

@@ -289,7 +289,7 @@ impl super::App {
     ) -> UiPicker {
         self.refresh_available_auths();
         let current = self.internal_agent_picker_model(id);
-        let scope = self.resolved_model_picker_scope();
+        let scope = self.latch_model_picker_scope_on_open();
         let picker = super::model_picker::internal_agent_model_picker(
             super::model_picker::InternalAgentPickerInputs {
                 agent_id: id,

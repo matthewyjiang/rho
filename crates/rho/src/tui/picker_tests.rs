@@ -25,10 +25,9 @@ fn action_footer_parts_include_structured_key_hints() {
         PickerAction::ResumeSession,
     )
     .with_key_hints(PickerKeyHints {
-        pin_toggle: false,
-        scope_toggle: false,
         tab_complete: true,
         row_delete: true,
+        ..Default::default()
     })
     .with_confirm_verb("resume");
 
@@ -57,7 +56,7 @@ fn action_footer_parts_include_structured_key_hints() {
             pin_toggle: true,
             scope_toggle: true,
             tab_complete: true,
-            row_delete: false,
+            ..Default::default()
         });
     assert_eq!(
         model.action_footer_parts(),
