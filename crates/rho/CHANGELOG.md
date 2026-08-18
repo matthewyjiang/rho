@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.45.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.44.0...rho-coding-agent-v1.45.0) (2026-08-18)
+
+
+### Features
+
+* **providers:** read Ollama context and thinking from native tags ([#993](https://github.com/matthewyjiang/rho/issues/993)) ([dfd0f01](https://github.com/matthewyjiang/rho/commit/dfd0f0145ac26a34365f16446bc924ef1de125b5))
+* **providers:** set up ollama through /login instead of first-run defaults ([#994](https://github.com/matthewyjiang/rho/issues/994)) ([1fbe5f8](https://github.com/matthewyjiang/rho/commit/1fbe5f853d9f9b8f02251b5e9dbad2258e82a20c))
+* **tui:** cycle pinned models without opening the catalogue ([#988](https://github.com/matthewyjiang/rho/issues/988)) ([c0d0292](https://github.com/matthewyjiang/rho/commit/c0d029261852a91ae24ec5ced355de8ef7c876f9))
+* **tui:** show prompt-cache misses in /info and optional notices ([#989](https://github.com/matthewyjiang/rho/issues/989)) ([4b35cb6](https://github.com/matthewyjiang/rho/commit/4b35cb661a75e355bd0405a39a7b1dcace7a1c43))
+
+
+### Bug Fixes
+
+* **providers:** keep a stored custom key after /login and restart ([#995](https://github.com/matthewyjiang/rho/issues/995)) ([5e404f6](https://github.com/matthewyjiang/rho/commit/5e404f6d584dcfe1ec22ffbe2fa2b472754d6cca))
+* **tui:** keep picker keybinds from clipping mid-hint ([#996](https://github.com/matthewyjiang/rho/issues/996)) ([f7bca1e](https://github.com/matthewyjiang/rho/commit/f7bca1eedbb2c6f1b86bc14426a5d30948b9d614))
+* **tui:** keep up-arrow history out of the command palette ([#990](https://github.com/matthewyjiang/rho/issues/990)) ([3a5b048](https://github.com/matthewyjiang/rho/commit/3a5b0481d6f00e54862b48af6cfb37cd31549631))
+
 ## [1.44.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.43.1...rho-coding-agent-v1.44.0) (2026-08-18)
 
 

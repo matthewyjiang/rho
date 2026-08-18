@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.8.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.7.0...rho-providers-v1.8.0) (2026-08-18)
+
+
+### Features
+
+* **providers:** read Ollama context and thinking from native tags ([#993](https://github.com/matthewyjiang/rho/issues/993)) ([dfd0f01](https://github.com/matthewyjiang/rho/commit/dfd0f0145ac26a34365f16446bc924ef1de125b5))
+* **providers:** set up ollama through /login instead of first-run defaults ([#994](https://github.com/matthewyjiang/rho/issues/994)) ([1fbe5f8](https://github.com/matthewyjiang/rho/commit/1fbe5f853d9f9b8f02251b5e9dbad2258e82a20c))
+* **tui:** cycle pinned models without opening the catalogue ([#988](https://github.com/matthewyjiang/rho/issues/988)) ([c0d0292](https://github.com/matthewyjiang/rho/commit/c0d029261852a91ae24ec5ced355de8ef7c876f9))
+
+
+### Bug Fixes
+
+* **providers:** restore models.dev metadata for catalog = "openrouter" ([#987](https://github.com/matthewyjiang/rho/issues/987)) ([e8fb9f1](https://github.com/matthewyjiang/rho/commit/e8fb9f16d17038168fcae7701c13fa03123722d4))
+
 ## [1.7.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.6.1...rho-providers-v1.7.0) (2026-08-18)
 
 
