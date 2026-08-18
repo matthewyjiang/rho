@@ -37,7 +37,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         }
         ],
         model_source: ProviderModelSource::CachedProviderModels,
-        model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
+        model_refresh: Some(ProviderModelRefreshKind::Ollama),
         model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "ollama",
         // Same OpenAI-compatible API as Ollama Cloud: reasoning_effort including "none".

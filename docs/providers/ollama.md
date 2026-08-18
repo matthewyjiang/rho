@@ -43,7 +43,7 @@ Keep the `/v1` suffix. Rho derives the native API root by removing that segment 
 
 ## Model metadata
 
-Context window and thinking capability come from the local server. Complete `/api/tags` rows are enough; Rho calls `/api/show` only when tags omit context length or capabilities, reading `model_info.<arch>.context_length` when present. That value is the model's advertised maximum, not the server's current `num_ctx`. Models that advertise only `embedding` stay out of the picker. A model created from another model can borrow the parent's models.dev display metadata when the child itself has no catalog row.
+Context window and thinking capability come from the local server. Complete `/api/tags` rows are enough; Rho calls `/api/show` only when tags omit context length or capabilities, reading `model_info.<arch>.context_length` when present. That value is the model's advertised maximum, not the server's current `num_ctx`. Models that advertise only `embedding` stay out of the picker.
 
 ## Model compatibility
 

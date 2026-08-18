@@ -39,10 +39,9 @@ mod kimi_capabilities;
 mod ollama;
 #[path = "provider_models/openai_compatible.rs"]
 mod openai_compatible;
-pub(crate) use ollama::cached_parent_model as cached_ollama_parent_model;
 pub use openai_compatible::probe_provider_models;
 
-pub(crate) struct ProviderModelRecord {
+pub(super) struct ProviderModelRecord {
     pub model: ProviderModel,
     pub raw_json: Value,
 }
@@ -327,23 +326,15 @@ pub async fn refresh_provider_models_with_store(
         Some(ProviderModelRefreshKind::GithubCopilot) => {
             records_from_models(fetch_github_copilot_models(provider, store).await?)
         }
+        Some(ProviderModelRefreshKind::Ollama) => {
+            let api_base = openai_compatible_api_base(descriptor, endpoint)?;
+            records_from_models(ollama::fetch(descriptor, auth_mode, api_base, store).await?)
+        }
         Some(ProviderModelRefreshKind::OpenAiCompatible) => {
-            let ProviderModelEndpoint::OpenAiCompatible(api_base) = endpoint else {
-                return Err(ModelError::InvalidResponse(format!(
-                    "provider '{}' requires a resolved API base for model discovery",
-                    descriptor.name
-                )));
-            };
-            // NEXT_MAJOR(rho-providers): promote Ollama native discovery to
-            // its own ProviderModelRefreshKind so this no longer branches on
-            // the built-in provider name inside the OpenAI-compatible arm.
-            if descriptor.name == "ollama" {
-                ollama::fetch(descriptor, auth_mode, api_base, store).await?
-            } else {
-                records_from_models(
-                    openai_compatible::fetch(descriptor, auth_mode, api_base, store).await?,
-                )
-            }
+            let api_base = openai_compatible_api_base(descriptor, endpoint)?;
+            records_from_models(
+                openai_compatible::fetch(descriptor, auth_mode, api_base, store).await?,
+            )
         }
         None => return Err(ModelError::UnsupportedProvider(provider.to_string())),
     };
@@ -352,6 +343,19 @@ pub async fn refresh_provider_models_with_store(
         provider: provider.to_string(),
         models: records.into_iter().map(|record| record.model).collect(),
     })
+}
+
+fn openai_compatible_api_base<'a>(
+    descriptor: &provider::ProviderDescriptor,
+    endpoint: ProviderModelEndpoint<'a>,
+) -> Result<&'a Url, ModelError> {
+    let ProviderModelEndpoint::OpenAiCompatible(api_base) = endpoint else {
+        return Err(ModelError::InvalidResponse(format!(
+            "provider '{}' requires a resolved API base for model discovery",
+            descriptor.name
+        )));
+    };
+    Ok(api_base)
 }
 
 fn records_from_models(models: Vec<ProviderModel>) -> Vec<ProviderModelRecord> {
@@ -711,14 +715,6 @@ pub fn replace_cached_provider_models_for_tests(
     models: &[ProviderModel],
 ) -> Result<(), ModelError> {
     replace_cached_provider_models(provider, models)
-}
-
-#[cfg(test)]
-pub(crate) fn replace_cached_provider_model_records_for_tests(
-    provider: &str,
-    records: &[ProviderModelRecord],
-) -> Result<(), ModelError> {
-    replace_cached_provider_model_records(provider, records)
 }
 
 #[cfg(test)]

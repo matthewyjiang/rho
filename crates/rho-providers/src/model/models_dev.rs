@@ -269,11 +269,17 @@ fn load_model_metadata(
 ) -> Option<ModelMetadata> {
     let local = overrides::local_override_table(provider, model);
     let (source_provider, source_model) = catalog_source_for(provider, model, local.as_ref());
-    let (metadata, catalog_provider, catalog_model) =
-        catalog_metadata(provider, model, &source_provider, &source_model, freshness)?;
-    let remapped = catalog_provider != provider || catalog_model != model;
+    let remapped = source_provider != provider || source_model != model;
+    let metadata = match freshness {
+        CacheFreshness::CurrentOnly => {
+            current_cached_upstream_model_metadata(&source_provider, &source_model)
+        }
+        CacheFreshness::AllowStale => {
+            cached_upstream_model_metadata(&source_provider, &source_model)
+        }
+    }?;
     let metadata = if remapped {
-        overrides::apply_builtin_overrides(&catalog_provider, &catalog_model, metadata)
+        overrides::apply_builtin_overrides(&source_provider, &source_model, metadata)
     } else {
         overrides::apply_builtin_overrides(provider, model, metadata)
     };
@@ -282,41 +288,6 @@ fn load_model_metadata(
         Some(table) => overrides::merge_toml_override(metadata, table),
         None => metadata,
     })
-}
-
-fn catalog_metadata(
-    provider: &str,
-    model: &str,
-    source_provider: &str,
-    source_model: &str,
-    freshness: CacheFreshness,
-) -> Option<(ModelMetadata, String, String)> {
-    if let Some(metadata) = cached_upstream_for(source_provider, source_model, freshness) {
-        return Some((
-            metadata,
-            source_provider.to_string(),
-            source_model.to_string(),
-        ));
-    }
-    // Dynamic analogue of Anthropic dated-parent alias: Ollama Modelfile
-    // children keep their live provider row and borrow the parent's catalog.
-    if provider != "ollama" {
-        return None;
-    }
-    let parent = super::provider_models::cached_ollama_parent_model(provider, model)?;
-    let metadata = cached_upstream_for(source_provider, &parent, freshness)?;
-    Some((metadata, source_provider.to_string(), parent))
-}
-
-fn cached_upstream_for(
-    provider: &str,
-    model: &str,
-    freshness: CacheFreshness,
-) -> Option<ModelMetadata> {
-    match freshness {
-        CacheFreshness::CurrentOnly => current_cached_upstream_model_metadata(provider, model),
-        CacheFreshness::AllowStale => cached_upstream_model_metadata(provider, model),
-    }
 }
 
 fn upstream_metadata_from_api(

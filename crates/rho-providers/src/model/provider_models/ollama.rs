@@ -1,8 +1,7 @@
 //! Native Ollama `/api/tags` + `/api/show` discovery.
 //!
 //! Ollama's OpenAI-compatible `/v1/models` only returns ids. The native
-//! endpoints supply context length, capabilities, and the parent-model alias
-//! used as a models.dev fallback.
+//! endpoints supply context length and thinking capability.
 
 use reqwest::Url;
 use serde::Deserialize;
@@ -14,7 +13,7 @@ use crate::{
     provider::{self, OLLAMA_UNKNOWN_REASONING_LEVELS},
 };
 
-use super::{provider_models_client, ProviderModel, ProviderModelRecord};
+use super::{provider_models_client, ProviderModel};
 
 /// Upper bound on `/api/show` calls during one refresh so a host with many
 /// incomplete tags rows cannot stall startup.
@@ -36,8 +35,6 @@ struct OllamaTagModel {
 
 #[derive(Clone, Debug, Default, Deserialize)]
 struct OllamaModelDetails {
-    #[serde(default)]
-    parent_model: Option<String>,
     context_length: Option<u64>,
 }
 
@@ -122,69 +119,19 @@ fn json_u64(value: &Value) -> Option<u64> {
         .or_else(|| value.as_i64().and_then(|n| u64::try_from(n).ok()))
 }
 
-fn parent_model_from(details: &OllamaModelDetails, model: &str) -> Option<String> {
-    let parent = details.parent_model.as_deref()?.trim();
-    if parent.is_empty() || parent == model {
-        None
-    } else {
-        Some(parent.to_string())
-    }
-}
-
-fn record_json(capabilities: Option<&[String]>, parent_model: Option<&str>) -> Value {
-    let mut record = Map::new();
-    if let Some(capabilities) = capabilities {
-        record.insert("capabilities".into(), json!(capabilities));
-    }
-    if let Some(parent_model) = parent_model {
-        record.insert("parent_model".into(), json!(parent_model));
-    }
-    Value::Object(record)
-}
-
-/// Reads the parent-model alias cached from tags/show. Dynamic analogue of
-/// Anthropic dated-snapshot parent lookup.
-pub(crate) fn cached_parent_model(provider: &str, model: &str) -> Option<String> {
-    let raw = super::cached_provider_model_raw_json(provider, model)?;
-    let parent = raw.get("parent_model")?.as_str()?.trim();
-    if parent.is_empty() || parent == model {
-        None
-    } else {
-        Some(parent.to_string())
-    }
-}
-
 pub(super) async fn fetch(
     descriptor: &provider::ProviderDescriptor,
     auth: provider::AuthMode,
     api_base: &Url,
     store: &dyn CredentialStore,
-) -> Result<Vec<ProviderModelRecord>, ModelError> {
+) -> Result<Vec<ProviderModel>, ModelError> {
     let Some(root) = native_root(api_base) else {
-        return fallback_openai_compatible(descriptor, auth, api_base, store).await;
+        return super::openai_compatible::fetch(descriptor, auth, api_base, store).await;
     };
     match fetch_tags(&root).await {
-        Ok(models) => hydrate_models(descriptor, &root, models).await,
-        Err(_) => fallback_openai_compatible(descriptor, auth, api_base, store).await,
+        Ok(models) => Ok(hydrate_models(descriptor, &root, models).await),
+        Err(_) => super::openai_compatible::fetch(descriptor, auth, api_base, store).await,
     }
-}
-
-async fn fallback_openai_compatible(
-    descriptor: &provider::ProviderDescriptor,
-    auth: provider::AuthMode,
-    api_base: &Url,
-    store: &dyn CredentialStore,
-) -> Result<Vec<ProviderModelRecord>, ModelError> {
-    Ok(
-        super::openai_compatible::fetch(descriptor, auth, api_base, store)
-            .await?
-            .into_iter()
-            .map(|model| ProviderModelRecord {
-                model,
-                raw_json: Value::Null,
-            })
-            .collect(),
-    )
 }
 
 async fn fetch_tags(root: &Url) -> Result<Vec<OllamaTagModel>, ModelError> {
@@ -208,43 +155,82 @@ async fn hydrate_models(
     descriptor: &provider::ProviderDescriptor,
     root: &Url,
     models: Vec<OllamaTagModel>,
-) -> Result<Vec<ProviderModelRecord>, ModelError> {
-    let mut records = Vec::new();
-    let mut remaining_shows = MAX_SHOW_LOOKUPS;
+) -> Vec<ProviderModel> {
+    let mut complete = Vec::new();
+    let mut incomplete = Vec::new();
     for model in models {
         let name = model.name.trim();
         if name.is_empty() || !is_chat_model(model.capabilities.as_deref()) {
             continue;
         }
-        let mut capabilities = model.capabilities.clone();
+        let context_window = model.details.context_length.filter(|window| *window > 0);
+        if context_window.is_some() && model.capabilities.is_some() {
+            if let Some(record) = chat_provider_model(
+                descriptor,
+                name,
+                context_window,
+                model.capabilities.as_deref(),
+            ) {
+                complete.push(record);
+            }
+        } else {
+            incomplete.push(model);
+        }
+    }
+
+    let deferred = incomplete.split_off(incomplete.len().min(MAX_SHOW_LOOKUPS));
+    let show_lookups = incomplete.into_iter().map(|model| async move {
+        let mut capabilities = model.capabilities;
         let mut context_window = model.details.context_length.filter(|window| *window > 0);
-        let mut parent_model = parent_model_from(&model.details, name);
-        let needs_show = context_window.is_none() || capabilities.is_none();
-        if needs_show && remaining_shows > 0 {
-            remaining_shows -= 1;
-            if let Some(shown) = fetch_show(root, name).await {
-                context_window = context_length_from_show(&shown).or(context_window);
-                if shown.capabilities.is_some() {
-                    capabilities = shown.capabilities;
-                }
-                parent_model = parent_model_from(&shown.details, name).or(parent_model);
+        if let Some(shown) = fetch_show(root, model.name.trim()).await {
+            context_window = context_length_from_show(&shown).or(context_window);
+            if shown.capabilities.is_some() {
+                capabilities = shown.capabilities;
             }
         }
-        records.push(ProviderModelRecord {
-            model: ProviderModel {
-                provider: descriptor.name.into(),
-                display_name: name.to_string(),
-                context_window,
-                max_output_tokens: None,
-                model: name.to_string(),
-                reasoning_capabilities: reasoning_capabilities_from(capabilities.as_deref()),
-            },
-            raw_json: record_json(capabilities.as_deref(), parent_model.as_deref()),
-        });
+        (model.name, context_window, capabilities)
+    });
+    for (name, context_window, capabilities) in futures_util::future::join_all(show_lookups).await {
+        if let Some(record) =
+            chat_provider_model(descriptor, &name, context_window, capabilities.as_deref())
+        {
+            complete.push(record);
+        }
     }
-    records.sort_by(|left, right| left.model.model.cmp(&right.model.model));
-    records.dedup_by(|left, right| left.model.model == right.model.model);
-    Ok(records)
+    for model in deferred {
+        if let Some(record) = chat_provider_model(
+            descriptor,
+            &model.name,
+            model.details.context_length.filter(|window| *window > 0),
+            model.capabilities.as_deref(),
+        ) {
+            complete.push(record);
+        }
+    }
+
+    complete.sort_by(|left, right| left.model.cmp(&right.model));
+    complete.dedup_by(|left, right| left.model == right.model);
+    complete
+}
+
+fn chat_provider_model(
+    descriptor: &provider::ProviderDescriptor,
+    name: &str,
+    context_window: Option<u64>,
+    capabilities: Option<&[String]>,
+) -> Option<ProviderModel> {
+    let name = name.trim();
+    if name.is_empty() || !is_chat_model(capabilities) {
+        return None;
+    }
+    Some(ProviderModel {
+        provider: descriptor.name.into(),
+        display_name: name.to_string(),
+        context_window,
+        max_output_tokens: None,
+        model: name.to_string(),
+        reasoning_capabilities: reasoning_capabilities_from(capabilities),
+    })
 }
 
 async fn fetch_show(root: &Url, model: &str) -> Option<OllamaShowResponse> {

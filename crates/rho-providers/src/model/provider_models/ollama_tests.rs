@@ -3,17 +3,11 @@ use reqwest::Url;
 use serde_json::{json, Map};
 
 use super::{
-    cached_parent_model, context_length_from_show, is_chat_model, native_root, parent_model_from,
-    reasoning_capabilities_from, OllamaModelDetails, OllamaShowResponse,
+    context_length_from_show, is_chat_model, native_root, reasoning_capabilities_from,
+    OllamaModelDetails, OllamaShowResponse,
 };
 use crate::{
-    model::{
-        provider_models::{
-            replace_cached_provider_model_records_for_tests,
-            with_provider_models_cache_dir_for_tests, ProviderModel, ProviderModelRecord,
-        },
-        ReasoningCapabilities, ReasoningLevelSet,
-    },
+    model::{ReasoningCapabilities, ReasoningLevelSet},
     provider::OLLAMA_UNKNOWN_REASONING_LEVELS,
     reasoning::ReasoningLevel,
 };
@@ -123,7 +117,6 @@ fn show_context_length_prefers_model_info() {
     let shown = OllamaShowResponse {
         details: OllamaModelDetails {
             context_length: Some(4096),
-            ..OllamaModelDetails::default()
         },
         model_info: Some(model_info),
         ..OllamaShowResponse::default()
@@ -133,74 +126,8 @@ fn show_context_length_prefers_model_info() {
     let empty = OllamaShowResponse {
         details: OllamaModelDetails {
             context_length: Some(0),
-            ..OllamaModelDetails::default()
         },
         ..OllamaShowResponse::default()
     };
     assert_eq!(context_length_from_show(&empty), None);
-}
-
-// Covers: empty or self parent aliases do not become catalog fallbacks
-// Owner: ollama native discovery
-#[test]
-fn parent_model_ignores_empty_and_self_aliases() {
-    assert_eq!(
-        parent_model_from(
-            &OllamaModelDetails {
-                parent_model: Some(String::new()),
-                ..OllamaModelDetails::default()
-            },
-            "gemma4:31b"
-        ),
-        None
-    );
-    assert_eq!(
-        parent_model_from(
-            &OllamaModelDetails {
-                parent_model: Some("gemma4:31b".into()),
-                ..OllamaModelDetails::default()
-            },
-            "gemma4:31b"
-        ),
-        None
-    );
-    assert_eq!(
-        parent_model_from(
-            &OllamaModelDetails {
-                parent_model: Some("qwen3.8:27b-q4_K_M".into()),
-                ..OllamaModelDetails::default()
-            },
-            "qwen3.8:27b"
-        ),
-        Some("qwen3.8:27b-q4_K_M".into())
-    );
-}
-
-// Covers: cached parent_model is the models.dev fallback id
-// Owner: ollama native discovery
-#[test]
-fn cached_parent_model_reads_raw_json() {
-    let cache = tempfile::tempdir().unwrap();
-    with_provider_models_cache_dir_for_tests(cache.path().to_path_buf(), || {
-        replace_cached_provider_model_records_for_tests(
-            "ollama",
-            &[ProviderModelRecord {
-                model: ProviderModel {
-                    provider: "ollama".into(),
-                    model: "qwen3.8:27b".into(),
-                    display_name: "qwen3.8:27b".into(),
-                    context_window: Some(262_144),
-                    max_output_tokens: None,
-                    reasoning_capabilities: ReasoningCapabilities::Unknown,
-                },
-                raw_json: json!({"parent_model": "qwen3.8:27b-q4_K_M"}),
-            }],
-        )
-        .unwrap();
-        assert_eq!(
-            cached_parent_model("ollama", "qwen3.8:27b").as_deref(),
-            Some("qwen3.8:27b-q4_K_M")
-        );
-        assert_eq!(cached_parent_model("ollama", "missing"), None);
-    });
 }

@@ -27,7 +27,10 @@ pub async fn probe_provider_models(
             error: ModelError::UnsupportedProvider(provider.into()).to_string(),
         };
     };
-    if descriptor.model_refresh != Some(ProviderModelRefreshKind::OpenAiCompatible) {
+    if !descriptor
+        .model_refresh
+        .is_some_and(ProviderModelRefreshKind::probes_openai_compatible_models)
+    {
         return ProviderModelHealth::InvalidResponse {
             error: format!("provider '{provider}' does not use OpenAI-compatible model discovery"),
         };

@@ -202,6 +202,48 @@ async fn ollama_incomplete_tags_fill_context_from_show() {
     );
 }
 
+// Covers: capability-less tags that /api/show later marks embedding-only stay out
+// Owner: ollama native discovery
+#[tokio::test]
+async fn ollama_show_embedding_only_stays_out_of_the_picker() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api_base = Url::parse(&format!("http://{}/v1", listener.local_addr().unwrap())).unwrap();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                break;
+            };
+            let request = read_http_request(&mut stream).await;
+            let body = if request.starts_with("GET /api/tags ") {
+                r#"{"models":[
+                    {"name":"gemma4:31b","details":{"context_length":262144},"capabilities":["completion","tools","thinking"]},
+                    {"name":"nomic-embed","details":{}}
+                ]}"#
+            } else if request.starts_with("POST /api/show ") {
+                r#"{"details":{},"capabilities":["embedding"]}"#
+            } else {
+                panic!("unexpected request: {request}");
+            };
+            stream
+                .write_all(http_json_response("200 OK", body).as_bytes())
+                .await
+                .unwrap();
+        }
+    });
+    let cache = tempfile::tempdir().unwrap();
+    set_provider_models_cache_dir_for_tests(Some(cache.path().to_path_buf()));
+    let _cache_dir_reset = CacheDirReset;
+
+    let models = refresh_ollama(&api_base).await;
+    assert_eq!(
+        models
+            .iter()
+            .map(|model| model.model.as_str())
+            .collect::<Vec<_>>(),
+        ["gemma4:31b"]
+    );
+}
+
 // Covers: native tags failure still lists models from /v1/models without auth
 // Owner: ollama native discovery
 #[tokio::test]

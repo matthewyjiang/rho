@@ -234,6 +234,15 @@ pub enum ProviderModelRefreshKind {
     Google,
     GithubCopilot,
     OpenAiCompatible,
+    /// Native Ollama `/api/tags` + `/api/show`, falling back to `/v1/models`.
+    Ollama,
+}
+
+impl ProviderModelRefreshKind {
+    /// True when `/doctor` and health probes hit `/v1/models`.
+    pub(crate) fn probes_openai_compatible_models(self) -> bool {
+        matches!(self, Self::OpenAiCompatible | Self::Ollama)
+    }
 }
 
 /// How a provider encodes model IDs on the wire versus in Rho cache/config.
@@ -497,7 +506,9 @@ impl ProviderDescriptor {
     /// not disqualify it.
     pub fn probes_configured_endpoint(self) -> bool {
         self.has_none_auth()
-            && self.model_refresh == Some(ProviderModelRefreshKind::OpenAiCompatible)
+            && self
+                .model_refresh
+                .is_some_and(ProviderModelRefreshKind::probes_openai_compatible_models)
     }
 
     /// Auth mode used for unattended model discovery.
