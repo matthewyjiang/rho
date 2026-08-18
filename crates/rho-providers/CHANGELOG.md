@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.6.1...rho-providers-v1.7.0) (2026-08-18)
+
+
+### Features
+
+* **providers:** let /login add custom hosts that work with CLIProxyAPI ([#984](https://github.com/matthewyjiang/rho/issues/984)) ([5ec9a44](https://github.com/matthewyjiang/rho/commit/5ec9a445db5ff9c47cc814d2cbd282172c827a5a))
+
 ## [1.6.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.6.0...rho-providers-v1.6.1) (2026-08-17)
 
 

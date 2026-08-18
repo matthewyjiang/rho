@@ -4496,7 +4496,7 @@ dependencies = [
 
 [[package]]
 name = "rho-agent-tools"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "calamine",
  "flate2",
@@ -4524,7 +4524,7 @@ dependencies = [
 
 [[package]]
 name = "rho-coding-agent"
-version = "1.43.1"
+version = "1.44.0"
 dependencies = [
  "agent-client-protocol",
  "anyhow",

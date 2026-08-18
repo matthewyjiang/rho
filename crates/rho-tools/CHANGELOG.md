@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.1](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.18.0...rho-agent-tools-v0.18.1) (2026-08-18)
+
+
+### Performance Improvements
+
+* **tools:** cut tokens from web, process, and shell results ([#980](https://github.com/matthewyjiang/rho/issues/980)) ([c103ec0](https://github.com/matthewyjiang/rho/commit/c103ec0d6d46896f735074413369cc471c95a750))
+
 ## [0.18.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.17.1...rho-agent-tools-v0.18.0) (2026-08-17)
 
 
