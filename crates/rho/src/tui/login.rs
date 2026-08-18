@@ -634,7 +634,7 @@ impl App {
         let Some(descriptor) = provider::provider_descriptor(&target.provider) else {
             return Ok(());
         };
-        if descriptor.model_refresh.is_none() {
+        if !descriptor.supports_model_refresh() {
             return Ok(());
         }
 

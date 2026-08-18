@@ -504,6 +504,11 @@ impl ProviderDescriptor {
     /// A configured endpoint plus OpenAI-compatible discovery is enough; the
     /// probe supplies whatever credentials the host has, so a stored key does
     /// not disqualify it.
+    /// True when this provider can refresh a live model list.
+    pub fn supports_model_refresh(self) -> bool {
+        self.model_refresh.is_some()
+    }
+
     pub fn probes_configured_endpoint(self) -> bool {
         self.has_none_auth()
             && self

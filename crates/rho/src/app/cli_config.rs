@@ -418,7 +418,7 @@ async fn refresh_model_list_for_provider(
         && (selected_model.is_none() || provider_requires_cached_models(provider));
     let needs_capabilities = selected_model
         .is_some_and(|model| provider_model_capabilities_need_refresh(provider, model));
-    if descriptor.model_refresh.is_none() || (!needs_model_discovery && !needs_capabilities) {
+    if !descriptor.supports_model_refresh() || (!needs_model_discovery && !needs_capabilities) {
         return Ok(false);
     }
     match refresh_provider_models_with_store(provider, auth, store, endpoint).await {
