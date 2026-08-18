@@ -1459,6 +1459,74 @@ fn hydrate_writes_borrowed_non_rho_catalog_slugs() {
     crate::provider::reset_custom_openai_compatible_providers_for_tests();
 }
 
+// Covers: catalog = "openrouter" matches the models.dev openrouter document
+// by owner/model id, not Rho's built-in OpenRouter remapper.
+// Owner: models.dev catalog hydrate
+#[test]
+fn hydrate_writes_borrowed_openrouter_catalog_rows() {
+    let _lock = crate::provider::custom_provider_registry_test_lock();
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+    crate::provider::install_custom_openai_compatible_providers([
+        crate::provider::CustomProviderSpec::new("cliproxyapi", Some("openrouter")),
+    ])
+    .unwrap();
+
+    let api = json!({
+        "openrouter": {
+            "models": {
+                "x-ai/grok-4.6": {
+                    "name": "Grok 4.6",
+                    "reasoning": true,
+                    "reasoning_options": [{
+                        "type": "effort",
+                        "values": ["low", "medium", "high", "xhigh"]
+                    }],
+                    "limit": { "context": 500000, "output": 500000 },
+                    "cost": { "input": 2.0, "output": 6.0, "cache_read": 0.5 }
+                }
+            }
+        },
+        "xai": {
+            "models": {
+                "grok-4.6": {
+                    "name": "Direct Grok",
+                    "reasoning": false,
+                    "limit": { "context": 128000, "output": 4096 }
+                }
+            }
+        }
+    });
+
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        assert!(hydrate_catalog_from_api(&api) >= 1);
+        let metadata = current_model_metadata("cliproxyapi", "x-ai/grok-4.6")
+            .expect("borrowed openrouter catalog row");
+        assert_eq!(metadata.display_name.as_deref(), Some("Grok 4.6"));
+        assert_eq!(metadata.advertised_context_window, Some(500_000));
+        assert_eq!(
+            metadata
+                .cost_default
+                .and_then(|cost| cost.input_micros_per_m),
+            Some(2_000_000)
+        );
+        assert_eq!(
+            metadata.supported_reasoning_levels,
+            Some(vec![
+                ReasoningLevel::Low,
+                ReasoningLevel::Medium,
+                ReasoningLevel::High,
+                ReasoningLevel::Xhigh,
+            ])
+        );
+        assert!(
+            current_model_metadata("cliproxyapi", "grok-4.6").is_none(),
+            "a borrowed openrouter slug must not remap to the xai catalog"
+        );
+    });
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+}
+
 // Covers: a newly borrowed catalog slug must refetch even when the snapshot is fresh
 // Owner: models.dev catalog hydrate
 #[test]

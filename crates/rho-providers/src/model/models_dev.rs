@@ -233,9 +233,11 @@ fn catalog_source_for(
     if let Some(source) = local.and_then(|table| overrides::local_catalog_source(table, model)) {
         return source;
     }
+    // The catalog string is the models.dev provider key. Do not run built-in
+    // remappers (OpenRouter's owner/model split) on a borrowed slug.
     let borrowed = crate::provider::provider_descriptor(provider)
         .filter(|descriptor| descriptor.is_custom_openai_compatible())
-        .map(|descriptor| descriptor.metadata_upstream_for_model(model))
+        .map(|descriptor| descriptor.metadata_upstream)
         .filter(|upstream| *upstream != provider);
     match borrowed {
         Some(upstream) => (upstream.to_string(), model.to_string()),
