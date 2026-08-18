@@ -104,36 +104,21 @@ impl ProviderConfigs {
         Ok(())
     }
 
-    fn publish_catalogs(&self) {
-        rho_providers::provider::set_custom_provider_catalogs(
-            self.custom
-                .iter()
-                .map(|(name, endpoint)| (name.as_str(), endpoint.catalog.as_deref())),
-        );
+    /// Each config-defined host paired with the models.dev slug it borrows.
+    fn specs(&self) -> impl Iterator<Item = rho_providers::provider::CustomProviderSpec<'_>> {
+        self.custom.iter().map(|(name, endpoint)| {
+            rho_providers::provider::CustomProviderSpec::new(name, endpoint.catalog.as_deref())
+        })
     }
 
     /// Interns config-defined hosts without changing the process-wide picker set.
     pub(crate) fn intern_names(&self) -> anyhow::Result<std::sync::Arc<[String]>> {
-        let names = rho_providers::provider::intern_custom_openai_compatible_providers(
-            self.custom.keys().map(String::as_str),
-        )?;
-        self.publish_catalogs();
-        Ok(names)
+        rho_providers::provider::intern_custom_openai_compatible_providers(self.specs())
     }
 
     /// Publishes config-defined hosts as the process-wide named provider set.
     pub(crate) fn activate(&self) -> anyhow::Result<()> {
-        rho_providers::provider::install_custom_openai_compatible_providers(
-            self.custom.keys().map(String::as_str),
-        )?;
-        self.publish_catalogs();
-        Ok(())
-    }
-
-    /// Refreshes this thread's overlay so a newly written host is visible now.
-    pub(crate) fn refresh_thread_visibility(&self) -> anyhow::Result<()> {
-        rho_providers::provider::replace_current_thread_custom_providers(self.intern_names()?);
-        Ok(())
+        rho_providers::provider::install_custom_openai_compatible_providers(self.specs())
     }
 
     /// Interns this config's hosts and overlays them on the current thread.

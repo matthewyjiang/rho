@@ -4,6 +4,9 @@
 //! provider (`/model composer/...`, `/model vllm/...`). The default auth is
 //! keyless (`none`). An optional `{name}-api-key` mode stores a Bearer token.
 //!
+//! A host may borrow another models.dev slug for context, price, and reasoning
+//! metadata via `catalog`; that slug becomes its `metadata_upstream`.
+//!
 //! Descriptors are interned for `'static` lookup. Visibility is scoped: the
 //! process-wide active set is the foreground config, and a runtime can overlay
 //! its own names on the current thread or Tokio task without replacing that set.
@@ -21,7 +24,7 @@ use super::{
 };
 
 const CUSTOM_NONE_AUTH: AuthMode = AuthMode {
-    id: "none",
+    id: super::KEYLESS_AUTH,
     login_label: "No authentication required",
     auth_kind: ProviderAuthKind::None,
 };
@@ -29,24 +32,6 @@ const CUSTOM_NONE_AUTH: AuthMode = AuthMode {
 /// Auth profile id for a named custom host's optional API key.
 pub fn custom_provider_api_key_auth_id(name: &str) -> String {
     format!("{name}-api-key")
-}
-
-/// Credential-store account for a named custom host's optional API key.
-pub fn custom_provider_api_key_account(name: &str) -> String {
-    format!("provider:{name}:api-key")
-}
-
-/// Environment override for a named custom host's optional API key.
-pub fn custom_provider_api_key_env_var(name: &str) -> String {
-    format!(
-        "RHO_{}_API_KEY",
-        name.to_ascii_uppercase().replace('-', "_")
-    )
-}
-
-/// True when `name` matches the `RHO_<NAME>_API_KEY` override convention.
-pub fn is_provider_api_key_env_var(name: &str) -> bool {
-    name.starts_with("RHO_") && name.ends_with("_API_KEY")
 }
 
 /// Whether `value` is a syntactically valid `{name}-api-key` custom auth id.
@@ -63,12 +48,41 @@ fn leak_str(value: String) -> &'static str {
     Box::leak(value.into_boxed_str())
 }
 
+/// A config-defined host: its provider name and the models.dev slug it borrows.
+///
+/// `catalog` is `None` when the host has no `catalog` override, in which case
+/// it borrows nothing and its own name is the metadata slug.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CustomProviderSpec<'a> {
+    pub name: &'a str,
+    pub catalog: Option<&'a str>,
+}
+
+impl<'a> CustomProviderSpec<'a> {
+    pub fn new(name: &'a str, catalog: Option<&'a str>) -> Self {
+        Self {
+            name,
+            catalog: catalog.map(str::trim).filter(|slug| !slug.is_empty()),
+        }
+    }
+
+    /// models.dev slug this host reads metadata rows under.
+    fn metadata_upstream(&self) -> &'a str {
+        self.catalog.unwrap_or(self.name)
+    }
+}
+
+/// A bare name is a host that borrows no catalog.
+impl<'a> From<&'a str> for CustomProviderSpec<'a> {
+    fn from(name: &'a str) -> Self {
+        Self::new(name, None)
+    }
+}
+
 #[derive(Default)]
 struct CustomRegistry {
     interned: BTreeMap<String, &'static ProviderDescriptor>,
     active: Vec<&'static ProviderDescriptor>,
-    /// models.dev provider slug to borrow for a named custom host.
-    catalogs: BTreeMap<String, String>,
 }
 
 fn registry() -> &'static RwLock<CustomRegistry> {
@@ -109,11 +123,12 @@ fn scoped_names() -> Option<Arc<[String]>> {
 /// keep the foreground set intact should intern and enter a
 /// [`CustomProviderThreadScope`] or [`scope_custom_openai_compatible_providers`]
 /// instead of installing.
-pub fn install_custom_openai_compatible_providers<'a, I>(names: I) -> anyhow::Result<()>
+pub fn install_custom_openai_compatible_providers<'a, I>(specs: I) -> anyhow::Result<()>
 where
-    I: IntoIterator<Item = &'a str>,
+    I: IntoIterator,
+    I::Item: Into<CustomProviderSpec<'a>>,
 {
-    let interned = intern_custom_openai_compatible_providers(names)?;
+    let interned = intern_custom_openai_compatible_providers(specs)?;
     let mut registry = lock_write();
     registry.active = interned
         .iter()
@@ -122,25 +137,29 @@ where
     Ok(())
 }
 
-/// Interns names without changing the process-wide active set.
-pub fn intern_custom_openai_compatible_providers<'a, I>(names: I) -> anyhow::Result<Arc<[String]>>
+/// Interns hosts without changing the process-wide active set.
+pub fn intern_custom_openai_compatible_providers<'a, I>(specs: I) -> anyhow::Result<Arc<[String]>>
 where
-    I: IntoIterator<Item = &'a str>,
+    I: IntoIterator,
+    I::Item: Into<CustomProviderSpec<'a>>,
 {
-    let names = names.into_iter().collect::<Vec<_>>();
+    let specs = specs
+        .into_iter()
+        .map(Into::into)
+        .collect::<Vec<CustomProviderSpec<'a>>>();
     let mut seen = BTreeMap::<&str, ()>::new();
-    for name in &names {
-        validate_custom_provider_name(name)?;
-        if seen.insert(*name, ()).is_some() {
-            anyhow::bail!("duplicate custom provider '{name}'");
+    for spec in &specs {
+        validate_custom_provider_name(spec.name)?;
+        if seen.insert(spec.name, ()).is_some() {
+            anyhow::bail!("duplicate custom provider '{}'", spec.name);
         }
     }
 
     let mut registry = lock_write();
-    let mut interned = Vec::with_capacity(names.len());
-    for name in names {
-        intern(name, &mut registry);
-        interned.push(name.to_string());
+    let mut interned = Vec::with_capacity(specs.len());
+    for spec in specs {
+        intern(spec, &mut registry);
+        interned.push(spec.name.to_string());
     }
     Ok(interned.into())
 }
@@ -165,19 +184,6 @@ impl Drop for CustomProviderThreadScope {
     }
 }
 
-/// Replaces the current thread overlay's visible names, if this thread has one.
-///
-/// [`install_custom_openai_compatible_providers`] updates the process-wide set
-/// only. A live overlay still hides that set, so login that writes a new host
-/// must refresh the current overlay instead of stacking another scope.
-pub fn replace_current_thread_custom_providers(names: Arc<[String]>) {
-    THREAD_SCOPE.with(|stack| {
-        if let Some(top) = stack.borrow_mut().last_mut() {
-            *top = names;
-        }
-    });
-}
-
 /// Overlays custom provider visibility on the current Tokio task.
 pub async fn scope_custom_openai_compatible_providers<F, T>(names: Arc<[String]>, future: F) -> T
 where
@@ -197,35 +203,7 @@ pub fn custom_provider_registry_test_lock() -> MutexGuard<'static, ()> {
 /// tests can still resolve unknown-effort policy for a previously interned name.
 #[doc(hidden)]
 pub fn reset_custom_openai_compatible_providers_for_tests() {
-    let mut registry = lock_write();
-    registry.active.clear();
-    registry.catalogs.clear();
-}
-
-/// Replaces models.dev catalog slugs for config-defined hosts.
-///
-/// A later call replaces the whole map. `None` or an empty slug clears that
-/// host. Names are not interned here; callers publish names separately.
-pub fn set_custom_provider_catalogs<'a, I>(catalogs: I)
-where
-    I: IntoIterator<Item = (&'a str, Option<&'a str>)>,
-{
-    let mut registry = lock_write();
-    registry.catalogs.clear();
-    for (name, catalog) in catalogs {
-        let Some(catalog) = catalog.map(str::trim).filter(|slug| !slug.is_empty()) else {
-            continue;
-        };
-        registry
-            .catalogs
-            .insert(name.to_string(), catalog.to_string());
-    }
-}
-
-/// models.dev provider slug a custom host borrows for context, price, and
-/// reasoning metadata. Absent when the host has no `catalog` override.
-pub fn custom_provider_catalog(name: &str) -> Option<String> {
-    lock_read().catalogs.get(name).cloned()
+    lock_write().active.clear();
 }
 
 pub fn custom_openai_compatible_providers() -> Vec<&'static ProviderDescriptor> {
@@ -291,14 +269,37 @@ pub fn validate_custom_provider_name(name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn intern(name: &str, registry: &mut CustomRegistry) -> &'static ProviderDescriptor {
-    if let Some(existing) = registry.interned.get(name) {
+/// Interns one host, reusing the existing descriptor when nothing changed.
+///
+/// A config edit that repoints `catalog` must not keep serving the descriptor
+/// leaked for the old slug, so a changed `metadata_upstream` re-interns. Leaking
+/// a second descriptor is acceptable because config edits are rare; serving a
+/// stale catalog silently is not.
+fn intern(
+    spec: CustomProviderSpec<'_>,
+    registry: &mut CustomRegistry,
+) -> &'static ProviderDescriptor {
+    let name = spec.name;
+    let metadata_upstream = spec.metadata_upstream();
+    if let Some(existing) = registry
+        .interned
+        .get(name)
+        .filter(|existing| existing.metadata_upstream == metadata_upstream)
+    {
         return existing;
     }
     let leaked_name = leak_str(name.to_string());
+    let metadata_upstream = if metadata_upstream == name {
+        leaked_name
+    } else {
+        leak_str(metadata_upstream.to_string())
+    };
     let auth_id = leak_str(custom_provider_api_key_auth_id(name));
-    let account = leak_str(custom_provider_api_key_account(name));
-    let env_var = leak_str(custom_provider_api_key_env_var(name));
+    let account = leak_str(format!("provider:{name}:api-key"));
+    let env_var = leak_str(format!(
+        "RHO_{}_API_KEY",
+        name.to_ascii_uppercase().replace('-', "_")
+    ));
     let entry_label = leak_str(format!("{name} API key"));
     let missing_message = leak_str(format!(
         "missing {name} API key; run /login {name} in the TUI or set {env_var} as a CI/dev override"
@@ -331,7 +332,8 @@ fn intern(name: &str, registry: &mut CustomRegistry) -> &'static ProviderDescrip
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
         model_id_codec: ModelIdCodec::Plain,
-        metadata_upstream: leaked_name,
+        // Own name unless `catalog` borrows another models.dev slug.
+        metadata_upstream,
         // Same Chat Completions effort field as Ollama. Custom names are not in
         // models.dev, so Unknown must still send the selected level.
         catalog_reasoning: CatalogReasoningPolicy::OffAsNone,

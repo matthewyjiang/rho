@@ -32,7 +32,14 @@ pub async fn probe_provider_models(
             error: format!("provider '{provider}' does not use OpenAI-compatible model discovery"),
         };
     }
-    match fetch(descriptor, descriptor.default_auth(), api_base, store).await {
+    match fetch(
+        descriptor,
+        descriptor.discovery_auth(store),
+        api_base,
+        store,
+    )
+    .await
+    {
         Ok(models) if models.is_empty() => ProviderModelHealth::ReachableWithoutModels,
         Ok(models) => ProviderModelHealth::ReachableWithModels {
             model_count: models.len(),

@@ -21,14 +21,8 @@ pub type AuthenticationFuture = Pin<
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuthenticationMethod {
     None,
-    ApiKey {
-        entry_label: &'static str,
-        /// The provider also has a keyless mode, so an empty key is valid.
-        optional: bool,
-    },
-    Interactive {
-        provider_label: &'static str,
-    },
+    ApiKey { entry_label: &'static str },
+    Interactive { provider_label: &'static str },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -149,10 +143,9 @@ impl ProviderAuthentication {
         let profile = resolve_login_profile(provider_or_auth)?;
         Ok(match profile.auth_kind() {
             ProviderAuthKind::None => AuthenticationMethod::None,
-            ProviderAuthKind::ApiKey { entry_label, .. } => AuthenticationMethod::ApiKey {
-                entry_label,
-                optional: profile.provider.has_none_auth(),
-            },
+            ProviderAuthKind::ApiKey { entry_label, .. } => {
+                AuthenticationMethod::ApiKey { entry_label }
+            }
             ProviderAuthKind::CodexOAuth { .. } => AuthenticationMethod::Interactive {
                 provider_label: "Codex",
             },

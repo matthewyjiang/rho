@@ -37,7 +37,7 @@ pub(super) fn login_group_picker() -> UiPicker {
         detail: Some(super::custom_provider_login::CUSTOM_PROVIDER_LOGIN_DETAIL.into()),
         preview: None,
         badge: None,
-        value: super::custom_provider_login::CUSTOM_PROVIDER_LOGIN_VALUE.into(),
+        value: super::custom_provider_login::NEW_CUSTOM_HOST_VALUE.into(),
         selection_verb: None,
     });
     sort_items_by_ascii_label(&mut items);

@@ -140,6 +140,20 @@ pub(super) const LOGIN_CUSTOM_PROVIDER_STEPS: &[Step] = &[
         text: "edit provider name",
         timeout: SETTLE,
     },
+    // A rejected name must keep what was typed instead of clearing the field.
+    Step::TypeText("openai"),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "conflicts with a built-in provider",
+        timeout: SETTLE,
+    },
+    Step::AssertText("openai"),
+    Step::Key(Key::Backspace),
+    Step::Key(Key::Backspace),
+    Step::Key(Key::Backspace),
+    Step::Key(Key::Backspace),
+    Step::Key(Key::Backspace),
+    Step::Key(Key::Backspace),
     Step::TypeText("vllm"),
     Step::Key(Key::Enter),
     Step::WaitText {

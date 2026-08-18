@@ -1444,7 +1444,10 @@ fn hydrate_writes_non_rho_catalog_slugs() {
 fn custom_provider_catalog_slug_borrows_upstream_metadata() {
     let _lock = crate::provider::custom_provider_registry_test_lock();
     crate::provider::reset_custom_openai_compatible_providers_for_tests();
-    crate::provider::set_custom_provider_catalogs([("cliproxyapi", Some("llmgateway"))]);
+    crate::provider::install_custom_openai_compatible_providers([
+        crate::provider::CustomProviderSpec::new("cliproxyapi", Some("llmgateway")),
+    ])
+    .unwrap();
 
     let cache = tempfile::tempdir().unwrap();
     with_models_dev_cache_dir(cache.path().to_path_buf(), || {
@@ -1506,7 +1509,10 @@ fn local_catalog_ref_parses_slug_and_qualified_ids() {
 fn rematched_openai_codex_catalog_keeps_builtin_window() {
     let _lock = crate::provider::custom_provider_registry_test_lock();
     crate::provider::reset_custom_openai_compatible_providers_for_tests();
-    crate::provider::set_custom_provider_catalogs([("cliproxyapi", Some("openai-codex"))]);
+    crate::provider::install_custom_openai_compatible_providers([
+        crate::provider::CustomProviderSpec::new("cliproxyapi", Some("openai-codex")),
+    ])
+    .unwrap();
 
     let cache = tempfile::tempdir().unwrap();
     with_models_dev_cache_dir(cache.path().to_path_buf(), || {

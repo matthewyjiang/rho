@@ -40,11 +40,9 @@ impl App {
 
         let submit = match (key.modifiers, key.code) {
             (KeyModifiers::NONE, KeyCode::Enter) => {
-                let target = secret.target.clone();
-                let value = secret.value.trim().to_string();
-                let allow_empty = secret.allow_empty;
+                let submission = secret.submission();
                 self.input_ui.set_composer(ComposerMode::Input);
-                Some((target, value, allow_empty))
+                Some(submission)
             }
             (_, KeyCode::Esc) => {
                 self.input_ui.set_composer(ComposerMode::Input);
@@ -84,8 +82,8 @@ impl App {
             _ => None,
         };
         self.clear_transient_key_state();
-        if let Some((target, value, allow_empty)) = submit {
-            self.submit_api_key_login(target, value, allow_empty, terminal, agent)
+        if let Some(submission) = submit {
+            self.submit_api_key_login(submission, terminal, agent)
                 .await?;
         }
         Ok(true)
@@ -264,11 +262,8 @@ impl App {
             super::text_input::TextInputTarget::AgentField(field) => {
                 self.commit_agent_text_input(field, value)?;
             }
-            super::text_input::TextInputTarget::CustomProviderName => {
-                return self.submit_custom_provider_name(value);
-            }
-            super::text_input::TextInputTarget::CustomProviderUrl { name } => {
-                return self.submit_custom_provider_url(name, value);
+            super::text_input::TextInputTarget::CustomHost(step) => {
+                self.submit_custom_host_step(step, value)?;
             }
         }
         Ok(true)
@@ -287,11 +282,7 @@ impl App {
             super::text_input::TextInputTarget::AgentField(field) => {
                 self.reopen_agent_field_picker(field.value());
             }
-            super::text_input::TextInputTarget::CustomProviderName
-            | super::text_input::TextInputTarget::CustomProviderUrl { .. } => {
-                self.input_ui.set_composer(ComposerMode::Input);
-                self.set_status("login cancelled");
-            }
+            super::text_input::TextInputTarget::CustomHost(_) => self.cancel_custom_host_step(),
         }
         Ok(true)
     }

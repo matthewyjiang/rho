@@ -19,6 +19,20 @@ pub(super) struct PendingInteractiveLogin {
     pub(super) handle: tokio::task::JoinHandle<Result<CompletedAuthentication, String>>,
 }
 
+/// What Enter in the API-key overlay resolved to.
+///
+/// Keeps "blank means run keyless" as a named outcome rather than a boolean
+/// threaded alongside the value.
+#[derive(Clone, Debug)]
+pub(super) enum ApiKeySubmission {
+    /// Store this key for the target's auth mode.
+    Save { target: LoginTarget, key: String },
+    /// Drop any stored key and select the host's keyless mode.
+    ClearAndRunKeyless { target: LoginTarget },
+    /// Blank, but this target requires a key.
+    Rejected,
+}
+
 #[derive(Clone, Debug)]
 pub(super) enum StoreChoiceNext {
     /// Continue login for a normal Rho provider after the store is chosen.
@@ -114,6 +128,10 @@ impl App {
         }
         match claude_login::SignInTarget::parse(&invocation.args) {
             claude_login::SignInTarget::ClaudeCode => self.execute_claude_code_login().await,
+            claude_login::SignInTarget::NewCustomHost => {
+                self.start_custom_provider_onboarding();
+                Ok(())
+            }
             claude_login::SignInTarget::Provider(provider) => {
                 self.start_login_for_provider(&provider, terminal, agent)
                     .await
@@ -145,6 +163,8 @@ impl App {
         }
         match claude_login::SignInTarget::parse(&invocation.args) {
             claude_login::SignInTarget::ClaudeCode => self.execute_claude_code_logout().await,
+            // Nothing is stored for a host that was never created.
+            claude_login::SignInTarget::NewCustomHost => Ok(()),
             claude_login::SignInTarget::Provider(provider) => {
                 self.logout_provider(&provider, agent).await
             }
@@ -253,11 +273,13 @@ impl App {
             return Ok(());
         }
         let provider = provider.trim();
+        // A fully keyless provider has no login target or group, so it would
+        // otherwise fall through to the unsupported-provider error below.
+        // `AuthenticationMethod::None` reports the same thing for targets that
+        // do resolve.
         if provider::provider_descriptor(provider).is_some_and(|descriptor| descriptor.is_keyless())
         {
-            self.set_status(format!(
-                "{provider} does not require login. Refresh its model list in /config, then choose a model with /model."
-            ));
+            self.report_login_not_required(provider);
             return Ok(());
         }
         // Resolve in this order:
@@ -309,6 +331,12 @@ impl App {
         Ok(())
     }
 
+    fn report_login_not_required(&mut self, provider: &str) {
+        self.set_status(format!(
+            "{provider} does not require login. Refresh its model list in /config, then choose a model with /model."
+        ));
+    }
+
     async fn start_login_for_target(
         &mut self,
         target: LoginTarget,
@@ -319,28 +347,24 @@ impl App {
             .expect("catalog returned unsupported login provider")
         {
             AuthenticationMethod::None => {
-                self.set_status(format!(
-                    "{} does not require login. Refresh its model list in /config, then choose a model with /model.",
-                    target.provider
-                ));
+                self.report_login_not_required(&target.provider);
                 Ok(())
             }
-            AuthenticationMethod::ApiKey {
-                entry_label,
-                optional,
-            } => {
-                let secret = if optional {
-                    SecretInput::optional(target)
+            AuthenticationMethod::ApiKey { entry_label } => {
+                // A host that also runs keyless accepts a blank key as "no key".
+                let optional = provider::provider_descriptor(&target.provider)
+                    .is_some_and(|descriptor| descriptor.has_none_auth());
+                let (secret, status) = if optional {
+                    (
+                        SecretInput::optional(target),
+                        "enter API key or leave blank".to_string(),
+                    )
                 } else {
-                    SecretInput::new(target)
+                    (SecretInput::new(target), format!("enter {entry_label}"))
                 };
                 self.input_ui
                     .set_composer(ComposerMode::SecretInput(secret));
-                self.set_status(if optional {
-                    "enter API key or leave blank".into()
-                } else {
-                    format!("enter {entry_label}")
-                });
+                self.set_status(status);
                 Ok(())
             }
             AuthenticationMethod::Interactive { provider_label } => {
@@ -352,45 +376,36 @@ impl App {
 
     pub(super) async fn submit_api_key_login(
         &mut self,
-        target: LoginTarget,
-        key: String,
-        allow_empty: bool,
+        submission: ApiKeySubmission,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        if key.trim().is_empty() {
-            if allow_empty {
-                return self
-                    .finish_optional_api_key_without_key(target, terminal, agent)
-                    .await;
+        match submission {
+            ApiKeySubmission::Rejected => {
+                self.insert_entry(&Entry::Error("API key cannot be empty".into()));
+                self.set_status("login failed");
+                Ok(())
             }
-            self.insert_entry(&Entry::Error("API key cannot be empty".into()));
-            self.set_status("login failed");
-            return Ok(());
+            ApiKeySubmission::ClearAndRunKeyless { mut target } => {
+                let _ = ProviderAuthentication::delete_credentials(
+                    self.credential_store.as_ref(),
+                    &target.auth,
+                );
+                target.auth = provider::KEYLESS_AUTH.into();
+                target.label = target.provider.clone();
+                self.finish_login(target, terminal, agent).await
+            }
+            ApiKeySubmission::Save { target, key } => {
+                if self.begin_store_choice_if_needed(StoreChoiceNext::SaveApiKey {
+                    target: target.clone(),
+                    key: key.clone(),
+                }) {
+                    return Ok(());
+                }
+                self.persist_api_key_and_finish(target, key, terminal, agent)
+                    .await
+            }
         }
-        if self.begin_store_choice_if_needed(StoreChoiceNext::SaveApiKey {
-            target: target.clone(),
-            key: key.clone(),
-        }) {
-            return Ok(());
-        }
-        self.persist_api_key_and_finish(target, key, terminal, agent)
-            .await
-    }
-
-    async fn finish_optional_api_key_without_key(
-        &mut self,
-        mut target: LoginTarget,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        let _ = ProviderAuthentication::delete_credentials(
-            self.credential_store.as_ref(),
-            &target.auth,
-        );
-        target.auth = "none".into();
-        target.label = target.provider.clone();
-        self.finish_login(target, terminal, agent).await
     }
 
     async fn persist_api_key_and_finish(

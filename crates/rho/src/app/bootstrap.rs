@@ -446,7 +446,9 @@ async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Res
         )
     });
 
-    let _scope = startup.config.providers.thread_scope()?;
+    // No thread overlay here: `prepare_startup` already installed these hosts
+    // process-wide. An overlay would additionally hide later `/login` additions
+    // from every spawned task, since thread-locals do not follow `tokio::spawn`.
     let sdk_options = SdkBootstrapOptions::from_config(&startup.config, &startup.cwd)?;
     let credentials = rho_providers::auth::provider_credentials::ApplicationCredentialSource::new(
         Arc::new(AppCredentialStore),

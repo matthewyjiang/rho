@@ -56,6 +56,8 @@ pub(super) struct ExternalLoginMethod {
 pub(super) enum SignInTarget {
     /// Claude Code, whose credential the `claude` binary owns.
     ClaudeCode,
+    /// Onboarding for a host that does not exist yet.
+    NewCustomHost,
     /// A Rho provider credential.
     Provider(String),
 }
@@ -65,6 +67,8 @@ impl SignInTarget {
         let value = value.trim();
         if value.eq_ignore_ascii_case(CLAUDE_CODE_TARGET) {
             Self::ClaudeCode
+        } else if value == super::custom_provider_login::NEW_CUSTOM_HOST_VALUE {
+            Self::NewCustomHost
         } else {
             Self::Provider(value.to_string())
         }

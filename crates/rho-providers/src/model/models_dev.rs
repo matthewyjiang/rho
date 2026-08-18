@@ -220,14 +220,23 @@ pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMe
 ///
 /// Custom hosts can borrow another slug (`catalog = "llmgateway"`). A models.toml
 /// `catalog` value wins and may also remap the model id (`anthropic/claude-sonnet-4-5`).
+///
+/// Built-in providers are deliberately left on their provider-facing name:
+/// hydrate writes their rows under that name, not under `metadata_upstream`
+/// (`openai-codex` rows, not `openai`), so borrowing the upstream slug here
+/// would miss the cache. Only config-defined hosts redirect.
 fn catalog_source_for(provider: &str, model: &str) -> (String, String) {
     if let Some(source) = overrides::local_catalog_source(provider, model) {
         return source;
     }
-    if let Some(slug) = crate::provider::custom_provider_catalog(provider) {
-        return (slug, model.to_string());
+    let borrowed = crate::provider::provider_descriptor(provider)
+        .filter(|descriptor| descriptor.is_custom_openai_compatible())
+        .map(|descriptor| descriptor.metadata_upstream_for_model(model))
+        .filter(|upstream| *upstream != provider);
+    match borrowed {
+        Some(upstream) => (upstream.to_string(), model.to_string()),
+        None => (provider.to_string(), model.to_string()),
     }
-    (provider.to_string(), model.to_string())
 }
 
 fn load_model_metadata(

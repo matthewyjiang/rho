@@ -108,18 +108,23 @@ pub(super) async fn refresh_model_cache(
 
 /// Fetches `/v1/models` for every user-defined OpenAI-compatible host.
 ///
-/// Failures are ignored so a down host does not block startup. The picker
-/// stays empty until the host is reachable or the user refreshes by hand.
-/// Independent hosts refresh concurrently so one timeout cannot add to another.
+/// Hosts with a stored API key are queried with it, so a keyed host does not
+/// come back 401 with an empty picker. Failures are ignored so a down host does
+/// not block startup. The picker stays empty until the host is reachable or the
+/// user refreshes by hand. Independent hosts refresh concurrently so one
+/// timeout cannot add to another.
 pub(super) async fn refresh_custom_provider_models(
     config: &Config,
     store: &dyn credentials::CredentialStore,
 ) {
     futures_util::future::join_all(config.providers.custom.iter().map(
         |(name, endpoint)| async move {
+            let auth = provider::provider_descriptor(name)
+                .map(|descriptor| descriptor.discovery_auth(store).id)
+                .unwrap_or("none");
             let _ = refresh_provider_models_with_store(
                 name,
-                "none",
+                auth,
                 store,
                 ProviderModelEndpoint::OpenAiCompatible(&endpoint.base_url),
             )

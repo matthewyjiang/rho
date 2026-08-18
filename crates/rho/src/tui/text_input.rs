@@ -15,8 +15,8 @@ use super::{
 pub(super) enum TextInputTarget {
     ConfigApiKey(ConfigTextKey),
     AgentField(AgentField),
-    CustomProviderName,
-    CustomProviderUrl { name: String },
+    /// One step of the custom-host `/login` wizard, which owns its own state.
+    CustomHost(super::custom_provider_login::CustomHostStep),
 }
 
 /// Editable agent frontmatter fields that use the shared line editor.
@@ -71,17 +71,14 @@ impl TextInput {
         }
     }
 
-    pub(super) fn custom_provider_name() -> Self {
+    /// A wizard step, seeded with `value` so a rejected entry is not discarded.
+    pub(super) fn custom_host(
+        step: super::custom_provider_login::CustomHostStep,
+        value: impl Into<String>,
+    ) -> Self {
         Self {
-            target: TextInputTarget::CustomProviderName,
-            editor: LineEditor::new(""),
-        }
-    }
-
-    pub(super) fn custom_provider_url(name: impl Into<String>) -> Self {
-        Self {
-            target: TextInputTarget::CustomProviderUrl { name: name.into() },
-            editor: LineEditor::new("http://127.0.0.1:8000/v1"),
+            target: TextInputTarget::CustomHost(step),
+            editor: LineEditor::new(value),
         }
     }
 
@@ -102,8 +99,15 @@ impl TextInput {
         match &self.target {
             TextInputTarget::ConfigApiKey(key) => key.label(),
             TextInputTarget::AgentField(field) => field.label(),
-            TextInputTarget::CustomProviderName => "provider name",
-            TextInputTarget::CustomProviderUrl { .. } => "base URL",
+            TextInputTarget::CustomHost(step) => step.label(),
+        }
+    }
+
+    /// Footer verb for Enter. A wizard step advances; everything else saves.
+    fn confirm_verb(&self) -> &'static str {
+        match &self.target {
+            TextInputTarget::CustomHost(_) => "Enter continue",
+            TextInputTarget::ConfigApiKey(_) | TextInputTarget::AgentField(_) => "Enter save",
         }
     }
 
@@ -117,19 +121,13 @@ impl TextInput {
 }
 
 pub(super) fn text_input_lines(input: &TextInput, width: usize) -> Vec<Line<'static>> {
-    let action = match &input.target {
-        TextInputTarget::CustomProviderName | TextInputTarget::CustomProviderUrl { .. } => {
-            "Enter continue"
-        }
-        TextInputTarget::ConfigApiKey(_) | TextInputTarget::AgentField(_) => "Enter save",
-    };
     vec![
         styled_line(
             truncate_one_line(
                 &format!(
                     "edit {}  {}",
                     input.label(),
-                    super::composer_chrome::join_footer_parts([action, "Esc cancel"])
+                    super::composer_chrome::join_footer_parts([input.confirm_verb(), "Esc cancel"])
                 ),
                 width,
             ),

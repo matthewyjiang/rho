@@ -21,6 +21,9 @@ pub const QWEN_TOKEN_PLAN_API_KEY_ACCOUNT: &str = "provider:qwen-token-plan:api-
 pub const META_API_KEY_ACCOUNT: &str = "provider:meta:api-key";
 pub const OPENCODE_GO_API_KEY_ACCOUNT: &str = "provider:opencode-go:api-key";
 
+/// Auth profile id meaning "this provider needs no credential".
+pub const KEYLESS_AUTH: &str = "none";
+
 pub const OLLAMA_API_BASE: &str = "http://127.0.0.1:11434/v1";
 pub const OLLAMA_CLOUD_API_BASE: &str = "https://ollama.com/v1";
 pub const MOONSHOT_API_BASE: &str = "https://api.moonshot.ai/v1";
@@ -487,6 +490,29 @@ impl ProviderDescriptor {
         PROVIDERS.iter().all(|builtin| builtin.name != self.name)
     }
 
+    /// Whether `/doctor` and `/config` can reach this host's `/v1/models`.
+    ///
+    /// A configured endpoint plus OpenAI-compatible discovery is enough; the
+    /// probe supplies whatever credentials the host has, so a stored key does
+    /// not disqualify it.
+    pub fn probes_configured_endpoint(self) -> bool {
+        self.has_none_auth()
+            && self.model_refresh == Some(ProviderModelRefreshKind::OpenAiCompatible)
+    }
+
+    /// Auth mode used for unattended model discovery.
+    ///
+    /// Prefers a mode whose credentials are present so a keyed custom host is
+    /// probed with its key instead of anonymously; falls back to the default.
+    pub fn discovery_auth(self, store: &dyn crate::credentials::CredentialStore) -> AuthMode {
+        self.auth_modes()
+            .find(|mode| {
+                !matches!(mode.auth_kind, ProviderAuthKind::None)
+                    && crate::credentials::auth_has_credentials(store, mode.id).unwrap_or(false)
+            })
+            .unwrap_or_else(|| self.default_auth())
+    }
+
     /// Wire policy for Standard-dialect hosts when models.dev has no row.
     pub fn unknown_effort(self) -> UnknownEffortPolicy {
         if self.is_custom_openai_compatible() {
@@ -508,13 +534,11 @@ mod provider_table;
 mod custom_openai_compatible;
 
 pub use custom_openai_compatible::{
-    custom_provider_api_key_account, custom_provider_api_key_auth_id,
-    custom_provider_api_key_env_var, custom_provider_catalog, custom_provider_registry_test_lock,
+    custom_provider_api_key_auth_id, custom_provider_registry_test_lock,
     install_custom_openai_compatible_providers, intern_custom_openai_compatible_providers,
-    interned_custom_provider, is_custom_provider_api_key_auth, is_provider_api_key_env_var,
-    replace_current_thread_custom_providers, reset_custom_openai_compatible_providers_for_tests,
-    scope_custom_openai_compatible_providers, set_custom_provider_catalogs,
-    validate_custom_provider_name, CustomProviderThreadScope,
+    interned_custom_provider, is_custom_provider_api_key_auth,
+    reset_custom_openai_compatible_providers_for_tests, scope_custom_openai_compatible_providers,
+    validate_custom_provider_name, CustomProviderSpec, CustomProviderThreadScope,
 };
 pub use provider_table::PROVIDERS;
 
@@ -537,18 +561,14 @@ pub fn visible_providers() -> Vec<&'static ProviderDescriptor> {
 
 /// Environment variable names used as provider credential overrides.
 ///
-/// Built-in auth kinds, interned custom hosts, and any currently set
-/// `RHO_*_API_KEY`. Callers typically snapshot this into
-/// [`rho_sdk::ProcessEnvironment::inherit_except`] at tool-set construction;
-/// scanning the live environment covers an override for a host that `/login`
-/// interns later in the same session.
+/// Derived from the built-in [`PROVIDERS`] auth kinds plus every interned
+/// custom host, so newly registered provider credentials are included
+/// automatically. Hosts should strip these from child process environments by
+/// default, for example with [`rho_sdk::ProcessEnvironment::inherit_except`].
+///
+/// Intern config-defined hosts before calling this: a host that has never been
+/// interned has no descriptor and therefore no override name to report.
 pub fn credential_env_vars() -> Vec<String> {
-    credential_env_vars_from(std::env::vars().map(|(name, _)| name))
-}
-
-pub(crate) fn credential_env_vars_from(
-    env: impl IntoIterator<Item = impl AsRef<str>>,
-) -> Vec<String> {
     let mut vars: Vec<String> = providers()
         .iter()
         .chain(custom_openai_compatible::interned_custom_providers())
@@ -556,10 +576,6 @@ pub(crate) fn credential_env_vars_from(
         .filter_map(|mode| mode.auth_kind.env_var())
         .map(str::to_owned)
         .collect();
-    vars.extend(env.into_iter().filter_map(|name| {
-        let name = name.as_ref();
-        is_provider_api_key_env_var(name).then(|| name.to_owned())
-    }));
     vars.sort_unstable();
     vars.dedup();
     vars

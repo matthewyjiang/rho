@@ -22,10 +22,22 @@ impl SecretInput {
         }
     }
 
+    /// For hosts that also run keyless, where blank means "use no key".
     pub(super) fn optional(target: LoginTarget) -> Self {
         Self {
             allow_empty: true,
             ..Self::new(target)
+        }
+    }
+
+    /// What pressing Enter with the current value means.
+    pub(super) fn submission(&self) -> super::login::ApiKeySubmission {
+        let key = self.value.trim().to_string();
+        let target = self.target.clone();
+        match (key.is_empty(), self.allow_empty) {
+            (true, true) => super::login::ApiKeySubmission::ClearAndRunKeyless { target },
+            (true, false) => super::login::ApiKeySubmission::Rejected,
+            (false, _) => super::login::ApiKeySubmission::Save { target, key },
         }
     }
 

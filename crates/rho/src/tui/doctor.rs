@@ -238,11 +238,7 @@ fn misc_checks(context: &DoctorContext<'_>) -> Vec<DoctorCheck> {
 fn model_endpoint_checks(provider_health: &[(String, ProviderModelHealth)]) -> Vec<DoctorCheck> {
     provider::visible_providers()
         .iter()
-        .filter(|descriptor| {
-            descriptor.has_none_auth()
-                && descriptor.model_refresh
-                    == Some(provider::ProviderModelRefreshKind::OpenAiCompatible)
-        })
+        .filter(|descriptor| descriptor.probes_configured_endpoint())
         .map(|descriptor| {
             let health = provider_health
                 .iter()

@@ -3,11 +3,11 @@ use super::super::{
     UnknownEffortPolicy,
 };
 use super::{
-    custom_openai_compatible_provider, custom_openai_compatible_providers, custom_provider_catalog,
+    custom_openai_compatible_provider, custom_openai_compatible_providers,
     custom_provider_registry_test_lock, install_custom_openai_compatible_providers,
     intern_custom_openai_compatible_providers, is_custom_provider_api_key_auth,
-    replace_current_thread_custom_providers, reset_custom_openai_compatible_providers_for_tests,
-    set_custom_provider_catalogs, validate_custom_provider_name, CustomProviderThreadScope,
+    reset_custom_openai_compatible_providers_for_tests, validate_custom_provider_name,
+    CustomProviderSpec, CustomProviderThreadScope,
 };
 use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
 use crate::protocol::openai_chat::ChatToolCallPolicy;
@@ -144,23 +144,61 @@ fn install_custom_providers_makes_openai_compatible_hosts() {
     assert!(custom_openai_compatible_provider("composer").is_none());
 }
 
-// Covers: a later config replaces models.dev catalog slugs for custom hosts
+// Covers: a borrowed catalog slug becomes the host's models.dev upstream
 // Owner: provider registry
 #[test]
-fn set_custom_provider_catalogs_replaces_the_map() {
+fn custom_host_catalog_slug_becomes_metadata_upstream() {
     let _lock = custom_provider_registry_test_lock();
     restore_empty();
     let _restore = RestoreCustomProviders;
-    set_custom_provider_catalogs([("cliproxyapi", Some("llmgateway"))]);
+    install_custom_openai_compatible_providers([
+        CustomProviderSpec::new("cliproxyapi", Some("llmgateway")),
+        // A blank slug borrows nothing.
+        CustomProviderSpec::new("blank", Some("  ")),
+        CustomProviderSpec::new("vllm", None),
+    ])
+    .unwrap();
+
+    let borrowed = custom_openai_compatible_provider("cliproxyapi").unwrap();
+    assert_eq!(borrowed.metadata_upstream, "llmgateway");
+    assert_eq!(borrowed.name, "cliproxyapi");
     assert_eq!(
-        custom_provider_catalog("cliproxyapi").as_deref(),
-        Some("llmgateway")
+        custom_openai_compatible_provider("blank")
+            .unwrap()
+            .metadata_upstream,
+        "blank"
     );
-    set_custom_provider_catalogs([("cliproxyapi", Some("")), ("vllm", Some("openrouter"))]);
-    assert_eq!(custom_provider_catalog("cliproxyapi"), None);
     assert_eq!(
-        custom_provider_catalog("vllm").as_deref(),
-        Some("openrouter")
+        custom_openai_compatible_provider("vllm")
+            .unwrap()
+            .metadata_upstream,
+        "vllm"
+    );
+}
+
+// Covers: repointing catalog must not keep serving the previously leaked slug
+// Owner: provider registry
+#[test]
+fn custom_host_catalog_change_reinterns_the_descriptor() {
+    let _lock = custom_provider_registry_test_lock();
+    restore_empty();
+    let _restore = RestoreCustomProviders;
+    install_custom_openai_compatible_providers([CustomProviderSpec::new(
+        "cliproxyapi",
+        Some("llmgateway"),
+    )])
+    .unwrap();
+    install_custom_openai_compatible_providers([CustomProviderSpec::new(
+        "cliproxyapi",
+        Some("openai-codex"),
+    )])
+    .unwrap();
+
+    assert_eq!(
+        custom_openai_compatible_provider("cliproxyapi")
+            .unwrap()
+            .metadata_upstream,
+        "openai-codex"
     );
 }
 
@@ -205,20 +243,17 @@ fn thread_scope_does_not_replace_process_active_providers() {
     assert!(crate::provider::provider_descriptor("vllm").is_none());
 }
 
-// Covers: replacing the current overlay must not push another scope
+// Covers: a host installed while no overlay is active is immediately visible
 // Owner: provider registry
 #[test]
-fn replace_current_thread_custom_providers_updates_the_live_overlay() {
+fn installing_a_new_host_is_visible_without_an_overlay() {
     let _lock = custom_provider_registry_test_lock();
     restore_empty();
     let _restore = RestoreCustomProviders;
     install_custom_openai_compatible_providers(["composer"]).unwrap();
-    let overlay = intern_custom_openai_compatible_providers(["composer"]).unwrap();
-    let _scope = CustomProviderThreadScope::enter(overlay);
     assert!(crate::provider::provider_descriptor("vllm").is_none());
 
-    let next = intern_custom_openai_compatible_providers(["composer", "vllm"]).unwrap();
-    replace_current_thread_custom_providers(next);
+    install_custom_openai_compatible_providers(["composer", "vllm"]).unwrap();
     assert!(crate::provider::provider_descriptor("composer").is_some());
     assert!(crate::provider::provider_descriptor("vllm").is_some());
 }
@@ -230,6 +265,35 @@ fn custom_api_key_auth_ids_accept_valid_host_names_only() {
     assert!(!is_custom_provider_api_key_auth("openai-api-key"));
     assert!(!is_custom_provider_api_key_auth("api-key"));
     assert!(!is_custom_provider_api_key_auth("vllm"));
+}
+
+// Covers: model discovery must use a stored key instead of probing anonymously
+// Owner: provider registry
+#[test]
+fn discovery_auth_prefers_a_stored_key_over_the_keyless_default() {
+    use crate::credentials::{CredentialStore, MemoryCredentialStore};
+
+    let _lock = custom_provider_registry_test_lock();
+    restore_empty();
+    let _restore = RestoreCustomProviders;
+    install_custom_openai_compatible_providers(["composer"]).unwrap();
+    let descriptor = custom_openai_compatible_provider("composer").unwrap();
+
+    let store = MemoryCredentialStore::default();
+    assert_eq!(
+        descriptor.discovery_auth(&store).id,
+        "none",
+        "a host with no stored key is probed anonymously"
+    );
+
+    store
+        .set_secret("provider:composer:api-key", "composer-secret")
+        .unwrap();
+    assert_eq!(
+        descriptor.discovery_auth(&store).id,
+        "composer-api-key",
+        "a stored key must be used so discovery does not 401"
+    );
 }
 
 // Covers: custom-host env overrides must be stripped from child processes
@@ -245,27 +309,5 @@ fn credential_env_vars_include_interned_custom_hosts() {
             .iter()
             .any(|name| name == "RHO_ENVFILTER_HOST_API_KEY"),
         "interned custom hosts must appear in the child-process strip list"
-    );
-}
-
-// Covers: a live RHO_*_API_KEY is stripped even before its host is interned
-// Owner: provider registry
-#[test]
-fn credential_env_vars_include_live_rho_api_key_overrides() {
-    let vars = crate::provider::credential_env_vars_from([
-        "RHO_UNINTERNED_LIVE_API_KEY",
-        "PATH",
-        "RHO_AUDIT_API_KEY_7f3a",
-    ]);
-    assert!(
-        vars.iter()
-            .any(|name| name == "RHO_UNINTERNED_LIVE_API_KEY"),
-        "currently set RHO_*_API_KEY overrides must be stripped before intern"
-    );
-    assert!(
-        !vars
-            .iter()
-            .any(|name| name == "PATH" || name == "RHO_AUDIT_API_KEY_7f3a"),
-        "non-override names must not be stripped"
     );
 }
