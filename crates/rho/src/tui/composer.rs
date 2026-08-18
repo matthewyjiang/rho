@@ -198,6 +198,8 @@ impl App {
                 });
                 self.input_ui.apply_input_draft(draft);
                 self.input_ui.set_history_cursor(None);
+                // The draft was live typed text, so palettes reopen if it
+                // still looks like a command or file mention.
                 self.input_changed();
                 return true;
             }
@@ -623,6 +625,15 @@ impl App {
         self.input_ui.set_file_palette_dismissed(false);
         self.clamp_command_selection();
         self.clamp_file_selection();
+    }
+
+    /// Recalled history is finished content, not a live search. Keep both
+    /// palettes closed until the next typed edit.
+    pub(super) fn finish_history_restore(&mut self) {
+        self.clamp_command_selection();
+        self.clamp_file_selection();
+        self.input_ui.set_command_palette_dismissed(true);
+        self.input_ui.set_file_palette_dismissed(true);
     }
 
     pub(super) fn parse_input_command(

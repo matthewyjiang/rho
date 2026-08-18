@@ -477,6 +477,9 @@ impl super::App {
     }
 
     /// Restore composer text that may still use the historical `!` / `!!` prefix form.
+    ///
+    /// Recalled history is finished content, not a live command or file search,
+    /// so both palettes stay closed until the next typed edit.
     pub(super) fn apply_composer_text(
         &mut self,
         text: String,
@@ -490,7 +493,7 @@ impl super::App {
                 self.input_ui.clear_paste_segments();
                 self.input_ui.set_submission_mode(submission_mode);
                 self.input_ui.set_cursor(self.input_char_len());
-                self.input_changed();
+                self.finish_history_restore();
                 return;
             }
         }
@@ -499,7 +502,7 @@ impl super::App {
         self.input_ui.set_paste_segments(paste_segments);
         self.input_ui.set_submission_mode(submission_mode);
         self.input_ui.set_cursor(self.input_char_len());
-        self.input_changed();
+        self.finish_history_restore();
     }
 
     pub(super) async fn finish_completed_inline_shells(&mut self) -> anyhow::Result<bool> {

@@ -1,4 +1,4 @@
-use super::super::{tests::test_app, InputSubmissionMode};
+use super::super::{tests::test_app, HistoryDirection, InputSubmissionMode};
 
 #[test]
 fn completing_goal_command_reveals_lifecycle_actions() {
@@ -96,4 +96,37 @@ fn template_completion_marks_slash_prefixed_contents_as_prompt() {
 
     assert_eq!(app.input_ui.text(), "/diff literally ");
     assert_eq!(app.input_ui.submission_mode(), InputSubmissionMode::Prompt);
+}
+
+// Covers: recalling a slash command must not steal Up/Down for palette
+// matching; typing after recall reopens the list.
+// Owner: pure unit (composer history vs palette visibility)
+#[test]
+fn recalling_a_command_keeps_the_palette_closed_until_edit() {
+    let mut app = test_app();
+    app.push_input_history("/info");
+    app.push_input_history("/model");
+    app.input_ui.set_text("/c".to_string());
+    app.input_ui.set_cursor(2);
+    app.input_changed();
+    assert!(app.command_palette_visible());
+
+    app.recall_input_history_or_move_cursor(HistoryDirection::Previous, 80);
+    assert_eq!(app.input_ui.text(), "/model");
+    assert!(!app.command_palette_visible());
+
+    app.recall_input_history_or_move_cursor(HistoryDirection::Previous, 80);
+    assert_eq!(app.input_ui.text(), "/info");
+    assert!(!app.command_palette_visible());
+
+    app.recall_input_history_or_move_cursor(HistoryDirection::Next, 80);
+    app.recall_input_history_or_move_cursor(HistoryDirection::Next, 80);
+    assert_eq!(app.input_ui.text(), "/c");
+    assert!(app.command_palette_visible());
+
+    app.recall_input_history_or_move_cursor(HistoryDirection::Previous, 80);
+    assert!(!app.command_palette_visible());
+    app.backspace_input();
+    assert_eq!(app.input_ui.text(), "/mode");
+    assert!(app.command_palette_visible());
 }
