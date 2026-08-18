@@ -23,7 +23,7 @@ ollama serve
 ollama pull <tool-capable-model>
 ```
 
-In Rho, run `/login ollama`. The first field is the API base, prefilled with the local default. Keep it or replace it with another host. The second field is an API key; leave it blank for a keyless local server.
+In Rho, run `/login ollama`. The first field is the API base, prefilled with the local default. Keep it or replace it with another host. The second field is an API key; leave it blank for a keyless local server, or to keep a key you already stored. Use `/logout ollama` to drop a stored key.
 
 ```text
 /login ollama
@@ -48,7 +48,7 @@ base_url = "http://192.168.1.20:11434/v1"
 
 Keep the `/v1` suffix. Rho appends `/models` for discovery and `/chat/completions` for agent turns. The setting applies only to Ollama and is also used by `/doctor` when it checks the server. The URL must use `http` or `https` and cannot contain credentials, a query, or a fragment.
 
-A stored key is sent as a Bearer token. Leave the key blank, or omit it, when the host does not require one.
+A stored key is sent as a Bearer token. Leave the key blank to keep a stored key, or when the host does not require one. `/logout ollama` drops a stored key.
 
 ## Model compatibility
 

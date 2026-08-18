@@ -21,16 +21,25 @@ pub(super) struct PendingInteractiveLogin {
 
 /// What Enter in the API-key overlay resolved to.
 ///
-/// Keeps "blank means run keyless" as a named outcome rather than a boolean
-/// threaded alongside the value.
+/// Blank on an optional field means "do not write a new key": keep a stored
+/// key if one exists, otherwise run keyless. `/logout` is the wipe path.
 #[derive(Clone, Debug)]
 pub(super) enum ApiKeySubmission {
     /// Store this key for the target's auth mode.
     Save { target: LoginTarget, key: String },
-    /// Drop any stored key and select the host's keyless mode.
-    ClearAndRunKeyless { target: LoginTarget },
+    /// No new key. Keep a stored key, or run keyless when none is stored.
+    LeaveUnset { target: LoginTarget },
     /// Blank, but this target requires a key.
     Rejected,
+}
+
+/// Blank optional key: keep a stored key, otherwise run keyless. Never deletes.
+fn resolve_blank_optional_key(mut target: LoginTarget, has_stored_key: bool) -> LoginTarget {
+    if !has_stored_key {
+        target.auth = provider::KEYLESS_AUTH.into();
+        target.label = target.provider.clone();
+    }
+    target
 }
 
 #[derive(Clone, Debug)]
@@ -402,14 +411,18 @@ impl App {
                 self.set_status("login failed");
                 Ok(())
             }
-            ApiKeySubmission::ClearAndRunKeyless { mut target } => {
-                let _ = ProviderAuthentication::delete_credentials(
+            ApiKeySubmission::LeaveUnset { target } => {
+                let has_stored_key = ProviderAuthentication::has_stored_credentials(
                     self.credential_store.as_ref(),
                     &target.auth,
-                );
-                target.auth = provider::KEYLESS_AUTH.into();
-                target.label = target.provider.clone();
-                self.finish_login(target, terminal, agent).await
+                )
+                .unwrap_or(false);
+                self.finish_login(
+                    resolve_blank_optional_key(target, has_stored_key),
+                    terminal,
+                    agent,
+                )
+                .await
             }
             ApiKeySubmission::Save { target, key } => {
                 if self.begin_store_choice_if_needed(StoreChoiceNext::SaveApiKey {
