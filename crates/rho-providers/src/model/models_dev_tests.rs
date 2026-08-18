@@ -1128,6 +1128,7 @@ fn providers_that_read_another_upstream_catalog_still_get_names() {
 // Owner: models.dev catalog prefetch
 #[tokio::test]
 async fn prefetch_does_nothing_when_every_target_is_current() {
+    let _lock = crate::provider::custom_provider_registry_test_lock();
     let cache = tempfile::tempdir().unwrap();
     let current = ModelMetadata {
         display_name: Some("GPT-5.6 Luna".into()),
@@ -1455,6 +1456,106 @@ fn hydrate_writes_borrowed_non_rho_catalog_slugs() {
             cached_upstream_model_metadata("azure", "gpt-4o").is_none(),
             "unborrowed non-Rho slugs must stay out of the cache"
         );
+    });
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+}
+
+// Covers: catalog = "openrouter" writes the models.dev openrouter document
+// under the custom host and leaves built-in OpenRouter extract alone.
+// Owner: models.dev catalog hydrate
+#[test]
+fn hydrate_borrowed_openrouter_slug_uses_catalog_document() {
+    let _lock = crate::provider::custom_provider_registry_test_lock();
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+    crate::provider::install_custom_openai_compatible_providers([
+        crate::provider::CustomProviderSpec::new("cliproxyapi", Some("openrouter")),
+    ])
+    .unwrap();
+
+    let api = json!({
+        "openrouter": {
+            "models": {
+                "anthropic/claude-test": {
+                    "name": "OpenRouter Claude",
+                    "reasoning": true,
+                    "reasoning_options": [{
+                        "type": "effort",
+                        "values": ["low", "medium", "high", "xhigh"]
+                    }],
+                    "limit": { "context": 500000, "output": 500000 },
+                    "cost": { "input": 2.0, "output": 6.0 }
+                },
+                "x-ai/grok-4.6": {
+                    "name": "OpenRouter Grok",
+                    "reasoning": false,
+                    "limit": { "context": 500000, "output": 500000 },
+                    "cost": { "input": 2.0, "output": 6.0 }
+                }
+            }
+        },
+        "anthropic": {
+            "models": {
+                "claude-test": {
+                    "name": "Direct Claude",
+                    "reasoning": true,
+                    "reasoning_options": [{
+                        "type": "effort",
+                        "values": ["low", "high"]
+                    }],
+                    "limit": { "context": 128000, "output": 4096 }
+                }
+            }
+        },
+        "xai": {
+            "models": {
+                "grok-4.6": {
+                    "name": "Direct Grok",
+                    "reasoning": false,
+                    "limit": { "context": 128000, "output": 4096 }
+                }
+            }
+        }
+    });
+
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        assert!(hydrate_catalog_from_api(&api) >= 1);
+        for (model, expected_name, expected_levels) in [
+            (
+                "anthropic/claude-test",
+                "OpenRouter Claude",
+                Some(vec![
+                    ReasoningLevel::Off,
+                    ReasoningLevel::Low,
+                    ReasoningLevel::Medium,
+                    ReasoningLevel::High,
+                    ReasoningLevel::Xhigh,
+                ]),
+            ),
+            ("x-ai/grok-4.6", "OpenRouter Grok", None),
+        ] {
+            let metadata = current_model_metadata("cliproxyapi", model)
+                .unwrap_or_else(|| panic!("borrowed openrouter catalog row for {model}"));
+            assert_eq!(metadata.display_name.as_deref(), Some(expected_name));
+            assert_eq!(metadata.advertised_context_window, Some(500_000));
+            assert_eq!(
+                metadata
+                    .cost_default
+                    .and_then(|cost| cost.input_micros_per_m),
+                Some(2_000_000)
+            );
+            assert_eq!(metadata.supported_reasoning_levels, expected_levels);
+        }
+        let openrouter = cached_upstream_model_metadata("openrouter", "anthropic/claude-test")
+            .expect("built-in openrouter extract still remaps to the owner section");
+        assert_eq!(openrouter.display_name.as_deref(), Some("Direct Claude"));
+        assert_eq!(openrouter.advertised_context_window, Some(128_000));
+        assert!(openrouter.cost_default.is_none());
+        let anthropic = cached_upstream_model_metadata("anthropic", "claude-test")
+            .expect("first-party anthropic extract still writes its own keys");
+        assert_eq!(anthropic.display_name.as_deref(), Some("Direct Claude"));
+        assert_eq!(anthropic.advertised_context_window, Some(128_000));
+        assert!(anthropic.cost_default.is_none());
     });
     crate::provider::reset_custom_openai_compatible_providers_for_tests();
 }

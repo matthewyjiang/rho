@@ -224,7 +224,9 @@ pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMe
 /// Built-in providers are deliberately left on their provider-facing name:
 /// hydrate writes their rows under that name, not under `metadata_upstream`
 /// (`openai-codex` rows, not `openai`), so borrowing the upstream slug here
-/// would miss the cache. Only config-defined hosts redirect.
+/// would miss the cache. Only config-defined hosts redirect, and only when
+/// that slug is not itself a built-in cache key. `catalog = "openrouter"`
+/// rows live under the custom host so they cannot replace Rho OpenRouter.
 fn catalog_source_for(
     provider: &str,
     model: &str,
@@ -233,14 +235,31 @@ fn catalog_source_for(
     if let Some(source) = local.and_then(|table| overrides::local_catalog_source(table, model)) {
         return source;
     }
+    // The catalog string is the models.dev provider key. Do not run built-in
+    // remappers (OpenRouter's owner/model split) on a borrowed slug. A slug
+    // that is also a built-in cache key *and* that provider's document
+    // (`openrouter`) is keyed by the host so extract is untouched.
+    // `openai-codex` is a built-in name whose document is `openai`, so those
+    // hosts still rematch the Codex extract rows.
     let borrowed = crate::provider::provider_descriptor(provider)
         .filter(|descriptor| descriptor.is_custom_openai_compatible())
-        .map(|descriptor| descriptor.metadata_upstream_for_model(model))
-        .filter(|upstream| *upstream != provider);
+        .map(|descriptor| descriptor.metadata_upstream)
+        .filter(|upstream| *upstream != provider)
+        .filter(|upstream| !borrowed_slug_collides_with_builtin_extract(upstream));
     match borrowed {
         Some(upstream) => (upstream.to_string(), model.to_string()),
         None => (provider.to_string(), model.to_string()),
     }
+}
+
+/// True when writing borrowed rows under `slug` would collide with a built-in
+/// provider's extract keys (`openrouter`). Those rows go under the host name.
+/// `openai-codex` is a built-in name whose document is `openai`, so it still
+/// rematches extract rows and is not a collision.
+fn borrowed_slug_collides_with_builtin_extract(slug: &str) -> bool {
+    crate::provider::providers()
+        .iter()
+        .any(|descriptor| descriptor.name == slug && descriptor.metadata_upstream == slug)
 }
 
 fn load_model_metadata(
