@@ -514,11 +514,46 @@ impl InputUi {
         &self.history
     }
 
-    pub(in crate::tui) fn push_history_if_new(&mut self, prompt: &str) {
+    pub(in crate::tui) fn push_history_if_new(&mut self, prompt: &str) -> bool {
         if self.history.last().is_some_and(|last| last == prompt) {
-            return;
+            return false;
         }
         self.history.push(prompt.to_string());
+        true
+    }
+
+    pub(in crate::tui) fn seed_history_front(&mut self, mut entries: Vec<String>) {
+        if entries.is_empty() {
+            return;
+        }
+        if let (Some(last_seeded), Some(first_local)) = (entries.last(), self.history.first()) {
+            if last_seeded == first_local {
+                entries.pop();
+            }
+        }
+        let inserted = entries.len();
+        if inserted == 0 {
+            return;
+        }
+        entries.append(&mut self.history);
+        self.history = entries;
+        if let Some(cursor) = &mut self.history_cursor {
+            *cursor += inserted;
+        }
+    }
+
+    pub(in crate::tui) fn clear_history(&mut self) {
+        self.history.clear();
+        self.reset_history_navigation();
+    }
+
+    pub(in crate::tui) fn truncate_history_to_newest(&mut self, max_entries: usize) {
+        if max_entries == 0 || self.history.len() <= max_entries {
+            return;
+        }
+        let drop = self.history.len() - max_entries;
+        self.history.drain(..drop);
+        self.reset_history_navigation();
     }
 
     pub(in crate::tui) fn history_cursor(&self) -> Option<usize> {

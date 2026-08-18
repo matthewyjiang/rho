@@ -104,6 +104,16 @@ impl App {
                 let ComposerMode::ConfigNumberInput(input) = self.input_ui.composer() else {
                     return Ok(true);
                 };
+                if input.key.proposes_confirm() {
+                    match input.parsed_value() {
+                        Ok(value) => self.propose_prompt_history_limit(value)?,
+                        Err(err) => {
+                            self.insert_entry(&Entry::Error(err.to_string()));
+                            self.set_status("config save failed");
+                        }
+                    }
+                    return Ok(true);
+                }
                 let saved = match input.save(&self.info.services.config_repository) {
                     Ok(saved) => saved,
                     Err(err) => {

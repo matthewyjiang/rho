@@ -417,6 +417,34 @@ async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Res
             .instrument(tracing::info_span!("startup.custom_models")),
         )
     });
+    let prompt_history_limit = startup.config.prompt_history_limit;
+    let pending_prompt_history = (prompt_history_limit > 0).then(|| {
+        tokio::spawn(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    match crate::prompt_history::PromptHistoryStore::at_default_path() {
+                        Ok(store) => match store.load_tail(prompt_history_limit) {
+                            Ok(tail) => Some((store, tail)),
+                            Err(error) => {
+                                tracing::warn!(%error, "failed to load prompt history");
+                                None
+                            }
+                        },
+                        Err(error) => {
+                            tracing::warn!(%error, "failed to open prompt history");
+                            None
+                        }
+                    }
+                })
+                .await
+                .unwrap_or_else(|error| {
+                    tracing::warn!(%error, "prompt history task failed");
+                    None
+                })
+            }
+            .instrument(tracing::info_span!("startup.prompt_history")),
+        )
+    });
 
     let _scope = startup.config.providers.thread_scope()?;
     let sdk_options = SdkBootstrapOptions::from_config(&startup.config, &startup.cwd)?;
@@ -446,6 +474,7 @@ async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Res
         missing_auth_model_error,
         pending_update_notice,
         pending_custom_models,
+        pending_prompt_history,
         diagnostics,
         herdr: startup.herdr,
         agent: startup.bound_agent,

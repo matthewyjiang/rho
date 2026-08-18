@@ -579,6 +579,12 @@ impl App {
                 ));
                 self.set_status("edit max tool output lines");
             }
+            config_picker::PROMPT_HISTORY_LIMIT_VALUE => {
+                self.open_prompt_history_limit_editor()?;
+            }
+            config_picker::CLEAR_PROMPT_HISTORY_VALUE => {
+                self.prompt_clear_prompt_history()?;
+            }
             config_picker::REASONING_VALUE => {
                 self.set_status("reasoning changes are unavailable while a model turn is running");
             }

@@ -42,6 +42,8 @@ pub(crate) use provider_config::ProviderConfigs;
 
 /// Keep in lockstep with [`rho_tools::DEFAULT_MAX_OUTPUT_BYTES`].
 pub(crate) const DEFAULT_MAX_OUTPUT_BYTES: usize = rho_tools::DEFAULT_MAX_OUTPUT_BYTES;
+pub(crate) const DEFAULT_PROMPT_HISTORY_LIMIT: usize = 1000;
+pub(crate) const MAX_PROMPT_HISTORY_LIMIT: usize = 10_000;
 
 /// Persisted application configuration owned by `rho-coding-agent`.
 ///
@@ -62,6 +64,9 @@ pub struct Config {
     pub model_alias: Option<String>,
     pub max_output_bytes: usize,
     pub max_tool_output_lines: usize,
+    /// Sent composer prompts kept in the shared prompt-history database.
+    /// `0` disables persistence.
+    pub prompt_history_limit: usize,
     pub auth: String,
     pub reasoning: ReasoningLevel,
     /// Use the low-latency priority tier for supported Codex models.
@@ -132,6 +137,7 @@ impl Default for Config {
             model_alias: None,
             max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
             max_tool_output_lines: 10,
+            prompt_history_limit: DEFAULT_PROMPT_HISTORY_LIMIT,
             auth: "api-key".into(),
             reasoning: ReasoningLevel::Medium,
             fast_mode: false,

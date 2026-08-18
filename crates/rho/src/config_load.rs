@@ -136,6 +136,17 @@ pub(super) fn parse_settings(text: &str) -> anyhow::Result<(Config, Vec<ConfigWa
             }
             cfg.max_tool_output_lines = clamped;
         }
+        if let Some(value) = group.prompt_history_limit {
+            let clamped = value.min(crate::config::MAX_PROMPT_HISTORY_LIMIT);
+            if clamped != value {
+                warnings.push(ConfigWarning::Clamped {
+                    key: "display.prompt_history_limit",
+                    from: value.to_string(),
+                    to: clamped.to_string(),
+                });
+            }
+            cfg.prompt_history_limit = clamped;
+        }
     }
     if let Some(group) = file.output {
         if let Some(value) = group.max_output_bytes {
@@ -341,12 +352,14 @@ impl PartialConfig {
                 zen_mode: None,
                 theme: None,
                 max_tool_output_lines: None,
+                prompt_history_limit: None,
             });
             self.display = Some(PartialDisplayConfig {
                 show_reasoning_output: group.show_reasoning_output.or(show_reasoning_output),
                 zen_mode: group.zen_mode.or(zen_mode),
                 theme: group.theme,
                 max_tool_output_lines: group.max_tool_output_lines.or(max_tool_output_lines),
+                prompt_history_limit: group.prompt_history_limit,
             });
         }
 
@@ -519,6 +532,7 @@ struct PartialDisplayConfig {
     zen_mode: Option<bool>,
     theme: Option<String>,
     max_tool_output_lines: Option<usize>,
+    prompt_history_limit: Option<usize>,
 }
 
 #[derive(Deserialize)]

@@ -161,7 +161,9 @@ impl App {
         if prompt.is_empty() {
             return;
         }
-        self.input_ui.push_history_if_new(prompt);
+        if self.input_ui.push_history_if_new(prompt) {
+            self.prompt_history.push(prompt);
+        }
     }
 
     fn recall_input_history(&mut self, direction: HistoryDirection) -> bool {

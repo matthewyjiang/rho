@@ -72,6 +72,16 @@ impl App {
         let pending_update_notice = info.services.pending_update_notice.take();
         let pending_custom_models = info.services.pending_custom_models.take();
         let pending_syntax_warmup = info.services.pending_syntax_warmup.take();
+        let prompt_history_limit = info
+            .services
+            .config_repository
+            .load()
+            .map(|config| config.prompt_history_limit)
+            .unwrap_or(0);
+        let prompt_history = super::prompt_history::PromptHistory::new(
+            prompt_history_limit,
+            info.services.pending_prompt_history.take(),
+        );
         let statusline = StatusLine::new(&info.runtime);
         let mut app = Self {
             info,
@@ -111,6 +121,7 @@ impl App {
             pending_update_notice,
             pending_custom_models,
             pending_syntax_warmup,
+            prompt_history,
             pending_herdr_graphics: None,
             held_turns: std::collections::VecDeque::new(),
             compact_follow_up: super::compact_work::CompactFollowUp::None,

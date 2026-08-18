@@ -71,7 +71,7 @@ Most editing keys work the way they do in a normal terminal input. Run `/help` f
 | `/` at start | Open the command palette |
 | `/help` | Open the keyboard shortcuts overlay |
 | `@` | Open workspace file path autocomplete |
-| `up` / `down` | Re-enter previous prompts, or select a command or file while a picker is open |
+| `up` / `down` | Re-enter previous prompts from this and earlier sessions, or select a command or file while a picker is open |
 | `tab` | Complete the selected command or file path |
 | `enter` | Send a prompt, run a selected slash command, or steer after the current assistant turn while a response is running |
 | `alt-up` | Pull the most recent queued prompt back into the composer for editing |
