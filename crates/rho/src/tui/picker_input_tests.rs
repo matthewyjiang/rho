@@ -11,6 +11,10 @@ use super::{
     PickerMouseEvent,
 };
 
+fn keys() -> crate::keybindings::Keybindings {
+    crate::keybindings::Keybindings::default()
+}
+
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent {
         code,
@@ -41,14 +45,26 @@ fn filter_accepts_shift_modified_characters() {
     let mut shift = key(KeyCode::Char('Q'));
     shift.modifiers = KeyModifiers::SHIFT;
 
-    let effect = apply_picker_key(&mut picker, shift, None, /*space_confirms*/ false);
+    let effect = apply_picker_key(
+        &mut picker,
+        shift,
+        None,
+        /*space_confirms*/ false,
+        &keys(),
+    );
 
     assert_eq!(effect, PickerKeyEffect::Handled);
     assert_eq!(picker.filter, "Q");
 
     let mut ctrl = key(KeyCode::Char('q'));
     ctrl.modifiers = KeyModifiers::CONTROL;
-    let effect = apply_picker_key(&mut picker, ctrl, None, /*space_confirms*/ false);
+    let effect = apply_picker_key(
+        &mut picker,
+        ctrl,
+        None,
+        /*space_confirms*/ false,
+        &keys(),
+    );
     assert_eq!(effect, PickerKeyEffect::None);
     assert_eq!(picker.filter, "Q");
 }
@@ -65,6 +81,7 @@ fn tab_is_ignored_when_tab_complete_disabled() {
         key(KeyCode::Tab),
         None,
         /*space_confirms*/ true,
+        &keys(),
     );
 
     assert_eq!(effect, PickerKeyEffect::None);
@@ -81,7 +98,8 @@ fn tab_completes_filter_when_tab_complete_enabled() {
         PickerAction::SelectModel,
     )
     .with_key_hints(PickerKeyHints {
-        pin_toggle: false,
+        pin_toggle: None,
+        scope_toggle: None,
         tab_complete: true,
         row_delete: false,
     });
@@ -92,10 +110,54 @@ fn tab_completes_filter_when_tab_complete_enabled() {
         key(KeyCode::Tab),
         None,
         /*space_confirms*/ false,
+        &keys(),
     );
 
     assert_eq!(effect, PickerKeyEffect::Handled);
     assert_eq!(picker.filter, "openai/gpt-5.5");
+}
+
+// Covers: model pickers must treat Ctrl-O as a scope toggle, not a dead key
+// or a filter character.
+// Owner: tui picker key dispatch
+#[test]
+fn ctrl_o_toggles_model_scope_when_enabled() {
+    let mut picker = UiPicker::new(
+        "select model",
+        vec![item("openai/gpt-5.5")],
+        PickerAction::SelectModel,
+    )
+    .with_key_hints(PickerKeyHints {
+        pin_toggle: Some("Ctrl+P".into()),
+        scope_toggle: Some("Ctrl+O".into()),
+        tab_complete: true,
+        row_delete: false,
+    });
+    let mut key = key(KeyCode::Char('o'));
+    key.modifiers = KeyModifiers::CONTROL;
+
+    assert_eq!(
+        apply_picker_key(
+            &mut picker,
+            key,
+            None,
+            /*space_confirms*/ false,
+            &keys()
+        ),
+        PickerKeyEffect::ToggleModelScope
+    );
+
+    picker.key_hints.scope_toggle = None;
+    assert_eq!(
+        apply_picker_key(
+            &mut picker,
+            key,
+            None,
+            /*space_confirms*/ false,
+            &keys()
+        ),
+        PickerKeyEffect::None
+    );
 }
 
 fn overlay_picker_with_detail() -> UiPicker {
@@ -128,34 +190,34 @@ fn overlay_focus_routes_scrolling_to_both_panes() {
     let targets = detail_targets();
 
     // Nav focus is the default: Down moves the selection.
-    apply_picker_key(&mut picker, key(KeyCode::Down), targets, false);
+    apply_picker_key(&mut picker, key(KeyCode::Down), targets, false, &keys());
     assert_eq!(picker.selected, 1);
-    apply_picker_key(&mut picker, key(KeyCode::Up), targets, false);
+    apply_picker_key(&mut picker, key(KeyCode::Up), targets, false, &keys());
     assert_eq!(picker.selected, 0);
 
     // PgDn pages the nav list while nav is focused.
-    apply_picker_key(&mut picker, key(KeyCode::PageDown), targets, false);
+    apply_picker_key(&mut picker, key(KeyCode::PageDown), targets, false, &keys());
     assert_eq!(picker.selected, 1, "page down clamps to the last row");
-    apply_picker_key(&mut picker, key(KeyCode::Home), targets, false);
+    apply_picker_key(&mut picker, key(KeyCode::Home), targets, false, &keys());
     assert_eq!(picker.selected, 0);
 
     // Right focuses the detail pane; Down/PgDn/End scroll detail lines.
-    apply_picker_key(&mut picker, key(KeyCode::Right), targets, false);
+    apply_picker_key(&mut picker, key(KeyCode::Right), targets, false, &keys());
     assert!(picker.detail_pane_focused());
-    apply_picker_key(&mut picker, key(KeyCode::Down), targets, false);
+    apply_picker_key(&mut picker, key(KeyCode::Down), targets, false, &keys());
     assert_eq!(picker.detail_scroll, 1);
-    apply_picker_key(&mut picker, key(KeyCode::PageDown), targets, false);
+    apply_picker_key(&mut picker, key(KeyCode::PageDown), targets, false, &keys());
     assert_eq!(picker.detail_scroll, 6);
-    apply_picker_key(&mut picker, key(KeyCode::End), targets, false);
+    apply_picker_key(&mut picker, key(KeyCode::End), targets, false, &keys());
     assert_eq!(picker.detail_scroll, 35);
-    apply_picker_key(&mut picker, key(KeyCode::Up), targets, false);
+    apply_picker_key(&mut picker, key(KeyCode::Up), targets, false, &keys());
     assert_eq!(picker.detail_scroll, 34);
     assert_eq!(picker.selected, 0, "detail scrolling leaves the selection");
 
     // Left returns focus to the nav list.
-    apply_picker_key(&mut picker, key(KeyCode::Left), targets, false);
+    apply_picker_key(&mut picker, key(KeyCode::Left), targets, false, &keys());
     assert!(!picker.detail_pane_focused());
-    apply_picker_key(&mut picker, key(KeyCode::Down), targets, false);
+    apply_picker_key(&mut picker, key(KeyCode::Down), targets, false, &keys());
     assert_eq!(picker.selected, 1);
 }
 
@@ -165,7 +227,7 @@ fn overlay_focus_routes_scrolling_to_both_panes() {
 #[test]
 fn pane_focus_keys_are_inert_without_detail() {
     let mut picker = UiPicker::new("plain", vec![item("one")], PickerAction::Config);
-    let effect = apply_picker_key(&mut picker, key(KeyCode::Right), None, false);
+    let effect = apply_picker_key(&mut picker, key(KeyCode::Right), None, false, &keys());
     assert_eq!(effect, PickerKeyEffect::None);
     assert!(!picker.detail_pane_focused());
 }

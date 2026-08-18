@@ -186,7 +186,7 @@ impl App {
         self.set_status("loading models");
         terminal.draw(|frame| self.draw(frame))?;
         self.refresh_available_auths();
-        let picker = model_picker::model_picker(&self.info.runtime, &self.available_auths);
+        let picker = self.conversation_model_picker();
 
         if picker.items.is_empty() {
             self.set_status("no cached provider models. use Config > Refresh model lists.");
@@ -499,49 +499,9 @@ impl App {
         self.info.runtime.favorite_models = favorite_models;
 
         self.refresh_available_auths();
-        let mut picker = match action {
-            // During-run picker queues a model for after the provider turn.
-            // Compaction is busy UI without a live run, so keep the idle picker.
-            PickerAction::SelectModel if self.is_provider_turn_ui() => {
-                model_picker::model_picker_during_run(
-                    &self.info.runtime,
-                    self.pending_model_selection
-                        .as_ref()
-                        .map(|pending| &pending.selection),
-                    &self.available_auths,
-                )
-            }
-            PickerAction::SelectModel => {
-                model_picker::model_picker(&self.info.runtime, &self.available_auths)
-            }
-            PickerAction::SelectInternalAgentModel => {
-                let Some(target) = self.internal_agent_model_target.clone() else {
-                    return Ok(());
-                };
-                self.internal_agent_model_picker(&target.id, target.origin)
-            }
-            PickerAction::LoginGroup
-            | PickerAction::LoginProvider
-            | PickerAction::LogoutProvider
-            | PickerAction::SwitchAuthMode
-            | PickerAction::RefreshModelList
-            | PickerAction::InsertSkillCommand
-            | PickerAction::ViewAgent
-            | PickerAction::ResumeSession
-            | PickerAction::ManageSessions
-            | PickerAction::SelectTreeNode
-            | PickerAction::SelectRewindCheckpoint
-            | PickerAction::ConfirmRewindCheckpoint
-            | PickerAction::Config
-            | PickerAction::SelectTheme
-            | PickerAction::EditAgent
-            | PickerAction::Workflow
-            | PickerAction::AttachSubagent
-            | PickerAction::Dismiss
-            | PickerAction::ViewMcpServers => return Ok(()),
-        };
-        Self::restore_picker_position(&mut picker, &value, filter);
-        self.input_ui.set_composer(ComposerMode::Picker(picker));
+        // The pinned view degrades to all on its own when the last usable pin
+        // goes away, so no scope reconciliation is needed here.
+        self.rebuild_open_model_picker(&value, filter);
         let action = if pinned { "pinned" } else { "unpinned" };
         self.set_status(format!("{action} {value}"));
         Ok(())

@@ -27,11 +27,15 @@ impl PartialEq<Vec<usize>> for PickerMatches<'_> {
 
 /// Optional key bindings advertised in footers and honored by picker input.
 ///
-/// Renderers and input both read these flags so hints cannot drift from keys.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Renderers and input both read these fields so hints cannot drift from keys.
+/// Model-list labels come from the live keybindings; flags stay for the
+/// remaining hardcoded shortcuts (Tab, d/Delete).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct PickerKeyHints {
-    /// Ctrl-P pins or unpins the selected model.
-    pub(super) pin_toggle: bool,
+    /// Bound key that pins or unpins the selected model, when shown.
+    pub(super) pin_toggle: Option<String>,
+    /// Bound key that switches the model list between all and pinned.
+    pub(super) scope_toggle: Option<String>,
     /// Tab fills the filter from the selected row.
     pub(super) tab_complete: bool,
     /// `d` / Delete removes the selected row (sessions, workflows).
@@ -537,8 +541,11 @@ impl UiPicker {
         if self.action.space_confirms_selection() {
             parts.push("Space confirm".into());
         }
-        if self.key_hints.pin_toggle {
-            parts.push("Ctrl-P pin/unpin".into());
+        if let Some(key) = &self.key_hints.pin_toggle {
+            parts.push(format!("{key} pin/unpin"));
+        }
+        if let Some(key) = &self.key_hints.scope_toggle {
+            parts.push(format!("{key} all/pinned"));
         }
         if self.key_hints.tab_complete {
             parts.push("Tab complete".into());

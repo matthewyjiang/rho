@@ -1,6 +1,5 @@
 use super::{
-    model_picker, provider_picker, App, Entry, PickerAction, PickerBadge, PickerBadgeTone,
-    PickerItem, UiPicker,
+    provider_picker, App, Entry, PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker,
 };
 use {
     crate::config::{Config, EditTool},
@@ -746,7 +745,7 @@ fn web_search_api_key_is_set(
 impl App {
     pub(super) fn open_config_conversation_model_picker(&mut self) {
         self.refresh_available_auths();
-        let picker = model_picker::model_picker(&self.info.runtime, &self.available_auths);
+        let picker = self.conversation_model_picker();
         if picker.items.is_empty() {
             self.set_status("no cached provider models. use Config > Refresh model lists.");
         } else {
@@ -757,13 +756,7 @@ impl App {
 
     pub(super) fn open_config_conversation_model_picker_during_turn(&mut self) {
         self.refresh_available_auths();
-        let picker = model_picker::model_picker_during_run(
-            &self.info.runtime,
-            self.pending_model_selection
-                .as_ref()
-                .map(|pending| &pending.selection),
-            &self.available_auths,
-        );
+        let picker = self.conversation_model_picker_during_run();
         if picker.items.is_empty() {
             self.set_status(
                 "no cached provider models. refresh model lists after the current turn ends.",

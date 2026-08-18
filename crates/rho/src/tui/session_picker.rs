@@ -18,9 +18,9 @@ pub(super) fn session_picker(
         PickerAction::ResumeSession,
     )
     .with_key_hints(super::PickerKeyHints {
-        pin_toggle: false,
         tab_complete: true,
         row_delete: true,
+        ..Default::default()
     })
     .with_confirm_verb("resume")
 }

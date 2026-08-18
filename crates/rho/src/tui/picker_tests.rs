@@ -25,9 +25,9 @@ fn action_footer_parts_include_structured_key_hints() {
         PickerAction::ResumeSession,
     )
     .with_key_hints(PickerKeyHints {
-        pin_toggle: false,
         tab_complete: true,
         row_delete: true,
+        ..Default::default()
     })
     .with_confirm_verb("resume");
 
@@ -53,15 +53,17 @@ fn action_footer_parts_include_structured_key_hints() {
 
     let model = UiPicker::new("select model", vec![item("m")], PickerAction::SelectModel)
         .with_key_hints(PickerKeyHints {
-            pin_toggle: true,
+            pin_toggle: Some("Ctrl+P".into()),
+            scope_toggle: Some("Ctrl+O".into()),
             tab_complete: true,
-            row_delete: false,
+            ..Default::default()
         });
     assert_eq!(
         model.action_footer_parts(),
         vec![
             "Enter select".to_string(),
-            "Ctrl-P pin/unpin".to_string(),
+            "Ctrl+P pin/unpin".to_string(),
+            "Ctrl+O all/pinned".to_string(),
             "Tab complete".to_string(),
             "Esc cancel".to_string(),
         ]

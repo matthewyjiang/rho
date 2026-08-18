@@ -252,9 +252,9 @@ fn cleanup_missing_workspaces_row(
 fn manage_sessions_picker(title: impl Into<String>, items: Vec<PickerItem>) -> UiPicker {
     UiPicker::new(title, items, PickerAction::ManageSessions)
         .with_key_hints(PickerKeyHints {
-            pin_toggle: false,
             tab_complete: false,
             row_delete: true,
+            ..Default::default()
         })
         .with_layout(PickerLayout::Overlay)
         .with_overlay_chrome(OverlayChrome {

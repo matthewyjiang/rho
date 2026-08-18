@@ -18,6 +18,9 @@ pub(super) async fn select_running_run(
         tokio::task::spawn_blocking(move || attach_picker::workspace_candidates(&cwd)).await??;
     let mut filter = WorkspaceRunFilter::RunningOnly;
     let mut picker = attach_picker::picker(&candidates, filter);
+    // Standalone overlay with no session config loaded. The attach picker
+    // enables neither model key hint, so only the defaults are ever consulted.
+    let keybindings = crate::keybindings::Keybindings::default();
     loop {
         terminal.draw(|frame| draw_picker(frame, &picker))?;
         match next_event().await? {
@@ -31,7 +34,13 @@ pub(super) async fn select_running_run(
                     continue;
                 }
                 let targets = overlay_scroll_targets(&picker, terminal);
-                match apply_picker_key(&mut picker, key, targets, /*space_confirms*/ false) {
+                match apply_picker_key(
+                    &mut picker,
+                    key,
+                    targets,
+                    /*space_confirms*/ false,
+                    &keybindings,
+                ) {
                     PickerKeyEffect::Submit => {
                         return Ok(picker.selected_item().map(|item| item.value.clone()));
                     }
@@ -39,6 +48,7 @@ pub(super) async fn select_running_run(
                     PickerKeyEffect::Handled
                     | PickerKeyEffect::None
                     | PickerKeyEffect::ToggleFavorite
+                    | PickerKeyEffect::ToggleModelScope
                     | PickerKeyEffect::DeleteRow => {}
                 }
             }

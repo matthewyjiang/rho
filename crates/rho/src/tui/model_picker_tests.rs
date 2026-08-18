@@ -1,6 +1,13 @@
 use pretty_assertions::assert_eq;
+use std::sync::LazyLock;
 
 use super::*;
+
+fn default_keybindings() -> &'static crate::keybindings::Keybindings {
+    static KEYS: LazyLock<crate::keybindings::Keybindings> =
+        LazyLock::new(crate::keybindings::Keybindings::default);
+    &KEYS
+}
 
 fn inputs(
     current: InternalAgentSelection,
@@ -14,6 +21,8 @@ fn inputs(
         claude_code,
         favorite_models: &[],
         available_auths: &[],
+        scope: ModelPickerScope::All,
+        keybindings: default_keybindings(),
     }
 }
 
@@ -148,4 +157,79 @@ fn each_row_value_routes_to_its_runtime() {
         parse_internal_agent_model_row("anthropic/claude-fable-5"),
         InternalAgentModelRow::RhoModel("anthropic/claude-fable-5".into())
     );
+}
+
+// Covers: the pinned scope is only usable when a pin has auth, and asking for
+// all must never be upgraded to pinned.
+// Owner: model picker scope
+#[test]
+fn pinned_scope_degrades_to_all_without_a_usable_pin() {
+    let cases = [
+        (ModelPickerScope::Pinned, vec![], vec!["api-key"]),
+        (ModelPickerScope::Pinned, vec!["openai/gpt-5.5"], vec![]),
+        (
+            ModelPickerScope::All,
+            vec!["xai/grok-4.6"],
+            vec!["xai-api-key"],
+        ),
+    ];
+    for (scope, pins, auths) in cases {
+        let pins = pins.iter().map(|pin| pin.to_string()).collect::<Vec<_>>();
+        let auths = auths
+            .iter()
+            .map(|auth| auth.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            effective_model_picker_scope(scope, &pins, &auths),
+            ModelPickerScope::All,
+            "{scope:?} {pins:?} {auths:?}"
+        );
+    }
+
+    assert_eq!(
+        effective_model_picker_scope(
+            ModelPickerScope::Pinned,
+            &["xai/grok-4.6".into()],
+            &["xai-api-key".into()]
+        ),
+        ModelPickerScope::Pinned
+    );
+}
+
+// Covers: the pinned list must hide unpinned catalogue rows so /model can
+// stay short; empty pins must keep the full authenticated catalogue.
+// Owner: model picker scope
+#[test]
+fn pinned_scope_lists_only_usable_pins() {
+    let mut runtime = crate::tui::tests::test_bootstrap().runtime;
+    runtime.provider = "xai".into();
+    runtime.model = "grok-4.6".into();
+    runtime.auth = "xai-api-key".into();
+    runtime.favorite_models = vec!["xai/grok-4.6".into()];
+    let auths = vec!["xai-api-key".into()];
+    let pinned = model_picker(&runtime, &auths, ModelPickerScope::Pinned);
+    assert_eq!(
+        pinned
+            .items
+            .iter()
+            .map(|item| item.value.as_str())
+            .collect::<Vec<_>>(),
+        vec!["xai/grok-4.6"]
+    );
+    assert!(pinned.title.contains("pinned"));
+
+    runtime.favorite_models.clear();
+    let all = model_picker(&runtime, &auths, ModelPickerScope::Pinned);
+    assert_eq!(
+        all.items
+            .iter()
+            .map(|item| item.value.as_str())
+            .collect::<Vec<_>>(),
+        catalog::available_models_for_auths(&auths)
+            .iter()
+            .map(|entry| rho_providers::provider::model_reference(&entry.provider, &entry.model))
+            .collect::<Vec<_>>(),
+        "empty pins should keep the whole authenticated catalogue"
+    );
+    assert!(all.title.contains("all"));
 }

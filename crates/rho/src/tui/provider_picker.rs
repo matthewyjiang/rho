@@ -43,9 +43,9 @@ pub(super) fn login_group_picker() -> UiPicker {
     sort_items_by_ascii_label(&mut items);
     UiPicker::new("select provider to login", items, PickerAction::LoginGroup).with_key_hints(
         super::PickerKeyHints {
-            pin_toggle: false,
             tab_complete: true,
             row_delete: false,
+            ..Default::default()
         },
     )
 }
@@ -95,9 +95,9 @@ pub(super) fn login_method_picker(group: catalog::LoginGroup) -> UiPicker {
             }),
     );
     UiPicker::new(title, items, PickerAction::LoginProvider).with_key_hints(super::PickerKeyHints {
-        pin_toggle: false,
         tab_complete: true,
         row_delete: false,
+        ..Default::default()
     })
 }
 
@@ -250,9 +250,9 @@ fn provider_picker_for_targets(
 
     UiPicker::new(format!("select provider to {verb}"), items, action).with_key_hints(
         super::PickerKeyHints {
-            pin_toggle: false,
             tab_complete: true,
             row_delete: false,
+            ..Default::default()
         },
     )
 }

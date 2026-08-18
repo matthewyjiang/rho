@@ -207,9 +207,9 @@ pub(super) fn hub_picker(
 
     UiPicker::new("Workflows", items, PickerAction::Workflow)
         .with_key_hints(super::PickerKeyHints {
-            pin_toggle: false,
             tab_complete: false,
             row_delete: true,
+            ..Default::default()
         })
         .with_layout(PickerLayout::Overlay)
         .with_overlay_chrome(OverlayChrome {

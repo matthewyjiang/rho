@@ -292,8 +292,7 @@ impl App {
             return;
         }
         self.refresh_available_auths();
-        let mut picker =
-            crate::tui::model_picker::model_picker(&self.info.runtime, &self.available_auths);
+        let mut picker = self.conversation_model_picker();
         if picker.items.is_empty() {
             self.open_agent_text_input(AgentField::Model, draft.model_text());
             return;

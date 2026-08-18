@@ -89,6 +89,10 @@ impl App {
             return Ok(());
         }
 
+        if self.handle_favorite_cycle_key(key, agent).await? {
+            return Ok(());
+        }
+
         if self
             .handle_command_palette_key(key, terminal, agent)
             .await?
