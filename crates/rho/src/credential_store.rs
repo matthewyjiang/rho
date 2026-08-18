@@ -160,6 +160,9 @@ pub(crate) fn initialize_from_config(
     ) {
         dirty = true;
     }
+    if config.promote_stored_custom_auth(&AppCredentialStore) {
+        dirty = true;
+    }
     if dirty {
         config.write_settings(config_path.to_path_buf())?;
     }

@@ -208,6 +208,32 @@ fn custom_openai_compatible_keeps_configured_api_key_auth() {
     assert_eq!(config.auth, "composer-api-key");
 }
 
+// Covers: a stored custom key must promote `auth = "none"` so restart sends it
+// Owner: provider config
+#[test]
+fn custom_openai_compatible_promotes_stored_key_over_keyless() {
+    use rho_providers::credentials::{CredentialStore, MemoryCredentialStore};
+
+    let _lock = rho_providers::provider::custom_provider_registry_test_lock();
+    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        "provider = \"composer\"\nmodel = \"composer-2.5\"\nauth = \"none\"\n[providers.custom.composer]\nbase_url = \"http://127.0.0.1:8787/v1\"\n",
+    )
+    .unwrap();
+
+    let store = MemoryCredentialStore::default();
+    store
+        .set_secret("provider:composer:api-key", "composer-secret")
+        .unwrap();
+    let mut config = Config::load_with_store(path, &store).unwrap();
+    assert_eq!(config.auth, "none");
+    assert!(config.promote_stored_custom_auth(&store));
+    assert_eq!(config.auth, "composer-api-key");
+}
+
 // Covers: custom hosts can borrow a models.dev slug for catalog metadata
 // Owner: provider config
 #[test]

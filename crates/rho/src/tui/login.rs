@@ -623,6 +623,9 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        // Write the keyed profile once. Later activate/reload failures must not
+        // leave a stored custom key behind as `auth = "none"`.
+        self.persist_login_auth(&target);
         self.refresh_available_auths();
         self.refresh_model_list_after_login(&target, terminal)
             .await?;
@@ -775,6 +778,32 @@ impl App {
             }
         }
         Ok(true)
+    }
+
+    /// Writes the login target's auth profile so a stored custom key is not
+    /// left behind as `auth = "none"` after restart.
+    fn persist_login_auth(&mut self, target: &LoginTarget) {
+        if target.auth == provider::KEYLESS_AUTH {
+            return;
+        }
+        if target.provider != self.info.runtime.provider && !self.using_unavailable_provider {
+            if let Err(err) = self.info.services.config_repository.update(|config| {
+                if config.provider == target.provider {
+                    config.auth = target.auth.clone();
+                }
+            }) {
+                self.insert_entry(&Entry::Error(format!(
+                    "stored credentials, but saving auth mode failed: {err}"
+                )));
+            }
+            return;
+        }
+        self.info.runtime.auth = target.auth.clone();
+        if let Err(err) = self.save_current_config() {
+            self.insert_entry(&Entry::Error(format!(
+                "stored credentials, but saving auth mode failed: {err}"
+            )));
+        }
     }
 
     async fn activate_provider_after_login(

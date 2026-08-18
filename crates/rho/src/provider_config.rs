@@ -185,6 +185,39 @@ impl Config {
         Ok(())
     }
 
+    /// Promotes a custom host from `none` to `{name}-api-key` when a key is stored.
+    ///
+    /// Login stores the secret without always rewriting `auth`. Keyless is the
+    /// default and is always "available", so restart would keep sending no
+    /// `Authorization` header unless this runs.
+    pub(crate) fn promote_stored_custom_auth(
+        &mut self,
+        store: &dyn rho_providers::credentials::CredentialStore,
+    ) -> bool {
+        let Some(descriptor) = rho_providers::provider::interned_custom_provider(&self.provider)
+        else {
+            return false;
+        };
+        // Use interned modes and the store directly. `available_auth_modes`
+        // only sees the process-wide picker set, which may still be empty
+        // during settings load.
+        let available = descriptor
+            .auth_modes()
+            .filter(|mode| {
+                rho_providers::credentials::auth_has_credentials(store, mode.id).unwrap_or(false)
+            })
+            .map(|mode| mode.id.to_string())
+            .collect::<Vec<_>>();
+        let selected = descriptor
+            .preferred_auth(Some(self.auth.as_str()), &available)
+            .id;
+        if selected == self.auth {
+            return false;
+        }
+        self.auth = selected.to_string();
+        true
+    }
+
     /// Resolves the one API base shared by runtime requests, model discovery, and diagnostics.
     pub(crate) fn resolved_provider_endpoint(&self, provider: &str) -> Option<Url> {
         self.providers.endpoint(provider).cloned().or_else(|| {
