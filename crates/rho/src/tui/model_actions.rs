@@ -297,12 +297,18 @@ impl App {
             }
             PickerAction::LoginGroup => {
                 // A single-method group short-circuits to that method's value,
-                // which may name the external runtime rather than a group id.
-                if let super::claude_login::SignInTarget::ClaudeCode =
-                    super::claude_login::SignInTarget::parse(&value)
-                {
-                    return self.execute_claude_code_login().await;
-                }
+                // which may name the external runtime or new-host onboarding
+                // rather than a group id.
+                let value = match super::claude_login::SignInTarget::parse(&value) {
+                    super::claude_login::SignInTarget::ClaudeCode => {
+                        return self.execute_claude_code_login().await
+                    }
+                    super::claude_login::SignInTarget::NewCustomHost => {
+                        self.start_custom_provider_onboarding();
+                        return Ok(());
+                    }
+                    super::claude_login::SignInTarget::Provider(provider) => provider,
+                };
                 let Some(group) = catalog::login_group(&value) else {
                     self.insert_entry(&Entry::Error(format!(
                         "unsupported login provider group '{value}'"
@@ -325,6 +331,10 @@ impl App {
                 super::claude_login::SignInTarget::ClaudeCode => {
                     self.execute_claude_code_login().await
                 }
+                super::claude_login::SignInTarget::NewCustomHost => {
+                    self.start_custom_provider_onboarding();
+                    Ok(())
+                }
                 super::claude_login::SignInTarget::Provider(provider) => {
                     self.start_login_for_provider(&provider, terminal, agent)
                         .await
@@ -335,6 +345,8 @@ impl App {
                     super::claude_login::SignInTarget::ClaudeCode => {
                         self.execute_claude_code_logout().await
                     }
+                    // Nothing is stored for a host that was never created.
+                    super::claude_login::SignInTarget::NewCustomHost => Ok(()),
                     super::claude_login::SignInTarget::Provider(provider) => {
                         self.logout_provider(&provider, agent).await
                     }

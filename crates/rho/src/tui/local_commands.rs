@@ -1,7 +1,7 @@
 use ratatui::DefaultTerminal;
 use rho_providers::{
     model::provider_models::{probe_provider_models, ProviderModelHealth},
-    provider::{self, ProviderModelRefreshKind},
+    provider,
 };
 use {
     crate::commands::CommandInvocation,
@@ -113,9 +113,7 @@ impl App {
 
         let mut provider_health = Vec::new();
         for descriptor in provider::visible_providers() {
-            if !descriptor.is_keyless()
-                || descriptor.model_refresh != Some(ProviderModelRefreshKind::OpenAiCompatible)
-            {
+            if !descriptor.probes_configured_endpoint() {
                 continue;
             }
             let Some(endpoint) = config.resolved_provider_endpoint(descriptor.name) else {

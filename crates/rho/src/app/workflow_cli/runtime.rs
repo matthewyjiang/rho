@@ -433,9 +433,8 @@ impl WorkflowRuntime {
             approvals: command_approvals,
             hooks,
         });
-        let process_environment = ProcessEnvironment::inherit_except(
-            rho_providers::credential_env_vars().iter().copied(),
-        );
+        let process_environment =
+            ProcessEnvironment::inherit_except(rho_providers::credential_env_vars());
         let app_agent_executor = Arc::new(match approvals.classifier.clone() {
             Some(classifier) => AgentExecutor::new(
                 config.clone(),

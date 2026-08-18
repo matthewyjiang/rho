@@ -17,7 +17,7 @@ Help the user configure rho. Determine what they want to change, then guide them
 - `skills/` - skills available only to rho.
 - `prompts/` - prompt template files; each filename becomes a slash command.
 - `hooks.toml` - user hooks, always eligible.
-- `models.toml` - local model catalog overrides (or the file `RHO_MODELS_PATH` selects). Use this to set a per-model `usable_context_window` or `supported_reasoning_levels`.
+- `models.toml` - local model catalog overrides (or the file `RHO_MODELS_PATH` selects). Use this to set a per-model `usable_context_window`, `supported_reasoning_levels`, or `catalog` slug.
 - `credentials/` - secrets when the `file` credential backend is selected (`credentials/secrets.json`).
 - `sessions/` - saved session transcripts and workspace keys.
 - `subagents/` - global delegated runs.
@@ -41,7 +41,7 @@ Rho stores persistent config at `~/.rho/config.toml` by default. `RHO_HOME` over
 
 1. **Interactive TUI**: `/config` opens a category browser (Models, Appearance, Agent behavior, Context & limits, Tools, Providers). Type to filter, press `enter` to open a category, press `space` to toggle an on/off setting, and `esc` to return. `/login`, `/logout`, `/model`, and `/agents` are direct shortcuts. This is the easiest path for a user already in the TUI.
 2. **Command line**: `--provider`, `--model`, `--auth`, and `--reasoning` update the config file and become the future default. `rho credential-store` shows or sets the credential backend.
-3. **Direct file edit**: edit `~/.rho/config.toml` by hand. Group settings by purpose. Use this for settings the TUI does not expose, such as `[model.aliases]`, `[internal_agents]` overrides, `[prompt_templates]`, `[keybindings]`, `[providers.ollama].base_url`, and `[providers.custom.<name>].base_url`. Per-model context windows and reasoning lists live in `~/.rho/models.toml`, not `config.toml`.
+3. **Direct file edit**: edit `~/.rho/config.toml` by hand. Group settings by purpose. Use this for settings the TUI does not expose, such as `[model.aliases]`, `[internal_agents]` overrides, `[prompt_templates]`, `[keybindings]`, `[providers.ollama].base_url`, and `[providers.custom.<name>].base_url` / `catalog`. Per-model context windows, reasoning lists, and catalog rematches live in `~/.rho/models.toml`, not `config.toml`.
 4. **Environment**: `RHO_CREDENTIAL_STORE=os|file` overrides the saved credential backend; `RHO_MODELS_PATH` selects a custom models file; `RHO_TRUST_PROJECT_AGENTS=1` and `RHO_TRUST_PROJECT_HOOKS=1` trust project agent definitions and hooks.
 
 ## Inspect the current live config

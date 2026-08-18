@@ -40,10 +40,9 @@ impl App {
 
         let submit = match (key.modifiers, key.code) {
             (KeyModifiers::NONE, KeyCode::Enter) => {
-                let target = secret.target.clone();
-                let value = secret.value.trim().to_string();
+                let submission = secret.submission();
                 self.input_ui.set_composer(ComposerMode::Input);
-                Some((target, value))
+                Some(submission)
             }
             (_, KeyCode::Esc) => {
                 self.input_ui.set_composer(ComposerMode::Input);
@@ -83,8 +82,8 @@ impl App {
             _ => None,
         };
         self.clear_transient_key_state();
-        if let Some((target, value)) = submit {
-            self.submit_api_key_login(target, value, terminal, agent)
+        if let Some(submission) = submit {
+            self.submit_api_key_login(submission, terminal, agent)
                 .await?;
         }
         Ok(true)
@@ -241,9 +240,10 @@ impl App {
         let ComposerMode::TextInput(input) = self.input_ui.composer() else {
             return Ok(true);
         };
-        match input.target {
+        let target = input.target.clone();
+        let value = input.editor.value.clone();
+        match target {
             super::text_input::TextInputTarget::ConfigApiKey(key) => {
-                let value = input.editor.value.clone();
                 let save_result = save_config_api_key(self.credential_store.as_ref(), key, &value);
                 match save_result {
                     Ok(()) => {
@@ -260,8 +260,10 @@ impl App {
                 }
             }
             super::text_input::TextInputTarget::AgentField(field) => {
-                let value = input.editor.value.clone();
                 self.commit_agent_text_input(field, value)?;
+            }
+            super::text_input::TextInputTarget::CustomHost(step) => {
+                self.submit_custom_host_step(step, value)?;
             }
         }
         Ok(true)
@@ -271,7 +273,8 @@ impl App {
         let ComposerMode::TextInput(input) = self.input_ui.composer() else {
             return Ok(true);
         };
-        match input.target {
+        let target = input.target.clone();
+        match target {
             super::text_input::TextInputTarget::ConfigApiKey(key) => {
                 self.refresh_web_search_config_picker(key.picker_value())?;
                 self.set_status("web search config");
@@ -279,6 +282,7 @@ impl App {
             super::text_input::TextInputTarget::AgentField(field) => {
                 self.reopen_agent_field_picker(field.value());
             }
+            super::text_input::TextInputTarget::CustomHost(_) => self.cancel_custom_host_step(),
         }
         Ok(true)
     }

@@ -21,6 +21,9 @@ pub const QWEN_TOKEN_PLAN_API_KEY_ACCOUNT: &str = "provider:qwen-token-plan:api-
 pub const META_API_KEY_ACCOUNT: &str = "provider:meta:api-key";
 pub const OPENCODE_GO_API_KEY_ACCOUNT: &str = "provider:opencode-go:api-key";
 
+/// Auth profile id meaning "this provider needs no credential".
+pub const KEYLESS_AUTH: &str = "none";
+
 pub const OLLAMA_API_BASE: &str = "http://127.0.0.1:11434/v1";
 pub const OLLAMA_CLOUD_API_BASE: &str = "https://ollama.com/v1";
 pub const MOONSHOT_API_BASE: &str = "https://api.moonshot.ai/v1";
@@ -470,13 +473,44 @@ impl ProviderDescriptor {
         self.auth_modes().find(|mode| mode.id == auth)
     }
 
+    /// True when every registered mode is keyless.
     pub fn is_keyless(self) -> bool {
-        matches!(self.default_auth().auth_kind, ProviderAuthKind::None)
+        self.auth_modes()
+            .all(|mode| matches!(mode.auth_kind, ProviderAuthKind::None))
+    }
+
+    /// True when the provider can run without credentials.
+    pub fn has_none_auth(self) -> bool {
+        self.auth_modes()
+            .any(|mode| matches!(mode.auth_kind, ProviderAuthKind::None))
     }
 
     /// Config-defined Chat Completions hosts are named providers, not a single built-in.
     pub fn is_custom_openai_compatible(self) -> bool {
         PROVIDERS.iter().all(|builtin| builtin.name != self.name)
+    }
+
+    /// Whether `/doctor` and `/config` can reach this host's `/v1/models`.
+    ///
+    /// A configured endpoint plus OpenAI-compatible discovery is enough; the
+    /// probe supplies whatever credentials the host has, so a stored key does
+    /// not disqualify it.
+    pub fn probes_configured_endpoint(self) -> bool {
+        self.has_none_auth()
+            && self.model_refresh == Some(ProviderModelRefreshKind::OpenAiCompatible)
+    }
+
+    /// Auth mode used for unattended model discovery.
+    ///
+    /// Prefers a mode whose credentials are present so a keyed custom host is
+    /// probed with its key instead of anonymously; falls back to the default.
+    pub fn discovery_auth(self, store: &dyn crate::credentials::CredentialStore) -> AuthMode {
+        self.auth_modes()
+            .find(|mode| {
+                !matches!(mode.auth_kind, ProviderAuthKind::None)
+                    && crate::credentials::auth_has_credentials(store, mode.id).unwrap_or(false)
+            })
+            .unwrap_or_else(|| self.default_auth())
     }
 
     /// Wire policy for Standard-dialect hosts when models.dev has no row.
@@ -499,11 +533,13 @@ mod provider_table;
 #[path = "custom_openai_compatible.rs"]
 mod custom_openai_compatible;
 
+pub(crate) use custom_openai_compatible::interned_custom_providers;
 pub use custom_openai_compatible::{
-    custom_provider_registry_test_lock, install_custom_openai_compatible_providers,
-    intern_custom_openai_compatible_providers, reset_custom_openai_compatible_providers_for_tests,
-    scope_custom_openai_compatible_providers, validate_custom_provider_name,
-    CustomProviderThreadScope,
+    custom_provider_api_key_auth_id, custom_provider_registry_test_lock,
+    install_custom_openai_compatible_providers, intern_custom_openai_compatible_providers,
+    interned_custom_provider, is_custom_provider_api_key_auth,
+    reset_custom_openai_compatible_providers_for_tests, scope_custom_openai_compatible_providers,
+    validate_custom_provider_name, CustomProviderSpec, CustomProviderThreadScope,
 };
 pub use provider_table::PROVIDERS;
 
@@ -526,25 +562,36 @@ pub fn visible_providers() -> Vec<&'static ProviderDescriptor> {
 
 /// Environment variable names used as provider credential overrides.
 ///
-/// Derived from [`PROVIDERS`] auth kinds so newly registered provider credentials
-/// are included automatically. Hosts should strip these from child process
-/// environments by default, for example with
-/// [`rho_sdk::ProcessEnvironment::inherit_except`].
-pub fn credential_env_vars() -> &'static [&'static str] {
-    use std::sync::OnceLock;
+/// Built-in auth kinds, interned custom hosts, and any currently set
+/// `RHO_*_API_KEY`. Callers typically snapshot this into
+/// [`rho_sdk::ProcessEnvironment::inherit_except`] at tool-set construction;
+/// scanning the live environment covers an override for a host that `/login`
+/// interns later in the same session.
+///
+/// Intern config-defined hosts before calling this: a host that has never been
+/// interned has no descriptor and therefore no override name to report, unless
+/// its `RHO_*_API_KEY` is already set.
+pub fn credential_env_vars() -> Vec<String> {
+    credential_env_vars_from(std::env::vars().map(|(name, _)| name))
+}
 
-    static VARS: OnceLock<Vec<&'static str>> = OnceLock::new();
-    VARS.get_or_init(|| {
-        let mut vars: Vec<&'static str> = providers()
-            .iter()
-            .flat_map(|descriptor| descriptor.auth_modes())
-            .filter_map(|mode| mode.auth_kind.env_var())
-            .collect();
-        vars.sort_unstable();
-        vars.dedup();
-        vars
-    })
-    .as_slice()
+pub(crate) fn credential_env_vars_from(
+    env: impl IntoIterator<Item = impl AsRef<str>>,
+) -> Vec<String> {
+    let mut vars: Vec<String> = providers()
+        .iter()
+        .chain(custom_openai_compatible::interned_custom_providers())
+        .flat_map(|descriptor| descriptor.auth_modes())
+        .filter_map(|mode| mode.auth_kind.env_var())
+        .map(str::to_owned)
+        .collect();
+    vars.extend(env.into_iter().filter_map(|name| {
+        let name = name.as_ref();
+        custom_openai_compatible::is_provider_api_key_env_var(name).then(|| name.to_owned())
+    }));
+    vars.sort_unstable();
+    vars.dedup();
+    vars
 }
 
 /// Auth profile names accepted by CLI `--auth` and config `auth`.
@@ -591,7 +638,7 @@ pub fn provider_descriptor(provider: &str) -> Option<&'static ProviderDescriptor
         .or_else(|| custom_openai_compatible::custom_openai_compatible_provider(provider))
 }
 
-pub(crate) fn interned_custom_openai_compatible_provider(
+pub fn interned_custom_openai_compatible_provider(
     provider: &str,
 ) -> Option<&'static ProviderDescriptor> {
     custom_openai_compatible::interned_custom_provider(provider)
@@ -606,6 +653,7 @@ pub fn provider_descriptor_for_auth(auth: &str) -> Option<&'static ProviderDescr
     providers()
         .iter()
         .find(|descriptor| descriptor.auth_mode(auth).is_some())
+        .or_else(|| custom_openai_compatible::interned_custom_provider_for_auth(auth))
 }
 
 /// Resolves an auth profile id to its provider and mode.

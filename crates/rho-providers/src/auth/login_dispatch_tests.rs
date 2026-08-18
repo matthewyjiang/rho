@@ -9,7 +9,7 @@ fn dispatches_registered_providers_to_typed_authentication_methods() {
     assert_eq!(
         ProviderAuthentication::method("openai").unwrap(),
         AuthenticationMethod::ApiKey {
-            entry_label: "OpenAI API key"
+            entry_label: "OpenAI API key",
         }
     );
     assert_eq!(

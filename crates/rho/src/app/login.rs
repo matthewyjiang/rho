@@ -25,7 +25,7 @@ pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<()>
         AuthenticationMethod::None => {
             anyhow::bail!("provider '{provider}' does not require login")
         }
-        AuthenticationMethod::ApiKey { entry_label } => {
+        AuthenticationMethod::ApiKey { entry_label, .. } => {
             anyhow::bail!(
                 "{entry_label} login is only supported in the interactive TUI; run `/login {provider}`"
             );

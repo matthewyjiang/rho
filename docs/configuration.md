@@ -175,7 +175,15 @@ Without this file, Rho uses the catalog window. For GPT-5.5 and GPT-5.6 that is 
 usable_context_window = 272000
 ```
 
-The key is `provider/model`. `usable_context_window` is the budget Rho displays and compacts against. You can also set `effective_context_window`. The same file can pin `supported_reasoning_levels`. Local values win over catalog data. Restart Rho or switch models after you edit the file.
+The key is `provider/model`. `usable_context_window` is the budget Rho displays and compacts against. You can also set `effective_context_window`. The same file can pin `supported_reasoning_levels`. Set `catalog` to a models.dev provider slug, or to `provider/model`, to borrow that catalog row for a custom host. Local values win over catalog data. Restart Rho or switch models after you edit the file.
+
+```toml
+[models."cliproxyapi/claude-sonnet-4-5"]
+catalog = "anthropic"
+
+[models."cliproxyapi/opus-thinking"]
+catalog = "anthropic/claude-opus-4-6"
+```
 
 The catalog window can sit above a model's long-context price tier. Rho does not clamp it.
 

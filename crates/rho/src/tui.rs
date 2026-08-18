@@ -70,6 +70,7 @@ mod chat_media;
 mod choice_actions;
 mod claude_login;
 mod composer_layout;
+mod custom_provider_login;
 mod during_turn;
 mod goal_command;
 mod help_picker;

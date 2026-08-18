@@ -505,10 +505,13 @@ fn auth_mode_has_credentials(
 }
 
 pub fn available_auth_modes(store: &dyn CredentialStore) -> Vec<String> {
-    provider::providers()
-        .iter()
+    let mut modes = provider::visible_providers()
+        .into_iter()
         .flat_map(|provider| provider.auth_modes())
         .filter(|mode| auth_has_credentials(store, mode.id).unwrap_or(false))
         .map(|mode| mode.id.to_string())
-        .collect()
+        .collect::<Vec<_>>();
+    modes.sort();
+    modes.dedup();
+    modes
 }

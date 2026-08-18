@@ -14,11 +14,14 @@ use std::{
 use rusqlite::params;
 use tokio::sync::Mutex;
 
-use crate::provider::{CatalogConstruction, ProviderDescriptor, ProviderId};
+use crate::provider::{
+    CatalogConstruction, CatalogReasoningPolicy, ProviderDescriptor, ProviderId,
+};
 
 use super::{
-    document::ModelsDevCatalog, fetch_models_dev_api, model_metadata_needs_refresh,
-    open_models_dev_cache, upstream_metadata_from_api, write_cached_upstream_model_metadata_batch,
+    document::{self, ModelsDevCatalog},
+    fetch_models_dev_api, model_metadata_needs_refresh, open_models_dev_cache,
+    upstream_metadata_from_api, write_cached_upstream_model_metadata_batch,
     MODEL_METADATA_CACHE_VERSION,
 };
 
@@ -37,8 +40,12 @@ const CATALOG_SNAPSHOT_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 /// row for every registered Rho provider instead.
 ///
 /// Concurrent callers share one in-flight download. A current on-disk snapshot
-/// (same cache version and fresh `updated_at`) is free. Returns how many rows
-/// the hydrate wrote, or `0` when the network was skipped or failed.
+/// (same cache version, fresh `updated_at`, and every interned borrowed catalog
+/// slug already written) is free. A host that `/login` or a config edit points
+/// at a new slug after that snapshot was taken is not free: the next ensure
+/// redownloads so context, price, and reasoning do not wait 24 hours.
+/// Returns how many rows the hydrate wrote, or `0` when the network was
+/// skipped or failed.
 pub async fn ensure_models_dev_catalog() -> usize {
     if catalog_snapshot_is_ready() {
         return 0;
@@ -83,30 +90,57 @@ pub async fn prefetch_model_metadata(targets: impl IntoIterator<Item = (String, 
 /// Cache keys stay provider-facing (`openai-codex` / model), not upstream. OpenRouter
 /// rows use the aggregator model ids (`anthropic/claude-…`). Kimi Code's `k3`
 /// alias is written beside the upstream `kimi-k3` id.
+///
+/// models.dev slugs that interned custom hosts actually borrow (`catalog =
+/// "llmgateway"`) are also written so those hosts can rematch cache rows. The
+/// rest of the upstream catalog stays out of sqlite. Rho names keep their
+/// existing extract policy and are not overwritten by this second pass.
 pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
     let mut entries = Vec::new();
     let mut touched_providers = HashSet::new();
+    let mut rho_names = HashSet::new();
     for descriptor in crate::provider::providers() {
+        rho_names.insert(descriptor.name);
         for model_id in catalog_model_ids_for_provider(api, descriptor) {
             if let Some(metadata) = extract_complete_upstream_metadata(api, descriptor, &model_id) {
-                touched_providers.insert(descriptor.name);
-                entries.push((descriptor.name, model_id, metadata));
+                touched_providers.insert(descriptor.name.to_string());
+                entries.push((descriptor.name.to_string(), model_id, metadata));
             }
         }
         // Provider-facing ids that are not catalog keys still need a cache row.
         if descriptor.id == ProviderId::KimiCode {
             if let Some(metadata) = extract_complete_upstream_metadata(api, descriptor, "k3") {
-                touched_providers.insert(descriptor.name);
-                entries.push((descriptor.name, "k3".to_string(), metadata));
+                touched_providers.insert(descriptor.name.to_string());
+                entries.push((descriptor.name.to_string(), "k3".to_string(), metadata));
             }
         }
     }
+    let borrowed_slugs = borrowed_custom_catalog_slugs(&rho_names);
+    for (slug, provider) in api.iter_providers() {
+        if rho_names.contains(slug) || !borrowed_slugs.contains(slug) {
+            continue;
+        }
+        for model_id in provider.models.keys() {
+            let Some(metadata) = document::model_metadata_from_catalog(
+                api,
+                slug,
+                model_id,
+                CatalogReasoningPolicy::ExactAdvertised,
+            ) else {
+                continue;
+            };
+            touched_providers.insert(slug.to_string());
+            entries.push((slug.to_string(), model_id.clone(), metadata));
+        }
+    }
     let written = write_cached_upstream_model_metadata_batch(
-        entries.iter().map(|(p, m, meta)| (*p, m.as_str(), meta)),
+        entries
+            .iter()
+            .map(|(provider, model, metadata)| (provider.as_str(), model.as_str(), metadata)),
     );
     if written > 0 {
         for provider in touched_providers {
-            crate::model::display_name::forget_provider_display_names(provider);
+            crate::model::display_name::forget_provider_display_names(&provider);
         }
     }
     written
@@ -126,6 +160,58 @@ fn catalog_model_ids_for_provider(
     api.provider(upstream)
         .map(|provider| provider.models.keys().cloned().collect())
         .unwrap_or_default()
+}
+
+fn current_borrowed_custom_catalog_slugs() -> HashSet<String> {
+    let rho_names = crate::provider::providers()
+        .iter()
+        .map(|descriptor| descriptor.name)
+        .collect();
+    borrowed_custom_catalog_slugs(&rho_names)
+}
+
+fn borrowed_custom_catalog_slugs(rho_names: &HashSet<&str>) -> HashSet<String> {
+    crate::provider::interned_custom_providers()
+        .into_iter()
+        .filter(|descriptor| descriptor.metadata_upstream != descriptor.name)
+        .map(|descriptor| descriptor.metadata_upstream)
+        .filter(|slug| !rho_names.contains(slug))
+        .map(str::to_string)
+        .collect()
+}
+
+fn encode_borrowed_slugs(slugs: &HashSet<String>) -> String {
+    let mut slugs = slugs.iter().cloned().collect::<Vec<_>>();
+    slugs.sort_unstable();
+    slugs.join(",")
+}
+
+fn decode_borrowed_slugs(raw: &str) -> HashSet<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|slug| !slug.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn stored_borrowed_catalog_slugs() -> HashSet<String> {
+    let Ok(connection) = open_models_dev_cache() else {
+        return HashSet::new();
+    };
+    connection
+        .query_row(
+            "select borrowed_slugs from catalog_snapshot where id = 1",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+        .map(|raw| decode_borrowed_slugs(&raw))
+        .unwrap_or_default()
+}
+
+fn borrowed_catalog_slugs_are_hydrated() -> bool {
+    let needed = current_borrowed_custom_catalog_slugs();
+    needed.is_empty() || needed.is_subset(&stored_borrowed_catalog_slugs())
 }
 
 /// Extracts metadata when its reasoning metadata is complete. Providers whose
@@ -157,6 +243,9 @@ fn catalog_hydrate_lock() -> &'static Mutex<()> {
 }
 
 pub(super) fn catalog_snapshot_is_ready() -> bool {
+    if !borrowed_catalog_slugs_are_hydrated() {
+        return false;
+    }
     // Isolated test cache dirs share this process flag. A sibling test that
     // marked the catalog ready would otherwise skip our aged sqlite.
     if super::test_cache_dir_override_is_set() {
@@ -200,14 +289,16 @@ pub(super) fn mark_catalog_snapshot_current() -> bool {
     let Ok(connection) = open_models_dev_cache() else {
         return false;
     };
+    let borrowed = encode_borrowed_slugs(&current_borrowed_custom_catalog_slugs());
     connection
         .execute(
-            "insert into catalog_snapshot (id, cache_version, updated_at)
-             values (1, ?1, strftime('%s', 'now'))
+            "insert into catalog_snapshot (id, cache_version, updated_at, borrowed_slugs)
+             values (1, ?1, strftime('%s', 'now'), ?2)
              on conflict(id) do update set
                cache_version = excluded.cache_version,
-               updated_at = excluded.updated_at",
-            params![MODEL_METADATA_CACHE_VERSION],
+               updated_at = excluded.updated_at,
+               borrowed_slugs = excluded.borrowed_slugs",
+            params![MODEL_METADATA_CACHE_VERSION, borrowed],
         )
         .is_ok()
 }

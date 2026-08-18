@@ -157,6 +157,8 @@ fn prefers_the_catalog_name_then_the_provider_name_then_nothing() {
 async fn ensure_is_a_no_op_when_the_catalog_snapshot_is_current() {
     use models_dev::mark_catalog_snapshot_current_for_tests;
 
+    let _lock = crate::provider::custom_provider_registry_test_lock();
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
     let catalog = tempfile::tempdir().unwrap();
     let provider = tempfile::tempdir().unwrap();
     let written = with_models_dev_cache_dir_for_tests(catalog.path().to_path_buf(), || {
@@ -176,6 +178,7 @@ async fn ensure_is_a_no_op_when_the_catalog_snapshot_is_current() {
         Some(0),
         "ensure must finish without awaiting the network when the snapshot is current"
     );
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
 }
 
 // Covers: a same-version snapshot that is older than the freshness window must
@@ -186,6 +189,8 @@ async fn ensure_is_a_no_op_when_the_catalog_snapshot_is_current() {
 async fn ensure_awaits_when_the_catalog_snapshot_is_stale() {
     use models_dev::age_catalog_snapshot_for_tests;
 
+    let _lock = crate::provider::custom_provider_registry_test_lock();
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
     let catalog = tempfile::tempdir().unwrap();
     let provider = tempfile::tempdir().unwrap();
     let pending = with_models_dev_cache_dir_for_tests(catalog.path().to_path_buf(), || {
@@ -205,4 +210,5 @@ async fn ensure_awaits_when_the_catalog_snapshot_is_stale() {
         pending, None,
         "a stale same-version snapshot must not short-circuit ensure"
     );
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
 }

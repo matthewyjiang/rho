@@ -1,64 +1,72 @@
 # Custom OpenAI-compatible hosts
 
-You can point Rho at any local or remote host that speaks OpenAI Chat Completions. There is no login picker. Add a name and a base URL in config, like Ollama. Rho sends no `Authorization` header.
+You can point Rho at any local or remote host that speaks OpenAI Chat Completions. Add a name and a base URL in config, or create the host from `/login`. Requests send an `Authorization` header only when you store an API key.
 
 This is not the first-party [OpenAI](/providers/openai) provider.
 
 ## Define a host
 
-Edit `~/.rho/config.toml`. The table key is the provider name used in `/model`.
+The fastest path is `/login` in the [interactive TUI](/interactive-tui). Choose **Custom Chat Completions**, name the provider, enter its base URL, then enter an API key or leave that field blank.
+
+You can also edit `~/.rho/config.toml`. The table key is the provider name used in `/model`.
 
 ```toml
-[providers.custom.composer]
-base_url = "http://127.0.0.1:8787/v1"
-
 [providers.custom.vllm]
 base_url = "http://127.0.0.1:8000/v1"
 ```
 
+A mixed proxy that is not itself in [models.dev](https://models.dev/) can borrow another catalog for context windows, prices, and reasoning lists. Set `catalog` to that models.dev provider slug. Model ids must match the borrowed catalog (`gpt-5.6-sol`, not `openai/gpt-5.6-sol`):
+
+```toml
+[providers.custom.cliproxyapi]
+base_url = "http://127.0.0.1:8317/v1"
+catalog = "llmgateway"
+```
+
+`llmgateway` is a mixed models.dev catalog with bare model ids. `openrouter` only matches if the host uses OpenRouter-style `owner/model` ids. `openai-codex` borrows Rho's Codex catalog, including built-in window overrides. Requests still go to the custom host; only metadata is borrowed. For one model that should use a different slug, set `catalog` on that row in `~/.rho/models.toml`. See [local model metadata](/configuration#local-model-metadata).
+
 Keep the `/v1` suffix. Rho appends `/models` for discovery and `/chat/completions` for agent turns. The URL must use `http` or `https` and cannot contain credentials, a query, or a fragment.
 
-Names must be lowercase letters, digits, and hyphens, start with a letter, and must not match a built-in provider. Restart Rho after you edit this table, including an existing `base_url`. Direct edits to `config.toml` do not update a running process.
+Names must be lowercase letters, digits, and hyphens, start with a letter, and must not match a built-in provider. Restart Rho after you edit this table, including an existing `base_url`. Direct edits to `config.toml` do not update a running process. Creating or updating a host through `/login` applies immediately.
+
+## Authentication
+
+Custom hosts default to `auth = "none"` and send no `Authorization` header. If the host requires a key, store one with `/login <name>` or during onboarding. That selects `{name}-api-key` and sends `Authorization: Bearer <key>`. Secrets stay in the credential store, not in config.
+
+```toml
+[model]
+provider = "vllm"
+model = "qwen2.5-coder"
+auth = "none"
+```
+
+With a stored key:
+
+```toml
+[model]
+provider = "vllm"
+model = "qwen2.5-coder"
+auth = "vllm-api-key"
+```
+
+Leave the `/login` key field blank to delete any stored key and switch the host back to `none`. `/logout <name>` also deletes a stored key. The CI/development override is `RHO_<NAME>_API_KEY`, with the provider name uppercased and hyphens turned into underscores (`RHO_VLLM_API_KEY`). The override applies to hosts defined in `config.toml`; Rho also strips those names from agent command environments so a tool cannot read them.
 
 ## Use it
 
-```toml
-[model]
-provider = "composer"
-model = "composer-2.5"
-auth = "none"
-```
-
-Or, after a restart, Rho fetches `/v1/models` in the background for each custom host so the picker can fill in. You can also refresh by hand in `/config` if the host was down at startup.
+After a restart, or immediately after `/login` onboarding, Rho fetches `/v1/models` in the background for each custom host so the picker can fill in. You can also refresh by hand in `/config` if the host was down at startup.
 
 ```text
-/model composer/composer-2.5
+/model vllm/qwen2.5-coder
 ```
-
-Do not run `/login`. There is no API key and no credential store entry.
 
 ## Models
 
-Rho fetches `/v1/models` in the background at startup for every custom host so the picker can fill in. A down host is skipped so startup still succeeds; refresh later in `/config` once it is up. Opening `/model` before the fetch lands can show a stale or empty custom list. The host must support tool calls if you want a coding agent.
+Rho fetches `/v1/models` in the background at startup for every custom host so the picker can fill in. A down host is skipped so startup still succeeds; refresh later in `/config` once it is up. Opening `/model` before the fetch lands can show a stale or empty custom list. The host must support tool calls if you want a coding agent. Proxies such as CLIProxyAPI, and many local servers, omit tool-call ids, use sparse indexes, or skip `{}` for zero-argument tools. Rho fills those in so the tool loop can continue. First-party OpenAI-compatible providers stay strict.
 
 Rho sends `reasoning_effort` on each turn, including `"none"` when reasoning is off. Shift+Tab and `/config` cycle the level. Hosts that do not accept that field may reject the request; pin levels in `~/.rho/models.toml` if you need a smaller set.
-
-## Example: API for Cursor
-
-[API for Cursor](https://github.com/standardagents/composer-api) serves Cursor models from a local `/v1` server.
-
-```toml
-[providers.custom.composer]
-base_url = "http://127.0.0.1:8787/v1"
-
-[model]
-provider = "composer"
-model = "composer-2.5"
-auth = "none"
-```
 
 ## Automation
 
 ```bash
-rho --provider composer --model composer/composer-2.5 run "review this project"
+rho --provider vllm --model vllm/qwen2.5-coder run "review this project"
 ```

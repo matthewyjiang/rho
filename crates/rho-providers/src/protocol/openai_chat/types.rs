@@ -62,6 +62,8 @@ pub(crate) struct OpenAiMessage {
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct OpenAiToolCall {
+    /// Some OpenAI-compatible hosts omit ids; lenient dialects synthesize them.
+    #[serde(default)]
     pub(crate) id: String,
     #[serde(rename = "type")]
     pub(crate) kind: String,

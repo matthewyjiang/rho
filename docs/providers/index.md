@@ -20,7 +20,7 @@ This index lists every first-party provider Rho ships. Shared concepts such as c
 | `meta` | `meta-api-key` | [Meta Model API](/providers/meta) |
 | `opencode-go` | `opencode-go-api-key` | [OpenCode Go](/providers/opencode-go) |
 
-User-defined Chat Completions hosts are not login providers. Add `[providers.custom.<name>]` with a `base_url`. See [Custom OpenAI-compatible hosts](/providers/openai-compatible).
+User-defined Chat Completions hosts can be created from `/login` (**Custom Chat Completions**) or by adding `[providers.custom.<name>]` with a `base_url`. An API key is optional. See [Custom OpenAI-compatible hosts](/providers/openai-compatible).
 
 ## Recommended next steps
 

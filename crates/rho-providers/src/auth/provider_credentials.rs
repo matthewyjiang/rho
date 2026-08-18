@@ -416,6 +416,35 @@ mod tests {
         );
     }
 
+    // Covers: a stored custom-host key resolves to CompatibleAuth::ApiKey
+    // Owner: provider credentials
+    #[test]
+    fn custom_host_acquisition_reads_store_key() {
+        let _lock = crate::provider::custom_provider_registry_test_lock();
+        crate::provider::reset_custom_openai_compatible_providers_for_tests();
+        struct RestoreCustomProviders;
+        impl Drop for RestoreCustomProviders {
+            fn drop(&mut self) {
+                crate::provider::reset_custom_openai_compatible_providers_for_tests();
+            }
+        }
+        let _restore = RestoreCustomProviders;
+        crate::provider::install_custom_openai_compatible_providers(["vllm"]).unwrap();
+
+        let store = MemoryCredentialStore::default();
+        store
+            .set_secret("provider:vllm:api-key", "vllm-secret")
+            .unwrap();
+        let source = ApplicationCredentialSource::new(Arc::new(store));
+
+        let credential = source.acquire("vllm", "vllm-api-key").unwrap();
+        assert!(matches!(
+            credential,
+            ProviderCredential::OpenAiCompatible(CompatibleAuth::ApiKey(secret))
+                if secret == "vllm-secret"
+        ));
+    }
+
     #[test]
     fn ollama_cloud_device_acquisition_reports_missing_without_key_dir() {
         let dir = tempfile::tempdir().unwrap();

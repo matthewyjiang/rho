@@ -109,8 +109,7 @@ pub struct ModelCost {
 }
 
 pub fn current_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
-    current_cached_upstream_model_metadata(provider, model)
-        .map(|metadata| apply_overrides(provider, model, metadata))
+    load_model_metadata(provider, model, CacheFreshness::CurrentOnly)
         .or_else(|| override_metadata(provider, model))
 }
 
@@ -192,31 +191,84 @@ pub fn model_metadata_needs_refresh(provider: &str, model: &str) -> bool {
     if provider_reasoning_is_not_configurable(provider) {
         return false;
     }
-    current_cached_upstream_model_metadata(provider, model)
-        .map(|metadata| apply_overrides(provider, model, metadata))
+    load_model_metadata(provider, model, CacheFreshness::CurrentOnly)
         .or_else(|| override_metadata(provider, model))
         .is_none_or(|metadata| !metadata.reasoning_metadata_complete)
 }
 
 pub fn cached_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
-    cached_upstream_model_metadata(provider, model)
-        .map(|metadata| apply_overrides(provider, model, metadata))
+    load_model_metadata(provider, model, CacheFreshness::AllowStale)
         .or_else(|| override_metadata(provider, model))
 }
 
 pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
-    if let Some(metadata) = current_cached_upstream_model_metadata(provider, model) {
-        return Some(apply_overrides(provider, model, metadata));
+    if let Some(metadata) = load_model_metadata(provider, model, CacheFreshness::CurrentOnly) {
+        return Some(metadata);
     }
 
     // One full catalog hydrate fills every provider-facing row. After that, the
     // requested model is either current in sqlite or genuinely absent.
     ensure_models_dev_catalog().await;
-    if let Some(metadata) = current_cached_upstream_model_metadata(provider, model) {
-        return Some(apply_overrides(provider, model, metadata));
+    if let Some(metadata) = load_model_metadata(provider, model, CacheFreshness::CurrentOnly) {
+        return Some(metadata);
     }
 
     override_metadata(provider, model)
+}
+
+/// models.dev provider and model id used for the sqlite catalog row.
+///
+/// Custom hosts can borrow another slug (`catalog = "llmgateway"`). A models.toml
+/// `catalog` value wins and may also remap the model id (`anthropic/claude-sonnet-4-5`).
+///
+/// Built-in providers are deliberately left on their provider-facing name:
+/// hydrate writes their rows under that name, not under `metadata_upstream`
+/// (`openai-codex` rows, not `openai`), so borrowing the upstream slug here
+/// would miss the cache. Only config-defined hosts redirect.
+fn catalog_source_for(
+    provider: &str,
+    model: &str,
+    local: Option<&toml::map::Map<String, toml::Value>>,
+) -> (String, String) {
+    if let Some(source) = local.and_then(|table| overrides::local_catalog_source(table, model)) {
+        return source;
+    }
+    let borrowed = crate::provider::provider_descriptor(provider)
+        .filter(|descriptor| descriptor.is_custom_openai_compatible())
+        .map(|descriptor| descriptor.metadata_upstream_for_model(model))
+        .filter(|upstream| *upstream != provider);
+    match borrowed {
+        Some(upstream) => (upstream.to_string(), model.to_string()),
+        None => (provider.to_string(), model.to_string()),
+    }
+}
+
+fn load_model_metadata(
+    provider: &str,
+    model: &str,
+    freshness: CacheFreshness,
+) -> Option<ModelMetadata> {
+    let local = overrides::local_override_table(provider, model);
+    let (source_provider, source_model) = catalog_source_for(provider, model, local.as_ref());
+    let remapped = source_provider != provider || source_model != model;
+    let metadata = match freshness {
+        CacheFreshness::CurrentOnly => {
+            current_cached_upstream_model_metadata(&source_provider, &source_model)
+        }
+        CacheFreshness::AllowStale => {
+            cached_upstream_model_metadata(&source_provider, &source_model)
+        }
+    }?;
+    let metadata = if remapped {
+        overrides::apply_builtin_overrides(&source_provider, &source_model, metadata)
+    } else {
+        overrides::apply_builtin_overrides(provider, model, metadata)
+    };
+    let metadata = apply_provider_capabilities(provider, model, metadata);
+    Some(match local.as_ref() {
+        Some(table) => overrides::merge_toml_override(metadata, table),
+        None => metadata,
+    })
 }
 
 fn upstream_metadata_from_api(
@@ -339,10 +391,14 @@ async fn fetch_models_dev_api() -> Option<document::ModelsDevCatalog> {
 /// v8: `display_name` added. Older rows are complete without it, so only a bump
 /// makes them refetch and pick up the catalog name.
 ///
+/// v9: hydrate also writes non-Rho models.dev slugs so custom hosts can set
+/// `catalog = "llmgateway"` and borrow those rows. A version match on an older
+/// snapshot would otherwise skip the download forever.
+///
 /// `sdk_package` was added without a bump: only opencode-go reads it, and that
 /// provider registered in the same release, so no older rows can miss it. Bump
 /// when an already-registered provider switches to `PreferModelsDevNpm`.
-pub(super) const MODEL_METADATA_CACHE_VERSION: i64 = 8;
+pub(super) const MODEL_METADATA_CACHE_VERSION: i64 = 9;
 
 fn cached_upstream_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
     cached_upstream_model_metadata_with_freshness(provider, model, CacheFreshness::AllowStale)
@@ -469,11 +525,16 @@ pub(super) fn open_models_dev_cache() -> rusqlite::Result<Connection> {
         create table if not exists catalog_snapshot (
             id integer primary key check (id = 1),
             cache_version integer not null,
-            updated_at integer not null
+            updated_at integer not null,
+            borrowed_slugs text not null default ''
         );",
     )?;
     let _ = connection.execute(
         "alter table model_metadata add column cache_version integer not null default 1",
+        [],
+    );
+    let _ = connection.execute(
+        "alter table catalog_snapshot add column borrowed_slugs text not null default ''",
         [],
     );
     Ok(connection)

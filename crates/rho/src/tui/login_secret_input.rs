@@ -9,6 +9,7 @@ pub(super) struct SecretInput {
     pub(super) target: LoginTarget,
     pub(super) value: String,
     pub(super) cursor: usize,
+    pub(super) allow_empty: bool,
 }
 
 impl SecretInput {
@@ -17,6 +18,26 @@ impl SecretInput {
             target,
             value: String::new(),
             cursor: 0,
+            allow_empty: false,
+        }
+    }
+
+    /// For hosts that also run keyless, where blank means "use no key".
+    pub(super) fn optional(target: LoginTarget) -> Self {
+        Self {
+            allow_empty: true,
+            ..Self::new(target)
+        }
+    }
+
+    /// What pressing Enter with the current value means.
+    pub(super) fn submission(&self) -> super::login::ApiKeySubmission {
+        let key = self.value.trim().to_string();
+        let target = self.target.clone();
+        match (key.is_empty(), self.allow_empty) {
+            (true, true) => super::login::ApiKeySubmission::ClearAndRunKeyless { target },
+            (true, false) => super::login::ApiKeySubmission::Rejected,
+            (false, _) => super::login::ApiKeySubmission::Save { target, key },
         }
     }
 
@@ -69,11 +90,18 @@ pub(super) fn secret_input_lines(
     secret: &SecretInput,
     width: usize,
 ) -> Vec<ratatui::text::Line<'static>> {
-    let prompt = format!(
-        "enter {}  {}",
-        secret.target.label,
-        composer_chrome::join_footer_parts(["Enter save", "Esc cancel"])
-    );
+    let prompt = if secret.allow_empty {
+        format!(
+            "enter API key (optional)  {}",
+            composer_chrome::join_footer_parts(["Enter save", "Esc cancel"])
+        )
+    } else {
+        format!(
+            "enter {}  {}",
+            secret.target.label,
+            composer_chrome::join_footer_parts(["Enter save", "Esc cancel"])
+        )
+    };
     let display_value = "•".repeat(secret.value.chars().count());
     vec![
         styled_line(

@@ -100,6 +100,12 @@ impl ModelsDevCatalog {
         self.providers.get(name)
     }
 
+    pub(super) fn iter_providers(&self) -> impl Iterator<Item = (&str, &ModelsDevProvider)> {
+        self.providers
+            .iter()
+            .map(|(name, provider)| (name.as_str(), provider))
+    }
+
     pub(super) fn model(
         &self,
         provider: &str,
