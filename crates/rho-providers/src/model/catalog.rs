@@ -190,8 +190,8 @@ pub fn login_group(id: &str) -> Option<LoginGroup> {
 }
 
 pub fn login_targets() -> Vec<LoginTarget> {
-    provider::providers()
-        .iter()
+    provider::visible_providers()
+        .into_iter()
         .flat_map(|provider| {
             provider
                 .auth_modes()

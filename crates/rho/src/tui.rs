@@ -70,6 +70,7 @@ mod chat_media;
 mod choice_actions;
 mod claude_login;
 mod composer_layout;
+mod custom_provider_login;
 mod during_turn;
 mod goal_command;
 mod help_picker;
@@ -487,6 +488,8 @@ struct App {
     goal: Option<GoalState>,
     history: HistoryUi,
     credential_store: Arc<dyn CredentialStore>,
+    /// Keeps newly created custom hosts visible above the startup thread scope.
+    custom_provider_scope: Option<rho_providers::provider::CustomProviderThreadScope>,
     available_auths: Vec<String>,
     using_unavailable_provider: bool,
     pending_interactive_login: Option<PendingInteractiveLogin>,

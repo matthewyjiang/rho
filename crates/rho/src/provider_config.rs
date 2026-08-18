@@ -116,6 +116,8 @@ fn parse_provider_base_url(field: &str, base_url: &str) -> anyhow::Result<Url> {
 
 impl Config {
     pub(crate) fn normalize_provider_profiles(&mut self) -> anyhow::Result<()> {
+        // Auth ids such as `{name}-api-key` exist only after intern.
+        let _ = self.providers.intern_names()?;
         normalize_selection(
             &self.providers,
             &mut self.provider,
@@ -167,7 +169,11 @@ fn normalize_selection(
     internal_agent: Option<&str>,
 ) -> anyhow::Result<()> {
     if providers.custom.contains_key(provider.as_str()) {
-        *auth = "none".into();
+        let accepted = rho_providers::provider::interned_custom_provider(provider)
+            .is_some_and(|descriptor| descriptor.auth_mode(auth).is_some());
+        if !accepted {
+            *auth = "none".into();
+        }
         return Ok(());
     }
     let profile = rho_providers::provider::resolve_profile(provider, auth).map_err(|error| {

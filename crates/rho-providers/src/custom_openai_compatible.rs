@@ -1,8 +1,8 @@
 //! User-defined OpenAI-compatible Chat Completions hosts.
 //!
 //! Names and endpoints come from application config. Each name is its own
-//! provider (`/model composer/...`, `/model vllm/...`). They are keyless, like
-//! Ollama, and do not appear in `/login`.
+//! provider (`/model composer/...`, `/model vllm/...`). The default auth is
+//! keyless (`none`). An optional `{name}-api-key` mode stores a Bearer token.
 //!
 //! Descriptors are interned for `'static` lookup. Visibility is scoped: the
 //! process-wide active set is the foreground config, and a runtime can overlay
@@ -20,11 +20,33 @@ use super::{
     OPENAI_COMPATIBLE_API_BASE, PROVIDERS,
 };
 
-const CUSTOM_AUTH: &[AuthMode] = &[AuthMode {
+const CUSTOM_NONE_AUTH: AuthMode = AuthMode {
     id: "none",
     login_label: "No authentication required",
     auth_kind: ProviderAuthKind::None,
-}];
+};
+
+/// Auth profile id for a named custom host's optional API key.
+pub fn custom_provider_api_key_auth_id(name: &str) -> String {
+    format!("{name}-api-key")
+}
+
+/// Credential-store account for a named custom host's optional API key.
+pub fn custom_provider_api_key_account(name: &str) -> String {
+    format!("provider:{name}:api-key")
+}
+
+/// Environment override for a named custom host's optional API key.
+pub fn custom_provider_api_key_env_var(name: &str) -> String {
+    format!(
+        "RHO_{}_API_KEY",
+        name.to_ascii_uppercase().replace('-', "_")
+    )
+}
+
+fn leak_str(value: String) -> &'static str {
+    Box::leak(value.into_boxed_str())
+}
 
 #[derive(Default)]
 struct CustomRegistry {
@@ -172,8 +194,16 @@ pub fn custom_openai_compatible_provider(name: &str) -> Option<&'static Provider
         .find(|descriptor| descriptor.name == name)
 }
 
-pub(crate) fn interned_custom_provider(name: &str) -> Option<&'static ProviderDescriptor> {
+pub fn interned_custom_provider(name: &str) -> Option<&'static ProviderDescriptor> {
     lock_read().interned.get(name).copied()
+}
+
+pub(crate) fn interned_custom_provider_for_auth(auth: &str) -> Option<&'static ProviderDescriptor> {
+    lock_read().interned.values().copied().find(|descriptor| {
+        descriptor
+            .auth_modes()
+            .any(|mode| mode.id == auth && !matches!(mode.auth_kind, ProviderAuthKind::None))
+    })
 }
 
 pub fn validate_custom_provider_name(name: &str) -> anyhow::Result<()> {
@@ -203,7 +233,27 @@ fn intern(name: &str, registry: &mut CustomRegistry) -> &'static ProviderDescrip
     if let Some(existing) = registry.interned.get(name) {
         return existing;
     }
-    let leaked_name = Box::leak(name.to_string().into_boxed_str());
+    let leaked_name = leak_str(name.to_string());
+    let auth_id = leak_str(custom_provider_api_key_auth_id(name));
+    let account = leak_str(custom_provider_api_key_account(name));
+    let env_var = leak_str(custom_provider_api_key_env_var(name));
+    let entry_label = leak_str(format!("{name} API key"));
+    let missing_message = leak_str(format!(
+        "missing {name} API key; run /login {name} in the TUI or set {env_var} as a CI/dev override"
+    ));
+    let auth_modes: &'static [AuthMode] = Box::leak(Box::new([
+        CUSTOM_NONE_AUTH,
+        AuthMode {
+            id: auth_id,
+            login_label: entry_label,
+            auth_kind: ProviderAuthKind::ApiKey {
+                env_var,
+                account,
+                entry_label,
+                missing_message,
+            },
+        },
+    ]));
     let descriptor = Box::leak(Box::new(ProviderDescriptor {
         // NEXT_MAJOR(rho-providers): add ProviderId::OpenAiCompatible so
         // config-defined hosts are not aliased onto a built-in id.
@@ -215,7 +265,7 @@ fn intern(name: &str, registry: &mut CustomRegistry) -> &'static ProviderDescrip
         },
         name: leaked_name,
         display_name: leaked_name,
-        auth_modes: CUSTOM_AUTH,
+        auth_modes,
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
         model_id_codec: ModelIdCodec::Plain,

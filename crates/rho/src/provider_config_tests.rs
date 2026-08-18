@@ -147,3 +147,25 @@ fn custom_openai_compatible_resolves_configured_endpoint() {
         "http://127.0.0.1:8787/v1"
     );
 }
+
+// Covers: a stored custom API-key auth profile must survive config load
+// Owner: provider config
+#[test]
+fn custom_openai_compatible_keeps_configured_api_key_auth() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        "provider = \"composer\"\nmodel = \"composer-2.5\"\nauth = \"composer-api-key\"\n[providers.custom.composer]\nbase_url = \"http://127.0.0.1:8787/v1\"\n",
+    )
+    .unwrap();
+
+    let config = Config::load_with_store(
+        path,
+        &rho_providers::credentials::MemoryCredentialStore::default(),
+    )
+    .unwrap();
+
+    assert_eq!(config.provider, "composer");
+    assert_eq!(config.auth, "composer-api-key");
+}

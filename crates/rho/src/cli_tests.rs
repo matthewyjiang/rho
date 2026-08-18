@@ -11,6 +11,12 @@ fn parses_new_provider_auth_modes() {
 }
 
 #[test]
+fn parses_custom_provider_api_key_auth() {
+    let cli = Cli::try_parse_from(["rho", "--auth", "vllm-api-key"]).unwrap();
+    assert_eq!(cli.auth.as_deref(), Some("vllm-api-key"));
+}
+
+#[test]
 fn rejects_unknown_auth_profiles() {
     let error = Cli::try_parse_from(["rho", "--auth", "not-a-real-auth"]).unwrap_err();
     assert!(error

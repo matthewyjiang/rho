@@ -23,6 +23,8 @@ pub(super) struct PendingInteractiveLogin {
 pub(super) enum StoreChoiceNext {
     /// Continue login for a normal Rho provider after the store is chosen.
     Provider(String),
+    /// Save a custom host API key after the store is chosen.
+    CustomApiKey { provider: String, key: String },
 }
 
 fn credential_store_inline_choice(
@@ -157,7 +159,7 @@ impl App {
         self.set_status("select provider to login");
     }
 
-    fn begin_store_choice_if_needed(&mut self, next: StoreChoiceNext) -> bool {
+    pub(super) fn begin_store_choice_if_needed(&mut self, next: StoreChoiceNext) -> bool {
         let config = match self.load_settings_for_login() {
             Ok(config) => config,
             Err(err) => {
@@ -230,6 +232,11 @@ impl App {
                 self.start_login_for_provider(&provider, terminal, agent)
                     .await
             }
+            StoreChoiceNext::CustomApiKey { provider, key } => {
+                let target = super::custom_provider_login::custom_provider_login_target(&provider);
+                self.persist_api_key_and_finish(target, key, terminal, agent)
+                    .await
+            }
         }
     }
 
@@ -247,8 +254,13 @@ impl App {
             return Ok(());
         }
         let provider = provider.trim();
-        if provider::provider_descriptor(provider).is_some_and(|descriptor| descriptor.is_keyless())
-        {
+        if super::custom_provider_login::is_custom_provider_login_value(provider) {
+            self.start_custom_provider_onboarding();
+            return Ok(());
+        }
+        if provider::provider_descriptor(provider).is_some_and(|descriptor| {
+            descriptor.is_keyless() && !descriptor.is_custom_openai_compatible()
+        }) {
             self.set_status(format!(
                 "{provider} does not require login. Refresh its model list in /config, then choose a model with /model."
             ));
@@ -320,9 +332,20 @@ impl App {
                 Ok(())
             }
             AuthenticationMethod::ApiKey { entry_label } => {
+                let custom = provider::provider_descriptor(&target.provider)
+                    .is_some_and(|descriptor| descriptor.is_custom_openai_compatible());
+                let secret = if custom {
+                    SecretInput::optional(target)
+                } else {
+                    SecretInput::new(target)
+                };
                 self.input_ui
-                    .set_composer(ComposerMode::SecretInput(SecretInput::new(target)));
-                self.set_status(format!("enter {entry_label}"));
+                    .set_composer(ComposerMode::SecretInput(secret));
+                self.set_status(if custom {
+                    "enter API key or leave blank".into()
+                } else {
+                    format!("enter {entry_label}")
+                });
                 Ok(())
             }
             AuthenticationMethod::Interactive { provider_label } => {
@@ -336,19 +359,33 @@ impl App {
         &mut self,
         target: LoginTarget,
         key: String,
+        allow_empty: bool,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        let custom = provider::provider_descriptor(&target.provider)
+            .or_else(|| provider::interned_custom_provider(&target.provider))
+            .is_some_and(|descriptor| descriptor.is_custom_openai_compatible());
         if key.trim().is_empty() {
+            if allow_empty || custom {
+                return self
+                    .finish_custom_provider_without_key(target, terminal, agent)
+                    .await;
+            }
             self.insert_entry(&Entry::Error("API key cannot be empty".into()));
             self.set_status("login failed");
             return Ok(());
+        }
+        if custom {
+            return self
+                .finish_custom_provider_with_key(target, key, terminal, agent)
+                .await;
         }
         self.persist_api_key_and_finish(target, key, terminal, agent)
             .await
     }
 
-    async fn persist_api_key_and_finish(
+    pub(super) async fn persist_api_key_and_finish(
         &mut self,
         target: LoginTarget,
         key: String,
@@ -519,7 +556,7 @@ impl App {
         }
     }
 
-    async fn finish_login(
+    pub(super) async fn finish_login(
         &mut self,
         target: LoginTarget,
         terminal: &mut DefaultTerminal,
@@ -549,6 +586,14 @@ impl App {
                     target.provider
                 ));
             }
+        } else if provider::provider_descriptor(&target.provider)
+            .is_some_and(|descriptor| descriptor.is_custom_openai_compatible())
+            && target.auth == "none"
+        {
+            self.set_status(format!(
+                "added custom provider {}. Switch models with /model when you want to use it.",
+                target.provider
+            ));
         } else {
             self.set_status(format!(
                 "stored credentials for {}. Switch models with /model when you want to use it.",

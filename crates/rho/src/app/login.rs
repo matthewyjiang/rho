@@ -8,9 +8,9 @@ use {
 };
 
 pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<()> {
-    if rho_providers::provider::provider_descriptor(provider)
-        .is_some_and(|descriptor| descriptor.is_keyless())
-    {
+    if rho_providers::provider::provider_descriptor(provider).is_some_and(|descriptor| {
+        descriptor.is_keyless() && !descriptor.is_custom_openai_compatible()
+    }) {
         anyhow::bail!("provider '{provider}' does not require login");
     }
     let Some(target) = catalog::login_target_for_provider(provider) else {

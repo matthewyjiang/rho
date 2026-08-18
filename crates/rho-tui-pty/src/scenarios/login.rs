@@ -118,3 +118,45 @@ pub(super) const LOGIN_PROVIDER_GROUPS_STEPS: &[Step] = &[
     Step::Key(Key::Esc),
     Step::ExitCommand,
 ];
+
+pub(super) const LOGIN_CUSTOM_PROVIDER_STEPS: &[Step] = &[
+    Step::Phase("open_custom_onboarding"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("/login"),
+    Step::WaitText {
+        text: "select provider to login",
+        timeout: SETTLE,
+    },
+    Step::TypeText("Custom"),
+    Step::WaitText {
+        text: "Custom Chat Completions",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "edit provider name",
+        timeout: SETTLE,
+    },
+    Step::TypeText("vllm"),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "edit base URL",
+        timeout: SETTLE,
+    },
+    Step::AssertText("http://127.0.0.1:8000/v1"),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "enter API key (optional)",
+        timeout: SETTLE,
+    },
+    Step::AssertText("saved custom provider vllm"),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "added custom provider vllm",
+        timeout: STARTUP,
+    },
+    Step::ExitCommand,
+];

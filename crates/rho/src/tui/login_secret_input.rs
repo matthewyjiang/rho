@@ -9,6 +9,7 @@ pub(super) struct SecretInput {
     pub(super) target: LoginTarget,
     pub(super) value: String,
     pub(super) cursor: usize,
+    pub(super) allow_empty: bool,
 }
 
 impl SecretInput {
@@ -17,6 +18,14 @@ impl SecretInput {
             target,
             value: String::new(),
             cursor: 0,
+            allow_empty: false,
+        }
+    }
+
+    pub(super) fn optional(target: LoginTarget) -> Self {
+        Self {
+            allow_empty: true,
+            ..Self::new(target)
         }
     }
 
@@ -69,11 +78,18 @@ pub(super) fn secret_input_lines(
     secret: &SecretInput,
     width: usize,
 ) -> Vec<ratatui::text::Line<'static>> {
-    let prompt = format!(
-        "enter {}  {}",
-        secret.target.label,
-        composer_chrome::join_footer_parts(["Enter save", "Esc cancel"])
-    );
+    let prompt = if secret.allow_empty {
+        format!(
+            "enter API key (optional)  {}",
+            composer_chrome::join_footer_parts(["Enter save", "Esc cancel"])
+        )
+    } else {
+        format!(
+            "enter {}  {}",
+            secret.target.label,
+            composer_chrome::join_footer_parts(["Enter save", "Esc cancel"])
+        )
+    };
     let display_value = "•".repeat(secret.value.chars().count());
     vec![
         styled_line(

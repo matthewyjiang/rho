@@ -303,6 +303,15 @@ impl App {
                 {
                     return self.execute_claude_code_login().await;
                 }
+                if super::custom_provider_login::is_custom_provider_login_value(&value) {
+                    self.start_custom_provider_onboarding();
+                    return Ok(());
+                }
+                if provider::provider_descriptor(&value)
+                    .is_some_and(|descriptor| descriptor.is_custom_openai_compatible())
+                {
+                    return self.start_login_for_provider(&value, terminal, agent).await;
+                }
                 let Some(group) = catalog::login_group(&value) else {
                     self.insert_entry(&Entry::Error(format!(
                         "unsupported login provider group '{value}'"

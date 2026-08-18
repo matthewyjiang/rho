@@ -35,9 +35,9 @@ Rho's implemented providers are:
 | `meta` | `meta-api-key` | [Meta Model API](/providers/meta) |
 | `opencode-go` | `opencode-go-api-key` | [OpenCode Go](/providers/opencode-go) |
 
-User-defined Chat Completions hosts use `[providers.custom.<name>]` and `auth = "none"`. They do not appear in `/login`. See [Custom OpenAI-compatible hosts](/providers/openai-compatible).
+User-defined Chat Completions hosts use `[providers.custom.<name>]` with `auth = "none"` or `{name}-api-key`. Create one from `/login` by choosing **Custom Chat Completions**, or add the table in config. See [Custom OpenAI-compatible hosts](/providers/openai-compatible).
 
-OpenAI, Anthropic, Google Gemini, GitHub Copilot, Ollama, Ollama Cloud, Poolside, OpenRouter, Moonshot, Kimi Code, Qwen Token Plan, Meta Model API, OpenCode Go, and user-defined OpenAI-compatible hosts expose refreshable API model lists. Local Ollama and custom hosts need no login; the other providers refresh after authentication. OpenAI Codex OAuth and xAI OAuth use static allowlists, so their available models are maintained by Rho rather than fetched through **Refresh model lists** in `/config`.
+OpenAI, Anthropic, Google Gemini, GitHub Copilot, Ollama, Ollama Cloud, Poolside, OpenRouter, Moonshot, Kimi Code, Qwen Token Plan, Meta Model API, OpenCode Go, and user-defined OpenAI-compatible hosts expose refreshable API model lists. Local Ollama needs no login. Custom hosts can run without a key or store one through `/login`. The other providers refresh after authentication. OpenAI Codex OAuth and xAI OAuth use static allowlists, so their available models are maintained by Rho rather than fetched through **Refresh model lists** in `/config`.
 
 Each provider page documents whether authentication is required, how to select models, and any provider-specific setup.
 
@@ -91,7 +91,7 @@ flowchart TD
     logoutCmd["/logout"] --> remove[Delete stored credentials]
 ```
 
-`/login` opens a readable provider picker. Providers with multiple authentication methods open a second picker with prompts such as **API Key** and **OAuth**; providers with one method continue directly to that login flow. Direct args (`/login openai`, `/login anthropic`, and so on) target a single method. See each [provider page](#providers) for the exact flow.
+`/login` opens a readable provider picker. Providers with multiple authentication methods open a second picker with prompts such as **API Key** and **OAuth**; providers with one method continue directly to that login flow. **Custom Chat Completions** collects a name, a base URL, and an optional API key. Direct args (`/login openai`, `/login anthropic`, and so on) target a single method. See each [provider page](#providers) for the exact flow.
 
 Successful login normally stores credentials only. It does not switch the active provider/model, because provider switching is model-driven through `/model`. If Rho started without usable auth and is running on an unauthenticated placeholder, a successful login selects that provider's default model so the session becomes usable.
 

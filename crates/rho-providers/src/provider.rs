@@ -500,8 +500,10 @@ mod provider_table;
 mod custom_openai_compatible;
 
 pub use custom_openai_compatible::{
-    custom_provider_registry_test_lock, install_custom_openai_compatible_providers,
-    intern_custom_openai_compatible_providers, reset_custom_openai_compatible_providers_for_tests,
+    custom_provider_api_key_account, custom_provider_api_key_auth_id,
+    custom_provider_api_key_env_var, custom_provider_registry_test_lock,
+    install_custom_openai_compatible_providers, intern_custom_openai_compatible_providers,
+    interned_custom_provider, reset_custom_openai_compatible_providers_for_tests,
     scope_custom_openai_compatible_providers, validate_custom_provider_name,
     CustomProviderThreadScope,
 };
@@ -591,7 +593,7 @@ pub fn provider_descriptor(provider: &str) -> Option<&'static ProviderDescriptor
         .or_else(|| custom_openai_compatible::custom_openai_compatible_provider(provider))
 }
 
-pub(crate) fn interned_custom_openai_compatible_provider(
+pub fn interned_custom_openai_compatible_provider(
     provider: &str,
 ) -> Option<&'static ProviderDescriptor> {
     custom_openai_compatible::interned_custom_provider(provider)
@@ -606,6 +608,7 @@ pub fn provider_descriptor_for_auth(auth: &str) -> Option<&'static ProviderDescr
     providers()
         .iter()
         .find(|descriptor| descriptor.auth_mode(auth).is_some())
+        .or_else(|| custom_openai_compatible::interned_custom_provider_for_auth(auth))
 }
 
 /// Resolves an auth profile id to its provider and mode.

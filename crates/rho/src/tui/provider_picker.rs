@@ -31,6 +31,16 @@ pub(super) fn login_group_picker() -> UiPicker {
             selection_verb: None,
         })
         .collect::<Vec<_>>();
+    items.extend(visible_custom_provider_login_items());
+    items.push(PickerItem {
+        section: None,
+        label: super::custom_provider_login::CUSTOM_PROVIDER_LOGIN_LABEL.into(),
+        detail: Some(super::custom_provider_login::CUSTOM_PROVIDER_LOGIN_DETAIL.into()),
+        preview: None,
+        badge: None,
+        value: super::custom_provider_login::CUSTOM_PROVIDER_LOGIN_VALUE.into(),
+        selection_verb: None,
+    });
     sort_items_by_ascii_label(&mut items);
     UiPicker::new("select provider to login", items, PickerAction::LoginGroup).with_key_hints(
         super::PickerKeyHints {
@@ -201,6 +211,22 @@ pub(super) fn logout_provider_picker(
         sort_items_by_ascii_label(&mut picker.items);
     }
     Ok(picker)
+}
+
+fn visible_custom_provider_login_items() -> Vec<PickerItem> {
+    provider::visible_providers()
+        .into_iter()
+        .filter(|descriptor| descriptor.is_custom_openai_compatible())
+        .map(|descriptor| PickerItem {
+            section: None,
+            label: descriptor.display_name.into(),
+            detail: Some("Update the optional API key for this Chat Completions host.".into()),
+            preview: None,
+            badge: None,
+            value: descriptor.name.into(),
+            selection_verb: None,
+        })
+        .collect()
 }
 
 fn provider_picker_for_targets(

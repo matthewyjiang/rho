@@ -42,10 +42,10 @@ fn custom_provider_names_reject_reserved_and_invalid_values() {
     validate_custom_provider_name("vllm-local").unwrap();
 }
 
-// Covers: installed custom hosts resolve as keyless OpenAI-compatible providers
+// Covers: installed custom hosts resolve as OpenAI-compatible with optional API key
 // Owner: provider registry
 #[test]
-fn install_custom_providers_makes_keyless_openai_compatible_hosts() {
+fn install_custom_providers_makes_openai_compatible_hosts() {
     let _lock = custom_provider_registry_test_lock();
     restore_empty();
     let _restore = RestoreCustomProviders;
@@ -71,6 +71,19 @@ fn install_custom_providers_makes_keyless_openai_compatible_hosts() {
         composer.default_auth().auth_kind,
         ProviderAuthKind::None
     ));
+    let api_key = composer
+        .auth_mode("composer-api-key")
+        .expect("custom hosts expose an optional API key mode");
+    assert!(matches!(
+        api_key.auth_kind,
+        ProviderAuthKind::ApiKey { account, env_var, .. }
+            if account == "provider:composer:api-key" && env_var == "RHO_COMPOSER_API_KEY"
+    ));
+    assert_eq!(
+        crate::provider::resolve_auth_mode("composer-api-key")
+            .map(|(descriptor, mode)| (descriptor.name, mode.id)),
+        Some(("composer", "composer-api-key"))
+    );
     let listed = crate::provider::visible_providers();
     assert!(
         listed
@@ -98,7 +111,13 @@ fn install_custom_providers_makes_keyless_openai_compatible_hosts() {
         crate::model::catalog::login_groups()
             .iter()
             .all(|group| group.id != "composer" && group.id != "vllm"),
-        "custom hosts must not appear in /login"
+        "creating a custom host is a dedicated /login item, not a catalog group"
+    );
+    assert!(
+        crate::model::catalog::login_targets()
+            .iter()
+            .any(|target| target.auth == "composer-api-key" && target.provider == "composer"),
+        "installed custom hosts must be login targets for optional API keys"
     );
 
     restore_empty();

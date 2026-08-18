@@ -11,10 +11,12 @@ use super::{
 };
 
 /// Which overlay owns a [`TextInput`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum TextInputTarget {
     ConfigApiKey(ConfigTextKey),
     AgentField(AgentField),
+    CustomProviderName,
+    CustomProviderUrl { name: String },
 }
 
 /// Editable agent frontmatter fields that use the shared line editor.
@@ -69,6 +71,20 @@ impl TextInput {
         }
     }
 
+    pub(super) fn custom_provider_name() -> Self {
+        Self {
+            target: TextInputTarget::CustomProviderName,
+            editor: LineEditor::new(""),
+        }
+    }
+
+    pub(super) fn custom_provider_url(name: impl Into<String>) -> Self {
+        Self {
+            target: TextInputTarget::CustomProviderUrl { name: name.into() },
+            editor: LineEditor::new("http://127.0.0.1:8000/v1"),
+        }
+    }
+
     pub(super) fn with_return_picker(mut self, picker: UiPicker) -> Self {
         self.editor = self.editor.with_return_picker(picker);
         self
@@ -82,10 +98,12 @@ impl TextInput {
         matches!(self.target, TextInputTarget::ConfigApiKey(_))
     }
 
-    pub(super) fn label(&self) -> &'static str {
-        match self.target {
+    pub(super) fn label(&self) -> &str {
+        match &self.target {
             TextInputTarget::ConfigApiKey(key) => key.label(),
             TextInputTarget::AgentField(field) => field.label(),
+            TextInputTarget::CustomProviderName => "provider name",
+            TextInputTarget::CustomProviderUrl { .. } => "base URL",
         }
     }
 
@@ -99,13 +117,19 @@ impl TextInput {
 }
 
 pub(super) fn text_input_lines(input: &TextInput, width: usize) -> Vec<Line<'static>> {
+    let action = match &input.target {
+        TextInputTarget::CustomProviderName | TextInputTarget::CustomProviderUrl { .. } => {
+            "Enter continue"
+        }
+        TextInputTarget::ConfigApiKey(_) | TextInputTarget::AgentField(_) => "Enter save",
+    };
     vec![
         styled_line(
             truncate_one_line(
                 &format!(
                     "edit {}  {}",
                     input.label(),
-                    super::composer_chrome::join_footer_parts(["Enter save", "Esc cancel"])
+                    super::composer_chrome::join_footer_parts([action, "Esc cancel"])
                 ),
                 width,
             ),
