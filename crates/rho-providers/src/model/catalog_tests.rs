@@ -203,6 +203,25 @@ fn provider_selection_keeps_current_auth_when_multiple_credentials_exist() {
     );
 }
 
+// Covers: switching to a keyless-capable host must use a stored key
+// Owner: model catalog
+#[test]
+fn provider_selection_prefers_stored_key_over_keyless_default() {
+    with_cached_provider_models("ollama", vec![provider_model("ollama", "llama3.2")], || {
+        let selection = resolve_model_selection_for_provider(
+            "ollama",
+            "llama3.2",
+            SelectionAuthContext {
+                current: Some("none"),
+                available: &["none".into(), "ollama-api-key".into()],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(selection.auth, "ollama-api-key");
+    });
+}
+
 #[test]
 fn provider_selection_ignores_current_auth_from_another_provider() {
     with_cached_provider_models(
@@ -524,6 +543,14 @@ fn login_groups_include_meta_and_merge_openai_codex() {
     assert_eq!(opencode_go.prompt, "OpenCode Go");
     assert_eq!(opencode_go.methods.len(), 1);
     assert_eq!(opencode_go.methods[0].target.auth, "opencode-go-api-key");
+
+    let ollama = groups
+        .iter()
+        .find(|group| group.id == "ollama")
+        .expect("ollama login group");
+    assert_eq!(ollama.prompt, "Ollama");
+    assert_eq!(ollama.methods.len(), 1);
+    assert_eq!(ollama.methods[0].target.auth, "ollama-api-key");
 
     let openai = groups
         .iter()

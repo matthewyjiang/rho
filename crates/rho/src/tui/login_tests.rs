@@ -1,5 +1,6 @@
 use rho_providers::{
     model::{
+        catalog::LoginTarget,
         provider_models::{
             replace_cached_provider_models_for_tests, with_provider_models_cache_dir_for_tests,
             ProviderModel,
@@ -10,6 +11,30 @@ use rho_providers::{
 };
 
 use crate::{config::Config, tui::tests::test_app};
+
+// Covers: blank optional key must keep a reachable key
+// Owner: login policy
+#[test]
+fn blank_optional_key_keeps_a_reachable_key_and_runs_keyless_when_none_exists() {
+    let keyed = LoginTarget {
+        provider: "ollama".into(),
+        auth: "ollama-api-key".into(),
+        label: "Ollama API key".into(),
+    };
+
+    pretty_assertions::assert_eq!(
+        super::resolve_blank_optional_key(keyed.clone(), true),
+        keyed
+    );
+    pretty_assertions::assert_eq!(
+        super::resolve_blank_optional_key(keyed, false),
+        LoginTarget {
+            provider: "ollama".into(),
+            auth: "none".into(),
+            label: "ollama".into(),
+        }
+    );
+}
 
 #[test]
 fn login_state_save_persists_reasoning_and_normalizes_auth_profile() {

@@ -1,8 +1,10 @@
-//! `/login` onboarding for a user-defined OpenAI-compatible host.
+//! `/login` onboarding for Chat Completions hosts that persist an API base.
 //!
-//! Three steps: name the host, set its base URL, then optionally store an API
-//! key. The first two reuse the shared [`TextInput`] overlay and carry their own
-//! state in [`CustomHostStep`], so that widget stays a plain line editor.
+//! Custom hosts collect a name, then a URL, then an optional key. Built-in
+//! hosts that [`provider::ProviderDescriptor::collects_login_endpoint`] start
+//! on the URL step. The first two reuse the shared [`TextInput`] overlay and
+//! carry their own state in [`CustomHostStep`], so that widget stays a plain
+//! line editor.
 
 use rho_providers::{model::catalog, provider};
 
@@ -47,6 +49,33 @@ impl App {
         );
     }
 
+    /// Opens the URL step for a built-in that persists its API base from `/login`.
+    pub(super) fn start_endpoint_onboarding(&mut self, provider: &str) {
+        match self.endpoint_prefill(provider) {
+            Ok(prefill) => self.edit_custom_host_step(
+                CustomHostStep::Url {
+                    name: provider.to_string(),
+                },
+                prefill,
+                "enter the API base URL",
+            ),
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not load config before login: {err}"
+                )));
+                self.set_status("login failed");
+            }
+        }
+    }
+
+    fn endpoint_prefill(&self, provider: &str) -> anyhow::Result<String> {
+        let config = self.info.services.config_repository.load()?;
+        Ok(config
+            .resolved_provider_endpoint(provider)
+            .map(|url| url.to_string())
+            .unwrap_or_else(|| DEFAULT_BASE_URL.to_string()))
+    }
+
     /// Opens one wizard step, seeded with `value` so a rejected entry survives.
     fn edit_custom_host_step(&mut self, step: CustomHostStep, value: String, status: &'static str) {
         self.input_ui
@@ -83,9 +112,7 @@ impl App {
         if let Err(error) = self.persist_custom_provider(&name, &base_url) {
             return self.retry_custom_host_step(CustomHostStep::Url { name }, value, error);
         }
-        self.insert_entry(&Entry::Notice(format!(
-            "saved custom provider {name} at {base_url}"
-        )));
+        self.insert_entry(&Entry::Notice(saved_endpoint_notice(&name, &base_url)));
         // The host is interned now, so its API-key target comes from the registry.
         let Some(target) = catalog::login_target_for_provider(&name) else {
             self.insert_entry(&Entry::Error(format!(
@@ -124,5 +151,14 @@ impl App {
             // to make the host visible here and in every spawned task.
             config.providers.activate()
         })?
+    }
+}
+
+fn saved_endpoint_notice(name: &str, base_url: &str) -> String {
+    match provider::provider_descriptor(name) {
+        Some(descriptor) if descriptor.collects_login_endpoint() => {
+            format!("saved {} endpoint {base_url}", descriptor.display_name)
+        }
+        _ => format!("saved custom provider {name} at {base_url}"),
     }
 }

@@ -12,6 +12,7 @@ pub const GITHUB_COPILOT_TOKENS_ACCOUNT: &str = "provider:github-copilot:tokens"
 pub const XAI_API_KEY_ACCOUNT: &str = "provider:xai:api-key";
 pub const XAI_TOKENS_ACCOUNT: &str = "provider:xai:tokens";
 pub const MOONSHOT_API_KEY_ACCOUNT: &str = "provider:moonshot:api-key";
+pub const OLLAMA_API_KEY_ACCOUNT: &str = "provider:ollama:api-key";
 pub const OLLAMA_CLOUD_API_KEY_ACCOUNT: &str = "provider:ollama-cloud:api-key";
 pub const POOLSIDE_API_KEY_ACCOUNT: &str = "provider:poolside:api-key";
 pub const OPENROUTER_API_KEY_ACCOUNT: &str = "provider:openrouter:api-key";
@@ -498,6 +499,16 @@ impl ProviderDescriptor {
     pub fn probes_configured_endpoint(self) -> bool {
         self.has_none_auth()
             && self.model_refresh == Some(ProviderModelRefreshKind::OpenAiCompatible)
+    }
+
+    /// `/login` collects and persists this host's API base before the optional key.
+    ///
+    /// Built-in Ollama stores `[providers.ollama]`. Named custom hosts reuse
+    /// [`ProviderId::Ollama`] as a wire-family stand-in, so identity is the
+    /// provider name, not the id. Those hosts already collected a URL when
+    /// they were created.
+    pub fn collects_login_endpoint(self) -> bool {
+        self.name == "ollama"
     }
 
     /// Auth mode used for unattended model discovery.
