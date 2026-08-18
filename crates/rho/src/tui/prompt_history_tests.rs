@@ -128,6 +128,22 @@ fn seed_history_front_offsets_in_progress_recall() {
     assert_eq!(app.input_ui.text(), "older");
 }
 
+// Covers: count and clear do not create the default file just to inspect it.
+// Owner: tui prompt-history persistence policy
+#[test]
+fn count_and_clear_do_not_create_missing_store() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("prompt-history.sqlite3");
+    let mut app = test_app();
+    app.prompt_history.set_store_path(path.clone());
+
+    app.prompt_clear_prompt_history().unwrap();
+    assert!(!path.exists());
+
+    app.propose_prompt_history_limit(10).unwrap();
+    assert!(!path.exists());
+}
+
 // Covers: a disabled persist limit does not write durable appends.
 // Owner: tui prompt-history persistence policy
 #[test]

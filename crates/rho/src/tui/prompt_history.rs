@@ -67,11 +67,17 @@ impl PromptHistory {
 
     pub(in crate::tui) fn clear(&mut self) -> Result<(), PromptHistoryError> {
         self.ring_invalidated = true;
-        self.ensure_store()?.clear()
+        match self.store_if_present()? {
+            Some(store) => store.clear(),
+            None => Ok(()),
+        }
     }
 
     pub(in crate::tui) fn count(&mut self) -> Result<usize, PromptHistoryError> {
-        self.ensure_store()?.count()
+        match self.store_if_present()? {
+            Some(store) => store.count(),
+            None => Ok(0),
+        }
     }
 
     pub(in crate::tui) fn enforce_limit(
@@ -79,7 +85,10 @@ impl PromptHistory {
         max_entries: usize,
     ) -> Result<(), PromptHistoryError> {
         self.ring_invalidated = true;
-        self.ensure_store()?.enforce_limit(max_entries)
+        match self.store_if_present()? {
+            Some(store) => store.enforce_limit(max_entries),
+            None => Ok(()),
+        }
     }
 
     fn take_finished_seed(&mut self) -> Option<Vec<String>> {
@@ -109,13 +118,30 @@ impl PromptHistory {
 
     fn ensure_store(&mut self) -> Result<&PromptHistoryStore, PromptHistoryError> {
         if self.store.is_none() {
-            let store = match &self.store_path {
-                Some(path) => PromptHistoryStore::open_path(path),
-                None => PromptHistoryStore::at_default_path(),
-            }?;
-            self.store = Some(store);
+            self.store = Some(self.open_store()?);
         }
         Ok(self.store.as_ref().expect("store just inserted"))
+    }
+
+    fn store_if_present(&mut self) -> Result<Option<&PromptHistoryStore>, PromptHistoryError> {
+        if self.store.is_none() {
+            self.store = self.open_existing_store()?;
+        }
+        Ok(self.store.as_ref())
+    }
+
+    fn open_store(&self) -> Result<PromptHistoryStore, PromptHistoryError> {
+        match &self.store_path {
+            Some(path) => PromptHistoryStore::open_path(path),
+            None => PromptHistoryStore::at_default_path(),
+        }
+    }
+
+    fn open_existing_store(&self) -> Result<Option<PromptHistoryStore>, PromptHistoryError> {
+        match &self.store_path {
+            Some(path) => PromptHistoryStore::open_path_if_exists(path),
+            None => PromptHistoryStore::at_default_path_if_exists(),
+        }
     }
 
     #[cfg(test)]
@@ -182,7 +208,7 @@ impl App {
                 self.insert_entry(&Entry::Error(format!(
                     "could not read prompt history: {error}"
                 )));
-                self.restore_prompt_history_config(config_picker::PROMPT_HISTORY_LIMIT_VALUE)?;
+                self.open_main_config_picker_selected(config_picker::PROMPT_HISTORY_LIMIT_VALUE)?;
                 self.set_status("prompt history unavailable");
                 return Ok(());
             }
@@ -225,7 +251,7 @@ impl App {
                 self.insert_entry(&Entry::Error(format!(
                     "could not read prompt history: {error}"
                 )));
-                self.restore_prompt_history_config(config_picker::CLEAR_PROMPT_HISTORY_VALUE)?;
+                self.open_main_config_picker_selected(config_picker::CLEAR_PROMPT_HISTORY_VALUE)?;
                 self.set_status("prompt history unavailable");
                 return Ok(());
             }
@@ -282,20 +308,18 @@ impl App {
         new_limit: usize,
     ) -> anyhow::Result<()> {
         if value != CONFIRM_VALUE {
-            return self.restore_prompt_history_config(config_picker::PROMPT_HISTORY_LIMIT_VALUE);
+            return self
+                .open_main_config_picker_selected(config_picker::PROMPT_HISTORY_LIMIT_VALUE);
         }
         self.apply_prompt_history_limit(new_limit)
     }
 
     pub(super) fn submit_clear_prompt_history_choice(&mut self, value: &str) -> anyhow::Result<()> {
         if value != CONFIRM_VALUE {
-            return self.restore_prompt_history_config(config_picker::CLEAR_PROMPT_HISTORY_VALUE);
+            return self
+                .open_main_config_picker_selected(config_picker::CLEAR_PROMPT_HISTORY_VALUE);
         }
         self.clear_prompt_history()
-    }
-
-    pub(super) fn restore_prompt_history_config(&mut self, selected: &str) -> anyhow::Result<()> {
-        self.open_main_config_picker_selected(selected)
     }
 
     fn apply_prompt_history_limit(&mut self, new_limit: usize) -> anyhow::Result<()> {
@@ -305,7 +329,7 @@ impl App {
             self.insert_entry(&Entry::Error(format!(
                 "could not save prompt history limit: {error}"
             )));
-            self.restore_prompt_history_config(config_picker::PROMPT_HISTORY_LIMIT_VALUE)?;
+            self.open_main_config_picker_selected(config_picker::PROMPT_HISTORY_LIMIT_VALUE)?;
             self.set_status("config save failed");
             return Ok(());
         }
@@ -318,7 +342,7 @@ impl App {
             }
             self.input_ui.truncate_history_to_newest(new_limit);
         }
-        self.restore_prompt_history_config(config_picker::PROMPT_HISTORY_LIMIT_VALUE)?;
+        self.open_main_config_picker_selected(config_picker::PROMPT_HISTORY_LIMIT_VALUE)?;
         self.set_status(if new_limit == 0 {
             "prompt history saving disabled".into()
         } else {
@@ -333,11 +357,11 @@ impl App {
             self.insert_entry(&Entry::Error(format!(
                 "could not clear prompt history: {error}"
             )));
-            self.restore_prompt_history_config(config_picker::CLEAR_PROMPT_HISTORY_VALUE)?;
+            self.open_main_config_picker_selected(config_picker::CLEAR_PROMPT_HISTORY_VALUE)?;
             self.set_status("clear prompt history failed");
             return Ok(());
         }
-        self.restore_prompt_history_config(config_picker::CLEAR_PROMPT_HISTORY_VALUE)?;
+        self.open_main_config_picker_selected(config_picker::CLEAR_PROMPT_HISTORY_VALUE)?;
         self.set_status("prompt history cleared");
         Ok(())
     }

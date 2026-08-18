@@ -4,7 +4,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::DefaultTerminal;
 
 use super::{
-    config_editor::{ConfigNumberInput, ConfigNumberKey, ConfigNumberSave},
+    config_editor::{ConfigNumberInput, ConfigNumberSave},
     config_picker, App, ComposerMode, Entry, InteractiveRuntime,
 };
 
@@ -104,7 +104,7 @@ impl App {
                 let ComposerMode::ConfigNumberInput(input) = self.input_ui.composer() else {
                     return Ok(true);
                 };
-                if input.key == ConfigNumberKey::PromptHistoryLimit {
+                if input.key.proposes_confirm() {
                     match input.parsed_value() {
                         Ok(value) => self.propose_prompt_history_limit(value)?,
                         Err(err) => {

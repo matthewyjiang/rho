@@ -162,6 +162,10 @@ impl ConfigNumberKey {
         }
     }
 
+    pub(super) fn proposes_confirm(self) -> bool {
+        matches!(self, Self::PromptHistoryLimit)
+    }
+
     pub(super) fn min_value(self) -> usize {
         match self {
             ConfigNumberKey::PromptHistoryLimit => 0,

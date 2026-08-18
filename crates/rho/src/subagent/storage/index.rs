@@ -8,15 +8,16 @@ use std::{
 };
 
 use rusqlite::{
-    params, Connection, ErrorCode, OpenFlags, OptionalExtension, Transaction, TransactionBehavior,
+    params, Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior,
 };
+
+use crate::sqlite_support::{is_lock_contention, BUSY_TIMEOUT};
 
 use super::super::create_private_file;
 use super::paths::prepare_private_directory;
 
 pub(super) const INDEX_FILE_NAME: &str = "index.sqlite3";
 const INDEX_SCHEMA_VERSION: i64 = 4;
-const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// How long a crashed cleanup may block the same parent before the lease is
 /// stealable. Fresh leases always block concurrent delete/reserve for that parent.
@@ -30,7 +31,7 @@ pub(super) fn initialize_index(path: &Path) -> anyhow::Result<Connection> {
     let deadline = Instant::now() + BUSY_TIMEOUT;
     loop {
         match initialize_index_once(path) {
-            Err(error) if is_lock_contention(&error) && Instant::now() < deadline => {
+            Err(error) if is_lock_contention(error.as_ref()) && Instant::now() < deadline => {
                 thread::sleep(Duration::from_millis(10));
             }
             result => return result,
@@ -155,16 +156,6 @@ pub(super) fn set_index_permissions(path: &Path) -> std::io::Result<()> {
     }
     let _ = path;
     Ok(())
-}
-
-fn is_lock_contention(error: &anyhow::Error) -> bool {
-    error.chain().any(|cause| {
-        matches!(
-            cause.downcast_ref::<rusqlite::Error>(),
-            Some(rusqlite::Error::SqliteFailure(details, _))
-                if matches!(details.code, ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked)
-        )
-    })
 }
 
 pub(super) fn unix_timestamp_secs() -> i64 {

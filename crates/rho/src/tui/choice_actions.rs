@@ -96,12 +96,12 @@ impl App {
                         self.open_workflow_hub_or_report();
                     }
                     InlineChoicePending::PromptHistoryLimit { .. } => {
-                        self.restore_prompt_history_config(
+                        self.open_main_config_picker_selected(
                             super::config_picker::PROMPT_HISTORY_LIMIT_VALUE,
                         )?;
                     }
                     InlineChoicePending::ClearPromptHistory => {
-                        self.restore_prompt_history_config(
+                        self.open_main_config_picker_selected(
                             super::config_picker::CLEAR_PROMPT_HISTORY_VALUE,
                         )?;
                     }

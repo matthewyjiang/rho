@@ -35,7 +35,7 @@ mod questionnaire;
 mod run_artifacts;
 mod session;
 mod skills;
-mod sqlite_privacy;
+mod sqlite_support;
 mod stdio;
 mod subagent;
 mod title;
