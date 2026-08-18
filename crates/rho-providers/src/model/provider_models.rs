@@ -39,6 +39,8 @@ mod kimi_capabilities;
 mod ollama;
 #[path = "provider_models/openai_compatible.rs"]
 mod openai_compatible;
+#[path = "provider_models/request_auth.rs"]
+mod request_auth;
 pub use openai_compatible::probe_provider_models;
 
 pub(super) struct ProviderModelRecord {

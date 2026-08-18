@@ -128,17 +128,24 @@ pub(super) async fn fetch(
     let Some(root) = native_root(api_base) else {
         return super::openai_compatible::fetch(descriptor, auth, api_base, store).await;
     };
-    match fetch_tags(&root).await {
-        Ok(models) => Ok(hydrate_models(descriptor, &root, models).await),
+    let client = provider_models_client()?;
+    let request_auth = super::request_auth::load(auth, store, &client).await?;
+    match fetch_tags(&root, &request_auth).await {
+        Ok(models) => Ok(hydrate_models(descriptor, &root, &request_auth, models).await),
         Err(_) => super::openai_compatible::fetch(descriptor, auth, api_base, store).await,
     }
 }
 
-async fn fetch_tags(root: &Url) -> Result<Vec<OllamaTagModel>, ModelError> {
+async fn fetch_tags(
+    root: &Url,
+    auth: &super::request_auth::ModelRequestAuth,
+) -> Result<Vec<OllamaTagModel>, ModelError> {
     let url = root.join("api/tags").map_err(|error| {
         ModelError::InvalidResponse(format!("invalid Ollama tags URL: {error}"))
     })?;
-    let response = provider_models_client()?.get(url).send().await?;
+    let response = super::request_auth::authorize_get(&provider_models_client()?, url, auth)?
+        .send()
+        .await?;
     if !response.status().is_success() {
         return Err(ModelError::InvalidResponse(format!(
             "Ollama /api/tags returned {}",
@@ -154,6 +161,7 @@ async fn fetch_tags(root: &Url) -> Result<Vec<OllamaTagModel>, ModelError> {
 async fn hydrate_models(
     descriptor: &provider::ProviderDescriptor,
     root: &Url,
+    auth: &super::request_auth::ModelRequestAuth,
     models: Vec<OllamaTagModel>,
 ) -> Vec<ProviderModel> {
     let mut show_budget = MAX_SHOW_LOOKUPS;
@@ -171,6 +179,7 @@ async fn hydrate_models(
         if should_show {
             show_budget -= 1;
         }
+        let auth = auth.clone();
         async move {
             if skip {
                 return None;
@@ -178,7 +187,7 @@ async fn hydrate_models(
             let mut capabilities = model.capabilities;
             let mut context_window = model.details.context_length.filter(|window| *window > 0);
             if should_show {
-                if let Some(shown) = fetch_show(root, &name).await {
+                if let Some(shown) = fetch_show(root, &name, &auth).await {
                     context_window = context_length_from_show(&shown).or(context_window);
                     if shown.capabilities.is_some() {
                         capabilities = shown.capabilities;
@@ -218,11 +227,14 @@ fn chat_provider_model(
     })
 }
 
-async fn fetch_show(root: &Url, model: &str) -> Option<OllamaShowResponse> {
+async fn fetch_show(
+    root: &Url,
+    model: &str,
+    auth: &super::request_auth::ModelRequestAuth,
+) -> Option<OllamaShowResponse> {
     let url = root.join("api/show").ok()?;
-    let response = provider_models_client()
+    let response = super::request_auth::authorize_post(&provider_models_client().ok()?, url, auth)
         .ok()?
-        .post(url)
         .json(&json!({ "model": model }))
         .send()
         .await

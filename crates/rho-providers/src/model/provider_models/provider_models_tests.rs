@@ -202,6 +202,68 @@ async fn ollama_incomplete_tags_fill_context_from_show() {
     );
 }
 
+// Covers: a stored ollama-api-key must authorize native tags and show
+// Owner: ollama native discovery
+#[tokio::test]
+async fn ollama_native_discovery_sends_stored_api_key() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api_base = Url::parse(&format!("http://{}/v1", listener.local_addr().unwrap())).unwrap();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen_for_server = seen.clone();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                break;
+            };
+            let request = read_http_request(&mut stream).await;
+            assert!(
+                request
+                    .to_ascii_lowercase()
+                    .contains("authorization: bearer ollama-secret"),
+                "{request}"
+            );
+            seen_for_server.lock().unwrap().push(request.clone());
+            let body = if request.starts_with("GET /api/tags ") {
+                r#"{"models":[{"name":"gemma4:31b","details":{},"capabilities":["completion","tools","thinking"]}]}"#
+            } else if request.starts_with("POST /api/show ") {
+                r#"{"details":{},"capabilities":["completion","tools","thinking"],"model_info":{"gemma4.context_length":262144}}"#
+            } else {
+                panic!("unexpected request: {request}");
+            };
+            stream
+                .write_all(http_json_response("200 OK", body).as_bytes())
+                .await
+                .unwrap();
+        }
+    });
+    let cache = tempfile::tempdir().unwrap();
+    set_provider_models_cache_dir_for_tests(Some(cache.path().to_path_buf()));
+    let _cache_dir_reset = CacheDirReset;
+    let store = MemoryCredentialStore::default();
+    save_provider_api_key(&store, "ollama-api-key", "ollama-secret").unwrap();
+    let descriptor = provider::provider_descriptor("ollama").unwrap();
+    let models = refresh_provider_models_with_store(
+        descriptor.name,
+        "ollama-api-key",
+        &store,
+        ProviderModelEndpoint::OpenAiCompatible(&api_base),
+    )
+    .await
+    .unwrap()
+    .models;
+    assert_eq!(
+        models
+            .iter()
+            .map(|model| (model.model.as_str(), model.context_window))
+            .collect::<Vec<_>>(),
+        [("gemma4:31b", Some(262_144))]
+    );
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2, "{seen:?}");
+    assert!(seen[0].starts_with("GET /api/tags "));
+    assert!(seen[1].starts_with("POST /api/show "));
+}
+
 // Covers: capability-less tags that /api/show later marks embedding-only stay out
 // Owner: ollama native discovery
 #[tokio::test]
