@@ -70,11 +70,7 @@ fn list_picker_chrome_rows(picker: &UiPicker, footer_rows: usize) -> usize {
 /// The list grows with the terminal instead of staying at the number that fits
 /// the default height fallback, so a tall window shows a long model or session
 /// list without scrolling.
-fn picker_visible_item_cap(
-    picker: &UiPicker,
-    viewport_height: usize,
-    footer_rows: usize,
-) -> usize {
+fn picker_visible_item_cap(picker: &UiPicker, viewport_height: usize, footer_rows: usize) -> usize {
     viewport_height
         .saturating_sub(list_picker_chrome_rows(picker, footer_rows))
         .saturating_sub(PICKER_RESERVED_FEED_ROWS)
@@ -225,13 +221,7 @@ fn list_picker_footer_text(picker: &UiPicker, width: usize) -> Vec<String> {
     let inner_width = width.saturating_sub(2);
     wrap_footer_parts(parts.iter().map(String::as_str), inner_width)
         .into_iter()
-        .map(|line| {
-            if width > 2 {
-                format!("  {line}")
-            } else {
-                line
-            }
-        })
+        .map(|line| if width > 2 { format!("  {line}") } else { line })
         .collect()
 }
 
