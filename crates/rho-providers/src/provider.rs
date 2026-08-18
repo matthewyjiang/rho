@@ -511,7 +511,7 @@ pub use custom_openai_compatible::{
     custom_provider_api_key_account, custom_provider_api_key_auth_id,
     custom_provider_api_key_env_var, custom_provider_registry_test_lock,
     install_custom_openai_compatible_providers, intern_custom_openai_compatible_providers,
-    interned_custom_provider, is_custom_provider_api_key_auth,
+    interned_custom_provider, is_custom_provider_api_key_auth, is_provider_api_key_env_var,
     replace_current_thread_custom_providers, reset_custom_openai_compatible_providers_for_tests,
     scope_custom_openai_compatible_providers, validate_custom_provider_name,
     CustomProviderThreadScope,
@@ -543,6 +543,12 @@ pub fn visible_providers() -> Vec<&'static ProviderDescriptor> {
 /// scanning the live environment covers an override for a host that `/login`
 /// interns later in the same session.
 pub fn credential_env_vars() -> Vec<String> {
+    credential_env_vars_from(std::env::vars().map(|(name, _)| name))
+}
+
+pub(crate) fn credential_env_vars_from(
+    env: impl IntoIterator<Item = impl AsRef<str>>,
+) -> Vec<String> {
     let mut vars: Vec<String> = providers()
         .iter()
         .chain(custom_openai_compatible::interned_custom_providers())
@@ -550,8 +556,9 @@ pub fn credential_env_vars() -> Vec<String> {
         .filter_map(|mode| mode.auth_kind.env_var())
         .map(str::to_owned)
         .collect();
-    vars.extend(std::env::vars().filter_map(|(name, _)| {
-        (name.starts_with("RHO_") && name.ends_with("_API_KEY")).then_some(name)
+    vars.extend(env.into_iter().filter_map(|name| {
+        let name = name.as_ref();
+        is_provider_api_key_env_var(name).then(|| name.to_owned())
     }));
     vars.sort_unstable();
     vars.dedup();

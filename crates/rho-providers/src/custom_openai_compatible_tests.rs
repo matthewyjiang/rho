@@ -218,17 +218,20 @@ fn credential_env_vars_include_interned_custom_hosts() {
 // Owner: provider registry
 #[test]
 fn credential_env_vars_include_live_rho_api_key_overrides() {
-    const VAR: &str = "RHO_UNINTERNED_LIVE_API_KEY";
-    std::env::set_var(VAR, "secret");
-    struct Restore;
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            std::env::remove_var(VAR);
-        }
-    }
-    let _restore = Restore;
+    let vars = crate::provider::credential_env_vars_from([
+        "RHO_UNINTERNED_LIVE_API_KEY",
+        "PATH",
+        "RHO_AUDIT_API_KEY_7f3a",
+    ]);
     assert!(
-        crate::credential_env_vars().iter().any(|name| name == VAR),
+        vars.iter()
+            .any(|name| name == "RHO_UNINTERNED_LIVE_API_KEY"),
         "currently set RHO_*_API_KEY overrides must be stripped before intern"
+    );
+    assert!(
+        !vars
+            .iter()
+            .any(|name| name == "PATH" || name == "RHO_AUDIT_API_KEY_7f3a"),
+        "non-override names must not be stripped"
     );
 }

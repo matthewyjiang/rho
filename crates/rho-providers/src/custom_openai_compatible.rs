@@ -44,6 +44,11 @@ pub fn custom_provider_api_key_env_var(name: &str) -> String {
     )
 }
 
+/// True when `name` matches the `RHO_<NAME>_API_KEY` override convention.
+pub fn is_provider_api_key_env_var(name: &str) -> bool {
+    name.starts_with("RHO_") && name.ends_with("_API_KEY")
+}
+
 /// Whether `value` is a syntactically valid `{name}-api-key` custom auth id.
 ///
 /// The host does not have to be interned yet. CLI `--auth` uses this because
