@@ -80,7 +80,7 @@ impl App {
             self.refresh_available_auths();
             provider::visible_providers()
                 .iter()
-                .filter(|descriptor| descriptor.model_refresh.is_some())
+                .filter(|descriptor| descriptor.supports_model_refresh())
                 .filter(|descriptor| {
                     descriptor
                         .auth_modes()

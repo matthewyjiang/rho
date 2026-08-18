@@ -159,7 +159,7 @@ pub(super) fn refresh_model_list_picker(available_auths: &[String]) -> UiPicker 
     }];
     let mut providers = provider::visible_providers()
         .iter()
-        .filter(|descriptor| descriptor.model_refresh.is_some())
+        .filter(|descriptor| descriptor.supports_model_refresh())
         .filter(|descriptor| {
             descriptor
                 .auth_modes()

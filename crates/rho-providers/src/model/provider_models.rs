@@ -35,8 +35,12 @@ mod google;
 pub(crate) use google::{thinking_policy, ThinkingPolicy};
 #[path = "provider_models/kimi_capabilities.rs"]
 mod kimi_capabilities;
+#[path = "provider_models/ollama.rs"]
+mod ollama;
 #[path = "provider_models/openai_compatible.rs"]
 mod openai_compatible;
+#[path = "provider_models/request_auth.rs"]
+mod request_auth;
 pub use openai_compatible::probe_provider_models;
 
 pub(super) struct ProviderModelRecord {
@@ -216,7 +220,8 @@ const PROVIDER_MODEL_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 
 pub fn provider_model_capabilities_need_refresh(provider: &str, model: &str) -> bool {
     let capabilities_are_known = match provider {
-        "kimi-code" => kimi_capabilities_are_known as fn(&CachedCapabilityRow) -> bool,
+        "kimi-code" => reasoning_capabilities_are_known as fn(&CachedCapabilityRow) -> bool,
+        "ollama" => ollama_capabilities_are_known,
         "anthropic" => anthropic_capabilities_are_known,
         _ => return false,
     };
@@ -274,7 +279,14 @@ fn cached_capability_row(provider: &str, model: &str) -> Option<CachedCapability
         .ok()
 }
 
-fn kimi_capabilities_are_known(row: &CachedCapabilityRow) -> bool {
+// Native tags may omit `capabilities`, and the OpenAI-compatible fallback
+// always writes Unknown. A completed refresh still settles so startup does
+// not refetch forever.
+fn ollama_capabilities_are_known(_row: &CachedCapabilityRow) -> bool {
+    true
+}
+
+fn reasoning_capabilities_are_known(row: &CachedCapabilityRow) -> bool {
     row.reasoning_capabilities_json
         .as_deref()
         .and_then(|value| serde_json::from_str::<ReasoningCapabilities>(value).ok())
@@ -322,13 +334,12 @@ pub async fn refresh_provider_models_with_store(
         Some(ProviderModelRefreshKind::GithubCopilot) => {
             records_from_models(fetch_github_copilot_models(provider, store).await?)
         }
+        Some(ProviderModelRefreshKind::Ollama) => {
+            let api_base = openai_compatible_api_base(descriptor, endpoint)?;
+            records_from_models(ollama::fetch(descriptor, auth_mode, api_base, store).await?)
+        }
         Some(ProviderModelRefreshKind::OpenAiCompatible) => {
-            let ProviderModelEndpoint::OpenAiCompatible(api_base) = endpoint else {
-                return Err(ModelError::InvalidResponse(format!(
-                    "provider '{}' requires a resolved API base for model discovery",
-                    descriptor.name
-                )));
-            };
+            let api_base = openai_compatible_api_base(descriptor, endpoint)?;
             records_from_models(
                 openai_compatible::fetch(descriptor, auth_mode, api_base, store).await?,
             )
@@ -340,6 +351,19 @@ pub async fn refresh_provider_models_with_store(
         provider: provider.to_string(),
         models: records.into_iter().map(|record| record.model).collect(),
     })
+}
+
+fn openai_compatible_api_base<'a>(
+    descriptor: &provider::ProviderDescriptor,
+    endpoint: ProviderModelEndpoint<'a>,
+) -> Result<&'a Url, ModelError> {
+    let ProviderModelEndpoint::OpenAiCompatible(api_base) = endpoint else {
+        return Err(ModelError::InvalidResponse(format!(
+            "provider '{}' requires a resolved API base for model discovery",
+            descriptor.name
+        )));
+    };
+    Ok(api_base)
 }
 
 fn records_from_models(models: Vec<ProviderModel>) -> Vec<ProviderModelRecord> {

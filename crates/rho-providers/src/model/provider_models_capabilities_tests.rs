@@ -195,3 +195,71 @@ fn anthropic_dated_snapshots_reuse_the_parent_alias_for_freshness_and_pickers() 
     });
     let _ = fs::remove_dir_all(cache_dir);
 }
+
+// Covers: a successful Ollama refresh settles Unknown rows; only expiry retriggers
+// Owner: ollama native discovery
+#[test]
+fn ollama_unknown_reasoning_rows_settle_after_a_fresh_refresh() {
+    let cache_dir = unique_test_cache_dir("ollama-unknown-reasoning");
+    with_provider_models_cache_dir_for_tests(cache_dir.clone(), || {
+        replace_cached_provider_models(
+            "ollama",
+            &[ProviderModel {
+                provider: "ollama".into(),
+                model: "gemma4:31b".into(),
+                display_name: "gemma4:31b".into(),
+                context_window: Some(262_144),
+                max_output_tokens: None,
+                reasoning_capabilities: ReasoningCapabilities::Unknown,
+            }],
+        )
+        .unwrap();
+        assert!(
+            !provider_model_capabilities_need_refresh("ollama", "gemma4:31b"),
+            "fallback-sourced Unknown must not retrigger a successful refresh"
+        );
+        assert!(
+            provider_model_capabilities_need_refresh("ollama", "missing-model"),
+            "a missing Ollama row must still refresh"
+        );
+
+        let connection = open_provider_models_cache().unwrap();
+        connection
+            .execute(
+                "update provider_model_refresh set updated_at = 0 where provider = 'ollama'",
+                [],
+            )
+            .unwrap();
+        assert!(
+            provider_model_capabilities_need_refresh("ollama", "gemma4:31b"),
+            "an expired Ollama snapshot must refresh"
+        );
+        drop(connection);
+
+        replace_cached_provider_models(
+            "ollama",
+            &[ProviderModel {
+                provider: "ollama".into(),
+                model: "gemma4:31b".into(),
+                display_name: "gemma4:31b".into(),
+                context_window: Some(262_144),
+                max_output_tokens: None,
+                reasoning_capabilities: ReasoningCapabilities::Levels(ReasoningLevelSet::new(
+                    vec![
+                        ReasoningLevel::Off,
+                        ReasoningLevel::Low,
+                        ReasoningLevel::Medium,
+                        ReasoningLevel::High,
+                        ReasoningLevel::Max,
+                    ],
+                )),
+            }],
+        )
+        .unwrap();
+        assert!(!provider_model_capabilities_need_refresh(
+            "ollama",
+            "gemma4:31b"
+        ));
+    });
+    let _ = fs::remove_dir_all(cache_dir);
+}

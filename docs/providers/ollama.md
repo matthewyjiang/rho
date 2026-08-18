@@ -11,7 +11,7 @@ For direct hosted access with an API key or device key and no local server, see 
 | Provider | `ollama` |
 | Auth | `none`, or optional `ollama-api-key` |
 | Default API base | `http://127.0.0.1:11434/v1` |
-| Model list | Models installed in Ollama, refreshed from `/v1/models` |
+| Model list | Installed models from native `/api/tags` (falls back to `/v1/models`) |
 | Environment override | `RHO_OLLAMA_API_KEY` (optional key) |
 
 ## Setup
@@ -29,7 +29,7 @@ In Rho, run `/login ollama`. The first field is the API base, prefilled with the
 /login ollama
 ```
 
-Then open `/config` and choose **Refresh model lists**, or select a model directly:
+Then open `/config` and choose **Refresh model lists**. The model picker then shows the models returned by Ollama. Startup also refreshes that list when the cache is stale. You can also select one directly:
 
 ```text
 /model ollama/<tool-capable-model>
@@ -46,9 +46,13 @@ First-run setup does not write `[providers.ollama]`. The endpoint is stored only
 base_url = "http://192.168.1.20:11434/v1"
 ```
 
-Keep the `/v1` suffix. Rho appends `/models` for discovery and `/chat/completions` for agent turns. The setting applies only to Ollama and is also used by `/doctor` when it checks the server. The URL must use `http` or `https` and cannot contain credentials, a query, or a fragment.
+Keep the `/v1` suffix. Rho derives the native API root by removing that segment (`http://host:11434/v1` → `http://host:11434/api/tags` and `/api/show`) and still posts agent turns to `/v1/chat/completions`. Bases that do not end in `/v1` skip native discovery and keep the plain `/v1/models` list. `/doctor` still probes `/v1/models`. The URL must use `http` or `https` and cannot contain credentials, a query, or a fragment.
 
-A stored key is sent as a Bearer token. Leave the key blank to keep a stored or env-supplied key, or when the host does not require one. `/logout ollama` drops a stored key.
+A stored key is sent as a Bearer token. Leave the key blank to keep a stored or env-supplied key, or when the host does not require one. Custom headers for secured remote endpoints are not supported.
+
+## Model metadata
+
+Context window and thinking capability come from the local server. Complete `/api/tags` rows are enough; Rho calls `/api/show` only when tags omit context length or capabilities, reading `model_info.<arch>.context_length` when present. That value is the model's advertised maximum, not the server's current `num_ctx`. Models that advertise only `embedding` stay out of the picker.
 
 ## Model compatibility
 
@@ -56,6 +60,6 @@ Ollama's OpenAI-compatible endpoint can serve many model types, but not every mo
 
 ## Reasoning
 
-Ollama accepts `reasoning_effort` values `low`, `medium`, `high`, `max`, and `none`. Rho sends the selected level when the model capability profile permits it. Shift+Tab and `/config` cycle it. When the model is missing from models.dev, Rho still sends the field so you can turn thinking off, mapping other Rho levels to the nearest accepted value. Rho omits the field for models whose metadata reports reasoning as not configurable. Omitting the field lets Ollama enable thinking on its own.
+Ollama accepts `reasoning_effort` values `low`, `medium`, `high`, `max`, and `none`. Rho sends the selected level when the model advertises a `thinking` capability. Shift+Tab and `/config` cycle it. When the model is missing from models.dev and the server does not advertise capabilities, Rho still sends the field so you can turn thinking off, mapping other Rho levels to the nearest accepted value. Rho omits the field for models whose metadata reports reasoning as not configurable. Omitting the field lets Ollama enable thinking on its own.
 
 If Ollama omits optional usage data, Rho still handles the response. Run `/doctor` to distinguish a reachable server with installed models, a reachable server with no models, an unreachable server, and an invalid or unsuccessful response.

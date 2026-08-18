@@ -1,14 +1,9 @@
 use reqwest::Url;
 
 use crate::{
-    auth::{
-        kimi_oauth::{refresh_kimi_tokens, KimiOAuthError},
-        kimi_token::token_is_expiring,
-        ollama_device::OllamaDeviceKey,
-    },
-    credentials::{load_kimi_tokens, save_kimi_tokens, CredentialStore, KimiTokens},
+    credentials::CredentialStore,
     model::{ModelError, ReasoningCapabilities},
-    provider::{self, ProviderAuthKind, ProviderModelRefreshKind},
+    provider::{self, ProviderModelRefreshKind},
     provider_backend::http_error,
 };
 
@@ -27,7 +22,10 @@ pub async fn probe_provider_models(
             error: ModelError::UnsupportedProvider(provider.into()).to_string(),
         };
     };
-    if descriptor.model_refresh != Some(ProviderModelRefreshKind::OpenAiCompatible) {
+    if !descriptor
+        .model_refresh
+        .is_some_and(ProviderModelRefreshKind::probes_openai_compatible_models)
+    {
         return ProviderModelHealth::InvalidResponse {
             error: format!("provider '{provider}' does not use OpenAI-compatible model discovery"),
         };
@@ -62,24 +60,13 @@ pub(super) async fn fetch(
     store: &dyn CredentialStore,
 ) -> Result<Vec<ProviderModel>, ModelError> {
     let client = provider_models_client()?;
-    let auth = load_model_request_auth(auth, store, &client).await?;
+    let auth = super::request_auth::load(auth, store, &client).await?;
     let models_url = Url::parse(&format!(
         "{}/models",
         api_base.as_str().trim_end_matches('/')
     ))
     .map_err(|error| ModelError::InvalidResponse(format!("invalid models URL: {error}")))?;
-    let request = match auth {
-        ModelRequestAuth::None => client.get(models_url),
-        ModelRequestAuth::Bearer(token) => client.get(models_url).bearer_auth(token),
-        ModelRequestAuth::OllamaDevice(key) => {
-            let (url, authorization) = key
-                .authorize_request("GET", models_url)
-                .map_err(|error| ModelError::InvalidResponse(error.to_string()))?;
-            client
-                .get(url)
-                .header(reqwest::header::AUTHORIZATION, authorization)
-        }
-    };
+    let request = super::request_auth::authorize_get(&client, models_url, &auth)?;
     let response = http_error::error_for_status(request.send().await?).await?;
     let response: OpenAiModelsResponse = response.json().await.map_err(|error| {
         ModelError::InvalidResponse(format!(
@@ -109,76 +96,4 @@ pub(super) async fn fetch(
     models.sort_by(|left, right| left.model.cmp(&right.model));
     models.dedup_by(|left, right| left.model == right.model);
     Ok(models)
-}
-
-async fn load_model_request_auth(
-    mode: provider::AuthMode,
-    store: &dyn CredentialStore,
-    client: &reqwest::Client,
-) -> Result<ModelRequestAuth, ModelError> {
-    match mode.auth_kind {
-        ProviderAuthKind::None => Ok(ModelRequestAuth::None),
-        ProviderAuthKind::ApiKey { .. } => Ok(ModelRequestAuth::Bearer(
-            crate::auth::provider_credentials::load_api_key_for_mode(mode.auth_kind, store)?,
-        )),
-        ProviderAuthKind::BearerCredential {
-            env_var,
-            account,
-            missing_message,
-            ..
-        } => Ok(ModelRequestAuth::Bearer(
-            crate::auth::provider_credentials::load_stored_bearer_key(
-                env_var,
-                account,
-                missing_message,
-                store,
-            )?,
-        )),
-        ProviderAuthKind::KimiOAuth { .. } => {
-            let env_var = mode
-                .auth_kind
-                .env_var()
-                .expect("Kimi OAuth must declare an environment variable");
-            let missing = || crate::model::registry::missing_credentials_error("kimi-code");
-            let mut tokens = match std::env::var(env_var) {
-                Ok(access_token) if !access_token.trim().is_empty() => KimiTokens {
-                    access_token,
-                    refresh_token: None,
-                    expires_at_unix: None,
-                    scope: String::new(),
-                    token_type: "Bearer".into(),
-                    expires_in: None,
-                },
-                _ => load_kimi_tokens(store)?.ok_or_else(missing)?,
-            };
-            if token_is_expiring(&tokens) {
-                let refresh_token = tokens.refresh_token.as_deref().ok_or_else(missing)?;
-                tokens = refresh_kimi_tokens(client, refresh_token)
-                    .await
-                    .map_err(|error| match error {
-                        KimiOAuthError::Unauthorized(_) => missing(),
-                        error => ModelError::InvalidResponse(error.to_string()),
-                    })?;
-                save_kimi_tokens(store, &tokens)?;
-            }
-            Ok(ModelRequestAuth::Bearer(tokens.access_token))
-        }
-        ProviderAuthKind::OllamaDeviceKey { missing_message } => {
-            Ok(ModelRequestAuth::OllamaDevice(
-                crate::auth::provider_credentials::load_ollama_device_key(missing_message)?,
-            ))
-        }
-        ProviderAuthKind::CodexOAuth { .. }
-        | ProviderAuthKind::GithubCopilotDevice { .. }
-        | ProviderAuthKind::XaiOAuth { .. } => Err(ModelError::UnsupportedProvider(format!(
-            "auth mode '{}'",
-            mode.id
-        ))),
-    }
-}
-
-enum ModelRequestAuth {
-    None,
-    Bearer(String),
-    OllamaDevice(OllamaDeviceKey),
 }

@@ -229,12 +229,21 @@ pub enum UnknownEffortPolicy {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ProviderModelRefreshKind {
+pub(crate) enum ProviderModelRefreshKind {
     OpenAi,
     Anthropic,
     Google,
     GithubCopilot,
     OpenAiCompatible,
+    /// Native Ollama `/api/tags` + `/api/show`, falling back to `/v1/models`.
+    Ollama,
+}
+
+impl ProviderModelRefreshKind {
+    /// True when `/doctor` and health probes hit `/v1/models`.
+    pub(crate) fn probes_openai_compatible_models(self) -> bool {
+        matches!(self, Self::OpenAiCompatible | Self::Ollama)
+    }
 }
 
 /// How a provider encodes model IDs on the wire versus in Rho cache/config.
@@ -430,7 +439,7 @@ pub struct ProviderDescriptor {
     /// Non-empty. First entry is the default auth mode.
     pub auth_modes: &'static [AuthMode],
     pub model_source: ProviderModelSource,
-    pub model_refresh: Option<ProviderModelRefreshKind>,
+    pub(crate) model_refresh: Option<ProviderModelRefreshKind>,
     pub model_id_codec: ModelIdCodec,
     pub metadata_upstream: &'static str,
     pub catalog_reasoning: CatalogReasoningPolicy,
@@ -498,7 +507,14 @@ impl ProviderDescriptor {
     /// not disqualify it.
     pub fn probes_configured_endpoint(self) -> bool {
         self.has_none_auth()
-            && self.model_refresh == Some(ProviderModelRefreshKind::OpenAiCompatible)
+            && self
+                .model_refresh
+                .is_some_and(ProviderModelRefreshKind::probes_openai_compatible_models)
+    }
+
+    /// True when this provider can refresh a live model list.
+    pub fn supports_model_refresh(self) -> bool {
+        self.model_refresh.is_some()
     }
 
     /// `/login` collects and persists this host's API base before the optional key.
