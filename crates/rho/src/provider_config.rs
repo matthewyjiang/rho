@@ -5,11 +5,11 @@ use url::Url;
 
 use super::Config;
 
-pub(crate) const DEFAULT_OLLAMA_BASE_URL: &str = rho_providers::model::registry::OLLAMA_API_BASE;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ProviderConfigs {
-    pub(crate) ollama: ProviderEndpointConfig,
+    /// Set only after `/login ollama` or an explicit `[providers.ollama]` table.
+    /// First-run config does not invent a default endpoint.
+    pub(crate) ollama: Option<ProviderEndpointConfig>,
     pub(crate) custom: BTreeMap<String, ProviderEndpointConfig>,
 }
 
@@ -20,23 +20,10 @@ pub(crate) struct ProviderEndpointConfig {
     pub(crate) catalog: Option<String>,
 }
 
-impl Default for ProviderConfigs {
-    fn default() -> Self {
-        Self {
-            ollama: ProviderEndpointConfig {
-                base_url: Url::parse(DEFAULT_OLLAMA_BASE_URL)
-                    .expect("the default Ollama API base must be a valid URL"),
-                catalog: None,
-            },
-            custom: BTreeMap::new(),
-        }
-    }
-}
-
 impl ProviderConfigs {
     fn endpoint(&self, provider: &str) -> Option<&Url> {
         match provider {
-            "ollama" => Some(&self.ollama.base_url),
+            "ollama" => self.ollama.as_ref().map(|endpoint| &endpoint.base_url),
             name => self.custom.get(name).map(|endpoint| &endpoint.base_url),
         }
     }
@@ -51,7 +38,10 @@ impl ProviderConfigs {
         };
         let parsed = parse_provider_base_url(&field, base_url)?;
         if provider == "ollama" {
-            self.ollama.base_url = parsed;
+            self.ollama = Some(ProviderEndpointConfig {
+                base_url: parsed,
+                catalog: None,
+            });
             return Ok(());
         }
         rho_providers::provider::validate_custom_provider_name(provider)?;
@@ -243,9 +233,16 @@ fn normalize_selection(
 
 #[derive(Serialize)]
 pub(super) struct PersistedProviderConfigs<'a> {
-    ollama: PersistedEndpointConfig<'a>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ollama: Option<PersistedEndpointConfig<'a>>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     custom: BTreeMap<&'a str, PersistedEndpointConfig<'a>>,
+}
+
+impl PersistedProviderConfigs<'_> {
+    pub(super) fn is_empty(&self) -> bool {
+        self.ollama.is_none() && self.custom.is_empty()
+    }
 }
 
 #[derive(Serialize)]
@@ -258,10 +255,13 @@ struct PersistedEndpointConfig<'a> {
 impl<'a> From<&'a ProviderConfigs> for PersistedProviderConfigs<'a> {
     fn from(config: &'a ProviderConfigs) -> Self {
         Self {
-            ollama: PersistedEndpointConfig {
-                base_url: config.ollama.base_url.as_str(),
-                catalog: None,
-            },
+            ollama: config
+                .ollama
+                .as_ref()
+                .map(|endpoint| PersistedEndpointConfig {
+                    base_url: endpoint.base_url.as_str(),
+                    catalog: None,
+                }),
             custom: config
                 .custom
                 .iter()

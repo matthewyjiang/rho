@@ -22,7 +22,7 @@ impl SecretInput {
         }
     }
 
-    /// For hosts that also run keyless, where blank means "use no key".
+    /// For hosts that also run keyless, where blank means "do not set a new key".
     pub(super) fn optional(target: LoginTarget) -> Self {
         Self {
             allow_empty: true,
@@ -35,7 +35,7 @@ impl SecretInput {
         let key = self.value.trim().to_string();
         let target = self.target.clone();
         match (key.is_empty(), self.allow_empty) {
-            (true, true) => super::login::ApiKeySubmission::ClearAndRunKeyless { target },
+            (true, true) => super::login::ApiKeySubmission::LeaveUnset { target },
             (true, false) => super::login::ApiKeySubmission::Rejected,
             (false, _) => super::login::ApiKeySubmission::Save { target, key },
         }

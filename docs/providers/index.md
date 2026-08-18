@@ -12,7 +12,7 @@ This index lists every first-party provider Rho ships. Shared concepts such as c
 | `xai` | `xai-api-key`, `xai-oauth` | [xAI](/providers/xai) |
 | `poolside` | `poolside-api-key` | [Poolside](/providers/poolside) |
 | `openrouter` | `openrouter-api-key`, `openrouter-oauth` | [OpenRouter](/providers/openrouter) |
-| `ollama` | None | [Ollama](/providers/ollama) |
+| `ollama` | `none`, optional `ollama-api-key` | [Ollama](/providers/ollama) |
 | `ollama-cloud` | `ollama-cloud-api-key`, `ollama-cloud-device` | [Ollama Cloud](/providers/ollama-cloud) |
 | `moonshot` | `moonshot-api-key` | [Moonshot and Kimi Code](/providers/moonshot-kimi) |
 | `kimi-code` | `kimi-oauth` | [Moonshot and Kimi Code](/providers/moonshot-kimi) |

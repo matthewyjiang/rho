@@ -20,14 +20,17 @@ fn refresh_auth_for_provider(
     preferred_auth: &str,
     available_auths: &[String],
 ) -> &'static str {
+    let modes: Vec<String> = descriptor
+        .auth_modes()
+        .map(|mode| mode.id.to_string())
+        .collect();
+    let selected = catalog::SelectionAuthContext {
+        current: Some(preferred_auth),
+        available: available_auths,
+    }
+    .select(&modes);
     descriptor
-        .auth_mode(preferred_auth)
-        .filter(|mode| available_auths.iter().any(|auth| auth == mode.id))
-        .or_else(|| {
-            descriptor
-                .auth_modes()
-                .find(|mode| available_auths.iter().any(|auth| auth == mode.id))
-        })
+        .auth_mode(&selected)
         .unwrap_or_else(|| descriptor.default_auth())
         .id
 }

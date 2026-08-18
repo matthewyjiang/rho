@@ -21,16 +21,27 @@ pub(super) struct PendingInteractiveLogin {
 
 /// What Enter in the API-key overlay resolved to.
 ///
-/// Keeps "blank means run keyless" as a named outcome rather than a boolean
-/// threaded alongside the value.
+/// Blank on an optional field means "do not write a new key": keep a
+/// reachable key (store or env), otherwise run keyless. `/logout` is the
+/// wipe path.
 #[derive(Clone, Debug)]
 pub(super) enum ApiKeySubmission {
     /// Store this key for the target's auth mode.
     Save { target: LoginTarget, key: String },
-    /// Drop any stored key and select the host's keyless mode.
-    ClearAndRunKeyless { target: LoginTarget },
+    /// No new key. Keep a reachable key, or run keyless when none exists.
+    LeaveUnset { target: LoginTarget },
     /// Blank, but this target requires a key.
     Rejected,
+}
+
+/// Blank optional key: keep a reachable key, otherwise run keyless. Never deletes.
+fn resolve_blank_optional_key(mut target: LoginTarget, has_reachable_key: bool) -> LoginTarget {
+    if has_reachable_key {
+        return target;
+    }
+    target.auth = provider::KEYLESS_AUTH.into();
+    target.label = target.provider.clone();
+    target
 }
 
 #[derive(Clone, Debug)]
@@ -269,9 +280,6 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        if self.begin_store_choice_if_needed(StoreChoiceNext::Provider(provider.to_string())) {
-            return Ok(());
-        }
         let provider = provider.trim();
         // A fully keyless provider has no login target or group, so it would
         // otherwise fall through to the unsupported-provider error below.
@@ -289,11 +297,10 @@ impl App {
         //
         // Group lookup must not win over a unique provider target: the OpenAI
         // group also offers Codex, but `/login openai` means the OpenAI provider.
-        if let Some(target) = catalog::login_target_for_auth(provider) {
-            return self.start_login_for_target(target, terminal, agent).await;
-        }
-        if let Some(target) = catalog::login_target_for_provider(provider) {
-            return self.start_login_for_target(target, terminal, agent).await;
+        if let Some(target) = catalog::login_target_for_auth(provider)
+            .or_else(|| catalog::login_target_for_provider(provider))
+        {
+            return self.start_resolved_login(target, terminal, agent).await;
         }
         if let Some(group) = catalog::login_group(provider) {
             match super::provider_picker::login_group_next(group) {
@@ -307,7 +314,7 @@ impl App {
                         self.set_status("login failed");
                         return Ok(());
                     };
-                    return self.start_login_for_target(target, terminal, agent).await;
+                    return self.start_resolved_login(target, terminal, agent).await;
                 }
                 super::provider_picker::LoginGroupNext::MethodPicker(picker) => {
                     self.input_ui.set_composer(ComposerMode::Picker(*picker));
@@ -331,6 +338,26 @@ impl App {
         Ok(())
     }
 
+    /// After a target is known: persist an endpoint if this host needs one,
+    /// then choose a credential store only when a key may be stored.
+    async fn start_resolved_login(
+        &mut self,
+        target: LoginTarget,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        if provider::provider_descriptor(&target.provider)
+            .is_some_and(|descriptor| descriptor.collects_login_endpoint())
+        {
+            self.start_endpoint_onboarding(&target.provider);
+            return Ok(());
+        }
+        if self.begin_store_choice_if_needed(StoreChoiceNext::Provider(target.provider.clone())) {
+            return Ok(());
+        }
+        self.start_login_for_target(target, terminal, agent).await
+    }
+
     fn report_login_not_required(&mut self, provider: &str) {
         self.set_status(format!(
             "{provider} does not require login. Refresh its model list in /config, then choose a model with /model."
@@ -351,7 +378,7 @@ impl App {
                 Ok(())
             }
             AuthenticationMethod::ApiKey { entry_label } => {
-                // A host that also runs keyless accepts a blank key as "no key".
+                // A host that also runs keyless accepts a blank key as "do not write a new key".
                 let optional = provider::provider_descriptor(&target.provider)
                     .is_some_and(|descriptor| descriptor.has_none_auth());
                 let (secret, status) = if optional {
@@ -386,14 +413,25 @@ impl App {
                 self.set_status("login failed");
                 Ok(())
             }
-            ApiKeySubmission::ClearAndRunKeyless { mut target } => {
-                let _ = ProviderAuthentication::delete_credentials(
+            ApiKeySubmission::LeaveUnset { target } => {
+                match ProviderAuthentication::has_credentials(
                     self.credential_store.as_ref(),
                     &target.auth,
-                );
-                target.auth = provider::KEYLESS_AUTH.into();
-                target.label = target.provider.clone();
-                self.finish_login(target, terminal, agent).await
+                ) {
+                    Ok(has_key) => {
+                        self.finish_login(
+                            resolve_blank_optional_key(target, has_key),
+                            terminal,
+                            agent,
+                        )
+                        .await
+                    }
+                    Err(err) => {
+                        self.insert_entry(&Entry::Error(err.to_string()));
+                        self.set_status("login failed");
+                        Ok(())
+                    }
+                }
             }
             ApiKeySubmission::Save { target, key } => {
                 if self.begin_store_choice_if_needed(StoreChoiceNext::SaveApiKey {

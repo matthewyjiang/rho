@@ -21,6 +21,19 @@ fn model_refresh_prefers_the_active_available_auth_mode() {
     );
 }
 
+// Covers: /config refresh must send a stored key instead of probing anonymously
+// Owner: model list refresh
+#[test]
+fn model_refresh_prefers_a_stored_key_over_keyless() {
+    let descriptor = rho_providers::provider::provider_descriptor("ollama").unwrap();
+    let available = vec!["none".into(), "ollama-api-key".into()];
+
+    assert_eq!(
+        super::refresh_auth_for_provider(descriptor, "none", &available),
+        "ollama-api-key"
+    );
+}
+
 #[test]
 fn model_refresh_falls_back_to_an_available_auth_mode() {
     let descriptor = rho_providers::provider::provider_descriptor("openrouter").unwrap();

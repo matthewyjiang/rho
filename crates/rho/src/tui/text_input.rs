@@ -15,7 +15,7 @@ use super::{
 pub(super) enum TextInputTarget {
     ConfigApiKey(ConfigTextKey),
     AgentField(AgentField),
-    /// One step of the custom-host `/login` wizard, which owns its own state.
+    /// One step of the `/login` endpoint wizard, which owns its own state.
     CustomHost(super::custom_provider_login::CustomHostStep),
 }
 
