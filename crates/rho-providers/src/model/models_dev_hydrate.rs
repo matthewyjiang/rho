@@ -14,9 +14,7 @@ use std::{
 use rusqlite::params;
 use tokio::sync::Mutex;
 
-use crate::provider::{
-    CatalogConstruction, CatalogReasoningPolicy, ProviderDescriptor, ProviderId,
-};
+use crate::provider::{CatalogConstruction, ProviderDescriptor, ProviderId};
 
 use super::{
     document::{self, ModelsDevCatalog},
@@ -93,21 +91,15 @@ pub async fn prefetch_model_metadata(targets: impl IntoIterator<Item = (String, 
 ///
 /// models.dev slugs that interned custom hosts actually borrow (`catalog =
 /// "llmgateway"` or `catalog = "openrouter"`) are also written so those hosts
-/// can rematch cache rows by slug and model id. When that slug has a catalog
-/// document, the document is the only writer of those keys and extract is
-/// skipped so remappers cannot occupy them. Slugs with no document
-/// (`openai-codex`) keep extract. Unborrowed upstream providers stay out of
-/// sqlite.
+/// can rematch cache rows by slug and model id. A slug that is also a built-in
+/// cache key (`openrouter`) is written under the borrowing host name instead,
+/// so extract for Rho's own provider is unchanged. Slugs with no document
+/// (`openai-codex`) keep extract and rematch. Unborrowed upstream providers
+/// stay out of sqlite.
 pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
     let mut entries = Vec::new();
     let mut touched_providers = HashSet::new();
-    let borrowed_slugs = borrowed_custom_catalog_slugs();
     for descriptor in crate::provider::providers() {
-        if borrowed_slugs.contains(descriptor.name)
-            && borrowed_document_policy(api, descriptor.name).is_some()
-        {
-            continue;
-        }
         for model_id in catalog_model_ids_for_provider(api, descriptor) {
             if let Some(metadata) = extract_complete_upstream_metadata(api, descriptor, &model_id) {
                 touched_providers.insert(descriptor.name.to_string());
@@ -122,21 +114,27 @@ pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
             }
         }
     }
-    for slug in borrowed_slugs {
-        let Some(policy) = borrowed_document_policy(api, &slug) else {
+    for host in crate::provider::interned_custom_providers() {
+        let slug = host.metadata_upstream;
+        if slug == host.name {
+            continue;
+        }
+        let Some(provider) = api.provider(slug) else {
             continue;
         };
-        let Some(provider) = api.provider(&slug) else {
-            continue;
+        let cache_provider = if super::borrowed_slug_collides_with_builtin_extract(slug) {
+            host.name
+        } else {
+            slug
         };
         for model_id in provider.models.keys() {
             let Some(metadata) =
-                document::model_metadata_from_catalog(api, &slug, model_id, policy)
+                document::model_metadata_from_catalog(api, slug, model_id, host.catalog_reasoning)
             else {
                 continue;
             };
-            touched_providers.insert(slug.clone());
-            entries.push((slug.clone(), model_id.clone(), metadata));
+            touched_providers.insert(cache_provider.to_string());
+            entries.push((cache_provider.to_string(), model_id.clone(), metadata));
         }
     }
     let written = write_cached_upstream_model_metadata_batch(
@@ -150,22 +148,6 @@ pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
         }
     }
     written
-}
-
-/// When a borrowed slug has a models.dev section, that section owns
-/// `(slug, model)`. Built-in extract is skipped so remappers cannot occupy the
-/// keys. Reasoning policy comes from the built-in of the same name, if any
-/// (`openrouter` stays `OffAsNone`; `anthropic` stays `Unknown`). Slugs with
-/// no document (`openai-codex`) keep extract.
-fn borrowed_document_policy(api: &ModelsDevCatalog, slug: &str) -> Option<CatalogReasoningPolicy> {
-    api.provider(slug)?;
-    Some(
-        crate::provider::providers()
-            .iter()
-            .find(|descriptor| descriptor.name == slug)
-            .map(|descriptor| descriptor.catalog_reasoning)
-            .unwrap_or(CatalogReasoningPolicy::ExactAdvertised),
-    )
 }
 
 fn catalog_model_ids_for_provider(

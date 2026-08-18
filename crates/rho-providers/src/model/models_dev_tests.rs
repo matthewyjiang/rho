@@ -1461,7 +1461,7 @@ fn hydrate_writes_borrowed_non_rho_catalog_slugs() {
 }
 
 // Covers: catalog = "openrouter" writes the models.dev openrouter document
-// even when OpenRouter's remapper would hit a first-party row.
+// under the custom host and leaves built-in OpenRouter extract alone.
 // Owner: models.dev catalog hydrate
 #[test]
 fn hydrate_borrowed_openrouter_slug_uses_catalog_document() {
@@ -1547,21 +1547,16 @@ fn hydrate_borrowed_openrouter_slug_uses_catalog_document() {
             assert_eq!(metadata.supported_reasoning_levels, expected_levels);
         }
         let openrouter = cached_upstream_model_metadata("openrouter", "anthropic/claude-test")
-            .expect("borrowed openrouter keys are the catalog document");
-        assert_eq!(
-            openrouter.display_name.as_deref(),
-            Some("OpenRouter Claude")
-        );
-        assert_eq!(openrouter.advertised_context_window, Some(500_000));
+            .expect("built-in openrouter extract still remaps to the owner section");
+        assert_eq!(openrouter.display_name.as_deref(), Some("Direct Claude"));
+        assert_eq!(openrouter.advertised_context_window, Some(128_000));
+        assert!(openrouter.cost_default.is_none());
         let anthropic = cached_upstream_model_metadata("anthropic", "claude-test")
             .expect("first-party anthropic extract still writes its own keys");
         assert_eq!(anthropic.display_name.as_deref(), Some("Direct Claude"));
         assert_eq!(anthropic.advertised_context_window, Some(128_000));
         assert!(anthropic.cost_default.is_none());
     });
-    // Re-intern without a Rho slug so later hydrates do not inherit document
-    // ownership of the built-in openrouter keys.
-    crate::provider::install_custom_openai_compatible_providers(["cliproxyapi"]).unwrap();
     crate::provider::reset_custom_openai_compatible_providers_for_tests();
 }
 
