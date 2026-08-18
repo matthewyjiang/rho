@@ -26,34 +26,29 @@ enum CycleTarget {
 }
 
 impl App {
-    /// Records the scope a model picker opens on for the rest of the session.
+    /// Scope the next model picker should open on.
     ///
-    /// Called only when a picker is opened, so browsing "all" and then pinning
-    /// a model does not silently collapse the list under the user.
-    pub(super) fn latch_model_picker_scope_on_open(&mut self) -> model_picker::ModelPickerScope {
-        // With no explicit choice yet, prefer pinned; it degrades to all on its
-        // own when no pin has auth.
-        let requested = self
-            .model_picker_scope
-            .unwrap_or(model_picker::ModelPickerScope::Pinned);
-        let scope = model_picker::effective_model_picker_scope(
-            requested,
+    /// An explicit Ctrl-O choice sticks until the user toggles again. Until
+    /// then, prefer pinned and recompute on every open so a first-run picker
+    /// that opened on all still shows pins after the user adds one.
+    pub(super) fn resolved_model_picker_scope(&self) -> model_picker::ModelPickerScope {
+        model_picker::effective_model_picker_scope(
+            self.model_picker_scope_override
+                .unwrap_or(model_picker::ModelPickerScope::Pinned),
             &self.info.runtime.favorite_models,
             &self.available_auths,
-        );
-        self.model_picker_scope = Some(scope);
-        scope
+        )
     }
 
     pub(super) fn conversation_model_picker(&mut self) -> UiPicker {
         self.refresh_available_auths();
-        let scope = self.latch_model_picker_scope_on_open();
+        let scope = self.resolved_model_picker_scope();
         model_picker::model_picker(&self.info.runtime, &self.available_auths, scope)
     }
 
     pub(super) fn conversation_model_picker_during_run(&mut self) -> UiPicker {
         self.refresh_available_auths();
-        let scope = self.latch_model_picker_scope_on_open();
+        let scope = self.resolved_model_picker_scope();
         model_picker::model_picker_during_run(
             &self.info.runtime,
             self.pending_model_selection
@@ -131,7 +126,7 @@ impl App {
             _ => String::new(),
         };
         self.refresh_available_auths();
-        let current = self.latch_model_picker_scope_on_open();
+        let current = self.resolved_model_picker_scope();
         let next = current.other();
         if model_picker::effective_model_picker_scope(
             next,
@@ -144,13 +139,14 @@ impl App {
         }
         // Scope and picker move together: a rebuild that cannot happen must not
         // leave the session flipped to a view the user never sees.
-        self.model_picker_scope = Some(next);
+        let previous = self.model_picker_scope_override;
+        self.model_picker_scope_override = Some(next);
         match self.rebuilt_model_picker(&value, filter) {
             Some(picker) => {
                 self.input_ui.set_composer(ComposerMode::Picker(picker));
                 self.set_status(format!("showing {}", next.status_label()));
             }
-            None => self.model_picker_scope = Some(current),
+            None => self.model_picker_scope_override = previous,
         }
         Ok(())
     }

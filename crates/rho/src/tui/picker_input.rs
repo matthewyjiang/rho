@@ -119,10 +119,10 @@ pub(in crate::tui) fn apply_picker_key(
     // Model-list keys reuse the composer bindings so a rebind moves both, and
     // are checked before the tuple match so a rebind onto a plain character
     // cannot be swallowed by the filter arm.
-    if picker.key_hints.pin_toggle && keybindings.cycle_pinned_model.matches(key) {
+    if picker.key_hints.pin_toggle.is_some() && keybindings.cycle_pinned_model.matches(key) {
         return PickerKeyEffect::ToggleFavorite;
     }
-    if picker.key_hints.scope_toggle && keybindings.toggle_tool_output.matches(key) {
+    if picker.key_hints.scope_toggle.is_some() && keybindings.toggle_tool_output.matches(key) {
         return PickerKeyEffect::ToggleModelScope;
     }
     match (key.modifiers, key.code) {

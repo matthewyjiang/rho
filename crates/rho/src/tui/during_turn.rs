@@ -96,10 +96,13 @@ impl App {
         if self.handle_running_file_palette_key(key)? {
             return Ok(false);
         }
-        if self.handle_configurable_running_key(key, terminal)? {
+        // Same order as the idle composer: pin cycle wins when a user binds
+        // `cycle_pinned_model` onto a key that `handle_configurable_*` also
+        // owns (for example Ctrl-P rebound to `toggle_tool_output`).
+        if self.handle_running_favorite_cycle_key(key)? {
             return Ok(false);
         }
-        if self.handle_running_favorite_cycle_key(key)? {
+        if self.handle_configurable_running_key(key, terminal)? {
             return Ok(false);
         }
 

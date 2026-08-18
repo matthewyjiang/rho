@@ -98,8 +98,8 @@ fn tab_completes_filter_when_tab_complete_enabled() {
         PickerAction::SelectModel,
     )
     .with_key_hints(PickerKeyHints {
-        pin_toggle: false,
-        scope_toggle: false,
+        pin_toggle: None,
+        scope_toggle: None,
         tab_complete: true,
         row_delete: false,
     });
@@ -128,8 +128,8 @@ fn ctrl_o_toggles_model_scope_when_enabled() {
         PickerAction::SelectModel,
     )
     .with_key_hints(PickerKeyHints {
-        pin_toggle: true,
-        scope_toggle: true,
+        pin_toggle: Some("ctrl+p".into()),
+        scope_toggle: Some("ctrl+o".into()),
         tab_complete: true,
         row_delete: false,
     });
@@ -147,7 +147,7 @@ fn ctrl_o_toggles_model_scope_when_enabled() {
         PickerKeyEffect::ToggleModelScope
     );
 
-    picker.key_hints.scope_toggle = false;
+    picker.key_hints.scope_toggle = None;
     assert_eq!(
         apply_picker_key(
             &mut picker,

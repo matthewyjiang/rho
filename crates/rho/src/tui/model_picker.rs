@@ -4,6 +4,7 @@ use super::{
 };
 use crate::claude_runtime::models as claude_models;
 use crate::config::CLAUDE_CLI_RUNTIME_KEY;
+use crate::keybindings::Keybindings;
 use rho_providers::model::{catalog, favorites};
 
 /// Which models a conversation or internal-agent picker lists.
@@ -88,6 +89,7 @@ pub(super) fn model_picker(
         available_auths,
         PickerAction::SelectModel,
         scope,
+        &info.keybindings,
     )
 }
 
@@ -117,6 +119,7 @@ pub(super) fn model_picker_during_run(
         available_auths,
         PickerAction::SelectModel,
         scope,
+        &info.keybindings,
     )
 }
 
@@ -221,6 +224,7 @@ pub(super) struct InternalAgentPickerInputs<'a> {
     pub(super) favorite_models: &'a [String],
     pub(super) available_auths: &'a [String],
     pub(super) scope: ModelPickerScope,
+    pub(super) keybindings: &'a Keybindings,
 }
 
 pub(super) fn internal_agent_model_picker(inputs: InternalAgentPickerInputs<'_>) -> UiPicker {
@@ -232,6 +236,7 @@ pub(super) fn internal_agent_model_picker(inputs: InternalAgentPickerInputs<'_>)
         favorite_models,
         available_auths,
         scope,
+        keybindings,
     } = inputs;
     let rho_current = match &current {
         InternalAgentSelection::RhoModel { provider, model } => (provider.as_str(), model.as_str()),
@@ -248,6 +253,7 @@ pub(super) fn internal_agent_model_picker(inputs: InternalAgentPickerInputs<'_>)
         available_auths,
         PickerAction::SelectInternalAgentModel,
         scope,
+        keybindings,
     );
 
     let mut leading = Vec::new();
@@ -355,6 +361,7 @@ fn model_picker_for_current(
     available_auths: &[String],
     action: PickerAction,
     scope: ModelPickerScope,
+    keybindings: &Keybindings,
 ) -> UiPicker {
     let CurrentModel {
         provider: current_provider,
@@ -368,6 +375,8 @@ fn model_picker_for_current(
     if effective_scope == ModelPickerScope::Pinned {
         available.retain(|entry| favorites::is_favorite(&favorites, &entry.provider, &entry.model));
     }
+    let pin_key = keybindings.cycle_pinned_model.to_string();
+    let scope_key = keybindings.toggle_tool_output.to_string();
     let catalog_items = favorites::reorder_models_by_favorites(available, &favorites)
         .into_iter()
         .map(|entry| {
@@ -393,9 +402,9 @@ fn model_picker_for_current(
                 section: None,
                 label: value.clone(),
                 detail: Some(if pinned {
-                    "Press Ctrl-P to unpin this model.".into()
+                    format!("Press {pin_key} to unpin this model.")
                 } else {
-                    "Press Ctrl-P to pin this model to the top of model pickers.".into()
+                    format!("Press {pin_key} to pin this model to the top of model pickers.")
                 }),
                 preview: None,
                 badge,
@@ -411,8 +420,8 @@ fn model_picker_for_current(
         action,
     )
     .with_key_hints(PickerKeyHints {
-        pin_toggle: true,
-        scope_toggle: true,
+        pin_toggle: Some(pin_key),
+        scope_toggle: Some(scope_key),
         tab_complete: true,
         ..Default::default()
     });

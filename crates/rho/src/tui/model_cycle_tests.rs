@@ -1,10 +1,17 @@
 use pretty_assertions::assert_eq;
 
 use super::super::{tests::test_app, App, ComposerMode};
-use crate::tui::model_picker::ModelPickerScope;
 
 fn app_with_pins(pins: &[&str]) -> App {
     let mut app = test_app();
+    // OpenAI models come from a cache these unit tests do not populate.
+    // xAI is a static-catalog provider, so a stored key makes pins usable.
+    rho_providers::credentials::save_provider_api_key(
+        app.credential_store.as_ref(),
+        "xai",
+        "xai-test",
+    )
+    .unwrap();
     let pins = pins.iter().map(|pin| pin.to_string()).collect::<Vec<_>>();
     app.info
         .services
@@ -41,13 +48,10 @@ fn picker_values(app: &App) -> Vec<String> {
 // Owner: model picker scope
 #[test]
 fn scope_toggle_flips_the_open_picker_and_sticks() {
-    let mut app = app_with_pins(&["ollama-cloud/glm-5.2"]);
+    let mut app = app_with_pins(&["xai/grok-4.6"]);
     open_model_picker(&mut app);
     assert!(picker_title(&app).contains("pinned"));
-    assert_eq!(
-        picker_values(&app),
-        vec!["ollama-cloud/glm-5.2".to_string()]
-    );
+    assert_eq!(picker_values(&app), vec!["xai/grok-4.6".to_string()]);
 
     app.toggle_model_picker_scope().unwrap();
     assert!(picker_title(&app).contains("all"));
@@ -78,7 +82,7 @@ fn scope_toggle_refuses_an_empty_pinned_view() {
     assert_eq!(app.status(), "no pinned models");
     assert!(picker_title(&app).contains("all"));
     assert_eq!(picker_values(&app), before);
-    assert_eq!(app.model_picker_scope, Some(ModelPickerScope::All));
+    assert_eq!(app.model_picker_scope_override, None);
 }
 
 // Covers: unpinning the last usable pin while the pinned view is open must
@@ -86,7 +90,7 @@ fn scope_toggle_refuses_an_empty_pinned_view() {
 // Owner: model picker scope
 #[test]
 fn unpinning_the_last_pin_falls_back_to_all() {
-    let mut app = app_with_pins(&["ollama-cloud/glm-5.2"]);
+    let mut app = app_with_pins(&["xai/grok-4.6"]);
     open_model_picker(&mut app);
     assert!(picker_title(&app).contains("pinned"));
 
@@ -102,7 +106,7 @@ fn unpinning_the_last_pin_falls_back_to_all() {
 // Owner: model picker scope
 #[test]
 fn rebuilding_keeps_the_parent_picker() {
-    let mut app = app_with_pins(&["ollama-cloud/glm-5.2"]);
+    let mut app = app_with_pins(&["xai/grok-4.6"]);
     let parent = crate::tui::provider_picker::login_group_picker();
     let picker = app.conversation_model_picker().with_parent(parent);
     app.input_ui.set_composer(ComposerMode::Picker(picker));
@@ -113,4 +117,28 @@ fn rebuilding_keeps_the_parent_picker() {
         panic!("model picker should still be open");
     };
     assert!(picker.has_parent(), "scope toggle must keep the parent");
+}
+
+// Covers: a session that first opened /model with no usable pin must still
+// open on the pinned list once a pin has auth, without the user pressing
+// the scope toggle.
+// Owner: model picker scope
+#[test]
+fn first_open_without_pins_promotes_after_a_pin_is_added() {
+    let mut app = app_with_pins(&[]);
+    open_model_picker(&mut app);
+    assert!(picker_title(&app).contains("all"));
+    assert_eq!(app.model_picker_scope_override, None);
+
+    app.info
+        .services
+        .config_repository
+        .update(|config| config.favorite_models = vec!["xai/grok-4.6".into()])
+        .unwrap();
+    app.info.runtime.favorite_models = vec!["xai/grok-4.6".into()];
+
+    open_model_picker(&mut app);
+    assert!(picker_title(&app).contains("pinned"));
+    assert_eq!(picker_values(&app), vec!["xai/grok-4.6".to_string()]);
+    assert_eq!(app.model_picker_scope_override, None);
 }

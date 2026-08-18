@@ -1,6 +1,13 @@
 use pretty_assertions::assert_eq;
+use std::sync::LazyLock;
 
 use super::*;
+
+fn default_keybindings() -> &'static crate::keybindings::Keybindings {
+    static KEYS: LazyLock<crate::keybindings::Keybindings> =
+        LazyLock::new(crate::keybindings::Keybindings::default);
+    &KEYS
+}
 
 fn inputs(
     current: InternalAgentSelection,
@@ -15,6 +22,7 @@ fn inputs(
         favorite_models: &[],
         available_auths: &[],
         scope: ModelPickerScope::All,
+        keybindings: default_keybindings(),
     }
 }
 

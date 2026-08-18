@@ -289,7 +289,7 @@ impl super::App {
     ) -> UiPicker {
         self.refresh_available_auths();
         let current = self.internal_agent_picker_model(id);
-        let scope = self.latch_model_picker_scope_on_open();
+        let scope = self.resolved_model_picker_scope();
         let picker = super::model_picker::internal_agent_model_picker(
             super::model_picker::InternalAgentPickerInputs {
                 agent_id: id,
@@ -299,6 +299,7 @@ impl super::App {
                 favorite_models: &self.info.runtime.favorite_models,
                 available_auths: &self.available_auths,
                 scope,
+                keybindings: &self.info.runtime.keybindings,
             },
         );
         self.internal_agent_model_target = Some(InternalAgentModelTarget {
