@@ -128,8 +128,8 @@ fn ctrl_o_toggles_model_scope_when_enabled() {
         PickerAction::SelectModel,
     )
     .with_key_hints(PickerKeyHints {
-        pin_toggle: Some("ctrl+p".into()),
-        scope_toggle: Some("ctrl+o".into()),
+        pin_toggle: Some("Ctrl+P".into()),
+        scope_toggle: Some("Ctrl+O".into()),
         tab_complete: true,
         row_delete: false,
     });

@@ -375,8 +375,8 @@ fn model_picker_for_current(
     if effective_scope == ModelPickerScope::Pinned {
         available.retain(|entry| favorites::is_favorite(&favorites, &entry.provider, &entry.model));
     }
-    let pin_key = keybindings.cycle_pinned_model.to_string();
-    let scope_key = keybindings.toggle_tool_output.to_string();
+    let pin_key = keybindings.cycle_pinned_model.chrome_label();
+    let scope_key = keybindings.toggle_tool_output.chrome_label();
     let catalog_items = favorites::reorder_models_by_favorites(available, &favorites)
         .into_iter()
         .map(|entry| {

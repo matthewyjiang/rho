@@ -137,6 +137,24 @@ impl KeyBinding {
     pub fn matches(&self, event: KeyEvent) -> bool {
         self.modifiers == event.modifiers && key_codes_match(self.code, event.code)
     }
+
+    /// Capitalised form for picker footers and row details (`Ctrl+P`).
+    ///
+    /// [`Display`] stays lowercase (`ctrl+p`) so config files and `/help` keep
+    /// the parseable spelling.
+    pub fn chrome_label(&self) -> String {
+        self.to_string()
+            .split('+')
+            .map(|part| {
+                let mut chars = part.chars();
+                match chars.next() {
+                    Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
+                    None => String::new(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("+")
+    }
 }
 
 fn key_codes_match(configured: KeyCode, received: KeyCode) -> bool {
@@ -271,6 +289,7 @@ mod tests {
 
         assert!(binding.matches(event));
         assert_eq!(binding.to_string(), "ctrl+shift+g");
+        assert_eq!(binding.chrome_label(), "Ctrl+Shift+G");
     }
 
     #[test]
