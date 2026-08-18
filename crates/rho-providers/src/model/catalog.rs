@@ -268,9 +268,9 @@ fn descriptor_default_model(provider: &str) -> Option<&'static str> {
 
 /// Auth context a caller resolves model selections against.
 ///
-/// Selection prefers `current` when the target provider offers it, then a
-/// stored key over a keyless mode, then the first offered mode in
-/// `available`, then the provider default.
+/// Selection prefers `current` when the target provider offers it and it is
+/// in `available`, then a stored key over a keyless mode, then the first
+/// offered mode in `available`, then the provider default.
 #[derive(Clone, Copy)]
 pub struct SelectionAuthContext<'a> {
     /// The auth mode active before the selection, if any.
@@ -289,12 +289,16 @@ impl SelectionAuthContext<'_> {
     }
 
     /// Selects the auth mode for a model selection from the given candidate
-    /// modes: current auth first, then a stored key over [`crate::provider::KEYLESS_AUTH`],
-    /// then the first candidate so callers without credential context keep the
-    /// provider default.
+    /// modes: current auth when it is offered and available, then a stored key
+    /// over [`crate::provider::KEYLESS_AUTH`], then the first candidate so
+    /// callers without credential context keep the provider default.
     pub fn select(&self, auth_modes: &[String]) -> String {
         self.current
-            .filter(|auth| auth_modes.iter().any(|mode| mode == auth))
+            .filter(|auth| {
+                auth_modes
+                    .iter()
+                    .any(|mode| mode == *auth && self.available.contains(mode))
+            })
             .map(str::to_string)
             .or_else(|| self.preferred_available(auth_modes))
             .or_else(|| auth_modes.first().cloned())
