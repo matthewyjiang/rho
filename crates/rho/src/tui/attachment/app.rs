@@ -39,7 +39,8 @@ use super::super::{
     HISTORY_SCROLLBAR_REVEAL_DURATION,
 };
 use super::tool_toggle::{
-    latest_toggle_target, status_fallback_items, tool_card_at_line, HistoryItem, ToggleTarget,
+    latest_toggle_target, status_fallback_items, tool_card_at_line, HistoryItem, PaintedHistory,
+    ToggleTarget,
 };
 
 const REFRESH_INTERVAL: Duration = Duration::from_millis(100);
@@ -185,6 +186,10 @@ struct AttachmentApp {
     press_cell: Option<(u16, u16)>,
     /// Current transcript index for each finished tool key.
     finished_tool_index: BTreeMap<String, usize>,
+    /// Cached history render shared by draw and hit-testing. Invalidated on
+    /// content, status, toggle, and width changes so mouse and scroll events
+    /// reuse it instead of re-rendering the whole transcript.
+    painted: Option<PaintedHistory>,
     viewport_height: usize,
     history_area: Rect,
     history_width: usize,
@@ -220,6 +225,7 @@ impl AttachmentApp {
             press_tool_key: None,
             press_cell: None,
             finished_tool_index: BTreeMap::new(),
+            painted: None,
             viewport_height: 0,
             history_area: Rect::default(),
             history_width: 0,
@@ -241,11 +247,13 @@ impl AttachmentApp {
                 event = terminal_events.next() => self.handle_event(event?),
                 _ = refresh.tick() => {
                     let changed = self.refresh().await?;
+                    let elapsed_advanced =
+                        self.live_elapsed_secs() != self.last_drawn_elapsed_secs;
                     // Keep redrawing while the auto-hide scrollbar is visible, and
                     // when a live run's whole-second elapsed label advances without I/O.
                     changed
                         || self.scroll.should_render(Instant::now())
-                        || self.live_elapsed_secs() != self.last_drawn_elapsed_secs
+                        || elapsed_advanced
                 },
             };
             if redraw {
@@ -264,7 +272,12 @@ impl AttachmentApp {
         }
         let status_path = self.directory.join(subagent::RESULT_FILE_NAME);
         if let Some(status) = subagent::read_status(&status_path) {
-            changed |= self.status.as_ref() != Some(&status);
+            let status_changed = self.status.as_ref() != Some(&status);
+            if status_changed {
+                // Status feeds the fallback history items.
+                self.invalidate_painted();
+            }
+            changed |= status_changed;
             let state_changed = self.reported_state != Some(status.state);
             self.status = Some(status.clone());
             if state_changed {
@@ -290,6 +303,14 @@ impl AttachmentApp {
     }
 
     fn apply_event(&mut self, event: AttachmentEvent) {
+        if !matches!(
+            event,
+            AttachmentEvent::ContextUsage(_)
+                | AttachmentEvent::Usage(_)
+                | AttachmentEvent::StepStarted
+        ) {
+            self.invalidate_painted();
+        }
         match event {
             AttachmentEvent::Prompt(prompt) => self.transcript.push(Entry::User(prompt)),
             AttachmentEvent::AssistantTextDelta(text) => {
@@ -411,6 +432,23 @@ impl AttachmentApp {
     fn clear_press(&mut self) {
         self.press_cell = None;
         self.press_tool_key = None;
+    }
+
+    fn invalidate_painted(&mut self) {
+        self.painted = None;
+    }
+
+    /// Rebuild the cached history render when missing or wrapped for another
+    /// width. Content changes drop the cache via [`Self::invalidate_painted`].
+    fn ensure_painted(&mut self, width: usize) -> &PaintedHistory {
+        if self
+            .painted
+            .as_ref()
+            .is_none_or(|painted| painted.width != width)
+        {
+            self.painted = Some(self.paint_history(width));
+        }
+        self.painted.as_ref().expect("painted history just ensured")
     }
 
     fn tool_key_for_target(&self, target: &ToggleTarget) -> Option<String> {
@@ -616,13 +654,21 @@ impl AttachmentApp {
         ];
         frame.render_widget(Paragraph::new(header), chunks[0]);
 
-        let lines = self.history_lines(width, status);
-        self.sync_history_geometry(chunks[1], lines.len(), width);
+        // Pending cards paint live elapsed labels. Invalidate here so a
+        // key-driven redraw on a second boundary still refreshes them.
+        if self.live_elapsed_secs() != self.last_drawn_elapsed_secs
+            && !self.pending_tools.is_empty()
+        {
+            self.invalidate_painted();
+        }
+        let content_len = self.ensure_painted(width).lines.len();
+        self.sync_history_geometry(chunks[1], content_len, width);
         let start = self
             .scroll
             .visible_start(self.content_len, self.viewport_height);
-        let end = start.saturating_add(self.viewport_height).min(lines.len());
-        frame.render_widget(Paragraph::new(lines[start..end].to_vec()), chunks[1]);
+        let end = start.saturating_add(self.viewport_height).min(content_len);
+        let visible = self.ensure_painted(width).lines[start..end].to_vec();
+        frame.render_widget(Paragraph::new(visible), chunks[1]);
         // Hover lift derives from the remembered pointer cell against this
         // frame's layout, so scroll, promotion, and toggles re-anchor it every
         // draw instead of caching stale content-line spans.
@@ -652,16 +698,20 @@ impl AttachmentApp {
         frame.render_widget(Paragraph::new(footer).style(Style::default()), chunks[2]);
     }
 
-    fn history_lines(&self, width: usize, status: Option<&RunStatus>) -> Vec<Line<'static>> {
-        let mut lines = Vec::new();
-        let max_tool_output_lines = self.display.max_tool_output_lines();
-        for item in self.history_items(status) {
-            lines.extend(item.paint_lines(width, max_tool_output_lines));
+    /// Paint the full history for `width`, including the placeholder shown
+    /// before any agent output arrives.
+    fn paint_history(&self, width: usize) -> PaintedHistory {
+        let mut painted = PaintedHistory::paint(
+            self.history_items(self.status.as_ref()),
+            width,
+            self.display.max_tool_output_lines(),
+        );
+        if painted.lines.is_empty() {
+            painted
+                .lines
+                .push(Line::styled("waiting for agent output...", Theme::dim()));
         }
-        if lines.is_empty() {
-            lines.push(Line::styled("waiting for agent output...", Theme::dim()));
-        }
-        lines
+        painted
     }
 
     fn history_items(&self, status: Option<&RunStatus>) -> Vec<HistoryItem<'_>> {
@@ -714,22 +764,19 @@ impl AttachmentApp {
     }
 
     /// Toggleable card under the pointer: click target and hover-lift span.
-    fn tool_card_at_pointer(&self, column: u16, row: u16) -> Option<(ToggleTarget, Range<usize>)> {
+    fn tool_card_at_pointer(
+        &mut self,
+        column: u16,
+        row: u16,
+    ) -> Option<(ToggleTarget, Range<usize>)> {
         let line = self.pointer_history_line(column, row)?;
-        tool_card_at_line(
-            self.history_items(self.status.as_ref()),
-            line,
-            self.toggle_width(),
-            self.display.max_tool_output_lines(),
-        )
+        let width = self.toggle_width();
+        tool_card_at_line(&self.ensure_painted(width).cards, line)
     }
 
     fn toggle_latest_tool(&mut self) {
-        let Some(target) = latest_toggle_target(
-            self.history_items(self.status.as_ref()),
-            self.toggle_width(),
-            self.display.max_tool_output_lines(),
-        ) else {
+        let width = self.toggle_width();
+        let Some(target) = latest_toggle_target(&self.ensure_painted(width).cards) else {
             return;
         };
         self.toggle_tool_at(target);
@@ -747,6 +794,7 @@ impl AttachmentApp {
             tool.expanded =
                 expand && matches!(&target, ToggleTarget::Pending(pending) if pending == key);
         }
+        self.invalidate_painted();
     }
 
     fn is_expanded(&self, target: &ToggleTarget) -> bool {

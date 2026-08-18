@@ -203,7 +203,7 @@ fn multi_step_usage_replaces_live_run_snapshot() {
 }
 
 // Covers: attach render policy mirrors interactive show_reasoning_output + zen_mode.
-// Owner: AttachmentDisplaySettings + history_lines.
+// Owner: AttachmentDisplaySettings + paint_history.
 #[test]
 fn history_lines_follow_display_settings() {
     let directory = TempDir::new().unwrap();
@@ -225,7 +225,7 @@ fn history_lines_follow_display_settings() {
         ),
     });
 
-    let visible = |app: &AttachmentApp| line_text(&app.history_lines(80, None));
+    let visible = |app: &AttachmentApp| line_text(&app.paint_history(80).lines);
 
     let full = visible(&app);
     assert!(full.iter().any(|line| line.contains("secret plan")));
@@ -262,7 +262,7 @@ fn history_lines_follow_display_settings() {
 }
 
 // Covers: max_tool_output_lines comes from display settings, not a local constant.
-// Owner: AttachmentDisplaySettings + history_lines.
+// Owner: AttachmentDisplaySettings + paint_history.
 #[test]
 fn history_lines_honor_max_tool_output_lines() {
     let directory = TempDir::new().unwrap();
@@ -286,7 +286,7 @@ fn history_lines_honor_max_tool_output_lines() {
         .with_body(rho_tools::tool_card::ToolBody::Lines(body)),
     });
 
-    let lines = line_text(&app.history_lines(80, None));
+    let lines = line_text(&app.paint_history(80).lines);
     assert!(lines.iter().any(|line| line.contains("line-0")));
     assert!(lines.iter().all(|line| !line.contains("line-4")));
 }
@@ -483,7 +483,7 @@ fn click_card(app: &mut AttachmentApp, column: u16, row: u16) {
 }
 
 fn sync_view(app: &mut AttachmentApp, width: u16, height: u16) {
-    let lines = app.history_lines(width as usize, None);
+    let lines = app.paint_history(width as usize).lines;
     app.sync_history_geometry(Rect::new(0, 4, width, height), lines.len(), width as usize);
 }
 
@@ -504,15 +504,89 @@ fn click_toggles_finished_over_budget_card() {
         card: long_body_card(),
     });
     sync_view(&mut app, 80, 30);
-    let collapsed_len = app.history_lines(80, None).len();
+    let collapsed_len = app.paint_history(80).lines.len();
 
     click_card(&mut app, 8, 5);
     assert!(transcript_tool(&app, 0).expanded);
-    assert!(app.history_lines(80, None).len() > collapsed_len);
+    assert!(app.paint_history(80).lines.len() > collapsed_len);
 
     click_card(&mut app, 8, 5);
     assert!(!transcript_tool(&app, 0).expanded);
-    assert_eq!(app.history_lines(80, None).len(), collapsed_len);
+    assert_eq!(app.paint_history(80).lines.len(), collapsed_len);
+}
+
+// Covers: mouse events reuse the cached history render instead of re-painting
+// the whole transcript per event, while content and toggles invalidate it
+// Owner: attach paint cache
+#[test]
+fn mouse_events_reuse_painted_history() {
+    let (_directory, mut app) = test_app();
+    app.apply_event(AttachmentEvent::ToolFinished {
+        key: Some("call-1".into()),
+        card: long_body_card(),
+    });
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 30)).expect("test terminal");
+    terminal
+        .draw(|frame| app.draw(frame))
+        .expect("baseline draw");
+    let painted_ptr = app
+        .painted
+        .as_ref()
+        .expect("painted after draw")
+        .lines
+        .as_ptr();
+
+    app.handle_event(mouse(MouseEventKind::Moved, 8, 5));
+    app.handle_event(mouse(MouseEventKind::Down(MouseButton::Left), 8, 5));
+    app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 8, 6));
+    terminal.draw(|frame| app.draw(frame)).expect("hover draw");
+    assert_eq!(
+        app.painted
+            .as_ref()
+            .expect("painted after mouse events")
+            .lines
+            .as_ptr(),
+        painted_ptr,
+        "mouse events must not rebuild the painted history"
+    );
+
+    click_card(&mut app, 8, 5);
+    assert!(
+        app.painted.is_none(),
+        "toggling a card must invalidate the painted history"
+    );
+
+    terminal.draw(|frame| app.draw(frame)).expect("toggle draw");
+    let after_toggle_ptr = app
+        .painted
+        .as_ref()
+        .expect("painted after toggle draw")
+        .lines
+        .as_ptr();
+    app.apply_event(AttachmentEvent::Usage(ModelUsage {
+        input_tokens: Some(10),
+        ..ModelUsage::default()
+    }));
+    app.apply_event(AttachmentEvent::ContextUsage(ContextUsage::estimated(
+        10, None,
+    )));
+    app.apply_event(AttachmentEvent::StepStarted);
+    assert_eq!(
+        app.painted
+            .as_ref()
+            .expect("painted after header-only events")
+            .lines
+            .as_ptr(),
+        after_toggle_ptr,
+        "header-only events must not rebuild the painted history"
+    );
+
+    app.apply_event(AttachmentEvent::Notice("new content".into()));
+    assert!(
+        app.painted.is_none(),
+        "content changes must invalidate the painted history"
+    );
 }
 
 // Covers: under-budget cards ignore click

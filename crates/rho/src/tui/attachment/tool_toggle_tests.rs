@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 use rho_tools::tool_card::{ToolBody, ToolCard, ToolFamily, ToolHeader, ToolStatus};
 
-use super::{latest_toggle_target, tool_card_at_line, HistoryItem, ToggleTarget};
+use super::{latest_toggle_target, tool_card_at_line, HistoryItem, PaintedHistory, ToggleTarget};
 use crate::tui::{Entry, ToolEntry};
 
 fn long_card() -> ToolCard {
@@ -60,6 +60,7 @@ fn tool_card_at_line_maps_header_body_spacer_and_neighbors() {
     ];
     let long_height = paint_height(&items[0], 80, 10);
     let notice_height = paint_height(&items[1], 80, 10);
+    let painted = PaintedHistory::paint(items, 80, 10);
 
     let cases = [
         (0, Some(ToggleTarget::Transcript(0))),
@@ -71,26 +72,7 @@ fn tool_card_at_line_maps_header_body_spacer_and_neighbors() {
     ];
     for (line, expected) in cases {
         assert_eq!(
-            tool_card_at_line(
-                [
-                    HistoryItem::Transcript {
-                        index: 0,
-                        entry: &long,
-                    },
-                    HistoryItem::Transcript {
-                        index: 1,
-                        entry: &notice,
-                    },
-                    HistoryItem::Pending {
-                        key: "live",
-                        tool: &pending,
-                    },
-                ],
-                line,
-                80,
-                10
-            )
-            .map(|(target, _)| target),
+            tool_card_at_line(&painted.cards, line).map(|(target, _)| target),
             expected,
             "line {line}"
         );
@@ -103,21 +85,22 @@ fn tool_card_at_line_maps_header_body_spacer_and_neighbors() {
 fn latest_toggle_target_prefers_pending() {
     let finished = Entry::Tool(tool_entry(long_card()));
     let pending = tool_entry(long_card());
+    let painted = PaintedHistory::paint(
+        [
+            HistoryItem::Transcript {
+                index: 0,
+                entry: &finished,
+            },
+            HistoryItem::Pending {
+                key: "live",
+                tool: &pending,
+            },
+        ],
+        80,
+        10,
+    );
     assert_eq!(
-        latest_toggle_target(
-            [
-                HistoryItem::Transcript {
-                    index: 0,
-                    entry: &finished,
-                },
-                HistoryItem::Pending {
-                    key: "live",
-                    tool: &pending,
-                },
-            ],
-            80,
-            10,
-        ),
+        latest_toggle_target(&painted.cards),
         Some(ToggleTarget::Pending("live".into()))
     );
 }
@@ -128,21 +111,19 @@ fn latest_toggle_target_prefers_pending() {
 fn latest_toggle_target_does_not_skip_non_expandable_pending() {
     let finished = Entry::Tool(tool_entry(long_card()));
     let pending = tool_entry(short_card());
-    assert_eq!(
-        latest_toggle_target(
-            [
-                HistoryItem::Transcript {
-                    index: 0,
-                    entry: &finished,
-                },
-                HistoryItem::Pending {
-                    key: "live",
-                    tool: &pending,
-                },
-            ],
-            80,
-            10,
-        ),
-        None
+    let painted = PaintedHistory::paint(
+        [
+            HistoryItem::Transcript {
+                index: 0,
+                entry: &finished,
+            },
+            HistoryItem::Pending {
+                key: "live",
+                tool: &pending,
+            },
+        ],
+        80,
+        10,
     );
+    assert_eq!(latest_toggle_target(&painted.cards), None);
 }

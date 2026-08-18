@@ -1,7 +1,11 @@
 //! Hit-test and accordion toggle targets for attach tool cards.
 //!
-//! Attach rebuilds history on every draw, so click mapping walks the same
-//! visible items `history_lines` paints instead of a cached line index.
+//! [`PaintedHistory`] paints the visible items once into a line stack plus
+//! per-card spans, so rendering, hover lift, and click mapping share one line
+//! index. The attach app caches it between content and layout changes instead
+//! of re-rendering the whole transcript on every event.
+
+use std::ops::Range;
 
 use ratatui::text::Line;
 
@@ -103,36 +107,68 @@ pub(super) fn status_fallback_items(
     items
 }
 
+/// One painted history render: the full line stack plus tool-card spans.
+///
+/// Lines and spans come from the same paint pass, so hit-testing always
+/// agrees with what is on screen.
+pub(super) struct PaintedHistory {
+    /// Width the lines were wrapped for; a mismatch invalidates the cache.
+    pub(super) width: usize,
+    pub(super) lines: Vec<Line<'static>>,
+    pub(super) cards: Vec<PaintedCard>,
+}
+
+/// Paint-order metadata for one tool card inside [`PaintedHistory`].
+pub(super) struct PaintedCard {
+    /// Set only when the card is over budget and has a click/Ctrl+O target.
+    toggle: Option<ToggleTarget>,
+    span: Range<usize>,
+    pending: bool,
+}
+
+impl PaintedHistory {
+    pub(super) fn paint<'a, I>(items: I, width: usize, max_tool_output_lines: usize) -> Self
+    where
+        I: IntoIterator<Item = HistoryItem<'a>>,
+    {
+        let mut lines = Vec::new();
+        let mut cards = Vec::new();
+        for item in items {
+            let painted = item.paint_lines(width, max_tool_output_lines);
+            if painted.is_empty() {
+                continue;
+            }
+            let span = lines.len()..lines.len().saturating_add(painted.len());
+            if item.tool_entry().is_some() {
+                cards.push(PaintedCard {
+                    toggle: item
+                        .is_toggleable(width, max_tool_output_lines)
+                        .then(|| item.toggle_target())
+                        .flatten(),
+                    span,
+                    pending: matches!(item, HistoryItem::Pending { .. }),
+                });
+            }
+            lines.extend(painted);
+        }
+        Self {
+            width,
+            lines,
+            cards,
+        }
+    }
+}
+
 /// Toggleable tool card covering `line`: its target and full line span.
 ///
 /// The span is the whole clickable card, so hover lift and click toggle
 /// agree on the hit region.
-pub(super) fn tool_card_at_line<'a, I>(
-    items: I,
+pub(super) fn tool_card_at_line(
+    cards: &[PaintedCard],
     line: usize,
-    width: usize,
-    max_tool_output_lines: usize,
-) -> Option<(ToggleTarget, std::ops::Range<usize>)>
-where
-    I: IntoIterator<Item = HistoryItem<'a>>,
-{
-    let mut start = 0usize;
-    for item in items {
-        let height = item.paint_lines(width, max_tool_output_lines).len();
-        if height == 0 {
-            continue;
-        }
-        let end = start.saturating_add(height);
-        if (start..end).contains(&line) {
-            return item
-                .is_toggleable(width, max_tool_output_lines)
-                .then(|| item.toggle_target())
-                .flatten()
-                .map(|target| (target, start..end));
-        }
-        start = end;
-    }
-    None
+) -> Option<(ToggleTarget, Range<usize>)> {
+    let card = cards.iter().find(|card| card.span.contains(&line))?;
+    Some((card.toggle.clone()?, card.span.clone()))
 }
 
 /// Latest Ctrl+O target in paint order.
@@ -141,31 +177,12 @@ where
 /// the latest pending card is eligible — matching the main TUI, which does
 /// not fall back to an older pending or transcript card when that latest
 /// pending body is under budget.
-pub(super) fn latest_toggle_target<'a, I>(
-    items: I,
-    width: usize,
-    max_tool_output_lines: usize,
-) -> Option<ToggleTarget>
-where
-    I: IntoIterator<Item = HistoryItem<'a>>,
-{
-    let mut last_pending = None;
-    let mut last_toggleable = None;
-    for item in items {
-        if matches!(item, HistoryItem::Pending { .. }) {
-            last_pending = Some(item);
-        } else if item.is_toggleable(width, max_tool_output_lines) {
-            last_toggleable = Some(item);
-        }
-    }
-    let candidate = match last_pending {
-        Some(pending) => pending,
-        None => last_toggleable?,
-    };
-    candidate
-        .is_toggleable(width, max_tool_output_lines)
-        .then(|| candidate.toggle_target())
-        .flatten()
+pub(super) fn latest_toggle_target(cards: &[PaintedCard]) -> Option<ToggleTarget> {
+    let candidate = cards
+        .iter()
+        .rfind(|card| card.pending)
+        .or_else(|| cards.iter().rfind(|card| card.toggle.is_some()))?;
+    candidate.toggle.clone()
 }
 
 #[cfg(test)]
