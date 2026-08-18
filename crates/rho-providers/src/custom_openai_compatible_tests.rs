@@ -4,7 +4,8 @@ use super::super::{
 use super::{
     custom_openai_compatible_provider, custom_openai_compatible_providers,
     custom_provider_registry_test_lock, install_custom_openai_compatible_providers,
-    intern_custom_openai_compatible_providers, reset_custom_openai_compatible_providers_for_tests,
+    intern_custom_openai_compatible_providers, is_custom_provider_api_key_auth,
+    replace_current_thread_custom_providers, reset_custom_openai_compatible_providers_for_tests,
     validate_custom_provider_name, CustomProviderThreadScope,
 };
 
@@ -63,6 +64,8 @@ fn install_custom_providers_makes_openai_compatible_hosts() {
         CatalogReasoningPolicy::OffAsNone
     );
     assert!(composer.is_custom_openai_compatible());
+    assert!(!composer.is_keyless());
+    assert!(composer.has_none_auth());
     assert_eq!(
         composer.unknown_effort(),
         UnknownEffortPolicy::SendRequested
@@ -107,12 +110,15 @@ fn install_custom_providers_makes_openai_compatible_hosts() {
             .collect::<Vec<_>>(),
         ["composer", "vllm"]
     );
-    assert!(
-        crate::model::catalog::login_groups()
-            .iter()
-            .all(|group| group.id != "composer" && group.id != "vllm"),
-        "creating a custom host is a dedicated /login item, not a catalog group"
-    );
+    let composer_group = crate::model::catalog::login_groups()
+        .into_iter()
+        .find(|group| group.id == "composer")
+        .expect("installed custom hosts are login groups");
+    assert_eq!(composer_group.methods.len(), 1);
+    assert_eq!(composer_group.methods[0].target.auth, "composer-api-key");
+    assert!(crate::model::catalog::login_groups()
+        .iter()
+        .any(|group| group.id == "vllm"));
     assert!(
         crate::model::catalog::login_targets()
             .iter()
@@ -163,4 +169,31 @@ fn thread_scope_does_not_replace_process_active_providers() {
     }
     assert!(crate::provider::provider_descriptor("composer").is_some());
     assert!(crate::provider::provider_descriptor("vllm").is_none());
+}
+
+// Covers: replacing the current overlay must not push another scope
+// Owner: provider registry
+#[test]
+fn replace_current_thread_custom_providers_updates_the_live_overlay() {
+    let _lock = custom_provider_registry_test_lock();
+    restore_empty();
+    let _restore = RestoreCustomProviders;
+    install_custom_openai_compatible_providers(["composer"]).unwrap();
+    let overlay = intern_custom_openai_compatible_providers(["composer"]).unwrap();
+    let _scope = CustomProviderThreadScope::enter(overlay);
+    assert!(crate::provider::provider_descriptor("vllm").is_none());
+
+    let next = intern_custom_openai_compatible_providers(["composer", "vllm"]).unwrap();
+    replace_current_thread_custom_providers(next);
+    assert!(crate::provider::provider_descriptor("composer").is_some());
+    assert!(crate::provider::provider_descriptor("vllm").is_some());
+}
+
+#[test]
+fn custom_api_key_auth_ids_accept_valid_host_names_only() {
+    assert!(is_custom_provider_api_key_auth("vllm-api-key"));
+    assert!(is_custom_provider_api_key_auth("composer-api-key"));
+    assert!(!is_custom_provider_api_key_auth("openai-api-key"));
+    assert!(!is_custom_provider_api_key_auth("api-key"));
+    assert!(!is_custom_provider_api_key_auth("vllm"));
 }

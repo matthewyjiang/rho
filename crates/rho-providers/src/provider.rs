@@ -470,8 +470,16 @@ impl ProviderDescriptor {
         self.auth_modes().find(|mode| mode.id == auth)
     }
 
+    /// True when every registered mode is keyless.
     pub fn is_keyless(self) -> bool {
-        matches!(self.default_auth().auth_kind, ProviderAuthKind::None)
+        self.auth_modes()
+            .all(|mode| matches!(mode.auth_kind, ProviderAuthKind::None))
+    }
+
+    /// True when the provider can run without credentials.
+    pub fn has_none_auth(self) -> bool {
+        self.auth_modes()
+            .any(|mode| matches!(mode.auth_kind, ProviderAuthKind::None))
     }
 
     /// Config-defined Chat Completions hosts are named providers, not a single built-in.
@@ -503,7 +511,8 @@ pub use custom_openai_compatible::{
     custom_provider_api_key_account, custom_provider_api_key_auth_id,
     custom_provider_api_key_env_var, custom_provider_registry_test_lock,
     install_custom_openai_compatible_providers, intern_custom_openai_compatible_providers,
-    interned_custom_provider, reset_custom_openai_compatible_providers_for_tests,
+    interned_custom_provider, is_custom_provider_api_key_auth,
+    replace_current_thread_custom_providers, reset_custom_openai_compatible_providers_for_tests,
     scope_custom_openai_compatible_providers, validate_custom_provider_name,
     CustomProviderThreadScope,
 };

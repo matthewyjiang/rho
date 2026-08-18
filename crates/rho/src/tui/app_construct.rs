@@ -106,7 +106,6 @@ impl App {
             goal: None,
             history: HistoryUi::default(),
             credential_store,
-            custom_provider_scope: None,
             available_auths,
             using_unavailable_provider,
             pending_interactive_login: None,

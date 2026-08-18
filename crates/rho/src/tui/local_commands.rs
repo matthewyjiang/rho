@@ -113,7 +113,7 @@ impl App {
 
         let mut provider_health = Vec::new();
         for descriptor in provider::visible_providers() {
-            if !descriptor.is_keyless()
+            if !descriptor.has_none_auth()
                 || descriptor.model_refresh != Some(ProviderModelRefreshKind::OpenAiCompatible)
             {
                 continue;

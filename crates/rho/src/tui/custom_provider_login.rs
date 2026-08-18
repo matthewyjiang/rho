@@ -1,17 +1,11 @@
 //! `/login` onboarding for a user-defined OpenAI-compatible host.
 
-use ratatui::DefaultTerminal;
 use rho_providers::{
-    auth::login_dispatch::ProviderAuthentication,
     model::catalog::LoginTarget,
     provider::{self, custom_provider_api_key_auth_id},
 };
 
-use super::{
-    login::{SecretInput, StoreChoiceNext},
-    text_input::TextInput,
-    App, ComposerMode, Entry, InteractiveRuntime,
-};
+use super::{login::SecretInput, text_input::TextInput, App, ComposerMode, Entry};
 
 pub(super) const CUSTOM_PROVIDER_LOGIN_VALUE: &str = "_custom-chat-completions";
 pub(super) const CUSTOM_PROVIDER_LOGIN_LABEL: &str = "Custom Chat Completions";
@@ -74,47 +68,12 @@ impl App {
             .update(|config| config.providers.set_endpoint(name, base_url))??;
         let config = self.info.services.config_repository.load()?;
         config.providers.activate()?;
-        // Startup holds an empty overlay. Replace it so the new host is visible
-        // to pickers and login before the next process start.
-        self.custom_provider_scope = None;
-        self.custom_provider_scope = Some(config.providers.thread_scope()?);
+        config.providers.refresh_thread_visibility()?;
         Ok(())
-    }
-
-    pub(super) async fn finish_custom_provider_without_key(
-        &mut self,
-        mut target: LoginTarget,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        let _ = ProviderAuthentication::delete_credentials(
-            self.credential_store.as_ref(),
-            &target.auth,
-        );
-        target.auth = "none".into();
-        target.label = target.provider.clone();
-        self.finish_login(target, terminal, agent).await
-    }
-
-    pub(super) async fn finish_custom_provider_with_key(
-        &mut self,
-        target: LoginTarget,
-        key: String,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        if self.begin_store_choice_if_needed(StoreChoiceNext::CustomApiKey {
-            provider: target.provider.clone(),
-            key: key.clone(),
-        }) {
-            return Ok(());
-        }
-        self.persist_api_key_and_finish(target, key, terminal, agent)
-            .await
     }
 }
 
-pub(super) fn custom_provider_login_target(name: &str) -> LoginTarget {
+fn custom_provider_login_target(name: &str) -> LoginTarget {
     LoginTarget {
         provider: name.to_string(),
         auth: custom_provider_api_key_auth_id(name),

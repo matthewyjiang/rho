@@ -123,6 +123,14 @@ fn authentication_checks(store: &dyn CredentialStore) -> Vec<DoctorCheck> {
                                 "Credentials are available in the configured credential store."
                                     .into(),
                             ),
+                            Ok(false) if descriptor.has_none_auth() => (
+                                true,
+                                "optional",
+                                format!(
+                                    "No key stored. This host can run without one, or run /login {} to add a key.",
+                                    mode.id
+                                ),
+                            ),
                             Ok(false) => (
                                 false,
                                 "missing",
@@ -231,7 +239,7 @@ fn model_endpoint_checks(provider_health: &[(String, ProviderModelHealth)]) -> V
     provider::visible_providers()
         .iter()
         .filter(|descriptor| {
-            descriptor.is_keyless()
+            descriptor.has_none_auth()
                 && descriptor.model_refresh
                     == Some(provider::ProviderModelRefreshKind::OpenAiCompatible)
         })

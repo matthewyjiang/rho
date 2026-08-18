@@ -22,10 +22,8 @@ fn parse_auth_profile(value: &str) -> Result<String, String> {
     if profiles.contains(&value) {
         return Ok(value.to_string());
     }
-    if let Some(name) = value.strip_suffix("-api-key") {
-        if rho_providers::provider::validate_custom_provider_name(name).is_ok() {
-            return Ok(value.to_string());
-        }
+    if rho_providers::provider::is_custom_provider_api_key_auth(value) {
+        return Ok(value.to_string());
     }
     Err(format!(
         "invalid value '{value}' for '--auth'; expected one of: {}",

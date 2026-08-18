@@ -8,9 +8,9 @@ use {
 };
 
 pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<()> {
-    if rho_providers::provider::provider_descriptor(provider).is_some_and(|descriptor| {
-        descriptor.is_keyless() && !descriptor.is_custom_openai_compatible()
-    }) {
+    if rho_providers::provider::provider_descriptor(provider)
+        .is_some_and(|descriptor| descriptor.is_keyless())
+    {
         anyhow::bail!("provider '{provider}' does not require login");
     }
     let Some(target) = catalog::login_target_for_provider(provider) else {
@@ -25,7 +25,7 @@ pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<()>
         AuthenticationMethod::None => {
             anyhow::bail!("provider '{provider}' does not require login")
         }
-        AuthenticationMethod::ApiKey { entry_label } => {
+        AuthenticationMethod::ApiKey { entry_label, .. } => {
             anyhow::bail!(
                 "{entry_label} login is only supported in the interactive TUI; run `/login {provider}`"
             );

@@ -89,6 +89,12 @@ impl ProviderConfigs {
         )
     }
 
+    /// Refreshes this thread's overlay so a newly written host is visible now.
+    pub(crate) fn refresh_thread_visibility(&self) -> anyhow::Result<()> {
+        rho_providers::provider::replace_current_thread_custom_providers(self.intern_names()?);
+        Ok(())
+    }
+
     /// Interns this config's hosts and overlays them on the current thread.
     pub(crate) fn thread_scope(
         &self,

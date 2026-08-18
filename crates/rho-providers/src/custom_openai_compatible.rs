@@ -44,6 +44,16 @@ pub fn custom_provider_api_key_env_var(name: &str) -> String {
     )
 }
 
+/// Whether `value` is a syntactically valid `{name}-api-key` custom auth id.
+///
+/// The host does not have to be interned yet. CLI `--auth` uses this because
+/// [`crate::auth_profiles`] is the static built-in list.
+pub fn is_custom_provider_api_key_auth(value: &str) -> bool {
+    value
+        .strip_suffix("-api-key")
+        .is_some_and(|name| validate_custom_provider_name(name).is_ok())
+}
+
 fn leak_str(value: String) -> &'static str {
     Box::leak(value.into_boxed_str())
 }
@@ -146,6 +156,19 @@ impl Drop for CustomProviderThreadScope {
             stack.borrow_mut().pop();
         });
     }
+}
+
+/// Replaces the current thread overlay's visible names, if this thread has one.
+///
+/// [`install_custom_openai_compatible_providers`] updates the process-wide set
+/// only. A live overlay still hides that set, so login that writes a new host
+/// must refresh the current overlay instead of stacking another scope.
+pub fn replace_current_thread_custom_providers(names: Arc<[String]>) {
+    THREAD_SCOPE.with(|stack| {
+        if let Some(top) = stack.borrow_mut().last_mut() {
+            *top = names;
+        }
+    });
 }
 
 /// Overlays custom provider visibility on the current Tokio task.

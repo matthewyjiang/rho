@@ -91,7 +91,7 @@ struct CrossProviderLoginGroup {
 
 /// Cross-provider login groups that attach foreign auth modes under one picker entry.
 ///
-/// Single-provider groups are derived from [`provider::providers`]; only groupings that
+/// Single-provider groups are derived from [`provider::visible_providers`]; only groupings that
 /// span providers (OpenAI+Codex, Moonshot+Kimi) need an explicit spec.
 ///
 /// Auth prompts are derived from registry metadata so `ApiKey`/`OAuth` wording stays
@@ -139,7 +139,7 @@ pub fn login_groups() -> Vec<LoginGroup> {
         });
     }
 
-    for descriptor in provider::providers() {
+    for descriptor in provider::visible_providers() {
         let modes = descriptor
             .auth_modes()
             .filter(|mode| mode.auth_kind != ProviderAuthKind::None)
