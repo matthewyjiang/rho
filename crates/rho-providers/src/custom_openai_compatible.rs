@@ -221,6 +221,10 @@ pub fn interned_custom_provider(name: &str) -> Option<&'static ProviderDescripto
     lock_read().interned.get(name).copied()
 }
 
+pub(crate) fn interned_custom_providers() -> Vec<&'static ProviderDescriptor> {
+    lock_read().interned.values().copied().collect()
+}
+
 pub(crate) fn interned_custom_provider_for_auth(auth: &str) -> Option<&'static ProviderDescriptor> {
     lock_read().interned.values().copied().find(|descriptor| {
         descriptor

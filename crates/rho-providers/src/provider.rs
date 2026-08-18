@@ -537,25 +537,20 @@ pub fn visible_providers() -> Vec<&'static ProviderDescriptor> {
 
 /// Environment variable names used as provider credential overrides.
 ///
-/// Derived from [`PROVIDERS`] auth kinds so newly registered provider credentials
-/// are included automatically. Hosts should strip these from child process
-/// environments by default, for example with
+/// Built-in auth kinds plus every interned custom host, recomputed on each
+/// call so a host added after first lookup is still stripped. Hosts should
+/// strip these from child process environments by default, for example with
 /// [`rho_sdk::ProcessEnvironment::inherit_except`].
-pub fn credential_env_vars() -> &'static [&'static str] {
-    use std::sync::OnceLock;
-
-    static VARS: OnceLock<Vec<&'static str>> = OnceLock::new();
-    VARS.get_or_init(|| {
-        let mut vars: Vec<&'static str> = providers()
-            .iter()
-            .flat_map(|descriptor| descriptor.auth_modes())
-            .filter_map(|mode| mode.auth_kind.env_var())
-            .collect();
-        vars.sort_unstable();
-        vars.dedup();
-        vars
-    })
-    .as_slice()
+pub fn credential_env_vars() -> Vec<&'static str> {
+    let mut vars: Vec<&'static str> = providers()
+        .iter()
+        .chain(custom_openai_compatible::interned_custom_providers())
+        .flat_map(|descriptor| descriptor.auth_modes())
+        .filter_map(|mode| mode.auth_kind.env_var())
+        .collect();
+    vars.sort_unstable();
+    vars.dedup();
+    vars
 }
 
 /// Auth profile names accepted by CLI `--auth` and config `auth`.

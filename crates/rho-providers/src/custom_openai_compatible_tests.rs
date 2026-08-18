@@ -197,3 +197,17 @@ fn custom_api_key_auth_ids_accept_valid_host_names_only() {
     assert!(!is_custom_provider_api_key_auth("api-key"));
     assert!(!is_custom_provider_api_key_auth("vllm"));
 }
+
+// Covers: custom-host env overrides must be stripped from child processes
+// Owner: provider registry
+#[test]
+fn credential_env_vars_include_interned_custom_hosts() {
+    let _lock = custom_provider_registry_test_lock();
+    restore_empty();
+    let _restore = RestoreCustomProviders;
+    intern_custom_openai_compatible_providers(["envfilter-host"]).unwrap();
+    assert!(
+        crate::credential_env_vars().contains(&"RHO_ENVFILTER_HOST_API_KEY"),
+        "interned custom hosts must appear in the child-process strip list"
+    );
+}

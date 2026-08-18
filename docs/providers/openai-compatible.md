@@ -39,7 +39,7 @@ model = "qwen2.5-coder"
 auth = "vllm-api-key"
 ```
 
-Leave the `/login` key field blank to keep or switch back to `none`. `/logout <name>` deletes a stored key. The CI/development override is `RHO_<NAME>_API_KEY`, with the provider name uppercased and hyphens turned into underscores (`RHO_VLLM_API_KEY`).
+Leave the `/login` key field blank to delete any stored key and switch the host back to `none`. `/logout <name>` also deletes a stored key. The CI/development override is `RHO_<NAME>_API_KEY`, with the provider name uppercased and hyphens turned into underscores (`RHO_VLLM_API_KEY`).
 
 ## Use it
 
