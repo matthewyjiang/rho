@@ -187,31 +187,23 @@ impl Config {
 
     /// Promotes a custom host from `none` to `{name}-api-key` when a key is stored.
     ///
-    /// Login stores the secret without always rewriting `auth`. Keyless is the
-    /// default and is always "available", so restart would keep sending no
-    /// `Authorization` header unless this runs.
+    /// Login can store the secret without rewriting `auth`. Keyless is the
+    /// default, so restart would keep sending no `Authorization` header unless
+    /// this runs. One-directional: a keyed profile is never written back to
+    /// `none`, including when the credential store errors or is empty.
     pub(crate) fn promote_stored_custom_auth(
         &mut self,
         store: &dyn rho_providers::credentials::CredentialStore,
     ) -> bool {
+        if self.auth != rho_providers::provider::KEYLESS_AUTH {
+            return false;
+        }
         let Some(descriptor) = rho_providers::provider::interned_custom_provider(&self.provider)
         else {
             return false;
         };
-        // Use interned modes and the store directly. `available_auth_modes`
-        // only sees the process-wide picker set, which may still be empty
-        // during settings load.
-        let available = descriptor
-            .auth_modes()
-            .filter(|mode| {
-                rho_providers::credentials::auth_has_credentials(store, mode.id).unwrap_or(false)
-            })
-            .map(|mode| mode.id.to_string())
-            .collect::<Vec<_>>();
-        let selected = descriptor
-            .preferred_auth(Some(self.auth.as_str()), &available)
-            .id;
-        if selected == self.auth {
+        let selected = descriptor.discovery_auth(store).id;
+        if selected == rho_providers::provider::KEYLESS_AUTH {
             return false;
         }
         self.auth = selected.to_string();

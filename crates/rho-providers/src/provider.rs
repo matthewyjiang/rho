@@ -524,30 +524,6 @@ impl ProviderDescriptor {
             .unwrap_or_else(|| self.default_auth())
     }
 
-    /// Auth mode for config promotion after a stored custom key.
-    ///
-    /// Keyless (`none`) is always available. A stored keyed mode still wins
-    /// over current `none` so restart keeps the key after `/login`.
-    pub fn preferred_auth(self, current: Option<&str>, available: &[String]) -> AuthMode {
-        current
-            .filter(|auth| {
-                *auth != KEYLESS_AUTH
-                    && self.auth_mode(auth).is_some()
-                    && available.iter().any(|mode| mode == auth)
-            })
-            .and_then(|auth| self.auth_mode(auth))
-            .or_else(|| {
-                self.auth_modes().find(|mode| {
-                    mode.id != KEYLESS_AUTH && available.iter().any(|auth| auth == mode.id)
-                })
-            })
-            .or_else(|| {
-                self.auth_modes()
-                    .find(|mode| available.iter().any(|auth| auth == mode.id))
-            })
-            .unwrap_or_else(|| self.default_auth())
-    }
-
     /// Wire policy for Standard-dialect hosts when models.dev has no row.
     pub fn unknown_effort(self) -> UnknownEffortPolicy {
         if self.is_custom_openai_compatible() {

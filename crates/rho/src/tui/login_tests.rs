@@ -97,6 +97,27 @@ fn keyed_custom_login_persists_auth_mode_for_active_provider() {
     assert_eq!(saved.auth, "composer-api-key");
 }
 
+// Covers: /login must not persist a foreign auth id next to the current provider
+// Owner: login
+#[test]
+fn keyed_custom_login_does_not_write_auth_for_a_different_runtime_provider() {
+    let mut app = test_app();
+    app.using_unavailable_provider = true;
+    let before = app.info.services.config_repository.load().unwrap();
+
+    app.persist_login_auth(&LoginTarget {
+        provider: "composer".into(),
+        auth: "composer-api-key".into(),
+        label: "composer API key".into(),
+    });
+
+    pretty_assertions::assert_eq!(app.info.runtime.provider.as_str(), "openai");
+    pretty_assertions::assert_eq!(app.info.runtime.auth.as_str(), "api-key");
+    let saved = app.info.services.config_repository.load().unwrap();
+    pretty_assertions::assert_eq!(saved.provider, before.provider);
+    pretty_assertions::assert_eq!(saved.auth, before.auth);
+}
+
 #[test]
 fn refreshed_login_capabilities_reject_explicit_and_normalize_persisted_reasoning() {
     let cache = tempfile::tempdir().unwrap();

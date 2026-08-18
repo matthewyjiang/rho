@@ -786,20 +786,17 @@ impl App {
         if target.auth == provider::KEYLESS_AUTH {
             return;
         }
-        if target.provider != self.info.runtime.provider && !self.using_unavailable_provider {
-            if let Err(err) = self.info.services.config_repository.update(|config| {
+        let result = if target.provider == self.info.runtime.provider {
+            self.info.runtime.auth = target.auth.clone();
+            self.save_current_config()
+        } else {
+            self.info.services.config_repository.update(|config| {
                 if config.provider == target.provider {
                     config.auth = target.auth.clone();
                 }
-            }) {
-                self.insert_entry(&Entry::Error(format!(
-                    "stored credentials, but saving auth mode failed: {err}"
-                )));
-            }
-            return;
-        }
-        self.info.runtime.auth = target.auth.clone();
-        if let Err(err) = self.save_current_config() {
+            })
+        };
+        if let Err(err) = result {
             self.insert_entry(&Entry::Error(format!(
                 "stored credentials, but saving auth mode failed: {err}"
             )));
