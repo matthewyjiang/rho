@@ -59,9 +59,13 @@ fn push_pad_spaces(buf: &mut String, width: usize) {
 
 /// Rows the inline list picker spends on its own chrome, matching what
 /// `list_picker_lines` emits around the item rows.
-fn list_picker_chrome_rows(picker: &UiPicker) -> usize {
-    // filter + blank + count + blank + footer, plus detail + blank when shown.
-    5 + if picker.has_item_details() { 2 } else { 0 }
+fn list_picker_chrome_rows(picker: &UiPicker, width: usize) -> usize {
+    // filter + blank + count + blank + footer lines, plus detail + blank when shown.
+    4 + list_picker_footer_row_count(picker, width) + if picker.has_item_details() { 2 } else { 0 }
+}
+
+fn list_picker_footer_row_count(picker: &UiPicker, width: usize) -> usize {
+    picker.list_footer_lines(width).len().max(1)
 }
 
 /// Item rows a picker can list in a `viewport_height` row terminal.
@@ -69,9 +73,13 @@ fn list_picker_chrome_rows(picker: &UiPicker) -> usize {
 /// The list grows with the terminal instead of staying at the number that fits
 /// the default height fallback, so a tall window shows a long model or session
 /// list without scrolling.
-pub(super) fn picker_visible_item_cap(picker: &UiPicker, viewport_height: usize) -> usize {
+pub(super) fn picker_visible_item_cap(
+    picker: &UiPicker,
+    width: usize,
+    viewport_height: usize,
+) -> usize {
     viewport_height
-        .saturating_sub(list_picker_chrome_rows(picker))
+        .saturating_sub(list_picker_chrome_rows(picker, width))
         .saturating_sub(PICKER_RESERVED_FEED_ROWS)
         .max(1)
 }
@@ -144,7 +152,7 @@ fn list_picker_lines(
     width: usize,
     viewport_height: usize,
 ) -> Vec<Line<'static>> {
-    let item_cap = picker_visible_item_cap(picker, viewport_height);
+    let item_cap = picker_visible_item_cap(picker, width, viewport_height);
     let matching_indices = picker.matching_indices();
     let mut lines = Vec::with_capacity(item_cap + 7);
     lines.push(picker_filter_line(picker, width));
@@ -158,12 +166,7 @@ fn list_picker_lines(
             LineFill::Natural,
         ));
         lines.push(Line::raw(""));
-        lines.push(styled_line(
-            truncate_one_line(&picker.list_footer_text(), width),
-            width,
-            Theme::dim(),
-            LineFill::Natural,
-        ));
+        lines.extend(list_picker_footer_lines(picker, width));
         return lines;
     }
 
@@ -214,13 +217,23 @@ fn list_picker_lines(
         lines.push(styled_line(detail, width, Theme::dim(), LineFill::Natural));
         lines.push(Line::raw(""));
     }
-    lines.push(styled_line(
-        truncate_one_line(&picker.list_footer_text(), width),
-        width,
-        Theme::dim(),
-        LineFill::Natural,
-    ));
+    lines.extend(list_picker_footer_lines(picker, width));
     lines
+}
+
+fn list_picker_footer_lines(picker: &UiPicker, width: usize) -> Vec<Line<'static>> {
+    picker
+        .list_footer_lines(width)
+        .into_iter()
+        .map(|line| {
+            styled_line(
+                truncate_one_line(&line, width),
+                width,
+                Theme::dim(),
+                LineFill::Natural,
+            )
+        })
+        .collect()
 }
 
 fn picker_filter_line(picker: &UiPicker, width: usize) -> Line<'static> {
