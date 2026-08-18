@@ -161,7 +161,11 @@ async fn hydrate_models(
         let name = model.name.trim().to_string();
         let skip = name.is_empty() || !is_chat_model(model.capabilities.as_deref());
         let needs_show = !skip
-            && (model.details.context_length.filter(|window| *window > 0).is_none()
+            && (model
+                .details
+                .context_length
+                .filter(|window| *window > 0)
+                .is_none()
                 || model.capabilities.is_none());
         let should_show = needs_show && show_budget > 0;
         if should_show {
