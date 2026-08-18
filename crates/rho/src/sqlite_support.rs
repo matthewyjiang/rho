@@ -55,6 +55,7 @@ impl OwnerOnlySqlite {
         Self::open(path, parent_privacy, migrate).map(Some)
     }
 
+    #[cfg(test)]
     pub(crate) fn path(&self) -> &Path {
         &self.path
     }

@@ -29,13 +29,15 @@ enum StoreOp {
         max_entries: usize,
         reply: Sender<StoreReply>,
     },
-    SetPath(Option<PathBuf>),
     Flush(Sender<()>),
+    #[cfg(test)]
+    SetPath(Option<PathBuf>),
 }
 
 enum StoreReply {
     Count(Result<usize, PromptHistoryError>),
     Done(Result<(), PromptHistoryError>),
+    WriterGone,
 }
 
 enum FollowUp {
@@ -46,6 +48,7 @@ enum FollowUp {
 }
 
 pub(in crate::tui) struct PromptHistory {
+    #[cfg(test)]
     store_path: Option<PathBuf>,
     limit: usize,
     pending_load: Option<PromptHistoryLoadHandle>,
@@ -58,6 +61,7 @@ pub(in crate::tui) struct PromptHistory {
 impl PromptHistory {
     pub(in crate::tui) fn new(limit: usize, pending_load: Option<PromptHistoryLoadHandle>) -> Self {
         Self {
+            #[cfg(test)]
             store_path: None,
             limit,
             pending_load,
@@ -68,6 +72,7 @@ impl PromptHistory {
         }
     }
 
+    #[cfg(test)]
     pub(in crate::tui) fn limit(&self) -> usize {
         self.limit
     }
@@ -138,7 +143,7 @@ impl PromptHistory {
             Err(mpsc::TryRecvError::Empty) => None,
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.pending_reply = None;
-                Some(StoreReply::Done(Err(PromptHistoryError::DataDirectory)))
+                Some(StoreReply::WriterGone)
             }
         }
     }
@@ -176,7 +181,6 @@ impl PromptHistory {
         self.store_path.as_deref()
     }
 
-    #[cfg(test)]
     pub(in crate::tui) fn flush(&mut self) {
         let (tx, rx) = mpsc::channel();
         if self.tx.send(StoreOp::Flush(tx)).is_ok() {
@@ -230,12 +234,13 @@ fn writer_loop(rx: Receiver<StoreOp>, path: Option<PathBuf>) {
                     .map(|_| ());
                 let _ = reply.send(StoreReply::Done(result));
             }
+            StoreOp::Flush(reply) => {
+                let _ = reply.send(());
+            }
+            #[cfg(test)]
             StoreOp::SetPath(path) => {
                 state.store = None;
                 state.path = path;
-            }
-            StoreOp::Flush(reply) => {
-                let _ = reply.send(());
             }
         }
     }
@@ -445,6 +450,12 @@ impl App {
     }
 
     fn handle_prompt_history_reply(&mut self, reply: StoreReply) -> bool {
+        if matches!(reply, StoreReply::WriterGone) {
+            self.prompt_history.follow_up = None;
+            self.insert_entry(&Entry::Error("prompt history writer stopped".into()));
+            self.set_status("prompt history unavailable");
+            return true;
+        }
         let follow_up = self.prompt_history.follow_up.take();
         let result = match (follow_up, reply) {
             (Some(FollowUp::ProposeLimit { new_limit }), StoreReply::Count(result)) => {
@@ -480,7 +491,11 @@ impl App {
                     done
                 }
             },
-            _ => Ok(()),
+            (follow_up, reply) => {
+                tracing::warn!("unexpected prompt history reply");
+                let _ = (follow_up, reply);
+                Ok(())
+            }
         };
         if let Err(error) = result {
             self.insert_entry(&Entry::Error(error.to_string()));

@@ -186,6 +186,7 @@ impl App {
                 }
             }
         }
+        self.prompt_history.flush();
         self.abort_compact(agent).await;
         self.cancel_limits_command().await;
         self.cancel_changelog_command().await;
