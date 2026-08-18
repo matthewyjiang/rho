@@ -109,8 +109,7 @@ pub struct ModelCost {
 }
 
 pub fn current_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
-    current_cached_upstream_model_metadata(provider, model)
-        .map(|metadata| apply_overrides(provider, model, metadata))
+    load_model_metadata(provider, model, CacheFreshness::CurrentOnly)
         .or_else(|| override_metadata(provider, model))
 }
 
@@ -192,31 +191,67 @@ pub fn model_metadata_needs_refresh(provider: &str, model: &str) -> bool {
     if provider_reasoning_is_not_configurable(provider) {
         return false;
     }
-    current_cached_upstream_model_metadata(provider, model)
-        .map(|metadata| apply_overrides(provider, model, metadata))
+    load_model_metadata(provider, model, CacheFreshness::CurrentOnly)
         .or_else(|| override_metadata(provider, model))
         .is_none_or(|metadata| !metadata.reasoning_metadata_complete)
 }
 
 pub fn cached_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
-    cached_upstream_model_metadata(provider, model)
-        .map(|metadata| apply_overrides(provider, model, metadata))
+    load_model_metadata(provider, model, CacheFreshness::AllowStale)
         .or_else(|| override_metadata(provider, model))
 }
 
 pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
-    if let Some(metadata) = current_cached_upstream_model_metadata(provider, model) {
-        return Some(apply_overrides(provider, model, metadata));
+    if let Some(metadata) = load_model_metadata(provider, model, CacheFreshness::CurrentOnly) {
+        return Some(metadata);
     }
 
     // One full catalog hydrate fills every provider-facing row. After that, the
     // requested model is either current in sqlite or genuinely absent.
     ensure_models_dev_catalog().await;
-    if let Some(metadata) = current_cached_upstream_model_metadata(provider, model) {
-        return Some(apply_overrides(provider, model, metadata));
+    if let Some(metadata) = load_model_metadata(provider, model, CacheFreshness::CurrentOnly) {
+        return Some(metadata);
     }
 
     override_metadata(provider, model)
+}
+
+/// models.dev provider and model id used for the sqlite catalog row.
+///
+/// Custom hosts can borrow another slug (`catalog = "llmgateway"`). A models.toml
+/// `catalog` value wins and may also remap the model id (`anthropic/claude-sonnet-4-5`).
+fn catalog_source_for(provider: &str, model: &str) -> (String, String) {
+    if let Some(source) = overrides::local_catalog_source(provider, model) {
+        return source;
+    }
+    if let Some(slug) = crate::provider::custom_provider_catalog(provider) {
+        return (slug, model.to_string());
+    }
+    (provider.to_string(), model.to_string())
+}
+
+fn load_model_metadata(
+    provider: &str,
+    model: &str,
+    freshness: CacheFreshness,
+) -> Option<ModelMetadata> {
+    let (source_provider, source_model) = catalog_source_for(provider, model);
+    let remapped = source_provider != provider || source_model != model;
+    let metadata = match freshness {
+        CacheFreshness::CurrentOnly => {
+            current_cached_upstream_model_metadata(&source_provider, &source_model)
+        }
+        CacheFreshness::AllowStale => {
+            cached_upstream_model_metadata(&source_provider, &source_model)
+        }
+    }?;
+    let metadata = if remapped {
+        overrides::apply_builtin_overrides(&source_provider, &source_model, metadata)
+    } else {
+        overrides::apply_builtin_overrides(provider, model, metadata)
+    };
+    let metadata = apply_provider_capabilities(provider, model, metadata);
+    Some(overrides::apply_local_overrides(provider, model, metadata))
 }
 
 fn upstream_metadata_from_api(
@@ -339,10 +374,14 @@ async fn fetch_models_dev_api() -> Option<document::ModelsDevCatalog> {
 /// v8: `display_name` added. Older rows are complete without it, so only a bump
 /// makes them refetch and pick up the catalog name.
 ///
+/// v9: hydrate also writes non-Rho models.dev slugs so custom hosts can set
+/// `catalog = "llmgateway"` and borrow those rows. A version match on an older
+/// snapshot would otherwise skip the download forever.
+///
 /// `sdk_package` was added without a bump: only opencode-go reads it, and that
 /// provider registered in the same release, so no older rows can miss it. Bump
 /// when an already-registered provider switches to `PreferModelsDevNpm`.
-pub(super) const MODEL_METADATA_CACHE_VERSION: i64 = 8;
+pub(super) const MODEL_METADATA_CACHE_VERSION: i64 = 9;
 
 fn cached_upstream_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
     cached_upstream_model_metadata_with_freshness(provider, model, CacheFreshness::AllowStale)

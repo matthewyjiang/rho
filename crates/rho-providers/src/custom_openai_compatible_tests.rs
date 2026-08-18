@@ -1,13 +1,16 @@
 use super::super::{
-    CatalogReasoningPolicy, ProviderAuthKind, ProviderModelSource, UnknownEffortPolicy,
+    CatalogReasoningPolicy, ProviderAuthKind, ProviderModelSource, ProviderRuntime,
+    UnknownEffortPolicy,
 };
 use super::{
-    custom_openai_compatible_provider, custom_openai_compatible_providers,
+    custom_openai_compatible_provider, custom_openai_compatible_providers, custom_provider_catalog,
     custom_provider_registry_test_lock, install_custom_openai_compatible_providers,
     intern_custom_openai_compatible_providers, is_custom_provider_api_key_auth,
     replace_current_thread_custom_providers, reset_custom_openai_compatible_providers_for_tests,
-    validate_custom_provider_name, CustomProviderThreadScope,
+    set_custom_provider_catalogs, validate_custom_provider_name, CustomProviderThreadScope,
 };
+use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
+use crate::protocol::openai_chat::ChatToolCallPolicy;
 
 fn restore_empty() {
     reset_custom_openai_compatible_providers_for_tests();
@@ -64,6 +67,17 @@ fn install_custom_providers_makes_openai_compatible_hosts() {
         CatalogReasoningPolicy::OffAsNone
     );
     assert!(composer.is_custom_openai_compatible());
+    assert!(matches!(
+        composer.runtime,
+        ProviderRuntime::OpenAiCompatible {
+            dialect: OpenAiCompatibleDialect::Custom,
+            ..
+        }
+    ));
+    assert_eq!(
+        OpenAiCompatibleDialect::Custom.chat_tool_call_policy(),
+        ChatToolCallPolicy::Lenient
+    );
     assert!(!composer.is_keyless());
     assert!(composer.has_none_auth());
     assert_eq!(
@@ -128,6 +142,26 @@ fn install_custom_providers_makes_openai_compatible_hosts() {
 
     restore_empty();
     assert!(custom_openai_compatible_provider("composer").is_none());
+}
+
+// Covers: a later config replaces models.dev catalog slugs for custom hosts
+// Owner: provider registry
+#[test]
+fn set_custom_provider_catalogs_replaces_the_map() {
+    let _lock = custom_provider_registry_test_lock();
+    restore_empty();
+    let _restore = RestoreCustomProviders;
+    set_custom_provider_catalogs([("cliproxyapi", Some("llmgateway"))]);
+    assert_eq!(
+        custom_provider_catalog("cliproxyapi").as_deref(),
+        Some("llmgateway")
+    );
+    set_custom_provider_catalogs([("cliproxyapi", Some("")), ("vllm", Some("openrouter"))]);
+    assert_eq!(custom_provider_catalog("cliproxyapi"), None);
+    assert_eq!(
+        custom_provider_catalog("vllm").as_deref(),
+        Some("openrouter")
+    );
 }
 
 // Covers: a later config replaces the active custom provider set

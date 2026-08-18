@@ -16,6 +16,8 @@ pub(crate) struct ProviderConfigs {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ProviderEndpointConfig {
     pub(crate) base_url: Url,
+    /// models.dev provider slug whose catalog rows this host should borrow.
+    pub(crate) catalog: Option<String>,
 }
 
 impl Default for ProviderConfigs {
@@ -24,6 +26,7 @@ impl Default for ProviderConfigs {
             ollama: ProviderEndpointConfig {
                 base_url: Url::parse(DEFAULT_OLLAMA_BASE_URL)
                     .expect("the default Ollama API base must be a valid URL"),
+                catalog: None,
             },
             custom: BTreeMap::new(),
         }
@@ -52,16 +55,41 @@ impl ProviderConfigs {
             return Ok(());
         }
         rho_providers::provider::validate_custom_provider_name(provider)?;
+        let catalog = self
+            .custom
+            .get(provider)
+            .and_then(|endpoint| endpoint.catalog.clone());
         self.custom.insert(
             provider.to_string(),
-            ProviderEndpointConfig { base_url: parsed },
+            ProviderEndpointConfig {
+                base_url: parsed,
+                catalog,
+            },
         );
         Ok(())
     }
 
+    fn set_catalog(&mut self, provider: &str, catalog: Option<String>) -> anyhow::Result<()> {
+        let field = format!("providers.custom.{provider}.catalog");
+        let catalog = match catalog {
+            Some(value) => Some(parse_provider_catalog(&field, &value)?),
+            None => None,
+        };
+        let Some(endpoint) = self.custom.get_mut(provider) else {
+            anyhow::bail!("{field} requires a configured base_url");
+        };
+        endpoint.catalog = catalog;
+        Ok(())
+    }
+
     pub(super) fn apply(&mut self, partial: PartialProviderConfigs) -> anyhow::Result<()> {
-        if let Some(base_url) = partial.ollama.and_then(|endpoint| endpoint.base_url) {
-            self.set_endpoint("ollama", &base_url)?;
+        if let Some(endpoint) = partial.ollama {
+            if endpoint.catalog.is_some() {
+                anyhow::bail!("providers.ollama does not accept catalog");
+            }
+            if let Some(base_url) = endpoint.base_url {
+                self.set_endpoint("ollama", &base_url)?;
+            }
         }
         if let Some(custom) = partial.custom {
             self.custom.clear();
@@ -70,23 +98,36 @@ impl ProviderConfigs {
                     anyhow::bail!("providers.custom.{name} requires base_url");
                 };
                 self.set_endpoint(&name, &base_url)?;
+                self.set_catalog(&name, endpoint.catalog)?;
             }
         }
         Ok(())
     }
 
+    fn publish_catalogs(&self) {
+        rho_providers::provider::set_custom_provider_catalogs(
+            self.custom
+                .iter()
+                .map(|(name, endpoint)| (name.as_str(), endpoint.catalog.as_deref())),
+        );
+    }
+
     /// Interns config-defined hosts without changing the process-wide picker set.
     pub(crate) fn intern_names(&self) -> anyhow::Result<std::sync::Arc<[String]>> {
-        rho_providers::provider::intern_custom_openai_compatible_providers(
+        let names = rho_providers::provider::intern_custom_openai_compatible_providers(
             self.custom.keys().map(String::as_str),
-        )
+        )?;
+        self.publish_catalogs();
+        Ok(names)
     }
 
     /// Publishes config-defined hosts as the process-wide named provider set.
     pub(crate) fn activate(&self) -> anyhow::Result<()> {
         rho_providers::provider::install_custom_openai_compatible_providers(
             self.custom.keys().map(String::as_str),
-        )
+        )?;
+        self.publish_catalogs();
+        Ok(())
     }
 
     /// Refreshes this thread's overlay so a newly written host is visible now.
@@ -103,6 +144,22 @@ impl ProviderConfigs {
             self.intern_names()?,
         ))
     }
+}
+
+fn parse_provider_catalog(field: &str, catalog: &str) -> anyhow::Result<String> {
+    let catalog = catalog.trim();
+    if catalog.is_empty() {
+        anyhow::bail!("{field} must not be empty");
+    }
+    if catalog.contains('/') {
+        anyhow::bail!(
+            "{field} must be a models.dev provider slug; set a per-model catalog in models.toml"
+        );
+    }
+    if catalog.chars().any(char::is_whitespace) {
+        anyhow::bail!("{field} must not contain whitespace");
+    }
+    Ok(catalog.to_string())
 }
 
 fn parse_provider_base_url(field: &str, base_url: &str) -> anyhow::Result<Url> {
@@ -206,6 +263,8 @@ pub(super) struct PersistedProviderConfigs<'a> {
 #[derive(Serialize)]
 struct PersistedEndpointConfig<'a> {
     base_url: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    catalog: Option<&'a str>,
 }
 
 impl<'a> From<&'a ProviderConfigs> for PersistedProviderConfigs<'a> {
@@ -213,6 +272,7 @@ impl<'a> From<&'a ProviderConfigs> for PersistedProviderConfigs<'a> {
         Self {
             ollama: PersistedEndpointConfig {
                 base_url: config.ollama.base_url.as_str(),
+                catalog: None,
             },
             custom: config
                 .custom
@@ -222,6 +282,7 @@ impl<'a> From<&'a ProviderConfigs> for PersistedProviderConfigs<'a> {
                         name.as_str(),
                         PersistedEndpointConfig {
                             base_url: endpoint.base_url.as_str(),
+                            catalog: endpoint.catalog.as_deref(),
                         },
                     )
                 })
@@ -241,6 +302,7 @@ pub(super) struct PartialProviderConfigs {
 #[serde(deny_unknown_fields)]
 pub(super) struct PartialEndpointConfig {
     pub(super) base_url: Option<String>,
+    pub(super) catalog: Option<String>,
 }
 
 #[cfg(test)]

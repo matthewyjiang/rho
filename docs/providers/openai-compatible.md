@@ -15,6 +15,16 @@ You can also edit `~/.rho/config.toml`. The table key is the provider name used 
 base_url = "http://127.0.0.1:8000/v1"
 ```
 
+A mixed proxy that is not itself in [models.dev](https://models.dev/) can borrow another catalog for context windows, prices, and reasoning lists. Set `catalog` to that models.dev provider slug. Model ids must match the borrowed catalog (`gpt-5.6-sol`, not `openai/gpt-5.6-sol`):
+
+```toml
+[providers.custom.cliproxyapi]
+base_url = "http://127.0.0.1:8317/v1"
+catalog = "llmgateway"
+```
+
+`llmgateway` is a mixed models.dev catalog with bare model ids. `openrouter` only matches if the host uses OpenRouter-style `owner/model` ids. `openai-codex` borrows Rho's Codex catalog, including built-in window overrides. Requests still go to the custom host; only metadata is borrowed. For one model that should use a different slug, set `catalog` on that row in `~/.rho/models.toml`. See [local model metadata](/configuration#local-model-metadata).
+
 Keep the `/v1` suffix. Rho appends `/models` for discovery and `/chat/completions` for agent turns. The URL must use `http` or `https` and cannot contain credentials, a query, or a fragment.
 
 Names must be lowercase letters, digits, and hyphens, start with a letter, and must not match a built-in provider. Restart Rho after you edit this table, including an existing `base_url`. Direct edits to `config.toml` do not update a running process. Creating or updating a host through `/login` applies immediately.
@@ -51,7 +61,7 @@ After a restart, or immediately after `/login` onboarding, Rho fetches `/v1/mode
 
 ## Models
 
-Rho fetches `/v1/models` in the background at startup for every custom host so the picker can fill in. A down host is skipped so startup still succeeds; refresh later in `/config` once it is up. Opening `/model` before the fetch lands can show a stale or empty custom list. The host must support tool calls if you want a coding agent.
+Rho fetches `/v1/models` in the background at startup for every custom host so the picker can fill in. A down host is skipped so startup still succeeds; refresh later in `/config` once it is up. Opening `/model` before the fetch lands can show a stale or empty custom list. The host must support tool calls if you want a coding agent. Proxies such as CLIProxyAPI, and many local servers, omit tool-call ids, use sparse indexes, or skip `{}` for zero-argument tools. Rho fills those in so the tool loop can continue. First-party OpenAI-compatible providers stay strict.
 
 Rho sends `reasoning_effort` on each turn, including `"none"` when reasoning is off. Shift+Tab and `/config` cycle the level. Hosts that do not accept that field may reject the request; pin levels in `~/.rho/models.toml` if you need a smaller set.
 

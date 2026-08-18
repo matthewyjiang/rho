@@ -14,11 +14,14 @@ use std::{
 use rusqlite::params;
 use tokio::sync::Mutex;
 
-use crate::provider::{CatalogConstruction, ProviderDescriptor, ProviderId};
+use crate::provider::{
+    CatalogConstruction, CatalogReasoningPolicy, ProviderDescriptor, ProviderId,
+};
 
 use super::{
-    document::ModelsDevCatalog, fetch_models_dev_api, model_metadata_needs_refresh,
-    open_models_dev_cache, upstream_metadata_from_api, write_cached_upstream_model_metadata_batch,
+    document::{self, ModelsDevCatalog},
+    fetch_models_dev_api, model_metadata_needs_refresh, open_models_dev_cache,
+    upstream_metadata_from_api, write_cached_upstream_model_metadata_batch,
     MODEL_METADATA_CACHE_VERSION,
 };
 
@@ -83,30 +86,56 @@ pub async fn prefetch_model_metadata(targets: impl IntoIterator<Item = (String, 
 /// Cache keys stay provider-facing (`openai-codex` / model), not upstream. OpenRouter
 /// rows use the aggregator model ids (`anthropic/claude-…`). Kimi Code's `k3`
 /// alias is written beside the upstream `kimi-k3` id.
+///
+/// models.dev slugs that are not Rho provider names (`llmgateway`, `azure`) are
+/// also written so a custom host can set `catalog = "llmgateway"` and borrow
+/// those rows. Rho names keep their existing extract policy and are not
+/// overwritten by this second pass.
 pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
     let mut entries = Vec::new();
     let mut touched_providers = HashSet::new();
+    let mut rho_names = HashSet::new();
     for descriptor in crate::provider::providers() {
+        rho_names.insert(descriptor.name);
         for model_id in catalog_model_ids_for_provider(api, descriptor) {
             if let Some(metadata) = extract_complete_upstream_metadata(api, descriptor, &model_id) {
-                touched_providers.insert(descriptor.name);
-                entries.push((descriptor.name, model_id, metadata));
+                touched_providers.insert(descriptor.name.to_string());
+                entries.push((descriptor.name.to_string(), model_id, metadata));
             }
         }
         // Provider-facing ids that are not catalog keys still need a cache row.
         if descriptor.id == ProviderId::KimiCode {
             if let Some(metadata) = extract_complete_upstream_metadata(api, descriptor, "k3") {
-                touched_providers.insert(descriptor.name);
-                entries.push((descriptor.name, "k3".to_string(), metadata));
+                touched_providers.insert(descriptor.name.to_string());
+                entries.push((descriptor.name.to_string(), "k3".to_string(), metadata));
             }
         }
     }
+    for (slug, provider) in api.iter_providers() {
+        if rho_names.contains(slug) {
+            continue;
+        }
+        for model_id in provider.models.keys() {
+            let Some(metadata) = document::model_metadata_from_catalog(
+                api,
+                slug,
+                model_id,
+                CatalogReasoningPolicy::ExactAdvertised,
+            ) else {
+                continue;
+            };
+            touched_providers.insert(slug.to_string());
+            entries.push((slug.to_string(), model_id.clone(), metadata));
+        }
+    }
     let written = write_cached_upstream_model_metadata_batch(
-        entries.iter().map(|(p, m, meta)| (*p, m.as_str(), meta)),
+        entries
+            .iter()
+            .map(|(provider, model, metadata)| (provider.as_str(), model.as_str(), metadata)),
     );
     if written > 0 {
         for provider in touched_providers {
-            crate::model::display_name::forget_provider_display_names(provider);
+            crate::model::display_name::forget_provider_display_names(&provider);
         }
     }
     written

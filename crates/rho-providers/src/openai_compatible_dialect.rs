@@ -5,6 +5,12 @@ use crate::protocol::openai_chat::{ChatToolCallPolicy, OpenAiTool};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OpenAiCompatibleDialect {
     Standard,
+    /// Config-defined Chat Completions hosts (vLLM, CLIProxyAPI, and similar).
+    ///
+    /// Unknown implementations often omit tool-call ids, use sparse indexes, or
+    /// skip `{}` for zero-argument tools. Those quirks must not rewrite
+    /// first-party dialects.
+    Custom,
     /// Qwen Token Plan and similar hosts with lenient chat tool-call wire quirks.
     QwenTokenPlan,
     Poolside,
@@ -17,7 +23,7 @@ impl OpenAiCompatibleDialect {
     /// How aggressively to normalize incomplete chat tool-call payloads.
     pub(crate) fn chat_tool_call_policy(self) -> ChatToolCallPolicy {
         match self {
-            Self::QwenTokenPlan => ChatToolCallPolicy::Lenient,
+            Self::Custom | Self::QwenTokenPlan => ChatToolCallPolicy::Lenient,
             Self::Standard
             | Self::Poolside
             | Self::OpenRouter
@@ -28,7 +34,11 @@ impl OpenAiCompatibleDialect {
 
     pub(crate) fn normalize_tool(self, mut tool: OpenAiTool) -> OpenAiTool {
         match self {
-            Self::Standard | Self::QwenTokenPlan | Self::Poolside | Self::OpenRouter => tool,
+            Self::Standard
+            | Self::Custom
+            | Self::QwenTokenPlan
+            | Self::Poolside
+            | Self::OpenRouter => tool,
             Self::Moonshot | Self::KimiCode => {
                 normalize_moonshot_parameters(&mut tool.function.parameters);
                 tool

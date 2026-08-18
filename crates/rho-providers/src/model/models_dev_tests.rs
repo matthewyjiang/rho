@@ -1404,3 +1404,125 @@ fn failed_hydrate_does_not_advance_readiness() {
         );
     });
 }
+
+// Covers: models.dev slugs that are not Rho providers still get cache rows
+// Owner: models.dev catalog hydrate
+#[test]
+fn hydrate_writes_non_rho_catalog_slugs() {
+    let api = json!({
+        "llmgateway": {
+            "models": {
+                "gpt-5.6-sol": {
+                    "name": "GPT-5.6 Sol",
+                    "reasoning": false,
+                    "limit": { "context": 1050000, "input": 922000, "output": 128000 },
+                    "cost": { "input": 5.0, "output": 30.0 }
+                }
+            }
+        }
+    });
+
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        assert!(hydrate_catalog_from_api(&api) >= 1);
+        let metadata =
+            cached_upstream_model_metadata("llmgateway", "gpt-5.6-sol").expect("llmgateway row");
+        assert_eq!(metadata.display_name.as_deref(), Some("GPT-5.6 Sol"));
+        assert_eq!(metadata.effective_context_window, Some(922000));
+        assert_eq!(
+            metadata
+                .cost_default
+                .and_then(|cost| cost.input_micros_per_m),
+            Some(5_000_000)
+        );
+    });
+}
+
+// Covers: a custom host with catalog = slug borrows that models.dev row
+// Owner: models.dev catalog rematch
+#[test]
+fn custom_provider_catalog_slug_borrows_upstream_metadata() {
+    let _lock = crate::provider::custom_provider_registry_test_lock();
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+    crate::provider::set_custom_provider_catalogs([("cliproxyapi", Some("llmgateway"))]);
+
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        write_cached_upstream_model_metadata(
+            "llmgateway",
+            "gpt-5.6-sol",
+            &ModelMetadata {
+                display_name: Some("GPT-5.6 Sol".into()),
+                advertised_context_window: Some(1_050_000),
+                effective_context_window: Some(922_000),
+                cost_default: Some(ModelCost {
+                    input_micros_per_m: Some(5_000_000),
+                    output_micros_per_m: Some(30_000_000),
+                    ..ModelCost::default()
+                }),
+                reasoning_metadata_complete: true,
+                ..ModelMetadata::default()
+            },
+        );
+
+        let metadata =
+            current_model_metadata("cliproxyapi", "gpt-5.6-sol").expect("borrowed catalog row");
+        assert_eq!(metadata.display_name.as_deref(), Some("GPT-5.6 Sol"));
+        assert_eq!(metadata.effective_context_window, Some(922_000));
+        assert_eq!(
+            metadata
+                .cost_default
+                .and_then(|cost| cost.input_micros_per_m),
+            Some(5_000_000)
+        );
+        assert!(current_model_metadata("cliproxyapi", "missing").is_none());
+    });
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+}
+
+// Covers: models.toml catalog remaps provider and optional model id
+// Owner: models.dev catalog rematch
+#[test]
+fn local_catalog_ref_parses_slug_and_qualified_ids() {
+    assert_eq!(
+        overrides::parse_catalog_ref("llmgateway", "gpt-5.6-sol"),
+        Some(("llmgateway".into(), "gpt-5.6-sol".into()))
+    );
+    assert_eq!(
+        overrides::parse_catalog_ref("anthropic/claude-sonnet-4-5", "alias"),
+        Some(("anthropic".into(), "claude-sonnet-4-5".into()))
+    );
+    assert_eq!(
+        overrides::parse_catalog_ref("openrouter/anthropic/claude-sonnet-4", "alias"),
+        Some(("openrouter".into(), "anthropic/claude-sonnet-4".into()))
+    );
+    assert_eq!(overrides::parse_catalog_ref("", "gpt-5.6-sol"), None);
+    assert_eq!(overrides::parse_catalog_ref("/model", "gpt-5.6-sol"), None);
+}
+
+// Covers: inheriting openai-codex applies the built-in window override
+// Owner: models.dev catalog rematch
+#[test]
+fn rematched_openai_codex_catalog_keeps_builtin_window() {
+    let _lock = crate::provider::custom_provider_registry_test_lock();
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+    crate::provider::set_custom_provider_catalogs([("cliproxyapi", Some("openai-codex"))]);
+
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        write_cached_upstream_model_metadata(
+            "openai-codex",
+            "gpt-5.5",
+            &ModelMetadata {
+                advertised_context_window: Some(1_050_000),
+                effective_context_window: Some(922_000),
+                reasoning_metadata_complete: true,
+                ..ModelMetadata::default()
+            },
+        );
+
+        let metadata = current_model_metadata("cliproxyapi", "gpt-5.5").expect("rematched");
+        assert_eq!(metadata.effective_context_window, Some(400_000));
+    });
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+}

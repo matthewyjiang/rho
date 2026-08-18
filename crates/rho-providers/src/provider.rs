@@ -509,12 +509,12 @@ mod custom_openai_compatible;
 
 pub use custom_openai_compatible::{
     custom_provider_api_key_account, custom_provider_api_key_auth_id,
-    custom_provider_api_key_env_var, custom_provider_registry_test_lock,
+    custom_provider_api_key_env_var, custom_provider_catalog, custom_provider_registry_test_lock,
     install_custom_openai_compatible_providers, intern_custom_openai_compatible_providers,
     interned_custom_provider, is_custom_provider_api_key_auth, is_provider_api_key_env_var,
     replace_current_thread_custom_providers, reset_custom_openai_compatible_providers_for_tests,
-    scope_custom_openai_compatible_providers, validate_custom_provider_name,
-    CustomProviderThreadScope,
+    scope_custom_openai_compatible_providers, set_custom_provider_catalogs,
+    validate_custom_provider_name, CustomProviderThreadScope,
 };
 pub use provider_table::PROVIDERS;
 

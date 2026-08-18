@@ -38,25 +38,48 @@ pub(super) fn apply_local_overrides(
     model: &str,
     metadata: ModelMetadata,
 ) -> ModelMetadata {
-    let Some(path) = local_overrides_path() else {
+    let Some(table) = local_override_table(provider, model) else {
         return metadata;
     };
-    let Ok(contents) = fs::read_to_string(path) else {
-        return metadata;
-    };
-    let Ok(value) = contents.parse::<toml::Value>() else {
-        return metadata;
-    };
+    merge_toml_override(metadata, &table)
+}
+
+/// Resolves `catalog` from `~/.rho/models.toml` for one provider-facing model.
+///
+/// `anthropic` keeps the same model id under that slug. `anthropic/claude-sonnet-4-5`
+/// remaps both the models.dev provider and the catalog model id.
+pub(super) fn local_catalog_source(provider: &str, model: &str) -> Option<(String, String)> {
+    let table = local_override_table(provider, model)?;
+    parse_catalog_ref(table.get("catalog")?.as_str()?, model)
+}
+
+pub(super) fn parse_catalog_ref(catalog: &str, fallback_model: &str) -> Option<(String, String)> {
+    let catalog = catalog.trim();
+    if catalog.is_empty() {
+        return None;
+    }
+    match catalog.split_once('/') {
+        Some((provider, model)) if !provider.is_empty() && !model.is_empty() => {
+            Some((provider.to_string(), model.to_string()))
+        }
+        None => Some((catalog.to_string(), fallback_model.to_string())),
+        Some(_) => None,
+    }
+}
+
+fn local_override_table(
+    provider: &str,
+    model: &str,
+) -> Option<toml::map::Map<String, toml::Value>> {
+    let path = local_overrides_path()?;
+    let contents = fs::read_to_string(path).ok()?;
+    let value = contents.parse::<toml::Value>().ok()?;
     let key = format!("{provider}/{model}");
-    let Some(table) = value
+    value
         .get("models")
         .and_then(|models| models.get(&key))
-        .and_then(|value| value.as_table())
-    else {
-        return metadata;
-    };
-
-    merge_toml_override(metadata, table)
+        .and_then(toml::Value::as_table)
+        .cloned()
 }
 
 fn local_overrides_path() -> Option<PathBuf> {

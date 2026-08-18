@@ -67,6 +67,8 @@ fn leak_str(value: String) -> &'static str {
 struct CustomRegistry {
     interned: BTreeMap<String, &'static ProviderDescriptor>,
     active: Vec<&'static ProviderDescriptor>,
+    /// models.dev provider slug to borrow for a named custom host.
+    catalogs: BTreeMap<String, String>,
 }
 
 fn registry() -> &'static RwLock<CustomRegistry> {
@@ -195,7 +197,35 @@ pub fn custom_provider_registry_test_lock() -> MutexGuard<'static, ()> {
 /// tests can still resolve unknown-effort policy for a previously interned name.
 #[doc(hidden)]
 pub fn reset_custom_openai_compatible_providers_for_tests() {
-    lock_write().active.clear();
+    let mut registry = lock_write();
+    registry.active.clear();
+    registry.catalogs.clear();
+}
+
+/// Replaces models.dev catalog slugs for config-defined hosts.
+///
+/// A later call replaces the whole map. `None` or an empty slug clears that
+/// host. Names are not interned here; callers publish names separately.
+pub fn set_custom_provider_catalogs<'a, I>(catalogs: I)
+where
+    I: IntoIterator<Item = (&'a str, Option<&'a str>)>,
+{
+    let mut registry = lock_write();
+    registry.catalogs.clear();
+    for (name, catalog) in catalogs {
+        let Some(catalog) = catalog.map(str::trim).filter(|slug| !slug.is_empty()) else {
+            continue;
+        };
+        registry
+            .catalogs
+            .insert(name.to_string(), catalog.to_string());
+    }
+}
+
+/// models.dev provider slug a custom host borrows for context, price, and
+/// reasoning metadata. Absent when the host has no `catalog` override.
+pub fn custom_provider_catalog(name: &str) -> Option<String> {
+    lock_read().catalogs.get(name).cloned()
 }
 
 pub fn custom_openai_compatible_providers() -> Vec<&'static ProviderDescriptor> {
@@ -291,7 +321,7 @@ fn intern(name: &str, registry: &mut CustomRegistry) -> &'static ProviderDescrip
         // config-defined hosts are not aliased onto a built-in id.
         id: ProviderId::Ollama,
         runtime: ProviderRuntime::OpenAiCompatible {
-            dialect: OpenAiCompatibleDialect::Standard,
+            dialect: OpenAiCompatibleDialect::Custom,
             default_api_base: OPENAI_COMPATIBLE_API_BASE,
             catalog_construction: CatalogConstruction::Runtime,
         },
