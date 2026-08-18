@@ -1494,7 +1494,7 @@ fn fresh_snapshot_is_not_ready_for_a_new_borrowed_slug() {
                 }
             }
         }));
-        assert!(written >= 1);
+        assert_eq!(written, 1);
         mark_catalog_snapshot_current_for_tests();
         assert!(
             hydrate::catalog_snapshot_is_ready(),

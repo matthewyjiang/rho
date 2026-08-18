@@ -141,6 +141,9 @@ fn parse_provider_catalog(field: &str, catalog: &str) -> anyhow::Result<String> 
             "{field} must be a models.dev provider slug; set a per-model catalog in models.toml"
         );
     }
+    if catalog.contains(',') {
+        anyhow::bail!("{field} must not contain ','");
+    }
     if catalog.chars().any(char::is_whitespace) {
         anyhow::bail!("{field} must not contain whitespace");
     }

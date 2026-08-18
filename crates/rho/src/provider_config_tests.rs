@@ -225,6 +225,22 @@ fn custom_catalog_rejects_model_qualified_and_ollama_values() {
         "{slash_error:#}"
     );
 
+    let comma = dir.path().join("comma.toml");
+    std::fs::write(
+        &comma,
+        "[providers.custom.cliproxyapi]\nbase_url = \"http://127.0.0.1:8317/v1\"\ncatalog = \"a,b\"\n",
+    )
+    .unwrap();
+    let comma_error = Config::load_with_store(
+        comma,
+        &rho_providers::credentials::MemoryCredentialStore::default(),
+    )
+    .unwrap_err();
+    assert!(
+        format!("{comma_error:#}").contains("must not contain ','"),
+        "{comma_error:#}"
+    );
+
     let ollama = dir.path().join("ollama.toml");
     std::fs::write(
         &ollama,
