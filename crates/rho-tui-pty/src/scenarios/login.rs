@@ -155,7 +155,7 @@ pub(super) const LOGIN_CUSTOM_PROVIDER_STEPS: &[Step] = &[
     Step::AssertText("saved custom provider vllm"),
     Step::Key(Key::Enter),
     Step::WaitText {
-        text: "added custom provider vllm",
+        text: "vllm is ready",
         timeout: STARTUP,
     },
     Step::ExitCommand,
