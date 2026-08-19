@@ -1,13 +1,14 @@
 //! In-place attach view for activity-rail clicks and `/attach`.
 
-use std::time::Instant;
-
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use ratatui::Frame;
 
 use super::{
-    attachment::{embedded_footer_hint, AttachInput, AttachmentApp, AttachmentDisplaySettings},
+    attachment::{
+        AttachChrome, AttachInput, AttachmentApp, AttachmentDisplaySettings, ParentNotice,
+    },
+    exclusive_screen::ExclusiveOccupant,
     subagent_panel::SubagentAttachTarget,
     App, ComposerMode,
 };
@@ -22,40 +23,6 @@ pub(super) fn attach_command(run_id: &str) -> String {
 /// Short hover hint shown on the right edge of a subagent row.
 pub(super) const ACTION_HINT: &str = "attach";
 
-/// Modal session for the in-place attach viewer.
-pub(super) struct EmbeddedAttach {
-    view: AttachmentApp,
-    /// Snapshot of parent busy-ness when the modal first opened. Cycling runs
-    /// must not resample this or the "parent turn complete" badge disappears.
-    opened_while_busy: bool,
-}
-
-impl EmbeddedAttach {
-    fn open(
-        target: &SubagentAttachTarget,
-        display: AttachmentDisplaySettings,
-        opened_while_busy: bool,
-    ) -> anyhow::Result<Self> {
-        Ok(Self {
-            view: open_view(target, display)?,
-            opened_while_busy,
-        })
-    }
-
-    fn switch_run(
-        &mut self,
-        target: &SubagentAttachTarget,
-        display: AttachmentDisplaySettings,
-    ) -> anyhow::Result<()> {
-        self.view = open_view(target, display)?;
-        Ok(())
-    }
-
-    fn should_redraw(&self, now: Instant) -> bool {
-        self.view.should_redraw(now)
-    }
-}
-
 fn open_view(
     target: &SubagentAttachTarget,
     display: AttachmentDisplaySettings,
@@ -64,20 +31,82 @@ fn open_view(
     Ok(AttachmentApp::new(&target.run_id, directory, display))
 }
 
-impl App {
-    pub(super) fn is_attach_view(&self) -> bool {
-        self.embedded_attach.is_some()
+/// Next live-rail target, or `None` when cycling is not defined.
+///
+/// Live rail only. A finished run opened from `/attach` is not in this set, so
+/// Tab is a no-op instead of jumping to the first live row.
+pub(super) fn next_target<'a>(
+    current: &str,
+    targets: &'a [SubagentAttachTarget],
+    delta: isize,
+) -> Option<&'a SubagentAttachTarget> {
+    if targets.len() < 2 {
+        return None;
     }
+    let index = targets.iter().position(|target| target.run_id == current)?;
+    let next = (index as isize + delta).rem_euclid(targets.len() as isize) as usize;
+    let target = &targets[next];
+    (target.run_id != current).then_some(target)
+}
 
-    pub(super) fn draw_embedded_attach(&mut self, frame: &mut Frame<'_>) -> bool {
-        let notice = self.parent_attach_notice();
-        let Some(session) = self.embedded_attach.as_mut() else {
+/// Composer-owned parent wait. Distinct from [`ParentNotice::TurnComplete`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ParentWait {
+    Approval,
+    Questionnaire,
+}
+
+/// Parent chrome while attach is showing. Composer waits win over turn-complete.
+pub(super) fn parent_notice(
+    waiting: Option<ParentWait>,
+    parent_turn_armed: bool,
+    parent_busy: bool,
+) -> Option<ParentNotice> {
+    match waiting {
+        Some(ParentWait::Approval) => Some(ParentNotice::Approval),
+        Some(ParentWait::Questionnaire) => Some(ParentNotice::Questionnaire),
+        None if parent_turn_armed && !parent_busy => Some(ParentNotice::TurnComplete),
+        None => None,
+    }
+}
+
+fn cycle_delta(key: KeyEvent) -> Option<isize> {
+    if key.kind != KeyEventKind::Press
+        || key.modifiers.contains(KeyModifiers::CONTROL)
+        || key.modifiers.contains(KeyModifiers::ALT)
+    {
+        return None;
+    }
+    match key.code {
+        KeyCode::Tab | KeyCode::Right => Some(1),
+        KeyCode::BackTab | KeyCode::Left => Some(-1),
+        _ => None,
+    }
+}
+
+fn composer_wait(composer: &ComposerMode) -> Option<ParentWait> {
+    match composer {
+        ComposerMode::Approval(_) => Some(ParentWait::Approval),
+        ComposerMode::Questionnaire(_) => Some(ParentWait::Questionnaire),
+        _ => None,
+    }
+}
+
+impl App {
+    pub(super) fn draw_attach_screen(&mut self, frame: &mut Frame<'_>) -> bool {
+        let Some(parent_turn_armed) = self.exclusive.parent_turn_armed() else {
             return false;
         };
-        session
-            .view
-            .draw(frame, embedded_footer_hint(), notice.as_deref());
-        session.view.note_drawn();
+        let notice = parent_notice(
+            composer_wait(self.input_ui.composer()),
+            parent_turn_armed,
+            self.is_ui_busy(),
+        );
+        let Some(view) = self.exclusive.attach_view_mut() else {
+            return false;
+        };
+        view.draw(frame, AttachChrome::Embedded { notice });
+        view.note_drawn();
         true
     }
 
@@ -94,17 +123,22 @@ impl App {
         &mut self,
         target: &SubagentAttachTarget,
     ) -> anyhow::Result<()> {
-        let display = AttachmentDisplaySettings {
-            show_reasoning_output: self.info.runtime.show_reasoning_output,
-            zen_mode: self.info.runtime.zen_mode,
-            max_tool_output_lines: self.info.runtime.max_tool_output_lines.max(1),
-            theme: self.info.services.theme.clone(),
+        let display = AttachmentDisplaySettings::from_runtime(
+            self.info.runtime.show_reasoning_output,
+            self.info.runtime.zen_mode,
+            self.info.runtime.max_tool_output_lines,
+        );
+        let view = open_view(target, display)?;
+        let parent_turn_armed = match &self.exclusive {
+            ExclusiveOccupant::Attach {
+                parent_turn_armed, ..
+            } => *parent_turn_armed,
+            ExclusiveOccupant::Session | ExclusiveOccupant::Setup(_) => self.is_ui_busy(),
         };
-        if let Some(session) = self.embedded_attach.as_mut() {
-            session.switch_run(target, display)?;
-        } else {
-            self.embedded_attach = Some(EmbeddedAttach::open(target, display, self.is_ui_busy())?);
-        }
+        self.exclusive = ExclusiveOccupant::Attach {
+            view: Box::new(view),
+            parent_turn_armed,
+        };
         self.notify_status(format!(
             "attached to {} · {}",
             target.agent_id,
@@ -114,124 +148,56 @@ impl App {
     }
 
     pub(super) fn leave_attach_view(&mut self) {
-        self.embedded_attach = None;
-    }
-
-    pub(super) fn parent_attach_notice(&self) -> Option<String> {
-        match self.input_ui.composer() {
-            ComposerMode::Approval(_) => Some("parent approval waiting".into()),
-            ComposerMode::Questionnaire(_) => Some("parent questionnaire waiting".into()),
-            _ if self
-                .embedded_attach
-                .as_ref()
-                .is_some_and(|session| session.opened_while_busy)
-                && !self.is_ui_busy() =>
-            {
-                Some("parent turn complete".into())
-            }
-            _ => None,
+        if matches!(self.exclusive, ExclusiveOccupant::Attach { .. }) {
+            self.exclusive = ExclusiveOccupant::Session;
         }
     }
 
-    pub(super) async fn poll_embedded_attach(&mut self) -> anyhow::Result<bool> {
-        let Some(session) = self.embedded_attach.as_mut() else {
-            return Ok(false);
-        };
-        let changed = session.view.refresh().await?;
-        Ok(changed || session.view.should_redraw(Instant::now()))
-    }
-
-    /// Consume a terminal event when the attach modal is open.
-    ///
-    /// Returns `false` when attach is not showing so the parent TUI can handle
-    /// the event. When attach is showing, every event is consumed.
-    pub(super) fn dispatch_attach(&mut self, event: Event) -> bool {
-        if self.embedded_attach.is_none() {
-            return false;
-        }
+    pub(super) fn route_attach_event(&mut self, event: Event) -> bool {
+        let resize = matches!(event, Event::Resize(_, _));
         if let Event::Key(key) = event {
-            if is_cycle_key(key) {
-                self.cycle_embedded_attach(cycle_delta(key));
-                return true;
+            if let Some(delta) = cycle_delta(key) {
+                self.cycle_attachment_view(delta);
+                return resize;
             }
-            match self
-                .embedded_attach
-                .as_mut()
-                .expect("attach view checked above")
-                .view
-                .handle_event(Event::Key(key))
-            {
-                AttachInput::Leave => self.leave_attach_view(),
-                AttachInput::Quit => {
-                    self.leave_attach_view();
-                    self.should_quit = true;
-                }
-                AttachInput::Ignored | AttachInput::Handled => {}
-            }
-            return true;
         }
-        let _ = self
-            .embedded_attach
-            .as_mut()
-            .expect("attach view checked above")
-            .view
-            .handle_event(event);
-        true
+        let Some(view) = self.exclusive.attach_view_mut() else {
+            return resize;
+        };
+        match view.handle_event(event) {
+            AttachInput::Leave => self.leave_attach_view(),
+            AttachInput::Quit => {
+                self.leave_attach_view();
+                self.should_quit = true;
+            }
+            AttachInput::Ignored | AttachInput::Handled => {}
+        }
+        resize
     }
 
-    pub(super) fn attach_should_redraw(&self, now: Instant) -> bool {
-        self.embedded_attach
-            .as_ref()
-            .is_some_and(|session| session.should_redraw(now))
-    }
-
-    fn cycle_embedded_attach(&mut self, delta: isize) {
-        let candidates = self.subagent_panel.candidates();
-        if candidates.len() < 2 {
-            return;
-        }
-        let current = self
-            .embedded_attach
-            .as_ref()
-            .map(|session| session.view.run_id().to_owned());
-        let index = current
-            .as_deref()
-            .and_then(|run_id| {
-                candidates
-                    .iter()
-                    .position(|candidate| candidate.run_id == run_id)
+    fn cycle_attachment_view(&mut self, delta: isize) {
+        let targets = self
+            .subagent_panel
+            .candidates()
+            .into_iter()
+            .map(|candidate| SubagentAttachTarget {
+                run_id: candidate.run_id,
+                agent_id: candidate.agent_id,
             })
-            .unwrap_or(0);
-        let next = (index as isize + delta).rem_euclid(candidates.len() as isize) as usize;
-        if Some(candidates[next].run_id.as_str()) == current.as_deref() {
+            .collect::<Vec<_>>();
+        let Some(current) = self
+            .exclusive
+            .attach_view()
+            .map(|view| view.run_id().to_owned())
+        else {
             return;
-        }
-        let target = SubagentAttachTarget {
-            run_id: candidates[next].run_id.clone(),
-            agent_id: candidates[next].agent_id.clone(),
+        };
+        let Some(target) = next_target(&current, &targets, delta).cloned() else {
+            return;
         };
         if let Err(error) = self.enter_attach_view(&target) {
             self.notify_status(format!("could not switch attach view: {error}"));
         }
-    }
-}
-
-fn is_cycle_key(key: KeyEvent) -> bool {
-    key.kind == KeyEventKind::Press
-        && match key.code {
-            KeyCode::Tab | KeyCode::BackTab | KeyCode::Left | KeyCode::Right => {
-                !key.modifiers.contains(KeyModifiers::CONTROL)
-                    && !key.modifiers.contains(KeyModifiers::ALT)
-            }
-            _ => false,
-        }
-}
-
-fn cycle_delta(key: KeyEvent) -> isize {
-    match key.code {
-        KeyCode::Tab | KeyCode::Right => 1,
-        KeyCode::BackTab | KeyCode::Left => -1,
-        _ => 0,
     }
 }
 

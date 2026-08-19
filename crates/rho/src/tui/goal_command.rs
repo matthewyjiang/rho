@@ -332,6 +332,7 @@ impl App {
                         }
                         _ = tokio::time::sleep(LoadingSpinner::FRAME_INTERVAL) => {
                             self.flush_due_paste_burst();
+                            self.update_activity_panels(agent)?;
                             terminal.draw(|frame| self.draw(frame))?;
                         }
                     }
@@ -463,8 +464,7 @@ impl App {
                 }
                 _ = tokio::time::sleep(Duration::from_millis(100)) => {
                     self.flush_due_paste_burst();
-                    self.update_activity_panels(agent);
-                    let _ = self.poll_embedded_attach().await?;
+                    self.update_activity_panels(agent)?;
                 }
             }
             self.finish_completed_inline_shells().await?;
@@ -537,6 +537,7 @@ impl App {
                 }
                 _ = tokio::time::sleep(LoadingSpinner::FRAME_INTERVAL) => {
                     self.flush_due_paste_burst();
+                    self.update_activity_panels(agent)?;
                     terminal.draw(|frame| self.draw(frame))?;
                 }
             }

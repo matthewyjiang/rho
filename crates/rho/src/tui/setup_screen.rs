@@ -19,6 +19,7 @@ use ratatui::{
 };
 
 use super::{
+    exclusive_screen::ExclusiveOccupant,
     first_run::SetupEntry,
     render::{display_width, truncate_one_line},
     theme::Theme,
@@ -80,7 +81,17 @@ const STEP_LABELS: [&str; 2] = ["Sign in to a provider", "Choose a model"];
 
 impl App {
     pub(super) fn setup_step(&self) -> Option<SetupStep> {
-        self.setup_screen
+        self.exclusive.setup_step()
+    }
+
+    fn enter_setup(&mut self, step: SetupStep) {
+        self.exclusive = ExclusiveOccupant::Setup(step);
+    }
+
+    fn leave_setup(&mut self) {
+        if matches!(self.exclusive, ExclusiveOccupant::Setup(_)) {
+            self.exclusive = ExclusiveOccupant::Session;
+        }
     }
 
     /// Open the setup screen at the step this launch asked for.
@@ -100,7 +111,7 @@ impl App {
             SetupEntry::Auto if self.setup_model_picker().is_some() => SetupStep::ChooseModel,
             SetupEntry::Auto => SetupStep::SignIn,
         };
-        self.setup_screen = Some(step);
+        self.enter_setup(step);
         match step {
             SetupStep::SignIn => self.open_login_picker(),
             SetupStep::ChooseModel => self.open_setup_model_picker(terminal),
@@ -112,9 +123,9 @@ impl App {
         &mut self,
         terminal: &mut super::DefaultTerminal,
     ) {
-        match self.setup_screen {
+        match self.setup_step() {
             Some(SetupStep::SignIn) => {
-                self.setup_screen = Some(SetupStep::ChooseModel);
+                self.enter_setup(SetupStep::ChooseModel);
                 self.open_setup_model_picker(terminal);
             }
             // A login from the model step or from a normal session changes
@@ -128,8 +139,8 @@ impl App {
     /// The status is left as the caller set it, so a config-save failure during
     /// the model switch still reaches the user.
     pub(super) fn finish_setup_screen(&mut self) {
-        match self.setup_screen {
-            Some(SetupStep::ChooseModel) => self.setup_screen = None,
+        match self.setup_step() {
+            Some(SetupStep::ChooseModel) => self.leave_setup(),
             Some(SetupStep::SignIn) | None => {}
         }
     }
@@ -140,7 +151,7 @@ impl App {
     /// Esc always leads somewhere instead of stranding an empty screen. Every
     /// step exits the same way, so this needs no per-step handling.
     pub(super) fn dismiss_setup_screen(&mut self) {
-        self.setup_screen = None;
+        self.leave_setup();
     }
 
     /// The model picker for this session, or `None` when the available
@@ -157,7 +168,7 @@ impl App {
         let Some(picker) = self.setup_model_picker() else {
             // Nothing to choose between: keep the configured model rather than
             // showing an empty step.
-            self.setup_screen = None;
+            self.leave_setup();
             self.set_status("ready");
             return;
         };

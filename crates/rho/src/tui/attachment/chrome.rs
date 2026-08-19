@@ -18,17 +18,52 @@ use crate::{
 /// Separator between attach header fields. Matches the main TUI statusline.
 const FIELD_SEP: &str = " · ";
 
-pub(super) fn standalone_footer_hint() -> &'static str {
-    "read-only · scroll · ctrl+o expand · q detach"
+/// Host-specific attach chrome. Footer copy and parent badges live here so
+/// `AttachmentApp` stays a viewer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AttachChrome {
+    Standalone,
+    Embedded { notice: Option<ParentNotice> },
 }
 
-pub(crate) fn embedded_footer_hint() -> &'static str {
-    "read-only · scroll · tab cycle · ctrl+o expand · q back"
+/// Parent session state shown in the embedded attach footer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ParentNotice {
+    Approval,
+    Questionnaire,
+    TurnComplete,
 }
 
-pub(super) fn footer_line(hint: &str, parent_notice: Option<&str>, width: usize) -> Line<'static> {
-    let text = match parent_notice.filter(|notice| !notice.is_empty()) {
-        Some(notice) => format!("{notice} · {hint}"),
+impl AttachChrome {
+    fn footer_hint(self) -> &'static str {
+        match self {
+            Self::Standalone => "read-only · scroll · ctrl+o expand · q detach",
+            Self::Embedded { .. } => "read-only · scroll · tab cycle · ctrl+o expand · q back",
+        }
+    }
+
+    fn parent_notice(self) -> Option<ParentNotice> {
+        match self {
+            Self::Standalone => None,
+            Self::Embedded { notice } => notice,
+        }
+    }
+}
+
+impl ParentNotice {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Approval => "parent approval waiting",
+            Self::Questionnaire => "parent questionnaire waiting",
+            Self::TurnComplete => "parent turn complete",
+        }
+    }
+}
+
+pub(super) fn footer_line(chrome: AttachChrome, width: usize) -> Line<'static> {
+    let hint = chrome.footer_hint();
+    let text = match chrome.parent_notice() {
+        Some(notice) => format!("{}{FIELD_SEP}{hint}", notice.label()),
         None => hint.to_string(),
     };
     Line::styled(truncate_one_line(&text, width), Theme::dim())

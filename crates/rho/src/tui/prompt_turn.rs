@@ -343,9 +343,8 @@ impl App {
             }
             queued_interactions
                 .extend_subagent_questionnaires(self.subagent_inbox.take_questionnaires());
-            let panel_changed = self.update_activity_panels(agent);
-            let attach_changed = self.poll_embedded_attach().await?;
-            if panel_changed || attach_changed {
+            let panel_changed = self.update_activity_panels(agent)?;
+            if panel_changed {
                 self.draw_running_frame(terminal, &mut frame_scheduler)?;
             }
             if self.poll_limits_command().await? {

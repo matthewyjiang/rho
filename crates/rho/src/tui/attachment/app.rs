@@ -39,7 +39,7 @@ use super::super::{
 use super::chrome::format_run_cost;
 use super::chrome::{
     activity_metrics_line, footer_line, header_title_line, herdr_status, identity_line,
-    standalone_footer_hint,
+    AttachChrome,
 };
 use super::tool_toggle::{
     latest_toggle_target, status_fallback_items, tool_card_at_line, HistoryItem, PaintedHistory,
@@ -73,7 +73,6 @@ pub(crate) struct AttachmentDisplaySettings {
     pub show_reasoning_output: bool,
     pub zen_mode: bool,
     pub max_tool_output_lines: usize,
-    pub theme: String,
 }
 
 impl Default for AttachmentDisplaySettings {
@@ -83,13 +82,24 @@ impl Default for AttachmentDisplaySettings {
 }
 
 impl AttachmentDisplaySettings {
-    pub(crate) fn from_config(config: &crate::config::Config) -> Self {
+    pub(crate) fn from_runtime(
+        show_reasoning_output: bool,
+        zen_mode: bool,
+        max_tool_output_lines: usize,
+    ) -> Self {
         Self {
-            show_reasoning_output: config.show_reasoning_output,
-            zen_mode: config.zen_mode,
-            max_tool_output_lines: config.max_tool_output_lines.max(1),
-            theme: config.theme.clone(),
+            show_reasoning_output,
+            zen_mode,
+            max_tool_output_lines: max_tool_output_lines.max(1),
         }
+    }
+
+    pub(crate) fn from_config(config: &crate::config::Config) -> Self {
+        Self::from_runtime(
+            config.show_reasoning_output,
+            config.zen_mode,
+            config.max_tool_output_lines,
+        )
     }
 
     /// Exclusive reasoning display policy; matches interactive TUI chrome.
@@ -118,7 +128,7 @@ impl AttachmentDisplaySettings {
     }
 
     fn max_tool_output_lines(&self) -> usize {
-        self.max_tool_output_lines.max(1)
+        self.max_tool_output_lines
     }
 
     /// Zen hides tools and reasoning. Hide-reasoning alone suppresses reasoning text.
@@ -134,6 +144,7 @@ impl AttachmentDisplaySettings {
 pub(crate) async fn run(
     id: Option<&str>,
     display: AttachmentDisplaySettings,
+    theme: &str,
     herdr: HerdrReporter,
 ) -> anyhow::Result<()> {
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
@@ -144,7 +155,7 @@ pub(crate) async fn run(
         mouse_capture: mouse_capture::Guard::acquire(),
     };
     Theme::initialize_from_terminal();
-    Theme::apply_committed(&display.theme);
+    Theme::apply_committed(theme);
     let id = match id {
         Some(id) => subagent::normalize_id(id)?,
         None => match super::select::select_running_run(&mut terminal).await? {
@@ -262,9 +273,9 @@ impl AttachmentApp {
         let mut refresh = tokio::time::interval(REFRESH_INTERVAL);
         refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut reported_state = None;
-        self.refresh().await?;
+        self.refresh()?;
         self.report_herdr(herdr, &mut reported_state).await;
-        terminal.draw(|frame| self.draw(frame, standalone_footer_hint(), None))?;
+        terminal.draw(|frame| self.draw(frame, AttachChrome::Standalone))?;
         self.note_drawn();
 
         loop {
@@ -276,7 +287,7 @@ impl AttachmentApp {
                     }
                 }
                 _ = refresh.tick() => {
-                    let changed = self.refresh().await?;
+                    let changed = self.refresh()?;
                     self.report_herdr(herdr, &mut reported_state).await;
                     let elapsed_advanced =
                         self.live_elapsed_secs() != self.last_drawn_elapsed_secs;
@@ -288,7 +299,7 @@ impl AttachmentApp {
                 },
             };
             if redraw {
-                terminal.draw(|frame| self.draw(frame, standalone_footer_hint(), None))?;
+                terminal.draw(|frame| self.draw(frame, AttachChrome::Standalone))?;
                 self.note_drawn();
             }
         }
@@ -309,7 +320,7 @@ impl AttachmentApp {
         *reported_state = Some(status.state);
     }
 
-    pub(crate) async fn refresh(&mut self) -> anyhow::Result<bool> {
+    pub(crate) fn refresh(&mut self) -> anyhow::Result<bool> {
         let events = self.reader.read_new()?;
         let mut changed = !events.is_empty();
         for event in events {
@@ -655,12 +666,7 @@ impl AttachmentApp {
         self.scroll.clamp(self.content_len, self.viewport_height);
     }
 
-    pub(crate) fn draw(
-        &mut self,
-        frame: &mut Frame<'_>,
-        footer_hint: &str,
-        parent_notice: Option<&str>,
-    ) {
+    pub(crate) fn draw(&mut self, frame: &mut Frame<'_>, chrome: AttachChrome) {
         let area = frame.area();
         let chunks = Layout::vertical([
             Constraint::Length(4),
@@ -728,7 +734,7 @@ impl AttachmentApp {
 
         let footer = vec![
             Line::styled("─".repeat(width.max(1)), Theme::dim()),
-            footer_line(footer_hint, parent_notice, width),
+            footer_line(chrome, width),
         ];
         frame.render_widget(Paragraph::new(footer).style(Style::default()), chunks[2]);
     }

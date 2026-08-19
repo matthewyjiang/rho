@@ -109,7 +109,7 @@ impl App {
             available_auths,
             using_unavailable_provider,
             pending_interactive_login: None,
-            setup_screen: None,
+            exclusive: super::exclusive_screen::ExclusiveOccupant::Session,
             pending_usage_limits: Vec::new(),
             usage_limits_live: std::collections::BTreeMap::new(),
             pending_changelog: None,
@@ -138,7 +138,7 @@ impl App {
             media_attach_tasks: Vec::new(),
             terminal_height: 0,
             composer_attachment_layout_cache: None,
-            embedded_attach: None,
+
             attach_run_filter: super::attach_picker::WorkspaceRunFilter::RunningOnly,
             attach_disk_candidates: Vec::new(),
             attach_seen_live: std::collections::HashSet::new(),

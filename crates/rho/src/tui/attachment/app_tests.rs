@@ -5,7 +5,7 @@ use pretty_assertions::assert_eq;
 use ratatui::layout::Rect;
 use tempfile::TempDir;
 
-use super::*;
+use super::{super::chrome::AttachChrome, *};
 use rho_sdk::model::ModelUsage;
 
 fn test_app() -> (TempDir, AttachmentApp) {
@@ -525,7 +525,7 @@ fn mouse_events_reuse_painted_history() {
     let mut terminal =
         ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 30)).expect("test terminal");
     terminal
-        .draw(|frame| app.draw(frame, "hint", None))
+        .draw(|frame| app.draw(frame, AttachChrome::Standalone))
         .expect("baseline draw");
     let painted_ptr = app
         .painted
@@ -538,7 +538,7 @@ fn mouse_events_reuse_painted_history() {
     app.handle_event(mouse(MouseEventKind::Down(MouseButton::Left), 8, 5));
     app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 8, 6));
     terminal
-        .draw(|frame| app.draw(frame, "hint", None))
+        .draw(|frame| app.draw(frame, AttachChrome::Standalone))
         .expect("hover draw");
     assert_eq!(
         app.painted
@@ -557,7 +557,7 @@ fn mouse_events_reuse_painted_history() {
     );
 
     terminal
-        .draw(|frame| app.draw(frame, "hint", None))
+        .draw(|frame| app.draw(frame, AttachChrome::Standalone))
         .expect("toggle draw");
     let after_toggle_ptr = app
         .painted
@@ -638,7 +638,7 @@ fn draw_hover_lift_follows_pointer_and_survives_toggle() {
     let mut terminal =
         ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 30)).expect("test terminal");
     terminal
-        .draw(|frame| app.draw(frame, "hint", None))
+        .draw(|frame| app.draw(frame, AttachChrome::Standalone))
         .expect("baseline draw");
 
     let baseline = row_look(&terminal, 5);
@@ -647,7 +647,7 @@ fn draw_hover_lift_follows_pointer_and_survives_toggle() {
     // Pointer over the header, outside the history viewport: no lift.
     app.handle_event(mouse(MouseEventKind::Moved, 8, 1));
     terminal
-        .draw(|frame| app.draw(frame, "hint", None))
+        .draw(|frame| app.draw(frame, AttachChrome::Standalone))
         .expect("header draw");
     assert_eq!(
         row_look(&terminal, 5),
@@ -658,7 +658,7 @@ fn draw_hover_lift_follows_pointer_and_survives_toggle() {
     // Pointer over the card: lift.
     app.handle_event(mouse(MouseEventKind::Moved, 8, 5));
     terminal
-        .draw(|frame| app.draw(frame, "hint", None))
+        .draw(|frame| app.draw(frame, AttachChrome::Standalone))
         .expect("hover draw");
     assert_ne!(
         row_look(&terminal, 5),
@@ -670,7 +670,7 @@ fn draw_hover_lift_follows_pointer_and_survives_toggle() {
     // reshaped card under the stationary pointer instead of dropping it.
     click_card(&mut app, 8, 5);
     terminal
-        .draw(|frame| app.draw(frame, "hint", None))
+        .draw(|frame| app.draw(frame, AttachChrome::Standalone))
         .expect("toggle draw");
     assert!(transcript_tool(&app, 0).expanded);
     assert_ne!(
@@ -693,13 +693,13 @@ fn draw_hover_lift_skips_untoggleable_card() {
     let mut terminal =
         ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 30)).expect("test terminal");
     terminal
-        .draw(|frame| app.draw(frame, "hint", None))
+        .draw(|frame| app.draw(frame, AttachChrome::Standalone))
         .expect("baseline draw");
     let baseline = row_look(&terminal, 5);
 
     app.handle_event(mouse(MouseEventKind::Moved, 8, 5));
     terminal
-        .draw(|frame| app.draw(frame, "hint", None))
+        .draw(|frame| app.draw(frame, AttachChrome::Standalone))
         .expect("hover draw");
     assert_eq!(
         row_look(&terminal, 5),

@@ -19,6 +19,23 @@ pub(super) fn print_exit_summary(summary: Option<&str>) -> std::io::Result<()> {
 }
 
 impl App {
+    fn insert_recovered_history(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+    ) -> std::io::Result<bool> {
+        let messages = std::mem::take(&mut self.info.session.recovered_messages);
+        let had_recovered_messages = !messages.is_empty();
+        let entries = self.transcript_entries(&messages);
+        if entries.is_empty() {
+            return Ok(had_recovered_messages);
+        }
+
+        let size = terminal.size()?;
+        self.note_terminal_geometry(size.width as usize, size.height as usize);
+        self.set_history_entries(entries);
+        Ok(had_recovered_messages)
+    }
+
     pub(super) async fn run(
         mut self,
         terminal: &mut DefaultTerminal,
@@ -99,8 +116,7 @@ impl App {
             }
             needs_redraw |= shell_changed;
             needs_redraw |= background_ready;
-            needs_redraw |= self.update_activity_panels(agent);
-            needs_redraw |= self.poll_embedded_attach().await?;
+            needs_redraw |= self.update_activity_panels(agent)?;
             needs_redraw |= self
                 .poll_subagent_questionnaires(agent.session_id())
                 .await?;
@@ -143,7 +159,7 @@ impl App {
                 || !self.pending_usage_limits.is_empty()
                 || self.pending_changelog.is_some()
                 || self.mcp_argument_completions.is_pending()
-                || self.is_attach_view()
+                || self.exclusive.wants_journal_ticks()
                 || !self.pending_inline_shells.is_empty()
                 || self.history.images().has_pending()
                 || agent.startup_hydrate_pending()
@@ -208,50 +224,47 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        if self.is_attach_view() {
-            self.dispatch_attach(event);
-            return Ok(());
-        }
-        match event {
-            Event::Key(key) if key.kind == KeyEventKind::Press => {
-                self.clear_selections();
-                self.subagent_panel.clear_pointer_state();
-                self.handle_key(key, terminal, agent).await?;
+        match self.take_exclusive_event(event) {
+            Ok(resize) => {
+                if resize {
+                    self.apply_terminal_resize(terminal)?;
+                }
+                return Ok(());
             }
-            Event::Paste(text) => {
-                self.input_ui.cancel_pointer_click_sequence();
-                self.flush_pending_paste_burst();
-                let text = normalize_paste(&text);
-                self.insert_external_paste(&text);
-                self.input_ui.clear_paste_burst();
-            }
-            Event::Resize(_, _) => {
-                self.flush_pending_paste_burst();
-                self.clamp_overlay_detail_scroll(terminal);
-                self.clamp_limits_overlay_scroll(terminal);
-                self.clear_selections();
-                self.history.set_hovered_code_block_copy(None);
-                self.subagent_panel.clear_pointer_state();
-                self.hide_history_scrollbar();
-                self.clamp_history_scroll_for_terminal(terminal)?;
-            }
-            Event::Mouse(mouse) => {
-                self.flush_pending_paste_burst();
-                self.handle_mouse_event(mouse.kind, mouse.column, mouse.row, terminal)?;
-            }
-            Event::FocusGained => {
-                self.input_ui.cancel_pointer_click_sequence();
-                // Some Windows hosts drop application mouse tracking on focus
-                // changes; re-assert so wheel scrolling keeps working.
-                mouse_capture::reassert();
-                self.statusline.refresh_git_branch();
-            }
-            Event::FocusLost => {
-                self.input_ui.cancel_pointer_click_sequence();
-                self.input_ui.finalize_selection();
-                self.subagent_panel.clear_pointer_state();
-            }
-            Event::Key(_) => {}
+            Err(event) => match event {
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    self.clear_selections();
+                    self.subagent_panel.clear_pointer_state();
+                    self.handle_key(key, terminal, agent).await?;
+                }
+                Event::Paste(text) => {
+                    self.input_ui.cancel_pointer_click_sequence();
+                    self.flush_pending_paste_burst();
+                    let text = normalize_paste(&text);
+                    self.insert_external_paste(&text);
+                    self.input_ui.clear_paste_burst();
+                }
+                Event::Resize(_, _) => {
+                    self.apply_terminal_resize(terminal)?;
+                }
+                Event::Mouse(mouse) => {
+                    self.flush_pending_paste_burst();
+                    self.handle_mouse_event(mouse.kind, mouse.column, mouse.row, terminal)?;
+                }
+                Event::FocusGained => {
+                    self.input_ui.cancel_pointer_click_sequence();
+                    // Some Windows hosts drop application mouse tracking on focus
+                    // changes; re-assert so wheel scrolling keeps working.
+                    mouse_capture::reassert();
+                    self.statusline.refresh_git_branch();
+                }
+                Event::FocusLost => {
+                    self.input_ui.cancel_pointer_click_sequence();
+                    self.input_ui.finalize_selection();
+                    self.subagent_panel.clear_pointer_state();
+                }
+                Event::Key(_) => {}
+            },
         }
         Ok(())
     }
@@ -280,7 +293,7 @@ impl App {
 
     pub(super) fn animation_active(&self, now: Instant) -> bool {
         self.loading_active()
-            || self.attach_should_redraw(now)
+            || self.exclusive_should_redraw(now)
             || self.subagent_panel.is_active()
             || self.process_panel.is_active()
             || self
@@ -375,11 +388,32 @@ impl App {
         )
     }
 
-    pub(super) fn update_activity_panels(&mut self, agent: &InteractiveRuntime) -> bool {
-        let mut changed = self.subagent_panel.update(agent.subagents());
-        if changed {
+    pub(super) fn apply_terminal_resize(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+    ) -> std::io::Result<()> {
+        self.flush_pending_paste_burst();
+        self.clamp_overlay_detail_scroll(terminal);
+        self.clamp_limits_overlay_scroll(terminal);
+        self.clear_selections();
+        self.history.set_hovered_code_block_copy(None);
+        self.subagent_panel.clear_pointer_state();
+        self.hide_history_scrollbar();
+        self.clamp_history_scroll_for_terminal(terminal)
+    }
+
+    pub(super) fn update_activity_panels(
+        &mut self,
+        agent: &InteractiveRuntime,
+    ) -> anyhow::Result<bool> {
+        // Tick the occupant first so a journal read error cannot leave panel
+        // costs half-applied.
+        let mut changed = self.refresh_exclusive_screen()?;
+        let panel_changed = self.subagent_panel.update(agent.subagents());
+        if panel_changed {
             self.refresh_attach_picker();
         }
+        changed |= panel_changed;
         changed |= self.process_panel.update(agent.processes());
         // Fold terminal subagent/advisor costs on every panel refresh path (idle
         // poll, in-turn wait, goal wait). Claiming is idempotent per run/call.
@@ -387,7 +421,7 @@ impl App {
         if self.subagent_panel.is_active() {
             self.turn.start_loading_if_needed();
         }
-        changed
+        Ok(changed)
     }
 
     /// Pull finished non-main costs into the parent session total.

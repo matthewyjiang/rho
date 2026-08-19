@@ -728,114 +728,102 @@ impl App {
         let mut control = StreamControl::Continue;
         let mut approval_resolved = false;
         'event: {
-            if self.is_attach_view() {
-                let resize = matches!(first_event, Event::Resize(_, _));
-                if resize {
-                    self.flush_pending_paste_burst();
-                }
-                self.dispatch_attach(first_event);
-                if self.should_quit {
-                    return Ok(
-                        self.request_running_interrupt(interrupt_requested, tool_call_active)
-                    );
-                }
-                if resize {
-                    self.drain_streams(terminal)?;
-                    control = StreamControl::Resize;
-                }
-                break 'event;
-            }
-            match first_event {
-                Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    self.clear_selections();
-                    self.subagent_panel.clear_pointer_state();
-                    if key.code == KeyCode::Esc
-                        && matches!(self.input_ui.composer(), ComposerMode::Approval(_))
-                    {
-                        self.handle_approval_key(key, 1, 1).map_err(|error| {
-                            RunningTerminalError::Recoverable(
-                                rho_providers::model::ModelError::InvalidResponse(
-                                    error.to_string(),
-                                ),
-                            )
-                        })?;
-                        self.cancel_inline_shells();
-                        return Ok(
-                            self.request_running_interrupt(interrupt_requested, tool_call_active)
-                        );
-                    }
-                    if key.code == KeyCode::Esc && self.cancel_inline_shells() {
-                        break 'event;
-                    }
-                    if key.code == KeyCode::Esc && self.exit_shell_mode() {
-                        break 'event;
-                    }
-                    if key.code == KeyCode::Esc && !self.running_escape_has_overlay_target() {
-                        return Ok(
-                            self.request_running_interrupt(interrupt_requested, tool_call_active)
-                        );
-                    }
-                    if self.external_editor_shortcut_matches(key) {
-                        self.open_composer_in_editor(terminal)
-                            .await
-                            .map_err(RunningTerminalError::Terminal)?;
+            match self.take_exclusive_event(first_event) {
+                Ok(resize) => {
+                    if resize {
+                        self.apply_terminal_resize(terminal)?;
+                        self.drain_streams(terminal)?;
                         control = StreamControl::Resize;
-                        break 'event;
-                    }
-                    let resolved =
-                        self.handle_key_during_turn(key, terminal)
-                            .await
-                            .map_err(|err| {
-                                RunningTerminalError::Recoverable(
-                                    rho_providers::model::ModelError::InvalidResponse(
-                                        err.to_string(),
-                                    ),
-                                )
-                            })?;
-                    approval_resolved |= resolved;
-                    if self.pending.input_action().is_some() {
-                        break 'event;
                     }
                     if self.should_quit {
                         return Ok(
                             self.request_running_interrupt(interrupt_requested, tool_call_active)
                         );
                     }
+                    break 'event;
                 }
-                Event::Paste(text) => {
-                    self.input_ui.cancel_pointer_click_sequence();
-                    self.flush_pending_paste_burst();
-                    let text = normalize_paste(&text);
-                    self.insert_external_paste(&text);
-                    self.input_ui.clear_paste_burst();
-                }
-                Event::Resize(_, _) => {
-                    self.flush_pending_paste_burst();
-                    self.clamp_overlay_detail_scroll(terminal);
-                    self.clamp_limits_overlay_scroll(terminal);
-                    self.clear_selections();
-                    self.history.set_hovered_code_block_copy(None);
-                    self.subagent_panel.clear_pointer_state();
-                    self.hide_history_scrollbar();
-                    self.clamp_history_scroll_for_terminal(terminal)?;
-                    self.drain_streams(terminal)?;
-                    control = StreamControl::Resize;
-                }
-                Event::Mouse(mouse) => {
-                    self.flush_pending_paste_burst();
-                    self.handle_mouse_event(mouse.kind, mouse.column, mouse.row, terminal)?;
-                }
-                Event::FocusGained => {
-                    self.input_ui.cancel_pointer_click_sequence();
-                    mouse_capture::reassert();
-                    self.statusline.refresh_git_branch();
-                }
-                Event::FocusLost => {
-                    self.input_ui.cancel_pointer_click_sequence();
-                    self.input_ui.finalize_selection();
-                    self.subagent_panel.clear_pointer_state();
-                }
-                _ => {}
+                Err(first_event) => match first_event {
+                    Event::Key(key) if key.kind == KeyEventKind::Press => {
+                        self.clear_selections();
+                        self.subagent_panel.clear_pointer_state();
+                        if key.code == KeyCode::Esc
+                            && matches!(self.input_ui.composer(), ComposerMode::Approval(_))
+                        {
+                            self.handle_approval_key(key, 1, 1).map_err(|error| {
+                                RunningTerminalError::Recoverable(
+                                    rho_providers::model::ModelError::InvalidResponse(
+                                        error.to_string(),
+                                    ),
+                                )
+                            })?;
+                            self.cancel_inline_shells();
+                            return Ok(self
+                                .request_running_interrupt(interrupt_requested, tool_call_active));
+                        }
+                        if key.code == KeyCode::Esc && self.cancel_inline_shells() {
+                            break 'event;
+                        }
+                        if key.code == KeyCode::Esc && self.exit_shell_mode() {
+                            break 'event;
+                        }
+                        if key.code == KeyCode::Esc && !self.running_escape_has_overlay_target() {
+                            return Ok(self
+                                .request_running_interrupt(interrupt_requested, tool_call_active));
+                        }
+                        if self.external_editor_shortcut_matches(key) {
+                            self.open_composer_in_editor(terminal)
+                                .await
+                                .map_err(RunningTerminalError::Terminal)?;
+                            control = StreamControl::Resize;
+                            break 'event;
+                        }
+                        let resolved =
+                            self.handle_key_during_turn(key, terminal)
+                                .await
+                                .map_err(|err| {
+                                    RunningTerminalError::Recoverable(
+                                        rho_providers::model::ModelError::InvalidResponse(
+                                            err.to_string(),
+                                        ),
+                                    )
+                                })?;
+                        approval_resolved |= resolved;
+                        if self.pending.input_action().is_some() {
+                            break 'event;
+                        }
+                        if self.should_quit {
+                            return Ok(self
+                                .request_running_interrupt(interrupt_requested, tool_call_active));
+                        }
+                    }
+                    Event::Paste(text) => {
+                        self.input_ui.cancel_pointer_click_sequence();
+                        self.flush_pending_paste_burst();
+                        let text = normalize_paste(&text);
+                        self.insert_external_paste(&text);
+                        self.input_ui.clear_paste_burst();
+                    }
+                    Event::Resize(_, _) => {
+                        self.apply_terminal_resize(terminal)?;
+                        self.drain_streams(terminal)?;
+                        control = StreamControl::Resize;
+                    }
+                    Event::Mouse(mouse) => {
+                        self.flush_pending_paste_burst();
+                        self.handle_mouse_event(mouse.kind, mouse.column, mouse.row, terminal)?;
+                    }
+                    Event::FocusGained => {
+                        self.input_ui.cancel_pointer_click_sequence();
+                        mouse_capture::reassert();
+                        self.statusline.refresh_git_branch();
+                    }
+                    Event::FocusLost => {
+                        self.input_ui.cancel_pointer_click_sequence();
+                        self.input_ui.finalize_selection();
+                        self.subagent_panel.clear_pointer_state();
+                    }
+                    _ => {}
+                },
             }
         }
         self.flush_due_paste_burst();
