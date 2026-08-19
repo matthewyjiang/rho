@@ -15,21 +15,15 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
-        if self.info.session.startup_prompt.is_none() {
-            return Ok(false);
-        }
         if self.setup_screen.is_some()
             || self.input_ui.composer().blocks_held_turn_start()
             || self.is_ui_busy()
         {
             return Ok(false);
         }
-        let prompt = self
-            .info
-            .session
-            .startup_prompt
-            .take()
-            .expect("startup prompt checked above");
+        let Some(prompt) = self.info.session.startup_prompt.take() else {
+            return Ok(false);
+        };
         self.input_ui.set_text(prompt);
         self.input_ui.set_cursor(self.input_ui.char_len());
         self.submit(terminal, agent).await?;

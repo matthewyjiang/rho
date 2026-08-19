@@ -35,7 +35,7 @@ To open the same session with the first prompt already sent:
 rho --prompt "summarize this repository"
 ```
 
-This is still the interactive TUI. Use [`rho run`](/automation-cli) when you want one answer and then exit.
+This is still the interactive TUI. Use [`rho run`](/automation-cli) when you want one answer and then exit. If you are not signed in yet, the text stays in the composer until you finish login and press enter.
 
 Rho streams the assistant response as it works. Tool use appears inline so you can see commands, file reads, and edits as they happen. For persisted history and resume behavior, see [sessions](/sessions).
 

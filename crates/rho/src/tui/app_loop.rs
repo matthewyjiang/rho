@@ -79,6 +79,9 @@ impl App {
             needs_redraw |= self.poll_compact(terminal, agent).await?;
             needs_redraw |= self.release_pending_held_turn(terminal, agent).await?;
             needs_redraw |= self.start_next_follow_up(terminal, agent).await?;
+            if !first_frame {
+                needs_redraw |= self.start_startup_prompt(terminal, agent).await?;
+            }
             self.poll_update_notice();
             self.poll_custom_provider_models();
             needs_redraw |= self.poll_syntax_warmup();
@@ -116,14 +119,10 @@ impl App {
                     first_frame = false;
                     if open_resume_after_draw {
                         self.open_resume_picker()?;
-                        needs_redraw = true;
-                        continue;
                     }
+                    needs_redraw = true;
+                    continue;
                 }
-            }
-            if !first_frame && self.start_startup_prompt(terminal, agent).await? {
-                needs_redraw = true;
-                continue;
             }
             let subagents_active = agent.subagents().is_some_and(|manager| {
                 manager.has_active_or_pending_notification(agent.session_id().as_str())
