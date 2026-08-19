@@ -332,7 +332,7 @@ impl App {
                 if let Some(target) = activate_subagent {
                     self.input_ui.clear_selection();
                     self.history.clear_text_selection();
-                    self.activate_subagent_row(&target, now);
+                    self.activate_subagent_row(&target);
                 } else if was_scrollbar_drag {
                     self.input_ui.clear_selection();
                     self.history.clear_text_selection();

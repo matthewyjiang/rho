@@ -4,6 +4,7 @@ mod activity_anchor;
 mod advisor;
 mod assert_helpers;
 mod attach_picker;
+mod attach_view;
 mod background_agents;
 mod changelog;
 mod command_palette;
@@ -43,6 +44,10 @@ use advisor::{
 };
 use attach_picker::{
     ATTACH_CLI_EMPTY_SCENARIO, ATTACH_PICKER_EMPTY_SCENARIO, ATTACH_PICKER_SCENARIO,
+};
+use attach_view::{
+    ATTACH_VIEW_CYCLE_SCENARIO, ATTACH_VIEW_FROM_COMMAND_SCENARIO,
+    ATTACH_VIEW_PARENT_APPROVAL_SCENARIO, ATTACH_VIEW_QUIT_RESTORES_SCENARIO,
 };
 use background_agents::{
     BACKGROUND_AGENT_AUTO_DELIVERY_STEPS, BACKGROUND_AGENT_QUESTIONNAIRE_STEPS,
@@ -855,6 +860,10 @@ const ALL_SCENARIOS: &[Scenario] = &[
     ATTACH_PICKER_SCENARIO,
     ATTACH_PICKER_EMPTY_SCENARIO,
     ATTACH_CLI_EMPTY_SCENARIO,
+    ATTACH_VIEW_FROM_COMMAND_SCENARIO,
+    ATTACH_VIEW_CYCLE_SCENARIO,
+    ATTACH_VIEW_PARENT_APPROVAL_SCENARIO,
+    ATTACH_VIEW_QUIT_RESTORES_SCENARIO,
     PROCESS_RAIL_SCENARIO,
     Scenario::new(
         "tool_card_hover",

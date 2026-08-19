@@ -165,89 +165,6 @@ impl HerdrReporter {
             .await;
     }
 
-    /// Splits a sibling pane and submits one shell command to it.
-    ///
-    /// The split and input requests use the bounded Herdr socket transport. If
-    /// input submission fails after the split, Rho closes the new pane before
-    /// returning the error.
-    pub(crate) async fn open_sibling_pane(&self, command: &str) -> std::io::Result<()> {
-        let Some(config) = &self.config else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::NotConnected,
-                "herdr is not configured",
-            ));
-        };
-        let split = self
-            .request(
-                "pane.split",
-                json!({
-                    "direction": "right",
-                    "focus": false,
-                    "target_pane_id": config.pane_id,
-                }),
-            )
-            .await?;
-        let pane_id = split
-            .pointer("/pane/pane_id")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "herdr pane split returned no pane id",
-                )
-            })?
-            .to_owned();
-
-        if let Err(run_error) = self
-            .request(
-                "pane.send_input",
-                json!({
-                    "pane_id": pane_id,
-                    "text": command,
-                    "keys": ["enter"],
-                }),
-            )
-            .await
-        {
-            let cleanup = self
-                .request("pane.close", json!({ "pane_id": pane_id }))
-                .await;
-            return match cleanup {
-                Ok(_) => Err(run_error),
-                Err(cleanup_error) => Err(std::io::Error::other(format!(
-                    "{run_error}; pane cleanup failed: {cleanup_error}"
-                ))),
-            };
-        }
-        Ok(())
-    }
-
-    async fn request(
-        &self,
-        method: &str,
-        params: serde_json::Value,
-    ) -> std::io::Result<serde_json::Value> {
-        let response = self
-            .exchange(json_rpc_request(method, params), REQUEST_TIMEOUT)
-            .await?;
-        let response: serde_json::Value = serde_json::from_slice(&response)
-            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-        if let Some(error) = response.get("error") {
-            let message = error
-                .get("message")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_owned)
-                .unwrap_or_else(|| error.to_string());
-            return Err(std::io::Error::other(message));
-        }
-        response.get("result").cloned().ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "herdr response returned no result",
-            )
-        })
-    }
-
     async fn exchange(
         &self,
         request: serde_json::Value,
@@ -402,38 +319,6 @@ pub(crate) mod test_support {
                         return;
                     };
                     let tx = tx.clone();
-                    tokio::spawn(async move {
-                        let mut stream = BufReader::new(stream);
-                        let mut line = String::new();
-                        stream.read_line(&mut line).await.unwrap();
-                        let request = serde_json::from_str(&line).unwrap();
-                        tx.send(request).unwrap();
-                        // Keep the connection open after the framed response so
-                        // clients must read a newline rather than waiting for EOF.
-                        stream.get_mut().write_all(response).await.unwrap();
-                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                    });
-                }
-            });
-            Self { requests }
-        }
-
-        pub(crate) async fn bind_with_responses(
-            socket_path: &Path,
-            responses: Vec<&'static [u8]>,
-        ) -> Self {
-            use std::{collections::VecDeque, sync::Arc};
-
-            let listener = tokio::net::UnixListener::bind(socket_path).unwrap();
-            let (tx, requests) = tokio::sync::mpsc::unbounded_channel();
-            let responses = Arc::new(std::sync::Mutex::new(VecDeque::from(responses)));
-            tokio::spawn(async move {
-                loop {
-                    let Ok((stream, _)) = listener.accept().await else {
-                        return;
-                    };
-                    let tx = tx.clone();
-                    let response = responses.lock().unwrap().pop_front().unwrap_or(b"{}\n");
                     tokio::spawn(async move {
                         let mut stream = BufReader::new(stream);
                         let mut line = String::new();

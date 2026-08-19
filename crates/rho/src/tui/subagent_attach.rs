@@ -1,172 +1,204 @@
-//! Click-to-attach actions for subagent rows in the activity rail.
+//! In-place attach view for activity-rail clicks and `/attach`.
 
-use std::{io, path::Path, time::Instant};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use futures_util::FutureExt;
+use ratatui::Frame;
 
 use super::{
-    clipboard::CopyOutcome, subagent_panel::SubagentAttachTarget, text_selection::CopyNotice, App,
+    attachment::{
+        AttachChrome, AttachInput, AttachmentApp, AttachmentDisplaySettings, ParentNotice,
+    },
+    exclusive_screen::ExclusiveOccupant,
+    subagent_panel::SubagentAttachTarget,
+    App, ComposerMode,
 };
-use crate::herdr::HerdrReporter;
 
-/// Where a subagent attach request should land.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum AttachDestination {
-    /// Split a new Herdr pane beside this one and run the attach command there.
-    HerdrPane,
-    /// No Herdr host: hand the command to the user through the clipboard.
-    Clipboard,
-}
-
-pub(super) struct PendingSubagentAttach {
-    target: SubagentAttachTarget,
-    clipboard_command: String,
-    handle: tokio::task::JoinHandle<io::Result<()>>,
-}
-
-/// Command a user runs to watch delegated run `run_id`.
+/// Command a user runs to watch delegated run `run_id` from another terminal.
 ///
 /// `run_id` is a validated 6-char hex id, so it needs no shell quoting.
 pub(super) fn attach_command(run_id: &str) -> String {
     format!("rho attach {run_id}")
 }
 
-/// Command to run inside a Herdr pane.
+/// Short hover hint shown on the right edge of a subagent row.
+pub(super) const ACTION_HINT: &str = "attach";
+
+fn open_view(
+    target: &SubagentAttachTarget,
+    display: AttachmentDisplaySettings,
+) -> anyhow::Result<AttachmentApp> {
+    let directory = crate::subagent::resolve_run_directory(&target.run_id)?;
+    Ok(AttachmentApp::new(&target.run_id, directory, display))
+}
+
+/// Next live-rail target, or `None` when cycling is not defined.
 ///
-/// Prefers this process's executable so a cargo-built or downloaded binary still
-/// starts when `rho` is not on `PATH`. Every argument is quoted because Herdr
-/// submits this string to the pane's shell.
-pub(super) fn pane_attach_command(run_id: &str) -> String {
-    let executable = std::env::current_exe().ok();
-    pane_attach_command_for_executable(executable.as_deref(), run_id)
+/// Live rail only. A finished run opened from `/attach` is not in this set, so
+/// Tab is a no-op instead of jumping to the first live row.
+pub(super) fn next_target<'a>(
+    current: &str,
+    targets: &'a [SubagentAttachTarget],
+    delta: isize,
+) -> Option<&'a SubagentAttachTarget> {
+    if targets.len() < 2 {
+        return None;
+    }
+    let index = targets.iter().position(|target| target.run_id == current)?;
+    let next = (index as isize + delta).rem_euclid(targets.len() as isize) as usize;
+    let target = &targets[next];
+    (target.run_id != current).then_some(target)
 }
 
-fn pane_attach_command_for_executable(executable: Option<&Path>, run_id: &str) -> String {
-    let executable = executable
-        .map(|path| path.to_string_lossy())
-        .unwrap_or_else(|| "rho".into());
-    format!(
-        "{} {} {}",
-        shell_single_quote(&executable),
-        shell_single_quote("attach"),
-        shell_single_quote(run_id)
-    )
+/// Composer-owned parent wait. Distinct from [`ParentNotice::TurnComplete`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ParentWait {
+    Approval,
+    Questionnaire,
 }
 
-/// Choose clipboard vs Herdr based on whether this Rho instance is hosted.
-pub(super) fn destination(herdr: &HerdrReporter) -> AttachDestination {
-    if herdr.is_enabled() {
-        AttachDestination::HerdrPane
-    } else {
-        AttachDestination::Clipboard
+/// Parent chrome while attach is showing. Composer waits win over turn-complete.
+pub(super) fn parent_notice(
+    waiting: Option<ParentWait>,
+    parent_turn_armed: bool,
+    parent_busy: bool,
+) -> Option<ParentNotice> {
+    match waiting {
+        Some(ParentWait::Approval) => Some(ParentNotice::Approval),
+        Some(ParentWait::Questionnaire) => Some(ParentNotice::Questionnaire),
+        None if parent_turn_armed && !parent_busy => Some(ParentNotice::TurnComplete),
+        None => None,
     }
 }
 
-/// Short hover hint shown on the right edge of a subagent row.
-pub(super) fn action_hint(destination: AttachDestination) -> &'static str {
-    match destination {
-        AttachDestination::HerdrPane => "open pane",
-        AttachDestination::Clipboard => "copy attach",
+fn cycle_delta(key: KeyEvent) -> Option<isize> {
+    if key.kind != KeyEventKind::Press
+        || key.modifiers.contains(KeyModifiers::CONTROL)
+        || key.modifiers.contains(KeyModifiers::ALT)
+    {
+        return None;
+    }
+    match key.code {
+        KeyCode::Tab | KeyCode::Right => Some(1),
+        KeyCode::BackTab | KeyCode::Left => Some(-1),
+        _ => None,
+    }
+}
+
+fn composer_wait(composer: &ComposerMode) -> Option<ParentWait> {
+    match composer {
+        ComposerMode::Approval(_) => Some(ParentWait::Approval),
+        ComposerMode::Questionnaire(_) => Some(ParentWait::Questionnaire),
+        _ => None,
     }
 }
 
 impl App {
-    pub(super) fn subagent_attach_destination(&self) -> AttachDestination {
-        destination(&self.info.services.herdr)
-    }
-
-    pub(super) fn subagent_action_hint(&self) -> &'static str {
-        action_hint(self.subagent_attach_destination())
-    }
-
-    pub(super) fn activate_subagent_row(&mut self, target: &SubagentAttachTarget, now: Instant) {
-        let clipboard_command = attach_command(&target.run_id);
-        match self.subagent_attach_destination() {
-            AttachDestination::HerdrPane => {
-                if self
-                    .pending_subagent_attaches
-                    .iter()
-                    .any(|pending| pending.target.run_id == target.run_id)
-                {
-                    return;
-                }
-                let herdr = self.info.services.herdr.clone();
-                let pane_command = pane_attach_command(&target.run_id);
-                let handle =
-                    tokio::spawn(async move { herdr.open_sibling_pane(&pane_command).await });
-                self.pending_subagent_attaches.push(PendingSubagentAttach {
-                    target: target.clone(),
-                    clipboard_command,
-                    handle,
-                });
-                self.notify_status(format!(
-                    "opening a herdr pane for {} {}",
-                    target.agent_id, target.run_id
-                ));
-            }
-            AttachDestination::Clipboard => {
-                let message = self.copy_attach_command(&clipboard_command, now);
-                self.notify_status(message);
-            }
-        }
-    }
-
-    pub(super) fn poll_pending_subagent_attaches(&mut self, now: Instant) -> bool {
-        let mut changed = false;
-        while let Some(index) = self
-            .pending_subagent_attaches
-            .iter()
-            .position(|pending| pending.handle.is_finished())
-        {
-            let pending = self.pending_subagent_attaches.remove(index);
-            let result = pending
-                .handle
-                .now_or_never()
-                .expect("finished subagent attach task has a result");
-            match result {
-                Ok(Ok(())) => self.notify_status(format!(
-                    "opened a herdr pane attached to {} {}",
-                    pending.target.agent_id, pending.target.run_id
-                )),
-                Ok(Err(error)) => {
-                    let copy_message = self.copy_attach_command(&pending.clipboard_command, now);
-                    self.notify_status(format!("herdr pane failed ({error}); {copy_message}"));
-                }
-                Err(error) => {
-                    let copy_message = self.copy_attach_command(&pending.clipboard_command, now);
-                    self.notify_status(format!("herdr pane task failed ({error}); {copy_message}"));
-                }
-            }
-            changed = true;
-        }
-        changed
-    }
-
-    pub(super) fn has_pending_subagent_attach(&self) -> bool {
-        !self.pending_subagent_attaches.is_empty()
-    }
-
-    fn copy_attach_command(&mut self, command: &str, now: Instant) -> String {
-        let outcome = self.clipboard.copy(command);
-        let message = match &outcome {
-            Ok(CopyOutcome::Confirmed) => format!("copied attach command: {command}"),
-            Ok(CopyOutcome::SentToTerminal) => {
-                format!("sent attach command to the terminal: {command}")
-            }
-            Err(error) => format!("copy failed ({error}); attach with: {command}"),
+    pub(super) fn draw_attach_screen(&mut self, frame: &mut Frame<'_>) -> bool {
+        let Some(parent_turn_armed) = self.exclusive.parent_turn_armed() else {
+            return false;
         };
-        self.history
-            .set_copy_notice(Some(CopyNotice::from_copy_result(
-                outcome,
-                command.chars().count(),
-                now,
-            )));
-        message
+        let notice = parent_notice(
+            composer_wait(self.input_ui.composer()),
+            parent_turn_armed,
+            self.is_ui_busy(),
+        );
+        let Some(view) = self.exclusive.attach_view_mut() else {
+            return false;
+        };
+        view.draw(frame, AttachChrome::Embedded { notice });
+        view.note_drawn();
+        true
     }
-}
 
-fn shell_single_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', r"'\''"))
+    pub(super) fn activate_subagent_row(&mut self, target: &SubagentAttachTarget) {
+        if let Err(error) = self.enter_attach_view(target) {
+            self.notify_status(format!(
+                "could not attach to {} {}: {error}",
+                target.agent_id, target.run_id
+            ));
+        }
+    }
+
+    pub(super) fn enter_attach_view(
+        &mut self,
+        target: &SubagentAttachTarget,
+    ) -> anyhow::Result<()> {
+        let display = AttachmentDisplaySettings::from_runtime(
+            self.info.runtime.show_reasoning_output,
+            self.info.runtime.zen_mode,
+            self.info.runtime.max_tool_output_lines,
+        );
+        let view = open_view(target, display)?;
+        let parent_turn_armed = match &self.exclusive {
+            ExclusiveOccupant::Attach {
+                parent_turn_armed, ..
+            } => *parent_turn_armed,
+            ExclusiveOccupant::Session | ExclusiveOccupant::Setup(_) => self.is_ui_busy(),
+        };
+        self.exclusive = ExclusiveOccupant::Attach {
+            view: Box::new(view),
+            parent_turn_armed,
+        };
+        self.notify_status(format!(
+            "attached to {} · {}",
+            target.agent_id,
+            attach_command(&target.run_id)
+        ));
+        Ok(())
+    }
+
+    pub(super) fn leave_attach_view(&mut self) {
+        if matches!(self.exclusive, ExclusiveOccupant::Attach { .. }) {
+            self.exclusive = ExclusiveOccupant::Session;
+        }
+    }
+
+    pub(super) fn route_attach_event(&mut self, event: Event) -> bool {
+        let resize = matches!(event, Event::Resize(_, _));
+        if let Event::Key(key) = event {
+            if let Some(delta) = cycle_delta(key) {
+                self.cycle_attachment_view(delta);
+                return resize;
+            }
+        }
+        let Some(view) = self.exclusive.attach_view_mut() else {
+            return resize;
+        };
+        match view.handle_event(event) {
+            AttachInput::Leave => self.leave_attach_view(),
+            AttachInput::Quit => {
+                self.leave_attach_view();
+                self.should_quit = true;
+            }
+            AttachInput::Ignored | AttachInput::Handled => {}
+        }
+        resize
+    }
+
+    fn cycle_attachment_view(&mut self, delta: isize) {
+        let targets = self
+            .subagent_panel
+            .candidates()
+            .into_iter()
+            .map(|candidate| SubagentAttachTarget {
+                run_id: candidate.run_id,
+                agent_id: candidate.agent_id,
+            })
+            .collect::<Vec<_>>();
+        let Some(current) = self
+            .exclusive
+            .attach_view()
+            .map(|view| view.run_id().to_owned())
+        else {
+            return;
+        };
+        let Some(target) = next_target(&current, &targets, delta).cloned() else {
+            return;
+        };
+        if let Err(error) = self.enter_attach_view(&target) {
+            self.notify_status(format!("could not switch attach view: {error}"));
+        }
+    }
 }
 
 #[cfg(test)]

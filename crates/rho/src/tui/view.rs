@@ -6,7 +6,7 @@ use ratatui::{
     style::Style,
     text::Line,
     widgets::{Clear, Paragraph},
-    DefaultTerminal, Frame,
+    Frame,
 };
 
 use super::tool_call_batch::LiveToolKey;
@@ -94,12 +94,15 @@ impl App {
             draw_terminal_too_small(frame, area);
             return;
         }
-        // First-launch setup owns the whole screen: no history, composer,
-        // statusline, or hints until the user has a provider and a model.
-        if let Some(step) = self.setup_step() {
-            self.draw_setup_screen(frame, area, step);
+        // Setup and in-place attach replace session chrome. Setup still types
+        // into its pickers; attach swallows input in the event loops.
+        if self.draw_exclusive_screen(frame) {
             return;
         }
+        self.draw_session(frame, area, now);
+    }
+
+    fn draw_session(&mut self, frame: &mut Frame<'_>, area: Rect, now: Instant) {
         let width = area.width as usize;
         let height = area.height as usize;
         self.note_terminal_geometry(width, height);
@@ -298,7 +301,7 @@ impl App {
                 Paragraph::new(self.subagent_panel.lines(
                     width,
                     layout.subagents.height as usize,
-                    self.subagent_action_hint(),
+                    super::subagent_attach::ACTION_HINT,
                     /*continues_below*/ layout.processes.height > 0,
                 ))
                 .style(Theme::activity_rail()),
@@ -513,7 +516,7 @@ impl App {
             lines.extend(self.subagent_panel.lines(
                 width,
                 layout.subagents.height as usize,
-                self.subagent_action_hint(),
+                super::subagent_attach::ACTION_HINT,
                 /*continues_below*/ layout.processes.height > 0,
             ));
         }
@@ -971,22 +974,5 @@ impl App {
         let goal = self.goal_status();
         self.refresh_statusline_state();
         self.statusline.lines(width, goal)
-    }
-
-    pub(super) fn insert_recovered_history(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-    ) -> std::io::Result<bool> {
-        let messages = std::mem::take(&mut self.info.session.recovered_messages);
-        let had_recovered_messages = !messages.is_empty();
-        let entries = self.transcript_entries(&messages);
-        if entries.is_empty() {
-            return Ok(had_recovered_messages);
-        }
-
-        let size = terminal.size()?;
-        self.note_terminal_geometry(size.width as usize, size.height as usize);
-        self.set_history_entries(entries);
-        Ok(had_recovered_messages)
     }
 }

@@ -12,7 +12,7 @@ Herdr support is Unix-only. On other platforms Rho ignores Herdr environment var
 | --- | --- |
 | Agent state | Rho reports `idle`, `working`, and `blocked` so Herdr can show pane status |
 | Session identity | Rho reports the active session id (and the attach run id in `rho attach`) |
-| Subagent panes | Click a subagent row in the activity rail to open a sibling pane that runs `rho attach <id>` |
+| Subagent attach | Click a subagent row in the activity rail to open the in-place attach view. `rho attach <id>` remains available for another terminal. |
 | Image paste | A single-line paste of an image path becomes an attachment instead of plain text |
 | Image previews | Kitty placements when Herdr can paint them; halfblock fallback when host cell metrics are missing |
 
@@ -45,13 +45,11 @@ On exit, Rho releases the agent marker for the pane.
 
 Interactive sessions and `rho run` both report state when they detect Herdr. `rho attach <id>` reports state for the watched run and releases on detach.
 
-## Watch a subagent in a sibling pane
+## Watch a subagent
 
-Outside Herdr, activating a subagent row copies `rho attach <id>` so you can paste it elsewhere.
+Activating a subagent row, or choosing one from `/attach`, opens a read-only attach view in the same terminal. The parent session keeps streaming. Press `q` or Escape to return. Detaching does not stop the delegated run.
 
-Inside Herdr, the same action opens a sibling pane to the right and submits the attach command there. Rho prefers the current executable path so a cargo-built or downloaded binary still starts when `rho` is not on `PATH`. If the pane split fails, Rho falls back to copying the attach command.
-
-Detaching from the attach TUI does not stop the delegated run. See [attachment and artifacts](/subagents/attachment-and-artifacts).
+`rho attach <id>` still starts the same viewer as its own process when you want another terminal. See [attachment and artifacts](/subagents/attachment-and-artifacts).
 
 ## Images and graphics
 

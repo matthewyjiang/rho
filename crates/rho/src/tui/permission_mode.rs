@@ -85,7 +85,7 @@ impl App {
             }
             return Ok(());
         }
-        if self.setup_screen.is_some() {
+        if self.exclusive.setup_step().is_some() {
             return Ok(());
         }
         if !matches!(self.input_ui.composer(), ComposerMode::Input) {

@@ -73,6 +73,7 @@ mod claude_login;
 mod composer_layout;
 mod custom_provider_login;
 mod during_turn;
+mod exclusive_screen;
 mod goal_command;
 mod help_picker;
 mod history_cache;
@@ -233,7 +234,6 @@ use render::{
 use scrollbar::HistoryScrollbar;
 use session_title::PendingSessionTitle;
 use statusline::{GoalStatus, StatusLine};
-use subagent_attach::PendingSubagentAttach;
 use subagent_panel::SubagentPanel;
 use terminal_session::TerminalSession;
 use text_selection::{highlight_selection, render_copy_notice, TextSelection};
@@ -499,9 +499,8 @@ struct App {
     available_auths: Vec<String>,
     using_unavailable_provider: bool,
     pending_interactive_login: Option<PendingInteractiveLogin>,
-    /// Active step of the first-launch setup screen, or `None` for a normal
-    /// session. While set, the screen replaces all session chrome.
-    setup_screen: Option<setup_screen::SetupStep>,
+    /// Who owns the full terminal. Setup and attach replace session chrome.
+    exclusive: exclusive_screen::ExclusiveOccupant,
     pending_usage_limits: Vec<limits_command::PendingUsageFetch>,
     usage_limits_live: std::collections::BTreeMap<
         crate::usage_limits::UsageProviderKind,
@@ -546,7 +545,7 @@ struct App {
     terminal_height: usize,
     /// Shared composer attachment layout for the current frame/width.
     composer_attachment_layout_cache: Option<composer_attachments::ComposerAttachmentLayoutCache>,
-    pending_subagent_attaches: Vec<PendingSubagentAttach>,
+
     /// `/attach` starts on running runs; Ctrl-R includes finished transcripts.
     attach_run_filter: attach_picker::WorkspaceRunFilter,
     /// Disk listing captured when `/attach` opens so panel ticks only rematch live rows.
