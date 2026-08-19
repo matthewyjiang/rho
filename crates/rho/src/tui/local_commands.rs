@@ -22,7 +22,6 @@ impl App {
         };
         let text = text.to_owned();
         self.copy_text(&text, Instant::now());
-        self.set_status("copied last assistant message");
         Ok(())
     }
 
