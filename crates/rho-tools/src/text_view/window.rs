@@ -192,7 +192,6 @@ struct WindowScan<F> {
     start: usize,
     want: Option<usize>,
     selected: Vec<String>,
-    ends_with_newline: bool,
     bytes: usize,
 }
 
@@ -206,7 +205,6 @@ impl<F: LineFingerprint> WindowScan<F> {
             start,
             want: limit,
             selected: Vec::new(),
-            ends_with_newline: false,
             bytes: 0,
         }
     }
@@ -221,11 +219,9 @@ impl<F: LineFingerprint> WindowScan<F> {
                     self.pending.extend_from_slice(&rest[..index]);
                     self.finish_content_line()?;
                     rest = &rest[index + 1..];
-                    self.ends_with_newline = true;
                 }
                 None => {
                     self.pending.extend_from_slice(rest);
-                    self.ends_with_newline = false;
                     return Ok(());
                 }
             }
@@ -233,11 +229,9 @@ impl<F: LineFingerprint> WindowScan<F> {
         while let Some(index) = rest.iter().position(|&byte| byte == b'\n') {
             self.consume_line(&rest[..index], /*content*/ true)?;
             rest = &rest[index + 1..];
-            self.ends_with_newline = true;
         }
         if !rest.is_empty() {
             self.pending.extend_from_slice(rest);
-            self.ends_with_newline = false;
         }
         Ok(())
     }
