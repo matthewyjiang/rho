@@ -59,6 +59,8 @@ Heading-like text inside code fences, or invalid heading lines, stays literal.
 
 ## Copy
 
+- `/copy` copies the last assistant message. Rho briefly shows how many
+  characters were copied.
 - Drag-select transcript text to copy it to the terminal clipboard. Rho briefly
   shows how many characters were copied.
 - Code block, Mermaid, and math panel `COPY` actions sit in the top-right border
