@@ -4,6 +4,7 @@ use tempfile::TempDir;
 
 use super::{grep_workspace, truncate_chars, GrepRequest, MAX_FILE_BYTES};
 use crate::{
+    file_view::FileViewStyle,
     hashline::compute_file_hash,
     tool::{compact_display_path, resolve_path, ToolError},
 };
@@ -14,7 +15,13 @@ fn call_grep(dir: &TempDir, args: serde_json::Value) -> Result<String, ToolError
     let request = GrepRequest::from_arguments(args)?;
     let root = resolve_path(dir.path(), &request.path);
     let display = compact_display_path(dir.path(), &request.path);
-    grep_workspace(&root, &display, &request, &|| false)
+    grep_workspace(
+        &root,
+        &display,
+        &request,
+        &|| false,
+        FileViewStyle::Hashline,
+    )
 }
 
 fn write(dir: &TempDir, relative: &str, content: &str) {
@@ -175,7 +182,7 @@ fn cancellation_stops_the_walk_and_is_reported() {
     let dir = TempDir::new().unwrap();
     write(&dir, "a.txt", "needle\n");
     let request = GrepRequest::from_arguments(json!({"pattern": "needle"})).unwrap();
-    let out = grep_workspace(dir.path(), ".", &request, &|| true).unwrap();
+    let out = grep_workspace(dir.path(), ".", &request, &|| true, FileViewStyle::Hashline).unwrap();
     assert_eq!(out, "no matches for 'needle' under . (cancelled)");
 }
 
@@ -237,7 +244,29 @@ fn content_mode_headers_are_workspace_relative_under_narrowed_path() {
         !content.contains(&format!("[nested.txt#{tag}]")),
         "must not emit walk-root-relative header: {content}"
     );
-    assert!(content.contains("1 | anchor line"), "{content}");
+}
+
+// Covers: non-hashline grep content mode must not mint full-file tags
+// Owner: pure unit (grep hashline)
+#[test]
+fn content_mode_omits_file_tags_when_disabled() {
+    let dir = TempDir::new().unwrap();
+    let body = "find me\n";
+    write(&dir, "src/lib.rs", body);
+    let request = GrepRequest::from_arguments(json!({"pattern": "find me"})).unwrap();
+    let root = resolve_path(dir.path(), &request.path);
+    let display = compact_display_path(dir.path(), &request.path);
+    let content = grep_workspace(
+        &root,
+        &display,
+        &request,
+        &|| false,
+        FileViewStyle::Numbered,
+    )
+    .unwrap();
+    assert!(content.contains("src/lib.rs"), "{content}");
+    assert!(!content.contains("[src/lib.rs#"), "{content}");
+    assert!(content.contains("1 | find me"), "{content}");
 }
 
 // Covers: truncate_chars bounds multibyte UTF-8 strings at character boundaries

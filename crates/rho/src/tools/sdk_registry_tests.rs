@@ -640,6 +640,12 @@ fn edit_tool_selection_swaps_the_advertised_edit_surface() {
     let after = tools.unfiltered_names().collect::<Vec<_>>();
     assert_eq!(before.len(), after.len());
     assert!(after.iter().any(|name| name == "read_file"));
+    assert_eq!(
+        after.iter().filter(|name| *name == "read_file").count(),
+        1,
+        "edit-tool switch must keep one read_file"
+    );
+    assert_eq!(tools.file_view_style(), rho_tools::FileViewStyle::Numbered);
 
     let mut without_edit = AppToolSet::new(
         &config,

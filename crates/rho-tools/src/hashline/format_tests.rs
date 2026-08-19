@@ -2,35 +2,6 @@ use pretty_assertions::assert_eq;
 
 use super::*;
 
-// Covers: empty and trailing-newline files must not invent phantom content lines
-// Owner: hashline format
-#[test]
-fn split_content_lines_handles_empty_and_trailing_newline() {
-    assert!(split_content_lines("").is_empty());
-    assert_eq!(split_content_lines("a\nb"), vec!["a", "b"]);
-    assert_eq!(split_content_lines("a\nb\n"), vec!["a", "b"]);
-    assert_eq!(split_content_lines("\n"), vec![""]);
-    assert_eq!(split_content_lines("a\r\nb\r\n"), vec!["a", "b"]);
-
-    assert_eq!(
-        iter_content_lines("").collect::<Vec<_>>(),
-        Vec::<&str>::new()
-    );
-    assert_eq!(
-        iter_content_lines("a\nb").collect::<Vec<_>>(),
-        vec!["a", "b"]
-    );
-    assert_eq!(
-        iter_content_lines("a\nb\n").collect::<Vec<_>>(),
-        vec!["a", "b"]
-    );
-    assert_eq!(iter_content_lines("\n").collect::<Vec<_>>(), vec![""]);
-    assert_eq!(
-        iter_content_lines("a\r\nb\r\n").collect::<Vec<_>>(),
-        vec!["a", "b"]
-    );
-}
-
 // Covers: snapshot tags must stay stable for equivalent normalized text
 // Owner: hashline format
 #[test]
@@ -38,6 +9,10 @@ fn file_hash_ignores_trailing_spaces_and_crlf() {
     let lf = "fn main() {\n    ok();\n}\n";
     let crlf_spaces = "fn main() {\r\n    ok();   \r\n}\r\n";
     assert_eq!(compute_file_hash(lf), compute_file_hash(crlf_spaces));
+    assert_eq!(
+        compute_file_hash(lf),
+        compute_file_hash_bytes(lf.as_bytes())
+    );
     assert_eq!(compute_file_hash(lf).len(), FILE_HASH_LENGTH);
     assert!(compute_file_hash(lf)
         .chars()
@@ -149,7 +124,7 @@ fn chain_snapshot_uses_head_tail_window_without_focus() {
     assert!(snapshot.contains("80:line-80"), "{snapshot}");
     assert!(snapshot.contains("…\n"), "{snapshot}");
     assert!(
-        snapshot.contains(&chain_truncation_footer(36, 80)),
+        snapshot.contains(&crate::text_view::chain_truncation_footer(36, 80)),
         "{snapshot}"
     );
     assert!(!snapshot.contains("40:line-40"), "{snapshot}");

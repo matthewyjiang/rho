@@ -417,7 +417,7 @@ async fn preserves_untouched_ending_before_deleted_final_line() {
 // Covers: one transaction applies add/update/delete and returns current metadata/output shapes.
 // Owner: apply_patch application
 #[tokio::test]
-async fn applies_mixed_operations_with_hashline_snapshots() {
+async fn applies_mixed_operations_with_numbered_snapshots() {
     let (_dir, ctx) = test_context();
     std::fs::write(ctx.cwd.join("modify.txt"), "line1\nline2\n").unwrap();
     std::fs::write(ctx.cwd.join("delete.txt"), "obsolete\n").unwrap();
@@ -442,8 +442,10 @@ async fn applies_mixed_operations_with_hashline_snapshots() {
         outcome.display_paths,
         vec!["nested/new.txt", "delete.txt", "modify.txt"]
     );
-    assert!(outcome.content.contains("[nested/new.txt#"));
-    assert!(outcome.content.contains("[modify.txt#"));
+    assert!(outcome.content.contains("nested/new.txt"));
+    assert!(outcome.content.contains("modify.txt"));
+    assert!(!outcome.content.contains("[nested/new.txt#"));
+    assert!(!outcome.content.contains("[modify.txt#"));
     assert!(!outcome.content.contains("@@"));
     assert!(outcome.diff.contains("--- a/modify.txt"));
 }

@@ -27,7 +27,8 @@ flowchart TD
 
 ## Hashline snapshots
 
-UTF-8 text and source files always read as a hashline view:
+UTF-8 text and source files read as numbered lines. When the selected edit tool
+is `hashline`, the header is a snapshot tag:
 
 ```text
 [src/app.py#A1B2]
@@ -39,12 +40,14 @@ UTF-8 text and source files always read as a hashline view:
 | Piece | Meaning |
 | --- | --- |
 | `path` | Display path for the file |
-| `TAG` | 4 uppercase hex digits. Full-file fingerprint with trailing whitespace ignored so a whitespace-only drift does not bust the tag |
+| `TAG` | 4 uppercase hex digits. Full-file fingerprint with trailing whitespace ignored so a whitespace-only drift does not bust the tag. Omitted when the selected edit tool is not `hashline` |
 | `N:line` | 1-indexed original line body |
 
-`read_file` still hashes the whole file when you pass `offset` / `limit`. Those
-args only choose which numbered rows appear. Rich documents and images are not
-hashline-editable; see [documents and images](/tools-workspace/documents-and-images).
+`read_file` still scans the whole file so the footer can report `of {total}`,
+even if you pass `offset` / `limit`. Those args only choose which numbered rows
+appear. Files larger than 256 KiB keep only that window in memory. There is no
+persistent line index. Rich documents and images are not hashline-editable; see
+[documents and images](/tools-workspace/documents-and-images).
 
 ### Where tags come from
 
@@ -144,13 +147,12 @@ syntax-highlighted content, and diff headers use the accent color.
   show as real `-` rows. Missing or stale targets fall back to the document
   projection.
 
-## One read format for every caller
+## One numbered read format
 
-`read_file` returns the hashline view for every UTF-8 text file, whether or not
-the caller can use `edit`. Two read formats would make output depend on the
-agent's tool set, so the same file would read differently to a subagent, a
-workflow step, and the automation CLI. One format costs a small number of input
-tokens per line and keeps every reader on the same contract.
+`read_file` always returns numbered `N:line` rows for UTF-8 text. The `[path#TAG]`
+header is only minted when the selected edit tool is `hashline`, because that is
+the format that consumes the tag. `apply_patch` and `str_replace` keep the same
+numbered lines without the fingerprint.
 
 ## Related
 

@@ -5,6 +5,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::{
+    file_view::{FileViewPolicy, FileViewStyle},
     grep_format::format_results,
     path_glob::PathGlob,
     search::{
@@ -30,7 +31,16 @@ const REGEX_SIZE_LIMIT: usize = 10 * 1024 * 1024;
 /// Cap DFA heap during regex compile.
 const REGEX_DFA_SIZE_LIMIT: usize = 10 * 1024 * 1024;
 
-pub(crate) struct GrepSearch;
+#[derive(Clone)]
+pub(crate) struct GrepSearch {
+    file_view: FileViewPolicy,
+}
+
+impl GrepSearch {
+    pub(crate) fn new(file_view: FileViewPolicy) -> Self {
+        Self { file_view }
+    }
+}
 
 #[derive(Deserialize)]
 struct Args {
@@ -147,7 +157,7 @@ impl WorkspaceSearch for GrepSearch {
     fn spec() -> ToolSpec {
         ToolSpec {
             name: Self::NAME.into(),
-            description: "Searches file contents under a directory with a regular expression. Skips ignored, hidden, and binary files. Returns matches grouped by file with line numbers. Content mode prefixes each file with a stable [path#TAG] snapshot header and shows matches as `N | text`. Match text is a preview and may be truncated; use read_file when you need exact line text.".into(),
+            description: "Searches file contents under a directory with a regular expression. Skips ignored, hidden, and binary files. Returns matches grouped by file with line numbers. Content mode shows matches as `N | text`. When the selected edit tool is hashline, each file is prefixed with a [path#TAG] snapshot header. Match text is a preview and may be truncated; use read_file when you need exact line text.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -178,12 +188,19 @@ impl WorkspaceSearch for GrepSearch {
     }
 
     fn run(
+        &self,
         root: &Path,
         display_root: &str,
         request: &GrepRequest,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<String, ToolError> {
-        grep_workspace(root, display_root, request, cancelled)
+        grep_workspace(
+            root,
+            display_root,
+            request,
+            cancelled,
+            self.file_view.style(),
+        )
     }
 }
 
@@ -221,6 +238,7 @@ pub(crate) fn grep_workspace(
     display_root: &str,
     request: &GrepRequest,
     cancelled: &dyn Fn() -> bool,
+    style: FileViewStyle,
 ) -> Result<String, ToolError> {
     let options = WalkOptions {
         hidden: request.hidden,
@@ -242,7 +260,7 @@ pub(crate) fn grep_workspace(
                 return ControlFlow::Continue(());
             }
         }
-        let Some(mut hit) = scan_file(request, file, retained_per_file) else {
+        let Some(mut hit) = scan_file(request, file, retained_per_file, style) else {
             return ControlFlow::Continue(());
         };
 
@@ -284,7 +302,12 @@ pub(crate) fn grep_workspace(
 ///
 /// Returns `None` for unreadable, oversized, binary, or non-matching files, so
 /// every output mode shares one read and one pass over the lines.
-fn scan_file(request: &GrepRequest, file: WalkedFile, retain: usize) -> Option<FileHit> {
+fn scan_file(
+    request: &GrepRequest,
+    file: WalkedFile,
+    retain: usize,
+    style: FileViewStyle,
+) -> Option<FileHit> {
     let text = read_searchable_text(&file.absolute)?;
     let stop_early = request.output_mode.stops_at_first_match();
     let mut hit = FileHit {
@@ -294,7 +317,7 @@ fn scan_file(request: &GrepRequest, file: WalkedFile, retain: usize) -> Option<F
         lines: Vec::new(),
     };
     // Use hashline line splitting so match line numbers agree with edit anchors.
-    for (index, line) in crate::hashline::iter_content_lines(&text).enumerate() {
+    for (index, line) in crate::text_view::iter_content_lines(&text).enumerate() {
         if !request.regex.is_match(line) {
             continue;
         }
@@ -311,7 +334,7 @@ fn scan_file(request: &GrepRequest, file: WalkedFile, retain: usize) -> Option<F
     if hit.total == 0 {
         return None;
     }
-    if request.output_mode == GrepOutputMode::Content {
+    if request.output_mode == GrepOutputMode::Content && style.mints_snapshot_tags() {
         hit.file_tag = Some(crate::hashline::compute_file_hash(&text));
     }
     Some(hit)

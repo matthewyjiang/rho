@@ -5,6 +5,7 @@ use std::sync::Arc;
 use rho_sdk::tool::Tool;
 
 use crate::{
+    file_view::FileViewPolicy,
     sdk_search::{GlobTool, GrepTool},
     DEFAULT_MAX_OUTPUT_BYTES,
 };
@@ -16,15 +17,15 @@ use super::{ListDirTool, ReadFileTool, WriteFileTool};
 pub struct CodingToolOptions {
     max_output_bytes: usize,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
-    edit_tool: crate::EditFormat,
+    file_view: FileViewPolicy,
 }
 
 impl Default for CodingToolOptions {
     fn default() -> Self {
         Self {
             max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
-            edit_tool: crate::EditFormat::default(),
             mutation_observer: None,
+            file_view: FileViewPolicy::default(),
         }
     }
 }
@@ -40,7 +41,12 @@ impl CodingToolOptions {
     }
 
     pub fn edit_tool(mut self, edit_tool: crate::EditFormat) -> Self {
-        self.edit_tool = edit_tool;
+        self.file_view = FileViewPolicy::new(edit_tool);
+        self
+    }
+
+    pub fn file_view(mut self, file_view: FileViewPolicy) -> Self {
+        self.file_view = file_view;
         self
     }
 
@@ -77,17 +83,22 @@ pub fn coding_tool(kind: CodingToolKind, options: CodingToolOptions) -> Arc<dyn 
         }),
         CodingToolKind::ReadFile => Arc::new(ReadFileTool {
             max_output_bytes: options.max_output_bytes,
+            file_view: options.file_view.clone(),
         }),
         CodingToolKind::WriteFile => Arc::new(WriteFileTool {
             max_output_bytes: options.max_output_bytes,
             mutation_observer: options.mutation_observer.clone(),
+            file_view: options.file_view.clone(),
         }),
         CodingToolKind::Edit => super::build_edit_sdk_tool(
-            options.edit_tool,
+            options.file_view.current(),
             options.max_output_bytes,
             options.mutation_observer.clone(),
         ),
-        CodingToolKind::Grep => Arc::new(GrepTool::new(options.max_output_bytes)),
+        CodingToolKind::Grep => Arc::new(GrepTool::grep(
+            options.max_output_bytes,
+            options.file_view.clone(),
+        )),
         CodingToolKind::Glob => Arc::new(GlobTool::new(options.max_output_bytes)),
     }
 }
