@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    model::ReasoningCapabilities, provider::CatalogReasoningPolicy, reasoning::ReasoningLevel,
+    model::ReasoningCapabilities,
+    provider::{CatalogLookupMode, CatalogReasoningPolicy},
+    reasoning::ReasoningLevel,
 };
 
 #[path = "models_dev_document.rs"]
@@ -17,7 +19,9 @@ mod hydrate;
 mod overrides;
 #[path = "models_dev_sdk.rs"]
 mod sdk;
-pub use hydrate::{ensure_models_dev_catalog, prefetch_model_metadata};
+pub use hydrate::{
+    ensure_models_dev_catalog, force_refresh_models_dev_catalog, prefetch_model_metadata,
+};
 
 /// Holds the catalog hydrate mutex so tests can prove a caller does not await it.
 #[doc(hidden)]
@@ -216,9 +220,43 @@ pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMe
     override_metadata(provider, model)
 }
 
+/// Why a custom host with `catalog_mode = "model-id"` has no models.dev row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CatalogLookupMiss {
+    /// The selected model id has no `provider/model` slash.
+    BareModelId,
+    /// The id split, but that models.dev pair is absent.
+    MissingRow {
+        source_provider: String,
+        source_model: String,
+    },
+}
+
+/// Some when this custom host splits model ids and catalog metadata is absent.
+pub fn custom_model_id_catalog_miss(provider: &str, model: &str) -> Option<CatalogLookupMiss> {
+    let descriptor = crate::provider::provider_descriptor(provider)?;
+    if !descriptor.is_custom_openai_compatible() {
+        return None;
+    }
+    if descriptor.catalog_lookup() != CatalogLookupMode::ModelId {
+        return None;
+    }
+    if cached_model_metadata(provider, model).is_some() {
+        return None;
+    }
+    Some(match model_id_catalog_source(model) {
+        Some((source_provider, source_model)) => CatalogLookupMiss::MissingRow {
+            source_provider,
+            source_model,
+        },
+        None => CatalogLookupMiss::BareModelId,
+    })
+}
+
 /// models.dev provider and model id used for the sqlite catalog row.
 ///
-/// Custom hosts can borrow another slug (`catalog = "llmgateway"`). A models.toml
+/// Custom hosts can borrow another slug (`catalog = "llmgateway"`) or split
+/// the selected model id (`catalog_mode = "model-id"`). A models.toml
 /// `catalog` value wins and may also remap the model id (`anthropic/claude-sonnet-4-5`).
 ///
 /// Built-in providers are deliberately left on their provider-facing name:
@@ -235,21 +273,38 @@ fn catalog_source_for(
     if let Some(source) = local.and_then(|table| overrides::local_catalog_source(table, model)) {
         return source;
     }
-    // The catalog string is the models.dev provider key. Do not run built-in
-    // remappers (OpenRouter's owner/model split) on a borrowed slug. A slug
-    // that is also a built-in cache key *and* that provider's document
-    // (`openrouter`) is keyed by the host so extract is untouched.
-    // `openai-codex` is a built-in name whose document is `openai`, so those
-    // hosts still rematch the Codex extract rows.
-    let borrowed = crate::provider::provider_descriptor(provider)
+    let Some(descriptor) = crate::provider::provider_descriptor(provider)
         .filter(|descriptor| descriptor.is_custom_openai_compatible())
-        .map(|descriptor| descriptor.metadata_upstream)
-        .filter(|upstream| *upstream != provider)
-        .filter(|upstream| !borrowed_slug_collides_with_builtin_extract(upstream));
-    match borrowed {
-        Some(upstream) => (upstream.to_string(), model.to_string()),
-        None => (provider.to_string(), model.to_string()),
+    else {
+        return (provider.to_string(), model.to_string());
+    };
+    match descriptor.catalog_lookup() {
+        CatalogLookupMode::ModelId => model_id_catalog_source(model)
+            .unwrap_or_else(|| (provider.to_string(), model.to_string())),
+        CatalogLookupMode::Slug => {
+            // The catalog string is the models.dev provider key. Do not run built-in
+            // remappers (OpenRouter's owner/model split) on a borrowed slug. A slug
+            // that is also a built-in cache key *and* that provider's document
+            // (`openrouter`) is keyed by the host so extract is untouched.
+            // `openai-codex` is a built-in name whose document is `openai`, so those
+            // hosts still rematch the Codex extract rows.
+            let upstream = descriptor.metadata_upstream;
+            if upstream != provider && !borrowed_slug_collides_with_builtin_extract(upstream) {
+                (upstream.to_string(), model.to_string())
+            } else {
+                (provider.to_string(), model.to_string())
+            }
+        }
     }
+}
+
+/// Splits `provider/model` on the first slash. Extra slashes stay in the model.
+fn model_id_catalog_source(model: &str) -> Option<(String, String)> {
+    let (source_provider, source_model) = model.split_once('/')?;
+    if source_provider.is_empty() || source_model.is_empty() {
+        return None;
+    }
+    Some((source_provider.to_string(), source_model.to_string()))
 }
 
 /// True when writing borrowed rows under `slug` would collide with a built-in
@@ -545,7 +600,8 @@ pub(super) fn open_models_dev_cache() -> rusqlite::Result<Connection> {
             id integer primary key check (id = 1),
             cache_version integer not null,
             updated_at integer not null,
-            borrowed_slugs text not null default ''
+            borrowed_slugs text not null default '',
+            full_tree integer not null default 0
         );",
     )?;
     let _ = connection.execute(
@@ -554,6 +610,10 @@ pub(super) fn open_models_dev_cache() -> rusqlite::Result<Connection> {
     );
     let _ = connection.execute(
         "alter table catalog_snapshot add column borrowed_slugs text not null default ''",
+        [],
+    );
+    let _ = connection.execute(
+        "alter table catalog_snapshot add column full_tree integer not null default 0",
         [],
     );
     Ok(connection)
@@ -659,18 +719,7 @@ pub fn mark_catalog_snapshot_current_for_tests() {
 /// staleness forces another hydrate.
 #[doc(hidden)]
 pub fn age_catalog_snapshot_for_tests() {
-    hydrate::set_catalog_ready(false);
-    let Ok(connection) = open_models_dev_cache() else {
-        return;
-    };
-    let _ = connection.execute(
-        "insert into catalog_snapshot (id, cache_version, updated_at)
-         values (1, ?1, 0)
-         on conflict(id) do update set
-           cache_version = excluded.cache_version,
-           updated_at = excluded.updated_at",
-        params![MODEL_METADATA_CACHE_VERSION],
-    );
+    hydrate::invalidate_catalog_snapshot();
 }
 
 /// Clears process-local hydrate readiness so a test can force another download path.

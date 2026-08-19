@@ -364,3 +364,101 @@ fn set_endpoint_preserves_custom_catalog() {
         Some("llmgateway")
     );
 }
+
+// Covers: catalog_mode loads, persists, and survives a URL rewrite
+// Owner: provider config
+#[test]
+fn custom_openai_compatible_loads_and_persists_catalog_mode() {
+    let _lock = rho_providers::provider::custom_provider_registry_test_lock();
+    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        "provider = \"cliproxyapi\"\nmodel = \"anthropic/claude-sonnet-4-5\"\n[providers.custom.cliproxyapi]\nbase_url = \"http://127.0.0.1:8317/v1\"\ncatalog_mode = \"model-id\"\n",
+    )
+    .unwrap();
+
+    let config = Config::load_with_store(
+        path.clone(),
+        &rho_providers::credentials::MemoryCredentialStore::default(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        config.providers.custom["cliproxyapi"].catalog_lookup,
+        rho_providers::provider::CatalogLookupMode::ModelId
+    );
+    assert_eq!(
+        rho_providers::provider::interned_custom_provider("cliproxyapi")
+            .unwrap()
+            .catalog_lookup(),
+        rho_providers::provider::CatalogLookupMode::ModelId
+    );
+
+    config.write_settings(path.clone()).unwrap();
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        saved.contains("catalog_mode = \"model-id\""),
+        "saved config must keep catalog_mode: {saved}"
+    );
+    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
+}
+
+// Covers: catalog_mode rejects unknown values and ollama
+// Owner: provider config
+#[test]
+fn custom_catalog_mode_rejects_unknown_and_ollama_values() {
+    let dir = tempfile::tempdir().unwrap();
+    let unknown = dir.path().join("unknown.toml");
+    std::fs::write(
+        &unknown,
+        "[providers.custom.cliproxyapi]\nbase_url = \"http://127.0.0.1:8317/v1\"\ncatalog_mode = \"owner-model\"\n",
+    )
+    .unwrap();
+    let unknown_error = Config::load_with_store(
+        unknown,
+        &rho_providers::credentials::MemoryCredentialStore::default(),
+    )
+    .unwrap_err();
+    assert!(
+        format!("{unknown_error:#}").contains("providers.custom.cliproxyapi.catalog_mode"),
+        "{unknown_error:#}"
+    );
+
+    let ollama = dir.path().join("ollama.toml");
+    std::fs::write(
+        &ollama,
+        "[providers.ollama]\nbase_url = \"http://127.0.0.1:11434/v1\"\ncatalog_mode = \"model-id\"\n",
+    )
+    .unwrap();
+    let ollama_error = Config::load_with_store(
+        ollama,
+        &rho_providers::credentials::MemoryCredentialStore::default(),
+    )
+    .unwrap_err();
+    assert!(
+        format!("{ollama_error:#}").contains("providers.ollama does not accept catalog_mode"),
+        "{ollama_error:#}"
+    );
+}
+
+// Covers: rewriting a custom host URL must not drop catalog_mode
+// Owner: provider config
+#[test]
+fn set_endpoint_preserves_custom_catalog_mode() {
+    let mut providers = ProviderConfigs::default();
+    providers
+        .set_endpoint("cliproxyapi", "http://127.0.0.1:8317/v1")
+        .unwrap();
+    providers
+        .set_catalog_mode("cliproxyapi", Some("model-id".into()))
+        .unwrap();
+    providers
+        .set_endpoint("cliproxyapi", "http://127.0.0.1:8318/v1")
+        .unwrap();
+    assert_eq!(
+        providers.custom["cliproxyapi"].catalog_lookup,
+        rho_providers::provider::CatalogLookupMode::ModelId
+    );
+}

@@ -16,6 +16,7 @@ pub(super) const TOOLS_CATEGORY_VALUE: &str = "config_category:tools";
 pub(super) const PROVIDERS_CATEGORY_VALUE: &str = "config_category:providers";
 pub(super) const CONVERSATION_MODEL_VALUE: &str = "conversation_model";
 pub(super) const REFRESH_MODEL_LIST_VALUE: &str = "refresh_model_list";
+pub(super) const REFRESH_MODELS_DEV_VALUE: &str = "refresh_models_dev";
 pub(super) const PROVIDER_LOGIN_VALUE: &str = "provider_login";
 pub(super) const PROVIDER_LOGOUT_VALUE: &str = "provider_logout";
 pub(super) const SWITCH_AUTH_MODE_VALUE: &str = "switch_auth_mode";
@@ -225,7 +226,7 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
             ),
             item(
                 "Providers",
-                "Provider login, logout, auth mode, refresh model lists, and startup update checks.",
+                "Provider login, logout, auth mode, refresh model lists, refresh models.dev, and startup update checks.",
                 None,
                 PROVIDERS_CATEGORY_VALUE,
             ),
@@ -487,6 +488,12 @@ pub(super) fn category_picker(
                 REFRESH_MODEL_LIST_VALUE,
             ));
             items.push(item(
+                "Refresh models.dev catalog",
+                "Redownload models.dev metadata used for context, price, and reasoning.",
+                Some("run now".into()),
+                REFRESH_MODELS_DEV_VALUE,
+            ));
+            items.push(item(
                 "Check for updates",
                 "Check GitHub releases at startup and show an update notice when available. Space toggles.",
                 Some(on_off(config.check_for_updates)),
@@ -539,6 +546,7 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
         | PROVIDER_LOGOUT_VALUE
         | SWITCH_AUTH_MODE_VALUE
         | REFRESH_MODEL_LIST_VALUE
+        | REFRESH_MODELS_DEV_VALUE
         | CHECK_FOR_UPDATES_VALUE => Some(PROVIDERS_CATEGORY_VALUE),
         _ => None,
     }

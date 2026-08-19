@@ -18,6 +18,8 @@ pub(crate) struct ProviderEndpointConfig {
     pub(crate) base_url: Url,
     /// models.dev provider slug whose catalog rows this host should borrow.
     pub(crate) catalog: Option<String>,
+    /// How this host rematches models.dev rows. Default is slug-or-host.
+    pub(crate) catalog_lookup: rho_providers::provider::CatalogLookupMode,
 }
 
 impl ProviderConfigs {
@@ -41,19 +43,22 @@ impl ProviderConfigs {
             self.ollama = Some(ProviderEndpointConfig {
                 base_url: parsed,
                 catalog: None,
+                catalog_lookup: rho_providers::provider::CatalogLookupMode::Slug,
             });
             return Ok(());
         }
         rho_providers::provider::validate_custom_provider_name(provider)?;
-        let catalog = self
-            .custom
-            .get(provider)
-            .and_then(|endpoint| endpoint.catalog.clone());
+        let existing = self.custom.get(provider);
+        let catalog = existing.and_then(|endpoint| endpoint.catalog.clone());
+        let catalog_lookup = existing
+            .map(|endpoint| endpoint.catalog_lookup)
+            .unwrap_or_default();
         self.custom.insert(
             provider.to_string(),
             ProviderEndpointConfig {
                 base_url: parsed,
                 catalog,
+                catalog_lookup,
             },
         );
         Ok(())
@@ -72,10 +77,30 @@ impl ProviderConfigs {
         Ok(())
     }
 
+    fn set_catalog_mode(
+        &mut self,
+        provider: &str,
+        catalog_mode: Option<String>,
+    ) -> anyhow::Result<()> {
+        let field = format!("providers.custom.{provider}.catalog_mode");
+        let catalog_lookup = match catalog_mode {
+            Some(value) => parse_provider_catalog_mode(&field, &value)?,
+            None => rho_providers::provider::CatalogLookupMode::Slug,
+        };
+        let Some(endpoint) = self.custom.get_mut(provider) else {
+            anyhow::bail!("{field} requires a configured base_url");
+        };
+        endpoint.catalog_lookup = catalog_lookup;
+        Ok(())
+    }
+
     pub(super) fn apply(&mut self, partial: PartialProviderConfigs) -> anyhow::Result<()> {
         if let Some(endpoint) = partial.ollama {
             if endpoint.catalog.is_some() {
                 anyhow::bail!("providers.ollama does not accept catalog");
+            }
+            if endpoint.catalog_mode.is_some() {
+                anyhow::bail!("providers.ollama does not accept catalog_mode");
             }
             if let Some(base_url) = endpoint.base_url {
                 self.set_endpoint("ollama", &base_url)?;
@@ -89,6 +114,7 @@ impl ProviderConfigs {
                 };
                 self.set_endpoint(&name, &base_url)?;
                 self.set_catalog(&name, endpoint.catalog)?;
+                self.set_catalog_mode(&name, endpoint.catalog_mode)?;
             }
         }
         Ok(())
@@ -97,7 +123,11 @@ impl ProviderConfigs {
     /// Each config-defined host paired with the models.dev slug it borrows.
     fn specs(&self) -> impl Iterator<Item = rho_providers::provider::CustomProviderSpec<'_>> {
         self.custom.iter().map(|(name, endpoint)| {
-            rho_providers::provider::CustomProviderSpec::new(name, endpoint.catalog.as_deref())
+            rho_providers::provider::CustomProviderSpec::with_lookup(
+                name,
+                endpoint.catalog.as_deref(),
+                endpoint.catalog_lookup,
+            )
         })
     }
 
@@ -138,6 +168,15 @@ fn parse_provider_catalog(field: &str, catalog: &str) -> anyhow::Result<String> 
         anyhow::bail!("{field} must not contain whitespace");
     }
     Ok(catalog.to_string())
+}
+
+fn parse_provider_catalog_mode(
+    field: &str,
+    catalog_mode: &str,
+) -> anyhow::Result<rho_providers::provider::CatalogLookupMode> {
+    catalog_mode
+        .parse()
+        .map_err(|error| anyhow::anyhow!("{field} {error}"))
 }
 
 fn parse_provider_base_url(field: &str, base_url: &str) -> anyhow::Result<Url> {
@@ -275,6 +314,8 @@ struct PersistedEndpointConfig<'a> {
     base_url: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     catalog: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    catalog_mode: Option<&'a str>,
 }
 
 impl<'a> From<&'a ProviderConfigs> for PersistedProviderConfigs<'a> {
@@ -286,6 +327,7 @@ impl<'a> From<&'a ProviderConfigs> for PersistedProviderConfigs<'a> {
                 .map(|endpoint| PersistedEndpointConfig {
                     base_url: endpoint.base_url.as_str(),
                     catalog: None,
+                    catalog_mode: None,
                 }),
             custom: config
                 .custom
@@ -296,6 +338,7 @@ impl<'a> From<&'a ProviderConfigs> for PersistedProviderConfigs<'a> {
                         PersistedEndpointConfig {
                             base_url: endpoint.base_url.as_str(),
                             catalog: endpoint.catalog.as_deref(),
+                            catalog_mode: persisted_catalog_mode(endpoint.catalog_lookup),
                         },
                     )
                 })
@@ -311,11 +354,21 @@ pub(super) struct PartialProviderConfigs {
     pub(super) custom: Option<BTreeMap<String, PartialEndpointConfig>>,
 }
 
+fn persisted_catalog_mode(
+    lookup: rho_providers::provider::CatalogLookupMode,
+) -> Option<&'static str> {
+    match lookup {
+        rho_providers::provider::CatalogLookupMode::Slug => None,
+        rho_providers::provider::CatalogLookupMode::ModelId => Some(lookup.as_str()),
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct PartialEndpointConfig {
     pub(super) base_url: Option<String>,
     pub(super) catalog: Option<String>,
+    pub(super) catalog_mode: Option<String>,
 }
 
 #[cfg(test)]

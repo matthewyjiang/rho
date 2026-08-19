@@ -1708,3 +1708,127 @@ fn rematched_openai_codex_catalog_keeps_builtin_window() {
     });
     crate::provider::reset_custom_openai_compatible_providers_for_tests();
 }
+
+fn model_id_host_spec() -> crate::provider::CustomProviderSpec<'static> {
+    crate::provider::CustomProviderSpec::with_lookup(
+        "cliproxyapi",
+        None,
+        crate::provider::CatalogLookupMode::ModelId,
+    )
+}
+
+// Covers: catalog_mode = model-id hydrate writes otherwise-unborrowed slugs
+// Owner: models.dev catalog hydrate
+#[test]
+fn hydrate_writes_full_tree_for_model_id_hosts() {
+    let _lock = crate::provider::custom_provider_registry_test_lock();
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+    crate::provider::install_custom_openai_compatible_providers([model_id_host_spec()]).unwrap();
+
+    let api = json!({
+        "azure": {
+            "models": {
+                "gpt-4o": {
+                    "name": "Azure GPT-4o",
+                    "reasoning": false,
+                    "limit": { "context": 128000, "output": 4096 }
+                }
+            }
+        }
+    });
+
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        assert!(hydrate_catalog_from_api(&api) >= 1);
+        let metadata = cached_upstream_model_metadata("azure", "gpt-4o").expect("full-tree row");
+        assert_eq!(metadata.display_name.as_deref(), Some("Azure GPT-4o"));
+        assert_eq!(metadata.advertised_context_window, Some(128_000));
+    });
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+}
+
+// Covers: model-id lookup splits on the first slash; bare ids miss
+// Owner: models.dev catalog rematch
+#[test]
+fn custom_host_model_id_lookup_splits_and_misses_bare_ids() {
+    let _lock = crate::provider::custom_provider_registry_test_lock();
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+    crate::provider::install_custom_openai_compatible_providers([model_id_host_spec()]).unwrap();
+
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        write_cached_upstream_model_metadata(
+            "foo",
+            "bar/baz",
+            &ModelMetadata {
+                display_name: Some("Foo Bar Baz".into()),
+                advertised_context_window: Some(32_000),
+                reasoning_metadata_complete: true,
+                ..ModelMetadata::default()
+            },
+        );
+        let metadata = current_model_metadata("cliproxyapi", "foo/bar/baz").expect("split row");
+        assert_eq!(metadata.display_name.as_deref(), Some("Foo Bar Baz"));
+        assert!(current_model_metadata("cliproxyapi", "gpt-5.6-sol").is_none());
+        assert_eq!(
+            custom_model_id_catalog_miss("cliproxyapi", "gpt-5.6-sol"),
+            Some(CatalogLookupMiss::BareModelId)
+        );
+        assert_eq!(
+            custom_model_id_catalog_miss("cliproxyapi", "foo/bar/baz"),
+            None
+        );
+        assert_eq!(
+            custom_model_id_catalog_miss("cliproxyapi", "missing/model"),
+            Some(CatalogLookupMiss::MissingRow {
+                source_provider: "missing".into(),
+                source_model: "model".into(),
+            })
+        );
+    });
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+}
+
+// Covers: installing a model-id host must refetch even when the snapshot is fresh
+// Owner: models.dev catalog hydrate
+#[test]
+fn fresh_snapshot_is_not_ready_for_a_model_id_host() {
+    let _lock = crate::provider::custom_provider_registry_test_lock();
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        mark_catalog_snapshot_current_for_tests();
+        assert!(
+            hydrate::catalog_snapshot_is_ready(),
+            "a current snapshot with no model-id hosts is ready"
+        );
+
+        crate::provider::install_custom_openai_compatible_providers([model_id_host_spec()])
+            .unwrap();
+        assert!(
+            !hydrate::catalog_snapshot_is_ready(),
+            "a model-id host must refetch even when the snapshot is fresh"
+        );
+
+        mark_catalog_snapshot_current_for_tests();
+        assert!(
+            hydrate::catalog_snapshot_is_ready(),
+            "recording the full-tree flag must restore readiness"
+        );
+    });
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+}
+
+// Covers: force-refresh invalidation drops a current snapshot
+// Owner: models.dev catalog hydrate
+#[test]
+fn invalidate_catalog_snapshot_clears_readiness() {
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        mark_catalog_snapshot_current_for_tests();
+        assert!(hydrate::catalog_snapshot_is_ready());
+        hydrate::invalidate_catalog_snapshot();
+        assert!(!hydrate::catalog_snapshot_is_ready());
+    });
+}

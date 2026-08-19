@@ -547,6 +547,7 @@ impl App {
                 self.open_config_conversation_model_picker_during_turn();
             }
             config_picker::REFRESH_MODEL_LIST_VALUE
+            | config_picker::REFRESH_MODELS_DEV_VALUE
             | config_picker::PROVIDER_LOGIN_VALUE
             | config_picker::PROVIDER_LOGOUT_VALUE
             | config_picker::SWITCH_AUTH_MODE_VALUE => {

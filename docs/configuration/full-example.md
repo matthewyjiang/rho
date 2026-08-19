@@ -67,6 +67,7 @@ base_url = "http://127.0.0.1:11434/v1"
 [providers.custom.composer]
 base_url = "http://127.0.0.1:8787/v1"
 # catalog = "llmgateway" # optional models.dev slug for context, price, and reasoning
+# catalog_mode = "model-id" # split selected model ids as provider/model for models.dev
 
 [behavior]
 advisor_mode = false
@@ -109,7 +110,7 @@ Ollama's provider-specific API base uses its own section and does not affect oth
 base_url = "http://127.0.0.1:11434/v1"
 ```
 
-Custom Chat Completions hosts use a name you choose. `catalog` is optional and borrows a [models.dev](https://models.dev/) provider for context, price, and reasoning:
+Custom Chat Completions hosts use a name you choose. `catalog` is optional and borrows a [models.dev](https://models.dev/) provider for context, price, and reasoning. `catalog_mode = "model-id"` splits the selected model id instead:
 
 ```toml
 [providers.custom.composer]

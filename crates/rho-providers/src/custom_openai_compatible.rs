@@ -6,6 +6,8 @@
 //!
 //! A host may borrow another models.dev slug for context, price, and reasoning
 //! metadata via `catalog`; that slug becomes its `metadata_upstream`.
+//! `catalog_mode = "model-id"` instead splits the selected model id on the
+//! first `/` and looks that pair up in models.dev.
 //!
 //! Descriptors are interned for `'static` lookup. Visibility is scoped: the
 //! process-wide active set is the foreground config, and a runtime can overlay
@@ -18,9 +20,9 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock};
 use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
 
 use super::{
-    AuthMode, CatalogConstruction, CatalogReasoningPolicy, ModelIdCodec, ProviderAuthKind,
-    ProviderDescriptor, ProviderId, ProviderModelRefreshKind, ProviderModelSource, ProviderRuntime,
-    OPENAI_COMPATIBLE_API_BASE, PROVIDERS,
+    AuthMode, CatalogConstruction, CatalogLookupMode, CatalogReasoningPolicy, ModelIdCodec,
+    ProviderAuthKind, ProviderDescriptor, ProviderId, ProviderModelRefreshKind,
+    ProviderModelSource, ProviderRuntime, OPENAI_COMPATIBLE_API_BASE, PROVIDERS,
 };
 
 const CUSTOM_NONE_AUTH: AuthMode = AuthMode {
@@ -65,6 +67,7 @@ fn leak_str(value: String) -> &'static str {
 ///
 /// `catalog` is `None` when the host has no `catalog` override, in which case
 /// it borrows nothing and its own name is the metadata slug.
+/// Use [`Self::with_lookup`] for `catalog_mode = "model-id"`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CustomProviderSpec<'a> {
     pub name: &'a str,
@@ -79,10 +82,32 @@ impl<'a> CustomProviderSpec<'a> {
         }
     }
 
+    /// Interns this host with a models.dev lookup mode other than slug-or-host.
+    pub fn with_lookup(
+        name: &'a str,
+        catalog: Option<&'a str>,
+        catalog_lookup: CatalogLookupMode,
+    ) -> Self {
+        let spec = Self::new(name, catalog);
+        PENDING_CATALOG_LOOKUP.with(|pending| {
+            pending
+                .borrow_mut()
+                .insert(spec.name.to_string(), catalog_lookup);
+        });
+        spec
+    }
+
     /// models.dev slug this host reads metadata rows under.
+    ///
+    /// Model-id lookup ignores this and splits the selected model id instead.
     fn metadata_upstream(&self) -> &'a str {
         self.catalog.unwrap_or(self.name)
     }
+}
+
+thread_local! {
+    static PENDING_CATALOG_LOOKUP: RefCell<BTreeMap<String, CatalogLookupMode>> =
+        const { RefCell::new(BTreeMap::new()) };
 }
 
 /// A bare name is a host that borrows no catalog.
@@ -95,6 +120,8 @@ impl<'a> From<&'a str> for CustomProviderSpec<'a> {
 #[derive(Default)]
 struct CustomRegistry {
     interned: BTreeMap<String, &'static ProviderDescriptor>,
+    // NEXT_MAJOR(rho-providers): store CatalogLookupMode on CustomProviderSpec and ProviderDescriptor so intern does not need a side table.
+    catalog_lookup: BTreeMap<String, CatalogLookupMode>,
     active: Vec<&'static ProviderDescriptor>,
 }
 
@@ -160,6 +187,17 @@ where
         .into_iter()
         .map(Into::into)
         .collect::<Vec<CustomProviderSpec<'a>>>();
+    let lookups = specs
+        .iter()
+        .map(|spec| {
+            PENDING_CATALOG_LOOKUP.with(|pending| {
+                pending
+                    .borrow_mut()
+                    .remove(spec.name)
+                    .unwrap_or(CatalogLookupMode::Slug)
+            })
+        })
+        .collect::<Vec<_>>();
     let mut seen = BTreeMap::<&str, ()>::new();
     for spec in &specs {
         validate_custom_provider_name(spec.name)?;
@@ -170,8 +208,8 @@ where
 
     let mut registry = lock_write();
     let mut interned = Vec::with_capacity(specs.len());
-    for spec in specs {
-        intern(spec, &mut registry);
+    for (spec, catalog_lookup) in specs.into_iter().zip(lookups) {
+        intern(spec, catalog_lookup, &mut registry);
         interned.push(spec.name.to_string());
     }
     Ok(interned.into())
@@ -216,7 +254,10 @@ pub fn custom_provider_registry_test_lock() -> MutexGuard<'static, ()> {
 /// tests can still resolve unknown-effort policy for a previously interned name.
 #[doc(hidden)]
 pub fn reset_custom_openai_compatible_providers_for_tests() {
-    lock_write().active.clear();
+    let mut registry = lock_write();
+    registry.active.clear();
+    registry.catalog_lookup.clear();
+    PENDING_CATALOG_LOOKUP.with(|pending| pending.borrow_mut().clear());
 }
 
 pub fn custom_openai_compatible_providers() -> Vec<&'static ProviderDescriptor> {
@@ -251,6 +292,24 @@ pub(crate) fn interned_custom_providers() -> Vec<&'static ProviderDescriptor> {
     lock_read().interned.values().copied().collect()
 }
 
+/// True when any interned custom host splits model ids against models.dev.
+///
+/// Hydrate uses this to write every models.dev provider document, not only
+/// one borrowed slug.
+pub fn interned_custom_hosts_need_full_models_dev_tree() -> bool {
+    interned_custom_providers()
+        .into_iter()
+        .any(|descriptor| catalog_lookup_for(descriptor.name) == CatalogLookupMode::ModelId)
+}
+
+pub(super) fn catalog_lookup_for(name: &str) -> CatalogLookupMode {
+    lock_read()
+        .catalog_lookup
+        .get(name)
+        .copied()
+        .unwrap_or(CatalogLookupMode::Slug)
+}
+
 pub(crate) fn interned_custom_provider_for_auth(auth: &str) -> Option<&'static ProviderDescriptor> {
     lock_read().interned.values().copied().find(|descriptor| {
         descriptor
@@ -282,21 +341,23 @@ pub fn validate_custom_provider_name(name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Interns one host, reusing the existing descriptor when nothing changed.
-///
-/// A config edit that repoints `catalog` must not keep serving the descriptor
-/// leaked for the old slug, so a changed `metadata_upstream` re-interns. Leaking
-/// a second descriptor is acceptable because config edits are rare; serving a
-/// stale catalog silently is not.
+/// Interns one host, reusing the existing descriptor when the catalog slug is
+/// unchanged. Lookup mode lives on the registry side table so a mode-only edit
+/// does not leak a second descriptor.
 fn intern(
     spec: CustomProviderSpec<'_>,
+    catalog_lookup: CatalogLookupMode,
     registry: &mut CustomRegistry,
 ) -> &'static ProviderDescriptor {
     let name = spec.name;
     let metadata_upstream = spec.metadata_upstream();
+    registry
+        .catalog_lookup
+        .insert(name.to_string(), catalog_lookup);
     if let Some(existing) = registry
         .interned
         .get(name)
+        .copied()
         .filter(|existing| existing.metadata_upstream == metadata_upstream)
     {
         return existing;

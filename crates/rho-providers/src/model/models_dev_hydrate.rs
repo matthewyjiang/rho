@@ -14,7 +14,9 @@ use std::{
 use rusqlite::params;
 use tokio::sync::Mutex;
 
-use crate::provider::{CatalogConstruction, ProviderDescriptor, ProviderId};
+use crate::provider::{
+    CatalogConstruction, CatalogReasoningPolicy, ProviderDescriptor, ProviderId,
+};
 
 use super::{
     document::{self, ModelsDevCatalog},
@@ -52,6 +54,20 @@ pub async fn ensure_models_dev_catalog() -> usize {
     if catalog_snapshot_is_ready() {
         return 0;
     }
+    hydrate_catalog_from_network().await
+}
+
+/// Downloads models.dev again, ignoring the 24h snapshot gate.
+///
+/// `/config` Providers uses this so a host that just switched to
+/// `catalog_mode = "model-id"` can fill arbitrary slugs without waiting.
+pub async fn force_refresh_models_dev_catalog() -> usize {
+    let _guard = catalog_hydrate_lock().lock().await;
+    invalidate_catalog_snapshot();
+    hydrate_catalog_from_network().await
+}
+
+async fn hydrate_catalog_from_network() -> usize {
     let Some(response) = fetch_models_dev_api().await else {
         return 0;
     };
@@ -95,7 +111,8 @@ pub async fn prefetch_model_metadata(targets: impl IntoIterator<Item = (String, 
 /// cache key (`openrouter`) is written under the borrowing host name instead,
 /// so extract for Rho's own provider is unchanged. Slugs with no document
 /// (`openai-codex`) keep extract and rematch. Unborrowed upstream providers
-/// stay out of sqlite.
+/// stay out of sqlite unless a custom host uses `catalog_mode = "model-id"`,
+/// which needs every document for `provider/model` lookups.
 pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
     let mut entries = Vec::new();
     let mut touched_providers = HashSet::new();
@@ -135,6 +152,26 @@ pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
             };
             touched_providers.insert(cache_provider.to_string());
             entries.push((cache_provider.to_string(), model_id.clone(), metadata));
+        }
+    }
+    if crate::provider::interned_custom_hosts_need_full_models_dev_tree() {
+        for (slug, provider) in api.iter_providers() {
+            if super::borrowed_slug_collides_with_builtin_extract(slug) {
+                continue;
+            }
+            for model_id in provider.models.keys() {
+                let Some(metadata) = document::model_metadata_from_catalog(
+                    api,
+                    slug,
+                    model_id,
+                    CatalogReasoningPolicy::ExactAdvertised,
+                )
+                .filter(|metadata| metadata.reasoning_metadata_complete) else {
+                    continue;
+                };
+                touched_providers.insert(slug.to_string());
+                entries.push((slug.to_string(), model_id.clone(), metadata));
+            }
         }
     }
     let written = write_cached_upstream_model_metadata_batch(
@@ -208,6 +245,24 @@ fn borrowed_catalog_slugs_are_hydrated() -> bool {
     needed.is_empty() || needed.is_subset(&stored_borrowed_catalog_slugs())
 }
 
+fn full_models_dev_tree_is_hydrated() -> bool {
+    !crate::provider::interned_custom_hosts_need_full_models_dev_tree() || stored_full_tree_flag()
+}
+
+fn stored_full_tree_flag() -> bool {
+    let Ok(connection) = open_models_dev_cache() else {
+        return false;
+    };
+    connection
+        .query_row(
+            "select full_tree from catalog_snapshot where id = 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .ok()
+        .is_some_and(|flag| flag != 0)
+}
+
 /// Extracts metadata when its reasoning metadata is complete. Providers whose
 /// construction follows the catalog's npm mapping also keep
 /// reasoning-incomplete rows, because the builder needs `sdk_package` even
@@ -237,7 +292,7 @@ fn catalog_hydrate_lock() -> &'static Mutex<()> {
 }
 
 pub(super) fn catalog_snapshot_is_ready() -> bool {
-    if !borrowed_catalog_slugs_are_hydrated() {
+    if !borrowed_catalog_slugs_are_hydrated() || !full_models_dev_tree_is_hydrated() {
         return false;
     }
     // Isolated test cache dirs share this process flag. A sibling test that
@@ -284,17 +339,34 @@ pub(super) fn mark_catalog_snapshot_current() -> bool {
         return false;
     };
     let borrowed = encode_borrowed_slugs(&borrowed_custom_catalog_slugs());
+    let full_tree = i64::from(crate::provider::interned_custom_hosts_need_full_models_dev_tree());
     connection
         .execute(
-            "insert into catalog_snapshot (id, cache_version, updated_at, borrowed_slugs)
-             values (1, ?1, strftime('%s', 'now'), ?2)
+            "insert into catalog_snapshot (id, cache_version, updated_at, borrowed_slugs, full_tree)
+             values (1, ?1, strftime('%s', 'now'), ?2, ?3)
              on conflict(id) do update set
                cache_version = excluded.cache_version,
                updated_at = excluded.updated_at,
-               borrowed_slugs = excluded.borrowed_slugs",
-            params![MODEL_METADATA_CACHE_VERSION, borrowed],
+               borrowed_slugs = excluded.borrowed_slugs,
+               full_tree = excluded.full_tree",
+            params![MODEL_METADATA_CACHE_VERSION, borrowed, full_tree],
         )
         .is_ok()
+}
+
+pub(super) fn invalidate_catalog_snapshot() {
+    set_catalog_ready(false);
+    let Ok(connection) = open_models_dev_cache() else {
+        return;
+    };
+    let _ = connection.execute(
+        "insert into catalog_snapshot (id, cache_version, updated_at, borrowed_slugs, full_tree)
+         values (1, ?1, 0, '', 0)
+         on conflict(id) do update set
+           cache_version = excluded.cache_version,
+           updated_at = 0",
+        params![MODEL_METADATA_CACHE_VERSION],
+    );
 }
 
 pub(super) fn catalog_hydrate_lock_for_parent() -> &'static Mutex<()> {
