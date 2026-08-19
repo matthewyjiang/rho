@@ -384,8 +384,25 @@ impl AppToolSet {
             .position(|tool| is_canonical_edit_tool_name(tool.spec().name.as_str()))?;
         let mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver> =
             self.checkpoint_tracker.clone();
+        let options = rho_tools::CodingToolOptions::new()
+            .max_output_bytes(max_output_bytes)
+            .edit_tool(edit_tool)
+            .mutation_observer(Arc::clone(&mutation_observer));
         self.tools[position] =
-            super::coding::edit_tool(edit_tool, max_output_bytes, mutation_observer);
+            super::coding::edit_tool(edit_tool, max_output_bytes, Arc::clone(&mutation_observer));
+        for tool in &mut self.tools {
+            let name = tool.spec().name;
+            *tool = match name.as_str() {
+                "read_file" => {
+                    rho_tools::coding_tool(rho_tools::CodingToolKind::ReadFile, options.clone())
+                }
+                "write" => {
+                    rho_tools::coding_tool(rho_tools::CodingToolKind::WriteFile, options.clone())
+                }
+                "grep" => rho_tools::coding_tool(rho_tools::CodingToolKind::Grep, options.clone()),
+                _ => continue,
+            };
+        }
         Some(previous)
     }
 

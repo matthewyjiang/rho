@@ -29,6 +29,7 @@ pub(super) fn sdk_bundle(
 
     let options = rho_tools::CodingToolOptions::new()
         .max_output_bytes(max_output_bytes)
+        .edit_tool(config_edit_tool)
         .mutation_observer(Arc::clone(&mutation_observer));
     let mut tools = Vec::new();
     for (capability, kind) in [

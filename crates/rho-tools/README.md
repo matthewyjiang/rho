@@ -8,8 +8,9 @@ The built-in tools cover `read_file`, `write`, one selectable edit surface,
 `list_dir`, `grep`, and `glob`, with shared diff generation and output limiting.
 `CodingToolOptions::edit_tool` selects `hashline` (`edit`), Codex-style
 `apply_patch`, or `str_replace`; only that tool is registered.
-`read_file` returns UTF-8 sources as hashline views. `grep` content mode also
-mints `[path#TAG]` headers on matching files plus `N | text` match previews.
+`read_file` returns UTF-8 sources as numbered line views. When the selected
+edit tool is `hashline`, those views and `grep` content mode also mint
+`[path#TAG]` headers. `grep` match previews stay `N | text`.
 These snapshots let the default hashline `edit` chain tags and line numbers;
 preview bodies are not exact source text. Successful mutations return bounded
 post-edit snapshots, while full unified diffs stay in result metadata.

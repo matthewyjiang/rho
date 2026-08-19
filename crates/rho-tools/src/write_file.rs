@@ -20,7 +20,7 @@ impl Tool for WriteFile {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "write".into(),
-            description: "Creates or fully rewrites a UTF-8 text file with complete contents. Prefer the selected edit tool for targeted changes. Successful writes return a bounded hashline chain snapshot (`[path#TAG]` plus numbered lines) for follow-up work without an extra `read_file`. Re-read only for lines outside that snapshot. Unified diff is tool metadata for UI cards.".into(),
+            description: "Creates or fully rewrites a UTF-8 text file with complete contents. Prefer the selected edit tool for targeted changes. Successful writes return a bounded numbered snapshot for follow-up work without an extra `read_file`. When the selected edit tool is hashline, that snapshot is `[path#TAG]` plus numbered lines. Re-read only for lines outside that snapshot. Unified diff is tool metadata for UI cards.".into(),
             input_schema: json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}),
         }
     }
@@ -39,6 +39,7 @@ impl Tool for WriteFile {
                 &compact_display_path(&ctx.cwd, &args.path),
                 &args.content,
                 ctx.max_output_bytes,
+                /*mint_tag*/ true,
             )
             .await?;
             Ok(ToolResult {
@@ -55,6 +56,7 @@ pub(super) async fn write_file_content(
     display_path: &str,
     content: &str,
     max_output_bytes: usize,
+    mint_tag: bool,
 ) -> Result<FileMutationOutcome, ToolError> {
     let (old_content, existing_file_is_unreadable) = match tokio::fs::read_to_string(path).await {
         Ok(content) => (Some(content), false),
@@ -82,7 +84,8 @@ pub(super) async fn write_file_content(
     let action = if created { "created" } else { "wrote" };
     // Model-facing chain contract: action line + bounded hashline snapshot.
     // Unified diff stays on metadata for UI cards.
-    let snapshot = crate::hashline::format_chain_snapshot(display_path, content, &[]);
+    let snapshot =
+        crate::hashline::format_chain_snapshot_with(display_path, content, &[], mint_tag);
     let content = if existing_file_is_unreadable {
         format!("{action} {display_path}\n\n{UNREADABLE_FILE_DIFF_MESSAGE}\n\n{snapshot}")
     } else {

@@ -121,5 +121,6 @@ pub(crate) trait WorkspaceSearch: Send + Sync + 'static {
         display_root: &str,
         request: &Self::Request,
         cancelled: &dyn Fn() -> bool,
+        mint_tag: bool,
     ) -> Result<String, ToolError>;
 }

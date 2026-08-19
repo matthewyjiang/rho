@@ -38,6 +38,10 @@ fn file_hash_ignores_trailing_spaces_and_crlf() {
     let lf = "fn main() {\n    ok();\n}\n";
     let crlf_spaces = "fn main() {\r\n    ok();   \r\n}\r\n";
     assert_eq!(compute_file_hash(lf), compute_file_hash(crlf_spaces));
+    assert_eq!(
+        compute_file_hash(lf),
+        compute_file_hash_bytes(lf.as_bytes())
+    );
     assert_eq!(compute_file_hash(lf).len(), FILE_HASH_LENGTH);
     assert!(compute_file_hash(lf)
         .chars()
@@ -56,6 +60,18 @@ fn hashline_view_uses_absolute_lines_and_full_file_tag() {
         format!(
             "[src/a.rs#{hash}]\n2:two\n3:three\n\n[lines 2-3 of 4 shown; re-read with a different offset or limit for the rest]"
         )
+    );
+}
+
+// Covers: non-hashline reads keep numbered lines without a full-file tag
+// Owner: hashline format
+#[test]
+fn text_view_can_omit_the_full_file_tag() {
+    let text = "one\ntwo\nthree\nfour\n";
+    let view = format_text_view("src/a.rs", text, Some(2), Some(2), /*mint_tag*/ false).unwrap();
+    assert_eq!(
+        view,
+        "src/a.rs\n2:two\n3:three\n\n[lines 2-3 of 4 shown; re-read with a different offset or limit for the rest]"
     );
 }
 

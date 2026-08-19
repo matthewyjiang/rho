@@ -25,7 +25,7 @@ impl Tool for ReadFile {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "read_file".into(),
-            description: "Reads a UTF-8 text/source file, extracts text from PDF, DOCX, XLSX, XLS, or ODS documents, or reads a PNG, JPEG, GIF, or WebP image. Text and source files always return a hashline view: a [path#TAG] header plus N:line rows. TAG fingerprints the full file (trailing whitespace ignored); offset/limit select which rows are shown, but the file is still read fully to mint TAG. offset and limit apply to UTF-8 text files only.".into(),
+            description: "Reads a UTF-8 text/source file, extracts text from PDF, DOCX, XLSX, XLS, or ODS documents, or reads a PNG, JPEG, GIF, or WebP image. Text and source files return numbered N:line rows. When the selected edit tool is hashline, the header is [path#TAG] and TAG fingerprints the full file (trailing whitespace ignored). offset/limit select which rows are shown. Files larger than 256 KiB keep only the selected window in memory. offset and limit apply to UTF-8 text files only.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -48,7 +48,14 @@ impl Tool for ReadFile {
             let args: Args = serde_json::from_value(args)?;
             let path = resolve_path(&ctx.cwd, &args.path);
             let display_path = compact_display_path(&ctx.cwd, &args.path);
-            let output = read_file_content(&path, &display_path, args.offset, args.limit).await?;
+            let output = read_file_content(
+                &path,
+                &display_path,
+                args.offset,
+                args.limit,
+                /*mint_tag*/ true,
+            )
+            .await?;
             Ok(ToolResult {
                 id,
                 ok: true,
@@ -105,15 +112,32 @@ pub(super) async fn read_file_content(
     display_path: &str,
     offset: Option<usize>,
     limit: Option<usize>,
+    mint_tag: bool,
 ) -> Result<ReadFileContent, ToolError> {
     let mut file = tokio::fs::File::open(path).await?;
     let source_len = file.metadata().await?.len();
 
     // Range reads are always hashline text views of the on-disk UTF-8 body. The
-    // whole body is read because the header tag covers the whole file, so the
-    // document size limit applies here just as it does to a full read.
+    // header tag covers the whole file, so the document size limit still applies.
+    // Files larger than one chunk are scanned once; only the selected window is kept.
     if offset.is_some() || limit.is_some() {
         check_document_size(path, source_len)?;
+        if source_len > crate::hashline::CHUNK_SIZE as u64 {
+            let content = crate::hashline::read_hashline_window(
+                path,
+                display_path,
+                source_len,
+                offset,
+                limit,
+                mint_tag,
+            )
+            .await?;
+            return Ok(ReadFileContent {
+                content,
+                image: None,
+                preview_error: None,
+            });
+        }
         let mut bytes =
             Vec::with_capacity(source_len.min(MAX_DOCUMENT_INPUT_BYTES as u64 + 1) as usize);
         (&mut file)
@@ -132,8 +156,9 @@ pub(super) async fn read_file_content(
                 path.display()
             ))
         })?;
-        let content = crate::hashline::format_hashline_view(display_path, &text, offset, limit)
-            .map_err(ToolError::Message)?;
+        let content =
+            crate::hashline::format_text_view(display_path, &text, offset, limit, mint_tag)
+                .map_err(ToolError::Message)?;
         return Ok(ReadFileContent {
             content,
             image: None,
@@ -151,6 +176,7 @@ pub(super) async fn read_file_content(
             mime_type,
             header,
             header_len,
+            mint_tag,
         )
         .await;
     }
@@ -172,7 +198,7 @@ pub(super) async fn read_file_content(
                 path.display()
             ))
         })?;
-        let content = crate::hashline::format_hashline_view(display_path, &text, None, None)
+        let content = crate::hashline::format_text_view(display_path, &text, None, None, mint_tag)
             .map_err(ToolError::Message)?;
         return Ok(ReadFileContent {
             content,
@@ -212,6 +238,7 @@ async fn read_image_content(
     mime_type: &'static str,
     header: [u8; 12],
     header_len: usize,
+    mint_tag: bool,
 ) -> Result<ReadFileContent, ToolError> {
     let content = format!("{mime_type} image ({source_len} bytes)");
     if source_len > MAX_IMAGE_FILE_BYTES {
@@ -253,7 +280,7 @@ async fn read_image_content(
         Ok(Err((error, bytes))) => match String::from_utf8(bytes) {
             Ok(text) => {
                 let content =
-                    crate::hashline::format_hashline_view(&display_path, &text, None, None)
+                    crate::hashline::format_text_view(&display_path, &text, None, None, mint_tag)
                         .map_err(ToolError::Message)?;
                 Ok(ReadFileContent {
                     content,

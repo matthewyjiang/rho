@@ -640,6 +640,11 @@ fn edit_tool_selection_swaps_the_advertised_edit_surface() {
     let after = tools.unfiltered_names().collect::<Vec<_>>();
     assert_eq!(before.len(), after.len());
     assert!(after.iter().any(|name| name == "read_file"));
+    assert_eq!(
+        after.iter().filter(|name| *name == "read_file").count(),
+        1,
+        "edit-tool switch must rebuild read_file in place, not duplicate it"
+    );
 
     let mut without_edit = AppToolSet::new(
         &config,

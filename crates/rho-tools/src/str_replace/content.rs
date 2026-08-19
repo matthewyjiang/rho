@@ -85,7 +85,12 @@ fn str_replace_content_locked(
 
     let diff = unified_diff(&original, &updated, display_path, /*created*/ false);
     let replaced = spans.len();
-    let snapshot = crate::hashline::format_chain_snapshot(display_path, &updated, &[]);
+    let snapshot = crate::hashline::format_chain_snapshot_with(
+        display_path,
+        &updated,
+        &[],
+        /*mint_tag*/ false,
+    );
     Ok(FileMutationOutcome {
         content: truncate(
             format!("edited {display_path}; replaced {replaced} occurrence(s)\n\n{snapshot}"),

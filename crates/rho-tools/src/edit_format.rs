@@ -66,6 +66,14 @@ impl EditFormat {
         self.as_str()
     }
 
+    /// Whether read, grep, and write mint full-file `[path#TAG]` snapshots.
+    ///
+    /// Only [`Self::Hashline`] consumes those tags. The other formats still
+    /// return numbered lines, but they skip the whole-file fingerprint.
+    pub const fn mints_snapshot_tags(self) -> bool {
+        matches!(self, Self::Hashline)
+    }
+
     /// The format detail shown when selecting an edit surface.
     pub const fn detail(self) -> &'static str {
         match self {

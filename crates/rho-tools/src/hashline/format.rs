@@ -22,16 +22,34 @@ pub(crate) const LINE_BODY_SEP: char = ':';
 
 /// Compute the snapshot tag for normalized file text.
 pub(crate) fn compute_file_hash(text: &str) -> String {
+    compute_file_hash_bytes(text.as_bytes())
+}
+
+/// Byte-equivalent of [`compute_file_hash`] for streaming readers.
+///
+/// Hashing is ASCII-whitespace-insensitive on each `\n` segment, so it matches
+/// the UTF-8 string path without decoding the whole file.
+pub(super) fn compute_file_hash_bytes(bytes: &[u8]) -> String {
     let mut hasher = Fnv1a32::new();
-    for (index, line) in text.split('\n').enumerate() {
+    for (index, line) in bytes.split(|&byte| byte == b'\n').enumerate() {
         if index > 0 {
             hasher.write(b"\n");
         }
-        let trimmed = line.trim_end_matches([' ', '\t', '\r']);
-        hasher.write(trimmed.as_bytes());
+        hasher.write(trim_hash_line(line));
     }
-    let digest = hasher.finish() & 0xFFFF;
-    format!("{digest:04X}")
+    format_file_hash(hasher.finish())
+}
+
+pub(super) fn trim_hash_line(line: &[u8]) -> &[u8] {
+    let end = line
+        .iter()
+        .rposition(|byte| !matches!(byte, b' ' | b'\t' | b'\r'))
+        .map_or(0, |index| index + 1);
+    &line[..end]
+}
+
+pub(super) fn format_file_hash(digest: u32) -> String {
+    format!("{:04X}", digest & 0xFFFF)
 }
 
 /// Format a section header `[path#TAG]`.
@@ -93,13 +111,25 @@ pub(crate) fn chain_truncation_footer(selected: usize, total: usize) -> String {
 
 /// Render a hashline view of `text` for `display_path`.
 ///
-/// `offset`/`limit` select a 1-indexed inclusive window of lines. The header
-/// always carries the full-file tag so later edits can validate the snapshot.
+/// `offset`/`limit` select a 1-indexed inclusive window of lines. When
+/// `mint_tag` is set, the header carries the full-file tag so later hashline
+/// edits can validate the snapshot.
+#[cfg(test)]
 pub(crate) fn format_hashline_view(
     display_path: &str,
     text: &str,
     offset: Option<usize>,
     limit: Option<usize>,
+) -> Result<String, String> {
+    format_text_view(display_path, text, offset, limit, /*mint_tag*/ true)
+}
+
+pub(crate) fn format_text_view(
+    display_path: &str,
+    text: &str,
+    offset: Option<usize>,
+    limit: Option<usize>,
+    mint_tag: bool,
 ) -> Result<String, String> {
     if offset == Some(0) {
         return Err("offset must be greater than 0".into());
@@ -111,19 +141,15 @@ pub(crate) fn format_hashline_view(
     let lines = split_content_lines(text);
     let total = lines.len();
     let start = offset.unwrap_or(1);
-    let header = format_header(display_path, &compute_file_hash(text));
+    let header = view_header(display_path, mint_tag.then(|| compute_file_hash(text)));
     if total == 0 {
         if start > 1 {
-            return Err(format!(
-                "offset {start} is past the end of the file (0 line(s))"
-            ));
+            return Err(offset_past_end(start, 0));
         }
         return Ok(header);
     }
     if start > total {
-        return Err(format!(
-            "offset {start} is past the end of the file ({total} line(s))"
-        ));
+        return Err(offset_past_end(start, total));
     }
 
     let end = match limit {
@@ -131,19 +157,34 @@ pub(crate) fn format_hashline_view(
         None => total,
     };
     let selected: Vec<usize> = (start..=end).collect();
-    let footer = if start > 1 || end < total {
-        Some(format!(
-            "[lines {start}-{end} of {total} shown; re-read with a different offset or limit for the rest]"
-        ))
-    } else {
-        None
-    };
+    let footer = window_footer(start, end, total);
     Ok(emit_numbered_body(
         &header,
         &lines,
         &selected,
         footer.as_deref(),
     ))
+}
+
+pub(super) fn view_header(display_path: &str, tag: Option<String>) -> String {
+    match tag {
+        Some(tag) => format_header(display_path, &tag),
+        None => display_path.to_string(),
+    }
+}
+
+pub(super) fn window_footer(start: usize, end: usize, total: usize) -> Option<String> {
+    if start > 1 || end < total {
+        Some(format!(
+            "[lines {start}-{end} of {total} shown; re-read with a different offset or limit for the rest]"
+        ))
+    } else {
+        None
+    }
+}
+
+pub(super) fn offset_past_end(start: usize, total: usize) -> String {
+    format!("offset {start} is past the end of the file ({total} line(s))")
 }
 
 /// Render a chainable post-edit hashline preview for `new_text`.
@@ -183,17 +224,27 @@ pub(crate) fn format_post_edit_preview(
     emit_numbered_body(&header, &lines, &selected, footer.as_deref())
 }
 
-/// Bounded hashline snapshot for chaining after `write` or a failed `edit`.
+/// Bounded numbered snapshot for chaining after `write` or a failed `edit`.
 ///
-/// Always includes the full-file TAG. Body rows are capped: focus anchors expand
-/// locally; otherwise a short head+tail window is used.
+/// When `mint_tag` is set, the header carries the full-file TAG. Body rows are
+/// capped: focus anchors expand locally; otherwise a short head+tail window is
+/// used.
 pub(crate) fn format_chain_snapshot(
     display_path: &str,
     text: &str,
     focus_lines: &[usize],
 ) -> String {
+    format_chain_snapshot_with(display_path, text, focus_lines, /*mint_tag*/ true)
+}
+
+pub(crate) fn format_chain_snapshot_with(
+    display_path: &str,
+    text: &str,
+    focus_lines: &[usize],
+    mint_tag: bool,
+) -> String {
     let lines = split_content_lines(text);
-    let header = format_header(display_path, &compute_file_hash(text));
+    let header = view_header(display_path, mint_tag.then(|| compute_file_hash(text)));
     if lines.is_empty() {
         return header;
     }
@@ -400,7 +451,7 @@ pub(crate) fn has_trailing_newline(text: &str) -> bool {
 }
 
 #[derive(Clone, Copy)]
-struct Fnv1a32 {
+pub(super) struct Fnv1a32 {
     hash: u32,
 }
 
@@ -408,20 +459,20 @@ impl Fnv1a32 {
     const OFFSET_BASIS: u32 = 0x811c_9dc5;
     const PRIME: u32 = 0x0100_0193;
 
-    const fn new() -> Self {
+    pub(super) const fn new() -> Self {
         Self {
             hash: Self::OFFSET_BASIS,
         }
     }
 
-    fn write(&mut self, bytes: &[u8]) {
+    pub(super) fn write(&mut self, bytes: &[u8]) {
         for &byte in bytes {
             self.hash ^= u32::from(byte);
             self.hash = self.hash.wrapping_mul(Self::PRIME);
         }
     }
 
-    fn finish(&self) -> u32 {
+    pub(super) fn finish(self) -> u32 {
         self.hash
     }
 }

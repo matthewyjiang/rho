@@ -82,11 +82,13 @@ pub(super) struct ListDirTool {
 
 pub(super) struct ReadFileTool {
     pub(super) max_output_bytes: usize,
+    pub(super) mint_tag: bool,
 }
 
 pub(super) struct WriteFileTool {
     pub(super) max_output_bytes: usize,
     pub(super) mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
+    pub(super) mint_tag: bool,
 }
 
 #[derive(Deserialize)]
@@ -206,6 +208,7 @@ impl Tool for ReadFileTool {
                             &display_path,
                             args.offset,
                             args.limit,
+                            self.mint_tag,
                         )
                         .await
                         .map_err(map_app_error)?;
@@ -277,6 +280,7 @@ impl Tool for WriteFileTool {
                     execute_prepared_write(
                         self.max_output_bytes,
                         self.mutation_observer.clone(),
+                        self.mint_tag,
                         workspace,
                         resolved,
                         args,
@@ -291,6 +295,7 @@ impl Tool for WriteFileTool {
 fn execute_prepared_write(
     max_output_bytes: usize,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
+    mint_tag: bool,
     workspace: Workspace,
     resolved: ResolvedWorkspacePath,
     args: WriteArgs,
@@ -310,7 +315,13 @@ fn execute_prepared_write(
         let outcome = run_observed_mutation(
             mutation_observer.as_ref(),
             &mutation_paths,
-            write_file_content(resolved.path(), &display, &args.content, max_output_bytes),
+            write_file_content(
+                resolved.path(),
+                &display,
+                &args.content,
+                max_output_bytes,
+                mint_tag,
+            ),
         )
         .await?;
         Ok(mutation_output(outcome))

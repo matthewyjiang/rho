@@ -38,13 +38,19 @@ pub(crate) type GlobTool = SearchTool<GlobSearch>;
 
 pub(crate) struct SearchTool<S> {
     max_output_bytes: usize,
+    mint_tag: bool,
     search: PhantomData<fn() -> S>,
 }
 
 impl<S: WorkspaceSearch> SearchTool<S> {
     pub(crate) fn new(max_output_bytes: usize) -> Self {
+        Self::with_mint_tag(max_output_bytes, /*mint_tag*/ true)
+    }
+
+    pub(crate) fn with_mint_tag(max_output_bytes: usize, mint_tag: bool) -> Self {
         Self {
             max_output_bytes: max_output_bytes.max(1),
+            mint_tag,
             search: PhantomData,
         }
     }
@@ -93,6 +99,7 @@ impl<S: WorkspaceSearch> Tool for SearchTool<S> {
                 resolved.path(),
             ))];
             let max_output_bytes = self.max_output_bytes;
+            let mint_tag = self.mint_tag;
             Ok(PreparedToolInvocation::resource_aware(
                 accesses,
                 [capability],
@@ -106,7 +113,13 @@ impl<S: WorkspaceSearch> Tool for SearchTool<S> {
                         let content = tokio::task::spawn_blocking({
                             let display = display.clone();
                             move || {
-                                S::run(&root, &display, &request, &|| cancellation.is_cancelled())
+                                S::run(
+                                    &root,
+                                    &display,
+                                    &request,
+                                    &|| cancellation.is_cancelled(),
+                                    mint_tag,
+                                )
                             }
                         })
                         .await

@@ -77,17 +77,22 @@ pub fn coding_tool(kind: CodingToolKind, options: CodingToolOptions) -> Arc<dyn 
         }),
         CodingToolKind::ReadFile => Arc::new(ReadFileTool {
             max_output_bytes: options.max_output_bytes,
+            mint_tag: options.edit_tool.mints_snapshot_tags(),
         }),
         CodingToolKind::WriteFile => Arc::new(WriteFileTool {
             max_output_bytes: options.max_output_bytes,
             mutation_observer: options.mutation_observer.clone(),
+            mint_tag: options.edit_tool.mints_snapshot_tags(),
         }),
         CodingToolKind::Edit => super::build_edit_sdk_tool(
             options.edit_tool,
             options.max_output_bytes,
             options.mutation_observer.clone(),
         ),
-        CodingToolKind::Grep => Arc::new(GrepTool::new(options.max_output_bytes)),
+        CodingToolKind::Grep => Arc::new(GrepTool::with_mint_tag(
+            options.max_output_bytes,
+            options.edit_tool.mints_snapshot_tags(),
+        )),
         CodingToolKind::Glob => Arc::new(GlobTool::new(options.max_output_bytes)),
     }
 }
