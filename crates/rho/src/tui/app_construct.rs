@@ -139,7 +139,6 @@ impl App {
             terminal_height: 0,
             composer_attachment_layout_cache: None,
             embedded_attach: None,
-            attach_parent_was_busy: false,
             attach_run_filter: super::attach_picker::WorkspaceRunFilter::RunningOnly,
             attach_disk_candidates: Vec::new(),
             attach_seen_live: std::collections::HashSet::new(),

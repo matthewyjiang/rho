@@ -734,7 +734,8 @@ fn cli_attach_opens_an_empty_picker_when_nothing_is_running() {
     assert_pass("attach_cli_empty");
 }
 
-// Covers: /attach must swap the main TUI into a live in-place attach view.
+// Covers: /attach must swap the main TUI into a live in-place attach view
+// and keep typed keys out of the hidden composer.
 // Owner: interactive TUI
 #[test]
 fn attach_opens_an_in_place_view_and_returns_to_the_composer() {
@@ -748,7 +749,8 @@ fn attach_view_cycles_between_running_subagents() {
     assert_pass("attach_view_cycle");
 }
 
-// Covers: a parent approval arriving mid-attach must badge, not yank the user.
+// Covers: a parent approval arriving mid-attach must badge, not yank, and
+// must not resolve on y until the user returns.
 // Owner: interactive TUI
 #[test]
 fn attach_view_badges_a_parent_approval_until_return() {

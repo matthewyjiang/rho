@@ -208,6 +208,10 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        if self.is_attach_view() {
+            self.dispatch_attach(event);
+            return Ok(());
+        }
         match event {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
                 self.clear_selections();
@@ -217,23 +221,19 @@ impl App {
             Event::Paste(text) => {
                 self.input_ui.cancel_pointer_click_sequence();
                 self.flush_pending_paste_burst();
-                if !self.is_attach_view() {
-                    let text = normalize_paste(&text);
-                    self.insert_external_paste(&text);
-                    self.input_ui.clear_paste_burst();
-                }
+                let text = normalize_paste(&text);
+                self.insert_external_paste(&text);
+                self.input_ui.clear_paste_burst();
             }
             Event::Resize(_, _) => {
                 self.flush_pending_paste_burst();
-                if !self.handle_attach_view_resize() {
-                    self.clamp_overlay_detail_scroll(terminal);
-                    self.clamp_limits_overlay_scroll(terminal);
-                    self.clear_selections();
-                    self.history.set_hovered_code_block_copy(None);
-                    self.subagent_panel.clear_pointer_state();
-                    self.hide_history_scrollbar();
-                    self.clamp_history_scroll_for_terminal(terminal)?;
-                }
+                self.clamp_overlay_detail_scroll(terminal);
+                self.clamp_limits_overlay_scroll(terminal);
+                self.clear_selections();
+                self.history.set_hovered_code_block_copy(None);
+                self.subagent_panel.clear_pointer_state();
+                self.hide_history_scrollbar();
+                self.clamp_history_scroll_for_terminal(terminal)?;
             }
             Event::Mouse(mouse) => {
                 self.flush_pending_paste_burst();
@@ -280,10 +280,7 @@ impl App {
 
     pub(super) fn animation_active(&self, now: Instant) -> bool {
         self.loading_active()
-            || self
-                .embedded_attach
-                .as_ref()
-                .is_some_and(|view| view.should_redraw(now))
+            || self.attach_should_redraw(now)
             || self.subagent_panel.is_active()
             || self.process_panel.is_active()
             || self

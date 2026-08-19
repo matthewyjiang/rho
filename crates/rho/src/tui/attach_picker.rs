@@ -227,13 +227,10 @@ impl App {
         let agent_id = candidate_agent_id(&self.sync_attach_candidates(), run_id)
             .unwrap_or("agent")
             .to_owned();
-        self.activate_subagent_row(
-            &super::subagent_panel::SubagentAttachTarget {
-                run_id: run_id.to_owned(),
-                agent_id,
-            },
-            std::time::Instant::now(),
-        );
+        self.activate_subagent_row(&super::subagent_panel::SubagentAttachTarget {
+            run_id: run_id.to_owned(),
+            agent_id,
+        });
     }
 
     fn open_attach_picker(&mut self) {

@@ -72,6 +72,9 @@ const ATTACH_VIEW_FROM_COMMAND_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::AssertText("attach "),
+    Step::Phase("keys_do_not_reach_composer"),
+    Step::TypeText("zzzattachleak"),
+    Step::AssertText("q back"),
     Step::Phase("return_to_composer"),
     Step::Key(Key::Esc),
     Step::WaitTextGone {
@@ -80,6 +83,10 @@ const ATTACH_VIEW_FROM_COMMAND_STEPS: &[Step] = &[
     },
     Step::WaitText {
         text: "Type a message",
+        timeout: SETTLE,
+    },
+    Step::WaitTextGone {
+        text: "zzzattachleak",
         timeout: SETTLE,
     },
     Step::ExitCommand,
@@ -157,6 +164,10 @@ const ATTACH_VIEW_PARENT_APPROVAL_STEPS: &[Step] = &[
         timeout: STREAM,
     },
     Step::AssertText("q back"),
+    Step::Phase("approval_keys_stay_in_attach"),
+    Step::Key(Key::Char('y')),
+    Step::AssertText("q back"),
+    Step::AssertText("parent approval waiting"),
     Step::Key(Key::Esc),
     Step::WaitText {
         text: "bash wants to run a command",

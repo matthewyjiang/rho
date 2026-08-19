@@ -14,8 +14,6 @@ fn test_app() -> (TempDir, AttachmentApp) {
         "abc123",
         directory.path().to_path_buf(),
         AttachmentDisplaySettings::default(),
-        HerdrReporter::default(),
-        /*embedded*/ false,
     );
     (directory, app)
 }
@@ -136,37 +134,10 @@ fn attached_view_ignores_prompt_input() {
     )));
 
     assert_eq!(app.transcript.len(), 1);
-    assert!(!app.should_quit);
     assert!(matches!(
         &app.transcript[0],
         Entry::User(prompt) if prompt == "delegated task"
     ));
-}
-
-// Covers: embedded attach must leave Tab/arrows to the host so it can cycle runs.
-// Owner: attach event loop
-#[test]
-fn embedded_view_leaves_cycle_keys_unhandled() {
-    let directory = TempDir::new().unwrap();
-    let mut app = AttachmentApp::new(
-        "abc123",
-        directory.path().to_path_buf(),
-        AttachmentDisplaySettings::default(),
-        HerdrReporter::default(),
-        /*embedded*/ true,
-    );
-    assert_eq!(
-        app.handle_event(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))),
-        AttachInput::Ignored
-    );
-    assert_eq!(
-        app.handle_event(Event::Key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))),
-        AttachInput::Ignored
-    );
-    assert_eq!(
-        app.handle_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))),
-        AttachInput::Leave
-    );
 }
 
 #[test]
@@ -239,8 +210,6 @@ fn history_lines_follow_display_settings() {
         "abc123",
         directory.path().to_path_buf(),
         AttachmentDisplaySettings::default(),
-        HerdrReporter::default(),
-        /*embedded*/ false,
     );
     app.apply_event(AttachmentEvent::Prompt("task".into()));
     app.apply_event(AttachmentEvent::ReasoningDelta("secret plan".into()));
@@ -302,8 +271,6 @@ fn history_lines_honor_max_tool_output_lines() {
             max_tool_output_lines: 1,
             ..AttachmentDisplaySettings::default()
         },
-        HerdrReporter::default(),
-        /*embedded*/ false,
     );
     let body = (0..5).map(|i| format!("line-{i}")).collect::<Vec<_>>();
     app.apply_event(AttachmentEvent::ToolFinished {
@@ -558,7 +525,7 @@ fn mouse_events_reuse_painted_history() {
     let mut terminal =
         ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 30)).expect("test terminal");
     terminal
-        .draw(|frame| app.draw(frame))
+        .draw(|frame| app.draw(frame, "hint", None))
         .expect("baseline draw");
     let painted_ptr = app
         .painted
@@ -570,7 +537,9 @@ fn mouse_events_reuse_painted_history() {
     app.handle_event(mouse(MouseEventKind::Moved, 8, 5));
     app.handle_event(mouse(MouseEventKind::Down(MouseButton::Left), 8, 5));
     app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 8, 6));
-    terminal.draw(|frame| app.draw(frame)).expect("hover draw");
+    terminal
+        .draw(|frame| app.draw(frame, "hint", None))
+        .expect("hover draw");
     assert_eq!(
         app.painted
             .as_ref()
@@ -587,7 +556,9 @@ fn mouse_events_reuse_painted_history() {
         "toggling a card must invalidate the painted history"
     );
 
-    terminal.draw(|frame| app.draw(frame)).expect("toggle draw");
+    terminal
+        .draw(|frame| app.draw(frame, "hint", None))
+        .expect("toggle draw");
     let after_toggle_ptr = app
         .painted
         .as_ref()
@@ -667,7 +638,7 @@ fn draw_hover_lift_follows_pointer_and_survives_toggle() {
     let mut terminal =
         ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 30)).expect("test terminal");
     terminal
-        .draw(|frame| app.draw(frame))
+        .draw(|frame| app.draw(frame, "hint", None))
         .expect("baseline draw");
 
     let baseline = row_look(&terminal, 5);
@@ -675,7 +646,9 @@ fn draw_hover_lift_follows_pointer_and_survives_toggle() {
 
     // Pointer over the header, outside the history viewport: no lift.
     app.handle_event(mouse(MouseEventKind::Moved, 8, 1));
-    terminal.draw(|frame| app.draw(frame)).expect("header draw");
+    terminal
+        .draw(|frame| app.draw(frame, "hint", None))
+        .expect("header draw");
     assert_eq!(
         row_look(&terminal, 5),
         baseline,
@@ -684,7 +657,9 @@ fn draw_hover_lift_follows_pointer_and_survives_toggle() {
 
     // Pointer over the card: lift.
     app.handle_event(mouse(MouseEventKind::Moved, 8, 5));
-    terminal.draw(|frame| app.draw(frame)).expect("hover draw");
+    terminal
+        .draw(|frame| app.draw(frame, "hint", None))
+        .expect("hover draw");
     assert_ne!(
         row_look(&terminal, 5),
         baseline,
@@ -694,7 +669,9 @@ fn draw_hover_lift_follows_pointer_and_survives_toggle() {
     // Click expands the card; the next draw re-anchors the lift to the
     // reshaped card under the stationary pointer instead of dropping it.
     click_card(&mut app, 8, 5);
-    terminal.draw(|frame| app.draw(frame)).expect("toggle draw");
+    terminal
+        .draw(|frame| app.draw(frame, "hint", None))
+        .expect("toggle draw");
     assert!(transcript_tool(&app, 0).expanded);
     assert_ne!(
         row_look(&terminal, 5),
@@ -716,12 +693,14 @@ fn draw_hover_lift_skips_untoggleable_card() {
     let mut terminal =
         ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 30)).expect("test terminal");
     terminal
-        .draw(|frame| app.draw(frame))
+        .draw(|frame| app.draw(frame, "hint", None))
         .expect("baseline draw");
     let baseline = row_look(&terminal, 5);
 
     app.handle_event(mouse(MouseEventKind::Moved, 8, 5));
-    terminal.draw(|frame| app.draw(frame)).expect("hover draw");
+    terminal
+        .draw(|frame| app.draw(frame, "hint", None))
+        .expect("hover draw");
     assert_eq!(
         row_look(&terminal, 5),
         baseline,

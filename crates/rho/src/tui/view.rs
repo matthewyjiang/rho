@@ -301,7 +301,7 @@ impl App {
                 Paragraph::new(self.subagent_panel.lines(
                     width,
                     layout.subagents.height as usize,
-                    self.subagent_action_hint(),
+                    super::subagent_attach::ACTION_HINT,
                     /*continues_below*/ layout.processes.height > 0,
                 ))
                 .style(Theme::activity_rail()),
@@ -516,7 +516,7 @@ impl App {
             lines.extend(self.subagent_panel.lines(
                 width,
                 layout.subagents.height as usize,
-                self.subagent_action_hint(),
+                super::subagent_attach::ACTION_HINT,
                 /*continues_below*/ layout.processes.height > 0,
             ));
         }

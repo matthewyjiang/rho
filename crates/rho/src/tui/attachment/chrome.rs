@@ -22,20 +22,11 @@ pub(super) fn standalone_footer_hint() -> &'static str {
     "read-only · scroll · ctrl+o expand · q detach"
 }
 
-pub(super) fn embedded_footer_hint() -> &'static str {
+pub(crate) fn embedded_footer_hint() -> &'static str {
     "read-only · scroll · tab cycle · ctrl+o expand · q back"
 }
 
-pub(super) fn footer_line(
-    embedded: bool,
-    parent_notice: Option<&str>,
-    width: usize,
-) -> Line<'static> {
-    let hint = if embedded {
-        embedded_footer_hint()
-    } else {
-        standalone_footer_hint()
-    };
+pub(super) fn footer_line(hint: &str, parent_notice: Option<&str>, width: usize) -> Line<'static> {
     let text = match parent_notice.filter(|notice| !notice.is_empty()) {
         Some(notice) => format!("{notice} · {hint}"),
         None => hint.to_string(),

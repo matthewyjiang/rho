@@ -2,12 +2,12 @@
 
 use std::time::Instant;
 
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use ratatui::Frame;
 
 use super::{
-    attachment::{AttachInput, AttachmentApp, AttachmentDisplaySettings},
+    attachment::{embedded_footer_hint, AttachInput, AttachmentApp, AttachmentDisplaySettings},
     subagent_panel::SubagentAttachTarget,
     App, ComposerMode,
 };
@@ -20,8 +20,48 @@ pub(super) fn attach_command(run_id: &str) -> String {
 }
 
 /// Short hover hint shown on the right edge of a subagent row.
-pub(super) fn action_hint() -> &'static str {
-    "attach"
+pub(super) const ACTION_HINT: &str = "attach";
+
+/// Modal session for the in-place attach viewer.
+pub(super) struct EmbeddedAttach {
+    view: AttachmentApp,
+    /// Snapshot of parent busy-ness when the modal first opened. Cycling runs
+    /// must not resample this or the "parent turn complete" badge disappears.
+    opened_while_busy: bool,
+}
+
+impl EmbeddedAttach {
+    fn open(
+        target: &SubagentAttachTarget,
+        display: AttachmentDisplaySettings,
+        opened_while_busy: bool,
+    ) -> anyhow::Result<Self> {
+        Ok(Self {
+            view: open_view(target, display)?,
+            opened_while_busy,
+        })
+    }
+
+    fn switch_run(
+        &mut self,
+        target: &SubagentAttachTarget,
+        display: AttachmentDisplaySettings,
+    ) -> anyhow::Result<()> {
+        self.view = open_view(target, display)?;
+        Ok(())
+    }
+
+    fn should_redraw(&self, now: Instant) -> bool {
+        self.view.should_redraw(now)
+    }
+}
+
+fn open_view(
+    target: &SubagentAttachTarget,
+    display: AttachmentDisplaySettings,
+) -> anyhow::Result<AttachmentApp> {
+    let directory = crate::subagent::resolve_run_directory(&target.run_id)?;
+    Ok(AttachmentApp::new(&target.run_id, directory, display))
 }
 
 impl App {
@@ -30,23 +70,18 @@ impl App {
     }
 
     pub(super) fn draw_embedded_attach(&mut self, frame: &mut Frame<'_>) -> bool {
-        if !self.is_attach_view() {
-            return false;
-        }
         let notice = self.parent_attach_notice();
-        if let Some(view) = self.embedded_attach.as_mut() {
-            view.set_parent_notice(notice);
-            view.draw(frame);
-            view.note_drawn();
-        }
+        let Some(session) = self.embedded_attach.as_mut() else {
+            return false;
+        };
+        session
+            .view
+            .draw(frame, embedded_footer_hint(), notice.as_deref());
+        session.view.note_drawn();
         true
     }
 
-    pub(super) fn subagent_action_hint(&self) -> &'static str {
-        action_hint()
-    }
-
-    pub(super) fn activate_subagent_row(&mut self, target: &SubagentAttachTarget, _now: Instant) {
+    pub(super) fn activate_subagent_row(&mut self, target: &SubagentAttachTarget) {
         if let Err(error) = self.enter_attach_view(target) {
             self.notify_status(format!(
                 "could not attach to {} {}: {error}",
@@ -59,22 +94,17 @@ impl App {
         &mut self,
         target: &SubagentAttachTarget,
     ) -> anyhow::Result<()> {
-        let directory = crate::subagent::resolve_run_directory(&target.run_id)?;
         let display = AttachmentDisplaySettings {
             show_reasoning_output: self.info.runtime.show_reasoning_output,
             zen_mode: self.info.runtime.zen_mode,
             max_tool_output_lines: self.info.runtime.max_tool_output_lines.max(1),
             theme: self.info.services.theme.clone(),
         };
-        let mut view = AttachmentApp::open_embedded(
-            &target.run_id,
-            directory,
-            display,
-            self.info.services.herdr.clone(),
-        );
-        view.set_parent_notice(self.parent_attach_notice());
-        self.attach_parent_was_busy = self.is_ui_busy();
-        self.embedded_attach = Some(view);
+        if let Some(session) = self.embedded_attach.as_mut() {
+            session.switch_run(target, display)?;
+        } else {
+            self.embedded_attach = Some(EmbeddedAttach::open(target, display, self.is_ui_busy())?);
+        }
         self.notify_status(format!(
             "attached to {} · {}",
             target.agent_id,
@@ -84,17 +114,19 @@ impl App {
     }
 
     pub(super) fn leave_attach_view(&mut self) {
-        if self.embedded_attach.take().is_some() {
-            self.attach_parent_was_busy = false;
-            self.set_status("ready");
-        }
+        self.embedded_attach = None;
     }
 
     pub(super) fn parent_attach_notice(&self) -> Option<String> {
         match self.input_ui.composer() {
             ComposerMode::Approval(_) => Some("parent approval waiting".into()),
             ComposerMode::Questionnaire(_) => Some("parent questionnaire waiting".into()),
-            _ if self.attach_parent_was_busy && !self.is_ui_busy() => {
+            _ if self
+                .embedded_attach
+                .as_ref()
+                .is_some_and(|session| session.opened_while_busy)
+                && !self.is_ui_busy() =>
+            {
                 Some("parent turn complete".into())
             }
             _ => None,
@@ -102,56 +134,55 @@ impl App {
     }
 
     pub(super) async fn poll_embedded_attach(&mut self) -> anyhow::Result<bool> {
-        if self.embedded_attach.is_none() {
-            return Ok(false);
-        }
-        let notice = self.parent_attach_notice();
-        let Some(view) = self.embedded_attach.as_mut() else {
+        let Some(session) = self.embedded_attach.as_mut() else {
             return Ok(false);
         };
-        view.set_parent_notice(notice);
-        let changed = view.refresh().await?;
-        Ok(changed || view.should_redraw(Instant::now()))
+        let changed = session.view.refresh().await?;
+        Ok(changed || session.view.should_redraw(Instant::now()))
     }
 
-    pub(super) fn handle_attach_view_key(&mut self, key: KeyEvent) -> bool {
+    /// Consume a terminal event when the attach modal is open.
+    ///
+    /// Returns `false` when attach is not showing so the parent TUI can handle
+    /// the event. When attach is showing, every event is consumed.
+    pub(super) fn dispatch_attach(&mut self, event: Event) -> bool {
         if self.embedded_attach.is_none() {
             return false;
         }
-        if is_cycle_key(key) {
-            self.cycle_embedded_attach(cycle_delta(key));
+        if let Event::Key(key) = event {
+            if is_cycle_key(key) {
+                self.cycle_embedded_attach(cycle_delta(key));
+                return true;
+            }
+            match self
+                .embedded_attach
+                .as_mut()
+                .expect("attach view checked above")
+                .view
+                .handle_event(Event::Key(key))
+            {
+                AttachInput::Leave => self.leave_attach_view(),
+                AttachInput::Quit => {
+                    self.leave_attach_view();
+                    self.should_quit = true;
+                }
+                AttachInput::Ignored | AttachInput::Handled => {}
+            }
             return true;
         }
-        let Some(view) = self.embedded_attach.as_mut() else {
-            return false;
-        };
-        match view.handle_event(Event::Key(key)) {
-            AttachInput::Ignored => false,
-            AttachInput::Handled => true,
-            AttachInput::Leave => {
-                self.leave_attach_view();
-                true
-            }
-            AttachInput::Quit => {
-                self.leave_attach_view();
-                self.should_quit = true;
-                true
-            }
-        }
+        let _ = self
+            .embedded_attach
+            .as_mut()
+            .expect("attach view checked above")
+            .view
+            .handle_event(event);
+        true
     }
 
-    pub(super) fn handle_attach_view_mouse(&mut self, mouse: MouseEvent) -> bool {
-        let Some(view) = self.embedded_attach.as_mut() else {
-            return false;
-        };
-        view.handle_event(Event::Mouse(mouse)).redraws()
-    }
-
-    pub(super) fn handle_attach_view_resize(&mut self) -> bool {
-        let Some(view) = self.embedded_attach.as_mut() else {
-            return false;
-        };
-        view.handle_event(Event::Resize(0, 0)).redraws()
+    pub(super) fn attach_should_redraw(&self, now: Instant) -> bool {
+        self.embedded_attach
+            .as_ref()
+            .is_some_and(|session| session.should_redraw(now))
     }
 
     fn cycle_embedded_attach(&mut self, delta: isize) {
@@ -162,8 +193,7 @@ impl App {
         let current = self
             .embedded_attach
             .as_ref()
-            .map(AttachmentApp::run_id)
-            .map(str::to_owned);
+            .map(|session| session.view.run_id().to_owned());
         let index = current
             .as_deref()
             .and_then(|run_id| {

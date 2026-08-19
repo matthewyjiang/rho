@@ -53,10 +53,6 @@ impl App {
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<bool> {
-        if self.handle_attach_view_key(key) {
-            return Ok(false);
-        }
-
         if self.handle_paste_burst_key(key) {
             return Ok(false);
         }
@@ -732,13 +728,27 @@ impl App {
         let mut control = StreamControl::Continue;
         let mut approval_resolved = false;
         'event: {
+            if self.is_attach_view() {
+                let resize = matches!(first_event, Event::Resize(_, _));
+                if resize {
+                    self.flush_pending_paste_burst();
+                }
+                self.dispatch_attach(first_event);
+                if self.should_quit {
+                    return Ok(
+                        self.request_running_interrupt(interrupt_requested, tool_call_active)
+                    );
+                }
+                if resize {
+                    self.drain_streams(terminal)?;
+                    control = StreamControl::Resize;
+                }
+                break 'event;
+            }
             match first_event {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     self.clear_selections();
                     self.subagent_panel.clear_pointer_state();
-                    if self.handle_attach_view_key(key) {
-                        break 'event;
-                    }
                     if key.code == KeyCode::Esc
                         && matches!(self.input_ui.composer(), ComposerMode::Approval(_))
                     {
@@ -795,23 +805,19 @@ impl App {
                 Event::Paste(text) => {
                     self.input_ui.cancel_pointer_click_sequence();
                     self.flush_pending_paste_burst();
-                    if !self.is_attach_view() {
-                        let text = normalize_paste(&text);
-                        self.insert_external_paste(&text);
-                        self.input_ui.clear_paste_burst();
-                    }
+                    let text = normalize_paste(&text);
+                    self.insert_external_paste(&text);
+                    self.input_ui.clear_paste_burst();
                 }
                 Event::Resize(_, _) => {
                     self.flush_pending_paste_burst();
-                    if !self.handle_attach_view_resize() {
-                        self.clamp_overlay_detail_scroll(terminal);
-                        self.clamp_limits_overlay_scroll(terminal);
-                        self.clear_selections();
-                        self.history.set_hovered_code_block_copy(None);
-                        self.subagent_panel.clear_pointer_state();
-                        self.hide_history_scrollbar();
-                        self.clamp_history_scroll_for_terminal(terminal)?;
-                    }
+                    self.clamp_overlay_detail_scroll(terminal);
+                    self.clamp_limits_overlay_scroll(terminal);
+                    self.clear_selections();
+                    self.history.set_hovered_code_block_copy(None);
+                    self.subagent_panel.clear_pointer_state();
+                    self.hide_history_scrollbar();
+                    self.clamp_history_scroll_for_terminal(terminal)?;
                     self.drain_streams(terminal)?;
                     control = StreamControl::Resize;
                 }

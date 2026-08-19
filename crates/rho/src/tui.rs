@@ -541,9 +541,7 @@ struct App {
     terminal_height: usize,
     /// Shared composer attachment layout for the current frame/width.
     composer_attachment_layout_cache: Option<composer_attachments::ComposerAttachmentLayoutCache>,
-    embedded_attach: Option<attachment::AttachmentApp>,
-    /// True when the parent turn was busy at the moment attach opened.
-    attach_parent_was_busy: bool,
+    embedded_attach: Option<subagent_attach::EmbeddedAttach>,
     /// `/attach` starts on running runs; Ctrl-R includes finished transcripts.
     attach_run_filter: attach_picker::WorkspaceRunFilter,
     /// Disk listing captured when `/attach` opens so panel ticks only rematch live rows.

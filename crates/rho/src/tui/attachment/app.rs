@@ -39,6 +39,7 @@ use super::super::{
 use super::chrome::format_run_cost;
 use super::chrome::{
     activity_metrics_line, footer_line, header_title_line, herdr_status, identity_line,
+    standalone_footer_hint,
 };
 use super::tool_toggle::{
     latest_toggle_target, status_fallback_items, tool_card_at_line, HistoryItem, PaintedHistory,
@@ -158,8 +159,8 @@ pub(crate) async fn run(
     herdr
         .report_state(HerdrState::Working, Some(&message), Some(&id))
         .await;
-    let result = AttachmentApp::open(&id, directory, display, herdr.clone())?
-        .run(&mut terminal)
+    let result = AttachmentApp::new(&id, directory, display)
+        .run(&mut terminal, &herdr)
         .await;
     herdr.release().await;
     result
@@ -191,10 +192,8 @@ pub(crate) struct AttachmentApp {
     run_usage: AttemptAwareRunUsage,
     provider_attempt: ProviderAttempt,
     status: Option<RunStatus>,
-    reported_state: Option<RunState>,
     /// Last whole-second live elapsed painted into the header (running runs only).
     last_drawn_elapsed_secs: Option<u64>,
-    herdr: HerdrReporter,
     scroll: HistoryScrollChrome,
     last_mouse_position: Option<(u16, u16)>,
     /// Stable tool key under the last left-button press, if any. Survives
@@ -211,21 +210,10 @@ pub(crate) struct AttachmentApp {
     history_area: Rect,
     history_width: usize,
     content_len: usize,
-    should_quit: bool,
-    /// When true, Tab/Shift-Tab/arrows are left for the host to cycle runs.
-    embedded: bool,
-    /// Host-owned parent interrupt, painted into the footer. Never auto-exits.
-    parent_notice: Option<String>,
 }
 
 impl AttachmentApp {
-    fn new(
-        id: &str,
-        directory: PathBuf,
-        display: AttachmentDisplaySettings,
-        herdr: HerdrReporter,
-        embedded: bool,
-    ) -> Self {
+    pub(crate) fn new(id: &str, directory: PathBuf, display: AttachmentDisplaySettings) -> Self {
         let reader = AttachmentReader::new(directory.join(subagent::ATTACHMENT_FILE_NAME));
         Self {
             id: id.to_string(),
@@ -239,9 +227,7 @@ impl AttachmentApp {
             run_usage: AttemptAwareRunUsage::default(),
             provider_attempt: ProviderAttempt::default(),
             status: None,
-            reported_state: None,
             last_drawn_elapsed_secs: None,
-            herdr,
             scroll: HistoryScrollChrome::default(),
             last_mouse_position: None,
             press_tool_key: None,
@@ -252,40 +238,11 @@ impl AttachmentApp {
             history_area: Rect::default(),
             history_width: 0,
             content_len: 0,
-            should_quit: false,
-            embedded,
-            parent_notice: None,
         }
-    }
-
-    fn open(
-        id: &str,
-        directory: PathBuf,
-        display: AttachmentDisplaySettings,
-        herdr: HerdrReporter,
-    ) -> anyhow::Result<Self> {
-        Ok(Self::new(
-            id, directory, display, herdr, /*embedded*/ false,
-        ))
-    }
-
-    pub(crate) fn open_embedded(
-        id: &str,
-        directory: PathBuf,
-        display: AttachmentDisplaySettings,
-        herdr: HerdrReporter,
-    ) -> Self {
-        Self::new(id, directory, display, herdr, /*embedded*/ true)
     }
 
     pub(crate) fn run_id(&self) -> &str {
         &self.id
-    }
-
-    pub(crate) fn set_parent_notice(&mut self, notice: Option<String>) {
-        if self.parent_notice != notice {
-            self.parent_notice = notice;
-        }
     }
 
     pub(crate) fn should_redraw(&self, now: Instant) -> bool {
@@ -296,22 +253,31 @@ impl AttachmentApp {
         self.last_drawn_elapsed_secs = self.live_elapsed_secs();
     }
 
-    async fn run(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
+    async fn run(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+        herdr: &HerdrReporter,
+    ) -> anyhow::Result<()> {
         let mut terminal_events = TerminalEvents::new();
         let mut refresh = tokio::time::interval(REFRESH_INTERVAL);
         refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut reported_state = None;
         self.refresh().await?;
-        terminal.draw(|frame| self.draw(frame))?;
-        self.last_drawn_elapsed_secs = self.live_elapsed_secs();
+        self.report_herdr(herdr, &mut reported_state).await;
+        terminal.draw(|frame| self.draw(frame, standalone_footer_hint(), None))?;
+        self.note_drawn();
 
-        while !self.should_quit {
+        loop {
             let redraw = tokio::select! {
                 event = terminal_events.next() => {
-                    let outcome = self.handle_event(event?);
-                    matches!(outcome, AttachInput::Leave | AttachInput::Quit) || outcome.redraws()
+                    match self.handle_event(event?) {
+                        AttachInput::Leave | AttachInput::Quit => break,
+                        outcome => outcome.redraws(),
+                    }
                 }
                 _ = refresh.tick() => {
                     let changed = self.refresh().await?;
+                    self.report_herdr(herdr, &mut reported_state).await;
                     let elapsed_advanced =
                         self.live_elapsed_secs() != self.last_drawn_elapsed_secs;
                     // Keep redrawing while the auto-hide scrollbar is visible, and
@@ -322,11 +288,25 @@ impl AttachmentApp {
                 },
             };
             if redraw {
-                terminal.draw(|frame| self.draw(frame))?;
-                self.last_drawn_elapsed_secs = self.live_elapsed_secs();
+                terminal.draw(|frame| self.draw(frame, standalone_footer_hint(), None))?;
+                self.note_drawn();
             }
         }
         Ok(())
+    }
+
+    async fn report_herdr(&self, herdr: &HerdrReporter, reported_state: &mut Option<RunState>) {
+        let Some(status) = &self.status else {
+            return;
+        };
+        if *reported_state == Some(status.state) {
+            return;
+        }
+        let (state, message) = herdr_status(&self.id, status);
+        herdr
+            .report_state(state, Some(&message), Some(&self.id))
+            .await;
+        *reported_state = Some(status.state);
     }
 
     pub(crate) async fn refresh(&mut self) -> anyhow::Result<bool> {
@@ -343,15 +323,7 @@ impl AttachmentApp {
                 self.invalidate_painted();
             }
             changed |= status_changed;
-            let state_changed = self.reported_state != Some(status.state);
-            self.status = Some(status.clone());
-            if state_changed {
-                let (state, message) = herdr_status(&self.id, &status);
-                self.herdr
-                    .report_state(state, Some(&message), Some(&self.id))
-                    .await;
-                self.reported_state = Some(status.state);
-            }
+            self.status = Some(status);
         }
         Ok(changed)
     }
@@ -547,18 +519,9 @@ impl AttachmentApp {
         match event {
             Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
                 KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    self.should_quit = true;
                     AttachInput::Quit
                 }
-                KeyCode::Char('q') | KeyCode::Esc => {
-                    self.should_quit = true;
-                    AttachInput::Leave
-                }
-                KeyCode::Tab | KeyCode::BackTab | KeyCode::Left | KeyCode::Right
-                    if self.embedded =>
-                {
-                    AttachInput::Ignored
-                }
+                KeyCode::Char('q') | KeyCode::Esc => AttachInput::Leave,
                 KeyCode::Up => {
                     self.scroll_lines(now, -1);
                     AttachInput::Handled
@@ -692,7 +655,12 @@ impl AttachmentApp {
         self.scroll.clamp(self.content_len, self.viewport_height);
     }
 
-    pub(crate) fn draw(&mut self, frame: &mut Frame<'_>) {
+    pub(crate) fn draw(
+        &mut self,
+        frame: &mut Frame<'_>,
+        footer_hint: &str,
+        parent_notice: Option<&str>,
+    ) {
         let area = frame.area();
         let chunks = Layout::vertical([
             Constraint::Length(4),
@@ -760,7 +728,7 @@ impl AttachmentApp {
 
         let footer = vec![
             Line::styled("─".repeat(width.max(1)), Theme::dim()),
-            footer_line(self.embedded, self.parent_notice.as_deref(), width),
+            footer_line(footer_hint, parent_notice, width),
         ];
         frame.render_widget(Paragraph::new(footer).style(Style::default()), chunks[2]);
     }

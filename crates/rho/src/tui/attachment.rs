@@ -10,4 +10,5 @@ mod select;
 mod tool_toggle;
 
 pub(crate) use app::{run, AttachInput, AttachmentApp, AttachmentDisplaySettings};
+pub(crate) use chrome::embedded_footer_hint;
 pub(crate) use sdk_writer::translate_run_event;
