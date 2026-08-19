@@ -62,6 +62,10 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        if self.handle_attach_view_key(key) {
+            return Ok(());
+        }
+
         if self.handle_paste_burst_key(key) {
             return Ok(());
         }

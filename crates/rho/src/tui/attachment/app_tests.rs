@@ -6,6 +6,7 @@ use ratatui::layout::Rect;
 use tempfile::TempDir;
 
 use super::*;
+use rho_sdk::model::ModelUsage;
 
 fn test_app() -> (TempDir, AttachmentApp) {
     let directory = TempDir::new().unwrap();
@@ -14,6 +15,7 @@ fn test_app() -> (TempDir, AttachmentApp) {
         directory.path().to_path_buf(),
         AttachmentDisplaySettings::default(),
         HerdrReporter::default(),
+        /*embedded*/ false,
     );
     (directory, app)
 }
@@ -141,6 +143,32 @@ fn attached_view_ignores_prompt_input() {
     ));
 }
 
+// Covers: embedded attach must leave Tab/arrows to the host so it can cycle runs.
+// Owner: attach event loop
+#[test]
+fn embedded_view_leaves_cycle_keys_unhandled() {
+    let directory = TempDir::new().unwrap();
+    let mut app = AttachmentApp::new(
+        "abc123",
+        directory.path().to_path_buf(),
+        AttachmentDisplaySettings::default(),
+        HerdrReporter::default(),
+        /*embedded*/ true,
+    );
+    assert_eq!(
+        app.handle_event(Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))),
+        AttachInput::Ignored
+    );
+    assert_eq!(
+        app.handle_event(Event::Key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))),
+        AttachInput::Ignored
+    );
+    assert_eq!(
+        app.handle_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))),
+        AttachInput::Leave
+    );
+}
+
 #[test]
 fn provider_retry_preserves_failed_attempt_usage() {
     let (_directory, mut app) = test_app();
@@ -212,6 +240,7 @@ fn history_lines_follow_display_settings() {
         directory.path().to_path_buf(),
         AttachmentDisplaySettings::default(),
         HerdrReporter::default(),
+        /*embedded*/ false,
     );
     app.apply_event(AttachmentEvent::Prompt("task".into()));
     app.apply_event(AttachmentEvent::ReasoningDelta("secret plan".into()));
@@ -274,6 +303,7 @@ fn history_lines_honor_max_tool_output_lines() {
             ..AttachmentDisplaySettings::default()
         },
         HerdrReporter::default(),
+        /*embedded*/ false,
     );
     let body = (0..5).map(|i| format!("line-{i}")).collect::<Vec<_>>();
     app.apply_event(AttachmentEvent::ToolFinished {

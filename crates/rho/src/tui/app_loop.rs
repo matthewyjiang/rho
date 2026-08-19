@@ -100,7 +100,7 @@ impl App {
             needs_redraw |= shell_changed;
             needs_redraw |= background_ready;
             needs_redraw |= self.update_activity_panels(agent);
-            needs_redraw |= self.poll_pending_subagent_attaches(Instant::now());
+            needs_redraw |= self.poll_embedded_attach().await?;
             needs_redraw |= self
                 .poll_subagent_questionnaires(agent.session_id())
                 .await?;
@@ -143,7 +143,7 @@ impl App {
                 || !self.pending_usage_limits.is_empty()
                 || self.pending_changelog.is_some()
                 || self.mcp_argument_completions.is_pending()
-                || self.has_pending_subagent_attach()
+                || self.is_attach_view()
                 || !self.pending_inline_shells.is_empty()
                 || self.history.images().has_pending()
                 || agent.startup_hydrate_pending()
@@ -217,19 +217,23 @@ impl App {
             Event::Paste(text) => {
                 self.input_ui.cancel_pointer_click_sequence();
                 self.flush_pending_paste_burst();
-                let text = normalize_paste(&text);
-                self.insert_external_paste(&text);
-                self.input_ui.clear_paste_burst();
+                if !self.is_attach_view() {
+                    let text = normalize_paste(&text);
+                    self.insert_external_paste(&text);
+                    self.input_ui.clear_paste_burst();
+                }
             }
             Event::Resize(_, _) => {
                 self.flush_pending_paste_burst();
-                self.clamp_overlay_detail_scroll(terminal);
-                self.clamp_limits_overlay_scroll(terminal);
-                self.clear_selections();
-                self.history.set_hovered_code_block_copy(None);
-                self.subagent_panel.clear_pointer_state();
-                self.hide_history_scrollbar();
-                self.clamp_history_scroll_for_terminal(terminal)?;
+                if !self.handle_attach_view_resize() {
+                    self.clamp_overlay_detail_scroll(terminal);
+                    self.clamp_limits_overlay_scroll(terminal);
+                    self.clear_selections();
+                    self.history.set_hovered_code_block_copy(None);
+                    self.subagent_panel.clear_pointer_state();
+                    self.hide_history_scrollbar();
+                    self.clamp_history_scroll_for_terminal(terminal)?;
+                }
             }
             Event::Mouse(mouse) => {
                 self.flush_pending_paste_burst();
@@ -276,6 +280,10 @@ impl App {
 
     pub(super) fn animation_active(&self, now: Instant) -> bool {
         self.loading_active()
+            || self
+                .embedded_attach
+                .as_ref()
+                .is_some_and(|view| view.should_redraw(now))
             || self.subagent_panel.is_active()
             || self.process_panel.is_active()
             || self

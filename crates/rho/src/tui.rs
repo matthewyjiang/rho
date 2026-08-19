@@ -232,7 +232,6 @@ use render::{
 use scrollbar::HistoryScrollbar;
 use session_title::PendingSessionTitle;
 use statusline::{GoalStatus, StatusLine};
-use subagent_attach::PendingSubagentAttach;
 use subagent_panel::SubagentPanel;
 use terminal_session::TerminalSession;
 use text_selection::{highlight_selection, render_copy_notice, TextSelection};
@@ -542,7 +541,9 @@ struct App {
     terminal_height: usize,
     /// Shared composer attachment layout for the current frame/width.
     composer_attachment_layout_cache: Option<composer_attachments::ComposerAttachmentLayoutCache>,
-    pending_subagent_attaches: Vec<PendingSubagentAttach>,
+    embedded_attach: Option<attachment::AttachmentApp>,
+    /// True when the parent turn was busy at the moment attach opened.
+    attach_parent_was_busy: bool,
     /// `/attach` starts on running runs; Ctrl-R includes finished transcripts.
     attach_run_filter: attach_picker::WorkspaceRunFilter,
     /// Disk listing captured when `/attach` opens so panel ticks only rematch live rows.

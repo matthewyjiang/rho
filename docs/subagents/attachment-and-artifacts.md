@@ -42,7 +42,7 @@ Each run directory can contain:
 
 Run IDs stay globally unique. `rho attach` first checks the global run index, then scans folder-layout sessions, then checks the legacy global path. This lets another process attach from any working directory while keeping unindexed older runs available.
 
-Detaching does not cancel execution. [Herdr](/integrations/herdr) panes also run `rho attach <id>` and never own the delegated task. Artifacts remain available for post-run inspection and may contain prompts or workspace content.
+Detaching does not cancel execution. The interactive TUI opens this viewer in place. `rho attach <id>` still works as a separate process for another terminal. Neither path owns the delegated task. Artifacts remain available for post-run inspection and may contain prompts or workspace content.
 
 Attach uses the same display settings as the interactive TUI from config: `show_reasoning_output`, `zen_mode`, `max_tool_output_lines`, and `theme`. Reasoning and tool events stay in the journal; the view filters them when painting so hide-reasoning and zen match the main session. Click a truncated tool card, or press Ctrl+O, to expand or collapse it.
 

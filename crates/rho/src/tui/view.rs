@@ -100,6 +100,9 @@ impl App {
             self.draw_setup_screen(frame, area, step);
             return;
         }
+        if self.draw_embedded_attach(frame) {
+            return;
+        }
         let width = area.width as usize;
         let height = area.height as usize;
         self.note_terminal_geometry(width, height);

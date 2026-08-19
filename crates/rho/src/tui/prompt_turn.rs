@@ -344,7 +344,7 @@ impl App {
             queued_interactions
                 .extend_subagent_questionnaires(self.subagent_inbox.take_questionnaires());
             let panel_changed = self.update_activity_panels(agent);
-            let attach_changed = self.poll_pending_subagent_attaches(Instant::now());
+            let attach_changed = self.poll_embedded_attach().await?;
             if panel_changed || attach_changed {
                 self.draw_running_frame(terminal, &mut frame_scheduler)?;
             }

@@ -38,10 +38,7 @@ fn assert_subagent_rail_mouse_flow(harness: &mut PtyHarness) -> Result<()> {
     let column = 3;
     let row = active_subagent_row(harness)?;
     harness.mouse_move(column, row)?;
-    harness.wait_for_text(
-        "copy attach",
-        WaitTimeout::secs(2, "subagent hover action hint"),
-    )?;
+    harness.wait_for_text("attach", WaitTimeout::secs(2, "subagent hover action hint"))?;
 
     let refresh_deadline = Instant::now() + Duration::from_millis(1_200);
     while Instant::now() < refresh_deadline {
@@ -54,19 +51,19 @@ fn assert_subagent_rail_mouse_flow(harness: &mut PtyHarness) -> Result<()> {
         .get(row.saturating_sub(1) as usize)
         .cloned()
         .unwrap_or_default();
-    if !hovered_row.contains("copy attach") {
+    if !hovered_row.contains("attach") {
         anyhow::bail!("hover disappeared after snapshot refresh:\n{hovered_row}");
     }
 
     harness.mouse(MouseButton::Left, column, row, true)?;
     harness.poll(Duration::from_millis(150));
-    if harness.screen().contains_text("attach command") {
+    if harness.screen().contains_text("q back") {
         anyhow::bail!("subagent action ran on mouse down");
     }
     harness.mouse_drag(column, 1)?;
     harness.mouse(MouseButton::Left, column, 1, false)?;
     harness.poll(Duration::from_millis(150));
-    if harness.screen().contains_text("attach command") {
+    if harness.screen().contains_text("q back") {
         anyhow::bail!("drag-away activated the subagent row");
     }
 
@@ -74,12 +71,12 @@ fn assert_subagent_rail_mouse_flow(harness: &mut PtyHarness) -> Result<()> {
     harness.mouse_move(column, row)?;
     harness.mouse(MouseButton::Left, column, row, true)?;
     harness.poll(Duration::from_millis(100));
-    if harness.screen().contains_text("attach command") {
+    if harness.screen().contains_text("q back") {
         anyhow::bail!("subagent action ran before mouse release");
     }
     harness.mouse(MouseButton::Left, column, row, false)?;
     harness.wait_for_text(
-        "attach command",
+        "q back",
         WaitTimeout::secs(2, "subagent click release action"),
     )?;
     Ok(())

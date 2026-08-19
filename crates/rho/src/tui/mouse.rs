@@ -48,6 +48,16 @@ impl App {
         let height = size.height as usize;
         self.note_terminal_geometry(width, height);
         let now = Instant::now();
+        if self.is_attach_view() {
+            let mouse = crossterm::event::MouseEvent {
+                kind,
+                column,
+                row,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            };
+            let _ = self.handle_attach_view_mouse(mouse);
+            return Ok(());
+        }
         match kind {
             MouseEventKind::ScrollUp => {
                 self.input_ui.cancel_pointer_click_sequence();

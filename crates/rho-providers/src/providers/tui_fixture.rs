@@ -7,6 +7,7 @@ use std::{
 };
 
 mod advisor;
+mod attach;
 mod compact;
 mod docs_demo;
 mod edit;
@@ -107,6 +108,9 @@ async fn fixture_stream(
         return completed("Fixture run title");
     }
     if let Some(response) = docs_demo::intercept(&prompt, &request, &events).await {
+        return response;
+    }
+    if let Some(response) = attach::intercept(&prompt, &request, &events).await {
         return response;
     }
     if is_goal_retry_prompt(&prompt) {

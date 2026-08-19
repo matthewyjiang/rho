@@ -170,6 +170,11 @@ impl HerdrReporter {
     /// The split and input requests use the bounded Herdr socket transport. If
     /// input submission fails after the split, Rho closes the new pane before
     /// returning the error.
+    ///
+    /// Interactive attach no longer uses this by default. The method stays so a
+    /// host or a later "open in pane" action can still split a `rho attach`
+    /// process.
+    #[allow(dead_code)]
     pub(crate) async fn open_sibling_pane(&self, command: &str) -> std::io::Result<()> {
         let Some(config) = &self.config else {
             return Err(std::io::Error::new(

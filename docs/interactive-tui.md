@@ -114,7 +114,7 @@ A single `/` as the first character opens the command palette. Any later `/` cha
 | `/theme` | Preview and apply a color theme. Lists the host terminal theme, built-in light/dark schemes, and custom files from `~/.rho/themes/`. Moving the selection previews colors; Enter saves. See [Theme](/interactive-tui/theme). |
 | `/hooks` | Reload [lifecycle hooks](/hooks) and show what each one will run: the resolved argv, working directory, timeout, and environment. Also names any project hooks file ignored because the workspace is not trusted. |
 | `/agents` | Reload agent definitions and browse their descriptions, sources, runtime (`rho` or `claude-cli`), model policies, reasoning levels, tools (Rho capabilities or Claude tool names), Claude config inheritance, prompt policies, and prompt previews. Select a reserved internal agent to configure its model. |
-| `/attach` | Open a full-screen picker of subagents from this directory. Starts on running runs; Ctrl-R also shows finished transcripts. Rows show the agent role, generated title, and current tool or final state. Enter attaches the same way as clicking the activity rail. |
+| `/attach` | Open a full-screen picker of subagents from this directory. Starts on running runs; Ctrl-R also shows finished transcripts. Rows show the agent role, generated title, and current tool or final state. Enter opens the in-place attach view, the same as clicking the activity rail. |
 | `/diff` | Show local Git status plus staged and unstaged worktree patches without invoking the model. |
 | `/doctor` | Check provider authentication, the selected model, config and session writability, model caches, clipboard image helpers, rtk, Herdr integration, and Claude Code binary/auth health without displaying secrets. |
 | `/mcp` | List configured MCP servers for this session, including in-flight connects. Connecting servers are not treated as failures. `/doctor` includes the same MCP health row. See [Model Context Protocol](/integrations/mcp). |
@@ -199,7 +199,9 @@ rho attach
 rho attach abc123
 ```
 
-Attached mode uses a separate read-only TUI. It renders the delegated prompt, reasoning, assistant output, tool activity, usage, and final state, but it has no message box and cannot submit prompts or change the subagent environment. Use Up/Down, Page Up/Page Down, and Home/End to scroll. Click a truncated tool card, or press Ctrl+O, to expand or collapse it. Press `q`, Escape, or Ctrl-C to detach without stopping the run. For Claude-cli runs, attach also surfaces `claude_session_id` when present so you can open the full Claude transcript with `claude --resume <session-id>`. Under [Herdr](/integrations/herdr), activating a subagent row opens a sibling pane that runs attach for you. See [subagents](/subagents/attachment-and-artifacts) for lifecycle details.
+`/attach` and a rail click swap the current session into a read-only attach view in the same terminal. The parent session keeps running underneath. The view renders the delegated prompt, reasoning, assistant output, tool activity, usage, and final state. It has no message box and cannot submit prompts or change the subagent environment. Use Up/Down, Page Up/Page Down, and Home/End to scroll. Tab, Shift-Tab, Left, and Right cycle other running subagents. Click a truncated tool card, or press Ctrl+O, to expand or collapse it. Press `q` or Escape to return to the composer. Ctrl-C quits Rho. If the parent hits an approval, questionnaire, or turn completion while you are attached, the footer notes it; the view does not yank you back.
+
+`rho attach` and `rho attach <id>` still open the same read-only TUI in a separate process, for another terminal. For Claude-cli runs, attach also surfaces `claude_session_id` when present so you can open the full Claude transcript with `claude --resume <session-id>`. See [subagents](/subagents/attachment-and-artifacts) for lifecycle details.
 
 ## Attachments
 
@@ -220,4 +222,4 @@ The TUI owns the transcript viewport (use its scroll controls, not terminal scro
 
 Use [automation and CLI](/automation-cli) when you want a single answer outside the TUI.
 Use [workflows](/workflows) when you need a frozen multi-step graph with durable status, cancellation, and resume. In the interactive TUI, run `/workflow` to browse sources, plans, and runs without leaving the session.
-Under [Herdr](/integrations/herdr), Rho reports agent state and can open attach panes. With [RTK](/integrations/rtk) on `PATH`, agent shell commands are rewritten automatically. See [integrations](/integrations).
+Under [Herdr](/integrations/herdr), Rho reports agent state. With [RTK](/integrations/rtk) on `PATH`, agent shell commands are rewritten automatically. See [integrations](/integrations).

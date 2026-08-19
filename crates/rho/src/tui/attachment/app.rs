@@ -10,11 +10,11 @@ use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, 
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::Style,
-    text::{Line, Span},
+    text::Line,
     widgets::Paragraph,
     DefaultTerminal, Frame,
 };
-use rho_sdk::model::{ContextUsage, ModelUsage};
+use rho_sdk::model::ContextUsage;
 use rho_tools::tool_card::ToolCard;
 
 use crate::{
@@ -31,12 +31,14 @@ use super::super::{
     terminal_events::TerminalEvents,
     theme::Theme,
     tool_card_hover,
-    usage_cost::{
-        format_token_count, format_usage_token_summary, format_usd, resolved_usage_cost_usd_micros,
-        AttemptAwareRunUsage,
-    },
+    usage_cost::AttemptAwareRunUsage,
     Entry, HistoryScroll, ReasoningChrome, ReasoningEntry, ToolEntry, HISTORY_MOUSE_SCROLL_LINES,
     HISTORY_SCROLLBAR_REVEAL_DURATION,
+};
+#[cfg(test)]
+use super::chrome::format_run_cost;
+use super::chrome::{
+    activity_metrics_line, footer_line, header_title_line, herdr_status, identity_line,
 };
 use super::tool_toggle::{
     latest_toggle_target, status_fallback_items, tool_card_at_line, HistoryItem, PaintedHistory,
@@ -45,6 +47,21 @@ use super::tool_toggle::{
 
 const REFRESH_INTERVAL: Duration = Duration::from_millis(100);
 const TOGGLE_WIDTH_FALLBACK: usize = 80;
+
+/// Result of routing one terminal event through the attach view.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AttachInput {
+    Ignored,
+    Handled,
+    Leave,
+    Quit,
+}
+
+impl AttachInput {
+    pub(crate) fn redraws(self) -> bool {
+        !matches!(self, Self::Ignored)
+    }
+}
 
 /// Display policy for `rho attach`, mirrored from interactive config.
 ///
@@ -141,7 +158,7 @@ pub(crate) async fn run(
     herdr
         .report_state(HerdrState::Working, Some(&message), Some(&id))
         .await;
-    let result = AttachmentApp::new(&id, directory, display, herdr.clone())
+    let result = AttachmentApp::open(&id, directory, display, herdr.clone())?
         .run(&mut terminal)
         .await;
     herdr.release().await;
@@ -160,7 +177,7 @@ impl Drop for RestoreTerminal {
     }
 }
 
-struct AttachmentApp {
+pub(crate) struct AttachmentApp {
     id: String,
     directory: PathBuf,
     reader: AttachmentReader,
@@ -195,6 +212,10 @@ struct AttachmentApp {
     history_width: usize,
     content_len: usize,
     should_quit: bool,
+    /// When true, Tab/Shift-Tab/arrows are left for the host to cycle runs.
+    embedded: bool,
+    /// Host-owned parent interrupt, painted into the footer. Never auto-exits.
+    parent_notice: Option<String>,
 }
 
 impl AttachmentApp {
@@ -203,6 +224,7 @@ impl AttachmentApp {
         directory: PathBuf,
         display: AttachmentDisplaySettings,
         herdr: HerdrReporter,
+        embedded: bool,
     ) -> Self {
         let reader = AttachmentReader::new(directory.join(subagent::ATTACHMENT_FILE_NAME));
         Self {
@@ -231,7 +253,47 @@ impl AttachmentApp {
             history_width: 0,
             content_len: 0,
             should_quit: false,
+            embedded,
+            parent_notice: None,
         }
+    }
+
+    fn open(
+        id: &str,
+        directory: PathBuf,
+        display: AttachmentDisplaySettings,
+        herdr: HerdrReporter,
+    ) -> anyhow::Result<Self> {
+        Ok(Self::new(
+            id, directory, display, herdr, /*embedded*/ false,
+        ))
+    }
+
+    pub(crate) fn open_embedded(
+        id: &str,
+        directory: PathBuf,
+        display: AttachmentDisplaySettings,
+        herdr: HerdrReporter,
+    ) -> Self {
+        Self::new(id, directory, display, herdr, /*embedded*/ true)
+    }
+
+    pub(crate) fn run_id(&self) -> &str {
+        &self.id
+    }
+
+    pub(crate) fn set_parent_notice(&mut self, notice: Option<String>) {
+        if self.parent_notice != notice {
+            self.parent_notice = notice;
+        }
+    }
+
+    pub(crate) fn should_redraw(&self, now: Instant) -> bool {
+        self.scroll.should_render(now) || self.live_elapsed_secs() != self.last_drawn_elapsed_secs
+    }
+
+    pub(crate) fn note_drawn(&mut self) {
+        self.last_drawn_elapsed_secs = self.live_elapsed_secs();
     }
 
     async fn run(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
@@ -244,7 +306,10 @@ impl AttachmentApp {
 
         while !self.should_quit {
             let redraw = tokio::select! {
-                event = terminal_events.next() => self.handle_event(event?),
+                event = terminal_events.next() => {
+                    let outcome = self.handle_event(event?);
+                    matches!(outcome, AttachInput::Leave | AttachInput::Quit) || outcome.redraws()
+                }
                 _ = refresh.tick() => {
                     let changed = self.refresh().await?;
                     let elapsed_advanced =
@@ -264,7 +329,7 @@ impl AttachmentApp {
         Ok(())
     }
 
-    async fn refresh(&mut self) -> anyhow::Result<bool> {
+    pub(crate) async fn refresh(&mut self) -> anyhow::Result<bool> {
         let events = self.reader.read_new()?;
         let mut changed = !events.is_empty();
         for event in events {
@@ -477,33 +542,38 @@ impl AttachmentApp {
         self.pending_order.clear();
     }
 
-    fn handle_event(&mut self, event: Event) -> bool {
+    pub(crate) fn handle_event(&mut self, event: Event) -> AttachInput {
         let now = Instant::now();
         match event {
             Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
                 KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     self.should_quit = true;
-                    true
+                    AttachInput::Quit
                 }
                 KeyCode::Char('q') | KeyCode::Esc => {
                     self.should_quit = true;
-                    true
+                    AttachInput::Leave
+                }
+                KeyCode::Tab | KeyCode::BackTab | KeyCode::Left | KeyCode::Right
+                    if self.embedded =>
+                {
+                    AttachInput::Ignored
                 }
                 KeyCode::Up => {
                     self.scroll_lines(now, -1);
-                    true
+                    AttachInput::Handled
                 }
                 KeyCode::Down => {
                     self.scroll_lines(now, 1);
-                    true
+                    AttachInput::Handled
                 }
                 KeyCode::PageUp => {
                     self.scroll_lines(now, -(self.viewport_height.max(1) as isize));
-                    true
+                    AttachInput::Handled
                 }
                 KeyCode::PageDown => {
                     self.scroll_lines(now, self.viewport_height.max(1) as isize);
-                    true
+                    AttachInput::Handled
                 }
                 KeyCode::Home => {
                     self.scroll
@@ -511,23 +581,23 @@ impl AttachmentApp {
                     if !matches!(self.scroll.scroll(), HistoryScroll::Bottom) {
                         self.scroll.reveal(now, HISTORY_SCROLLBAR_REVEAL_DURATION);
                     }
-                    true
+                    AttachInput::Handled
                 }
                 KeyCode::End => {
                     self.scroll.scroll_to_bottom();
-                    true
+                    AttachInput::Handled
                 }
                 KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     self.toggle_latest_tool();
-                    true
+                    AttachInput::Handled
                 }
-                _ => false,
+                _ => AttachInput::Ignored,
             },
             Event::Mouse(mouse) => {
                 if matches!(mouse.kind, MouseEventKind::Moved)
                     && self.last_mouse_position == Some((mouse.column, mouse.row))
                 {
-                    return false;
+                    return AttachInput::Ignored;
                 }
                 if matches!(mouse.kind, MouseEventKind::Moved) {
                     self.last_mouse_position = Some((mouse.column, mouse.row));
@@ -572,28 +642,28 @@ impl AttachmentApp {
                                 press.and_then(|key| self.target_for_tool_key(&key))
                             {
                                 self.toggle_tool_at(target);
-                                return true;
+                                return AttachInput::Handled;
                             }
                         }
                     }
                     _ => {}
                 }
-                true
+                AttachInput::Handled
             }
             Event::FocusGained => {
                 self.clear_press();
                 mouse_capture::reassert();
-                false
+                AttachInput::Ignored
             }
             Event::FocusLost => {
                 self.clear_press();
-                false
+                AttachInput::Ignored
             }
             Event::Resize(_, _) => {
                 self.clear_press();
-                true
+                AttachInput::Handled
             }
-            _ => false,
+            _ => AttachInput::Ignored,
         }
     }
 
@@ -622,7 +692,7 @@ impl AttachmentApp {
         self.scroll.clamp(self.content_len, self.viewport_height);
     }
 
-    fn draw(&mut self, frame: &mut Frame<'_>) {
+    pub(crate) fn draw(&mut self, frame: &mut Frame<'_>) {
         let area = frame.area();
         let chunks = Layout::vertical([
             Constraint::Length(4),
@@ -690,10 +760,7 @@ impl AttachmentApp {
 
         let footer = vec![
             Line::styled("─".repeat(width.max(1)), Theme::dim()),
-            Line::styled(
-                truncate_one_line("read-only · scroll · ctrl+o expand · q detach", width),
-                Theme::dim(),
-            ),
+            footer_line(self.embedded, self.parent_notice.as_deref(), width),
         ];
         frame.render_widget(Paragraph::new(footer).style(Style::default()), chunks[2]);
     }
@@ -811,129 +878,6 @@ impl AttachmentApp {
     }
 }
 
-/// Middle header row: model, runtime, turn, elapsed, optional Claude session, cost.
-fn identity_line(
-    status: Option<&RunStatus>,
-    run_usage: Option<&ModelUsage>,
-    now_unix_secs: u64,
-) -> String {
-    let Some(status) = status else {
-        return String::new();
-    };
-    let mut parts = Vec::new();
-    if let Some(model) =
-        crate::model_identity::PromptModel::from_run_status(status).map(|model| model.describe())
-    {
-        parts.push(model);
-    }
-    if let Some(runtime) = status.runtime {
-        parts.push(runtime.as_str().to_string());
-    }
-    parts.push(format!("turn {}", status.turns));
-    if let Some(elapsed) = status
-        .elapsed_duration(now_unix_secs)
-        .map(|elapsed| subagent::format_elapsed_secs(elapsed.as_secs()))
-    {
-        parts.push(elapsed);
-    }
-    if let Some(session_id) = status
-        .claude_session_id
-        .as_deref()
-        .filter(|session_id| !session_id.is_empty())
-    {
-        parts.push(format!("claude {session_id}"));
-    }
-    if let Some(cost) = format_run_cost(status, run_usage) {
-        parts.push(cost);
-    }
-    join_fields(parts)
-}
-
-/// Bottom header row: what the run is doing plus live usage.
-fn activity_metrics_line(
-    activity: &str,
-    context: Option<&ContextUsage>,
-    run_usage: Option<&ModelUsage>,
-    status: Option<&RunStatus>,
-) -> String {
-    let mut parts = vec![activity.to_string()];
-    parts.extend(usage_metric_parts(context, run_usage, status));
-    join_fields(parts)
-}
-
-fn usage_metric_parts(
-    context: Option<&ContextUsage>,
-    run_usage: Option<&ModelUsage>,
-    status: Option<&RunStatus>,
-) -> Vec<String> {
-    let mut parts = Vec::new();
-    if let Some(context_summary) = format_context_summary(context) {
-        parts.push(context_summary);
-    }
-    if let Some(usage_summary) = run_usage
-        .and_then(format_usage_token_summary)
-        .or_else(|| status.and_then(|status| format_usage_token_summary(&run_status_usage(status))))
-    {
-        parts.push(usage_summary);
-    }
-    parts
-}
-
-fn header_title_line(
-    run_id: &str,
-    agent_id: &str,
-    state: &str,
-    status: Option<&RunStatus>,
-) -> Line<'static> {
-    Line::from(vec![
-        Span::styled("rho", Theme::brand()),
-        Span::raw(format!("  attach {run_id}")),
-        Span::styled(format!(" · {agent_id}"), Theme::dim()),
-        Span::styled(format!(" · {state}"), state_style(status)),
-    ])
-}
-
-fn join_fields(parts: Vec<String>) -> String {
-    parts.join(FIELD_SEP)
-}
-
-/// Separator between attach header fields. Matches the main TUI statusline.
-const FIELD_SEP: &str = " · ";
-
-fn run_status_usage(status: &RunStatus) -> ModelUsage {
-    ModelUsage {
-        input_tokens: status.input_tokens,
-        output_tokens: status.output_tokens,
-        ..ModelUsage::default()
-    }
-}
-
-fn format_context_summary(context: Option<&ContextUsage>) -> Option<String> {
-    let context = context?;
-    let tokens = context.tokens?;
-    match context.context_window.filter(|window| *window > 0) {
-        Some(window) => {
-            let percent = tokens as f64 * 100.0 / window as f64;
-            Some(format!(
-                "context {}/{} ({percent:.1}%)",
-                format_token_count(tokens),
-                format_token_count(window)
-            ))
-        }
-        None => Some(format!("context {}", format_token_count(tokens))),
-    }
-}
-
-fn format_run_cost(status: &RunStatus, run_usage: Option<&ModelUsage>) -> Option<String> {
-    if let Some(cost) = status.total_cost_usd {
-        return Some(format_usd(subagent::usd_to_micros(cost)));
-    }
-    // Attach has no model metadata, so this resolves provider-reported cost only.
-    run_usage
-        .and_then(|usage| resolved_usage_cost_usd_micros(usage, None))
-        .map(format_usd)
-}
-
 #[derive(Clone, Copy)]
 enum StreamTarget {
     Assistant,
@@ -966,27 +910,6 @@ fn append_stream(
 fn attachment_tool_key(key: Option<String>) -> String {
     key.filter(|key| !key.is_empty())
         .unwrap_or_else(|| "__legacy__".into())
-}
-
-fn herdr_status(id: &str, status: &RunStatus) -> (HerdrState, String) {
-    let state = match status.state {
-        RunState::Starting | RunState::Running => HerdrState::Working,
-        RunState::Error => HerdrState::Blocked,
-        RunState::Ok | RunState::Stopped => HerdrState::Idle,
-    };
-    let detail = status
-        .last_activity
-        .as_deref()
-        .unwrap_or_else(|| status.state.as_str());
-    (state, format!("agent run {id}: {detail}"))
-}
-
-fn state_style(status: Option<&RunStatus>) -> ratatui::style::Style {
-    match status.map(|status| status.state) {
-        Some(RunState::Ok) => Theme::success(),
-        Some(RunState::Error | RunState::Stopped) => Theme::error(),
-        Some(RunState::Starting | RunState::Running) | None => Theme::warning(),
-    }
 }
 
 #[cfg(test)]
