@@ -120,8 +120,13 @@ impl App {
                     if open_resume_after_draw {
                         self.open_resume_picker()?;
                     }
-                    needs_redraw = true;
-                    continue;
+                    // Only skip the first event wait when startup work still
+                    // needs a loop-top poll. A blanket continue changed paste
+                    // timing on ordinary launches.
+                    if open_resume_after_draw || self.info.session.startup_prompt.is_some() {
+                        needs_redraw = true;
+                        continue;
+                    }
                 }
             }
             let subagents_active = agent.subagents().is_some_and(|manager| {
