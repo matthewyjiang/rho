@@ -96,6 +96,9 @@ impl App {
             needs_redraw |= self.poll_compact(terminal, agent).await?;
             needs_redraw |= self.release_pending_held_turn(terminal, agent).await?;
             needs_redraw |= self.start_next_follow_up(terminal, agent).await?;
+            if !first_frame {
+                needs_redraw |= self.start_startup_prompt(terminal, agent).await?;
+            }
             self.poll_update_notice();
             self.poll_custom_provider_models();
             needs_redraw |= self.poll_syntax_warmup();
@@ -132,6 +135,11 @@ impl App {
                     first_frame = false;
                     if open_resume_after_draw {
                         self.open_resume_picker()?;
+                    }
+                    // Only skip the first event wait when startup work still
+                    // needs a loop-top poll. A blanket continue changed paste
+                    // timing on ordinary launches.
+                    if open_resume_after_draw || self.info.session.startup_prompt.is_some() {
                         needs_redraw = true;
                         continue;
                     }

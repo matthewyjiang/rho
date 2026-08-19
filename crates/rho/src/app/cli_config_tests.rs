@@ -78,6 +78,7 @@ fn test_cli() -> Cli {
         permission_mode: None,
         save: false,
         resume: None,
+        prompt: None,
         command: None,
     }
 }
@@ -106,6 +107,33 @@ fn validate_cli_rejects_resume_with_non_interactive_commands() {
         let err = validate(&cli).unwrap_err();
         assert!(err.to_string().contains("--resume is only supported"));
     }
+}
+
+// Covers: --prompt must not start a headless command or accept blank text.
+// Owner: cli config validation
+#[test]
+fn validate_cli_rejects_prompt_outside_interactive_session() {
+    let with_command = Cli {
+        prompt: Some("ship it".into()),
+        command: Some(Command::Run {
+            stdin: false,
+            output_file: None,
+            output: crate::cli::OutputFormat::Text,
+            max_steps: None,
+            timeout: None,
+            prompt: Vec::new(),
+        }),
+        ..test_cli()
+    };
+    let error = validate(&with_command).unwrap_err();
+    assert!(error.to_string().contains("--prompt is only supported"));
+
+    let blank = Cli {
+        prompt: Some("   ".into()),
+        ..test_cli()
+    };
+    let error = validate(&blank).unwrap_err();
+    assert!(error.to_string().contains("--prompt requires non-empty"));
 }
 
 #[test]

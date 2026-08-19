@@ -71,6 +71,7 @@ pub(super) fn test_bootstrap() -> TuiBootstrap {
             session_id: None,
             recovered_messages: Vec::new(),
             open_resume_picker: false,
+            startup_prompt: None,
         },
         services: ApplicationServices {
             config_repository: ConfigRepository::temporary_for_tests().unwrap(),

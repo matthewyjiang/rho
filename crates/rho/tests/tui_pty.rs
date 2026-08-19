@@ -53,6 +53,13 @@ fn smoke_startup_stream_exit() {
     assert_pass("startup_stream_exit");
 }
 
+// Covers: --prompt must start the first turn without typing Enter.
+// Owner: interactive TUI
+#[test]
+fn smoke_startup_prompt_stream_exit() {
+    assert_pass("startup_prompt_stream_exit");
+}
+
 // Covers: first session chrome must paint without waiting on MCP, catalog, or keyring tails.
 // Owner: interactive TUI
 #[test]

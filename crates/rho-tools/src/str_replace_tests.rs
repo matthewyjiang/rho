@@ -51,7 +51,7 @@ fn rejects_invalid_replacement_arguments() {
 // Covers: a unique replacement rewrites the target and returns chainable output.
 // Owner: str_replace application
 #[tokio::test]
-async fn replaces_unique_occurrence_with_hashline_snapshot() {
+async fn replaces_unique_occurrence_with_numbered_snapshot() {
     let (_dir, ctx) = test_context();
     let path = ctx.cwd.join("sample.txt");
     std::fs::write(&path, "alpha beta gamma").unwrap();
@@ -70,7 +70,12 @@ async fn replaces_unique_occurrence_with_hashline_snapshot() {
     assert_eq!(std::fs::read_to_string(path).unwrap(), "alpha delta gamma");
     assert_eq!(outcome.display_paths, vec!["sample.txt"]);
     assert!(
-        outcome.content.contains("[sample.txt#"),
+        outcome.content.contains("sample.txt"),
+        "{}",
+        outcome.content
+    );
+    assert!(
+        !outcome.content.contains("[sample.txt#"),
         "{}",
         outcome.content
     );

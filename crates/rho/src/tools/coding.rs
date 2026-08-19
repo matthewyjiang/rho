@@ -21,14 +21,15 @@ pub(super) fn edit_tool(
 pub(super) fn sdk_bundle(
     capabilities: &AgentCapabilities,
     max_output_bytes: usize,
-    config_edit_tool: rho_tools::EditFormat,
     process_environment: ProcessEnvironment,
     mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
+    file_view: rho_tools::FileViewPolicy,
 ) -> super::sdk_registry::StaticToolBundle {
     use rho_tools::CodingToolKind;
 
     let options = rho_tools::CodingToolOptions::new()
         .max_output_bytes(max_output_bytes)
+        .file_view(file_view)
         .mutation_observer(Arc::clone(&mutation_observer));
     let mut tools = Vec::new();
     for (capability, kind) in [
@@ -42,14 +43,7 @@ pub(super) fn sdk_bundle(
         if !capabilities.contains(&capability) {
             continue;
         }
-        match kind {
-            CodingToolKind::Edit => tools.push(edit_tool(
-                config_edit_tool,
-                max_output_bytes,
-                Arc::clone(&mutation_observer),
-            )),
-            kind => tools.push(rho_tools::coding_tool(kind, options.clone())),
-        }
+        tools.push(rho_tools::coding_tool(kind, options.clone()));
     }
     #[cfg(unix)]
     let shell_enabled = capabilities.contains(&ToolCapability::Bash);

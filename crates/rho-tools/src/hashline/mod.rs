@@ -1,7 +1,9 @@
 //! Line-anchored multi-hunk edit tool (`edit`) with snapshot tags.
 //!
-//! `read_file` / `write` mint `[path#TAG]` snapshots. `grep` content mode
-//! mints headers + line numbers for anchors (match text is preview only). `edit`
+//! When the selected edit tool is `hashline`, `read_file` / `write` mint
+//! `[path#TAG]` snapshots and `grep` content mode mints headers + line numbers
+//! for anchors (match text is preview only). Numbered rows themselves live in
+//! `text_view`; this module only owns tags and PUT/CUT. `edit`
 //! applies a compact PUT/CUT document against those original line numbers and
 //! rejects stale tags. Failures leave the file untouched and return a bounded
 //! live snapshot to copy.
@@ -19,8 +21,7 @@ use crate::tool::*;
 
 pub(crate) use execute::{apply_prepared_sections, claim_unique_path, PreparedSection};
 pub(crate) use format::{
-    compute_file_hash, format_chain_snapshot, format_hashline_view, format_header,
-    iter_content_lines,
+    compute_file_hash, format_chain_snapshot, format_hashline_view, format_header, FileHash,
 };
 pub(crate) use parser::parse_hashline;
 pub use proposed::{

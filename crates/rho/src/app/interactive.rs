@@ -125,6 +125,7 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
                 session_id,
                 recovered_messages,
                 open_resume_picker,
+                startup_prompt: cli.prompt.clone(),
             },
             services: ApplicationServices {
                 config_repository,

@@ -7,8 +7,6 @@
 //! adapters, these implement [`rho_sdk::tool::Tool::prepare`] only and need the
 //! published default [`rho_sdk::tool::Tool::call`] body.
 
-use std::marker::PhantomData;
-
 use serde_json::Value;
 
 use rho_sdk::{
@@ -21,6 +19,7 @@ use rho_sdk::{
 };
 
 use crate::{
+    file_view::FileViewPolicy,
     glob::GlobSearch,
     grep::GrepSearch,
     sdk_support::{
@@ -38,14 +37,23 @@ pub(crate) type GlobTool = SearchTool<GlobSearch>;
 
 pub(crate) struct SearchTool<S> {
     max_output_bytes: usize,
-    search: PhantomData<fn() -> S>,
+    search: S,
 }
 
-impl<S: WorkspaceSearch> SearchTool<S> {
+impl SearchTool<GrepSearch> {
+    pub(crate) fn grep(max_output_bytes: usize, file_view: FileViewPolicy) -> Self {
+        Self {
+            max_output_bytes: max_output_bytes.max(1),
+            search: GrepSearch::new(file_view),
+        }
+    }
+}
+
+impl SearchTool<GlobSearch> {
     pub(crate) fn new(max_output_bytes: usize) -> Self {
         Self {
             max_output_bytes: max_output_bytes.max(1),
-            search: PhantomData,
+            search: GlobSearch,
         }
     }
 }
@@ -93,6 +101,7 @@ impl<S: WorkspaceSearch> Tool for SearchTool<S> {
                 resolved.path(),
             ))];
             let max_output_bytes = self.max_output_bytes;
+            let search = self.search.clone();
             Ok(PreparedToolInvocation::resource_aware(
                 accesses,
                 [capability],
@@ -106,7 +115,8 @@ impl<S: WorkspaceSearch> Tool for SearchTool<S> {
                         let content = tokio::task::spawn_blocking({
                             let display = display.clone();
                             move || {
-                                S::run(&root, &display, &request, &|| cancellation.is_cancelled())
+                                search
+                                    .run(&root, &display, &request, &|| cancellation.is_cancelled())
                             }
                         })
                         .await
