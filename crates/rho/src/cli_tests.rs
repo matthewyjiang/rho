@@ -141,6 +141,15 @@ fn parses_sessions_list_and_rm() {
     ));
 }
 
+// Covers: interactive --prompt must not be treated as a run subcommand.
+// Owner: CLI parser
+#[test]
+fn parses_interactive_prompt_flag() {
+    let cli = Cli::try_parse_from(["rho", "--prompt", "ship it"]).unwrap();
+    assert_eq!(cli.prompt.as_deref(), Some("ship it"));
+    assert!(cli.command.is_none());
+}
+
 #[test]
 fn parses_permission_mode_override() {
     for (flag, expected) in [

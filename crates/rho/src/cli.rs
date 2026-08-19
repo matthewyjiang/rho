@@ -97,6 +97,12 @@ pub struct Cli {
     /// Resume an existing session by UUID or UUID prefix. Omit the ID to choose from a picker.
     #[arg(short = 'R', long, value_name = "ID", num_args = 0..=1)]
     pub resume: Option<Option<String>>,
+    /// Open the interactive TUI with this prompt already submitted.
+    ///
+    /// This starts a normal session. Use `rho run` when you want one answer and
+    /// then exit.
+    #[arg(long, value_name = "PROMPT")]
+    pub prompt: Option<String>,
     #[command(subcommand)]
     pub command: Option<Command>,
 }

@@ -30,6 +30,15 @@ pub(super) const STARTUP_STREAM_EXIT_SCENARIO: Scenario = Scenario::new(
     true,
 );
 
+pub(super) const STARTUP_PROMPT_STREAM_EXIT_SCENARIO: Scenario = Scenario::new(
+    "startup_prompt_stream_exit",
+    "Launch with --prompt and stream a fixture response without typing",
+    SIZE,
+    STARTUP_PROMPT_STREAM_EXIT_STEPS,
+    true,
+)
+.with_args(&["--prompt", "fixture stream"]);
+
 const STARTUP_FIRST_FRAME_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
@@ -55,6 +64,36 @@ const STARTUP_STREAM_EXIT_STEPS: &[Step] = &[
     },
     Step::Phase("submit_stream"),
     Step::SubmitText("fixture stream"),
+    Step::WaitText {
+        text: "assistant stream part one",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "part two",
+        timeout: STREAM,
+    },
+    Step::WaitQuiet {
+        quiet_for: Duration::from_millis(200),
+        timeout: SETTLE,
+    },
+    Step::ExitCommand,
+];
+
+const STARTUP_PROMPT_STREAM_EXIT_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "rho",
+        timeout: STARTUP,
+    },
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("startup_prompt_stream"),
+    Step::WaitText {
+        text: "fixture stream",
+        timeout: STREAM,
+    },
     Step::WaitText {
         text: "assistant stream part one",
         timeout: STREAM,
