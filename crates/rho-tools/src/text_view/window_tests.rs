@@ -1,6 +1,7 @@
 use pretty_assertions::assert_eq;
 
-use super::{format_window_bytes, read_text_window, ScanError, CHUNK_SIZE};
+use super::{format_numbered_view, format_window_bytes, read_text_window, ScanError, CHUNK_SIZE};
+use crate::file_view::FileViewStyle;
 use crate::hashline::{format_hashline_view, FileHash};
 
 fn numbered_log(lines: usize, pad: usize) -> String {
@@ -129,4 +130,30 @@ async fn disk_window_matches_split_view() {
     .await
     .unwrap();
     assert_eq!(actual, expected);
+}
+
+// Covers: untagged large ranged reads must match the in-memory numbered view
+// Owner: text view window
+#[tokio::test]
+async fn numbered_disk_window_matches_split_view() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("log.txt");
+    let text = numbered_log(9_000, 40);
+    std::fs::write(&path, &text).unwrap();
+    let source_len = std::fs::metadata(&path).unwrap().len();
+    assert!(source_len as usize > CHUNK_SIZE);
+
+    let cases = [
+        (Some(1), Some(4)),
+        (Some(4_500), Some(6)),
+        (Some(8_990), Some(20)),
+    ];
+    for (offset, limit) in cases {
+        let expected = format_numbered_view("log.txt", &text, offset, limit).unwrap();
+        let actual = FileViewStyle::Numbered
+            .read_window(&path, "log.txt", source_len, offset, limit)
+            .await
+            .unwrap();
+        assert_eq!(actual, expected, "offset={offset:?} limit={limit:?}");
+    }
 }

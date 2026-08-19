@@ -9,7 +9,7 @@
 
 use crate::text_view::{
     cap_selected_by_hunk, emit_numbered_body, expand_focus_lines,
-    format_chain_snapshot_with_header, format_numbered_view_with_header, split_content_lines,
+    format_chain_snapshot as format_numbered_snapshot, format_numbered_view, split_content_lines,
     LineFingerprint,
 };
 
@@ -126,7 +126,7 @@ pub(crate) fn format_hashline_view(
     offset: Option<usize>,
     limit: Option<usize>,
 ) -> Result<String, String> {
-    format_numbered_view_with_header(
+    format_numbered_view(
         &format_header(display_path, &compute_file_hash(text)),
         text,
         offset,
@@ -183,7 +183,7 @@ pub(crate) fn format_chain_snapshot(
     text: &str,
     focus_lines: &[usize],
 ) -> String {
-    format_chain_snapshot_with_header(
+    format_numbered_snapshot(
         &format_header(display_path, &compute_file_hash(text)),
         text,
         focus_lines,

@@ -17,7 +17,6 @@ use super::{ListDirTool, ReadFileTool, WriteFileTool};
 pub struct CodingToolOptions {
     max_output_bytes: usize,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
-    edit_tool: crate::EditFormat,
     file_view: FileViewPolicy,
 }
 
@@ -25,7 +24,6 @@ impl Default for CodingToolOptions {
     fn default() -> Self {
         Self {
             max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
-            edit_tool: crate::EditFormat::default(),
             mutation_observer: None,
             file_view: FileViewPolicy::default(),
         }
@@ -43,19 +41,13 @@ impl CodingToolOptions {
     }
 
     pub fn edit_tool(mut self, edit_tool: crate::EditFormat) -> Self {
-        self.edit_tool = edit_tool;
-        self.file_view.set(edit_tool);
+        self.file_view = FileViewPolicy::new(edit_tool);
         self
     }
 
     pub fn file_view(mut self, file_view: FileViewPolicy) -> Self {
-        file_view.set(self.edit_tool);
         self.file_view = file_view;
         self
-    }
-
-    pub fn file_view_policy(&self) -> FileViewPolicy {
-        self.file_view.clone()
     }
 
     pub fn mutation_observer(
@@ -99,7 +91,7 @@ pub fn coding_tool(kind: CodingToolKind, options: CodingToolOptions) -> Arc<dyn 
             file_view: options.file_view.clone(),
         }),
         CodingToolKind::Edit => super::build_edit_sdk_tool(
-            options.edit_tool,
+            options.file_view.current(),
             options.max_output_bytes,
             options.mutation_observer.clone(),
         ),

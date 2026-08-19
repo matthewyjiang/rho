@@ -202,7 +202,6 @@ impl AppToolSet {
         tool_set.add_bundle(super::coding::sdk_bundle(
             &capabilities,
             config.max_output_bytes,
-            edit_format,
             process_environment.clone(),
             tool_set.checkpoint_tracker.clone(),
             tool_set.file_view.clone(),

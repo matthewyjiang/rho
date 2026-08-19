@@ -32,20 +32,12 @@ pub(crate) fn format_numbered_line(line_number: usize, line: &str) -> String {
     format!("{line_number}{LINE_BODY_SEP}{line}")
 }
 
-/// Render a numbered view of `text` for `display_path`.
+/// Render a numbered view of `text`.
 ///
-/// `offset`/`limit` select a 1-indexed inclusive window of lines. The header is
-/// the display path. Callers that need a snapshot tag wrap the first line.
+/// `offset`/`limit` select a 1-indexed inclusive window of lines. Callers that
+/// need a snapshot tag pass a `[path#TAG]` header; everyone else passes the
+/// display path.
 pub(crate) fn format_numbered_view(
-    display_path: &str,
-    text: &str,
-    offset: Option<usize>,
-    limit: Option<usize>,
-) -> Result<String, String> {
-    format_numbered_view_with_header(display_path, text, offset, limit)
-}
-
-pub(crate) fn format_numbered_view_with_header(
     header: &str,
     text: &str,
     offset: Option<usize>,
@@ -95,20 +87,8 @@ pub(crate) fn offset_past_end(start: usize, total: usize) -> String {
 /// Bounded numbered snapshot after `write` or a failed `edit`.
 ///
 /// Body rows are capped: focus anchors expand locally; otherwise a short
-/// head+tail window is used. The header is the display path.
-pub(crate) fn format_chain_snapshot(
-    display_path: &str,
-    text: &str,
-    focus_lines: &[usize],
-) -> String {
-    format_chain_snapshot_with_header(display_path, text, focus_lines)
-}
-
-pub(crate) fn format_chain_snapshot_with_header(
-    header: &str,
-    text: &str,
-    focus_lines: &[usize],
-) -> String {
+/// head+tail window is used. Pass a tagged header or the display path.
+pub(crate) fn format_chain_snapshot(header: &str, text: &str, focus_lines: &[usize]) -> String {
     let lines = split_content_lines(text);
     if lines.is_empty() {
         return header.to_string();

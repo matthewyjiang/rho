@@ -125,10 +125,6 @@ impl FileViewPolicy {
         FileViewStyle::from_edit_format(self.current())
     }
 
-    pub fn mints_snapshot_tags(&self) -> bool {
-        self.style().mints_snapshot_tags()
-    }
-
     fn read_format(&self) -> std::sync::RwLockReadGuard<'_, EditFormat> {
         self.format
             .read()

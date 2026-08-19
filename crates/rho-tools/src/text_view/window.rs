@@ -12,7 +12,7 @@ use tokio::io::AsyncReadExt;
 use super::{format_numbered_line, offset_past_end, window_footer};
 
 #[cfg(test)]
-use super::format_numbered_view_with_header;
+use super::format_numbered_view;
 use crate::document::MAX_DOCUMENT_INPUT_BYTES;
 use crate::tool::ToolError;
 
@@ -272,12 +272,11 @@ impl<F: LineFingerprint> WindowScan<F> {
 
     fn finish(mut self) -> Result<ScannedWindow, ScanError> {
         self.utf8.finish().map_err(|()| ScanError::InvalidUtf8)?;
-        if !self.pending.is_empty() || (self.bytes > 0 && !self.ends_with_newline) {
+        if !self.pending.is_empty() {
             self.finish_content_line()?;
-        } else if self.bytes > 0 && self.ends_with_newline {
-            // `split('\n')` yields an empty last segment after a trailing newline.
-            self.consume_line(b"", /*content*/ false)?;
-        } else if self.bytes == 0 {
+        } else {
+            // Empty file, or the empty last `split('\n')` segment after a
+            // trailing newline. `pending` is empty only in those cases.
             self.consume_line(b"", /*content*/ false)?;
         }
         let total = if self.bytes == 0 {
@@ -315,7 +314,7 @@ where
     let (start, limit) = validate_window(offset, limit)?;
     if bytes.len() <= CHUNK_SIZE && fingerprint.is_none() {
         let text = std::str::from_utf8(bytes).map_err(|error| error.to_string())?;
-        return Ok(format_numbered_view_with_header(
+        return Ok(format_numbered_view(
             &header(None),
             text,
             Some(start),
