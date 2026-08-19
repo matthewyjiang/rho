@@ -69,6 +69,7 @@ impl App {
             CommandId::Compact => {
                 self.start_compact(agent, super::compact_work::CompactFollowUp::None)
             }
+            CommandId::Copy => self.execute_copy_command(),
             CommandId::Goal => {
                 invocation.raw_args = slash_command_args(&expanded_input).to_string();
                 invocation.args = invocation.raw_args.trim().to_string();

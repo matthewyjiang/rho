@@ -15,6 +15,7 @@ pub enum CommandId {
     Info,
     Help,
     Compact,
+    Copy,
     Goal,
     Skills,
     Theme,
@@ -169,6 +170,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "config",
         usage: "/config",
         description: "open configuration picker",
+        argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Copy,
+        name: "copy",
+        usage: "/copy",
+        description: "copy the last assistant message to the clipboard",
         argument_choices: &[],
     },
     CommandSpec {

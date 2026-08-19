@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use ratatui::DefaultTerminal;
 use rho_providers::{
     model::provider_models::{probe_provider_models, ProviderModelHealth},
@@ -13,6 +15,16 @@ use super::{doctor, local_diff, App, Entry, Session, ToolEntry};
 use crate::claude_runtime::auth::ClaudeProbeSnapshot;
 
 impl App {
+    pub(super) fn execute_copy_command(&mut self) -> anyhow::Result<()> {
+        let Some(text) = last_assistant_text(self.history.entries()) else {
+            self.set_status("no assistant message to copy");
+            return Ok(());
+        };
+        let text = text.to_owned();
+        self.copy_text(&text, Instant::now());
+        Ok(())
+    }
+
     pub(super) fn execute_diff_command(&mut self) -> anyhow::Result<()> {
         let diff = match local_diff::collect(&self.info.runtime.cwd) {
             Ok(diff) => diff,
@@ -163,3 +175,14 @@ impl App {
         Ok(())
     }
 }
+
+fn last_assistant_text(entries: &[Entry]) -> Option<&str> {
+    entries.iter().rev().find_map(|entry| match entry {
+        Entry::Assistant(text) if !text.trim().is_empty() => Some(text.as_str()),
+        _ => None,
+    })
+}
+
+#[cfg(test)]
+#[path = "local_commands_tests.rs"]
+mod tests;
