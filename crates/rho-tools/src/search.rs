@@ -99,7 +99,7 @@ pub(crate) fn with_reasons(counts: String, reasons: &[StopReason], narrow: Narro
 /// adapter owns capability requests, resource declarations, cancellation, and
 /// output truncation. Adding a search tool means adding an implementation
 /// here, not another adapter.
-pub(crate) trait WorkspaceSearch: Send + Sync + 'static {
+pub(crate) trait WorkspaceSearch: Clone + Send + Sync + 'static {
     /// Validated arguments, built before any capability is requested so an
     /// invalid pattern cannot cost an authorization round trip.
     type Request: Send + 'static;
@@ -117,10 +117,10 @@ pub(crate) trait WorkspaceSearch: Send + Sync + 'static {
     /// Runs the search on a blocking thread. `display_root` is the root as it
     /// should appear in output; `cancelled` is polled between files.
     fn run(
+        &self,
         root: &Path,
         display_root: &str,
         request: &Self::Request,
         cancelled: &dyn Fn() -> bool,
-        mint_tag: bool,
     ) -> Result<String, ToolError>;
 }

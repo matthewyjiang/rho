@@ -16,6 +16,7 @@ use crate::{
 /// How glob tells the model to shrink a search.
 const NARROW: NarrowHint = NarrowHint("the pattern or path");
 
+#[derive(Clone, Copy)]
 pub(crate) struct GlobSearch;
 
 #[derive(Deserialize)]
@@ -82,11 +83,11 @@ impl WorkspaceSearch for GlobSearch {
     }
 
     fn run(
+        &self,
         root: &Path,
         display_root: &str,
         request: &GlobRequest,
         cancelled: &dyn Fn() -> bool,
-        _mint_tag: bool,
     ) -> Result<String, ToolError> {
         glob_workspace(root, display_root, request, cancelled)
     }

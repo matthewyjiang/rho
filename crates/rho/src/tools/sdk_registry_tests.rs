@@ -643,8 +643,9 @@ fn edit_tool_selection_swaps_the_advertised_edit_surface() {
     assert_eq!(
         after.iter().filter(|name| *name == "read_file").count(),
         1,
-        "edit-tool switch must rebuild read_file in place, not duplicate it"
+        "edit-tool switch must keep one read_file"
     );
+    assert_eq!(tools.file_view_style(), rho_tools::FileViewStyle::Numbered);
 
     let mut without_edit = AppToolSet::new(
         &config,

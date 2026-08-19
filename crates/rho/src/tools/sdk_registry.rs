@@ -154,6 +154,7 @@ pub struct AppToolSet {
     web_access: super::web::WebAccessStore,
     mcp_report: super::mcp::McpSessionReport,
     mcp_catalog: super::mcp::McpCatalog,
+    file_view: rho_tools::FileViewPolicy,
 }
 
 impl AppToolSet {
@@ -171,6 +172,7 @@ impl AppToolSet {
             web_access: super::web::WebAccessStore::new(),
             mcp_report: super::mcp::McpSessionReport::default(),
             mcp_catalog: super::mcp::McpCatalog::default(),
+            file_view: rho_tools::FileViewPolicy::default(),
         }
     }
 
@@ -195,12 +197,15 @@ impl AppToolSet {
         let process_environment =
             rho_sdk::ProcessEnvironment::inherit_except(rho_providers::credential_env_vars());
 
+        let edit_format = config.edit_tool.resolve(&config.provider);
+        tool_set.file_view.set(edit_format);
         tool_set.add_bundle(super::coding::sdk_bundle(
             &capabilities,
             config.max_output_bytes,
-            config.edit_tool.resolve(&config.provider),
+            edit_format,
             process_environment.clone(),
             tool_set.checkpoint_tracker.clone(),
+            tool_set.file_view.clone(),
         ));
         if capabilities.contains(&ToolCapability::Process) {
             let bundle = super::process::sdk_bundle(
@@ -384,26 +389,15 @@ impl AppToolSet {
             .position(|tool| is_canonical_edit_tool_name(tool.spec().name.as_str()))?;
         let mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver> =
             self.checkpoint_tracker.clone();
-        let options = rho_tools::CodingToolOptions::new()
-            .max_output_bytes(max_output_bytes)
-            .edit_tool(edit_tool)
-            .mutation_observer(Arc::clone(&mutation_observer));
         self.tools[position] =
-            super::coding::edit_tool(edit_tool, max_output_bytes, Arc::clone(&mutation_observer));
-        for tool in &mut self.tools {
-            let name = tool.spec().name;
-            *tool = match name.as_str() {
-                "read_file" => {
-                    rho_tools::coding_tool(rho_tools::CodingToolKind::ReadFile, options.clone())
-                }
-                "write" => {
-                    rho_tools::coding_tool(rho_tools::CodingToolKind::WriteFile, options.clone())
-                }
-                "grep" => rho_tools::coding_tool(rho_tools::CodingToolKind::Grep, options.clone()),
-                _ => continue,
-            };
-        }
+            super::coding::edit_tool(edit_tool, max_output_bytes, mutation_observer);
+        self.file_view.set(edit_tool);
         Some(previous)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn file_view_style(&self) -> rho_tools::FileViewStyle {
+        self.file_view.style()
     }
 
     /// The currently advertised built-in edit format, when this run exposes one.

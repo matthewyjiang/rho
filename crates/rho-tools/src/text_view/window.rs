@@ -1,95 +1,57 @@
-//! Request-local line lookup for large UTF-8 reads.
+//! Request-local line window for large UTF-8 reads.
 //!
-//! Rho still has to scan the whole file once: the hashline TAG fingerprints
-//! every line. OpenCode's augmented rope exists because that reader can stop
-//! after the selected window. Here the same 256 KiB chunks are hashed and
-//! counted in one sequential pass, and only the selected window is retained.
-//! There is no persistent index.
-//!
-//! Small files stay on the direct split path.
-//!
-//! Algorithm notes: Boehm, Atkinson, and Plass, "Ropes: An Alternative to
-//! Strings"; generic order-statistic trees. Those structures skip unread
-//! prefixes when a later page is the only work. Rho's TAG makes the unread
-//! suffix required, so this module keeps the request-local summary idea and
-//! drops the second seek pass.
+//! The scan walks the file once in 256 KiB chunks and keeps only the selected
+//! window. Callers that need a full-file fingerprint supply a
+//! [`LineFingerprint`]; untagged reads still finish the file so the footer can
+//! report `of {total}`.
 
 use std::path::Path;
 
 use tokio::io::AsyncReadExt;
 
+use super::{format_numbered_line, offset_past_end, window_footer};
+
 #[cfg(test)]
-use super::format::format_text_view;
-use super::format::{
-    format_file_hash, format_numbered_line, offset_past_end, trim_hash_line, view_header,
-    window_footer, Fnv1a32,
-};
+use super::format_numbered_view_with_header;
 use crate::document::MAX_DOCUMENT_INPUT_BYTES;
 use crate::tool::ToolError;
 
-/// Chunk size used for the sequential scan. Matches the OpenCode read-tool rope.
-pub(crate) const CHUNK_SIZE: usize = 256 * 1024;
-
-struct HashState {
-    hasher: Fnv1a32,
-    pending: Vec<u8>,
-    started: bool,
+/// Failures while scanning a UTF-8 window.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ScanError {
+    InvalidUtf8,
+    Message(String),
 }
 
-impl HashState {
-    fn new() -> Self {
-        Self {
-            hasher: Fnv1a32::new(),
-            pending: Vec::new(),
-            started: false,
-        }
+impl From<String> for ScanError {
+    fn from(message: String) -> Self {
+        Self::Message(message)
     }
+}
 
-    fn push(&mut self, chunk: &[u8]) {
-        let mut rest = chunk;
-        if !self.pending.is_empty() {
-            match rest.iter().position(|&byte| byte == b'\n') {
-                Some(index) => {
-                    self.pending.extend_from_slice(&rest[..index]);
-                    self.hash_pending();
-                    rest = &rest[index + 1..];
-                }
-                None => {
-                    self.pending.extend_from_slice(rest);
-                    return;
-                }
-            }
+impl ScanError {
+    fn into_tool_error(self, path: &Path) -> ToolError {
+        match self {
+            Self::InvalidUtf8 => ToolError::Message(format!(
+                "could not read '{}' as UTF-8 text: invalid utf-8 sequence",
+                path.display()
+            )),
+            Self::Message(message) => ToolError::Message(message),
         }
-        while let Some(index) = rest.iter().position(|&byte| byte == b'\n') {
-            self.hash_line(&rest[..index]);
-            rest = &rest[index + 1..];
-        }
-        self.pending.extend_from_slice(rest);
     }
+}
 
-    fn hash_line(&mut self, line: &[u8]) {
-        if self.started {
-            self.hasher.write(b"\n");
-        }
-        self.started = true;
-        self.hasher.write(trim_hash_line(line));
-    }
+/// Chunk size used for the sequential scan.
+pub(crate) const CHUNK_SIZE: usize = 256 * 1024;
 
-    fn hash_pending(&mut self) {
-        if self.started {
-            self.hasher.write(b"\n");
-        }
-        self.started = true;
-        self.hasher.write(trim_hash_line(&self.pending));
-        self.pending.clear();
-    }
-
-    fn finish(mut self) -> String {
-        // `split('\n')` always yields a last segment, including the empty one
-        // after a trailing newline and the single empty segment of an empty file.
-        self.hash_pending();
-        format_file_hash(self.hasher.finish())
-    }
+/// Optional per-`\n` digest collected while scanning.
+///
+/// `push_line` sees the same segments as `split('\n')`, including the empty
+/// last segment after a trailing newline and the single empty segment of an
+/// empty file.
+pub(crate) trait LineFingerprint {
+    fn push_line(&mut self, line: &[u8]);
+    fn finish(self) -> String;
 }
 
 struct Utf8Check {
@@ -185,7 +147,7 @@ fn emit_window(header: &str, start: usize, lines: &[String], footer: Option<&str
     out
 }
 
-fn validate_window(
+pub(crate) fn validate_window(
     offset: Option<usize>,
     limit: Option<usize>,
 ) -> Result<(usize, Option<usize>), String> {
@@ -198,9 +160,8 @@ fn validate_window(
     Ok((offset.unwrap_or(1), limit))
 }
 
-fn render_window(
-    display_path: &str,
-    tag: Option<&str>,
+pub(crate) fn render_window(
+    header: &str,
     total: usize,
     start: usize,
     limit: Option<usize>,
@@ -210,7 +171,7 @@ fn render_window(
         if start > 1 {
             return Err(offset_past_end(start, 0));
         }
-        return Ok(view_header(display_path, tag.map(str::to_string)));
+        return Ok(header.to_string());
     }
     if start > total {
         return Err(offset_past_end(start, total));
@@ -219,13 +180,12 @@ fn render_window(
         Some(limit) => start.saturating_add(limit).saturating_sub(1).min(total),
         None => total,
     };
-    let header = view_header(display_path, tag.map(str::to_string));
     let footer = window_footer(start, end, total);
-    Ok(emit_window(&header, start, lines, footer.as_deref()))
+    Ok(emit_window(header, start, lines, footer.as_deref()))
 }
 
-struct WindowScan {
-    hasher: Option<HashState>,
+struct WindowScan<F> {
+    fingerprint: Option<F>,
     utf8: Utf8Check,
     pending: Vec<u8>,
     line_number: usize,
@@ -236,10 +196,10 @@ struct WindowScan {
     bytes: usize,
 }
 
-impl WindowScan {
-    fn new(start: usize, limit: Option<usize>, mint_tag: bool) -> Self {
+impl<F: LineFingerprint> WindowScan<F> {
+    fn new(start: usize, limit: Option<usize>, fingerprint: Option<F>) -> Self {
         Self {
-            hasher: mint_tag.then(HashState::new),
+            fingerprint,
             utf8: Utf8Check::new(),
             pending: Vec::new(),
             line_number: 1,
@@ -251,13 +211,8 @@ impl WindowScan {
         }
     }
 
-    fn push(&mut self, chunk: &[u8]) -> Result<(), String> {
-        self.utf8
-            .push(chunk)
-            .map_err(|()| "file is not valid UTF-8 text".to_string())?;
-        if let Some(hasher) = &mut self.hasher {
-            hasher.push(chunk);
-        }
+    fn push(&mut self, chunk: &[u8]) -> Result<(), ScanError> {
+        self.utf8.push(chunk).map_err(|()| ScanError::InvalidUtf8)?;
         self.bytes = self.bytes.saturating_add(chunk.len());
         let mut rest = chunk;
         if !self.pending.is_empty() {
@@ -276,10 +231,7 @@ impl WindowScan {
             }
         }
         while let Some(index) = rest.iter().position(|&byte| byte == b'\n') {
-            if self.in_window() {
-                self.selected.push(decode_line(&rest[..index])?);
-            }
-            self.line_number = self.line_number.saturating_add(1);
+            self.consume_line(&rest[..index], /*content*/ true)?;
             rest = &rest[index + 1..];
             self.ends_with_newline = true;
         }
@@ -290,13 +242,22 @@ impl WindowScan {
         Ok(())
     }
 
-    fn finish_content_line(&mut self) -> Result<(), String> {
-        if self.in_window() {
-            self.selected.push(decode_line(&self.pending)?);
+    fn consume_line(&mut self, line: &[u8], content: bool) -> Result<(), ScanError> {
+        if let Some(fingerprint) = &mut self.fingerprint {
+            fingerprint.push_line(line);
         }
-        self.pending.clear();
-        self.line_number = self.line_number.saturating_add(1);
+        if content && self.in_window() {
+            self.selected.push(decode_line(line)?);
+        }
+        if content {
+            self.line_number = self.line_number.saturating_add(1);
+        }
         Ok(())
+    }
+
+    fn finish_content_line(&mut self) -> Result<(), ScanError> {
+        let pending = std::mem::take(&mut self.pending);
+        self.consume_line(&pending, /*content*/ true)
     }
 
     fn in_window(&self) -> bool {
@@ -309,15 +270,15 @@ impl WindowScan {
         }
     }
 
-    fn finish(mut self) -> Result<ScannedWindow, String> {
-        self.utf8
-            .finish()
-            .map_err(|()| "file is not valid UTF-8 text".to_string())?;
+    fn finish(mut self) -> Result<ScannedWindow, ScanError> {
+        self.utf8.finish().map_err(|()| ScanError::InvalidUtf8)?;
         if !self.pending.is_empty() || (self.bytes > 0 && !self.ends_with_newline) {
-            if self.in_window() {
-                self.selected.push(decode_line(&self.pending)?);
-            }
-            self.line_number = self.line_number.saturating_add(1);
+            self.finish_content_line()?;
+        } else if self.bytes > 0 && self.ends_with_newline {
+            // `split('\n')` yields an empty last segment after a trailing newline.
+            self.consume_line(b"", /*content*/ false)?;
+        } else if self.bytes == 0 {
+            self.consume_line(b"", /*content*/ false)?;
         }
         let total = if self.bytes == 0 {
             0
@@ -325,67 +286,69 @@ impl WindowScan {
             self.line_number.saturating_sub(1)
         };
         Ok(ScannedWindow {
-            tag: self.hasher.map(HashState::finish),
+            tag: self.fingerprint.map(LineFingerprint::finish),
             total,
             selected: self.selected,
         })
     }
 }
 
-struct ScannedWindow {
-    tag: Option<String>,
-    total: usize,
-    selected: Vec<String>,
-}
-
-#[cfg(test)]
-fn scan_bytes(bytes: &[u8], start: usize, limit: Option<usize>) -> Result<ScannedWindow, String> {
-    let mut scan = WindowScan::new(start, limit, /*mint_tag*/ true);
-    for chunk in bytes.chunks(CHUNK_SIZE) {
-        scan.push(chunk)?;
-    }
-    scan.finish()
+pub(crate) struct ScannedWindow {
+    pub(crate) tag: Option<String>,
+    pub(crate) total: usize,
+    pub(crate) selected: Vec<String>,
 }
 
 /// In-memory scan used by tests and the large-file oracle comparison.
 #[cfg(test)]
-pub(super) fn format_hashline_view_bytes(
-    display_path: &str,
+pub(crate) fn format_window_bytes<F, H>(
     bytes: &[u8],
     offset: Option<usize>,
     limit: Option<usize>,
-) -> Result<String, String> {
+    fingerprint: Option<F>,
+    header: H,
+) -> Result<String, ScanError>
+where
+    F: LineFingerprint,
+    H: FnOnce(Option<&str>) -> String,
+{
     let (start, limit) = validate_window(offset, limit)?;
-    if bytes.len() <= CHUNK_SIZE {
+    if bytes.len() <= CHUNK_SIZE && fingerprint.is_none() {
         let text = std::str::from_utf8(bytes).map_err(|error| error.to_string())?;
-        return format_text_view(
-            display_path,
+        return Ok(format_numbered_view_with_header(
+            &header(None),
             text,
             Some(start),
             limit,
-            /*mint_tag*/ true,
-        );
+        )?);
     }
-    let scanned = scan_bytes(bytes, start, limit)?;
-    render_window(
-        display_path,
-        scanned.tag.as_deref(),
+    let mut scan = WindowScan::new(start, limit, fingerprint);
+    for chunk in bytes.chunks(CHUNK_SIZE) {
+        scan.push(chunk)?;
+    }
+    let scanned = scan.finish()?;
+    Ok(render_window(
+        &header(scanned.tag.as_deref()),
         scanned.total,
         start,
         limit,
         &scanned.selected,
-    )
+    )?)
 }
 
 /// Paginate a large on-disk UTF-8 file without retaining every prefix.
-pub(crate) async fn read_hashline_window(
+pub(crate) async fn read_text_window<F, H>(
     path: &Path,
-    display_path: &str,
     source_len: u64,
     offset: Option<usize>,
     limit: Option<usize>,
-    mint_tag: bool,
-) -> Result<String, ToolError> {
+    fingerprint: Option<F>,
+    header: H,
+) -> Result<String, ToolError>
+where
+    F: LineFingerprint,
+    H: FnOnce(Option<&str>) -> String,
+{
     let (start, limit) = validate_window(offset, limit).map_err(ToolError::Message)?;
     if source_len > MAX_DOCUMENT_INPUT_BYTES as u64 {
         return Err(ToolError::Message(format!(
@@ -394,7 +357,7 @@ pub(crate) async fn read_hashline_window(
         )));
     }
     let mut file = tokio::fs::File::open(path).await?;
-    let mut scan = WindowScan::new(start, limit, mint_tag);
+    let mut scan = WindowScan::new(start, limit, fingerprint);
     let mut buf = vec![0_u8; CHUNK_SIZE];
     loop {
         let read = file.read(&mut buf).await?;
@@ -408,30 +371,12 @@ pub(crate) async fn read_hashline_window(
                 path.display()
             )));
         }
-        scan.push(&buf[..read]).map_err(|error| {
-            if error == "file is not valid UTF-8 text" {
-                ToolError::Message(format!(
-                    "could not read '{}' as UTF-8 text: invalid utf-8",
-                    path.display()
-                ))
-            } else {
-                ToolError::Message(error)
-            }
-        })?;
+        scan.push(&buf[..read])
+            .map_err(|error| error.into_tool_error(path))?;
     }
-    let scanned = scan.finish().map_err(|error| {
-        if error == "file is not valid UTF-8 text" {
-            ToolError::Message(format!(
-                "could not read '{}' as UTF-8 text: invalid utf-8",
-                path.display()
-            ))
-        } else {
-            ToolError::Message(error)
-        }
-    })?;
+    let scanned = scan.finish().map_err(|error| error.into_tool_error(path))?;
     render_window(
-        display_path,
-        scanned.tag.as_deref(),
+        &header(scanned.tag.as_deref()),
         scanned.total,
         start,
         limit,
@@ -439,7 +384,3 @@ pub(crate) async fn read_hashline_window(
     )
     .map_err(ToolError::Message)
 }
-
-#[cfg(test)]
-#[path = "rope_tests.rs"]
-mod tests;

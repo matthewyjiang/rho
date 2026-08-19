@@ -43,11 +43,10 @@ is `hashline`, the header is a snapshot tag:
 | `TAG` | 4 uppercase hex digits. Full-file fingerprint with trailing whitespace ignored so a whitespace-only drift does not bust the tag. Omitted when the selected edit tool is not `hashline` |
 | `N:line` | 1-indexed original line body |
 
-`read_file` still scans the whole file when a hashline TAG is minted, even if
-you pass `offset` / `limit`. Those args only choose which numbered rows appear.
-Without a TAG, a large ranged read can keep only the selected window. Files
-larger than 256 KiB keep only that window in memory. There is no persistent line
-index. Rich documents and images are not hashline-editable; see
+`read_file` still scans the whole file so the footer can report `of {total}`,
+even if you pass `offset` / `limit`. Those args only choose which numbered rows
+appear. Files larger than 256 KiB keep only that window in memory. There is no
+persistent line index. Rich documents and images are not hashline-editable; see
 [documents and images](/tools-workspace/documents-and-images).
 
 ### Where tags come from

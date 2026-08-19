@@ -49,9 +49,15 @@ async fn falls_back_to_hashline_text_when_an_ascii_signature_is_not_a_decodable_
     let text = "GIF89a ordinary fixture text";
     fs::write(&path, text).unwrap();
 
-    let output = read_file_content(&path, "fixture.txt", None, None, /*mint_tag*/ true)
-        .await
-        .unwrap();
+    let output = read_file_content(
+        &path,
+        "fixture.txt",
+        None,
+        None,
+        crate::FileViewStyle::Hashline,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         output.content,
@@ -67,9 +73,15 @@ async fn keeps_binary_image_reads_successful_when_preview_decoding_fails() {
     let path = ctx.cwd.join("broken.png");
     fs::write(&path, b"\x89PNG\r\n\x1a\n\xffbroken").unwrap();
 
-    let output = read_file_content(&path, "broken.png", None, None, /*mint_tag*/ true)
-        .await
-        .unwrap();
+    let output = read_file_content(
+        &path,
+        "broken.png",
+        None,
+        None,
+        crate::FileViewStyle::Hashline,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(output.content, "image/png image (15 bytes)");
     assert!(output.image.is_none());
@@ -117,9 +129,15 @@ async fn plain_text_reads_return_hashline_view_with_full_file_tag() {
     let text = "fn main() {\n    ok();\n}\n";
     fs::write(&path, text).unwrap();
 
-    let output = read_file_content(&path, "sample.rs", None, None, /*mint_tag*/ true)
-        .await
-        .unwrap();
+    let output = read_file_content(
+        &path,
+        "sample.rs",
+        None,
+        None,
+        crate::FileViewStyle::Hashline,
+    )
+    .await
+    .unwrap();
 
     let expected = format_hashline_view("sample.rs", text, None, None).unwrap();
     assert_eq!(output.content, expected);
@@ -161,7 +179,7 @@ async fn large_ranged_reads_match_hashline_window() {
     let mut text = String::new();
     let filler = "x".repeat(40);
     let mut lines = 0usize;
-    while text.len() <= crate::hashline::CHUNK_SIZE {
+    while text.len() <= crate::text_view::CHUNK_SIZE {
         lines += 1;
         text.push_str(&format!("line-{lines:06} {filler}\n"));
     }
@@ -170,7 +188,7 @@ async fn large_ranged_reads_match_hashline_window() {
         text.push_str(&format!("line-{lines:06} {filler}\n"));
     }
     fs::write(&path, &text).unwrap();
-    assert!(fs::metadata(&path).unwrap().len() as usize > crate::hashline::CHUNK_SIZE);
+    assert!(fs::metadata(&path).unwrap().len() as usize > crate::text_view::CHUNK_SIZE);
 
     let result = ReadFile
         .call(
@@ -208,9 +226,15 @@ async fn reports_truncated_document_extraction() {
     writer.write_all(xml.as_bytes()).unwrap();
     fs::write(&path, writer.finish().unwrap().into_inner()).unwrap();
 
-    let output = read_file_content(&path, "large.docx", None, None, /*mint_tag*/ true)
-        .await
-        .unwrap();
+    let output = read_file_content(
+        &path,
+        "large.docx",
+        None,
+        None,
+        crate::FileViewStyle::Hashline,
+    )
+    .await
+    .unwrap();
 
     assert!(
         output
@@ -246,7 +270,14 @@ async fn rejects_documents_over_the_input_limit() {
     file.set_len(crate::document::MAX_DOCUMENT_INPUT_BYTES as u64 + 1)
         .unwrap();
 
-    let error = match read_file_content(&path, "oversized.pdf", None, None, /*mint_tag*/ true).await
+    let error = match read_file_content(
+        &path,
+        "oversized.pdf",
+        None,
+        None,
+        crate::FileViewStyle::Hashline,
+    )
+    .await
     {
         Ok(_) => panic!("oversized document unexpectedly succeeded"),
         Err(error) => error,

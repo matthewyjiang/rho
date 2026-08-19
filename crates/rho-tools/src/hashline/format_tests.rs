@@ -2,35 +2,6 @@ use pretty_assertions::assert_eq;
 
 use super::*;
 
-// Covers: empty and trailing-newline files must not invent phantom content lines
-// Owner: hashline format
-#[test]
-fn split_content_lines_handles_empty_and_trailing_newline() {
-    assert!(split_content_lines("").is_empty());
-    assert_eq!(split_content_lines("a\nb"), vec!["a", "b"]);
-    assert_eq!(split_content_lines("a\nb\n"), vec!["a", "b"]);
-    assert_eq!(split_content_lines("\n"), vec![""]);
-    assert_eq!(split_content_lines("a\r\nb\r\n"), vec!["a", "b"]);
-
-    assert_eq!(
-        iter_content_lines("").collect::<Vec<_>>(),
-        Vec::<&str>::new()
-    );
-    assert_eq!(
-        iter_content_lines("a\nb").collect::<Vec<_>>(),
-        vec!["a", "b"]
-    );
-    assert_eq!(
-        iter_content_lines("a\nb\n").collect::<Vec<_>>(),
-        vec!["a", "b"]
-    );
-    assert_eq!(iter_content_lines("\n").collect::<Vec<_>>(), vec![""]);
-    assert_eq!(
-        iter_content_lines("a\r\nb\r\n").collect::<Vec<_>>(),
-        vec!["a", "b"]
-    );
-}
-
 // Covers: snapshot tags must stay stable for equivalent normalized text
 // Owner: hashline format
 #[test]
@@ -60,18 +31,6 @@ fn hashline_view_uses_absolute_lines_and_full_file_tag() {
         format!(
             "[src/a.rs#{hash}]\n2:two\n3:three\n\n[lines 2-3 of 4 shown; re-read with a different offset or limit for the rest]"
         )
-    );
-}
-
-// Covers: non-hashline reads keep numbered lines without a full-file tag
-// Owner: hashline format
-#[test]
-fn text_view_can_omit_the_full_file_tag() {
-    let text = "one\ntwo\nthree\nfour\n";
-    let view = format_text_view("src/a.rs", text, Some(2), Some(2), /*mint_tag*/ false).unwrap();
-    assert_eq!(
-        view,
-        "src/a.rs\n2:two\n3:three\n\n[lines 2-3 of 4 shown; re-read with a different offset or limit for the rest]"
     );
 }
 
@@ -165,7 +124,7 @@ fn chain_snapshot_uses_head_tail_window_without_focus() {
     assert!(snapshot.contains("80:line-80"), "{snapshot}");
     assert!(snapshot.contains("…\n"), "{snapshot}");
     assert!(
-        snapshot.contains(&chain_truncation_footer(36, 80)),
+        snapshot.contains(&crate::text_view::chain_truncation_footer(36, 80)),
         "{snapshot}"
     );
     assert!(!snapshot.contains("40:line-40"), "{snapshot}");

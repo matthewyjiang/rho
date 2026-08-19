@@ -82,13 +82,13 @@ pub(super) struct ListDirTool {
 
 pub(super) struct ReadFileTool {
     pub(super) max_output_bytes: usize,
-    pub(super) mint_tag: bool,
+    pub(super) file_view: crate::FileViewPolicy,
 }
 
 pub(super) struct WriteFileTool {
     pub(super) max_output_bytes: usize,
     pub(super) mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
-    pub(super) mint_tag: bool,
+    pub(super) file_view: crate::FileViewPolicy,
 }
 
 #[derive(Deserialize)]
@@ -208,7 +208,7 @@ impl Tool for ReadFileTool {
                             &display_path,
                             args.offset,
                             args.limit,
-                            self.mint_tag,
+                            self.file_view.style(),
                         )
                         .await
                         .map_err(map_app_error)?;
@@ -280,7 +280,7 @@ impl Tool for WriteFileTool {
                     execute_prepared_write(
                         self.max_output_bytes,
                         self.mutation_observer.clone(),
-                        self.mint_tag,
+                        self.file_view.clone(),
                         workspace,
                         resolved,
                         args,
@@ -295,7 +295,7 @@ impl Tool for WriteFileTool {
 fn execute_prepared_write(
     max_output_bytes: usize,
     mutation_observer: Option<Arc<dyn crate::WorkspaceMutationObserver>>,
-    mint_tag: bool,
+    file_view: crate::FileViewPolicy,
     workspace: Workspace,
     resolved: ResolvedWorkspacePath,
     args: WriteArgs,
@@ -320,7 +320,7 @@ fn execute_prepared_write(
                 &display,
                 &args.content,
                 max_output_bytes,
-                mint_tag,
+                file_view.style(),
             ),
         )
         .await?;

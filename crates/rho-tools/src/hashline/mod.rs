@@ -2,7 +2,8 @@
 //!
 //! When the selected edit tool is `hashline`, `read_file` / `write` mint
 //! `[path#TAG]` snapshots and `grep` content mode mints headers + line numbers
-//! for anchors (match text is preview only). `edit`
+//! for anchors (match text is preview only). Numbered rows themselves live in
+//! `text_view`; this module only owns tags and PUT/CUT. `edit`
 //! applies a compact PUT/CUT document against those original line numbers and
 //! rejects stale tags. Failures leave the file untouched and return a bounded
 //! live snapshot to copy.
@@ -12,7 +13,6 @@ mod execute;
 mod format;
 mod parser;
 mod proposed;
-mod rope;
 
 use serde::Deserialize;
 use serde_json::json;
@@ -20,18 +20,14 @@ use serde_json::json;
 use crate::tool::*;
 
 pub(crate) use execute::{apply_prepared_sections, claim_unique_path, PreparedSection};
-#[cfg(test)]
-pub(crate) use format::format_hashline_view;
 pub(crate) use format::{
-    compute_file_hash, format_chain_snapshot_with, format_header, format_text_view,
-    iter_content_lines,
+    compute_file_hash, format_chain_snapshot, format_hashline_view, format_header, FileHash,
 };
 pub(crate) use parser::parse_hashline;
 pub use proposed::{
     planned_edit, proposed_edit, proposed_sections, EditPreview, EditPreviewKind, ProposedSection,
     EDIT_DOCUMENT_ONLY_NOTICE,
 };
-pub(crate) use rope::{read_hashline_window, CHUNK_SIZE};
 
 /// Operational contract only. Chaining policy and dialect tips live in the system
 /// prompt / docs so this schema string does not drift as a third essay.

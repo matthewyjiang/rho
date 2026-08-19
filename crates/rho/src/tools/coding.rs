@@ -24,12 +24,15 @@ pub(super) fn sdk_bundle(
     config_edit_tool: rho_tools::EditFormat,
     process_environment: ProcessEnvironment,
     mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
+    file_view: rho_tools::FileViewPolicy,
 ) -> super::sdk_registry::StaticToolBundle {
     use rho_tools::CodingToolKind;
 
+    file_view.set(config_edit_tool);
     let options = rho_tools::CodingToolOptions::new()
         .max_output_bytes(max_output_bytes)
         .edit_tool(config_edit_tool)
+        .file_view(file_view.clone())
         .mutation_observer(Arc::clone(&mutation_observer));
     let mut tools = Vec::new();
     for (capability, kind) in [

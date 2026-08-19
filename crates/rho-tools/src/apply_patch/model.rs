@@ -98,11 +98,10 @@ impl FileChange {
                 display_path,
                 new_content,
                 ..
-            } => Some(crate::hashline::format_chain_snapshot_with(
+            } => Some(crate::text_view::format_chain_snapshot(
                 display_path,
                 new_content,
                 &[],
-                /*mint_tag*/ false,
             )),
             Self::Delete { .. } => None,
         }

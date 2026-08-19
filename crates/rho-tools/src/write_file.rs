@@ -39,7 +39,7 @@ impl Tool for WriteFile {
                 &compact_display_path(&ctx.cwd, &args.path),
                 &args.content,
                 ctx.max_output_bytes,
-                /*mint_tag*/ true,
+                crate::FileViewStyle::Hashline,
             )
             .await?;
             Ok(ToolResult {
@@ -56,7 +56,7 @@ pub(super) async fn write_file_content(
     display_path: &str,
     content: &str,
     max_output_bytes: usize,
-    mint_tag: bool,
+    style: crate::FileViewStyle,
 ) -> Result<FileMutationOutcome, ToolError> {
     let (old_content, existing_file_is_unreadable) = match tokio::fs::read_to_string(path).await {
         Ok(content) => (Some(content), false),
@@ -84,8 +84,7 @@ pub(super) async fn write_file_content(
     let action = if created { "created" } else { "wrote" };
     // Model-facing chain contract: action line + bounded hashline snapshot.
     // Unified diff stays on metadata for UI cards.
-    let snapshot =
-        crate::hashline::format_chain_snapshot_with(display_path, content, &[], mint_tag);
+    let snapshot = style.format_chain_snapshot(display_path, content, &[]);
     let content = if existing_file_is_unreadable {
         format!("{action} {display_path}\n\n{UNREADABLE_FILE_DIFF_MESSAGE}\n\n{snapshot}")
     } else {

@@ -444,7 +444,8 @@ async fn applies_mixed_operations_with_numbered_snapshots() {
     );
     assert!(outcome.content.contains("nested/new.txt"));
     assert!(outcome.content.contains("modify.txt"));
-    assert!(!outcome.content.contains('#'));
+    assert!(!outcome.content.contains("[nested/new.txt#"));
+    assert!(!outcome.content.contains("[modify.txt#"));
     assert!(!outcome.content.contains("@@"));
     assert!(outcome.diff.contains("--- a/modify.txt"));
 }

@@ -4,9 +4,10 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use super::{
-    format::{compute_file_hash, detect_eol, has_trailing_newline, split_content_lines},
+    format::{compute_file_hash, detect_eol, has_trailing_newline},
     parser::Op,
 };
+use crate::text_view::split_content_lines;
 
 /// Result of applying ops to one file body.
 #[derive(Clone, Debug, PartialEq, Eq)]

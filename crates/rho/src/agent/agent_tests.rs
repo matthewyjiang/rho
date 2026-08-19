@@ -119,7 +119,7 @@ fn golden_legacy_v1_fingerprints_for_builtin_rho_agents() {
         ),
         (
             "explorer",
-            "52a0868729579676fbcff35089221a5a59d52da787d995a9f3a776b94e041dc0",
+            "b393602c7cb63eca98273b1b43640767f31c88a42abfbfe04dc387acfd68f3fc",
         ),
         (
             "reviewer",
@@ -127,7 +127,7 @@ fn golden_legacy_v1_fingerprints_for_builtin_rho_agents() {
         ),
         (
             "worker",
-            "f4b26831e2bca1c52679cef24bfd530e6b27d1e601513070800fb3a5f028342c",
+            "3974c0730d03a37c063e0a9cb43496f17aab9bb152c97397b52d9425c1329079",
         ),
     ];
     for (id, expected_legacy) in expected {
