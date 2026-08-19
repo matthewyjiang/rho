@@ -8,7 +8,7 @@ printf 'summarize this repository' | rho run --stdin
 rho run "review this diff" --stdin < diff.txt
 ```
 
-Use the [interactive TUI](/interactive-tui) when you want an ongoing session. Use `rho run` when you want a single answer for a script, hook, alias, pipeline, or CI job. Use [`rho acp`](/integrations/acp) when an editor host speaks Agent Client Protocol. That command does not change `rho run --output jsonl`.
+Use the [interactive TUI](/interactive-tui) when you want an ongoing session. Pass `--prompt` to open that TUI with the first prompt already started. Use `rho run` when you want a single answer for a script, hook, alias, pipeline, or CI job. Use [`rho acp`](/integrations/acp) when an editor host speaks Agent Client Protocol. That command does not change `rho run --output jsonl`.
 
 ```mermaid
 flowchart LR
@@ -197,13 +197,14 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | `--no-tools` | Do not expose tools to the model. Current invocation only. Place before a subcommand: `rho --no-tools run "..."`. |
 | `--no-subagents` | Do not expose the delegated-agent tools (`agent` / `agents`). Current invocation only. |
 | `-R`, `--resume [<ID>]` | Resume a session by UUID or UUID prefix. Without an ID, open a picker. Interactive sessions only. |
+| `--prompt <PROMPT>` | Open the interactive TUI and immediately submit this prompt. Interactive sessions only. |
 | `-h`, `--help` | Show help for Rho or a subcommand. |
 
 ### Commands
 
 | Command | Description |
 | --- | --- |
-| `rho` | Start an interactive TUI session in the current working directory. |
+| `rho` | Start an interactive TUI session in the current working directory. Add `--prompt` to send the first message as the session opens. |
 | `rho run [OPTIONS] [PROMPT]...` | Send one prompt, optionally append stdin, print the final answer, and exit. |
 | `rho acp` | Serve Agent Client Protocol over stdio for an editor host. See [ACP](/integrations/acp). |
 | `rho attach [ID]` | Watch a delegated agent run in a read-only TUI. Omit the id to pick from subagents in the current directory. The picker starts on running runs; Ctrl-R shows finished transcripts. See [subagents](/subagents/attachment-and-artifacts). |
@@ -229,5 +230,5 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 
 Provider, model, auth, and reasoning options are described further in [authentication and models](/authentication-and-models) and [configuration](/configuration). For provider-specific automation caveats, see the [provider pages](/authentication-and-models#providers). For example, [GitHub Copilot](/providers/github-copilot#automation) needs a prior `/login` or a `GITHUB_COPILOT_TOKEN` override.
 
-`--no-system-prompt`, `--no-tools`, `--no-subagents`, and `--agent` only affect the current invocation and are not written to config. `--no-system-prompt` and `--no-tools` are root options, so they must come before a subcommand (`rho --no-tools run "..."`). `--no-subagents` and `--agent` are global and may appear before or after the subcommand. `--resume` cannot be combined with a subcommand such as `run` or `update`. Workflow resume is a separate command: `rho workflow resume <RUN_ID>`.
+`--no-system-prompt`, `--no-tools`, `--no-subagents`, and `--agent` only affect the current invocation and are not written to config. `--no-system-prompt` and `--no-tools` are root options, so they must come before a subcommand (`rho --no-tools run "..."`). `--no-subagents` and `--agent` are global and may appear before or after the subcommand. `--resume` and `--prompt` cannot be combined with a subcommand such as `run` or `update`. Workflow resume is a separate command: `rho workflow resume <RUN_ID>`.
 

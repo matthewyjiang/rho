@@ -85,7 +85,9 @@ use resume_delete::RESUME_PICKER_DELETE_STEPS;
 use resume_scrollback::RESUME_SCROLLBACK_ID;
 use runtime_info::RUNTIME_INFO_STEPS;
 use sessions_hub::{setup_sessions_hub, SESSIONS_HUB_STEPS};
-use startup::{STARTUP_FIRST_FRAME_SCENARIO, STARTUP_STREAM_EXIT_SCENARIO};
+use startup::{
+    STARTUP_FIRST_FRAME_SCENARIO, STARTUP_PROMPT_STREAM_EXIT_SCENARIO, STARTUP_STREAM_EXIT_SCENARIO,
+};
 use statusline::STATUSLINE_HIERARCHY_STEPS;
 use std::time::Duration;
 use subagent_rail::SUBAGENT_RAIL_MOUSE_SCENARIO;
@@ -503,6 +505,7 @@ const RETRACT_STEERING_DURING_TOOL_STEPS: &[Step] = &[
 const ALL_SCENARIOS: &[Scenario] = &[
     STARTUP_FIRST_FRAME_SCENARIO,
     STARTUP_STREAM_EXIT_SCENARIO,
+    STARTUP_PROMPT_STREAM_EXIT_SCENARIO,
     Scenario::new(
         "cancel_and_resubmit",
         "Cancel a long fixture stream and submit another prompt",

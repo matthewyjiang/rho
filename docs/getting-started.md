@@ -29,7 +29,7 @@ The active model and provider are saved when you choose them through `/model` or
 
 ## Choose a workflow
 
-- Use the [interactive TUI](/interactive-tui) when you want an ongoing session with streaming output, tool calls, slash commands, and [session resume](/sessions).
+- Use the [interactive TUI](/interactive-tui) when you want an ongoing session with streaming output, tool calls, slash commands, and [session resume](/sessions). `rho --prompt "..."` opens that TUI with the first prompt already started.
 - Use [automation and CLI](/automation-cli) when you want a single answer for a script, hook, alias, pipeline, or CI job.
 
 ## After the first run

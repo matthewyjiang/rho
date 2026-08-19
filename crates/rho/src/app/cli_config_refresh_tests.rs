@@ -24,6 +24,7 @@ fn test_cli() -> Cli {
         permission_mode: None,
         save: false,
         resume: None,
+        prompt: None,
         command: None,
     }
 }

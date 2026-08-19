@@ -64,6 +64,7 @@ To resume an existing session for the current workspace, pass its UUID or UUID p
 ```bash
 rho --resume <session-uuid>
 rho -R <session-uuid-prefix>
+rho --resume <session-uuid> --prompt "continue from the last change"
 ```
 
 Resuming by id first looks in the current workspace. If no session matches there, Rho resolves the id across every workspace, so you can resume a session by id from a different directory. A session resumed this way continues under **its own** workspace, not the current directory, because its history refers to that project's files and tools. If that workspace directory no longer exists — for example after it was renamed, moved, or deleted — Rho reports where the session belongs instead of continuing against an unrelated tree; its transcript remains preserved under `~/.rho/sessions`.

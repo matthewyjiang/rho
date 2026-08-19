@@ -121,6 +121,10 @@ impl App {
                     }
                 }
             }
+            if !first_frame && self.start_startup_prompt(terminal, agent).await? {
+                needs_redraw = true;
+                continue;
+            }
             let subagents_active = agent.subagents().is_some_and(|manager| {
                 manager.has_active_or_pending_notification(agent.session_id().as_str())
             }) || agent

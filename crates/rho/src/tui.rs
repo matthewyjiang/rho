@@ -146,6 +146,7 @@ mod reasoning_phase;
 mod rewind_actions;
 mod skill_actions;
 mod skill_picker;
+mod startup_prompt;
 // Always compiled: display_version() is used in release TUI chrome.
 // Matrix/herdr injection paths stay no-ops outside debug builds.
 mod smoke_injection;
@@ -374,6 +375,9 @@ pub struct SessionBootstrap {
     /// transcript entries and drops the `Message` vec.
     pub recovered_messages: Vec<Message>,
     pub open_resume_picker: bool,
+    /// Take-once CLI prompt. After the first frame, the TUI submits it as the
+    /// first turn once the composer is free.
+    pub startup_prompt: Option<String>,
 }
 
 pub struct ApplicationServices {
