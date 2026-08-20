@@ -1,4 +1,4 @@
-use std::io::{Seek as _, SeekFrom};
+use std::io::SeekFrom;
 
 use super::*;
 
