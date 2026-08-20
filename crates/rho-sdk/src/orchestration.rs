@@ -132,7 +132,7 @@ async fn execute_turn_loop(
                 .await
             {
                 Ok(history) => history,
-                Err(terminal) => return terminal,
+                Err(terminal) => return *terminal,
             };
     }
     // The tool set is immutable for the duration of a run, so build the specs
@@ -297,7 +297,7 @@ async fn execute_turn_loop(
                 .await
             {
                 Ok(history) => history,
-                Err(terminal) => return terminal,
+                Err(terminal) => return *terminal,
             };
     }
 
@@ -354,25 +354,27 @@ async fn resolve_tool_turn_result(
     history: Vec<Message>,
     result: Result<ToolTurnStatus, Error>,
     events: &mpsc::Sender<RunEvent>,
-) -> Result<Vec<Message>, Result<RunOutcome, Error>> {
+) -> Result<Vec<Message>, Box<Result<RunOutcome, Error>>> {
     match result {
-        Ok(status) if status.is_cancelled() => {
-            Err(commit_terminal_history(core, history, TerminalKind::Cancelled, events).await)
-        }
+        Ok(status) if status.is_cancelled() => Err(Box::new(
+            commit_terminal_history(core, history, TerminalKind::Cancelled, events).await,
+        )),
         Ok(_) => Ok(history),
-        Err(Error::Cancelled) => {
-            Err(commit_terminal_history(core, history, TerminalKind::Cancelled, events).await)
-        }
+        Err(Error::Cancelled) => Err(Box::new(
+            commit_terminal_history(core, history, TerminalKind::Cancelled, events).await,
+        )),
         // Event-consumer interrupts leave candidate history uninstalled.
-        Err(error @ Error::Interrupted { .. }) => Err(Err(error)),
-        Err(error) => Err(commit_terminal(
-            core,
-            history,
-            StreamCapture::default(),
-            TerminalKind::Failed(error),
-            events,
-        )
-        .await),
+        Err(error @ Error::Interrupted { .. }) => Err(Box::new(Err(error))),
+        Err(error) => Err(Box::new(
+            commit_terminal(
+                core,
+                history,
+                StreamCapture::default(),
+                TerminalKind::Failed(error),
+                events,
+            )
+            .await,
+        )),
     }
 }
 
@@ -459,6 +461,12 @@ struct RequestFailure {
     capture: StreamCapture,
 }
 
+impl RequestFailure {
+    fn boxed(error: ProviderError, capture: StreamCapture) -> Box<Self> {
+        Box::new(Self { error, capture })
+    }
+}
+
 struct RunControl<'a> {
     hooks: &'a RunHooks,
     cancellation: &'a CancellationToken,
@@ -483,7 +491,7 @@ async fn request_valid_response(
     reasoning_level: crate::ReasoningLevel,
     prompt_cache_key: Option<&str>,
     control: &mut RunControl<'_>,
-) -> Result<(ModelResponse, StreamCapture), RequestFailure> {
+) -> Result<(ModelResponse, StreamCapture), Box<RequestFailure>> {
     let mut next_attempt_index = 1;
     let mut provider_turn_attempts = 0;
     let mut invalid_responses = 0;
@@ -590,14 +598,14 @@ async fn request_valid_response(
         {
             // Invalid attempts are discarded; do not install stream fragments
             // into session history on the terminal failure path.
-            return Err(RequestFailure {
-                error: ProviderError::new(
+            return Err(RequestFailure::boxed(
+                ProviderError::new(
                     ProviderErrorKind::InvalidResponse,
                     issue,
                     Retryability::Permanent,
                 ),
-                capture: StreamCapture::default(),
-            });
+                StreamCapture::default(),
+            ));
         }
         let detail = format!(
             "retrying malformed provider response after provider attempt {provider_turn_attempts} of {PROVIDER_TURN_ATTEMPTS}"
@@ -682,7 +690,7 @@ async fn provider_turn(
     reasoning_level: crate::ReasoningLevel,
     prompt_cache_key: Option<&str>,
     control: &mut RunControl<'_>,
-) -> Result<(ModelResponse, StreamCapture), RequestFailure> {
+) -> Result<(ModelResponse, StreamCapture), Box<RequestFailure>> {
     let provider = runtime.provider.as_ref();
     let (provider_events, mut receiver) =
         provider_event_channel(NonZeroUsize::new(PROVIDER_EVENT_CAPACITY).unwrap());
@@ -734,7 +742,7 @@ async fn provider_turn(
                                     &mut capture,
                                 );
                             }
-                            return Err(RequestFailure { error, capture });
+                            return Err(RequestFailure::boxed(error, capture));
                         }
                     }
                     None => stream_open = false,
@@ -758,10 +766,10 @@ async fn provider_turn(
                 }
                 drop(future);
                 drain_cancelled_provider_events(&mut receiver, &identity, &mut capture);
-                return Err(RequestFailure {
-                    error: ProviderError::interrupted("provider request cancelled"),
+                return Err(RequestFailure::boxed(
+                    ProviderError::interrupted("provider request cancelled"),
                     capture,
-                });
+                ));
             }
         }
     };
@@ -781,7 +789,7 @@ async fn provider_turn(
             if control.cancellation.is_cancelled() {
                 drain_cancelled_provider_events(&mut receiver, &identity, &mut capture);
             }
-            return Err(RequestFailure { error, capture });
+            return Err(RequestFailure::boxed(error, capture));
         }
     }
     match result {
@@ -797,10 +805,10 @@ async fn provider_turn(
                     detail,
                 };
                 if let Err(error) = emit(control.events, control.cancellation, carrier).await {
-                    return Err(RequestFailure {
-                        error: ProviderError::interrupted(error.to_string()),
+                    return Err(RequestFailure::boxed(
+                        ProviderError::interrupted(error.to_string()),
                         capture,
-                    });
+                    ));
                 }
             }
             let metrics = timer.finish(completed_at, capture.usage().output_tokens);
@@ -811,14 +819,14 @@ async fn provider_turn(
             )
             .await
             {
-                return Err(RequestFailure {
-                    error: ProviderError::interrupted(error.to_string()),
+                return Err(RequestFailure::boxed(
+                    ProviderError::interrupted(error.to_string()),
                     capture,
-                });
+                ));
             }
             Ok((response, capture))
         }
-        Err(error) => Err(RequestFailure { error, capture }),
+        Err(error) => Err(RequestFailure::boxed(error, capture)),
     }
 }
 
