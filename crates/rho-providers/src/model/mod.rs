@@ -22,7 +22,9 @@ pub use display_name::{
     ensure_model_catalog_names, model_display_name, model_reference_with_display_name,
 };
 pub use image::image_summary;
-pub use models_dev::{ensure_models_dev_catalog, ModelMetadata};
+pub use models_dev::{
+    ensure_models_dev_catalog, force_refresh_models_dev_catalog, CatalogLookupMiss, ModelMetadata,
+};
 pub use reasoning_capabilities::{
     ReasoningCapabilities, ReasoningLevelSet, ReasoningRequestSource, ReasoningResolution,
 };

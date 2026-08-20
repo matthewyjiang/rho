@@ -1,3 +1,4 @@
+use ratatui::DefaultTerminal;
 use rho_providers::credentials::load_web_search_api_key;
 
 use super::{
@@ -25,6 +26,7 @@ impl App {
         &mut self,
         value: &str,
         agent: &mut InteractiveRuntime,
+        terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         match value {
             value if config_picker::is_category(value) => self.open_config_category(value),
@@ -35,6 +37,9 @@ impl App {
             config_picker::REFRESH_MODEL_LIST_VALUE => {
                 self.open_config_refresh_model_picker();
                 Ok(())
+            }
+            config_picker::REFRESH_MODELS_DEV_VALUE => {
+                self.refresh_models_dev_catalog(terminal, agent).await
             }
             config_picker::PROVIDER_LOGIN_VALUE => {
                 self.open_config_login_picker();

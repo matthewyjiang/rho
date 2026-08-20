@@ -490,6 +490,7 @@ pub(super) const OPEN_CONFIG_PICKER_STEPS: &[Step] = &[
         text: "Refresh model lists",
         timeout: SETTLE,
     },
+    Step::AssertText("Refresh models.dev catalog"),
     Step::Key(Key::Esc),
     Step::WaitText {
         text: "Appearance",

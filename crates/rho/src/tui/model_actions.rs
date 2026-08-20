@@ -380,7 +380,7 @@ impl App {
                 self.submit_rewind_confirmation(&value, terminal, agent)
                     .await
             }
-            PickerAction::Config => self.submit_config_selection(&value, agent).await,
+            PickerAction::Config => self.submit_config_selection(&value, agent, terminal).await,
             PickerAction::SelectTheme => self.submit_theme_selection(&value),
             PickerAction::ViewAgent => self.submit_view_agent_selection(&value),
             PickerAction::EditAgent => self.submit_edit_agent_selection(&value, terminal).await,

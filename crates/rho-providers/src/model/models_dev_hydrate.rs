@@ -14,7 +14,9 @@ use std::{
 use rusqlite::params;
 use tokio::sync::Mutex;
 
-use crate::provider::{CatalogConstruction, ProviderDescriptor, ProviderId};
+use crate::provider::{
+    CatalogConstruction, CatalogLookupMode, CatalogReasoningPolicy, ProviderDescriptor, ProviderId,
+};
 
 use super::{
     document::{self, ModelsDevCatalog},
@@ -52,6 +54,20 @@ pub async fn ensure_models_dev_catalog() -> usize {
     if catalog_snapshot_is_ready() {
         return 0;
     }
+    hydrate_catalog_from_network().await
+}
+
+/// Downloads models.dev again, ignoring the 24h snapshot gate.
+///
+/// `/config` Providers uses this so a host that just switched to
+/// `catalog_mode = "model-id"` can fill arbitrary slugs without waiting.
+pub async fn force_refresh_models_dev_catalog() -> usize {
+    let _guard = catalog_hydrate_lock().lock().await;
+    invalidate_catalog_snapshot();
+    hydrate_catalog_from_network().await
+}
+
+async fn hydrate_catalog_from_network() -> usize {
     let Some(response) = fetch_models_dev_api().await else {
         return 0;
     };
@@ -95,7 +111,8 @@ pub async fn prefetch_model_metadata(targets: impl IntoIterator<Item = (String, 
 /// cache key (`openrouter`) is written under the borrowing host name instead,
 /// so extract for Rho's own provider is unchanged. Slugs with no document
 /// (`openai-codex`) keep extract and rematch. Unborrowed upstream providers
-/// stay out of sqlite.
+/// stay out of sqlite unless a custom host uses `catalog_mode = "model-id"`,
+/// which needs every document for `provider/model` lookups.
 pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
     let mut entries = Vec::new();
     let mut touched_providers = HashSet::new();
@@ -114,6 +131,7 @@ pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
             }
         }
     }
+    let mut borrowed_slugs = HashSet::new();
     for host in crate::provider::interned_custom_providers() {
         let slug = host.metadata_upstream;
         if slug == host.name {
@@ -127,6 +145,7 @@ pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
         } else {
             slug
         };
+        borrowed_slugs.insert(slug);
         for model_id in provider.models.keys() {
             let Some(metadata) =
                 document::model_metadata_from_catalog(api, slug, model_id, host.catalog_reasoning)
@@ -135,6 +154,28 @@ pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
             };
             touched_providers.insert(cache_provider.to_string());
             entries.push((cache_provider.to_string(), model_id.clone(), metadata));
+        }
+    }
+    if matches!(needed_extra_catalog_docs(), ExtraCatalogDocs::All) {
+        for (slug, provider) in api.iter_providers() {
+            if borrowed_slugs.contains(slug)
+                || super::borrowed_slug_collides_with_builtin_extract(slug)
+            {
+                continue;
+            }
+            for model_id in provider.models.keys() {
+                let Some(metadata) = document::model_metadata_from_catalog(
+                    api,
+                    slug,
+                    model_id,
+                    CatalogReasoningPolicy::ExactAdvertised,
+                )
+                .filter(|metadata| metadata.reasoning_metadata_complete) else {
+                    continue;
+                };
+                touched_providers.insert(slug.to_string());
+                entries.push((slug.to_string(), model_id.clone(), metadata));
+            }
         }
     }
     let written = write_cached_upstream_model_metadata_batch(
@@ -166,31 +207,61 @@ fn catalog_model_ids_for_provider(
         .unwrap_or_default()
 }
 
-fn borrowed_custom_catalog_slugs() -> HashSet<String> {
-    crate::provider::interned_custom_providers()
-        .into_iter()
-        .filter(|descriptor| descriptor.metadata_upstream != descriptor.name)
-        .map(|descriptor| descriptor.metadata_upstream.to_string())
-        .collect()
+/// Extra models.dev documents this snapshot must contain besides Rho extract.
+enum ExtraCatalogDocs {
+    /// Only these borrowed slugs.
+    Slugs(HashSet<String>),
+    /// Every models.dev document. Used when a host splits `provider/model` ids.
+    All,
 }
 
-fn encode_borrowed_slugs(slugs: &HashSet<String>) -> String {
-    let mut slugs = slugs.iter().cloned().collect::<Vec<_>>();
-    slugs.sort_unstable();
-    slugs.join(",")
+/// Sentinel stored in `catalog_snapshot.borrowed_slugs` for [`ExtraCatalogDocs::All`].
+const EXTRA_CATALOG_DOCS_ALL: &str = "*";
+
+fn needed_extra_catalog_docs() -> ExtraCatalogDocs {
+    let interned = crate::provider::interned_custom_providers();
+    if interned
+        .iter()
+        .any(|descriptor| descriptor.catalog_lookup() == CatalogLookupMode::ModelId)
+    {
+        return ExtraCatalogDocs::All;
+    }
+    ExtraCatalogDocs::Slugs(
+        interned
+            .into_iter()
+            .filter(|descriptor| descriptor.metadata_upstream != descriptor.name)
+            .map(|descriptor| descriptor.metadata_upstream.to_string())
+            .collect(),
+    )
 }
 
-fn decode_borrowed_slugs(raw: &str) -> HashSet<String> {
-    raw.split(',')
-        .map(str::trim)
-        .filter(|slug| !slug.is_empty())
-        .map(str::to_string)
-        .collect()
+fn encode_extra_catalog_docs(docs: &ExtraCatalogDocs) -> String {
+    match docs {
+        ExtraCatalogDocs::All => EXTRA_CATALOG_DOCS_ALL.to_string(),
+        ExtraCatalogDocs::Slugs(slugs) => {
+            let mut slugs = slugs.iter().cloned().collect::<Vec<_>>();
+            slugs.sort_unstable();
+            slugs.join(",")
+        }
+    }
 }
 
-fn stored_borrowed_catalog_slugs() -> HashSet<String> {
+fn decode_extra_catalog_docs(raw: &str) -> ExtraCatalogDocs {
+    if raw.trim() == EXTRA_CATALOG_DOCS_ALL {
+        return ExtraCatalogDocs::All;
+    }
+    ExtraCatalogDocs::Slugs(
+        raw.split(',')
+            .map(str::trim)
+            .filter(|slug| !slug.is_empty())
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
+fn stored_extra_catalog_docs() -> ExtraCatalogDocs {
     let Ok(connection) = open_models_dev_cache() else {
-        return HashSet::new();
+        return ExtraCatalogDocs::Slugs(HashSet::new());
     };
     connection
         .query_row(
@@ -199,13 +270,25 @@ fn stored_borrowed_catalog_slugs() -> HashSet<String> {
             |row| row.get::<_, String>(0),
         )
         .ok()
-        .map(|raw| decode_borrowed_slugs(&raw))
-        .unwrap_or_default()
+        .map(|raw| decode_extra_catalog_docs(&raw))
+        .unwrap_or_else(|| ExtraCatalogDocs::Slugs(HashSet::new()))
 }
 
-fn borrowed_catalog_slugs_are_hydrated() -> bool {
-    let needed = borrowed_custom_catalog_slugs();
-    needed.is_empty() || needed.is_subset(&stored_borrowed_catalog_slugs())
+fn extra_catalog_docs_are_hydrated() -> bool {
+    extra_catalog_docs_cover(&needed_extra_catalog_docs(), &stored_extra_catalog_docs())
+}
+
+fn extra_catalog_docs_cover(needed: &ExtraCatalogDocs, stored: &ExtraCatalogDocs) -> bool {
+    match needed {
+        ExtraCatalogDocs::All => matches!(stored, ExtraCatalogDocs::All),
+        ExtraCatalogDocs::Slugs(needed) => {
+            needed.is_empty()
+                || match stored {
+                    ExtraCatalogDocs::All => true,
+                    ExtraCatalogDocs::Slugs(stored) => needed.is_subset(stored),
+                }
+        }
+    }
 }
 
 /// Extracts metadata when its reasoning metadata is complete. Providers whose
@@ -237,7 +320,7 @@ fn catalog_hydrate_lock() -> &'static Mutex<()> {
 }
 
 pub(super) fn catalog_snapshot_is_ready() -> bool {
-    if !borrowed_catalog_slugs_are_hydrated() {
+    if !extra_catalog_docs_are_hydrated() {
         return false;
     }
     // Isolated test cache dirs share this process flag. A sibling test that
@@ -283,7 +366,7 @@ pub(super) fn mark_catalog_snapshot_current() -> bool {
     let Ok(connection) = open_models_dev_cache() else {
         return false;
     };
-    let borrowed = encode_borrowed_slugs(&borrowed_custom_catalog_slugs());
+    let extra = encode_extra_catalog_docs(&needed_extra_catalog_docs());
     connection
         .execute(
             "insert into catalog_snapshot (id, cache_version, updated_at, borrowed_slugs)
@@ -292,9 +375,25 @@ pub(super) fn mark_catalog_snapshot_current() -> bool {
                cache_version = excluded.cache_version,
                updated_at = excluded.updated_at,
                borrowed_slugs = excluded.borrowed_slugs",
-            params![MODEL_METADATA_CACHE_VERSION, borrowed],
+            params![MODEL_METADATA_CACHE_VERSION, extra],
         )
         .is_ok()
+}
+
+pub(super) fn invalidate_catalog_snapshot() {
+    set_catalog_ready(false);
+    let Ok(connection) = open_models_dev_cache() else {
+        return;
+    };
+    let _ = connection.execute(
+        "insert into catalog_snapshot (id, cache_version, updated_at, borrowed_slugs)
+         values (1, ?1, 0, '')
+         on conflict(id) do update set
+           cache_version = excluded.cache_version,
+           updated_at = excluded.updated_at,
+           borrowed_slugs = excluded.borrowed_slugs",
+        params![MODEL_METADATA_CACHE_VERSION],
+    );
 }
 
 pub(super) fn catalog_hydrate_lock_for_parent() -> &'static Mutex<()> {

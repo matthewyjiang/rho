@@ -103,6 +103,7 @@ mod model_actions;
 mod model_cycle;
 mod model_performance;
 mod model_picker;
+mod models_dev_actions;
 mod mouse;
 mod mouse_capture;
 mod overlay_panel;

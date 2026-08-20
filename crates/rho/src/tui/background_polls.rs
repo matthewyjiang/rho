@@ -1,7 +1,9 @@
 //! Background polling for model metadata and update notices.
 
 use futures_util::FutureExt;
-use rho_providers::model::models_dev::fetch_model_metadata;
+use rho_providers::model::models_dev::{
+    custom_model_id_catalog_miss, fetch_model_metadata, CatalogLookupMiss,
+};
 use rho_providers::model::ReasoningRequestSource::PersistedOrDefault;
 
 use super::{
@@ -196,7 +198,30 @@ impl App {
                     }
                 }
                 self.model_metadata = Some(metadata);
+            } else {
+                self.warn_custom_model_id_catalog_miss();
             }
         }
+    }
+
+    fn warn_custom_model_id_catalog_miss(&mut self) {
+        let provider = self.info.runtime.provider.as_str();
+        let model = self.info.runtime.model.as_str();
+        let Some(miss) = custom_model_id_catalog_miss(provider, model) else {
+            return;
+        };
+        let message = match miss {
+            CatalogLookupMiss::BareModelId => format!(
+                "{provider}/{model} has no models.dev metadata: catalog_mode = \"model-id\" needs a provider/model id"
+            ),
+            CatalogLookupMiss::MissingRow {
+                source_provider,
+                source_model,
+            } => format!(
+                "{provider}/{model} has no models.dev metadata for {source_provider}/{source_model}"
+            ),
+        };
+        self.insert_entry(&Entry::Notice(message));
+        self.set_status("models.dev catalog miss");
     }
 }

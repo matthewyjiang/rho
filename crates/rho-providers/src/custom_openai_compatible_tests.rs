@@ -5,6 +5,7 @@ use super::super::{
 use super::{
     custom_openai_compatible_provider, custom_openai_compatible_providers,
     custom_provider_registry_test_lock, install_custom_openai_compatible_providers,
+    install_custom_openai_compatible_providers_with_lookup,
     intern_custom_openai_compatible_providers, is_custom_provider_api_key_auth,
     reset_custom_openai_compatible_providers_for_tests, validate_custom_provider_name,
     CustomProviderSpec, CustomProviderThreadScope,
@@ -174,6 +175,10 @@ fn custom_host_catalog_slug_becomes_metadata_upstream() {
             .metadata_upstream,
         "vllm"
     );
+    assert_eq!(
+        borrowed.catalog_lookup(),
+        crate::provider::CatalogLookupMode::Slug
+    );
 }
 
 // Covers: repointing catalog must not keep serving the previously leaked slug
@@ -200,6 +205,39 @@ fn custom_host_catalog_change_reinterns_the_descriptor() {
             .metadata_upstream,
         "openai-codex"
     );
+}
+
+// Covers: catalog_mode = model-id must intern and re-intern independently of catalog
+// Owner: provider registry
+#[test]
+fn custom_host_model_id_lookup_reinterns_the_descriptor() {
+    let _lock = custom_provider_registry_test_lock();
+    restore_empty();
+    let _restore = RestoreCustomProviders;
+    install_custom_openai_compatible_providers([CustomProviderSpec::new(
+        "cliproxyapi",
+        Some("llmgateway"),
+    )])
+    .unwrap();
+    assert_eq!(
+        custom_openai_compatible_provider("cliproxyapi")
+            .unwrap()
+            .catalog_lookup(),
+        crate::provider::CatalogLookupMode::Slug
+    );
+
+    install_custom_openai_compatible_providers_with_lookup([(
+        CustomProviderSpec::new("cliproxyapi", None),
+        crate::provider::CatalogLookupMode::ModelId,
+    )])
+    .unwrap();
+
+    let host = custom_openai_compatible_provider("cliproxyapi").unwrap();
+    assert_eq!(
+        host.catalog_lookup(),
+        crate::provider::CatalogLookupMode::ModelId
+    );
+    assert_eq!(host.metadata_upstream, "cliproxyapi");
 }
 
 // Covers: a later config replaces the active custom provider set
