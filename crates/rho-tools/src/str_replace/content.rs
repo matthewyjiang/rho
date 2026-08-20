@@ -135,8 +135,10 @@ fn replacement_spans(content: &str, old_string: &str) -> Vec<Range<usize>> {
         .collect();
     let source_offsets = source_offsets_for_normalized_boundaries(content, &boundaries);
     source_offsets
-        .chunks_exact(2)
-        .map(|chunk| chunk[0]..chunk[1])
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&[start, end]| start..end)
         .collect()
 }
 
