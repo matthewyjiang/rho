@@ -24,7 +24,9 @@ use crate::{
 };
 
 use super::super::{
-    live_started_at, mouse_capture,
+    live_started_at,
+    model_performance::ModelPerformanceAggregate,
+    mouse_capture,
     provider_attempt::ProviderAttempt,
     render::truncate_one_line,
     scrollbar::{HistoryScrollChrome, HistoryScrollbar, ScrollbarMouseInput},
@@ -201,6 +203,9 @@ pub(crate) struct AttachmentApp {
     context_usage: Option<ContextUsage>,
     /// Latest provider usage for the attached run, including failed attempts.
     run_usage: AttemptAwareRunUsage,
+    /// One average for the attached run. A subagent uses one model; a mid-run
+    /// tier fallback blends into that same average instead of keyed profiles.
+    model_performance: ModelPerformanceAggregate,
     provider_attempt: ProviderAttempt,
     status: Option<RunStatus>,
     /// Last whole-second live elapsed painted into the header (running runs only).
@@ -236,6 +241,7 @@ impl AttachmentApp {
             pending_order: Vec::new(),
             context_usage: None,
             run_usage: AttemptAwareRunUsage::default(),
+            model_performance: ModelPerformanceAggregate::default(),
             provider_attempt: ProviderAttempt::default(),
             status: None,
             last_drawn_elapsed_secs: None,
@@ -355,6 +361,7 @@ impl AttachmentApp {
             event,
             AttachmentEvent::ContextUsage(_)
                 | AttachmentEvent::Usage(_)
+                | AttachmentEvent::ModelCallCompleted { .. }
                 | AttachmentEvent::StepStarted
         ) {
             self.invalidate_painted();
@@ -394,6 +401,15 @@ impl AttachmentApp {
             AttachmentEvent::ContextUsage(usage) => self.context_usage = Some(usage),
             AttachmentEvent::Usage(usage) => {
                 self.run_usage.apply_snapshot(usage, |snapshot| snapshot);
+            }
+            AttachmentEvent::ModelCallCompleted {
+                generation_output_tokens,
+                generation_time_ms,
+            } => {
+                self.model_performance.record_resolved(
+                    generation_output_tokens,
+                    Duration::from_millis(generation_time_ms),
+                );
             }
             AttachmentEvent::StepStarted => {
                 self.provider_attempt.begin(self.transcript.len());
@@ -684,11 +700,13 @@ impl AttachmentApp {
             .and_then(|status| status.last_activity.as_deref())
             .unwrap_or("waiting for activity");
         let identity = identity_line(status, self.run_usage.current(), subagent::unix_now_secs());
+        let rate = self.model_performance.summary().rounded_generation_rate();
         let activity_metrics = activity_metrics_line(
             activity,
             self.context_usage.as_ref(),
             self.run_usage.current(),
             status,
+            rate,
         );
         let header = vec![
             header_title_line(&self.id, agent_id, state, status),

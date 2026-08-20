@@ -43,6 +43,15 @@ pub(super) struct ModelPerformanceSummary {
     pub(super) eligible_calls: u64,
 }
 
+impl ModelPerformanceSummary {
+    /// Average generation rate rounded for display (`N tok/s` in the
+    /// statusline and the attach header).
+    pub(super) fn rounded_generation_rate(&self) -> Option<u64> {
+        self.average_generation_tokens_per_second
+            .map(|rate| rate.round() as u64)
+    }
+}
+
 #[derive(Default)]
 pub(super) struct ModelPerformanceTracker {
     profiles: BTreeMap<ModelCallProfile, ModelPerformanceAggregate>,
@@ -74,7 +83,7 @@ impl ModelPerformanceTracker {
 }
 
 #[derive(Default)]
-struct ModelPerformanceAggregate {
+pub(super) struct ModelPerformanceAggregate {
     latest_call: Option<ModelCallPerformance>,
     generation_output_tokens: u64,
     generation_time: Duration,
@@ -99,6 +108,17 @@ impl ModelPerformanceAggregate {
         let Some(generation_time) = metrics.generation_time else {
             return;
         };
+        self.record_resolved(generation_output_tokens, generation_time);
+    }
+
+    /// Applies the same eligibility gates as [`Self::record`]: at least 32
+    /// generated tokens and 500ms of generation time. Does not update
+    /// `latest_call`.
+    pub(super) fn record_resolved(
+        &mut self,
+        generation_output_tokens: u64,
+        generation_time: Duration,
+    ) {
         if generation_output_tokens < MIN_GENERATION_OUTPUT_TOKENS
             || generation_time < MIN_GENERATION_TIME
         {
@@ -112,7 +132,7 @@ impl ModelPerformanceAggregate {
         self.eligible_calls = self.eligible_calls.saturating_add(1);
     }
 
-    fn summary(&self) -> ModelPerformanceSummary {
+    pub(super) fn summary(&self) -> ModelPerformanceSummary {
         ModelPerformanceSummary {
             latest_call: self.latest_call,
             average_generation_tokens_per_second: (self.eligible_calls > 0)

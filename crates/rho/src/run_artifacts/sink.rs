@@ -285,6 +285,7 @@ impl RunArtifactSink {
             | AttachmentEvent::Notice(_)
             | AttachmentEvent::ContextUsage(_)
             | AttachmentEvent::Usage(_)
+            | AttachmentEvent::ModelCallCompleted { .. }
             | AttachmentEvent::StepStarted
             | AttachmentEvent::ProviderStreamReset
             | AttachmentEvent::Completed

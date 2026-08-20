@@ -6,7 +6,10 @@
 //! [`crate::run_artifacts::RunArtifactSink`]. [`SdkAttachmentWriter`] is a
 //! test-only convenience that owns a journal writer for unit coverage.
 
-use super::super::event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent};
+use super::super::{
+    event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent},
+    model_performance::ModelCallPerformance,
+};
 use crate::run_artifacts::AttachmentEvent;
 
 /// Test-only helper that records Rho SDK run events into a journal writer.
@@ -125,7 +128,22 @@ fn attachment_update(
         ViewModelEvent::LiveOutputText(_) => None,
         ViewModelEvent::ContextUsage(usage) => Some(AttachmentEvent::ContextUsage(usage)),
         ViewModelEvent::Usage(usage) => Some(AttachmentEvent::Usage(usage)),
-        ViewModelEvent::ModelCallCompleted { .. } => None,
+        ViewModelEvent::ModelCallCompleted {
+            metrics,
+            generation_output_tokens,
+            ..
+        } => {
+            let generation_output_tokens = ModelCallPerformance {
+                metrics,
+                generation_output_tokens,
+            }
+            .throughput_output_tokens()?;
+            let generation_time = metrics.generation_time?;
+            Some(AttachmentEvent::ModelCallCompleted {
+                generation_output_tokens,
+                generation_time_ms: u64::try_from(generation_time.as_millis()).unwrap_or(u64::MAX),
+            })
+        }
     }
 }
 

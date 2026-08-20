@@ -322,15 +322,69 @@ fn herdr_state_follows_attached_subagent_state() {
 fn status_token_fallback_uses_run_status_totals() {
     let summary = activity_metrics_line(
         "assistant text",
-        None,
-        None,
+        /*context*/ None,
+        /*run_usage*/ None,
         Some(&RunStatus {
             input_tokens: Some(1_200),
             output_tokens: Some(300),
             ..RunStatus::default()
         }),
+        /*average_generation_rate*/ None,
     );
     assert_eq!(summary, "assistant text · tokens in 1.2K · out 300");
+}
+
+fn activity_line(app: &AttachmentApp, activity: &str) -> String {
+    let rate = app.model_performance.summary().rounded_generation_rate();
+    activity_metrics_line(
+        activity, /*context*/ None, /*run_usage*/ None, /*status*/ None, rate,
+    )
+}
+
+// Covers: attach header shows the statusline tok/s average from journaled calls.
+// Owner: attach viewer
+#[test]
+fn eligible_model_calls_show_generation_rate() {
+    let (_directory, mut app) = test_app();
+    app.apply_event(AttachmentEvent::ModelCallCompleted {
+        generation_output_tokens: 100,
+        generation_time_ms: 2_000,
+    });
+    assert_eq!(
+        activity_line(&app, "assistant text"),
+        "assistant text · 50 tok/s"
+    );
+
+    app.apply_event(AttachmentEvent::ModelCallCompleted {
+        generation_output_tokens: 300,
+        generation_time_ms: 3_000,
+    });
+    assert_eq!(
+        activity_line(&app, "assistant text"),
+        "assistant text · 80 tok/s"
+    );
+}
+
+// Covers: sub-threshold model calls stay hidden instead of showing 0 tok/s.
+// Owner: attach viewer
+#[test]
+fn sub_threshold_model_calls_hide_generation_rate() {
+    let cases = [
+        (12, 2_000), // below the 32-token gate, above the 500ms gate
+        (100, 300),  // above the 32-token gate, below the 500ms gate
+    ];
+    for (generation_output_tokens, generation_time_ms) in cases {
+        let (_directory, mut app) = test_app();
+        app.apply_event(AttachmentEvent::ModelCallCompleted {
+            generation_output_tokens,
+            generation_time_ms,
+        });
+        assert_eq!(
+            activity_line(&app, "assistant text"),
+            "assistant text",
+            "tokens={generation_output_tokens} time_ms={generation_time_ms}"
+        );
+    }
 }
 
 #[test]

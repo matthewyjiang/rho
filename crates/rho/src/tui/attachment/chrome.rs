@@ -113,9 +113,13 @@ pub(super) fn activity_metrics_line(
     context: Option<&ContextUsage>,
     run_usage: Option<&ModelUsage>,
     status: Option<&RunStatus>,
+    average_generation_rate: Option<u64>,
 ) -> String {
     let mut parts = vec![activity.to_string()];
     parts.extend(usage_metric_parts(context, run_usage, status));
+    if let Some(rate) = average_generation_rate {
+        parts.push(format!("{rate} tok/s"));
+    }
     join_fields(parts)
 }
 
