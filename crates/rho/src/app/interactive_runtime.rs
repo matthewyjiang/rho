@@ -689,7 +689,17 @@ impl InteractiveRuntime {
         model: String,
         display: String,
     ) -> anyhow::Result<()> {
-        let session = self.sessions.session();
+        Self::record_user_context_with_display(&mut self.sessions, model, display)?;
+        self.refresh_context_usage();
+        Ok(())
+    }
+
+    fn record_user_context_with_display(
+        sessions: &mut InteractiveSessionController,
+        model: String,
+        display: String,
+    ) -> anyhow::Result<()> {
+        let session = sessions.session();
         let history_before = session.history();
         session.append_message(Message::user_text(model))?;
 
@@ -701,26 +711,22 @@ impl InteractiveRuntime {
                         "injected advisor switch notice snapshot save failure"
                     ))
                 } else {
-                    self.sessions.save_snapshot(&[Message::user_text(display)])
+                    sessions.save_snapshot(&[Message::user_text(display)])
                 }
             }
             #[cfg(not(test))]
             {
-                self.sessions.save_snapshot(&[Message::user_text(display)])
+                sessions.save_snapshot(&[Message::user_text(display)])
             }
         };
 
         match save_result {
-            Ok(()) => {
-                self.refresh_context_usage();
-                Ok(())
-            }
+            Ok(()) => Ok(()),
             Err(error) => {
                 // Append already advanced model-visible history. Roll it back so a
                 // failed durable write cannot leave the live session describing a
                 // notice the host never persisted.
-                if let Err(rollback_error) = self.sessions.session().replace_history(history_before)
-                {
+                if let Err(rollback_error) = sessions.session().replace_history(history_before) {
                     return Err(error.context(format!(
                         "failed to roll back live history after snapshot save failure: {rollback_error}"
                     )));

@@ -63,10 +63,6 @@ pub(super) fn resolve_model_value(
     }
     let value_id = match &request.value {
         SessionConfigOptionValue::ValueId { value } => value.0.as_ref(),
-        SessionConfigOptionValue::Boolean { .. } => {
-            return Err(AcpError::invalid_params()
-                .data("model option requires a select value, not a boolean"));
-        }
         _ => {
             return Err(AcpError::invalid_params().data("model option requires a select value"));
         }

@@ -38,6 +38,7 @@ use crate::{
     app::{
         conversation_switch::{
             apply_conversation_switch, resolve_model_switch_reasoning, ConversationSwitch,
+            SwitchNotice,
         },
         interactive_runtime::startup::prompt_cache_key,
         session_assembly::BuiltSession,
@@ -280,18 +281,23 @@ impl SessionHost {
                 .await
                 .map_err(host_apply_error)?;
         // HandoffReport could ride along in `_meta` later; ACP has no place for it yet.
-        let _handoff = apply_conversation_switch(ConversationSwitch {
-            session: &self.built.session,
-            tools: &self.built.tools,
-            new_provider: provider,
-            new_reasoning: reasoning,
-            auth: &selection.auth,
-            compaction: CompactionConfig::from(process_config),
-            context_window,
-            previous_context_window,
-            usage_recording: self.built.runtime.usage_recording(),
-        })
+        let _handoff = apply_conversation_switch(
+            ConversationSwitch {
+                session: &self.built.session,
+                tools: &self.built.tools,
+                previous_provider: Arc::clone(&self.built.provider),
+                new_provider: Arc::clone(&provider),
+                new_reasoning: reasoning,
+                auth: &selection.auth,
+                compaction: CompactionConfig::from(process_config),
+                context_window,
+                previous_context_window,
+                usage_recording: self.built.runtime.usage_recording(),
+            },
+            SwitchNotice::SessionMessage,
+        )
         .map_err(host_apply_error)?;
+        self.built.provider = provider;
         self.auth = selection.auth;
         Ok(self.config_options(&process_config.favorite_models))
     }

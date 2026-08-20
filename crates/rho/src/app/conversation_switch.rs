@@ -1,7 +1,7 @@
 //! Conversation-model change on an assembled SDK session.
 //!
 //! Interactive TUI wraps this with display history, MCP sampling, and run
-//! transition. ACP calls it directly. Both must keep provider, reasoning,
+//! transition. ACP calls it directly. Both keep provider, reasoning,
 //! compaction, the switch notice, and delegated selection on one path.
 
 use std::sync::Arc;
@@ -50,9 +50,20 @@ pub(crate) fn resolve_model_switch_reasoning(
     }
 }
 
+/// How the model-switch notice is written after the session accepts the new
+/// provider.
+///
+/// ACP records only the model-visible line. Interactive TUI also persists the
+/// host-visible display line.
+pub(crate) enum SwitchNotice<'a> {
+    SessionMessage,
+    WithDisplay(&'a mut dyn FnMut(String, String) -> Result<(), Error>),
+}
+
 pub(crate) struct ConversationSwitch<'a> {
     pub(crate) session: &'a Session,
     pub(crate) tools: &'a AppToolSet,
+    pub(crate) previous_provider: Arc<dyn ModelProvider>,
     pub(crate) new_provider: Arc<dyn ModelProvider>,
     pub(crate) new_reasoning: ReasoningLevel,
     pub(crate) auth: &'a str,
@@ -64,8 +75,9 @@ pub(crate) struct ConversationSwitch<'a> {
 
 pub(crate) fn apply_conversation_switch(
     switch: ConversationSwitch<'_>,
+    notice: SwitchNotice<'_>,
 ) -> Result<HandoffReport, Error> {
-    let previous_provider = switch.session.provider();
+    let previous_provider = Arc::clone(&switch.previous_provider);
     let previous_reasoning = switch.session.reasoning_level();
     let previous_prompt_model = PromptModel::from_sdk_identity(&previous_provider.identity());
     let session_started = !switch.session.history().is_empty();
@@ -95,14 +107,9 @@ pub(crate) fn apply_conversation_switch(
 
     let current_prompt_model = PromptModel::from_sdk_identity(&switch.new_provider.identity());
     if session_started && current_prompt_model != previous_prompt_model {
-        let (context, _) =
+        let (context, display) =
             model_switch_context(ModelSwitchKind::Conversation, &current_prompt_model);
-        if let Err(error) = switch.session.append_message(Message::user_text(context)) {
-            let error = Error::InvalidConfiguration {
-                message: format!(
-                    "could not record the conversation model switch for the model: {error}"
-                ),
-            };
+        if let Err(error) = record_switch_notice(switch.session, notice, context, display) {
             return Err(restore_after_failed_step(
                 switch.session,
                 previous_provider,
@@ -124,6 +131,23 @@ pub(crate) fn apply_conversation_switch(
         );
     }
     Ok(report)
+}
+
+fn record_switch_notice(
+    session: &Session,
+    notice: SwitchNotice<'_>,
+    context: String,
+    display: String,
+) -> Result<(), Error> {
+    let result = match notice {
+        SwitchNotice::SessionMessage => session
+            .append_message(Message::user_text(context))
+            .map(|_| ()),
+        SwitchNotice::WithDisplay(record) => record(context, display),
+    };
+    result.map_err(|error| Error::InvalidConfiguration {
+        message: format!("could not record the conversation model switch for the model: {error}"),
+    })
 }
 
 fn refresh_session_compaction(switch: &ConversationSwitch<'_>) -> Result<(), Error> {
@@ -155,7 +179,7 @@ fn restore_after_failed_step(
             ),
         };
     }
-    if let Err(rollback_error) = session.replace_provider(previous_provider) {
+    if let Err(rollback_error) = session.replace_provider(Arc::clone(&previous_provider)) {
         return Error::InvalidConfiguration {
             message: format!(
                 "{primary}; also failed to restore the previous provider: {rollback_error}"
@@ -167,7 +191,7 @@ fn restore_after_failed_step(
             return primary;
         };
         let (compactor, policy) = build_compaction(
-            session.provider(),
+            previous_provider,
             switch.tools.tools(),
             previous_reasoning,
             switch.compaction.clone(),

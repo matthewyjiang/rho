@@ -7,7 +7,7 @@ use rho_sdk::{
     SessionOptions, SystemPrompt, Workspace,
 };
 
-use super::{apply_conversation_switch, ConversationSwitch};
+use super::{apply_conversation_switch, ConversationSwitch, SwitchNotice};
 use crate::{
     app::{
         policy::AppPolicy,
@@ -26,7 +26,12 @@ fn identity(provider: &str, model: &str) -> ModelIdentity {
 async fn switchable_session(
     history: Vec<Message>,
     context_window: Option<u64>,
-) -> (rho_sdk::Rho, rho_sdk::Session, AppToolSet) {
+) -> (
+    rho_sdk::Rho,
+    rho_sdk::Session,
+    AppToolSet,
+    Arc<dyn ModelProvider>,
+) {
     let provider: Arc<dyn ModelProvider> = Arc::new(ScriptedProvider::new(
         identity("original", "start"),
         Vec::<ScriptedTurn>::new(),
@@ -34,7 +39,7 @@ async fn switchable_session(
     let tools = AppToolSet::disabled();
     let workspace = Workspace::new(std::env::current_dir().unwrap()).unwrap();
     let runtime = build_runtime(RuntimeBuildOptions {
-        provider,
+        provider: Arc::clone(&provider),
         tools: tools.tools(),
         workspace,
         workspace_policy: AppPolicy::for_mode(PermissionMode::Auto, Default::default()),
@@ -59,7 +64,7 @@ async fn switchable_session(
         .session(SessionOptions::new().history(history))
         .await
         .unwrap();
-    (runtime, session, tools)
+    (runtime, session, tools, provider)
 }
 
 fn replacement(provider: &str, model: &str) -> Arc<dyn ModelProvider> {
@@ -73,7 +78,7 @@ fn replacement(provider: &str, model: &str) -> Arc<dyn ModelProvider> {
 // Owner: conversation switch
 #[tokio::test]
 async fn mid_session_switch_updates_provider_reasoning_and_compaction() {
-    let (_runtime, session, tools) = switchable_session(
+    let (_runtime, session, tools, previous_provider) = switchable_session(
         vec![
             Message::user_text("hello"),
             Message::assistant_text("there"),
@@ -83,26 +88,30 @@ async fn mid_session_switch_updates_provider_reasoning_and_compaction() {
     .await;
     let new_provider = replacement("replacement", "next");
 
-    apply_conversation_switch(ConversationSwitch {
-        session: &session,
-        tools: &tools,
-        new_provider: Arc::clone(&new_provider),
-        new_reasoning: rho_sdk::ReasoningLevel::Low,
-        auth: "test-auth",
-        compaction: CompactionConfig {
-            auto_compact: true,
-            threshold_percent: 80,
-            target_percent: 50,
+    apply_conversation_switch(
+        ConversationSwitch {
+            session: &session,
+            tools: &tools,
+            previous_provider,
+            new_provider: Arc::clone(&new_provider),
+            new_reasoning: rho_sdk::ReasoningLevel::Low,
+            auth: "test-auth",
+            compaction: CompactionConfig {
+                auto_compact: true,
+                threshold_percent: 80,
+                target_percent: 50,
+            },
+            context_window: Some(2_000),
+            previous_context_window: Some(1_000),
+            usage_recording: Default::default(),
         },
-        context_window: Some(2_000),
-        previous_context_window: Some(1_000),
-        usage_recording: Default::default(),
-    })
+        SwitchNotice::SessionMessage,
+    )
     .unwrap();
 
     assert_eq!(
-        session.provider().identity(),
-        identity("replacement", "next")
+        session.snapshot().provider(),
+        &identity("replacement", "next")
     );
     assert_eq!(session.reasoning_level(), rho_sdk::ReasoningLevel::Low);
     assert_eq!(
@@ -123,24 +132,28 @@ async fn mid_session_switch_updates_provider_reasoning_and_compaction() {
 // Owner: conversation switch
 #[tokio::test]
 async fn empty_session_switch_stays_silent() {
-    let (_runtime, session, tools) = switchable_session(Vec::new(), None).await;
+    let (_runtime, session, tools, previous_provider) = switchable_session(Vec::new(), None).await;
 
-    apply_conversation_switch(ConversationSwitch {
-        session: &session,
-        tools: &tools,
-        new_provider: replacement("replacement", "next"),
-        new_reasoning: rho_sdk::ReasoningLevel::Low,
-        auth: "test-auth",
-        compaction: CompactionConfig::default(),
-        context_window: None,
-        previous_context_window: None,
-        usage_recording: Default::default(),
-    })
+    apply_conversation_switch(
+        ConversationSwitch {
+            session: &session,
+            tools: &tools,
+            previous_provider,
+            new_provider: replacement("replacement", "next"),
+            new_reasoning: rho_sdk::ReasoningLevel::Low,
+            auth: "test-auth",
+            compaction: CompactionConfig::default(),
+            context_window: None,
+            previous_context_window: None,
+            usage_recording: Default::default(),
+        },
+        SwitchNotice::SessionMessage,
+    )
     .unwrap();
 
     assert_eq!(session.history(), Vec::<Message>::new());
     assert_eq!(
-        session.provider().identity(),
-        identity("replacement", "next")
+        session.snapshot().provider(),
+        &identity("replacement", "next")
     );
 }

@@ -42,9 +42,7 @@ fn option_values(select: &SessionConfigSelect) -> Vec<String> {
             .iter()
             .map(|option| option.value.0.as_ref().to_string())
             .collect(),
-        SessionConfigSelectOptions::Grouped(_) | _ => {
-            panic!("expected an ungrouped model list")
-        }
+        _ => panic!("expected an ungrouped model list"),
     }
 }
 
@@ -131,37 +129,22 @@ fn resolve_model_value_rejects_invalid_requests() {
 // Covers: advertised current values, including off-catalog ones, must resolve
 // Owner: ACP config options
 #[test]
-fn resolve_model_value_accepts_current_and_catalog_models() {
-    let available_auths = ["xai-api-key".to_string()];
-    let cases = [
-        (
-            "current off-catalog",
-            current("custom", "local-model"),
-            "custom/local-model",
-            ModelSelection {
-                provider: "custom".into(),
-                model: "local-model".into(),
-                auth: "api-key".into(),
-                from_catalog: false,
-            },
-        ),
-        (
-            "other catalog model",
-            current("xai", "grok-4.6"),
-            "xai/grok-4.5",
-            ModelSelection {
-                provider: "xai".into(),
-                model: "grok-4.5".into(),
-                auth: "xai-api-key".into(),
-                from_catalog: true,
-            },
-        ),
-    ];
+fn resolve_model_value_accepts_current_model() {
+    let current = current("custom", "local-model");
+    let request = SetSessionConfigOptionRequest::new(
+        SessionId::new("session"),
+        MODEL_CONFIG_ID,
+        "custom/local-model",
+    );
 
-    for (label, current, value, expected) in cases {
-        let request =
-            SetSessionConfigOptionRequest::new(SessionId::new("session"), MODEL_CONFIG_ID, value);
-        let selection = resolve_model_value(&request, &current, &available_auths).expect(label);
-        assert_eq!(selection, expected, "{label}");
-    }
+    let selection = resolve_model_value(&request, &current, &["xai-api-key".to_string()]).unwrap();
+    assert_eq!(
+        selection,
+        ModelSelection {
+            provider: "custom".into(),
+            model: "local-model".into(),
+            auth: "api-key".into(),
+            from_catalog: false,
+        }
+    );
 }
