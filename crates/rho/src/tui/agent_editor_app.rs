@@ -188,7 +188,7 @@ impl App {
             self.refresh_available_auths();
             auth_choice_picker(draft, &self.available_auths)
         } else {
-            agent_choice_picker(field, draft)
+            agent_choice_picker(field, draft, (&self.info.runtime).into())
         };
         self.open_child_picker(picker);
         self.set_status(field.status_label());
