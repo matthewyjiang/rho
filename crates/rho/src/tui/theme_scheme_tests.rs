@@ -101,6 +101,25 @@ fn resolves_builtin_and_terminal_ids() {
     assert_eq!(theme_display_name(""), "Terminal");
 }
 
+// Covers: duplicate built-in ids would silently hide a scheme and reserve the stem
+// Owner: tui theme scheme catalog
+#[test]
+fn builtin_catalog_ids_are_unique_and_reserved() {
+    let mut ids: Vec<_> = BUILTIN_SCHEMES.iter().map(|spec| spec.id).collect();
+    ids.sort_unstable();
+    let mut unique = ids.clone();
+    unique.dedup();
+    assert_eq!(ids, unique);
+
+    for spec in BUILTIN_SCHEMES {
+        assert!(!is_terminal_theme_id(spec.id));
+        assert!(is_builtin_theme_id(spec.id));
+        let resolved = resolve_fixed_scheme(spec.id).expect("builtin resolves");
+        assert_eq!(resolved.source, ThemeSourceKind::Builtin);
+        assert_eq!(resolved.id, spec.id);
+    }
+}
+
 // Covers: custom themes load from an injected directory (no RHO_HOME mutation)
 // Owner: tui theme scheme catalog
 #[test]

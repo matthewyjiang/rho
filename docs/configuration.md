@@ -109,7 +109,7 @@ Rho reads each model's available effort values from cached [models.dev](https://
 
 `zen_mode` hides tool cards, reasoning blocks, and the `Thinking...` placeholder so the transcript shows only message text. The live activity rail, subagent rows, and background-process rows stay visible so you can still see progress. It defaults to `false`. Changing it from `/config` applies immediately to the current transcript and live turn UI. Tools and reasoning still run; only their transcript display is suppressed.
 
-`theme` selects the interactive TUI color theme. The default is `terminal` (match the host palette). Built-in ids include `one-half-dark`, `one-half-light`, `monochrome-dark`, and `monochrome-light`. Custom schemes load from `~/.rho/themes/<id>.json` (or `$RHO_HOME/themes/`) in Windows Terminal color-scheme JSON form. Change it with `/theme` or `/config` → **Appearance** → **Theme**. The picker previews live; Enter saves. Details: [Theme](/interactive-tui/theme).
+`theme` selects the interactive TUI color theme. The default is `terminal` (match the host palette). Named built-ins (Dracula, Nord, One Half, and others) and custom Windows Terminal JSON under `~/.rho/themes/<id>.json` (or `$RHO_HOME/themes/`) are listed in [Theme](/interactive-tui/theme). Change it with `/theme` or `/config` → **Appearance** → **Theme**. The picker previews live; Enter saves.
 
 ## Advisor mode
 
