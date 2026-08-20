@@ -94,6 +94,7 @@ impl GitHubCopilotProvider {
             stream_options: stream.then_some(ChatStreamOptions {
                 include_usage: true,
             }),
+            prompt_cache_key: request.prompt_cache_key.map(str::to_owned),
             reasoning: None,
             reasoning_effort: None,
             thinking: None,

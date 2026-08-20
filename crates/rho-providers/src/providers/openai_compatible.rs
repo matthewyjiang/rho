@@ -155,6 +155,7 @@ impl OpenAiCompatibleProvider {
             stream_options: stream.then_some(ChatStreamOptions {
                 include_usage: true,
             }),
+            prompt_cache_key: request.prompt_cache_key.map(str::to_owned),
             reasoning: reasoning_fields.reasoning,
             reasoning_effort: reasoning_fields.reasoning_effort,
             thinking: reasoning_fields.thinking,

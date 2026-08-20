@@ -67,6 +67,8 @@ Rho fetches `/v1/models` in the background at startup for every custom host so t
 
 Rho sends `reasoning_effort` on each turn, including `"none"` when reasoning is off. Shift+Tab and `/config` cycle the level. Hosts that do not accept that field may reject the request; pin levels in `~/.rho/models.toml` if you need a smaller set.
 
+When the session has a prompt cache key, Rho also sends `prompt_cache_key` on Chat Completions so compatible hosts and proxies can pin prompt cache across turns. The field is omitted when there is no key.
+
 ## Automation
 
 ```bash
