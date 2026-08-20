@@ -171,23 +171,37 @@ static FILE_PATH_CACHE: LazyLock<Mutex<FilePathCache>> = LazyLock::new(|| {
     })
 });
 
+/// The `@query` token under the cursor, if any.
+///
+/// Scans char indices in place: the render path calls this several times per
+/// frame, so only the short token itself is ever collected into a String.
 pub(super) fn active_file_mention(input: &str, cursor: usize) -> Option<FileMention> {
-    let chars = input.chars().collect::<Vec<_>>();
-    let cursor = cursor.min(chars.len());
-    let start = chars[..cursor]
-        .iter()
-        .rposition(|ch| ch.is_whitespace())
-        .map_or(0, |index| index + 1);
-    let token_prefix = chars[start..cursor].iter().collect::<String>();
-    let query = token_prefix.strip_prefix('@')?;
+    let mut start = 0usize;
+    let mut token_len = 0usize;
+    let mut tail_whitespace = None;
+    for (index, ch) in input.chars().enumerate() {
+        if index < cursor {
+            if ch.is_whitespace() {
+                start = index + 1;
+                token_len = 0;
+            } else {
+                token_len += 1;
+            }
+        } else if ch.is_whitespace() {
+            tail_whitespace = Some(index);
+            break;
+        }
+    }
+    let end = tail_whitespace.unwrap_or_else(|| input.chars().count());
+    let token = input
+        .chars()
+        .skip(start)
+        .take(token_len)
+        .collect::<String>();
+    let query = token.strip_prefix('@')?;
     if query.contains('@') {
         return None;
     }
-    let end = chars[cursor..]
-        .iter()
-        .position(|ch| ch.is_whitespace())
-        .map_or(chars.len(), |offset| cursor + offset);
-
     Some(FileMention {
         start,
         end,

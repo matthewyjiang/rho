@@ -160,8 +160,9 @@ impl App {
     }
 
     pub(super) fn command_suggestion_lines(&self, width: usize) -> Vec<Line<'static>> {
-        if self.command_palette_visible() {
-            let matches = self.command_matches();
+        // Each palette's visibility check needs its matches, so compute them
+        // once here instead of asking "visible?" and then matching again.
+        if let Some(matches) = self.command_palette_matches_if_visible() {
             let selected_index = self
                 .input_ui
                 .command_selection()
@@ -207,11 +208,10 @@ impl App {
                 .collect();
         }
 
-        if !self.file_palette_visible() {
+        let Some(matches) = self.file_palette_matches_if_visible() else {
             return Vec::new();
-        }
+        };
 
-        let matches = self.file_matches();
         let selected_index = self
             .input_ui
             .file_selection()
@@ -242,12 +242,9 @@ impl App {
             })
             .collect::<Vec<_>>();
 
-        if let Some(footer) = file_picker::file_palette_scroll_footer(
-            above,
-            below,
-            matches.len(),
-            self.file_discovery_incomplete(),
-        ) {
+        if let Some(footer) =
+            file_picker::file_palette_scroll_footer(above, below, matches.len(), matches.incomplete)
+        {
             lines.push(styled_line(
                 truncate_one_line(&footer, width.max(1)),
                 width.max(1),

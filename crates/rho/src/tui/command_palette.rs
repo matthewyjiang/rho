@@ -1,12 +1,31 @@
 use std::sync::Arc;
 
-use super::{App, CommandChoice, CommandChoiceKind, SkillMatchCache};
+use super::{App, CommandChoice, CommandChoiceKind, ComposerMode};
 use crate::commands;
 
 /// How long one skill-discovery pass stays valid for command palette queries.
 const SKILL_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(2);
 
 impl App {
+    /// Palette matches when the command palette is what the composer shows.
+    ///
+    /// Visibility needs the matches anyway (`!is_empty`), so this returns them
+    /// instead of making callers match twice per frame.
+    pub(super) fn command_palette_matches_if_visible(&self) -> Option<Vec<CommandChoice>> {
+        if !matches!(self.input_ui.composer(), ComposerMode::Input)
+            || self.input_ui.shell_mode().is_some()
+            || self.input_ui.command_palette_dismissed()
+        {
+            return None;
+        }
+        let matches = self.command_matches();
+        let answers_argument =
+            !commands::argument_choices(self.input_ui.text(), self.input_ui.cursor()).is_empty()
+                || !self.mcp_argument_choices().is_empty();
+        (!matches.is_empty() && (self.cursor_in_command_token() || answers_argument))
+            .then_some(matches)
+    }
+
     pub(super) fn command_matches(&self) -> Vec<CommandChoice> {
         let argument_choices =
             commands::argument_choices(self.input_ui.text(), self.input_ui.cursor());
@@ -116,30 +135,18 @@ impl App {
         matches
     }
 
-    /// Skills for palette matching, served from the timed cache when fresh so
-    /// repeated per-keystroke queries skip the filesystem walk.
+    /// Skills for palette matching, served from the timed cache when fresh.
+    ///
+    /// Refresh-on-read: the render path calls this every frame while a `/`
+    /// palette is open, so the read populates the cache too instead of leaving
+    /// every frame to re-walk skill directories until the next keystroke.
     fn discovered_skills(&self) -> Arc<Vec<crate::skills::Skill>> {
-        if let Some(cache) = self.input_ui.skill_match_cache() {
-            if cache.refreshed_at.elapsed() < SKILL_CACHE_TTL {
-                return Arc::clone(&cache.skills);
-            }
+        if let Some(skills) = self.input_ui.fresh_skill_match_cache(SKILL_CACHE_TTL) {
+            return skills;
         }
-        Arc::new(crate::skills::discover(&self.info.runtime.cwd))
-    }
-
-    pub(super) fn refresh_skill_match_cache(&mut self) {
-        if self
-            .input_ui
-            .skill_match_cache()
-            .as_ref()
-            .is_some_and(|cache| cache.refreshed_at.elapsed() < SKILL_CACHE_TTL)
-        {
-            return;
-        }
-        self.input_ui.set_skill_match_cache(Some(SkillMatchCache {
-            skills: Arc::new(crate::skills::discover(&self.info.runtime.cwd)),
-            refreshed_at: std::time::Instant::now(),
-        }));
+        let skills = Arc::new(crate::skills::discover(&self.info.runtime.cwd));
+        self.input_ui.store_skill_match_cache(Arc::clone(&skills));
+        skills
     }
 
     pub(super) fn selected_command(&self) -> Option<CommandChoice> {

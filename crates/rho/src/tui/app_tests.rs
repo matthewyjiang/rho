@@ -176,6 +176,7 @@ fn minimum_terminal_layout_keeps_composer_visible() {
         /*history_len*/ 0,
         &composer_lines,
         /*command_line_count*/ 0,
+        app.composer_cursor_position(width),
     );
     assert!(
         layout.composer.height >= 1,

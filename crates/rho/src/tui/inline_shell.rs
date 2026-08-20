@@ -65,6 +65,20 @@ pub(super) struct PendingShellTask {
     stderr: String,
     updates: mpsc::UnboundedReceiver<ShellStreamUpdate>,
     handle: tokio::task::JoinHandle<std::io::Result<ShellOutput>>,
+    /// Rendered card lines reused across frames. A running shell's output only
+    /// grows, so buffer lengths are a complete content key; without this every
+    /// animation frame re-cloned and re-wrapped the whole captured output.
+    render_cache: Option<ShellRenderCache>,
+}
+
+/// Keyed render for one running shell's card.
+struct ShellRenderCache {
+    stdout_len: usize,
+    stderr_len: usize,
+    width: usize,
+    max_tool_output_lines: usize,
+    max_image_height: u16,
+    lines: Vec<ratatui::text::Line<'static>>,
 }
 
 #[derive(Clone, Copy)]
@@ -323,15 +337,35 @@ pub(super) fn display_text(output: &ShellOutput, included_in_context: bool) -> S
 }
 
 pub(super) fn display_card(output: &ShellOutput, _included_in_context: bool) -> ToolCard {
-    let prompt = match output.shell.to_ascii_lowercase().as_str() {
+    display_card_parts(
+        &output.shell,
+        &output.command,
+        &output.stdout,
+        &output.stderr,
+        &output.exit_code,
+        output.ok,
+    )
+}
+
+/// Card for shell output given its parts, so live rendering can borrow a
+/// running task's buffers instead of cloning them into a [`ShellOutput`].
+fn display_card_parts(
+    shell: &str,
+    command: &str,
+    stdout: &str,
+    stderr: &str,
+    exit_code: &str,
+    ok: bool,
+) -> ToolCard {
+    let prompt = match shell.to_ascii_lowercase().as_str() {
         "powershell" | "powershell.exe" | "pwsh" | "pwsh.exe" => "PS",
         _ => "$",
     };
-    let status = if output.exit_code == "running" {
+    let status = if exit_code == "running" {
         ToolStatus::Running
-    } else if output.ok {
+    } else if ok {
         ToolStatus::Ok
-    } else if output.exit_code == "cancelled" {
+    } else if exit_code == "cancelled" {
         ToolStatus::Interrupted
     } else {
         ToolStatus::Error
@@ -339,18 +373,18 @@ pub(super) fn display_card(output: &ShellOutput, _included_in_context: bool) -> 
     let mut card = ToolCard::new(
         status,
         ToolFamily::FileCommand,
-        ToolHeader::shell(prompt, Some(output.command.clone())),
+        ToolHeader::shell(prompt, Some(command.to_string())),
     );
-    if output.exit_code != "running" && !output.ok && output.exit_code != "cancelled" {
+    if exit_code != "running" && !ok && exit_code != "cancelled" {
         card.push_fact(ToolFact::Meta {
-            text: format!("exit {}", output.exit_code),
+            text: format!("exit {exit_code}"),
         });
     }
-    if !output.stdout.is_empty() {
-        card.body = ToolBody::Lines(vec![output.stdout.trim_end().to_string()]);
-    } else if !output.stderr.is_empty() && !output.ok {
+    if !stdout.is_empty() {
+        card.body = ToolBody::Lines(vec![stdout.trim_end().to_string()]);
+    } else if !stderr.is_empty() && !ok {
         card.push_fact(ToolFact::Error {
-            text: output.stderr.trim_end().to_string(),
+            text: stderr.trim_end().to_string(),
         });
     }
     card
@@ -403,6 +437,7 @@ impl super::App {
                 )
                 .await
             }),
+            render_cache: None,
         });
         self.set_status(format!("running {shell}"));
         Ok(())
@@ -578,12 +613,23 @@ impl super::App {
         Ok(())
     }
 
-    pub(super) fn running_inline_shell_entries(
-        &self,
-    ) -> impl Iterator<Item = super::ToolEntry> + '_ {
+    /// Rendered card lines for every running inline shell, in task order.
+    ///
+    /// Each task caches its render keyed by buffer lengths, so idle frames
+    /// reuse lines instead of re-cloning and re-wrapping streamed output.
+    pub(super) fn inline_shell_live_lines(
+        &mut self,
+        width: usize,
+        max_tool_output_lines: usize,
+        max_image_height: u16,
+    ) -> Vec<Vec<ratatui::text::Line<'static>>> {
         self.pending_inline_shells
-            .iter()
-            .map(PendingShellTask::tool_entry)
+            .iter_mut()
+            .map(|task| {
+                task.rendered_lines(width, max_tool_output_lines, max_image_height)
+                    .to_vec()
+            })
+            .collect()
     }
 
     pub(super) fn insert_deferred_inline_shell_context(
@@ -629,20 +675,57 @@ impl PendingShellTask {
     }
 
     fn tool_entry(&self) -> super::ToolEntry {
-        let output = ShellOutput {
-            shell: self.shell.clone(),
-            command: self.command.clone(),
-            stdout: self.stdout.clone(),
-            stderr: self.stderr.clone(),
-            exit_code: "running".into(),
-            ok: true,
-        };
         super::ToolEntry {
-            card: display_card(&output, self.mode.included_in_context()),
+            card: display_card_parts(
+                &self.shell,
+                &self.command,
+                &self.stdout,
+                &self.stderr,
+                "running",
+                true,
+            ),
             expanded: true,
             image: None,
             started_at: None,
         }
+    }
+
+    /// Cached render of this task's live card, refreshed only when the output
+    /// buffers, width, or budgets changed since the last frame.
+    fn rendered_lines(
+        &mut self,
+        width: usize,
+        max_tool_output_lines: usize,
+        max_image_height: u16,
+    ) -> &[ratatui::text::Line<'static>] {
+        let fresh = self.render_cache.as_ref().is_some_and(|cache| {
+            cache.stdout_len == self.stdout.len()
+                && cache.stderr_len == self.stderr.len()
+                && cache.width == width
+                && cache.max_tool_output_lines == max_tool_output_lines
+                && cache.max_image_height == max_image_height
+        });
+        if !fresh {
+            let lines = super::tool_entry_lines(
+                &self.tool_entry(),
+                width,
+                max_tool_output_lines,
+                max_image_height,
+            );
+            self.render_cache = Some(ShellRenderCache {
+                stdout_len: self.stdout.len(),
+                stderr_len: self.stderr.len(),
+                width,
+                max_tool_output_lines,
+                max_image_height,
+                lines,
+            });
+        }
+        &self
+            .render_cache
+            .as_ref()
+            .expect("render cache populated above")
+            .lines
     }
 }
 

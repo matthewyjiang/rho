@@ -2,7 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{
     file_picker::{self, FilePaletteEntry, FilePaletteMatches},
-    App, ComposerMode, FileMatchCache,
+    App, ComposerMode,
 };
 
 impl App {
@@ -128,8 +128,18 @@ impl App {
         self.file_match_list()
     }
 
-    pub(super) fn file_discovery_incomplete(&self) -> bool {
-        self.file_match_list().incomplete
+    /// Matches when the `@` palette is what the composer shows. The command
+    /// palette wins when both could answer, and visibility needs the matches
+    /// anyway, so they are computed once here.
+    pub(super) fn file_palette_matches_if_visible(&self) -> Option<FilePaletteMatches> {
+        if !matches!(self.input_ui.composer(), ComposerMode::Input)
+            || self.input_ui.file_palette_dismissed()
+            || self.command_palette_visible()
+        {
+            return None;
+        }
+        let matches = self.file_matches();
+        (!matches.is_empty()).then_some(matches)
     }
 
     fn file_match_list(&self) -> FilePaletteMatches {
@@ -138,14 +148,18 @@ impl App {
         else {
             return FilePaletteMatches::empty();
         };
-        if let Some(cache) = self.input_ui.file_match_cache() {
-            if cache.query == mention.query
-                && cache.refreshed_at.elapsed() < file_picker::FILE_PATH_CACHE_TTL
-            {
-                return cache.matches.clone();
-            }
+        if let Some(cache) = self
+            .input_ui
+            .fresh_file_match_cache(&mention.query, file_picker::FILE_PATH_CACHE_TTL)
+        {
+            return cache.matches;
         }
-        self.discover_file_palette_matches(&mention.query)
+        // Refresh-on-read: the render path calls this every frame, so populate
+        // the cache here too instead of re-running discovery until a keystroke.
+        let discovered = self.discover_file_palette_matches(&mention.query);
+        self.input_ui
+            .store_file_match_cache(mention.query.clone(), discovered.clone());
+        discovered
     }
 
     /// Rank both sources for one query. The catalog is an in-memory listing
@@ -167,26 +181,19 @@ impl App {
         let Some(mention) =
             file_picker::active_file_mention(self.input_ui.text(), self.input_ui.cursor())
         else {
-            *self.input_ui.file_match_cache_mut() = None;
+            self.input_ui.clear_file_match_cache();
             return;
         };
         if self
             .input_ui
-            .file_match_cache()
-            .as_ref()
-            .is_some_and(|cache| {
-                cache.query == mention.query
-                    && cache.refreshed_at.elapsed() < file_picker::FILE_PATH_CACHE_TTL
-            })
+            .fresh_file_match_cache(&mention.query, file_picker::FILE_PATH_CACHE_TTL)
+            .is_some()
         {
             return;
         }
         let discovered = self.discover_file_palette_matches(&mention.query);
-        self.input_ui.set_file_match_cache(Some(FileMatchCache {
-            query: mention.query.clone(),
-            matches: discovered,
-            refreshed_at: std::time::Instant::now(),
-        }));
+        self.input_ui
+            .store_file_match_cache(mention.query, discovered);
     }
 
     pub(super) fn selected_palette_entry(&self) -> Option<FilePaletteEntry> {

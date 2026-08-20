@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::time::Duration;
 
 use pretty_assertions::assert_eq;
@@ -6,7 +5,7 @@ use rho_tools::tool_card::{
     DiffRow, DiffRowKind, ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus,
 };
 
-use super::{card_is_toggleable, live_shell_elapsed, push_tool_card, with_live_shell_elapsed};
+use super::{card_is_toggleable, live_shell_elapsed, push_tool_card};
 use crate::tui::{
     syntax::{reset_highlight_line_calls, take_highlight_line_calls, warm_syntax_set},
     theme::{SyntaxRole, Theme},
@@ -26,6 +25,7 @@ fn render(card: &ToolCard, width: usize) -> Vec<String> {
     let mut lines = Vec::new();
     push_tool_card(
         &mut lines, card, width, /*max_tool_output_lines*/ 32, /*expanded*/ true,
+        /*live_elapsed*/ None,
     );
     lines.into_iter().map(|line| line_text(&line)).collect()
 }
@@ -198,7 +198,7 @@ fn file_diff_body_highlights_rust_from_header_path() {
     let mut lines = Vec::new();
     push_tool_card(
         &mut lines, &card, /*width*/ 80, /*max_tool_output_lines*/ 32,
-        /*expanded*/ true,
+        /*expanded*/ true, /*live_elapsed*/ None,
     );
     let body = lines
         .iter()
@@ -250,7 +250,7 @@ fn file_diff_rows_apply_soft_wash_with_fg_signs() {
     let mut lines = Vec::new();
     push_tool_card(
         &mut lines, &card, /*width*/ 80, /*max_tool_output_lines*/ 32,
-        /*expanded*/ true,
+        /*expanded*/ true, /*live_elapsed*/ None,
     );
 
     let removed = lines
@@ -372,6 +372,7 @@ fn collapsed_diff_paint_highlights_only_budget_rows() {
         /*width*/ 100,
         budget,
         /*expanded*/ false,
+        /*live_elapsed*/ None,
     );
     let collapsed_calls = take_highlight_line_calls();
 
@@ -383,6 +384,7 @@ fn collapsed_diff_paint_highlights_only_budget_rows() {
         /*width*/ 100,
         budget,
         /*expanded*/ true,
+        /*live_elapsed*/ None,
     );
     let expanded_calls = take_highlight_line_calls();
 
@@ -437,7 +439,7 @@ fn grep_body_highlights_language_and_match() {
     let mut lines = Vec::new();
     push_tool_card(
         &mut lines, &card, /*width*/ 80, /*max_tool_output_lines*/ 32,
-        /*expanded*/ true,
+        /*expanded*/ true, /*live_elapsed*/ None,
     );
     let body = lines
         .iter()
@@ -468,77 +470,40 @@ fn grep_body_highlights_language_and_match() {
 // Covers: running shell cards fold the live elapsed clock into the timeout fact
 // Owner: pure unit (tool card elapsed rewrite)
 #[test]
-fn with_live_shell_elapsed_folds_clock_into_timeout_fact() {
-    let started = std::time::Instant::now() - Duration::from_millis(1_200);
-    let mut entry = ToolEntry {
-        card: ToolCard::new(
-            ToolStatus::Running,
-            ToolFamily::FileCommand,
-            ToolHeader::shell("$", Some("sleep 1".into())),
-        ),
-        expanded: false,
-        image: None,
-        started_at: Some(started),
-    };
-    entry
-        .card
-        .push_fact(ToolFact::Timeout { seconds: Some(30) });
-    entry.card.push_fact(ToolFact::Timeout { seconds: None });
-
-    let rewritten = with_live_shell_elapsed(&entry);
-    assert!(
-        matches!(&rewritten, Cow::Owned(_)),
-        "running shell must rewrite the card"
+fn push_tool_card_paints_live_elapsed_into_timeout_fact() {
+    let mut card = ToolCard::new(
+        ToolStatus::Running,
+        ToolFamily::FileCommand,
+        ToolHeader::shell("$", Some("sleep 1".into())),
     );
-    assert_eq!(
-        rewritten.facts,
-        vec![
-            ToolFact::Meta {
-                text: "timeout 30s · 1.2s".into()
-            },
-            ToolFact::Meta {
-                text: "timeout none · 1.2s".into()
-            },
-        ]
+    card.push_fact(ToolFact::Timeout { seconds: Some(30) });
+    card.push_fact(ToolFact::Timeout { seconds: None });
+
+    let lines = render_with_elapsed(&card, 60, Some(Duration::from_millis(1_200)));
+    assert!(
+        lines.iter().any(|line| line.contains("timeout 30s · 1.2s")),
+        "running shell must paint the elapsed clock: {lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("timeout none · 1.2s")),
+        "both timeout facts carry the clock: {lines:?}"
+    );
+
+    let without_clock = render_with_elapsed(&card, 60, None);
+    assert!(
+        without_clock.iter().all(|line| !line.contains("· 1.2s")),
+        "no live clock must leave the facts untouched: {without_clock:?}"
     );
 }
 
-// Covers: finished, non-shell, and clockless entries keep their card untouched
-// Owner: pure unit (tool card elapsed rewrite)
-#[test]
-fn with_live_shell_elapsed_borrows_when_no_live_clock() {
-    let cases = [
-        (
-            "finished shell",
-            ToolStatus::Ok,
-            ToolHeader::shell("$", Some("true".into())),
-            Some(std::time::Instant::now()),
-        ),
-        (
-            "non-shell running",
-            ToolStatus::Running,
-            ToolHeader::call("read_file", Some("a.rs".into())),
-            Some(std::time::Instant::now()),
-        ),
-        (
-            "running shell without clock",
-            ToolStatus::Running,
-            ToolHeader::shell("$", Some("sleep 1".into())),
-            None,
-        ),
-    ];
-    for (label, status, header, started_at) in cases {
-        let entry = ToolEntry {
-            card: ToolCard::new(status, ToolFamily::FileCommand, header),
-            expanded: false,
-            image: None,
-            started_at,
-        };
-        assert!(
-            matches!(with_live_shell_elapsed(&entry), Cow::Borrowed(_)),
-            "{label} must borrow the card unchanged"
-        );
-    }
+fn render_with_elapsed(card: &ToolCard, width: usize, elapsed: Option<Duration>) -> Vec<String> {
+    let mut lines = Vec::new();
+    push_tool_card(
+        &mut lines, card, width, /*max_tool_output_lines*/ 32, /*expanded*/ true, elapsed,
+    );
+    lines.into_iter().map(|line| line_text(&line)).collect()
 }
 
 // Covers: only running shell cards expose a live elapsed clock

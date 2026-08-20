@@ -1,6 +1,9 @@
 use std::time::Instant;
 
-use ratatui::{layout::Rect, text::Line};
+use ratatui::{
+    layout::{Position, Rect},
+    text::Line,
+};
 
 use super::{activity, render::display_width, scrollbar::HistoryScrollbar, App, HistoryScroll};
 
@@ -163,7 +166,14 @@ impl App {
         let history_len = self.history_len(width, now);
         let composer_lines = self.composer_lines(width, area.height as usize);
         let command_lines = self.command_suggestion_lines(width);
-        self.screen_layout_for_history_len(area, history_len, &composer_lines, command_lines.len())
+        let composer_cursor = self.composer_cursor_position(width);
+        self.screen_layout_for_history_len(
+            area,
+            history_len,
+            &composer_lines,
+            command_lines.len(),
+            composer_cursor,
+        )
     }
 
     pub(super) fn screen_layout_for_history_len(
@@ -172,11 +182,11 @@ impl App {
         history_len: usize,
         composer_lines: &[Line<'_>],
         command_line_count: usize,
+        composer_cursor: Position,
     ) -> ScreenLayout {
         let width = area.width as usize;
         let height = area.height as usize;
-        let full_cursor = self.composer_cursor_position(width);
-        let cursor_line = (full_cursor.y as usize).min(composer_lines.len().saturating_sub(1));
+        let cursor_line = (composer_cursor.y as usize).min(composer_lines.len().saturating_sub(1));
         let chrome = bottom_chrome_heights(
             height,
             self.statusline.height(),

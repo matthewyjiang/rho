@@ -60,6 +60,9 @@ struct DrawSurface<'a> {
     width: usize,
     now: Instant,
     layout: &'a super::screen_layout::ScreenLayout,
+    /// Composer cursor computed once for this frame; layout and cursor paint
+    /// must agree without re-wrapping the composer text.
+    composer_cursor: Position,
 }
 
 fn draw_terminal_too_small(frame: &mut Frame<'_>, area: Rect) {
@@ -117,16 +120,24 @@ impl App {
             command_lines.len(),
         );
         let live_history = self.live_history_layout(width, settings.max_image_height);
-        let viewport = self.history_content_height_for_screen(width, height, now);
+        // The viewport derives from the same line counts as `settings`, so no
+        // read here may re-render the composer or the suggestion palette.
+        let viewport = self.history_content_height_from_counts(
+            height,
+            composer_lines.len(),
+            command_lines.len(),
+        );
         self.ensure_measured_history_suffix(settings, viewport);
         let history_len = self
             .history_static_len_with_settings(width, settings)
             .saturating_add(live_history.lines.len());
+        let composer_cursor = self.composer_cursor_position(width);
         let layout = self.screen_layout_for_history_len(
             area,
             history_len,
             &composer_lines,
             command_lines.len(),
+            composer_cursor,
         );
         let (history_start, history_count) =
             self.visible_history_window(history_len, layout.history_content.height as usize);
@@ -135,6 +146,7 @@ impl App {
             width,
             now,
             layout: &layout,
+            composer_cursor,
         };
         self.draw_history(
             frame,
@@ -338,6 +350,7 @@ impl App {
             width,
             now,
             layout,
+            ..
         } = surface;
         let composer_visible = composer_lines
             .into_iter()
@@ -407,6 +420,7 @@ impl App {
             width,
             layout,
             now,
+            composer_cursor: full_cursor,
         } = surface;
         let popup_cursor = match self.input_ui.composer() {
             ComposerMode::Picker(picker) => picker_overlay_frame(picker, area).map(|overlay| {
@@ -440,7 +454,6 @@ impl App {
             return;
         }
 
-        let full_cursor = self.composer_cursor_position(width);
         let max_cursor_x = width.max(1).saturating_sub(1) as u16;
         let cursor_y = full_cursor
             .y
@@ -482,11 +495,13 @@ impl App {
         let history_len = self.history_len(width, now);
         let composer_lines = self.composer_lines(width, area.height as usize);
         let command_lines = self.command_suggestion_lines(width);
+        let composer_cursor = self.composer_cursor_position(width);
         let layout = self.screen_layout_for_history_len(
             area,
             history_len,
             &composer_lines,
             command_lines.len(),
+            composer_cursor,
         );
         let (history_start, history_count) =
             self.visible_history_window(history_len, layout.history_content.height as usize);
@@ -643,7 +658,7 @@ impl App {
         super::feed_image::ImageRowBudget::feed(height, content_height).get()
     }
 
-    fn history_content_height_from_counts(
+    pub(super) fn history_content_height_from_counts(
         &self,
         height: usize,
         composer_line_count: usize,
@@ -832,18 +847,23 @@ impl App {
             .filter(|target| target.columns.contains(&relative_column))
     }
 
-    pub(super) fn history_live_lines(&self, width: usize, _now: Instant) -> Vec<Line<'static>> {
+    pub(super) fn history_live_lines(&mut self, width: usize, _now: Instant) -> Vec<Line<'static>> {
         self.live_history_layout(width, self.feed_image_row_budget(width))
             .lines
     }
 
     /// Live feed lines plus the clickable card spans in the same walk that paints them.
-    pub(super) fn live_history_layout(&self, width: usize, max_image_height: u16) -> LiveHistory {
+    pub(super) fn live_history_layout(
+        &mut self,
+        width: usize,
+        max_image_height: u16,
+    ) -> LiveHistory {
         let mut lines = Vec::new();
         let mut cards = Vec::new();
         let show_tools = self.info.runtime.shows_work_chrome();
+        let max_tool_output_lines = self.info.runtime.max_tool_output_lines;
         let shells = if show_tools {
-            self.running_inline_shell_entries().collect::<Vec<_>>()
+            self.inline_shell_live_lines(width, max_tool_output_lines, max_image_height)
         } else {
             Vec::new()
         };
@@ -858,16 +878,10 @@ impl App {
         if has_pending_tools && self.open_stream_tail_active() {
             lines.push(Line::raw(""));
         }
-        for pending in &shells {
-            // tool_entry_lines owns the trailing spacer under each card.
-            lines.extend(tool_entry_lines(
-                pending,
-                width,
-                self.info.runtime.max_tool_output_lines,
-                max_image_height,
-            ));
+        for shell_lines in &shells {
+            // Each cached render owns the trailing spacer under its card.
+            lines.extend(shell_lines.iter().cloned());
         }
-        let max_tool_output_lines = self.info.runtime.max_tool_output_lines;
         for (key, pending) in tools {
             let start = lines.len();
             lines.extend(tool_entry_lines(

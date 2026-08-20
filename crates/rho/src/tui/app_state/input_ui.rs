@@ -1,6 +1,9 @@
 //! Composer text, paste handling, command/file palettes, and input history.
 
-use std::time::{Duration, Instant};
+use std::{
+    cell::RefCell,
+    time::{Duration, Instant},
+};
 
 use crate::tui::{
     composer_attachments::ComposerAttachmentSlot,
@@ -138,8 +141,12 @@ pub(in crate::tui) struct InputUi {
     file_selection: usize,
     file_query: Option<String>,
     file_palette_dismissed: bool,
-    file_match_cache: Option<FileMatchCache>,
-    skill_match_cache: Option<SkillMatchCache>,
+    /// Palette matches for the active `@` query. Written by both keystroke
+    /// refresh and render-path reads so an idle frame never re-runs discovery.
+    file_match_cache: RefCell<Option<FileMatchCache>>,
+    /// Discovered skills for `/` palette matching, shared with render reads the
+    /// same way.
+    skill_match_cache: RefCell<Option<SkillMatchCache>>,
     composer: ComposerMode,
 }
 
@@ -632,23 +639,57 @@ impl InputUi {
         self.file_palette_dismissed = dismissed;
     }
 
-    pub(in crate::tui) fn file_match_cache(&self) -> Option<&FileMatchCache> {
-        self.file_match_cache.as_ref()
+    /// Cached `@` palette matches when they still answer `query` and are fresh.
+    /// Clones the shared match lists out so no borrow is held by callers.
+    pub(in crate::tui) fn fresh_file_match_cache(
+        &self,
+        query: &str,
+        ttl: Duration,
+    ) -> Option<FileMatchCache> {
+        let cache = self.file_match_cache.borrow();
+        let cache = cache.as_ref()?;
+        (cache.query == query && cache.refreshed_at.elapsed() < ttl).then(|| FileMatchCache {
+            query: cache.query.clone(),
+            matches: cache.matches.clone(),
+            refreshed_at: cache.refreshed_at,
+        })
     }
 
-    pub(in crate::tui) fn file_match_cache_mut(&mut self) -> &mut Option<FileMatchCache> {
-        &mut self.file_match_cache
+    /// Store matches from any path, including read-only render passes, so an
+    /// idle frame that expires the TTL pays for discovery once, not per frame.
+    pub(in crate::tui) fn store_file_match_cache(
+        &self,
+        query: String,
+        matches: crate::tui::file_picker::FilePaletteMatches,
+    ) {
+        *self.file_match_cache.borrow_mut() = Some(FileMatchCache {
+            query,
+            matches,
+            refreshed_at: Instant::now(),
+        });
     }
 
-    pub(in crate::tui) fn set_file_match_cache(&mut self, cache: Option<FileMatchCache>) {
-        self.file_match_cache = cache;
+    pub(in crate::tui) fn clear_file_match_cache(&self) {
+        *self.file_match_cache.borrow_mut() = None;
     }
 
-    pub(in crate::tui) fn skill_match_cache(&self) -> Option<&SkillMatchCache> {
-        self.skill_match_cache.as_ref()
+    /// Cached skill list when fresh; see [`Self::store_skill_match_cache`].
+    pub(in crate::tui) fn fresh_skill_match_cache(
+        &self,
+        ttl: Duration,
+    ) -> Option<std::sync::Arc<Vec<crate::skills::Skill>>> {
+        let cache = self.skill_match_cache.borrow();
+        let cache = cache.as_ref()?;
+        (cache.refreshed_at.elapsed() < ttl).then(|| std::sync::Arc::clone(&cache.skills))
     }
 
-    pub(in crate::tui) fn set_skill_match_cache(&mut self, cache: Option<SkillMatchCache>) {
-        self.skill_match_cache = cache;
+    pub(in crate::tui) fn store_skill_match_cache(
+        &self,
+        skills: std::sync::Arc<Vec<crate::skills::Skill>>,
+    ) {
+        *self.skill_match_cache.borrow_mut() = Some(SkillMatchCache {
+            skills,
+            refreshed_at: Instant::now(),
+        });
     }
 }

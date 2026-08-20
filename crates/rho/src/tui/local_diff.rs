@@ -33,6 +33,10 @@ impl WorktreeDiff {
     }
 }
 
+/// Bound per-file `git diff --no-index` spawns so `/diff` stays responsive in
+/// workspaces where ignore rules leave thousands of untracked files behind.
+const MAX_UNTRACKED_PATCHES: usize = 50;
+
 pub(super) fn collect(cwd: &Path) -> anyhow::Result<WorktreeDiff> {
     let status = git(cwd, &["status", "--short", "--branch"])?;
     let unstaged = git(cwd, &["diff", "--no-ext-diff", "--"])?;
@@ -54,8 +58,13 @@ pub(super) fn collect(cwd: &Path) -> anyhow::Result<WorktreeDiff> {
     if !untracked.is_empty() {
         lines.push(String::new());
         lines.push("untracked changes:".into());
-        for path in untracked {
-            lines.extend(untracked_patch(cwd, &path)?);
+        let shown = untracked.len().min(MAX_UNTRACKED_PATCHES);
+        for path in &untracked[..shown] {
+            lines.extend(untracked_patch(cwd, path)?);
+        }
+        let remaining = untracked.len() - shown;
+        if remaining > 0 {
+            lines.push(format!("... {remaining} more untracked files not diffed"));
         }
     }
     if !has_changes {
