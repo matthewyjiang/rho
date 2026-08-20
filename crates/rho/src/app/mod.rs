@@ -6,6 +6,7 @@ pub(crate) mod automation_protocol;
 mod bootstrap;
 mod cli_config;
 pub(crate) mod config_repository;
+pub(crate) mod conversation_switch;
 pub(crate) mod headless_run;
 mod interactive;
 pub(crate) mod interactive_presenter;

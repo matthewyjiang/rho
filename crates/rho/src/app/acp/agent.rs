@@ -6,19 +6,18 @@ use std::{
     },
 };
 
+use super::{
+    session_host::{PromptGate, SessionHost},
+    AcpClientPort, AcpStartup,
+};
 use agent_client_protocol::{
     schema::v1::{
         AgentCapabilities, AuthenticateRequest, CancelNotification, InitializeRequest,
         InitializeResponse, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
         NewSessionResponse, PromptCapabilities, PromptRequest, PromptResponse, SessionId,
-        SetSessionModeRequest,
+        SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, SetSessionModeRequest,
     },
     Error as AcpError,
-};
-
-use super::{
-    session_host::{PromptGate, SessionHost},
-    AcpClientPort, AcpStartup,
 };
 
 /// One ACP session slot. The host stays in this mutex for its whole life, so a
@@ -137,6 +136,26 @@ impl RhoAcpAgent {
             .prompt(request, port)
             .await
             .map_err(host_error)
+    }
+
+    pub(super) async fn set_config_option(
+        self: &Arc<Self>,
+        request: SetSessionConfigOptionRequest,
+    ) -> Result<SetSessionConfigOptionResponse, AcpError> {
+        let session_id = request.session_id.clone();
+        let live = {
+            let sessions = self.sessions.lock().await;
+            sessions
+                .get(&session_id)
+                .cloned()
+                .ok_or_else(|| missing_session(&session_id))?
+        };
+        let mut slot = live.try_lock_host(&session_id)?;
+        let host = slot.as_mut().expect("try_lock_host rejects an empty slot");
+        Ok(SetSessionConfigOptionResponse::new(
+            host.set_model_option(&request, &self.startup.config)
+                .await?,
+        ))
     }
 
     pub(super) async fn cancel(&self, notification: CancelNotification) {

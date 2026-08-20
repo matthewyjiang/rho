@@ -30,33 +30,9 @@ pub(super) fn cached_metadata(provider: &str, model: &str) -> Option<(ModelMetad
     Some((metadata, is_current))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct ModelSwitchReasoningResolution {
-    pub(super) effective: ReasoningLevel,
-    pub(super) source: ReasoningRequestSource,
-}
-
-pub(super) fn resolve_model_switch_reasoning(
-    capabilities: &ReasoningCapabilities,
-    requested: ReasoningLevel,
-    source: ReasoningRequestSource,
-) -> Result<ModelSwitchReasoningResolution, ReasoningLevel> {
-    let resolution = capabilities.resolve(requested, source);
-    match resolution {
-        ReasoningResolution::UnsupportedExplicit(requested) => Err(requested),
-        ReasoningResolution::Normalized { effective, .. } => Ok(ModelSwitchReasoningResolution {
-            effective,
-            source: ReasoningRequestSource::PersistedOrDefault,
-        }),
-        ReasoningResolution::Exact(effective) | ReasoningResolution::Unknown(effective) => {
-            Ok(ModelSwitchReasoningResolution { effective, source })
-        }
-        ReasoningResolution::NotConfigurable => Ok(ModelSwitchReasoningResolution {
-            effective: requested,
-            source,
-        }),
-    }
-}
+pub(super) use crate::app::conversation_switch::{
+    resolve_model_switch_reasoning, ModelSwitchReasoningResolution,
+};
 
 pub(super) fn resolve_fetched_reasoning(
     capabilities: &ReasoningCapabilities,

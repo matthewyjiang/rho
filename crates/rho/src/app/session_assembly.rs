@@ -83,6 +83,7 @@ pub(super) struct SessionApproval {
 pub(super) struct BuiltSession {
     pub runtime: rho_sdk::Rho,
     pub session: Session,
+    pub provider: Arc<dyn ModelProvider>,
     pub tools: AppToolSet,
     pub hooks: Option<crate::hooks::HookPipeline>,
     pub approval_receiver: Option<ApprovalRequestReceiver>,
@@ -158,6 +159,7 @@ where
     // providers need the hydrate before build; a no-op for the rest.
     sdk_options.provider.ensure_catalog_for_construction().await;
     let provider = build_automation_provider(sdk_options.provider, &credentials)?;
+    let live_provider = Arc::clone(&provider);
     let workspace_root = sdk_options.workspace.root.clone();
     let workspace = sdk_options.workspace.build_workspace()?;
     let ToolsAndPrompt {
@@ -256,6 +258,7 @@ where
         built: BuiltSession {
             runtime,
             session,
+            provider: live_provider,
             tools: tool_set,
             hooks,
             approval_receiver,

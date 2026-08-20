@@ -61,7 +61,7 @@ pub enum WorkflowRunFormat {
 }
 
 #[derive(Parser, Debug)]
-#[command(name = "rho")]
+#[command(name = "rho", version)]
 pub struct Cli {
     #[arg(long)]
     pub provider: Option<String>,
