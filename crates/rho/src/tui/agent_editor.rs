@@ -15,7 +15,7 @@ use anyhow::{anyhow, Context};
 use super::{
     agent_picker::AgentModelView, picker_overlay::OverlayChrome, render::truncate_one_line,
     text_input::AgentField, App, ComposerMode, Entry, PickerAction, PickerBadge, PickerBadgeTone,
-    PickerItem, PickerLayout, UiPicker,
+    PickerItem, PickerLayout, RuntimeModelView, UiPicker,
 };
 
 use crate::agent::{
@@ -23,6 +23,7 @@ use crate::agent::{
     ReasoningLevel,
 };
 use crate::claude_runtime::models as claude_models;
+use crate::model_aliases::ModelAliases;
 use rho_providers::model::{models_dev, ReasoningCapabilities};
 
 /// Stable field-picker values (choice/model phases dispatch by session phase).
@@ -59,6 +60,24 @@ pub(super) enum AgentChoiceField {
     Auth,
     Reasoning,
     InheritClaudeConfig,
+}
+
+/// Conversation model identity consulted when a draft inherits or
+/// under-specifies its model target.
+struct ConversationModelView<'a> {
+    provider: &'a str,
+    model: &'a str,
+    model_aliases: &'a ModelAliases,
+}
+
+impl<'a> From<&'a RuntimeModelView> for ConversationModelView<'a> {
+    fn from(runtime: &'a RuntimeModelView) -> Self {
+        Self {
+            provider: &runtime.provider,
+            model: &runtime.model,
+            model_aliases: &runtime.model_aliases,
+        }
+    }
 }
 
 impl AgentChoiceField {
@@ -467,7 +486,11 @@ fn prompt_body_preview(draft: &AgentDefinition) -> String {
     }
 }
 
-fn agent_choice_picker(field: AgentChoiceField, draft: &AgentDefinition) -> UiPicker {
+fn agent_choice_picker(
+    field: AgentChoiceField,
+    draft: &AgentDefinition,
+    conversation: ConversationModelView<'_>,
+) -> UiPicker {
     debug_assert!(
         !matches!(field, AgentChoiceField::Auth),
         "use auth_choice_picker for auth"
@@ -531,7 +554,7 @@ fn agent_choice_picker(field: AgentChoiceField, draft: &AgentDefinition) -> UiPi
         AgentChoiceField::Reasoning => {
             let is_claude = draft.runtime.runtime() == AgentRuntime::ClaudeCli;
             let current = draft.reasoning();
-            let levels = selectable_agent_reasoning_levels(draft);
+            let levels = selectable_agent_reasoning_levels(draft, conversation);
             let mut items = vec![PickerItem {
                 section: None,
                 label: "inherit".into(),
@@ -654,16 +677,19 @@ fn choice_items(options: &[(&str, &str)], current: &str, value_prefix: &str) -> 
 
 /// Reasoning options for the agent editor.
 ///
-/// Prefer catalog-advertised levels when the draft pins a provider/model.
+/// Prefer catalog-advertised levels for the model this draft will bind to.
 /// Fall back to the full (or Claude-safe) set when catalog data is missing.
-fn selectable_agent_reasoning_levels(draft: &AgentDefinition) -> Vec<ReasoningLevel> {
+fn selectable_agent_reasoning_levels(
+    draft: &AgentDefinition,
+    conversation: ConversationModelView<'_>,
+) -> Vec<ReasoningLevel> {
     let is_claude = draft.runtime.runtime() == AgentRuntime::ClaudeCli;
     // Claude Code efforts are fixed; Claude model ids are not resolved through
     // models.dev provider rows in this editor.
     let capabilities = if is_claude {
         ReasoningCapabilities::Unknown
     } else {
-        draft_model_reasoning_capabilities(draft)
+        draft_model_reasoning_capabilities(draft, conversation)
     };
     let fallback = if is_claude {
         crate::claude_runtime::spawn::CLAUDE_EFFORT_LEVELS.levels()
@@ -673,18 +699,36 @@ fn selectable_agent_reasoning_levels(draft: &AgentDefinition) -> Vec<ReasoningLe
     capabilities.selectable_levels(fallback, draft.reasoning())
 }
 
-fn draft_model_reasoning_capabilities(draft: &AgentDefinition) -> ReasoningCapabilities {
+/// Catalog capabilities for the model this draft will bind to.
+///
+/// Mirrors `apply_rho_model_policy` target resolution: inherit and empty
+/// providers fall back to the conversation identity, `@alias` pins resolve
+/// through the conversation's aliases. Uses `known_` (not `current_`)
+/// capabilities so a stale-but-known catalog row still constrains the picker;
+/// the conversation cycle wants freshness and stays on `current_`.
+fn draft_model_reasoning_capabilities(
+    draft: &AgentDefinition,
+    conversation: ConversationModelView<'_>,
+) -> ReasoningCapabilities {
     let model_policy = draft.model_policy();
     let Some(selection) = model_policy.selection() else {
-        return ReasoningCapabilities::Unknown;
+        // Inherit: the agent runs on the conversation model.
+        return models_dev::known_reasoning_capabilities(conversation.provider, conversation.model);
     };
     if selection.model.is_empty() {
+        // Target model not chosen yet: do not guess from the conversation.
         return ReasoningCapabilities::Unknown;
     }
-    let Some(provider) = selection.provider.as_deref() else {
+    let Ok(resolved) = conversation.model_aliases.resolve(&selection.model) else {
+        // Bind would fail on this alias; offer the full set rather than guess.
         return ReasoningCapabilities::Unknown;
     };
-    models_dev::known_reasoning_capabilities(provider, &selection.model)
+    let provider = resolved
+        .provider
+        .as_deref()
+        .or(selection.provider.as_deref())
+        .unwrap_or(conversation.provider);
+    models_dev::known_reasoning_capabilities(provider, &resolved.model)
 }
 
 #[path = "agent_editor_app.rs"]

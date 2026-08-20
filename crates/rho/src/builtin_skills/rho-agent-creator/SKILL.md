@@ -77,7 +77,7 @@ For Claude-cli starters, offer concrete presets when the user is unsure:
 
 Ask for a reasoning level:
 
-- `runtime: rho`: inherit/default, off, minimal, low, medium, high, xhigh, max. Omitting `reasoning` means the selected model's normal default.
+- `runtime: rho`: always offer inherit/default (omit `reasoning`). Omitting `reasoning` inherits the selected model's / conversation default. When models.dev lists levels for the target model (pinned provider+model, or inherit of a known conversation model), offer only those levels. When unknown (no catalog row, empty model, unresolved provider), fall back to inherit/default, off, minimal, low, medium, high, xhigh, max.
 - `runtime: claude-cli`: inherit/default, low, medium, high, xhigh, max. Omitting `reasoning` inherits Claude's default effort. Map the chosen value to Claude `--effort`. Never emit `off` or `minimal` for Claude.
 
 ## 4. Model policy

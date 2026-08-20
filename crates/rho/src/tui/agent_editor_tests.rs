@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use pretty_assertions::assert_eq;
 
 use super::*;
@@ -5,6 +7,7 @@ use crate::agent::{
     AgentDefinition, AgentId, AgentOrigin, AgentRuntimeSpec, ClaudeAgentConfig, ClaudeToolPolicy,
     ModelPolicy, ModelSelection, PromptPolicy, ToolPolicy,
 };
+use crate::model_aliases::ModelAliases;
 use crate::tui::line_editor::LineEditor;
 use crate::tui::text_input::{AgentField, TextInput};
 
@@ -41,6 +44,40 @@ fn field_values(picker: &UiPicker) -> Vec<&str> {
         .iter()
         .map(|item| item.value.as_str())
         .collect()
+}
+
+fn conversation<'a>(
+    provider: &'a str,
+    model: &'a str,
+    aliases: &'a ModelAliases,
+) -> ConversationModelView<'a> {
+    ConversationModelView {
+        provider,
+        model,
+        model_aliases: aliases,
+    }
+}
+
+fn picker_labels(picker: &UiPicker) -> Vec<&str> {
+    picker
+        .items
+        .iter()
+        .map(|item| item.label.as_str())
+        .collect()
+}
+
+fn rho_draft_with(model: ModelPolicy, reasoning: Option<ReasoningLevel>) -> AgentDefinition {
+    let mut draft = rho_draft();
+    if let AgentRuntimeSpec::Rho {
+        model: draft_model,
+        reasoning: draft_reasoning,
+        ..
+    } = &mut draft.runtime
+    {
+        *draft_model = model;
+        *draft_reasoning = reasoning;
+    }
+    draft
 }
 
 // Covers: the field editor lists only fields the runtime accepts
@@ -127,46 +164,180 @@ fn edit_session_restores_inactive_runtime_settings() {
 // Owner: tui agent editor
 #[test]
 fn model_policy_choice_for_claude_offers_inherit_and_select_only() {
-    let picker = agent_choice_picker(AgentChoiceField::ModelPolicy, &claude_draft());
-    let labels: Vec<&str> = picker
-        .items
-        .iter()
-        .map(|item| item.label.as_str())
-        .collect();
-    assert_eq!(labels, ["inherit", "select"]);
+    let aliases = ModelAliases::default();
+    let picker = agent_choice_picker(
+        AgentChoiceField::ModelPolicy,
+        &claude_draft(),
+        conversation("acme", "unlisted", &aliases),
+    );
+    assert_eq!(picker_labels(&picker), ["inherit", "select"]);
 
-    let rho_picker = agent_choice_picker(AgentChoiceField::ModelPolicy, &rho_draft());
-    let rho_labels: Vec<&str> = rho_picker
-        .items
-        .iter()
-        .map(|item| item.label.as_str())
-        .collect();
-    assert_eq!(rho_labels, ["inherit", "prefer", "require", "select"]);
+    let rho_picker = agent_choice_picker(
+        AgentChoiceField::ModelPolicy,
+        &rho_draft(),
+        conversation("acme", "unlisted", &aliases),
+    );
+    assert_eq!(
+        picker_labels(&rho_picker),
+        ["inherit", "prefer", "require", "select"]
+    );
 }
 
 // Covers: claude reasoning picker omits off and minimal
 // Owner: tui agent editor
 #[test]
 fn claude_reasoning_picker_omits_off_and_minimal() {
-    let reasoning_picker = agent_choice_picker(AgentChoiceField::Reasoning, &claude_draft());
-    let labels: Vec<&str> = reasoning_picker
-        .items
-        .iter()
-        .map(|item| item.label.as_str())
-        .collect();
+    let aliases = ModelAliases::default();
+    let reasoning_picker = agent_choice_picker(
+        AgentChoiceField::Reasoning,
+        &claude_draft(),
+        conversation("acme", "unlisted", &aliases),
+    );
+    let labels = picker_labels(&reasoning_picker);
     assert!(labels.contains(&"inherit"));
     assert!(!labels.contains(&"off"));
     assert!(!labels.contains(&"minimal"));
     assert!(labels.contains(&"high"));
 }
 
-// Covers: pinned catalog models only list advertised reasoning levels in the agent picker
+// Covers: /agents reasoning picker only offers models.dev-valid levels for the
+// model the draft will actually run on (inherit, provider-less pins, aliases)
 // Owner: pure unit (agent editor reasoning choice assembly)
 #[test]
-fn reasoning_picker_follows_pinned_catalog_capabilities() {
+fn reasoning_picker_offers_catalog_valid_levels() {
     use rho_providers::model::models_dev::{
         with_models_dev_cache_dir_for_tests, write_cached_model_metadata_for_tests, ModelMetadata,
     };
+
+    let spark_levels = [
+        ReasoningLevel::Minimal,
+        ReasoningLevel::Low,
+        ReasoningLevel::Medium,
+        ReasoningLevel::High,
+        ReasoningLevel::Xhigh,
+    ];
+    let spark_labels: &[&str] = &["inherit", "minimal", "low", "medium", "high", "xhigh"];
+
+    struct Case<'a> {
+        name: &'static str,
+        draft: AgentDefinition,
+        provider: &'static str,
+        model: &'static str,
+        aliases: ModelAliases,
+        expected: &'a [&'a str],
+    }
+
+    let cases = [
+        Case {
+            name: "inherit follows conversation catalog",
+            draft: rho_draft_with(ModelPolicy::Inherit, None),
+            provider: "meta",
+            model: "muse-spark-1.2",
+            aliases: ModelAliases::default(),
+            expected: spark_labels,
+        },
+        Case {
+            name: "pinned provider+model filters, unsupported pin kept",
+            draft: rho_draft_with(
+                ModelPolicy::Select(ModelSelection {
+                    provider: Some("meta".into()),
+                    model: "muse-spark-1.2".into(),
+                    auth: None,
+                }),
+                Some(ReasoningLevel::Max),
+            ),
+            provider: "acme",
+            model: "unlisted",
+            aliases: ModelAliases::default(),
+            expected: &[
+                "inherit", "minimal", "low", "medium", "high", "xhigh", "max",
+            ],
+        },
+        Case {
+            name: "provider-less pin uses conversation provider",
+            draft: rho_draft_with(
+                ModelPolicy::Select(ModelSelection {
+                    provider: None,
+                    model: "muse-spark-1.2".into(),
+                    auth: None,
+                }),
+                None,
+            ),
+            provider: "meta",
+            model: "other",
+            aliases: ModelAliases::default(),
+            expected: spark_labels,
+        },
+        Case {
+            name: "alias pin resolves through aliases",
+            draft: rho_draft_with(
+                ModelPolicy::Select(ModelSelection {
+                    provider: None,
+                    model: "@spark".into(),
+                    auth: None,
+                }),
+                None,
+            ),
+            provider: "acme",
+            model: "unlisted",
+            aliases: ModelAliases::from_entries(BTreeMap::from([(
+                "spark".into(),
+                "meta/muse-spark-1.2".into(),
+            )]))
+            .unwrap(),
+            expected: spark_labels,
+        },
+        Case {
+            name: "empty model pin keeps full ladder",
+            draft: rho_draft_with(
+                ModelPolicy::Select(ModelSelection {
+                    provider: Some("meta".into()),
+                    model: String::new(),
+                    auth: None,
+                }),
+                None,
+            ),
+            provider: "meta",
+            model: "muse-spark-1.2",
+            aliases: ModelAliases::default(),
+            expected: &[
+                "inherit", "off", "minimal", "low", "medium", "high", "xhigh", "max",
+            ],
+        },
+        Case {
+            name: "unknown catalog keeps full ladder",
+            draft: rho_draft_with(ModelPolicy::Inherit, None),
+            provider: "acme",
+            model: "unlisted",
+            aliases: ModelAliases::default(),
+            expected: &[
+                "inherit", "off", "minimal", "low", "medium", "high", "xhigh", "max",
+            ],
+        },
+        Case {
+            name: "NotConfigurable offers inherit only",
+            draft: rho_draft_with(ModelPolicy::Inherit, None),
+            provider: "meta",
+            model: "muse-stone-1.0",
+            aliases: ModelAliases::default(),
+            expected: &["inherit"],
+        },
+        Case {
+            name: "NotConfigurable keeps current pin",
+            draft: rho_draft_with(
+                ModelPolicy::Select(ModelSelection {
+                    provider: Some("meta".into()),
+                    model: "muse-stone-1.0".into(),
+                    auth: None,
+                }),
+                Some(ReasoningLevel::High),
+            ),
+            provider: "acme",
+            model: "unlisted",
+            aliases: ModelAliases::default(),
+            expected: &["inherit", "high"],
+        },
+    ];
 
     let cache = tempfile::tempdir().unwrap();
     with_models_dev_cache_dir_for_tests(cache.path().to_path_buf(), || {
@@ -174,42 +345,31 @@ fn reasoning_picker_follows_pinned_catalog_capabilities() {
             "meta",
             "muse-spark-1.2",
             &ModelMetadata {
-                supported_reasoning_levels: Some(vec![
-                    ReasoningLevel::Minimal,
-                    ReasoningLevel::Low,
-                    ReasoningLevel::Medium,
-                    ReasoningLevel::High,
-                    ReasoningLevel::Xhigh,
-                ]),
+                supported_reasoning_levels: Some(spark_levels.to_vec()),
+                reasoning_capabilities_known: true,
+                reasoning_metadata_complete: true,
+                ..ModelMetadata::default()
+            },
+        );
+        write_cached_model_metadata_for_tests(
+            "meta",
+            "muse-stone-1.0",
+            &ModelMetadata {
+                supported_reasoning_levels: Some(vec![]),
                 reasoning_capabilities_known: true,
                 reasoning_metadata_complete: true,
                 ..ModelMetadata::default()
             },
         );
 
-        let mut draft = rho_draft();
-        if let AgentRuntimeSpec::Rho {
-            model, reasoning, ..
-        } = &mut draft.runtime
-        {
-            *model = ModelPolicy::Select(ModelSelection {
-                provider: Some("meta".into()),
-                model: "muse-spark-1.2".into(),
-                auth: None,
-            });
-            *reasoning = Some(ReasoningLevel::Max);
+        for case in &cases {
+            let picker = agent_choice_picker(
+                AgentChoiceField::Reasoning,
+                &case.draft,
+                conversation(case.provider, case.model, &case.aliases),
+            );
+            assert_eq!(picker_labels(&picker), case.expected, "{}", case.name);
         }
-
-        let picker = agent_choice_picker(AgentChoiceField::Reasoning, &draft);
-        let labels: Vec<&str> = picker
-            .items
-            .iter()
-            .map(|item| item.label.as_str())
-            .collect();
-        assert_eq!(
-            labels,
-            ["inherit", "minimal", "low", "medium", "high", "xhigh", "max"]
-        );
     });
 }
 
