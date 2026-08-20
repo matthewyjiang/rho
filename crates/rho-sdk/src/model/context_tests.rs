@@ -109,6 +109,21 @@ fn provider_usage_becomes_current_context_from_total_input() {
 }
 
 #[test]
+fn provider_usage_recovers_mixed_prompt_total_as_context() {
+    let usage = ModelUsage {
+        output_tokens: Some(5),
+        total_tokens: Some(105),
+        context_window: Some(10_000),
+        ..ModelUsage::default()
+    };
+
+    assert_eq!(
+        ContextUsage::from_model_usage(&usage),
+        Some(ContextUsage::provider_reported(100, Some(10_000)))
+    );
+}
+
+#[test]
 fn estimates_message_slices_without_request_or_tool_overhead() {
     let messages = vec![
         Message::user_text("1234"),

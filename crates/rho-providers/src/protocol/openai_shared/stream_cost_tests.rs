@@ -35,9 +35,9 @@ fn reported_cost_includes_byok_upstream_inference_cost() {
     assert_eq!(
         extract_usage(&value),
         Some(ModelUsage {
-            input_tokens: Some(91),
+            input_tokens: None,
             output_tokens: Some(38),
-            total_tokens: None,
+            total_tokens: Some(129),
             cost_usd_micros: Some(597),
             ..ModelUsage::default()
         })
@@ -128,6 +128,43 @@ fn invalid_reported_costs_do_not_replace_catalog_fallback() {
     assert_eq!(
         extract_usage(&malformed_cost).and_then(|usage| usage.cost_usd_micros),
         None
+    );
+}
+
+// Covers: a bare prompt_tokens total still includes cache hits, so it must not
+// become ModelUsage.input_tokens (uncached) until the host reports the split
+// Owner: OpenAI shared usage parser
+#[test]
+fn prompt_tokens_without_cache_details_are_not_uncached_input() {
+    let unknown_split = json!({
+        "usage": { "prompt_tokens": 100, "completion_tokens": 5, "total_tokens": 105 }
+    });
+    let explicit_zero_cache = json!({
+        "usage": {
+            "prompt_tokens": 100,
+            "completion_tokens": 5,
+            "prompt_tokens_details": { "cached_tokens": 0 }
+        }
+    });
+
+    assert_eq!(
+        extract_usage(&unknown_split),
+        Some(ModelUsage {
+            input_tokens: None,
+            output_tokens: Some(5),
+            total_tokens: Some(105),
+            ..ModelUsage::default()
+        })
+    );
+    assert_eq!(
+        extract_usage(&explicit_zero_cache),
+        Some(ModelUsage {
+            input_tokens: Some(100),
+            output_tokens: Some(5),
+            cache_read_tokens: Some(0),
+            total_tokens: Some(105),
+            ..ModelUsage::default()
+        })
     );
 }
 

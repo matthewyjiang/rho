@@ -141,7 +141,7 @@ fn parse_compact_response_reads_usage() {
     )
     .unwrap();
     assert_eq!(messages.len(), 2);
-    assert_eq!(usage.input_tokens, Some(100));
+    assert_eq!(usage.input_tokens, None);
     assert_eq!(usage.output_tokens, Some(5));
     assert_eq!(usage.total_tokens, Some(105));
 }
@@ -201,7 +201,7 @@ fn native_compact_from_response_body_success_and_failure() {
     assert!(failed.is_empty());
     let output = result.expect("success");
     assert_eq!(output.messages().len(), 2);
-    assert_eq!(output.usage().input_tokens, Some(3));
+    assert_eq!(output.usage().input_tokens, None);
 
     let err = native_compact_from_response_body(
         identity,
@@ -258,6 +258,6 @@ fn xai_single_compaction_item_replaces_history() {
         marker.provider_context[0].data["encrypted_content"],
         "opaque-blob"
     );
-    assert_eq!(usage.input_tokens, Some(12000));
+    assert_eq!(usage.input_tokens, None);
     assert_eq!(usage.output_tokens, Some(800));
 }

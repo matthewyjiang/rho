@@ -64,15 +64,16 @@ impl AttemptAwareRunUsage {
     }
 }
 
-/// Display-only usage for the in-flight provider stream.
+/// Display-only generation for the in-flight provider stream.
 ///
 /// Quiet hosts (OpenAI-compatible chat) often withhold usage until the final
-/// chunk. This estimate fills the statusline while thinking and tool JSON
-/// stream, then yields as soon as any provider `Usage` arrives for the attempt.
-/// It must never enter the durable usage ledger.
+/// chunk. This estimate meters streamed output so statusline cost can advance
+/// during the attempt, then yields as soon as any provider `Usage` arrives.
+/// It must never enter the durable usage ledger, and it must not restate the
+/// prompt as new uncached input: `ContextEstimated` is the full window, so
+/// billing it on submit double-counts history and ignores cache.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct LiveStreamUsageEstimate {
-    input_tokens: Option<u64>,
     output_tokens: u64,
     provider_usage_seen: bool,
 }
@@ -80,12 +81,6 @@ pub(super) struct LiveStreamUsageEstimate {
 impl LiveStreamUsageEstimate {
     pub(super) fn clear(&mut self) {
         *self = Self::default();
-    }
-
-    pub(super) fn note_estimated_input(&mut self, tokens: u64) {
-        if !self.provider_usage_seen {
-            self.input_tokens = Some(tokens);
-        }
     }
 
     pub(super) fn add_output_text(&mut self, text: &str) {
@@ -101,12 +96,11 @@ impl LiveStreamUsageEstimate {
 
     pub(super) fn provider_usage_received(&mut self) {
         self.provider_usage_seen = true;
-        self.input_tokens = None;
         self.output_tokens = 0;
     }
 
     pub(super) fn is_active(&self) -> bool {
-        !self.provider_usage_seen && (self.input_tokens.is_some() || self.output_tokens > 0)
+        !self.provider_usage_seen && self.output_tokens > 0
     }
 
     pub(super) fn as_usage(&self) -> Option<ModelUsage> {
@@ -114,8 +108,7 @@ impl LiveStreamUsageEstimate {
             return None;
         }
         Some(ModelUsage {
-            input_tokens: self.input_tokens,
-            output_tokens: (self.output_tokens > 0).then_some(self.output_tokens),
+            output_tokens: Some(self.output_tokens),
             ..ModelUsage::default()
         })
     }
@@ -209,10 +202,15 @@ pub(super) fn estimated_cost_usd_micros(
     metadata: Option<&ModelMetadata>,
 ) -> Option<u64> {
     let metadata = metadata?;
-    let input = usage.input_tokens.unwrap_or_default();
     let cache_read = usage.cache_read_tokens.unwrap_or_default();
-    let total_input = usage.total_input_tokens().unwrap_or_default();
-    let cost = metadata.cost_for_input_tokens(total_input)?;
+    let inclusive = usage.inclusive_prompt_tokens().unwrap_or_default();
+    // Always derive billed input from inclusive prompt size. Preferring
+    // `input_tokens` when Some drops mute turns after a later cache split:
+    // accumulated `input_tokens` holds only the split remainder.
+    let input = inclusive
+        .saturating_sub(cache_read)
+        .saturating_sub(usage.cache_write_tokens.unwrap_or_default());
+    let cost = metadata.cost_for_input_tokens(inclusive)?;
     let mut micros = 0u128;
     micros += cost_component(input, cost.input_micros_per_m);
     micros += cost_component(
@@ -251,16 +249,21 @@ pub(super) fn format_token_count(tokens: u64) -> String {
 /// Compact in/out/cache breakdown for status and attach headers.
 pub(super) fn format_usage_token_summary(usage: &ModelUsage) -> Option<String> {
     let mut parts = Vec::new();
-    push_token_part(&mut parts, "in", usage.input_tokens);
+    push_token_part(&mut parts, "in", display_input_tokens(usage));
     push_token_part(&mut parts, "out", usage.output_tokens);
     push_token_part(&mut parts, "cache r", usage.cache_read_tokens);
     push_token_part(&mut parts, "cache w", usage.cache_write_tokens);
-    if parts.is_empty() {
-        // Fall back to total input when providers only report an aggregate.
-        push_token_part(&mut parts, "in", usage.total_input_tokens());
-        push_token_part(&mut parts, "out", usage.output_tokens);
-    }
     (!parts.is_empty()).then(|| format!("tokens {}", parts.join(" · ")))
+}
+
+pub(super) fn display_input_tokens(usage: &ModelUsage) -> Option<u64> {
+    usage.input_tokens.or_else(|| {
+        let has_cache_split =
+            usage.cache_read_tokens.is_some() || usage.cache_write_tokens.is_some();
+        (!has_cache_split)
+            .then(|| usage.inclusive_prompt_tokens())
+            .flatten()
+    })
 }
 
 fn push_token_part(parts: &mut Vec<String>, label: &str, tokens: Option<u64>) {
@@ -346,7 +349,7 @@ pub(super) fn merge_usage(total: &mut Option<ModelUsage>, mut usage: ModelUsage)
 
 pub(super) fn usage_total_tokens(usage: &ModelUsage) -> Option<u64> {
     let total = usage
-        .total_input_tokens()
+        .inclusive_prompt_tokens()
         .unwrap_or_default()
         .saturating_add(usage.output_tokens.unwrap_or_default());
     (total > 0).then_some(total)

@@ -3,8 +3,10 @@ use std::collections::HashMap;
 use serde_json::json;
 
 use crate::model::{
-    handoff::prepare_assistant, ContentBlock, Message, ModelError, ModelEvent, ModelIdentity,
-    ModelResponse, ModelUsage, ToolCall, ToolSpec,
+    handoff::prepare_assistant,
+    inclusive_prompt::{model_usage_from_inclusive_prompt, InclusivePromptUsage},
+    ContentBlock, Message, ModelError, ModelEvent, ModelIdentity, ModelResponse, ModelUsage,
+    ToolCall, ToolSpec,
 };
 
 use super::types::*;
@@ -512,23 +514,23 @@ impl ResponseCollector {
 }
 
 fn usage_from_metadata(usage: UsageMetadata) -> ModelUsage {
-    let cached = usage.cached_content_token_count;
-    ModelUsage {
-        input_tokens: usage
-            .prompt_token_count
-            .map(|total| total.saturating_sub(cached.unwrap_or_default())),
-        output_tokens: match (usage.candidates_token_count, usage.thoughts_token_count) {
-            (None, None) => None,
-            (answer, thoughts) => Some(
-                answer
-                    .unwrap_or_default()
-                    .saturating_add(thoughts.unwrap_or_default()),
-            ),
-        },
-        cache_read_tokens: cached,
-        total_tokens: usage.total_token_count,
-        ..ModelUsage::default()
-    }
+    let output_tokens = match (usage.candidates_token_count, usage.thoughts_token_count) {
+        (None, None) => None,
+        (answer, thoughts) => Some(
+            answer
+                .unwrap_or_default()
+                .saturating_add(thoughts.unwrap_or_default()),
+        ),
+    };
+    model_usage_from_inclusive_prompt(InclusivePromptUsage {
+        prompt_tokens: usage.prompt_token_count,
+        output_tokens,
+        cache_read_tokens: usage.cached_content_token_count,
+        cache_write_tokens: None,
+        reported_total: usage.total_token_count,
+        context_window: None,
+        cost_usd_micros: None,
+    })
 }
 
 fn merge_cumulative_usage(previous: &UsageMetadata, observed: UsageMetadata) -> UsageMetadata {

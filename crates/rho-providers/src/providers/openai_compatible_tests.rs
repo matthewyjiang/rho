@@ -676,7 +676,7 @@ async fn poolside_publishes_only_final_stream_usage_snapshot() {
                 data: json!({ "tokens": null }),
             },
             ModelEvent::Usage(ModelUsage {
-                input_tokens: Some(6_900),
+                input_tokens: None,
                 output_tokens: Some(2),
                 total_tokens: Some(6_902),
                 ..ModelUsage::default()
@@ -704,8 +704,9 @@ async fn poolside_off_trusts_aggregate_output_without_reasoning_details() {
         vec![
             ModelEvent::OutputDelta("hi".into()),
             ModelEvent::Usage(ModelUsage {
-                input_tokens: Some(10),
+                input_tokens: None,
                 output_tokens: Some(2),
+                total_tokens: Some(12),
                 ..ModelUsage::default()
             }),
         ]
@@ -738,8 +739,9 @@ async fn poolside_streamed_reasoning_reports_full_output_total() {
                 data: json!({ "tokens": 230 }),
             },
             ModelEvent::Usage(ModelUsage {
-                input_tokens: Some(10),
+                input_tokens: None,
                 output_tokens: Some(230),
+                total_tokens: Some(240),
                 ..ModelUsage::default()
             }),
             ModelEvent::ProviderContext {

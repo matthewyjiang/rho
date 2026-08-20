@@ -134,7 +134,8 @@ impl CacheStatsTracker {
         let Some(usage) = self.reported_usage.take() else {
             return;
         };
-        let Some(prompt_tokens) = usage.total_input_tokens().filter(|tokens| *tokens > 0) else {
+        let Some(prompt_tokens) = usage.inclusive_prompt_tokens().filter(|tokens| *tokens > 0)
+        else {
             return;
         };
 

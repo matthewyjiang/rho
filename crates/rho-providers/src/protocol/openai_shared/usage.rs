@@ -6,7 +6,10 @@
 //! the runtime's generation window.
 
 use crate::{
-    model::{ModelEvent, ModelUsage},
+    model::{
+        inclusive_prompt::{model_usage_from_inclusive_prompt, InclusivePromptUsage},
+        ModelEvent, ModelUsage,
+    },
     protocol::cost::parse_usd_micros,
 };
 
@@ -204,20 +207,15 @@ impl RawUsage {
     /// OpenAI reports cache reads and writes as subsets of the raw input
     /// count, while `ModelUsage` keeps the three input buckets disjoint.
     pub(crate) fn into_model_usage(self) -> ModelUsage {
-        let input_tokens = self.input_tokens.map(|input| {
-            input
-                .saturating_sub(self.cache_read_tokens.unwrap_or_default())
-                .saturating_sub(self.cache_write_tokens.unwrap_or_default())
-        });
-        ModelUsage {
-            input_tokens,
+        model_usage_from_inclusive_prompt(InclusivePromptUsage {
+            prompt_tokens: self.input_tokens,
             output_tokens: self.output_tokens,
             cache_read_tokens: self.cache_read_tokens,
             cache_write_tokens: self.cache_write_tokens,
-            total_tokens: self.total_tokens,
+            reported_total: self.total_tokens,
             context_window: self.context_window,
             cost_usd_micros: self.cost_usd_micros,
-        }
+        })
     }
 
     pub(crate) fn reported_output(self) -> Option<ReportedOutputUsage> {

@@ -2,8 +2,8 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 
 use super::{
-    AbortedAssistant, AssistantMessage, ContentBlock, ImageContent, Message, ModelIdentity,
-    ModelUsage, PartialToolCall, ProviderContextBlock,
+    AbortedAssistant, AssistantMessage, ContentBlock, ImageContent, InclusivePromptUsage, Message,
+    ModelIdentity, ModelUsage, PartialToolCall, ProviderContextBlock,
 };
 
 #[test]
@@ -137,4 +137,62 @@ fn image_content_recognizes_supported_signatures() {
         Some("image/webp")
     );
     assert_eq!(ImageContent::mime_type_from_bytes(b"plain text"), None);
+}
+
+// Covers: inclusive-prompt hosts must not store mixed totals as uncached input,
+// and later cache-split snapshots must not erase earlier mute prompt size
+// Owner: sdk model usage
+#[test]
+fn inclusive_prompt_recovers_mute_totals_without_claiming_uncached() {
+    let mute = ModelUsage::from_inclusive_prompt(InclusivePromptUsage {
+        prompt_tokens: Some(100),
+        output_tokens: Some(5),
+        reported_total: Some(105),
+        ..InclusivePromptUsage::default()
+    });
+    let explicit_zero_cache = ModelUsage::from_inclusive_prompt(InclusivePromptUsage {
+        prompt_tokens: Some(100),
+        output_tokens: Some(5),
+        cache_read_tokens: Some(0),
+        reported_total: Some(105),
+        ..InclusivePromptUsage::default()
+    });
+    let split = ModelUsage::from_inclusive_prompt(InclusivePromptUsage {
+        prompt_tokens: Some(100),
+        output_tokens: Some(10),
+        cache_read_tokens: Some(20),
+        reported_total: Some(110),
+        ..InclusivePromptUsage::default()
+    });
+    let growing_total = ModelUsage {
+        total_tokens: Some(105),
+        ..ModelUsage::default()
+    };
+    let merged = mute.saturating_add(&split);
+
+    assert_eq!(
+        mute,
+        ModelUsage {
+            output_tokens: Some(5),
+            total_tokens: Some(105),
+            ..ModelUsage::default()
+        }
+    );
+    assert_eq!(mute.total_input_tokens(), None);
+    assert_eq!(mute.inclusive_prompt_tokens(), Some(100));
+
+    assert_eq!(explicit_zero_cache.input_tokens, Some(100));
+    assert_eq!(explicit_zero_cache.cache_read_tokens, Some(0));
+    assert_eq!(explicit_zero_cache.inclusive_prompt_tokens(), Some(100));
+
+    assert_eq!(split.input_tokens, Some(80));
+    assert_eq!(split.total_input_tokens(), Some(100));
+    assert_eq!(split.inclusive_prompt_tokens(), Some(100));
+
+    assert_eq!(growing_total.inclusive_prompt_tokens(), None);
+
+    assert_eq!(merged.input_tokens, Some(80));
+    assert_eq!(merged.cache_read_tokens, Some(20));
+    assert_eq!(merged.total_input_tokens(), Some(100));
+    assert_eq!(merged.inclusive_prompt_tokens(), Some(200));
 }

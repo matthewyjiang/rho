@@ -292,11 +292,6 @@ impl App {
             }
             ViewModelEvent::ContextUsage(usage) => {
                 self.info.services.diagnostics.record_context(usage.clone());
-                if usage.source == rho_sdk::model::ContextUsageSource::Estimated {
-                    if let Some(tokens) = usage.tokens {
-                        self.usage.live_stream.note_estimated_input(tokens);
-                    }
-                }
                 self.usage.current_context = Some(usage);
                 None
             }

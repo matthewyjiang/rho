@@ -234,7 +234,8 @@ fn cumulative_usage_replaces_live_run_snapshots_and_adds_completed_runs() {
     );
 }
 
-// Covers: quiet hosts must advance estimated cost while thinking before usage arrives
+// Covers: quiet hosts must not reprice estimated context on submit; live cost
+// grows from streamed output, then yields to provider-reported usage
 // Owner: tui transcript usage accounting
 #[test]
 fn live_stream_estimate_grows_during_reasoning_and_yields_to_provider() {
@@ -250,10 +251,34 @@ fn live_stream_estimate_grows_during_reasoning_and_yields_to_provider() {
     });
     app.record_agent_event(ViewModelEvent::RunStarted);
     app.record_agent_event(ViewModelEvent::StepStarted(1));
+    app.record_agent_event(ViewModelEvent::Usage(ModelUsage {
+        input_tokens: Some(80),
+        output_tokens: Some(10),
+        cost_usd_micros: Some(100),
+        ..Default::default()
+    }));
+    app.record_agent_event(ViewModelEvent::RunStarted);
+    app.record_agent_event(ViewModelEvent::StepStarted(1));
     app.record_agent_event(ViewModelEvent::ContextUsage(ContextUsage::estimated(
         1_000,
         Some(10_000),
     )));
+    assert!(!app.usage.live_stream.is_active());
+    assert_eq!(
+        crate::tui::usage_cost::display_usage_with_live(
+            app.usage.cumulative_usage.as_ref(),
+            &app.usage.live_stream,
+            app.model_metadata.as_ref(),
+        ),
+        Some(ModelUsage {
+            input_tokens: Some(80),
+            output_tokens: Some(10),
+            total_tokens: Some(90),
+            cost_usd_micros: Some(100),
+            ..Default::default()
+        })
+    );
+
     app.record_agent_event(ViewModelEvent::LiveOutputText(
         "a".repeat(16), // 16 chars => 4 tokens
     ));
@@ -264,9 +289,9 @@ fn live_stream_estimate_grows_during_reasoning_and_yields_to_provider() {
         app.model_metadata.as_ref(),
     )
     .expect("live display usage");
-    assert_eq!(display.input_tokens, Some(1_000));
-    assert_eq!(display.output_tokens, Some(4));
-    assert_eq!(display.cost_usd_micros, Some(1_008));
+    assert_eq!(display.input_tokens, Some(80));
+    assert_eq!(display.output_tokens, Some(14));
+    assert_eq!(display.cost_usd_micros, Some(108));
 
     app.record_agent_event(ViewModelEvent::Usage(ModelUsage {
         input_tokens: Some(1_000),
@@ -278,10 +303,10 @@ fn live_stream_estimate_grows_during_reasoning_and_yields_to_provider() {
     assert_eq!(
         app.usage.cumulative_usage,
         Some(ModelUsage {
-            input_tokens: Some(1_000),
-            output_tokens: Some(10),
-            total_tokens: Some(1_010),
-            cost_usd_micros: Some(1_020),
+            input_tokens: Some(1_080),
+            output_tokens: Some(20),
+            total_tokens: Some(1_100),
+            cost_usd_micros: Some(1_120),
             ..Default::default()
         })
     );
