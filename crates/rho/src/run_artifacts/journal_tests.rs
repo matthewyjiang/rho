@@ -34,3 +34,32 @@ fn attachment_stream_skips_malformed_events() {
         AttachmentEvent::AssistantTextDelta("valid".into())
     );
 }
+
+// Covers: attach journals persist the tagged model-call wire shape for readers.
+// Owner: run artifact journal
+#[test]
+fn model_call_completed_round_trips_tagged_data() {
+    let event = AttachmentEvent::ModelCallCompleted {
+        generation_output_tokens: 80,
+        generation_time_ms: 2_000,
+    };
+    assert_eq!(
+        serde_json::to_value(&event).unwrap(),
+        serde_json::json!({
+            "type": "model_call_completed",
+            "data": {
+                "generation_output_tokens": 80,
+                "generation_time_ms": 2000
+            }
+        })
+    );
+
+    let directory = TempDir::new().unwrap();
+    let result_path = directory.path().join(subagent::RESULT_FILE_NAME);
+    let mut writer = AttachmentWriter::create(&result_path).unwrap();
+    writer.write_event(&event).unwrap();
+    drop(writer);
+
+    let mut reader = AttachmentReader::new(directory.path().join(subagent::ATTACHMENT_FILE_NAME));
+    assert_eq!(reader.read_new().unwrap(), vec![event]);
+}

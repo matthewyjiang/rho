@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
@@ -192,4 +192,78 @@ fn call_id_less_preview_and_later_update_reuse_the_same_key() {
             card: with_id,
         })
     );
+}
+
+fn model_call_completed(
+    output_tokens: Option<u64>,
+    generation_time: Option<Duration>,
+) -> rho_sdk::RunEvent {
+    rho_sdk::RunEvent::ModelCallCompleted {
+        profile: rho_sdk::ModelCallProfile {
+            provider: "openai".into(),
+            model: "gpt".into(),
+            reasoning: rho_sdk::ReasoningLevel::Medium,
+            service_tier: None,
+        },
+        metrics: rho_sdk::ModelCallMetrics {
+            output_tokens,
+            time_to_first_token: Some(Duration::from_millis(200)),
+            generation_time,
+            total_latency: Duration::from_millis(2_200),
+        },
+    }
+}
+
+// Covers: attach journals resolved generation tokens and time, including the
+// 1.x ProviderActivity carrier path.
+// Owner: attach SDK writer
+#[test]
+fn model_call_completed_journals_resolved_tokens_and_time() {
+    let mut adapter = SdkEventAdapter::default();
+    assert_eq!(
+        translate_run_event(
+            &mut adapter,
+            &model_call_completed(Some(100), Some(Duration::from_secs(2))),
+        ),
+        vec![AttachmentEvent::ModelCallCompleted {
+            generation_output_tokens: 100,
+            generation_time_ms: 2_000,
+        }]
+    );
+
+    #[allow(deprecated)]
+    let carrier = rho_sdk::RunEvent::ProviderActivity {
+        kind: "model_call_generation_output_tokens".into(),
+        detail: "80".into(),
+    };
+    assert!(translate_run_event(&mut adapter, &carrier).is_empty());
+    assert_eq!(
+        translate_run_event(
+            &mut adapter,
+            &model_call_completed(Some(100), Some(Duration::from_secs(2))),
+        ),
+        vec![AttachmentEvent::ModelCallCompleted {
+            generation_output_tokens: 80,
+            generation_time_ms: 2_000,
+        }]
+    );
+}
+
+// Covers: attach omits model-call lines without both resolved tokens and time.
+// Owner: attach SDK writer
+#[test]
+fn model_call_completed_without_tokens_or_time_is_not_journaled() {
+    let mut adapter = SdkEventAdapter::default();
+    #[allow(deprecated)]
+    let unavailable = rho_sdk::RunEvent::ProviderActivity {
+        kind: "model_call_generation_output_tokens".into(),
+        detail: "unavailable".into(),
+    };
+    assert!(translate_run_event(&mut adapter, &unavailable).is_empty());
+    assert!(translate_run_event(
+        &mut adapter,
+        &model_call_completed(Some(100), Some(Duration::from_secs(2))),
+    )
+    .is_empty());
+    assert!(translate_run_event(&mut adapter, &model_call_completed(Some(100), None),).is_empty());
 }

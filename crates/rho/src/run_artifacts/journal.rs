@@ -34,6 +34,15 @@ pub(crate) enum AttachmentEvent {
     Notice(String),
     ContextUsage(ContextUsage),
     Usage(ModelUsage),
+    /// Completed model call that streamed generated output. The writer resolves
+    /// token attribution (reported vs aggregate fallback) before journaling, so
+    /// readers only see usable numbers; calls without both resolved tokens and
+    /// generation time are not journaled. Absent for claude-cli runs and old
+    /// journals. Old readers render unknown variants as a skipped-event notice.
+    ModelCallCompleted {
+        generation_output_tokens: u64,
+        generation_time_ms: u64,
+    },
     StepStarted,
     ProviderStreamReset,
     Completed,
