@@ -15,7 +15,7 @@ use rusqlite::params;
 use tokio::sync::Mutex;
 
 use crate::provider::{
-    CatalogConstruction, CatalogReasoningPolicy, ProviderDescriptor, ProviderId,
+    CatalogConstruction, CatalogLookupMode, CatalogReasoningPolicy, ProviderDescriptor, ProviderId,
 };
 
 use super::{
@@ -131,6 +131,7 @@ pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
             }
         }
     }
+    let mut borrowed_slugs = HashSet::new();
     for host in crate::provider::interned_custom_providers() {
         let slug = host.metadata_upstream;
         if slug == host.name {
@@ -144,6 +145,7 @@ pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
         } else {
             slug
         };
+        borrowed_slugs.insert(slug);
         for model_id in provider.models.keys() {
             let Some(metadata) =
                 document::model_metadata_from_catalog(api, slug, model_id, host.catalog_reasoning)
@@ -154,9 +156,11 @@ pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
             entries.push((cache_provider.to_string(), model_id.clone(), metadata));
         }
     }
-    if crate::provider::interned_custom_hosts_need_full_models_dev_tree() {
+    if matches!(needed_extra_catalog_docs(), ExtraCatalogDocs::All) {
         for (slug, provider) in api.iter_providers() {
-            if super::borrowed_slug_collides_with_builtin_extract(slug) {
+            if borrowed_slugs.contains(slug)
+                || super::borrowed_slug_collides_with_builtin_extract(slug)
+            {
                 continue;
             }
             for model_id in provider.models.keys() {
@@ -203,31 +207,61 @@ fn catalog_model_ids_for_provider(
         .unwrap_or_default()
 }
 
-fn borrowed_custom_catalog_slugs() -> HashSet<String> {
-    crate::provider::interned_custom_providers()
-        .into_iter()
-        .filter(|descriptor| descriptor.metadata_upstream != descriptor.name)
-        .map(|descriptor| descriptor.metadata_upstream.to_string())
-        .collect()
+/// Extra models.dev documents this snapshot must contain besides Rho extract.
+enum ExtraCatalogDocs {
+    /// Only these borrowed slugs.
+    Slugs(HashSet<String>),
+    /// Every models.dev document. Used when a host splits `provider/model` ids.
+    All,
 }
 
-fn encode_borrowed_slugs(slugs: &HashSet<String>) -> String {
-    let mut slugs = slugs.iter().cloned().collect::<Vec<_>>();
-    slugs.sort_unstable();
-    slugs.join(",")
+/// Sentinel stored in `catalog_snapshot.borrowed_slugs` for [`ExtraCatalogDocs::All`].
+const EXTRA_CATALOG_DOCS_ALL: &str = "*";
+
+fn needed_extra_catalog_docs() -> ExtraCatalogDocs {
+    let interned = crate::provider::interned_custom_providers();
+    if interned
+        .iter()
+        .any(|descriptor| descriptor.catalog_lookup == CatalogLookupMode::ModelId)
+    {
+        return ExtraCatalogDocs::All;
+    }
+    ExtraCatalogDocs::Slugs(
+        interned
+            .into_iter()
+            .filter(|descriptor| descriptor.metadata_upstream != descriptor.name)
+            .map(|descriptor| descriptor.metadata_upstream.to_string())
+            .collect(),
+    )
 }
 
-fn decode_borrowed_slugs(raw: &str) -> HashSet<String> {
-    raw.split(',')
-        .map(str::trim)
-        .filter(|slug| !slug.is_empty())
-        .map(str::to_string)
-        .collect()
+fn encode_extra_catalog_docs(docs: &ExtraCatalogDocs) -> String {
+    match docs {
+        ExtraCatalogDocs::All => EXTRA_CATALOG_DOCS_ALL.to_string(),
+        ExtraCatalogDocs::Slugs(slugs) => {
+            let mut slugs = slugs.iter().cloned().collect::<Vec<_>>();
+            slugs.sort_unstable();
+            slugs.join(",")
+        }
+    }
 }
 
-fn stored_borrowed_catalog_slugs() -> HashSet<String> {
+fn decode_extra_catalog_docs(raw: &str) -> ExtraCatalogDocs {
+    if raw.trim() == EXTRA_CATALOG_DOCS_ALL {
+        return ExtraCatalogDocs::All;
+    }
+    ExtraCatalogDocs::Slugs(
+        raw.split(',')
+            .map(str::trim)
+            .filter(|slug| !slug.is_empty())
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
+fn stored_extra_catalog_docs() -> ExtraCatalogDocs {
     let Ok(connection) = open_models_dev_cache() else {
-        return HashSet::new();
+        return ExtraCatalogDocs::Slugs(HashSet::new());
     };
     connection
         .query_row(
@@ -236,31 +270,25 @@ fn stored_borrowed_catalog_slugs() -> HashSet<String> {
             |row| row.get::<_, String>(0),
         )
         .ok()
-        .map(|raw| decode_borrowed_slugs(&raw))
-        .unwrap_or_default()
+        .map(|raw| decode_extra_catalog_docs(&raw))
+        .unwrap_or_else(|| ExtraCatalogDocs::Slugs(HashSet::new()))
 }
 
-fn borrowed_catalog_slugs_are_hydrated() -> bool {
-    let needed = borrowed_custom_catalog_slugs();
-    needed.is_empty() || needed.is_subset(&stored_borrowed_catalog_slugs())
+fn extra_catalog_docs_are_hydrated() -> bool {
+    extra_catalog_docs_cover(&needed_extra_catalog_docs(), &stored_extra_catalog_docs())
 }
 
-fn full_models_dev_tree_is_hydrated() -> bool {
-    !crate::provider::interned_custom_hosts_need_full_models_dev_tree() || stored_full_tree_flag()
-}
-
-fn stored_full_tree_flag() -> bool {
-    let Ok(connection) = open_models_dev_cache() else {
-        return false;
-    };
-    connection
-        .query_row(
-            "select full_tree from catalog_snapshot where id = 1",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .ok()
-        .is_some_and(|flag| flag != 0)
+fn extra_catalog_docs_cover(needed: &ExtraCatalogDocs, stored: &ExtraCatalogDocs) -> bool {
+    match needed {
+        ExtraCatalogDocs::All => matches!(stored, ExtraCatalogDocs::All),
+        ExtraCatalogDocs::Slugs(needed) => {
+            needed.is_empty()
+                || match stored {
+                    ExtraCatalogDocs::All => true,
+                    ExtraCatalogDocs::Slugs(stored) => needed.is_subset(stored),
+                }
+        }
+    }
 }
 
 /// Extracts metadata when its reasoning metadata is complete. Providers whose
@@ -292,7 +320,7 @@ fn catalog_hydrate_lock() -> &'static Mutex<()> {
 }
 
 pub(super) fn catalog_snapshot_is_ready() -> bool {
-    if !borrowed_catalog_slugs_are_hydrated() || !full_models_dev_tree_is_hydrated() {
+    if !extra_catalog_docs_are_hydrated() {
         return false;
     }
     // Isolated test cache dirs share this process flag. A sibling test that
@@ -338,18 +366,16 @@ pub(super) fn mark_catalog_snapshot_current() -> bool {
     let Ok(connection) = open_models_dev_cache() else {
         return false;
     };
-    let borrowed = encode_borrowed_slugs(&borrowed_custom_catalog_slugs());
-    let full_tree = i64::from(crate::provider::interned_custom_hosts_need_full_models_dev_tree());
+    let extra = encode_extra_catalog_docs(&needed_extra_catalog_docs());
     connection
         .execute(
-            "insert into catalog_snapshot (id, cache_version, updated_at, borrowed_slugs, full_tree)
-             values (1, ?1, strftime('%s', 'now'), ?2, ?3)
+            "insert into catalog_snapshot (id, cache_version, updated_at, borrowed_slugs)
+             values (1, ?1, strftime('%s', 'now'), ?2)
              on conflict(id) do update set
                cache_version = excluded.cache_version,
                updated_at = excluded.updated_at,
-               borrowed_slugs = excluded.borrowed_slugs,
-               full_tree = excluded.full_tree",
-            params![MODEL_METADATA_CACHE_VERSION, borrowed, full_tree],
+               borrowed_slugs = excluded.borrowed_slugs",
+            params![MODEL_METADATA_CACHE_VERSION, extra],
         )
         .is_ok()
 }
@@ -360,8 +386,8 @@ pub(super) fn invalidate_catalog_snapshot() {
         return;
     };
     let _ = connection.execute(
-        "insert into catalog_snapshot (id, cache_version, updated_at, borrowed_slugs, full_tree)
-         values (1, ?1, 0, '', 0)
+        "insert into catalog_snapshot (id, cache_version, updated_at, borrowed_slugs)
+         values (1, ?1, 0, '')
          on conflict(id) do update set
            cache_version = excluded.cache_version,
            updated_at = 0",

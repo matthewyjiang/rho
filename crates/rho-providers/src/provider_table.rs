@@ -6,8 +6,8 @@
 
 use super::{
     AuthMode, BearerCredentialAcquisition, BrowserOAuthFlow, CatalogConstruction,
-    CatalogReasoningPolicy, ModelIdCodec, OpenAiRuntimeAuth, ProviderAuthKind, ProviderDescriptor,
-    ProviderId, ProviderModelRefreshKind, ProviderModelSource, ProviderRuntime,
+    CatalogLookupMode, CatalogReasoningPolicy, ModelIdCodec, OpenAiRuntimeAuth, ProviderAuthKind,
+    ProviderDescriptor, ProviderId, ProviderModelRefreshKind, ProviderModelSource, ProviderRuntime,
     ANTHROPIC_API_KEY_ACCOUNT, CODEX_TOKENS_ACCOUNT, GITHUB_COPILOT_TOKENS_ACCOUNT,
     GOOGLE_API_KEY_ACCOUNT, KIMI_CODE_API_BASE, KIMI_TOKENS_ACCOUNT, META_API_BASE,
     META_API_KEY_ACCOUNT, MOONSHOT_API_BASE, MOONSHOT_API_KEY_ACCOUNT, OLLAMA_API_BASE,
@@ -53,6 +53,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         // Same OpenAI-compatible API as Ollama Cloud: reasoning_effort including "none".
         // Local models are often missing from models.dev. Unknown models still send
         // effort, constrained to Ollama's accepted values (low/medium/high/max/none).
+        catalog_lookup: CatalogLookupMode::Slug,
         catalog_reasoning: CatalogReasoningPolicy::OffAsNone,
         default_model: None,
     },
@@ -90,6 +91,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         // models.dev catalogs cloud models under `ollama-cloud`, not `ollama`.
         metadata_upstream: "ollama-cloud",
         // Ollama's OpenAI-compatible API accepts reasoning_effort including "none".
+        catalog_lookup: CatalogLookupMode::Slug,
         catalog_reasoning: CatalogReasoningPolicy::OffAsNone,
         default_model: None,
     },
@@ -116,7 +118,8 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_refresh: Some(ProviderModelRefreshKind::OpenAi),
         model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "openai",
-         catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
+        catalog_lookup: CatalogLookupMode::Slug,
+        catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
         default_model: None,
     },
     ProviderDescriptor {
@@ -141,7 +144,8 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_refresh: None,
         model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "openai",
-         catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
+        catalog_lookup: CatalogLookupMode::Slug,
+        catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
         default_model: None,
     },
     ProviderDescriptor {
@@ -165,7 +169,8 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_refresh: Some(ProviderModelRefreshKind::Anthropic),
         model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "anthropic",
-         catalog_reasoning: CatalogReasoningPolicy::Unknown,
+        catalog_lookup: CatalogLookupMode::Slug,
+        catalog_reasoning: CatalogReasoningPolicy::Unknown,
         default_model: Some("claude-sonnet-4-5"),
     },
     ProviderDescriptor {
@@ -189,7 +194,8 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_refresh: Some(ProviderModelRefreshKind::Google),
         model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "google",
-         catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
+        catalog_lookup: CatalogLookupMode::Slug,
+        catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
         default_model: Some("gemini-3.1-flash-lite"),
     },
     ProviderDescriptor {
@@ -212,7 +218,8 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_refresh: Some(ProviderModelRefreshKind::GithubCopilot),
         model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "github-copilot",
-         catalog_reasoning: CatalogReasoningPolicy::NotConfigurable,
+        catalog_lookup: CatalogLookupMode::Slug,
+        catalog_reasoning: CatalogReasoningPolicy::NotConfigurable,
         default_model: None,
     },
     ProviderDescriptor {
@@ -240,7 +247,8 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
         model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "moonshotai",
-         catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
+        catalog_lookup: CatalogLookupMode::Slug,
+        catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
         default_model: None,
     },
     ProviderDescriptor {
@@ -268,7 +276,8 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
         model_id_codec: ModelIdCodec::ProviderPrefixed,
         metadata_upstream: "poolside",
-         catalog_reasoning: CatalogReasoningPolicy::OffOrMax,
+        catalog_lookup: CatalogLookupMode::Slug,
+        catalog_reasoning: CatalogReasoningPolicy::OffOrMax,
         default_model: None,
     },
     ProviderDescriptor {
@@ -306,7 +315,8 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
         model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "openrouter",
-         catalog_reasoning: CatalogReasoningPolicy::OffAsNone,
+        catalog_lookup: CatalogLookupMode::Slug,
+        catalog_reasoning: CatalogReasoningPolicy::OffAsNone,
         default_model: None,
     },
     ProviderDescriptor {
@@ -333,7 +343,8 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
         model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "moonshotai",
-         catalog_reasoning: CatalogReasoningPolicy::OffByAdvertisedToggle,
+        catalog_lookup: CatalogLookupMode::Slug,
+        catalog_reasoning: CatalogReasoningPolicy::OffByAdvertisedToggle,
         default_model: None,
     },
     ProviderDescriptor {
@@ -361,7 +372,8 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
         model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "alibaba-token-plan",
-         catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
+        catalog_lookup: CatalogLookupMode::Slug,
+        catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
         default_model: None,
     },
     ProviderDescriptor {
@@ -389,7 +401,8 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
         model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "meta",
-         catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
+        catalog_lookup: CatalogLookupMode::Slug,
+        catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
         default_model: Some("muse-spark-1.2"),
     },
     ProviderDescriptor {
@@ -415,7 +428,8 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),
         model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "opencode-go",
-         catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
+        catalog_lookup: CatalogLookupMode::Slug,
+        catalog_reasoning: CatalogReasoningPolicy::ExactAdvertised,
         default_model: None,
     },
     ProviderDescriptor {
@@ -448,6 +462,7 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         model_refresh: None,
         model_id_codec: ModelIdCodec::Plain,
         metadata_upstream: "xai",
+        catalog_lookup: CatalogLookupMode::Slug,
         catalog_reasoning: CatalogReasoningPolicy::OffByAdvertisedToggle,
         default_model: None,
     },

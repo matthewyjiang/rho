@@ -392,7 +392,7 @@ fn custom_openai_compatible_loads_and_persists_catalog_mode() {
     assert_eq!(
         rho_providers::provider::interned_custom_provider("cliproxyapi")
             .unwrap()
-            .catalog_lookup(),
+            .catalog_lookup,
         rho_providers::provider::CatalogLookupMode::ModelId
     );
 
@@ -440,6 +440,22 @@ fn custom_catalog_mode_rejects_unknown_and_ollama_values() {
     assert!(
         format!("{ollama_error:#}").contains("providers.ollama does not accept catalog_mode"),
         "{ollama_error:#}"
+    );
+
+    let combined = dir.path().join("combined.toml");
+    std::fs::write(
+        &combined,
+        "[providers.custom.cliproxyapi]\nbase_url = \"http://127.0.0.1:8317/v1\"\ncatalog = \"llmgateway\"\ncatalog_mode = \"model-id\"\n",
+    )
+    .unwrap();
+    let combined_error = Config::load_with_store(
+        combined,
+        &rho_providers::credentials::MemoryCredentialStore::default(),
+    )
+    .unwrap_err();
+    assert!(
+        format!("{combined_error:#}").contains("cannot be combined with catalog"),
+        "{combined_error:#}"
     );
 }
 

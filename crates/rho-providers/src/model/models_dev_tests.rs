@@ -1767,6 +1767,7 @@ fn custom_host_model_id_lookup_splits_and_misses_bare_ids() {
                 ..ModelMetadata::default()
             },
         );
+        mark_catalog_snapshot_current_for_tests();
         let metadata = current_model_metadata("cliproxyapi", "foo/bar/baz").expect("split row");
         assert_eq!(metadata.display_name.as_deref(), Some("Foo Bar Baz"));
         assert!(current_model_metadata("cliproxyapi", "gpt-5.6-sol").is_none());
@@ -1814,7 +1815,7 @@ fn fresh_snapshot_is_not_ready_for_a_model_id_host() {
         mark_catalog_snapshot_current_for_tests();
         assert!(
             hydrate::catalog_snapshot_is_ready(),
-            "recording the full-tree flag must restore readiness"
+            "recording extra catalog docs must restore readiness"
         );
     });
     crate::provider::reset_custom_openai_compatible_providers_for_tests();

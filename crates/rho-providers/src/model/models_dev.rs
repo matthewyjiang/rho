@@ -238,18 +238,23 @@ pub fn custom_model_id_catalog_miss(provider: &str, model: &str) -> Option<Catal
     if !descriptor.is_custom_openai_compatible() {
         return None;
     }
-    if descriptor.catalog_lookup() != CatalogLookupMode::ModelId {
+    if descriptor.catalog_lookup != CatalogLookupMode::ModelId {
         return None;
     }
     if cached_model_metadata(provider, model).is_some() {
         return None;
     }
-    Some(match model_id_catalog_source(model) {
-        Some((source_provider, source_model)) => CatalogLookupMiss::MissingRow {
-            source_provider,
-            source_model,
-        },
+    Some(match overrides::split_provider_model(model) {
         None => CatalogLookupMiss::BareModelId,
+        Some((source_provider, source_model)) => {
+            if !hydrate::catalog_snapshot_is_ready() {
+                return None;
+            }
+            CatalogLookupMiss::MissingRow {
+                source_provider,
+                source_model,
+            }
+        }
     })
 }
 
@@ -278,8 +283,8 @@ fn catalog_source_for(
     else {
         return (provider.to_string(), model.to_string());
     };
-    match descriptor.catalog_lookup() {
-        CatalogLookupMode::ModelId => model_id_catalog_source(model)
+    match descriptor.catalog_lookup {
+        CatalogLookupMode::ModelId => overrides::split_provider_model(model)
             .unwrap_or_else(|| (provider.to_string(), model.to_string())),
         CatalogLookupMode::Slug => {
             // The catalog string is the models.dev provider key. Do not run built-in
@@ -296,15 +301,6 @@ fn catalog_source_for(
             }
         }
     }
-}
-
-/// Splits `provider/model` on the first slash. Extra slashes stay in the model.
-fn model_id_catalog_source(model: &str) -> Option<(String, String)> {
-    let (source_provider, source_model) = model.split_once('/')?;
-    if source_provider.is_empty() || source_model.is_empty() {
-        return None;
-    }
-    Some((source_provider.to_string(), source_model.to_string()))
 }
 
 /// True when writing borrowed rows under `slug` would collide with a built-in
@@ -600,8 +596,7 @@ pub(super) fn open_models_dev_cache() -> rusqlite::Result<Connection> {
             id integer primary key check (id = 1),
             cache_version integer not null,
             updated_at integer not null,
-            borrowed_slugs text not null default '',
-            full_tree integer not null default 0
+            borrowed_slugs text not null default ''
         );",
     )?;
     let _ = connection.execute(
@@ -610,10 +605,6 @@ pub(super) fn open_models_dev_cache() -> rusqlite::Result<Connection> {
     );
     let _ = connection.execute(
         "alter table catalog_snapshot add column borrowed_slugs text not null default ''",
-        [],
-    );
-    let _ = connection.execute(
-        "alter table catalog_snapshot add column full_tree integer not null default 0",
         [],
     );
     Ok(connection)

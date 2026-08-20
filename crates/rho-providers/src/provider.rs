@@ -491,6 +491,8 @@ pub struct ProviderDescriptor {
     pub(crate) model_refresh: Option<ProviderModelRefreshKind>,
     pub model_id_codec: ModelIdCodec,
     pub metadata_upstream: &'static str,
+    /// How this host rematches models.dev rows. Built-ins are always [`CatalogLookupMode::Slug`].
+    pub catalog_lookup: CatalogLookupMode,
     pub catalog_reasoning: CatalogReasoningPolicy,
     /// Preferred model when the cache is empty or contains this id.
     pub default_model: Option<&'static str>,
@@ -547,11 +549,6 @@ impl ProviderDescriptor {
     /// Config-defined Chat Completions hosts are named providers, not a single built-in.
     pub fn is_custom_openai_compatible(self) -> bool {
         PROVIDERS.iter().all(|builtin| builtin.name != self.name)
-    }
-
-    /// How this host rematches models.dev rows for context, price, and reasoning.
-    pub fn catalog_lookup(self) -> CatalogLookupMode {
-        custom_openai_compatible::catalog_lookup_for(self.name)
     }
 
     /// Whether `/doctor` and `/config` can reach this host's `/v1/models`.
@@ -614,7 +611,6 @@ mod provider_table;
 #[path = "custom_openai_compatible.rs"]
 mod custom_openai_compatible;
 
-pub use custom_openai_compatible::interned_custom_hosts_need_full_models_dev_tree;
 pub(crate) use custom_openai_compatible::interned_custom_providers;
 pub use custom_openai_compatible::{
     custom_provider_api_key_auth_id, custom_provider_registry_test_lock,

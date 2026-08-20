@@ -175,7 +175,7 @@ fn custom_host_catalog_slug_becomes_metadata_upstream() {
         "vllm"
     );
     assert_eq!(
-        borrowed.catalog_lookup(),
+        borrowed.catalog_lookup,
         crate::provider::CatalogLookupMode::Slug
     );
 }
@@ -218,7 +218,12 @@ fn custom_host_model_id_lookup_reinterns_the_descriptor() {
         Some("llmgateway"),
     )])
     .unwrap();
-    assert!(!crate::provider::interned_custom_hosts_need_full_models_dev_tree());
+    assert_eq!(
+        custom_openai_compatible_provider("cliproxyapi")
+            .unwrap()
+            .catalog_lookup,
+        crate::provider::CatalogLookupMode::Slug
+    );
 
     install_custom_openai_compatible_providers([CustomProviderSpec::with_lookup(
         "cliproxyapi",
@@ -229,11 +234,10 @@ fn custom_host_model_id_lookup_reinterns_the_descriptor() {
 
     let host = custom_openai_compatible_provider("cliproxyapi").unwrap();
     assert_eq!(
-        host.catalog_lookup(),
+        host.catalog_lookup,
         crate::provider::CatalogLookupMode::ModelId
     );
     assert_eq!(host.metadata_upstream, "cliproxyapi");
-    assert!(crate::provider::interned_custom_hosts_need_full_models_dev_tree());
 }
 
 // Covers: a later config replaces the active custom provider set

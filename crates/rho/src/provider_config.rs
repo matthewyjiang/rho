@@ -73,6 +73,11 @@ impl ProviderConfigs {
         let Some(endpoint) = self.custom.get_mut(provider) else {
             anyhow::bail!("{field} requires a configured base_url");
         };
+        if catalog.is_some()
+            && endpoint.catalog_lookup == rho_providers::provider::CatalogLookupMode::ModelId
+        {
+            anyhow::bail!("{field} cannot be combined with catalog_mode = \"model-id\"");
+        }
         endpoint.catalog = catalog;
         Ok(())
     }
@@ -90,6 +95,11 @@ impl ProviderConfigs {
         let Some(endpoint) = self.custom.get_mut(provider) else {
             anyhow::bail!("{field} requires a configured base_url");
         };
+        if catalog_lookup == rho_providers::provider::CatalogLookupMode::ModelId
+            && endpoint.catalog.is_some()
+        {
+            anyhow::bail!("{field} cannot be combined with catalog");
+        }
         endpoint.catalog_lookup = catalog_lookup;
         Ok(())
     }

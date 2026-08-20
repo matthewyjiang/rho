@@ -72,6 +72,7 @@ fn leak_str(value: String) -> &'static str {
 pub struct CustomProviderSpec<'a> {
     pub name: &'a str,
     pub catalog: Option<&'a str>,
+    pub catalog_lookup: CatalogLookupMode,
 }
 
 impl<'a> CustomProviderSpec<'a> {
@@ -79,6 +80,7 @@ impl<'a> CustomProviderSpec<'a> {
         Self {
             name,
             catalog: catalog.map(str::trim).filter(|slug| !slug.is_empty()),
+            catalog_lookup: CatalogLookupMode::Slug,
         }
     }
 
@@ -88,13 +90,10 @@ impl<'a> CustomProviderSpec<'a> {
         catalog: Option<&'a str>,
         catalog_lookup: CatalogLookupMode,
     ) -> Self {
-        let spec = Self::new(name, catalog);
-        PENDING_CATALOG_LOOKUP.with(|pending| {
-            pending
-                .borrow_mut()
-                .insert(spec.name.to_string(), catalog_lookup);
-        });
-        spec
+        Self {
+            catalog_lookup,
+            ..Self::new(name, catalog)
+        }
     }
 
     /// models.dev slug this host reads metadata rows under.
@@ -103,11 +102,6 @@ impl<'a> CustomProviderSpec<'a> {
     fn metadata_upstream(&self) -> &'a str {
         self.catalog.unwrap_or(self.name)
     }
-}
-
-thread_local! {
-    static PENDING_CATALOG_LOOKUP: RefCell<BTreeMap<String, CatalogLookupMode>> =
-        const { RefCell::new(BTreeMap::new()) };
 }
 
 /// A bare name is a host that borrows no catalog.
@@ -120,8 +114,6 @@ impl<'a> From<&'a str> for CustomProviderSpec<'a> {
 #[derive(Default)]
 struct CustomRegistry {
     interned: BTreeMap<String, &'static ProviderDescriptor>,
-    // NEXT_MAJOR(rho-providers): store CatalogLookupMode on CustomProviderSpec and ProviderDescriptor so intern does not need a side table.
-    catalog_lookup: BTreeMap<String, CatalogLookupMode>,
     active: Vec<&'static ProviderDescriptor>,
 }
 
@@ -187,17 +179,6 @@ where
         .into_iter()
         .map(Into::into)
         .collect::<Vec<CustomProviderSpec<'a>>>();
-    let lookups = specs
-        .iter()
-        .map(|spec| {
-            PENDING_CATALOG_LOOKUP.with(|pending| {
-                pending
-                    .borrow_mut()
-                    .remove(spec.name)
-                    .unwrap_or(CatalogLookupMode::Slug)
-            })
-        })
-        .collect::<Vec<_>>();
     let mut seen = BTreeMap::<&str, ()>::new();
     for spec in &specs {
         validate_custom_provider_name(spec.name)?;
@@ -208,8 +189,8 @@ where
 
     let mut registry = lock_write();
     let mut interned = Vec::with_capacity(specs.len());
-    for (spec, catalog_lookup) in specs.into_iter().zip(lookups) {
-        intern(spec, catalog_lookup, &mut registry);
+    for spec in specs {
+        intern(spec, &mut registry);
         interned.push(spec.name.to_string());
     }
     Ok(interned.into())
@@ -250,14 +231,24 @@ pub fn custom_provider_registry_test_lock() -> MutexGuard<'static, ()> {
     LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Drops the process-wide active set. Interned descriptors stay so parallel
-/// tests can still resolve unknown-effort policy for a previously interned name.
+/// Drops the process-wide active set. Interned names stay so parallel tests can
+/// still resolve unknown-effort policy, but leftover catalog slugs and lookup
+/// modes are reset so snapshot tests do not inherit extra models.dev docs.
 #[doc(hidden)]
 pub fn reset_custom_openai_compatible_providers_for_tests() {
-    let mut registry = lock_write();
-    registry.active.clear();
-    registry.catalog_lookup.clear();
-    PENDING_CATALOG_LOOKUP.with(|pending| pending.borrow_mut().clear());
+    let names = {
+        let mut registry = lock_write();
+        registry.active.clear();
+        registry.interned.keys().cloned().collect::<Vec<_>>()
+    };
+    if names.is_empty() {
+        return;
+    }
+    let specs = names
+        .iter()
+        .map(|name| CustomProviderSpec::new(name, None))
+        .collect::<Vec<_>>();
+    let _ = intern_custom_openai_compatible_providers(specs);
 }
 
 pub fn custom_openai_compatible_providers() -> Vec<&'static ProviderDescriptor> {
@@ -292,24 +283,6 @@ pub(crate) fn interned_custom_providers() -> Vec<&'static ProviderDescriptor> {
     lock_read().interned.values().copied().collect()
 }
 
-/// True when any interned custom host splits model ids against models.dev.
-///
-/// Hydrate uses this to write every models.dev provider document, not only
-/// one borrowed slug.
-pub fn interned_custom_hosts_need_full_models_dev_tree() -> bool {
-    interned_custom_providers()
-        .into_iter()
-        .any(|descriptor| catalog_lookup_for(descriptor.name) == CatalogLookupMode::ModelId)
-}
-
-pub(super) fn catalog_lookup_for(name: &str) -> CatalogLookupMode {
-    lock_read()
-        .catalog_lookup
-        .get(name)
-        .copied()
-        .unwrap_or(CatalogLookupMode::Slug)
-}
-
 pub(crate) fn interned_custom_provider_for_auth(auth: &str) -> Option<&'static ProviderDescriptor> {
     lock_read().interned.values().copied().find(|descriptor| {
         descriptor
@@ -341,25 +314,19 @@ pub fn validate_custom_provider_name(name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Interns one host, reusing the existing descriptor when the catalog slug is
-/// unchanged. Lookup mode lives on the registry side table so a mode-only edit
-/// does not leak a second descriptor.
+/// Interns one host, reusing the existing descriptor when the catalog slug and
+/// lookup mode are unchanged. A config edit that repoints either must not keep
+/// serving the previously leaked descriptor.
 fn intern(
     spec: CustomProviderSpec<'_>,
-    catalog_lookup: CatalogLookupMode,
     registry: &mut CustomRegistry,
 ) -> &'static ProviderDescriptor {
     let name = spec.name;
     let metadata_upstream = spec.metadata_upstream();
-    registry
-        .catalog_lookup
-        .insert(name.to_string(), catalog_lookup);
-    if let Some(existing) = registry
-        .interned
-        .get(name)
-        .copied()
-        .filter(|existing| existing.metadata_upstream == metadata_upstream)
-    {
+    if let Some(existing) = registry.interned.get(name).copied().filter(|existing| {
+        existing.metadata_upstream == metadata_upstream
+            && existing.catalog_lookup == spec.catalog_lookup
+    }) {
         return existing;
     }
     let leaked_name = leak_str(name.to_string());
@@ -405,6 +372,7 @@ fn intern(
         model_id_codec: ModelIdCodec::Plain,
         // Own name unless `catalog` borrows another models.dev slug.
         metadata_upstream,
+        catalog_lookup: spec.catalog_lookup,
         // Same Chat Completions effort field as Ollama. Custom names are not in
         // models.dev, so Unknown must still send the selected level.
         catalog_reasoning: CatalogReasoningPolicy::OffAsNone,

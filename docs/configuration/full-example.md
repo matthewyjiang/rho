@@ -110,7 +110,7 @@ Ollama's provider-specific API base uses its own section and does not affect oth
 base_url = "http://127.0.0.1:11434/v1"
 ```
 
-Custom Chat Completions hosts use a name you choose. `catalog` is optional and borrows a [models.dev](https://models.dev/) provider for context, price, and reasoning. `catalog_mode = "model-id"` splits the selected model id instead:
+Custom Chat Completions hosts use a name you choose. `catalog` is optional and borrows a [models.dev](https://models.dev/) provider for context, price, and reasoning. `catalog_mode = "model-id"` splits the selected model id instead and cannot be combined with `catalog`:
 
 ```toml
 [providers.custom.composer]

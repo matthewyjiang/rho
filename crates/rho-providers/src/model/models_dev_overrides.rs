@@ -55,18 +55,28 @@ pub(super) fn local_catalog_source(
     parse_catalog_ref(table.get("catalog")?.as_str()?, model)
 }
 
+/// Splits `provider/model` on the first slash. Extra slashes stay in the model.
+pub(super) fn split_provider_model(value: &str) -> Option<(String, String)> {
+    let value = value.trim();
+    let (provider, model) = value.split_once('/')?;
+    if provider.is_empty() || model.is_empty() {
+        return None;
+    }
+    Some((provider.to_string(), model.to_string()))
+}
+
 pub(super) fn parse_catalog_ref(catalog: &str, fallback_model: &str) -> Option<(String, String)> {
     let catalog = catalog.trim();
     if catalog.is_empty() {
         return None;
     }
-    match catalog.split_once('/') {
-        Some((provider, model)) if !provider.is_empty() && !model.is_empty() => {
-            Some((provider.to_string(), model.to_string()))
-        }
-        None => Some((catalog.to_string(), fallback_model.to_string())),
-        Some(_) => None,
+    if let Some(source) = split_provider_model(catalog) {
+        return Some(source);
     }
+    if catalog.contains('/') {
+        return None;
+    }
+    Some((catalog.to_string(), fallback_model.to_string()))
 }
 
 pub(super) fn local_override_table(
