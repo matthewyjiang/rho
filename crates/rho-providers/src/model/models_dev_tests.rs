@@ -1833,3 +1833,50 @@ fn invalidate_catalog_snapshot_clears_readiness() {
         assert!(!hydrate::catalog_snapshot_is_ready());
     });
 }
+
+// Covers: invalidate must reset borrowed_slugs, not only updated_at
+// Owner: models.dev catalog hydrate
+#[test]
+fn invalidate_catalog_snapshot_clears_stored_extra_docs() {
+    let _lock = crate::provider::custom_provider_registry_test_lock();
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+    crate::provider::install_custom_openai_compatible_providers([model_id_host_spec()]).unwrap();
+
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        mark_catalog_snapshot_current_for_tests();
+        let sqlite = cache
+            .path()
+            .join("models.dev")
+            .join("models-dev-metadata.sqlite3");
+        let connection = rusqlite::Connection::open(&sqlite).unwrap();
+        let stored: String = connection
+            .query_row(
+                "select borrowed_slugs from catalog_snapshot where id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored, "*");
+
+        hydrate::invalidate_catalog_snapshot();
+        let stored: String = connection
+            .query_row(
+                "select borrowed_slugs from catalog_snapshot where id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored, "");
+        let updated_at: i64 = connection
+            .query_row(
+                "select updated_at from catalog_snapshot where id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(updated_at, 0);
+        assert!(!hydrate::catalog_snapshot_is_ready());
+    });
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+}

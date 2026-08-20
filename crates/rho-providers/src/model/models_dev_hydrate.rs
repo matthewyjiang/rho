@@ -390,7 +390,8 @@ pub(super) fn invalidate_catalog_snapshot() {
          values (1, ?1, 0, '')
          on conflict(id) do update set
            cache_version = excluded.cache_version,
-           updated_at = 0",
+           updated_at = excluded.updated_at,
+           borrowed_slugs = excluded.borrowed_slugs",
         params![MODEL_METADATA_CACHE_VERSION],
     );
 }
