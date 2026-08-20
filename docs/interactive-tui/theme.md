@@ -72,7 +72,7 @@ the choice to config and keeps it. Escape restores the previous theme.
 
 ```toml
 [display]
-theme = "terminal" # or one-half-dark, dracula, nord, a custom file stem, ...
+theme = "terminal" # or a built-in id from the table above, or a custom file stem
 ```
 
 Changes from `/theme` or `/config` apply immediately and persist in

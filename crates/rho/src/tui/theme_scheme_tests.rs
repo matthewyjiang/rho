@@ -105,18 +105,18 @@ fn resolves_builtin_and_terminal_ids() {
 // Owner: tui theme scheme catalog
 #[test]
 fn builtin_catalog_ids_are_unique_and_reserved() {
-    let schemes = builtin_schemes();
-    let mut ids: Vec<_> = schemes.iter().map(|scheme| scheme.id.clone()).collect();
-    ids.sort();
+    let mut ids: Vec<_> = BUILTIN_SCHEMES.iter().map(|spec| spec.id).collect();
+    ids.sort_unstable();
     let mut unique = ids.clone();
     unique.dedup();
     assert_eq!(ids, unique);
 
-    for scheme in schemes {
-        assert!(!is_terminal_theme_id(&scheme.id));
-        let resolved = resolve_fixed_scheme(&scheme.id).expect("builtin resolves");
+    for spec in BUILTIN_SCHEMES {
+        assert!(!is_terminal_theme_id(spec.id));
+        assert!(is_builtin_theme_id(spec.id));
+        let resolved = resolve_fixed_scheme(spec.id).expect("builtin resolves");
         assert_eq!(resolved.source, ThemeSourceKind::Builtin);
-        assert_eq!(resolved.id, scheme.id);
+        assert_eq!(resolved.id, spec.id);
     }
 }
 

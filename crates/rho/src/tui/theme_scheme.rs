@@ -259,158 +259,128 @@ fn scheme_is_dark(scheme: &ColorScheme) -> bool {
     scheme.background.luminance() <= 0.55
 }
 
-fn builtin_schemes() -> Vec<ColorScheme> {
-    vec![
-        one_half_dark(),
-        one_half_light(),
-        monochrome_dark(),
-        monochrome_light(),
-        catppuccin_mocha(),
-        dracula(),
-        gruvbox_dark(),
-        nord(),
-    ]
+struct BuiltinSpec {
+    id: &'static str,
+    name: &'static str,
+    background: &'static str,
+    foreground: &'static str,
+    ansi: [&'static str; 16],
 }
 
-fn builtin_scheme(id: &str) -> Option<ColorScheme> {
-    builtin_schemes().into_iter().find(|scheme| scheme.id == id)
-}
-
-/// [One Half Dark](https://github.com/sonph/onehalf) by Son A. Pham.
-fn one_half_dark() -> ColorScheme {
-    scheme_from_parts(
-        "one-half-dark",
-        "One Half Dark",
-        ThemeSourceKind::Builtin,
-        /* background */ "#282c34",
-        /* foreground */ "#dcdfe4",
-        [
-            "#282c34", "#e06c75", "#98c379", "#e5c07b", "#61afef", "#c678dd", "#56b6c2", "#dcdfe4",
-            "#5c6370", "#e06c75", "#98c379", "#e5c07b", "#61afef", "#c678dd", "#56b6c2", "#ffffff",
-        ],
-    )
-}
-
-/// [One Half Light](https://github.com/sonph/onehalf) by Son A. Pham.
-fn one_half_light() -> ColorScheme {
-    scheme_from_parts(
-        "one-half-light",
-        "One Half Light",
-        ThemeSourceKind::Builtin,
-        /* background */ "#fafafa",
-        /* foreground */ "#383a42",
-        [
-            "#383a42", "#e45649", "#50a14f", "#c18401", "#0184bc", "#a626a4", "#0997b3", "#fafafa",
-            "#4f525e", "#e06c75", "#98c379", "#e5c07b", "#61afef", "#c678dd", "#56b6c2", "#ffffff",
-        ],
-    )
-}
-
-fn monochrome_dark() -> ColorScheme {
-    scheme_from_parts(
-        "monochrome-dark",
-        "Monochrome Dark",
-        ThemeSourceKind::Builtin,
-        /* background */ "#121212",
-        /* foreground */ "#e6e6e6",
-        [
-            "#121212", "#b0b0b0", "#c0c0c0", "#d0d0d0", "#a8a8a8", "#b8b8b8", "#c8c8c8", "#e6e6e6",
-            "#6a6a6a", "#c4c4c4", "#d4d4d4", "#e0e0e0", "#bcbcbc", "#cccccc", "#dadada", "#ffffff",
-        ],
-    )
-}
-
-fn monochrome_light() -> ColorScheme {
-    scheme_from_parts(
-        "monochrome-light",
-        "Monochrome Light",
-        ThemeSourceKind::Builtin,
-        /* background */ "#f5f5f5",
-        /* foreground */ "#1a1a1a",
-        [
-            "#1a1a1a", "#4a4a4a", "#3a3a3a", "#5a5a5a", "#2a2a2a", "#404040", "#505050", "#f5f5f5",
-            "#8a8a8a", "#5a5a5a", "#4a4a4a", "#6a6a6a", "#3a3a3a", "#505050", "#606060", "#ffffff",
-        ],
-    )
-}
-
-/// [Catppuccin Mocha](https://github.com/catppuccin/windows-terminal) for Windows Terminal.
-fn catppuccin_mocha() -> ColorScheme {
-    scheme_from_parts(
-        "catppuccin-mocha",
-        "Catppuccin Mocha",
-        ThemeSourceKind::Builtin,
-        /* background */ "#1e1e2e",
-        /* foreground */ "#cdd6f4",
-        [
+/// In-process catalog. Adding a built-in is one row; ids here are reserved stems.
+const BUILTIN_SCHEMES: &[BuiltinSpec] = &[
+    // https://github.com/catppuccin/windows-terminal mocha.json
+    BuiltinSpec {
+        id: "catppuccin-mocha",
+        name: "Catppuccin Mocha",
+        background: "#1e1e2e",
+        foreground: "#cdd6f4",
+        ansi: [
             "#45475a", "#f38ba8", "#a6e3a1", "#f9e2af", "#89b4fa", "#f5c2e7", "#94e2d5", "#bac2de",
             "#585b70", "#f38ba8", "#a6e3a1", "#f9e2af", "#89b4fa", "#f5c2e7", "#94e2d5", "#a6adc8",
         ],
-    )
-}
-
-/// [Dracula](https://github.com/dracula/windows-terminal) for Windows Terminal.
-fn dracula() -> ColorScheme {
-    scheme_from_parts(
-        "dracula",
-        "Dracula",
-        ThemeSourceKind::Builtin,
-        /* background */ "#282a36",
-        /* foreground */ "#f8f8f2",
-        [
+    },
+    // https://github.com/dracula/windows-terminal
+    BuiltinSpec {
+        id: "dracula",
+        name: "Dracula",
+        background: "#282a36",
+        foreground: "#f8f8f2",
+        ansi: [
             "#21222c", "#ff5555", "#50fa7b", "#f1fa8c", "#bd93f9", "#ff79c6", "#8be9fd", "#f8f8f2",
             "#6272a4", "#ff6e6e", "#69ff94", "#ffffa5", "#d6acff", "#ff92df", "#a4ffff", "#ffffff",
         ],
-    )
-}
-
-/// [Gruvbox Dark](https://github.com/mbadolato/iTerm2-Color-Schemes/blob/master/windowsterminal/Gruvbox%20Dark.json)
-/// Windows Terminal port.
-fn gruvbox_dark() -> ColorScheme {
-    scheme_from_parts(
-        "gruvbox-dark",
-        "Gruvbox Dark",
-        ThemeSourceKind::Builtin,
-        /* background */ "#282828",
-        /* foreground */ "#ebdbb2",
-        [
+    },
+    // https://github.com/mbadolato/iTerm2-Color-Schemes windowsterminal/Gruvbox Dark.json
+    BuiltinSpec {
+        id: "gruvbox-dark",
+        name: "Gruvbox Dark",
+        background: "#282828",
+        foreground: "#ebdbb2",
+        ansi: [
             "#282828", "#cc241d", "#98971a", "#d79921", "#458588", "#b16286", "#689d6a", "#a89984",
             "#928374", "#fb4934", "#b8bb26", "#fabd2f", "#83a598", "#d3869b", "#8ec07c", "#ebdbb2",
         ],
-    )
-}
-
-/// [Nord](https://github.com/mbadolato/iTerm2-Color-Schemes/blob/master/windowsterminal/Nord.json)
-/// Windows Terminal port.
-fn nord() -> ColorScheme {
-    scheme_from_parts(
-        "nord",
-        "Nord",
-        ThemeSourceKind::Builtin,
-        /* background */ "#2e3440",
-        /* foreground */ "#d8dee9",
-        [
+    },
+    BuiltinSpec {
+        id: "monochrome-dark",
+        name: "Monochrome Dark",
+        background: "#121212",
+        foreground: "#e6e6e6",
+        ansi: [
+            "#121212", "#b0b0b0", "#c0c0c0", "#d0d0d0", "#a8a8a8", "#b8b8b8", "#c8c8c8", "#e6e6e6",
+            "#6a6a6a", "#c4c4c4", "#d4d4d4", "#e0e0e0", "#bcbcbc", "#cccccc", "#dadada", "#ffffff",
+        ],
+    },
+    BuiltinSpec {
+        id: "monochrome-light",
+        name: "Monochrome Light",
+        background: "#f5f5f5",
+        foreground: "#1a1a1a",
+        ansi: [
+            "#1a1a1a", "#4a4a4a", "#3a3a3a", "#5a5a5a", "#2a2a2a", "#404040", "#505050", "#f5f5f5",
+            "#8a8a8a", "#5a5a5a", "#4a4a4a", "#6a6a6a", "#3a3a3a", "#505050", "#606060", "#ffffff",
+        ],
+    },
+    // https://github.com/mbadolato/iTerm2-Color-Schemes windowsterminal/Nord.json
+    BuiltinSpec {
+        id: "nord",
+        name: "Nord",
+        background: "#2e3440",
+        foreground: "#d8dee9",
+        ansi: [
             "#3b4252", "#bf616a", "#a3be8c", "#ebcb8b", "#81a1c1", "#b48ead", "#88c0d0", "#e5e9f0",
             "#596377", "#bf616a", "#a3be8c", "#ebcb8b", "#81a1c1", "#b48ead", "#8fbcbb", "#eceff4",
         ],
-    )
+    },
+    // https://github.com/sonph/onehalf
+    BuiltinSpec {
+        id: "one-half-dark",
+        name: "One Half Dark",
+        background: "#282c34",
+        foreground: "#dcdfe4",
+        ansi: [
+            "#282c34", "#e06c75", "#98c379", "#e5c07b", "#61afef", "#c678dd", "#56b6c2", "#dcdfe4",
+            "#5c6370", "#e06c75", "#98c379", "#e5c07b", "#61afef", "#c678dd", "#56b6c2", "#ffffff",
+        ],
+    },
+    BuiltinSpec {
+        id: "one-half-light",
+        name: "One Half Light",
+        background: "#fafafa",
+        foreground: "#383a42",
+        ansi: [
+            "#383a42", "#e45649", "#50a14f", "#c18401", "#0184bc", "#a626a4", "#0997b3", "#fafafa",
+            "#4f525e", "#e06c75", "#98c379", "#e5c07b", "#61afef", "#c678dd", "#56b6c2", "#ffffff",
+        ],
+    },
+];
+
+fn builtin_schemes() -> Vec<ColorScheme> {
+    BUILTIN_SCHEMES.iter().map(scheme_from_builtin).collect()
 }
 
-fn scheme_from_parts(
-    id: &str,
-    name: &str,
-    source: ThemeSourceKind,
-    background: &str,
-    foreground: &str,
-    ansi: [&str; 16],
-) -> ColorScheme {
+fn builtin_scheme(id: &str) -> Option<ColorScheme> {
+    BUILTIN_SCHEMES
+        .iter()
+        .find(|spec| spec.id == id)
+        .map(scheme_from_builtin)
+}
+
+fn is_builtin_theme_id(id: &str) -> bool {
+    BUILTIN_SCHEMES.iter().any(|spec| spec.id == id)
+}
+
+fn scheme_from_builtin(spec: &BuiltinSpec) -> ColorScheme {
     ColorScheme {
-        id: id.into(),
-        name: name.into(),
-        background: Rgb::from_hex(background).expect("builtin background"),
-        foreground: Rgb::from_hex(foreground).expect("builtin foreground"),
-        ansi: ansi.map(|hex| Rgb::from_hex(hex).expect("builtin ansi")),
-        source,
+        id: spec.id.into(),
+        name: spec.name.into(),
+        background: Rgb::from_hex(spec.background).expect("builtin background"),
+        foreground: Rgb::from_hex(spec.foreground).expect("builtin foreground"),
+        ansi: spec
+            .ansi
+            .map(|hex| Rgb::from_hex(hex).expect("builtin ansi")),
+        source: ThemeSourceKind::Builtin,
     }
 }
 
@@ -427,7 +397,7 @@ fn scan_custom_theme_dir(dir: &Path) -> Vec<ThemeEntry> {
         let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
             continue;
         };
-        if stem.is_empty() || is_terminal_theme_id(stem) || builtin_scheme(stem).is_some() {
+        if stem.is_empty() || is_terminal_theme_id(stem) || is_builtin_theme_id(stem) {
             // Built-in ids stay reserved so a colliding file does not hide them.
             continue;
         }
