@@ -689,13 +689,13 @@ impl InteractiveRuntime {
         model: String,
         display: String,
     ) -> anyhow::Result<()> {
-        Self::record_user_context_with_display(&mut self.sessions, model, display)?;
+        Self::record_user_context_with_display(&self.sessions, model, display)?;
         self.refresh_context_usage();
         Ok(())
     }
 
     fn record_user_context_with_display(
-        sessions: &mut InteractiveSessionController,
+        sessions: &InteractiveSessionController,
         model: String,
         display: String,
     ) -> anyhow::Result<()> {

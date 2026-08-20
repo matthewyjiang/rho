@@ -179,6 +179,58 @@ async fn replace_provider_rebuilds_compactor_with_current_context_window() {
     );
 }
 
+// Covers: a failed TUI switch must not adopt the rejected provider
+// Owner: interactive runtime provider switch
+#[tokio::test]
+async fn replace_provider_notice_failure_keeps_previous_provider() {
+    let mut interactive = pending_compaction_runtime("done").await;
+    interactive
+        .sessions
+        .session()
+        .append_message(Message::user_text("already started"))
+        .unwrap();
+    let previous_controller_identity = interactive.provider.provider().identity();
+    let previous_controller_reasoning = interactive.provider.reasoning();
+    let previous_session_identity = interactive
+        .sessions
+        .session()
+        .diagnostics()
+        .provider()
+        .clone();
+    let previous_session_reasoning = interactive.sessions.session().reasoning_level();
+    let history_before = interactive.history();
+    let replacement: Arc<dyn ModelProvider> = Arc::new(ScriptedProvider::new(
+        ModelIdentity::new("replacement", "test", "model"),
+        Vec::<ScriptedTurn>::new(),
+    ));
+
+    super::advisor::fail_next_advisor_switch_notice_for_tests();
+    let error = interactive
+        .replace_provider(replacement, rho_sdk::ReasoningLevel::Low, "test-auth")
+        .expect_err("notice failure should abort the switch");
+    assert!(
+        matches!(error, rho_sdk::Error::InvalidConfiguration { .. }),
+        "unexpected error: {error}"
+    );
+    assert_eq!(
+        interactive.provider.provider().identity(),
+        previous_controller_identity
+    );
+    assert_eq!(
+        interactive.provider.reasoning(),
+        previous_controller_reasoning
+    );
+    assert_eq!(
+        interactive.sessions.session().diagnostics().provider(),
+        &previous_session_identity
+    );
+    assert_eq!(
+        interactive.sessions.session().reasoning_level(),
+        previous_session_reasoning
+    );
+    assert_eq!(interactive.history(), history_before);
+}
+
 async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime {
     let provider = Arc::new(ScriptedProvider::new(
         ModelIdentity::new("test", "test", "test"),

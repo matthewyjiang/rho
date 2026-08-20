@@ -33,22 +33,17 @@ impl InteractiveRuntime {
             return Err(Error::SessionBusy);
         }
         self.runs.begin_provider_switch()?;
-        let session = self.sessions.session().clone();
         let previous_provider = Arc::clone(self.provider.provider());
         let context_window = self.context_window;
         let mut record_notice = |context: String, display: String| {
-            InteractiveRuntime::record_user_context_with_display(
-                &mut self.sessions,
-                context,
-                display,
-            )
-            .map_err(|error| Error::InvalidConfiguration {
-                message: error.to_string(),
-            })
+            InteractiveRuntime::record_user_context_with_display(&self.sessions, context, display)
+                .map_err(|error| Error::InvalidConfiguration {
+                    message: error.to_string(),
+                })
         };
         let result = conversation_switch::apply_conversation_switch(
             conversation_switch::ConversationSwitch {
-                session: &session,
+                session: self.sessions.session(),
                 tools: &self.tools,
                 previous_provider,
                 new_provider: Arc::clone(&provider),
