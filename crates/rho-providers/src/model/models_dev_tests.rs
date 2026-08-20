@@ -1820,20 +1820,7 @@ fn fresh_snapshot_is_not_ready_for_a_model_id_host() {
     crate::provider::reset_custom_openai_compatible_providers_for_tests();
 }
 
-// Covers: force-refresh invalidation drops a current snapshot
-// Owner: models.dev catalog hydrate
-#[test]
-fn invalidate_catalog_snapshot_clears_readiness() {
-    let cache = tempfile::tempdir().unwrap();
-    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
-        mark_catalog_snapshot_current_for_tests();
-        assert!(hydrate::catalog_snapshot_is_ready());
-        hydrate::invalidate_catalog_snapshot();
-        assert!(!hydrate::catalog_snapshot_is_ready());
-    });
-}
-
-// Covers: invalidate must reset borrowed_slugs, not only updated_at
+// Covers: invalidate must reset borrowed_slugs and drop a current snapshot
 // Owner: models.dev catalog hydrate
 #[test]
 fn invalidate_catalog_snapshot_clears_stored_extra_docs() {
@@ -1844,6 +1831,10 @@ fn invalidate_catalog_snapshot_clears_stored_extra_docs() {
     let cache = tempfile::tempdir().unwrap();
     with_models_dev_cache_dir(cache.path().to_path_buf(), || {
         mark_catalog_snapshot_current_for_tests();
+        assert!(
+            hydrate::catalog_snapshot_is_ready(),
+            "a marked snapshot must be ready before invalidate"
+        );
         let sqlite = cache
             .path()
             .join("models.dev")
