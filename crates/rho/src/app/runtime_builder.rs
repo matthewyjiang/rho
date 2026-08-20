@@ -142,6 +142,28 @@ pub(crate) fn build_compaction(
     (compactor, policy)
 }
 
+/// Rebuilds the live session's compactor and automatic policy from the same
+/// inputs `build_compaction` uses at runtime construction.
+pub(crate) fn refresh_session_compaction(
+    session: &rho_sdk::Session,
+    provider: Arc<dyn ModelProvider>,
+    tools: &[Arc<dyn rho_sdk::tool::Tool>],
+    reasoning: rho_sdk::ReasoningLevel,
+    compaction: CompactionConfig,
+    context_window: Option<u64>,
+    usage_recording: ProviderRequestUsageRecording,
+) -> Result<(), Error> {
+    let (compactor, policy) = build_compaction(
+        provider,
+        tools,
+        reasoning,
+        compaction,
+        context_window,
+        usage_recording,
+    );
+    session.set_compaction(Some(Arc::new(compactor)), policy)
+}
+
 pub(crate) fn automatic_compaction_policy(
     compaction: &CompactionConfig,
     context_window: Option<u64>,

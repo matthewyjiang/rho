@@ -18,11 +18,7 @@ use rho_sdk::{
     SessionOptions, UserInput,
 };
 
-use super::{
-    config::{self, ThoughtLevelApply},
-    events::EventMapper,
-    permission, AcpClientPort, AcpStartup,
-};
+use super::{events::EventMapper, permission, thought_level, AcpClientPort, AcpStartup};
 use crate::{
     app::{interactive_runtime::startup::prompt_cache_key, session_assembly::BuiltSession},
     config::Config,
@@ -145,7 +141,7 @@ impl SessionHost {
         let acp_session_id = SessionId::new(built.session.id().as_str());
         let response = NewSessionResponse::new(acp_session_id.clone())
             .modes(mode_state(startup.config.permission_mode))
-            .config_options(config::config_options(
+            .config_options(thought_level::config_options(
                 &startup.config,
                 built.session.reasoning_level(),
             ));
@@ -187,7 +183,7 @@ impl SessionHost {
         }
         let response = LoadSessionResponse::new()
             .modes(mode_state(startup.config.permission_mode))
-            .config_options(config::config_options(
+            .config_options(thought_level::config_options(
                 &startup.config,
                 built.session.reasoning_level(),
             ));
@@ -229,20 +225,8 @@ impl SessionHost {
         &mut self,
         request: SetSessionConfigOptionRequest,
     ) -> Result<SetSessionConfigOptionResponse, agent_client_protocol::Error> {
-        let requested = config::parse_thought_level_request(&request)?;
-        let (compaction, context_window) = config::compaction_for(&self.config);
-        config::apply_thought_level(
-            ThoughtLevelApply {
-                session: &self.built.session,
-                provider: Arc::clone(&self.built.provider),
-                tools: self.built.tools.tools(),
-                compaction,
-                context_window,
-                usage_recording: self.built.runtime.usage_recording(),
-                config: &self.config,
-            },
-            requested,
-        )
+        let requested = thought_level::parse_thought_level_request(&request)?;
+        thought_level::apply_thought_level(&self.built, &self.config, requested)
     }
 
     pub(super) fn cancel_handle(&self) -> Arc<PromptGate> {

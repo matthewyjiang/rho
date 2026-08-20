@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use agent_client_protocol::{
     schema::v1::{
-        SessionConfigKind, SessionConfigOptionCategory, SessionId, SetSessionConfigOptionRequest,
+        SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
+        SessionConfigOptionValue, SessionConfigSelectOptions, SessionId,
+        SetSessionConfigOptionRequest,
     },
     ErrorCode,
 };
@@ -11,14 +13,14 @@ use rho_providers::reasoning::ReasoningLevel;
 use rho_sdk::{
     model::{ContentBlock, ModelIdentity, ModelRequest, ModelResponse},
     provider::{ModelProvider, ProviderFuture, ScriptedProvider, ScriptedTurn},
-    ProviderRequestUsageRecording, Rho, SessionOptions, UserInput,
+    SessionOptions, UserInput,
 };
 
 use super::{
     apply_thought_level, config_options, parse_thought_level_request, selectable_thought_levels,
-    ThoughtLevelApply, THOUGHT_LEVEL_ID,
+    THOUGHT_LEVEL_ID,
 };
-use crate::{compaction::CompactionConfig, config::Config};
+use crate::{app::session_assembly::BuiltSession, config::Config, tools::sdk_registry::AppToolSet};
 
 fn test_config() -> Config {
     Config {
@@ -43,7 +45,7 @@ impl ModelProvider for HangUntilCancel {
     }
 }
 
-fn select_current(options: &[agent_client_protocol::schema::v1::SessionConfigOption]) -> &str {
+fn select_current(options: &[SessionConfigOption]) -> &str {
     match &options[0].kind {
         SessionConfigKind::Select(select) => select.current_value.0.as_ref(),
         SessionConfigKind::Boolean(_) => panic!("thought_level must be a select option"),
@@ -51,20 +53,36 @@ fn select_current(options: &[agent_client_protocol::schema::v1::SessionConfigOpt
     }
 }
 
-fn select_values(
-    options: &[agent_client_protocol::schema::v1::SessionConfigOption],
-) -> Vec<String> {
+fn select_values(options: &[SessionConfigOption]) -> Vec<String> {
     match &options[0].kind {
         SessionConfigKind::Select(select) => match &select.options {
-            agent_client_protocol::schema::v1::SessionConfigSelectOptions::Ungrouped(values) => {
-                values
-                    .iter()
-                    .map(|option| option.value.0.as_ref().to_string())
-                    .collect()
-            }
+            SessionConfigSelectOptions::Ungrouped(values) => values
+                .iter()
+                .map(|option| option.value.0.as_ref().to_string())
+                .collect(),
             _ => panic!("thought_level must be ungrouped"),
         },
         _ => panic!("thought_level must be a select option"),
+    }
+}
+
+async fn built_session(
+    provider: Arc<dyn ModelProvider>,
+    reasoning: ReasoningLevel,
+) -> BuiltSession {
+    let runtime = rho_sdk::Rho::builder()
+        .provider_shared(Arc::clone(&provider))
+        .reasoning_level(reasoning)
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    BuiltSession {
+        runtime,
+        session,
+        provider,
+        tools: AppToolSet::disabled(),
+        hooks: None,
+        approval_receiver: None,
     }
 }
 
@@ -102,7 +120,7 @@ fn parse_thought_level_rejects_unknown_option_and_non_select_values() {
         SetSessionConfigOptionRequest::new(
             session.clone(),
             THOUGHT_LEVEL_ID,
-            agent_client_protocol::schema::v1::SessionConfigOptionValue::boolean(true),
+            SessionConfigOptionValue::boolean(true),
         ),
         SetSessionConfigOptionRequest::new(session, THOUGHT_LEVEL_ID, "ludicrous"),
     ];
@@ -122,30 +140,17 @@ async fn apply_thought_level_updates_the_idle_session() {
             ContentBlock::Text("done".into()),
         ]))],
     );
-    let runtime = Rho::builder()
-        .provider(provider.clone())
-        .reasoning_level(rho_sdk::ReasoningLevel::Medium)
-        .build()
-        .unwrap();
-    let session = runtime.session(SessionOptions::default()).await.unwrap();
-    let config = test_config();
     let boxed: Arc<dyn ModelProvider> = Arc::new(provider.clone());
-    let response = apply_thought_level(
-        ThoughtLevelApply {
-            session: &session,
-            provider: boxed,
-            tools: &[],
-            compaction: CompactionConfig::default(),
-            context_window: None,
-            usage_recording: ProviderRequestUsageRecording::default(),
-            config: &config,
-        },
-        ReasoningLevel::High,
-    )
-    .expect("apply thought_level");
+    let built = built_session(boxed, rho_sdk::ReasoningLevel::Medium).await;
+    let config = test_config();
+    let response =
+        apply_thought_level(&built, &config, ReasoningLevel::High).expect("apply thought_level");
 
-    session.complete("next").await.unwrap();
-    assert_eq!(session.reasoning_level(), rho_sdk::ReasoningLevel::High);
+    built.session.complete("next").await.unwrap();
+    assert_eq!(
+        built.session.reasoning_level(),
+        rho_sdk::ReasoningLevel::High
+    );
     assert_eq!(select_current(&response.config_options), "high");
     assert_eq!(
         provider.recorded_requests()[0].reasoning_level,
@@ -159,28 +164,49 @@ async fn apply_thought_level_updates_the_idle_session() {
 #[tokio::test]
 async fn apply_thought_level_rejects_a_busy_session() {
     let provider: Arc<dyn ModelProvider> = Arc::new(HangUntilCancel);
-    let runtime = Rho::builder()
-        .provider_shared(Arc::clone(&provider))
-        .reasoning_level(rho_sdk::ReasoningLevel::Medium)
-        .build()
-        .unwrap();
-    let session = runtime.session(SessionOptions::default()).await.unwrap();
-    let mut run = session.start(UserInput::text("hold")).await.unwrap();
+    let built = built_session(provider, rho_sdk::ReasoningLevel::Medium).await;
+    let mut run = built.session.start(UserInput::text("hold")).await.unwrap();
     let config = test_config();
-    let error = apply_thought_level(
-        ThoughtLevelApply {
-            session: &session,
-            provider,
-            tools: &[],
-            compaction: CompactionConfig::default(),
-            context_window: None,
-            usage_recording: ProviderRequestUsageRecording::default(),
-            config: &config,
-        },
-        ReasoningLevel::High,
-    )
-    .expect_err("busy session");
+    let error =
+        apply_thought_level(&built, &config, ReasoningLevel::High).expect_err("busy session");
     run.cancel();
     let _ = run.outcome().await;
     assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert_eq!(
+        error.data,
+        Some(serde_json::json!(format!(
+            "session '{}' already has an active prompt",
+            built.session.id()
+        )))
+    );
+}
+
+// Covers: an unsupported pin that is not the current level must reach
+// resolve_thought_level instead of the pre-validation "unknown" error.
+// Owner: acp session config mapper
+#[tokio::test]
+async fn apply_thought_level_surfaces_supported_levels_for_unsupported_pins() {
+    let provider: Arc<dyn ModelProvider> = Arc::new(ScriptedProvider::new(
+        ModelIdentity::new("poolside", "poolside", "model"),
+        [],
+    ));
+    let built = built_session(provider, rho_sdk::ReasoningLevel::Off).await;
+    let config = Config {
+        provider: "poolside".into(),
+        model: "model".into(),
+        ..Config::default()
+    };
+    let error =
+        apply_thought_level(&built, &config, ReasoningLevel::High).expect_err("unsupported pin");
+    assert_eq!(error.code, ErrorCode::InvalidParams);
+    assert_eq!(
+        error.data,
+        Some(serde_json::json!(
+            "provider 'poolside' model 'model' does not support reasoning level 'high'; supported levels: off, max"
+        ))
+    );
+    assert_eq!(
+        built.session.reasoning_level(),
+        rho_sdk::ReasoningLevel::Off
+    );
 }

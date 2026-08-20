@@ -72,10 +72,6 @@ impl InteractiveSessionController {
         &self.session
     }
 
-    pub(crate) fn session_mut(&mut self) -> &mut Session {
-        &mut self.session
-    }
-
     pub(crate) fn replace_session(&mut self, session: Session, omission: Option<HandoffReport>) {
         self.session = session;
         self.pending_session_id = None;

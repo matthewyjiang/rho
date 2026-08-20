@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    ops::{Deref, DerefMut},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -86,17 +87,9 @@ impl RhoAcpAgent {
         request: SetSessionConfigOptionRequest,
     ) -> Result<SetSessionConfigOptionResponse, AcpError> {
         let session_id = request.session_id.clone();
-        let live = {
-            let sessions = self.sessions.lock().await;
-            sessions
-                .get(&session_id)
-                .cloned()
-                .ok_or_else(|| missing_session(&session_id))?
-        };
-        let mut slot = live.try_lock_host(&session_id)?;
-        slot.as_mut()
-            .expect("try_lock_host rejects an empty slot")
-            .set_config_option(request)
+        let live = self.live_session(&session_id).await?;
+        let mut host = live.try_lock_host(&session_id)?;
+        host.set_config_option(request)
     }
 
     pub(super) fn set_session_mode(request: &SetSessionModeRequest) -> AcpError {
@@ -142,19 +135,17 @@ impl RhoAcpAgent {
         port: &dyn AcpClientPort,
     ) -> Result<PromptResponse, AcpError> {
         let session_id = request.session_id.clone();
-        let live = {
-            let sessions = self.sessions.lock().await;
-            sessions
-                .get(&session_id)
-                .cloned()
-                .ok_or_else(|| missing_session(&session_id))?
-        };
-        let mut slot = live.try_lock_host(&session_id)?;
-        slot.as_mut()
-            .expect("try_lock_host rejects an empty slot")
-            .prompt(request, port)
-            .await
-            .map_err(host_error)
+        let live = self.live_session(&session_id).await?;
+        let mut host = live.try_lock_host(&session_id)?;
+        host.prompt(request, port).await.map_err(host_error)
+    }
+
+    async fn live_session(&self, session_id: &SessionId) -> Result<Arc<LiveSession>, AcpError> {
+        let sessions = self.sessions.lock().await;
+        sessions
+            .get(session_id)
+            .cloned()
+            .ok_or_else(|| missing_session(session_id))
     }
 
     pub(super) async fn cancel(&self, notification: CancelNotification) {
@@ -246,7 +237,7 @@ fn missing_session(session_id: &SessionId) -> AcpError {
     AcpError::resource_not_found(Some(session_id.to_string()))
 }
 
-fn busy_session(session_id: &SessionId) -> AcpError {
+pub(super) fn busy_session(session_id: &SessionId) -> AcpError {
     AcpError::invalid_request().data(format!(
         "session '{session_id}' already has an active prompt"
     ))
@@ -271,15 +262,32 @@ impl LiveSession {
         })
     }
 
-    fn try_lock_host(
-        &self,
-        session_id: &SessionId,
-    ) -> Result<tokio::sync::MutexGuard<'_, Option<SessionHost>>, AcpError> {
+    fn try_lock_host(&self, session_id: &SessionId) -> Result<HostGuard<'_>, AcpError> {
         let guard = self.host.try_lock().map_err(|_| busy_session(session_id))?;
         if guard.is_none() {
             return Err(busy_session(session_id));
         }
-        Ok(guard)
+        Ok(HostGuard(guard))
+    }
+}
+
+/// Exclusive access to a live session host. `try_lock_host` already rejected
+/// empty slots, so the Option unwrap is an invariant, not a caller concern.
+struct HostGuard<'a>(tokio::sync::MutexGuard<'a, Option<SessionHost>>);
+
+const HOST_SLOT_INVARIANT: &str = "try_lock_host rejects an empty slot";
+
+impl Deref for HostGuard<'_> {
+    type Target = SessionHost;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref().expect(HOST_SLOT_INVARIANT)
+    }
+}
+
+impl DerefMut for HostGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0.as_mut().expect(HOST_SLOT_INVARIANT)
     }
 }
 

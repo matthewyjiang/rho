@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use agent_client_protocol::{
     schema::v1::{
-        SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
+        SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption, SessionId,
         SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
     },
     Error as AcpError,
@@ -14,10 +14,12 @@ use rho_providers::{
     },
     reasoning::ReasoningLevel,
 };
-use rho_sdk::{provider::ModelProvider, Session};
 
 use crate::{
-    app::runtime_builder::{build_compaction, configured_context_window},
+    app::{
+        runtime_builder::{configured_context_window, refresh_session_compaction},
+        session_assembly::BuiltSession,
+    },
     compaction::CompactionConfig,
     config::Config,
 };
@@ -109,85 +111,54 @@ pub(super) fn resolve_thought_level(
     }
 }
 
-pub(super) struct ThoughtLevelApply<'a> {
-    pub session: &'a Session,
-    pub provider: Arc<dyn ModelProvider>,
-    pub tools: &'a [Arc<dyn rho_sdk::tool::Tool>],
-    pub compaction: CompactionConfig,
-    pub context_window: Option<u64>,
-    pub usage_recording: rho_sdk::ProviderRequestUsageRecording,
-    pub config: &'a Config,
-}
-
 pub(super) fn apply_thought_level(
-    apply: ThoughtLevelApply<'_>,
+    built: &BuiltSession,
+    config: &Config,
     requested: ReasoningLevel,
 ) -> Result<SetSessionConfigOptionResponse, AcpError> {
-    if !selectable_thought_levels(apply.config, apply.session.reasoning_level())
-        .contains(&requested)
-    {
-        return Err(AcpError::invalid_params().data(format!("unknown thought_level '{requested}'")));
-    }
-    let current = apply.session.reasoning_level();
+    let current = built.session.reasoning_level();
     if requested != current {
-        let level = resolve_thought_level(apply.config, requested)?;
-        apply
+        let level = resolve_thought_level(config, requested)?;
+        built
             .session
             .set_reasoning_level(level)
-            .map_err(map_session_error)?;
-        if let Err(error) = refresh_compaction(&apply, level) {
+            .map_err(|error| map_session_error(&built.session, error))?;
+        if let Err(error) = refresh_session_compaction(
+            &built.session,
+            Arc::clone(&built.provider),
+            built.tools.tools(),
+            level,
+            CompactionConfig::from(config),
+            configured_context_window(config),
+            built.runtime.usage_recording(),
+        ) {
             // Restore the previous level so a failed compaction rebuild does
             // not leave the session advertising a level its compactor does
             // not match. The session was idle to get here; ignore a restore
             // error rather than masking the compaction failure.
-            let _ = apply.session.set_reasoning_level(current);
-            return Err(error);
+            let _ = built.session.set_reasoning_level(current);
+            return Err(map_session_error(&built.session, error));
         }
     }
     Ok(SetSessionConfigOptionResponse::new(config_options(
-        apply.config,
-        apply.session.reasoning_level(),
+        config,
+        built.session.reasoning_level(),
     )))
-}
-
-pub(super) fn compaction_for(config: &Config) -> (CompactionConfig, Option<u64>) {
-    (
-        CompactionConfig::from(config),
-        configured_context_window(config),
-    )
 }
 
 fn thought_capabilities(config: &Config) -> ReasoningCapabilities {
     cached_reasoning_capabilities(&config.provider, &config.model)
 }
 
-fn refresh_compaction(
-    apply: &ThoughtLevelApply<'_>,
-    reasoning: ReasoningLevel,
-) -> Result<(), AcpError> {
-    let (compactor, policy) = build_compaction(
-        Arc::clone(&apply.provider),
-        apply.tools,
-        reasoning,
-        apply.compaction.clone(),
-        apply.context_window,
-        apply.usage_recording.clone(),
-    );
-    apply
-        .session
-        .set_compaction(Some(Arc::new(compactor)), policy)
-        .map_err(map_session_error)
-}
-
-fn map_session_error(error: rho_sdk::Error) -> AcpError {
+fn map_session_error(session: &rho_sdk::Session, error: rho_sdk::Error) -> AcpError {
     match error {
         rho_sdk::Error::SessionBusy => {
-            AcpError::invalid_request().data("session already has an active prompt".to_string())
+            super::agent::busy_session(&SessionId::new(session.id().as_str()))
         }
         error => AcpError::internal_error().data(error.to_string()),
     }
 }
 
 #[cfg(test)]
-#[path = "config_tests.rs"]
+#[path = "thought_level_tests.rs"]
 mod tests;
