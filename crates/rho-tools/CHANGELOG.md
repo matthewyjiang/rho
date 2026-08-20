@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.19.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.18.1...rho-agent-tools-v0.19.0) (2026-08-20)
+
+
+### Features
+
+* **tools:** mint hashline tags only for the hashline edit tool ([#1000](https://github.com/matthewyjiang/rho/issues/1000)) ([2fa3c2c](https://github.com/matthewyjiang/rho/commit/2fa3c2c35280f79cb53826cf3cc863421fcd18d0))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 4.1.0 to 4.1.1
+
 ## [0.18.1](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.18.0...rho-agent-tools-v0.18.1) (2026-08-18)
 
 

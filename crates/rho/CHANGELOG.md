@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.46.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.45.0...rho-coding-agent-v1.46.0) (2026-08-20)
+
+
+### Features
+
+* **cli:** open the tui with the first prompt already running ([#1003](https://github.com/matthewyjiang/rho/issues/1003)) ([20b9d43](https://github.com/matthewyjiang/rho/commit/20b9d43b4dcb71f231f1022e7c2e4c4d48a8a9b4))
+* **providers:** look up models.dev from custom host model ids ([#1004](https://github.com/matthewyjiang/rho/issues/1004)) ([da477da](https://github.com/matthewyjiang/rho/commit/da477da84b401f3bc2b299e481851dfd5278aded))
+* **tools:** mint hashline tags only for the hashline edit tool ([#1000](https://github.com/matthewyjiang/rho/issues/1000)) ([2fa3c2c](https://github.com/matthewyjiang/rho/commit/2fa3c2c35280f79cb53826cf3cc863421fcd18d0))
+* **tui:** add /copy for the last assistant message ([#998](https://github.com/matthewyjiang/rho/issues/998)) ([991c147](https://github.com/matthewyjiang/rho/commit/991c1471a94e67260ef3bad3aa986166903920df))
+* **tui:** watch subagents in the same terminal ([#1002](https://github.com/matthewyjiang/rho/issues/1002)) ([966f3e8](https://github.com/matthewyjiang/rho/commit/966f3e8315f8d2c39f91ef31577aa4b81f3a1e80))
+
+
+### Bug Fixes
+
+* **tui:** filter /agents reasoning choices by models.dev capabilities ([#1005](https://github.com/matthewyjiang/rho/issues/1005)) ([098a9d1](https://github.com/matthewyjiang/rho/commit/098a9d1d7d4c0aacd64ee734262fa51a78b0e1ed))
+* **tui:** stop openai-compatible cost jumping on submit ([#1008](https://github.com/matthewyjiang/rho/issues/1008)) ([51f881f](https://github.com/matthewyjiang/rho/commit/51f881f68d663b1d15a0b280f0fef76cbcf9a8ba))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 4.1.0 to 4.1.1
+    * rho-providers bumped from 1.8.0 to 1.9.0
+
 ## [1.45.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.44.0...rho-coding-agent-v1.45.0) (2026-08-18)
 
 
