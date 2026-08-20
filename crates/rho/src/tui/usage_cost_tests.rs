@@ -12,36 +12,41 @@ fn priced_metadata() -> ModelMetadata {
     }
 }
 
-#[test]
-fn estimated_cost_uses_normalized_input_and_cache_read() {
-    let usage = ModelUsage {
-        input_tokens: Some(300_000),
-        cache_read_tokens: Some(700_000),
-        output_tokens: Some(100_000),
-        ..ModelUsage::default()
-    };
-
-    assert_eq!(
-        super::estimated_cost_usd_micros(&usage, Some(&priced_metadata())),
-        Some(570_000)
-    );
-}
-
-// Covers: a host-reported mixed prompt total is billed as uncached when no
-// cache split exists; ContextEstimated is not this path
+// Covers: catalog cost bills recovered prompt size, including mute turns
+// that later merge with a cache-split snapshot; ContextEstimated is not this path
 // Owner: tui catalog cost estimate
 #[test]
-fn estimated_cost_bills_mixed_prompt_total_when_split_unknown() {
-    let usage = ModelUsage {
+fn estimated_cost_bills_recovered_prompt_not_split_remainder() {
+    let mute = ModelUsage {
         output_tokens: Some(10),
         total_tokens: Some(1_000_010),
         ..ModelUsage::default()
     };
+    let split = ModelUsage {
+        input_tokens: Some(300_000),
+        cache_read_tokens: Some(700_000),
+        output_tokens: Some(100_000),
+        total_tokens: Some(1_100_000),
+        ..ModelUsage::default()
+    };
+    let mut mute_then_split = None;
+    super::merge_usage(&mut mute_then_split, mute.clone());
+    super::merge_usage(&mut mute_then_split, split.clone());
 
-    assert_eq!(
-        super::estimated_cost_usd_micros(&usage, Some(&priced_metadata())),
-        Some(1_000_020)
-    );
+    let cases = [
+        (split, Some(570_000)),
+        (mute, Some(1_000_020)),
+        (
+            mute_then_split.expect("merged mute then split"),
+            Some(1_570_020),
+        ),
+    ];
+    for (usage, expected) in cases {
+        assert_eq!(
+            super::estimated_cost_usd_micros(&usage, Some(&priced_metadata())),
+            expected
+        );
+    }
 }
 
 #[test]

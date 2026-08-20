@@ -204,12 +204,12 @@ pub(super) fn estimated_cost_usd_micros(
     let metadata = metadata?;
     let cache_read = usage.cache_read_tokens.unwrap_or_default();
     let inclusive = usage.inclusive_prompt_tokens().unwrap_or_default();
-    let input = match usage.input_tokens {
-        Some(input) => input,
-        None => inclusive
-            .saturating_sub(cache_read)
-            .saturating_sub(usage.cache_write_tokens.unwrap_or_default()),
-    };
+    // Always derive billed input from inclusive prompt size. Preferring
+    // `input_tokens` when Some drops mute turns after a later cache split:
+    // accumulated `input_tokens` holds only the split remainder.
+    let input = inclusive
+        .saturating_sub(cache_read)
+        .saturating_sub(usage.cache_write_tokens.unwrap_or_default());
     let cost = metadata.cost_for_input_tokens(inclusive)?;
     let mut micros = 0u128;
     micros += cost_component(input, cost.input_micros_per_m);
