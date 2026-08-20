@@ -3,6 +3,7 @@ mod config_options;
 mod events;
 mod permission;
 mod session_host;
+mod thought_level;
 
 use std::{future::Future, path::PathBuf, pin::Pin, sync::Arc};
 

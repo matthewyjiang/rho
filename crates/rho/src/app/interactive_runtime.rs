@@ -36,7 +36,7 @@ use super::{
     interactive_session_controller::{InteractiveSessionController, ReplacementSessionSource},
     policy::AppPolicy,
     provider_controller::ProviderController,
-    runtime_builder::{build_compaction, build_runtime, RuntimeBuildOptions},
+    runtime_builder::{build_runtime, refresh_session_compaction, RuntimeBuildOptions},
 };
 
 pub(crate) use super::interactive_run_controller::{
@@ -660,17 +660,15 @@ impl InteractiveRuntime {
     }
 
     fn refresh_compaction(&mut self) -> Result<(), Error> {
-        let (compactor, policy) = build_compaction(
+        refresh_session_compaction(
+            self.sessions.session(),
             Arc::clone(self.provider.provider()),
             self.tools.tools(),
             self.provider.reasoning(),
             self.compaction.clone(),
             self.context_window,
             self.usage_recording.clone(),
-        );
-        self.sessions
-            .session_mut()
-            .set_compaction(Some(Arc::new(compactor)), policy)
+        )
     }
 
     fn refresh_context_usage(&mut self) {

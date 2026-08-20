@@ -216,7 +216,7 @@ where
     let startup_result: anyhow::Result<_> = async {
         let runtime = build_runtime_with_max_steps(
             RuntimeBuildOptions {
-                provider,
+                provider: Arc::clone(&provider),
                 tools: tool_set.tools(),
                 workspace,
                 workspace_policy: AppPolicy::for_mode(config.permission_mode, session_writes),

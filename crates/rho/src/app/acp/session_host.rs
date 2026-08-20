@@ -11,7 +11,7 @@ use agent_client_protocol::{
     schema::v1::{
         LoadSessionRequest, LoadSessionResponse, McpServer, NewSessionRequest, NewSessionResponse,
         PromptRequest, PromptResponse, RequestPermissionOutcome, SessionConfigOption, SessionId,
-        SetSessionConfigOptionRequest,
+        SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
     },
     Error as AcpError,
 };
@@ -32,7 +32,7 @@ use rho_sdk::{
 use super::{
     config_options::{self, CurrentModel},
     events::EventMapper,
-    permission, AcpClientPort, AcpStartup,
+    permission, thought_level, AcpClientPort, AcpStartup,
 };
 use crate::{
     app::{
@@ -172,7 +172,7 @@ impl SessionHost {
         );
         let response = NewSessionResponse::new(acp_session_id)
             .modes(mode_state(startup.config.permission_mode))
-            .config_options(host.config_options(&startup.config.favorite_models));
+            .config_options(host.config_options(&startup.config));
         Ok((host, response))
     }
 
@@ -209,7 +209,7 @@ impl SessionHost {
         );
         let response = LoadSessionResponse::new()
             .modes(mode_state(startup.config.permission_mode))
-            .config_options(host.config_options(&startup.config.favorite_models));
+            .config_options(host.config_options(&startup.config));
         Ok((host, response))
     }
 
@@ -235,6 +235,27 @@ impl SessionHost {
         result
     }
 
+    pub(super) async fn set_config_option(
+        &mut self,
+        request: SetSessionConfigOptionRequest,
+        process_config: &Config,
+    ) -> Result<SetSessionConfigOptionResponse, AcpError> {
+        if request.config_id.0.as_ref() == thought_level::THOUGHT_LEVEL_ID {
+            let requested = thought_level::parse_thought_level_request(&request)?;
+            thought_level::apply_thought_level(
+                &self.built,
+                &self.thought_config(process_config),
+                requested,
+            )?;
+            return Ok(SetSessionConfigOptionResponse::new(
+                self.config_options(process_config),
+            ));
+        }
+        Ok(SetSessionConfigOptionResponse::new(
+            self.set_model_option(&request, process_config).await?,
+        ))
+    }
+
     pub(super) fn cancel_handle(&self) -> Arc<PromptGate> {
         Arc::clone(&self.prompt_gate)
     }
@@ -243,12 +264,11 @@ impl SessionHost {
         Arc::clone(&self.replaced)
     }
 
-    pub(super) fn config_options(&self, favorite_models: &[String]) -> Vec<SessionConfigOption> {
-        let available_auths = available_auth_modes(&AppCredentialStore);
-        config_options::model_config_options(
+    pub(super) fn config_options(&self, process_config: &Config) -> Vec<SessionConfigOption> {
+        advertised_config_options(
             &self.current_model(),
-            favorite_models,
-            catalog::available_models_for_auths(&available_auths),
+            process_config,
+            self.built.session.reasoning_level(),
         )
     }
 
@@ -266,7 +286,7 @@ impl SessionHost {
             == model_reference(&current.provider, &current.model)
             && selection.auth == current.auth
         {
-            return Ok(self.config_options(&process_config.favorite_models));
+            return Ok(self.config_options(process_config));
         }
         let reasoning = resolve_switch_reasoning(&selection, self.built.session.reasoning_level())?;
         let mut config = process_config.clone();
@@ -299,7 +319,7 @@ impl SessionHost {
         .map_err(host_apply_error)?;
         self.built.provider = provider;
         self.auth = selection.auth;
-        Ok(self.config_options(&process_config.favorite_models))
+        Ok(self.config_options(process_config))
     }
 
     pub(super) async fn shutdown(self) {
@@ -317,6 +337,10 @@ impl SessionHost {
             model: identity.model.clone(),
             auth: self.auth.clone(),
         }
+    }
+
+    fn thought_config(&self, process_config: &Config) -> Config {
+        model_scoped_config(&self.current_model(), process_config)
     }
 
     fn from_built(
@@ -433,6 +457,32 @@ impl SessionHost {
             message,
         );
     }
+}
+
+fn advertised_config_options(
+    current: &CurrentModel,
+    process_config: &Config,
+    reasoning: rho_sdk::ReasoningLevel,
+) -> Vec<SessionConfigOption> {
+    let available_auths = available_auth_modes(&AppCredentialStore);
+    let mut options = config_options::model_config_options(
+        current,
+        &process_config.favorite_models,
+        catalog::available_models_for_auths(&available_auths),
+    );
+    options.extend(thought_level::config_options(
+        &model_scoped_config(current, process_config),
+        reasoning,
+    ));
+    options
+}
+
+fn model_scoped_config(current: &CurrentModel, process_config: &Config) -> Config {
+    let mut config = process_config.clone();
+    config.provider = current.provider.clone();
+    config.model = current.model.clone();
+    config.auth = current.auth.clone();
+    config
 }
 
 fn model_context_window(provider: &str, model: &str) -> Option<u64> {

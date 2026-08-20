@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fs, io::Write as _, path::PathBuf};
+use std::{collections::BTreeMap, fs, path::PathBuf};
 
 use pretty_assertions::assert_eq;
 use rho_sdk::Revision;
