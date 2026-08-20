@@ -11,15 +11,18 @@ use agent_client_protocol::{
         AgentCapabilities, AuthenticateRequest, CancelNotification, InitializeRequest,
         InitializeResponse, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
         NewSessionResponse, PromptCapabilities, PromptRequest, PromptResponse, SessionId,
-        SetSessionModeRequest,
+        SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, SetSessionModeRequest,
     },
     Error as AcpError,
 };
+use rho_providers::credentials::available_auth_modes;
 
 use super::{
+    config_options::resolve_model_value,
     session_host::{PromptGate, SessionHost},
     AcpClientPort, AcpStartup,
 };
+use crate::credential_store::{build_provider_from_config_ensuring_catalog, AppCredentialStore};
 
 /// One ACP session slot. The host stays in this mutex for its whole life, so a
 /// prompt never has to take it out of the map and put it back.
@@ -137,6 +140,37 @@ impl RhoAcpAgent {
             .prompt(request, port)
             .await
             .map_err(host_error)
+    }
+
+    pub(super) async fn set_config_option(
+        self: &Arc<Self>,
+        request: SetSessionConfigOptionRequest,
+    ) -> Result<SetSessionConfigOptionResponse, AcpError> {
+        let session_id = request.session_id.clone();
+        let live = {
+            let sessions = self.sessions.lock().await;
+            sessions
+                .get(&session_id)
+                .cloned()
+                .ok_or_else(|| missing_session(&session_id))?
+        };
+        let mut slot = live.try_lock_host(&session_id)?;
+        let host = slot.as_mut().expect("try_lock_host rejects an empty slot");
+        let available_auths = available_auth_modes(&AppCredentialStore);
+        let selection = resolve_model_value(&request, &host.current_model, &available_auths)?;
+        let mut config = self.startup.config.clone();
+        config.provider = selection.provider.clone();
+        config.model = selection.model.clone();
+        config.auth = selection.auth.clone();
+        let provider =
+            build_provider_from_config_ensuring_catalog(&config, Arc::new(AppCredentialStore))
+                .await
+                .map_err(|error| host_error(error.into()))?;
+        host.replace_model(selection, provider)
+            .map_err(host_error)?;
+        Ok(SetSessionConfigOptionResponse::new(
+            host.config_options(&self.startup.config.favorite_models),
+        ))
     }
 
     pub(super) async fn cancel(&self, notification: CancelNotification) {

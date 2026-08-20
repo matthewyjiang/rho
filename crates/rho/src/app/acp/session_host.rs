@@ -9,18 +9,29 @@ use std::{
 
 use agent_client_protocol::schema::v1::{
     LoadSessionRequest, LoadSessionResponse, McpServer, NewSessionRequest, NewSessionResponse,
-    PromptRequest, PromptResponse, RequestPermissionOutcome, SessionId,
+    PromptRequest, PromptResponse, RequestPermissionOutcome, SessionConfigOption, SessionId,
 };
 use futures_util::stream::{FuturesUnordered, StreamExt};
+use rho_providers::{
+    credentials::available_auth_modes,
+    model::catalog::{self, ModelSelection},
+};
 use rho_sdk::{
-    model::Message, ApprovalRequestReceiver, CancellationToken, PendingApproval, RunEvent,
-    SessionOptions, UserInput,
+    model::Message, provider::ModelProvider, ApprovalRequestReceiver, CancellationToken,
+    PendingApproval, RunEvent, SessionOptions, UserInput,
 };
 
-use super::{events::EventMapper, permission, AcpClientPort, AcpStartup};
+use super::{
+    config_options::{self, CurrentModel},
+    events::EventMapper,
+    permission, AcpClientPort, AcpStartup,
+};
 use crate::{
     app::{interactive_runtime::startup::prompt_cache_key, session_assembly::BuiltSession},
+    credential_store::AppCredentialStore,
     herdr::{HerdrReporter, HerdrState},
+    model_identity::PromptModel,
+    prompt::{model_switch_context, ModelSwitchKind},
     session::Session as StoredSession,
 };
 
@@ -36,6 +47,7 @@ pub(super) struct SessionHost {
     acp_session_id: SessionId,
     built: BuiltSession,
     stored: StoredSession,
+    pub(super) current_model: CurrentModel,
     prompt_gate: Arc<PromptGate>,
     completed_runs: u64,
     permission_placeholders: AtomicU64,
@@ -136,12 +148,17 @@ impl SessionHost {
             }
         };
         let acp_session_id = SessionId::new(built.session.id().as_str());
-        let response = NewSessionResponse::new(acp_session_id.clone())
-            .modes(mode_state(startup.config.permission_mode));
-        Ok((
-            Self::from_built(acp_session_id, built, stored, startup.herdr.clone()),
-            response,
-        ))
+        let host = Self::from_built(
+            acp_session_id.clone(),
+            built,
+            stored,
+            CurrentModel::from_config(&startup.config),
+            startup.herdr.clone(),
+        );
+        let response = NewSessionResponse::new(acp_session_id)
+            .modes(mode_state(startup.config.permission_mode))
+            .config_options(host.config_options(&startup.config.favorite_models));
+        Ok((host, response))
     }
 
     pub(super) async fn load(
@@ -168,11 +185,17 @@ impl SessionHost {
             built.teardown().await;
             return Err(error);
         }
-        let response = LoadSessionResponse::new().modes(mode_state(startup.config.permission_mode));
-        Ok((
-            Self::from_built(request.session_id, built, stored, startup.herdr.clone()),
-            response,
-        ))
+        let host = Self::from_built(
+            request.session_id,
+            built,
+            stored,
+            CurrentModel::from_config(&startup.config),
+            startup.herdr.clone(),
+        );
+        let response = LoadSessionResponse::new()
+            .modes(mode_state(startup.config.permission_mode))
+            .config_options(host.config_options(&startup.config.favorite_models));
+        Ok((host, response))
     }
 
     pub(super) async fn prompt(
@@ -205,6 +228,45 @@ impl SessionHost {
         Arc::clone(&self.replaced)
     }
 
+    pub(super) fn config_options(&self, favorite_models: &[String]) -> Vec<SessionConfigOption> {
+        let available_auths = available_auth_modes(&AppCredentialStore);
+        config_options::model_config_options(
+            &self.current_model,
+            favorite_models,
+            catalog::available_models_for_auths(&available_auths),
+        )
+    }
+
+    /// Swaps the live provider. The caller holds the host slot lock so no prompt
+    /// is in flight.
+    pub(super) fn replace_model(
+        &mut self,
+        selection: ModelSelection,
+        provider: Arc<dyn ModelProvider>,
+    ) -> anyhow::Result<()> {
+        let session_started = !self.built.session.history().is_empty();
+        let previous_prompt_model = PromptModel::Rho {
+            provider: self.current_model.provider.clone(),
+            model: self.current_model.model.clone(),
+        };
+        let current_prompt_model = PromptModel::from_sdk_identity(&provider.identity());
+        // HandoffReport could ride along in `_meta` later; ACP has no place for it yet.
+        let _handoff = self.built.session.replace_provider(provider)?;
+        self.current_model = CurrentModel {
+            provider: selection.provider,
+            model: selection.model,
+            auth: selection.auth,
+        };
+        if session_started && current_prompt_model != previous_prompt_model {
+            let (context, _) =
+                model_switch_context(ModelSwitchKind::Conversation, &current_prompt_model);
+            self.built
+                .session
+                .append_message(Message::user_text(context))?;
+        }
+        Ok(())
+    }
+
     pub(super) async fn shutdown(self) {
         self.prompt_gate.cancel();
         let Self { built, herdr, .. } = self;
@@ -216,12 +278,14 @@ impl SessionHost {
         acp_session_id: SessionId,
         built: BuiltSession,
         stored: StoredSession,
+        current_model: CurrentModel,
         herdr: HerdrReporter,
     ) -> Self {
         Self {
             acp_session_id,
             built,
             stored,
+            current_model,
             prompt_gate: Arc::new(PromptGate::new()),
             completed_runs: 0,
             permission_placeholders: AtomicU64::new(0),

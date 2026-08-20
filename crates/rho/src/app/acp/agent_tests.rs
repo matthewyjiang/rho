@@ -11,7 +11,8 @@ use agent_client_protocol::{
         v1::{
             CancelNotification, InitializeRequest, LoadSessionRequest, PromptCapabilities,
             PromptRequest, RequestPermissionRequest, RequestPermissionResponse, SessionId,
-            SessionModeId, SessionNotification, SetSessionModeRequest,
+            SessionModeId, SessionNotification, SetSessionConfigOptionRequest,
+            SetSessionModeRequest,
         },
         ProtocolVersion,
     },
@@ -384,6 +385,46 @@ async fn shutdown_all_prevents_later_publication() {
         .await
         .expect_err("load after shutdown");
     assert_eq!(load.code, ErrorCode::InternalError);
+}
+
+// Covers: session/set_config_option on an unknown id must not invent a session
+// Owner: ACP agent session map
+#[tokio::test]
+async fn set_config_option_on_missing_session_is_not_found() {
+    let error = test_agent()
+        .set_config_option(SetSessionConfigOptionRequest::new(
+            SessionId::new("missing"),
+            "model",
+            "xai/grok-3",
+        ))
+        .await
+        .expect_err("missing session");
+    assert_eq!(error.code, ErrorCode::ResourceNotFound);
+}
+
+// Covers: session/set_config_option must report busy while a prompt holds the host
+// Owner: ACP agent session map
+#[tokio::test]
+async fn set_config_option_on_a_locked_session_is_busy() {
+    let agent = test_agent();
+    let session_id = SessionId::new("busy");
+    let live = vacant_session();
+    agent
+        .sessions
+        .lock()
+        .await
+        .insert(session_id.clone(), Arc::clone(&live));
+    let _held = live.host.lock().await;
+
+    let error = agent
+        .set_config_option(SetSessionConfigOptionRequest::new(
+            session_id,
+            "model",
+            "xai/grok-3",
+        ))
+        .await
+        .expect_err("busy session");
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
 }
 
 // Covers: a same-ID replacement must not become promptable until the old host

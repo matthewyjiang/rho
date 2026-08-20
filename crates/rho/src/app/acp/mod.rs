@@ -1,4 +1,5 @@
 mod agent;
+mod config_options;
 mod events;
 mod permission;
 mod session_host;
@@ -9,7 +10,7 @@ use agent_client_protocol::{
     schema::v1::{
         AuthenticateRequest, CancelNotification, InitializeRequest, LoadSessionRequest,
         NewSessionRequest, PromptRequest, RequestPermissionRequest, RequestPermissionResponse,
-        SessionNotification, SetSessionModeRequest,
+        SessionNotification, SetSessionConfigOptionRequest, SetSessionModeRequest,
     },
     Agent, Client, ConnectionTo, Error as AcpError, JsonRpcResponse, Responder, Role, Stdio,
 };
@@ -126,6 +127,18 @@ pub(super) async fn run(startup: AcpStartup) -> anyhow::Result<()> {
                         responder,
                         async move { agent.prompt(request, &port).await },
                     )
+                }
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let agent = Arc::clone(&agent);
+                async move |request: SetSessionConfigOptionRequest, responder, cx| {
+                    let agent = Arc::clone(&agent);
+                    spawn_response(&cx, responder, async move {
+                        agent.set_config_option(request).await
+                    })
                 }
             },
             agent_client_protocol::on_receive_request!(),
