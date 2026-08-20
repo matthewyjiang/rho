@@ -5,6 +5,7 @@ pub mod display_name;
 pub mod favorites;
 pub mod handoff;
 pub mod image;
+pub(crate) mod inclusive_prompt;
 pub mod models_dev;
 pub mod provider_models;
 mod reasoning_capabilities;

@@ -202,10 +202,15 @@ pub(super) fn estimated_cost_usd_micros(
     metadata: Option<&ModelMetadata>,
 ) -> Option<u64> {
     let metadata = metadata?;
-    let input = usage.input_tokens.unwrap_or_default();
     let cache_read = usage.cache_read_tokens.unwrap_or_default();
-    let total_input = usage.total_input_tokens().unwrap_or_default();
-    let cost = metadata.cost_for_input_tokens(total_input)?;
+    let inclusive = usage.inclusive_prompt_tokens().unwrap_or_default();
+    let input = match usage.input_tokens {
+        Some(input) => input,
+        None => inclusive
+            .saturating_sub(cache_read)
+            .saturating_sub(usage.cache_write_tokens.unwrap_or_default()),
+    };
+    let cost = metadata.cost_for_input_tokens(inclusive)?;
     let mut micros = 0u128;
     micros += cost_component(input, cost.input_micros_per_m);
     micros += cost_component(
@@ -244,16 +249,21 @@ pub(super) fn format_token_count(tokens: u64) -> String {
 /// Compact in/out/cache breakdown for status and attach headers.
 pub(super) fn format_usage_token_summary(usage: &ModelUsage) -> Option<String> {
     let mut parts = Vec::new();
-    push_token_part(&mut parts, "in", usage.input_tokens);
+    push_token_part(&mut parts, "in", display_input_tokens(usage));
     push_token_part(&mut parts, "out", usage.output_tokens);
     push_token_part(&mut parts, "cache r", usage.cache_read_tokens);
     push_token_part(&mut parts, "cache w", usage.cache_write_tokens);
-    if parts.is_empty() {
-        // Fall back to total input when providers only report an aggregate.
-        push_token_part(&mut parts, "in", usage.total_input_tokens());
-        push_token_part(&mut parts, "out", usage.output_tokens);
-    }
     (!parts.is_empty()).then(|| format!("tokens {}", parts.join(" · ")))
+}
+
+pub(super) fn display_input_tokens(usage: &ModelUsage) -> Option<u64> {
+    usage.input_tokens.or_else(|| {
+        let has_cache_split =
+            usage.cache_read_tokens.is_some() || usage.cache_write_tokens.is_some();
+        (!has_cache_split)
+            .then(|| usage.inclusive_prompt_tokens())
+            .flatten()
+    })
 }
 
 fn push_token_part(parts: &mut Vec<String>, label: &str, tokens: Option<u64>) {
@@ -339,7 +349,7 @@ pub(super) fn merge_usage(total: &mut Option<ModelUsage>, mut usage: ModelUsage)
 
 pub(super) fn usage_total_tokens(usage: &ModelUsage) -> Option<u64> {
     let total = usage
-        .total_input_tokens()
+        .inclusive_prompt_tokens()
         .unwrap_or_default()
         .saturating_add(usage.output_tokens.unwrap_or_default());
     (total > 0).then_some(total)

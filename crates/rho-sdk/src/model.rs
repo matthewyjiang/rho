@@ -344,6 +344,22 @@ impl ModelResponse {
     }
 }
 
+/// Host-reported usage where the prompt total still includes cache hits.
+///
+/// Pass this to [`ModelUsage::from_inclusive_prompt`]. Anthropic-style hosts
+/// that already report an uncached remainder should construct [`ModelUsage`]
+/// directly.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct InclusivePromptUsage {
+    pub prompt_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub cache_read_tokens: Option<u64>,
+    pub cache_write_tokens: Option<u64>,
+    pub reported_total: Option<u64>,
+    pub context_window: Option<u64>,
+    pub cost_usd_micros: Option<u64>,
+}
+
 /// Normalized token, context, and cost accounting for model work.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelUsage {
@@ -351,7 +367,8 @@ pub struct ModelUsage {
     ///
     /// Absent when the host has not reported a cache split. Do not treat a
     /// missing value as zero uncached tokens, and do not store a mixed prompt
-    /// total here.
+    /// total here. Use [`Self::from_inclusive_prompt`] for inclusive-prompt
+    /// hosts and [`Self::inclusive_prompt_tokens`] for prompt size.
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
     pub cache_read_tokens: Option<u64>,
@@ -362,27 +379,80 @@ pub struct ModelUsage {
 }
 
 impl ModelUsage {
-    /// Input tokens present in the request, including cache hits and writes.
+    /// Build usage from a host that reports an inclusive prompt total.
     ///
-    /// Prefers the disjoint input buckets. When those are absent, falls back to
-    /// `total_tokens` minus output so context fill can still use a prompt size
-    /// without treating that total as uncached input.
+    /// Uncached input is derived only when a cache field is present, including
+    /// an explicit zero. A missing cache count is not treated as zero cache.
+    /// `total_tokens` keeps the host total, or prompt plus output when the host
+    /// omitted it, so [`Self::inclusive_prompt_tokens`] can recover prompt size.
+    pub fn from_inclusive_prompt(usage: InclusivePromptUsage) -> Self {
+        let input_tokens = match (
+            usage.prompt_tokens,
+            usage.cache_read_tokens,
+            usage.cache_write_tokens,
+        ) {
+            (Some(prompt), cache_read, cache_write)
+                if cache_read.is_some() || cache_write.is_some() =>
+            {
+                Some(
+                    prompt
+                        .saturating_sub(cache_read.unwrap_or_default())
+                        .saturating_sub(cache_write.unwrap_or_default()),
+                )
+            }
+            _ => None,
+        };
+        let total_tokens =
+            usage
+                .reported_total
+                .or_else(|| match (usage.prompt_tokens, usage.output_tokens) {
+                    (Some(prompt), Some(output)) => Some(prompt.saturating_add(output)),
+                    (Some(prompt), None) => Some(prompt),
+                    _ => None,
+                });
+        Self {
+            input_tokens,
+            output_tokens: usage.output_tokens,
+            cache_read_tokens: usage.cache_read_tokens,
+            cache_write_tokens: usage.cache_write_tokens,
+            total_tokens,
+            context_window: usage.context_window,
+            cost_usd_micros: usage.cost_usd_micros,
+        }
+    }
+
+    /// Sum of the disjoint input buckets: uncached, cache read, and cache write.
+    ///
+    /// Missing when every bucket is absent. This is not prompt size for a mixed
+    /// total; use [`Self::inclusive_prompt_tokens`] for that.
     pub fn total_input_tokens(&self) -> Option<u64> {
         let has_input = self.input_tokens.is_some()
             || self.cache_read_tokens.is_some()
             || self.cache_write_tokens.is_some();
-        if has_input {
-            return Some(
-                self.input_tokens
-                    .unwrap_or_default()
-                    .saturating_add(self.cache_read_tokens.unwrap_or_default())
-                    .saturating_add(self.cache_write_tokens.unwrap_or_default()),
-            );
-        }
-        match (self.total_tokens, self.output_tokens) {
+        has_input.then_some(
+            self.input_tokens
+                .unwrap_or_default()
+                .saturating_add(self.cache_read_tokens.unwrap_or_default())
+                .saturating_add(self.cache_write_tokens.unwrap_or_default()),
+        )
+    }
+
+    /// Prompt tokens present in the request, including cache hits and writes.
+    ///
+    /// Prefers the disjoint buckets. When those undercount an accumulated
+    /// session, or when they are absent, uses `total_tokens` minus output so
+    /// context fill and catalog cost can still see a prompt. Returns none when
+    /// output is unknown: a bare total may still be growing with generation.
+    pub fn inclusive_prompt_tokens(&self) -> Option<u64> {
+        let buckets = self.total_input_tokens();
+        let recovered = match (self.total_tokens, self.output_tokens) {
             (Some(total), Some(output)) => Some(total.saturating_sub(output)),
-            (Some(total), None) => Some(total),
-            (None, _) => None,
+            _ => None,
+        };
+        match (buckets, recovered) {
+            (Some(known), Some(from_total)) => Some(known.max(from_total)),
+            (Some(known), None) | (None, Some(known)) => Some(known),
+            (None, None) => None,
         }
     }
 
@@ -606,7 +676,7 @@ impl ContextUsage {
 
     pub fn from_model_usage(usage: &ModelUsage) -> Option<Self> {
         usage
-            .total_input_tokens()
+            .inclusive_prompt_tokens()
             .map(|tokens| Self::provider_reported(tokens, usage.context_window))
     }
 }

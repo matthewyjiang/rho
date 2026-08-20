@@ -205,7 +205,7 @@ impl InteractiveRunController {
                 self.note_context_usage(ContextUsage::estimated(*tokens, context_window));
             }
             RunEvent::UsageUpdated { usage } => {
-                if let Some(cumulative_tokens) = usage.total_input_tokens() {
+                if let Some(cumulative_tokens) = usage.inclusive_prompt_tokens() {
                     self.cumulative_input_tokens = cumulative_tokens;
                     let tokens = cumulative_tokens.saturating_sub(self.step_input_token_baseline);
                     let context_window = match (usage.context_window, context_window) {

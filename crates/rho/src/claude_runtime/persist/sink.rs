@@ -207,7 +207,7 @@ fn apply_terminal_metadata(status: &mut RunStatus, terminal: &TerminalResult) {
         status.turns = turns;
     }
     if let Some(usage) = &terminal.usage {
-        if let Some(tokens) = usage.total_input_tokens() {
+        if let Some(tokens) = usage.inclusive_prompt_tokens() {
             status.input_tokens = Some(tokens);
         }
         if let Some(tokens) = usage.output_tokens {

@@ -741,7 +741,7 @@ impl RunReporter {
                 self.sink.publish();
             }
             RunEvent::UsageUpdated { usage } => {
-                self.sink.status.input_tokens = usage.total_input_tokens();
+                self.sink.status.input_tokens = usage.inclusive_prompt_tokens();
                 self.sink.status.output_tokens = usage.output_tokens;
             }
             _ => {}
@@ -761,7 +761,7 @@ impl RunReporter {
         match result {
             Ok(outcome) => {
                 let usage = outcome.usage();
-                self.sink.status.input_tokens = usage.total_input_tokens();
+                self.sink.status.input_tokens = usage.inclusive_prompt_tokens();
                 self.sink.status.output_tokens = usage.output_tokens;
                 self.sink.finish_ok(Some(outcome.text().to_string()));
             }
@@ -787,7 +787,7 @@ impl RunReporter {
         match terminal {
             RunTerminal::Completed(outcome) => {
                 let usage = outcome.usage();
-                self.sink.status.input_tokens = usage.total_input_tokens();
+                self.sink.status.input_tokens = usage.inclusive_prompt_tokens();
                 self.sink.status.output_tokens = usage.output_tokens;
                 self.sink.finish_ok(Some(outcome.text().to_string()));
             }

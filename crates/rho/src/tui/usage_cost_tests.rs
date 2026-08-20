@@ -27,11 +27,11 @@ fn estimated_cost_uses_normalized_input_and_cache_read() {
     );
 }
 
-// Covers: a mixed prompt total without a cache split must not be billed as
-// uncached input; only known buckets (here, output) may be priced
+// Covers: a host-reported mixed prompt total is billed as uncached when no
+// cache split exists; ContextEstimated is not this path
 // Owner: tui catalog cost estimate
 #[test]
-fn estimated_cost_does_not_treat_mixed_prompt_total_as_uncached() {
+fn estimated_cost_bills_mixed_prompt_total_when_split_unknown() {
     let usage = ModelUsage {
         output_tokens: Some(10),
         total_tokens: Some(1_000_010),
@@ -40,7 +40,7 @@ fn estimated_cost_does_not_treat_mixed_prompt_total_as_uncached() {
 
     assert_eq!(
         super::estimated_cost_usd_micros(&usage, Some(&priced_metadata())),
-        Some(20)
+        Some(1_000_020)
     );
 }
 
