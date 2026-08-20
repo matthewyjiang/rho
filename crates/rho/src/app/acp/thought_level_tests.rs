@@ -116,14 +116,14 @@ fn omits_thought_level_when_reasoning_is_not_configurable() {
     assert!(config_options(&config, ReasoningLevel::High).is_empty());
 }
 
-// Covers: hosts must get InvalidParams for an unknown option or a non-select
-// thought_level value instead of a silent no-op.
+// Covers: hosts must get InvalidParams for a non-select thought_level value
+// instead of a silent no-op. Unknown option ids are rejected by the model
+// resolver after SessionHost dispatches.
 // Owner: acp session config mapper
 #[test]
 fn parse_thought_level_rejects_unknown_option_and_non_select_values() {
     let session = SessionId::new("sess");
     let cases = [
-        SetSessionConfigOptionRequest::new(session.clone(), "mode", "bypass"),
         SetSessionConfigOptionRequest::new(
             session.clone(),
             THOUGHT_LEVEL_ID,
@@ -150,15 +150,13 @@ async fn apply_thought_level_updates_the_idle_session() {
     let boxed: Arc<dyn ModelProvider> = Arc::new(provider.clone());
     let built = built_session(boxed, rho_sdk::ReasoningLevel::Medium).await;
     let config = test_config();
-    let response =
-        apply_thought_level(&built, &config, ReasoningLevel::High).expect("apply thought_level");
+    apply_thought_level(&built, &config, ReasoningLevel::High).expect("apply thought_level");
 
     built.session.complete("next").await.unwrap();
     assert_eq!(
         built.session.reasoning_level(),
         rho_sdk::ReasoningLevel::High
     );
-    assert_eq!(select_current(&response.config_options), "high");
     assert_eq!(
         provider.recorded_requests()[0].reasoning_level,
         rho_sdk::ReasoningLevel::High

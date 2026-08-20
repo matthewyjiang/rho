@@ -3,7 +3,7 @@ use std::sync::Arc;
 use agent_client_protocol::{
     schema::v1::{
         SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption, SessionId,
-        SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
+        SetSessionConfigOptionRequest,
     },
     Error as AcpError,
 };
@@ -120,35 +120,33 @@ pub(super) fn apply_thought_level(
     built: &BuiltSession,
     config: &Config,
     requested: ReasoningLevel,
-) -> Result<SetSessionConfigOptionResponse, AcpError> {
+) -> Result<(), AcpError> {
     let current = built.session.reasoning_level();
-    if requested != current {
-        let level = resolve_thought_level(config, requested)?;
-        built
-            .session
-            .set_reasoning_level(level)
-            .map_err(|error| map_session_error(&built.session, error))?;
-        if let Err(error) = refresh_session_compaction(
-            &built.session,
-            Arc::clone(&built.provider),
-            built.tools.tools(),
-            level,
-            CompactionConfig::from(config),
-            configured_context_window(config),
-            built.runtime.usage_recording(),
-        ) {
-            // Restore the previous level so a failed compaction rebuild does
-            // not leave the session advertising a level its compactor does
-            // not match. The session was idle to get here; ignore a restore
-            // error rather than masking the compaction failure.
-            let _ = built.session.set_reasoning_level(current);
-            return Err(map_session_error(&built.session, error));
-        }
+    if requested == current {
+        return Ok(());
     }
-    Ok(SetSessionConfigOptionResponse::new(config_options(
-        config,
-        built.session.reasoning_level(),
-    )))
+    let level = resolve_thought_level(config, requested)?;
+    built
+        .session
+        .set_reasoning_level(level)
+        .map_err(|error| map_session_error(&built.session, error))?;
+    if let Err(error) = refresh_session_compaction(
+        &built.session,
+        Arc::clone(&built.provider),
+        built.tools.tools(),
+        level,
+        CompactionConfig::from(config),
+        configured_context_window(config),
+        built.runtime.usage_recording(),
+    ) {
+        // Restore the previous level so a failed compaction rebuild does
+        // not leave the session advertising a level its compactor does
+        // not match. The session was idle to get here; ignore a restore
+        // error rather than masking the compaction failure.
+        let _ = built.session.set_reasoning_level(current);
+        return Err(map_session_error(&built.session, error));
+    }
+    Ok(())
 }
 
 fn thought_capabilities(config: &Config) -> ReasoningCapabilities {

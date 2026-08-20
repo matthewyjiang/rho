@@ -22,10 +22,12 @@ use rho_sdk::{
 };
 
 use super::{
+    advertised_config_options,
     convert::{user_input_from_prompt, validate_session_cwd, workspace_cwd, SessionCwdError},
-    pump_sources, ApprovalSource, EventMapper, EventSource, PromptGate,
+    pump_sources, ApprovalSource, CurrentModel, EventMapper, EventSource, PromptGate,
 };
-use crate::app::acp::AcpClientPort;
+use crate::{app::acp::AcpClientPort, config::Config};
+use rho_providers::reasoning::ReasoningLevel;
 
 // Covers: session/new and session/load must refuse a non-workspace cwd
 // Owner: acp session host
@@ -280,4 +282,43 @@ async fn permission_request_does_not_block_event_drain() {
     drop(event_tx);
     drop(approval_tx);
     pump.await.expect("pump task").expect("pump");
+}
+
+// Covers: session/new and set_config_option must advertise model, then
+// thought_level only when the current model can change reasoning.
+// Owner: acp session config mapper
+#[test]
+fn advertised_options_merge_model_with_optional_thought_level() {
+    let cases = [
+        (
+            CurrentModel {
+                provider: "test".into(),
+                model: "model".into(),
+                auth: "api-key".into(),
+            },
+            ["model", "thought_level"].as_slice(),
+        ),
+        (
+            CurrentModel {
+                provider: "github-copilot".into(),
+                model: "gpt-4.1".into(),
+                auth: "github-copilot".into(),
+            },
+            ["model"].as_slice(),
+        ),
+    ];
+    for (current, expected_ids) in cases {
+        let config = Config {
+            provider: current.provider.clone(),
+            model: current.model.clone(),
+            auth: current.auth.clone(),
+            ..Config::default()
+        };
+        let options = advertised_config_options(&current, &config, ReasoningLevel::High);
+        let ids = options
+            .iter()
+            .map(|option| option.id.0.as_ref())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, expected_ids, "{}", current.provider);
+    }
 }

@@ -265,17 +265,11 @@ impl SessionHost {
     }
 
     pub(super) fn config_options(&self, process_config: &Config) -> Vec<SessionConfigOption> {
-        let available_auths = available_auth_modes(&AppCredentialStore);
-        let mut options = config_options::model_config_options(
+        advertised_config_options(
             &self.current_model(),
-            &process_config.favorite_models,
-            catalog::available_models_for_auths(&available_auths),
-        );
-        options.extend(thought_level::config_options(
-            &self.thought_config(process_config),
+            process_config,
             self.built.session.reasoning_level(),
-        ));
-        options
+        )
     }
 
     /// Resolves and applies `session/set_config_option` on this host. The caller
@@ -468,6 +462,25 @@ impl SessionHost {
             message,
         );
     }
+}
+
+fn advertised_config_options(
+    current: &CurrentModel,
+    process_config: &Config,
+    reasoning: rho_sdk::ReasoningLevel,
+) -> Vec<SessionConfigOption> {
+    let available_auths = available_auth_modes(&AppCredentialStore);
+    let mut options = config_options::model_config_options(
+        current,
+        &process_config.favorite_models,
+        catalog::available_models_for_auths(&available_auths),
+    );
+    let mut thought_config = process_config.clone();
+    thought_config.provider = current.provider.clone();
+    thought_config.model = current.model.clone();
+    thought_config.auth = current.auth.clone();
+    options.extend(thought_level::config_options(&thought_config, reasoning));
+    options
 }
 
 fn model_context_window(provider: &str, model: &str) -> Option<u64> {
