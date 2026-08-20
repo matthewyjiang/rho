@@ -43,6 +43,15 @@ pub(super) struct ModelPerformanceSummary {
     pub(super) eligible_calls: u64,
 }
 
+impl ModelPerformanceSummary {
+    /// Average generation rate rounded for display (`N tok/s` in the
+    /// statusline and the attach header).
+    pub(super) fn rounded_generation_rate(&self) -> Option<u64> {
+        self.average_generation_tokens_per_second
+            .map(|rate| rate.round() as u64)
+    }
+}
+
 #[derive(Default)]
 pub(super) struct ModelPerformanceTracker {
     profiles: BTreeMap<ModelCallProfile, ModelPerformanceAggregate>,

@@ -700,11 +700,7 @@ impl AttachmentApp {
             .and_then(|status| status.last_activity.as_deref())
             .unwrap_or("waiting for activity");
         let identity = identity_line(status, self.run_usage.current(), subagent::unix_now_secs());
-        let rate = self
-            .model_performance
-            .summary()
-            .average_generation_tokens_per_second
-            .map(|rate| rate.round() as u64);
+        let rate = self.model_performance.summary().rounded_generation_rate();
         let activity_metrics = activity_metrics_line(
             activity,
             self.context_usage.as_ref(),

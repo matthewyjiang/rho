@@ -335,11 +335,7 @@ fn status_token_fallback_uses_run_status_totals() {
 }
 
 fn activity_line(app: &AttachmentApp, activity: &str) -> String {
-    let rate = app
-        .model_performance
-        .summary()
-        .average_generation_tokens_per_second
-        .map(|rate| rate.round() as u64);
+    let rate = app.model_performance.summary().rounded_generation_rate();
     activity_metrics_line(activity, None, None, None, rate)
 }
 

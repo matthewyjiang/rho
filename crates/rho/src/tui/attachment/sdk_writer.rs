@@ -141,7 +141,7 @@ fn attachment_update(
             let generation_time = metrics.generation_time?;
             Some(AttachmentEvent::ModelCallCompleted {
                 generation_output_tokens,
-                generation_time_ms: generation_time.as_millis().min(u64::MAX as u128) as u64,
+                generation_time_ms: u64::try_from(generation_time.as_millis()).unwrap_or(u64::MAX),
             })
         }
     }

@@ -961,11 +961,8 @@ impl App {
             .usage
             .model_performance
             .summary(&self.info.runtime.model_call_profile());
-        self.statusline.update_average_generation_rate(
-            performance
-                .average_generation_tokens_per_second
-                .map(|rate| rate.round() as u64),
-        );
+        self.statusline
+            .update_average_generation_rate(performance.rounded_generation_rate());
         self.statusline
             .update_model_metadata(self.model_metadata.as_ref());
     }
