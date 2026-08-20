@@ -1,10 +1,10 @@
 //! Conversation provider/model switches on a live interactive runtime.
 //!
-//! Replacing the provider is a multi-step transition: hand off the session,
-//! rebuild compaction, tell the model when the conversation model changed, and
-//! keep MCP sampling on the live selection. Post-replace failures roll the
-//! provider back so `Err` means the active provider is unchanged whenever
-//! restore itself succeeds.
+//! Session-level replace, reasoning, compaction, notice, and delegated
+//! selection live in [`crate::app::conversation_switch`]. This wrapper adds
+//! TUI display history, MCP sampling, and run-transition. Post-replace
+//! failures roll the provider back so `Err` means the active provider is
+//! unchanged whenever restore itself succeeds.
 
 use std::sync::Arc;
 

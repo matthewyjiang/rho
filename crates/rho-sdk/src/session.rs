@@ -458,6 +458,18 @@ impl Session {
         self.core.persistence_snapshot()
     }
 
+    /// Live provider this session will use on the next turn.
+    pub fn provider(&self) -> Arc<dyn ModelProvider> {
+        Arc::clone(
+            &self
+                .core
+                .runtime
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .provider,
+        )
+    }
+
     pub fn reasoning_level(&self) -> crate::ReasoningLevel {
         self.core.runtime().reasoning_level
     }

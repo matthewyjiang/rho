@@ -7,18 +7,26 @@ use std::{
     },
 };
 
-use agent_client_protocol::schema::v1::{
-    LoadSessionRequest, LoadSessionResponse, McpServer, NewSessionRequest, NewSessionResponse,
-    PromptRequest, PromptResponse, RequestPermissionOutcome, SessionConfigOption, SessionId,
+use agent_client_protocol::{
+    schema::v1::{
+        LoadSessionRequest, LoadSessionResponse, McpServer, NewSessionRequest, NewSessionResponse,
+        PromptRequest, PromptResponse, RequestPermissionOutcome, SessionConfigOption, SessionId,
+        SetSessionConfigOptionRequest,
+    },
+    Error as AcpError,
 };
 use futures_util::stream::{FuturesUnordered, StreamExt};
 use rho_providers::{
     credentials::available_auth_modes,
-    model::catalog::{self, ModelSelection},
+    model::{
+        catalog::{self, ModelSelection},
+        models_dev, ReasoningRequestSource,
+    },
+    provider::model_reference,
 };
 use rho_sdk::{
-    model::Message, provider::ModelProvider, ApprovalRequestReceiver, CancellationToken,
-    PendingApproval, RunEvent, SessionOptions, UserInput,
+    model::Message, ApprovalRequestReceiver, CancellationToken, PendingApproval, RunEvent,
+    SessionOptions, UserInput,
 };
 
 use super::{
@@ -27,11 +35,17 @@ use super::{
     permission, AcpClientPort, AcpStartup,
 };
 use crate::{
-    app::{interactive_runtime::startup::prompt_cache_key, session_assembly::BuiltSession},
-    credential_store::AppCredentialStore,
+    app::{
+        conversation_switch::{
+            apply_conversation_switch, resolve_model_switch_reasoning, ConversationSwitch,
+        },
+        interactive_runtime::startup::prompt_cache_key,
+        session_assembly::BuiltSession,
+    },
+    compaction::CompactionConfig,
+    config::Config,
+    credential_store::{build_provider_from_config_ensuring_catalog, AppCredentialStore},
     herdr::{HerdrReporter, HerdrState},
-    model_identity::PromptModel,
-    prompt::{model_switch_context, ModelSwitchKind},
     session::Session as StoredSession,
 };
 
@@ -47,7 +61,7 @@ pub(super) struct SessionHost {
     acp_session_id: SessionId,
     built: BuiltSession,
     stored: StoredSession,
-    pub(super) current_model: CurrentModel,
+    auth: String,
     prompt_gate: Arc<PromptGate>,
     completed_runs: u64,
     permission_placeholders: AtomicU64,
@@ -152,7 +166,7 @@ impl SessionHost {
             acp_session_id.clone(),
             built,
             stored,
-            CurrentModel::from_config(&startup.config),
+            startup.config.auth.clone(),
             startup.herdr.clone(),
         );
         let response = NewSessionResponse::new(acp_session_id)
@@ -189,7 +203,7 @@ impl SessionHost {
             request.session_id,
             built,
             stored,
-            CurrentModel::from_config(&startup.config),
+            startup.config.auth.clone(),
             startup.herdr.clone(),
         );
         let response = LoadSessionResponse::new()
@@ -231,40 +245,55 @@ impl SessionHost {
     pub(super) fn config_options(&self, favorite_models: &[String]) -> Vec<SessionConfigOption> {
         let available_auths = available_auth_modes(&AppCredentialStore);
         config_options::model_config_options(
-            &self.current_model,
+            &self.current_model(),
             favorite_models,
             catalog::available_models_for_auths(&available_auths),
         )
     }
 
-    /// Swaps the live provider. The caller holds the host slot lock so no prompt
-    /// is in flight.
-    pub(super) fn replace_model(
+    /// Resolves and applies `session/set_config_option` on this host. The caller
+    /// holds the host slot lock so no prompt is in flight.
+    pub(super) async fn set_model_option(
         &mut self,
-        selection: ModelSelection,
-        provider: Arc<dyn ModelProvider>,
-    ) -> anyhow::Result<()> {
-        let session_started = !self.built.session.history().is_empty();
-        let previous_prompt_model = PromptModel::Rho {
-            provider: self.current_model.provider.clone(),
-            model: self.current_model.model.clone(),
-        };
-        let current_prompt_model = PromptModel::from_sdk_identity(&provider.identity());
-        // HandoffReport could ride along in `_meta` later; ACP has no place for it yet.
-        let _handoff = self.built.session.replace_provider(provider)?;
-        self.current_model = CurrentModel {
-            provider: selection.provider,
-            model: selection.model,
-            auth: selection.auth,
-        };
-        if session_started && current_prompt_model != previous_prompt_model {
-            let (context, _) =
-                model_switch_context(ModelSwitchKind::Conversation, &current_prompt_model);
-            self.built
-                .session
-                .append_message(Message::user_text(context))?;
+        request: &SetSessionConfigOptionRequest,
+        process_config: &Config,
+    ) -> Result<Vec<SessionConfigOption>, AcpError> {
+        let current = self.current_model();
+        let available_auths = available_auth_modes(&AppCredentialStore);
+        let selection = config_options::resolve_model_value(request, &current, &available_auths)?;
+        if model_reference(&selection.provider, &selection.model)
+            == model_reference(&current.provider, &current.model)
+            && selection.auth == current.auth
+        {
+            return Ok(self.config_options(&process_config.favorite_models));
         }
-        Ok(())
+        let reasoning = resolve_switch_reasoning(&selection, self.built.session.reasoning_level())?;
+        let mut config = process_config.clone();
+        config.provider = selection.provider.clone();
+        config.model = selection.model.clone();
+        config.auth = selection.auth.clone();
+        config.reasoning = reasoning;
+        let previous_context_window = model_context_window(&current.provider, &current.model);
+        let context_window = model_context_window(&selection.provider, &selection.model);
+        let provider =
+            build_provider_from_config_ensuring_catalog(&config, Arc::new(AppCredentialStore))
+                .await
+                .map_err(host_apply_error)?;
+        // HandoffReport could ride along in `_meta` later; ACP has no place for it yet.
+        let _handoff = apply_conversation_switch(ConversationSwitch {
+            session: &self.built.session,
+            tools: &self.built.tools,
+            new_provider: provider,
+            new_reasoning: reasoning,
+            auth: &selection.auth,
+            compaction: CompactionConfig::from(process_config),
+            context_window,
+            previous_context_window,
+            usage_recording: self.built.runtime.usage_recording(),
+        })
+        .map_err(host_apply_error)?;
+        self.auth = selection.auth;
+        Ok(self.config_options(&process_config.favorite_models))
     }
 
     pub(super) async fn shutdown(self) {
@@ -274,18 +303,28 @@ impl SessionHost {
         herdr.release().await;
     }
 
+    fn current_model(&self) -> CurrentModel {
+        let snapshot = self.built.session.snapshot();
+        let identity = snapshot.provider();
+        CurrentModel {
+            provider: identity.provider.clone(),
+            model: identity.model.clone(),
+            auth: self.auth.clone(),
+        }
+    }
+
     fn from_built(
         acp_session_id: SessionId,
         built: BuiltSession,
         stored: StoredSession,
-        current_model: CurrentModel,
+        auth: String,
         herdr: HerdrReporter,
     ) -> Self {
         Self {
             acp_session_id,
             built,
             stored,
-            current_model,
+            auth,
             prompt_gate: Arc::new(PromptGate::new()),
             completed_runs: 0,
             permission_placeholders: AtomicU64::new(0),
@@ -388,6 +427,34 @@ impl SessionHost {
             message,
         );
     }
+}
+
+fn model_context_window(provider: &str, model: &str) -> Option<u64> {
+    models_dev::cached_model_metadata(provider, model)
+        .and_then(|metadata| metadata.display_context_window())
+}
+
+fn resolve_switch_reasoning(
+    selection: &ModelSelection,
+    requested: rho_sdk::ReasoningLevel,
+) -> Result<rho_sdk::ReasoningLevel, AcpError> {
+    let capabilities =
+        models_dev::current_reasoning_capabilities(&selection.provider, &selection.model);
+    match resolve_model_switch_reasoning(
+        &capabilities,
+        requested,
+        ReasoningRequestSource::PersistedOrDefault,
+    ) {
+        Ok(resolved) => Ok(resolved.effective),
+        Err(level) => Err(AcpError::invalid_params().data(format!(
+            "reasoning level '{level}' is not supported for '{}'",
+            model_reference(&selection.provider, &selection.model)
+        ))),
+    }
+}
+
+fn host_apply_error(error: impl ToString) -> AcpError {
+    AcpError::internal_error().data(error.to_string())
 }
 
 /// Host-supplied MCP servers are ignored. Rho loads MCP from the workspace and

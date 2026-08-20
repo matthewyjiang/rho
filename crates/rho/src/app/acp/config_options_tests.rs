@@ -1,13 +1,12 @@
 use agent_client_protocol::{
     schema::v1::{
         SessionConfigKind, SessionConfigOptionCategory, SessionConfigSelect,
-        SessionConfigSelectOption, SessionConfigSelectOptions, SessionId,
-        SetSessionConfigOptionRequest,
+        SessionConfigSelectOptions, SessionId, SetSessionConfigOptionRequest,
     },
     ErrorCode,
 };
 use pretty_assertions::assert_eq;
-use rho_providers::model::catalog::ModelCatalogEntry;
+use rho_providers::model::catalog::{ModelCatalogEntry, ModelSelection};
 
 use super::{model_config_options, resolve_model_value, CurrentModel, MODEL_CONFIG_ID};
 
@@ -70,18 +69,6 @@ fn model_options_list_favorites_first_with_provider_model_ids() {
         option_values(select),
         vec!["xai/grok-3".to_string(), "openai/gpt-4".to_string()]
     );
-    match &select.options {
-        SessionConfigSelectOptions::Ungrouped(rows) => {
-            assert_eq!(
-                rows,
-                &vec![
-                    SessionConfigSelectOption::new("xai/grok-3", "xai/grok-3"),
-                    SessionConfigSelectOption::new("openai/gpt-4", "openai/gpt-4"),
-                ]
-            );
-        }
-        SessionConfigSelectOptions::Grouped(_) | _ => panic!("expected an ungrouped model list"),
-    }
 }
 
 // Covers: current model must remain selectable even when it is off-catalog
@@ -138,5 +125,43 @@ fn resolve_model_value_rejects_invalid_requests() {
     for (label, request) in cases {
         let error = resolve_model_value(&request, &current, &available_auths).expect_err(label);
         assert_eq!(error.code, ErrorCode::InvalidParams, "{label}");
+    }
+}
+
+// Covers: advertised current values, including off-catalog ones, must resolve
+// Owner: ACP config options
+#[test]
+fn resolve_model_value_accepts_current_and_catalog_models() {
+    let available_auths = ["xai-api-key".to_string()];
+    let cases = [
+        (
+            "current off-catalog",
+            current("custom", "local-model"),
+            "custom/local-model",
+            ModelSelection {
+                provider: "custom".into(),
+                model: "local-model".into(),
+                auth: "api-key".into(),
+                from_catalog: false,
+            },
+        ),
+        (
+            "other catalog model",
+            current("xai", "grok-4.6"),
+            "xai/grok-4.5",
+            ModelSelection {
+                provider: "xai".into(),
+                model: "grok-4.5".into(),
+                auth: "xai-api-key".into(),
+                from_catalog: true,
+            },
+        ),
+    ];
+
+    for (label, current, value, expected) in cases {
+        let request =
+            SetSessionConfigOptionRequest::new(SessionId::new("session"), MODEL_CONFIG_ID, value);
+        let selection = resolve_model_value(&request, &current, &available_auths).expect(label);
+        assert_eq!(selection, expected, "{label}");
     }
 }

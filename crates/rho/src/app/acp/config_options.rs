@@ -20,16 +20,6 @@ pub(super) struct CurrentModel {
     pub(super) auth: String,
 }
 
-impl CurrentModel {
-    pub(super) fn from_config(config: &crate::config::Config) -> Self {
-        Self {
-            provider: config.provider.clone(),
-            model: config.model.clone(),
-            auth: config.auth.clone(),
-        }
-    }
-}
-
 /// One flat `model` select: favorites first, `provider/model` value ids.
 pub(super) fn model_config_options(
     current: &CurrentModel,
@@ -84,6 +74,14 @@ pub(super) fn resolve_model_value(
     let Some((provider, model)) = split_model_reference(value_id) else {
         return Err(AcpError::invalid_params().data(format!("invalid model value '{value_id}'")));
     };
+    if model_reference(provider, model) == model_reference(&current.provider, &current.model) {
+        return Ok(ModelSelection {
+            provider: current.provider.clone(),
+            model: current.model.clone(),
+            auth: current.auth.clone(),
+            from_catalog: false,
+        });
+    }
     catalog::resolve_model_selection_for_provider(
         provider,
         model,
