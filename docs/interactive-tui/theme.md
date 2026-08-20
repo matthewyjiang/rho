@@ -29,10 +29,14 @@ These ship with Rho and work offline:
 | Id | Name |
 | --- | --- |
 | `terminal` | Match the host terminal (default) |
-| `one-half-dark` | One Half Dark |
-| `one-half-light` | One Half Light |
+| `catppuccin-mocha` | Catppuccin Mocha |
+| `dracula` | Dracula |
+| `gruvbox-dark` | Gruvbox Dark |
 | `monochrome-dark` | Monochrome Dark |
 | `monochrome-light` | Monochrome Light |
+| `nord` | Nord |
+| `one-half-dark` | One Half Dark |
+| `one-half-light` | One Half Light |
 
 Named themes paint Rho's own surface and RGB accents so light and dark schemes
 stay readable even when the host terminal uses the opposite mode.
@@ -46,7 +50,7 @@ Drop Windows Terminal color-scheme JSON files into:
 ```
 
 or `$RHO_HOME/themes/` when `RHO_HOME` is set. The file stem is the theme id
-(`dracula.json` → `dracula`). Each file should include `background`,
+(`solarized-dark.json` → `solarized-dark`). Each file should include `background`,
 `foreground`, the eight normal colors (`black` … `white`), the eight bright
 colors (`brightBlack` … `brightWhite`), and may include `name`, `cursorColor`,
 and `selectionBackground`.
@@ -55,8 +59,8 @@ That shape matches common catalogs such as
 [iTerm2-Color-Schemes](https://github.com/mbadolato/iTerm2-Color-Schemes)
 (`windowsterminal/*.json`) and [windowsterminalthemes.dev](https://windowsterminalthemes.dev/).
 
-Built-in ids are reserved. A custom file named `one-half-dark.json` is ignored so
-it cannot hide the built-in scheme.
+Built-in ids are reserved. A custom file named `one-half-dark.json` or
+`dracula.json` is ignored so it cannot hide the built-in scheme.
 
 ## Picker and preview
 
@@ -68,7 +72,7 @@ the choice to config and keeps it. Escape restores the previous theme.
 
 ```toml
 [display]
-theme = "terminal" # or one-half-dark, monochrome-light, a custom file stem, ...
+theme = "terminal" # or one-half-dark, dracula, nord, a custom file stem, ...
 ```
 
 Changes from `/theme` or `/config` apply immediately and persist in

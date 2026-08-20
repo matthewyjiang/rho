@@ -265,6 +265,10 @@ fn builtin_schemes() -> Vec<ColorScheme> {
         one_half_light(),
         monochrome_dark(),
         monochrome_light(),
+        catppuccin_mocha(),
+        dracula(),
+        gruvbox_dark(),
+        nord(),
     ]
 }
 
@@ -326,6 +330,68 @@ fn monochrome_light() -> ColorScheme {
         [
             "#1a1a1a", "#4a4a4a", "#3a3a3a", "#5a5a5a", "#2a2a2a", "#404040", "#505050", "#f5f5f5",
             "#8a8a8a", "#5a5a5a", "#4a4a4a", "#6a6a6a", "#3a3a3a", "#505050", "#606060", "#ffffff",
+        ],
+    )
+}
+
+/// [Catppuccin Mocha](https://github.com/catppuccin/windows-terminal) for Windows Terminal.
+fn catppuccin_mocha() -> ColorScheme {
+    scheme_from_parts(
+        "catppuccin-mocha",
+        "Catppuccin Mocha",
+        ThemeSourceKind::Builtin,
+        /* background */ "#1e1e2e",
+        /* foreground */ "#cdd6f4",
+        [
+            "#45475a", "#f38ba8", "#a6e3a1", "#f9e2af", "#89b4fa", "#f5c2e7", "#94e2d5", "#bac2de",
+            "#585b70", "#f38ba8", "#a6e3a1", "#f9e2af", "#89b4fa", "#f5c2e7", "#94e2d5", "#a6adc8",
+        ],
+    )
+}
+
+/// [Dracula](https://github.com/dracula/windows-terminal) for Windows Terminal.
+fn dracula() -> ColorScheme {
+    scheme_from_parts(
+        "dracula",
+        "Dracula",
+        ThemeSourceKind::Builtin,
+        /* background */ "#282a36",
+        /* foreground */ "#f8f8f2",
+        [
+            "#21222c", "#ff5555", "#50fa7b", "#f1fa8c", "#bd93f9", "#ff79c6", "#8be9fd", "#f8f8f2",
+            "#6272a4", "#ff6e6e", "#69ff94", "#ffffa5", "#d6acff", "#ff92df", "#a4ffff", "#ffffff",
+        ],
+    )
+}
+
+/// [Gruvbox Dark](https://github.com/mbadolato/iTerm2-Color-Schemes/blob/master/windowsterminal/Gruvbox%20Dark.json)
+/// Windows Terminal port.
+fn gruvbox_dark() -> ColorScheme {
+    scheme_from_parts(
+        "gruvbox-dark",
+        "Gruvbox Dark",
+        ThemeSourceKind::Builtin,
+        /* background */ "#282828",
+        /* foreground */ "#ebdbb2",
+        [
+            "#282828", "#cc241d", "#98971a", "#d79921", "#458588", "#b16286", "#689d6a", "#a89984",
+            "#928374", "#fb4934", "#b8bb26", "#fabd2f", "#83a598", "#d3869b", "#8ec07c", "#ebdbb2",
+        ],
+    )
+}
+
+/// [Nord](https://github.com/mbadolato/iTerm2-Color-Schemes/blob/master/windowsterminal/Nord.json)
+/// Windows Terminal port.
+fn nord() -> ColorScheme {
+    scheme_from_parts(
+        "nord",
+        "Nord",
+        ThemeSourceKind::Builtin,
+        /* background */ "#2e3440",
+        /* foreground */ "#d8dee9",
+        [
+            "#3b4252", "#bf616a", "#a3be8c", "#ebcb8b", "#81a1c1", "#b48ead", "#88c0d0", "#e5e9f0",
+            "#596377", "#bf616a", "#a3be8c", "#ebcb8b", "#81a1c1", "#b48ead", "#8fbcbb", "#eceff4",
         ],
     )
 }
