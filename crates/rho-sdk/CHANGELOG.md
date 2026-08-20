@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.1.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v4.1.0...rho-sdk-v4.1.1) (2026-08-20)
+
+
+### Bug Fixes
+
+* **tui:** stop openai-compatible cost jumping on submit ([#1008](https://github.com/matthewyjiang/rho/issues/1008)) ([51f881f](https://github.com/matthewyjiang/rho/commit/51f881f68d663b1d15a0b280f0fef76cbcf9a8ba))
+
 ## [4.1.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v4.0.1...rho-sdk-v4.1.0) (2026-08-17)
 
 

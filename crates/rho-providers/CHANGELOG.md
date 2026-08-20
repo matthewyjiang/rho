@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.9.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.8.0...rho-providers-v1.9.0) (2026-08-20)
+
+
+### Features
+
+* **providers:** look up models.dev from custom host model ids ([#1004](https://github.com/matthewyjiang/rho/issues/1004)) ([da477da](https://github.com/matthewyjiang/rho/commit/da477da84b401f3bc2b299e481851dfd5278aded))
+* **tui:** watch subagents in the same terminal ([#1002](https://github.com/matthewyjiang/rho/issues/1002)) ([966f3e8](https://github.com/matthewyjiang/rho/commit/966f3e8315f8d2c39f91ef31577aa4b81f3a1e80))
+
+
+### Bug Fixes
+
+* **providers:** drop flaky catalog invalidate readiness test ([#1006](https://github.com/matthewyjiang/rho/issues/1006)) ([8ba4f27](https://github.com/matthewyjiang/rho/commit/8ba4f27b203c268797f82eb0bd79845b0b412a08))
+* **providers:** send prompt_cache_key on openai-compatible chat ([#1007](https://github.com/matthewyjiang/rho/issues/1007)) ([5c10feb](https://github.com/matthewyjiang/rho/commit/5c10feb8331e20543967128200ce5f4c09ae271b))
+* **tui:** stop openai-compatible cost jumping on submit ([#1008](https://github.com/matthewyjiang/rho/issues/1008)) ([51f881f](https://github.com/matthewyjiang/rho/commit/51f881f68d663b1d15a0b280f0fef76cbcf9a8ba))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 4.1.0 to 4.1.1
+
 ## [1.8.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.7.0...rho-providers-v1.8.0) (2026-08-18)
 
 
