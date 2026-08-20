@@ -11,7 +11,8 @@ use agent_client_protocol::{
         v1::{
             CancelNotification, InitializeRequest, LoadSessionRequest, PromptCapabilities,
             PromptRequest, RequestPermissionRequest, RequestPermissionResponse, SessionId,
-            SessionModeId, SessionNotification, SetSessionModeRequest,
+            SessionModeId, SessionNotification, SetSessionConfigOptionRequest,
+            SetSessionModeRequest,
         },
         ProtocolVersion,
     },
@@ -150,11 +151,21 @@ async fn missing_session_prompt_and_load_return_errors() {
 
     agent
         .load_session(
-            LoadSessionRequest::new(missing, PathBuf::from("/tmp")),
+            LoadSessionRequest::new(missing.clone(), PathBuf::from("/tmp")),
             &port,
         )
         .await
         .expect_err("missing load session");
+
+    let config = agent
+        .set_session_config_option(SetSessionConfigOptionRequest::new(
+            missing,
+            "thought_level",
+            "high",
+        ))
+        .await
+        .expect_err("missing config session");
+    assert_eq!(config.code, ErrorCode::ResourceNotFound);
 }
 
 fn vacant_session() -> Arc<LiveSession> {

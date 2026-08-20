@@ -10,6 +10,7 @@ use std::{
 use agent_client_protocol::schema::v1::{
     LoadSessionRequest, LoadSessionResponse, McpServer, NewSessionRequest, NewSessionResponse,
     PromptRequest, PromptResponse, RequestPermissionOutcome, SessionId,
+    SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
 };
 use futures_util::stream::{FuturesUnordered, StreamExt};
 use rho_sdk::{
@@ -17,9 +18,14 @@ use rho_sdk::{
     SessionOptions, UserInput,
 };
 
-use super::{events::EventMapper, permission, AcpClientPort, AcpStartup};
+use super::{
+    config::{self, ThoughtLevelApply},
+    events::EventMapper,
+    permission, AcpClientPort, AcpStartup,
+};
 use crate::{
     app::{interactive_runtime::startup::prompt_cache_key, session_assembly::BuiltSession},
+    config::Config,
     herdr::{HerdrReporter, HerdrState},
     session::Session as StoredSession,
 };
@@ -36,6 +42,7 @@ pub(super) struct SessionHost {
     acp_session_id: SessionId,
     built: BuiltSession,
     stored: StoredSession,
+    config: Config,
     prompt_gate: Arc<PromptGate>,
     completed_runs: u64,
     permission_placeholders: AtomicU64,
@@ -137,9 +144,19 @@ impl SessionHost {
         };
         let acp_session_id = SessionId::new(built.session.id().as_str());
         let response = NewSessionResponse::new(acp_session_id.clone())
-            .modes(mode_state(startup.config.permission_mode));
+            .modes(mode_state(startup.config.permission_mode))
+            .config_options(config::config_options(
+                &startup.config,
+                built.session.reasoning_level(),
+            ));
         Ok((
-            Self::from_built(acp_session_id, built, stored, startup.herdr.clone()),
+            Self::from_built(
+                acp_session_id,
+                built,
+                stored,
+                startup.config.clone(),
+                startup.herdr.clone(),
+            ),
             response,
         ))
     }
@@ -168,9 +185,20 @@ impl SessionHost {
             built.teardown().await;
             return Err(error);
         }
-        let response = LoadSessionResponse::new().modes(mode_state(startup.config.permission_mode));
+        let response = LoadSessionResponse::new()
+            .modes(mode_state(startup.config.permission_mode))
+            .config_options(config::config_options(
+                &startup.config,
+                built.session.reasoning_level(),
+            ));
         Ok((
-            Self::from_built(request.session_id, built, stored, startup.herdr.clone()),
+            Self::from_built(
+                request.session_id,
+                built,
+                stored,
+                startup.config.clone(),
+                startup.herdr.clone(),
+            ),
             response,
         ))
     }
@@ -197,6 +225,26 @@ impl SessionHost {
         result
     }
 
+    pub(super) fn set_config_option(
+        &mut self,
+        request: SetSessionConfigOptionRequest,
+    ) -> Result<SetSessionConfigOptionResponse, agent_client_protocol::Error> {
+        let requested = config::parse_thought_level_request(&request)?;
+        let (compaction, context_window) = config::compaction_for(&self.config);
+        config::apply_thought_level(
+            ThoughtLevelApply {
+                session: &self.built.session,
+                provider: Arc::clone(&self.built.provider),
+                tools: self.built.tools.tools(),
+                compaction,
+                context_window,
+                usage_recording: self.built.runtime.usage_recording(),
+                config: &self.config,
+            },
+            requested,
+        )
+    }
+
     pub(super) fn cancel_handle(&self) -> Arc<PromptGate> {
         Arc::clone(&self.prompt_gate)
     }
@@ -216,12 +264,14 @@ impl SessionHost {
         acp_session_id: SessionId,
         built: BuiltSession,
         stored: StoredSession,
+        config: Config,
         herdr: HerdrReporter,
     ) -> Self {
         Self {
             acp_session_id,
             built,
             stored,
+            config,
             prompt_gate: Arc::new(PromptGate::new()),
             completed_runs: 0,
             permission_placeholders: AtomicU64::new(0),

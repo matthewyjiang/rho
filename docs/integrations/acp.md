@@ -37,6 +37,12 @@ When a tool needs approval, Rho asks the host. The host choices map to allow onc
 
 The model is chosen at process start. `session/set_model` is not supported yet. Change the model with `--model` / `--provider` or config, then restart `rho acp`.
 
+## Reasoning
+
+New and loaded sessions advertise a `thought_level` config option. Hosts that support `session/set_config_option` can change it while the session is idle. Values are Rho reasoning ids: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`, filtered to what the current model advertises.
+
+The change applies to later turns in that ACP session. It does not rewrite `config.toml`. Launch still honors `--reasoning` and config as the starting value. A prompt already in flight rejects the change as a busy session.
+
 ## MCP
 
 Rho still starts MCP servers from its own config. Host-supplied `mcpServers` are ignored. `rho acp` is not an MCP server. See [Model Context Protocol](/integrations/mcp).

@@ -11,7 +11,7 @@ use agent_client_protocol::{
         AgentCapabilities, AuthenticateRequest, CancelNotification, InitializeRequest,
         InitializeResponse, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
         NewSessionResponse, PromptCapabilities, PromptRequest, PromptResponse, SessionId,
-        SetSessionModeRequest,
+        SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, SetSessionModeRequest,
     },
     Error as AcpError,
 };
@@ -79,6 +79,24 @@ impl RhoAcpAgent {
 
     pub(super) fn authenticate(_request: &AuthenticateRequest) -> AcpError {
         not_yet_supported("authenticate")
+    }
+
+    pub(super) async fn set_session_config_option(
+        self: &Arc<Self>,
+        request: SetSessionConfigOptionRequest,
+    ) -> Result<SetSessionConfigOptionResponse, AcpError> {
+        let session_id = request.session_id.clone();
+        let live = {
+            let sessions = self.sessions.lock().await;
+            sessions
+                .get(&session_id)
+                .cloned()
+                .ok_or_else(|| missing_session(&session_id))?
+        };
+        let mut slot = live.try_lock_host(&session_id)?;
+        slot.as_mut()
+            .expect("try_lock_host rejects an empty slot")
+            .set_config_option(request)
     }
 
     pub(super) fn set_session_mode(request: &SetSessionModeRequest) -> AcpError {
