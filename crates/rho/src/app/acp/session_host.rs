@@ -340,12 +340,7 @@ impl SessionHost {
     }
 
     fn thought_config(&self, process_config: &Config) -> Config {
-        let current = self.current_model();
-        let mut config = process_config.clone();
-        config.provider = current.provider;
-        config.model = current.model;
-        config.auth = current.auth;
-        config
+        model_scoped_config(&self.current_model(), process_config)
     }
 
     fn from_built(
@@ -475,12 +470,19 @@ fn advertised_config_options(
         &process_config.favorite_models,
         catalog::available_models_for_auths(&available_auths),
     );
-    let mut thought_config = process_config.clone();
-    thought_config.provider = current.provider.clone();
-    thought_config.model = current.model.clone();
-    thought_config.auth = current.auth.clone();
-    options.extend(thought_level::config_options(&thought_config, reasoning));
+    options.extend(thought_level::config_options(
+        &model_scoped_config(current, process_config),
+        reasoning,
+    ));
     options
+}
+
+fn model_scoped_config(current: &CurrentModel, process_config: &Config) -> Config {
+    let mut config = process_config.clone();
+    config.provider = current.provider.clone();
+    config.model = current.model.clone();
+    config.auth = current.auth.clone();
+    config
 }
 
 fn model_context_window(provider: &str, model: &str) -> Option<u64> {

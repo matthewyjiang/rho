@@ -10,7 +10,8 @@ use agent_client_protocol::{
     schema::v1::{
         ContentBlock as AcpContentBlock, EmbeddedResource, EmbeddedResourceResource, ImageContent,
         RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-        ResourceLink, SessionId, SessionNotification, SessionUpdate, TextResourceContents,
+        ResourceLink, SessionConfigKind, SessionConfigOption, SessionId, SessionNotification,
+        SessionUpdate, TextResourceContents,
     },
     Error as AcpError,
 };
@@ -320,5 +321,18 @@ fn advertised_options_merge_model_with_optional_thought_level() {
             .map(|option| option.id.0.as_ref())
             .collect::<Vec<_>>();
         assert_eq!(ids, expected_ids, "{}", current.provider);
+        if let Some(thought) = options
+            .iter()
+            .find(|option| option.id.0.as_ref() == "thought_level")
+        {
+            assert_eq!(select_current(thought), "high", "{}", current.provider);
+        }
+    }
+}
+
+fn select_current(option: &SessionConfigOption) -> &str {
+    match &option.kind {
+        SessionConfigKind::Select(select) => select.current_value.0.as_ref(),
+        other => panic!("expected a select option, got {other:?}"),
     }
 }
