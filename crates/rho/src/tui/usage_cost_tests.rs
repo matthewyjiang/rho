@@ -27,6 +27,23 @@ fn estimated_cost_uses_normalized_input_and_cache_read() {
     );
 }
 
+// Covers: a mixed prompt total without a cache split must not be billed as
+// uncached input; only known buckets (here, output) may be priced
+// Owner: tui catalog cost estimate
+#[test]
+fn estimated_cost_does_not_treat_mixed_prompt_total_as_uncached() {
+    let usage = ModelUsage {
+        output_tokens: Some(10),
+        total_tokens: Some(1_000_010),
+        ..ModelUsage::default()
+    };
+
+    assert_eq!(
+        super::estimated_cost_usd_micros(&usage, Some(&priced_metadata())),
+        Some(20)
+    );
+}
+
 #[test]
 fn cost_tracker_replaces_live_snapshots_but_keeps_retry_estimates() {
     let reported = ModelUsage {
@@ -110,19 +127,18 @@ fn attempt_aware_run_usage_preserves_failed_attempt_tokens() {
     );
 }
 
-// Covers: quiet hosts must show growing estimated cost until provider usage arrives
+// Covers: quiet hosts must show growing output cost until provider usage arrives,
+// without restating the prompt as new billed input
 // Owner: tui live stream usage estimate
 #[test]
 fn live_stream_estimate_tracks_output_until_provider_usage() {
     let mut live = super::LiveStreamUsageEstimate::default();
-    live.note_estimated_input(1_000);
     live.add_output_text("abcd"); // 1 token at 4 chars/token
     live.add_output_text("efghijkl"); // 2 tokens
 
     assert_eq!(
         live.as_usage(),
         Some(ModelUsage {
-            input_tokens: Some(1_000),
             output_tokens: Some(3),
             ..ModelUsage::default()
         })
@@ -139,9 +155,9 @@ fn live_stream_estimate_tracks_output_until_provider_usage() {
         Some(&priced_metadata()),
     )
     .expect("display usage");
-    assert_eq!(display.input_tokens, Some(1_500));
+    assert_eq!(display.input_tokens, Some(500));
     assert_eq!(display.output_tokens, Some(23));
-    assert!(display.cost_usd_micros.is_some());
+    assert_eq!(display.cost_usd_micros, Some(56));
 
     live.provider_usage_received();
     assert!(!live.is_active());
@@ -156,7 +172,6 @@ fn live_stream_estimate_ignores_deltas_after_provider_usage() {
     live.add_output_text("abcd");
     live.provider_usage_received();
     live.add_output_text("more output that would otherwise count");
-    live.note_estimated_input(99);
     assert!(!live.is_active());
     assert_eq!(live.as_usage(), None);
 }

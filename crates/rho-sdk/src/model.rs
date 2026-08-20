@@ -348,6 +348,10 @@ impl ModelResponse {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelUsage {
     /// Uncached input tokens charged at the normal input-token rate.
+    ///
+    /// Absent when the host has not reported a cache split. Do not treat a
+    /// missing value as zero uncached tokens, and do not store a mixed prompt
+    /// total here.
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
     pub cache_read_tokens: Option<u64>,
@@ -359,16 +363,27 @@ pub struct ModelUsage {
 
 impl ModelUsage {
     /// Input tokens present in the request, including cache hits and writes.
+    ///
+    /// Prefers the disjoint input buckets. When those are absent, falls back to
+    /// `total_tokens` minus output so context fill can still use a prompt size
+    /// without treating that total as uncached input.
     pub fn total_input_tokens(&self) -> Option<u64> {
         let has_input = self.input_tokens.is_some()
             || self.cache_read_tokens.is_some()
             || self.cache_write_tokens.is_some();
-        let total = self
-            .input_tokens
-            .unwrap_or_default()
-            .saturating_add(self.cache_read_tokens.unwrap_or_default())
-            .saturating_add(self.cache_write_tokens.unwrap_or_default());
-        has_input.then_some(total)
+        if has_input {
+            return Some(
+                self.input_tokens
+                    .unwrap_or_default()
+                    .saturating_add(self.cache_read_tokens.unwrap_or_default())
+                    .saturating_add(self.cache_write_tokens.unwrap_or_default()),
+            );
+        }
+        match (self.total_tokens, self.output_tokens) {
+            (Some(total), Some(output)) => Some(total.saturating_sub(output)),
+            (Some(total), None) => Some(total),
+            (None, _) => None,
+        }
     }
 
     /// Saturating sum used to accumulate usage across model steps.

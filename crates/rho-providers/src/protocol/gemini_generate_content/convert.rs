@@ -513,20 +513,33 @@ impl ResponseCollector {
 
 fn usage_from_metadata(usage: UsageMetadata) -> ModelUsage {
     let cached = usage.cached_content_token_count;
+    // `promptTokenCount` includes cached content. Uncached input exists only
+    // when the host reports that split; a missing count is not zero cache.
+    let input_tokens = match (usage.prompt_token_count, cached) {
+        (Some(prompt), Some(cached)) => Some(prompt.saturating_sub(cached)),
+        _ => None,
+    };
+    let output_tokens = match (usage.candidates_token_count, usage.thoughts_token_count) {
+        (None, None) => None,
+        (answer, thoughts) => Some(
+            answer
+                .unwrap_or_default()
+                .saturating_add(thoughts.unwrap_or_default()),
+        ),
+    };
+    let total_tokens =
+        usage
+            .total_token_count
+            .or_else(|| match (usage.prompt_token_count, output_tokens) {
+                (Some(prompt), Some(output)) => Some(prompt.saturating_add(output)),
+                (Some(prompt), None) => Some(prompt),
+                _ => None,
+            });
     ModelUsage {
-        input_tokens: usage
-            .prompt_token_count
-            .map(|total| total.saturating_sub(cached.unwrap_or_default())),
-        output_tokens: match (usage.candidates_token_count, usage.thoughts_token_count) {
-            (None, None) => None,
-            (answer, thoughts) => Some(
-                answer
-                    .unwrap_or_default()
-                    .saturating_add(thoughts.unwrap_or_default()),
-            ),
-        },
+        input_tokens,
+        output_tokens,
         cache_read_tokens: cached,
-        total_tokens: usage.total_token_count,
+        total_tokens,
         ..ModelUsage::default()
     }
 }

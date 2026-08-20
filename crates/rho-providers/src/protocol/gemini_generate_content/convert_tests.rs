@@ -545,8 +545,39 @@ fn blocked_response_reports_usage_before_error() {
     assert!(matches!(error, ModelError::InvalidResponse(message) if message.contains("blocked")));
     assert!(matches!(
         events.as_slice(),
-        [crate::model::ModelEvent::Usage(usage)] if usage.total_tokens == Some(4)
+        [crate::model::ModelEvent::Usage(usage)]
+            if usage.total_tokens == Some(4) && usage.input_tokens.is_none()
     ));
+}
+
+// Covers: promptTokenCount includes cached content, so a missing cache count
+// must not become ModelUsage.input_tokens (uncached)
+// Owner: Gemini generateContent usage parser
+#[test]
+fn prompt_without_cached_count_is_not_uncached_input() {
+    let mut collector = ResponseCollector::default();
+    let mut usages = Vec::new();
+    collector
+        .apply(
+            serde_json::from_value(json!({
+                "candidates":[{"content":{"parts":[{"text":"hi"}]},"finishReason":"STOP"}],
+                "usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":2,"totalTokenCount":12}
+            }))
+            .unwrap(),
+            Some(&mut |event| {
+                if let crate::model::ModelEvent::Usage(usage) = event {
+                    usages.push(usage);
+                }
+                Ok(())
+            }),
+        )
+        .unwrap();
+
+    assert_eq!(usages.len(), 1);
+    assert_eq!(usages[0].input_tokens, None);
+    assert_eq!(usages[0].cache_read_tokens, None);
+    assert_eq!(usages[0].output_tokens, Some(2));
+    assert_eq!(usages[0].total_tokens, Some(12));
 }
 
 #[test]

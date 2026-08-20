@@ -64,15 +64,16 @@ impl AttemptAwareRunUsage {
     }
 }
 
-/// Display-only usage for the in-flight provider stream.
+/// Display-only generation for the in-flight provider stream.
 ///
 /// Quiet hosts (OpenAI-compatible chat) often withhold usage until the final
-/// chunk. This estimate fills the statusline while thinking and tool JSON
-/// stream, then yields as soon as any provider `Usage` arrives for the attempt.
-/// It must never enter the durable usage ledger.
+/// chunk. This estimate meters streamed output so statusline cost can advance
+/// during the attempt, then yields as soon as any provider `Usage` arrives.
+/// It must never enter the durable usage ledger, and it must not restate the
+/// prompt as new uncached input: `ContextEstimated` is the full window, so
+/// billing it on submit double-counts history and ignores cache.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct LiveStreamUsageEstimate {
-    input_tokens: Option<u64>,
     output_tokens: u64,
     provider_usage_seen: bool,
 }
@@ -80,12 +81,6 @@ pub(super) struct LiveStreamUsageEstimate {
 impl LiveStreamUsageEstimate {
     pub(super) fn clear(&mut self) {
         *self = Self::default();
-    }
-
-    pub(super) fn note_estimated_input(&mut self, tokens: u64) {
-        if !self.provider_usage_seen {
-            self.input_tokens = Some(tokens);
-        }
     }
 
     pub(super) fn add_output_text(&mut self, text: &str) {
@@ -101,12 +96,11 @@ impl LiveStreamUsageEstimate {
 
     pub(super) fn provider_usage_received(&mut self) {
         self.provider_usage_seen = true;
-        self.input_tokens = None;
         self.output_tokens = 0;
     }
 
     pub(super) fn is_active(&self) -> bool {
-        !self.provider_usage_seen && (self.input_tokens.is_some() || self.output_tokens > 0)
+        !self.provider_usage_seen && self.output_tokens > 0
     }
 
     pub(super) fn as_usage(&self) -> Option<ModelUsage> {
@@ -114,8 +108,7 @@ impl LiveStreamUsageEstimate {
             return None;
         }
         Some(ModelUsage {
-            input_tokens: self.input_tokens,
-            output_tokens: (self.output_tokens > 0).then_some(self.output_tokens),
+            output_tokens: Some(self.output_tokens),
             ..ModelUsage::default()
         })
     }

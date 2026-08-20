@@ -203,18 +203,40 @@ impl RawUsage {
 
     /// OpenAI reports cache reads and writes as subsets of the raw input
     /// count, while `ModelUsage` keeps the three input buckets disjoint.
+    ///
+    /// Uncached input is only derived when the host reports a cache split.
+    /// A bare `prompt_tokens` total still includes cache hits; treating it as
+    /// `input_tokens` would bill the whole prompt at the uncached rate.
     pub(crate) fn into_model_usage(self) -> ModelUsage {
-        let input_tokens = self.input_tokens.map(|input| {
-            input
-                .saturating_sub(self.cache_read_tokens.unwrap_or_default())
-                .saturating_sub(self.cache_write_tokens.unwrap_or_default())
-        });
+        let input_tokens = match (
+            self.input_tokens,
+            self.cache_read_tokens,
+            self.cache_write_tokens,
+        ) {
+            (Some(input), cache_read, cache_write)
+                if cache_read.is_some() || cache_write.is_some() =>
+            {
+                Some(
+                    input
+                        .saturating_sub(cache_read.unwrap_or_default())
+                        .saturating_sub(cache_write.unwrap_or_default()),
+                )
+            }
+            _ => None,
+        };
+        let total_tokens =
+            self.total_tokens
+                .or_else(|| match (self.input_tokens, self.output_tokens) {
+                    (Some(input), Some(output)) => Some(input.saturating_add(output)),
+                    (Some(input), None) => Some(input),
+                    _ => None,
+                });
         ModelUsage {
             input_tokens,
             output_tokens: self.output_tokens,
             cache_read_tokens: self.cache_read_tokens,
             cache_write_tokens: self.cache_write_tokens,
-            total_tokens: self.total_tokens,
+            total_tokens,
             context_window: self.context_window,
             cost_usd_micros: self.cost_usd_micros,
         }

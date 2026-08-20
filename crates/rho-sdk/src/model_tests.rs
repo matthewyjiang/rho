@@ -138,3 +138,17 @@ fn image_content_recognizes_supported_signatures() {
     );
     assert_eq!(ImageContent::mime_type_from_bytes(b"plain text"), None);
 }
+
+// Covers: mixed prompt totals can fill context without claiming uncached input
+// Owner: sdk model usage
+#[test]
+fn total_input_tokens_falls_back_to_prompt_size_without_claiming_uncached() {
+    let usage = ModelUsage {
+        output_tokens: Some(5),
+        total_tokens: Some(105),
+        ..ModelUsage::default()
+    };
+
+    assert_eq!(usage.input_tokens, None);
+    assert_eq!(usage.total_input_tokens(), Some(100));
+}
