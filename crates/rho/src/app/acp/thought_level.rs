@@ -26,13 +26,18 @@ use crate::{
 
 pub(super) const THOUGHT_LEVEL_ID: &str = "thought_level";
 
-/// ACP session config options Rho currently advertises.
+/// Thought-level ACP session config options.
 ///
 /// Hosts that support `session/set_config_option` use this instead of
-/// restarting `rho acp` to change reasoning. New and loaded sessions both
-/// advertise it. Model and permission mode stay process-start values.
+/// restarting `rho acp` to change reasoning. New and loaded sessions advertise
+/// it only when the current model exposes configurable reasoning.
 pub(super) fn config_options(config: &Config, current: ReasoningLevel) -> Vec<SessionConfigOption> {
-    vec![thought_level_option(config, current)]
+    match thought_capabilities(config) {
+        ReasoningCapabilities::NotConfigurable => Vec::new(),
+        ReasoningCapabilities::Unknown | ReasoningCapabilities::Levels(_) => {
+            vec![thought_level_option(config, current)]
+        }
+    }
 }
 
 pub(super) fn thought_level_option(

@@ -1,4 +1,5 @@
 mod agent;
+mod config_options;
 mod events;
 mod permission;
 mod session_host;
@@ -137,7 +138,7 @@ pub(super) async fn run(startup: AcpStartup) -> anyhow::Result<()> {
                 async move |request: SetSessionConfigOptionRequest, responder, cx| {
                     let agent = Arc::clone(&agent);
                     spawn_response(&cx, responder, async move {
-                        agent.set_session_config_option(request).await
+                        agent.set_config_option(request).await
                     })
                 }
             },

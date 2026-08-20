@@ -16,10 +16,7 @@ use rho_sdk::{
     SessionOptions, UserInput,
 };
 
-use super::{
-    apply_thought_level, config_options, parse_thought_level_request, selectable_thought_levels,
-    THOUGHT_LEVEL_ID,
-};
+use super::{apply_thought_level, config_options, parse_thought_level_request, THOUGHT_LEVEL_ID};
 use crate::{app::session_assembly::BuiltSession, config::Config, tools::sdk_registry::AppToolSet};
 
 fn test_config() -> Config {
@@ -100,13 +97,23 @@ fn advertises_thought_level_select_for_the_current_reasoning() {
         Some(SessionConfigOptionCategory::ThoughtLevel)
     );
     assert_eq!(select_current(&options), "high");
-    let advertised = select_values(&options);
-    let selectable = selectable_thought_levels(&config, ReasoningLevel::High)
-        .into_iter()
-        .map(|level| level.to_string())
-        .collect::<Vec<_>>();
-    assert_eq!(advertised, selectable);
-    assert!(advertised.contains(&"high".to_string()));
+    assert_eq!(
+        select_values(&options),
+        ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
+    );
+}
+
+// Covers: a model with no configurable reasoning must omit thought_level so
+// hosts do not render a one-entry select that can never change.
+// Owner: acp session config mapper
+#[test]
+fn omits_thought_level_when_reasoning_is_not_configurable() {
+    let config = Config {
+        provider: "github-copilot".into(),
+        model: "gpt-4.1".into(),
+        ..Config::default()
+    };
+    assert!(config_options(&config, ReasoningLevel::High).is_empty());
 }
 
 // Covers: hosts must get InvalidParams for an unknown option or a non-select
