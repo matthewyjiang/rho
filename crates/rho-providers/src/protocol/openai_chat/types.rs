@@ -13,6 +13,14 @@ pub(crate) struct ChatRequest {
     pub(crate) stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) stream_options: Option<ChatStreamOptions>,
+    /// Session-scoped prompt cache identity. Omitted when the caller has none.
+    ///
+    /// OpenAI Chat Completions and several compatible hosts (including
+    /// CLIProxyAPI's xAI path) use this to pin cache across turns. Unknown
+    /// hosts typically ignore extra fields; a host that rejects it can be
+    /// handled at that provider.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) prompt_cache_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) reasoning: Option<OpenAiReasoning>,
     #[serde(skip_serializing_if = "Option::is_none")]

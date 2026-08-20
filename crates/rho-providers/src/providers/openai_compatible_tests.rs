@@ -212,6 +212,56 @@ fn kimi_code_k3_serializes_an_unnormalized_effort_as_is() {
     );
 }
 
+// Covers: Chat Completions must send prompt_cache_key when the session has one
+// and omit it otherwise so strict hosts never see an empty field.
+// Owner: openai compatible chat request
+#[test]
+fn chat_completions_forwards_prompt_cache_key_when_present() {
+    let provider = OpenAiCompatibleProvider::new(
+        reqwest::Client::new(),
+        "cliproxyapi",
+        "xai/grok-4.6".into(),
+        OpenAiCompatibleDialect::Custom,
+        CompatibleAuth::ApiKey("secret".into()),
+        "https://example.com".into(),
+    );
+    let messages = [Message::user_text("hello")];
+
+    let with_key = serde_json::to_value(
+        provider
+            .request_body(
+                ModelRequest {
+                    messages: &messages,
+                    tools: &[],
+                    cancellation: Default::default(),
+                    reasoning_level: crate::reasoning::ReasoningLevel::Off,
+                    prompt_cache_key: Some("rho:session-1"),
+                },
+                /*stream*/ false,
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(with_key["prompt_cache_key"], "rho:session-1");
+
+    let without_key = serde_json::to_value(
+        provider
+            .request_body(
+                ModelRequest {
+                    messages: &messages,
+                    tools: &[],
+                    cancellation: Default::default(),
+                    reasoning_level: crate::reasoning::ReasoningLevel::Off,
+                    prompt_cache_key: None,
+                },
+                /*stream*/ false,
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(without_key.get("prompt_cache_key").is_none());
+}
+
 #[test]
 fn authenticated_capabilities_normalize_before_kimi_request_serialization() {
     let cache_dir = std::env::temp_dir().join(format!(
