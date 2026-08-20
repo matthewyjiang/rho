@@ -222,7 +222,7 @@ fn needed_extra_catalog_docs() -> ExtraCatalogDocs {
     let interned = crate::provider::interned_custom_providers();
     if interned
         .iter()
-        .any(|descriptor| descriptor.catalog_lookup == CatalogLookupMode::ModelId)
+        .any(|descriptor| descriptor.catalog_lookup() == CatalogLookupMode::ModelId)
     {
         return ExtraCatalogDocs::All;
     }

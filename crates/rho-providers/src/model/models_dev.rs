@@ -238,7 +238,7 @@ pub fn custom_model_id_catalog_miss(provider: &str, model: &str) -> Option<Catal
     if !descriptor.is_custom_openai_compatible() {
         return None;
     }
-    if descriptor.catalog_lookup != CatalogLookupMode::ModelId {
+    if descriptor.catalog_lookup() != CatalogLookupMode::ModelId {
         return None;
     }
     if cached_model_metadata(provider, model).is_some() {
@@ -283,7 +283,7 @@ fn catalog_source_for(
     else {
         return (provider.to_string(), model.to_string());
     };
-    match descriptor.catalog_lookup {
+    match descriptor.catalog_lookup() {
         CatalogLookupMode::ModelId => overrides::split_provider_model(model)
             .unwrap_or_else(|| (provider.to_string(), model.to_string())),
         CatalogLookupMode::Slug => {
@@ -596,6 +596,8 @@ pub(super) fn open_models_dev_cache() -> rusqlite::Result<Connection> {
             id integer primary key check (id = 1),
             cache_version integer not null,
             updated_at integer not null,
+            -- Extra models.dev documents this snapshot contains: a comma-separated
+            -- slug list, or '*' when a model-id host required the full tree.
             borrowed_slugs text not null default ''
         );",
     )?;

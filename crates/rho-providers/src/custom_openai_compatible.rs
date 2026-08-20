@@ -67,12 +67,19 @@ fn leak_str(value: String) -> &'static str {
 ///
 /// `catalog` is `None` when the host has no `catalog` override, in which case
 /// it borrows nothing and its own name is the metadata slug.
-/// Use [`Self::with_lookup`] for `catalog_mode = "model-id"`.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-providers): store CatalogLookupMode on CustomProviderSpec and ProviderDescriptor so intern does not need a side table.
+///
+/// Both types are public 1.x API and every `CustomProviderSpec` field is `pub`,
+/// so a new field would break external struct literals. Until then, pass the
+/// mode through [`install_custom_openai_compatible_providers_with_lookup`] /
+/// [`intern_custom_openai_compatible_providers_with_lookup`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CustomProviderSpec<'a> {
     pub name: &'a str,
     pub catalog: Option<&'a str>,
-    pub catalog_lookup: CatalogLookupMode,
 }
 
 impl<'a> CustomProviderSpec<'a> {
@@ -80,19 +87,6 @@ impl<'a> CustomProviderSpec<'a> {
         Self {
             name,
             catalog: catalog.map(str::trim).filter(|slug| !slug.is_empty()),
-            catalog_lookup: CatalogLookupMode::Slug,
-        }
-    }
-
-    /// Interns this host with a models.dev lookup mode other than slug-or-host.
-    pub fn with_lookup(
-        name: &'a str,
-        catalog: Option<&'a str>,
-        catalog_lookup: CatalogLookupMode,
-    ) -> Self {
-        Self {
-            catalog_lookup,
-            ..Self::new(name, catalog)
         }
     }
 
@@ -160,7 +154,22 @@ where
     I: IntoIterator,
     I::Item: Into<CustomProviderSpec<'a>>,
 {
-    let interned = intern_custom_openai_compatible_providers(specs)?;
+    install_custom_openai_compatible_providers_with_lookup(
+        specs
+            .into_iter()
+            .map(|spec| (spec, CatalogLookupMode::Slug)),
+    )
+}
+
+/// Like [`install_custom_openai_compatible_providers`], with an explicit lookup mode.
+pub fn install_custom_openai_compatible_providers_with_lookup<'a, I, S>(
+    specs: I,
+) -> anyhow::Result<()>
+where
+    I: IntoIterator<Item = (S, CatalogLookupMode)>,
+    S: Into<CustomProviderSpec<'a>>,
+{
+    let interned = intern_custom_openai_compatible_providers_with_lookup(specs)?;
     let mut registry = lock_write();
     registry.active = interned
         .iter()
@@ -175,12 +184,27 @@ where
     I: IntoIterator,
     I::Item: Into<CustomProviderSpec<'a>>,
 {
+    intern_custom_openai_compatible_providers_with_lookup(
+        specs
+            .into_iter()
+            .map(|spec| (spec, CatalogLookupMode::Slug)),
+    )
+}
+
+/// Like [`intern_custom_openai_compatible_providers`], with an explicit lookup mode.
+pub fn intern_custom_openai_compatible_providers_with_lookup<'a, I, S>(
+    specs: I,
+) -> anyhow::Result<Arc<[String]>>
+where
+    I: IntoIterator<Item = (S, CatalogLookupMode)>,
+    S: Into<CustomProviderSpec<'a>>,
+{
     let specs = specs
         .into_iter()
-        .map(Into::into)
-        .collect::<Vec<CustomProviderSpec<'a>>>();
+        .map(|(spec, mode)| (spec.into(), mode))
+        .collect::<Vec<(CustomProviderSpec<'a>, CatalogLookupMode)>>();
     let mut seen = BTreeMap::<&str, ()>::new();
-    for spec in &specs {
+    for (spec, _) in &specs {
         validate_custom_provider_name(spec.name)?;
         if seen.insert(spec.name, ()).is_some() {
             anyhow::bail!("duplicate custom provider '{}'", spec.name);
@@ -189,8 +213,8 @@ where
 
     let mut registry = lock_write();
     let mut interned = Vec::with_capacity(specs.len());
-    for spec in specs {
-        intern(spec, &mut registry);
+    for (spec, catalog_lookup) in specs {
+        intern(spec, catalog_lookup, &mut registry);
         interned.push(spec.name.to_string());
     }
     Ok(interned.into())
@@ -319,13 +343,14 @@ pub fn validate_custom_provider_name(name: &str) -> anyhow::Result<()> {
 /// serving the previously leaked descriptor.
 fn intern(
     spec: CustomProviderSpec<'_>,
+    catalog_lookup: CatalogLookupMode,
     registry: &mut CustomRegistry,
 ) -> &'static ProviderDescriptor {
     let name = spec.name;
     let metadata_upstream = spec.metadata_upstream();
     if let Some(existing) = registry.interned.get(name).copied().filter(|existing| {
         existing.metadata_upstream == metadata_upstream
-            && existing.catalog_lookup == spec.catalog_lookup
+            && existing.catalog_lookup() == catalog_lookup
     }) {
         return existing;
     }
@@ -372,7 +397,7 @@ fn intern(
         model_id_codec: ModelIdCodec::Plain,
         // Own name unless `catalog` borrows another models.dev slug.
         metadata_upstream,
-        catalog_lookup: spec.catalog_lookup,
+        catalog_lookup,
         // Same Chat Completions effort field as Ollama. Custom names are not in
         // models.dev, so Unknown must still send the selected level.
         catalog_reasoning: CatalogReasoningPolicy::OffAsNone,

@@ -492,7 +492,10 @@ pub struct ProviderDescriptor {
     pub model_id_codec: ModelIdCodec,
     pub metadata_upstream: &'static str,
     /// How this host rematches models.dev rows. Built-ins are always [`CatalogLookupMode::Slug`].
-    pub catalog_lookup: CatalogLookupMode,
+    ///
+    /// `pub(crate)` so adding the field stays minor-compatible; external
+    /// construction is already blocked by [`Self::model_refresh`].
+    pub(crate) catalog_lookup: CatalogLookupMode,
     pub catalog_reasoning: CatalogReasoningPolicy,
     /// Preferred model when the cache is empty or contains this id.
     pub default_model: Option<&'static str>,
@@ -549,6 +552,11 @@ impl ProviderDescriptor {
     /// Config-defined Chat Completions hosts are named providers, not a single built-in.
     pub fn is_custom_openai_compatible(self) -> bool {
         PROVIDERS.iter().all(|builtin| builtin.name != self.name)
+    }
+
+    /// How this host rematches models.dev rows.
+    pub fn catalog_lookup(self) -> CatalogLookupMode {
+        self.catalog_lookup
     }
 
     /// Whether `/doctor` and `/config` can reach this host's `/v1/models`.
@@ -614,10 +622,13 @@ mod custom_openai_compatible;
 pub(crate) use custom_openai_compatible::interned_custom_providers;
 pub use custom_openai_compatible::{
     custom_provider_api_key_auth_id, custom_provider_registry_test_lock,
-    install_custom_openai_compatible_providers, intern_custom_openai_compatible_providers,
-    interned_custom_provider, is_custom_provider_api_key_auth,
-    reset_custom_openai_compatible_providers_for_tests, scope_custom_openai_compatible_providers,
-    validate_custom_provider_name, CustomProviderSpec, CustomProviderThreadScope,
+    install_custom_openai_compatible_providers,
+    install_custom_openai_compatible_providers_with_lookup,
+    intern_custom_openai_compatible_providers,
+    intern_custom_openai_compatible_providers_with_lookup, interned_custom_provider,
+    is_custom_provider_api_key_auth, reset_custom_openai_compatible_providers_for_tests,
+    scope_custom_openai_compatible_providers, validate_custom_provider_name, CustomProviderSpec,
+    CustomProviderThreadScope,
 };
 pub use provider_table::PROVIDERS;
 

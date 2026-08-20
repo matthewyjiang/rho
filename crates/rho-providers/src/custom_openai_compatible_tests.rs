@@ -5,6 +5,7 @@ use super::super::{
 use super::{
     custom_openai_compatible_provider, custom_openai_compatible_providers,
     custom_provider_registry_test_lock, install_custom_openai_compatible_providers,
+    install_custom_openai_compatible_providers_with_lookup,
     intern_custom_openai_compatible_providers, is_custom_provider_api_key_auth,
     reset_custom_openai_compatible_providers_for_tests, validate_custom_provider_name,
     CustomProviderSpec, CustomProviderThreadScope,
@@ -175,7 +176,7 @@ fn custom_host_catalog_slug_becomes_metadata_upstream() {
         "vllm"
     );
     assert_eq!(
-        borrowed.catalog_lookup,
+        borrowed.catalog_lookup(),
         crate::provider::CatalogLookupMode::Slug
     );
 }
@@ -221,20 +222,19 @@ fn custom_host_model_id_lookup_reinterns_the_descriptor() {
     assert_eq!(
         custom_openai_compatible_provider("cliproxyapi")
             .unwrap()
-            .catalog_lookup,
+            .catalog_lookup(),
         crate::provider::CatalogLookupMode::Slug
     );
 
-    install_custom_openai_compatible_providers([CustomProviderSpec::with_lookup(
-        "cliproxyapi",
-        None,
+    install_custom_openai_compatible_providers_with_lookup([(
+        CustomProviderSpec::new("cliproxyapi", None),
         crate::provider::CatalogLookupMode::ModelId,
     )])
     .unwrap();
 
     let host = custom_openai_compatible_provider("cliproxyapi").unwrap();
     assert_eq!(
-        host.catalog_lookup,
+        host.catalog_lookup(),
         crate::provider::CatalogLookupMode::ModelId
     );
     assert_eq!(host.metadata_upstream, "cliproxyapi");

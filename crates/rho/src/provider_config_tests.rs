@@ -392,7 +392,7 @@ fn custom_openai_compatible_loads_and_persists_catalog_mode() {
     assert_eq!(
         rho_providers::provider::interned_custom_provider("cliproxyapi")
             .unwrap()
-            .catalog_lookup,
+            .catalog_lookup(),
         rho_providers::provider::CatalogLookupMode::ModelId
     );
 

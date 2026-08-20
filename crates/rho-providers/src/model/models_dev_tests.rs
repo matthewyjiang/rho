@@ -1709,12 +1709,12 @@ fn rematched_openai_codex_catalog_keeps_builtin_window() {
     crate::provider::reset_custom_openai_compatible_providers_for_tests();
 }
 
-fn model_id_host_spec() -> crate::provider::CustomProviderSpec<'static> {
-    crate::provider::CustomProviderSpec::with_lookup(
-        "cliproxyapi",
-        None,
+fn install_model_id_host() {
+    crate::provider::install_custom_openai_compatible_providers_with_lookup([(
+        crate::provider::CustomProviderSpec::new("cliproxyapi", None),
         crate::provider::CatalogLookupMode::ModelId,
-    )
+    )])
+    .unwrap();
 }
 
 // Covers: catalog_mode = model-id hydrate writes otherwise-unborrowed slugs
@@ -1723,7 +1723,7 @@ fn model_id_host_spec() -> crate::provider::CustomProviderSpec<'static> {
 fn hydrate_writes_full_tree_for_model_id_hosts() {
     let _lock = crate::provider::custom_provider_registry_test_lock();
     crate::provider::reset_custom_openai_compatible_providers_for_tests();
-    crate::provider::install_custom_openai_compatible_providers([model_id_host_spec()]).unwrap();
+    install_model_id_host();
 
     let api = json!({
         "azure": {
@@ -1753,7 +1753,7 @@ fn hydrate_writes_full_tree_for_model_id_hosts() {
 fn custom_host_model_id_lookup_splits_and_misses_bare_ids() {
     let _lock = crate::provider::custom_provider_registry_test_lock();
     crate::provider::reset_custom_openai_compatible_providers_for_tests();
-    crate::provider::install_custom_openai_compatible_providers([model_id_host_spec()]).unwrap();
+    install_model_id_host();
 
     let cache = tempfile::tempdir().unwrap();
     with_models_dev_cache_dir(cache.path().to_path_buf(), || {
@@ -1805,8 +1805,7 @@ fn fresh_snapshot_is_not_ready_for_a_model_id_host() {
             "a current snapshot with no model-id hosts is ready"
         );
 
-        crate::provider::install_custom_openai_compatible_providers([model_id_host_spec()])
-            .unwrap();
+        install_model_id_host();
         assert!(
             !hydrate::catalog_snapshot_is_ready(),
             "a model-id host must refetch even when the snapshot is fresh"
@@ -1840,7 +1839,7 @@ fn invalidate_catalog_snapshot_clears_readiness() {
 fn invalidate_catalog_snapshot_clears_stored_extra_docs() {
     let _lock = crate::provider::custom_provider_registry_test_lock();
     crate::provider::reset_custom_openai_compatible_providers_for_tests();
-    crate::provider::install_custom_openai_compatible_providers([model_id_host_spec()]).unwrap();
+    install_model_id_host();
 
     let cache = tempfile::tempdir().unwrap();
     with_models_dev_cache_dir(cache.path().to_path_buf(), || {

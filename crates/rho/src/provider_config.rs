@@ -130,12 +130,18 @@ impl ProviderConfigs {
         Ok(())
     }
 
-    /// Each config-defined host paired with the models.dev slug it borrows.
-    fn specs(&self) -> impl Iterator<Item = rho_providers::provider::CustomProviderSpec<'_>> {
+    /// Each config-defined host paired with its models.dev lookup mode.
+    fn specs(
+        &self,
+    ) -> impl Iterator<
+        Item = (
+            rho_providers::provider::CustomProviderSpec<'_>,
+            rho_providers::provider::CatalogLookupMode,
+        ),
+    > {
         self.custom.iter().map(|(name, endpoint)| {
-            rho_providers::provider::CustomProviderSpec::with_lookup(
-                name,
-                endpoint.catalog.as_deref(),
+            (
+                rho_providers::provider::CustomProviderSpec::new(name, endpoint.catalog.as_deref()),
                 endpoint.catalog_lookup,
             )
         })
@@ -143,12 +149,14 @@ impl ProviderConfigs {
 
     /// Interns config-defined hosts without changing the process-wide picker set.
     pub(crate) fn intern_names(&self) -> anyhow::Result<std::sync::Arc<[String]>> {
-        rho_providers::provider::intern_custom_openai_compatible_providers(self.specs())
+        rho_providers::provider::intern_custom_openai_compatible_providers_with_lookup(self.specs())
     }
 
     /// Publishes config-defined hosts as the process-wide named provider set.
     pub(crate) fn activate(&self) -> anyhow::Result<()> {
-        rho_providers::provider::install_custom_openai_compatible_providers(self.specs())
+        rho_providers::provider::install_custom_openai_compatible_providers_with_lookup(
+            self.specs(),
+        )
     }
 
     /// Interns this config's hosts and overlays them on the current thread.
