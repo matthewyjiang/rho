@@ -12,8 +12,8 @@ use super::{
 };
 use crate::tui::{
     render::{
-        display_width, input_cursor_position, input_visual_lines, styled_line, truncate_one_line,
-        wrap_line_at_whitespace, LineFill,
+        display_width, editable_input_visual_lines, input_visual_lines, styled_line,
+        truncate_one_line, visual_caret_position, wrap_line_at_whitespace, LineFill,
     },
     theme::Theme,
 };
@@ -494,8 +494,9 @@ fn prefixed_input_cursor(
     width: usize,
 ) -> Position {
     let prefix_width = display_width(prefix);
-    let mut position =
-        input_cursor_position(value, cursor, width.saturating_sub(prefix_width).max(1));
+    let inner_width = width.saturating_sub(prefix_width).max(1);
+    let visual_lines = editable_input_visual_lines(value, inner_width);
+    let mut position = visual_caret_position(&visual_lines, value, cursor);
     position.x = position.x.saturating_add(prefix_width as u16);
     position.y = position.y.saturating_add(start_y as u16);
     position

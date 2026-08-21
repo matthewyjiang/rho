@@ -447,7 +447,8 @@ impl App {
         width: usize,
         terminal: &mut Terminal<B>,
     ) -> Result<bool, B::Error> {
-        let live = self.live_history_layout(width, self.feed_image_row_budget(width));
+        let budget = self.feed_image_row_budget(width);
+        let live = self.live_history_layout(width, budget);
         let Some(hit) = self.tool_card_hit_at_history_line(line, width, &live) else {
             return Ok(false);
         };

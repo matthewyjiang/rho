@@ -164,15 +164,14 @@ impl App {
         self.note_terminal_geometry(width, area.height as usize);
         self.refresh_composer_attachment_layout_cache(width);
         let history_len = self.history_len(width, now);
-        let composer_lines = self.composer_lines(width, area.height as usize);
+        let composer = self.composer_frame(width, area.height as usize);
         let command_lines = self.command_suggestion_lines(width);
-        let composer_cursor = self.composer_cursor_position(width);
         self.screen_layout_for_history_len(
             area,
             history_len,
-            &composer_lines,
+            &composer.lines,
             command_lines.len(),
-            composer_cursor,
+            composer.cursor,
         )
     }
 
@@ -335,25 +334,24 @@ impl App {
     }
 
     pub(super) fn history_height_for_screen(
-        &self,
+        &mut self,
         width: usize,
         height: usize,
         _now: Instant,
     ) -> usize {
-        self.history_height_from_line_counts(
-            height,
-            self.composer_lines(width, height).len(),
-            self.command_suggestion_lines(width).len(),
-        )
+        let composer_line_count = self.composer_frame(width, height).lines.len();
+        let command_line_count = self.command_suggestion_lines(width).len();
+        self.history_height_from_line_counts(height, composer_line_count, command_line_count)
     }
 
     pub(super) fn history_content_height_for_screen(
-        &self,
+        &mut self,
         width: usize,
         height: usize,
         now: Instant,
     ) -> usize {
-        self.history_content_height(self.history_height_for_screen(width, height, now))
+        let history_height = self.history_height_for_screen(width, height, now);
+        self.history_content_height(history_height)
     }
 
     pub(super) fn history_height_from_line_counts(

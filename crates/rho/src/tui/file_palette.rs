@@ -2,18 +2,18 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{
     file_picker::{self, FilePaletteEntry, FilePaletteMatches},
-    App, ComposerMode,
+    palette::ActivePalette,
+    App,
 };
 
 impl App {
     pub(super) fn handle_file_palette_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
-        if !self.file_palette_visible() {
+        let Some(ActivePalette::File(matches)) = self.active_palette() else {
             return Ok(false);
-        }
+        };
 
         match (key.modifiers, key.code) {
             (KeyModifiers::NONE, KeyCode::Up) => {
-                let matches = self.file_matches();
                 if !matches.is_empty() {
                     self.input_ui
                         .set_file_selection(if self.input_ui.file_selection() == 0 {
@@ -27,7 +27,6 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Down) => {
-                let matches = self.file_matches();
                 if !matches.is_empty() {
                     self.input_ui
                         .set_file_selection((self.input_ui.file_selection() + 1) % matches.len());
@@ -124,41 +123,27 @@ impl App {
         self.input_ui.set_file_selection(0);
     }
 
-    pub(super) fn file_matches(&self) -> FilePaletteMatches {
-        self.file_match_list()
-    }
-
-    /// Matches when the `@` palette is what the composer shows. The command
-    /// palette wins when both could answer, and visibility needs the matches
-    /// anyway, so they are computed once here.
-    pub(super) fn file_palette_matches_if_visible(&self) -> Option<FilePaletteMatches> {
-        if !matches!(self.input_ui.composer(), ComposerMode::Input)
-            || self.input_ui.file_palette_dismissed()
-            || self.command_palette_visible()
-        {
-            return None;
-        }
-        let matches = self.file_matches();
-        (!matches.is_empty()).then_some(matches)
-    }
-
-    fn file_match_list(&self) -> FilePaletteMatches {
+    /// Matches for the `@` palette, served from the session cache when fresh.
+    ///
+    /// Get-or-discover: whichever path asks first — a keystroke or a render
+    /// frame — runs discovery once and shares the result. An empty answer also
+    /// drops any cache left by a mention that is no longer active.
+    pub(super) fn file_match_list(&mut self) -> FilePaletteMatches {
         let Some(mention) =
             file_picker::active_file_mention(self.input_ui.text(), self.input_ui.cursor())
         else {
+            self.palette_caches.clear_file();
             return FilePaletteMatches::empty();
         };
-        if let Some(cache) = self
-            .input_ui
-            .fresh_file_match_cache(&mention.query, file_picker::FILE_PATH_CACHE_TTL)
+        if let Some(matches) = self
+            .palette_caches
+            .fresh_file(&mention.query, file_picker::FILE_PATH_CACHE_TTL)
         {
-            return cache.matches;
+            return matches;
         }
-        // Refresh-on-read: the render path calls this every frame, so populate
-        // the cache here too instead of re-running discovery until a keystroke.
         let discovered = self.discover_file_palette_matches(&mention.query);
-        self.input_ui
-            .store_file_match_cache(mention.query.clone(), discovered.clone());
+        self.palette_caches
+            .store_file(mention.query, discovered.clone());
         discovered
     }
 
@@ -177,41 +162,13 @@ impl App {
         )
     }
 
-    fn refresh_file_match_cache(&mut self) {
-        let Some(mention) =
-            file_picker::active_file_mention(self.input_ui.text(), self.input_ui.cursor())
-        else {
-            self.input_ui.clear_file_match_cache();
-            return;
-        };
-        if self
-            .input_ui
-            .fresh_file_match_cache(&mention.query, file_picker::FILE_PATH_CACHE_TTL)
-            .is_some()
-        {
-            return;
-        }
-        let discovered = self.discover_file_palette_matches(&mention.query);
-        self.input_ui
-            .store_file_match_cache(mention.query, discovered);
-    }
-
-    pub(super) fn selected_palette_entry(&self) -> Option<FilePaletteEntry> {
-        let matches = self.file_matches();
+    pub(super) fn selected_palette_entry(&mut self) -> Option<FilePaletteEntry> {
+        let matches = self.file_match_list();
         matches.get(
             self.input_ui
                 .file_selection()
                 .min(matches.len().saturating_sub(1)),
         )
-    }
-
-    pub(super) fn file_palette_visible(&self) -> bool {
-        matches!(self.input_ui.composer(), ComposerMode::Input)
-            && !self.input_ui.file_palette_dismissed()
-            && !self.command_palette_visible()
-            && file_picker::active_file_mention(self.input_ui.text(), self.input_ui.cursor())
-                .is_some()
-            && !self.file_matches().is_empty()
     }
 
     pub(super) fn clamp_file_selection(&mut self) {
@@ -221,9 +178,8 @@ impl App {
             self.input_ui.set_file_query(query);
             self.input_ui.set_file_selection(0);
         }
-        self.refresh_file_match_cache();
 
-        let match_count = self.file_matches().len();
+        let match_count = self.file_match_list().len();
         if match_count == 0 {
             self.input_ui.set_file_selection(0);
         } else if self.input_ui.file_selection() >= match_count {

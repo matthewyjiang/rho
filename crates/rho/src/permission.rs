@@ -198,6 +198,17 @@ enum GitVerdict {
     Ignored,
 }
 
+impl GitVerdict {
+    /// The one git question each kind answers, so a cached kind can never be
+    /// paired with the wrong probe.
+    fn check(self, path: &Path) -> bool {
+        match self {
+            Self::Tracked => path_is_git_tracked(path),
+            Self::Ignored => path_is_git_ignored(path),
+        }
+    }
+}
+
 /// Session-scoped paths whose first in-workspace write already passed the gate.
 ///
 /// Each path is bound to the grantor that allowed it. Evaluation only skips the
@@ -258,14 +269,9 @@ impl SessionWriteLog {
             .copied()
     }
 
-    /// The session's answer for this path and git fact, running `check` (a git
-    /// spawn) only on the first ask.
-    fn git_verdict(
-        &self,
-        path: &Path,
-        kind: GitVerdict,
-        check: impl FnOnce(&Path) -> bool,
-    ) -> bool {
+    /// The session's answer for this path and git fact, running the git spawn
+    /// for it only on the first ask.
+    fn git_verdict(&self, path: &Path, kind: GitVerdict) -> bool {
         let key = (path.to_path_buf(), kind);
         if let Some(verdict) = self
             .git_verdicts
@@ -275,7 +281,7 @@ impl SessionWriteLog {
         {
             return *verdict;
         }
-        let verdict = check(path);
+        let verdict = kind.check(path);
         self.git_verdicts
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -377,15 +383,11 @@ fn is_free_workspace_write(
             scope: PathScope::PrimaryWorkspace,
         } => {
             !path_is_symlink(path)
-                && (session_writes.git_verdict(path, GitVerdict::Tracked, path_is_git_tracked)
+                && (session_writes.git_verdict(path, GitVerdict::Tracked)
                     || (session_writes
                         .granted_by(path)
                         .is_some_and(|authority| mode.honors_write_authority(authority))
-                        && !session_writes.git_verdict(
-                            path,
-                            GitVerdict::Ignored,
-                            path_is_git_ignored,
-                        )))
+                        && !session_writes.git_verdict(path, GitVerdict::Ignored)))
         }
         _ => false,
     }
@@ -399,9 +401,7 @@ fn rememberable_workspace_write(
         CapabilityOperation::WritePath {
             path,
             scope: PathScope::PrimaryWorkspace,
-        } if !session_writes.git_verdict(path, GitVerdict::Ignored, path_is_git_ignored) => {
-            Some(path.clone())
-        }
+        } if !session_writes.git_verdict(path, GitVerdict::Ignored) => Some(path.clone()),
         _ => None,
     }
 }

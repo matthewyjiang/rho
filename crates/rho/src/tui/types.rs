@@ -230,6 +230,60 @@ pub(super) struct SkillMatchCache {
     pub(in crate::tui) refreshed_at: Instant,
 }
 
+/// Session palette caches. Whichever path asks first — a keystroke or a render
+/// frame — runs discovery and shares the result through here.
+#[derive(Default)]
+pub(super) struct PaletteCaches {
+    /// Matches for the active `@` query.
+    file: Option<FileMatchCache>,
+    /// Discovered skills for `/` palette matching.
+    skills: Option<SkillMatchCache>,
+}
+
+impl PaletteCaches {
+    /// Fresh matches for `query`, or `None` when discovery must run again.
+    pub(super) fn fresh_file(
+        &self,
+        query: &str,
+        ttl: Duration,
+    ) -> Option<super::file_picker::FilePaletteMatches> {
+        let cache = self.file.as_ref()?;
+        (cache.query == query && cache.refreshed_at.elapsed() < ttl).then(|| cache.matches.clone())
+    }
+
+    pub(super) fn store_file(
+        &mut self,
+        query: String,
+        matches: super::file_picker::FilePaletteMatches,
+    ) {
+        self.file = Some(FileMatchCache {
+            query,
+            matches,
+            refreshed_at: Instant::now(),
+        });
+    }
+
+    pub(super) fn clear_file(&mut self) {
+        self.file = None;
+    }
+
+    /// Fresh skills, or `None` when discovery must run again.
+    pub(super) fn fresh_skills(
+        &self,
+        ttl: Duration,
+    ) -> Option<std::sync::Arc<Vec<crate::skills::Skill>>> {
+        let cache = self.skills.as_ref()?;
+        (cache.refreshed_at.elapsed() < ttl).then(|| std::sync::Arc::clone(&cache.skills))
+    }
+
+    pub(super) fn store_skills(&mut self, skills: std::sync::Arc<Vec<crate::skills::Skill>>) {
+        self.skills = Some(SkillMatchCache {
+            skills,
+            refreshed_at: Instant::now(),
+        });
+    }
+}
+
 impl From<&str> for QueuedPrompt {
     fn from(prompt: &str) -> Self {
         Self {

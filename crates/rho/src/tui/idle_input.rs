@@ -5,8 +5,9 @@ use ratatui::DefaultTerminal;
 
 use super::{
     command_actions::CommandSubmission, command_palette::slash_command_args, commands,
-    goal_command, skill_actions, App, ChatMedia, ComposerMode, GoalState, HistoryDirection,
-    InputSubmissionMode, InteractiveRuntime, PasteSegment, QueuedPrompt, TurnOutcome, TurnPrompt,
+    goal_command, palette::ActivePalette, skill_actions, App, ChatMedia, ComposerMode, GoalState,
+    HistoryDirection, InputSubmissionMode, InteractiveRuntime, PasteSegment, QueuedPrompt,
+    TurnOutcome, TurnPrompt,
 };
 
 /// A turn held until MCP connect settles.
@@ -220,13 +221,12 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
-        if !self.command_palette_visible() {
+        let Some(ActivePalette::Command(matches)) = self.active_palette() else {
             return Ok(false);
-        }
+        };
 
         match (key.modifiers, key.code) {
             (KeyModifiers::NONE, KeyCode::Up) => {
-                let matches = self.command_matches();
                 if !matches.is_empty() {
                     self.input_ui.set_command_selection(
                         if self.input_ui.command_selection() == 0 {

@@ -110,13 +110,13 @@ impl App {
         let height = area.height as usize;
         self.note_terminal_geometry(width, height);
         self.refresh_composer_attachment_layout_cache(width);
-        let composer_lines = self.composer_lines(width, height);
+        let composer = self.composer_frame(width, height);
         let command_lines = self.command_suggestion_lines(width);
         // One settings/budget computation feeds every history read this frame;
         // recomputing it per read re-wrapped the composer several times a frame.
         let settings = self.history_render_settings_for_chrome(
             width,
-            composer_lines.len(),
+            composer.lines.len(),
             command_lines.len(),
         );
         let live_history = self.live_history_layout(width, settings.max_image_height);
@@ -124,20 +124,19 @@ impl App {
         // read here may re-render the composer or the suggestion palette.
         let viewport = self.history_content_height_from_counts(
             height,
-            composer_lines.len(),
+            composer.lines.len(),
             command_lines.len(),
         );
         self.ensure_measured_history_suffix(settings, viewport);
         let history_len = self
             .history_static_len_with_settings(width, settings)
             .saturating_add(live_history.lines.len());
-        let composer_cursor = self.composer_cursor_position(width);
         let layout = self.screen_layout_for_history_len(
             area,
             history_len,
-            &composer_lines,
+            &composer.lines,
             command_lines.len(),
-            composer_cursor,
+            composer.cursor,
         );
         let (history_start, history_count) =
             self.visible_history_window(history_len, layout.history_content.height as usize);
@@ -146,7 +145,7 @@ impl App {
             width,
             now,
             layout: &layout,
-            composer_cursor,
+            composer_cursor: composer.cursor,
         };
         self.draw_history(
             frame,
@@ -159,7 +158,7 @@ impl App {
             &live_history,
         );
         self.draw_panels(frame, surface);
-        self.draw_composer(frame, surface, composer_lines, command_lines);
+        self.draw_composer(frame, surface, composer.lines, command_lines);
         self.draw_cursor(frame, surface);
         if let Some(selection) = self.screen_selection {
             highlight_selection(frame.buffer_mut(), area, 0, selection);
@@ -493,15 +492,14 @@ impl App {
     ) -> ActiveFrame {
         let area = Rect::new(0, 0, width as u16, viewport_height as u16);
         let history_len = self.history_len(width, now);
-        let composer_lines = self.composer_lines(width, area.height as usize);
+        let composer = self.composer_frame(width, area.height as usize);
         let command_lines = self.command_suggestion_lines(width);
-        let composer_cursor = self.composer_cursor_position(width);
         let layout = self.screen_layout_for_history_len(
             area,
             history_len,
-            &composer_lines,
+            &composer.lines,
             command_lines.len(),
-            composer_cursor,
+            composer.cursor,
         );
         let (history_start, history_count) =
             self.visible_history_window(history_len, layout.history_content.height as usize);
@@ -548,7 +546,8 @@ impl App {
                 .take(layout.commands.height as usize),
         );
         lines.extend(
-            composer_lines
+            composer
+                .lines
                 .into_iter()
                 .skip(layout.composer_start)
                 .take(layout.composer.height as usize),
@@ -613,10 +612,9 @@ impl App {
     }
 
     /// History layout inputs, including the current feed-image row budget.
-    pub(super) fn history_render_settings(&self, width: usize) -> HistoryRenderSettings {
-        self.info
-            .runtime
-            .history_render_settings(width, self.feed_image_row_budget(width))
+    pub(super) fn history_render_settings(&mut self, width: usize) -> HistoryRenderSettings {
+        let budget = self.feed_image_row_budget(width);
+        self.info.runtime.history_render_settings(width, budget)
     }
 
     /// History render settings from already-counted bottom chrome lines, so a
@@ -648,12 +646,14 @@ impl App {
     /// Feed-image row budget: preferred terminal-height band, capped by the live
     /// history content viewport so composer chrome cannot make placements
     /// permanently unpaintable.
-    pub(super) fn feed_image_row_budget(&self, width: usize) -> u16 {
+    pub(super) fn feed_image_row_budget(&mut self, width: usize) -> u16 {
         let height = self.terminal_height;
+        let composer_lines = self.composer_frame(width, height).lines;
+        let command_line_count = self.command_suggestion_lines(width).len();
         let content_height = self.history_content_height_from_counts(
             height,
-            self.composer_lines(width, height).len(),
-            self.command_suggestion_lines(width).len(),
+            composer_lines.len(),
+            command_line_count,
         );
         super::feed_image::ImageRowBudget::feed(height, content_height).get()
     }
@@ -848,8 +848,8 @@ impl App {
     }
 
     pub(super) fn history_live_lines(&mut self, width: usize, _now: Instant) -> Vec<Line<'static>> {
-        self.live_history_layout(width, self.feed_image_row_budget(width))
-            .lines
+        let budget = self.feed_image_row_budget(width);
+        self.live_history_layout(width, budget).lines
     }
 
     /// Live feed lines plus the clickable card spans in the same walk that paints them.
@@ -862,25 +862,29 @@ impl App {
         let mut cards = Vec::new();
         let show_tools = self.info.runtime.shows_work_chrome();
         let max_tool_output_lines = self.info.runtime.max_tool_output_lines;
-        let shells = if show_tools {
-            self.inline_shell_live_lines(width, max_tool_output_lines, max_image_height)
+        let shell_count = if show_tools {
+            self.pending_inline_shells.len()
         } else {
-            Vec::new()
+            0
         };
         let tools = if show_tools {
             self.turn.tool_calls().live_cards().collect::<Vec<_>>()
         } else {
             Vec::new()
         };
-        let has_pending_tools = !shells.is_empty() || !tools.is_empty();
+        let has_pending_tools = shell_count > 0 || !tools.is_empty();
         // Open stream tails omit the history trailing blank so previews can abut
         // committed text. Live tools still need one row of separation above them.
         if has_pending_tools && self.open_stream_tail_active() {
             lines.push(Line::raw(""));
         }
-        for shell_lines in &shells {
-            // Each cached render owns the trailing spacer under its card.
-            lines.extend(shell_lines.iter().cloned());
+        if show_tools {
+            // Each cached render owns the trailing spacer under its card. Direct
+            // field iteration keeps this disjoint from the `tools` borrow above.
+            for task in &mut self.pending_inline_shells {
+                let rendered = task.rendered_lines(width, max_tool_output_lines, max_image_height);
+                lines.extend(rendered.iter().cloned());
+            }
         }
         for (key, pending) in tools {
             let start = lines.len();

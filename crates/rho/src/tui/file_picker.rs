@@ -173,38 +173,29 @@ static FILE_PATH_CACHE: LazyLock<Mutex<FilePathCache>> = LazyLock::new(|| {
 
 /// The `@query` token under the cursor, if any.
 ///
-/// Scans char indices in place: the render path calls this several times per
-/// frame, so only the short token itself is ever collected into a String.
+/// Works on slices of `input` instead of collecting characters: the render
+/// path calls this several times per frame, so nothing larger than the query
+/// itself is ever copied.
 pub(super) fn active_file_mention(input: &str, cursor: usize) -> Option<FileMention> {
-    let mut start = 0usize;
-    let mut token_len = 0usize;
-    let mut tail_whitespace = None;
-    for (index, ch) in input.chars().enumerate() {
-        if index < cursor {
-            if ch.is_whitespace() {
-                start = index + 1;
-                token_len = 0;
-            } else {
-                token_len += 1;
-            }
-        } else if ch.is_whitespace() {
-            tail_whitespace = Some(index);
-            break;
-        }
-    }
-    let end = tail_whitespace.unwrap_or_else(|| input.chars().count());
-    let token = input
-        .chars()
-        .skip(start)
-        .take(token_len)
-        .collect::<String>();
-    let query = token.strip_prefix('@')?;
+    let cursor_byte = input
+        .char_indices()
+        .nth(cursor)
+        .map_or(input.len(), |(byte, _)| byte);
+    let (before, after) = input.split_at(cursor_byte);
+    // The token is the last whitespace-delimited piece before the cursor plus
+    // the piece after it up to the next whitespace.
+    let head = before
+        .rsplit(char::is_whitespace)
+        .next()
+        .unwrap_or_default();
+    let tail = after.split(char::is_whitespace).next().unwrap_or_default();
+    let query = head.strip_prefix('@')?;
     if query.contains('@') {
         return None;
     }
     Some(FileMention {
-        start,
-        end,
+        start: before.chars().count() - head.chars().count(),
+        end: before.chars().count() + tail.chars().count(),
         query: query.to_string(),
     })
 }

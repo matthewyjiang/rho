@@ -52,6 +52,31 @@ fn email_like_tokens_do_not_open_file_mentions() {
 }
 
 #[test]
+fn mention_offsets_survive_multibyte_characters_before_the_token() {
+    // "héllo @w" — é is two bytes, so byte offsets and char offsets diverge.
+    assert_eq!(
+        active_file_mention("héllo @w", 8),
+        Some(FileMention {
+            start: 6,
+            end: 8,
+            query: "w".into(),
+        })
+    );
+}
+
+#[test]
+fn cursor_past_the_input_still_finds_the_trailing_token() {
+    assert_eq!(
+        active_file_mention("review @src", 99),
+        Some(FileMention {
+            start: 7,
+            end: 11,
+            query: "src".into(),
+        })
+    );
+}
+
+#[test]
 fn matching_paths_respect_gitignore_and_fuzzy_rank() {
     clear_workspace_file_path_cache();
     let workspace = tempdir().unwrap();

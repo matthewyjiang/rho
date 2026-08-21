@@ -107,6 +107,7 @@ mod models_dev_actions;
 mod mouse;
 mod mouse_capture;
 mod overlay_panel;
+mod palette;
 mod paste_burst;
 mod pending_input;
 #[cfg(test)]
@@ -229,8 +230,8 @@ use questionnaire::{
     QuestionAnswerRequest, QuestionnaireReply, QuestionnaireResponseChannel,
 };
 use render::{
-    char_prefix_display_width, display_width, input_cursor_position, input_lines, picker_lines,
-    session_header_lines, styled_line, tool_entry_lines, truncate_one_line, LineFill,
+    char_prefix_display_width, display_width, input_frame, picker_lines, session_header_lines,
+    styled_line, tool_entry_lines, truncate_one_line, InputFrame, LineFill,
 };
 use scrollbar::HistoryScrollbar;
 use session_title::PendingSessionTitle;
@@ -479,6 +480,8 @@ struct App {
     subagent_inbox: subagent_inbox::SubagentInbox,
     pending_subagent_questionnaire: Option<PendingSubagentQuestionnaire>,
     input_ui: InputUi,
+    /// Palette match caches shared by keystroke and render paths.
+    palette_caches: PaletteCaches,
     /// Tiny disappearing feedback toast. Write only through [`App::set_status`]
     /// / [`App::notify_status`].
     status_overlay: Option<status_overlay::StatusOverlay>,

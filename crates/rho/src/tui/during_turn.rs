@@ -15,6 +15,7 @@ use super::{
     commands::{self, CommandId, CommandInvocation},
     config_editor::{ConfigNumberInput, ConfigNumberKey, ConfigTextKey},
     config_picker, mouse_capture,
+    palette::ActivePalette,
     paste_burst::normalize_paste,
     App, ApprovalKeyOutcome, ComposerMode, Entry, HistoryDirection, InputSubmissionMode,
     InteractiveModelSelection, InteractiveRuntime, PasteSegment, PickerAction, QueuedPrompt,
@@ -418,13 +419,12 @@ impl App {
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<bool> {
-        if !self.command_palette_visible() {
+        let Some(ActivePalette::Command(matches)) = self.active_palette() else {
             return Ok(false);
-        }
+        };
 
         match (key.modifiers, key.code) {
             (KeyModifiers::NONE, KeyCode::Up) => {
-                let matches = self.command_matches();
                 if !matches.is_empty() {
                     self.input_ui.set_command_selection(
                         if self.input_ui.command_selection() == 0 {
@@ -437,7 +437,6 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Down) => {
-                let matches = self.command_matches();
                 if !matches.is_empty() {
                     self.input_ui.set_command_selection(
                         (self.input_ui.command_selection() + 1) % matches.len(),
@@ -835,9 +834,8 @@ impl App {
         }
     }
 
-    pub(super) fn running_escape_has_overlay_target(&self) -> bool {
-        self.command_palette_visible()
-            || self.file_palette_visible()
+    pub(super) fn running_escape_has_overlay_target(&mut self) -> bool {
+        self.active_palette().is_some()
             || self.pending_input_focused()
             || !matches!(self.input_ui.composer(), ComposerMode::Input)
     }

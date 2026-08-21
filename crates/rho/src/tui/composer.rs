@@ -8,7 +8,7 @@ use super::{
     paste_burst::{normalize_paste, paste_marker_for, previous_word_boundary},
     render::{
         editable_input_visual_lines, input_char_index_at_position,
-        input_cursor_index_on_visual_line, input_cursor_position,
+        input_cursor_index_on_visual_line, visual_caret_position,
     },
     App, CommandInvocation, ComposerAttachment, ComposerMode, HistoryDirection, InputDraft,
     InputSubmissionMode, PasteBurstEnter, PasteBurstKey, PasteSegment,
@@ -227,7 +227,7 @@ impl App {
         let content_width = content_width(terminal_width);
         let visual_lines = editable_input_visual_lines(self.input_ui.text(), content_width);
         let cursor_position =
-            input_cursor_position(self.input_ui.text(), self.input_ui.cursor(), content_width);
+            visual_caret_position(&visual_lines, self.input_ui.text(), self.input_ui.cursor());
         let can_recall = match direction {
             HistoryDirection::Previous => cursor_position.y == 0,
             HistoryDirection::Next => cursor_position.y as usize + 1 >= visual_lines.len(),
@@ -645,10 +645,6 @@ impl App {
             }
             InputSubmissionMode::Prompt => Ok(None),
         }
-    }
-
-    pub(super) fn command_palette_visible(&self) -> bool {
-        self.command_palette_matches_if_visible().is_some()
     }
 
     pub(super) fn cursor_in_command_token(&self) -> bool {

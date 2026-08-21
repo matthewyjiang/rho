@@ -13,6 +13,7 @@ use super::{
     process_panel::ProcessPanel,
     statusline::StatusLine,
     subagent_panel::SubagentPanel,
+    types::PaletteCaches,
     App, StatusSource, StreamUi, TuiBootstrap, UsageUi,
 };
 
@@ -92,6 +93,7 @@ impl App {
             subagent_inbox: crate::tui::subagent_inbox::SubagentInbox::default(),
             pending_subagent_questionnaire: None,
             input_ui: InputUi::default(),
+            palette_caches: PaletteCaches::default(),
             status_overlay: None,
             last_status: String::new(),
             status_source: StatusSource::default(),

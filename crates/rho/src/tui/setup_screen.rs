@@ -215,7 +215,7 @@ impl App {
                 truncate_one_line(self.status(), width),
                 Theme::dim(),
             ))],
-            _ => self.composer_lines(width, height as usize),
+            _ => self.composer_frame(width, height as usize).lines,
         }
     }
 
