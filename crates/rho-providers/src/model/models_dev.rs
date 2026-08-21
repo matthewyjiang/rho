@@ -220,6 +220,13 @@ pub async fn fetch_model_metadata(provider: &str, model: &str) -> Option<ModelMe
     override_metadata(provider, model)
 }
 
+/// Cache provider for the shared ExactAdvertised `slug/model` tree.
+///
+/// The slash keeps this out of custom host names and `catalog` slugs, so
+/// model-id lookup never aliases into built-in extract (Anthropic stores
+/// Unknown; this tree is ExactAdvertised).
+pub(super) const MODEL_ID_CATALOG_CACHE_PROVIDER: &str = "models.dev/tree";
+
 /// Why a custom host with `catalog_mode = "model-id"` has no models.dev row.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CatalogLookupMiss {
@@ -232,7 +239,10 @@ pub enum CatalogLookupMiss {
     },
 }
 
-/// Some when this custom host splits model ids and catalog metadata is absent.
+/// Some when this model-id host has no catalog row for the selected model.
+///
+/// The id is split here only to name the models.dev pair in the diagnostic;
+/// lookup itself reads the shared tree with the unsplit id.
 pub fn custom_model_id_catalog_miss(provider: &str, model: &str) -> Option<CatalogLookupMiss> {
     let descriptor = crate::provider::provider_descriptor(provider)?;
     if !descriptor.is_custom_openai_compatible() {
@@ -260,8 +270,9 @@ pub fn custom_model_id_catalog_miss(provider: &str, model: &str) -> Option<Catal
 
 /// models.dev provider and model id used for the sqlite catalog row.
 ///
-/// Custom hosts can borrow another slug (`catalog = "llmgateway"`) or split
-/// the selected model id (`catalog_mode = "model-id"`). A models.toml
+/// Custom hosts can borrow another slug (`catalog = "llmgateway"`) or read the
+/// shared ExactAdvertised tree with unsplit `slug/model` ids
+/// (`catalog_mode = "model-id"`). A models.toml
 /// `catalog` value wins and may also remap the model id (`anthropic/claude-sonnet-4-5`).
 ///
 /// Built-in providers are deliberately left on their provider-facing name:
@@ -284,8 +295,10 @@ fn catalog_source_for(
         return (provider.to_string(), model.to_string());
     };
     match descriptor.catalog_lookup() {
-        CatalogLookupMode::ModelId => overrides::split_provider_model(model)
-            .unwrap_or_else(|| (provider.to_string(), model.to_string())),
+        CatalogLookupMode::ModelId => (
+            MODEL_ID_CATALOG_CACHE_PROVIDER.to_string(),
+            model.to_string(),
+        ),
         CatalogLookupMode::Slug => {
             // The catalog string is the models.dev provider key. Do not run built-in
             // remappers (OpenRouter's owner/model split) on a borrowed slug. A slug
@@ -468,7 +481,12 @@ async fn fetch_models_dev_api() -> Option<document::ModelsDevCatalog> {
 /// `sdk_package` was added without a bump: only opencode-go reads it, and that
 /// provider registered in the same release, so no older rows can miss it. Bump
 /// when an already-registered provider switches to `PreferModelsDevNpm`.
-pub(super) const MODEL_METADATA_CACHE_VERSION: i64 = 9;
+///
+/// v10: model-id hosts stopped splitting ids for lookup. They now read the
+/// unsplit `slug/model` id from a shared ExactAdvertised tree keyed
+/// `models.dev/tree`. Older snapshots hold slug-keyed rows at the wrong keys
+/// and parse policy, so they must refetch.
+pub(super) const MODEL_METADATA_CACHE_VERSION: i64 = 10;
 
 fn cached_upstream_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
     cached_upstream_model_metadata_with_freshness(provider, model, CacheFreshness::AllowStale)
@@ -596,8 +614,9 @@ pub(super) fn open_models_dev_cache() -> rusqlite::Result<Connection> {
             id integer primary key check (id = 1),
             cache_version integer not null,
             updated_at integer not null,
-            -- Extra models.dev documents this snapshot contains: a comma-separated
-            -- slug list, or '*' when a model-id host required the full tree.
+            -- Extra models.dev rows this snapshot contains: a comma-separated
+            -- borrowed slug list, plus '*' when the shared ExactAdvertised
+            -- slug/model tree was written for model-id hosts.
             borrowed_slugs text not null default ''
         );",
     )?;

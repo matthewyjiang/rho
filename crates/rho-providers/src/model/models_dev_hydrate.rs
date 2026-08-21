@@ -14,15 +14,13 @@ use std::{
 use rusqlite::params;
 use tokio::sync::Mutex;
 
-use crate::provider::{
-    CatalogConstruction, CatalogLookupMode, CatalogReasoningPolicy, ProviderDescriptor, ProviderId,
-};
+use crate::provider::{CatalogConstruction, CatalogLookupMode, ProviderDescriptor, ProviderId};
 
 use super::{
     document::{self, ModelsDevCatalog},
     fetch_models_dev_api, model_metadata_needs_refresh, open_models_dev_cache,
     upstream_metadata_from_api, write_cached_upstream_model_metadata_batch,
-    MODEL_METADATA_CACHE_VERSION,
+    MODEL_ID_CATALOG_CACHE_PROVIDER, MODEL_METADATA_CACHE_VERSION,
 };
 
 /// How long a successful full-catalog snapshot stays current across launches.
@@ -110,9 +108,12 @@ pub async fn prefetch_model_metadata(targets: impl IntoIterator<Item = (String, 
 /// can rematch cache rows by slug and model id. A slug that is also a built-in
 /// cache key (`openrouter`) is written under the borrowing host name instead,
 /// so extract for Rho's own provider is unchanged. Slugs with no document
-/// (`openai-codex`) keep extract and rematch. Unborrowed upstream providers
-/// stay out of sqlite unless a custom host uses `catalog_mode = "model-id"`,
-/// which needs every document for `provider/model` lookups.
+/// (`openai-codex`) keep extract and rematch.
+///
+/// Any interned `catalog_mode = "model-id"` host additionally needs the entire
+/// models.dev tree written once under [`MODEL_ID_CATALOG_CACHE_PROVIDER`] with
+/// unsplit `slug/model` ids, parsed with that mode's hydrate policy. Unborrowed
+/// upstream providers otherwise stay out of sqlite.
 pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
     let mut entries = Vec::new();
     let mut touched_providers = HashSet::new();
@@ -131,7 +132,6 @@ pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
             }
         }
     }
-    let mut borrowed_slugs = HashSet::new();
     for host in crate::provider::interned_custom_providers() {
         let slug = host.metadata_upstream;
         if slug == host.name {
@@ -145,7 +145,6 @@ pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
         } else {
             slug
         };
-        borrowed_slugs.insert(slug);
         for model_id in provider.models.keys() {
             let Some(metadata) =
                 document::model_metadata_from_catalog(api, slug, model_id, host.catalog_reasoning)
@@ -156,25 +155,22 @@ pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
             entries.push((cache_provider.to_string(), model_id.clone(), metadata));
         }
     }
-    if matches!(needed_extra_catalog_docs(), ExtraCatalogDocs::All) {
+    let extra = needed_extra_catalog_docs();
+    if extra.full_tree {
+        let policy = CatalogLookupMode::model_id_hydrate_reasoning();
         for (slug, provider) in api.iter_providers() {
-            if borrowed_slugs.contains(slug)
-                || super::borrowed_slug_collides_with_builtin_extract(slug)
-            {
-                continue;
-            }
             for model_id in provider.models.keys() {
-                let Some(metadata) = document::model_metadata_from_catalog(
-                    api,
-                    slug,
-                    model_id,
-                    CatalogReasoningPolicy::ExactAdvertised,
-                )
-                .filter(|metadata| metadata.reasoning_metadata_complete) else {
+                let Some(metadata) =
+                    document::model_metadata_from_catalog(api, slug, model_id, policy)
+                        .filter(|metadata| metadata.reasoning_metadata_complete)
+                else {
                     continue;
                 };
-                touched_providers.insert(slug.to_string());
-                entries.push((slug.to_string(), model_id.clone(), metadata));
+                entries.push((
+                    MODEL_ID_CATALOG_CACHE_PROVIDER.to_string(),
+                    format!("{slug}/{model_id}"),
+                    metadata,
+                ));
             }
         }
     }
@@ -184,6 +180,15 @@ pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
             .map(|(provider, model, metadata)| (provider.as_str(), model.as_str(), metadata)),
     );
     if written > 0 {
+        if extra.full_tree {
+            // Display names are cached under the host that looks them up, not
+            // the shared tree key.
+            for host in crate::provider::interned_custom_providers() {
+                if host.catalog_lookup() == CatalogLookupMode::ModelId {
+                    touched_providers.insert(host.name.to_string());
+                }
+            }
+        }
         for provider in touched_providers {
             crate::model::display_name::forget_provider_display_names(&provider);
         }
@@ -207,61 +212,65 @@ fn catalog_model_ids_for_provider(
         .unwrap_or_default()
 }
 
-/// Extra models.dev documents this snapshot must contain besides Rho extract.
-enum ExtraCatalogDocs {
-    /// Only these borrowed slugs.
-    Slugs(HashSet<String>),
-    /// Every models.dev document. Used when a host splits `provider/model` ids.
-    All,
+/// Extra models.dev rows this snapshot must contain besides Rho extract.
+///
+/// Two independent dimensions: borrowed slug documents written slug-keyed
+/// (`catalog = "llmgateway"`), and one shared ExactAdvertised `slug/model`
+/// tree for any interned `catalog_mode = "model-id"` host. A snapshot is only
+/// reusable when it covers both, so a new borrow or the first model-id host
+/// refetches. A second model-id host reuses the same tree.
+#[derive(Default, PartialEq, Eq)]
+struct ExtraCatalogDocs {
+    /// Borrowed models.dev slugs written under the slug (or borrowing host on
+    /// collision) by the borrow loop.
+    slugs: HashSet<String>,
+    /// Shared tree keyed [`MODEL_ID_CATALOG_CACHE_PROVIDER`].
+    full_tree: bool,
 }
 
-/// Sentinel stored in `catalog_snapshot.borrowed_slugs` for [`ExtraCatalogDocs::All`].
-const EXTRA_CATALOG_DOCS_ALL: &str = "*";
+/// Sentinel stored in `catalog_snapshot.borrowed_slugs` for the shared tree.
+const EXTRA_CATALOG_DOCS_FULL_TREE: &str = "*";
 
 fn needed_extra_catalog_docs() -> ExtraCatalogDocs {
-    let interned = crate::provider::interned_custom_providers();
-    if interned
-        .iter()
-        .any(|descriptor| descriptor.catalog_lookup() == CatalogLookupMode::ModelId)
-    {
-        return ExtraCatalogDocs::All;
+    let mut docs = ExtraCatalogDocs::default();
+    for descriptor in crate::provider::interned_custom_providers() {
+        if descriptor.catalog_lookup() == CatalogLookupMode::ModelId {
+            docs.full_tree = true;
+        } else if descriptor.metadata_upstream != descriptor.name {
+            docs.slugs.insert(descriptor.metadata_upstream.to_string());
+        }
     }
-    ExtraCatalogDocs::Slugs(
-        interned
-            .into_iter()
-            .filter(|descriptor| descriptor.metadata_upstream != descriptor.name)
-            .map(|descriptor| descriptor.metadata_upstream.to_string())
-            .collect(),
-    )
+    docs
 }
 
 fn encode_extra_catalog_docs(docs: &ExtraCatalogDocs) -> String {
-    match docs {
-        ExtraCatalogDocs::All => EXTRA_CATALOG_DOCS_ALL.to_string(),
-        ExtraCatalogDocs::Slugs(slugs) => {
-            let mut slugs = slugs.iter().cloned().collect::<Vec<_>>();
-            slugs.sort_unstable();
-            slugs.join(",")
-        }
+    let mut items = docs.slugs.iter().cloned().collect::<Vec<_>>();
+    if docs.full_tree {
+        items.push(EXTRA_CATALOG_DOCS_FULL_TREE.to_string());
     }
+    items.sort_unstable();
+    items.join(",")
 }
 
 fn decode_extra_catalog_docs(raw: &str) -> ExtraCatalogDocs {
-    if raw.trim() == EXTRA_CATALOG_DOCS_ALL {
-        return ExtraCatalogDocs::All;
+    let mut docs = ExtraCatalogDocs::default();
+    for item in raw
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+    {
+        if item == EXTRA_CATALOG_DOCS_FULL_TREE {
+            docs.full_tree = true;
+        } else {
+            docs.slugs.insert(item.to_string());
+        }
     }
-    ExtraCatalogDocs::Slugs(
-        raw.split(',')
-            .map(str::trim)
-            .filter(|slug| !slug.is_empty())
-            .map(str::to_string)
-            .collect(),
-    )
+    docs
 }
 
 fn stored_extra_catalog_docs() -> ExtraCatalogDocs {
     let Ok(connection) = open_models_dev_cache() else {
-        return ExtraCatalogDocs::Slugs(HashSet::new());
+        return ExtraCatalogDocs::default();
     };
     connection
         .query_row(
@@ -271,7 +280,7 @@ fn stored_extra_catalog_docs() -> ExtraCatalogDocs {
         )
         .ok()
         .map(|raw| decode_extra_catalog_docs(&raw))
-        .unwrap_or_else(|| ExtraCatalogDocs::Slugs(HashSet::new()))
+        .unwrap_or_default()
 }
 
 fn extra_catalog_docs_are_hydrated() -> bool {
@@ -279,16 +288,7 @@ fn extra_catalog_docs_are_hydrated() -> bool {
 }
 
 fn extra_catalog_docs_cover(needed: &ExtraCatalogDocs, stored: &ExtraCatalogDocs) -> bool {
-    match needed {
-        ExtraCatalogDocs::All => matches!(stored, ExtraCatalogDocs::All),
-        ExtraCatalogDocs::Slugs(needed) => {
-            needed.is_empty()
-                || match stored {
-                    ExtraCatalogDocs::All => true,
-                    ExtraCatalogDocs::Slugs(stored) => needed.is_subset(stored),
-                }
-        }
-    }
+    needed.slugs.is_subset(&stored.slugs) && (!needed.full_tree || stored.full_tree)
 }
 
 /// Extracts metadata when its reasoning metadata is complete. Providers whose

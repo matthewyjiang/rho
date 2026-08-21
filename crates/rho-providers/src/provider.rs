@@ -263,16 +263,18 @@ pub enum ModelIdCodec {
 /// How a custom OpenAI-compatible host rematches models.dev catalog rows.
 ///
 /// Built-in providers always use [`Self::Slug`]. Config-defined hosts may
-/// split the selected model id instead.
+/// instead keep the selected `slug/model` id and read a shared ExactAdvertised
+/// tree.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CatalogLookupMode {
     /// Look up `{catalog or host name}/{same model id}`.
     #[default]
     Slug,
-    /// Split the model id on the first `/` into `{provider}/{model}`.
+    /// Look up the unsplit `slug/model` id in the shared models.dev tree.
     ///
-    /// Extra slashes stay in the model id (`foo/bar/baz` → `foo` + `bar/baz`).
-    /// A bare id with no slash misses catalog metadata.
+    /// A bare id with no slash misses catalog metadata. Extra slashes stay in
+    /// the id (`foo/bar/baz`). The miss diagnostic still splits on the first
+    /// slash to name the models.dev pair.
     ModelId,
 }
 
@@ -282,6 +284,14 @@ impl CatalogLookupMode {
             Self::Slug => "slug",
             Self::ModelId => "model-id",
         }
+    }
+
+    /// Parse policy for the shared `slug/model` tree [`Self::ModelId`] reads.
+    ///
+    /// [`Self::Slug`] uses the host descriptor's `catalog_reasoning` instead,
+    /// because a borrowed slug follows that host's protocol.
+    pub(crate) fn model_id_hydrate_reasoning() -> CatalogReasoningPolicy {
+        CatalogReasoningPolicy::ExactAdvertised
     }
 }
 
