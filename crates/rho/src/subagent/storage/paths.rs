@@ -2,11 +2,10 @@
 
 use std::{
     fs,
-    io::ErrorKind,
     path::{Component, Path, PathBuf},
 };
 
-use super::super::{create_private_directory, secure_directory};
+use super::super::ensure_private_directory;
 
 /// Validated `sessions/<workspace>/<unit>/subagents` path.
 #[derive(Clone, Debug)]
@@ -56,15 +55,7 @@ impl SessionSubagentsDir {
     }
 
     pub(super) fn ensure_ready(&self) -> anyhow::Result<()> {
-        // Concurrent first reservations race on this create; AlreadyExists is
-        // success. `secure_directory` re-validates type and mode either way.
-        match create_private_directory(&self.path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(error.into()),
-        }
-        secure_directory(&self.path)?;
-        Ok(())
+        Ok(ensure_private_directory(&self.path)?)
     }
 
     pub(super) fn run_directory(&self, id: &str) -> PathBuf {
@@ -139,6 +130,8 @@ pub(super) fn scan_session_directories(rho_root: &Path, id: &str) -> anyhow::Res
 }
 
 pub(super) fn prepare_private_directory(path: &Path) -> std::io::Result<()> {
-    fs::create_dir_all(path)?;
-    secure_directory(path)
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    ensure_private_directory(path)
 }
