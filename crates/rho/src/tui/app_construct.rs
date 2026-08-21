@@ -99,6 +99,7 @@ impl App {
             status_source: StatusSource::default(),
             should_quit: false,
             ctrl_c_streak: 0,
+            turn_finished_attention: false,
             streams: StreamUi::default(),
             turn: TurnUi::default(),
             image_picker: picker_from_environment(herdr_graphics),

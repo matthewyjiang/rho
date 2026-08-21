@@ -173,16 +173,41 @@ pub(super) fn normalize_paste(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
-pub(super) fn paste_marker_for(text: &str) -> Option<String> {
-    let line_count = text.split('\n').count();
-    let char_count = text.chars().count();
-    if line_count >= PASTE_COLLAPSE_MIN_LINES {
-        Some(format!("[ pasted: {line_count} lines ]"))
-    } else if char_count > PASTE_COLLAPSE_MIN_CHARS {
-        Some(format!("[ pasted: {char_count} chars ]"))
-    } else {
-        None
+/// A paste large enough to collapse into an atomic composer marker.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct CollapsedPaste {
+    count: usize,
+    unit: &'static str,
+}
+
+impl CollapsedPaste {
+    /// Marker text that replaces the paste content in the composer.
+    pub(super) fn marker(&self) -> String {
+        format!("[ pasted: {} {} ]", self.count, self.unit)
     }
+
+    /// Toast confirming the collapse, since the content itself is hidden.
+    pub(super) fn toast(&self) -> String {
+        format!("pasted {} {}", self.count, self.unit)
+    }
+}
+
+pub(super) fn collapsed_paste_for(text: &str) -> Option<CollapsedPaste> {
+    let line_count = text.split('\n').count();
+    if line_count >= PASTE_COLLAPSE_MIN_LINES {
+        return Some(CollapsedPaste {
+            count: line_count,
+            unit: "lines",
+        });
+    }
+    let char_count = text.chars().count();
+    if char_count > PASTE_COLLAPSE_MIN_CHARS {
+        return Some(CollapsedPaste {
+            count: char_count,
+            unit: "chars",
+        });
+    }
+    None
 }
 
 pub(super) fn expand_paste_segments(input: &str, segments: &[super::PasteSegment]) -> String {
@@ -277,24 +302,31 @@ mod tests {
     // Owner: pure unit (paste marker policy)
     #[test]
     fn paste_marker_thresholds() {
-        assert_eq!(paste_marker_for("single line"), None);
+        assert_eq!(collapsed_paste_for("single line"), None);
         assert_eq!(
-            paste_marker_for(&paste_lines(PASTE_COLLAPSE_MIN_LINES - 1)),
+            collapsed_paste_for(&paste_lines(PASTE_COLLAPSE_MIN_LINES - 1)),
             None
         );
+        let collapsed = collapsed_paste_for(&paste_lines(PASTE_COLLAPSE_MIN_LINES)).unwrap();
         assert_eq!(
-            paste_marker_for(&paste_lines(PASTE_COLLAPSE_MIN_LINES)),
-            Some(format!("[ pasted: {PASTE_COLLAPSE_MIN_LINES} lines ]"))
+            collapsed.marker(),
+            format!("[ pasted: {PASTE_COLLAPSE_MIN_LINES} lines ]")
         );
         assert_eq!(
-            paste_marker_for(&"x".repeat(PASTE_COLLAPSE_MIN_CHARS + 1)),
-            Some(format!(
-                "[ pasted: {} chars ]",
-                PASTE_COLLAPSE_MIN_CHARS + 1
-            ))
+            collapsed.toast(),
+            format!("pasted {PASTE_COLLAPSE_MIN_LINES} lines")
+        );
+        let collapsed = collapsed_paste_for(&"x".repeat(PASTE_COLLAPSE_MIN_CHARS + 1)).unwrap();
+        assert_eq!(
+            collapsed.marker(),
+            format!("[ pasted: {} chars ]", PASTE_COLLAPSE_MIN_CHARS + 1)
         );
         assert_eq!(
-            paste_marker_for(&"x".repeat(PASTE_COLLAPSE_MIN_CHARS)),
+            collapsed.toast(),
+            format!("pasted {} chars", PASTE_COLLAPSE_MIN_CHARS + 1)
+        );
+        assert_eq!(
+            collapsed_paste_for(&"x".repeat(PASTE_COLLAPSE_MIN_CHARS)),
             None
         );
     }

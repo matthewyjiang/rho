@@ -125,6 +125,39 @@ async fn unsupported_binary_path_paste_stays_text() {
     assert!(!app.input_ui.text().is_empty() || !app.input_ui.paste_segments().is_empty());
 }
 
+// Covers: an unsupported attachment restored as text confirms the collapse when
+// it is large enough to hide behind a marker (same rule as external pastes).
+// Owner: tui status surface
+#[tokio::test]
+async fn unsupported_attach_restore_of_large_text_confirms_collapse() {
+    let min_lines = crate::tui::paste_burst::PASTE_COLLAPSE_MIN_LINES;
+    let original = (0..min_lines)
+        .map(|i| format!("line{i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let task = tokio::spawn(async move {
+        media_attach::MediaAttachOutcome::Unsupported {
+            original_text: original,
+        }
+    });
+    let id = MediaAttachId::new();
+    let mut app = test_app();
+    app.media_attach_tasks
+        .push(media_attach::MediaAttachTask { id, task });
+    app.input_ui
+        .push_pending_attachment(id, PendingAttachmentSource::File, "archive.bin".into());
+
+    let outcome = media_attach::next_media_attach_completion(&mut app.media_attach_tasks).await;
+    app.finish_media_attach(outcome);
+
+    assert!(app.input_ui.attachments().is_empty());
+    assert_eq!(
+        app.input_ui.text(),
+        format!("[ pasted: {min_lines} lines ]")
+    );
+    assert_eq!(app.status(), format!("pasted {min_lines} lines"));
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn unreadable_image_path_paste_reports_error_without_inserting_text() {

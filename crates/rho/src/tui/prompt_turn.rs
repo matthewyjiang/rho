@@ -581,7 +581,7 @@ impl App {
                 outcome
             }
             Ok(outcome) if sdk_failure.is_none() => {
-                self.end_busy_ui();
+                self.end_provider_turn_ui();
                 self.debug_assert_provider_turn_sync(agent);
                 self.turn.stop_loading();
                 self.finish_streams();

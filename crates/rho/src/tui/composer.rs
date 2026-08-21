@@ -5,7 +5,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use super::{
     commands,
     composer_layout::{content_width, prompt_width},
-    paste_burst::{normalize_paste, paste_marker_for, previous_word_boundary},
+    paste_burst::{collapsed_paste_for, normalize_paste, previous_word_boundary},
     render::{
         editable_input_visual_lines, input_char_index_at_position,
         input_cursor_index_on_visual_line, visual_caret_position,
@@ -407,11 +407,14 @@ impl App {
     }
 
     pub(super) fn insert_pasted_input_text(&mut self, text: &str) {
-        let Some(marker) = paste_marker_for(text) else {
+        let Some(paste) = collapsed_paste_for(text) else {
             self.insert_input_text(text);
             return;
         };
-        self.insert_input_text_with_paste_content(&marker, Some(text.to_string()));
+        // A collapsed paste hides its content behind a marker; confirm the
+        // catch so a large paste never looks like it silently vanished.
+        self.notify_status(paste.toast());
+        self.insert_input_text_with_paste_content(&paste.marker(), Some(text.to_string()));
     }
 
     fn insert_input_text_with_paste_content(&mut self, text: &str, paste_content: Option<String>) {

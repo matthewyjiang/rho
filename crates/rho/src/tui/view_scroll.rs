@@ -14,7 +14,7 @@ use super::{
     history_cache::HistoryRenderSettings,
     screen_layout::ScreenLayout,
     scrollbar::{unmeasured_prefix_scroll_need, unmeasured_prefix_scrollbar_top_need},
-    App, HistoryScrollbar, Theme, HISTORY_SCROLLBAR_REVEAL_DURATION,
+    App, ComposerMode, HistoryScroll, HistoryScrollbar, Theme, HISTORY_SCROLLBAR_REVEAL_DURATION,
 };
 
 impl App {
@@ -158,22 +158,56 @@ impl App {
     }
 
     pub(super) fn jump_to_bottom_line(&self, width: usize) -> Line<'static> {
-        let text = self.jump_to_bottom_text(width);
+        let state = self.jump_chip_state();
+        let text = self.jump_to_bottom_text(width, state);
         let binding = self.info.runtime.keybindings.jump_to_bottom.to_string();
         let Some(action) = text.strip_suffix(&binding) else {
             return Line::styled(text, Theme::jump_to_bottom());
         };
+        let action_style = if state.is_attention() {
+            Theme::jump_to_bottom_attention()
+        } else {
+            Theme::jump_to_bottom()
+        };
         Line::from(vec![
-            Span::styled(action.to_string(), Theme::jump_to_bottom()),
+            Span::styled(action.to_string(), action_style),
             Span::styled(binding, Theme::jump_to_bottom_shortcut()),
         ])
     }
 
-    pub(super) fn jump_to_bottom_text(&self, width: usize) -> String {
+    /// What the jump chip should say right now. Only meaningful when the chip
+    /// is visible (history scrolled away from bottom).
+    pub(super) fn jump_chip_state(&self) -> activity::JumpChipState {
+        if matches!(self.history.scroll(), HistoryScroll::Bottom) {
+            return activity::JumpChipState::Neutral;
+        }
+        match self.input_ui.composer() {
+            ComposerMode::Approval(_) => activity::JumpChipState::ApprovalNeeded,
+            ComposerMode::Questionnaire(_) => activity::JumpChipState::InputNeeded,
+            _ if self.turn_finished_attention => activity::JumpChipState::ResponseReady,
+            _ => activity::JumpChipState::Neutral,
+        }
+    }
+
+    /// Expire the response-ready cue once the user is back at bottom. Called
+    /// per frame so every scroll path (keys, wheel, drag, jump) clears it
+    /// without each having to know about the flag.
+    pub(super) fn settle_turn_finished_attention(&mut self) {
+        if self.history.scroll() == HistoryScroll::Bottom {
+            self.turn_finished_attention = false;
+        }
+    }
+
+    pub(super) fn jump_to_bottom_text(
+        &self,
+        width: usize,
+        state: activity::JumpChipState,
+    ) -> String {
         activity::jump_to_bottom_text(
             width,
             &self.info.runtime.keybindings.jump_to_bottom.to_string(),
             /*alongside_activity*/ self.activity_status().is_some(),
+            state,
         )
     }
 

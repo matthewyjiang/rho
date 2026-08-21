@@ -1,4 +1,4 @@
-use super::{App, Entry, InputSubmissionMode, InteractiveRuntime};
+use super::{App, Entry, HistoryScroll, InputSubmissionMode, InteractiveRuntime};
 
 impl App {
     pub(super) fn is_ui_busy(&self) -> bool {
@@ -19,6 +19,7 @@ impl App {
     }
 
     pub(super) fn begin_provider_turn_ui(&mut self) {
+        self.turn_finished_attention = false;
         self.turn.enter_provider_turn();
     }
 
@@ -32,6 +33,16 @@ impl App {
         // returns to the durable ledger (plus claimed subagent totals).
         self.usage.live_stream.clear();
         self.turn.end_busy();
+    }
+
+    /// End-of-turn cleanup for a provider turn that produced a response. Flags
+    /// the jump chip when the user is scrolled away; failed, cancelled, and
+    /// abandoned turns use [`Self::end_busy_ui`] and stay neutral.
+    pub(super) fn end_provider_turn_ui(&mut self) {
+        self.end_busy_ui();
+        if !matches!(self.history.scroll(), HistoryScroll::Bottom) {
+            self.turn_finished_attention = true;
+        }
     }
 
     /// After a successful provider start or terminal finish, provider-turn UI

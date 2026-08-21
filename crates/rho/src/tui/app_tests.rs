@@ -896,6 +896,26 @@ fn notify_status_is_toast_only() {
         .all(|entry| !matches!(entry, Entry::Notice(text) if text == "notice-a")));
 }
 
+// Covers: a collapsed external paste confirms the catch with a toast, since
+// its content is hidden behind a marker; small pastes stay quiet.
+// Owner: tui status surface
+#[test]
+fn collapsed_external_paste_sets_confirmation_toast() {
+    let mut app = test_app();
+
+    app.insert_external_paste("tiny");
+    assert_eq!(app.status(), "");
+
+    app.insert_external_paste(&collapsible_paste());
+    assert_eq!(
+        app.status(),
+        format!(
+            "pasted {} lines",
+            super::paste_burst::PASTE_COLLAPSE_MIN_LINES
+        )
+    );
+}
+
 // Covers: status writes must show as a short-lived overlay toast
 // Owner: tui status surface
 #[test]
