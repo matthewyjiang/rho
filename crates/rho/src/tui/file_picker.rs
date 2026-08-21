@@ -236,6 +236,7 @@ pub(super) fn active_file_mention(input: &str, cursor: usize) -> Option<FileMent
     })
 }
 
+#[cfg(test)]
 pub(super) fn matching_file_paths(cwd: &Path, query: &str) -> DiscoveredFilePaths {
     matching_file_paths_cached(cwd, query, &mut WorkspacePathCache::default())
 }
