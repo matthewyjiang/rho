@@ -327,7 +327,7 @@ pub(super) enum JumpChipState {
 
 impl JumpChipState {
     pub(super) fn is_attention(self) -> bool {
-        !matches!(self, Self::Neutral)
+        self != Self::Neutral
     }
 
     /// (full label, compact label) used by [`jump_to_bottom_text`].
@@ -335,7 +335,7 @@ impl JumpChipState {
         match self {
             Self::Neutral => ("jump to bottom", "bottom"),
             Self::ResponseReady => ("response ready", "ready"),
-            Self::ApprovalNeeded => ("approval needed", "approval"),
+            Self::ApprovalNeeded => ("approval needed", "ask"),
             Self::InputNeeded => ("input needed", "input"),
         }
     }

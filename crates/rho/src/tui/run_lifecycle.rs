@@ -28,18 +28,21 @@ impl App {
     }
 
     pub(super) fn end_busy_ui(&mut self) {
-        // A provider turn that finished while the user is scrolled away flags
-        // the jump chip until they return to bottom or the next turn starts.
-        // Only set here, never cleared: a trailing auto-compact end_busy must
-        // not wipe a cue the user has not seen yet.
-        if self.turn.is_provider_turn() && !matches!(self.history.scroll(), HistoryScroll::Bottom) {
-            self.turn_finished_attention = true;
-        }
         // Live stream estimates are display-only for the in-flight provider
         // attempt. Drop them when the turn is no longer busy so statusline cost
         // returns to the durable ledger (plus claimed subagent totals).
         self.usage.live_stream.clear();
         self.turn.end_busy();
+    }
+
+    /// End-of-turn cleanup for a provider turn that produced a response. Flags
+    /// the jump chip when the user is scrolled away; failed, cancelled, and
+    /// abandoned turns use [`Self::end_busy_ui`] and stay neutral.
+    pub(super) fn end_provider_turn_ui(&mut self) {
+        self.end_busy_ui();
+        if !matches!(self.history.scroll(), HistoryScroll::Bottom) {
+            self.turn_finished_attention = true;
+        }
     }
 
     /// After a successful provider start or terminal finish, provider-turn UI

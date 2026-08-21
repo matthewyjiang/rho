@@ -106,4 +106,32 @@ fn jump_to_bottom_attention_states_have_compact_forms() {
         jump_to_bottom_text(14, binding, false, JumpChipState::ResponseReady),
         "↓ ready ctrl+e"
     );
+    assert_eq!(
+        jump_to_bottom_text(14, binding, false, JumpChipState::ApprovalNeeded),
+        "↓ ask ctrl+e"
+    );
+    assert_eq!(
+        jump_to_bottom_text(14, binding, false, JumpChipState::InputNeeded),
+        "↓ input ctrl+e"
+    );
+}
+
+// Covers: every attention compact label is no wider than neutral's, so any
+// width that still shows the neutral cue shows the attention cue too.
+// Owner: pure unit (chip copy invariant)
+#[test]
+fn jump_to_bottom_attention_compact_labels_fit_where_neutral_does() {
+    let (_, neutral_compact) = JumpChipState::Neutral.labels();
+    let neutral_width = display_width(neutral_compact);
+    for state in [
+        JumpChipState::ResponseReady,
+        JumpChipState::ApprovalNeeded,
+        JumpChipState::InputNeeded,
+    ] {
+        let (full, compact) = state.labels();
+        assert!(
+            display_width(compact) <= neutral_width,
+            "{full:?} compact label {compact:?} is wider than neutral's {neutral_compact:?}"
+        );
+    }
 }

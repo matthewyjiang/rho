@@ -1,4 +1,6 @@
-use crate::tui::{pending_input::AcceptedSteering, tests::test_app, QueuedPrompt};
+use crate::tui::{
+    activity::JumpChipState, pending_input::AcceptedSteering, tests::test_app, QueuedPrompt,
+};
 
 fn prompt(model: &str, display: &str) -> QueuedPrompt {
     QueuedPrompt {
@@ -90,12 +92,9 @@ fn turn_finished_while_scrolled_up_flags_jump_chip() {
     app.begin_provider_turn_ui();
     app.history.scroll_chrome_mut().set_top_line(100, 10, 0);
 
-    app.end_busy_ui();
+    app.end_provider_turn_ui();
 
-    assert_eq!(
-        app.jump_chip_state(),
-        crate::tui::activity::JumpChipState::ResponseReady
-    );
+    assert_eq!(app.jump_chip_state(), JumpChipState::ResponseReady);
 }
 
 #[test]
@@ -103,12 +102,24 @@ fn turn_finished_at_bottom_keeps_chip_neutral() {
     let mut app = test_app();
     app.begin_provider_turn_ui();
 
+    app.end_provider_turn_ui();
+
+    assert_eq!(app.jump_chip_state(), JumpChipState::Neutral);
+}
+
+// Covers: failed / cancelled / abandoned turns end via end_busy_ui and must
+// not flag the chip as "response ready".
+// Owner: behavior (turn-finished attention cue)
+#[test]
+fn failed_turn_end_keeps_chip_neutral() {
+    let mut app = test_app();
+    app.begin_provider_turn_ui();
+    app.history.scroll_chrome_mut().set_top_line(100, 10, 0);
+
     app.end_busy_ui();
 
-    assert_eq!(
-        app.jump_chip_state(),
-        crate::tui::activity::JumpChipState::Neutral
-    );
+    assert!(!app.turn_finished_attention);
+    assert_eq!(app.jump_chip_state(), JumpChipState::Neutral);
 }
 
 #[test]
@@ -116,17 +127,14 @@ fn returning_to_bottom_expires_turn_finished_attention() {
     let mut app = test_app();
     app.begin_provider_turn_ui();
     app.history.scroll_chrome_mut().set_top_line(100, 10, 0);
-    app.end_busy_ui();
+    app.end_provider_turn_ui();
     assert!(app.turn_finished_attention);
 
     app.history.scroll_chrome_mut().scroll_to_bottom();
     app.settle_turn_finished_attention();
 
     assert!(!app.turn_finished_attention);
-    assert_eq!(
-        app.jump_chip_state(),
-        crate::tui::activity::JumpChipState::Neutral
-    );
+    assert_eq!(app.jump_chip_state(), JumpChipState::Neutral);
 }
 
 #[test]
@@ -134,7 +142,7 @@ fn next_turn_start_clears_turn_finished_attention() {
     let mut app = test_app();
     app.begin_provider_turn_ui();
     app.history.scroll_chrome_mut().set_top_line(100, 10, 0);
-    app.end_busy_ui();
+    app.end_provider_turn_ui();
     assert!(app.turn_finished_attention);
 
     app.begin_provider_turn_ui();
@@ -149,13 +157,10 @@ fn compact_finish_does_not_clear_unseen_turn_finished_attention() {
     let mut app = test_app();
     app.begin_provider_turn_ui();
     app.history.scroll_chrome_mut().set_top_line(100, 10, 0);
-    app.end_busy_ui();
+    app.end_provider_turn_ui();
 
     app.begin_compact_ui();
     app.end_busy_ui();
 
-    assert_eq!(
-        app.jump_chip_state(),
-        crate::tui::activity::JumpChipState::ResponseReady
-    );
+    assert_eq!(app.jump_chip_state(), JumpChipState::ResponseReady);
 }
