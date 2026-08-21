@@ -10,6 +10,7 @@ use super::{
     app_state::{HistoryUi, InputUi, PendingWorkUi, TurnUi},
     clipboard::SystemClipboard,
     feed_image::picker_from_environment,
+    palette::PaletteCaches,
     process_panel::ProcessPanel,
     statusline::StatusLine,
     subagent_panel::SubagentPanel,
@@ -92,6 +93,7 @@ impl App {
             subagent_inbox: crate::tui::subagent_inbox::SubagentInbox::default(),
             pending_subagent_questionnaire: None,
             input_ui: InputUi::default(),
+            palette_caches: PaletteCaches::default(),
             status_overlay: None,
             last_status: String::new(),
             status_source: StatusSource::default(),
@@ -136,7 +138,6 @@ impl App {
             session_title_locked: false,
             clipboard: Box::new(SystemClipboard::default()),
             media_attach_tasks: Vec::new(),
-            terminal_height: 0,
             composer_attachment_layout_cache: None,
 
             attach_run_filter: super::attach_picker::WorkspaceRunFilter::RunningOnly,

@@ -12,9 +12,11 @@ use ratatui::DefaultTerminal;
 
 use super::{
     activity::LoadingSpinner,
+    command_palette::selected_command,
     commands::{self, CommandId, CommandInvocation},
     config_editor::{ConfigNumberInput, ConfigNumberKey, ConfigTextKey},
     config_picker, mouse_capture,
+    palette::ActivePalette,
     paste_burst::normalize_paste,
     App, ApprovalKeyOutcome, ComposerMode, Entry, HistoryDirection, InputSubmissionMode,
     InteractiveModelSelection, InteractiveRuntime, PasteSegment, PickerAction, QueuedPrompt,
@@ -93,7 +95,7 @@ impl App {
         {
             return Ok(false);
         }
-        if self.handle_running_file_palette_key(key)? {
+        if self.handle_file_palette_key(key)? {
             return Ok(false);
         }
         // Same order as the idle composer: pin cycle wins when a user binds
@@ -418,13 +420,12 @@ impl App {
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<bool> {
-        if !self.command_palette_visible() {
+        let Some(ActivePalette::Command(matches)) = self.active_palette() else {
             return Ok(false);
-        }
+        };
 
         match (key.modifiers, key.code) {
             (KeyModifiers::NONE, KeyCode::Up) => {
-                let matches = self.command_matches();
                 if !matches.is_empty() {
                     self.input_ui.set_command_selection(
                         if self.input_ui.command_selection() == 0 {
@@ -437,7 +438,6 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Down) => {
-                let matches = self.command_matches();
                 if !matches.is_empty() {
                     self.input_ui.set_command_selection(
                         (self.input_ui.command_selection() + 1) % matches.len(),
@@ -446,7 +446,8 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Tab) => {
-                if let Some(choice) = self.selected_command() {
+                if let Some(choice) = selected_command(&matches, self.input_ui.command_selection())
+                {
                     self.complete_command_choice(&choice);
                     self.input_ui.set_command_palette_dismissed(false);
                     self.clamp_command_selection();
@@ -454,7 +455,8 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Enter) => {
-                if let Some(choice) = self.selected_command() {
+                if let Some(choice) = selected_command(&matches, self.input_ui.command_selection())
+                {
                     self.complete_command_choice(&choice);
                     self.clamp_command_selection();
                 }
@@ -835,9 +837,8 @@ impl App {
         }
     }
 
-    pub(super) fn running_escape_has_overlay_target(&self) -> bool {
-        self.command_palette_visible()
-            || self.file_palette_visible()
+    pub(super) fn running_escape_has_overlay_target(&mut self) -> bool {
+        self.active_palette().is_some()
             || self.pending_input_focused()
             || !matches!(self.input_ui.composer(), ComposerMode::Input)
     }

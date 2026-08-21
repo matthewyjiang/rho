@@ -12,6 +12,7 @@ use ratatui::{
 use super::{
     activity,
     history_cache::HistoryRenderSettings,
+    screen_layout::ScreenLayout,
     scrollbar::{unmeasured_prefix_scroll_need, unmeasured_prefix_scrollbar_top_need},
     App, HistoryScrollbar, Theme, HISTORY_SCROLLBAR_REVEAL_DURATION,
 };
@@ -53,15 +54,12 @@ impl App {
 
     pub(super) fn scroll_history_lines(
         &mut self,
-        width: usize,
-        height: usize,
-        now: Instant,
+        layout: &ScreenLayout,
+        settings: HistoryRenderSettings,
         delta: isize,
     ) {
-        let content_height = self.history_content_height_for_screen(width, height, now);
-        let settings = self.history_render_settings(width);
-        self.ensure_measured_history_suffix(settings, content_height);
-        let history_len = self.history_len(width, now);
+        let content_height = layout.history_content.height as usize;
+        let history_len = layout.history_len;
         let start = self.visible_history_start(history_len, content_height);
         let had_unmeasured = self.history.has_unmeasured_prefix();
         let overflow = unmeasured_prefix_scroll_need(start, delta, had_unmeasured);
@@ -71,11 +69,13 @@ impl App {
                 self.grow_measured_history_prefix(settings, overflow.max(content_height.max(1)));
             let header_inserted = had_unmeasured && !self.history.has_unmeasured_prefix();
             let header_shift = if header_inserted {
-                self.visible_session_header_len(width)
+                self.visible_session_header_len(settings.width)
             } else {
                 0
             };
-            let new_len = self.history_len(width, now);
+            let new_len = history_len
+                .saturating_add(prepended)
+                .saturating_add(header_shift);
             let new_start = start
                 .saturating_add(prepended)
                 .saturating_add(header_shift)
@@ -96,12 +96,11 @@ impl App {
     /// transcript on one click. Another drag at line 0 pulls the next pane.
     pub(super) fn reveal_unmeasured_history_at_scrollbar_top(
         &mut self,
-        width: usize,
-        height: usize,
-        now: Instant,
+        layout: &ScreenLayout,
+        settings: HistoryRenderSettings,
     ) {
-        let content_height = self.history_content_height_for_screen(width, height, now);
-        let history_len = self.history_len(width, now);
+        let content_height = layout.history_content.height as usize;
+        let history_len = layout.history_len;
         let extra = unmeasured_prefix_scrollbar_top_need(
             self.visible_history_start(history_len, content_height),
             self.history.has_unmeasured_prefix(),
@@ -110,14 +109,15 @@ impl App {
         if extra == 0 {
             return;
         }
-        let settings = self.history_render_settings(width);
-        if self.grow_measured_history_prefix(settings, extra) == 0 {
+        let prepended = self.grow_measured_history_prefix(settings, extra);
+        if prepended == 0 {
             return;
         }
-        let new_len = self.history_len(width, now);
-        self.history
-            .scroll_chrome_mut()
-            .pin_top_line(new_len, content_height, 0);
+        self.history.scroll_chrome_mut().pin_top_line(
+            history_len.saturating_add(prepended),
+            content_height,
+            0,
+        );
     }
 
     pub(super) fn reveal_history_scrollbar(&mut self, now: Instant) {
@@ -144,23 +144,16 @@ impl App {
             .update_hover(scrollbar, column, row);
     }
 
-    pub(super) fn clamp_history_scroll(&mut self, width: usize, height: usize, now: Instant) {
-        let content_height = self.history_content_height_for_screen(width, height, now);
-        let settings = self.history_render_settings(width);
-        self.ensure_measured_history_suffix(settings, content_height);
-        let history_len = self.history_len(width, now);
-        self.history
-            .scroll_chrome_mut()
-            .clamp(history_len, content_height);
-    }
-
     pub(super) fn clamp_history_scroll_for_terminal<B: Backend>(
         &mut self,
         terminal: &mut Terminal<B>,
     ) -> Result<(), B::Error> {
         let size = terminal.size()?;
-        self.note_terminal_geometry(size.width as usize, size.height as usize);
-        self.clamp_history_scroll(size.width as usize, size.height as usize, Instant::now());
+        let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
+        let ctx = self.frame_context(area);
+        self.history
+            .scroll_chrome_mut()
+            .clamp(ctx.history_len, ctx.layout.history_content.height as usize);
         Ok(())
     }
 
@@ -193,18 +186,15 @@ impl App {
             return Ok(false);
         }
         let size = terminal.size()?;
-        let width = size.width as usize;
-        let height = size.height as usize;
-        self.note_terminal_geometry(width, height);
+        let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
         let now = Instant::now();
+        let ctx = self.frame_context(area);
         match (key.modifiers, key.code) {
             (_, KeyCode::PageUp) => {
                 self.reveal_history_scrollbar(now);
                 self.history.set_scrollbar_drag(None);
-                let page = self
-                    .history_content_height_for_screen(width, height, now)
-                    .max(1);
-                self.scroll_history_lines(width, height, now, -(page as isize));
+                let page = (ctx.layout.history_content.height as usize).max(1);
+                self.scroll_history_lines(&ctx.layout, ctx.settings, -(page as isize));
                 self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 Ok(true)
@@ -212,10 +202,8 @@ impl App {
             (_, KeyCode::PageDown) => {
                 self.reveal_history_scrollbar(now);
                 self.history.set_scrollbar_drag(None);
-                let page = self
-                    .history_content_height_for_screen(width, height, now)
-                    .max(1);
-                self.scroll_history_lines(width, height, now, page as isize);
+                let page = (ctx.layout.history_content.height as usize).max(1);
+                self.scroll_history_lines(&ctx.layout, ctx.settings, page as isize);
                 self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 Ok(true)

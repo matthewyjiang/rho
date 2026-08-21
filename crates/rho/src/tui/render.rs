@@ -406,19 +406,113 @@ fn complete_word_wrapped_line_ends(line: &str, offset: usize, width: usize) -> V
         .collect()
 }
 
-pub(super) fn input_cursor_position(input: &str, cursor: usize, width: usize) -> Position {
-    // Borrow the prefix instead of rebuilding it: this runs on every frame.
-    let prefix_end = input
-        .char_indices()
-        .nth(cursor)
-        .map_or(input.len(), |(index, _)| index);
-    let lines = editable_input_visual_lines(&input[..prefix_end], width);
+/// Wrapped composer rows plus the caret position, from one soft-wrap pass.
+pub(super) struct InputFrame {
+    pub(super) lines: Vec<Line<'static>>,
+    /// Caret column in display columns and row among `lines`. Excludes any
+    /// prompt prefix or chrome the caller stacks above the text.
+    pub(super) cursor: Position,
+}
+
+/// Composer text rows plus the caret, derived from the same wrap so layout
+/// and cursor paint can never disagree or pay for a second wrap.
+pub(super) fn input_frame(
+    input: &str,
+    cursor: usize,
+    width: usize,
+    highlighted_range: Option<std::ops::Range<usize>>,
+) -> InputFrame {
+    let visual_lines = editable_input_visual_lines(input, width);
+    let caret = visual_caret_position(&visual_lines, input, cursor);
+    let mut lines = Vec::new();
+    // Walk `input` in lockstep with the visual lines. Composer soft wrap preserves
+    // every character (including break spaces), so one pass replaces a per-frame
+    // `Vec<char>` of the whole composer.
+    let mut input_chars = input.chars().peekable();
+    let mut input_cursor = 0;
+    for (line_index, visual_line) in visual_lines.iter().enumerate() {
+        if line_index > 0 && input_chars.peek() == Some(&'\n') {
+            input_chars.next();
+            input_cursor += 1;
+        }
+        let mut spans = Vec::new();
+        let mut span_text = String::new();
+        let mut span_highlighted = false;
+        for character in visual_line.chars() {
+            let highlighted = highlighted_range
+                .as_ref()
+                .is_some_and(|range| range.contains(&input_cursor));
+            input_chars.next();
+            input_cursor += 1;
+            if !span_text.is_empty() && highlighted != span_highlighted {
+                let style = if span_highlighted {
+                    Style::default().add_modifier(Modifier::REVERSED)
+                } else {
+                    Style::default()
+                };
+                spans.push(Span::styled(std::mem::take(&mut span_text), style));
+            }
+            span_highlighted = highlighted;
+            span_text.push(character);
+        }
+        if !span_text.is_empty() {
+            let style = if span_highlighted {
+                Style::default().add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default()
+            };
+            spans.push(Span::styled(span_text, style));
+        }
+        lines.push(Line::from(spans));
+    }
+    InputFrame {
+        lines,
+        cursor: caret,
+    }
+}
+
+/// Row and display column of char index `cursor` across `visual_lines`.
+///
+/// The lines partition `input` with hard newlines between rows they split, so
+/// the caret lands on the row that paints the character under the cursor: a
+/// cursor on a line end stays there when the break is a hard newline (or end
+/// of input) and falls to the next row when the line soft-wrapped.
+pub(super) fn visual_caret_position(
+    visual_lines: &[String],
+    input: &str,
+    cursor: usize,
+) -> Position {
+    let mut chars = input.chars().peekable();
+    let mut line_start = 0usize;
+    for (row, line) in visual_lines.iter().enumerate() {
+        let len = line.chars().count();
+        let line_end = line_start + len;
+        // Consume this row's source chars so `chars.peek()` is the row break.
+        for _ in 0..len {
+            chars.next();
+        }
+        let next_is_newline = chars.peek() == Some(&'\n');
+        let last_row = row + 1 == visual_lines.len();
+        if cursor < line_end || (cursor == line_end && (last_row || next_is_newline)) {
+            let column_byte = line
+                .char_indices()
+                .nth(cursor - line_start)
+                .map_or(line.len(), |(byte, _)| byte);
+            return Position {
+                x: display_width(&line[..column_byte]) as u16,
+                y: row as u16,
+            };
+        }
+        if next_is_newline {
+            chars.next();
+            line_start = line_end + 1;
+        } else {
+            line_start = line_end;
+        }
+    }
     Position {
-        x: lines
-            .last()
-            .map(|line| display_width(line))
-            .unwrap_or_default() as u16,
-        y: lines.len().saturating_sub(1) as u16,
+        x: 0,
+        y: visual_lines.len().saturating_sub(1) as u16,
     }
 }
 
@@ -481,56 +575,6 @@ pub(super) fn input_char_index_at_position(
     }
     let row = row.min(visual_lines.len() - 1);
     input_cursor_index_on_visual_line(input, &visual_lines, row, column)
-}
-
-pub(super) fn input_lines(
-    input: &str,
-    width: usize,
-    highlighted_range: Option<std::ops::Range<usize>>,
-) -> Vec<Line<'static>> {
-    let mut lines = Vec::new();
-    let input_lines = editable_input_visual_lines(input, width);
-    // Walk `input` in lockstep with the visual lines. Composer soft wrap preserves
-    // every character (including break spaces), so one pass replaces a per-frame
-    // `Vec<char>` of the whole composer.
-    let mut input_chars = input.chars().peekable();
-    let mut input_cursor = 0;
-    for (line_index, visual_line) in input_lines.into_iter().enumerate() {
-        if line_index > 0 && input_chars.peek() == Some(&'\n') {
-            input_chars.next();
-            input_cursor += 1;
-        }
-        let mut spans = Vec::new();
-        let mut span_text = String::new();
-        let mut span_highlighted = false;
-        for character in visual_line.chars() {
-            let highlighted = highlighted_range
-                .as_ref()
-                .is_some_and(|range| range.contains(&input_cursor));
-            input_chars.next();
-            input_cursor += 1;
-            if !span_text.is_empty() && highlighted != span_highlighted {
-                let style = if span_highlighted {
-                    Style::default().add_modifier(Modifier::REVERSED)
-                } else {
-                    Style::default()
-                };
-                spans.push(Span::styled(std::mem::take(&mut span_text), style));
-            }
-            span_highlighted = highlighted;
-            span_text.push(character);
-        }
-        if !span_text.is_empty() {
-            let style = if span_highlighted {
-                Style::default().add_modifier(Modifier::REVERSED)
-            } else {
-                Style::default()
-            };
-            spans.push(Span::styled(span_text, style));
-        }
-        lines.push(Line::from(spans));
-    }
-    lines
 }
 
 pub(super) fn editable_input_visual_lines(input: &str, width: usize) -> Vec<String> {
@@ -596,13 +640,13 @@ fn render_non_assistant_entry(
             unreachable!("assistant and reasoning entries are rendered as markdown")
         }
         Entry::Tool(tool) => {
-            let card = super::tool_card_render::with_live_shell_elapsed(tool);
             super::tool_card_render::push_tool_card(
                 lines,
-                &card,
+                &tool.card,
                 width,
                 max_tool_output_lines,
                 tool.expanded,
+                super::tool_card_render::live_shell_elapsed(tool),
             );
         }
         Entry::Notice(text) => {

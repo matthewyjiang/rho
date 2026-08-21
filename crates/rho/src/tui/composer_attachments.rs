@@ -238,7 +238,10 @@ impl App {
 
     pub(super) fn composer_attachment_layout(&self, width: usize) -> ComposerAttachmentLayout {
         if let Some(cache) = self.composer_attachment_layout_cache.as_ref() {
-            if cache.width == width && cache.epoch == self.input_ui.attachment_epoch() {
+            if cache.width == width
+                && cache.epoch == self.input_ui.attachment_epoch()
+                && cache.theme_generation == Theme::generation()
+            {
                 return cache.layout.clone();
             }
         }
@@ -252,10 +255,15 @@ impl App {
     /// Cache layout for this frame so lines, cursor, and paint share one pass.
     pub(super) fn refresh_composer_attachment_layout_cache(&mut self, width: usize) {
         let epoch = self.input_ui.attachment_epoch();
+        let theme_generation = Theme::generation();
         if self
             .composer_attachment_layout_cache
             .as_ref()
-            .is_some_and(|cache| cache.width == width && cache.epoch == epoch)
+            .is_some_and(|cache| {
+                cache.width == width
+                    && cache.epoch == epoch
+                    && cache.theme_generation == theme_generation
+            })
         {
             return;
         }
@@ -267,6 +275,7 @@ impl App {
         self.composer_attachment_layout_cache = Some(ComposerAttachmentLayoutCache {
             epoch,
             width,
+            theme_generation,
             layout,
         });
     }
@@ -327,6 +336,7 @@ impl App {
 pub(super) struct ComposerAttachmentLayoutCache {
     pub(super) epoch: u64,
     pub(super) width: usize,
+    pub(super) theme_generation: u64,
     pub(super) layout: ComposerAttachmentLayout,
 }
 

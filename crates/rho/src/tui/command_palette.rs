@@ -1,13 +1,27 @@
 use std::sync::Arc;
 
-use super::{App, CommandChoice, CommandChoiceKind, SkillMatchCache};
+use super::{palette::PALETTE_CACHE_TTL, App, CommandChoice, CommandChoiceKind};
 use crate::commands;
 
-/// How long one skill-discovery pass stays valid for command palette queries.
-const SKILL_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(2);
-
 impl App {
-    pub(super) fn command_matches(&self) -> Vec<CommandChoice> {
+    /// Command matches when the command palette is what the composer shows.
+    ///
+    /// Callers must already have excluded other composer modes; this owns the
+    /// command-palette-specific guards.
+    pub(super) fn visible_command_matches(&mut self) -> Option<Vec<CommandChoice>> {
+        if self.input_ui.command_palette_dismissed() {
+            return None;
+        }
+        let matches = self.command_matches();
+        (!matches.is_empty()
+            && (self.cursor_in_command_token()
+                || !commands::argument_choices(self.input_ui.text(), self.input_ui.cursor())
+                    .is_empty()
+                || !self.mcp_argument_choices().is_empty()))
+        .then_some(matches)
+    }
+
+    pub(super) fn command_matches(&mut self) -> Vec<CommandChoice> {
         let argument_choices =
             commands::argument_choices(self.input_ui.text(), self.input_ui.cursor());
         if !argument_choices.is_empty() {
@@ -116,41 +130,23 @@ impl App {
         matches
     }
 
-    /// Skills for palette matching, served from the timed cache when fresh so
-    /// repeated per-keystroke queries skip the filesystem walk.
-    fn discovered_skills(&self) -> Arc<Vec<crate::skills::Skill>> {
-        if let Some(cache) = self.input_ui.skill_match_cache() {
-            if cache.refreshed_at.elapsed() < SKILL_CACHE_TTL {
-                return Arc::clone(&cache.skills);
-            }
+    /// Skills for palette matching, served from the timed cache when fresh.
+    ///
+    /// Get-or-discover: whichever path asks first — a keystroke or a render
+    /// frame — walks skill directories once and shares the result.
+    fn discovered_skills(&mut self) -> Arc<Vec<crate::skills::Skill>> {
+        if let Some(skills) = self.palette_caches.fresh_skills(PALETTE_CACHE_TTL) {
+            return skills;
         }
-        Arc::new(crate::skills::discover(&self.info.runtime.cwd))
+        let skills = Arc::new(crate::skills::discover(&self.info.runtime.cwd));
+        self.palette_caches.store_skills(Arc::clone(&skills));
+        skills
     }
 
-    pub(super) fn refresh_skill_match_cache(&mut self) {
-        if self
-            .input_ui
-            .skill_match_cache()
-            .as_ref()
-            .is_some_and(|cache| cache.refreshed_at.elapsed() < SKILL_CACHE_TTL)
-        {
-            return;
-        }
-        self.input_ui.set_skill_match_cache(Some(SkillMatchCache {
-            skills: Arc::new(crate::skills::discover(&self.info.runtime.cwd)),
-            refreshed_at: std::time::Instant::now(),
-        }));
-    }
-
-    pub(super) fn selected_command(&self) -> Option<CommandChoice> {
+    #[cfg(test)]
+    pub(super) fn selected_command(&mut self) -> Option<CommandChoice> {
         let matches = self.command_matches();
-        matches
-            .get(
-                self.input_ui
-                    .command_selection()
-                    .min(matches.len().saturating_sub(1)),
-            )
-            .cloned()
+        selected_command(&matches, self.input_ui.command_selection())
     }
 
     pub(super) fn complete_command_choice(&mut self, choice: &CommandChoice) {
@@ -199,6 +195,16 @@ impl App {
         self.input_ui.set_text_and_cursor(input, cursor);
         self.input_ui.set_shell_mode(None);
     }
+}
+
+/// The palette row currently selected among already-resolved matches.
+pub(super) fn selected_command(
+    matches: &[CommandChoice],
+    selection: usize,
+) -> Option<CommandChoice> {
+    matches
+        .get(selection.min(matches.len().saturating_sub(1)))
+        .cloned()
 }
 
 fn argument_command_choice(choice: &'static commands::CommandArgumentChoice) -> CommandChoice {

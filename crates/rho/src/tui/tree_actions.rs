@@ -95,7 +95,7 @@ impl App {
     pub(super) async fn submit_tree_selection(
         &mut self,
         value: &str,
-        terminal: &mut DefaultTerminal,
+        _terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let target_id = NodeId::from_string(value)?;
@@ -104,8 +104,6 @@ impl App {
             .ok_or_else(|| anyhow::anyhow!("active session storage is unavailable"))?;
         let histories = storage.histories_for_node(&target_id)?;
         let entries = self.transcript_entries(&histories.display);
-        let size = terminal.size()?;
-        self.note_terminal_geometry(size.width as usize, size.height as usize);
         agent.select_tree_node(storage, &target_id).await?;
 
         self.input_ui.set_composer(ComposerMode::Input);

@@ -1,6 +1,7 @@
-use std::time::Instant;
-
-use ratatui::{layout::Rect, text::Line};
+use ratatui::{
+    layout::{Position, Rect},
+    text::Line,
+};
 
 use super::{activity, render::display_width, scrollbar::HistoryScrollbar, App, HistoryScroll};
 
@@ -81,6 +82,61 @@ struct InteractiveBudget {
     activity_floor: usize,
 }
 
+/// Named rails for [`interactive_chrome`] so callers cannot swap heights.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct ChromeRails {
+    pub(super) height: usize,
+    pub(super) desired_statusline_height: usize,
+    pub(super) composer_line_count: usize,
+    pub(super) command_line_count: usize,
+    pub(super) desired_pending: usize,
+    pub(super) desired_subagents: usize,
+    pub(super) desired_processes: usize,
+    pub(super) activity_floor: usize,
+}
+
+/// Bottom chrome plus the interactive split derived from those heights.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct InteractiveChrome {
+    pub(super) bottom: BottomChrome,
+    pub(super) show_top_divider: bool,
+    split: InteractiveSplit,
+}
+
+impl InteractiveChrome {
+    pub(super) fn history_height(self) -> usize {
+        self.split.history
+    }
+}
+
+/// One pass from bottom chrome through the interactive stack.
+pub(super) fn interactive_chrome(rails: ChromeRails) -> InteractiveChrome {
+    let bottom = bottom_chrome_heights(
+        rails.height,
+        rails.desired_statusline_height,
+        rails.composer_line_count,
+        rails.command_line_count,
+    );
+    let bottom_fixed_height =
+        bottom.bottom_divider_height + bottom.statusline_height + bottom.command_height;
+    let available_above_bottom = rails.height.saturating_sub(bottom_fixed_height);
+    let show_top_divider = available_above_bottom > 1 && rails.composer_line_count > 0;
+    let interactive_budget = available_above_bottom.saturating_sub(usize::from(show_top_divider));
+    let split = split_interactive_budget(InteractiveBudget {
+        budget: interactive_budget,
+        composer_lines: rails.composer_line_count,
+        desired_pending: rails.desired_pending,
+        desired_subagents: rails.desired_subagents,
+        desired_processes: rails.desired_processes,
+        activity_floor: rails.activity_floor,
+    });
+    InteractiveChrome {
+        bottom,
+        show_top_divider,
+        split,
+    }
+}
+
 /// Split the interactive budget in priority order.
 ///
 /// First pass (floors held for composer + a one-row activity history):
@@ -156,57 +212,26 @@ pub(super) struct ScreenLayout {
 }
 
 impl App {
-    pub(super) fn screen_layout(&mut self, area: Rect, now: Instant) -> ScreenLayout {
-        let width = area.width as usize;
-        self.note_terminal_geometry(width, area.height as usize);
-        self.refresh_composer_attachment_layout_cache(width);
-        let history_len = self.history_len(width, now);
-        let composer_lines = self.composer_lines(width, area.height as usize);
-        let command_lines = self.command_suggestion_lines(width);
-        self.screen_layout_for_history_len(area, history_len, &composer_lines, command_lines.len())
-    }
-
-    pub(super) fn screen_layout_for_history_len(
+    pub(super) fn build_screen_layout(
         &mut self,
         area: Rect,
         history_len: usize,
         composer_lines: &[Line<'_>],
-        command_line_count: usize,
+        composer_cursor: Position,
+        chrome: InteractiveChrome,
     ) -> ScreenLayout {
         let width = area.width as usize;
-        let height = area.height as usize;
-        let full_cursor = self.composer_cursor_position(width);
-        let cursor_line = (full_cursor.y as usize).min(composer_lines.len().saturating_sub(1));
-        let chrome = bottom_chrome_heights(
-            height,
-            self.statusline.height(),
-            composer_lines.len(),
-            command_line_count,
-        );
-        let statusline_height = chrome.statusline_height;
-        let bottom_divider_height = chrome.bottom_divider_height;
-        let command_height = chrome.command_height;
-        let bottom_fixed_height = bottom_divider_height + statusline_height + command_height;
-        let available_above_bottom = height.saturating_sub(bottom_fixed_height);
-        let show_top_divider = available_above_bottom > 1 && !composer_lines.is_empty();
-        let history_height_without_jump =
-            self.history_height_from_line_counts(height, composer_lines.len(), command_line_count);
+        let cursor_line = (composer_cursor.y as usize).min(composer_lines.len().saturating_sub(1));
+        let statusline_height = chrome.bottom.statusline_height;
+        let bottom_divider_height = chrome.bottom.bottom_divider_height;
+        let command_height = chrome.bottom.command_height;
+        let show_top_divider = chrome.show_top_divider;
+        let split = chrome.split;
+        let history_height_without_jump = split.history;
         let content_height_without_jump = self.history_content_height(history_height_without_jump);
         let show_jump_to_bottom = content_height_without_jump > 0
             && self.visible_history_start(history_len, content_height_without_jump)
                 < history_len.saturating_sub(content_height_without_jump);
-        let reserved_above_composer = usize::from(show_top_divider);
-        let interactive_budget = available_above_bottom.saturating_sub(reserved_above_composer);
-        let split = split_interactive_budget(InteractiveBudget {
-            budget: interactive_budget,
-            composer_lines: composer_lines.len(),
-            desired_pending: self.pending_input_height(),
-            desired_subagents: self.subagent_panel.desired_height(),
-            desired_processes: self.process_panel.desired_height(),
-            activity_floor: usize::from(
-                self.subagent_panel.is_active() || self.process_panel.is_active(),
-            ),
-        });
         let visible_composer_len = split.composer;
         let composer_start = visible_composer_start(
             cursor_line,
@@ -322,61 +347,6 @@ impl App {
 
     pub(super) fn history_content_height(&self, panel_height: usize) -> usize {
         panel_height.saturating_sub(self.history_content_inset().min(panel_height))
-    }
-
-    pub(super) fn history_height_for_screen(
-        &self,
-        width: usize,
-        height: usize,
-        _now: Instant,
-    ) -> usize {
-        self.history_height_from_line_counts(
-            height,
-            self.composer_lines(width, height).len(),
-            self.command_suggestion_lines(width).len(),
-        )
-    }
-
-    pub(super) fn history_content_height_for_screen(
-        &self,
-        width: usize,
-        height: usize,
-        now: Instant,
-    ) -> usize {
-        self.history_content_height(self.history_height_for_screen(width, height, now))
-    }
-
-    pub(super) fn history_height_from_line_counts(
-        &self,
-        height: usize,
-        composer_line_count: usize,
-        command_line_count: usize,
-    ) -> usize {
-        let chrome = bottom_chrome_heights(
-            height,
-            self.statusline.height(),
-            composer_line_count,
-            command_line_count,
-        );
-        let statusline_height = chrome.statusline_height;
-        let bottom_divider_height = chrome.bottom_divider_height;
-        let command_height = chrome.command_height;
-        let bottom_fixed_height = bottom_divider_height + statusline_height + command_height;
-        let available_above_bottom = height.saturating_sub(bottom_fixed_height);
-        let show_top_divider = available_above_bottom > 1 && composer_line_count > 0;
-        let reserved_above_composer = usize::from(show_top_divider);
-        let interactive_budget = available_above_bottom.saturating_sub(reserved_above_composer);
-        split_interactive_budget(InteractiveBudget {
-            budget: interactive_budget,
-            composer_lines: composer_line_count,
-            desired_pending: self.pending_input_height(),
-            desired_subagents: self.subagent_panel.desired_height(),
-            desired_processes: self.process_panel.desired_height(),
-            activity_floor: usize::from(
-                self.subagent_panel.is_active() || self.process_panel.is_active(),
-            ),
-        })
-        .history
     }
 }
 

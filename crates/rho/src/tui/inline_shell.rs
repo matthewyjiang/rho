@@ -65,6 +65,40 @@ pub(super) struct PendingShellTask {
     stderr: String,
     updates: mpsc::UnboundedReceiver<ShellStreamUpdate>,
     handle: tokio::task::JoinHandle<std::io::Result<ShellOutput>>,
+    /// Rendered card lines reused across frames. A running shell's output only
+    /// grows, so buffer lengths plus theme generation are a complete content
+    /// key; without this every animation frame re-cloned and re-wrapped the
+    /// whole captured output.
+    render_cache: Option<ShellRenderCache>,
+}
+
+impl PendingShellTask {
+    #[cfg(test)]
+    fn test_task(stdout: impl Into<String>) -> Self {
+        let (_tx, rx) = mpsc::unbounded_channel();
+        Self {
+            mode: InlineShellMode::IncludeInContext,
+            max_output_bytes: crate::config::DEFAULT_MAX_OUTPUT_BYTES,
+            shell: "sh".into(),
+            command: "printf hello".into(),
+            stdout: stdout.into(),
+            stderr: String::new(),
+            updates: rx,
+            handle: tokio::spawn(std::future::pending()),
+            render_cache: None,
+        }
+    }
+}
+
+/// Keyed render for one running shell's card.
+struct ShellRenderCache {
+    stdout_len: usize,
+    stderr_len: usize,
+    width: usize,
+    max_tool_output_lines: usize,
+    max_image_height: u16,
+    theme_generation: u64,
+    lines: Vec<ratatui::text::Line<'static>>,
 }
 
 #[derive(Clone, Copy)]
@@ -323,37 +357,79 @@ pub(super) fn display_text(output: &ShellOutput, included_in_context: bool) -> S
 }
 
 pub(super) fn display_card(output: &ShellOutput, _included_in_context: bool) -> ToolCard {
-    let prompt = match output.shell.to_ascii_lowercase().as_str() {
-        "powershell" | "powershell.exe" | "pwsh" | "pwsh.exe" => "PS",
-        _ => "$",
-    };
-    let status = if output.exit_code == "running" {
-        ToolStatus::Running
-    } else if output.ok {
-        ToolStatus::Ok
-    } else if output.exit_code == "cancelled" {
-        ToolStatus::Interrupted
-    } else {
-        ToolStatus::Error
-    };
-    let mut card = ToolCard::new(
-        status,
-        ToolFamily::FileCommand,
-        ToolHeader::shell(prompt, Some(output.command.clone())),
-    );
-    if output.exit_code != "running" && !output.ok && output.exit_code != "cancelled" {
-        card.push_fact(ToolFact::Meta {
-            text: format!("exit {}", output.exit_code),
-        });
+    ShellCardParts::from_output(output).card()
+}
+
+/// The borrowed inputs one shell card renders from.
+///
+/// Live tasks render straight from their streaming buffers and finished runs
+/// from their [`ShellOutput`], without cloning either into the other's shape.
+struct ShellCardParts<'a> {
+    shell: &'a str,
+    command: &'a str,
+    stdout: &'a str,
+    stderr: &'a str,
+    exit_code: &'a str,
+    ok: bool,
+}
+
+impl<'a> ShellCardParts<'a> {
+    fn from_output(output: &'a ShellOutput) -> Self {
+        Self {
+            shell: &output.shell,
+            command: &output.command,
+            stdout: &output.stdout,
+            stderr: &output.stderr,
+            exit_code: &output.exit_code,
+            ok: output.ok,
+        }
     }
-    if !output.stdout.is_empty() {
-        card.body = ToolBody::Lines(vec![output.stdout.trim_end().to_string()]);
-    } else if !output.stderr.is_empty() && !output.ok {
-        card.push_fact(ToolFact::Error {
-            text: output.stderr.trim_end().to_string(),
-        });
+
+    /// A still-running task has no exit code yet and owns no failure.
+    fn running(task: &'a PendingShellTask) -> Self {
+        Self {
+            shell: &task.shell,
+            command: &task.command,
+            stdout: &task.stdout,
+            stderr: &task.stderr,
+            exit_code: "running",
+            ok: true,
+        }
     }
-    card
+
+    fn card(self) -> ToolCard {
+        let prompt = match self.shell.to_ascii_lowercase().as_str() {
+            "powershell" | "powershell.exe" | "pwsh" | "pwsh.exe" => "PS",
+            _ => "$",
+        };
+        let status = if self.exit_code == "running" {
+            ToolStatus::Running
+        } else if self.ok {
+            ToolStatus::Ok
+        } else if self.exit_code == "cancelled" {
+            ToolStatus::Interrupted
+        } else {
+            ToolStatus::Error
+        };
+        let mut card = ToolCard::new(
+            status,
+            ToolFamily::FileCommand,
+            ToolHeader::shell(prompt, Some(self.command.to_string())),
+        );
+        if self.exit_code != "running" && !self.ok && self.exit_code != "cancelled" {
+            card.push_fact(ToolFact::Meta {
+                text: format!("exit {}", self.exit_code),
+            });
+        }
+        if !self.stdout.is_empty() {
+            card.body = ToolBody::Lines(vec![self.stdout.trim_end().to_string()]);
+        } else if !self.stderr.is_empty() && !self.ok {
+            card.push_fact(ToolFact::Error {
+                text: self.stderr.trim_end().to_string(),
+            });
+        }
+        card
+    }
 }
 
 fn executable_name(shell: &str) -> &str {
@@ -403,6 +479,7 @@ impl super::App {
                 )
                 .await
             }),
+            render_cache: None,
         });
         self.set_status(format!("running {shell}"));
         Ok(())
@@ -578,14 +655,6 @@ impl super::App {
         Ok(())
     }
 
-    pub(super) fn running_inline_shell_entries(
-        &self,
-    ) -> impl Iterator<Item = super::ToolEntry> + '_ {
-        self.pending_inline_shells
-            .iter()
-            .map(PendingShellTask::tool_entry)
-    }
-
     pub(super) fn insert_deferred_inline_shell_context(
         &mut self,
         agent: &mut super::InteractiveRuntime,
@@ -629,20 +698,53 @@ impl PendingShellTask {
     }
 
     fn tool_entry(&self) -> super::ToolEntry {
-        let output = ShellOutput {
-            shell: self.shell.clone(),
-            command: self.command.clone(),
-            stdout: self.stdout.clone(),
-            stderr: self.stderr.clone(),
-            exit_code: "running".into(),
-            ok: true,
-        };
         super::ToolEntry {
-            card: display_card(&output, self.mode.included_in_context()),
+            card: ShellCardParts::running(self).card(),
             expanded: true,
             image: None,
             started_at: None,
         }
+    }
+
+    /// Cached render of this task's live card, refreshed only when the output
+    /// buffers, width, budgets, or theme changed since the last frame.
+    pub(super) fn rendered_lines(
+        &mut self,
+        width: usize,
+        max_tool_output_lines: usize,
+        max_image_height: u16,
+    ) -> &[ratatui::text::Line<'static>] {
+        let theme_generation = super::Theme::generation();
+        let fresh = self.render_cache.as_ref().is_some_and(|cache| {
+            cache.stdout_len == self.stdout.len()
+                && cache.stderr_len == self.stderr.len()
+                && cache.width == width
+                && cache.max_tool_output_lines == max_tool_output_lines
+                && cache.max_image_height == max_image_height
+                && cache.theme_generation == theme_generation
+        });
+        if !fresh {
+            let lines = super::tool_entry_lines(
+                &self.tool_entry(),
+                width,
+                max_tool_output_lines,
+                max_image_height,
+            );
+            self.render_cache = Some(ShellRenderCache {
+                stdout_len: self.stdout.len(),
+                stderr_len: self.stderr.len(),
+                width,
+                max_tool_output_lines,
+                max_image_height,
+                theme_generation,
+                lines,
+            });
+        }
+        &self
+            .render_cache
+            .as_ref()
+            .expect("render cache populated above")
+            .lines
     }
 }
 

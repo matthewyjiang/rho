@@ -169,14 +169,10 @@ fn minimum_terminal_layout_keeps_composer_visible() {
         super::screen_layout::MIN_TERMINAL_HEIGHT,
     );
     let width = area.width as usize;
-    let composer_lines = app.composer_lines(width, area.height as usize);
-    assert!(!composer_lines.is_empty());
-    let layout = app.screen_layout_for_history_len(
-        area,
-        /*history_len*/ 0,
-        &composer_lines,
-        /*command_line_count*/ 0,
-    );
+    let composer = app.composer_frame(width, area.height as usize);
+    assert!(!composer.lines.is_empty());
+    let ctx = app.frame_context(area);
+    let layout = ctx.layout;
     assert!(
         layout.composer.height >= 1,
         "composer height at minimum size was {}",

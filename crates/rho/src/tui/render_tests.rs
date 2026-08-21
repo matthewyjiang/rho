@@ -307,6 +307,30 @@ fn input_char_index_at_position_matches_editable_layout() {
     assert_eq!(input_char_index_at_position("abcde", 5, 1, 0), 5);
 }
 
+// Covers: caret rows/columns derive from the same visual lines that paint, so
+// a wrapped composer never places the caret on a row that does not hold its
+// character.
+// Owner: pure unit (composer layout math)
+#[test]
+fn visual_caret_position_tracks_paint_rows() {
+    let caret = |input: &str, cursor: usize, width: usize| {
+        let lines = editable_input_visual_lines(input, width);
+        visual_caret_position(&lines, input, cursor)
+    };
+    // Mid-token and end of input on a single row.
+    assert_eq!(caret("hello", 2, 80), Position { x: 2, y: 0 });
+    assert_eq!(caret("hello", 5, 80), Position { x: 5, y: 0 });
+    // A cursor before a hard newline stays on its own row; after it, the next.
+    assert_eq!(caret("ab\ncd", 2, 80), Position { x: 2, y: 0 });
+    assert_eq!(caret("ab\ncd", 3, 80), Position { x: 0, y: 1 });
+    // Soft wrap: the caret falls to the painted row of its character.
+    assert_eq!(caret("hello world", 7, 8), Position { x: 1, y: 1 });
+    // A full-width first row leaves an empty editable row for the caret.
+    assert_eq!(caret("abcde", 5, 5), Position { x: 0, y: 1 });
+    // Multibyte characters count once and place by display width.
+    assert_eq!(caret("héllo", 3, 80), Position { x: 3, y: 0 });
+}
+
 // Covers: composer soft-wraps on word boundaries instead of mid-word hard cuts.
 // Owner: pure unit (composer layout math)
 #[test]
@@ -336,7 +360,13 @@ fn composer_input_word_wraps_at_whitespace() {
 // Owner: pure unit (composer layout math)
 #[test]
 fn composer_input_lines_highlight_survives_word_wrap() {
-    let lines = input_lines("hello world", 8, Some(6..11));
+    let frame = input_frame(
+        "hello world",
+        /*cursor*/ 11,
+        /*width*/ 8,
+        Some(6..11),
+    );
+    let lines = frame.lines;
     let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
     assert_eq!(rendered, vec!["hello ".to_string(), "world".to_string()]);
     assert_eq!(lines[1].spans.len(), 1);

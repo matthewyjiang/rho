@@ -191,19 +191,45 @@ pub(crate) enum WriteAuthority {
     Human,
 }
 
+/// Which git fact a cached verdict describes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum GitVerdict {
+    Tracked,
+    Ignored,
+}
+
+impl GitVerdict {
+    /// The one git question each kind answers, so a cached kind can never be
+    /// paired with the wrong probe.
+    fn check(self, path: &Path) -> bool {
+        match self {
+            Self::Tracked => path_is_git_tracked(path),
+            Self::Ignored => path_is_git_ignored(path),
+        }
+    }
+}
+
 /// Session-scoped paths whose first in-workspace write already passed the gate.
 ///
 /// Each path is bound to the grantor that allowed it. Evaluation only skips the
 /// gate when the current mode's grantor matches, so classifier approval cannot
 /// become a human-approval bypass.
+///
+/// Also caches per-path git tracked/ignored verdicts for the session: every
+/// uncached check spawns a synchronous `git` process on the authorize path, and
+/// repeated edits to the same files would pay that every time. Verdicts are
+/// accepted as stale for the session: a path that becomes untracked, or that a
+/// mid-session `.gitignore` edit starts ignoring, keeps the verdict it was first
+/// given until the session is cleared.
 #[derive(Clone, Default)]
 pub(crate) struct SessionWriteLog {
     paths: Arc<RwLock<HashMap<PathBuf, WriteAuthority>>>,
+    git_verdicts: Arc<RwLock<HashMap<(PathBuf, GitVerdict), bool>>>,
 }
 
 impl SessionWriteLog {
     pub(crate) fn remember(&self, request: &CapabilityRequest, authority: WriteAuthority) {
-        let Some(path) = rememberable_workspace_write(request) else {
+        let Some(path) = rememberable_workspace_write(request, self) else {
             return;
         };
         self.paths
@@ -230,6 +256,10 @@ impl SessionWriteLog {
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clear();
+        self.git_verdicts
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
     }
 
     fn granted_by(&self, path: &Path) -> Option<WriteAuthority> {
@@ -238,6 +268,26 @@ impl SessionWriteLog {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .get(path)
             .copied()
+    }
+
+    /// The session's answer for this path and git fact, running the git spawn
+    /// for it only on the first ask.
+    fn git_verdict(&self, path: &Path, kind: GitVerdict) -> bool {
+        let key = (path.to_path_buf(), kind);
+        if let Some(verdict) = self
+            .git_verdicts
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(&key)
+        {
+            return *verdict;
+        }
+        let verdict = kind.check(path);
+        self.git_verdicts
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(key, verdict);
+        verdict
     }
 }
 
@@ -334,22 +384,25 @@ fn is_free_workspace_write(
             scope: PathScope::PrimaryWorkspace,
         } => {
             !path_is_symlink(path)
-                && (path_is_git_tracked(path)
+                && (session_writes.git_verdict(path, GitVerdict::Tracked)
                     || (session_writes
                         .granted_by(path)
                         .is_some_and(|authority| mode.honors_write_authority(authority))
-                        && !path_is_git_ignored(path)))
+                        && !session_writes.git_verdict(path, GitVerdict::Ignored)))
         }
         _ => false,
     }
 }
 
-fn rememberable_workspace_write(request: &CapabilityRequest) -> Option<PathBuf> {
+fn rememberable_workspace_write(
+    request: &CapabilityRequest,
+    session_writes: &SessionWriteLog,
+) -> Option<PathBuf> {
     match request.operation() {
         CapabilityOperation::WritePath {
             path,
             scope: PathScope::PrimaryWorkspace,
-        } if !path_is_git_ignored(path) => Some(path.clone()),
+        } if !session_writes.git_verdict(path, GitVerdict::Ignored) => Some(path.clone()),
         _ => None,
     }
 }

@@ -4,9 +4,12 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::DefaultTerminal;
 
 use super::{
-    command_actions::CommandSubmission, command_palette::slash_command_args, commands,
-    goal_command, skill_actions, App, ChatMedia, ComposerMode, GoalState, HistoryDirection,
-    InputSubmissionMode, InteractiveRuntime, PasteSegment, QueuedPrompt, TurnOutcome, TurnPrompt,
+    command_actions::CommandSubmission,
+    command_palette::{selected_command, slash_command_args},
+    commands, goal_command,
+    palette::ActivePalette,
+    skill_actions, App, ChatMedia, ComposerMode, GoalState, HistoryDirection, InputSubmissionMode,
+    InteractiveRuntime, PasteSegment, QueuedPrompt, TurnOutcome, TurnPrompt,
 };
 
 /// A turn held until MCP connect settles.
@@ -220,13 +223,12 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
-        if !self.command_palette_visible() {
+        let Some(ActivePalette::Command(matches)) = self.active_palette() else {
             return Ok(false);
-        }
+        };
 
         match (key.modifiers, key.code) {
             (KeyModifiers::NONE, KeyCode::Up) => {
-                let matches = self.command_matches();
                 if !matches.is_empty() {
                     self.input_ui.set_command_selection(
                         if self.input_ui.command_selection() == 0 {
@@ -241,7 +243,6 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Down) => {
-                let matches = self.command_matches();
                 if !matches.is_empty() {
                     self.input_ui.set_command_selection(
                         (self.input_ui.command_selection() + 1) % matches.len(),
@@ -252,7 +253,8 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Tab) => {
-                if let Some(choice) = self.selected_command() {
+                if let Some(choice) = selected_command(&matches, self.input_ui.command_selection())
+                {
                     self.complete_command_choice(&choice);
                     self.input_ui.set_command_palette_dismissed(false);
                     self.clamp_command_selection();
@@ -262,7 +264,8 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Enter) => {
-                if let Some(choice) = self.selected_command() {
+                if let Some(choice) = selected_command(&matches, self.input_ui.command_selection())
+                {
                     self.complete_command_choice(&choice);
                     self.clamp_command_selection();
                 }

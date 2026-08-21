@@ -60,6 +60,9 @@ struct DrawSurface<'a> {
     width: usize,
     now: Instant,
     layout: &'a super::screen_layout::ScreenLayout,
+    /// Composer cursor computed once for this frame; layout and cursor paint
+    /// must agree without re-wrapping the composer text.
+    composer_cursor: Position,
 }
 
 fn draw_terminal_too_small(frame: &mut Frame<'_>, area: Rect) {
@@ -103,51 +106,28 @@ impl App {
     }
 
     fn draw_session(&mut self, frame: &mut Frame<'_>, area: Rect, now: Instant) {
-        let width = area.width as usize;
-        let height = area.height as usize;
-        self.note_terminal_geometry(width, height);
-        self.refresh_composer_attachment_layout_cache(width);
-        let composer_lines = self.composer_lines(width, height);
-        let command_lines = self.command_suggestion_lines(width);
-        // One settings/budget computation feeds every history read this frame;
-        // recomputing it per read re-wrapped the composer several times a frame.
-        let settings = self.history_render_settings_for_chrome(
-            width,
-            composer_lines.len(),
-            command_lines.len(),
-        );
-        let live_history = self.live_history_layout(width, settings.max_image_height);
-        let viewport = self.history_content_height_for_screen(width, height, now);
-        self.ensure_measured_history_suffix(settings, viewport);
-        let history_len = self
-            .history_static_len_with_settings(width, settings)
-            .saturating_add(live_history.lines.len());
-        let layout = self.screen_layout_for_history_len(
-            area,
-            history_len,
-            &composer_lines,
-            command_lines.len(),
-        );
-        let (history_start, history_count) =
-            self.visible_history_window(history_len, layout.history_content.height as usize);
+        let ctx = self.frame_context(area);
+        let (history_start, history_count) = self
+            .visible_history_window(ctx.history_len, ctx.layout.history_content.height as usize);
         let surface = DrawSurface {
             area,
-            width,
+            width: ctx.width,
             now,
-            layout: &layout,
+            layout: &ctx.layout,
+            composer_cursor: ctx.composer.cursor,
         };
         self.draw_history(
             frame,
-            settings,
+            ctx.settings,
             surface,
             HistoryLineSlice {
                 start: history_start,
                 count: history_count,
             },
-            &live_history,
+            &ctx.live_history,
         );
         self.draw_panels(frame, surface);
-        self.draw_composer(frame, surface, composer_lines, command_lines);
+        self.draw_composer(frame, surface, ctx.composer.lines, ctx.command_lines);
         self.draw_cursor(frame, surface);
         if let Some(selection) = self.screen_selection {
             highlight_selection(frame.buffer_mut(), area, 0, selection);
@@ -198,7 +178,7 @@ impl App {
             })
             .and_then(|(_, row)| {
                 let line = history_start + usize::from(row - layout.history_content.y);
-                self.tool_card_hit_at_history_line(line, width, live_history)
+                self.tool_card_hit_at_history_line(line, width, settings, live_history)
                     .map(|hit| hit.lines)
             })
         {
@@ -222,8 +202,7 @@ impl App {
             .hovered_code_block_copy()
             .filter(|line| (history_start..history_start + history_count).contains(line))
         {
-            if let Some(target) =
-                self.code_block_copy_target_at_line_with_settings(width, settings, hovered_line)
+            if let Some(target) = self.code_block_copy_target_at_line(width, settings, hovered_line)
             {
                 let row = layout
                     .history_content
@@ -338,6 +317,7 @@ impl App {
             width,
             now,
             layout,
+            ..
         } = surface;
         let composer_visible = composer_lines
             .into_iter()
@@ -407,6 +387,7 @@ impl App {
             width,
             layout,
             now,
+            composer_cursor: full_cursor,
         } = surface;
         let popup_cursor = match self.input_ui.composer() {
             ComposerMode::Picker(picker) => picker_overlay_frame(picker, area).map(|overlay| {
@@ -440,7 +421,6 @@ impl App {
             return;
         }
 
-        let full_cursor = self.composer_cursor_position(width);
         let max_cursor_x = width.max(1).saturating_sub(1) as u16;
         let cursor_y = full_cursor
             .y
@@ -479,18 +459,19 @@ impl App {
         now: Instant,
     ) -> ActiveFrame {
         let area = Rect::new(0, 0, width as u16, viewport_height as u16);
-        let history_len = self.history_len(width, now);
-        let composer_lines = self.composer_lines(width, area.height as usize);
-        let command_lines = self.command_suggestion_lines(width);
-        let layout = self.screen_layout_for_history_len(
-            area,
-            history_len,
-            &composer_lines,
-            command_lines.len(),
-        );
+        let ctx = self.frame_context(area);
+        let layout = ctx.layout;
         let (history_start, history_count) =
-            self.visible_history_window(history_len, layout.history_content.height as usize);
-        let mut lines = self.visible_history_lines(width, now, history_start, history_count);
+            self.visible_history_window(ctx.history_len, layout.history_content.height as usize);
+        let mut lines = self.visible_history_lines_with_live(
+            width,
+            ctx.settings,
+            history_start,
+            history_count,
+            &ctx.live_history.lines,
+        );
+        let command_lines = ctx.command_lines;
+        let composer = ctx.composer;
         lines.resize(layout.history.height as usize, Line::default());
         if let Some(activity) = layout.activity {
             lines[activity.y.saturating_sub(layout.history.y) as usize] =
@@ -533,7 +514,8 @@ impl App {
                 .take(layout.commands.height as usize),
         );
         lines.extend(
-            composer_lines
+            composer
+                .lines
                 .into_iter()
                 .skip(layout.composer_start)
                 .take(layout.composer.height as usize),
@@ -588,90 +570,7 @@ impl App {
         }
     }
 
-    pub(super) fn history_len(&mut self, width: usize, now: Instant) -> usize {
-        let live = self.history_live_lines(width, now);
-        self.history_len_with_live(width, &live)
-    }
-
-    fn history_len_with_live(&mut self, width: usize, live: &[Line<'static>]) -> usize {
-        self.history_static_len(width).saturating_add(live.len())
-    }
-
-    /// History layout inputs, including the current feed-image row budget.
-    pub(super) fn history_render_settings(&self, width: usize) -> HistoryRenderSettings {
-        self.info
-            .runtime
-            .history_render_settings(width, self.feed_image_row_budget(width))
-    }
-
-    /// History render settings from already-counted bottom chrome lines, so a
-    /// frame reuses its composer render instead of re-wrapping it per read.
-    pub(super) fn history_render_settings_for_chrome(
-        &self,
-        width: usize,
-        composer_line_count: usize,
-        command_line_count: usize,
-    ) -> HistoryRenderSettings {
-        let height = self.terminal_height;
-        let content_height = self.history_content_height_from_counts(
-            height,
-            composer_line_count,
-            command_line_count,
-        );
-        let budget = super::feed_image::ImageRowBudget::feed(height, content_height).get();
-        self.info.runtime.history_render_settings(width, budget)
-    }
-
-    /// Record terminal size for discrete feed-image budgets and layout caches.
-    pub(super) fn note_terminal_geometry(&mut self, width: usize, terminal_height: usize) {
-        let _ = width;
-        if terminal_height > 0 {
-            self.terminal_height = terminal_height;
-        }
-    }
-
-    /// Feed-image row budget: preferred terminal-height band, capped by the live
-    /// history content viewport so composer chrome cannot make placements
-    /// permanently unpaintable.
-    pub(super) fn feed_image_row_budget(&self, width: usize) -> u16 {
-        let height = self.terminal_height;
-        let content_height = self.history_content_height_from_counts(
-            height,
-            self.composer_lines(width, height).len(),
-            self.command_suggestion_lines(width).len(),
-        );
-        super::feed_image::ImageRowBudget::feed(height, content_height).get()
-    }
-
-    fn history_content_height_from_counts(
-        &self,
-        height: usize,
-        composer_line_count: usize,
-        command_line_count: usize,
-    ) -> usize {
-        if height == 0 {
-            return 0;
-        }
-        self.history_content_height(self.history_height_from_line_counts(
-            height,
-            composer_line_count,
-            command_line_count,
-        ))
-    }
-
-    pub(super) fn visible_history_lines(
-        &mut self,
-        width: usize,
-        now: Instant,
-        start: usize,
-        count: usize,
-    ) -> Vec<Line<'static>> {
-        let live = self.history_live_lines(width, now);
-        let settings = self.history_render_settings(width);
-        self.visible_history_lines_with_live(width, settings, start, count, &live)
-    }
-
-    fn visible_history_lines_with_live(
+    pub(super) fn visible_history_lines_with_live(
         &mut self,
         width: usize,
         settings: HistoryRenderSettings,
@@ -716,8 +615,7 @@ impl App {
                 });
         }
 
-        let static_len =
-            header_len.saturating_add(self.cached_transcript_line_count_with_settings(settings));
+        let static_len = header_len.saturating_add(self.cached_transcript_line_count(settings));
         if lines.len() < count {
             let live_start = start.saturating_sub(static_len);
             lines.extend(
@@ -732,35 +630,11 @@ impl App {
 
     /// Open assistant/reasoning entries omit their trailing separator while the stream is live.
     pub(super) fn sync_open_stream_tail(&mut self) {
-        let open = match self.streams.current_stream_kind {
-            None => false,
-            Some(StreamKind::Assistant) => matches!(self.history.last(), Some(Entry::Assistant(_))),
-            Some(StreamKind::Reasoning) => {
-                self.info.runtime.shows_work_chrome()
-                    && matches!(
-                        self.history.last(),
-                        Some(Entry::Reasoning(reasoning)) if !reasoning.text.is_empty()
-                    )
-            }
-        };
+        let open = self.open_stream_tail_active(/*require_work_chrome*/ true);
         self.history.lines_mut().set_open_stream_tail(open);
     }
 
-    pub(super) fn history_static_len(&mut self, width: usize) -> usize {
-        let settings = self.history_render_settings(width);
-        self.history_static_len_with_settings(width, settings)
-    }
-
-    fn history_static_len_with_settings(
-        &mut self,
-        width: usize,
-        settings: HistoryRenderSettings,
-    ) -> usize {
-        self.visible_session_header_len(width)
-            .saturating_add(self.cached_transcript_line_count_with_settings(settings))
-    }
-
-    fn cached_transcript_line_count_with_settings(
+    pub(super) fn cached_transcript_line_count(
         &mut self,
         settings: HistoryRenderSettings,
     ) -> usize {
@@ -779,15 +653,6 @@ impl App {
     /// Hits the history-cache projection, so pointer events on long transcripts
     /// do not rebuild a target list per event.
     pub(super) fn code_block_copy_target_at_line(
-        &mut self,
-        width: usize,
-        line: usize,
-    ) -> Option<CodeBlockCopyTarget> {
-        let settings = self.history_render_settings(width);
-        self.code_block_copy_target_at_line_with_settings(width, settings, line)
-    }
-
-    fn code_block_copy_target_at_line_with_settings(
         &mut self,
         width: usize,
         settings: HistoryRenderSettings,
@@ -819,6 +684,7 @@ impl App {
     pub(super) fn code_block_copy_target_at_position(
         &mut self,
         width: usize,
+        settings: HistoryRenderSettings,
         history: Rect,
         history_start: usize,
         position: Position,
@@ -828,46 +694,50 @@ impl App {
         }
         let line = history_start.saturating_add(position.y.saturating_sub(history.y) as usize);
         let relative_column = position.x.saturating_sub(history.x) as usize;
-        self.code_block_copy_target_at_line(width, line)
+        self.code_block_copy_target_at_line(width, settings, line)
             .filter(|target| target.columns.contains(&relative_column))
     }
 
-    pub(super) fn history_live_lines(&self, width: usize, _now: Instant) -> Vec<Line<'static>> {
-        self.live_history_layout(width, self.feed_image_row_budget(width))
-            .lines
+    /// Live feed lines plus the clickable card spans in the same walk that paints them.
+    #[cfg(test)]
+    pub(super) fn history_live_lines(&mut self, width: usize, height: usize) -> Vec<Line<'static>> {
+        let area = Rect::new(0, 0, width as u16, height as u16);
+        self.frame_context(area).live_history.lines
     }
 
-    /// Live feed lines plus the clickable card spans in the same walk that paints them.
-    pub(super) fn live_history_layout(&self, width: usize, max_image_height: u16) -> LiveHistory {
+    pub(super) fn live_history_layout(
+        &mut self,
+        width: usize,
+        max_image_height: u16,
+    ) -> LiveHistory {
         let mut lines = Vec::new();
         let mut cards = Vec::new();
         let show_tools = self.info.runtime.shows_work_chrome();
-        let shells = if show_tools {
-            self.running_inline_shell_entries().collect::<Vec<_>>()
+        let max_tool_output_lines = self.info.runtime.max_tool_output_lines;
+        let shell_count = if show_tools {
+            self.pending_inline_shells.len()
         } else {
-            Vec::new()
+            0
         };
         let tools = if show_tools {
             self.turn.tool_calls().live_cards().collect::<Vec<_>>()
         } else {
             Vec::new()
         };
-        let has_pending_tools = !shells.is_empty() || !tools.is_empty();
+        let has_pending_tools = shell_count > 0 || !tools.is_empty();
         // Open stream tails omit the history trailing blank so previews can abut
         // committed text. Live tools still need one row of separation above them.
-        if has_pending_tools && self.open_stream_tail_active() {
+        if has_pending_tools && self.open_stream_tail_active(/*require_work_chrome*/ false) {
             lines.push(Line::raw(""));
         }
-        for pending in &shells {
-            // tool_entry_lines owns the trailing spacer under each card.
-            lines.extend(tool_entry_lines(
-                pending,
-                width,
-                self.info.runtime.max_tool_output_lines,
-                max_image_height,
-            ));
+        if show_tools {
+            // Each cached render owns the trailing spacer under its card. Direct
+            // field iteration keeps this disjoint from the `tools` borrow above.
+            for task in &mut self.pending_inline_shells {
+                let rendered = task.rendered_lines(width, max_tool_output_lines, max_image_height);
+                lines.extend(rendered.iter().cloned());
+            }
         }
-        let max_tool_output_lines = self.info.runtime.max_tool_output_lines;
         for (key, pending) in tools {
             let start = lines.len();
             lines.extend(tool_entry_lines(
@@ -907,14 +777,17 @@ impl App {
         LiveHistory { lines, cards }
     }
 
-    pub(super) fn open_stream_tail_active(&self) -> bool {
+    fn open_stream_tail_active(&self, require_work_chrome: bool) -> bool {
         match self.streams.current_stream_kind {
             None => false,
             Some(StreamKind::Assistant) => matches!(self.history.last(), Some(Entry::Assistant(_))),
-            Some(StreamKind::Reasoning) => matches!(
-                self.history.last(),
-                Some(Entry::Reasoning(reasoning)) if !reasoning.text.is_empty()
-            ),
+            Some(StreamKind::Reasoning) => {
+                (!require_work_chrome || self.info.runtime.shows_work_chrome())
+                    && matches!(
+                        self.history.last(),
+                        Some(Entry::Reasoning(reasoning)) if !reasoning.text.is_empty()
+                    )
+            }
         }
     }
 

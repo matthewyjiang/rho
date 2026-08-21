@@ -19,10 +19,7 @@ pub(super) fn print_exit_summary(summary: Option<&str>) -> std::io::Result<()> {
 }
 
 impl App {
-    fn insert_recovered_history(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-    ) -> std::io::Result<bool> {
+    fn insert_recovered_history(&mut self) -> std::io::Result<bool> {
         let messages = std::mem::take(&mut self.info.session.recovered_messages);
         let had_recovered_messages = !messages.is_empty();
         let entries = self.transcript_entries(&messages);
@@ -30,8 +27,6 @@ impl App {
             return Ok(had_recovered_messages);
         }
 
-        let size = terminal.size()?;
-        self.note_terminal_geometry(size.width as usize, size.height as usize);
         self.set_history_entries(entries);
         Ok(had_recovered_messages)
     }
@@ -42,7 +37,7 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<TuiResult> {
         self.start_model_metadata_fetch(agent);
-        let had_recovered_messages = self.insert_recovered_history(terminal)?;
+        let had_recovered_messages = self.insert_recovered_history()?;
         self.maybe_offer_loaded_session_context_handoff(agent, had_recovered_messages)?;
         let open_resume_after_draw = self.info.session.open_resume_picker;
         self.info.session.open_resume_picker = false;

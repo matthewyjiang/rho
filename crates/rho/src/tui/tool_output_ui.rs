@@ -25,12 +25,7 @@ pub(super) fn tool_output_toggleable(
     width: usize,
 ) -> bool {
     let width = width.max(1);
-    card_is_toggleable(
-        &super::tool_card_render::with_live_shell_elapsed(tool),
-        width,
-        max_tool_output_lines,
-        tool.expanded,
-    )
+    card_is_toggleable(&tool.card, width, max_tool_output_lines, tool.expanded)
 }
 
 impl App {

@@ -52,8 +52,32 @@ fn email_like_tokens_do_not_open_file_mentions() {
 }
 
 #[test]
+fn mention_offsets_survive_multibyte_characters_before_the_token() {
+    // "héllo @w" — é is two bytes, so byte offsets and char offsets diverge.
+    assert_eq!(
+        active_file_mention("héllo @w", 8),
+        Some(FileMention {
+            start: 6,
+            end: 8,
+            query: "w".into(),
+        })
+    );
+}
+
+#[test]
+fn cursor_past_the_input_still_finds_the_trailing_token() {
+    assert_eq!(
+        active_file_mention("review @src", 99),
+        Some(FileMention {
+            start: 7,
+            end: 11,
+            query: "src".into(),
+        })
+    );
+}
+
+#[test]
 fn matching_paths_respect_gitignore_and_fuzzy_rank() {
-    clear_workspace_file_path_cache();
     let workspace = tempdir().unwrap();
     fs::create_dir(workspace.path().join(".git")).unwrap();
     fs::create_dir_all(workspace.path().join("src/nested")).unwrap();
@@ -71,27 +95,7 @@ fn matching_paths_respect_gitignore_and_fuzzy_rank() {
 }
 
 #[test]
-fn expired_workspace_cache_discovers_new_files() {
-    clear_workspace_file_path_cache();
-    let workspace = tempdir().unwrap();
-    fs::write(workspace.path().join("old.rs"), "").unwrap();
-
-    assert_eq!(
-        workspace_file_paths(workspace.path()).as_slice(),
-        ["old.rs"]
-    );
-    fs::write(workspace.path().join("new.rs"), "").unwrap();
-
-    expire_workspace_file_path_cache();
-    assert_eq!(
-        workspace_file_paths(workspace.path()).as_slice(),
-        ["new.rs", "old.rs"]
-    );
-}
-
-#[test]
 fn hidden_paths_are_skipped_unless_query_mentions_dot() {
-    clear_workspace_file_path_cache();
     let workspace = tempdir().unwrap();
     fs::create_dir_all(workspace.path().join(".cache/nested")).unwrap();
     fs::create_dir_all(workspace.path().join("docs")).unwrap();
@@ -137,7 +141,6 @@ fn sorted_strings(values: &[String]) -> Vec<String> {
 
 #[test]
 fn home_scope_skips_hidden_entries_by_default() {
-    clear_workspace_file_path_cache();
     let home = tempdir().unwrap();
     fs::create_dir_all(home.path().join(".cache")).unwrap();
     fs::create_dir_all(home.path().join("docs")).unwrap();
@@ -255,7 +258,6 @@ fn scroll_counts_track_hidden_rows_above_and_below() {
 
 #[test]
 fn relative_directory_prefix_scopes_search_to_that_directory() {
-    clear_workspace_file_path_cache();
     let workspace = tempdir().unwrap();
     fs::create_dir_all(workspace.path().join("src/nested")).unwrap();
     fs::write(workspace.path().join("README.md"), "").unwrap();
@@ -275,7 +277,6 @@ fn relative_directory_prefix_scopes_search_to_that_directory() {
 
 #[test]
 fn relative_directory_prefix_stays_relative_inside_home() {
-    clear_workspace_file_path_cache();
     let home = tempdir().unwrap();
     let workspace = home.path().join("project");
     fs::create_dir_all(workspace.join("src")).unwrap();
@@ -287,7 +288,6 @@ fn relative_directory_prefix_stays_relative_inside_home() {
 
 #[test]
 fn absolute_directory_prefix_stays_absolute() {
-    clear_workspace_file_path_cache();
     let root = tempdir().unwrap();
     let workspace = root.path().join("project");
     let logs = root.path().join("logs");
@@ -305,7 +305,6 @@ fn absolute_directory_prefix_stays_absolute() {
 
 #[test]
 fn parent_directory_prefix_scopes_outside_cwd() {
-    clear_workspace_file_path_cache();
     let root = tempdir().unwrap();
     let workspace = root.path().join("project");
     let sibling = root.path().join("sibling");
@@ -327,7 +326,6 @@ fn parent_directory_prefix_scopes_outside_cwd() {
 
 #[test]
 fn home_directory_prefix_scopes_to_home_relative_path() {
-    clear_workspace_file_path_cache();
     let home = tempdir().unwrap();
     let nested = home.path().join("docs");
     fs::create_dir_all(&nested).unwrap();
@@ -341,7 +339,6 @@ fn home_directory_prefix_scopes_to_home_relative_path() {
 
 #[test]
 fn non_existing_directory_prefix_falls_back_to_workspace_fuzzy() {
-    clear_workspace_file_path_cache();
     let workspace = tempdir().unwrap();
     fs::create_dir_all(workspace.path().join("src")).unwrap();
     fs::write(workspace.path().join("src/lib.rs"), "").unwrap();

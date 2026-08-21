@@ -44,10 +44,12 @@ impl App {
     ) -> Result<(), B::Error> {
         let size = terminal.size()?;
         let screen = Rect::new(0, 0, size.width, size.height);
-        let width = size.width as usize;
-        let height = size.height as usize;
-        self.note_terminal_geometry(width, height);
         let now = Instant::now();
+        let ctx = self.frame_context(screen);
+        let width = ctx.width;
+        let settings = ctx.settings;
+        let live_history = ctx.live_history;
+        let layout = ctx.layout;
         match kind {
             MouseEventKind::ScrollUp => {
                 self.input_ui.cancel_pointer_click_sequence();
@@ -73,9 +75,8 @@ impl App {
                 self.reveal_history_scrollbar(now);
                 self.history.set_scrollbar_drag(None);
                 self.scroll_history_lines(
-                    width,
-                    height,
-                    now,
+                    &layout,
+                    settings,
                     -(super::HISTORY_MOUSE_SCROLL_LINES as isize),
                 );
             }
@@ -103,9 +104,8 @@ impl App {
                 self.reveal_history_scrollbar(now);
                 self.history.set_scrollbar_drag(None);
                 self.scroll_history_lines(
-                    width,
-                    height,
-                    now,
+                    &layout,
+                    settings,
                     super::HISTORY_MOUSE_SCROLL_LINES as isize,
                 );
             }
@@ -122,11 +122,11 @@ impl App {
                     return Ok(());
                 }
                 self.screen_selection = None;
-                let layout = self.screen_layout(screen, now);
                 let (history, history_start) =
                     self.mouse_history_view(layout.history_content, layout.history_len);
                 let code_target = self.code_block_copy_target_at_position(
                     width,
+                    settings,
                     history,
                     history_start,
                     Position { x: column, y: row },
@@ -162,7 +162,7 @@ impl App {
                         now,
                         super::HISTORY_SCROLLBAR_REVEAL_DURATION,
                     );
-                    self.reveal_unmeasured_history_at_scrollbar_top(width, height, now);
+                    self.reveal_unmeasured_history_at_scrollbar_top(&layout, settings);
                 } else if layout.jump_to_bottom.is_some_and(|rect| {
                     rect.contains(ratatui::layout::Position { x: column, y: row })
                 }) {
@@ -243,7 +243,6 @@ impl App {
                 ) {
                     return Ok(());
                 }
-                let layout = self.screen_layout(screen, now);
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
                 self.subagent_panel.clear_pointer_state();
                 if self.history.scrollbar_drag().is_some() {
@@ -251,7 +250,7 @@ impl App {
                     self.history.set_hovered_code_block_copy(None);
                     if let Some(scrollbar) = layout.history_scrollbar {
                         self.history.scroll_chrome_mut().drag_to(scrollbar, row);
-                        self.reveal_unmeasured_history_at_scrollbar_top(width, height, now);
+                        self.reveal_unmeasured_history_at_scrollbar_top(&layout, settings);
                     }
                 } else if self.input_ui.selection_dragging() {
                     if let Some(index) =
@@ -274,6 +273,7 @@ impl App {
                     let hovered = self
                         .code_block_copy_target_at_position(
                             width,
+                            settings,
                             history,
                             history_start,
                             Position { x: column, y: row },
@@ -302,7 +302,6 @@ impl App {
                 let was_scrollbar_drag = self.history.scrollbar_drag().is_some();
                 let composer_selecting = self.input_ui.selection_dragging();
                 self.history.set_scrollbar_drag(None);
-                let layout = self.screen_layout(screen, now);
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
                 let released_subagent = matches!(self.input_ui.composer(), ComposerMode::Input)
                     .then(|| {
@@ -323,6 +322,7 @@ impl App {
                 let hovered = self
                     .code_block_copy_target_at_position(
                         width,
+                        settings,
                         history,
                         history_start,
                         Position { x: column, y: row },
@@ -357,11 +357,12 @@ impl App {
                     }
                     if selection.has_moved() {
                         let selected_lines = selection.selected_line_range();
-                        let lines = self.visible_history_lines(
+                        let lines = self.visible_history_lines_with_live(
                             width,
-                            now,
+                            settings,
                             selected_lines.start,
                             selected_lines.len(),
+                            &live_history.lines,
                         );
                         if let Some(text) = selection.selected_text(&lines, selected_lines.start) {
                             self.copy_text(&text, now);
@@ -370,7 +371,13 @@ impl App {
                     } else if release_position.is_some() {
                         let line =
                             history_start.saturating_add(row.saturating_sub(history.y) as usize);
-                        self.toggle_tool_output_at_history_line(line, width, terminal)?;
+                        self.toggle_tool_output_at_history_line(
+                            line,
+                            width,
+                            settings,
+                            &live_history,
+                            terminal,
+                        )?;
                     }
                 } else if let Some(mut selection) = self.screen_selection.take() {
                     if let Some(position) = selection_position_clamped(screen, 0, column, row) {
@@ -405,13 +412,13 @@ impl App {
                 ) {
                     return Ok(());
                 }
-                let layout = self.screen_layout(screen, now);
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
                 let (history, history_start) =
                     self.mouse_history_view(layout.history_content, layout.history_len);
                 let hovered = self
                     .code_block_copy_target_at_position(
                         width,
+                        settings,
                         history,
                         history_start,
                         Position { x: column, y: row },
@@ -445,10 +452,12 @@ impl App {
         &mut self,
         line: usize,
         width: usize,
+        settings: super::history_cache::HistoryRenderSettings,
+        live_history: &LiveHistory,
         terminal: &mut Terminal<B>,
     ) -> Result<bool, B::Error> {
-        let live = self.live_history_layout(width, self.feed_image_row_budget(width));
-        let Some(hit) = self.tool_card_hit_at_history_line(line, width, &live) else {
+        let Some(hit) = self.tool_card_hit_at_history_line(line, width, settings, live_history)
+        else {
             return Ok(false);
         };
         match hit.target {
@@ -502,6 +511,7 @@ impl App {
         &mut self,
         line: usize,
         width: usize,
+        settings: super::history_cache::HistoryRenderSettings,
         live: &LiveHistory,
     ) -> Option<ToolCardHit> {
         if !self.info.runtime.shows_work_chrome() {
@@ -511,7 +521,6 @@ impl App {
         let header_len = self.visible_session_header_len(width);
         if let Some(transcript_line) = line.checked_sub(header_len) {
             let cwd = self.info.runtime.cwd.clone();
-            let settings = self.history_render_settings(width);
             self.sync_open_stream_tail();
             let hit = self.history.with_lines_and_images_mut(
                 |history_lines, entries, markdown_images| {
@@ -539,7 +548,7 @@ impl App {
             }
         }
 
-        let static_len = self.history_static_len(width);
+        let static_len = self.history_static_len(width, settings);
         live.card_hit_at(line.checked_sub(static_len)?)
             .map(|(target, range)| ToolCardHit {
                 target,

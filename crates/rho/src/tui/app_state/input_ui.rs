@@ -7,8 +7,8 @@ use crate::tui::{
     feed_image::FeedImage,
     inline_shell::InlineShellMode,
     paste_burst::{expand_paste_segments, PasteBurst},
-    ChatMedia, ComposerAttachment, ComposerMode, FileMatchCache, InputDraft, InputSubmissionMode,
-    MediaAttachId, PasteSegment, PendingAttachmentSource, SkillMatchCache,
+    ChatMedia, ComposerAttachment, ComposerMode, InputDraft, InputSubmissionMode, MediaAttachId,
+    PasteSegment, PendingAttachmentSource,
 };
 
 #[derive(Debug)]
@@ -138,8 +138,6 @@ pub(in crate::tui) struct InputUi {
     file_selection: usize,
     file_query: Option<String>,
     file_palette_dismissed: bool,
-    file_match_cache: Option<FileMatchCache>,
-    skill_match_cache: Option<SkillMatchCache>,
     composer: ComposerMode,
 }
 
@@ -630,25 +628,5 @@ impl InputUi {
 
     pub(in crate::tui) fn set_file_palette_dismissed(&mut self, dismissed: bool) {
         self.file_palette_dismissed = dismissed;
-    }
-
-    pub(in crate::tui) fn file_match_cache(&self) -> Option<&FileMatchCache> {
-        self.file_match_cache.as_ref()
-    }
-
-    pub(in crate::tui) fn file_match_cache_mut(&mut self) -> &mut Option<FileMatchCache> {
-        &mut self.file_match_cache
-    }
-
-    pub(in crate::tui) fn set_file_match_cache(&mut self, cache: Option<FileMatchCache>) {
-        self.file_match_cache = cache;
-    }
-
-    pub(in crate::tui) fn skill_match_cache(&self) -> Option<&SkillMatchCache> {
-        self.skill_match_cache.as_ref()
-    }
-
-    pub(in crate::tui) fn set_skill_match_cache(&mut self, cache: Option<SkillMatchCache>) {
-        self.skill_match_cache = cache;
     }
 }

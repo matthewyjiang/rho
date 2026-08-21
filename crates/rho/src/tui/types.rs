@@ -216,20 +216,6 @@ pub(super) struct InputDraft {
     pub(in crate::tui) shell_mode: Option<InlineShellMode>,
 }
 
-#[derive(Clone, Debug)]
-pub(super) struct FileMatchCache {
-    pub(in crate::tui) query: String,
-    pub(in crate::tui) matches: super::file_picker::FilePaletteMatches,
-    pub(in crate::tui) refreshed_at: Instant,
-}
-
-/// Discovered skills reused across command palette queries, so typing a slash
-/// command does not re-walk skill directories on every keystroke.
-pub(super) struct SkillMatchCache {
-    pub(in crate::tui) skills: std::sync::Arc<Vec<crate::skills::Skill>>,
-    pub(in crate::tui) refreshed_at: Instant,
-}
-
 impl From<&str> for QueuedPrompt {
     fn from(prompt: &str) -> Self {
         Self {

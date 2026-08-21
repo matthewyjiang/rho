@@ -8,7 +8,7 @@ use super::{
     paste_burst::{normalize_paste, paste_marker_for, previous_word_boundary},
     render::{
         editable_input_visual_lines, input_char_index_at_position,
-        input_cursor_index_on_visual_line, input_cursor_position,
+        input_cursor_index_on_visual_line, visual_caret_position,
     },
     App, CommandInvocation, ComposerAttachment, ComposerMode, HistoryDirection, InputDraft,
     InputSubmissionMode, PasteBurstEnter, PasteBurstKey, PasteSegment,
@@ -227,7 +227,7 @@ impl App {
         let content_width = content_width(terminal_width);
         let visual_lines = editable_input_visual_lines(self.input_ui.text(), content_width);
         let cursor_position =
-            input_cursor_position(self.input_ui.text(), self.input_ui.cursor(), content_width);
+            visual_caret_position(&visual_lines, self.input_ui.text(), self.input_ui.cursor());
         let can_recall = match direction {
             HistoryDirection::Previous => cursor_position.y == 0,
             HistoryDirection::Next => cursor_position.y as usize + 1 >= visual_lines.len(),
@@ -647,18 +647,7 @@ impl App {
         }
     }
 
-    pub(super) fn command_palette_visible(&self) -> bool {
-        matches!(self.input_ui.composer(), ComposerMode::Input)
-            && self.input_ui.shell_mode().is_none()
-            && !self.input_ui.command_palette_dismissed()
-            && (self.cursor_in_command_token()
-                || !commands::argument_choices(self.input_ui.text(), self.input_ui.cursor())
-                    .is_empty()
-                || !self.mcp_argument_choices().is_empty())
-            && !self.command_matches().is_empty()
-    }
-
-    fn cursor_in_command_token(&self) -> bool {
+    pub(super) fn cursor_in_command_token(&self) -> bool {
         if !self.input_ui.text().starts_with('/') {
             return false;
         }
@@ -687,9 +676,6 @@ impl App {
         if self.input_ui.command_prefix() != prefix.as_deref() {
             self.input_ui.set_command_prefix(prefix);
             self.input_ui.set_command_selection(0);
-        }
-        if in_command_token && self.input_ui.command_prefix().is_some() {
-            self.refresh_skill_match_cache();
         }
 
         let match_count = self.command_matches().len();

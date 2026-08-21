@@ -1,10 +1,8 @@
-use std::time::Instant;
-
 use super::*;
 use crate::tui::ReasoningChrome;
 
-fn live_line_text(app: &App) -> Vec<String> {
-    app.history_live_lines(80, Instant::now())
+fn live_line_text(app: &mut App) -> Vec<String> {
+    app.history_live_lines(80, crate::tui::DEFAULT_TUI_HEIGHT as usize)
         .into_iter()
         .map(|line| {
             line.spans
@@ -15,7 +13,7 @@ fn live_line_text(app: &App) -> Vec<String> {
         .collect()
 }
 
-fn live_contains_thinking(app: &App) -> bool {
+fn live_contains_thinking(app: &mut App) -> bool {
     live_line_text(app)
         .iter()
         .any(|line| line.contains("Thinking..."))
@@ -60,7 +58,7 @@ fn thinking_placeholder_renders_only_for_open_thinking_chrome() {
     app.info.runtime.show_reasoning_output = false;
     app.turn.reasoning_phase_mut().begin_step();
 
-    assert!(live_contains_thinking(&app));
+    assert!(live_contains_thinking(&mut app));
 
     // Full reasoning text: stretch can stay open; Thinking... must not paint.
     app.info.runtime.show_reasoning_output = true;
@@ -69,13 +67,13 @@ fn thinking_placeholder_renders_only_for_open_thinking_chrome() {
         ReasoningChrome::FullText
     );
     assert!(app.turn.reasoning_phase().is_open());
-    assert!(!live_contains_thinking(&app));
+    assert!(!live_contains_thinking(&mut app));
 
     // Zen hides Thinking... even while the stretch is open.
     app.info.runtime.zen_mode = true;
     app.info.runtime.show_reasoning_output = false;
     assert_eq!(app.info.runtime.reasoning_chrome(), ReasoningChrome::Hidden);
-    assert!(!live_contains_thinking(&app));
+    assert!(!live_contains_thinking(&mut app));
 
     // Leaving zen with reasoning text off restores Thinking... while open.
     app.info.runtime.zen_mode = false;
@@ -83,12 +81,12 @@ fn thinking_placeholder_renders_only_for_open_thinking_chrome() {
         app.info.runtime.reasoning_chrome(),
         ReasoningChrome::ThinkingPlaceholder
     );
-    assert!(live_contains_thinking(&app));
+    assert!(live_contains_thinking(&mut app));
 
     // Finalize closes the stretch; Thinking... ends without a policy change.
     assert!(app.turn.reasoning_phase_mut().finalize().is_none());
     assert!(!app.turn.reasoning_phase().is_open());
-    assert!(!live_contains_thinking(&app));
+    assert!(!live_contains_thinking(&mut app));
 }
 
 // Covers: reasoning deltas keep the stretch open under zen without painting Thinking...
@@ -109,6 +107,6 @@ fn zen_reasoning_deltas_do_not_render_thinking_placeholder() {
 
     assert!(app.turn.reasoning_phase().is_open());
     assert_eq!(app.info.runtime.reasoning_chrome(), ReasoningChrome::Hidden);
-    assert!(!live_contains_thinking(&app));
+    assert!(!live_contains_thinking(&mut app));
     assert!(!app.info.runtime.displays_reasoning_output());
 }

@@ -655,8 +655,6 @@ impl App {
         self.reset_usage();
         self.usage.current_context = None;
         let entries = self.transcript_entries(&display_history);
-        let size = terminal.size()?;
-        self.note_terminal_geometry(size.width as usize, size.height as usize);
         self.set_history_entries(entries);
         self.scroll_history_to_bottom();
         self.clamp_history_scroll_for_terminal(terminal)?;
