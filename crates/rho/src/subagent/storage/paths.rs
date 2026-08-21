@@ -5,7 +5,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use super::super::{create_private_directory, secure_directory};
+use super::super::ensure_private_directory;
 
 /// Validated `sessions/<workspace>/<unit>/subagents` path.
 #[derive(Clone, Debug)]
@@ -55,12 +55,7 @@ impl SessionSubagentsDir {
     }
 
     pub(super) fn ensure_ready(&self) -> anyhow::Result<()> {
-        if self.path.exists() {
-            secure_directory(&self.path)?;
-        } else {
-            create_private_directory(&self.path)?;
-        }
-        Ok(())
+        Ok(ensure_private_directory(&self.path)?)
     }
 
     pub(super) fn run_directory(&self, id: &str) -> PathBuf {
@@ -135,6 +130,8 @@ pub(super) fn scan_session_directories(rho_root: &Path, id: &str) -> anyhow::Res
 }
 
 pub(super) fn prepare_private_directory(path: &Path) -> std::io::Result<()> {
-    fs::create_dir_all(path)?;
-    secure_directory(path)
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    ensure_private_directory(path)
 }

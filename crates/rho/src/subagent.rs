@@ -2,6 +2,7 @@
 
 use std::{
     fs::{File, OpenOptions},
+    io::ErrorKind,
     path::Path,
     sync::{Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -322,6 +323,18 @@ pub(crate) fn secure_directory(path: &Path) -> std::io::Result<()> {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
     }
     Ok(())
+}
+
+/// Create `path` as a private directory when missing, tolerating concurrent
+/// creators (`AlreadyExists` is success); always re-validates type and mode
+/// either way.
+pub(crate) fn ensure_private_directory(path: &Path) -> std::io::Result<()> {
+    match create_private_directory(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error),
+    }
+    secure_directory(path)
 }
 
 pub(crate) fn create_private_directory(path: &Path) -> std::io::Result<()> {

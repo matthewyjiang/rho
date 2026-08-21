@@ -7,11 +7,12 @@ use std::{
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
+use super::paths::{prepare_private_directory, SessionSubagentsDir};
 use super::{
     index::{
         initialize_index, insert_parent_lock_for_test, unix_timestamp_secs, PARENT_LOCK_TTL_SECS,
     },
-    list_workspace_runs_in_root, lock_parent_for_cleanup_in_root,
+    is_trusted_directory, list_workspace_runs_in_root, lock_parent_for_cleanup_in_root,
     reserve_run_directory_in_root as reserve_at, resolve_run_directory_in_root, RunPlacement,
 };
 use crate::session::Session;
@@ -110,6 +111,96 @@ fn concurrent_index_initialization_is_idempotent() {
     for handle in handles {
         handle.join().unwrap().unwrap();
     }
+}
+
+// Covers: concurrent first reservations must both succeed while racing to
+// create a missing session subagents directory — the loser used to fail with
+// EEXIST ("File exists (os error 17)") because the pre-fix code only
+// tolerated a directory that already existed at check time.
+// Owner: delegated-run reservation
+#[test]
+fn concurrent_session_subagents_dir_creation_is_tolerated() {
+    for _ in 0..16 {
+        let temp = TempDir::new().unwrap();
+        let subagents = temp.path().join("sessions/ws/session-1/subagents");
+        fs::create_dir_all(subagents.parent().unwrap()).unwrap();
+        let dir = SessionSubagentsDir::parse(temp.path(), &subagents).unwrap();
+        assert!(!subagents.exists());
+
+        let barrier = Arc::new(Barrier::new(3));
+        let handles = (0..2)
+            .map(|_| {
+                let dir = dir.clone();
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    dir.ensure_ready()
+                })
+            })
+            .collect::<Vec<_>>();
+        barrier.wait();
+
+        for handle in handles {
+            handle.join().unwrap().unwrap();
+        }
+        assert!(is_trusted_directory(&subagents));
+    }
+}
+
+// Covers: a reservation must succeed when the session subagents directory
+// already exists — the loser of a concurrent first-spawn create used to fail
+// here with EEXIST ("File exists (os error 17)").
+// Owner: delegated-run reservation
+#[test]
+fn reservations_tolerate_existing_session_subagents_dir() {
+    let temp = TempDir::new().unwrap();
+    // Simulate the winner of a concurrent first-spawn create: the directory
+    // exists by the time this reservation checks.
+    let subagents_dir = create_session_subagents(temp.path());
+    fs::create_dir(&subagents_dir).unwrap();
+    let placement = RunPlacement::Session {
+        parent_session_id: "session-id".into(),
+        subagents_dir: subagents_dir.clone(),
+    };
+
+    let (id, directory) =
+        reserve_in_default_workspace(temp.path(), &placement, || "abcdef".into()).unwrap();
+
+    assert_eq!(id, "abcdef");
+    assert_eq!(directory, subagents_dir.join("abcdef"));
+}
+
+// Covers: private-directory preparation must create a missing leaf with
+// private modes and stay idempotent when the leaf already exists.
+// Owner: delegated-run reservation
+#[test]
+fn prepare_private_directory_creates_and_secures_missing_leaf() {
+    let temp = TempDir::new().unwrap();
+    let target = temp.path().join("nested/subagents");
+
+    prepare_private_directory(&target).unwrap();
+    prepare_private_directory(&target).unwrap();
+
+    assert!(is_trusted_directory(&target));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(&target).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700);
+    }
+}
+
+// Covers: a non-directory at the target path must still be rejected even
+// though the create step tolerates AlreadyExists from concurrent creators.
+// Owner: delegated-run reservation
+#[test]
+fn prepare_private_directory_rejects_non_directory_target() {
+    let temp = TempDir::new().unwrap();
+    let target = temp.path().join("not-a-dir");
+    fs::write(&target, b"x").unwrap();
+
+    let error = prepare_private_directory(&target).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
 }
 
 #[test]
