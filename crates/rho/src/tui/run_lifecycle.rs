@@ -1,4 +1,4 @@
-use super::{App, Entry, InputSubmissionMode, InteractiveRuntime};
+use super::{App, Entry, HistoryScroll, InputSubmissionMode, InteractiveRuntime};
 
 impl App {
     pub(super) fn is_ui_busy(&self) -> bool {
@@ -19,6 +19,7 @@ impl App {
     }
 
     pub(super) fn begin_provider_turn_ui(&mut self) {
+        self.turn_finished_attention = false;
         self.turn.enter_provider_turn();
     }
 
@@ -27,6 +28,13 @@ impl App {
     }
 
     pub(super) fn end_busy_ui(&mut self) {
+        // A provider turn that finished while the user is scrolled away flags
+        // the jump chip until they return to bottom or the next turn starts.
+        // Only set here, never cleared: a trailing auto-compact end_busy must
+        // not wipe a cue the user has not seen yet.
+        if self.turn.is_provider_turn() && !matches!(self.history.scroll(), HistoryScroll::Bottom) {
+            self.turn_finished_attention = true;
+        }
         // Live stream estimates are display-only for the in-flight provider
         // attempt. Drop them when the turn is no longer busy so statusline cost
         // returns to the durable ledger (plus claimed subagent totals).

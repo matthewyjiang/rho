@@ -66,3 +66,44 @@ fn bottom_follow_activity_inset_only_when_activity_and_pinned() {
         ACTIVITY_RAIL_ROWS + ACTIVITY_CONTENT_GAP_ROWS
     );
 }
+
+// Covers: jump chip copy reflects attention state (response ready / input needed).
+// Owner: pure unit (chip copy policy)
+#[test]
+fn jump_to_bottom_text_reflects_chip_state() {
+    let binding = "ctrl+e";
+    assert_eq!(
+        jump_to_bottom_text(80, binding, false, JumpChipState::Neutral),
+        "↓ jump to bottom  ctrl+e"
+    );
+    assert_eq!(
+        jump_to_bottom_text(80, binding, false, JumpChipState::ResponseReady),
+        "↓ response ready  ctrl+e"
+    );
+    assert_eq!(
+        jump_to_bottom_text(80, binding, false, JumpChipState::ApprovalNeeded),
+        "↓ approval needed  ctrl+e"
+    );
+    assert_eq!(
+        jump_to_bottom_text(80, binding, false, JumpChipState::InputNeeded),
+        "↓ input needed  ctrl+e"
+    );
+}
+
+// Covers: attention states degrade to their compact form before dropping to
+// the bare shortcut, so the cue survives narrow terminals.
+// Owner: pure unit (chip width degradation)
+#[test]
+fn jump_to_bottom_attention_states_have_compact_forms() {
+    let binding = "ctrl+e";
+    // "↓ bottom ctrl+e" is one cell too wide here; neutral falls to shortcut.
+    assert_eq!(
+        jump_to_bottom_text(14, binding, false, JumpChipState::Neutral),
+        "↓ ctrl+e"
+    );
+    // "↓ ready ctrl+e" fits exactly.
+    assert_eq!(
+        jump_to_bottom_text(14, binding, false, JumpChipState::ResponseReady),
+        "↓ ready ctrl+e"
+    );
+}

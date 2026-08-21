@@ -80,3 +80,82 @@ fn interrupt_expands_pasted_draft_before_restoring_it() {
     assert_eq!(app.input_ui.text(), "steer\n\nalpha\nbeta");
     assert!(app.input_ui.paste_segments().is_empty());
 }
+
+// Covers: a turn that finishes while the user is scrolled up flags the jump
+// chip until they return to bottom or the next turn starts.
+// Owner: behavior (turn-finished attention cue)
+#[test]
+fn turn_finished_while_scrolled_up_flags_jump_chip() {
+    let mut app = test_app();
+    app.begin_provider_turn_ui();
+    app.history.scroll_chrome_mut().set_top_line(100, 10, 0);
+
+    app.end_busy_ui();
+
+    assert_eq!(
+        app.jump_chip_state(),
+        crate::tui::activity::JumpChipState::ResponseReady
+    );
+}
+
+#[test]
+fn turn_finished_at_bottom_keeps_chip_neutral() {
+    let mut app = test_app();
+    app.begin_provider_turn_ui();
+
+    app.end_busy_ui();
+
+    assert_eq!(
+        app.jump_chip_state(),
+        crate::tui::activity::JumpChipState::Neutral
+    );
+}
+
+#[test]
+fn returning_to_bottom_expires_turn_finished_attention() {
+    let mut app = test_app();
+    app.begin_provider_turn_ui();
+    app.history.scroll_chrome_mut().set_top_line(100, 10, 0);
+    app.end_busy_ui();
+    assert!(app.turn_finished_attention);
+
+    app.history.scroll_chrome_mut().scroll_to_bottom();
+    app.settle_turn_finished_attention();
+
+    assert!(!app.turn_finished_attention);
+    assert_eq!(
+        app.jump_chip_state(),
+        crate::tui::activity::JumpChipState::Neutral
+    );
+}
+
+#[test]
+fn next_turn_start_clears_turn_finished_attention() {
+    let mut app = test_app();
+    app.begin_provider_turn_ui();
+    app.history.scroll_chrome_mut().set_top_line(100, 10, 0);
+    app.end_busy_ui();
+    assert!(app.turn_finished_attention);
+
+    app.begin_provider_turn_ui();
+
+    assert!(!app.turn_finished_attention);
+}
+
+// Covers: a trailing auto-compact end_busy must not wipe an unseen cue.
+// Owner: behavior (turn-finished attention cue)
+#[test]
+fn compact_finish_does_not_clear_unseen_turn_finished_attention() {
+    let mut app = test_app();
+    app.begin_provider_turn_ui();
+    app.history.scroll_chrome_mut().set_top_line(100, 10, 0);
+    app.end_busy_ui();
+
+    app.begin_compact_ui();
+    app.end_busy_ui();
+
+    assert_eq!(
+        app.jump_chip_state(),
+        crate::tui::activity::JumpChipState::ResponseReady
+    );
+}

@@ -523,6 +523,12 @@ impl Theme {
         Self::activity_rail().fg(Palette::current().accent)
     }
 
+    /// Attention variant for chip states that need action (response ready,
+    /// approval/input needed). Bold keeps it calmer than a color change.
+    pub(super) fn jump_to_bottom_attention() -> Style {
+        Self::jump_to_bottom().add_modifier(Modifier::BOLD)
+    }
+
     pub(super) fn jump_to_bottom_shortcut() -> Style {
         Self::activity_rail().fg(Palette::current().dim)
     }

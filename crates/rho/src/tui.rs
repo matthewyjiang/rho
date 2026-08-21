@@ -492,6 +492,10 @@ struct App {
     status_source: StatusSource,
     should_quit: bool,
     ctrl_c_streak: u8,
+    /// Set when a provider turn finished while history was scrolled away from
+    /// the bottom, so the jump chip can flag the response until the user
+    /// returns to bottom or the next turn starts.
+    turn_finished_attention: bool,
     streams: StreamUi,
     turn: TurnUi,
     image_picker: Option<ratatui_image::picker::Picker>,

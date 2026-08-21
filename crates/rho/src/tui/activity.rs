@@ -312,9 +312,44 @@ impl LoadingSpinner {
     }
 }
 
-pub(super) fn jump_to_bottom_text(width: usize, binding: &str, alongside_activity: bool) -> String {
-    let full = format!("↓ jump to bottom  {binding}");
-    let compact = format!("↓ bottom {binding}");
+/// What the jump-to-bottom chip should communicate beyond navigation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum JumpChipState {
+    /// Plain navigation affordance while reading history.
+    Neutral,
+    /// The last provider turn finished while the user was scrolled away.
+    ResponseReady,
+    /// An approval prompt is blocking the agent.
+    ApprovalNeeded,
+    /// A questionnaire or input form is blocking the agent.
+    InputNeeded,
+}
+
+impl JumpChipState {
+    pub(super) fn is_attention(self) -> bool {
+        !matches!(self, Self::Neutral)
+    }
+
+    /// (full label, compact label) used by [`jump_to_bottom_text`].
+    fn labels(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Neutral => ("jump to bottom", "bottom"),
+            Self::ResponseReady => ("response ready", "ready"),
+            Self::ApprovalNeeded => ("approval needed", "approval"),
+            Self::InputNeeded => ("input needed", "input"),
+        }
+    }
+}
+
+pub(super) fn jump_to_bottom_text(
+    width: usize,
+    binding: &str,
+    alongside_activity: bool,
+    state: JumpChipState,
+) -> String {
+    let (full_action, compact_action) = state.labels();
+    let full = format!("↓ {full_action}  {binding}");
+    let compact = format!("↓ {compact_action} {binding}");
     let shortcut = format!("↓ {binding}");
     // Leave enough room for the compact activity label when both controls share a row.
     let activity_width = usize::from(alongside_activity)
