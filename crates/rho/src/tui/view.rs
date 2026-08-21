@@ -704,7 +704,6 @@ impl App {
         &mut self,
         width: usize,
         height: usize,
-        _now: Instant,
     ) -> Vec<Line<'static>> {
         let area = Rect::new(0, 0, width as u16, height as u16);
         self.frame_context(area).live_history.lines

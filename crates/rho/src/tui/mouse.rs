@@ -77,7 +77,6 @@ impl App {
                 self.scroll_history_lines(
                     &layout,
                     settings,
-                    now,
                     -(super::HISTORY_MOUSE_SCROLL_LINES as isize),
                 );
             }
@@ -107,7 +106,6 @@ impl App {
                 self.scroll_history_lines(
                     &layout,
                     settings,
-                    now,
                     super::HISTORY_MOUSE_SCROLL_LINES as isize,
                 );
             }

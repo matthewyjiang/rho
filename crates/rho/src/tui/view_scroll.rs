@@ -56,7 +56,6 @@ impl App {
         &mut self,
         layout: &ScreenLayout,
         settings: HistoryRenderSettings,
-        _now: Instant,
         delta: isize,
     ) {
         let content_height = layout.history_content.height as usize;
@@ -195,7 +194,7 @@ impl App {
                 self.reveal_history_scrollbar(now);
                 self.history.set_scrollbar_drag(None);
                 let page = (ctx.layout.history_content.height as usize).max(1);
-                self.scroll_history_lines(&ctx.layout, ctx.settings, now, -(page as isize));
+                self.scroll_history_lines(&ctx.layout, ctx.settings, -(page as isize));
                 self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 Ok(true)
@@ -204,7 +203,7 @@ impl App {
                 self.reveal_history_scrollbar(now);
                 self.history.set_scrollbar_drag(None);
                 let page = (ctx.layout.history_content.height as usize).max(1);
-                self.scroll_history_lines(&ctx.layout, ctx.settings, now, page as isize);
+                self.scroll_history_lines(&ctx.layout, ctx.settings, page as isize);
                 self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 Ok(true)
