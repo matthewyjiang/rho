@@ -157,7 +157,7 @@ pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
     }
     let extra = needed_extra_catalog_docs();
     if extra.full_tree {
-        let policy = CatalogLookupMode::model_id_hydrate_reasoning();
+        let policy = CatalogLookupMode::MODEL_ID_HYDRATE_REASONING;
         for (slug, provider) in api.iter_providers() {
             for model_id in provider.models.keys() {
                 let Some(metadata) =

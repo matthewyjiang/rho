@@ -268,7 +268,7 @@ pub fn custom_model_id_catalog_miss(provider: &str, model: &str) -> Option<Catal
     })
 }
 
-/// models.dev provider and model id used for the sqlite catalog row.
+/// Cache provider and model id used for the sqlite catalog row.
 ///
 /// Custom hosts can borrow another slug (`catalog = "llmgateway"`) or read the
 /// shared ExactAdvertised tree with unsplit `slug/model` ids
@@ -326,27 +326,37 @@ fn borrowed_slug_collides_with_builtin_extract(slug: &str) -> bool {
         .any(|descriptor| descriptor.name == slug && descriptor.metadata_upstream == slug)
 }
 
+/// Built-in override identity for a cached catalog row.
+///
+/// Model-id rows live under [`MODEL_ID_CATALOG_CACHE_PROVIDER`] with unsplit
+/// `slug/model` ids. Override lookup still uses the real models.dev pair
+/// (`openai-codex` + `gpt-5.5`), not the cache namespace.
+fn builtin_override_identity(cache_provider: &str, cache_model: &str) -> (String, String) {
+    if cache_provider == MODEL_ID_CATALOG_CACHE_PROVIDER {
+        if let Some(pair) = overrides::split_provider_model(cache_model) {
+            return pair;
+        }
+    }
+    (cache_provider.to_string(), cache_model.to_string())
+}
+
 fn load_model_metadata(
     provider: &str,
     model: &str,
     freshness: CacheFreshness,
 ) -> Option<ModelMetadata> {
     let local = overrides::local_override_table(provider, model);
-    let (source_provider, source_model) = catalog_source_for(provider, model, local.as_ref());
-    let remapped = source_provider != provider || source_model != model;
+    let (cache_provider, cache_model) = catalog_source_for(provider, model, local.as_ref());
     let metadata = match freshness {
         CacheFreshness::CurrentOnly => {
-            current_cached_upstream_model_metadata(&source_provider, &source_model)
+            current_cached_upstream_model_metadata(&cache_provider, &cache_model)
         }
-        CacheFreshness::AllowStale => {
-            cached_upstream_model_metadata(&source_provider, &source_model)
-        }
+        CacheFreshness::AllowStale => cached_upstream_model_metadata(&cache_provider, &cache_model),
     }?;
-    let metadata = if remapped {
-        overrides::apply_builtin_overrides(&source_provider, &source_model, metadata)
-    } else {
-        overrides::apply_builtin_overrides(provider, model, metadata)
-    };
+    let (override_provider, override_model) =
+        builtin_override_identity(&cache_provider, &cache_model);
+    let metadata =
+        overrides::apply_builtin_overrides(&override_provider, &override_model, metadata);
     let metadata = apply_provider_capabilities(provider, model, metadata);
     Some(match local.as_ref() {
         Some(table) => overrides::merge_toml_override(metadata, table),

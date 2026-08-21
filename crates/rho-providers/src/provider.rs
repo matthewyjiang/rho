@@ -290,9 +290,8 @@ impl CatalogLookupMode {
     ///
     /// [`Self::Slug`] uses the host descriptor's `catalog_reasoning` instead,
     /// because a borrowed slug follows that host's protocol.
-    pub(crate) fn model_id_hydrate_reasoning() -> CatalogReasoningPolicy {
-        CatalogReasoningPolicy::ExactAdvertised
-    }
+    pub(crate) const MODEL_ID_HYDRATE_REASONING: CatalogReasoningPolicy =
+        CatalogReasoningPolicy::ExactAdvertised;
 }
 
 impl std::str::FromStr for CatalogLookupMode {

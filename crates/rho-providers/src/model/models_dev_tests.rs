@@ -1709,6 +1709,34 @@ fn rematched_openai_codex_catalog_keeps_builtin_window() {
     crate::provider::reset_custom_openai_compatible_providers_for_tests();
 }
 
+// Covers: model-id host must apply built-in overrides for the split models.dev pair
+// Owner: models.dev catalog rematch
+#[test]
+fn model_id_host_applies_builtin_overrides_from_split_id() {
+    let _lock = crate::provider::custom_provider_registry_test_lock();
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+    install_model_id_host();
+
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        write_cached_upstream_model_metadata(
+            MODEL_ID_CATALOG_CACHE_PROVIDER,
+            "openai-codex/gpt-5.5",
+            &ModelMetadata {
+                advertised_context_window: Some(1_050_000),
+                effective_context_window: Some(922_000),
+                reasoning_metadata_complete: true,
+                ..ModelMetadata::default()
+            },
+        );
+
+        let metadata =
+            current_model_metadata("cliproxyapi", "openai-codex/gpt-5.5").expect("shared-tree row");
+        assert_eq!(metadata.effective_context_window, Some(400_000));
+    });
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+}
+
 fn install_model_id_host() {
     crate::provider::install_custom_openai_compatible_providers_with_lookup([(
         crate::provider::CustomProviderSpec::new("cliproxyapi", None),
