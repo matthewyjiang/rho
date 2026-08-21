@@ -112,6 +112,29 @@ fn concurrent_index_initialization_is_idempotent() {
     }
 }
 
+// Covers: a reservation must succeed when the session subagents directory
+// already exists — the loser of a concurrent first-spawn create used to fail
+// here with EEXIST ("File exists (os error 17)").
+// Owner: delegated-run reservation
+#[test]
+fn reservations_tolerate_existing_session_subagents_dir() {
+    let temp = TempDir::new().unwrap();
+    // Simulate the winner of a concurrent first-spawn create: the directory
+    // exists by the time this reservation checks.
+    let subagents_dir = create_session_subagents(temp.path());
+    fs::create_dir(&subagents_dir).unwrap();
+    let placement = RunPlacement::Session {
+        parent_session_id: "session-id".into(),
+        subagents_dir: subagents_dir.clone(),
+    };
+
+    let (id, directory) =
+        reserve_in_default_workspace(temp.path(), &placement, || "abcdef".into()).unwrap();
+
+    assert_eq!(id, "abcdef");
+    assert_eq!(directory, subagents_dir.join("abcdef"));
+}
+
 #[test]
 fn reservation_fails_after_parent_session_is_deleted() {
     let temp = TempDir::new().unwrap();

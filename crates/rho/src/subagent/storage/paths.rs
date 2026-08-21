@@ -2,6 +2,7 @@
 
 use std::{
     fs,
+    io::ErrorKind,
     path::{Component, Path, PathBuf},
 };
 
@@ -55,11 +56,14 @@ impl SessionSubagentsDir {
     }
 
     pub(super) fn ensure_ready(&self) -> anyhow::Result<()> {
-        if self.path.exists() {
-            secure_directory(&self.path)?;
-        } else {
-            create_private_directory(&self.path)?;
+        // Concurrent first reservations race on this create; AlreadyExists is
+        // success. `secure_directory` re-validates type and mode either way.
+        match create_private_directory(&self.path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.into()),
         }
+        secure_directory(&self.path)?;
         Ok(())
     }
 
