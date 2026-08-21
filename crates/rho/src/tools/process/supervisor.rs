@@ -46,16 +46,50 @@ pub(super) async fn supervise(
     tokio::spawn(reader(Stream::Stdout, stdout, tx.clone()));
     tokio::spawn(reader(Stream::Stderr, stderr, tx));
     let mut final_state = State::Exited;
-    if let Some(timeout) = timeout {
-        let sleep = tokio::time::sleep(timeout);
-        tokio::pin!(sleep);
-        loop {
-            tokio::select! {Some((stream,b))=rx.recv()=>push(&rec,stream,b,&limits),g=stop.recv()=>{final_state=State::Terminated;tree.terminate(&mut child,g.unwrap_or_default()).await;break},_= &mut sleep=>{final_state=State::TimedOut;tree.terminate(&mut child,Duration::ZERO).await;break},s=child.wait()=>{{let mut r=rec.lock().unwrap();r.exit_code=s.ok().and_then(|x|x.code());}break}}
+    match timeout {
+        Some(timeout) => {
+            let sleep = tokio::time::sleep(timeout);
+            tokio::pin!(sleep);
+            loop {
+                tokio::select! {
+                    Some((stream, bytes)) = rx.recv() => push(&rec, stream, bytes, &limits),
+                    grace = stop.recv() => {
+                        final_state = State::Terminated;
+                        tree.terminate(&mut child, grace.unwrap_or_default()).await;
+                        break;
+                    }
+                    _ = &mut sleep => {
+                        final_state = State::TimedOut;
+                        tree.terminate(&mut child, Duration::ZERO).await;
+                        break;
+                    }
+                    status = child.wait() => {
+                        record_exit(&rec, status);
+                        // The leader can exit while descendants survive (`sleep
+                        // 300 & exit 0`). End the whole group so the drain below
+                        // always reaches EOF and no descendant outlives the
+                        // record, matching the exact-process adapter.
+                        tree.kill();
+                        break;
+                    }
+                }
+            }
         }
-    } else {
-        loop {
-            tokio::select! {Some((stream,b))=rx.recv()=>push(&rec,stream,b,&limits),g=stop.recv()=>{final_state=State::Terminated;tree.terminate(&mut child,g.unwrap_or_default()).await;break},s=child.wait()=>{{let mut r=rec.lock().unwrap();r.exit_code=s.ok().and_then(|x|x.code());}break}}
-        }
+        None => loop {
+            tokio::select! {
+                Some((stream, bytes)) = rx.recv() => push(&rec, stream, bytes, &limits),
+                grace = stop.recv() => {
+                    final_state = State::Terminated;
+                    tree.terminate(&mut child, grace.unwrap_or_default()).await;
+                    break;
+                }
+                status = child.wait() => {
+                    record_exit(&rec, status);
+                    tree.kill();
+                    break;
+                }
+            }
+        },
     }
     loop {
         tokio::select! {
@@ -80,6 +114,10 @@ pub(super) async fn supervise(
     r.notify.notify_waiters();
     drop(r);
     exited.notify_waiters();
+}
+fn record_exit(rec: &SharedRecord, status: Result<std::process::ExitStatus, std::io::Error>) {
+    let mut r = rec.lock().unwrap();
+    r.exit_code = status.ok().and_then(|status| status.code());
 }
 fn push(rec: &SharedRecord, stream: Stream, b: Vec<u8>, limits: &ProcessLimits) {
     let mut r = rec.lock().unwrap();
