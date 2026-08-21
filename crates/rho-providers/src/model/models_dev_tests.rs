@@ -1709,6 +1709,34 @@ fn rematched_openai_codex_catalog_keeps_builtin_window() {
     crate::provider::reset_custom_openai_compatible_providers_for_tests();
 }
 
+// Covers: model-id host must apply built-in overrides for the split models.dev pair
+// Owner: models.dev catalog rematch
+#[test]
+fn model_id_host_applies_builtin_overrides_from_split_id() {
+    let _lock = crate::provider::custom_provider_registry_test_lock();
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+    install_model_id_host();
+
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        write_cached_upstream_model_metadata(
+            MODEL_ID_CATALOG_CACHE_PROVIDER,
+            "openai-codex/gpt-5.5",
+            &ModelMetadata {
+                advertised_context_window: Some(1_050_000),
+                effective_context_window: Some(922_000),
+                reasoning_metadata_complete: true,
+                ..ModelMetadata::default()
+            },
+        );
+
+        let metadata =
+            current_model_metadata("cliproxyapi", "openai-codex/gpt-5.5").expect("shared-tree row");
+        assert_eq!(metadata.effective_context_window, Some(400_000));
+    });
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+}
+
 fn install_model_id_host() {
     crate::provider::install_custom_openai_compatible_providers_with_lookup([(
         crate::provider::CustomProviderSpec::new("cliproxyapi", None),
@@ -1717,7 +1745,7 @@ fn install_model_id_host() {
     .unwrap();
 }
 
-// Covers: catalog_mode = model-id hydrate writes otherwise-unborrowed slugs
+// Covers: catalog_mode = model-id hydrate writes one shared ExactAdvertised tree
 // Owner: models.dev catalog hydrate
 #[test]
 fn hydrate_writes_full_tree_for_model_id_hosts() {
@@ -1740,17 +1768,113 @@ fn hydrate_writes_full_tree_for_model_id_hosts() {
     let cache = tempfile::tempdir().unwrap();
     with_models_dev_cache_dir(cache.path().to_path_buf(), || {
         assert!(hydrate_catalog_from_api(&api) >= 1);
-        let metadata = cached_upstream_model_metadata("azure", "gpt-4o").expect("full-tree row");
+        mark_catalog_snapshot_current_for_tests();
+        let metadata =
+            current_model_metadata("cliproxyapi", "azure/gpt-4o").expect("shared full-tree row");
         assert_eq!(metadata.display_name.as_deref(), Some("Azure GPT-4o"));
         assert_eq!(metadata.advertised_context_window, Some(128_000));
+        // The unborrowed slug itself stays out of sqlite.
+        assert!(cached_upstream_model_metadata("azure", "gpt-4o").is_none());
+        assert!(
+            cached_upstream_model_metadata("cliproxyapi", "azure/gpt-4o").is_none(),
+            "model-id rows must not be cloned under the host name"
+        );
+        assert!(
+            cached_upstream_model_metadata(MODEL_ID_CATALOG_CACHE_PROVIDER, "azure/gpt-4o")
+                .is_some()
+        );
     });
     crate::provider::reset_custom_openai_compatible_providers_for_tests();
 }
 
-// Covers: model-id lookup splits on the first slash; bare ids miss
+// Covers: a second model-id host reuses the shared tree without a refetch
+// Owner: models.dev catalog hydrate
+#[test]
+fn second_model_id_host_reuses_shared_full_tree() {
+    let _lock = crate::provider::custom_provider_registry_test_lock();
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+    install_model_id_host();
+
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        mark_catalog_snapshot_current_for_tests();
+        assert!(hydrate::catalog_snapshot_is_ready());
+
+        crate::provider::install_custom_openai_compatible_providers_with_lookup([
+            (
+                crate::provider::CustomProviderSpec::new("cliproxyapi", None),
+                crate::provider::CatalogLookupMode::ModelId,
+            ),
+            (
+                crate::provider::CustomProviderSpec::new("gateway-two", None),
+                crate::provider::CatalogLookupMode::ModelId,
+            ),
+        ])
+        .unwrap();
+        assert!(
+            hydrate::catalog_snapshot_is_ready(),
+            "a second model-id host must reuse the shared ExactAdvertised tree"
+        );
+    });
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+}
+
+// Covers: model-id lookup of a built-in slug uses advertised catalog levels
 // Owner: models.dev catalog rematch
 #[test]
-fn custom_host_model_id_lookup_splits_and_misses_bare_ids() {
+fn model_id_host_keeps_advertised_levels_for_builtin_slugs() {
+    let _lock = crate::provider::custom_provider_registry_test_lock();
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+    install_model_id_host();
+
+    let api = json!({
+        "anthropic": {
+            "models": {
+                "claude-fable-5": {
+                    "name": "Claude Fable 5",
+                    "reasoning": true,
+                    "reasoning_options": [
+                        {"type": "effort", "values": ["low", "medium", "high", "max"]}
+                    ],
+                    "limit": { "context": 200000, "output": 64000 }
+                }
+            }
+        }
+    });
+
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        assert!(hydrate_catalog_from_api(&api) >= 1);
+        mark_catalog_snapshot_current_for_tests();
+
+        // The host reads the shared ExactAdvertised tree with the unsplit id.
+        // Splitting would instead hit built-in Anthropic extract, whose Unknown
+        // policy does not expose advertised levels.
+        let metadata = current_model_metadata("cliproxyapi", "anthropic/claude-fable-5")
+            .expect("shared-tree row for a built-in slug");
+        assert_eq!(
+            metadata.supported_reasoning_levels,
+            Some(vec![
+                ReasoningLevel::Low,
+                ReasoningLevel::Medium,
+                ReasoningLevel::High,
+                ReasoningLevel::Max,
+            ])
+        );
+        assert!(metadata.reasoning_capabilities_known);
+
+        // Built-in Anthropic extract stays on its own policy: known stays false.
+        let builtin = current_model_metadata("anthropic", "claude-fable-5")
+            .expect("built-in anthropic extract row");
+        assert!(!builtin.reasoning_capabilities_known);
+    });
+    crate::provider::reset_custom_openai_compatible_providers_for_tests();
+}
+
+// Covers: model-id lookup reads the shared tree; bare ids miss with a diagnostic
+// Owner: models.dev catalog rematch
+#[test]
+fn custom_host_model_id_lookup_reads_unsplit_ids_and_misses_bare_ids() {
     let _lock = crate::provider::custom_provider_registry_test_lock();
     crate::provider::reset_custom_openai_compatible_providers_for_tests();
     install_model_id_host();
@@ -1758,8 +1882,8 @@ fn custom_host_model_id_lookup_splits_and_misses_bare_ids() {
     let cache = tempfile::tempdir().unwrap();
     with_models_dev_cache_dir(cache.path().to_path_buf(), || {
         write_cached_upstream_model_metadata(
-            "foo",
-            "bar/baz",
+            MODEL_ID_CATALOG_CACHE_PROVIDER,
+            "foo/bar/baz",
             &ModelMetadata {
                 display_name: Some("Foo Bar Baz".into()),
                 advertised_context_window: Some(32_000),
@@ -1768,7 +1892,8 @@ fn custom_host_model_id_lookup_splits_and_misses_bare_ids() {
             },
         );
         mark_catalog_snapshot_current_for_tests();
-        let metadata = current_model_metadata("cliproxyapi", "foo/bar/baz").expect("split row");
+        let metadata =
+            current_model_metadata("cliproxyapi", "foo/bar/baz").expect("shared-tree row");
         assert_eq!(metadata.display_name.as_deref(), Some("Foo Bar Baz"));
         assert!(current_model_metadata("cliproxyapi", "gpt-5.6-sol").is_none());
         assert_eq!(

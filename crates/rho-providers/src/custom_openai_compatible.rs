@@ -6,8 +6,8 @@
 //!
 //! A host may borrow another models.dev slug for context, price, and reasoning
 //! metadata via `catalog`; that slug becomes its `metadata_upstream`.
-//! `catalog_mode = "model-id"` instead splits the selected model id on the
-//! first `/` and looks that pair up in models.dev.
+//! `catalog_mode = "model-id"` instead keeps the selected `slug/model` id and
+//! looks that unsplit id up in a shared ExactAdvertised models.dev tree.
 //!
 //! Descriptors are interned for `'static` lookup. Visibility is scoped: the
 //! process-wide active set is the foreground config, and a runtime can overlay
@@ -92,7 +92,8 @@ impl<'a> CustomProviderSpec<'a> {
 
     /// models.dev slug this host reads metadata rows under.
     ///
-    /// Model-id lookup ignores this and splits the selected model id instead.
+    /// Model-id lookup ignores this and reads the unsplit `slug/model` id from
+    /// the shared catalog tree instead.
     fn metadata_upstream(&self) -> &'a str {
         self.catalog.unwrap_or(self.name)
     }

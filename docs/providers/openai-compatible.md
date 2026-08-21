@@ -25,7 +25,7 @@ catalog = "llmgateway"
 
 `llmgateway` is a mixed models.dev catalog with bare model ids. `openrouter` only matches if the host uses OpenRouter-style `owner/model` ids. `openai-codex` borrows Rho's Codex catalog, including built-in window overrides. Requests still go to the custom host; only metadata is borrowed. For one model that should use a different slug, set `catalog` on that row in `~/.rho/models.toml`. See [local model metadata](/configuration#local-model-metadata).
 
-If the host already pushes `provider/model` ids (`anthropic/claude-sonnet-4-5`), set `catalog_mode = "model-id"` instead of a borrowed slug. Rho splits on the first `/` and looks that pair up in models.dev (`foo/bar/baz` → `foo` / `bar/baz`). A host cannot set both `catalog` and `catalog_mode = "model-id"`. A bare id with no slash misses catalog metadata and inserts a transcript notice. Per-model `catalog` in `models.toml` still wins. Open `/config`, choose **Providers**, then **Refresh models.dev catalog** to redownload that snapshot on demand.
+If the host already pushes `provider/model` ids (`anthropic/claude-sonnet-4-5`), set `catalog_mode = "model-id"` instead of a borrowed slug. Rho looks the unsplit id up in models.dev (`foo/bar/baz` stays one catalog id). A host cannot set both `catalog` and `catalog_mode = "model-id"`. A bare id with no slash misses catalog metadata and inserts a transcript notice. Per-model `catalog` in `models.toml` still wins. Open `/config`, choose **Providers**, then **Refresh models.dev catalog** to redownload that snapshot on demand.
 
 Keep the `/v1` suffix. Rho appends `/models` for discovery and `/chat/completions` for agent turns. The URL must use `http` or `https` and cannot contain credentials, a query, or a fragment.
 
