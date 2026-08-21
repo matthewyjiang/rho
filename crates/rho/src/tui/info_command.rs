@@ -402,11 +402,14 @@ fn format_context_row(
         None => "model limit",
     };
     let Some(tokens) = context_usage.and_then(|usage| usage.tokens) else {
-        return Some(match window {
-            // No reported limit and no consumption to show.
-            None => format!("unknown ({source})"),
-            Some(window) => format!("unknown / {} tokens ({source})", format_number(window)),
-        });
+        // Nothing reported at all: let the caller render its fallback row.
+        let Some(window) = window else {
+            return None;
+        };
+        return Some(format!(
+            "unknown / {} tokens ({source})",
+            format_number(window)
+        ));
     };
     let Some(window) = window else {
         // Without a known limit there is no fill percent; still show consumption.
@@ -572,14 +575,11 @@ mod tests {
     }
 
     #[test]
-    fn context_row_always_renders_even_with_no_usage_or_limit() {
-        // Covers: /info is an exhaustive diagnostic, so the row renders even
-        // when neither usage nor a window is known.
+    fn context_row_falls_back_when_nothing_is_known() {
+        // Covers: no usage and no window must fall back to the caller's
+        // "not reported" row instead of naming a limit nobody reported.
         // Owner: /info context row
-        assert_eq!(
-            format_context_row(None, None),
-            Some("unknown (model limit)".into())
-        );
+        assert_eq!(format_context_row(None, None), None);
         // Metadata alone still supplies the window when usage is absent.
         assert_eq!(
             format_context_row(
