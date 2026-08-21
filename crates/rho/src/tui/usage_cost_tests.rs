@@ -209,3 +209,37 @@ fn resolves_and_combines_session_costs() {
     );
     assert_eq!(super::session_total_cost_usd_micros(None, 0), None);
 }
+
+// Covers: a zeroed provider-reported window must fall through to the catalog's
+// display window instead of hiding it; zero counts as unknown at each stage
+// Owner: tui context window resolution
+#[test]
+fn zeroed_provider_window_falls_back_to_metadata_display_window() {
+    use rho_providers::model::ContextUsage;
+
+    let metadata = ModelMetadata {
+        advertised_context_window: Some(200_000),
+        ..ModelMetadata::default()
+    };
+    // Provider reports 0: garbage value must not shadow the metadata window.
+    assert_eq!(
+        super::resolved_context_window(
+            Some(&ContextUsage::estimated(1_000, Some(0))),
+            Some(&metadata),
+        ),
+        Some(200_000)
+    );
+    // A positive provider value still wins over metadata.
+    assert_eq!(
+        super::resolved_context_window(
+            Some(&ContextUsage::estimated(1_000, Some(100_000))),
+            Some(&metadata),
+        ),
+        Some(100_000)
+    );
+    // Zero everywhere stays unknown.
+    assert_eq!(
+        super::resolved_context_window(Some(&ContextUsage::estimated(1_000, Some(0))), None,),
+        None
+    );
+}

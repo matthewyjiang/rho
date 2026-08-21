@@ -7,7 +7,8 @@ use super::super::{
     render::truncate_one_line,
     theme::Theme,
     usage_cost::{
-        format_token_count, format_usage_token_summary, format_usd, resolved_usage_cost_usd_micros,
+        context_fill_percent, format_token_count, format_usage_token_summary, format_usd,
+        resolved_context_window, resolved_usage_cost_usd_micros,
     },
 };
 use crate::{
@@ -129,7 +130,7 @@ fn usage_metric_parts(
     status: Option<&RunStatus>,
 ) -> Vec<String> {
     let mut parts = Vec::new();
-    if let Some(context_summary) = format_context_summary(context) {
+    if let Some(context_summary) = format_attach_context(context) {
         parts.push(context_summary);
     }
     if let Some(usage_summary) = run_usage
@@ -167,12 +168,13 @@ fn run_status_usage(status: &RunStatus) -> ModelUsage {
     }
 }
 
-fn format_context_summary(context: Option<&ContextUsage>) -> Option<String> {
+fn format_attach_context(context: Option<&ContextUsage>) -> Option<String> {
     let context = context?;
     let tokens = context.tokens?;
-    match context.context_window.filter(|window| *window > 0) {
+    // Attach has no model metadata, so only the usage-reported window applies.
+    match resolved_context_window(Some(context), None) {
         Some(window) => {
-            let percent = tokens as f64 * 100.0 / window as f64;
+            let percent = context_fill_percent(tokens, window);
             Some(format!(
                 "context {}/{} ({percent:.1}%)",
                 format_token_count(tokens),
