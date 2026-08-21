@@ -403,9 +403,7 @@ fn format_context_row(
     };
     let Some(tokens) = context_usage.and_then(|usage| usage.tokens) else {
         // Nothing reported at all: let the caller render its fallback row.
-        let Some(window) = window else {
-            return None;
-        };
+        let window = window?;
         return Some(format!(
             "unknown / {} tokens ({source})",
             format_number(window)
