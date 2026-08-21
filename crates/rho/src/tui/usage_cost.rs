@@ -280,6 +280,7 @@ pub(super) fn resolved_context_window(
 ) -> Option<u64> {
     usage
         .and_then(|usage| usage.context_window)
+        .filter(|window| *window > 0)
         .or_else(|| metadata.and_then(ModelMetadata::display_context_window))
         .filter(|window| *window > 0)
 }
