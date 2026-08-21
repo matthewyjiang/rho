@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.9.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.9.0...rho-providers-v1.9.1) (2026-08-21)
+
+
+### Bug Fixes
+
+* **providers:** stop model-id hosts inheriting builtin reasoning ([#1018](https://github.com/matthewyjiang/rho/issues/1018)) ([05acadd](https://github.com/matthewyjiang/rho/commit/05acadd28fc9058d10d13b029785f6fa53dfe36e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 4.1.1 to 4.2.0
+
 ## [1.9.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.8.0...rho-providers-v1.9.0) (2026-08-20)
 
 

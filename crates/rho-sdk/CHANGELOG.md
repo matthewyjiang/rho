@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.2.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v4.1.1...rho-sdk-v4.2.0) (2026-08-21)
+
+
+### Features
+
+* **acp:** let hosts set reasoning through thought_level ([#1015](https://github.com/matthewyjiang/rho/issues/1015)) ([5cda8e8](https://github.com/matthewyjiang/rho/commit/5cda8e8308682fa13c9d6001ec12989f0d030bb4))
+
 ## [4.1.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v4.1.0...rho-sdk-v4.1.1) (2026-08-20)
 
 

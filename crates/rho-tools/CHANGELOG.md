@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.20.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.19.0...rho-agent-tools-v0.20.0) (2026-08-21)
+
+
+### Features
+
+* **acp:** let hosts set reasoning through thought_level ([#1015](https://github.com/matthewyjiang/rho/issues/1015)) ([5cda8e8](https://github.com/matthewyjiang/rho/commit/5cda8e8308682fa13c9d6001ec12989f0d030bb4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 4.1.1 to 4.2.0
+
 ## [0.19.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.18.1...rho-agent-tools-v0.19.0) (2026-08-20)
 
 

@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.47.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.46.0...rho-coding-agent-v1.47.0) (2026-08-21)
+
+
+### Features
+
+* **acp:** let hosts discover and switch models per-session ([#1012](https://github.com/matthewyjiang/rho/issues/1012)) ([9ddaf37](https://github.com/matthewyjiang/rho/commit/9ddaf373c90565248896044e57fa9d7da8c8efee))
+* **acp:** let hosts set reasoning through thought_level ([#1015](https://github.com/matthewyjiang/rho/issues/1015)) ([5cda8e8](https://github.com/matthewyjiang/rho/commit/5cda8e8308682fa13c9d6001ec12989f0d030bb4))
+* **attach:** show live tok/s in the subagent attach header ([#1011](https://github.com/matthewyjiang/rho/issues/1011)) ([75f2db5](https://github.com/matthewyjiang/rho/commit/75f2db5dd9c61e07436f2d4775111fb9e9b6b98c))
+* **tui:** bundle popular color schemes as built-in themes ([#1014](https://github.com/matthewyjiang/rho/issues/1014)) ([b0a1ad6](https://github.com/matthewyjiang/rho/commit/b0a1ad622f19684d1b47e528171e38225031c04e))
+* **tui:** flag finished turns on the jump chip and toast collapsed pastes ([#1021](https://github.com/matthewyjiang/rho/issues/1021)) ([a16a4d4](https://github.com/matthewyjiang/rho/commit/a16a4d4de94ac1c09a39ed9970dce0cf74053569))
+
+
+### Bug Fixes
+
+* **subagents:** tolerate concurrent session subagents dir creation ([#1020](https://github.com/matthewyjiang/rho/issues/1020)) ([0a68625](https://github.com/matthewyjiang/rho/commit/0a68625102e153321119d98ca7655e18e36e6890))
+* **tui:** show context tokens when no window limit is reported ([#1019](https://github.com/matthewyjiang/rho/issues/1019)) ([a4d8909](https://github.com/matthewyjiang/rho/commit/a4d890987535c09c1ac8469977e87c1100b6a9df))
+
+
+### Performance Improvements
+
+* cut per-frame palette discovery, layout rework, and git spawn churn ([#1017](https://github.com/matthewyjiang/rho/issues/1017)) ([39952ce](https://github.com/matthewyjiang/rho/commit/39952ce4177da242f172b6a6bbcc30721424924b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 4.1.1 to 4.2.0
+    * rho-providers bumped from 1.9.0 to 1.9.1
+
 ## [1.46.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.45.0...rho-coding-agent-v1.46.0) (2026-08-20)
 
 
