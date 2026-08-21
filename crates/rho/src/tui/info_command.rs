@@ -387,27 +387,34 @@ fn format_cache_rebilled(
 }
 
 fn format_context(info: &RuntimeInfo) -> Option<String> {
-    let window = info
-        .context_usage
-        .as_ref()
+    format_context_details(info.context_usage.as_ref(), info.model_metadata.as_ref())
+}
+
+/// Shared by `/info`; shows consumption even when no limit is reported.
+fn format_context_details(
+    context_usage: Option<&ContextUsage>,
+    model_metadata: Option<&ModelMetadata>,
+) -> Option<String> {
+    let window = context_usage
         .and_then(|usage| usage.context_window)
-        .or_else(|| {
-            info.model_metadata
-                .as_ref()
-                .and_then(ModelMetadata::display_context_window)
-        })
-        .filter(|window| *window > 0)?;
-    let source = match info.context_usage.as_ref().map(|usage| usage.source) {
+        .or_else(|| model_metadata.and_then(ModelMetadata::display_context_window))
+        .filter(|window| *window > 0);
+    let source = match context_usage.map(|usage| usage.source) {
         Some(ContextUsageSource::Estimated) => "estimated",
         Some(ContextUsageSource::ProviderReported) => "provider reported",
         Some(ContextUsageSource::UnknownAfterCompaction) => "unknown after compaction",
         None => "model limit",
     };
-    let Some(tokens) = info.context_usage.as_ref().and_then(|usage| usage.tokens) else {
-        return Some(format!(
-            "unknown / {} tokens ({source})",
-            format_number(window)
-        ));
+    let Some(tokens) = context_usage.and_then(|usage| usage.tokens) else {
+        return Some(match window {
+            // No reported limit and no consumption to show.
+            None => format!("unknown ({source})"),
+            Some(window) => format!("unknown / {} tokens ({source})", format_number(window)),
+        });
+    };
+    let Some(window) = window else {
+        // Without a known limit there is no fill percent; still show consumption.
+        return Some(format!("{} tokens ({source})", format_number(tokens)));
     };
     let percent = tokens as f64 * 100.0 / window as f64;
     Some(format!(
@@ -550,6 +557,21 @@ mod tests {
                 BillingInfo::Metered,
             ),
             Some("$0.002 partial (8,000 tokens, 2 misses)".into())
+        );
+    }
+
+    #[test]
+    fn context_details_show_tokens_without_a_reported_limit() {
+        // Covers: unknown context window must not hide consumption
+        // Owner: /info context row
+        assert_eq!(
+            format_context_details(Some(&ContextUsage::estimated(123_456, None)), None,),
+            Some("123,456 tokens (estimated)".into())
+        );
+        // A reported limit keeps the familiar tokens/limit/percent form.
+        assert_eq!(
+            format_context_details(Some(&ContextUsage::estimated(50_000, Some(200_000))), None,),
+            Some("50,000 / 200,000 tokens (25.0%, estimated)".into())
         );
     }
 

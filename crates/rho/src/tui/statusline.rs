@@ -609,13 +609,17 @@ fn format_context_summary(state: &StatusLineState) -> Option<(String, Style)> {
                 .as_ref()
                 .and_then(ModelMetadata::display_context_window)
         })
-        .filter(|window| *window > 0)?;
+        .filter(|window| *window > 0);
     let Some(tokens) = context.tokens else {
         return match context.source {
             // Unknown after compaction is a real gap, not ambient chrome.
             ContextUsageSource::UnknownAfterCompaction => Some(("?".into(), Theme::warning())),
             ContextUsageSource::Estimated | ContextUsageSource::ProviderReported => None,
         };
+    };
+    // Without a known limit there is no fill percent; still show consumption.
+    let Some(window) = window else {
+        return Some((format_token_count(tokens), Theme::dim()));
     };
     let percent = tokens as f64 * 100.0 / window as f64;
     Some((

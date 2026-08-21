@@ -105,6 +105,21 @@ fn bypass_permission_and_high_context_use_warning_styles() {
 }
 
 #[test]
+fn context_without_known_window_still_shows_tokens() {
+    // Covers: models with no reported limit must still show consumption
+    // Owner: statusline render
+    let mut statusline = StatusLine::new(&test_info(PathBuf::from("/tmp/project")));
+    statusline.update_usage(None, Some(&ContextUsage::estimated(1_234, None)), 0);
+
+    let line = statusline.lines(80, None)[1].clone();
+    assert_eq!(
+        span_style(&line, "1.2K"),
+        Some(Theme::dim()),
+        "token count must render dim without a fill percent: {line:?}"
+    );
+}
+
+#[test]
 fn bottom_row_drops_fields_by_global_rank() {
     // Covers: scarce width drops by rank across both sides, not by staged packing
     // Owner: statusline field hierarchy
