@@ -1,4 +1,4 @@
-use rho_providers::model::{ModelMetadata, ModelUsage};
+use rho_providers::model::{ContextUsage, ModelMetadata, ModelUsage};
 use rho_sdk::model::context::estimate_text_tokens;
 
 /// Attempt-aware provider usage snapshots for a single run.
@@ -270,6 +270,23 @@ fn push_token_part(parts: &mut Vec<String>, label: &str, tokens: Option<u64>) {
     if let Some(tokens) = tokens {
         parts.push(format!("{label} {}", format_token_count(tokens)));
     }
+}
+
+/// Effective display window: provider-reported usage window first, then the
+/// model catalog's display window. A zeroed window counts as unknown.
+pub(super) fn resolved_context_window(
+    usage: Option<&ContextUsage>,
+    metadata: Option<&ModelMetadata>,
+) -> Option<u64> {
+    usage
+        .and_then(|usage| usage.context_window)
+        .or_else(|| metadata.and_then(ModelMetadata::display_context_window))
+        .filter(|window| *window > 0)
+}
+
+/// Fill percent of `window`; callers only invoke this with a positive window.
+pub(super) fn context_fill_percent(tokens: u64, window: u64) -> f64 {
+    tokens as f64 * 100.0 / window as f64
 }
 
 /// Resolve provider-reported or estimated main-session cost.

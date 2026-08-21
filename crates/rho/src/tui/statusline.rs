@@ -9,8 +9,8 @@ use super::{
     render::{display_width, truncate_one_line},
     theme::Theme,
     usage_cost::{
-        format_token_count, format_usd, resolved_usage_cost_usd_micros,
-        session_total_cost_usd_micros,
+        context_fill_percent, format_token_count, format_usd, resolved_context_window,
+        resolved_usage_cost_usd_micros, session_total_cost_usd_micros,
     },
     workspace::git_branch,
     RuntimeModelView,
@@ -397,7 +397,7 @@ fn pack_bottom_status(
 fn bottom_fields(state: &StatusLineState) -> Vec<StatusField> {
     let mut fields = Vec::with_capacity(8);
 
-    if let Some((text, style)) = format_context_summary(state) {
+    if let Some((text, style)) = format_status_context(state) {
         fields.push(field(
             FieldKey::Context,
             Side::Left,
@@ -599,17 +599,9 @@ fn truncate_fields(fields: &mut [StatusField], width: usize) {
     }
 }
 
-fn format_context_summary(state: &StatusLineState) -> Option<(String, Style)> {
+fn format_status_context(state: &StatusLineState) -> Option<(String, Style)> {
     let context = state.context_usage.as_ref()?;
-    let window = context
-        .context_window
-        .or_else(|| {
-            state
-                .model_metadata
-                .as_ref()
-                .and_then(ModelMetadata::display_context_window)
-        })
-        .filter(|window| *window > 0);
+    let window = resolved_context_window(Some(context), state.model_metadata.as_ref());
     let Some(tokens) = context.tokens else {
         return match context.source {
             // Unknown after compaction is a real gap, not ambient chrome.
@@ -621,7 +613,7 @@ fn format_context_summary(state: &StatusLineState) -> Option<(String, Style)> {
     let Some(window) = window else {
         return Some((format_token_count(tokens), Theme::dim()));
     };
-    let percent = tokens as f64 * 100.0 / window as f64;
+    let percent = context_fill_percent(tokens, window);
     Some((
         format!("{} ({percent:.1}%)", format_token_count(tokens)),
         context_usage_style(percent),

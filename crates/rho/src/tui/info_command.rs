@@ -7,8 +7,8 @@ use super::{
     command_block::CommandBlock,
     model_performance::ModelPerformanceSummary,
     usage_cost::{
-        display_input_tokens, format_usd, resolved_usage_cost_usd_micros,
-        session_total_cost_usd_micros, CostSource,
+        context_fill_percent, display_input_tokens, format_usd, resolved_context_window,
+        resolved_usage_cost_usd_micros, session_total_cost_usd_micros, CostSource,
     },
     workspace::git_branch,
     App, Entry,
@@ -228,7 +228,9 @@ pub(super) fn runtime_info_lines(info: &RuntimeInfo, width: usize) -> Vec<Line<'
 }
 
 fn push_usage_fields(block: &mut CommandBlock, info: &RuntimeInfo) {
-    if let Some(context) = format_context(info) {
+    if let Some(context) =
+        format_context_row(info.context_usage.as_ref(), info.model_metadata.as_ref())
+    {
         block.push_field("Context", &context);
     } else {
         block.push_field("Context", "not reported");
@@ -386,19 +388,13 @@ fn format_cache_rebilled(
     })
 }
 
-fn format_context(info: &RuntimeInfo) -> Option<String> {
-    format_context_details(info.context_usage.as_ref(), info.model_metadata.as_ref())
-}
-
-/// Shared by `/info`; shows consumption even when no limit is reported.
-fn format_context_details(
+/// Formats the `/info` context row; shows consumption even when no limit is
+/// reported.
+fn format_context_row(
     context_usage: Option<&ContextUsage>,
     model_metadata: Option<&ModelMetadata>,
 ) -> Option<String> {
-    let window = context_usage
-        .and_then(|usage| usage.context_window)
-        .or_else(|| model_metadata.and_then(ModelMetadata::display_context_window))
-        .filter(|window| *window > 0);
+    let window = resolved_context_window(context_usage, model_metadata);
     let source = match context_usage.map(|usage| usage.source) {
         Some(ContextUsageSource::Estimated) => "estimated",
         Some(ContextUsageSource::ProviderReported) => "provider reported",
@@ -416,7 +412,7 @@ fn format_context_details(
         // Without a known limit there is no fill percent; still show consumption.
         return Some(format!("{} tokens ({source})", format_number(tokens)));
     };
-    let percent = tokens as f64 * 100.0 / window as f64;
+    let percent = context_fill_percent(tokens, window);
     Some(format!(
         "{} / {} tokens ({percent:.1}%, {source})",
         format_number(tokens),
@@ -565,13 +561,35 @@ mod tests {
         // Covers: unknown context window must not hide consumption
         // Owner: /info context row
         assert_eq!(
-            format_context_details(Some(&ContextUsage::estimated(123_456, None)), None,),
+            format_context_row(Some(&ContextUsage::estimated(123_456, None)), None,),
             Some("123,456 tokens (estimated)".into())
         );
         // A reported limit keeps the familiar tokens/limit/percent form.
         assert_eq!(
-            format_context_details(Some(&ContextUsage::estimated(50_000, Some(200_000))), None,),
+            format_context_row(Some(&ContextUsage::estimated(50_000, Some(200_000))), None,),
             Some("50,000 / 200,000 tokens (25.0%, estimated)".into())
+        );
+    }
+
+    #[test]
+    fn context_row_always_renders_even_with_no_usage_or_limit() {
+        // Covers: /info is an exhaustive diagnostic, so the row renders even
+        // when neither usage nor a window is known.
+        // Owner: /info context row
+        assert_eq!(
+            format_context_row(None, None),
+            Some("unknown (model limit)".into())
+        );
+        // Metadata alone still supplies the window when usage is absent.
+        assert_eq!(
+            format_context_row(
+                None,
+                Some(&ModelMetadata {
+                    advertised_context_window: Some(200_000),
+                    ..ModelMetadata::default()
+                }),
+            ),
+            Some("unknown / 200,000 tokens (model limit)".into())
         );
     }
 
