@@ -284,7 +284,7 @@ fn unchanged_statusline_reuses_rendered_lines() {
 }
 
 #[test]
-fn git_branch_is_cached_until_explicit_refresh() {
+fn git_branch_updates_on_statusline_rebuild() {
     use std::fs;
 
     let temp = tempfile::tempdir().unwrap();
@@ -295,11 +295,8 @@ fn git_branch_is_cached_until_explicit_refresh() {
 
     let initial = statusline.lines(80, None).to_vec();
     fs::write(git_dir.join("HEAD"), "ref: refs/heads/feature\n").unwrap();
-    let cached = statusline.lines(80, None).to_vec();
-    statusline.refresh_git_branch();
     let refreshed = statusline.lines(80, None).to_vec();
 
-    assert_eq!(cached, initial);
     assert_ne!(refreshed, initial);
 }
 

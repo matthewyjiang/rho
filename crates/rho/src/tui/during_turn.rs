@@ -12,6 +12,7 @@ use ratatui::DefaultTerminal;
 
 use super::{
     activity::LoadingSpinner,
+    command_palette::selected_command,
     commands::{self, CommandId, CommandInvocation},
     config_editor::{ConfigNumberInput, ConfigNumberKey, ConfigTextKey},
     config_picker, mouse_capture,
@@ -94,7 +95,7 @@ impl App {
         {
             return Ok(false);
         }
-        if self.handle_running_file_palette_key(key)? {
+        if self.handle_file_palette_key(key)? {
             return Ok(false);
         }
         // Same order as the idle composer: pin cycle wins when a user binds
@@ -445,7 +446,8 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Tab) => {
-                if let Some(choice) = self.selected_command() {
+                if let Some(choice) = selected_command(&matches, self.input_ui.command_selection())
+                {
                     self.complete_command_choice(&choice);
                     self.input_ui.set_command_palette_dismissed(false);
                     self.clamp_command_selection();
@@ -453,7 +455,8 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Enter) => {
-                if let Some(choice) = self.selected_command() {
+                if let Some(choice) = selected_command(&matches, self.input_ui.command_selection())
+                {
                     self.complete_command_choice(&choice);
                     self.clamp_command_selection();
                 }
@@ -815,7 +818,6 @@ impl App {
                     Event::FocusGained => {
                         self.input_ui.cancel_pointer_click_sequence();
                         mouse_capture::reassert();
-                        self.statusline.refresh_git_branch();
                     }
                     Event::FocusLost => {
                         self.input_ui.cancel_pointer_click_sequence();

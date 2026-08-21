@@ -4,7 +4,7 @@ use super::*;
 use crate::tui::ReasoningChrome;
 
 fn live_line_text(app: &mut App) -> Vec<String> {
-    app.history_live_lines(80, Instant::now())
+    app.history_live_lines(80, crate::tui::DEFAULT_TUI_HEIGHT as usize, Instant::now())
         .into_iter()
         .map(|line| {
             line.spans

@@ -1,4 +1,5 @@
 use pretty_assertions::assert_eq;
+use tempfile::tempdir;
 
 use crate::tools::mcp::McpResource;
 
@@ -82,4 +83,23 @@ async fn selection_inserts_names_as_text_and_attaches_content() {
     for (name, entry, expected) in cases {
         assert_eq!(select(entry), expected, "{name}");
     }
+}
+
+// Covers: expired app-owned file palette cache must rediscover workspace files.
+// Owner: tui palette cache
+#[test]
+fn expired_app_file_cache_rediscovers_workspace_files() {
+    let workspace = tempdir().unwrap();
+    std::fs::write(workspace.path().join("old.rs"), "").unwrap();
+    let mut app = test_app();
+    app.info.runtime.cwd = workspace.path().to_path_buf();
+    app.input_ui.set_text("@".to_string());
+    app.input_ui.set_cursor(1);
+
+    let first = app.file_match_list();
+    assert_eq!(first.len(), 1);
+    std::fs::write(workspace.path().join("new.rs"), "").unwrap();
+    app.palette_caches.expire_file();
+    let refreshed = app.file_match_list();
+    assert_eq!(refreshed.len(), 2);
 }

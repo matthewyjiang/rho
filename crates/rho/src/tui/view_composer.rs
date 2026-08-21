@@ -76,7 +76,8 @@ impl App {
     ///
     /// Deriving both from the same walk keeps layout and cursor paint agreeing
     /// without wrapping the composer text twice per frame.
-    pub(super) fn composer_frame(&self, width: usize, viewport_height: usize) -> ComposerFrame {
+    pub(super) fn composer_frame(&mut self, width: usize, viewport_height: usize) -> ComposerFrame {
+        self.refresh_composer_attachment_layout_cache(width);
         match self.input_ui.composer() {
             ComposerMode::Input => {
                 let focused_paste = self

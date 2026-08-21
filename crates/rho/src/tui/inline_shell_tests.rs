@@ -178,3 +178,42 @@ fn display_text_preserves_output_and_context_state() {
         "✓ $ printf hello\nhello"
     );
 }
+
+// Covers: themed shell card cache must miss after Theme::generation() bumps.
+// Owner: tui inline shell render cache
+#[tokio::test]
+async fn shell_render_cache_misses_after_theme_generation_change() {
+    let _guard = crate::tui::theme::theme_test_lock();
+    crate::tui::theme::Theme::apply_committed("terminal");
+    let mut task = PendingShellTask::test_task("hello");
+    let first = task
+        .rendered_lines(40, 8, 4)
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    crate::tui::theme::Theme::apply_committed("one-half-light");
+    let generation = crate::tui::theme::Theme::generation();
+    let second = task
+        .rendered_lines(40, 8, 4)
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    let cached_generation = task
+        .render_cache
+        .as_ref()
+        .map(|cache| cache.theme_generation);
+    crate::tui::theme::Theme::apply_committed("terminal");
+    assert_eq!(first, second);
+    assert_eq!(cached_generation, Some(generation));
+    task.handle.abort();
+}

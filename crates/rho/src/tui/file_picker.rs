@@ -1,7 +1,7 @@
 use std::{
     ops::ControlFlow,
     path::{Path, PathBuf},
-    sync::{Arc, LazyLock, Mutex},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -14,7 +14,6 @@ use crate::paths::home_dir;
 
 const MAX_FILE_PATHS: usize = 100_000;
 const FILE_DISCOVERY_TIMEOUT: Duration = Duration::from_millis(750);
-pub(super) const FILE_PATH_CACHE_TTL: Duration = Duration::from_secs(2);
 /// Keep navigation bounded so weak queries stay interactive in large repos.
 const MAX_RANKED_FILE_MATCHES: usize = 500;
 
@@ -29,12 +28,6 @@ pub(super) struct FileMention {
 struct DirectoryScope {
     root: PathBuf,
     display_prefix: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct FilePathCacheKey {
-    root: PathBuf,
-    include_hidden: bool,
 }
 
 /// Workspace paths discovered for `@` mentions, plus whether the walk finished.
@@ -144,6 +137,7 @@ pub(super) fn file_palette_matches(
 }
 
 impl DiscoveredFilePaths {
+    #[cfg(test)]
     fn complete(paths: Vec<String>) -> Self {
         Self {
             paths: Arc::new(paths),
@@ -155,21 +149,6 @@ impl DiscoveredFilePaths {
         self.paths.as_slice()
     }
 }
-
-#[derive(Debug)]
-struct FilePathCache {
-    key: Option<FilePathCacheKey>,
-    discovered: DiscoveredFilePaths,
-    cached_at: Instant,
-}
-
-static FILE_PATH_CACHE: LazyLock<Mutex<FilePathCache>> = LazyLock::new(|| {
-    Mutex::new(FilePathCache {
-        key: None,
-        discovered: DiscoveredFilePaths::complete(Vec::new()),
-        cached_at: Instant::now(),
-    })
-});
 
 /// The `@query` token under the cursor, if any.
 ///
@@ -260,45 +239,13 @@ fn residual_includes_hidden(residual: &str) -> bool {
 
 fn file_paths_for_root(root: &Path, include_hidden: bool) -> DiscoveredFilePaths {
     let root = normalize_existing_dir(root).unwrap_or_else(|| root.to_path_buf());
-    let key = FilePathCacheKey {
-        root: root.clone(),
-        include_hidden,
-    };
-    if let Ok(cache) = FILE_PATH_CACHE.lock() {
-        if cache.key.as_ref() == Some(&key) && cache.cached_at.elapsed() < FILE_PATH_CACHE_TTL {
-            return cache.discovered.clone();
-        }
-    }
-
     let mut discovered = discover_file_paths(&root, include_hidden);
     Arc::make_mut(&mut discovered.paths).sort_by(|left, right| {
         left.to_ascii_lowercase()
             .cmp(&right.to_ascii_lowercase())
             .then_with(|| left.cmp(right))
     });
-
-    if let Ok(mut cache) = FILE_PATH_CACHE.lock() {
-        cache.key = Some(key);
-        cache.discovered = discovered.clone();
-        cache.cached_at = Instant::now();
-    }
     discovered
-}
-
-#[cfg(test)]
-pub(super) fn clear_workspace_file_path_cache() {
-    if let Ok(mut cache) = FILE_PATH_CACHE.lock() {
-        cache.key = None;
-        cache.discovered = DiscoveredFilePaths::complete(Vec::new());
-        cache.cached_at = Instant::now();
-    }
-}
-
-#[cfg(test)]
-pub(super) fn expire_workspace_file_path_cache() {
-    if let Ok(mut cache) = FILE_PATH_CACHE.lock() {
-        cache.cached_at = Instant::now() - FILE_PATH_CACHE_TTL;
-    }
 }
 
 fn directory_scope(

@@ -49,6 +49,7 @@ mod feed_image;
 mod file_palette;
 mod file_picker;
 mod first_run;
+mod frame_context;
 mod frame_scheduler;
 mod goal;
 mod line_editor;
@@ -481,7 +482,7 @@ struct App {
     pending_subagent_questionnaire: Option<PendingSubagentQuestionnaire>,
     input_ui: InputUi,
     /// Palette match caches shared by keystroke and render paths.
-    palette_caches: PaletteCaches,
+    palette_caches: palette::PaletteCaches,
     /// Tiny disappearing feedback toast. Write only through [`App::set_status`]
     /// / [`App::notify_status`].
     status_overlay: Option<status_overlay::StatusOverlay>,
@@ -545,8 +546,6 @@ struct App {
     session_title_locked: bool,
     clipboard: Box<dyn ClipboardWriter + Send>,
     media_attach_tasks: Vec<media_attach::MediaAttachTask>,
-    /// Last known terminal height for discrete feed-image row budgets.
-    terminal_height: usize,
     /// Shared composer attachment layout for the current frame/width.
     composer_attachment_layout_cache: Option<composer_attachments::ComposerAttachmentLayoutCache>,
 

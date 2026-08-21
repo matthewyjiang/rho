@@ -36,7 +36,9 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Tab) | (KeyModifiers::NONE, KeyCode::Enter) => {
-                if let Some(entry) = self.selected_palette_entry() {
+                if let Some(entry) =
+                    selected_palette_entry(&matches, self.input_ui.file_selection())
+                {
                     self.apply_file_palette_selection(&entry)?;
                 }
                 self.input_ui.clear_paste_burst();
@@ -137,7 +139,7 @@ impl App {
         };
         if let Some(matches) = self
             .palette_caches
-            .fresh_file(&mention.query, file_picker::FILE_PATH_CACHE_TTL)
+            .fresh_file(&mention.query, super::palette::PALETTE_CACHE_TTL)
         {
             return matches;
         }
@@ -162,15 +164,6 @@ impl App {
         )
     }
 
-    pub(super) fn selected_palette_entry(&mut self) -> Option<FilePaletteEntry> {
-        let matches = self.file_match_list();
-        matches.get(
-            self.input_ui
-                .file_selection()
-                .min(matches.len().saturating_sub(1)),
-        )
-    }
-
     pub(super) fn clamp_file_selection(&mut self) {
         let query = file_picker::active_file_mention(self.input_ui.text(), self.input_ui.cursor())
             .map(|mention| mention.query);
@@ -186,13 +179,13 @@ impl App {
             self.input_ui.set_file_selection(match_count - 1);
         }
     }
+}
 
-    pub(super) fn handle_running_file_palette_key(
-        &mut self,
-        key: KeyEvent,
-    ) -> anyhow::Result<bool> {
-        self.handle_file_palette_key(key)
-    }
+fn selected_palette_entry(
+    matches: &FilePaletteMatches,
+    selection: usize,
+) -> Option<FilePaletteEntry> {
+    matches.get(selection.min(matches.len().saturating_sub(1)))
 }
 
 #[cfg(test)]

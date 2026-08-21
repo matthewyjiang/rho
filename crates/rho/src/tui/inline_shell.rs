@@ -66,9 +66,28 @@ pub(super) struct PendingShellTask {
     updates: mpsc::UnboundedReceiver<ShellStreamUpdate>,
     handle: tokio::task::JoinHandle<std::io::Result<ShellOutput>>,
     /// Rendered card lines reused across frames. A running shell's output only
-    /// grows, so buffer lengths are a complete content key; without this every
-    /// animation frame re-cloned and re-wrapped the whole captured output.
+    /// grows, so buffer lengths plus theme generation are a complete content
+    /// key; without this every animation frame re-cloned and re-wrapped the
+    /// whole captured output.
     render_cache: Option<ShellRenderCache>,
+}
+
+impl PendingShellTask {
+    #[cfg(test)]
+    fn test_task(stdout: impl Into<String>) -> Self {
+        let (_tx, rx) = mpsc::unbounded_channel();
+        Self {
+            mode: InlineShellMode::IncludeInContext,
+            max_output_bytes: crate::config::DEFAULT_MAX_OUTPUT_BYTES,
+            shell: "sh".into(),
+            command: "printf hello".into(),
+            stdout: stdout.into(),
+            stderr: String::new(),
+            updates: rx,
+            handle: tokio::spawn(std::future::pending()),
+            render_cache: None,
+        }
+    }
 }
 
 /// Keyed render for one running shell's card.
@@ -78,6 +97,7 @@ struct ShellRenderCache {
     width: usize,
     max_tool_output_lines: usize,
     max_image_height: u16,
+    theme_generation: u64,
     lines: Vec<ratatui::text::Line<'static>>,
 }
 
@@ -622,7 +642,6 @@ impl super::App {
             image: None,
             started_at: None,
         }));
-        self.statusline.refresh_git_branch();
         self.set_status(if output.ok {
             if task.mode.included_in_context() {
                 "shell output pending context insertion".to_string()
@@ -687,19 +706,21 @@ impl PendingShellTask {
     }
 
     /// Cached render of this task's live card, refreshed only when the output
-    /// buffers, width, or budgets changed since the last frame.
+    /// buffers, width, budgets, or theme changed since the last frame.
     pub(super) fn rendered_lines(
         &mut self,
         width: usize,
         max_tool_output_lines: usize,
         max_image_height: u16,
     ) -> &[ratatui::text::Line<'static>] {
+        let theme_generation = super::Theme::generation();
         let fresh = self.render_cache.as_ref().is_some_and(|cache| {
             cache.stdout_len == self.stdout.len()
                 && cache.stderr_len == self.stderr.len()
                 && cache.width == width
                 && cache.max_tool_output_lines == max_tool_output_lines
                 && cache.max_image_height == max_image_height
+                && cache.theme_generation == theme_generation
         });
         if !fresh {
             let lines = super::tool_entry_lines(
@@ -714,6 +735,7 @@ impl PendingShellTask {
                 width,
                 max_tool_output_lines,
                 max_image_height,
+                theme_generation,
                 lines,
             });
         }

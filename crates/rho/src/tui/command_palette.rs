@@ -1,10 +1,7 @@
 use std::sync::Arc;
 
-use super::{App, CommandChoice, CommandChoiceKind};
+use super::{palette::PALETTE_CACHE_TTL, App, CommandChoice, CommandChoiceKind};
 use crate::commands;
-
-/// How long one skill-discovery pass stays valid for command palette queries.
-const SKILL_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(2);
 
 impl App {
     /// Command matches when the command palette is what the composer shows.
@@ -137,7 +134,7 @@ impl App {
     /// Get-or-discover: whichever path asks first — a keystroke or a render
     /// frame — walks skill directories once and shares the result.
     fn discovered_skills(&mut self) -> Arc<Vec<crate::skills::Skill>> {
-        if let Some(skills) = self.palette_caches.fresh_skills(SKILL_CACHE_TTL) {
+        if let Some(skills) = self.palette_caches.fresh_skills(PALETTE_CACHE_TTL) {
             return skills;
         }
         let skills = Arc::new(crate::skills::discover(&self.info.runtime.cwd));
@@ -145,15 +142,10 @@ impl App {
         skills
     }
 
+    #[cfg(test)]
     pub(super) fn selected_command(&mut self) -> Option<CommandChoice> {
         let matches = self.command_matches();
-        matches
-            .get(
-                self.input_ui
-                    .command_selection()
-                    .min(matches.len().saturating_sub(1)),
-            )
-            .cloned()
+        selected_command(&matches, self.input_ui.command_selection())
     }
 
     pub(super) fn complete_command_choice(&mut self, choice: &CommandChoice) {
@@ -202,6 +194,16 @@ impl App {
         self.input_ui.set_text_and_cursor(input, cursor);
         self.input_ui.set_shell_mode(None);
     }
+}
+
+/// The palette row currently selected among already-resolved matches.
+pub(super) fn selected_command(
+    matches: &[CommandChoice],
+    selection: usize,
+) -> Option<CommandChoice> {
+    matches
+        .get(selection.min(matches.len().saturating_sub(1)))
+        .cloned()
 }
 
 fn argument_command_choice(choice: &'static commands::CommandArgumentChoice) -> CommandChoice {

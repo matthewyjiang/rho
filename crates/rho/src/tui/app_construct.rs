@@ -10,10 +10,10 @@ use super::{
     app_state::{HistoryUi, InputUi, PendingWorkUi, TurnUi},
     clipboard::SystemClipboard,
     feed_image::picker_from_environment,
+    palette::PaletteCaches,
     process_panel::ProcessPanel,
     statusline::StatusLine,
     subagent_panel::SubagentPanel,
-    types::PaletteCaches,
     App, StatusSource, StreamUi, TuiBootstrap, UsageUi,
 };
 
@@ -138,7 +138,6 @@ impl App {
             session_title_locked: false,
             clipboard: Box::new(SystemClipboard::default()),
             media_attach_tasks: Vec::new(),
-            terminal_height: 0,
             composer_attachment_layout_cache: None,
 
             attach_run_filter: super::attach_picker::WorkspaceRunFilter::RunningOnly,
