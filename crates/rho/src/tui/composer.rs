@@ -411,7 +411,10 @@ impl App {
             self.insert_input_text(text);
             return;
         };
-        self.insert_input_text_with_paste_content(&paste.marker, Some(text.to_string()));
+        // A collapsed paste hides its content behind a marker; confirm the
+        // catch so a large paste never looks like it silently vanished.
+        self.notify_status(paste.toast());
+        self.insert_input_text_with_paste_content(&paste.marker(), Some(text.to_string()));
     }
 
     fn insert_input_text_with_paste_content(&mut self, text: &str, paste_content: Option<String>) {
@@ -706,13 +709,6 @@ impl App {
     pub(super) fn insert_external_paste(&mut self, text: &str) {
         let is_command = matches!(commands::parse_command(text), Ok(Some(_)));
         if is_command || !self.start_pasted_media_path(text) {
-            // A collapsed paste hides its content behind a marker; confirm the
-            // catch so a large paste never looks like it silently vanished.
-            if matches!(self.input_ui.composer(), ComposerMode::Input) {
-                if let Some(paste) = collapsed_paste_for(text) {
-                    self.notify_status(paste.toast);
-                }
-            }
             self.insert_paste(text);
         }
     }

@@ -159,7 +159,7 @@ impl App {
 
     pub(super) fn jump_to_bottom_line(&self, width: usize) -> Line<'static> {
         let state = self.jump_chip_state();
-        let text = self.jump_to_bottom_text_for(width, state);
+        let text = self.jump_to_bottom_text(width, state);
         let binding = self.info.runtime.keybindings.jump_to_bottom.to_string();
         let Some(action) = text.strip_suffix(&binding) else {
             return Line::styled(text, Theme::jump_to_bottom());
@@ -198,11 +198,11 @@ impl App {
         }
     }
 
-    pub(super) fn jump_to_bottom_text(&self, width: usize) -> String {
-        self.jump_to_bottom_text_for(width, self.jump_chip_state())
-    }
-
-    fn jump_to_bottom_text_for(&self, width: usize, state: activity::JumpChipState) -> String {
+    pub(super) fn jump_to_bottom_text(
+        &self,
+        width: usize,
+        state: activity::JumpChipState,
+    ) -> String {
         activity::jump_to_bottom_text(
             width,
             &self.info.runtime.keybindings.jump_to_bottom.to_string(),

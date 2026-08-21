@@ -269,7 +269,8 @@ impl App {
                 )
             });
 
-        let jump_text = show_jump_to_bottom.then(|| self.jump_to_bottom_text(width));
+        let jump_text =
+            show_jump_to_bottom.then(|| self.jump_to_bottom_text(width, self.jump_chip_state()));
         let jump_width = jump_text.as_deref().map_or(0, display_width).min(width) as u16;
         let jump_to_bottom = jump_text.map(|_| {
             Rect::new(
