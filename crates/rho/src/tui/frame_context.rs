@@ -3,8 +3,6 @@
 //! Composer wrap, suggestion lines, history settings, and the screen layout are
 //! computed together so every consumer of a frame sees the same chrome.
 
-use std::time::Instant;
-
 use ratatui::{layout::Rect, text::Line};
 
 use super::{
@@ -31,7 +29,7 @@ impl App {
     ///
     /// Recomputed per event or frame. Do not cache across events: composer text,
     /// live history, and theme can all change between them.
-    pub(super) fn frame_context(&mut self, area: Rect, _now: Instant) -> FrameContext {
+    pub(super) fn frame_context(&mut self, area: Rect) -> FrameContext {
         let width = area.width as usize;
         let height = area.height as usize;
         let composer = self.composer_frame(width, height);

@@ -151,7 +151,7 @@ impl App {
     ) -> Result<(), B::Error> {
         let size = terminal.size()?;
         let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
-        let ctx = self.frame_context(area, Instant::now());
+        let ctx = self.frame_context(area);
         self.history
             .scroll_chrome_mut()
             .clamp(ctx.history_len, ctx.layout.history_content.height as usize);
@@ -189,7 +189,7 @@ impl App {
         let size = terminal.size()?;
         let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
         let now = Instant::now();
-        let ctx = self.frame_context(area, now);
+        let ctx = self.frame_context(area);
         match (key.modifiers, key.code) {
             (_, KeyCode::PageUp) => {
                 self.reveal_history_scrollbar(now);

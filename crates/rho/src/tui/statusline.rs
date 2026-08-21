@@ -124,6 +124,14 @@ impl StatusLine {
         }
     }
 
+    pub(super) fn refresh_git_branch(&mut self) {
+        let branch = git_branch(&self.state.cwd);
+        if self.state.branch != branch {
+            self.state.branch = branch;
+            self.invalidate();
+        }
+    }
+
     pub(super) fn update_model(&mut self, info: &RuntimeModelView) {
         let reasoning_configurable = reasoning_is_configurable(&info.provider, &info.model);
         let fast_mode_active = info.fast_mode_active();
@@ -189,11 +197,6 @@ impl StatusLine {
 
     pub(super) fn lines(&mut self, width: usize, goal: Option<GoalStatus>) -> &[Line<'static>] {
         let theme_generation = Theme::generation();
-        let branch = git_branch(&self.state.cwd);
-        if self.state.branch != branch {
-            self.state.branch = branch;
-            self.invalidate();
-        }
         if self.cache.lines.is_empty()
             || self.cache.width != width
             || self.cache.goal != goal

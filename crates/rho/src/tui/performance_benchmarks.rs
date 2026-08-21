@@ -103,7 +103,7 @@ fn run_render_hot_path_benchmarks() {
     let full_rebuild_timing = measure(samples, || {
         app.history.invalidate_from(0);
         let area = ratatui::layout::Rect::new(0, 0, TERMINAL_WIDTH, TERMINAL_HEIGHT);
-        black_box(app.frame_context(area, Instant::now()).history_len)
+        black_box(app.frame_context(area).history_len)
     });
 
     let assistant_stream =
@@ -172,10 +172,10 @@ fn stream_commit_measurements(
         let started = Instant::now();
         let mut app = test_app();
         let area = ratatui::layout::Rect::new(0, 0, TERMINAL_WIDTH, TERMINAL_HEIGHT);
-        black_box(app.frame_context(area, Instant::now()).history_len);
+        black_box(app.frame_context(area).history_len);
         for index in 0..commit_count {
             app.push_transcript_entry(entry(stream_chunk(index)));
-            black_box(app.frame_context(area, Instant::now()).history_len);
+            black_box(app.frame_context(area).history_len);
         }
         let elapsed = started.elapsed().as_nanos() as u64;
         if let Some((prev_count, prev_elapsed)) = previous {

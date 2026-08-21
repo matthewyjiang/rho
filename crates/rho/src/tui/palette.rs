@@ -6,7 +6,11 @@
 
 use std::time::{Duration, Instant};
 
-use super::{file_picker::FilePaletteMatches, types::CommandChoice, App, ComposerMode};
+use super::{
+    file_picker::{FilePaletteMatches, WorkspacePathCache},
+    types::CommandChoice,
+    App, ComposerMode,
+};
 
 /// How long a palette discovery pass stays valid for keystroke and render reuse.
 pub(super) const PALETTE_CACHE_TTL: Duration = Duration::from_secs(2);
@@ -33,6 +37,8 @@ pub(super) struct PaletteCaches {
     file: Option<FileMatchCache>,
     /// Discovered skills for `/` palette matching.
     skills: Option<SkillMatchCache>,
+    /// Workspace walk shared by different `@` queries against the same root.
+    workspace: WorkspacePathCache,
 }
 
 impl PaletteCaches {
@@ -52,6 +58,10 @@ impl PaletteCaches {
 
     pub(super) fn clear_file(&mut self) {
         self.file = None;
+    }
+
+    pub(super) fn workspace_mut(&mut self) -> &mut WorkspacePathCache {
+        &mut self.workspace
     }
 
     /// Fresh skills, or `None` when discovery must run again.
@@ -75,6 +85,11 @@ impl PaletteCaches {
         if let Some(cache) = self.file.as_mut() {
             cache.refreshed_at = Instant::now() - PALETTE_CACHE_TTL;
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn expire_workspace(&mut self) {
+        self.workspace.expire();
     }
 }
 

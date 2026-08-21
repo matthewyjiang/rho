@@ -151,14 +151,19 @@ impl App {
 
     /// Rank both sources for one query. The catalog is an in-memory listing
     /// refreshed at connect, so this stays a local lookup on every keystroke.
-    fn discover_file_palette_matches(&self, query: &str) -> FilePaletteMatches {
+    fn discover_file_palette_matches(&mut self, query: &str) -> FilePaletteMatches {
         let resources = if self.mcp_catalog.is_empty() {
             Vec::new()
         } else {
             self.mcp_catalog.resources()
         };
+        let cwd = self.info.runtime.cwd.clone();
         file_picker::file_palette_matches(
-            file_picker::matching_file_paths(&self.info.runtime.cwd, query),
+            file_picker::matching_file_paths_cached(
+                &cwd,
+                query,
+                self.palette_caches.workspace_mut(),
+            ),
             &resources,
             query,
         )

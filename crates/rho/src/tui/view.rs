@@ -106,7 +106,7 @@ impl App {
     }
 
     fn draw_session(&mut self, frame: &mut Frame<'_>, area: Rect, now: Instant) {
-        let ctx = self.frame_context(area, now);
+        let ctx = self.frame_context(area);
         let (history_start, history_count) = self
             .visible_history_window(ctx.history_len, ctx.layout.history_content.height as usize);
         let surface = DrawSurface {
@@ -459,7 +459,7 @@ impl App {
         now: Instant,
     ) -> ActiveFrame {
         let area = Rect::new(0, 0, width as u16, viewport_height as u16);
-        let ctx = self.frame_context(area, now);
+        let ctx = self.frame_context(area);
         let layout = ctx.layout;
         let (history_start, history_count) =
             self.visible_history_window(ctx.history_len, layout.history_content.height as usize);
@@ -704,10 +704,10 @@ impl App {
         &mut self,
         width: usize,
         height: usize,
-        now: Instant,
+        _now: Instant,
     ) -> Vec<Line<'static>> {
         let area = Rect::new(0, 0, width as u16, height as u16);
-        self.frame_context(area, now).live_history.lines
+        self.frame_context(area).live_history.lines
     }
 
     pub(super) fn live_history_layout(

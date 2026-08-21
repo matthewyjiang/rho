@@ -245,10 +245,6 @@ impl App {
                 return cache.layout.clone();
             }
         }
-        debug_assert!(
-            false,
-            "composer attachment layout should be refreshed for this frame"
-        );
         layout_composer_attachments(
             self.input_ui.attachment_slots(),
             width,

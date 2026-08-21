@@ -13,11 +13,12 @@ impl App {
             return None;
         }
         let matches = self.command_matches();
-        let answers_argument =
-            !commands::argument_choices(self.input_ui.text(), self.input_ui.cursor()).is_empty()
-                || !self.mcp_argument_choices().is_empty();
-        (!matches.is_empty() && (self.cursor_in_command_token() || answers_argument))
-            .then_some(matches)
+        (!matches.is_empty()
+            && (self.cursor_in_command_token()
+                || !commands::argument_choices(self.input_ui.text(), self.input_ui.cursor())
+                    .is_empty()
+                || !self.mcp_argument_choices().is_empty()))
+        .then_some(matches)
     }
 
     pub(super) fn command_matches(&mut self) -> Vec<CommandChoice> {

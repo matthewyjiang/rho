@@ -14,6 +14,7 @@ use crate::paths::home_dir;
 
 const MAX_FILE_PATHS: usize = 100_000;
 const FILE_DISCOVERY_TIMEOUT: Duration = Duration::from_millis(750);
+const WORKSPACE_PATH_CACHE_TTL: Duration = Duration::from_secs(2);
 /// Keep navigation bounded so weak queries stay interactive in large repos.
 const MAX_RANKED_FILE_MATCHES: usize = 500;
 
@@ -150,6 +151,62 @@ impl DiscoveredFilePaths {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FilePathCacheKey {
+    root: PathBuf,
+    include_hidden: bool,
+}
+
+struct WorkspacePathCacheInner {
+    key: FilePathCacheKey,
+    discovered: DiscoveredFilePaths,
+    cached_at: Instant,
+}
+
+/// Query-independent workspace walk, keyed by `(root, include_hidden)`.
+///
+/// The `@` match cache is query-keyed; this layer is not, so typing `@s` then
+/// `@sr` reuses one walk for the TTL instead of rediscovering the tree.
+#[derive(Default)]
+pub(super) struct WorkspacePathCache {
+    inner: Option<WorkspacePathCacheInner>,
+}
+
+impl WorkspacePathCache {
+    fn file_paths_for_root(&mut self, root: &Path, include_hidden: bool) -> DiscoveredFilePaths {
+        let root = normalize_existing_dir(root).unwrap_or_else(|| root.to_path_buf());
+        let key = FilePathCacheKey {
+            root: root.clone(),
+            include_hidden,
+        };
+        if let Some(cache) = self.inner.as_ref() {
+            if cache.key == key && cache.cached_at.elapsed() < WORKSPACE_PATH_CACHE_TTL {
+                return cache.discovered.clone();
+            }
+        }
+
+        let mut discovered = discover_file_paths(&root, include_hidden);
+        Arc::make_mut(&mut discovered.paths).sort_by(|left, right| {
+            left.to_ascii_lowercase()
+                .cmp(&right.to_ascii_lowercase())
+                .then_with(|| left.cmp(right))
+        });
+        self.inner = Some(WorkspacePathCacheInner {
+            key,
+            discovered: discovered.clone(),
+            cached_at: Instant::now(),
+        });
+        discovered
+    }
+
+    #[cfg(test)]
+    pub(super) fn expire(&mut self) {
+        if let Some(cache) = self.inner.as_mut() {
+            cache.cached_at = Instant::now() - WORKSPACE_PATH_CACHE_TTL;
+        }
+    }
+}
+
 /// The `@query` token under the cursor, if any.
 ///
 /// Works on slices of `input` instead of collecting characters: the render
@@ -180,7 +237,15 @@ pub(super) fn active_file_mention(input: &str, cursor: usize) -> Option<FileMent
 }
 
 pub(super) fn matching_file_paths(cwd: &Path, query: &str) -> DiscoveredFilePaths {
-    matching_file_paths_with_home(cwd, query, home_dir().as_deref())
+    matching_file_paths_cached(cwd, query, &mut WorkspacePathCache::default())
+}
+
+pub(super) fn matching_file_paths_cached(
+    cwd: &Path,
+    query: &str,
+    cache: &mut WorkspacePathCache,
+) -> DiscoveredFilePaths {
+    matching_file_paths_with_home(cwd, query, home_dir().as_deref(), cache)
 }
 
 #[cfg(test)]
@@ -189,18 +254,19 @@ pub(super) fn matching_file_paths_with_home_for_test(
     query: &str,
     home: Option<&Path>,
 ) -> DiscoveredFilePaths {
-    matching_file_paths_with_home(cwd, query, home)
+    matching_file_paths_with_home(cwd, query, home, &mut WorkspacePathCache::default())
 }
 
 fn matching_file_paths_with_home(
     cwd: &Path,
     query: &str,
     home: Option<&Path>,
+    cache: &mut WorkspacePathCache,
 ) -> DiscoveredFilePaths {
     let query = query.trim();
     if let Some((scope, residual)) = directory_scope(cwd, query, home) {
         let include_hidden = residual_includes_hidden(&residual);
-        let discovered = file_paths_for_root(&scope.root, include_hidden);
+        let discovered = cache.file_paths_for_root(&scope.root, include_hidden);
         let matches = if residual.is_empty() {
             discovered.as_slice().to_vec()
         } else {
@@ -218,7 +284,7 @@ fn matching_file_paths_with_home(
     }
 
     let include_hidden = residual_includes_hidden(query);
-    let discovered = file_paths_for_root(cwd, include_hidden);
+    let discovered = cache.file_paths_for_root(cwd, include_hidden);
     if query.is_empty() {
         return discovered;
     }
@@ -230,22 +296,11 @@ fn matching_file_paths_with_home(
 
 #[cfg(test)]
 pub(super) fn workspace_file_paths(cwd: &Path) -> DiscoveredFilePaths {
-    file_paths_for_root(cwd, /*include_hidden*/ false)
+    WorkspacePathCache::default().file_paths_for_root(cwd, /*include_hidden*/ false)
 }
 
 fn residual_includes_hidden(residual: &str) -> bool {
     residual.split('/').any(|part| part.starts_with('.'))
-}
-
-fn file_paths_for_root(root: &Path, include_hidden: bool) -> DiscoveredFilePaths {
-    let root = normalize_existing_dir(root).unwrap_or_else(|| root.to_path_buf());
-    let mut discovered = discover_file_paths(&root, include_hidden);
-    Arc::make_mut(&mut discovered.paths).sort_by(|left, right| {
-        left.to_ascii_lowercase()
-            .cmp(&right.to_ascii_lowercase())
-            .then_with(|| left.cmp(right))
-    });
-    discovered
 }
 
 fn directory_scope(

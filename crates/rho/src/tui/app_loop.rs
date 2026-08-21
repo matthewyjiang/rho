@@ -259,6 +259,7 @@ impl App {
                     // Some Windows hosts drop application mouse tracking on focus
                     // changes; re-assert so wheel scrolling keeps working.
                     mouse_capture::reassert();
+                    self.statusline.refresh_git_branch();
                 }
                 Event::FocusLost => {
                     self.input_ui.cancel_pointer_click_sequence();

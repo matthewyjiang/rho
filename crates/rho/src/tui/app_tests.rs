@@ -171,7 +171,7 @@ fn minimum_terminal_layout_keeps_composer_visible() {
     let width = area.width as usize;
     let composer = app.composer_frame(width, area.height as usize);
     assert!(!composer.lines.is_empty());
-    let ctx = app.frame_context(area, std::time::Instant::now());
+    let ctx = app.frame_context(area);
     let layout = ctx.layout;
     assert!(
         layout.composer.height >= 1,

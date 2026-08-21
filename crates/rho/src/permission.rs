@@ -217,9 +217,10 @@ impl GitVerdict {
 ///
 /// Also caches per-path git tracked/ignored verdicts for the session: every
 /// uncached check spawns a synchronous `git` process on the authorize path, and
-/// repeated edits to the same files would pay that every time. Verdicts fail
-/// closed when stale — a file that becomes untracked or ignored mid-session can
-/// only lose a free-write skip, never gain one.
+/// repeated edits to the same files would pay that every time. Verdicts are
+/// accepted as stale for the session: a path that becomes untracked, or that a
+/// mid-session `.gitignore` edit starts ignoring, keeps the verdict it was first
+/// given until the session is cleared.
 #[derive(Clone, Default)]
 pub(crate) struct SessionWriteLog {
     paths: Arc<RwLock<HashMap<PathBuf, WriteAuthority>>>,

@@ -642,6 +642,7 @@ impl super::App {
             image: None,
             started_at: None,
         }));
+        self.statusline.refresh_git_branch();
         self.set_status(if output.ok {
             if task.mode.included_in_context() {
                 "shell output pending context insertion".to_string()

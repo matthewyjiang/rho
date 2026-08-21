@@ -100,6 +100,39 @@ fn expired_app_file_cache_rediscovers_workspace_files() {
     assert_eq!(first.len(), 1);
     std::fs::write(workspace.path().join("new.rs"), "").unwrap();
     app.palette_caches.expire_file();
+    assert_eq!(
+        app.file_match_list().len(),
+        1,
+        "an expired match cache must still reuse a fresh workspace walk"
+    );
+    app.palette_caches.expire_file();
+    app.palette_caches.expire_workspace();
     let refreshed = app.file_match_list();
     assert_eq!(refreshed.len(), 2);
+}
+
+// Covers: different @ queries inside the TTL must share one workspace walk.
+// Owner: tui palette cache
+#[test]
+fn different_queries_reuse_workspace_walk_until_expired() {
+    let workspace = tempdir().unwrap();
+    std::fs::write(workspace.path().join("src.rs"), "").unwrap();
+    let mut app = test_app();
+    app.info.runtime.cwd = workspace.path().to_path_buf();
+    app.input_ui.set_text("@s".to_string());
+    app.input_ui.set_cursor(2);
+
+    assert_eq!(app.file_match_list().len(), 1);
+    std::fs::write(workspace.path().join("lib.rs"), "").unwrap();
+    app.input_ui.set_text("@".to_string());
+    app.input_ui.set_cursor(1);
+    assert_eq!(
+        app.file_match_list().len(),
+        1,
+        "a different query must reuse the walk, not rediscover"
+    );
+
+    app.palette_caches.expire_file();
+    app.palette_caches.expire_workspace();
+    assert_eq!(app.file_match_list().len(), 2);
 }
