@@ -700,11 +700,7 @@ impl App {
 
     /// Live feed lines plus the clickable card spans in the same walk that paints them.
     #[cfg(test)]
-    pub(super) fn history_live_lines(
-        &mut self,
-        width: usize,
-        height: usize,
-    ) -> Vec<Line<'static>> {
+    pub(super) fn history_live_lines(&mut self, width: usize, height: usize) -> Vec<Line<'static>> {
         let area = Rect::new(0, 0, width as u16, height as u16);
         self.frame_context(area).live_history.lines
     }
