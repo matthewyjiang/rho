@@ -10,16 +10,16 @@ fn retry_removes_only_replaceable_provider_output() {
     transcript.extend([
         Entry::Assistant("discard assistant".into()),
         Entry::Notice("keep notice".into()),
-        Entry::Tool(ToolEntry {
-            card: rho_tools::tool_card::ToolCard::new(
+        Entry::Tool(ToolEntry::new(
+            rho_tools::tool_card::ToolCard::new(
                 rho_tools::tool_card::ToolStatus::Running,
                 rho_tools::tool_card::ToolFamily::Default,
                 rho_tools::tool_card::ToolHeader::call("keep tool", None),
             ),
-            expanded: false,
-            image: None,
-            started_at: None,
-        }),
+            false,
+            None,
+            None,
+        )),
         Entry::Reasoning(ReasoningEntry {
             text: "discard reasoning".into(),
             thought_for: Some(Duration::from_millis(1_200)),

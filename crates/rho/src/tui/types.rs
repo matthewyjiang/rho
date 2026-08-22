@@ -42,6 +42,23 @@ pub(super) struct LiveStreamPreview {
     pub(in crate::tui) include_leading_blank: bool,
 }
 
+/// Keyed paint of the live assistant/reasoning preview.
+///
+/// Invalidates when preview identity (`preview_generation`), committed fence
+/// state (`fence_generation`), width, or theme generation changes. Hits skip
+/// markdown + highlighter clone.
+#[derive(Debug)]
+pub(in crate::tui) struct StreamPreviewRenderCache {
+    pub(in crate::tui) kind: StreamKind,
+    pub(in crate::tui) preview_generation: u64,
+    pub(in crate::tui) fence_generation: u64,
+    pub(in crate::tui) width: usize,
+    pub(in crate::tui) theme_generation: u64,
+    pub(in crate::tui) lines: Vec<Line<'static>>,
+    #[cfg(test)]
+    pub(in crate::tui) paints: u32,
+}
+
 pub(super) struct SessionHeaderCache {
     pub(in crate::tui) width: usize,
     pub(in crate::tui) update_notice: Option<String>,
@@ -68,6 +85,11 @@ pub(super) struct StreamUi {
     /// Next opportunity to release held text and refresh the partial preview.
     pub(in crate::tui) stream_tick_deadline: Option<Instant>,
     pub(in crate::tui) live_stream_preview: Option<LiveStreamPreview>,
+    /// Bumps when [`Self::live_stream_preview`] identity changes (kind/text/blank).
+    pub(in crate::tui) preview_generation: u64,
+    /// Bumps when committed [`CodeFenceState`] is reset or advanced.
+    pub(in crate::tui) fence_generation: u64,
+    pub(in crate::tui) preview_render_cache: Option<StreamPreviewRenderCache>,
     /// Provider text waiting to be released into the active stream.
     pub(in crate::tui) hold: String,
     pub(in crate::tui) pacer: StreamPacer,
@@ -81,9 +103,31 @@ impl StreamUi {
         self.reasoning_stream_code_fence = CodeFenceState::default();
         self.current_stream_kind = None;
         self.stream_tick_deadline = None;
-        self.live_stream_preview = None;
+        self.set_live_preview(None);
+        self.bump_fence_generation();
         self.hold.clear();
         self.pacer.reset();
+    }
+
+    /// Replace the live preview and bump [`Self::preview_generation`] when identity changes.
+    pub(super) fn set_live_preview(&mut self, preview: Option<LiveStreamPreview>) {
+        let changed = match (&self.live_stream_preview, &preview) {
+            (None, None) => false,
+            (Some(current), Some(next)) => {
+                current.kind != next.kind
+                    || current.text != next.text
+                    || current.include_leading_blank != next.include_leading_blank
+            }
+            (None, Some(_)) | (Some(_), None) => true,
+        };
+        if changed {
+            self.preview_generation = self.preview_generation.wrapping_add(1);
+            self.live_stream_preview = preview;
+        }
+    }
+
+    pub(super) fn bump_fence_generation(&mut self) {
+        self.fence_generation = self.fence_generation.wrapping_add(1);
     }
 
     pub(super) fn loading_streams_active(&self) -> bool {
@@ -312,7 +356,37 @@ pub(super) fn live_started_at(
         .or_else(|| matches!(status, rho_tools::tool_card::ToolStatus::Running).then(Instant::now))
 }
 
-#[derive(Clone, Debug)]
+/// Keyed paint of one live tool card.
+///
+/// Lives on [`ToolEntry`] so card replacement drops it. Hits skip syntect.
+/// Elapsed suffixes are patched in place when display width is unchanged.
+pub(in crate::tui) struct LiveCardRenderCache {
+    pub(in crate::tui) width: usize,
+    pub(in crate::tui) max_tool_output_lines: usize,
+    pub(in crate::tui) max_image_height: u16,
+    pub(in crate::tui) theme_generation: u64,
+    pub(in crate::tui) expanded: bool,
+    pub(in crate::tui) elapsed_label: Option<String>,
+    pub(in crate::tui) elapsed_spans: Vec<(usize, usize)>,
+    pub(in crate::tui) lines: Vec<Line<'static>>,
+    #[cfg(test)]
+    pub(in crate::tui) paints: u32,
+}
+
+impl std::fmt::Debug for LiveCardRenderCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LiveCardRenderCache")
+            .field("width", &self.width)
+            .field("max_tool_output_lines", &self.max_tool_output_lines)
+            .field("max_image_height", &self.max_image_height)
+            .field("theme_generation", &self.theme_generation)
+            .field("expanded", &self.expanded)
+            .field("elapsed_label", &self.elapsed_label)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug)]
 pub(super) struct ToolEntry {
     /// Structured Call + Children card. Sole render input for tool rows.
     pub(in crate::tui) card: rho_tools::tool_card::ToolCard,
@@ -322,6 +396,37 @@ pub(super) struct ToolEntry {
     /// call runs. Set when a tool starts running; preserved across card
     /// updates; absent on historical, finished, interrupted, and preview rows.
     pub(in crate::tui) started_at: Option<Instant>,
+    /// Live-layout paint cache. Boxed so [`Entry::Tool`] stays small; not cloned.
+    pub(in crate::tui) render_cache: Option<Box<LiveCardRenderCache>>,
+}
+
+impl Clone for ToolEntry {
+    fn clone(&self) -> Self {
+        Self {
+            card: self.card.clone(),
+            expanded: self.expanded,
+            image: self.image.clone(),
+            started_at: self.started_at,
+            render_cache: None,
+        }
+    }
+}
+
+impl ToolEntry {
+    pub(in crate::tui) fn new(
+        card: rho_tools::tool_card::ToolCard,
+        expanded: bool,
+        image: Option<FeedImage>,
+        started_at: Option<Instant>,
+    ) -> Self {
+        Self {
+            card,
+            expanded,
+            image,
+            started_at,
+            render_cache: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

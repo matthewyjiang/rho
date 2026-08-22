@@ -254,12 +254,7 @@ fn bench_tool_entry(index: usize) -> Entry {
         format!("output line two for call {index}"),
         format!("output line three for call {index}"),
     ]));
-    Entry::Tool(ToolEntry {
-        card,
-        expanded: false,
-        image: None,
-        started_at: None,
-    })
+    Entry::Tool(ToolEntry::new(card, false, None, None))
 }
 
 struct SampleStats {

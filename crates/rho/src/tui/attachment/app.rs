@@ -443,15 +443,8 @@ impl AttachmentApp {
         if !self.pending_tools.contains_key(&key) {
             self.pending_order.push(key.clone());
         }
-        self.pending_tools.insert(
-            key,
-            ToolEntry {
-                card,
-                expanded,
-                image: None,
-                started_at,
-            },
-        );
+        self.pending_tools
+            .insert(key, ToolEntry::new(card, expanded, None, started_at));
     }
 
     fn finish_pending_tool(&mut self, key: Option<String>, card: ToolCard) {
@@ -461,12 +454,8 @@ impl AttachmentApp {
             .remove(&key)
             .is_some_and(|entry| entry.expanded);
         self.pending_order.retain(|pending| pending != &key);
-        self.transcript.push(Entry::Tool(ToolEntry {
-            card,
-            expanded,
-            image: None,
-            started_at: None,
-        }));
+        self.transcript
+            .push(Entry::Tool(ToolEntry::new(card, expanded, None, None)));
         self.finished_tool_index
             .insert(key, self.transcript.len() - 1);
     }

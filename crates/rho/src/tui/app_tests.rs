@@ -116,12 +116,7 @@ fn test_tool_entry(ok: bool, display_lines: &[&str]) -> Entry {
                 .collect(),
         ));
     }
-    Entry::Tool(ToolEntry {
-        card,
-        expanded: false,
-        image: None,
-        started_at: None,
-    })
+    Entry::Tool(ToolEntry::new(card, false, None, None))
 }
 
 pub(super) fn test_app() -> App {

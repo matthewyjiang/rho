@@ -4,23 +4,43 @@ use super::{
     markdown::push_wrapped_markdown_without_copy_button_from_fence_state,
     render::{pad_display_line, padded_content_width},
     theme::Theme,
-    App, StreamKind,
+    App, StreamKind, StreamPreviewRenderCache, StreamUi,
 };
 
-impl App {
-    pub(super) fn render_stream_preview_lines(
-        &self,
-        preview: &super::LiveStreamPreview,
-        width: usize,
-    ) -> Vec<Line<'static>> {
+impl StreamUi {
+    /// Cached live-preview paint. Hits skip markdown and highlighter clone.
+    ///
+    /// Invalidates on preview identity (`preview_generation`), committed fence
+    /// state (`fence_generation`), width, or theme generation.
+    pub(super) fn cached_preview_lines(&mut self, width: usize) -> Vec<Line<'static>> {
+        let Some(preview) = self.live_stream_preview.as_ref() else {
+            return Vec::new();
+        };
+        let theme_generation = Theme::generation();
+        let kind = preview.kind;
+        if self.preview_render_cache.as_ref().is_some_and(|cache| {
+            cache.kind == kind
+                && cache.preview_generation == self.preview_generation
+                && cache.fence_generation == self.fence_generation
+                && cache.width == width
+                && cache.theme_generation == theme_generation
+        }) {
+            return self
+                .preview_render_cache
+                .as_ref()
+                .expect("hit checked above")
+                .lines
+                .clone();
+        }
+
         let mut lines = Vec::new();
         if preview.include_leading_blank {
             lines.push(Line::raw(""));
         }
         let mut text_lines = Vec::new();
-        let mut code_fence = match preview.kind {
-            StreamKind::Assistant => self.streams.assistant_stream_code_fence.clone(),
-            StreamKind::Reasoning => self.streams.reasoning_stream_code_fence.clone(),
+        let mut code_fence = match kind {
+            StreamKind::Assistant => self.assistant_stream_code_fence.clone(),
+            StreamKind::Reasoning => self.reasoning_stream_code_fence.clone(),
         };
         push_wrapped_markdown_without_copy_button_from_fence_state(
             &mut text_lines,
@@ -28,10 +48,52 @@ impl App {
             padded_content_width(width),
             &mut code_fence,
         );
-        if matches!(preview.kind, StreamKind::Reasoning) {
+        if matches!(kind, StreamKind::Reasoning) {
             Theme::reasoning_output(&mut text_lines);
         }
         lines.extend(text_lines.into_iter().map(pad_display_line));
+        #[cfg(test)]
+        let paints = self
+            .preview_render_cache
+            .as_ref()
+            .map(|cache| cache.paints)
+            .unwrap_or(0)
+            .saturating_add(1);
+        self.preview_render_cache = Some(StreamPreviewRenderCache {
+            kind,
+            preview_generation: self.preview_generation,
+            fence_generation: self.fence_generation,
+            width,
+            theme_generation,
+            lines: lines.clone(),
+            #[cfg(test)]
+            paints,
+        });
         lines
     }
+
+    #[cfg(test)]
+    pub(super) fn preview_cache_paints(&self) -> u32 {
+        self.preview_render_cache
+            .as_ref()
+            .map(|cache| cache.paints)
+            .unwrap_or(0)
+    }
+
+    #[cfg(test)]
+    pub(super) fn preview_cache_theme_generation(&self) -> Option<u64> {
+        self.preview_render_cache
+            .as_ref()
+            .map(|cache| cache.theme_generation)
+    }
 }
+
+impl App {
+    pub(super) fn render_stream_preview_lines(&mut self, width: usize) -> Vec<Line<'static>> {
+        self.streams.cached_preview_lines(width)
+    }
+}
+
+#[cfg(test)]
+#[path = "stream_preview_tests.rs"]
+mod tests;

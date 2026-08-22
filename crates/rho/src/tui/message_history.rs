@@ -44,12 +44,7 @@ pub(super) fn generated_image_entry(
     card.push_fact(ToolFact::Meta {
         text: "finished".into(),
     });
-    Entry::Tool(ToolEntry {
-        card,
-        expanded: false,
-        image,
-        started_at: None,
-    })
+    Entry::Tool(ToolEntry::new(card, false, image, None))
 }
 
 fn apply_generated_image_preview(
@@ -136,12 +131,12 @@ pub(super) fn transcript_entries_from_messages(
                 if let Some(tool_call) = message.tool_calls.last() {
                     let presented =
                         presenter.interrupted(tool_call.name.as_deref(), &tool_call.arguments);
-                    entries.push(Entry::Tool(ToolEntry {
-                        card: presented.card,
-                        expanded: false,
-                        image: None,
-                        started_at: None,
-                    }));
+                    entries.push(Entry::Tool(ToolEntry::new(
+                        presented.card,
+                        false,
+                        None,
+                        None,
+                    )));
                 }
                 entries.push(Entry::Notice("model interrupted".into()));
             }
@@ -152,12 +147,12 @@ pub(super) fn transcript_entries_from_messages(
                     arguments: serde_json::Value::Object(Default::default()),
                 });
                 let presented = presenter.historical(&call, result.ok, &result.content);
-                entries.push(Entry::Tool(ToolEntry {
-                    card: presented.card,
-                    expanded: false,
-                    image: None,
-                    started_at: None,
-                }));
+                entries.push(Entry::Tool(ToolEntry::new(
+                    presented.card,
+                    false,
+                    None,
+                    None,
+                )));
             }
         }
     }
