@@ -878,3 +878,66 @@ async fn running_process_is_not_a_pending_notification() {
     let _ = wait_for_exit_notification(&manager).await;
     assert!(manager.take_notifications().is_empty());
 }
+
+// Covers: a shell leader that exits before its descendants must not leave the
+// record running forever or finalize with an unstoppable orphan tree
+// Owner: process supervisor
+#[cfg(unix)]
+#[tokio::test]
+async fn leader_exit_terminates_surviving_descendants() {
+    let manager = ProcessManager::new(ProcessLimits::default());
+    let dir = tempfile::tempdir().unwrap();
+    let pid_file = dir.path().join("descendant.pid");
+    // The background sleep inherits stdout, so without cleanup the pipe drain
+    // would never reach EOF and the record would stay running.
+    let command = format!("sleep 300 & echo $! > {}; exit 0", pid_file.display());
+    let started = manager
+        .start(command, std::path::Path::new("."), None)
+        .await
+        .unwrap();
+
+    // Bounded so a regression fails fast: without tree cleanup the record
+    // stays running until the descendant's own 300s sleep expires.
+    let snapshot = tokio::time::timeout(
+        Duration::from_secs(15),
+        eventually(&manager, &started.process_id),
+    )
+    .await
+    .expect("record must reach a terminal state once the leader exits");
+    assert_eq!(snapshot.state, State::Exited);
+    assert_eq!(snapshot.exit_code, Some(0));
+
+    let pid = std::fs::read_to_string(&pid_file)
+        .unwrap()
+        .trim()
+        .parse::<i32>()
+        .unwrap();
+    // A reparented descendant can linger as an unreaped zombie whose parent is
+    // a non-reaping init, so also accept a Linux Z state as gone.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let mut alive = unsafe { libc::kill(pid, 0) } == 0;
+        #[cfg(target_os = "linux")]
+        if alive {
+            alive &= std::fs::read_to_string(format!("/proc/{pid}/stat"))
+                .ok()
+                .and_then(|stat| {
+                    // Field 3 of /proc/<pid>/stat; safe here because the comm
+                    // field of `sleep` contains no spaces.
+                    stat.split_whitespace().nth(2).map(|state| state != "Z")
+                })
+                .unwrap_or(false);
+        }
+        if !alive {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "descendant {pid} survived leader exit"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    // Shutdown must not hang on the finalized record.
+    manager.shutdown().await;
+}
