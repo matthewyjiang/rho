@@ -45,9 +45,7 @@ use persistence::{
     AppendCursor, SessionStore,
 };
 #[cfg(test)]
-use persistence::{
-    read_entries, read_histories, summarize_session_file, SessionEntry, SESSION_VERSION,
-};
+use persistence::{read_entries, summarize_session_file, SessionEntry, SESSION_VERSION};
 
 pub use delete::{is_cross_project, DeleteOptions, DeleteOutcome};
 pub(crate) use delete::{CleanupOutcome, WorkspaceDeleteOutcome};
@@ -249,7 +247,8 @@ impl Session {
         );
         let active_lease =
             acquire_session_lease(session_root, &resolved.cwd, &resolved.id, LeaseMode::Active)?;
-        let histories = resolved.histories()?;
+        let tree = tree::SessionTree::load(&resolved.path)?;
+        let histories = persistence::histories_from_tree(&tree)?;
         let session = Self::from_parts_with_lease(
             session_root,
             resolved.cwd,
@@ -257,6 +256,7 @@ impl Session {
             resolved.path,
             active_lease,
         );
+        session.cache_loaded_tree(tree);
         Ok((session, histories))
     }
 

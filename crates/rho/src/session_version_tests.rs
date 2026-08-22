@@ -54,7 +54,9 @@ fn every_supported_application_session_fixture_restores_as_a_snapshot() {
                 "rho:migrated-v1".into(),
             )
             .unwrap();
-        let histories = read_histories(session.path()).unwrap();
+        let histories =
+            persistence::histories_from_tree(&tree::SessionTree::load(session.path()).unwrap())
+                .unwrap();
 
         assert_eq!(
             snapshot.schema_version(),
@@ -207,7 +209,9 @@ fn consecutive_snapshot_saves_append_only_new_history() {
         .unwrap();
     assert_eq!(restored, second);
     assert_eq!(
-        read_histories(session.path()).unwrap().display,
+        persistence::histories_from_tree(&tree::SessionTree::load(session.path()).unwrap())
+            .unwrap()
+            .display,
         second.history()
     );
 }

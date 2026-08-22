@@ -1,11 +1,8 @@
 use rho_sdk::{model::Message, Error};
 
-use crate::session::Session as StoredSession;
-
 use super::InteractiveRuntime;
 
 pub(super) struct CompactTaskResult {
-    checkpoint: Option<(StoredSession, rho_sdk::SessionSnapshot)>,
     outcome: Result<rho_sdk::CompactionOutcome, Error>,
 }
 
@@ -17,13 +14,11 @@ pub(crate) enum CompactTaskPoll {
 /// Session-owned compact work that can run off the TUI input loop.
 struct CompactTask {
     session: rho_sdk::Session,
-    checkpoint: Option<(StoredSession, rho_sdk::SessionSnapshot)>,
 }
 
 impl CompactTask {
     async fn run(self) -> CompactTaskResult {
         CompactTaskResult {
-            checkpoint: self.checkpoint,
             outcome: self.session.compact().await,
         }
     }
@@ -79,7 +74,6 @@ impl InteractiveRuntime {
         }
         let task = CompactTask {
             session: self.sessions.session().clone(),
-            checkpoint: self.capture_durable_session()?,
         };
         self.pending_compact = Some(tokio::spawn(task.run()));
         Ok(())
@@ -122,9 +116,8 @@ impl InteractiveRuntime {
         if self.is_session_busy() {
             anyhow::bail!("session is busy");
         }
-        let checkpoint = self.capture_durable_session()?;
         let outcome = self.sessions.session().compact().await?;
-        self.apply_compact_outcome(checkpoint, outcome).await
+        self.apply_compact_outcome(outcome).await
     }
 
     async fn complete_compact_task(
@@ -132,20 +125,32 @@ impl InteractiveRuntime {
         result: CompactTaskResult,
     ) -> anyhow::Result<Option<rho_sdk::CompactionOutcome>> {
         let outcome = result.outcome?;
-        self.apply_compact_outcome(result.checkpoint, outcome).await
+        self.apply_compact_outcome(outcome).await
     }
 
     async fn apply_compact_outcome(
         &mut self,
-        checkpoint: Option<(StoredSession, rho_sdk::SessionSnapshot)>,
         outcome: rho_sdk::CompactionOutcome,
     ) -> anyhow::Result<Option<rho_sdk::CompactionOutcome>> {
         if let Err(error) = self.sessions.save_compaction_snapshot(&[], &outcome) {
+            // Compact mutates live history first. A failed save truncates the
+            // partial append, so capturing after failure still reads the
+            // previous complete leaf without paying a parse on success.
+            let (checkpoint, capture_error) = match self.capture_durable_session() {
+                Ok(checkpoint) => (checkpoint, None),
+                Err(capture_error) => (None, Some(capture_error)),
+            };
             let rollback = self.restore_durable_session(checkpoint).await;
-            return match rollback {
-                Ok(()) => Err(error),
-                Err(rollback_error) => Err(anyhow::anyhow!(
+            return match (capture_error, rollback) {
+                (None, Ok(())) => Err(error),
+                (Some(capture_error), Ok(())) => Err(anyhow::anyhow!(
+                    "{error}; could not capture rollback checkpoint: {capture_error}"
+                )),
+                (None, Err(rollback_error)) => Err(anyhow::anyhow!(
                     "{error}; could not restore durable state: {rollback_error}"
+                )),
+                (Some(capture_error), Err(rollback_error)) => Err(anyhow::anyhow!(
+                    "{error}; could not capture rollback checkpoint: {capture_error}; could not restore durable state: {rollback_error}"
                 )),
             };
         }

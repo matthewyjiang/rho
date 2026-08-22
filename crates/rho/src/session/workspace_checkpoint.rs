@@ -499,10 +499,11 @@ impl rho_tools::WorkspaceMutationObserver for WorkspaceCheckpointTracker {
 
 impl Session {
     pub(crate) fn active_checkpoint_target(&self) -> anyhow::Result<Option<(NodeId, Revision)>> {
-        let tree = self.session_tree()?;
-        Ok(tree
-            .active_leaf_id()
-            .and_then(|id| tree.node(id).map(|node| (id.clone(), node.revision()))))
+        self.with_session_tree(|tree| {
+            Ok(tree
+                .active_leaf_id()
+                .and_then(|id| tree.node(id).map(|node| (id.clone(), node.revision()))))
+        })
     }
 
     pub(crate) fn workspace_checkpoint_store(
