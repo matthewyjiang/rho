@@ -279,3 +279,87 @@ fn truncate_chars_respects_char_boundaries() {
     assert_eq!(truncate_chars("café", 3), "caf…");
     assert_eq!(truncate_chars("", 5), "");
 }
+
+// Covers: parallel grep must emit the same path-ordered prefix every run
+// Owner: pure unit (grep determinism)
+#[test]
+fn parallel_grep_is_deterministic_across_runs() {
+    let dir = TempDir::new().unwrap();
+    for i in 0..40 {
+        write(&dir, &format!("f{i:02}.txt"), &format!("needle {i}\n"));
+    }
+    let args = json!({"pattern": "needle", "output_mode": "files_with_matches"});
+    let first = call_grep(&dir, args.clone()).unwrap();
+    let second = call_grep(&dir, args).unwrap();
+    assert_eq!(first, second);
+    let files: Vec<_> = first
+        .lines()
+        .take_while(|line| !line.is_empty() && !line.ends_with("files"))
+        .collect();
+    let mut sorted = files.clone();
+    sorted.sort();
+    assert_eq!(files, sorted);
+}
+
+// Covers: files_with_matches / count still skip binaries and respect gitignore
+// Owner: pure unit (grep early-exit modes)
+#[test]
+fn early_exit_modes_skip_binary_and_gitignore() {
+    let dir = TempDir::new().unwrap();
+    write(&dir, ".gitignore", "secret.txt\n");
+    write(&dir, "secret.txt", "needle\n");
+    write(&dir, "visible.txt", "needle\n");
+    std::fs::write(dir.path().join("bin.dat"), b"needle\0x\n").unwrap();
+
+    for mode in ["files_with_matches", "count"] {
+        let content = call_grep(&dir, json!({"pattern": "needle", "output_mode": mode})).unwrap();
+        assert!(content.contains("visible.txt"), "{mode}: {content}");
+        assert!(!content.contains("secret.txt"), "{mode}: {content}");
+        assert!(!content.contains("bin.dat"), "{mode}: {content}");
+    }
+}
+
+// Covers: streaming content scan must mint the same tag as full-file hashing
+// Owner: pure unit (grep hashline)
+#[test]
+fn streaming_content_tags_match_full_file_hash() {
+    let dir = TempDir::new().unwrap();
+    let cases = [
+        ("crlf.txt", "hit\r\nmiss\r\n"),
+        ("trailing.txt", "hit\n"),
+        ("no_nl.txt", "hit"),
+        ("blank_then_hit.txt", "\nhit\n"),
+    ];
+    for (name, body) in cases {
+        write(&dir, name, body);
+        let tag = compute_file_hash(body);
+        let content = call_grep(&dir, json!({"pattern": "hit", "glob": name})).unwrap();
+        assert!(
+            content.contains(&format!("[{name}#{tag}]")),
+            "{name}: {content}"
+        );
+    }
+}
+
+// Covers: files_with_matches can stop after the first hit in a file
+// Owner: pure unit (grep output modes)
+#[test]
+fn files_with_matches_lists_each_file_once() {
+    let dir = TempDir::new().unwrap();
+    write(&dir, "a.txt", "hit\nhit\n");
+    write(&dir, "b.txt", "miss\n");
+    write(&dir, "c.txt", "hit\n");
+    let content = call_grep(
+        &dir,
+        json!({"pattern": "hit", "output_mode": "files_with_matches"}),
+    )
+    .unwrap();
+    assert_eq!(
+        content,
+        "\
+a.txt
+c.txt
+
+2 files"
+    );
+}

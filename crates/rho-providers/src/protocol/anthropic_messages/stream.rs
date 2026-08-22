@@ -1,4 +1,5 @@
 use futures_util::StreamExt;
+use serde::Deserialize;
 
 use crate::{
     model::{ModelUsage, ProviderReportedErrorKind},
@@ -343,7 +344,7 @@ fn content_index(value: &serde_json::Value) -> Result<usize, ModelError> {
 }
 
 fn parse_usage(value: &serde_json::Value) -> Option<AnthropicUsage> {
-    serde_json::from_value(value.clone()).ok()
+    AnthropicUsage::deserialize(value).ok()
 }
 
 #[cfg(test)]

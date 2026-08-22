@@ -59,6 +59,13 @@ impl ToolCallBatch {
         self.live_cards().map(|(_, entry)| entry)
     }
 
+    pub(super) fn get_mut(&mut self, key: &LiveToolKey) -> Option<&mut ToolEntry> {
+        match key {
+            LiveToolKey::Preview(index) => self.previews.get_mut(index),
+            LiveToolKey::Running(call_id) => self.running.get_mut(call_id),
+        }
+    }
+
     pub(super) fn interrupted_entries(&self) -> Vec<ToolEntry> {
         self.live_entries()
             .cloned()
@@ -213,12 +220,7 @@ impl ToolCallBatch {
 }
 
 fn running_entry(card: ToolCard, expanded: bool, started_at: Option<Instant>) -> ToolEntry {
-    ToolEntry {
-        card,
-        expanded,
-        image: None,
-        started_at,
-    }
+    ToolEntry::new(card, expanded, None, started_at)
 }
 
 #[cfg(test)]

@@ -19,7 +19,7 @@ use super::{
     render::{pad_display_line, padded_content_width, truncate_one_line},
     render_copy_notice,
     screen_layout::{terminal_meets_minimum, MIN_TERMINAL_HEIGHT, MIN_TERMINAL_WIDTH},
-    session_header_lines, styled_line, tool_card_hover, tool_entry_lines,
+    session_header_lines, styled_line, tool_card_hover,
 };
 use super::{
     history_cache::{HistoryLineSlice, HistoryRenderSettings},
@@ -721,7 +721,11 @@ impl App {
             0
         };
         let tools = if show_tools {
-            self.turn.tool_calls().live_cards().collect::<Vec<_>>()
+            self.turn
+                .tool_calls()
+                .live_cards()
+                .map(|(key, _)| key)
+                .collect::<Vec<_>>()
         } else {
             Vec::new()
         };
@@ -739,26 +743,34 @@ impl App {
                 lines.extend(rendered.iter().cloned());
             }
         }
-        for (key, pending) in tools {
+        for key in tools {
             let start = lines.len();
-            lines.extend(tool_entry_lines(
-                pending,
-                width,
-                max_tool_output_lines,
-                max_image_height,
-            ));
+            let Some(pending) = self.turn.tool_calls_mut().get_mut(&key) else {
+                continue;
+            };
+            lines.extend(
+                pending
+                    .rendered_lines(width, max_tool_output_lines, max_image_height)
+                    .iter()
+                    .cloned(),
+            );
             let end = lines.len();
             if tool_output_toggleable(pending, max_tool_output_lines, width) {
                 cards.push((ToolCardTarget::from(key), start..end));
             }
         }
-        if let Some(preview) = &self.streams.live_stream_preview {
-            let show_preview = match preview.kind {
+        if let Some(kind) = self
+            .streams
+            .live_stream_preview
+            .as_ref()
+            .map(|preview| preview.kind)
+        {
+            let show_preview = match kind {
                 StreamKind::Assistant => true,
                 StreamKind::Reasoning => self.info.runtime.displays_reasoning_output(),
             };
             if show_preview {
-                lines.extend(self.render_stream_preview_lines(preview, width));
+                lines.extend(self.render_stream_preview_lines(width));
             }
         }
         if self.turn.reasoning_phase().is_open()

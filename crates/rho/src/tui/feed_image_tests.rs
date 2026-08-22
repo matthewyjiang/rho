@@ -40,16 +40,16 @@ fn kitty_picker() -> Picker {
 }
 
 fn image_tool() -> Entry {
-    Entry::Tool(ToolEntry {
-        card: rho_tools::tool_card::ToolCard::new(
+    Entry::Tool(ToolEntry::new(
+        rho_tools::tool_card::ToolCard::new(
             rho_tools::tool_card::ToolStatus::Ok,
             rho_tools::tool_card::ToolFamily::Default,
             rho_tools::tool_card::ToolHeader::call("read_file photo.png", None),
         ),
-        expanded: false,
-        image: Some(FeedImage::load(&png_asset(300, 600), &kitty_picker()).unwrap()),
-        started_at: None,
-    })
+        false,
+        Some(FeedImage::load(&png_asset(300, 600), &kitty_picker()).unwrap()),
+        None,
+    ))
 }
 
 #[test]

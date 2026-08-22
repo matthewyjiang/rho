@@ -104,6 +104,7 @@ impl StreamUi {
     }
 
     pub(super) fn code_fence_mut(&mut self, kind: StreamKind) -> &mut CodeFenceState {
+        self.bump_fence_generation();
         match kind {
             StreamKind::Assistant => &mut self.assistant_stream_code_fence,
             StreamKind::Reasoning => &mut self.reasoning_stream_code_fence,

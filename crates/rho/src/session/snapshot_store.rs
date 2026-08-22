@@ -2,7 +2,7 @@ use rho_providers::model::{Message, ModelIdentity};
 use rho_sdk::{SessionId, SessionSnapshot};
 
 use super::persistence::{
-    drop_incomplete_tool_turn_tail, read_session_state, timestamp, SessionEntry,
+    drop_incomplete_tool_turn_tail, timestamp, AppendCursor, PersistedSessionState, SessionEntry,
     StoredDisplayMessage,
 };
 use super::snapshot_delta::{SnapshotDeltaBase, StoredSnapshotDelta};
@@ -12,6 +12,10 @@ use super::tree::{
     NodeId, SessionNode, SessionNodeKind, SessionTree, StoredCompactionFacts, StoredStateTransition,
 };
 use super::{index, Session};
+
+#[cfg(test)]
+#[path = "snapshot_store_tests.rs"]
+mod tests;
 
 impl Session {
     /// Persists one SDK snapshot state and its newly visible transcript tail.
@@ -65,7 +69,7 @@ impl Session {
             .write_lock
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let mut tree = SessionTree::load(&self.path)?;
+        let mut tree = load_cached_tree(&mut cursor, &self.path)?;
         let parent_id = tree.active_leaf_id().cloned();
         let parent_snapshot = tree
             .active_state()
@@ -133,10 +137,9 @@ impl Session {
             display_messages,
         };
 
-        self.append_tree_entry(&mut cursor, &mut tree, SessionEntry::Node { node })?;
-        cursor.last_snapshot = Some(SnapshotDeltaBase::from_snapshot(snapshot));
+        self.commit_tree_entry(&mut cursor, &mut tree, SessionEntry::Node { node })?;
         let record = self.record_mirrored_index(&tree);
-        drop(cursor);
+        store_cached_tree(&mut cursor, &self.path, tree);
         Ok(record)
     }
 
@@ -174,31 +177,64 @@ impl Session {
             .ok_or_else(|| anyhow::anyhow!("set_leaf produced no mirrored index record"))
     }
 
+    #[cfg(test)]
     pub(crate) fn session_tree(&self) -> anyhow::Result<SessionTree> {
-        SessionTree::load(&self.path)
+        self.with_session_tree(|tree| Ok(tree.clone()))
+    }
+
+    /// Adopts a tree parsed elsewhere (e.g. session open) as the cache seed.
+    pub(super) fn cache_loaded_tree(&self, tree: SessionTree) {
+        let mut cursor = self
+            .write_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        cursor.seed_loaded_tree(tree, &self.path);
+    }
+
+    /// Runs `visit` on the cached tree when the file still matches the state
+    /// it was parsed from. Reloads from disk when another writer changed the
+    /// transcript.
+    pub(crate) fn with_session_tree<R>(
+        &self,
+        visit: impl FnOnce(&SessionTree) -> anyhow::Result<R>,
+    ) -> anyhow::Result<R> {
+        let mut cursor = self
+            .write_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(tree) = cursor.take_tree(&self.path) {
+            let result = visit(&tree);
+            cursor.store_tree(tree, &self.path);
+            return result;
+        }
+        let tree = SessionTree::load(&self.path)?;
+        let result = visit(&tree);
+        cursor.store_tree(tree, &self.path);
+        result
     }
 
     #[cfg(test)]
     pub(crate) fn tree_facts(&self) -> anyhow::Result<SessionTreeFacts> {
-        Ok(self.session_tree()?.facts())
+        self.with_session_tree(|tree| Ok(tree.facts()))
     }
 
     pub(crate) fn tree_items(&self) -> anyhow::Result<Vec<super::tree::SessionTreeItem>> {
-        self.session_tree()?.items()
+        self.with_session_tree(SessionTree::items)
     }
 
     pub(crate) fn histories_for_node(
         &self,
         target_id: &NodeId,
     ) -> anyhow::Result<super::SessionHistories> {
-        let tree = self.session_tree()?;
-        let state = tree.state_for(target_id)?;
-        let display = tree.projected_display(target_id)?;
-        Ok(super::SessionHistories {
-            model: drop_incomplete_tool_turn_tail(state.model),
-            display: drop_incomplete_tool_turn_tail(
-                display.into_iter().map(|entry| entry.message).collect(),
-            ),
+        self.with_session_tree(|tree| {
+            let state = tree.state_for(target_id)?;
+            let display = tree.projected_display(target_id)?;
+            Ok(super::SessionHistories {
+                model: drop_incomplete_tool_turn_tail(state.model),
+                display: drop_incomplete_tool_turn_tail(
+                    display.into_iter().map(|entry| entry.message).collect(),
+                ),
+            })
         })
     }
 
@@ -208,9 +244,10 @@ impl Session {
         provider: ModelIdentity,
         prompt_cache_key: String,
     ) -> anyhow::Result<SessionSnapshot> {
-        let tree = self.session_tree()?;
-        let state = tree.state_for(target_id)?;
-        self.snapshot_from_state(state, provider, prompt_cache_key)
+        self.with_session_tree(|tree| {
+            let state = tree.state_for(target_id)?;
+            self.snapshot_from_state(state, provider, prompt_cache_key)
+        })
     }
 
     /// Selects an existing valid node without changing any stored state.
@@ -227,15 +264,17 @@ impl Session {
             .write_lock
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let mut tree = SessionTree::load(&self.path)?;
+        let mut tree = load_cached_tree(&mut cursor, &self.path)?;
         if tree.node(target_id).is_none() {
+            restore_cached_tree(&mut cursor, &self.path, tree);
             anyhow::bail!("cannot select missing session node '{target_id}'");
         }
         if tree.active_leaf_id() == Some(target_id) {
+            restore_cached_tree(&mut cursor, &self.path, tree);
             return Ok(None);
         }
         let ts = timestamp();
-        self.append_tree_entry(
+        self.commit_tree_entry(
             &mut cursor,
             &mut tree,
             SessionEntry::SetLeaf {
@@ -243,14 +282,8 @@ impl Session {
                 target_id: target_id.clone(),
             },
         )?;
-        cursor.last_snapshot = tree.state_for(target_id).ok().and_then(|state| {
-            state
-                .snapshot
-                .as_ref()
-                .map(SnapshotDeltaBase::from_snapshot)
-        });
         let record = self.record_mirrored_index(&tree);
-        drop(cursor);
+        store_cached_tree(&mut cursor, &self.path, tree);
         Ok(record)
     }
 
@@ -259,7 +292,30 @@ impl Session {
         provider: ModelIdentity,
         prompt_cache_key: String,
     ) -> anyhow::Result<SessionSnapshot> {
-        self.snapshot_from_state(read_session_state(&self.path)?, provider, prompt_cache_key)
+        let state = self.active_persisted_state()?;
+        self.snapshot_from_state(state, provider, prompt_cache_key)
+    }
+
+    fn active_persisted_state(&self) -> anyhow::Result<PersistedSessionState> {
+        self.with_session_tree(|tree| Ok(tree.active_state().cloned().unwrap_or_default()))
+    }
+
+    /// Applies a tree-mutating entry and keeps the in-memory tree only when the
+    /// file write succeeds. A failed append rolls the file back, so the cache
+    /// must not keep the rejected node.
+    fn commit_tree_entry(
+        &self,
+        cursor: &mut AppendCursor,
+        tree: &mut SessionTree,
+        entry: SessionEntry,
+    ) -> anyhow::Result<()> {
+        match self.append_tree_entry(cursor, tree, entry) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                cursor.invalidate_tree();
+                Err(error)
+            }
+        }
     }
 
     fn snapshot_from_state(
@@ -318,15 +374,16 @@ impl rho_sdk::SessionStore for Session {
             if id.as_str() != self.id {
                 return Ok(None);
             }
-            let state = read_session_state(&self.path).map_err(persistence_error)?;
-            let Some(stored) = state.snapshot else {
+            let state = self.active_persisted_state().map_err(persistence_error)?;
+            let Some(stored) = state.snapshot.as_ref() else {
                 return Ok(None);
             };
             let cache_key = stored
                 .prompt_cache_key()
                 .map(str::to_owned)
                 .unwrap_or_else(|| format!("rho:{}", self.id));
-            self.snapshot_for_resume(stored.provider().clone(), cache_key)
+            let provider = stored.provider().clone();
+            self.snapshot_from_state(state, provider, cache_key)
                 .map(Some)
                 .map_err(persistence_error)
         })
@@ -343,5 +400,27 @@ impl rho_sdk::SessionStore for Session {
 fn persistence_error(error: impl std::fmt::Display) -> rho_sdk::Error {
     rho_sdk::Error::Persistence {
         message: error.to_string(),
+    }
+}
+
+fn load_cached_tree(
+    cursor: &mut AppendCursor,
+    path: &std::path::Path,
+) -> anyhow::Result<SessionTree> {
+    if let Some(tree) = cursor.take_tree(path) {
+        return Ok(tree);
+    }
+    SessionTree::load(path)
+}
+
+fn restore_cached_tree(cursor: &mut AppendCursor, path: &std::path::Path, tree: SessionTree) {
+    cursor.store_tree(tree, path);
+}
+
+fn store_cached_tree(cursor: &mut AppendCursor, path: &std::path::Path, tree: SessionTree) {
+    // The valid_len gate keeps a rejected/rolled-back write out of the cache.
+    match cursor.valid_len {
+        Some(_) => cursor.store_tree(tree, path),
+        None => cursor.invalidate_tree(),
     }
 }

@@ -114,6 +114,11 @@ pub(super) fn live_shell_elapsed(tool: &ToolEntry) -> Option<Duration> {
     }
 }
 
+/// Live elapsed suffix painted after a timeout fact (` · 1.2s`).
+pub(super) fn live_elapsed_label(elapsed: Duration) -> String {
+    format!(" · {:.1}s", elapsed.as_secs_f64())
+}
+
 /// Timeout budget text shared by the typed fact and its live elapsed suffix.
 fn timeout_text(seconds: Option<u64>) -> String {
     match seconds {
@@ -684,7 +689,7 @@ fn fact_spans(fact: &ToolFact, live_elapsed: Option<Duration>) -> Vec<Span<'stat
             let mut spans = vec![Span::styled(timeout_text(*seconds), Theme::tool_meta())];
             if let Some(elapsed) = live_elapsed {
                 spans.push(Span::styled(
-                    format!(" · {:.1}s", elapsed.as_secs_f64()),
+                    live_elapsed_label(elapsed),
                     Theme::tool_meta(),
                 ));
             }
@@ -866,6 +871,9 @@ fn pad_spans_line_with(
     }
     Line::from(spans)
 }
+
+#[path = "live_card_cache.rs"]
+mod live_card_cache;
 
 #[cfg(test)]
 #[path = "tool_card_render_tests.rs"]
