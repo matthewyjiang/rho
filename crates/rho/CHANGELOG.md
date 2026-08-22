@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.47.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.47.0...rho-coding-agent-v1.47.1) (2026-08-22)
+
+
+### Bug Fixes
+
+* **process:** terminate process tree when shell leader exits ([#1023](https://github.com/matthewyjiang/rho/issues/1023)) ([d53747e](https://github.com/matthewyjiang/rho/commit/d53747e16ba2553543de4c21493d16c8d8a9f228))
+
 ## [1.47.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.46.0...rho-coding-agent-v1.47.0) (2026-08-21)
 
 
