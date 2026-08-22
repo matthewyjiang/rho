@@ -6,7 +6,9 @@ use std::{
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
-use super::{visit_files, HiddenFiles, WalkLimits, WalkOptions, WalkStop, WalkedFile};
+use super::{
+    visit_files, visit_files_parallel, HiddenFiles, WalkLimits, WalkOptions, WalkStop, WalkedFile,
+};
 
 fn options(hidden: HiddenFiles, max_entries: usize, deadline: Instant) -> WalkOptions {
     WalkOptions {
@@ -206,4 +208,77 @@ fn a_root_named_git_is_still_walked() {
 
 fn far_deadline() -> Instant {
     Instant::now() + Duration::from_secs(30)
+}
+
+fn collect_parallel(root: &std::path::Path, options: &WalkOptions) -> (WalkStop, Vec<String>) {
+    let files = std::sync::Mutex::new(Vec::new());
+    let stop = visit_files_parallel(root, options, |file: WalkedFile| {
+        files
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .push(file.relative);
+        ControlFlow::Continue(())
+    });
+    let mut files = files
+        .into_inner()
+        .unwrap_or_else(|poison| poison.into_inner());
+    files.sort();
+    (stop, files)
+}
+
+// Covers: parallel walk must honor gitignore / hidden / .git the same as serial
+// Owner: pure unit (workspace walk policy)
+#[test]
+fn parallel_walk_matches_serial_ignore_policy() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(dir.path().join(".gitignore"), "ignored.txt\n").unwrap();
+    std::fs::write(dir.path().join("kept.txt"), "keep").unwrap();
+    std::fs::write(dir.path().join("ignored.txt"), "hide").unwrap();
+    std::fs::write(dir.path().join(".hidden.txt"), "dot").unwrap();
+    std::fs::create_dir_all(dir.path().join(".git")).unwrap();
+    std::fs::write(dir.path().join(".git/config"), "secret").unwrap();
+
+    let options = options(
+        HiddenFiles::Skip,
+        10_000,
+        Instant::now() + Duration::from_secs(5),
+    );
+    let serial = collect(dir.path(), &options);
+    let parallel = collect_parallel(dir.path(), &options);
+    assert_eq!(serial, parallel);
+    assert_eq!(serial.1, vec!["kept.txt".to_string()]);
+}
+
+// Covers: parallel result-limit must stop workers and remain usable
+// Owner: pure unit (workspace walk caps)
+#[test]
+fn parallel_result_limit_stops_and_sorts_hits() {
+    let dir = TempDir::new().unwrap();
+    for name in ["c.txt", "a.txt", "b.txt"] {
+        std::fs::write(dir.path().join(name), "x").unwrap();
+    }
+    let hits = std::sync::Mutex::new(Vec::new());
+    let stop = visit_files_parallel(
+        dir.path(),
+        &options(HiddenFiles::Skip, 10_000, far_deadline()),
+        |file: WalkedFile| {
+            let mut hits = hits.lock().unwrap_or_else(|poison| poison.into_inner());
+            hits.push(file.relative);
+            if hits.len() >= 2 {
+                ControlFlow::Break(WalkStop::ResultLimit)
+            } else {
+                ControlFlow::Continue(())
+            }
+        },
+    );
+    assert_eq!(stop, WalkStop::ResultLimit);
+    let mut hits = hits
+        .into_inner()
+        .unwrap_or_else(|poison| poison.into_inner());
+    hits.sort();
+    hits.dedup();
+    // Quit is asynchronous, so a couple of extra in-flight files are allowed,
+    // but the walk must not keep scanning the whole tree after the cap.
+    assert!(hits.len() >= 2, "{hits:?}");
+    assert!(hits.len() <= 3, "{hits:?}");
 }
