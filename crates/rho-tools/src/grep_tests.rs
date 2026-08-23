@@ -136,6 +136,49 @@ fn skips_binary_and_oversized_files() {
     assert!(!content.contains("huge.txt"), "{content}");
 }
 
+// Covers: files_with_matches must still honor MAX_FILE_BYTES when the first line hits
+// Owner: pure unit (grep safety)
+#[test]
+fn files_with_matches_excludes_oversized_files_that_match_early() {
+    let dir = TempDir::new().unwrap();
+    let huge = dir.path().join("huge.txt");
+    std::fs::write(&huge, b"needle\n").unwrap();
+    {
+        let file = std::fs::OpenOptions::new().write(true).open(&huge).unwrap();
+        file.set_len(MAX_FILE_BYTES + 1).unwrap();
+    }
+    write(&dir, "ok.txt", "needle\n");
+
+    let content = call_grep(
+        &dir,
+        json!({"pattern": "needle", "output_mode": "files_with_matches"}),
+    )
+    .unwrap();
+    assert!(content.contains("ok.txt"), "{content}");
+    assert!(!content.contains("huge.txt"), "{content}");
+}
+
+// Covers: files_with_matches may keep a first-line hit when later bytes are not UTF-8
+// Owner: pure unit (grep encoding)
+#[test]
+fn files_with_matches_accepts_a_first_line_hit_before_invalid_utf8() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(dir.path().join("mixed.txt"), b"needle\n\xff\n").unwrap();
+
+    let files = call_grep(
+        &dir,
+        json!({"pattern": "needle", "output_mode": "files_with_matches"}),
+    )
+    .unwrap();
+    assert!(files.contains("mixed.txt"), "{files}");
+
+    let content = call_grep(&dir, json!({"pattern": "needle"})).unwrap();
+    assert!(
+        !content.contains("mixed.txt"),
+        "content mode still rejects the file when hashing later invalid UTF-8: {content}"
+    );
+}
+
 // Covers: gitignore and hidden defaults are security boundaries
 // Owner: pure unit (grep path policy)
 #[test]

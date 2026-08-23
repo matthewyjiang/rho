@@ -87,7 +87,7 @@ impl WorkspaceSearch for GlobSearch {
         root: &Path,
         display_root: &str,
         request: &GlobRequest,
-        cancelled: &dyn Fn() -> bool,
+        cancelled: &(dyn Fn() -> bool + Send + Sync),
     ) -> Result<String, ToolError> {
         glob_workspace(root, display_root, request, cancelled)
     }
@@ -97,7 +97,7 @@ pub(crate) fn glob_workspace(
     root: &Path,
     display_root: &str,
     request: &GlobRequest,
-    cancelled: &dyn Fn() -> bool,
+    cancelled: &(dyn Fn() -> bool + Send + Sync),
 ) -> Result<String, ToolError> {
     let options = WalkOptions {
         hidden: request.hidden,

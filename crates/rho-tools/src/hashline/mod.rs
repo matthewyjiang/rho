@@ -20,9 +20,9 @@ use serde_json::json;
 use crate::tool::*;
 
 pub(crate) use execute::{apply_prepared_sections, claim_unique_path, PreparedSection};
-pub(crate) use format::{
-    compute_file_hash, format_chain_snapshot, format_hashline_view, format_header, FileHash,
-};
+#[cfg(test)]
+pub(crate) use format::compute_file_hash;
+pub(crate) use format::{format_chain_snapshot, format_hashline_view, format_header, FileHash};
 pub(crate) use parser::parse_hashline;
 pub use proposed::{
     planned_edit, proposed_edit, proposed_sections, EditPreview, EditPreviewKind, ProposedSection,

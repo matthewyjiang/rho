@@ -1,12 +1,4 @@
-use std::{
-    io::{BufRead, BufReader},
-    ops::ControlFlow,
-    path::Path,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Mutex,
-    },
-};
+use std::{ops::ControlFlow, path::Path};
 
 use regex::RegexBuilder;
 use serde::Deserialize;
@@ -15,17 +7,15 @@ use serde_json::{json, Value};
 use crate::{
     file_view::{FileViewPolicy, FileViewStyle},
     grep_format::format_results,
-    hashline::{compute_file_hash, FileHash},
+    hashline::FileHash,
     path_glob::PathGlob,
     search::{
         clamp_limit, stop_reasons, StopReason, WorkspaceSearch, DEFAULT_MAX_RESULTS,
         MAX_RESULTS_CEILING, SEARCH_DEADLINE,
     },
-    text_view::LineFingerprint,
+    text_view::read_searchable_lines,
     tool::{ToolError, ToolSpec},
-    workspace_walk::{
-        visit_files_parallel, HiddenFiles, WalkLimits, WalkOptions, WalkStop, WalkedFile,
-    },
+    workspace_walk::{visit_files, HiddenFiles, WalkLimits, WalkOptions, WalkStop, WalkedFile},
 };
 
 /// Default emitted match lines per file in `content` mode.
@@ -38,6 +28,10 @@ pub(crate) const MAX_FILE_BYTES: u64 = 5 * 1024 * 1024;
 const BINARY_SNIFF_BYTES: usize = 8 * 1024;
 /// Match-line display width before truncation.
 const MAX_LINE_CHARS: usize = 200;
+/// Per-grep scan-thread cap. Concurrent searches (up to the app's parallel
+/// tool limit) each spawn their own scoped pool, so this stays small rather
+/// than `available_parallelism()`.
+const SCAN_THREAD_CAP: usize = 4;
 /// Cap regex compile heap so pathological patterns fail fast.
 const REGEX_SIZE_LIMIT: usize = 10 * 1024 * 1024;
 /// Cap DFA heap during regex compile.
@@ -204,7 +198,7 @@ impl WorkspaceSearch for GrepSearch {
         root: &Path,
         display_root: &str,
         request: &GrepRequest,
-        cancelled: &dyn Fn() -> bool,
+        cancelled: &(dyn Fn() -> bool + Send + Sync),
     ) -> Result<String, ToolError> {
         grep_workspace(
             root,
@@ -249,7 +243,7 @@ pub(crate) fn grep_workspace(
     root: &Path,
     display_root: &str,
     request: &GrepRequest,
-    cancelled: &dyn Fn() -> bool,
+    cancelled: &(dyn Fn() -> bool + Send + Sync),
     style: FileViewStyle,
 ) -> Result<String, ToolError> {
     let options = WalkOptions {
@@ -257,16 +251,20 @@ pub(crate) fn grep_workspace(
         limits: WalkLimits::within(SEARCH_DEADLINE),
     };
     let retained_per_file = request.output_mode.retained_lines(request.max_per_file);
+    let batch_size = SCAN_THREAD_CAP;
 
-    let hits = Mutex::new(Vec::new());
-    let spent = AtomicUsize::new(0);
-    let cancelled = SharedCancel::new(cancelled);
+    let mut collector = HitCollector {
+        hits: Vec::new(),
+        shown: 0,
+        per_file_truncated: 0,
+        batch: Vec::new(),
+    };
 
-    let walk_stop = visit_files_parallel(root, &options, |file: WalkedFile| {
-        if cancelled.check() {
+    let walk_stop = visit_files(root, &options, |file: WalkedFile| {
+        if cancelled() {
             return ControlFlow::Break(WalkStop::Cancelled);
         }
-        if spent.load(Ordering::Relaxed) >= request.max_results {
+        if collector.shown >= request.max_results {
             return ControlFlow::Break(WalkStop::ResultLimit);
         }
         if let Some(glob) = &request.glob {
@@ -274,62 +272,29 @@ pub(crate) fn grep_workspace(
                 return ControlFlow::Continue(());
             }
         }
-        let Some(hit) = scan_file(request, file, retained_per_file, style) else {
-            return ControlFlow::Continue(());
-        };
-
-        let cost = request.output_mode.budget_cost(&hit);
-        let mut collected = hits.lock().unwrap_or_else(|poison| poison.into_inner());
-        collected.push(hit);
-        let now = spent
-            .fetch_add(cost, Ordering::Relaxed)
-            .saturating_add(cost);
-        if now >= request.max_results {
-            ControlFlow::Break(WalkStop::ResultLimit)
-        } else {
-            ControlFlow::Continue(())
+        collector.batch.push(file);
+        if collector.batch.len() >= batch_size {
+            collector.drain(request, style, retained_per_file, cancelled);
+            if cancelled() {
+                return ControlFlow::Break(WalkStop::Cancelled);
+            }
+            if collector.shown >= request.max_results {
+                return ControlFlow::Break(WalkStop::ResultLimit);
+            }
         }
+        ControlFlow::Continue(())
     });
+    collector.drain(request, style, retained_per_file, cancelled);
 
-    let mut hits = hits
-        .into_inner()
-        .unwrap_or_else(|poison| poison.into_inner());
-    hits.sort_by(|left, right| left.relative.cmp(&right.relative));
-
-    // Parallel discovery can overshoot the cap while in-flight scans finish.
-    // Sort first, then keep the path-ordered prefix so output is deterministic.
-    if hits.len() > request.max_results {
-        hits.truncate(request.max_results);
-    }
-
-    let mut shown = 0usize;
-    let mut keep = 0usize;
-    let mut per_file_truncated = 0usize;
-    for hit in &mut hits {
-        if shown >= request.max_results {
-            break;
-        }
-        // Count max_per_file cuts before the result-budget trim, so a file
-        // split only by max_results does not look like a per-file truncation.
-        if retained_per_file > 0 && hit.suppressed() > 0 {
-            per_file_truncated = per_file_truncated.saturating_add(1);
-        }
-        let remaining = request.max_results - shown;
-        hit.lines.truncate(remaining);
-        shown = shown.saturating_add(request.output_mode.budget_cost(hit));
-        keep = keep.saturating_add(1);
-    }
-    hits.truncate(keep);
-
-    // Totals describe the deterministic kept prefix, not extra files a racy
-    // worker may still have scanned after quit.
-    let total_matches: usize = hits
+    let total_matches: usize = collector
+        .hits
         .iter()
         .fold(0, |acc, hit| acc.saturating_add(hit.total));
-
     // Serial grep reports ResultLimit whenever the shown budget is full, even
     // if the walk also finished the tree (one file can exhaust max_results).
-    let walk_stop = if shown >= request.max_results {
+    let walk_stop = if cancelled() {
+        WalkStop::Cancelled
+    } else if collector.shown >= request.max_results {
         WalkStop::ResultLimit
     } else {
         walk_stop
@@ -338,178 +303,145 @@ pub(crate) fn grep_workspace(
     Ok(format_results(
         request,
         display_root,
-        &hits,
+        &collector.hits,
         GrepStats {
-            shown,
+            shown: collector.shown,
             total_matches,
-            reasons: stop_reasons(walk_stop, per_file_truncated),
+            reasons: stop_reasons(walk_stop, collector.per_file_truncated),
         },
     ))
+}
+
+struct HitCollector {
+    hits: Vec<FileHit>,
+    shown: usize,
+    per_file_truncated: usize,
+    batch: Vec<WalkedFile>,
+}
+
+impl HitCollector {
+    fn drain(
+        &mut self,
+        request: &GrepRequest,
+        style: FileViewStyle,
+        retain: usize,
+        cancelled: &(dyn Fn() -> bool + Send + Sync),
+    ) {
+        if self.batch.is_empty() || self.shown >= request.max_results || cancelled() {
+            self.batch.clear();
+            return;
+        }
+        let scanned = scan_files_parallel(&self.batch, request, retain, style, cancelled);
+        self.batch.clear();
+        for hit in scanned.into_iter().flatten() {
+            if self.shown >= request.max_results {
+                break;
+            }
+            // Count max_per_file cuts before the result-budget trim, so a file
+            // split only by max_results does not look like a per-file truncation.
+            if retain > 0 && hit.suppressed() > 0 {
+                self.per_file_truncated = self.per_file_truncated.saturating_add(1);
+            }
+            let mut hit = hit;
+            let remaining = request.max_results - self.shown;
+            hit.lines.truncate(remaining);
+            self.shown = self
+                .shown
+                .saturating_add(request.output_mode.budget_cost(&hit));
+            self.hits.push(hit);
+        }
+    }
+}
+
+fn scan_files_parallel(
+    files: &[WalkedFile],
+    request: &GrepRequest,
+    retain: usize,
+    style: FileViewStyle,
+    cancelled: &(dyn Fn() -> bool + Send + Sync),
+) -> Vec<Option<FileHit>> {
+    if files.len() <= 1 {
+        return files
+            .iter()
+            .map(|file| scan_file(request, file, retain, style))
+            .collect();
+    }
+    let threads = SCAN_THREAD_CAP.min(files.len());
+    let chunk_size = files.len().div_ceil(threads);
+    let mut slots: Vec<Option<FileHit>> = (0..files.len()).map(|_| None).collect();
+    std::thread::scope(|scope| {
+        let mut remaining_files = files;
+        let mut remaining_slots = slots.as_mut_slice();
+        while !remaining_files.is_empty() {
+            let n = remaining_files.len().min(chunk_size);
+            let (file_chunk, rest_files) = remaining_files.split_at(n);
+            let (slot_chunk, rest_slots) = remaining_slots.split_at_mut(n);
+            remaining_files = rest_files;
+            remaining_slots = rest_slots;
+            scope.spawn(move || {
+                for (slot, file) in slot_chunk.iter_mut().zip(file_chunk) {
+                    if cancelled() {
+                        return;
+                    }
+                    *slot = scan_file(request, file, retain, style);
+                }
+            });
+        }
+    });
+    slots
 }
 
 /// Scans one file, keeping at most `retain` match lines for display.
 ///
 /// Returns `None` for unreadable, oversized, binary, or non-matching files.
-/// Reads through a buffered stream so `files_with_matches` can stop at the
-/// first hit and size is enforced by bytes read rather than a metadata call.
+/// Size is gated by `metadata().len()` up front and by bytes read, so a
+/// `files_with_matches` hit on line 1 of a huge file is still excluded.
+/// Encoding is per-line: invalid UTF-8 drops the file only if the scan
+/// visits that line. `content` still reads the whole file to mint a tag;
+/// `files_with_matches` may list a file whose later bytes are not UTF-8.
 fn scan_file(
     request: &GrepRequest,
-    file: WalkedFile,
+    file: &WalkedFile,
     retain: usize,
     style: FileViewStyle,
 ) -> Option<FileHit> {
-    let reader = BufReader::new(std::fs::File::open(&file.absolute).ok()?);
+    let metadata = std::fs::metadata(&file.absolute).ok()?;
+    if !metadata.is_file() || metadata.len() > MAX_FILE_BYTES {
+        return None;
+    }
+    let reader = std::fs::File::open(&file.absolute).ok()?;
     let mint_tag = request.output_mode == GrepOutputMode::Content && style.mints_snapshot_tags();
-    let scanned = scan_searchable_text(reader, request, retain, mint_tag)?;
-    if scanned.total == 0 {
+    let stop_early = request.output_mode.stops_at_first_match() && !mint_tag;
+    let mut total = 0usize;
+    let mut lines = Vec::new();
+    let file_tag = read_searchable_lines(
+        reader,
+        mint_tag.then(FileHash::new),
+        MAX_FILE_BYTES,
+        BINARY_SNIFF_BYTES,
+        |line_no, line| {
+            if request.regex.is_match(line) {
+                total = total.saturating_add(1);
+                if lines.len() < retain {
+                    // Search preview only - may truncate. Not hashline `N:text`.
+                    lines.push((line_no, truncate_chars(line, MAX_LINE_CHARS)));
+                }
+                if stop_early {
+                    return ControlFlow::Break(());
+                }
+            }
+            ControlFlow::Continue(())
+        },
+    )?;
+    if total == 0 {
         return None;
     }
     Some(FileHit {
-        relative: file.relative,
-        file_tag: scanned.file_tag,
-        total: scanned.total,
-        lines: scanned.lines,
+        relative: file.relative.clone(),
+        file_tag,
+        total,
+        lines,
     })
-}
-
-struct ScannedFile {
-    file_tag: Option<String>,
-    total: usize,
-    lines: Vec<(usize, String)>,
-}
-
-/// Line-oriented scan matching [`crate::text_view::iter_content_lines`].
-///
-/// `read_until('\n')` keeps the delimiter. Hashing follows
-/// [`crate::hashline::compute_file_hash_bytes`]: every `\n` segment, including
-/// the empty segment after a trailing newline. Match line numbers strip a
-/// trailing `\n` first (so a final newline does not invent a blank line) and
-/// then a trailing `\r`.
-fn scan_searchable_text<R: BufRead>(
-    mut reader: R,
-    request: &GrepRequest,
-    retain: usize,
-    mint_tag: bool,
-) -> Option<ScannedFile> {
-    let stop_early = request.output_mode.stops_at_first_match() && !mint_tag;
-    let mut hasher = mint_tag.then(FileHash::new);
-    let mut hit = ScannedFile {
-        file_tag: None,
-        total: 0,
-        lines: Vec::new(),
-    };
-    let mut buf = Vec::new();
-    let mut bytes_read = 0u64;
-    let mut sniff_remaining = BINARY_SNIFF_BYTES;
-    let mut line_no = 0usize;
-    // Holds the previous `\n` segment until the next chunk proves it is not
-    // a trailing-newline phantom. Empty files never enter this path.
-    let mut pending: Option<Vec<u8>> = None;
-    let mut ended_with_lf = false;
-
-    loop {
-        buf.clear();
-        let n = reader.read_until(b'\n', &mut buf).ok()?;
-        if n == 0 {
-            break;
-        }
-        bytes_read = bytes_read.saturating_add(n as u64);
-        if bytes_read > MAX_FILE_BYTES {
-            return None;
-        }
-        if sniff_remaining > 0 {
-            let sniff = &buf[..sniff_remaining.min(buf.len())];
-            if sniff.contains(&0) {
-                return None;
-            }
-            sniff_remaining = sniff_remaining.saturating_sub(sniff.len());
-        }
-
-        ended_with_lf = buf.last() == Some(&b'\n');
-        if ended_with_lf {
-            buf.pop();
-        }
-        if let Some(hasher) = hasher.as_mut() {
-            hasher.push_line(&buf);
-        }
-
-        if let Some(previous) = pending.take() {
-            match_pending(&mut hit, request, retain, &mut line_no, &previous)?;
-            if stop_early && hit.total > 0 {
-                break;
-            }
-        }
-
-        if ended_with_lf {
-            pending = Some(std::mem::take(&mut buf));
-        } else {
-            match_pending(&mut hit, request, retain, &mut line_no, &buf)?;
-            break;
-        }
-    }
-
-    if let Some(previous) = pending.take() {
-        match_pending(&mut hit, request, retain, &mut line_no, &previous)?;
-    }
-
-    if mint_tag {
-        if bytes_read == 0 {
-            hit.file_tag = Some(compute_file_hash(""));
-        } else {
-            if ended_with_lf {
-                if let Some(hasher) = hasher.as_mut() {
-                    // `split('\n')` yields an empty last segment after a trailing newline.
-                    hasher.push_line(b"");
-                }
-            }
-            hit.file_tag = hasher.map(FileHash::finish);
-        }
-    }
-    Some(hit)
-}
-
-/// `WorkspaceSearch` exposes cancel as `&dyn Fn() -> bool`, which is not
-/// `Sync`. The adapter and tests pass thread-safe closures (`CancellationToken`
-/// polls or literals); workers may call `check` concurrently.
-struct SharedCancel<'a> {
-    check: &'a dyn Fn() -> bool,
-}
-
-impl<'a> SharedCancel<'a> {
-    fn new(check: &'a dyn Fn() -> bool) -> Self {
-        Self { check }
-    }
-
-    fn check(&self) -> bool {
-        (self.check)()
-    }
-}
-
-// Safety: the captured callback is invoked as a pure poll and does not rely on
-// thread-local state. Concurrent calls are required by the parallel walk.
-unsafe impl Sync for SharedCancel<'_> {}
-unsafe impl Send for SharedCancel<'_> {}
-
-fn match_pending(
-    hit: &mut ScannedFile,
-    request: &GrepRequest,
-    retain: usize,
-    line_no: &mut usize,
-    raw: &[u8],
-) -> Option<()> {
-    let line_bytes = raw.strip_suffix(b"\r").unwrap_or(raw);
-    let line = std::str::from_utf8(line_bytes).ok()?;
-    *line_no = line_no.saturating_add(1);
-    if !request.regex.is_match(line) {
-        return Some(());
-    }
-    hit.total = hit.total.saturating_add(1);
-    if hit.lines.len() < retain {
-        // Search preview only - may truncate. Not hashline `N:text` body text.
-        hit.lines
-            .push((*line_no, truncate_chars(line, MAX_LINE_CHARS)));
-    }
-    Some(())
 }
 
 fn truncate_chars(text: &str, max_chars: usize) -> String {
