@@ -1,9 +1,10 @@
 use std::collections::VecDeque;
+use std::time::Instant;
 
 use ratatui::text::Line;
 
 use super::*;
-use crate::tui::{tests::test_app, Entry};
+use crate::tui::{tests::test_app, Entry, StreamKind};
 
 fn prompt(text: &str) -> QueuedPrompt {
     QueuedPrompt {
@@ -203,9 +204,9 @@ fn already_applied_retraction_inserts_the_user_message() {
             id: id.clone(),
             prompt: prompt("keep me"),
         });
+    app.streams.current_stream_kind = Some(StreamKind::Assistant);
     app.streams
-        .assistant_stream
-        .push_delta("held assistant tail");
+        .push_delta(StreamKind::Assistant, "held assistant tail", Instant::now());
     let request = PendingInputRequest::Retract {
         action: PendingInputAction::DiscardAccepted { id },
         receipt: Box::pin(std::future::pending()),
@@ -217,7 +218,7 @@ fn already_applied_retraction_inserts_the_user_message() {
 
     assert_eq!(failure, None);
     assert!(app.pending.accepted_steering().is_empty());
-    assert!(app.streams.assistant_stream.is_empty());
+    assert!(app.streams.assistant_stream.pending_text().is_empty());
     assert!(matches!(
         app.history.entries(),
         [Entry::Assistant(assistant), Entry::User(text)]
