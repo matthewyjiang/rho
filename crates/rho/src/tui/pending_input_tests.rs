@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use ratatui::text::Line;
 
 use super::*;
-use crate::tui::tests::test_app;
+use crate::tui::{tests::test_app, Entry};
 
 fn prompt(text: &str) -> QueuedPrompt {
     QueuedPrompt {
@@ -112,11 +112,12 @@ fn applied_event_preserves_selection_of_a_later_pending_item() {
     app.pending.push_follow_up(prompt("future turn"));
     app.pending.input_panel_mut().selected = 2;
 
-    app.mark_steering_applied(&[applied]);
+    app.record_applied_steering(&[applied]);
 
     assert_eq!(app.pending.input_panel().selected, 1);
     let lines = app.pending_input_lines(80);
     assert!(line_text(&lines[2]).contains("▸ NEXT"));
+    assert_eq!(app.history.entries(), &[Entry::User("first steer".into())]);
 }
 
 #[test]
@@ -177,8 +178,39 @@ fn applied_event_removes_only_matching_steering() {
             prompt: prompt("pending"),
         });
 
-    app.mark_steering_applied(&[applied]);
+    app.record_applied_steering(&[applied]);
 
     assert_eq!(app.pending.accepted_steering().len(), 1);
     assert_eq!(app.pending.accepted_steering()[0].id, pending);
+    assert_eq!(app.history.entries(), &[Entry::User("applied".into())]);
+}
+
+// Covers: AlreadyApplied must still show the steer if SteeringApplied has not landed yet
+// Owner: interactive TUI pending-input
+#[test]
+fn already_applied_retraction_inserts_the_user_message() {
+    let mut app = test_app();
+    let id = rho_sdk::SteeringId::new();
+    app.pending
+        .accepted_steering_mut()
+        .push_back(AcceptedSteering {
+            id: id.clone(),
+            prompt: prompt("keep me"),
+        });
+    let request = PendingInputRequest::Retract {
+        action: PendingInputAction::DiscardAccepted { id },
+        receipt: Box::pin(std::future::pending()),
+    };
+    let completion =
+        PendingInputCompletion::Retracted(Ok(rho_sdk::SteeringRetraction::AlreadyApplied));
+
+    let failure = app.finish_pending_input_request(request, completion);
+
+    assert_eq!(failure, None);
+    assert!(app.pending.accepted_steering().is_empty());
+    assert_eq!(app.history.entries(), &[Entry::User("keep me".into())]);
+    assert_eq!(
+        app.status(),
+        "steer was already applied and can no longer be changed"
+    );
 }

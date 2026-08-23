@@ -16,6 +16,22 @@ pub(super) fn assert_idle_shell_still_streaming(harness: &mut PtyHarness) -> Res
     Ok(())
 }
 
+pub(super) fn assert_applied_steer_is_user_line(harness: &mut PtyHarness) -> Result<()> {
+    const STEER: &str = "fixture steer detail";
+    let has_standalone_line = harness
+        .screen()
+        .rows_text()
+        .iter()
+        .any(|row| row.trim() == STEER);
+    if !has_standalone_line {
+        anyhow::bail!(
+            "applied steer did not appear as a transcript user line:\n{}",
+            harness.screen().debug_dump()
+        );
+    }
+    Ok(())
+}
+
 pub(super) fn assert_terminal_restored(harness: &mut PtyHarness) -> Result<()> {
     // After a clean exit, ratatui/crossterm must leave the alternate screen.
     // Mouse disable alone is not enough: a regression that skips ESC[?1049l

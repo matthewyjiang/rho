@@ -39,9 +39,9 @@ fn should_finish_streams_before_recording(event: &ViewModelEvent) -> bool {
         | ViewModelEvent::ToolCallUpdated { .. }
         | ViewModelEvent::ToolCallProposed { .. }
         | ViewModelEvent::ToolStarted { .. }
-        | ViewModelEvent::ToolFinished { .. } => true,
+        | ViewModelEvent::ToolFinished { .. }
+        | ViewModelEvent::SteeringApplied(_) => true,
         ViewModelEvent::RunStarted
-        | ViewModelEvent::SteeringApplied(_)
         | ViewModelEvent::ProviderStreamReset(_)
         | ViewModelEvent::ProviderRetry
         | ViewModelEvent::OutputDelta(_)
@@ -251,7 +251,7 @@ impl App {
                 None
             }
             ViewModelEvent::SteeringApplied(ids) => {
-                self.mark_steering_applied(&ids);
+                self.record_applied_steering(&ids);
                 None
             }
             ViewModelEvent::ToolStarted { call_id, card } => {

@@ -466,6 +466,41 @@ const CONCURRENT_PROGRESS_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+const STEER_APPEARS_IN_TRANSCRIPT_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("start_turn"),
+    Step::SubmitText("fixture steering"),
+    Step::WaitText {
+        text: "initial turn waiting for steering",
+        timeout: STREAM,
+    },
+    Step::Phase("steer"),
+    Step::SubmitText("fixture steer detail"),
+    Step::WaitText {
+        text: "pending input",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "STEER",
+        timeout: STREAM,
+    },
+    Step::Phase("applied"),
+    Step::WaitText {
+        text: "steering applied exactly once: fixture steer detail",
+        timeout: STREAM,
+    },
+    Step::WaitTextGone {
+        text: "STEER",
+        timeout: STREAM,
+    },
+    Step::Custom(assert_applied_steer_is_user_line),
+    Step::ExitCommand,
+];
+
 const RETRACT_STEERING_DURING_TOOL_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
@@ -648,6 +683,13 @@ const ALL_SCENARIOS: &[Scenario] = &[
         DEFAULT_SIZE,
         CONCURRENT_PROGRESS_STEPS,
         false,
+    ),
+    Scenario::new(
+        "steer_appears_in_transcript",
+        "Applied steering appears as a transcript user message",
+        DEFAULT_SIZE,
+        STEER_APPEARS_IN_TRANSCRIPT_STEPS,
+        true,
     ),
     Scenario::new(
         "retract_steering_during_tool",
@@ -964,5 +1006,6 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
 }
 
 use assert_helpers::{
-    assert_idle_shell_still_streaming, assert_inline_shell_cancelled, assert_terminal_restored,
+    assert_applied_steer_is_user_line, assert_idle_shell_still_streaming,
+    assert_inline_shell_cancelled, assert_terminal_restored,
 };
