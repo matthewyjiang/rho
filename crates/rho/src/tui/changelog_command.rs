@@ -1,4 +1,4 @@
-use ratatui::{text::Line, DefaultTerminal};
+use ratatui::{backend::Backend, text::Line, Terminal};
 
 use super::{command_block::CommandBlock, App, Entry};
 use crate::{
@@ -12,11 +12,15 @@ use crate::{
 pub(super) type ChangelogFetchResult = anyhow::Result<ChangelogDisplay>;
 
 impl App {
-    pub(super) fn execute_changelog_command(
+    pub(super) fn execute_changelog_command<B>(
         &mut self,
         invocation: &CommandInvocation,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<()> {
+        terminal: &mut Terminal<B>,
+    ) -> anyhow::Result<()>
+    where
+        B: Backend,
+        B::Error: Send + Sync + 'static,
+    {
         let request = match parse_request(&invocation.args) {
             Ok(request) => request,
             Err(error) => {
@@ -36,7 +40,9 @@ impl App {
             },
             ChangelogRequest::Latest => {
                 if self.start_latest_changelog_command() {
-                    terminal.draw(|frame| self.draw(frame))?;
+                    terminal
+                        .draw(|frame| self.draw(frame))
+                        .map_err(anyhow::Error::new)?;
                 }
             }
         }

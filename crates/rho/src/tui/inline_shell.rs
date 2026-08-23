@@ -74,7 +74,7 @@ pub(super) struct PendingShellTask {
 
 impl PendingShellTask {
     #[cfg(test)]
-    fn test_task(stdout: impl Into<String>) -> Self {
+    pub(super) fn test_task(stdout: impl Into<String>) -> Self {
         let (_tx, rx) = mpsc::unbounded_channel();
         Self {
             mode: InlineShellMode::IncludeInContext,

@@ -27,6 +27,11 @@ impl App {
         self.turn.enter_compact();
     }
 
+    /// Busy UI for an interruptible wait that is not a provider run.
+    pub(super) fn begin_cancellable_wait_ui(&mut self) {
+        self.turn.enter_cancellable_wait();
+    }
+
     pub(super) fn end_busy_ui(&mut self) {
         // Live stream estimates are display-only for the in-flight provider
         // attempt. Drop them when the turn is no longer busy so statusline cost

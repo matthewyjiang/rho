@@ -257,6 +257,7 @@ impl App {
                 continue;
             }
             self.set_status("evaluating goal");
+            self.begin_cancellable_wait_ui();
             self.turn.start_loading();
             terminal.draw(|frame| self.draw(frame))?;
 
@@ -344,6 +345,7 @@ impl App {
             self.finish_all_inline_shells().await?;
             self.insert_deferred_inline_shell_context(agent)?;
             self.turn.stop_loading();
+            self.end_busy_ui();
             let Some(evaluation) = evaluation else {
                 break;
             };
@@ -430,6 +432,7 @@ impl App {
         }
 
         self.set_status("waiting for delegated agents");
+        self.begin_cancellable_wait_ui();
         self.turn.start_loading();
         terminal.draw(|frame| self.draw(frame))?;
         let interrupt_requested = AtomicBool::new(false);
@@ -473,6 +476,7 @@ impl App {
         self.finish_all_inline_shells().await?;
         self.insert_deferred_inline_shell_context(agent)?;
         self.turn.stop_loading();
+        self.end_busy_ui();
         Ok(self.goal.is_some() && !self.should_quit)
     }
 
@@ -503,6 +507,7 @@ impl App {
             return Ok(false);
         }
 
+        self.begin_cancellable_wait_ui();
         self.turn.start_loading();
         terminal.draw(|frame| self.draw(frame))?;
         let interrupt_requested = AtomicBool::new(false);
@@ -548,6 +553,7 @@ impl App {
         self.finish_all_inline_shells().await?;
         self.insert_deferred_inline_shell_context(agent)?;
         self.turn.stop_loading();
+        self.end_busy_ui();
         Ok(should_retry && self.goal.is_some() && !self.should_quit)
     }
 }

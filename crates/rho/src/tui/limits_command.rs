@@ -201,10 +201,10 @@ impl App {
         ))
     }
 
-    pub(super) fn handle_limits_overlay_key(
+    pub(super) fn handle_limits_overlay_key<B: ratatui::backend::Backend>(
         &mut self,
         key: crossterm::event::KeyEvent,
-        terminal: &ratatui::DefaultTerminal,
+        terminal: &ratatui::Terminal<B>,
     ) -> bool {
         if !self.limits_overlay_open() {
             return false;
@@ -262,25 +262,33 @@ impl App {
         true
     }
 
-    fn scroll_limits_overlay(&mut self, terminal: &ratatui::DefaultTerminal, delta: isize) {
+    fn scroll_limits_overlay<B: ratatui::backend::Backend>(
+        &mut self,
+        terminal: &ratatui::Terminal<B>,
+        delta: isize,
+    ) {
         self.apply_limits_scroll(terminal, LimitsScrollTarget::Delta(delta));
     }
 
-    fn scroll_limits_overlay_page(
+    fn scroll_limits_overlay_page<B: ratatui::backend::Backend>(
         &mut self,
-        terminal: &ratatui::DefaultTerminal,
+        terminal: &ratatui::Terminal<B>,
         direction: isize,
     ) {
         self.apply_limits_scroll(terminal, LimitsScrollTarget::Page(direction));
     }
 
-    fn set_limits_overlay_scroll(&mut self, terminal: &ratatui::DefaultTerminal, scroll: usize) {
+    fn set_limits_overlay_scroll<B: ratatui::backend::Backend>(
+        &mut self,
+        terminal: &ratatui::Terminal<B>,
+        scroll: usize,
+    ) {
         self.apply_limits_scroll(terminal, LimitsScrollTarget::Absolute(scroll));
     }
 
-    fn apply_limits_scroll(
+    fn apply_limits_scroll<B: ratatui::backend::Backend>(
         &mut self,
-        terminal: &ratatui::DefaultTerminal,
+        terminal: &ratatui::Terminal<B>,
         target: LimitsScrollTarget,
     ) {
         let Ok(size) = terminal.size() else {
@@ -388,7 +396,10 @@ impl App {
         }
     }
 
-    pub(super) fn clamp_limits_overlay_scroll(&mut self, terminal: &ratatui::DefaultTerminal) {
+    pub(super) fn clamp_limits_overlay_scroll<B: ratatui::backend::Backend>(
+        &mut self,
+        terminal: &ratatui::Terminal<B>,
+    ) {
         if !self.limits_overlay_open() {
             return;
         }

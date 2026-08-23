@@ -1,7 +1,7 @@
 //! Config, OAuth, secret, and reasoning-cycle key handlers for the interactive TUI.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::DefaultTerminal;
+use ratatui::{backend::Backend, DefaultTerminal, Terminal};
 
 use super::{
     config_editor::{ConfigNumberInput, ConfigNumberSave},
@@ -89,11 +89,15 @@ impl App {
         Ok(true)
     }
 
-    pub(super) fn handle_config_number_key(
+    pub(super) fn handle_config_number_key<B>(
         &mut self,
         key: KeyEvent,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<bool> {
+        terminal: &mut Terminal<B>,
+    ) -> anyhow::Result<bool>
+    where
+        B: Backend,
+        B::Error: Send + Sync + 'static,
+    {
         if !matches!(self.input_ui.composer(), ComposerMode::ConfigNumberInput(_)) {
             return Ok(false);
         }
@@ -139,7 +143,8 @@ impl App {
                         self.open_main_config_picker_selected(
                             config_picker::MAX_TOOL_OUTPUT_LINES_VALUE,
                         )?;
-                        self.clamp_history_scroll_for_terminal(terminal)?;
+                        self.clamp_history_scroll_for_terminal(terminal)
+                            .map_err(anyhow::Error::new)?;
                         self.set_status(format!("max tool output lines set to {value}"));
                     }
                     ConfigNumberSave::CompactThresholdPercent(value) => {
@@ -303,10 +308,14 @@ impl App {
         Ok(true)
     }
 
-    pub(super) fn execute_config_command(
+    pub(super) fn execute_config_command<B>(
         &mut self,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<()> {
+        terminal: &mut Terminal<B>,
+    ) -> anyhow::Result<()>
+    where
+        B: Backend,
+        B::Error: Send + Sync + 'static,
+    {
         let config = self.info.services.config_repository.load()?;
         self.info.runtime.max_tool_output_lines = config.max_tool_output_lines.max(1);
         self.info
@@ -321,7 +330,9 @@ impl App {
                 &config,
             )));
         self.set_status("config");
-        terminal.draw(|frame| self.draw(frame))?;
+        terminal
+            .draw(|frame| self.draw(frame))
+            .map_err(anyhow::Error::new)?;
         Ok(())
     }
 

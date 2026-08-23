@@ -882,7 +882,10 @@ fn fuzzy_character_bonus(haystack: &[char], index: usize, previous_match: Option
 }
 
 impl super::App {
-    pub(super) fn clamp_overlay_detail_scroll(&mut self, terminal: &ratatui::DefaultTerminal) {
+    pub(super) fn clamp_overlay_detail_scroll<B: ratatui::backend::Backend>(
+        &mut self,
+        terminal: &ratatui::Terminal<B>,
+    ) {
         let Ok(size) = terminal.size() else {
             return;
         };

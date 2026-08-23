@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use ratatui::DefaultTerminal;
+use ratatui::{backend::Backend, Terminal};
 
 use super::{
     activity::LoadingSpinner,
@@ -22,6 +22,23 @@ use super::{
     InteractiveModelSelection, InteractiveRuntime, PasteSegment, PickerAction, QueuedPrompt,
     StreamControl,
 };
+
+/// What Esc does in the live TUI.
+///
+/// Approval deny-and-abort stays first. Visible or focused overlays and
+/// non-input composer modes then own Esc, matching during-turn key routing,
+/// so background pending inline shells and shell mode cannot steal a key
+/// the overlay would handle. Event handling and the empty-composer hint
+/// share this so chrome never advertises abort unless Esc would actually
+/// interrupt through the composer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RunningEscapeAction {
+    DenyApprovalAndAbort,
+    CancelInlineShells,
+    ExitShellMode,
+    Overlay,
+    AbortTurn,
+}
 
 pub(super) enum RunningTerminalError {
     Recoverable(rho_providers::model::ModelError),
@@ -49,12 +66,23 @@ impl From<rho_providers::model::ModelError> for RunningTerminalError {
     }
 }
 
+fn map_backend_error<E>(error: E) -> RunningTerminalError
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    RunningTerminalError::Terminal(anyhow::Error::new(error))
+}
+
 impl App {
-    pub(super) async fn handle_key_during_turn(
+    pub(super) async fn handle_key_during_turn<B>(
         &mut self,
         key: KeyEvent,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<bool> {
+        terminal: &mut Terminal<B>,
+    ) -> anyhow::Result<bool>
+    where
+        B: Backend,
+        B::Error: Send + Sync + 'static,
+    {
         if self.handle_paste_burst_key(key) {
             return Ok(false);
         }
@@ -63,14 +91,17 @@ impl App {
             return Ok(false);
         }
 
-        let size = terminal.size()?;
+        let size = terminal.size().map_err(anyhow::Error::new)?;
         match self.handle_approval_key(key, size.width as usize, size.height as usize)? {
             ApprovalKeyOutcome::Ignored => {}
             ApprovalKeyOutcome::Handled => return Ok(false),
             ApprovalKeyOutcome::Resolved => return Ok(true),
         }
 
-        if self.handle_history_key(key, terminal)? {
+        if self
+            .handle_history_key(key, terminal)
+            .map_err(anyhow::Error::new)?
+        {
             return Ok(false);
         }
 
@@ -104,7 +135,10 @@ impl App {
         if self.handle_running_favorite_cycle_key(key)? {
             return Ok(false);
         }
-        if self.handle_configurable_running_key(key, terminal)? {
+        if self
+            .handle_configurable_running_key(key, terminal)
+            .map_err(anyhow::Error::new)?
+        {
             return Ok(false);
         }
 
@@ -149,12 +183,12 @@ impl App {
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::Up) => {
-                let width = terminal.size()?.width as usize;
+                let width = terminal.size().map_err(anyhow::Error::new)?.width as usize;
                 self.recall_input_history_or_move_cursor(HistoryDirection::Previous, width);
                 self.ctrl_c_streak = 0;
             }
             (_, KeyCode::Down) => {
-                let width = terminal.size()?.width as usize;
+                let width = terminal.size().map_err(anyhow::Error::new)?.width as usize;
                 self.recall_input_history_or_move_cursor(HistoryDirection::Next, width);
                 self.ctrl_c_streak = 0;
             }
@@ -200,10 +234,14 @@ impl App {
         Ok(false)
     }
 
-    pub(super) async fn submit_during_turn(
+    pub(super) async fn submit_during_turn<B>(
         &mut self,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<()> {
+        terminal: &mut Terminal<B>,
+    ) -> anyhow::Result<()>
+    where
+        B: Backend,
+        B::Error: Send + Sync + 'static,
+    {
         let prompt = self.expanded_input().trim().to_string();
         let display_prompt = self.input_ui.text().to_string();
         let paste_segments = self.input_ui.paste_segments().to_vec();
@@ -367,11 +405,15 @@ impl App {
         }
     }
 
-    pub(super) async fn execute_command_during_turn(
+    pub(super) async fn execute_command_during_turn<B>(
         &mut self,
         invocation: CommandInvocation,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<()> {
+        terminal: &mut Terminal<B>,
+    ) -> anyhow::Result<()>
+    where
+        B: Backend,
+        B::Error: Send + Sync + 'static,
+    {
         match invocation.id {
             CommandId::Exit => self.execute_exit_command(),
             CommandId::Theme => self.open_theme_picker(),
@@ -415,11 +457,15 @@ impl App {
         }
     }
 
-    pub(super) async fn handle_running_command_palette_key(
+    pub(super) async fn handle_running_command_palette_key<B>(
         &mut self,
         key: KeyEvent,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<bool> {
+        terminal: &mut Terminal<B>,
+    ) -> anyhow::Result<bool>
+    where
+        B: Backend,
+        B::Error: Send + Sync + 'static,
+    {
         let Some(ActivePalette::Command(matches)) = self.active_palette() else {
             return Ok(false);
         };
@@ -683,11 +729,15 @@ impl App {
         Ok(())
     }
 
-    pub(super) fn handle_running_config_number_key(
+    pub(super) fn handle_running_config_number_key<B>(
         &mut self,
         key: KeyEvent,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<bool> {
+        terminal: &mut Terminal<B>,
+    ) -> anyhow::Result<bool>
+    where
+        B: Backend,
+        B::Error: Send + Sync + 'static,
+    {
         if !matches!(self.input_ui.composer(), ComposerMode::ConfigNumberInput(_)) {
             return Ok(false);
         }
@@ -724,18 +774,50 @@ impl App {
     pub(super) async fn handle_running_terminal_events(
         &mut self,
         first_event: Event,
-        terminal: &mut DefaultTerminal,
+        terminal: &mut ratatui::DefaultTerminal,
         interrupt_requested: &AtomicBool,
         tool_call_active: &AtomicBool,
     ) -> Result<StreamControl, RunningTerminalError> {
+        let mut open_editor = false;
+        let control = self
+            .route_running_terminal_event(
+                first_event,
+                terminal,
+                interrupt_requested,
+                tool_call_active,
+                &mut open_editor,
+            )
+            .await?;
+        if open_editor {
+            self.open_composer_in_editor(terminal)
+                .await
+                .map_err(RunningTerminalError::Terminal)?;
+            return Ok(StreamControl::Resize);
+        }
+        Ok(control)
+    }
+
+    pub(super) async fn route_running_terminal_event<B>(
+        &mut self,
+        first_event: Event,
+        terminal: &mut Terminal<B>,
+        interrupt_requested: &AtomicBool,
+        tool_call_active: &AtomicBool,
+        open_editor: &mut bool,
+    ) -> Result<StreamControl, RunningTerminalError>
+    where
+        B: Backend,
+        B::Error: Send + Sync + 'static,
+    {
         let mut control = StreamControl::Continue;
         let mut approval_resolved = false;
         'event: {
             match self.take_exclusive_event(first_event) {
                 Ok(resize) => {
                     if resize {
-                        self.apply_terminal_resize(terminal)?;
-                        self.drain_streams(terminal)?;
+                        self.apply_terminal_resize(terminal)
+                            .map_err(map_backend_error)?;
+                        self.drain_streams(terminal).map_err(map_backend_error)?;
                         control = StreamControl::Resize;
                     }
                     if self.should_quit {
@@ -749,34 +831,41 @@ impl App {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
                         self.clear_selections();
                         self.subagent_panel.clear_pointer_state();
-                        if key.code == KeyCode::Esc
-                            && matches!(self.input_ui.composer(), ComposerMode::Approval(_))
-                        {
-                            self.handle_approval_key(key, 1, 1).map_err(|error| {
-                                RunningTerminalError::Recoverable(
-                                    rho_providers::model::ModelError::InvalidResponse(
-                                        error.to_string(),
-                                    ),
-                                )
-                            })?;
-                            self.cancel_inline_shells();
-                            return Ok(self
-                                .request_running_interrupt(interrupt_requested, tool_call_active));
-                        }
-                        if key.code == KeyCode::Esc && self.cancel_inline_shells() {
-                            break 'event;
-                        }
-                        if key.code == KeyCode::Esc && self.exit_shell_mode() {
-                            break 'event;
-                        }
-                        if key.code == KeyCode::Esc && !self.running_escape_has_overlay_target() {
-                            return Ok(self
-                                .request_running_interrupt(interrupt_requested, tool_call_active));
+                        if key.code == KeyCode::Esc {
+                            match self.running_escape_action() {
+                                RunningEscapeAction::DenyApprovalAndAbort => {
+                                    self.handle_approval_key(key, 1, 1).map_err(|error| {
+                                        RunningTerminalError::Recoverable(
+                                            rho_providers::model::ModelError::InvalidResponse(
+                                                error.to_string(),
+                                            ),
+                                        )
+                                    })?;
+                                    self.cancel_inline_shells();
+                                    return Ok(self.request_running_interrupt(
+                                        interrupt_requested,
+                                        tool_call_active,
+                                    ));
+                                }
+                                RunningEscapeAction::CancelInlineShells => {
+                                    let _ = self.cancel_inline_shells();
+                                    break 'event;
+                                }
+                                RunningEscapeAction::ExitShellMode => {
+                                    let _ = self.exit_shell_mode();
+                                    break 'event;
+                                }
+                                RunningEscapeAction::AbortTurn => {
+                                    return Ok(self.request_running_interrupt(
+                                        interrupt_requested,
+                                        tool_call_active,
+                                    ));
+                                }
+                                RunningEscapeAction::Overlay => {}
+                            }
                         }
                         if self.external_editor_shortcut_matches(key) {
-                            self.open_composer_in_editor(terminal)
-                                .await
-                                .map_err(RunningTerminalError::Terminal)?;
+                            *open_editor = true;
                             control = StreamControl::Resize;
                             break 'event;
                         }
@@ -807,13 +896,15 @@ impl App {
                         self.input_ui.clear_paste_burst();
                     }
                     Event::Resize(_, _) => {
-                        self.apply_terminal_resize(terminal)?;
-                        self.drain_streams(terminal)?;
+                        self.apply_terminal_resize(terminal)
+                            .map_err(map_backend_error)?;
+                        self.drain_streams(terminal).map_err(map_backend_error)?;
                         control = StreamControl::Resize;
                     }
                     Event::Mouse(mouse) => {
                         self.flush_pending_paste_burst();
-                        self.handle_mouse_event(mouse.kind, mouse.column, mouse.row, terminal)?;
+                        self.handle_mouse_event(mouse.kind, mouse.column, mouse.row, terminal)
+                            .map_err(map_backend_error)?;
                     }
                     Event::FocusGained => {
                         self.input_ui.cancel_pointer_click_sequence();
@@ -837,10 +928,36 @@ impl App {
         }
     }
 
-    pub(super) fn running_escape_has_overlay_target(&mut self) -> bool {
+    pub(super) fn running_escape_action(&mut self) -> RunningEscapeAction {
+        if matches!(self.input_ui.composer(), ComposerMode::Approval(_)) {
+            RunningEscapeAction::DenyApprovalAndAbort
+        } else if self.running_escape_has_overlay_target() {
+            RunningEscapeAction::Overlay
+        } else if !self.pending_inline_shells.is_empty() {
+            RunningEscapeAction::CancelInlineShells
+        } else if self.input_ui.shell_mode().is_some() {
+            RunningEscapeAction::ExitShellMode
+        } else if self.running_operation_is_interruptible() {
+            RunningEscapeAction::AbortTurn
+        } else {
+            RunningEscapeAction::Overlay
+        }
+    }
+
+    fn running_escape_has_overlay_target(&mut self) -> bool {
         self.active_palette().is_some()
             || self.pending_input_focused()
             || !matches!(self.input_ui.composer(), ComposerMode::Input)
+    }
+
+    /// True when Esc on the composer should cancel the current operation.
+    ///
+    /// Distinct from overlay intercepts: goal evaluation, delegated-agent
+    /// waits, and retry delay are interruptible even though they are not
+    /// provider turns. Idle and compact remain non-interruptible here because
+    /// those paths do not consume this handler.
+    fn running_operation_is_interruptible(&self) -> bool {
+        self.is_provider_turn_ui() || self.turn.is_cancellable_wait()
     }
 
     pub(super) fn request_running_interrupt(
@@ -855,3 +972,7 @@ impl App {
         StreamControl::Interrupt
     }
 }
+
+#[cfg(test)]
+#[path = "during_turn_tests.rs"]
+mod tests;

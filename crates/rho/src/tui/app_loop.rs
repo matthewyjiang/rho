@@ -2,7 +2,7 @@ use std::io::Write;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{Event, KeyEventKind};
-use ratatui::DefaultTerminal;
+use ratatui::{backend::Backend, DefaultTerminal, Terminal};
 
 use super::{
     media_attach, mouse_capture, paste_burst::normalize_paste, ActivityPhase, ActivityStatus, App,
@@ -393,10 +393,10 @@ impl App {
         ActivityStatus::from_parent_and_subagents(parent, self.subagent_panel.count())
     }
 
-    pub(super) fn apply_terminal_resize(
+    pub(super) fn apply_terminal_resize<B: Backend>(
         &mut self,
-        terminal: &mut DefaultTerminal,
-    ) -> std::io::Result<()> {
+        terminal: &mut Terminal<B>,
+    ) -> Result<(), B::Error> {
         self.flush_pending_paste_burst();
         self.clamp_overlay_detail_scroll(terminal);
         self.clamp_limits_overlay_scroll(terminal);

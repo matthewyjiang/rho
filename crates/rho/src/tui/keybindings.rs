@@ -1,14 +1,18 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::DefaultTerminal;
+use ratatui::{backend::Backend, DefaultTerminal, Terminal};
 
 use super::{App, Entry, InteractiveRuntime};
 
 impl App {
-    pub(super) fn handle_configurable_running_key(
+    pub(super) fn handle_configurable_running_key<B>(
         &mut self,
         key: KeyEvent,
-        terminal: &mut DefaultTerminal,
-    ) -> std::io::Result<bool> {
+        terminal: &mut Terminal<B>,
+    ) -> Result<bool, B::Error>
+    where
+        B: Backend,
+        B::Error: Send + Sync + 'static,
+    {
         if self.info.runtime.keybindings.paste_image.matches(key)
             || matches!(
                 (key.modifiers, key.code),

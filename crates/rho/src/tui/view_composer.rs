@@ -19,6 +19,7 @@ use super::{
     composer_layout::{content_width, prompt_width, PROMPT_PREFIX},
     config_number_input_lines, display_width,
     divider::{labeled_divider_line, DividerCaption},
+    during_turn::RunningEscapeAction,
     file_picker,
     inline_choice::inline_choice_lines,
     inline_shell, input_frame,
@@ -106,11 +107,12 @@ impl App {
                     );
                 }
                 if self.input_ui.text().is_empty() && self.input_ui.shell_mode().is_none() {
-                    let placeholder = if self.is_provider_turn_ui() {
-                        "Enter steers · Esc aborts"
-                    } else {
-                        "Type a message"
-                    };
+                    let placeholder =
+                        if matches!(self.running_escape_action(), RunningEscapeAction::AbortTurn) {
+                            "Enter steers · Esc aborts"
+                        } else {
+                            "Type a message"
+                        };
                     text_lines[0]
                         .spans
                         .push(Span::styled(placeholder, Theme::dim()));
