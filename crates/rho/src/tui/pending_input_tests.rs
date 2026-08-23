@@ -229,3 +229,19 @@ fn already_applied_retraction_inserts_the_user_message() {
         "steer was already applied and can no longer be changed"
     );
 }
+
+// Covers: a late or empty SteeringApplied must not cut a live post-steer stream
+// Owner: interactive TUI pending-input
+#[test]
+fn late_applied_event_does_not_cut_a_live_stream() {
+    let mut app = test_app();
+    app.streams.current_stream_kind = Some(StreamKind::Assistant);
+    app.streams
+        .push_delta(StreamKind::Assistant, "post-steer reply", Instant::now());
+
+    app.record_applied_steering(&[rho_sdk::SteeringId::new()]);
+
+    assert!(app.history.entries().is_empty());
+    assert!(!app.streams.hold.is_empty());
+    assert_eq!(app.streams.current_stream_kind, Some(StreamKind::Assistant));
+}

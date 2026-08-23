@@ -6,7 +6,10 @@
 //! into the transcript. Expand/collapse of truncated tool output lives in
 //! `tool_output_ui`. Stream finalization that must happen before recording a
 //! lifecycle event is classified exhaustively via
-//! [`should_finish_streams_before_recording`].
+//! [`should_finish_streams_before_recording`]. `SteeringApplied` is the
+//! exception: it finalizes inside [`App::record_applied_steering`] so the
+//! retraction path shares the same flush-then-insert order, and only when a
+//! matching accepted steer is still queued.
 
 use std::time::Instant;
 

@@ -245,8 +245,12 @@ impl App {
     }
 
     pub(super) fn record_applied_steering(&mut self, ids: &[rho_sdk::SteeringId]) {
+        let prompts = self.take_accepted_steering(ids);
+        if prompts.is_empty() {
+            return;
+        }
         self.finish_streams();
-        for prompt in self.take_accepted_steering(ids) {
+        for prompt in prompts {
             self.insert_entry(&Entry::User(message_history::render_user_entry(
                 &prompt.display_prompt,
                 &prompt.media,
