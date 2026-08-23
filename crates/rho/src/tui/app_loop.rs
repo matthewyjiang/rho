@@ -385,10 +385,12 @@ impl App {
             ComposerMode::Approval(_) | ComposerMode::Questionnaire(_) => None,
             _ => self.turn.provider_retry(),
         };
-        ActivityStatus::from_parent_and_subagents(
-            self.loading_active().then_some((phase, retry)),
-            self.subagent_panel.count(),
-        )
+        let parent = if self.held_turns.is_empty() {
+            self.loading_active().then_some((phase, retry))
+        } else {
+            Some((ActivityPhase::ConnectingMcp, None))
+        };
+        ActivityStatus::from_parent_and_subagents(parent, self.subagent_panel.count())
     }
 
     pub(super) fn apply_terminal_resize(

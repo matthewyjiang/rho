@@ -380,6 +380,7 @@ impl App {
             // Queue rather than replace: someone who submits twice while the
             // servers are still connecting must not lose the first prompt.
             self.hold_turn(turn, media, paste_segments);
+            self.turn.start_loading_if_needed();
             self.set_mcp_connecting_status();
             return Ok(());
         }

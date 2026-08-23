@@ -106,9 +106,14 @@ impl App {
                     );
                 }
                 if self.input_ui.text().is_empty() && self.input_ui.shell_mode().is_none() {
+                    let placeholder = if self.is_provider_turn_ui() {
+                        "Enter steers · Esc aborts"
+                    } else {
+                        "Type a message"
+                    };
                     text_lines[0]
                         .spans
-                        .push(Span::styled("Type a message", Theme::dim()));
+                        .push(Span::styled(placeholder, Theme::dim()));
                 }
                 lines.extend(text_lines);
                 ComposerFrame {

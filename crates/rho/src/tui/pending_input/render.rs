@@ -13,7 +13,7 @@ const MAX_VISIBLE_ITEMS: usize = 3;
 
 impl App {
     pub(in crate::tui) fn pending_input_height(&self) -> usize {
-        let count = self.pending_input_count();
+        let count = self.pending_input_refs().len();
         if count == 0 {
             return 0;
         }
@@ -31,8 +31,11 @@ impl App {
         let start = visible_start(selected, items.len(), MAX_VISIBLE_ITEMS);
         let steering_count =
             self.pending.accepted_steering().len() + self.pending.steering_prompts().len();
+        let held_count = self.held_turns.len();
         let hint = if self.pending.input_panel().focused {
             "↑↓ select · enter edit · backspace discard · esc close".to_string()
+        } else if held_count > 0 {
+            "esc edit".to_string()
         } else {
             format!(
                 "{} edit · {} manage",
@@ -44,6 +47,7 @@ impl App {
             width,
             steering_count,
             self.pending.queued_prompts().len(),
+            held_count,
             &hint,
         )];
         lines.extend(
@@ -106,6 +110,12 @@ impl App {
                 &self.pending.queued_prompts()[index].display_prompt,
                 Theme::accent(),
             ),
+            PendingInputRef::Held(index) => (
+                "HOLD",
+                "esc edit",
+                &self.held_turns[index].turn.display,
+                Theme::warning(),
+            ),
         };
         pending_item_line(width, marker, label, context, prompt, label_style, selected)
     }
@@ -115,15 +125,19 @@ fn pending_header_line(
     width: usize,
     steering_count: usize,
     follow_up_count: usize,
+    held_count: usize,
     hint: &str,
 ) -> Line<'static> {
-    let steering = count_label(steering_count, "steer", "steers");
-    let follow_up = count_label(follow_up_count, "follow-up", "follow-ups");
-    let counts = match (steering_count, follow_up_count) {
-        (0, _) => follow_up,
-        (_, 0) => steering,
-        _ => format!("{steering} · {follow_up}"),
-    };
+    let counts = [
+        (steering_count, "steer", "steers"),
+        (follow_up_count, "follow-up", "follow-ups"),
+        (held_count, "held prompt", "held prompts"),
+    ]
+    .into_iter()
+    .filter(|(count, _, _)| *count > 0)
+    .map(|(count, singular, plural)| count_label(count, singular, plural))
+    .collect::<Vec<_>>()
+    .join(" · ");
     let left = format!("  pending input · {counts}");
     let left_width = display_width(&left);
     let hint_width = display_width(hint);

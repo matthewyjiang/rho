@@ -119,12 +119,16 @@ const MCP_HOLD_TAKE_BACK_STEPS: &[Step] = &[
     },
     Step::Phase("submit_during_connect"),
     Step::SubmitText("hold-turn-xyz"),
-    // The prompt leaving the composer is what proves it was accepted and held,
-    // and it is the state the take-back has to reverse.
-    Step::WaitTextGone {
-        text: "hold-turn-xyz",
-        timeout: STARTUP,
+    Step::WaitText {
+        text: "connecting MCP servers",
+        timeout: SETTLE,
     },
+    Step::WaitText {
+        text: "HOLD",
+        timeout: SETTLE,
+    },
+    Step::AssertText("esc edit"),
+    Step::AssertText("hold-turn-xyz"),
     Step::Phase("take_back_with_esc"),
     Step::Key(Key::Esc),
     Step::WaitText {

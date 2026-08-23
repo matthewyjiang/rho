@@ -39,7 +39,9 @@ impl AttachChrome {
     fn footer_hint(self) -> &'static str {
         match self {
             Self::Standalone => "read-only · scroll · ctrl+o expand · q detach",
-            Self::Embedded { .. } => "read-only · scroll · tab cycle · ctrl+o expand · q back",
+            Self::Embedded { .. } => {
+                "scroll · tab cycle · ctrl+o expand · q back · ctrl+c back/again quit"
+            }
         }
     }
 

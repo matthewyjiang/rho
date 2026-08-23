@@ -132,6 +132,10 @@ const TYPE_DURING_STREAM_STEPS: &[Step] = &[
         text: "input flood event 010",
         timeout: STREAM,
     },
+    Step::WaitText {
+        text: "Enter steers · Esc aborts",
+        timeout: SETTLE,
+    },
     Step::Phase("query_limits"),
     Step::SubmitText("/limits"),
     Step::WaitText {
@@ -148,6 +152,10 @@ const TYPE_DURING_STREAM_STEPS: &[Step] = &[
     Step::WaitText {
         text: "draft while streaming",
         timeout: WaitTimeout::secs(2, "composer input during stream"),
+    },
+    Step::WaitTextGone {
+        text: "Enter steers · Esc aborts",
+        timeout: SETTLE,
     },
     Step::Key(Key::Esc),
     Step::WaitQuiet {
