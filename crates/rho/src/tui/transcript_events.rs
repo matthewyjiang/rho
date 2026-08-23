@@ -15,7 +15,6 @@ use ratatui::{backend::Backend, DefaultTerminal, Terminal};
 use super::{
     activity::ActivityPhase,
     event_adapter::ViewModelEvent,
-    markdown::update_code_block_state,
     render::padded_content_width,
     stream::StreamFragment,
     usage_cost::{
@@ -157,7 +156,7 @@ impl App {
             .stream_mut(kind)
             .drain_renderable_markdown(inner_width, in_code_block);
         if let Some(fragment) = fragment {
-            self.streams.live_stream_preview = None;
+            self.streams.set_live_preview(None);
             self.insert_stream_fragment(fragment, kind);
             Ok(true)
         } else {
@@ -211,14 +210,14 @@ impl App {
             .stream(kind)
             .drain_preview_markdown(inner_width, in_code_block);
         if let Some(preview) = preview {
-            self.streams.live_stream_preview = Some(LiveStreamPreview {
+            self.streams.set_live_preview(Some(LiveStreamPreview {
                 kind,
                 text: preview.render_text().to_string(),
                 include_leading_blank: preview.include_leading_blank(),
-            });
+            }));
             Ok(true)
         } else if self.streams.live_stream_preview.is_some() {
-            self.streams.live_stream_preview = None;
+            self.streams.set_live_preview(None);
             Ok(true)
         } else {
             Ok(false)
@@ -371,12 +370,7 @@ impl App {
                                 None
                             }
                         });
-                Some(Entry::Tool(ToolEntry {
-                    card,
-                    expanded,
-                    image,
-                    started_at: None,
-                }))
+                Some(Entry::Tool(ToolEntry::new(card, expanded, image, None)))
             }
         }
     }
@@ -438,7 +432,7 @@ impl App {
         let assistant_finished = self.finish_stream(StreamKind::Assistant);
         self.streams.current_stream_kind = None;
         self.streams.clear_tick_deadline();
-        self.streams.live_stream_preview = None;
+        self.streams.set_live_preview(None);
         let thought = self.close_reasoning_phase();
         reasoning_finished || assistant_finished || thought
     }
@@ -469,7 +463,7 @@ impl App {
         let fragment = self.streams.stream_mut(kind).finish();
         self.streams.clear_tick_deadline();
         if let Some(fragment) = fragment {
-            self.streams.live_stream_preview = None;
+            self.streams.set_live_preview(None);
             self.insert_stream_fragment(fragment, kind);
             true
         } else {
@@ -508,7 +502,7 @@ impl App {
     pub(super) fn insert_stream_fragment(&mut self, fragment: StreamFragment, kind: StreamKind) {
         let render_text = fragment.render_text();
         if !render_text.is_empty() {
-            update_code_block_state(render_text, self.streams.code_fence_mut(kind));
+            self.streams.advance_code_fence(kind, render_text);
         }
         let text = fragment.into_text();
         self.push_transcript_entry(kind.entry(text));
@@ -633,10 +627,11 @@ impl App {
             self.streams.discard_hold();
             self.streams.reasoning_stream.reset();
             self.streams.reasoning_stream_code_fence = Default::default();
+            self.streams.invalidate_preview_cache();
             self.streams.current_stream_kind = None;
         }
         self.streams.clear_tick_deadline();
-        self.streams.live_stream_preview = None;
+        self.streams.set_live_preview(None);
     }
 
     fn reset_attempt_accounting(&mut self) {

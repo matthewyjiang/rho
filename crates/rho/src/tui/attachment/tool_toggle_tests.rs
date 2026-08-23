@@ -25,12 +25,7 @@ fn short_card() -> ToolCard {
 }
 
 fn tool_entry(card: ToolCard) -> ToolEntry {
-    ToolEntry {
-        card,
-        expanded: false,
-        image: None,
-        started_at: None,
-    }
+    ToolEntry::new(card, false, None, None)
 }
 
 fn paint_height(item: &HistoryItem<'_>, width: usize, max_tool_output_lines: usize) -> usize {

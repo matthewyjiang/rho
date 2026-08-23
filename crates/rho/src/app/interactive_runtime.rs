@@ -417,23 +417,27 @@ impl InteractiveRuntime {
             let snapshot = outcome.committed_snapshot().ok_or_else(|| {
                 anyhow::anyhow!("automatic compaction event is missing its committed snapshot")
             });
-            let checkpoint = self.capture_durable_session();
             let display_user = self
                 .runs
                 .pending_turn()
                 .map(|turn| turn.display_user().unwrap_or_else(|| turn.model_user()));
-            match (checkpoint, snapshot) {
-                (Ok(checkpoint), Ok(snapshot)) => {
+            match snapshot {
+                Ok(snapshot) => {
                     if let Err(error) =
                         self.sessions
                             .save_automatic_compaction(snapshot, display_user, outcome)
                     {
                         self.runs.cancel();
                         self.pending_persistence_error = Some(error);
-                        self.pending_persistence_checkpoint = checkpoint;
+                        // File append rolls back on failure, so the on-disk
+                        // (or cached) tree is the pre-save state needed to
+                        // rebuild the live session. Skip this parse on the
+                        // happy path.
+                        self.pending_persistence_checkpoint =
+                            self.capture_durable_session().ok().flatten();
                     }
                 }
-                (Err(error), _) | (_, Err(error)) => {
+                Err(error) => {
                     self.runs.cancel();
                     self.pending_persistence_error = Some(error);
                 }
@@ -490,13 +494,14 @@ impl InteractiveRuntime {
                 return Err(error);
             }
         };
-        let checkpoint = self.capture_durable_session();
         if let Err(error) = self.sessions.sync_finished_turn(
             finished.pending_turn.as_ref(),
             finished.outcome.as_ref().ok(),
         ) {
             self.tools.checkpoint_tracker().discard_turn();
-            let (checkpoint, capture_error) = match checkpoint {
+            // Capture only after a failed save. The append path truncates a
+            // partial record, so disk still holds the previous complete leaf.
+            let (checkpoint, capture_error) = match self.capture_durable_session() {
                 Ok(checkpoint) => (checkpoint, None),
                 Err(capture_error) => (None, Some(capture_error)),
             };
@@ -800,6 +805,10 @@ impl InteractiveRuntime {
         self.runs.observe_event(event, self.context_window);
     }
 
+    /// Loads the current durable snapshot for rollback after a failed save.
+    ///
+    /// Call only on the failure path. Successful turns must not pay a transcript
+    /// parse just to hold a checkpoint that is never used.
     fn capture_durable_session(
         &self,
     ) -> anyhow::Result<Option<(StoredSession, rho_sdk::SessionSnapshot)>> {

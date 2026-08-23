@@ -85,15 +85,15 @@ pub fn visit_files(
     options: &WalkOptions,
     mut visit: impl FnMut(WalkedFile) -> ControlFlow<WalkStop>,
 ) -> WalkStop {
-    let walker = WalkBuilder::new(root)
+    let mut builder = WalkBuilder::new(root);
+    builder
         .follow_links(false)
         .require_git(false)
         .hidden(matches!(options.hidden, HiddenFiles::Skip))
         // Depth 0 is the requested root, which the caller has already chosen;
         // only its descendants are filtered.
-        .filter_entry(|entry| entry.depth() == 0 || entry.file_name() != ".git")
-        .sort_by_file_name(std::ffi::OsStr::cmp)
-        .build();
+        .filter_entry(|entry| entry.depth() == 0 || entry.file_name() != ".git");
+    let walker = builder.sort_by_file_name(std::ffi::OsStr::cmp).build();
 
     let mut entries_seen = 0usize;
     for entry in walker {
@@ -106,30 +106,30 @@ pub fn visit_files(
             return WalkStop::EntryLimit;
         }
 
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(_) => continue,
-        };
-
-        if !entry.file_type().is_some_and(|ty| ty.is_file()) {
-            continue;
-        }
-
-        let absolute = entry.into_path();
-        let Some(relative) = relative_path(root, &absolute) else {
+        let Some(file) = walked_file(root, entry) else {
             continue;
         };
-        if relative.is_empty() {
-            continue;
-        }
 
-        match visit(WalkedFile { absolute, relative }) {
+        match visit(file) {
             ControlFlow::Continue(()) => {}
             ControlFlow::Break(stop) => return stop,
         }
     }
 
     WalkStop::Completed
+}
+
+fn walked_file(root: &Path, entry: Result<ignore::DirEntry, ignore::Error>) -> Option<WalkedFile> {
+    let entry = entry.ok()?;
+    if !entry.file_type().is_some_and(|ty| ty.is_file()) {
+        return None;
+    }
+    let absolute = entry.into_path();
+    let relative = relative_path(root, &absolute)?;
+    if relative.is_empty() {
+        return None;
+    }
+    Some(WalkedFile { absolute, relative })
 }
 
 fn relative_path(root: &Path, absolute: &Path) -> Option<String> {

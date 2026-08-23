@@ -534,16 +534,16 @@ fn zen_mode_hides_tool_and_reasoning_lines_and_restores_them() {
     let _guard = crate::tui::theme::theme_test_lock();
     use crate::tui::{ReasoningEntry, ToolEntry};
 
-    let tool = Entry::Tool(ToolEntry {
-        card: rho_tools::tool_card::ToolCard::new(
+    let tool = Entry::Tool(ToolEntry::new(
+        rho_tools::tool_card::ToolCard::new(
             rho_tools::tool_card::ToolStatus::Running,
             rho_tools::tool_card::ToolFamily::Default,
             rho_tools::tool_card::ToolHeader::call("read_file(a.rs)", None),
         ),
-        expanded: false,
-        image: None,
-        started_at: None,
-    });
+        false,
+        None,
+        None,
+    ));
     let entries = vec![
         Entry::User("hi".into()),
         tool,
@@ -603,12 +603,7 @@ fn resplice_tool_expand_preserves_later_assistant_lines() {
 
     let mut entries = vec![
         Entry::User("go".into()),
-        Entry::Tool(ToolEntry {
-            card,
-            expanded: false,
-            image: None,
-            started_at: None,
-        }),
+        Entry::Tool(ToolEntry::new(card, false, None, None)),
         Entry::Assistant("# big\n\n".to_string() + &"paragraph\n\n".repeat(30)),
     ];
 
@@ -725,16 +720,16 @@ fn image_height_only_change_uses_cached_dependency_flags() {
         )
         .unwrap()
     };
-    let tool = Entry::Tool(crate::tui::ToolEntry {
-        card: rho_tools::tool_card::ToolCard::new(
+    let tool = Entry::Tool(crate::tui::ToolEntry::new(
+        rho_tools::tool_card::ToolCard::new(
             rho_tools::tool_card::ToolStatus::Ok,
             rho_tools::tool_card::ToolFamily::Default,
             rho_tools::tool_card::ToolHeader::call("read_file photo.png", None),
         ),
-        expanded: false,
-        image: Some(image),
-        started_at: None,
-    });
+        false,
+        Some(image),
+        None,
+    ));
     let mut cache = HistoryLineCache::default();
     let entries = vec![
         Entry::User("prompt".into()),

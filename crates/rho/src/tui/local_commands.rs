@@ -39,17 +39,17 @@ impl App {
         } else {
             ToolBody::Lines(diff.lines)
         };
-        self.insert_entry(&Entry::Tool(ToolEntry {
-            card: ToolCard::new(
+        self.insert_entry(&Entry::Tool(ToolEntry::new(
+            ToolCard::new(
                 ToolStatus::Ok,
                 ToolFamily::FileCommand,
                 ToolHeader::call("diff", None),
             )
             .with_body(body),
-            expanded: true,
-            image: None,
-            started_at: None,
-        }));
+            true,
+            None,
+            None,
+        )));
         self.set_status(if diff.has_changes {
             "worktree diff"
         } else {

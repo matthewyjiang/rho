@@ -500,12 +500,12 @@ impl super::App {
                 exit_code: "cancelled".into(),
                 ok: false,
             };
-            self.insert_entry(&super::Entry::Tool(super::ToolEntry {
-                card: display_card(&output, task.mode.included_in_context()),
-                expanded: true,
-                image: None,
-                started_at: None,
-            }));
+            self.insert_entry(&super::Entry::Tool(super::ToolEntry::new(
+                display_card(&output, task.mode.included_in_context()),
+                true,
+                None,
+                None,
+            )));
         }
         self.set_status("inline shell cancelled");
         true
@@ -636,12 +636,12 @@ impl super::App {
                 });
         }
         self.finish_streams();
-        self.insert_entry(&super::Entry::Tool(super::ToolEntry {
-            card: display_card(&output, task.mode.included_in_context()),
-            expanded: true,
-            image: None,
-            started_at: None,
-        }));
+        self.insert_entry(&super::Entry::Tool(super::ToolEntry::new(
+            display_card(&output, task.mode.included_in_context()),
+            true,
+            None,
+            None,
+        )));
         self.statusline.refresh_git_branch();
         self.set_status(if output.ok {
             if task.mode.included_in_context() {
@@ -698,12 +698,7 @@ impl PendingShellTask {
     }
 
     fn tool_entry(&self) -> super::ToolEntry {
-        super::ToolEntry {
-            card: ShellCardParts::running(self).card(),
-            expanded: true,
-            image: None,
-            started_at: None,
-        }
+        super::ToolEntry::new(ShellCardParts::running(self).card(), true, None, None)
     }
 
     /// Cached render of this task's live card, refreshed only when the output

@@ -511,16 +511,16 @@ fn render_with_elapsed(card: &ToolCard, width: usize, elapsed: Option<Duration>)
 #[test]
 fn live_shell_elapsed_requires_shell_header_and_running_status() {
     let started = std::time::Instant::now() - Duration::from_millis(250);
-    let mut entry = ToolEntry {
-        card: ToolCard::new(
+    let mut entry = ToolEntry::new(
+        ToolCard::new(
             ToolStatus::Running,
             ToolFamily::FileCommand,
             ToolHeader::shell("$", Some("sleep 1".into())),
         ),
-        expanded: false,
-        image: None,
-        started_at: Some(started),
-    };
+        false,
+        None,
+        Some(started),
+    );
     assert!(live_shell_elapsed(&entry).is_some());
 
     entry.card.status = ToolStatus::Ok;

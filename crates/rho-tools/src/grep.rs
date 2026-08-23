@@ -7,11 +7,13 @@ use serde_json::{json, Value};
 use crate::{
     file_view::{FileViewPolicy, FileViewStyle},
     grep_format::format_results,
+    hashline::FileHash,
     path_glob::PathGlob,
     search::{
         clamp_limit, stop_reasons, StopReason, WorkspaceSearch, DEFAULT_MAX_RESULTS,
         MAX_RESULTS_CEILING, SEARCH_DEADLINE,
     },
+    text_view::read_searchable_lines,
     tool::{ToolError, ToolSpec},
     workspace_walk::{visit_files, HiddenFiles, WalkLimits, WalkOptions, WalkStop, WalkedFile},
 };
@@ -245,10 +247,8 @@ pub(crate) fn grep_workspace(
         limits: WalkLimits::within(SEARCH_DEADLINE),
     };
     let retained_per_file = request.output_mode.retained_lines(request.max_per_file);
-
-    let mut hits: Vec<FileHit> = Vec::new();
+    let mut hits = Vec::new();
     let mut shown = 0usize;
-    let mut total_matches = 0usize;
     let mut per_file_truncated = 0usize;
 
     let walk_stop = visit_files(root, &options, |file: WalkedFile| {
@@ -260,31 +260,35 @@ pub(crate) fn grep_workspace(
                 return ControlFlow::Continue(());
             }
         }
-        let Some(mut hit) = scan_file(request, file, retained_per_file, style) else {
+        let Some(mut hit) = scan_file(request, &file, retained_per_file, style) else {
             return ControlFlow::Continue(());
         };
-
-        total_matches = total_matches.saturating_add(hit.total);
-        // Only meaningful where the mode keeps line text at all.
+        // Count max_per_file cuts before the result-budget trim, so a file
+        // split only by max_results does not look like a per-file truncation.
         if retained_per_file > 0 && hit.suppressed() > 0 {
             per_file_truncated = per_file_truncated.saturating_add(1);
         }
-
-        // `shown < max_results` holds here: the walk breaks as soon as it is
-        // reached, so `remaining` is always at least one. A file may carry
-        // more match lines than the budget has left; the extra lines fall into
-        // `suppressed()`. Modes that keep no line text are unaffected.
         let remaining = request.max_results - shown;
         hit.lines.truncate(remaining);
         shown = shown.saturating_add(request.output_mode.budget_cost(&hit));
         hits.push(hit);
-
         if shown >= request.max_results {
             ControlFlow::Break(WalkStop::ResultLimit)
         } else {
             ControlFlow::Continue(())
         }
     });
+
+    let total_matches: usize = hits
+        .iter()
+        .fold(0, |acc, hit| acc.saturating_add(hit.total));
+    // Cancel can land during the last file scan, after the visitor already
+    // returned Continue. ResultLimit is reported by the visitor Break.
+    let walk_stop = if cancelled() {
+        WalkStop::Cancelled
+    } else {
+        walk_stop
+    };
 
     Ok(format_results(
         request,
@@ -300,57 +304,55 @@ pub(crate) fn grep_workspace(
 
 /// Scans one file, keeping at most `retain` match lines for display.
 ///
-/// Returns `None` for unreadable, oversized, binary, or non-matching files, so
-/// every output mode shares one read and one pass over the lines.
+/// Returns `None` for unreadable, oversized, binary, or non-matching files.
+/// Size is gated by `metadata().len()` up front and by bytes read, so a
+/// `files_with_matches` hit on line 1 of a huge file is still excluded.
+/// Encoding is per-line: invalid UTF-8 drops the file only if the scan
+/// visits that line. `content` still reads the whole file to mint a tag;
+/// `files_with_matches` may list a file whose later bytes are not UTF-8.
 fn scan_file(
     request: &GrepRequest,
-    file: WalkedFile,
+    file: &WalkedFile,
     retain: usize,
     style: FileViewStyle,
 ) -> Option<FileHit> {
-    let text = read_searchable_text(&file.absolute)?;
-    let stop_early = request.output_mode.stops_at_first_match();
-    let mut hit = FileHit {
-        relative: file.relative,
-        file_tag: None,
-        total: 0,
-        lines: Vec::new(),
-    };
-    // Use hashline line splitting so match line numbers agree with edit anchors.
-    for (index, line) in crate::text_view::iter_content_lines(&text).enumerate() {
-        if !request.regex.is_match(line) {
-            continue;
-        }
-        hit.total = hit.total.saturating_add(1);
-        if hit.lines.len() < retain {
-            // Search preview only - may truncate. Not hashline `N:text` body text.
-            hit.lines
-                .push((index + 1, truncate_chars(line, MAX_LINE_CHARS)));
-        }
-        if stop_early {
-            break;
-        }
-    }
-    if hit.total == 0 {
-        return None;
-    }
-    if request.output_mode == GrepOutputMode::Content && style.mints_snapshot_tags() {
-        hit.file_tag = Some(crate::hashline::compute_file_hash(&text));
-    }
-    Some(hit)
-}
-
-fn read_searchable_text(path: &Path) -> Option<String> {
-    let metadata = std::fs::metadata(path).ok()?;
+    let metadata = std::fs::metadata(&file.absolute).ok()?;
     if !metadata.is_file() || metadata.len() > MAX_FILE_BYTES {
         return None;
     }
-    let bytes = std::fs::read(path).ok()?;
-    let sniff_len = BINARY_SNIFF_BYTES.min(bytes.len());
-    if bytes[..sniff_len].contains(&0) {
+    let reader = std::fs::File::open(&file.absolute).ok()?;
+    let mint_tag = request.output_mode == GrepOutputMode::Content && style.mints_snapshot_tags();
+    let stop_early = request.output_mode.stops_at_first_match();
+    let mut total = 0usize;
+    let mut lines = Vec::new();
+    let file_tag = read_searchable_lines(
+        reader,
+        mint_tag.then(FileHash::new),
+        MAX_FILE_BYTES,
+        BINARY_SNIFF_BYTES,
+        |line_no, line| {
+            if request.regex.is_match(line) {
+                total = total.saturating_add(1);
+                if lines.len() < retain {
+                    // Search preview only - may truncate. Not hashline `N:text`.
+                    lines.push((line_no, truncate_chars(line, MAX_LINE_CHARS)));
+                }
+                if stop_early {
+                    return ControlFlow::Break(());
+                }
+            }
+            ControlFlow::Continue(())
+        },
+    )?;
+    if total == 0 {
         return None;
     }
-    String::from_utf8(bytes).ok()
+    Some(FileHit {
+        relative: file.relative.clone(),
+        file_tag,
+        total,
+        lines,
+    })
 }
 
 fn truncate_chars(text: &str, max_chars: usize) -> String {

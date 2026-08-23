@@ -103,11 +103,17 @@ impl StreamUi {
         }
     }
 
-    pub(super) fn code_fence_mut(&mut self, kind: StreamKind) -> &mut CodeFenceState {
+    fn code_fence_mut(&mut self, kind: StreamKind) -> &mut CodeFenceState {
         match kind {
             StreamKind::Assistant => &mut self.assistant_stream_code_fence,
             StreamKind::Reasoning => &mut self.reasoning_stream_code_fence,
         }
+    }
+
+    /// Advances committed fence state and drops the live-preview paint cache.
+    pub(super) fn advance_code_fence(&mut self, kind: StreamKind, text: &str) {
+        super::markdown::update_code_block_state(text, self.code_fence_mut(kind));
+        self.invalidate_preview_cache();
     }
 
     /// Appends provider text into the hold and releases what the pacer allows.
