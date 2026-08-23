@@ -210,8 +210,10 @@ fn path_is_resolved_dir_child(path: &Path, root: &AnchoredPath) -> bool {
     let Some(name) = path.file_name() else {
         return false;
     };
+    // Compare canonical forms so macOS `/var` vs `/private/var` still matches.
+    let query = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let resolves_to_path =
-        |dir: &Path| fs::canonicalize(dir.join(name)).is_ok_and(|resolved| resolved == path);
+        |dir: &Path| fs::canonicalize(dir.join(name)).is_ok_and(|resolved| resolved == query);
     resolves_to_path(&root.lexical)
         || root.resolved.as_deref().is_some_and(|resolved| {
             resolved != root.lexical.as_path() && resolves_to_path(resolved)
@@ -487,12 +489,14 @@ mod tests {
     #[test]
     fn host_owned_surfaces_cover_workflow_state_and_path_dirs() {
         let rho_home = Path::new("/rho");
-        let surfaces =
-            HostOwnedSurfaces::from_env(Some(rho_home), Some(OsString::from("/usr/bin:/opt/bin")));
+        let usr_bin = PathBuf::from("/usr/bin");
+        let opt_bin = PathBuf::from("/opt/bin");
+        let path_var = std::env::join_paths([&usr_bin, &opt_bin]).expect("path dirs are valid");
+        let surfaces = HostOwnedSurfaces::from_env(Some(rho_home), Some(path_var));
         assert!(surfaces.contains(&user_workflows_dir(rho_home).join("runs/1")));
         assert!(surfaces.contains(&user_config_toml(rho_home)));
-        assert!(surfaces.contains(Path::new("/usr/bin/git")));
-        assert!(surfaces.contains(Path::new("/opt/bin/claude")));
+        assert!(surfaces.contains(&usr_bin.join("git")));
+        assert!(surfaces.contains(&opt_bin.join("claude")));
         assert!(!surfaces.contains(Path::new("/home/rho/.ssh/id_rsa")));
         assert!(!surfaces.contains(&rho_home.join("credentials/secrets.json")));
         assert!(!surfaces.contains(Path::new("/tmp/evil")));
@@ -512,6 +516,7 @@ mod tests {
         let target = lib.join("tool");
         fs::write(&target, "x").unwrap();
         std::os::unix::fs::symlink(&target, bin.join("tool")).unwrap();
+        let target = target.canonicalize().unwrap();
 
         let surfaces = HostOwnedSurfaces::from_env(None, Some(bin.as_os_str().to_os_string()));
         assert!(surfaces.contains(&bin.join("tool")));

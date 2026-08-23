@@ -90,8 +90,8 @@ impl AppWorkflowToolService {
         project_agents_trusted: bool,
     ) -> anyhow::Result<Vec<CapabilityRequest>> {
         let source = || CapabilitySource::built_in_tool("workflow");
-        let plans = rho_home.join("workflows/plans");
-        let runs = rho_home.join("workflows/runs");
+        let plans = crate::paths::user_workflows_dir(rho_home).join("plans");
+        let runs = crate::paths::user_workflows_dir(rho_home).join("runs");
         let capabilities = match request {
             WorkflowToolRequest::Validate { file, .. } | WorkflowToolRequest::Plan { file, .. } => {
                 let mut requests =
@@ -191,7 +191,7 @@ impl AppWorkflowToolService {
         match &self.config_path {
             Some(path) if path.is_absolute() => path.clone(),
             Some(path) => self.cwd.join(path),
-            None => rho_home.join("config.toml"),
+            None => crate::paths::user_config_toml(rho_home),
         }
     }
 
