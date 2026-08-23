@@ -315,6 +315,11 @@ fn untrusted_project_plugin_activates_no_components() {
     assert!(entry.problems.is_empty());
     assert_eq!(discovery.report.summary().untrusted, 1);
     assert_eq!(discovery.report.summary().problems, 0);
+    let inspected = discovery
+        .report
+        .inspect("risky")
+        .expect("inspect finds the untrusted package");
+    assert_eq!(inspected.status, PluginStatus::Untrusted);
 }
 
 // Covers: user plugins are the user's own files and activate regardless of
@@ -376,6 +381,9 @@ fn untrusted_project_plugin_does_not_shadow_user_plugin() {
     let plugin = contributions(&discovery, "dup");
     assert_eq!(plugin.skills.len(), 1);
     assert_eq!(plugin.skills[0].name, "user-flavor");
+    let inspected = discovery.report.inspect("dup").expect("inspect finds dup");
+    assert_eq!(inspected.status, PluginStatus::Loaded);
+    assert_eq!(inspected.scope, PluginScope::User);
 }
 
 // Covers: a user disable still occupies the name in an untrusted workspace.

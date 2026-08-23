@@ -59,11 +59,6 @@ pub(crate) use state::{PluginOrigin, PluginScope, PluginStateStore};
 pub(crate) const SUPPORTED_COMPONENTS: &str =
     "skills, mcp (stdio, streamable-http; sse unsupported)";
 
-/// Project plugin trust as configured by the environment.
-pub(crate) fn trust_from_env() -> ProjectTrust {
-    ProjectTrust::from_plugins_env()
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PluginStatus {
@@ -183,7 +178,7 @@ pub(crate) fn skills_by_precedence(cwd: &Path, home: Option<&Path>) -> Vec<Skill
         home,
         None,
         ComponentSelection::SkillsOnly,
-        trust_from_env(),
+        ProjectTrust::from_plugins_env(),
     )
     .skills
 }
@@ -191,7 +186,12 @@ pub(crate) fn skills_by_precedence(cwd: &Path, home: Option<&Path>) -> Vec<Skill
 /// Discover and load plugin packages from the explicit roots.
 pub(crate) fn discover(cwd: &Path, home: Option<&Path>) -> PluginDiscovery {
     let rho_home = crate::paths::rho_dir().ok();
-    discover_with_trust(cwd, home, rho_home.as_deref(), trust_from_env())
+    discover_with_trust(
+        cwd,
+        home,
+        rho_home.as_deref(),
+        ProjectTrust::from_plugins_env(),
+    )
 }
 
 /// Discover only plugin MCP configuration for the `rho mcp` inventory path.
@@ -202,7 +202,7 @@ pub(crate) fn discover_mcp(cwd: &Path, home: Option<&Path>) -> PluginDiscovery {
         home,
         rho_home.as_deref(),
         ComponentSelection::McpOnly,
-        trust_from_env(),
+        ProjectTrust::from_plugins_env(),
     )
 }
 
@@ -673,5 +673,20 @@ impl PluginLoadReport {
 
     pub(crate) fn find(&self, name: &str) -> Option<&PluginReportEntry> {
         self.plugins.iter().find(|entry| entry.name == name)
+    }
+
+    /// Prefer the package that is active in the session when several entries
+    /// share a name. Untrusted, disabled, and rejected copies stay reachable
+    /// when nothing is loaded.
+    pub(crate) fn inspect(&self, name: &str) -> Option<&PluginReportEntry> {
+        self.plugins
+            .iter()
+            .find(|entry| entry.name == name && entry.status.activates())
+            .or_else(|| {
+                self.plugins
+                    .iter()
+                    .find(|entry| entry.name == name && entry.status != PluginStatus::Shadowed)
+            })
+            .or_else(|| self.find(name))
     }
 }

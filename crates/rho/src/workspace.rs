@@ -18,7 +18,7 @@ pub enum ProjectTrust {
 }
 
 impl ProjectTrust {
-    pub fn from_env(value: Option<&str>) -> Self {
+    fn from_env(value: Option<&str>) -> Self {
         if value == Some("1") {
             Self::Trusted
         } else {
@@ -26,7 +26,7 @@ impl ProjectTrust {
         }
     }
 
-    pub fn from_env_var(name: &str) -> Self {
+    fn from_env_var(name: &str) -> Self {
         Self::from_env(std::env::var(name).ok().as_deref())
     }
 
