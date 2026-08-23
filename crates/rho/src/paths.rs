@@ -105,6 +105,16 @@ pub(crate) fn user_agent_dirs(home: &Path) -> [PathBuf; 2] {
     ]
 }
 
+/// Durable workflow plans and runs: `$RHO_HOME/workflows` or `~/.rho/workflows`.
+pub(crate) fn user_workflows_dir(rho_home: &Path) -> PathBuf {
+    rho_home.join("workflows")
+}
+
+/// Host config the workflow tool reads: `$RHO_HOME/config.toml` or `~/.rho/config.toml`.
+pub(crate) fn user_config_toml(rho_home: &Path) -> PathBuf {
+    rho_home.join("config.toml")
+}
+
 /// User-owned instruction surfaces Rho already loads from `$HOME`.
 ///
 /// Built from [`user_agents_md`], [`user_skill_dirs`], and [`user_agent_dirs`].
@@ -189,6 +199,71 @@ fn path_is_under_anchored(path: &Path, root: &AnchoredPath) -> bool {
             .resolved
             .as_ref()
             .is_some_and(|resolved| path.starts_with(resolved))
+}
+
+/// True when `path` is the live canonical target of `{root}/{file_name}`.
+///
+/// PATH binaries often live outside the PATH directory (`/usr/bin/git` →
+/// `/usr/lib/git-core/git`). Construction only snapshots the directory, so this
+/// check is the authorize-path follow-up for those resolved identities.
+fn path_is_resolved_dir_child(path: &Path, root: &AnchoredPath) -> bool {
+    let Some(name) = path.file_name() else {
+        return false;
+    };
+    let resolves_to_path =
+        |dir: &Path| fs::canonicalize(dir.join(name)).is_ok_and(|resolved| resolved == path);
+    resolves_to_path(&root.lexical)
+        || root.resolved.as_deref().is_some_and(|resolved| {
+            resolved != root.lexical.as_path() && resolves_to_path(resolved)
+        })
+}
+
+/// Host-owned surfaces the built-in `workflow` tool may read without the
+/// agent-facing outside-workspace gate: the Rho workflow tree, the default
+/// host config, and directories on `PATH` at construction.
+///
+/// Graph-supplied absolute paths outside this set still follow the normal
+/// gate. The model's `read_file` of the same paths is not exempt. A PATH
+/// binary whose canonical target left its PATH directory still matches via
+/// a live `{dir}/{file_name}` canonicalize.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct HostOwnedSurfaces {
+    files: Vec<AnchoredPath>,
+    directories: Vec<AnchoredPath>,
+}
+
+impl HostOwnedSurfaces {
+    pub(crate) fn from_process() -> Self {
+        Self::from_env(rho_dir().ok().as_deref(), std::env::var_os("PATH"))
+    }
+
+    pub(crate) fn from_env(rho_home: Option<&Path>, path_var: Option<OsString>) -> Self {
+        let mut files = Vec::new();
+        let mut directories = Vec::new();
+        if let Some(rho_home) = rho_home {
+            files.push(snapshot_path(user_config_toml(rho_home), rho_home));
+            directories.push(snapshot_path(user_workflows_dir(rho_home), rho_home));
+        }
+        if let Some(path_var) = path_var {
+            for directory in std::env::split_paths(&path_var) {
+                if directory.as_os_str().is_empty() {
+                    continue;
+                }
+                directories.push(snapshot_path(directory.clone(), &directory));
+            }
+        }
+        Self { files, directories }
+    }
+
+    pub(crate) fn contains(&self, path: &Path) -> bool {
+        let path = lexical_normalize(path);
+        self.files
+            .iter()
+            .any(|allowed| path_matches_file(&path, allowed))
+            || self.directories.iter().any(|root| {
+                path_is_under_anchored(&path, root) || path_is_resolved_dir_child(&path, root)
+            })
+    }
 }
 
 fn lexical_normalize(path: &Path) -> PathBuf {
@@ -404,5 +479,43 @@ mod tests {
         assert!(surfaces.contains(&rho.join("skills").join("secret.txt")));
         assert!(!surfaces.contains(&secret));
         assert!(!surfaces.contains(&outside));
+    }
+
+    // Covers: workflow host reads are the Rho workflow tree, default config,
+    // and PATH dirs — not the rest of $HOME or an arbitrary absolute path.
+    // Owner: paths catalog
+    #[test]
+    fn host_owned_surfaces_cover_workflow_state_and_path_dirs() {
+        let rho_home = Path::new("/rho");
+        let surfaces =
+            HostOwnedSurfaces::from_env(Some(rho_home), Some(OsString::from("/usr/bin:/opt/bin")));
+        assert!(surfaces.contains(&user_workflows_dir(rho_home).join("runs/1")));
+        assert!(surfaces.contains(&user_config_toml(rho_home)));
+        assert!(surfaces.contains(Path::new("/usr/bin/git")));
+        assert!(surfaces.contains(Path::new("/opt/bin/claude")));
+        assert!(!surfaces.contains(Path::new("/home/rho/.ssh/id_rsa")));
+        assert!(!surfaces.contains(&rho_home.join("credentials/secrets.json")));
+        assert!(!surfaces.contains(Path::new("/tmp/evil")));
+    }
+
+    // Covers: a PATH candidate whose canonical target left the PATH dir
+    // remains host-owned; an unrelated home path does not.
+    // Owner: paths catalog
+    #[cfg(unix)]
+    #[test]
+    fn host_owned_surfaces_include_resolved_path_binaries() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let bin = dir.path().join("bin");
+        let lib = dir.path().join("lib");
+        fs::create_dir_all(&bin).unwrap();
+        fs::create_dir_all(&lib).unwrap();
+        let target = lib.join("tool");
+        fs::write(&target, "x").unwrap();
+        std::os::unix::fs::symlink(&target, bin.join("tool")).unwrap();
+
+        let surfaces = HostOwnedSurfaces::from_env(None, Some(bin.as_os_str().to_os_string()));
+        assert!(surfaces.contains(&bin.join("tool")));
+        assert!(surfaces.contains(&target));
+        assert!(!surfaces.contains(&dir.path().join(".ssh/id_rsa")));
     }
 }

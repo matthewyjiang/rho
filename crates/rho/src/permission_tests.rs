@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::{ffi::OsString, path::Path, process::Command};
 
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
@@ -269,9 +269,9 @@ fn checked_modes_gate_unrestricted_filesystem_reads() {
     }
 }
 
-// Covers: the workflow tool's own host reads (plans, runs, config, PATH)
-// must not hit the agent-facing outside-workspace gate; the model's
-// read_file of the same path still does.
+// Covers: workflow host reads stay free only for the Rho workflow tree,
+// default config, and PATH dirs; a graph-supplied absolute path and the
+// model's read_file of a host path still hit the outside-workspace gate.
 // Owner: application permission policy
 #[test]
 fn workflow_tool_reads_skip_the_outside_workspace_gate() {
@@ -282,8 +282,14 @@ fn workflow_tool_reads_skip_the_outside_workspace_gate() {
         reason: "read outside the workspace is not allowed in plan mode".into(),
     };
     let host = workflow_read("/rho/workflows/runs/1", PathScope::UnrestrictedFilesystem);
-    let model = read_request("/rho/workflows/runs/1", PathScope::UnrestrictedFilesystem);
+    let config = workflow_read("/rho/config.toml", PathScope::UnrestrictedFilesystem);
     let path_bin = workflow_read("/usr/bin/git", PathScope::UnrestrictedFilesystem);
+    let graph = workflow_read("/home/rho/.ssh/id_rsa", PathScope::UnrestrictedFilesystem);
+    let model = read_request("/rho/workflows/runs/1", PathScope::UnrestrictedFilesystem);
+    let host_owned = crate::paths::HostOwnedSurfaces::from_env(
+        Some(Path::new("/rho")),
+        Some(OsString::from("/usr/bin")),
+    );
 
     for mode in [
         PermissionMode::Auto,
@@ -292,12 +298,21 @@ fn workflow_tool_reads_skip_the_outside_workspace_gate() {
         PermissionMode::Plan,
     ] {
         let policy = mode
-            .workspace_policy(SessionWriteLog::default())
+            .workspace_policy_with(
+                SessionWriteLog::default(),
+                crate::paths::UserInstructionSurfaces::default(),
+                host_owned.clone(),
+            )
             .expect("checked mode has a policy");
         assert_eq!(
             policy.evaluate(&host),
             PolicyDecision::Allow,
             "{mode:?} blocked a workflow host read"
+        );
+        assert_eq!(
+            policy.evaluate(&config),
+            PolicyDecision::Allow,
+            "{mode:?} blocked a workflow config read"
         );
         assert_eq!(
             policy.evaluate(&path_bin),
@@ -309,6 +324,11 @@ fn workflow_tool_reads_skip_the_outside_workspace_gate() {
         } else {
             require_approval.clone()
         };
+        assert_eq!(
+            policy.evaluate(&graph),
+            expected,
+            "{mode:?} allowed a graph-supplied workflow read"
+        );
         assert_eq!(
             policy.evaluate(&model),
             expected,

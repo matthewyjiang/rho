@@ -188,35 +188,36 @@ impl PermissionMode {
     /// [`Self::Bypass`] so the caller can preserve its existing allow-everything
     /// path.
     ///
-    /// Snapshots [`crate::paths::UserInstructionSurfaces::from_process`] (HOME)
-    /// at construction. The returned policy starts from [`Self::decision_for`]
-    /// and, for [`Self::Auto`] and [`Self::AllowEdits`], allows
-    /// primary-workspace writes to git-tracked files and to paths already
-    /// allowed this session. Reads stay free for configured workspace roots and
-    /// for those user instruction surfaces; unrestricted filesystem paths
-    /// follow the mode's remaining gate unless the built-in `workflow` tool
-    /// requested them. `ScopedWorkspacePolicy` is not used here because it
-    /// deny-defaults network destinations behind a per-host allowlist, which
-    /// would break the "workspace reads and network are free" contract of the
-    /// checked modes.
+    /// Snapshots user-instruction and host-owned surfaces at construction
+    /// (HOME / `RHO_HOME` / `PATH`). Bypass returns `None` before that I/O.
+    /// The returned policy starts from [`Self::decision_for`] and, for
+    /// [`Self::Auto`] and [`Self::AllowEdits`], allows primary-workspace writes
+    /// to git-tracked files and to paths already allowed this session. Reads
+    /// stay free for configured workspace roots and for those user instruction
+    /// surfaces; unrestricted filesystem paths follow the mode's remaining
+    /// gate unless the built-in `workflow` tool requested a host-owned path.
+    /// `ScopedWorkspacePolicy` is not used here because it deny-defaults
+    /// network destinations behind a per-host allowlist, which would break the
+    /// "workspace reads and network are free" contract of the checked modes.
     ///
     /// `session_writes` carries the paths whose first write already passed the
     /// gate this session.
     pub fn workspace_policy(self, session_writes: SessionWriteLog) -> Option<ModePolicy> {
-        match self {
-            Self::Bypass => None,
-            Self::Auto | Self::AllowEdits | Self::Plan | Self::Supervised => self
-                .workspace_policy_with(
-                    session_writes,
-                    crate::paths::UserInstructionSurfaces::from_process(),
-                ),
+        if matches!(self, Self::Bypass) {
+            return None;
         }
+        self.workspace_policy_with(
+            session_writes,
+            crate::paths::UserInstructionSurfaces::from_process(),
+            crate::paths::HostOwnedSurfaces::from_process(),
+        )
     }
 
     fn workspace_policy_with(
         self,
         session_writes: SessionWriteLog,
         user_instructions: crate::paths::UserInstructionSurfaces,
+        host_owned: crate::paths::HostOwnedSurfaces,
     ) -> Option<ModePolicy> {
         match self {
             Self::Bypass => None,
@@ -224,6 +225,7 @@ impl PermissionMode {
                 mode: self,
                 session_writes,
                 user_instructions,
+                host_owned,
             }),
         }
     }
@@ -358,6 +360,7 @@ pub(crate) struct ModePolicy {
     mode: PermissionMode,
     session_writes: SessionWriteLog,
     user_instructions: crate::paths::UserInstructionSurfaces,
+    host_owned: crate::paths::HostOwnedSurfaces,
 }
 
 /// Where a path-bearing request sits for this mode's remaining gate.
@@ -374,6 +377,7 @@ impl ModePolicy {
         mode.workspace_policy_with(
             SessionWriteLog::default(),
             crate::paths::UserInstructionSurfaces::from_home(Some(home)),
+            crate::paths::HostOwnedSurfaces::default(),
         )
         .expect("checked mode has a policy")
     }
@@ -417,7 +421,7 @@ impl ModePolicy {
                 CapabilityKind::Read | CapabilityKind::InstructionDiscovery,
                 PathLocation::Unrestricted,
             ) => {
-                if is_workflow_tool_read(request) {
+                if self.is_workflow_tool_read(request) {
                     PolicyDecision::Allow
                 } else {
                     self.mode.outside_workspace_read_decision()
@@ -430,6 +434,22 @@ impl ModePolicy {
                 PolicyDecision::Allow
             }
             _ => self.mode.decision_for(request.kind()),
+        }
+    }
+
+    /// Host-owned reads declared by the built-in `workflow` tool (plans, runs,
+    /// config, PATH resolution). Graph-supplied absolute paths outside that
+    /// set follow the unrestricted-filesystem gate. The model's `read_file` of
+    /// the same paths is never exempt.
+    fn is_workflow_tool_read(&self, request: &CapabilityRequest) -> bool {
+        match request.operation() {
+            CapabilityOperation::ReadPath { path, .. } => {
+                matches!(
+                    request.source(),
+                    CapabilitySource::BuiltInTool { name } if name == "workflow"
+                ) && self.host_owned.contains(path)
+            }
+            _ => false,
         }
     }
 }
@@ -483,22 +503,10 @@ impl ApprovalHandler for RememberingApprovals {
 }
 
 fn path_scope_is_workspace_rooted(scope: &PathScope) -> bool {
-    match scope {
-        PathScope::PrimaryWorkspace | PathScope::GrantedRoot { .. } => true,
-        PathScope::UnrestrictedFilesystem => false,
-        _ => false,
-    }
-}
-
-/// Host-owned reads declared by the built-in `workflow` tool (plans, runs,
-/// config, PATH resolution). The model's `read_file` of the same paths still
-/// follows the unrestricted-filesystem gate.
-fn is_workflow_tool_read(request: &CapabilityRequest) -> bool {
-    matches!(request.operation(), CapabilityOperation::ReadPath { .. })
-        && matches!(
-            request.source(),
-            CapabilitySource::BuiltInTool { name } if name == "workflow"
-        )
+    matches!(
+        scope,
+        PathScope::PrimaryWorkspace | PathScope::GrantedRoot { .. }
+    )
 }
 
 fn is_free_workspace_write(
