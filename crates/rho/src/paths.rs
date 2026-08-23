@@ -96,6 +96,14 @@ pub(crate) fn user_skill_dirs(home: &Path) -> [PathBuf; 2] {
     ]
 }
 
+/// User agent definition trees: `~/.agents/agents`, then `~/.rho/agents`.
+pub(crate) fn user_agent_dirs(home: &Path) -> [PathBuf; 2] {
+    [
+        home.join(".agents").join("agents"),
+        home.join(".rho").join("agents"),
+    ]
+}
+
 fn rho_dir_from_env(mut var: impl FnMut(&str) -> Option<OsString>) -> anyhow::Result<PathBuf> {
     if let Some(root) = var("RHO_HOME").filter(|value| !value.is_empty()) {
         return Ok(PathBuf::from(root));

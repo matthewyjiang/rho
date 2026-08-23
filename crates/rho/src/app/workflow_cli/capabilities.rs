@@ -97,12 +97,9 @@ impl AppWorkflowToolService {
         let home = crate::paths::home_dir();
         let mut sources = crate::agent::AgentCatalogSources::default();
         if let Some(home) = home.as_deref() {
-            sources.agents_home = self
-                .authorized_agent_sources(context, &home.join(".agents/agents"))
-                .await?;
-            sources.rho_home = self
-                .authorized_agent_sources(context, &home.join(".rho/agents"))
-                .await?;
+            let [agents_home, rho_home] = crate::paths::user_agent_dirs(home);
+            sources.agents_home = self.authorized_agent_sources(context, &agents_home).await?;
+            sources.rho_home = self.authorized_agent_sources(context, &rho_home).await?;
         }
         if project_agent_catalogs_trusted() {
             for root in crate::workspace::project_ancestor_dirs(&self.cwd)

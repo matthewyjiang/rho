@@ -471,8 +471,7 @@ fn agent_catalog_roots_for(
 ) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     if let Some(home) = home {
-        roots.push(home.join(".agents/agents"));
-        roots.push(home.join(".rho/agents"));
+        roots.extend(crate::paths::user_agent_dirs(home));
     }
     if project_agents_trusted {
         roots.extend(

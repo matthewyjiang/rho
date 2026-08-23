@@ -103,8 +103,9 @@ impl AgentCatalog {
         let mut catalog = Self::default();
         catalog.load_builtins()?;
         if let Some(home) = home {
-            catalog.load_tier(AgentOrigin::AgentsHome, &[home.join(".agents/agents")])?;
-            catalog.load_tier(AgentOrigin::RhoHome, &[home.join(".rho/agents")])?;
+            let [agents_home, rho_home] = crate::paths::user_agent_dirs(home);
+            catalog.load_tier(AgentOrigin::AgentsHome, &[agents_home])?;
+            catalog.load_tier(AgentOrigin::RhoHome, &[rho_home])?;
         }
         if project_trust.is_trusted() {
             let project_roots: Vec<_> = crate::workspace::project_ancestor_dirs(cwd)

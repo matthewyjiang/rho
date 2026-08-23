@@ -254,8 +254,9 @@ fn checked_modes_gate_unrestricted_filesystem_reads() {
     }
 }
 
-// Covers: global AGENTS.md and user skill trees stay readable and editable
-// without opening the rest of ~/.rho (credentials, config).
+// Covers: global AGENTS.md, user skills, and user agent definitions stay
+// readable and editable without opening the rest of ~/.rho or ~/.agents
+// (credentials, config, plugins).
 // Owner: application permission policy
 #[test]
 fn user_instruction_and_skill_paths_are_workspace_scoped() {
@@ -263,10 +264,18 @@ fn user_instruction_and_skill_paths_are_workspace_scoped() {
     let home = home.path();
     let agents = crate::paths::user_agents_md(home);
     let [rho_skills, agents_skills] = crate::paths::user_skill_dirs(home);
+    let [shared_agents, rho_agents] = crate::paths::user_agent_dirs(home);
     let skill = rho_skills.join("demo").join("SKILL.md");
     let other_skill = agents_skills.join("demo").join("SKILL.md");
+    let shared_agent = shared_agents.join("planner.md");
+    let rho_agent = rho_agents.join("planner.md");
     let credentials = home.join(".rho").join("credentials").join("secrets.json");
     let config = home.join(".rho").join("config.toml");
+    let plugin = home
+        .join(".agents")
+        .join("plugins")
+        .join("evil")
+        .join("plugin.json");
 
     let allow = PolicyDecision::Allow;
     let require_approval = PolicyDecision::RequireApproval {
@@ -309,6 +318,36 @@ fn user_instruction_and_skill_paths_are_workspace_scoped() {
             allow.clone(),
             require_approval.clone(),
             plan_write_deny.clone(),
+        ),
+        (
+            read_request(&shared_agent, PathScope::UnrestrictedFilesystem),
+            allow.clone(),
+            allow.clone(),
+            allow.clone(),
+        ),
+        (
+            read_request(&rho_agent, PathScope::UnrestrictedFilesystem),
+            allow.clone(),
+            allow.clone(),
+            allow.clone(),
+        ),
+        (
+            write_request(&shared_agent, PathScope::UnrestrictedFilesystem),
+            allow.clone(),
+            require_approval.clone(),
+            plan_write_deny.clone(),
+        ),
+        (
+            write_request(&rho_agent, PathScope::UnrestrictedFilesystem),
+            allow.clone(),
+            require_approval.clone(),
+            plan_write_deny.clone(),
+        ),
+        (
+            read_request(&plugin, PathScope::UnrestrictedFilesystem),
+            require_approval.clone(),
+            require_approval.clone(),
+            plan_read_deny.clone(),
         ),
         (
             read_request(&credentials, PathScope::UnrestrictedFilesystem),

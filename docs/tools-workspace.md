@@ -51,7 +51,7 @@ Built-in skills that ship with the binary include `rho-diagnostics`, `rho-config
 
 ## Security and workspace boundaries
 
-Tools run with the current user's permissions. File tools can resolve any path the user can access, including paths outside the workspace, and shell commands can do the same. Checked permission modes still authorize those paths: workspace-scoped reads, the user's global `~/.rho/AGENTS.md`, and user skill trees are free, while other reads outside the workspace ask first (`auto`, `allow_edits`, `supervised`) or are denied (`plan`).
+Tools run with the current user's permissions. File tools can resolve any path the user can access, including paths outside the workspace, and shell commands can do the same. Checked permission modes still authorize those paths: workspace-scoped reads, the user's global `~/.rho/AGENTS.md`, user skill trees, and user agent definitions are free, while other reads outside the workspace ask first (`auto`, `allow_edits`, `supervised`) or are denied (`plan`).
 
 ```mermaid
 flowchart LR
@@ -63,7 +63,7 @@ flowchart LR
     cap --> os[OS user permissions still apply]
 ```
 
-The default `bypass` [permission mode](/configuration#permission-modes) allows this behavior. `auto` uses the same write, process, and outside-read gate as `allow_edits`; a configured classifier model approves or denies only the requests that gate does not allow. `allow_edits` allows in-workspace writes to git-tracked, non-symlink files, later writes to a path already allowed this session, and edits to the user's global `AGENTS.md` and skill trees. Untracked and gitignored paths, other writes outside the workspace, process execution, and other reads outside the workspace still ask first. `plan` denies file writes, process execution, and those other outside reads, while `supervised` asks for interactive confirmation before writes and process execution. Supervised and Allow edits runs without an approval UI and headless Auto runs without a classifier model fail closed.
+The default `bypass` [permission mode](/configuration#permission-modes) allows this behavior. `auto` uses the same write, process, and outside-read gate as `allow_edits`; a configured classifier model approves or denies only the requests that gate does not allow. `allow_edits` allows in-workspace writes to git-tracked, non-symlink files, later writes to a path already allowed this session, and edits to the user's global `AGENTS.md`, skill trees, and agent definitions. Untracked and gitignored paths, other writes outside the workspace, process execution, and other reads outside the workspace still ask first. `plan` denies file writes, process execution, and those other outside reads, while `supervised` asks for interactive confirmation before writes and process execution. Supervised and Allow edits runs without an approval UI and headless Auto runs without a classifier model fail closed.
 
 Permission modes are policy checks at Rho's tool-capability boundary, not an operating-system sandbox. They do not reduce the permissions of the Rho process itself, and they depend on tools correctly declaring and authorizing capabilities. The SDK still scopes file access by default; embedded hosts must opt into broader access when they build a `Workspace`. Run Rho only in workspaces where you are comfortable with the selected mode and these limits.
 

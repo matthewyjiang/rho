@@ -24,26 +24,27 @@ pub(crate) enum PermissionMode {
     /// execution, reads outside configured workspace roots, and unrecognized
     /// capability classes require classifier approval. In-workspace writes to
     /// git-tracked files, later writes to a path already allowed this session,
-    /// and edits to the user's global `AGENTS.md` and skill trees skip the
-    /// classifier.
+    /// and edits to the user's global `AGENTS.md`, skill trees, and agent
+    /// definitions skip the classifier.
     Auto,
-    /// Known workspace-scoped reads, the user's global `AGENTS.md` and skill
-    /// trees, network access, skills, instruction discovery, and in-workspace
-    /// writes to git-tracked files are free. Later writes to a path already
-    /// allowed this session are also free. Other writes, process execution,
-    /// reads outside configured workspace roots, and unrecognized capability
-    /// classes require interactive approval.
+    /// Known workspace-scoped reads, the user's global `AGENTS.md`, skill
+    /// trees, and agent definitions, network access, skills, instruction
+    /// discovery, and in-workspace writes to git-tracked files are free. Later
+    /// writes to a path already allowed this session are also free. Other
+    /// writes, process execution, reads outside configured workspace roots, and
+    /// unrecognized capability classes require interactive approval.
     AllowEdits,
-    /// Model may investigate the workspace, the user's global `AGENTS.md`, and
-    /// skill trees, but cannot change state. Those reads, network, skill, and
-    /// instruction-discovery capabilities are allowed; writes, process
-    /// execution, other reads outside configured workspace roots, and
-    /// unrecognized capability classes are denied.
+    /// Model may investigate the workspace, the user's global `AGENTS.md`,
+    /// skill trees, and agent definitions, but cannot change state. Those
+    /// reads, network, skill, and instruction-discovery capabilities are
+    /// allowed; writes, process execution, other reads outside configured
+    /// workspace roots, and unrecognized capability classes are denied.
     Plan,
-    /// Known workspace-scoped reads, the user's global `AGENTS.md` and skill
-    /// trees, network access, skills, and instruction discovery are free;
-    /// writes, process execution, other reads outside configured workspace
-    /// roots, and unrecognized capability classes require interactive approval.
+    /// Known workspace-scoped reads, the user's global `AGENTS.md`, skill
+    /// trees, and agent definitions, network access, skills, and instruction
+    /// discovery are free; writes, process execution, other reads outside
+    /// configured workspace roots, and unrecognized capability classes require
+    /// interactive approval.
     Supervised,
 }
 
@@ -188,8 +189,9 @@ impl PermissionMode {
     /// [`Self::Auto`] and [`Self::AllowEdits`], allows primary-workspace writes
     /// to git-tracked files and to paths already allowed this session. Reads
     /// stay free for configured workspace roots and for the user's global
-    /// `AGENTS.md` and skill trees; unrestricted filesystem paths follow the
-    /// mode's remaining gate. `ScopedWorkspacePolicy` is not used here because
+    /// `AGENTS.md`, skill trees, and agent definitions; unrestricted filesystem
+    /// paths follow the mode's remaining gate. `ScopedWorkspacePolicy` is not
+    /// used here because
     /// it deny-defaults network destinations behind a per-host allowlist, which
     /// would break the "workspace reads and network are free" contract of the
     /// checked modes.
@@ -425,8 +427,9 @@ impl ApprovalHandler for RememberingApprovals {
     }
 }
 
-/// Workspace-scoped reads stay free, as do the user's global `AGENTS.md` and
-/// skill trees. Paths accepted only because unrestricted resolution is on
+/// Workspace-scoped reads stay free, as do the user's global `AGENTS.md`,
+/// skill trees, and agent definitions. Paths accepted only because unrestricted
+/// resolution is on
 /// (`UnrestrictedFilesystem`) follow the mode's remaining gate. There is no
 /// secret-path denylist: any such list is incomplete, and [`PathScope`] already
 /// distinguishes configured roots from the rest of the machine.
@@ -450,9 +453,9 @@ fn path_scope_is_workspace_rooted(scope: &PathScope) -> bool {
     }
 }
 
-/// User-owned instruction surfaces Rho already loads: global `AGENTS.md` and
-/// loose user skill trees. The rest of `~/.rho` (credentials, config, sessions)
-/// stays outside this set.
+/// User-owned instruction surfaces Rho already loads: global `AGENTS.md`,
+/// loose user skill trees, and user agent definitions. The rest of `~/.rho`
+/// (credentials, config, sessions) stays outside this set.
 #[derive(Clone, Debug, Default)]
 struct UserInstructionPaths {
     files: Vec<PathBuf>,
@@ -468,9 +471,11 @@ impl UserInstructionPaths {
         let Some(home) = home else {
             return Self::default();
         };
+        let mut directories = Vec::from(crate::paths::user_skill_dirs(home));
+        directories.extend(crate::paths::user_agent_dirs(home));
         Self {
             files: vec![crate::paths::user_agents_md(home)],
-            directories: crate::paths::user_skill_dirs(home).into(),
+            directories,
         }
     }
 
