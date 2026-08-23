@@ -4,20 +4,22 @@
 //! re-run syntect for every animation frame. Cache lives on [`ToolEntry`]: card
 //! replacement (preview/start/update/finish) drops it automatically. Hits key
 //! on layout inputs (width, tool-output budget, image budget, theme
-//! generation, expanded). The live elapsed suffix is patched in place when its
-//! display width is unchanged; a width change (9.9s → 10.0s) rebuilds.
-//!
-//! In-place card-body edits must clear [`ToolEntry::render_cache`]. Expand
-//! toggles are keyed and do not need an explicit clear.
+//! generation, expanded). The live elapsed clock lives in the cheap header/
+//! timeout prefix; a tick rebuilds that prefix and reuses the cached body.
 
 use ratatui::text::Line;
 
-use super::super::{render::display_width, theme::Theme, LiveCardRenderCache, ToolEntry};
-use super::{live_elapsed_label, live_shell_elapsed, tool_entry_lines};
+use super::super::{
+    feed_image::reserve_optional_image_rows,
+    render::{pad_display_line, padded_content_width, styled_blank_line},
+    theme::Theme,
+    LiveCardRenderCache, ToolEntry,
+};
+use super::{live_elapsed_label, live_shell_elapsed, paint_card_sections, paint_live_prefix};
 
 impl ToolEntry {
     /// Cached live-card paint. Rebuilds when layout, theme, or expand state
-    /// change; refreshes only the elapsed timeout span otherwise.
+    /// change; refreshes only the elapsed prefix otherwise.
     pub(in crate::tui) fn rendered_lines(
         &mut self,
         width: usize,
@@ -45,10 +47,7 @@ impl ToolEntry {
                 .lines;
         }
         if layout_hit
-            && self
-                .render_cache
-                .as_mut()
-                .is_some_and(|cache| patch_elapsed_label(cache, elapsed_label.as_deref()))
+            && self.patch_elapsed_prefix(width, max_image_height, elapsed_label.as_deref())
         {
             return &self
                 .render_cache
@@ -56,11 +55,19 @@ impl ToolEntry {
                 .expect("patched cache remains populated")
                 .lines;
         }
-        let lines = tool_entry_lines(self, width, max_tool_output_lines, max_image_height);
-        let elapsed_spans = match elapsed_label.as_deref() {
-            Some(suffix) => find_elapsed_spans(&lines, suffix),
-            None => Vec::new(),
-        };
+
+        let inner_width = padded_content_width(width);
+        let sections = paint_card_sections(
+            &self.card,
+            inner_width,
+            max_tool_output_lines,
+            self.expanded,
+            live_shell_elapsed(self),
+        );
+        let last_fact_is_end = sections.last_fact_is_end;
+        let prefix_len = sections.prefix.len();
+        let body = sections.body;
+        let lines = finish_live_card(self, width, max_image_height, sections.prefix, &body);
         #[cfg(test)]
         let paints = self
             .render_cache
@@ -75,7 +82,9 @@ impl ToolEntry {
             theme_generation,
             expanded: self.expanded,
             elapsed_label,
-            elapsed_spans,
+            last_fact_is_end,
+            prefix_len,
+            body,
             lines,
             #[cfg(test)]
             paints,
@@ -85,6 +94,34 @@ impl ToolEntry {
             .as_ref()
             .expect("render cache populated above")
             .lines
+    }
+
+    fn patch_elapsed_prefix(
+        &mut self,
+        width: usize,
+        max_image_height: u16,
+        elapsed_label: Option<&str>,
+    ) -> bool {
+        let Some(cache) = self.render_cache.as_ref() else {
+            return false;
+        };
+        let inner_width = padded_content_width(width);
+        let prefix = paint_live_prefix(
+            &self.card,
+            inner_width,
+            live_shell_elapsed(self),
+            cache.last_fact_is_end,
+        );
+        if prefix.len() != cache.prefix_len {
+            return false;
+        }
+        let lines = finish_live_card(self, width, max_image_height, prefix, &cache.body);
+        let Some(cache) = self.render_cache.as_mut() else {
+            return false;
+        };
+        cache.elapsed_label = elapsed_label.map(str::to_string);
+        cache.lines = lines;
+        true
     }
 
     #[cfg(test)]
@@ -103,42 +140,26 @@ impl ToolEntry {
     }
 }
 
-fn find_elapsed_spans(lines: &[Line<'static>], suffix: &str) -> Vec<(usize, usize)> {
-    lines
-        .iter()
-        .enumerate()
-        .flat_map(|(line_index, line)| {
-            line.spans
-                .iter()
-                .enumerate()
-                .filter_map(move |(span_index, span)| {
-                    (span.content.as_ref() == suffix).then_some((line_index, span_index))
-                })
-        })
-        .collect()
-}
-
-/// Rewrite cached elapsed suffixes when the new label has the same display
-/// width. Returns false when wrap would change (caller must rebuild).
-fn patch_elapsed_label(cache: &mut LiveCardRenderCache, new_label: Option<&str>) -> bool {
-    let (Some(old), Some(new)) = (cache.elapsed_label.as_deref(), new_label) else {
-        return false;
-    };
-    if cache.elapsed_spans.is_empty() || display_width(old) != display_width(new) {
-        return false;
-    }
-    for &(line_index, span_index) in &cache.elapsed_spans {
-        let Some(span) = cache
-            .lines
-            .get_mut(line_index)
-            .and_then(|line| line.spans.get_mut(span_index))
-        else {
-            return false;
-        };
-        span.content = new.to_string().into();
-    }
-    cache.elapsed_label = Some(new.to_string());
-    true
+fn finish_live_card(
+    tool: &ToolEntry,
+    width: usize,
+    max_image_height: u16,
+    prefix: Vec<Line<'static>>,
+    body: &[Line<'static>],
+) -> Vec<Line<'static>> {
+    let mut card_lines = prefix;
+    card_lines.extend(body.iter().cloned());
+    reserve_optional_image_rows(
+        &mut card_lines,
+        tool.image.as_ref(),
+        width,
+        max_image_height,
+    );
+    let padding_style = Theme::tool_card_padding();
+    let mut padded = Vec::with_capacity(card_lines.len() + 1);
+    padded.extend(card_lines.into_iter().map(pad_display_line));
+    padded.push(styled_blank_line(width, padding_style));
+    padded
 }
 
 #[cfg(test)]

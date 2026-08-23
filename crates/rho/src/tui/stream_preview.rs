@@ -4,37 +4,37 @@ use super::{
     markdown::push_wrapped_markdown_without_copy_button_from_fence_state,
     render::{pad_display_line, padded_content_width},
     theme::Theme,
-    App, StreamKind, StreamPreviewRenderCache, StreamUi,
+    StreamKind, StreamPreviewRenderCache, StreamUi,
 };
 
 impl StreamUi {
     /// Cached live-preview paint. Hits skip markdown and highlighter clone.
     ///
-    /// Invalidates on preview identity (`preview_generation`), committed fence
-    /// state (`fence_generation`), width, or theme generation.
-    pub(super) fn cached_preview_lines(&mut self, width: usize) -> Vec<Line<'static>> {
+    /// Dropped when preview identity or committed fence state changes. Remaining
+    /// key is width + theme generation.
+    pub(super) fn cached_preview_lines(&mut self, width: usize) -> &[Line<'static>] {
         let Some(preview) = self.live_stream_preview.as_ref() else {
-            return Vec::new();
+            self.preview_render_cache = None;
+            return &[];
         };
         let theme_generation = Theme::generation();
-        let kind = preview.kind;
-        if self.preview_render_cache.as_ref().is_some_and(|cache| {
-            cache.kind == kind
-                && cache.preview_generation == self.preview_generation
-                && cache.fence_generation == self.fence_generation
-                && cache.width == width
-                && cache.theme_generation == theme_generation
-        }) {
-            return self
+        if self
+            .preview_render_cache
+            .as_ref()
+            .is_some_and(|cache| cache.width == width && cache.theme_generation == theme_generation)
+        {
+            return &self
                 .preview_render_cache
                 .as_ref()
                 .expect("hit checked above")
-                .lines
-                .clone();
+                .lines;
         }
 
+        let kind = preview.kind;
+        let include_leading_blank = preview.include_leading_blank;
+        let text = preview.text.clone();
         let mut lines = Vec::new();
-        if preview.include_leading_blank {
+        if include_leading_blank {
             lines.push(Line::raw(""));
         }
         let mut text_lines = Vec::new();
@@ -44,7 +44,7 @@ impl StreamUi {
         };
         push_wrapped_markdown_without_copy_button_from_fence_state(
             &mut text_lines,
-            &preview.text,
+            &text,
             padded_content_width(width),
             &mut code_fence,
         );
@@ -53,31 +53,24 @@ impl StreamUi {
         }
         lines.extend(text_lines.into_iter().map(pad_display_line));
         #[cfg(test)]
-        let paints = self
-            .preview_render_cache
-            .as_ref()
-            .map(|cache| cache.paints)
-            .unwrap_or(0)
-            .saturating_add(1);
+        {
+            self.preview_paints = self.preview_paints.saturating_add(1);
+        }
         self.preview_render_cache = Some(StreamPreviewRenderCache {
-            kind,
-            preview_generation: self.preview_generation,
-            fence_generation: self.fence_generation,
             width,
             theme_generation,
-            lines: lines.clone(),
-            #[cfg(test)]
-            paints,
+            lines,
         });
-        lines
+        &self
+            .preview_render_cache
+            .as_ref()
+            .expect("render cache populated above")
+            .lines
     }
 
     #[cfg(test)]
     pub(super) fn preview_cache_paints(&self) -> u32 {
-        self.preview_render_cache
-            .as_ref()
-            .map(|cache| cache.paints)
-            .unwrap_or(0)
+        self.preview_paints
     }
 
     #[cfg(test)]
@@ -85,12 +78,6 @@ impl StreamUi {
         self.preview_render_cache
             .as_ref()
             .map(|cache| cache.theme_generation)
-    }
-}
-
-impl App {
-    pub(super) fn render_stream_preview_lines(&mut self, width: usize) -> Vec<Line<'static>> {
-        self.streams.cached_preview_lines(width)
     }
 }
 

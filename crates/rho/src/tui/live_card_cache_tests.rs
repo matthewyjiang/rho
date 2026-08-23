@@ -105,7 +105,7 @@ fn live_card_cache_misses_after_theme_generation_change() {
     assert_eq!(entry.render_cache_paints(), 2);
 }
 
-// Covers: expand/collapse and width changes rebuild; elapsed same-width patches.
+// Covers: expand/collapse and width changes rebuild; elapsed ticks reuse the body.
 // Owner: tui live card render cache
 #[test]
 fn live_card_cache_invalidates_on_expand_and_patches_elapsed() {
@@ -144,6 +144,6 @@ fn live_card_cache_invalidates_on_expand_and_patches_elapsed() {
         second
             .iter()
             .any(|line| line.contains("timeout 30s · 1.3s")),
-        "same-width elapsed must patch in place: {second:?}"
+        "elapsed tick must rebuild prefix without a full paint: {second:?}"
     );
 }

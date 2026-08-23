@@ -15,7 +15,6 @@ use ratatui::{backend::Backend, DefaultTerminal, Terminal};
 use super::{
     activity::ActivityPhase,
     event_adapter::ViewModelEvent,
-    markdown::update_code_block_state,
     render::padded_content_width,
     stream::StreamFragment,
     usage_cost::{
@@ -503,7 +502,7 @@ impl App {
     pub(super) fn insert_stream_fragment(&mut self, fragment: StreamFragment, kind: StreamKind) {
         let render_text = fragment.render_text();
         if !render_text.is_empty() {
-            update_code_block_state(render_text, self.streams.code_fence_mut(kind));
+            self.streams.advance_code_fence(kind, render_text);
         }
         let text = fragment.into_text();
         self.push_transcript_entry(kind.entry(text));
@@ -628,7 +627,7 @@ impl App {
             self.streams.discard_hold();
             self.streams.reasoning_stream.reset();
             self.streams.reasoning_stream_code_fence = Default::default();
-            self.streams.bump_fence_generation();
+            self.streams.invalidate_preview_cache();
             self.streams.current_stream_kind = None;
         }
         self.streams.clear_tick_deadline();

@@ -66,6 +66,16 @@ impl ToolCallBatch {
         }
     }
 
+    /// Live cards in paint order, mutably.
+    pub(super) fn for_each_live_mut(&mut self, mut visit: impl FnMut(LiveToolKey, &mut ToolEntry)) {
+        let keys: Vec<LiveToolKey> = self.live_cards().map(|(key, _)| key).collect();
+        for key in keys {
+            if let Some(entry) = self.get_mut(&key) {
+                visit(key, entry);
+            }
+        }
+    }
+
     pub(super) fn interrupted_entries(&self) -> Vec<ToolEntry> {
         self.live_entries()
             .cloned()

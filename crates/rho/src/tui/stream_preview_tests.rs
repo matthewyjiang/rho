@@ -1,8 +1,6 @@
 use pretty_assertions::assert_eq;
 
-use super::super::{
-    markdown::update_code_block_state, theme::Theme, LiveStreamPreview, StreamKind, StreamUi,
-};
+use super::super::{theme::Theme, LiveStreamPreview, StreamKind, StreamUi};
 
 fn line_text(line: &ratatui::text::Line<'_>) -> String {
     line.spans
@@ -59,7 +57,7 @@ fn stream_preview_cache_misses_on_content_width_fence_and_theme() {
     streams.cached_preview_lines(20);
     assert_eq!(streams.preview_cache_paints(), 3);
 
-    update_code_block_state("```rust\n", streams.code_fence_mut(StreamKind::Assistant));
+    streams.advance_code_fence(StreamKind::Assistant, "```rust\n");
     streams.cached_preview_lines(20);
     assert_eq!(streams.preview_cache_paints(), 4);
 

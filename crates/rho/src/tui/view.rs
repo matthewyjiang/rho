@@ -720,44 +720,34 @@ impl App {
         } else {
             0
         };
-        let tools = if show_tools {
-            self.turn
-                .tool_calls()
-                .live_cards()
-                .map(|(key, _)| key)
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
-        let has_pending_tools = shell_count > 0 || !tools.is_empty();
+        let has_pending_tools = shell_count > 0
+            || (show_tools && self.turn.tool_calls().live_entries().next().is_some());
         // Open stream tails omit the history trailing blank so previews can abut
         // committed text. Live tools still need one row of separation above them.
         if has_pending_tools && self.open_stream_tail_active(/*require_work_chrome*/ false) {
             lines.push(Line::raw(""));
         }
         if show_tools {
-            // Each cached render owns the trailing spacer under its card. Direct
-            // field iteration keeps this disjoint from the `tools` borrow above.
+            // Each cached render owns the trailing spacer under its card.
             for task in &mut self.pending_inline_shells {
                 let rendered = task.rendered_lines(width, max_tool_output_lines, max_image_height);
                 lines.extend(rendered.iter().cloned());
             }
-        }
-        for key in tools {
-            let start = lines.len();
-            let Some(pending) = self.turn.tool_calls_mut().get_mut(&key) else {
-                continue;
-            };
-            lines.extend(
-                pending
-                    .rendered_lines(width, max_tool_output_lines, max_image_height)
-                    .iter()
-                    .cloned(),
-            );
-            let end = lines.len();
-            if tool_output_toggleable(pending, max_tool_output_lines, width) {
-                cards.push((ToolCardTarget::from(key), start..end));
-            }
+            self.turn
+                .tool_calls_mut()
+                .for_each_live_mut(|key, pending| {
+                    let start = lines.len();
+                    lines.extend(
+                        pending
+                            .rendered_lines(width, max_tool_output_lines, max_image_height)
+                            .iter()
+                            .cloned(),
+                    );
+                    let end = lines.len();
+                    if tool_output_toggleable(pending, max_tool_output_lines, width) {
+                        cards.push((ToolCardTarget::from(key), start..end));
+                    }
+                });
         }
         if let Some(kind) = self
             .streams
@@ -770,7 +760,7 @@ impl App {
                 StreamKind::Reasoning => self.info.runtime.displays_reasoning_output(),
             };
             if show_preview {
-                lines.extend(self.render_stream_preview_lines(width));
+                lines.extend(self.streams.cached_preview_lines(width).iter().cloned());
             }
         }
         if self.turn.reasoning_phase().is_open()

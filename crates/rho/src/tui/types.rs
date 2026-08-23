@@ -44,19 +44,13 @@ pub(super) struct LiveStreamPreview {
 
 /// Keyed paint of the live assistant/reasoning preview.
 ///
-/// Invalidates when preview identity (`preview_generation`), committed fence
-/// state (`fence_generation`), width, or theme generation changes. Hits skip
-/// markdown + highlighter clone.
+/// Dropped when preview identity or committed fence state changes. Hits skip
+/// markdown + highlighter clone when width and theme generation match.
 #[derive(Debug)]
 pub(in crate::tui) struct StreamPreviewRenderCache {
-    pub(in crate::tui) kind: StreamKind,
-    pub(in crate::tui) preview_generation: u64,
-    pub(in crate::tui) fence_generation: u64,
     pub(in crate::tui) width: usize,
     pub(in crate::tui) theme_generation: u64,
     pub(in crate::tui) lines: Vec<Line<'static>>,
-    #[cfg(test)]
-    pub(in crate::tui) paints: u32,
 }
 
 pub(super) struct SessionHeaderCache {
@@ -85,11 +79,9 @@ pub(super) struct StreamUi {
     /// Next opportunity to release held text and refresh the partial preview.
     pub(in crate::tui) stream_tick_deadline: Option<Instant>,
     pub(in crate::tui) live_stream_preview: Option<LiveStreamPreview>,
-    /// Bumps when [`Self::live_stream_preview`] identity changes (kind/text/blank).
-    pub(in crate::tui) preview_generation: u64,
-    /// Bumps when committed [`CodeFenceState`] is reset or advanced.
-    pub(in crate::tui) fence_generation: u64,
     pub(in crate::tui) preview_render_cache: Option<StreamPreviewRenderCache>,
+    #[cfg(test)]
+    pub(in crate::tui) preview_paints: u32,
     /// Provider text waiting to be released into the active stream.
     pub(in crate::tui) hold: String,
     pub(in crate::tui) pacer: StreamPacer,
@@ -104,12 +96,12 @@ impl StreamUi {
         self.current_stream_kind = None;
         self.stream_tick_deadline = None;
         self.set_live_preview(None);
-        self.bump_fence_generation();
+        self.invalidate_preview_cache();
         self.hold.clear();
         self.pacer.reset();
     }
 
-    /// Replace the live preview and bump [`Self::preview_generation`] when identity changes.
+    /// Replace the live preview. Drops the paint cache when identity changes.
     pub(super) fn set_live_preview(&mut self, preview: Option<LiveStreamPreview>) {
         let changed = match (&self.live_stream_preview, &preview) {
             (None, None) => false,
@@ -121,13 +113,13 @@ impl StreamUi {
             (None, Some(_)) | (Some(_), None) => true,
         };
         if changed {
-            self.preview_generation = self.preview_generation.wrapping_add(1);
             self.live_stream_preview = preview;
+            self.preview_render_cache = None;
         }
     }
 
-    pub(super) fn bump_fence_generation(&mut self) {
-        self.fence_generation = self.fence_generation.wrapping_add(1);
+    pub(super) fn invalidate_preview_cache(&mut self) {
+        self.preview_render_cache = None;
     }
 
     pub(super) fn loading_streams_active(&self) -> bool {
@@ -359,7 +351,7 @@ pub(super) fn live_started_at(
 /// Keyed paint of one live tool card.
 ///
 /// Lives on [`ToolEntry`] so card replacement drops it. Hits skip syntect.
-/// Elapsed suffixes are patched in place when display width is unchanged.
+/// Elapsed ticks rebuild the cheap prefix and reuse `body`.
 pub(in crate::tui) struct LiveCardRenderCache {
     pub(in crate::tui) width: usize,
     pub(in crate::tui) max_tool_output_lines: usize,
@@ -367,7 +359,9 @@ pub(in crate::tui) struct LiveCardRenderCache {
     pub(in crate::tui) theme_generation: u64,
     pub(in crate::tui) expanded: bool,
     pub(in crate::tui) elapsed_label: Option<String>,
-    pub(in crate::tui) elapsed_spans: Vec<(usize, usize)>,
+    pub(in crate::tui) last_fact_is_end: bool,
+    pub(in crate::tui) prefix_len: usize,
+    pub(in crate::tui) body: Vec<Line<'static>>,
     pub(in crate::tui) lines: Vec<Line<'static>>,
     #[cfg(test)]
     pub(in crate::tui) paints: u32,
@@ -382,6 +376,7 @@ impl std::fmt::Debug for LiveCardRenderCache {
             .field("theme_generation", &self.theme_generation)
             .field("expanded", &self.expanded)
             .field("elapsed_label", &self.elapsed_label)
+            .field("body_lines", &self.body.len())
             .finish_non_exhaustive()
     }
 }
@@ -389,6 +384,8 @@ impl std::fmt::Debug for LiveCardRenderCache {
 #[derive(Debug)]
 pub(super) struct ToolEntry {
     /// Structured Call + Children card. Sole render input for tool rows.
+    /// In-place body edits must clear [`Self::render_cache`]; replacement
+    /// through [`Self::new`] drops it automatically.
     pub(in crate::tui) card: rho_tools::tool_card::ToolCard,
     pub(in crate::tui) expanded: bool,
     pub(in crate::tui) image: Option<FeedImage>,

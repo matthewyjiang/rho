@@ -135,7 +135,30 @@ pub(super) fn push_tool_card(
     expanded: bool,
     live_elapsed: Option<Duration>,
 ) {
-    push_header_line(lines, card, card.status, width);
+    let sections = paint_card_sections(card, width, max_tool_output_lines, expanded, live_elapsed);
+    lines.extend(sections.prefix);
+    lines.extend(sections.body);
+}
+
+/// Header + facts (elapsed lives here) versus syntax-highlighted body.
+///
+/// Live cards cache `body` across animation frames and only rebuild `prefix`
+/// when the timeout clock ticks.
+pub(super) struct CardSections {
+    pub(super) prefix: Vec<Line<'static>>,
+    pub(super) body: Vec<Line<'static>>,
+    pub(super) last_fact_is_end: bool,
+}
+
+pub(super) fn paint_card_sections(
+    card: &ToolCard,
+    width: usize,
+    max_tool_output_lines: usize,
+    expanded: bool,
+    live_elapsed: Option<Duration>,
+) -> CardSections {
+    let mut prefix = Vec::new();
+    push_header_line(&mut prefix, card, card.status, width);
 
     let budget = max_tool_output_lines.max(1);
     // Collapsed: paint only the visible budget (syntax is the costly part).
@@ -143,12 +166,12 @@ pub(super) fn push_tool_card(
     let paint_budget = if expanded { None } else { Some(budget) };
     let rendered = render_child_groups(card, width, paint_budget, live_elapsed);
     let total_rows = rendered.total_terminal_rows;
-    let show_collapse_prompt = expanded && total_rows > budget;
     let mut remaining = if expanded { usize::MAX } else { budget };
     let mut hidden_rows = 0usize;
     let mut emitted = Vec::new();
+    let fact_count = rendered.fact_groups.len();
 
-    for group in rendered.groups {
+    for group in rendered.fact_groups.into_iter().chain(rendered.body_groups) {
         if remaining == 0 {
             hidden_rows = hidden_rows.saturating_add(group.len());
             continue;
@@ -174,6 +197,7 @@ pub(super) fn push_tool_card(
     }
 
     let show_expand_prompt = !expanded && hidden_rows > 0;
+    let show_collapse_prompt = expanded && total_rows > budget;
     let has_prompt = show_expand_prompt || show_collapse_prompt;
     // For each group, whether a later TreeFact still needs the trunk. Mid
     // branches stay ├ and plain rows between them keep │ so multi-file File
@@ -189,6 +213,8 @@ pub(super) fn push_tool_card(
         }
         flags
     };
+    let prefix_groups = fact_count.min(emitted.len());
+    let mut body = Vec::new();
     for (index, mut group) in emitted.into_iter().enumerate() {
         match &mut group {
             ChildGroup::TreeFact(fact_lines) => {
@@ -202,21 +228,58 @@ pub(super) fn push_tool_card(
             }
             ChildGroup::Plain(_) => {}
         }
-        lines.extend(group.into_lines());
+        let dest = if index < prefix_groups {
+            &mut prefix
+        } else {
+            &mut body
+        };
+        dest.extend(group.into_lines());
     }
+
+    let last_fact_is_end = prefix_groups > 0 && !later_has_tree[prefix_groups - 1] && !has_prompt;
 
     if show_expand_prompt {
         let prompt = format!("... {hidden_rows} more lines, ctrl+o to expand");
-        push_wrapped_text(lines, &prompt, width, Theme::dim(), LineFill::PadToWidth);
+        push_wrapped_text(
+            &mut body,
+            &prompt,
+            width,
+            Theme::dim(),
+            LineFill::PadToWidth,
+        );
     } else if show_collapse_prompt {
         push_wrapped_text(
-            lines,
+            &mut body,
             "ctrl+o to collapse",
             width,
             Theme::dim(),
             LineFill::PadToWidth,
         );
     }
+    CardSections {
+        prefix,
+        body,
+        last_fact_is_end,
+    }
+}
+
+/// Header + timeout facts only. Used to refresh the live elapsed clock
+/// without re-highlighting the cached body.
+pub(super) fn paint_live_prefix(
+    card: &ToolCard,
+    width: usize,
+    live_elapsed: Option<Duration>,
+    last_fact_is_end: bool,
+) -> Vec<Line<'static>> {
+    let mut prefix = Vec::new();
+    push_header_line(&mut prefix, card, card.status, width);
+    let last = card.facts.len().saturating_sub(1);
+    for (index, fact) in card.facts.iter().enumerate() {
+        let mut fact_lines = push_wrapped_tree_fact(fact_spans(fact, live_elapsed), width);
+        rewrite_tree_fact(&mut fact_lines, last_fact_is_end && index == last);
+        prefix.extend(fact_lines);
+    }
+    prefix
 }
 
 /// Whether ctrl+o / click should toggle this tool at the given terminal width.
@@ -232,7 +295,8 @@ pub(super) fn card_is_toggleable(
 }
 
 struct ChildRender {
-    groups: Vec<ChildGroup>,
+    fact_groups: Vec<ChildGroup>,
+    body_groups: Vec<ChildGroup>,
     /// Full terminal-row height of all children (painted + estimated tail).
     total_terminal_rows: usize,
 }
@@ -246,7 +310,8 @@ fn render_child_groups(
     paint_budget: Option<usize>,
     live_elapsed: Option<Duration>,
 ) -> ChildRender {
-    let mut groups = Vec::new();
+    let mut fact_groups = Vec::new();
+    let mut body_groups = Vec::new();
     let mut total_rows = 0usize;
     let mut paint_remaining = paint_budget.unwrap_or(usize::MAX);
 
@@ -254,7 +319,7 @@ fn render_child_groups(
         // Always mid trunk here; last-child └ / hang is rewritten after clip.
         let fact_lines = push_wrapped_tree_fact(fact_spans(fact, live_elapsed), width);
         take_group(
-            &mut groups,
+            &mut fact_groups,
             &mut total_rows,
             &mut paint_remaining,
             ChildGroup::TreeFact(fact_lines),
@@ -290,7 +355,7 @@ fn render_child_groups(
                     push_body_line(&mut lines, line, width, Theme::text());
                 }
                 take_group(
-                    &mut groups,
+                    &mut body_groups,
                     &mut total_rows,
                     &mut paint_remaining,
                     ChildGroup::Plain(lines),
@@ -317,7 +382,7 @@ fn render_child_groups(
                     }
                     let spans = file_section_spans(row);
                     take_group(
-                        &mut groups,
+                        &mut body_groups,
                         &mut total_rows,
                         &mut paint_remaining,
                         ChildGroup::TreeFact(push_wrapped_tree_fact(spans, width)),
@@ -332,7 +397,7 @@ fn render_child_groups(
                 let mut lines = Vec::new();
                 push_diff_row(&mut lines, row, gutter, width, &mut syntax);
                 take_group(
-                    &mut groups,
+                    &mut body_groups,
                     &mut total_rows,
                     &mut paint_remaining,
                     ChildGroup::Plain(lines),
@@ -342,7 +407,8 @@ fn render_child_groups(
     }
 
     ChildRender {
-        groups,
+        fact_groups,
+        body_groups,
         total_terminal_rows: total_rows,
     }
 }
