@@ -203,10 +203,14 @@ impl PermissionMode {
     /// `session_writes` carries the paths whose first write already passed the
     /// gate this session.
     pub fn workspace_policy(self, session_writes: SessionWriteLog) -> Option<ModePolicy> {
-        self.workspace_policy_with(
-            session_writes,
-            crate::paths::UserInstructionSurfaces::from_process(),
-        )
+        match self {
+            Self::Bypass => None,
+            Self::Auto | Self::AllowEdits | Self::Plan | Self::Supervised => self
+                .workspace_policy_with(
+                    session_writes,
+                    crate::paths::UserInstructionSurfaces::from_process(),
+                ),
+        }
     }
 
     fn workspace_policy_with(

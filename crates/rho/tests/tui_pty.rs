@@ -48,6 +48,30 @@ fn confirm_claude_code_login(harness: &mut PtyHarness) {
     harness.inject_key(&Key::Char('2')).unwrap();
 }
 
+fn wait_for_claude_code_login_complete(harness: &mut PtyHarness) {
+    // Resume re-enables bracketed paste. The status line can appear before the
+    // event loop is reading again; quitting then turns `\x1b[200~/exit` into
+    // literal `[200~/exit` and the child never leaves.
+    harness
+        .wait_for_text(
+            "signed in as fake@example.com",
+            WaitTimeout::secs(10, "post-login status"),
+        )
+        .unwrap();
+    harness
+        .wait_for_text(
+            "Managed by the claude binary",
+            WaitTimeout::secs(10, "ownership copy"),
+        )
+        .unwrap();
+    harness
+        .wait_for_quiet(
+            Duration::from_millis(200),
+            WaitTimeout::secs(5, "idle after login"),
+        )
+        .unwrap();
+}
+
 #[test]
 fn smoke_startup_stream_exit() {
     assert_pass("startup_stream_exit");
@@ -250,18 +274,7 @@ credential_store = "file"
         .unwrap();
     // The fake claude process exits immediately, so its stdout may only appear on
     // the suspended main screen. Prefer the post-status source of truth.
-    harness
-        .wait_for_text(
-            "signed in as fake@example.com",
-            WaitTimeout::secs(10, "post-login status"),
-        )
-        .unwrap();
-    harness
-        .wait_for_text(
-            "Managed by the claude binary",
-            WaitTimeout::secs(10, "ownership copy"),
-        )
-        .unwrap();
+    wait_for_claude_code_login_complete(&mut harness);
     assert!(fake.marker.exists(), "fake claude login should have run");
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 }
@@ -449,12 +462,7 @@ web_search_provider = "disabled"
         !screen.contains("Where should Rho store provider credentials?"),
         "claude-code must never open the Rho store chooser:\n{screen}"
     );
-    harness
-        .wait_for_text(
-            "signed in as fake@example.com",
-            WaitTimeout::secs(10, "post-login status"),
-        )
-        .unwrap();
+    wait_for_claude_code_login_complete(&mut harness);
     assert!(fake.marker.exists(), "fake claude login should have run");
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
 
