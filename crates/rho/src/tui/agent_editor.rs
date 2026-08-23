@@ -200,8 +200,8 @@ fn authorize_editable_path(
     let roots = match origin {
         AgentOrigin::RhoHome => crate::paths::home_dir()
             .map(|home| {
-                let root = home.join(".rho/agents");
-                vec![(home, root)]
+                let [_, rho_home] = crate::paths::user_agent_dirs(&home);
+                vec![(home, rho_home)]
             })
             .unwrap_or_default(),
         AgentOrigin::Project => crate::workspace::project_ancestor_dirs(cwd)

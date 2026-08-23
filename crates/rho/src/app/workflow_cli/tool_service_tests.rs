@@ -298,6 +298,35 @@ fn preparation_keeps_exact_durable_and_process_facts() {
         .is_err());
 }
 
+// Covers: a workspace-local --config must not be labeled unrestricted, or
+// Plan/Auto treat a host config read as an outside-workspace agent read.
+// Owner: workflow application tool adapter
+#[test]
+fn workspace_config_declares_primary_workspace_scope() {
+    let capabilities = AppWorkflowToolService {
+        cwd: "/workspace".into(),
+        config_path: Some("rho.toml".into()),
+        tracker: crate::tools::workflow_tracker::WorkflowRunTracker::new(),
+    }
+    .capabilities_for_paths(
+        &WorkflowToolRequest::Validate {
+            file: "flow.star".into(),
+            inputs: BTreeMap::new(),
+        },
+        Path::new("/rho"),
+        Some(Path::new("/home/test")),
+        Path::new("/bin/rho"),
+        false,
+    )
+    .unwrap();
+    assert!(matches!(
+        capabilities[1].operation(),
+        CapabilityOperation::ReadPath { path, scope }
+            if path == Path::new("/workspace/rho.toml")
+                && *scope == PathScope::PrimaryWorkspace
+    ));
+}
+
 // Covers: catalog and PATH discovery must turn each possible read into an
 // exact path before model-tool planning resolves an agent or executable.
 // Owner: workflow application tool capability preparation.

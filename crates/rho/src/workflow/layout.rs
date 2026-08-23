@@ -10,7 +10,7 @@ pub(crate) struct WorkflowLayout {
 impl WorkflowLayout {
     pub(crate) fn new(rho_home: &Path) -> Self {
         Self {
-            root: rho_home.join("workflows"),
+            root: crate::paths::user_workflows_dir(rho_home),
         }
     }
     pub(crate) fn root(&self) -> &Path {

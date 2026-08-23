@@ -397,7 +397,7 @@ fn push_context_file(out: &mut String, tag: &str, path: &Path, contents: &str) {
 fn agent_instruction_files(cwd: &Path, home: Option<&Path>) -> Vec<(PathBuf, String)> {
     let mut paths = Vec::new();
     if let Some(home) = home {
-        paths.push(home.join(".rho").join("AGENTS.md"));
+        paths.push(crate::paths::user_agents_md(home));
     }
     paths.extend(
         crate::workspace::project_ancestor_dirs(cwd)

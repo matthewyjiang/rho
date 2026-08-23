@@ -1,6 +1,7 @@
 use std::{
     ffi::OsString,
-    path::{Path, PathBuf},
+    fs,
+    path::{Component, Path, PathBuf},
 };
 
 /// Renders paths consistently in user-facing text and structured output.
@@ -81,6 +82,204 @@ fn home_dir_from_env(mut var: impl FnMut(&str) -> Option<OsString>) -> Option<Pa
 
 pub(crate) fn rho_dir() -> anyhow::Result<PathBuf> {
     rho_dir_from_env(|name| std::env::var_os(name))
+}
+
+/// Global instructions loaded for every session: `~/.rho/AGENTS.md`.
+pub(crate) fn user_agents_md(home: &Path) -> PathBuf {
+    home.join(".rho").join("AGENTS.md")
+}
+
+/// Loose user skill trees: `~/.rho/skills`, then `~/.agents/skills`.
+pub(crate) fn user_skill_dirs(home: &Path) -> [PathBuf; 2] {
+    [
+        home.join(".rho").join("skills"),
+        home.join(".agents").join("skills"),
+    ]
+}
+
+/// User agent definition trees: `~/.agents/agents`, then `~/.rho/agents`.
+pub(crate) fn user_agent_dirs(home: &Path) -> [PathBuf; 2] {
+    [
+        home.join(".agents").join("agents"),
+        home.join(".rho").join("agents"),
+    ]
+}
+
+/// Durable workflow plans and runs: `$RHO_HOME/workflows` or `~/.rho/workflows`.
+pub(crate) fn user_workflows_dir(rho_home: &Path) -> PathBuf {
+    rho_home.join("workflows")
+}
+
+/// Host config the workflow tool reads: `$RHO_HOME/config.toml` or `~/.rho/config.toml`.
+pub(crate) fn user_config_toml(rho_home: &Path) -> PathBuf {
+    rho_home.join("config.toml")
+}
+
+/// User-owned instruction surfaces Rho already loads from `$HOME`.
+///
+/// Built from [`user_agents_md`], [`user_skill_dirs`], and [`user_agent_dirs`].
+/// Credentials, config, hooks, sessions, and plugins stay out of this set.
+///
+/// Membership is a construction-time snapshot: lexical paths always match, and
+/// a resolved path is kept only when the entry exists, is not a symlink, and
+/// stays under `$HOME`. Authorize-path checks do not touch the filesystem.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct UserInstructionSurfaces {
+    files: Vec<AnchoredPath>,
+    directories: Vec<AnchoredPath>,
+}
+
+#[derive(Clone, Debug)]
+struct AnchoredPath {
+    lexical: PathBuf,
+    resolved: Option<PathBuf>,
+}
+
+impl UserInstructionSurfaces {
+    pub(crate) fn from_process() -> Self {
+        Self::from_home(home_dir().as_deref())
+    }
+
+    pub(crate) fn from_home(home: Option<&Path>) -> Self {
+        let Some(home) = home else {
+            return Self::default();
+        };
+        let mut directories: Vec<_> = user_skill_dirs(home)
+            .into_iter()
+            .map(|path| snapshot_path(path, home))
+            .collect();
+        directories.extend(
+            user_agent_dirs(home)
+                .into_iter()
+                .map(|path| snapshot_path(path, home)),
+        );
+        Self {
+            files: vec![snapshot_path(user_agents_md(home), home)],
+            directories,
+        }
+    }
+
+    pub(crate) fn contains(&self, path: &Path) -> bool {
+        let path = lexical_normalize(path);
+        self.files
+            .iter()
+            .any(|allowed| path_matches_file(&path, allowed))
+            || self
+                .directories
+                .iter()
+                .any(|root| path_is_under_anchored(&path, root))
+    }
+}
+
+fn snapshot_path(lexical: PathBuf, home: &Path) -> AnchoredPath {
+    let resolved = resolved_if_anchored(&lexical, home);
+    AnchoredPath { lexical, resolved }
+}
+
+/// Keep a resolved form only when the entry is a real file or directory under
+/// `$HOME`. A symlink root (or a resolved path that escaped home) is dropped
+/// so canonicalize cannot widen the allowlist to `/` or `$HOME`.
+fn resolved_if_anchored(lexical: &Path, home: &Path) -> Option<PathBuf> {
+    let metadata = fs::symlink_metadata(lexical).ok()?;
+    if metadata.file_type().is_symlink() {
+        return None;
+    }
+    let resolved = lexical.canonicalize().ok()?;
+    let home_resolved = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
+    (resolved.starts_with(home) || resolved.starts_with(&home_resolved)).then_some(resolved)
+}
+
+fn path_matches_file(path: &Path, allowed: &AnchoredPath) -> bool {
+    path == allowed.lexical.as_path() || allowed.resolved.as_deref() == Some(path)
+}
+
+fn path_is_under_anchored(path: &Path, root: &AnchoredPath) -> bool {
+    path.starts_with(&root.lexical)
+        || root
+            .resolved
+            .as_ref()
+            .is_some_and(|resolved| path.starts_with(resolved))
+}
+
+/// True when `path` is the live canonical target of `{root}/{file_name}`.
+///
+/// PATH binaries often live outside the PATH directory (`/usr/bin/git` →
+/// `/usr/lib/git-core/git`). Construction only snapshots the directory, so this
+/// check is the authorize-path follow-up for those resolved identities.
+fn path_is_resolved_dir_child(path: &Path, root: &AnchoredPath) -> bool {
+    let Some(name) = path.file_name() else {
+        return false;
+    };
+    // Compare canonical forms so macOS `/var` vs `/private/var` still matches.
+    let query = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let resolves_to_path =
+        |dir: &Path| fs::canonicalize(dir.join(name)).is_ok_and(|resolved| resolved == query);
+    resolves_to_path(&root.lexical)
+        || root.resolved.as_deref().is_some_and(|resolved| {
+            resolved != root.lexical.as_path() && resolves_to_path(resolved)
+        })
+}
+
+/// Host-owned surfaces the built-in `workflow` tool may read without the
+/// agent-facing outside-workspace gate: the Rho workflow tree, the default
+/// host config, and directories on `PATH` at construction.
+///
+/// Graph-supplied absolute paths outside this set still follow the normal
+/// gate. The model's `read_file` of the same paths is not exempt. A PATH
+/// binary whose canonical target left its PATH directory still matches via
+/// a live `{dir}/{file_name}` canonicalize.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct HostOwnedSurfaces {
+    files: Vec<AnchoredPath>,
+    directories: Vec<AnchoredPath>,
+}
+
+impl HostOwnedSurfaces {
+    pub(crate) fn from_process() -> Self {
+        Self::from_env(rho_dir().ok().as_deref(), std::env::var_os("PATH"))
+    }
+
+    pub(crate) fn from_env(rho_home: Option<&Path>, path_var: Option<OsString>) -> Self {
+        let mut files = Vec::new();
+        let mut directories = Vec::new();
+        if let Some(rho_home) = rho_home {
+            files.push(snapshot_path(user_config_toml(rho_home), rho_home));
+            directories.push(snapshot_path(user_workflows_dir(rho_home), rho_home));
+        }
+        if let Some(path_var) = path_var {
+            for directory in std::env::split_paths(&path_var) {
+                if directory.as_os_str().is_empty() {
+                    continue;
+                }
+                directories.push(snapshot_path(directory.clone(), &directory));
+            }
+        }
+        Self { files, directories }
+    }
+
+    pub(crate) fn contains(&self, path: &Path) -> bool {
+        let path = lexical_normalize(path);
+        self.files
+            .iter()
+            .any(|allowed| path_matches_file(&path, allowed))
+            || self.directories.iter().any(|root| {
+                path_is_under_anchored(&path, root) || path_is_resolved_dir_child(&path, root)
+            })
+    }
+}
+
+fn lexical_normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            component => out.push(component),
+        }
+    }
+    out
 }
 
 fn rho_dir_from_env(mut var: impl FnMut(&str) -> Option<OsString>) -> anyhow::Result<PathBuf> {
@@ -235,5 +434,93 @@ mod tests {
             home_dir_from_env(|name| env(&[("USERPROFILE", r"C:\Users\rho")], name)),
             None
         );
+    }
+
+    // Covers: catalog membership is lexical (plus a home-anchored snapshot),
+    // not a secret-path denylist; credentials and plugins stay out.
+    // Owner: paths catalog
+    #[test]
+    fn user_instruction_surfaces_match_loaded_roots_only() {
+        let home = Path::new("/home/rho");
+        let surfaces = UserInstructionSurfaces::from_home(Some(home));
+        let agents = user_agents_md(home);
+        let [rho_skills, agents_skills] = user_skill_dirs(home);
+        let [shared_agents, rho_agents] = user_agent_dirs(home);
+
+        assert!(surfaces.contains(&agents));
+        assert!(surfaces.contains(&rho_skills.join("demo/SKILL.md")));
+        assert!(surfaces.contains(&agents_skills.join("demo/SKILL.md")));
+        assert!(surfaces.contains(&shared_agents.join("reviewer.md")));
+        assert!(surfaces.contains(&rho_agents.join("reviewer.md")));
+        assert!(!surfaces.contains(&rho_skills.join("../../../.ssh/id_rsa")));
+        assert!(!surfaces.contains(&home.join(".rho/credentials/secrets.json")));
+        assert!(!surfaces.contains(&home.join(".rho/config.toml")));
+        assert!(!surfaces.contains(&home.join(".agents/plugins/evil/plugin.json")));
+        assert!(!surfaces.contains(Path::new("/etc/shadow")));
+    }
+
+    // Covers: a symlink allowlist root must not widen membership to its target.
+    // Owner: paths catalog
+    #[cfg(unix)]
+    #[test]
+    fn user_instruction_surfaces_drop_symlink_roots() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let home = dir.path();
+        let rho = home.join(".rho");
+        fs::create_dir_all(home.join(".agents")).unwrap();
+        fs::create_dir_all(&rho).unwrap();
+        let outside = dir.path().join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        let secret = outside.join("secret.txt");
+        fs::write(&secret, "secret").unwrap();
+        std::os::unix::fs::symlink(&outside, rho.join("skills")).unwrap();
+        std::os::unix::fs::symlink(&secret, rho.join("AGENTS.md")).unwrap();
+
+        let surfaces = UserInstructionSurfaces::from_home(Some(home));
+        assert!(surfaces.contains(&user_agents_md(home)));
+        assert!(surfaces.contains(&rho.join("skills").join("secret.txt")));
+        assert!(!surfaces.contains(&secret));
+        assert!(!surfaces.contains(&outside));
+    }
+
+    // Covers: workflow host reads are the Rho workflow tree, default config,
+    // and PATH dirs — not the rest of $HOME or an arbitrary absolute path.
+    // Owner: paths catalog
+    #[test]
+    fn host_owned_surfaces_cover_workflow_state_and_path_dirs() {
+        let rho_home = Path::new("/rho");
+        let usr_bin = PathBuf::from("/usr/bin");
+        let opt_bin = PathBuf::from("/opt/bin");
+        let path_var = std::env::join_paths([&usr_bin, &opt_bin]).expect("path dirs are valid");
+        let surfaces = HostOwnedSurfaces::from_env(Some(rho_home), Some(path_var));
+        assert!(surfaces.contains(&user_workflows_dir(rho_home).join("runs/1")));
+        assert!(surfaces.contains(&user_config_toml(rho_home)));
+        assert!(surfaces.contains(&usr_bin.join("git")));
+        assert!(surfaces.contains(&opt_bin.join("claude")));
+        assert!(!surfaces.contains(Path::new("/home/rho/.ssh/id_rsa")));
+        assert!(!surfaces.contains(&rho_home.join("credentials/secrets.json")));
+        assert!(!surfaces.contains(Path::new("/tmp/evil")));
+    }
+
+    // Covers: a PATH candidate whose canonical target left the PATH dir
+    // remains host-owned; an unrelated home path does not.
+    // Owner: paths catalog
+    #[cfg(unix)]
+    #[test]
+    fn host_owned_surfaces_include_resolved_path_binaries() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let bin = dir.path().join("bin");
+        let lib = dir.path().join("lib");
+        fs::create_dir_all(&bin).unwrap();
+        fs::create_dir_all(&lib).unwrap();
+        let target = lib.join("tool");
+        fs::write(&target, "x").unwrap();
+        std::os::unix::fs::symlink(&target, bin.join("tool")).unwrap();
+        let target = target.canonicalize().unwrap();
+
+        let surfaces = HostOwnedSurfaces::from_env(None, Some(bin.as_os_str().to_os_string()));
+        assert!(surfaces.contains(&bin.join("tool")));
+        assert!(surfaces.contains(&target));
+        assert!(!surfaces.contains(&dir.path().join(".ssh/id_rsa")));
     }
 }

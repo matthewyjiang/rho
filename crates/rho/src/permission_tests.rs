@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::{ffi::OsString, path::Path, process::Command};
 
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
@@ -27,8 +27,16 @@ fn process_request(command: &str) -> CapabilityRequest {
     )
 }
 
+fn read_request(path: impl Into<std::path::PathBuf>, scope: PathScope) -> CapabilityRequest {
+    CapabilityRequest::read_path(path, scope, source("read_file"))
+}
+
 fn write_request(path: impl Into<std::path::PathBuf>, scope: PathScope) -> CapabilityRequest {
     CapabilityRequest::write_path(path, scope, source("write"))
+}
+
+fn workflow_read(path: impl Into<std::path::PathBuf>, scope: PathScope) -> CapabilityRequest {
+    CapabilityRequest::read_path(path, scope, source("workflow"))
 }
 
 fn run_git(cwd: &std::path::Path, args: &[&str]) {
@@ -145,11 +153,7 @@ fn decision_for_supervised_requires_approval_only_for_write_and_process() {
 
 #[test]
 fn workspace_policy_agrees_with_decision_for_when_writes_are_not_tracked() {
-    let read_request = CapabilityRequest::read_path(
-        "/workspace/file",
-        PathScope::PrimaryWorkspace,
-        source("read_file"),
-    );
+    let read_request = read_request("/workspace/file", PathScope::PrimaryWorkspace);
     let write_request = write_request("/workspace/file", PathScope::PrimaryWorkspace);
     let network_request = CapabilityRequest::network(
         NetworkTarget::Url("https://example.com/path".into()),
@@ -193,6 +197,284 @@ fn workspace_policy_agrees_with_decision_for_when_writes_are_not_tracked() {
     assert!(PermissionMode::Bypass
         .workspace_policy(SessionWriteLog::default())
         .is_none());
+}
+
+// Covers: checked modes no longer silently allow reads of arbitrary filesystem
+// paths; primary-workspace and host-attached roots stay free. There is no
+// secret-path denylist — PathScope is the policy input.
+// Owner: application permission policy
+#[test]
+fn checked_modes_gate_unrestricted_filesystem_reads() {
+    let require_approval = PolicyDecision::RequireApproval {
+        reason: String::new(),
+    };
+    let plan_deny = PolicyDecision::Deny {
+        reason: "read outside the workspace is not allowed in plan mode".into(),
+    };
+    let cases = [
+        (
+            PathScope::PrimaryWorkspace,
+            PolicyDecision::Allow,
+            PolicyDecision::Allow,
+        ),
+        (
+            PathScope::GrantedRoot {
+                root: "/extra".into(),
+            },
+            PolicyDecision::Allow,
+            PolicyDecision::Allow,
+        ),
+        (
+            PathScope::UnrestrictedFilesystem,
+            require_approval,
+            plan_deny,
+        ),
+    ];
+
+    for (scope, gated, plan) in cases {
+        let requests = [
+            read_request("/tmp/file", scope.clone()),
+            CapabilityRequest::instruction_discovery(
+                "/tmp/file",
+                scope.clone(),
+                CapabilitySource::PromptConstruction,
+            ),
+        ];
+        for request in requests {
+            for mode in [
+                PermissionMode::Auto,
+                PermissionMode::AllowEdits,
+                PermissionMode::Supervised,
+            ] {
+                let policy = mode
+                    .workspace_policy(SessionWriteLog::default())
+                    .expect("checked mode has a policy");
+                assert_eq!(
+                    policy.evaluate(&request),
+                    gated.clone(),
+                    "{mode:?} disagreed for {scope:?} {:?}",
+                    request.kind()
+                );
+            }
+            let plan_policy = PermissionMode::Plan
+                .workspace_policy(SessionWriteLog::default())
+                .expect("plan has a policy");
+            assert_eq!(
+                plan_policy.evaluate(&request),
+                plan.clone(),
+                "plan disagreed for {scope:?} {:?}",
+                request.kind()
+            );
+        }
+    }
+}
+
+// Covers: workflow host reads stay free only for the Rho workflow tree,
+// default config, and PATH dirs; a graph-supplied absolute path and the
+// model's read_file of a host path still hit the outside-workspace gate.
+// Owner: application permission policy
+#[test]
+fn workflow_tool_reads_skip_the_outside_workspace_gate() {
+    let require_approval = PolicyDecision::RequireApproval {
+        reason: String::new(),
+    };
+    let plan_deny = PolicyDecision::Deny {
+        reason: "read outside the workspace is not allowed in plan mode".into(),
+    };
+    let host = workflow_read("/rho/workflows/runs/1", PathScope::UnrestrictedFilesystem);
+    let config = workflow_read("/rho/config.toml", PathScope::UnrestrictedFilesystem);
+    let path_bin = workflow_read("/usr/bin/git", PathScope::UnrestrictedFilesystem);
+    let graph = workflow_read("/home/rho/.ssh/id_rsa", PathScope::UnrestrictedFilesystem);
+    let model = read_request("/rho/workflows/runs/1", PathScope::UnrestrictedFilesystem);
+    let host_owned = crate::paths::HostOwnedSurfaces::from_env(
+        Some(Path::new("/rho")),
+        Some(OsString::from("/usr/bin")),
+    );
+
+    for mode in [
+        PermissionMode::Auto,
+        PermissionMode::AllowEdits,
+        PermissionMode::Supervised,
+        PermissionMode::Plan,
+    ] {
+        let policy = mode
+            .workspace_policy_with(
+                SessionWriteLog::default(),
+                crate::paths::UserInstructionSurfaces::default(),
+                host_owned.clone(),
+            )
+            .expect("checked mode has a policy");
+        assert_eq!(
+            policy.evaluate(&host),
+            PolicyDecision::Allow,
+            "{mode:?} blocked a workflow host read"
+        );
+        assert_eq!(
+            policy.evaluate(&config),
+            PolicyDecision::Allow,
+            "{mode:?} blocked a workflow config read"
+        );
+        assert_eq!(
+            policy.evaluate(&path_bin),
+            PolicyDecision::Allow,
+            "{mode:?} blocked workflow PATH resolution"
+        );
+        let expected = if mode == PermissionMode::Plan {
+            plan_deny.clone()
+        } else {
+            require_approval.clone()
+        };
+        assert_eq!(
+            policy.evaluate(&graph),
+            expected,
+            "{mode:?} allowed a graph-supplied workflow read"
+        );
+        assert_eq!(
+            policy.evaluate(&model),
+            expected,
+            "{mode:?} allowed a model read of a workflow path"
+        );
+    }
+}
+
+// Covers: global AGENTS.md, user skills, and user agent definitions stay
+// readable without opening the rest of ~/.rho or ~/.agents (credentials,
+// config, plugins). Writes to those surfaces stay gated.
+// Owner: application permission policy
+#[test]
+fn user_instruction_paths_are_readable_and_writes_stay_gated() {
+    let home = TempDir::new().unwrap();
+    let home = home.path();
+    let agents = crate::paths::user_agents_md(home);
+    let [rho_skills, agents_skills] = crate::paths::user_skill_dirs(home);
+    let [shared_agents, rho_agents] = crate::paths::user_agent_dirs(home);
+    let skill = rho_skills.join("demo").join("SKILL.md");
+    let other_skill = agents_skills.join("demo").join("SKILL.md");
+    let shared_agent = shared_agents.join("planner.md");
+    let rho_agent = rho_agents.join("planner.md");
+    let credentials = home.join(".rho").join("credentials").join("secrets.json");
+    let config = home.join(".rho").join("config.toml");
+    let plugin = home
+        .join(".agents")
+        .join("plugins")
+        .join("evil")
+        .join("plugin.json");
+
+    let allow = PolicyDecision::Allow;
+    let require_approval = PolicyDecision::RequireApproval {
+        reason: String::new(),
+    };
+    let plan_write_deny = PolicyDecision::Deny {
+        reason: "capability is not allowed in plan mode".into(),
+    };
+    let plan_read_deny = PolicyDecision::Deny {
+        reason: "read outside the workspace is not allowed in plan mode".into(),
+    };
+
+    let cases = [
+        (
+            read_request(&agents, PathScope::UnrestrictedFilesystem),
+            allow.clone(),
+            allow.clone(),
+            allow.clone(),
+        ),
+        (
+            read_request(&skill, PathScope::UnrestrictedFilesystem),
+            allow.clone(),
+            allow.clone(),
+            allow.clone(),
+        ),
+        (
+            read_request(&other_skill, PathScope::UnrestrictedFilesystem),
+            allow.clone(),
+            allow.clone(),
+            allow.clone(),
+        ),
+        (
+            write_request(&agents, PathScope::UnrestrictedFilesystem),
+            require_approval.clone(),
+            require_approval.clone(),
+            plan_write_deny.clone(),
+        ),
+        (
+            write_request(&skill, PathScope::UnrestrictedFilesystem),
+            require_approval.clone(),
+            require_approval.clone(),
+            plan_write_deny.clone(),
+        ),
+        (
+            read_request(&shared_agent, PathScope::UnrestrictedFilesystem),
+            allow.clone(),
+            allow.clone(),
+            allow.clone(),
+        ),
+        (
+            read_request(&rho_agent, PathScope::UnrestrictedFilesystem),
+            allow.clone(),
+            allow.clone(),
+            allow.clone(),
+        ),
+        (
+            write_request(&shared_agent, PathScope::UnrestrictedFilesystem),
+            require_approval.clone(),
+            require_approval.clone(),
+            plan_write_deny.clone(),
+        ),
+        (
+            write_request(&rho_agent, PathScope::UnrestrictedFilesystem),
+            require_approval.clone(),
+            require_approval.clone(),
+            plan_write_deny.clone(),
+        ),
+        (
+            read_request(&plugin, PathScope::UnrestrictedFilesystem),
+            require_approval.clone(),
+            require_approval.clone(),
+            plan_read_deny.clone(),
+        ),
+        (
+            read_request(&credentials, PathScope::UnrestrictedFilesystem),
+            require_approval.clone(),
+            require_approval.clone(),
+            plan_read_deny.clone(),
+        ),
+        (
+            read_request(&config, PathScope::UnrestrictedFilesystem),
+            require_approval.clone(),
+            require_approval.clone(),
+            plan_read_deny,
+        ),
+        (
+            write_request(&credentials, PathScope::UnrestrictedFilesystem),
+            require_approval.clone(),
+            require_approval,
+            plan_write_deny,
+        ),
+    ];
+
+    for (request, auto, supervised, plan) in cases {
+        for mode in [PermissionMode::Auto, PermissionMode::AllowEdits] {
+            let policy = super::ModePolicy::for_home(mode, home);
+            assert_eq!(
+                policy.evaluate(&request),
+                auto.clone(),
+                "{mode:?} disagreed for {:?}",
+                request.operation()
+            );
+        }
+        assert_eq!(
+            super::ModePolicy::for_home(PermissionMode::Supervised, home).evaluate(&request),
+            supervised,
+            "supervised disagreed for {:?}",
+            request.operation()
+        );
+        assert_eq!(
+            super::ModePolicy::for_home(PermissionMode::Plan, home).evaluate(&request),
+            plan,
+            "plan disagreed for {:?}",
+            request.operation()
+        );
+    }
 }
 
 // Covers: Allow edits and Auto skip the classifier/prompt for in-workspace

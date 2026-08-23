@@ -90,8 +90,8 @@ impl AppWorkflowToolService {
         project_agents_trusted: bool,
     ) -> anyhow::Result<Vec<CapabilityRequest>> {
         let source = || CapabilitySource::built_in_tool("workflow");
-        let plans = rho_home.join("workflows/plans");
-        let runs = rho_home.join("workflows/runs");
+        let plans = crate::paths::user_workflows_dir(rho_home).join("plans");
+        let runs = crate::paths::user_workflows_dir(rho_home).join("runs");
         let capabilities = match request {
             WorkflowToolRequest::Validate { file, .. } | WorkflowToolRequest::Plan { file, .. } => {
                 let mut requests =
@@ -160,24 +160,17 @@ impl AppWorkflowToolService {
         project_agents_trusted: bool,
     ) -> anyhow::Result<Vec<CapabilityRequest>> {
         let source = || CapabilitySource::built_in_tool("workflow");
+        let config = self.config_request_path(rho_home);
         let mut requests = vec![
             CapabilityRequest::read_path(
                 self.source_request_path(file)?,
                 PathScope::PrimaryWorkspace,
                 source(),
             ),
-            CapabilityRequest::read_path(
-                self.config_request_path(rho_home),
-                PathScope::UnrestrictedFilesystem,
-                source(),
-            ),
+            CapabilityRequest::read_path(config.clone(), path_scope(&self.cwd, &config), source()),
         ];
         for path in agent_catalog_roots_for(&self.cwd, home, project_agents_trusted) {
-            let scope = if path.starts_with(&self.cwd) {
-                PathScope::PrimaryWorkspace
-            } else {
-                PathScope::UnrestrictedFilesystem
-            };
+            let scope = path_scope(&self.cwd, &path);
             requests.push(CapabilityRequest::read_path(path, scope, source()));
         }
         let workflow_agents = crate::agent::workflow_local_agents_root(Path::new(file));
@@ -198,7 +191,7 @@ impl AppWorkflowToolService {
         match &self.config_path {
             Some(path) if path.is_absolute() => path.clone(),
             Some(path) => self.cwd.join(path),
-            None => rho_home.join("config.toml"),
+            None => crate::paths::user_config_toml(rho_home),
         }
     }
 
@@ -471,8 +464,7 @@ fn agent_catalog_roots_for(
 ) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     if let Some(home) = home {
-        roots.push(home.join(".agents/agents"));
-        roots.push(home.join(".rho/agents"));
+        roots.extend(crate::paths::user_agent_dirs(home));
     }
     if project_agents_trusted {
         roots.extend(

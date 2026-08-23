@@ -45,25 +45,25 @@ Additional tools:
 | `rho` | Read-only harness diagnostics |
 | `advisor` | Second-model review when [advisor mode](/configuration/advisor-mode) is on |
 
-Prefer `grep` and `glob` over shell search for workspace inspection. Both honor `.gitignore`, skip hidden files by default, never follow symlinks, and request read access only, so they work in every permission mode including `plan`. Agent shell commands can use [RTK](/integrations/rtk) for token-efficient output when the binary is installed.
+Prefer `grep` and `glob` over shell search for workspace inspection. Both honor `.gitignore`, skip hidden files by default, never follow symlinks, and request read access only, so workspace-scoped searches work in every permission mode including `plan`. Agent shell commands can use [RTK](/integrations/rtk) for token-efficient output when the binary is installed.
 
 Built-in skills that ship with the binary include `rho-diagnostics`, `rho-config`, `rho-agent-creator`, and `rho-workflow-authoring`. Custom skills live under `~/.rho/skills/<name>/SKILL.md`, `~/.agents/skills/<name>/SKILL.md`, or `<project-root>/.agents/skills/<name>/SKILL.md`. Set `disable-model-invocation: true` in a skill's frontmatter to keep it available only through `/skill:<name>`.
 
 ## Security and workspace boundaries
 
-Tools run with the current user's permissions. File tools can read or modify any path that the user can access, including paths outside the workspace, and shell commands can do the same.
+Tools run with the current user's permissions. File tools can resolve any path the user can access, including paths outside the workspace, and shell commands can do the same. Checked permission modes still authorize those paths: workspace-scoped reads, the user's global `~/.rho/AGENTS.md`, user skill trees, and user agent definitions are free, while other reads outside the workspace ask first (`auto`, `allow_edits`, `supervised`) or are denied (`plan`).
 
 ```mermaid
 flowchart LR
     bypass[bypass: allow all] --> cap[Capability request]
     auto[auto: classifier] --> cap
     allowEdits[allow_edits: tracked edits] --> cap
-    plan[plan: deny write and process] --> cap
+    plan[plan: deny write, process, outside reads] --> cap
     supervised[supervised: ask] --> cap
     cap --> os[OS user permissions still apply]
 ```
 
-The default `bypass` [permission mode](/configuration#permission-modes) allows this behavior. `auto` uses the same write and process gate as `allow_edits`; a configured classifier model approves or denies only the requests that gate does not allow. `allow_edits` allows in-workspace writes to git-tracked, non-symlink files and later writes to a path already allowed this session. Untracked and gitignored paths, writes outside the workspace, and process execution still ask first. `plan` denies file writes and process execution, while `supervised` asks for interactive confirmation before those operations. Supervised and Allow edits runs without an approval UI and headless Auto runs without a classifier model fail closed.
+The default `bypass` [permission mode](/configuration#permission-modes) allows this behavior. `auto` uses the same write, process, and outside-read gate as `allow_edits`; a configured classifier model approves or denies only the requests that gate does not allow. `allow_edits` allows in-workspace writes to git-tracked, non-symlink files and later writes to a path already allowed this session. Untracked and gitignored paths, writes outside the workspace, process execution, and other reads outside the workspace still ask first. `plan` denies file writes, process execution, and those other outside reads, while `supervised` asks for interactive confirmation before writes and process execution. Supervised and Allow edits runs without an approval UI and headless Auto runs without a classifier model fail closed. Shell (`bash`) and `claude-cli` subprocesses have their own filesystem view; the path-scoped read gate covers declared file-tool capabilities, not those children.
 
 Permission modes are policy checks at Rho's tool-capability boundary, not an operating-system sandbox. They do not reduce the permissions of the Rho process itself, and they depend on tools correctly declaring and authorizing capabilities. The SDK still scopes file access by default; embedded hosts must opt into broader access when they build a `Workspace`. Run Rho only in workspaces where you are comfortable with the selected mode and these limits.
 
@@ -83,7 +83,7 @@ Details for the default format: [Hash-line edit format](/tools-workspace/edit-fo
 
 ## Search tools
 
-`grep` and `glob` run in-process, honor ignore rules, and stay read-only so they work in every permission mode including `plan`.
+`grep` and `glob` run in-process, honor ignore rules, and stay read-only so workspace-scoped searches work in every permission mode including `plan`.
 
 Details: [Search tools](/tools-workspace/search).
 

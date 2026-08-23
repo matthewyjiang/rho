@@ -22,7 +22,9 @@ pub(crate) const SYSTEM_PROMPT_FILE_NAME: &str = "system-prompt.txt";
 /// - [`Self::DontAsk`] — advisor one-shots, and Auto / Allow edits only when
 ///   [`dont_ask_preserves_bound_set`] holds; never prompt. Claude still
 ///   auto-approves read-only Bash and PreToolUse hooks, so this is not a
-///   complete `--allowedTools` fence.
+///   complete `--allowedTools` fence. Read-class Claude tools may ride
+///   `dontAsk` because Claude-cli, like bash, is outside Rho's path-scoped
+///   read gate.
 ///
 /// Claude classifier `auto` is intentionally absent because Rho's classifier
 /// mode needs its own approval handler.
@@ -243,12 +245,16 @@ fn dont_ask_tool_preserves_bound_set(mode: PermissionMode, tool: &str) -> bool {
 }
 
 fn dont_ask_bare_tool_preserves_approval_boundary(mode: PermissionMode, base: &str) -> bool {
-    // Fail closed: only known Claude built-ins whose Rho class is freely
-    // allowed in this mode may ride dontAsk. Write and process tools still
-    // need the remaining Auto / Allow edits gate (git-tracked / remembered
-    // paths, classifier or human process approval). Unknown, plugin, MCP,
-    // and Claude MCP resource tools have no proven class: a server resource
-    // URI can do more than Rho Read.
+    // Fail closed: only known Claude built-ins whose Rho *kind* is freely
+    // allowed in this mode may ride dontAsk. This uses `decision_for`, the
+    // kind-only mapping, not `ModePolicy::evaluate`. Claude-cli is a
+    // subprocess with its own filesystem view, like bash: Rho's path-scoped
+    // read gate does not apply to the child. Read/Glob/Grep/LSP therefore
+    // stay spawnable in Auto / Allow edits even though evaluate now asks
+    // (or denies in Plan) for unrestricted reads on Rho-hosted tools.
+    // Write and process tools still need the remaining Auto / Allow edits
+    // gate. Unknown, plugin, MCP, and Claude MCP resource tools have no
+    // proven class: a server resource URI can do more than Rho Read.
     let Some(kind) = claude_tool_capability_kind(base) else {
         return false;
     };
