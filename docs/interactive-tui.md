@@ -64,7 +64,7 @@ Use a multiline prompt when you need to paste or write a longer request. Type `@
 ### Interrupt, steer, reset, or quit
 
 - Press `esc` to abort the current response without closing Rho. The provider request and active tool receive the same cancellation signal, partial assistant output remains in the session, and queued prompts are restored to the composer instead of running automatically.
-- Press `enter` while Rho is working to steer the run. Rho finishes every tool call from the current assistant turn, adds their results to context, then inserts the steering message before the next model request.
+- Press `enter` while Rho is working to steer the run. Rho finishes every tool call from the current assistant turn, adds their results to context, then inserts the steering message before the next model request. Once applied, that text appears in the transcript as a user message.
 - Press `ctrl-r` to reset the conversation history. The next message starts a new [session](/sessions).
 - Press `ctrl-c` to clear the current input line.
 - Press `ctrl-c` twice to quit.

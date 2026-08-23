@@ -30,6 +30,7 @@ mod runtime_info;
 mod sessions_hub;
 mod startup;
 mod statusline;
+mod steering;
 mod subagent_rail;
 mod supervised_approval;
 mod text_selection;
@@ -96,6 +97,7 @@ use startup::{
 };
 use statusline::STATUSLINE_HIERARCHY_STEPS;
 use std::time::Duration;
+use steering::{RETRACT_STEERING_DURING_TOOL_SCENARIO, STEER_APPEARS_IN_TRANSCRIPT_SCENARIO};
 use subagent_rail::SUBAGENT_RAIL_MOUSE_SCENARIO;
 use supervised_approval::SUPERVISED_APPROVAL_STEPS;
 use text_selection::{SCREEN_TEXT_SELECTION_STEPS, TEXT_SELECTION_DRAG_STEPS};
@@ -430,46 +432,6 @@ const CONCURRENT_PROGRESS_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
-const RETRACT_STEERING_DURING_TOOL_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::Phase("start_tool"),
-    Step::SubmitText("fixture progress tool"),
-    Step::WaitText {
-        text: "deterministic progress update one",
-        timeout: STREAM,
-    },
-    Step::Phase("steer"),
-    Step::SubmitText("keep the public API unchanged"),
-    Step::WaitText {
-        text: "pending input",
-        timeout: STREAM,
-    },
-    Step::WaitText {
-        text: "STEER",
-        timeout: STREAM,
-    },
-    Step::Phase("retract"),
-    Step::Key(Key::AltUp),
-    Step::WaitText {
-        text: "editing retracted steer",
-        timeout: STREAM,
-    },
-    Step::Key(Key::Ctrl('c')),
-    Step::WaitText {
-        text: "input cleared",
-        timeout: STREAM,
-    },
-    Step::WaitText {
-        text: "progress tool lifecycle complete",
-        timeout: STREAM,
-    },
-    Step::ExitCommand,
-];
-
 /// All registered scenarios.
 const ALL_SCENARIOS: &[Scenario] = &[
     STARTUP_FIRST_FRAME_SCENARIO,
@@ -613,13 +575,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
         CONCURRENT_PROGRESS_STEPS,
         false,
     ),
-    Scenario::new(
-        "retract_steering_during_tool",
-        "Inspect and retract steering while a tool is running",
-        DEFAULT_SIZE,
-        RETRACT_STEERING_DURING_TOOL_STEPS,
-        true,
-    ),
+    STEER_APPEARS_IN_TRANSCRIPT_SCENARIO,
+    RETRACT_STEERING_DURING_TOOL_SCENARIO,
     MARKDOWN_HEADINGS_SCENARIO,
     STREAMING_MARKDOWN_STABILITY_SCENARIO,
     SPINNER_ACTIVITY_ANCHOR_SCENARIO,

@@ -1,9 +1,10 @@
 use std::collections::VecDeque;
+use std::time::Instant;
 
 use ratatui::text::Line;
 
 use super::*;
-use crate::tui::tests::test_app;
+use crate::tui::{tests::test_app, Entry, StreamKind};
 
 fn prompt(text: &str) -> QueuedPrompt {
     QueuedPrompt {
@@ -112,11 +113,15 @@ fn applied_event_preserves_selection_of_a_later_pending_item() {
     app.pending.push_follow_up(prompt("future turn"));
     app.pending.input_panel_mut().selected = 2;
 
-    app.mark_steering_applied(&[applied]);
+    app.record_applied_steering(&[applied]);
 
     assert_eq!(app.pending.input_panel().selected, 1);
     let lines = app.pending_input_lines(80);
     assert!(line_text(&lines[2]).contains("▸ NEXT"));
+    assert!(matches!(
+        app.history.entries(),
+        [Entry::User(text)] if text == "first steer"
+    ));
 }
 
 #[test]
@@ -177,8 +182,66 @@ fn applied_event_removes_only_matching_steering() {
             prompt: prompt("pending"),
         });
 
-    app.mark_steering_applied(&[applied]);
+    app.record_applied_steering(&[applied]);
 
     assert_eq!(app.pending.accepted_steering().len(), 1);
     assert_eq!(app.pending.accepted_steering()[0].id, pending);
+    assert!(matches!(
+        app.history.entries(),
+        [Entry::User(text)] if text == "applied"
+    ));
+}
+
+// Covers: AlreadyApplied must still show the steer after flushing any held stream
+// Owner: interactive TUI pending-input
+#[test]
+fn already_applied_retraction_inserts_the_user_message() {
+    let mut app = test_app();
+    let id = rho_sdk::SteeringId::new();
+    app.pending
+        .accepted_steering_mut()
+        .push_back(AcceptedSteering {
+            id: id.clone(),
+            prompt: prompt("keep me"),
+        });
+    app.streams.current_stream_kind = Some(StreamKind::Assistant);
+    app.streams
+        .push_delta(StreamKind::Assistant, "held assistant tail", Instant::now());
+    let request = PendingInputRequest::Retract {
+        action: PendingInputAction::DiscardAccepted { id },
+        receipt: Box::pin(std::future::pending()),
+    };
+    let completion =
+        PendingInputCompletion::Retracted(Ok(rho_sdk::SteeringRetraction::AlreadyApplied));
+
+    let failure = app.finish_pending_input_request(request, completion);
+
+    assert_eq!(failure, None);
+    assert!(app.pending.accepted_steering().is_empty());
+    assert!(app.streams.assistant_stream.pending_text().is_empty());
+    assert!(matches!(
+        app.history.entries(),
+        [Entry::Assistant(assistant), Entry::User(text)]
+            if assistant == "held assistant tail" && text == "keep me"
+    ));
+    assert_eq!(
+        app.status(),
+        "steer was already applied and can no longer be changed"
+    );
+}
+
+// Covers: a late or empty SteeringApplied must not cut a live post-steer stream
+// Owner: interactive TUI pending-input
+#[test]
+fn late_applied_event_does_not_cut_a_live_stream() {
+    let mut app = test_app();
+    app.streams.current_stream_kind = Some(StreamKind::Assistant);
+    app.streams
+        .push_delta(StreamKind::Assistant, "post-steer reply", Instant::now());
+
+    app.record_applied_steering(&[rho_sdk::SteeringId::new()]);
+
+    assert!(app.history.entries().is_empty());
+    assert!(!app.streams.hold.is_empty());
+    assert_eq!(app.streams.current_stream_kind, Some(StreamKind::Assistant));
 }

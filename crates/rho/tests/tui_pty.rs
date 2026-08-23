@@ -99,6 +99,13 @@ fn smoke_type_during_stream() {
     assert_pass("type_during_stream");
 }
 
+// Covers: applied steering must appear as a transcript user message
+// Owner: interactive TUI
+#[test]
+fn applied_steering_appears_as_transcript_user_message() {
+    assert_pass("steer_appears_in_transcript");
+}
+
 // Covers: /compact must keep the composer usable so typed keys are not dropped.
 // Owner: interactive TUI
 #[test]
