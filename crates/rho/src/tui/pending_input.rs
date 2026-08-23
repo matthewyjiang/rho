@@ -265,7 +265,10 @@ impl App {
             else {
                 continue;
             };
-            prompts.push(self.pending.accepted_steering_mut().remove(index).prompt);
+            let Some(entry) = self.pending.accepted_steering_mut().remove(index) else {
+                continue;
+            };
+            prompts.push(entry.prompt);
         }
         self.restore_pending_selection(selection);
         self.pending_input_changed();
