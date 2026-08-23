@@ -6,7 +6,10 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 use super::mcp_adapter::expand_placeholders;
-use super::{discover, manifest, PluginStatus};
+use super::{
+    discover_with_trust, manifest, skills_by_precedence_with_trust, PluginStatus, ProjectTrust,
+    TRUST_PROJECT_PLUGINS_ENV,
+};
 use crate::tools::mcp::config::McpTransport;
 
 const SCHEMA: &str = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
@@ -33,7 +36,12 @@ fn project_plugins(env: &Env) -> PathBuf {
 }
 
 fn discover_env(env: &Env) -> super::PluginDiscovery {
-    discover(env.project.path(), Some(env.home.path()))
+    discover_with_trust(
+        env.project.path(),
+        Some(env.home.path()),
+        None,
+        ProjectTrust::Trusted,
+    )
 }
 
 fn manifest_json(name: &str, extra: &str) -> String {
@@ -285,6 +293,167 @@ fn project_plugin_shadows_user_plugin_with_same_name() {
         .find(|entry| entry.status == PluginStatus::Shadowed)
         .expect("shadowed entry reported");
     assert_eq!(shadowed.name, "dup");
+}
+
+// --- Project plugin trust ---
+
+// Covers: untrusted project plugins load inventory-only and activate no
+// components (skills or MCP servers, including stdio commands).
+// Owner: plugin trust policy.
+#[test]
+fn untrusted_project_plugin_activates_no_components() {
+    let env = env();
+    std::fs::create_dir_all(project_plugins(&env)).unwrap();
+    let dir = write_plugin(&project_plugins(&env), "risky", &manifest_json("risky", ""));
+    write_skill(&dir, "leaky", "must not reach the session");
+    write_mcp(&dir, &stdio_mcp("bash"));
+
+    let discovery = discover_with_trust(
+        env.project.path(),
+        Some(env.home.path()),
+        None,
+        ProjectTrust::Untrusted,
+    );
+
+    assert!(discovery.skills.is_empty());
+    assert!(!discovery.mcp.has_enabled_servers());
+    assert!(discovery.mcp.servers.is_empty());
+    let entry = report_entry(&discovery, "risky");
+    assert_eq!(entry.status, PluginStatus::Untrusted);
+    assert!(entry.enabled);
+    // Inventory stays available for list/inspect without activation.
+    assert_eq!(entry.skill_count, 1);
+    assert_eq!(entry.mcp_server_count, 1);
+    // The notice names the exact opt-in so the user can grant trust.
+    assert!(entry
+        .problems
+        .iter()
+        .any(|problem| problem.contains(TRUST_PROJECT_PLUGINS_ENV)));
+    assert_eq!(discovery.report.summary().untrusted, 1);
+}
+
+// Covers: user plugins are the user's own files and activate regardless of
+// workspace trust.
+// Owner: plugin trust policy.
+#[test]
+fn untrusted_workspace_still_activates_user_plugins() {
+    let env = env();
+    std::fs::create_dir_all(user_plugins(&env)).unwrap();
+    let dir = write_plugin(&user_plugins(&env), "mine", &manifest_json("mine", ""));
+    write_skill(&dir, "hello", "user version");
+    write_mcp(&dir, &stdio_mcp("my-server"));
+
+    let discovery = discover_with_trust(
+        env.project.path(),
+        Some(env.home.path()),
+        None,
+        ProjectTrust::Untrusted,
+    );
+
+    assert_eq!(
+        report_entry(&discovery, "mine").status,
+        PluginStatus::Loaded
+    );
+    let plugin = contributions(&discovery, "mine");
+    assert_eq!(plugin.skills.len(), 1);
+    assert_eq!(plugin.mcp_servers.len(), 1);
+}
+
+// Covers: an untrusted project plugin must not shadow a user plugin of the
+// same name; only active packages claim a name.
+// Owner: plugin trust policy.
+#[test]
+fn untrusted_project_plugin_does_not_shadow_user_plugin() {
+    let env = env();
+    std::fs::create_dir_all(user_plugins(&env)).unwrap();
+    std::fs::create_dir_all(project_plugins(&env)).unwrap();
+    let user_dir = write_plugin(&user_plugins(&env), "dup", &manifest_json("dup", ""));
+    write_skill(&user_dir, "user-flavor", "user version");
+    let project_dir = write_plugin(&project_plugins(&env), "dup", &manifest_json("dup", ""));
+    write_skill(&project_dir, "project-flavor", "project version");
+
+    let discovery = discover_with_trust(
+        env.project.path(),
+        Some(env.home.path()),
+        None,
+        ProjectTrust::Untrusted,
+    );
+
+    let loaded: Vec<_> = discovery
+        .report
+        .plugins
+        .iter()
+        .filter(|entry| entry.status == PluginStatus::Loaded)
+        .map(|entry| entry.scope)
+        .collect();
+    assert_eq!(loaded, [super::PluginScope::User]);
+    let untrusted = discovery
+        .report
+        .plugins
+        .iter()
+        .find(|entry| entry.status == PluginStatus::Untrusted)
+        .expect("untrusted entry reported");
+    assert_eq!(untrusted.name, "dup");
+    let plugin = contributions(&discovery, "dup");
+    assert_eq!(plugin.skills.len(), 1);
+    assert_eq!(plugin.skills[0].name, "user-flavor");
+}
+
+// Covers: ordinary skill discovery drops project plugin skills in untrusted
+// workspaces while user plugin skills still load.
+// Owner: plugin trust policy.
+#[test]
+fn skills_by_precedence_gates_project_plugins_on_trust() {
+    let env = env();
+    std::fs::create_dir_all(user_plugins(&env)).unwrap();
+    std::fs::create_dir_all(project_plugins(&env)).unwrap();
+    let user_dir = write_plugin(
+        &user_plugins(&env),
+        "user-pkg",
+        &manifest_json("user-pkg", ""),
+    );
+    write_skill(&user_dir, "user-skill", "user version");
+    let project_dir = write_plugin(
+        &project_plugins(&env),
+        "project-pkg",
+        &manifest_json("project-pkg", ""),
+    );
+    write_skill(&project_dir, "project-skill", "project version");
+
+    let untrusted = skills_by_precedence_with_trust(
+        env.project.path(),
+        Some(env.home.path()),
+        ProjectTrust::Untrusted,
+    );
+    let names: Vec<_> = untrusted.iter().map(|skill| skill.name.as_str()).collect();
+    assert_eq!(names, ["user-skill"]);
+
+    let trusted = skills_by_precedence_with_trust(
+        env.project.path(),
+        Some(env.home.path()),
+        ProjectTrust::Trusted,
+    );
+    let names: Vec<_> = trusted.iter().map(|skill| skill.name.as_str()).collect();
+    assert_eq!(names, ["project-skill", "user-skill"]);
+}
+
+// Covers: only the exact value `1` grants trust, matching the
+// RHO_TRUST_PROJECT_HOOKS / RHO_TRUST_PROJECT_AGENTS family contract.
+// Owner: plugin trust policy.
+#[test]
+fn project_trust_env_value_parsing() {
+    assert_eq!(
+        ProjectTrust::from_env_value(Some("1")),
+        ProjectTrust::Trusted
+    );
+    for value in ["0", "true", "yes", ""] {
+        assert_eq!(
+            ProjectTrust::from_env_value(Some(value)),
+            ProjectTrust::Untrusted,
+            "{value}"
+        );
+    }
+    assert_eq!(ProjectTrust::from_env_value(None), ProjectTrust::Untrusted);
 }
 
 // --- Skill discovery and failure isolation ---

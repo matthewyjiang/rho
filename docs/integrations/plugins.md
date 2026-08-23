@@ -59,6 +59,26 @@ Supported component types in the current build: skills, and MCP servers with
 the `stdio` and `streamable-http` transports. Legacy `sse` entries are
 skipped per server. Rho implements no client extension namespaces.
 
+## Project plugin trust
+
+Packages under `~/.agents/plugins` are your own files and always activate.
+Packages under a project's `.agents/plugins` activate only in trusted
+workspaces:
+
+```sh
+RHO_TRUST_PROJECT_PLUGINS=1 rho
+```
+
+This is the same family as `RHO_TRUST_PROJECT_HOOKS` and
+`RHO_TRUST_PROJECT_AGENTS`, so a cloned repository cannot silently run plugin
+commands. Until you grant trust, Rho inventories project plugins — names,
+manifests, skill names, and MCP server definitions stay visible in
+`rho plugins list` and `rho plugins inspect` — but no component activates:
+plugin skills do not join skill discovery and no MCP server, including stdio
+commands, starts. An untrusted project plugin does not shadow a user plugin
+with the same name; enabling or disabling it still records your policy, and
+`rho plugins enable` says when trust is the remaining gate.
+
 ## Skills
 
 Each immediate child directory of `skills/` with a regular `SKILL.md` is one

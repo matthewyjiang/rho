@@ -10,9 +10,10 @@ use serde::Serialize;
 use crate::{
     cli::{Cli, PluginsCommand, PluginsScope},
     plugins::{
-        discover_with_rho_home,
+        discover_with_trust,
         manage::{self, InstallMode},
-        PluginLoadReport, PluginScope, PluginStatus,
+        trust_from_env, PluginLoadReport, PluginScope, PluginStatus, ProjectTrust,
+        TRUST_PROJECT_PLUGINS_ENV,
     },
 };
 
@@ -20,15 +21,16 @@ pub(super) fn run(command: &PluginsCommand, _cli: &Cli) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
     let home = crate::paths::home_dir();
     let rho_home = crate::paths::rho_dir().ok();
+    let trust = trust_from_env();
 
     match command {
         PluginsCommand::List { json } => {
-            let discovery = discover_with_rho_home(&cwd, home.as_deref(), rho_home.as_deref());
+            let discovery = discover_with_trust(&cwd, home.as_deref(), rho_home.as_deref(), trust);
             crate::plugins::log(&discovery.report);
             print_list(&discovery.report, *json)
         }
         PluginsCommand::Inspect { name, json } => {
-            let discovery = discover_with_rho_home(&cwd, home.as_deref(), rho_home.as_deref());
+            let discovery = discover_with_trust(&cwd, home.as_deref(), rho_home.as_deref(), trust);
             crate::plugins::log(&discovery.report);
             print_inspect(&discovery.report, name, *json)
         }
@@ -88,6 +90,11 @@ pub(super) fn run(command: &PluginsCommand, _cli: &Cli) -> anyhow::Result<()> {
                 package.scope.as_str(),
                 crate::paths::display(&package.path)
             );
+            if package.scope == PluginScope::Project && trust == ProjectTrust::Untrusted {
+                println!(
+                    "project plugins stay inactive in untrusted workspaces; set {TRUST_PROJECT_PLUGINS_ENV}=1 to activate"
+                );
+            }
             Ok(())
         }
         PluginsCommand::Disable { name } => {
@@ -281,6 +288,7 @@ fn status_label(status: PluginStatus) -> &'static str {
     match status {
         PluginStatus::Loaded => "loaded",
         PluginStatus::Disabled => "disabled",
+        PluginStatus::Untrusted => "untrusted",
         PluginStatus::Rejected => "rejected",
         PluginStatus::Shadowed => "shadowed",
     }

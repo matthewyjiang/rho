@@ -17,6 +17,13 @@
 //! (`plugins.toml` under the Rho data root and the project `.rho` directory).
 //! Install and link place packages into the explicit roots above.
 //!
+//! Project-scope plugins activate only in trusted workspaces: without
+//! `RHO_TRUST_PROJECT_PLUGINS=1` they load inventory-only (manifest and
+//! component metadata, no skill or MCP activation), mirroring the
+//! `RHO_TRUST_PROJECT_HOOKS` / `RHO_TRUST_PROJECT_AGENTS` family so a cloned
+//! repository cannot silently execute plugin commands. User-scope plugins are
+//! the user's own files and are not gated.
+//!
 //! Version handling stays isolated behind `$schema` recognition because the
 //! 1.0.0 specification is a Working Draft.
 //!
@@ -51,11 +58,43 @@ pub(crate) use state::{PluginOrigin, PluginScope, PluginStateStore};
 pub(crate) const SUPPORTED_COMPONENTS: &str =
     "skills, mcp (stdio, streamable-http; sse unsupported)";
 
+/// Environment variable that grants a workspace's project Agent Plugins.
+///
+/// Same family as `RHO_TRUST_PROJECT_HOOKS` and `RHO_TRUST_PROJECT_AGENTS`:
+/// project-supplied components stay inactive until the user says the workspace
+/// is trusted, so a cloned repository cannot silently enable them.
+pub(crate) const TRUST_PROJECT_PLUGINS_ENV: &str = "RHO_TRUST_PROJECT_PLUGINS";
+
+/// Whether a workspace's project Agent Plugins may activate components.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProjectTrust {
+    Trusted,
+    Untrusted,
+}
+
+impl ProjectTrust {
+    pub(crate) fn from_env_value(value: Option<&str>) -> Self {
+        if value == Some("1") {
+            Self::Trusted
+        } else {
+            Self::Untrusted
+        }
+    }
+}
+
+/// Project plugin trust as configured by the environment.
+pub(crate) fn trust_from_env() -> ProjectTrust {
+    ProjectTrust::from_env_value(std::env::var(TRUST_PROJECT_PLUGINS_ENV).ok().as_deref())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PluginStatus {
     Loaded,
     Disabled,
+    /// Project package whose components stay inactive because the workspace
+    /// is not trusted; inventory (manifest and component metadata) only.
+    Untrusted,
     Rejected,
     Shadowed,
 }
@@ -90,6 +129,7 @@ pub(crate) struct PluginLoadSummary {
     pub(crate) discovered: bool,
     pub(crate) loaded: usize,
     pub(crate) disabled: usize,
+    pub(crate) untrusted: usize,
     pub(crate) rejected: usize,
     pub(crate) problems: usize,
     pub(crate) skills: usize,
@@ -121,28 +161,50 @@ impl ComponentSelection {
 
 /// Plugin-owned skills in precedence order for ordinary skill discovery.
 pub(crate) fn skills_by_precedence(cwd: &Path, home: Option<&Path>) -> Vec<Skill> {
-    discover_components(cwd, home, None, ComponentSelection::SkillsOnly).skills
+    skills_by_precedence_with_trust(cwd, home, trust_from_env())
+}
+
+/// Plugin-owned skills with explicit project trust (tests and internals).
+pub(crate) fn skills_by_precedence_with_trust(
+    cwd: &Path,
+    home: Option<&Path>,
+    trust: ProjectTrust,
+) -> Vec<Skill> {
+    discover_components(cwd, home, None, ComponentSelection::SkillsOnly, trust).skills
 }
 
 /// Discover and load plugin packages from the explicit roots.
 pub(crate) fn discover(cwd: &Path, home: Option<&Path>) -> PluginDiscovery {
     let rho_home = crate::paths::rho_dir().ok();
-    discover_components(cwd, home, rho_home.as_deref(), ComponentSelection::All)
+    discover_with_trust(cwd, home, rho_home.as_deref(), trust_from_env())
 }
 
 /// Discover only plugin MCP configuration for the `rho mcp` inventory path.
 pub(crate) fn discover_mcp(cwd: &Path, home: Option<&Path>) -> PluginDiscovery {
     let rho_home = crate::paths::rho_dir().ok();
-    discover_components(cwd, home, rho_home.as_deref(), ComponentSelection::McpOnly)
+    discover_mcp_with_trust(cwd, home, rho_home.as_deref(), trust_from_env())
 }
 
-/// Discover with an explicit Rho data root (tests and management commands).
-pub(crate) fn discover_with_rho_home(
+/// Discover with an explicit Rho data root and project trust (tests and
+/// management commands).
+pub(crate) fn discover_with_trust(
     cwd: &Path,
     home: Option<&Path>,
     rho_home: Option<&Path>,
+    trust: ProjectTrust,
 ) -> PluginDiscovery {
-    discover_components(cwd, home, rho_home, ComponentSelection::All)
+    discover_components(cwd, home, rho_home, ComponentSelection::All, trust)
+}
+
+/// Discover only plugin MCP configuration with explicit Rho data root and
+/// project trust.
+pub(crate) fn discover_mcp_with_trust(
+    cwd: &Path,
+    home: Option<&Path>,
+    rho_home: Option<&Path>,
+    trust: ProjectTrust,
+) -> PluginDiscovery {
+    discover_components(cwd, home, rho_home, ComponentSelection::McpOnly, trust)
 }
 
 fn discover_components(
@@ -150,6 +212,7 @@ fn discover_components(
     home: Option<&Path>,
     rho_home: Option<&Path>,
     components: ComponentSelection,
+    trust: ProjectTrust,
 ) -> PluginDiscovery {
     let mut discovery = PluginDiscovery {
         skills: Vec::new(),
@@ -171,6 +234,7 @@ fn discover_components(
                 root.scope,
                 components,
                 &state,
+                trust,
             );
         }
     }
@@ -238,6 +302,7 @@ fn load_candidate(
     scope: PluginScope,
     components: ComponentSelection,
     state: &PluginStateStore,
+    trust: ProjectTrust,
 ) {
     let directory_name = candidate
         .file_name()
@@ -312,9 +377,15 @@ fn load_candidate(
     let mut problems: Vec<String> = manifest.warnings.clone();
     let enabled = state.is_enabled(scope, &manifest.name);
     let origin = state.origin(scope, &manifest.name, candidate);
+    // Project packages activate only in trusted workspaces; untrusted ones
+    // load inventory-only so a cloned repository cannot execute plugin
+    // commands or inject skills into the session. User packages are the
+    // user's own files and are never gated by workspace trust.
+    let untrusted_project = scope == PluginScope::Project && trust == ProjectTrust::Untrusted;
 
-    // Always inventory components so list/inspect stay useful while disabled.
-    // Only enabled packages contribute skills and MCP servers to the session.
+    // Always inventory components so list/inspect stay useful while disabled
+    // or untrusted. Only enabled, eligible packages contribute skills and MCP
+    // servers to the session.
     let skills = if components.loads_skills() {
         discover_plugin_skills(&manifest.name, &root, &mut problems)
     } else {
@@ -344,13 +415,22 @@ fn load_candidate(
     let mcp_server_count = mcp_servers.len();
 
     if enabled {
-        discovery.skills.extend(skills);
-        discovery.mcp.servers.extend(
-            mcp_servers
-                .into_iter()
-                .map(|(name, server)| (format!("{}/{name}", manifest.name), server)),
-        );
-        discovery.mcp.invalid_servers.extend(invalid_mcp_servers);
+        if untrusted_project {
+            problems.insert(
+                0,
+                format!(
+                    "project plugin inactive: workspace is not trusted; set {TRUST_PROJECT_PLUGINS_ENV}=1 to activate"
+                ),
+            );
+        } else {
+            discovery.skills.extend(skills);
+            discovery.mcp.servers.extend(
+                mcp_servers
+                    .into_iter()
+                    .map(|(name, server)| (format!("{}/{name}", manifest.name), server)),
+            );
+            discovery.mcp.invalid_servers.extend(invalid_mcp_servers);
+        }
     } else {
         problems.insert(
             0,
@@ -366,10 +446,12 @@ fn load_candidate(
         scope,
         origin,
         enabled,
-        status: if enabled {
-            PluginStatus::Loaded
-        } else {
+        status: if !enabled {
             PluginStatus::Disabled
+        } else if untrusted_project {
+            PluginStatus::Untrusted
+        } else {
+            PluginStatus::Loaded
         },
         problems,
         skill_count,
@@ -544,6 +626,13 @@ pub(crate) fn log(report: &PluginLoadReport) {
                     "Agent Plugin disabled; components inactive for new sessions"
                 );
             }
+            PluginStatus::Untrusted => {
+                tracing::warn!(
+                    plugin = %entry.name,
+                    root = %entry.root,
+                    "project Agent Plugin inactive: workspace not trusted; set {TRUST_PROJECT_PLUGINS_ENV}=1 to activate its components"
+                );
+            }
             PluginStatus::Loaded => {
                 for problem in &entry.problems {
                     tracing::warn!(
@@ -582,6 +671,11 @@ impl PluginLoadReport {
                 PluginStatus::Disabled => {
                     summary.disabled += 1;
                     // The leading disable notice is policy, not a package problem.
+                    summary.problems += entry.problems.len().saturating_sub(1);
+                }
+                PluginStatus::Untrusted => {
+                    summary.untrusted += 1;
+                    // The leading trust notice is policy, not a package problem.
                     summary.problems += entry.problems.len().saturating_sub(1);
                 }
                 PluginStatus::Rejected => summary.rejected += 1,

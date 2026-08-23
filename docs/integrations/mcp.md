@@ -364,4 +364,4 @@ model above, so transports, startup budgets, tool namespacing, permissions,
 failure isolation, and shutdown behave identically. Plugin servers appear in
 inventories as `<plugin-name>/<server-name>` and expand the `${PLUGIN_ROOT}`
 and `${PLUGIN_DATA}` placeholders. Discovery does not create `${PLUGIN_DATA}`.
-Rho creates it immediately before it starts each enabled stdio server. If directory preparation fails, Rho disables only that server. A plugin with no valid MCP servers adds no MCP startup work, and the zero-server fast path above still applies.
+Rho creates it immediately before it starts each enabled stdio server. If directory preparation fails, Rho disables only that server. A plugin with no valid MCP servers adds no MCP startup work, and the zero-server fast path above still applies. Servers from a project's plugin packages start only in trusted workspaces (`RHO_TRUST_PROJECT_PLUGINS=1`).

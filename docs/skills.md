@@ -103,7 +103,9 @@ Read its instructions before you use it.
 Plugin-owned skills arrive through [Agent Plugin packages](/integrations/plugins)
 (`rho plugins install` / `link`). Those skills keep the package as their owner
 and sit below every loose skill location in precedence. Loose skills and
-plugin-owned skills stay distinct in inventory output.
+plugin-owned skills stay distinct in inventory output. Skills from a project's
+plugin packages activate only in trusted workspaces
+(`RHO_TRUST_PROJECT_PLUGINS=1`).
 
 ## Built-in skills
 

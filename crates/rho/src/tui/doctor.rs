@@ -462,10 +462,15 @@ fn plugins_check(report: &crate::plugins::PluginLoadReport) -> DoctorCheck {
     let healthy = summary.rejected == 0 && summary.problems == 0;
     let status = if !summary.discovered {
         "none discovered".into()
-    } else if healthy && summary.disabled == 0 {
-        format!("{} loaded", summary.loaded)
     } else if healthy {
-        format!("{} loaded, {} disabled", summary.loaded, summary.disabled)
+        let mut parts = vec![format!("{} loaded", summary.loaded)];
+        if summary.disabled > 0 {
+            parts.push(format!("{} disabled", summary.disabled));
+        }
+        if summary.untrusted > 0 {
+            parts.push(format!("{} untrusted", summary.untrusted));
+        }
+        parts.join(", ")
     } else {
         format!(
             "{} loaded, {} disabled, {} rejected, {} problem{}",
@@ -476,14 +481,23 @@ fn plugins_check(report: &crate::plugins::PluginLoadReport) -> DoctorCheck {
             super::plural_suffix(summary.problems)
         )
     };
+    let trust_hint = if summary.untrusted > 0 {
+        format!(
+            "; set {} to activate project plugins",
+            crate::plugins::TRUST_PROJECT_PLUGINS_ENV
+        )
+    } else {
+        String::new()
+    };
     let detail = if summary.discovered {
         format!(
-            "{} skill{}, {} MCP server{}; supported: {}",
+            "{} skill{}, {} MCP server{}; supported: {}{}",
             summary.skills,
             super::plural_suffix(summary.skills),
             summary.mcp_servers,
             super::plural_suffix(summary.mcp_servers),
-            crate::plugins::SUPPORTED_COMPONENTS
+            crate::plugins::SUPPORTED_COMPONENTS,
+            trust_hint
         )
     } else {
         format!(
