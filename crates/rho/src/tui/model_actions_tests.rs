@@ -461,6 +461,13 @@ fn with_empty_provider_models_cache<T>(f: impl FnOnce() -> T) -> T {
     with_provider_models_cache_dir_for_tests(cache.path().to_path_buf(), f)
 }
 
+fn last_notice(app: &crate::tui::App) -> &str {
+    match app.history.last() {
+        Some(Entry::Notice(text)) => text,
+        other => panic!("expected a transcript notice, got {other:?}"),
+    }
+}
+
 // Covers: empty /config model picker must persist a transcript notice, not toast-only
 // Owner: tui model picker
 #[test]
@@ -480,6 +487,60 @@ fn empty_model_picker_writes_a_transcript_notice() {
         assert!(!app.status().is_empty());
         assert!(app.status_overlay.is_some());
         assert!(matches!(app.input_ui.composer(), ComposerMode::Input));
+    });
+}
+
+// Covers: repeating an empty /config model row must not stack identical notices
+// Owner: tui model picker
+#[test]
+fn empty_model_picker_does_not_stack_duplicate_notices() {
+    with_empty_provider_models_cache(|| {
+        let mut app = test_app();
+        app.open_config_conversation_model_picker();
+        app.open_config_conversation_model_picker();
+
+        assert!(
+            matches!(app.history.entries(), [Entry::Notice(_)]),
+            "a second empty picker press must re-toast, not append: {:?}",
+            app.history.entries()
+        );
+        assert!(app.status_overlay.is_some());
+    });
+}
+
+// Covers: wait-until-refresh copy must follow session busy, not only ProviderTurn
+// Owner: tui model picker
+#[test]
+fn empty_model_picker_wait_clause_follows_busy_session() {
+    with_empty_provider_models_cache(|| {
+        let idle = {
+            let mut app = test_app();
+            app.open_config_conversation_model_picker();
+            last_notice(&app).to_string()
+        };
+        let notices = [
+            (
+                "provider turn",
+                (|app| app.begin_provider_turn_ui()) as fn(&mut crate::tui::App),
+            ),
+            ("compacting", |app| app.begin_compact_ui()),
+            ("cancellable wait", |app| app.begin_cancellable_wait_ui()),
+        ]
+        .map(|(name, setup)| {
+            let mut app = test_app();
+            setup(&mut app);
+            app.open_config_conversation_model_picker_during_turn();
+            (name, last_notice(&app).to_string())
+        });
+
+        for (name, notice) in &notices {
+            assert_ne!(
+                notice, &idle,
+                "{name} must keep the wait clause while refresh is blocked"
+            );
+        }
+        assert_eq!(notices[0].1, notices[1].1);
+        assert_eq!(notices[0].1, notices[2].1);
     });
 }
 

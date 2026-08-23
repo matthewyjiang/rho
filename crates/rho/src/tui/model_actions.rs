@@ -40,17 +40,20 @@ impl App {
     /// path in the transcript after the 2-second toast is gone.
     ///
     /// Flush any live stream first so the notice cannot split an in-flight
-    /// assistant row. Refresh is blocked until the current turn ends, so the
-    /// during-turn sentence is chosen from session state rather than the
-    /// caller.
+    /// assistant row. Refresh is blocked while the session is busy, so the
+    /// wait clause follows `self.turn.is_busy()` rather than the caller.
+    /// Repeating the same empty picker from an open `/config` menu re-toasts
+    /// without stacking identical transcript rows.
     pub(super) fn report_missing_cached_provider_models(&mut self) {
         self.finish_streams();
-        let notice = if self.is_provider_turn_ui() {
+        let notice = if self.turn.is_busy() {
             "no cached provider models. Open /config > Providers > Refresh model lists after the current turn ends."
         } else {
             "no cached provider models. Open /config > Providers > Refresh model lists."
         };
-        self.insert_entry(&Entry::Notice(notice.into()));
+        if !matches!(self.history.last(), Some(Entry::Notice(text)) if text == notice) {
+            self.insert_entry(&Entry::Notice(notice.into()));
+        }
         self.set_status(notice);
     }
 
