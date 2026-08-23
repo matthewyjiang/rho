@@ -1,13 +1,18 @@
 use std::collections::BTreeMap;
+use std::time::Instant;
 
 use pretty_assertions::assert_eq;
 use rho_providers::model::catalog::ModelSelection;
+use rho_providers::model::provider_models::with_provider_models_cache_dir_for_tests;
 use rho_providers::reasoning::ReasoningLevel;
 
 use super::super::InteractiveModelSelection;
 use crate::{
-    agent::ADVISOR_AGENT_ID, config::InternalAgentModelConfig, model_aliases::ModelAliases,
-    tui::tests::test_app,
+    agent::ADVISOR_AGENT_ID,
+    commands::parse_command,
+    config::InternalAgentModelConfig,
+    model_aliases::ModelAliases,
+    tui::{tests::test_app, ComposerMode, Entry, StreamKind},
 };
 
 #[test]
@@ -449,4 +454,122 @@ async fn select_model_report_tells_the_model_about_a_mid_session_switch() {
         !text.contains("conversation model switched"),
         "a first model choice is not a switch: {text}"
     );
+}
+
+fn with_empty_provider_models_cache<T>(f: impl FnOnce() -> T) -> T {
+    let cache = tempfile::tempdir().unwrap();
+    with_provider_models_cache_dir_for_tests(cache.path().to_path_buf(), f)
+}
+
+fn last_notice(app: &crate::tui::App) -> &str {
+    match app.history.last() {
+        Some(Entry::Notice(text)) => text,
+        other => panic!("expected a transcript notice, got {other:?}"),
+    }
+}
+
+// Covers: empty /config model picker must persist a transcript notice, not toast-only
+// Owner: tui model picker
+#[test]
+fn empty_model_picker_writes_a_transcript_notice() {
+    with_empty_provider_models_cache(|| {
+        let mut app = test_app();
+        app.open_config_conversation_model_picker();
+
+        assert!(
+            matches!(
+                app.history.entries(),
+                [Entry::Notice(text)] if !text.is_empty()
+            ),
+            "empty model cache must leave a transcript notice: {:?}",
+            app.history.entries()
+        );
+        assert!(!app.status().is_empty());
+        assert!(app.status_overlay.is_some());
+        assert!(matches!(app.input_ui.composer(), ComposerMode::Input));
+    });
+}
+
+// Covers: repeating an empty /config model row must not stack identical notices
+// Owner: tui model picker
+#[test]
+fn empty_model_picker_does_not_stack_duplicate_notices() {
+    with_empty_provider_models_cache(|| {
+        let mut app = test_app();
+        app.open_config_conversation_model_picker();
+        app.open_config_conversation_model_picker();
+
+        assert!(
+            matches!(app.history.entries(), [Entry::Notice(_)]),
+            "a second empty picker press must re-toast, not append: {:?}",
+            app.history.entries()
+        );
+        assert!(app.status_overlay.is_some());
+    });
+}
+
+// Covers: wait-until-refresh copy must follow session busy, not only ProviderTurn
+// Owner: tui model picker
+#[test]
+fn empty_model_picker_wait_clause_follows_busy_session() {
+    with_empty_provider_models_cache(|| {
+        let idle = {
+            let mut app = test_app();
+            app.open_config_conversation_model_picker();
+            last_notice(&app).to_string()
+        };
+        let notices = [
+            (
+                "provider turn",
+                (|app| app.begin_provider_turn_ui()) as fn(&mut crate::tui::App),
+            ),
+            ("compacting", |app| app.begin_compact_ui()),
+            ("cancellable wait", |app| app.begin_cancellable_wait_ui()),
+        ]
+        .map(|(name, setup)| {
+            let mut app = test_app();
+            setup(&mut app);
+            app.open_config_conversation_model_picker_during_turn();
+            (name, last_notice(&app).to_string())
+        });
+
+        for (name, notice) in &notices {
+            assert_ne!(
+                notice, &idle,
+                "{name} must keep the wait clause while refresh is blocked"
+            );
+        }
+        assert_eq!(notices[0].1, notices[1].1);
+        assert_eq!(notices[0].1, notices[2].1);
+    });
+}
+
+// Covers: empty /model during a turn must flush the live assistant stream before the notice
+// Owner: tui model picker
+#[test]
+fn empty_model_picker_during_turn_does_not_split_a_live_stream() {
+    with_empty_provider_models_cache(|| {
+        let mut app = test_app();
+        app.begin_provider_turn_ui();
+        app.streams.current_stream_kind = Some(StreamKind::Assistant);
+        app.streams
+            .push_delta(StreamKind::Assistant, "held assistant tail", Instant::now());
+
+        let invocation = parse_command("/model").unwrap().unwrap();
+        app.execute_model_command_during_turn(invocation).unwrap();
+
+        assert!(
+            matches!(
+                app.history.entries(),
+                [Entry::Assistant(assistant), Entry::Notice(notice)]
+                    if assistant == "held assistant tail" && !notice.is_empty()
+            ),
+            "notice must follow the flushed assistant row, not split it: {:?}",
+            app.history.entries()
+        );
+        assert!(app.streams.assistant_stream.pending_text().is_empty());
+        assert_eq!(app.streams.current_stream_kind, None);
+        assert!(matches!(app.input_ui.composer(), ComposerMode::Input));
+        assert!(app.status_overlay.is_some());
+    });
 }
