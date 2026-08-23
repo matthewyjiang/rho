@@ -15,7 +15,7 @@ impl AppWorkflowToolService {
         context: &ToolContext,
         path: &Path,
     ) -> anyhow::Result<crate::config::Config> {
-        self.authorize_read(context, path, PathScope::UnrestrictedFilesystem)
+        self.authorize_read(context, path, path_scope(&self.cwd, path))
             .await?;
         let opened =
             match crate::workflow::VerifiedPath::open(path, crate::workflow::ContentHash::Skip) {

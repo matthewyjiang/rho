@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use rho_sdk::{
     ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, CapabilityKind,
-    CapabilityOperation, CapabilityRequest, PathScope, PolicyDecision, WorkspacePolicy,
+    CapabilityOperation, CapabilityRequest, CapabilitySource, PathScope, PolicyDecision,
+    WorkspacePolicy,
 };
 
 /// Lightweight permission mode that gates the model's most sensitive actions.
@@ -23,28 +24,26 @@ pub(crate) enum PermissionMode {
     /// Same capability gate as [`Self::AllowEdits`]; remaining writes, process
     /// execution, reads outside configured workspace roots, and unrecognized
     /// capability classes require classifier approval. In-workspace writes to
-    /// git-tracked files, later writes to a path already allowed this session,
-    /// and edits to the user's global `AGENTS.md`, skill trees, and agent
-    /// definitions skip the classifier.
+    /// git-tracked files and later writes to a path already allowed this
+    /// session skip the classifier.
     Auto,
-    /// Known workspace-scoped reads, the user's global `AGENTS.md`, skill
-    /// trees, and agent definitions, network access, skills, instruction
-    /// discovery, and in-workspace writes to git-tracked files are free. Later
-    /// writes to a path already allowed this session are also free. Other
-    /// writes, process execution, reads outside configured workspace roots, and
-    /// unrecognized capability classes require interactive approval.
+    /// Known workspace-scoped reads, the user's global instruction surfaces,
+    /// network access, skills, instruction discovery, and in-workspace writes
+    /// to git-tracked files are free. Later writes to a path already allowed
+    /// this session are also free. Other writes, process execution, reads
+    /// outside configured workspace roots, and unrecognized capability classes
+    /// require interactive approval.
     AllowEdits,
-    /// Model may investigate the workspace, the user's global `AGENTS.md`,
-    /// skill trees, and agent definitions, but cannot change state. Those
-    /// reads, network, skill, and instruction-discovery capabilities are
-    /// allowed; writes, process execution, other reads outside configured
-    /// workspace roots, and unrecognized capability classes are denied.
+    /// Model may investigate the workspace and the user's global instruction
+    /// surfaces, but cannot change state. Those reads, network, skill, and
+    /// instruction-discovery capabilities are allowed; writes, process
+    /// execution, other reads outside configured workspace roots, and
+    /// unrecognized capability classes are denied.
     Plan,
-    /// Known workspace-scoped reads, the user's global `AGENTS.md`, skill
-    /// trees, and agent definitions, network access, skills, and instruction
-    /// discovery are free; writes, process execution, other reads outside
-    /// configured workspace roots, and unrecognized capability classes require
-    /// interactive approval.
+    /// Known workspace-scoped reads, the user's global instruction surfaces,
+    /// network access, skills, and instruction discovery are free; writes,
+    /// process execution, other reads outside configured workspace roots, and
+    /// unrecognized capability classes require interactive approval.
     Supervised,
 }
 
@@ -139,11 +138,15 @@ impl PermissionMode {
     }
 
     /// Pure kind mapping: the default decision when request details do not
-    /// refine it. [`ModePolicy::evaluate`] may allow in-workspace writes to
-    /// git-tracked files, and later writes to a path already allowed this
-    /// session, for [`Self::Auto`] and [`Self::AllowEdits`]. It also gates
-    /// [`CapabilityKind::Read`] requests whose path is not under a configured
-    /// workspace root.
+    /// refine it. This is **not** authorization for [`CapabilityKind::Read`].
+    /// Read and instruction-discovery requests are location-sensitive and must
+    /// go through [`ModePolicy::evaluate`]. Callers that treat
+    /// `decision_for(Read) == Allow` as "no remaining gate" will miss the
+    /// outside-workspace read check.
+    ///
+    /// [`ModePolicy::evaluate`] may allow in-workspace writes to git-tracked
+    /// files, and later writes to a path already allowed this session, for
+    /// [`Self::Auto`] and [`Self::AllowEdits`].
     ///
     /// The wildcard arms intentionally fail closed if the non-exhaustive SDK
     /// enum gains a capability this application has not classified yet.
@@ -185,27 +188,31 @@ impl PermissionMode {
     /// [`Self::Bypass`] so the caller can preserve its existing allow-everything
     /// path.
     ///
-    /// The returned policy starts from [`Self::decision_for`] and, for
-    /// [`Self::Auto`] and [`Self::AllowEdits`], allows primary-workspace writes
-    /// to git-tracked files and to paths already allowed this session. Reads
-    /// stay free for configured workspace roots and for the user's global
-    /// `AGENTS.md`, skill trees, and agent definitions; unrestricted filesystem
-    /// paths follow the mode's remaining gate. `ScopedWorkspacePolicy` is not
-    /// used here because
-    /// it deny-defaults network destinations behind a per-host allowlist, which
+    /// Snapshots [`crate::paths::UserInstructionSurfaces::from_process`] (HOME)
+    /// at construction. The returned policy starts from [`Self::decision_for`]
+    /// and, for [`Self::Auto`] and [`Self::AllowEdits`], allows
+    /// primary-workspace writes to git-tracked files and to paths already
+    /// allowed this session. Reads stay free for configured workspace roots and
+    /// for those user instruction surfaces; unrestricted filesystem paths
+    /// follow the mode's remaining gate unless the built-in `workflow` tool
+    /// requested them. `ScopedWorkspacePolicy` is not used here because it
+    /// deny-defaults network destinations behind a per-host allowlist, which
     /// would break the "workspace reads and network are free" contract of the
     /// checked modes.
     ///
     /// `session_writes` carries the paths whose first write already passed the
     /// gate this session.
     pub fn workspace_policy(self, session_writes: SessionWriteLog) -> Option<ModePolicy> {
-        self.workspace_policy_with(session_writes, UserInstructionPaths::from_process())
+        self.workspace_policy_with(
+            session_writes,
+            crate::paths::UserInstructionSurfaces::from_process(),
+        )
     }
 
     fn workspace_policy_with(
         self,
         session_writes: SessionWriteLog,
-        user_instructions: UserInstructionPaths,
+        user_instructions: crate::paths::UserInstructionSurfaces,
     ) -> Option<ModePolicy> {
         match self {
             Self::Bypass => None,
@@ -346,7 +353,15 @@ impl fmt::Debug for SessionWriteLog {
 pub(crate) struct ModePolicy {
     mode: PermissionMode,
     session_writes: SessionWriteLog,
-    user_instructions: UserInstructionPaths,
+    user_instructions: crate::paths::UserInstructionSurfaces,
+}
+
+/// Where a path-bearing request sits for this mode's remaining gate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PathLocation {
+    WorkspaceRooted,
+    UserInstruction,
+    Unrestricted,
 }
 
 impl ModePolicy {
@@ -354,7 +369,7 @@ impl ModePolicy {
     fn for_home(mode: PermissionMode, home: &Path) -> Self {
         mode.workspace_policy_with(
             SessionWriteLog::default(),
-            UserInstructionPaths::from_home(Some(home)),
+            crate::paths::UserInstructionSurfaces::from_home(Some(home)),
         )
         .expect("checked mode has a policy")
     }
@@ -367,24 +382,60 @@ impl ModePolicy {
         };
         self.session_writes.remember(request, authority);
     }
+
+    fn location(&self, request: &CapabilityRequest) -> Option<PathLocation> {
+        let (path, scope) = match request.operation() {
+            CapabilityOperation::ReadPath { path, scope }
+            | CapabilityOperation::WritePath { path, scope }
+            | CapabilityOperation::DiscoverInstructions { path, scope } => (path.as_path(), scope),
+            _ => return None,
+        };
+        Some(if path_scope_is_workspace_rooted(scope) {
+            PathLocation::WorkspaceRooted
+        } else if self.user_instructions.contains(path) {
+            PathLocation::UserInstruction
+        } else {
+            PathLocation::Unrestricted
+        })
+    }
+
+    fn evaluate_located(
+        &self,
+        request: &CapabilityRequest,
+        location: PathLocation,
+    ) -> PolicyDecision {
+        match (request.kind(), location) {
+            (
+                CapabilityKind::Read | CapabilityKind::InstructionDiscovery,
+                PathLocation::WorkspaceRooted | PathLocation::UserInstruction,
+            ) => PolicyDecision::Allow,
+            (
+                CapabilityKind::Read | CapabilityKind::InstructionDiscovery,
+                PathLocation::Unrestricted,
+            ) => {
+                if is_workflow_tool_read(request) {
+                    PolicyDecision::Allow
+                } else {
+                    self.mode.outside_workspace_read_decision()
+                }
+            }
+            (CapabilityKind::Write, PathLocation::WorkspaceRooted)
+                if self.mode.allows_tracked_workspace_edits()
+                    && is_free_workspace_write(request, &self.session_writes, self.mode) =>
+            {
+                PolicyDecision::Allow
+            }
+            _ => self.mode.decision_for(request.kind()),
+        }
+    }
 }
 
 impl WorkspacePolicy for ModePolicy {
     fn evaluate(&self, request: &CapabilityRequest) -> PolicyDecision {
-        if self.mode.allows_tracked_workspace_edits()
-            && is_free_workspace_write(
-                request,
-                &self.session_writes,
-                self.mode,
-                &self.user_instructions,
-            )
-        {
-            return PolicyDecision::Allow;
+        match self.location(request) {
+            Some(location) => self.evaluate_located(request, location),
+            None => self.mode.decision_for(request.kind()),
         }
-        if is_outside_workspace_read(request, &self.user_instructions) {
-            return self.mode.outside_workspace_read_decision();
-        }
-        self.mode.decision_for(request.kind())
     }
 }
 
@@ -427,24 +478,6 @@ impl ApprovalHandler for RememberingApprovals {
     }
 }
 
-/// Workspace-scoped reads stay free, as do the user's global `AGENTS.md`,
-/// skill trees, and agent definitions. Paths accepted only because unrestricted
-/// resolution is on
-/// (`UnrestrictedFilesystem`) follow the mode's remaining gate. There is no
-/// secret-path denylist: any such list is incomplete, and [`PathScope`] already
-/// distinguishes configured roots from the rest of the machine.
-fn is_outside_workspace_read(
-    request: &CapabilityRequest,
-    user_instructions: &UserInstructionPaths,
-) -> bool {
-    match request.operation() {
-        CapabilityOperation::ReadPath { path, scope } => {
-            !path_scope_is_workspace_rooted(scope) && !user_instructions.contains(path)
-        }
-        _ => false,
-    }
-}
-
 fn path_scope_is_workspace_rooted(scope: &PathScope) -> bool {
     match scope {
         PathScope::PrimaryWorkspace | PathScope::GrantedRoot { .. } => true,
@@ -453,79 +486,26 @@ fn path_scope_is_workspace_rooted(scope: &PathScope) -> bool {
     }
 }
 
-/// User-owned instruction surfaces Rho already loads: global `AGENTS.md`,
-/// loose user skill trees, and user agent definitions. The rest of `~/.rho`
-/// (credentials, config, sessions) stays outside this set.
-#[derive(Clone, Debug, Default)]
-struct UserInstructionPaths {
-    files: Vec<PathBuf>,
-    directories: Vec<PathBuf>,
-}
-
-impl UserInstructionPaths {
-    fn from_process() -> Self {
-        Self::from_home(crate::paths::home_dir().as_deref())
-    }
-
-    fn from_home(home: Option<&Path>) -> Self {
-        let Some(home) = home else {
-            return Self::default();
-        };
-        let mut directories = Vec::from(crate::paths::user_skill_dirs(home));
-        directories.extend(crate::paths::user_agent_dirs(home));
-        Self {
-            files: vec![crate::paths::user_agents_md(home)],
-            directories,
-        }
-    }
-
-    fn contains(&self, path: &Path) -> bool {
-        self.files.iter().any(|allowed| paths_match(path, allowed))
-            || self
-                .directories
-                .iter()
-                .any(|root| path_is_under(path, root))
-    }
-}
-
-fn paths_match(path: &Path, allowed: &Path) -> bool {
-    path == allowed || canonical_paths_match(path, allowed)
-}
-
-fn path_is_under(path: &Path, root: &Path) -> bool {
-    path.starts_with(root) || canonical_path_is_under(path, root)
-}
-
-fn canonical_paths_match(left: &Path, right: &Path) -> bool {
-    match (left.canonicalize(), right.canonicalize()) {
-        (Ok(left), Ok(right)) => left == right,
-        _ => false,
-    }
-}
-
-fn canonical_path_is_under(path: &Path, root: &Path) -> bool {
-    let Ok(root) = root.canonicalize() else {
-        return false;
-    };
-    path.starts_with(&root)
-        || path
-            .canonicalize()
-            .is_ok_and(|canonical| canonical.starts_with(&root))
+/// Host-owned reads declared by the built-in `workflow` tool (plans, runs,
+/// config, PATH resolution). The model's `read_file` of the same paths still
+/// follows the unrestricted-filesystem gate.
+fn is_workflow_tool_read(request: &CapabilityRequest) -> bool {
+    matches!(request.operation(), CapabilityOperation::ReadPath { .. })
+        && matches!(
+            request.source(),
+            CapabilitySource::BuiltInTool { name } if name == "workflow"
+        )
 }
 
 fn is_free_workspace_write(
     request: &CapabilityRequest,
     session_writes: &SessionWriteLog,
     mode: PermissionMode,
-    user_instructions: &UserInstructionPaths,
 ) -> bool {
     match request.operation() {
         CapabilityOperation::WritePath { path, scope } => {
             if path_is_symlink(path) {
                 return false;
-            }
-            if user_instructions.contains(path) {
-                return true;
             }
             matches!(scope, PathScope::PrimaryWorkspace)
                 && (session_writes.git_verdict(path, GitVerdict::Tracked)

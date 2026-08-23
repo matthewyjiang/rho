@@ -160,24 +160,17 @@ impl AppWorkflowToolService {
         project_agents_trusted: bool,
     ) -> anyhow::Result<Vec<CapabilityRequest>> {
         let source = || CapabilitySource::built_in_tool("workflow");
+        let config = self.config_request_path(rho_home);
         let mut requests = vec![
             CapabilityRequest::read_path(
                 self.source_request_path(file)?,
                 PathScope::PrimaryWorkspace,
                 source(),
             ),
-            CapabilityRequest::read_path(
-                self.config_request_path(rho_home),
-                PathScope::UnrestrictedFilesystem,
-                source(),
-            ),
+            CapabilityRequest::read_path(config.clone(), path_scope(&self.cwd, &config), source()),
         ];
         for path in agent_catalog_roots_for(&self.cwd, home, project_agents_trusted) {
-            let scope = if path.starts_with(&self.cwd) {
-                PathScope::PrimaryWorkspace
-            } else {
-                PathScope::UnrestrictedFilesystem
-            };
+            let scope = path_scope(&self.cwd, &path);
             requests.push(CapabilityRequest::read_path(path, scope, source()));
         }
         let workflow_agents = crate::agent::workflow_local_agents_root(Path::new(file));
