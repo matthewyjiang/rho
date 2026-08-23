@@ -57,7 +57,7 @@ pub(super) const AUTO_PERMISSION_MODE_CONFIG_STEPS: &[Step] = &[
     // Auto stays highlighted after cancel, so the detail line describes Auto
     // while Bypass remains the selected/runtime mode.
     Step::AssertText("selected"),
-    Step::AssertText("Classifier reviews new files and processes"),
+    Step::AssertText("Classifier reviews new files, processes, and outside-workspace reads"),
     Step::AssertText("Bypass ·"),
     Step::Phase("select_classifier_applies_auto"),
     // Cancel returns to the permission-mode list with Auto still highlighted.

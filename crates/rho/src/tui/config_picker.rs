@@ -338,7 +338,7 @@ pub(super) fn category_picker(
                 sectioned_item(
                     Some("Permissions"),
                     "Permission classifier model",
-                    "Model used by Auto permission mode to review writes and processes. Enter opens a picker.",
+                    "Model used by Auto permission mode to review writes, processes, and outside-workspace reads. Enter opens a picker.",
                     Some(permission_classifier_model_badge(info)),
                     PERMISSION_CLASSIFIER_MODEL_VALUE,
                 ),
@@ -578,13 +578,17 @@ fn permission_mode_description(mode: PermissionMode) -> &'static str {
     match mode {
         PermissionMode::Bypass => "No permission checks.",
         PermissionMode::Auto => {
-            "Classifier reviews new files and processes; tracked and already-approved workspace edits are free."
+            "Classifier reviews new files, processes, and outside-workspace reads; tracked and already-approved workspace edits are free."
         }
         PermissionMode::AllowEdits => {
-            "Tracked and already-approved workspace edits are free; ask before new files and processes."
+            "Tracked and already-approved workspace edits are free; ask before new files, processes, and outside-workspace reads."
         }
-        PermissionMode::Plan => "Investigate only; writes and processes are denied.",
-        PermissionMode::Supervised => "Ask before writes and processes.",
+        PermissionMode::Plan => {
+            "Investigate the workspace; writes, processes, and outside-workspace reads are denied."
+        }
+        PermissionMode::Supervised => {
+            "Ask before writes, processes, and outside-workspace reads."
+        }
     }
 }
 

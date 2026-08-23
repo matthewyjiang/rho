@@ -21,23 +21,27 @@ pub(crate) enum PermissionMode {
     #[default]
     Bypass,
     /// Same capability gate as [`Self::AllowEdits`]; remaining writes, process
-    /// execution, and unrecognized capability classes require classifier
-    /// approval. In-workspace writes to git-tracked files, and later writes to
-    /// a path already allowed this session, skip the classifier.
+    /// execution, reads outside configured workspace roots, and unrecognized
+    /// capability classes require classifier approval. In-workspace writes to
+    /// git-tracked files, and later writes to a path already allowed this
+    /// session, skip the classifier.
     Auto,
-    /// Known reads, network access, skills, instruction discovery, and
-    /// in-workspace writes to git-tracked files are free. Later writes to a
-    /// path already allowed this session are also free. Other writes, process
-    /// execution, and unrecognized capability classes require interactive
-    /// approval.
+    /// Known workspace-scoped reads, network access, skills, instruction
+    /// discovery, and in-workspace writes to git-tracked files are free. Later
+    /// writes to a path already allowed this session are also free. Other
+    /// writes, process execution, reads outside configured workspace roots, and
+    /// unrecognized capability classes require interactive approval.
     AllowEdits,
-    /// Model may investigate but cannot change state. Known read, network,
-    /// skill, and instruction-discovery capabilities are allowed; writes,
-    /// process execution, and unrecognized capability classes are denied.
+    /// Model may investigate the workspace but cannot change state.
+    /// Workspace-scoped reads, network, skill, and instruction-discovery
+    /// capabilities are allowed; writes, process execution, reads outside
+    /// configured workspace roots, and unrecognized capability classes are
+    /// denied.
     Plan,
-    /// Known reads, network access, skills, and instruction discovery are free;
-    /// writes, process execution, and unrecognized capability classes require
-    /// interactive approval.
+    /// Known workspace-scoped reads, network access, skills, and instruction
+    /// discovery are free; writes, process execution, reads outside configured
+    /// workspace roots, and unrecognized capability classes require interactive
+    /// approval.
     Supervised,
 }
 
@@ -117,10 +121,26 @@ impl PermissionMode {
         }
     }
 
+    /// Remaining gate for a read that resolved outside configured workspace
+    /// roots. Bypass is unused here because it never installs a [`ModePolicy`].
+    fn outside_workspace_read_decision(self) -> PolicyDecision {
+        match self {
+            Self::Bypass => PolicyDecision::Allow,
+            Self::Plan => PolicyDecision::Deny {
+                reason: "read outside the workspace is not allowed in plan mode".into(),
+            },
+            Self::Auto | Self::AllowEdits | Self::Supervised => PolicyDecision::RequireApproval {
+                reason: String::new(),
+            },
+        }
+    }
+
     /// Pure kind mapping: the default decision when request details do not
     /// refine it. [`ModePolicy::evaluate`] may allow in-workspace writes to
     /// git-tracked files, and later writes to a path already allowed this
-    /// session, for [`Self::Auto`] and [`Self::AllowEdits`].
+    /// session, for [`Self::Auto`] and [`Self::AllowEdits`]. It also gates
+    /// [`CapabilityKind::Read`] requests whose path is not under a configured
+    /// workspace root.
     ///
     /// The wildcard arms intentionally fail closed if the non-exhaustive SDK
     /// enum gains a capability this application has not classified yet.
@@ -164,10 +184,12 @@ impl PermissionMode {
     ///
     /// The returned policy starts from [`Self::decision_for`] and, for
     /// [`Self::Auto`] and [`Self::AllowEdits`], allows primary-workspace writes
-    /// to git-tracked files and to paths already allowed this session.
-    /// `ScopedWorkspacePolicy` is not used here because it deny-defaults
-    /// network destinations behind a per-host allowlist, which would break the
-    /// "reads and network are free" contract of the checked modes.
+    /// to git-tracked files and to paths already allowed this session. Reads
+    /// stay free only for configured workspace roots; unrestricted filesystem
+    /// paths follow the mode's remaining gate. `ScopedWorkspacePolicy` is not
+    /// used here because it deny-defaults network destinations behind a
+    /// per-host allowlist, which would break the "workspace reads and network
+    /// are free" contract of the checked modes.
     ///
     /// `session_writes` carries the paths whose first write already passed the
     /// gate this session.
@@ -330,6 +352,9 @@ impl WorkspacePolicy for ModePolicy {
         {
             return PolicyDecision::Allow;
         }
+        if is_outside_workspace_read(request) {
+            return self.mode.outside_workspace_read_decision();
+        }
         self.mode.decision_for(request.kind())
     }
 }
@@ -370,6 +395,26 @@ impl ApprovalHandler for RememberingApprovals {
 
     fn reads_live_history(&self) -> bool {
         self.inner.reads_live_history()
+    }
+}
+
+/// Workspace-scoped reads stay free. Paths accepted only because unrestricted
+/// resolution is on (`UnrestrictedFilesystem`) follow the mode's remaining
+/// gate. There is no secret-path denylist: any such list is incomplete, and
+/// [`PathScope`] already distinguishes configured roots from the rest of the
+/// machine.
+fn is_outside_workspace_read(request: &CapabilityRequest) -> bool {
+    match request.operation() {
+        CapabilityOperation::ReadPath { scope, .. } => !path_scope_is_workspace_rooted(scope),
+        _ => false,
+    }
+}
+
+fn path_scope_is_workspace_rooted(scope: &PathScope) -> bool {
+    match scope {
+        PathScope::PrimaryWorkspace | PathScope::GrantedRoot { .. } => true,
+        PathScope::UnrestrictedFilesystem => false,
+        _ => false,
     }
 }
 

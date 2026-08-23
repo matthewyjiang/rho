@@ -27,6 +27,10 @@ fn process_request(command: &str) -> CapabilityRequest {
     )
 }
 
+fn read_request(path: impl Into<std::path::PathBuf>, scope: PathScope) -> CapabilityRequest {
+    CapabilityRequest::read_path(path, scope, source("read_file"))
+}
+
 fn write_request(path: impl Into<std::path::PathBuf>, scope: PathScope) -> CapabilityRequest {
     CapabilityRequest::write_path(path, scope, source("write"))
 }
@@ -145,11 +149,7 @@ fn decision_for_supervised_requires_approval_only_for_write_and_process() {
 
 #[test]
 fn workspace_policy_agrees_with_decision_for_when_writes_are_not_tracked() {
-    let read_request = CapabilityRequest::read_path(
-        "/workspace/file",
-        PathScope::PrimaryWorkspace,
-        source("read_file"),
-    );
+    let read_request = read_request("/workspace/file", PathScope::PrimaryWorkspace);
     let write_request = write_request("/workspace/file", PathScope::PrimaryWorkspace);
     let network_request = CapabilityRequest::network(
         NetworkTarget::Url("https://example.com/path".into()),
@@ -193,6 +193,65 @@ fn workspace_policy_agrees_with_decision_for_when_writes_are_not_tracked() {
     assert!(PermissionMode::Bypass
         .workspace_policy(SessionWriteLog::default())
         .is_none());
+}
+
+// Covers: checked modes no longer silently allow reads of arbitrary filesystem
+// paths; primary-workspace and host-attached roots stay free. There is no
+// secret-path denylist — PathScope is the policy input.
+// Owner: application permission policy
+#[test]
+fn checked_modes_gate_unrestricted_filesystem_reads() {
+    let require_approval = PolicyDecision::RequireApproval {
+        reason: String::new(),
+    };
+    let plan_deny = PolicyDecision::Deny {
+        reason: "read outside the workspace is not allowed in plan mode".into(),
+    };
+    let cases = [
+        (
+            PathScope::PrimaryWorkspace,
+            PolicyDecision::Allow,
+            PolicyDecision::Allow,
+        ),
+        (
+            PathScope::GrantedRoot {
+                root: "/extra".into(),
+            },
+            PolicyDecision::Allow,
+            PolicyDecision::Allow,
+        ),
+        (
+            PathScope::UnrestrictedFilesystem,
+            require_approval,
+            plan_deny,
+        ),
+    ];
+
+    for (scope, gated, plan) in cases {
+        let request = read_request("/tmp/file", scope.clone());
+        for mode in [
+            PermissionMode::Auto,
+            PermissionMode::AllowEdits,
+            PermissionMode::Supervised,
+        ] {
+            let policy = mode
+                .workspace_policy(SessionWriteLog::default())
+                .expect("checked mode has a policy");
+            assert_eq!(
+                policy.evaluate(&request),
+                gated.clone(),
+                "{mode:?} disagreed for {scope:?}"
+            );
+        }
+        let plan_policy = PermissionMode::Plan
+            .workspace_policy(SessionWriteLog::default())
+            .expect("plan has a policy");
+        assert_eq!(
+            plan_policy.evaluate(&request),
+            plan,
+            "plan disagreed for {scope:?}"
+        );
+    }
 }
 
 // Covers: Allow edits and Auto skip the classifier/prompt for in-workspace

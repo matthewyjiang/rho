@@ -135,7 +135,7 @@ pub(super) const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
 /// the only mode whose detail contains the marker, so overshoot cannot
 /// false-positive.
 fn move_down_to_supervised_mode(harness: &mut PtyHarness) -> Result<()> {
-    const MARKER: &str = "Ask before writes and processes";
+    const MARKER: &str = "Ask before writes, processes, and outside-workspace reads";
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         harness.poll(Duration::from_millis(30));

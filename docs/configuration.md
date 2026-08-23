@@ -73,7 +73,7 @@ flowchart LR
     bypass[bypass: allow all] --> tools[Sensitive tools]
     auto[auto: classifier] --> tools
     allowEdits[allow_edits: tracked edits] --> tools
-    plan[plan: deny writes and process] --> tools
+    plan[plan: deny writes, process, outside reads] --> tools
     supervised[supervised: ask first] --> tools
 ```
 
@@ -81,15 +81,15 @@ flowchart LR
 | --- | --- | --- | --- |
 | Bypass | `bypass` | yes (new installs / unset) | No policy checks. Every capability allowed. |
 | Auto | `auto` | no | Same gate as Allow edits. A configured classifier model decides allow or deny for the rest. |
-| Allow edits | `allow_edits` | no | In-workspace writes to git-tracked files are allowed. Later writes to a path already allowed this session are also allowed. Human approval for other new files, processes, and unknown capabilities. |
-| Plan | `plan` | no | Investigation only. File writes and process execution are denied. |
-| Supervised | `supervised` | no | Human approval for writes, processes, and unknown capabilities. |
+| Allow edits | `allow_edits` | no | In-workspace writes to git-tracked files are allowed. Later writes to a path already allowed this session are also allowed. Human approval for other new files, processes, reads outside the workspace, and unknown capabilities. |
+| Plan | `plan` | no | Investigate the workspace. File writes, process execution, and reads outside the workspace are denied. |
+| Supervised | `supervised` | no | Human approval for writes, processes, reads outside the workspace, and unknown capabilities. |
 
 - `bypass` is the default and preserves unrestricted tool behavior. The status line shows **Bypass** in warning style so the open posture stays visible.
 - `auto` uses the same capability gate as `allow_edits`. A permission-classifier model reviews gated requests instead of opening the approval UI. It runs in two stages: a fast low-reasoning screen answers `allow` or `escalate` in one token, and only an escalation pays for a second review at the configured classifier reasoning level. The stages share a transcript cache breakpoint; raising that reasoning keeps the screen cheap and forgoes a message-cache hit on the review. Denied calls return a tool error and the run continues. After three consecutive or twenty total classifier denials, Rho escalates to the human approval prompt in the TUI or fails closed in headless runs; a human decision clears both counts. Auto requires a configured classifier model; choosing it from `/config` opens the model picker when none is set, starting interactive Auto without one opens the same picker, and headless `rho run` fails at startup without one. Escaping the startup picker falls back to Supervised so gated tools still ask a human.
-- `allow_edits` lets the agent edit git-tracked files in the workspace without a prompt. After a new in-workspace file is allowed once this session, later edits to that path also skip the prompt. Gitignored paths, writes outside the workspace, and process execution still ask first. Reads, network access, skills, and instruction discovery do not prompt. `allow-edits` is accepted as an alias.
-- `plan` allows investigation but denies file writes and process execution.
-- `supervised` asks for confirmation before file writes and process execution. Reads, network access, skills, and instruction discovery do not prompt.
+- `allow_edits` lets the agent edit git-tracked files in the workspace without a prompt. After a new in-workspace file is allowed once this session, later edits to that path also skip the prompt. Gitignored paths, writes outside the workspace, process execution, and reads outside the workspace still ask first. Workspace-scoped reads, network access, skills, and instruction discovery do not prompt. `allow-edits` is accepted as an alias.
+- `plan` allows investigation of the workspace but denies file writes, process execution, and reads outside the workspace.
+- `supervised` asks for confirmation before file writes, process execution, and reads outside the workspace. Workspace-scoped reads, network access, skills, and instruction discovery do not prompt.
 
 Configure the classifier under **Agent behavior** in `/config`, or in config as `[internal_agents.permission-classifier]`. Rho does not pick a default classifier model. Override the mode for one invocation with `--permission-mode bypass|auto|allow_edits|plan|supervised` (not persisted).
 
