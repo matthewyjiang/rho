@@ -462,42 +462,17 @@ fn plugins_check(report: &crate::plugins::PluginLoadReport) -> DoctorCheck {
     let healthy = summary.rejected == 0 && summary.problems == 0;
     let status = if !summary.discovered {
         "none discovered".into()
-    } else if healthy {
-        let mut parts = vec![format!("{} loaded", summary.loaded)];
-        if summary.disabled > 0 {
-            parts.push(format!("{} disabled", summary.disabled));
-        }
-        if summary.untrusted > 0 {
-            parts.push(format!("{} untrusted", summary.untrusted));
-        }
-        parts.join(", ")
     } else {
-        format!(
-            "{} loaded, {} disabled, {} rejected, {} problem{}",
-            summary.loaded,
-            summary.disabled,
-            summary.rejected,
-            summary.problems,
-            super::plural_suffix(summary.problems)
-        )
+        plugins_status_line(&summary)
     };
-    let trust_hint = if summary.untrusted > 0 {
+    let mut detail = if summary.discovered {
         format!(
-            "; set {} to activate project plugins",
-            crate::plugins::TRUST_PROJECT_PLUGINS_ENV
-        )
-    } else {
-        String::new()
-    };
-    let detail = if summary.discovered {
-        format!(
-            "{} skill{}, {} MCP server{}; supported: {}{}",
+            "{} skill{}, {} MCP server{}; supported: {}",
             summary.skills,
             super::plural_suffix(summary.skills),
             summary.mcp_servers,
             super::plural_suffix(summary.mcp_servers),
-            crate::plugins::SUPPORTED_COMPONENTS,
-            trust_hint
+            crate::plugins::SUPPORTED_COMPONENTS
         )
     } else {
         format!(
@@ -505,6 +480,12 @@ fn plugins_check(report: &crate::plugins::PluginLoadReport) -> DoctorCheck {
             crate::plugins::SUPPORTED_COMPONENTS
         )
     };
+    if summary.untrusted > 0 {
+        detail.push_str(&format!(
+            "; set {} to activate project plugins",
+            crate::plugins::TRUST_PROJECT_PLUGINS_ENV
+        ));
+    }
     DoctorCheck {
         section: DoctorSection::Misc,
         label: "Agent Plugins".into(),
@@ -512,6 +493,27 @@ fn plugins_check(report: &crate::plugins::PluginLoadReport) -> DoctorCheck {
         healthy,
         detail,
     }
+}
+
+fn plugins_status_line(summary: &crate::plugins::PluginLoadSummary) -> String {
+    let mut parts = vec![format!("{} loaded", summary.loaded)];
+    if summary.disabled > 0 {
+        parts.push(format!("{} disabled", summary.disabled));
+    }
+    if summary.untrusted > 0 {
+        parts.push(format!("{} untrusted", summary.untrusted));
+    }
+    if summary.rejected > 0 {
+        parts.push(format!("{} rejected", summary.rejected));
+    }
+    if summary.problems > 0 {
+        parts.push(format!(
+            "{} problem{}",
+            summary.problems,
+            super::plural_suffix(summary.problems)
+        ));
+    }
+    parts.join(", ")
 }
 
 impl From<DoctorCheck> for PickerItem {

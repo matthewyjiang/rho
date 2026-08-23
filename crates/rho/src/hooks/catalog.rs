@@ -20,22 +20,7 @@ use super::{
 /// stays inert until the user says the workspace is trusted.
 pub const TRUST_PROJECT_HOOKS_ENV: &str = "RHO_TRUST_PROJECT_HOOKS";
 
-/// Whether a workspace's project hooks may load.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ProjectTrust {
-    Trusted,
-    Untrusted,
-}
-
-impl ProjectTrust {
-    pub fn from_env(value: Option<&str>) -> Self {
-        if value == Some("1") {
-            Self::Trusted
-        } else {
-            Self::Untrusted
-        }
-    }
-}
+pub use crate::workspace::ProjectTrust;
 
 /// Why a project hooks file was skipped.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -78,7 +63,7 @@ impl HookCatalog {
             return Ok(catalog);
         };
         let project_file = root.join(".rho/hooks.toml");
-        if trust == ProjectTrust::Untrusted {
+        if !trust.is_trusted() {
             match read_definitions(&project_file, HookSource::Project, Some(root)) {
                 Ok(Some(definitions)) => {
                     catalog.skipped_untrusted = Some(SkippedProjectHooks {

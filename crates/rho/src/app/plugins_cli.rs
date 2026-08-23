@@ -12,8 +12,7 @@ use crate::{
     plugins::{
         discover_with_trust,
         manage::{self, InstallMode},
-        trust_from_env, PluginLoadReport, PluginScope, PluginStatus, ProjectTrust,
-        TRUST_PROJECT_PLUGINS_ENV,
+        trust_from_env, PluginLoadReport, PluginScope, PluginStatus, TRUST_PROJECT_PLUGINS_ENV,
     },
 };
 
@@ -90,7 +89,7 @@ pub(super) fn run(command: &PluginsCommand, _cli: &Cli) -> anyhow::Result<()> {
                 package.scope.as_str(),
                 crate::paths::display(&package.path)
             );
-            if package.scope == PluginScope::Project && trust == ProjectTrust::Untrusted {
+            if package.scope == PluginScope::Project && !trust.is_trusted() {
                 println!(
                     "project plugins stay inactive in untrusted workspaces; set {TRUST_PROJECT_PLUGINS_ENV}=1 to activate"
                 );

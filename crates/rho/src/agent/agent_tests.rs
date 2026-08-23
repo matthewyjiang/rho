@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use super::*;
+use crate::workspace::ProjectTrust;
 
 #[test]
 fn rejects_unknown_tools_with_context() {

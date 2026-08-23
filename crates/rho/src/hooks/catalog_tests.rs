@@ -253,14 +253,3 @@ fn the_spawn_contract_shows_everything_that_decides_what_runs() {
         .contains(&crate::hooks::IN_HOOK_ENV.to_owned()));
     assert!(entry.environment.contains(&"MY_TOKEN".to_owned()));
 }
-
-#[test]
-fn project_trust_comes_from_an_explicit_opt_in() {
-    assert_eq!(ProjectTrust::from_env(Some("1")), ProjectTrust::Trusted);
-    assert_eq!(ProjectTrust::from_env(Some("0")), ProjectTrust::Untrusted);
-    assert_eq!(
-        ProjectTrust::from_env(Some("true")),
-        ProjectTrust::Untrusted
-    );
-    assert_eq!(ProjectTrust::from_env(None), ProjectTrust::Untrusted);
-}

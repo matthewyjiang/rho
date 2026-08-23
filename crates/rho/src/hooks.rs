@@ -247,7 +247,7 @@ pub fn discover_for_cwd(
         .into_iter()
         .next();
     let rho_home = crate::paths::rho_dir().ok();
-    let trust = ProjectTrust::from_env(std::env::var(TRUST_PROJECT_HOOKS_ENV).ok().as_deref());
+    let trust = ProjectTrust::from_env_var(TRUST_PROJECT_HOOKS_ENV);
     let catalog = HookCatalog::discover(rho_home.as_deref(), project_root.as_deref(), trust)?;
     if let Some(skipped) = catalog.skipped_untrusted() {
         report(format!(
