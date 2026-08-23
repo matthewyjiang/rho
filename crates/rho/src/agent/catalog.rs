@@ -86,7 +86,7 @@ impl AgentCatalog {
     /// `~/.rho/agents`, `~/.agents/agents`, then built-ins.
     pub fn discover(cwd: &Path) -> Result<Self, AgentCatalogError> {
         let home = crate::paths::home_dir();
-        let trust = ProjectTrust::from_env_var("RHO_TRUST_PROJECT_AGENTS");
+        let trust = ProjectTrust::from_agents_env();
         Self::discover_with_home_and_trust(cwd, home.as_deref(), trust)
     }
 

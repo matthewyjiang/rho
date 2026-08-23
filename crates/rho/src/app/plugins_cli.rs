@@ -250,6 +250,9 @@ fn print_inspect(report: &PluginLoadReport, name: &str, json: bool) -> anyhow::R
         println!("description: {description}");
     }
     println!("status: {}", status_label(plugin.status));
+    if let Some(notice) = plugin.status.policy_notice() {
+        println!("{notice}");
+    }
     println!("enabled: {}", plugin.enabled);
     println!("scope: {}", plugin.scope.as_str());
     println!("origin: {}", plugin.origin.as_str());

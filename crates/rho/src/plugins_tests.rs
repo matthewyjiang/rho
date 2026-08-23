@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 use super::mcp_adapter::expand_placeholders;
-use super::{discover_with_trust, manifest, PluginStatus, ProjectTrust};
+use super::{discover_with_trust, manifest, PluginScope, PluginStatus, ProjectTrust};
 use crate::tools::mcp::config::McpTransport;
 
 const SCHEMA: &str = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
@@ -33,12 +33,11 @@ fn project_plugins(env: &Env) -> PathBuf {
 }
 
 fn discover_env(env: &Env) -> super::PluginDiscovery {
-    discover_with_trust(
-        env.project.path(),
-        Some(env.home.path()),
-        None,
-        ProjectTrust::Trusted,
-    )
+    discover_env_with_trust(env, ProjectTrust::Trusted)
+}
+
+fn discover_env_with_trust(env: &Env, trust: ProjectTrust) -> super::PluginDiscovery {
+    discover_with_trust(env.project.path(), Some(env.home.path()), None, trust)
 }
 
 fn manifest_json(name: &str, extra: &str) -> String {
@@ -290,6 +289,127 @@ fn project_plugin_shadows_user_plugin_with_same_name() {
         .find(|entry| entry.status == PluginStatus::Shadowed)
         .expect("shadowed entry reported");
     assert_eq!(shadowed.name, "dup");
+}
+
+// Covers: untrusted project plugins stay inventory-only. Skills and MCP
+// servers, including stdio commands, never join the session.
+// Owner: plugin trust policy.
+#[test]
+fn untrusted_project_plugin_activates_no_components() {
+    let env = env();
+    std::fs::create_dir_all(project_plugins(&env)).unwrap();
+    let dir = write_plugin(&project_plugins(&env), "risky", &manifest_json("risky", ""));
+    write_skill(&dir, "leaky", "must not reach the session");
+    write_mcp(&dir, &stdio_mcp("bash"));
+
+    let discovery = discover_env_with_trust(&env, ProjectTrust::Untrusted);
+
+    assert!(discovery.skills.is_empty());
+    assert!(!discovery.mcp.has_enabled_servers());
+    assert!(discovery.mcp.servers.is_empty());
+    let entry = report_entry(&discovery, "risky");
+    assert_eq!(entry.status, PluginStatus::Untrusted);
+    assert!(entry.enabled);
+    assert_eq!(entry.skill_count, 1);
+    assert_eq!(entry.mcp_server_count, 1);
+    assert!(entry.problems.is_empty());
+    assert_eq!(discovery.report.summary().untrusted, 1);
+    assert_eq!(discovery.report.summary().problems, 0);
+}
+
+// Covers: user plugins are the user's own files and activate regardless of
+// workspace trust.
+// Owner: plugin trust policy.
+#[test]
+fn untrusted_workspace_still_activates_user_plugins() {
+    let env = env();
+    std::fs::create_dir_all(user_plugins(&env)).unwrap();
+    let dir = write_plugin(&user_plugins(&env), "mine", &manifest_json("mine", ""));
+    write_skill(&dir, "hello", "user version");
+    write_mcp(&dir, &stdio_mcp("my-server"));
+
+    let discovery = discover_env_with_trust(&env, ProjectTrust::Untrusted);
+
+    assert_eq!(
+        report_entry(&discovery, "mine").status,
+        PluginStatus::Loaded
+    );
+    let plugin = contributions(&discovery, "mine");
+    assert_eq!(plugin.skills.len(), 1);
+    assert_eq!(plugin.mcp_servers.len(), 1);
+    assert!(matches!(
+        plugin.mcp_servers[0].1.transport,
+        McpTransport::Stdio { .. }
+    ));
+}
+
+// Covers: an untrusted project plugin must not occupy a name, so a same-named
+// user plugin still loads.
+// Owner: plugin trust policy.
+#[test]
+fn untrusted_project_plugin_does_not_shadow_user_plugin() {
+    let env = env();
+    std::fs::create_dir_all(user_plugins(&env)).unwrap();
+    std::fs::create_dir_all(project_plugins(&env)).unwrap();
+    let user_dir = write_plugin(&user_plugins(&env), "dup", &manifest_json("dup", ""));
+    write_skill(&user_dir, "user-flavor", "user version");
+    let project_dir = write_plugin(&project_plugins(&env), "dup", &manifest_json("dup", ""));
+    write_skill(&project_dir, "project-flavor", "project version");
+
+    let discovery = discover_env_with_trust(&env, ProjectTrust::Untrusted);
+
+    let loaded: Vec<_> = discovery
+        .report
+        .plugins
+        .iter()
+        .filter(|entry| entry.status == PluginStatus::Loaded)
+        .map(|entry| entry.scope)
+        .collect();
+    assert_eq!(loaded, [PluginScope::User]);
+    let untrusted = discovery
+        .report
+        .plugins
+        .iter()
+        .find(|entry| entry.status == PluginStatus::Untrusted)
+        .expect("untrusted entry reported");
+    assert_eq!(untrusted.name, "dup");
+    let plugin = contributions(&discovery, "dup");
+    assert_eq!(plugin.skills.len(), 1);
+    assert_eq!(plugin.skills[0].name, "user-flavor");
+}
+
+// Covers: a user disable still occupies the name in an untrusted workspace.
+// Trust does not unwind that policy, so a later user plugin is shadowed.
+// Owner: plugin trust policy.
+#[test]
+fn disabled_project_plugin_occupies_name_in_untrusted_workspace() {
+    let env = env();
+    std::fs::create_dir_all(user_plugins(&env)).unwrap();
+    std::fs::create_dir_all(project_plugins(&env)).unwrap();
+    let project_dir = write_plugin(&project_plugins(&env), "dup", &manifest_json("dup", ""));
+    write_skill(&project_dir, "project-flavor", "project version");
+    let user_dir = write_plugin(&user_plugins(&env), "dup", &manifest_json("dup", ""));
+    write_skill(&user_dir, "user-flavor", "user version");
+    std::fs::create_dir_all(env.project.path().join(".rho")).unwrap();
+    std::fs::write(
+        env.project.path().join(".rho/plugins.toml"),
+        "version = 1\n\n[plugins.dup]\nenabled = false\n",
+    )
+    .unwrap();
+
+    let discovery = discover_env_with_trust(&env, ProjectTrust::Untrusted);
+
+    let project = report_entry(&discovery, "dup");
+    assert_eq!(project.status, PluginStatus::Disabled);
+    assert_eq!(project.scope, PluginScope::Project);
+    assert!(discovery.skills.is_empty());
+    let shadowed = discovery
+        .report
+        .plugins
+        .iter()
+        .find(|entry| entry.status == PluginStatus::Shadowed)
+        .expect("shadowed user entry reported");
+    assert_eq!(shadowed.scope, PluginScope::User);
 }
 
 // --- Skill discovery and failure isolation ---

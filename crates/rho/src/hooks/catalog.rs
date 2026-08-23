@@ -14,13 +14,7 @@ use super::{
     HookSource,
 };
 
-/// Environment variable that grants a workspace's project hooks.
-///
-/// Same family as `RHO_TRUST_PROJECT_AGENTS`: project-supplied executable policy
-/// stays inert until the user says the workspace is trusted.
-pub const TRUST_PROJECT_HOOKS_ENV: &str = "RHO_TRUST_PROJECT_HOOKS";
-
-pub use crate::workspace::ProjectTrust;
+pub use crate::workspace::{ProjectTrust, TRUST_PROJECT_HOOKS_ENV};
 
 /// Why a project hooks file was skipped.
 #[derive(Clone, Debug, PartialEq, Eq)]

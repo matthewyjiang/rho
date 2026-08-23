@@ -48,31 +48,20 @@ mod tests;
 #[path = "plugins/contain_tests.rs"]
 mod contain_tests;
 
-#[cfg(test)]
-#[path = "plugins/trust_tests.rs"]
-mod trust_tests;
-
 use std::path::{Path, PathBuf};
 
 use crate::skills::{Skill, SkillSource};
 use crate::tools::mcp::config::{InvalidMcpServer, McpConfig, McpServerConfig};
 
-pub(crate) use crate::workspace::ProjectTrust;
+pub(crate) use crate::workspace::{ProjectTrust, TRUST_PROJECT_PLUGINS_ENV};
 pub(crate) use state::{PluginOrigin, PluginScope, PluginStateStore};
 
 pub(crate) const SUPPORTED_COMPONENTS: &str =
     "skills, mcp (stdio, streamable-http; sse unsupported)";
 
-/// Environment variable that grants a workspace's project Agent Plugins.
-///
-/// Same family as `RHO_TRUST_PROJECT_HOOKS` and `RHO_TRUST_PROJECT_AGENTS`:
-/// project-supplied components stay inactive until the user says the workspace
-/// is trusted, so a cloned repository cannot silently enable them.
-pub(crate) const TRUST_PROJECT_PLUGINS_ENV: &str = "RHO_TRUST_PROJECT_PLUGINS";
-
 /// Project plugin trust as configured by the environment.
 pub(crate) fn trust_from_env() -> ProjectTrust {
-    ProjectTrust::from_env_var(TRUST_PROJECT_PLUGINS_ENV)
+    ProjectTrust::from_plugins_env()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
@@ -90,6 +79,9 @@ pub(crate) enum PluginStatus {
 impl PluginStatus {
     fn for_package(enabled: bool, scope: PluginScope, trust: ProjectTrust) -> Self {
         if !enabled {
+            // A user disable still occupies the name, even in an untrusted
+            // workspace. Trust is a separate gate and does not unwind that
+            // policy.
             Self::Disabled
         } else if scope == PluginScope::Project && !trust.is_trusted() {
             Self::Untrusted
@@ -98,7 +90,12 @@ impl PluginStatus {
         }
     }
 
-    fn claims_name(self) -> bool {
+    /// Whether this package occupies its name for later roots.
+    ///
+    /// Loaded and disabled packages occupy the name. Untrusted project
+    /// packages do not, so a cloned repository cannot evict a same-named
+    /// user plugin.
+    fn occupies_name(self) -> bool {
         matches!(self, Self::Loaded | Self::Disabled)
     }
 
@@ -106,7 +103,7 @@ impl PluginStatus {
         matches!(self, Self::Loaded)
     }
 
-    fn policy_notice(self) -> Option<String> {
+    pub(crate) fn policy_notice(self) -> Option<String> {
         match self {
             Self::Disabled => Some(
                 "disabled in plugins.toml; components are not active in new sessions".to_string(),
@@ -115,18 +112,6 @@ impl PluginStatus {
                 "project plugin inactive: workspace is not trusted; set {TRUST_PROJECT_PLUGINS_ENV}=1 to activate"
             )),
             Self::Loaded | Self::Rejected | Self::Shadowed => None,
-        }
-    }
-
-    fn has_policy_notice(self) -> bool {
-        matches!(self, Self::Disabled | Self::Untrusted)
-    }
-
-    fn package_problem_count(self, problems: usize) -> usize {
-        if self.has_policy_notice() {
-            problems.saturating_sub(1)
-        } else {
-            problems
         }
     }
 }
@@ -382,7 +367,7 @@ fn load_candidate(
         .report
         .plugins
         .iter()
-        .any(|entry| entry.status.claims_name() && entry.name == manifest.name)
+        .any(|entry| entry.status.occupies_name() && entry.name == manifest.name)
     {
         discovery.report.plugins.push(PluginReportEntry {
             name: manifest.name.clone(),
@@ -437,9 +422,6 @@ fn load_candidate(
     let skill_count = skills.len();
     let mcp_server_count = mcp_servers.len();
 
-    if let Some(notice) = status.policy_notice() {
-        problems.insert(0, notice);
-    }
     if status.activates() {
         discovery.skills.extend(skills);
         discovery.mcp.servers.extend(
@@ -670,17 +652,17 @@ impl PluginLoadReport {
             match entry.status {
                 PluginStatus::Loaded => {
                     summary.loaded += 1;
-                    summary.problems += entry.status.package_problem_count(entry.problems.len());
+                    summary.problems += entry.problems.len();
                     summary.skills += entry.skill_count;
                     summary.mcp_servers += entry.mcp_server_count;
                 }
                 PluginStatus::Disabled => {
                     summary.disabled += 1;
-                    summary.problems += entry.status.package_problem_count(entry.problems.len());
+                    summary.problems += entry.problems.len();
                 }
                 PluginStatus::Untrusted => {
                     summary.untrusted += 1;
-                    summary.problems += entry.status.package_problem_count(entry.problems.len());
+                    summary.problems += entry.problems.len();
                 }
                 PluginStatus::Rejected => summary.rejected += 1,
                 PluginStatus::Shadowed => {}

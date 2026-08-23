@@ -461,7 +461,7 @@ fn workflow_error_from_anyhow(error: anyhow::Error) -> WorkflowError {
 }
 
 fn project_agent_catalogs_trusted() -> bool {
-    crate::workspace::ProjectTrust::from_env_var("RHO_TRUST_PROJECT_AGENTS").is_trusted()
+    crate::workspace::ProjectTrust::from_agents_env().is_trusted()
 }
 
 fn agent_catalog_roots_for(

@@ -46,7 +46,7 @@ impl<'a> DiscoveringPlanHost<'a> {
         workflow_entry: &Path,
     ) -> anyhow::Result<Self> {
         let home = crate::paths::home_dir();
-        let trust = crate::workspace::ProjectTrust::from_env_var("RHO_TRUST_PROJECT_AGENTS");
+        let trust = crate::workspace::ProjectTrust::from_agents_env();
         Ok(Self {
             workspace,
             config,

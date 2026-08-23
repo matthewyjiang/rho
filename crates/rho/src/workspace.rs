@@ -1,5 +1,12 @@
 use std::path::{Path, PathBuf};
 
+/// Environment variable that grants a workspace's project hooks.
+pub const TRUST_PROJECT_HOOKS_ENV: &str = "RHO_TRUST_PROJECT_HOOKS";
+/// Environment variable that grants a workspace's project agent definitions.
+pub const TRUST_PROJECT_AGENTS_ENV: &str = "RHO_TRUST_PROJECT_AGENTS";
+/// Environment variable that grants a workspace's project Agent Plugins.
+pub const TRUST_PROJECT_PLUGINS_ENV: &str = "RHO_TRUST_PROJECT_PLUGINS";
+
 /// Whether a workspace's project-supplied files may activate.
 ///
 /// Shared by project hooks, project agents, and project Agent Plugins.
@@ -21,6 +28,18 @@ impl ProjectTrust {
 
     pub fn from_env_var(name: &str) -> Self {
         Self::from_env(std::env::var(name).ok().as_deref())
+    }
+
+    pub fn from_hooks_env() -> Self {
+        Self::from_env_var(TRUST_PROJECT_HOOKS_ENV)
+    }
+
+    pub fn from_agents_env() -> Self {
+        Self::from_env_var(TRUST_PROJECT_AGENTS_ENV)
+    }
+
+    pub fn from_plugins_env() -> Self {
+        Self::from_env_var(TRUST_PROJECT_PLUGINS_ENV)
     }
 
     pub const fn is_trusted(self) -> bool {
