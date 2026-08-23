@@ -85,7 +85,14 @@ pub fn visit_files(
     options: &WalkOptions,
     mut visit: impl FnMut(WalkedFile) -> ControlFlow<WalkStop>,
 ) -> WalkStop {
-    let mut builder = walk_builder(root, options);
+    let mut builder = WalkBuilder::new(root);
+    builder
+        .follow_links(false)
+        .require_git(false)
+        .hidden(matches!(options.hidden, HiddenFiles::Skip))
+        // Depth 0 is the requested root, which the caller has already chosen;
+        // only its descendants are filtered.
+        .filter_entry(|entry| entry.depth() == 0 || entry.file_name() != ".git");
     let walker = builder.sort_by_file_name(std::ffi::OsStr::cmp).build();
 
     let mut entries_seen = 0usize;
@@ -110,18 +117,6 @@ pub fn visit_files(
     }
 
     WalkStop::Completed
-}
-
-fn walk_builder(root: &Path, options: &WalkOptions) -> WalkBuilder {
-    let mut builder = WalkBuilder::new(root);
-    builder
-        .follow_links(false)
-        .require_git(false)
-        .hidden(matches!(options.hidden, HiddenFiles::Skip))
-        // Depth 0 is the requested root, which the caller has already chosen;
-        // only its descendants are filtered.
-        .filter_entry(|entry| entry.depth() == 0 || entry.file_name() != ".git");
-    builder
 }
 
 fn walked_file(root: &Path, entry: Result<ignore::DirEntry, ignore::Error>) -> Option<WalkedFile> {

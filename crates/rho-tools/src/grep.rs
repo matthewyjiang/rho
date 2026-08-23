@@ -255,9 +255,6 @@ pub(crate) fn grep_workspace(
         if cancelled() {
             return ControlFlow::Break(WalkStop::Cancelled);
         }
-        if shown >= request.max_results {
-            return ControlFlow::Break(WalkStop::ResultLimit);
-        }
         if let Some(glob) = &request.glob {
             if !glob.matches(&file.relative) {
                 return ControlFlow::Continue(());
@@ -285,12 +282,10 @@ pub(crate) fn grep_workspace(
     let total_matches: usize = hits
         .iter()
         .fold(0, |acc, hit| acc.saturating_add(hit.total));
-    // Serial grep reports ResultLimit whenever the shown budget is full, even
-    // if the walk also finished the tree (one file can exhaust max_results).
+    // Cancel can land during the last file scan, after the visitor already
+    // returned Continue. ResultLimit is reported by the visitor Break.
     let walk_stop = if cancelled() {
         WalkStop::Cancelled
-    } else if shown >= request.max_results {
-        WalkStop::ResultLimit
     } else {
         walk_stop
     };
@@ -327,7 +322,7 @@ fn scan_file(
     }
     let reader = std::fs::File::open(&file.absolute).ok()?;
     let mint_tag = request.output_mode == GrepOutputMode::Content && style.mints_snapshot_tags();
-    let stop_early = request.output_mode.stops_at_first_match() && !mint_tag;
+    let stop_early = request.output_mode.stops_at_first_match();
     let mut total = 0usize;
     let mut lines = Vec::new();
     let file_tag = read_searchable_lines(
