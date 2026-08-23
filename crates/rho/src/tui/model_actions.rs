@@ -35,7 +35,26 @@ fn refresh_auth_for_provider(
         .id
 }
 
+const NO_CACHED_PROVIDER_MODELS_STATUS: &str = "no cached provider models";
+
 impl App {
+    /// `/model` and config model pickers with an empty cache: keep the refresh
+    /// path in the transcript after the 2-second toast is gone.
+    pub(super) fn report_missing_cached_provider_models(&mut self) {
+        self.report_actionable_gap(
+            "no cached provider models. Open /config > Providers > Refresh model lists.",
+            NO_CACHED_PROVIDER_MODELS_STATUS,
+        );
+    }
+
+    /// Same gap while a turn is running: refresh is blocked until it ends.
+    pub(super) fn report_missing_cached_provider_models_during_turn(&mut self) {
+        self.report_actionable_gap(
+            "no cached provider models. Open /config > Providers > Refresh model lists after the current turn ends.",
+            NO_CACHED_PROVIDER_MODELS_STATUS,
+        );
+    }
+
     pub(super) fn resolve_model_selection(
         &self,
         reference: &str,
@@ -192,7 +211,7 @@ impl App {
         let picker = self.conversation_model_picker();
 
         if picker.items.is_empty() {
-            self.set_status("no cached provider models. use Config > Refresh model lists.");
+            self.report_missing_cached_provider_models();
             return Ok(());
         }
 

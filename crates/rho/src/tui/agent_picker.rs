@@ -358,7 +358,7 @@ impl super::App {
         let picker = self.internal_agent_model_picker(id, origin);
         if picker.items.is_empty() {
             self.internal_agent_model_target = None;
-            self.set_status("no cached provider models. use Config > Refresh model lists.");
+            self.report_missing_cached_provider_models();
             return false;
         }
         if origin.opens_standalone() {

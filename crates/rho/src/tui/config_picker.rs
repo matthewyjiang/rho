@@ -779,7 +779,7 @@ impl App {
         self.refresh_available_auths();
         let picker = self.conversation_model_picker();
         if picker.items.is_empty() {
-            self.set_status("no cached provider models. use Config > Refresh model lists.");
+            self.report_missing_cached_provider_models();
         } else {
             self.open_child_picker(picker);
             self.set_status("select model");
@@ -790,9 +790,7 @@ impl App {
         self.refresh_available_auths();
         let picker = self.conversation_model_picker_during_run();
         if picker.items.is_empty() {
-            self.set_status(
-                "no cached provider models. refresh model lists after the current turn ends.",
-            );
+            self.report_missing_cached_provider_models_during_turn();
         } else {
             self.open_child_picker(picker);
             self.set_status("select model for next turn");
