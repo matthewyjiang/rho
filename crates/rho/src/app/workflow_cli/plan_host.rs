@@ -46,13 +46,7 @@ impl<'a> DiscoveringPlanHost<'a> {
         workflow_entry: &Path,
     ) -> anyhow::Result<Self> {
         let home = crate::paths::home_dir();
-        let trust = if std::env::var_os("RHO_TRUST_PROJECT_AGENTS").as_deref()
-            == Some(std::ffi::OsStr::new("1"))
-        {
-            crate::agent::ProjectTrust::Trusted
-        } else {
-            crate::agent::ProjectTrust::Untrusted
-        };
+        let trust = crate::workspace::ProjectTrust::from_agents_env();
         Ok(Self {
             workspace,
             config,

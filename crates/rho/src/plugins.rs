@@ -17,6 +17,13 @@
 //! (`plugins.toml` under the Rho data root and the project `.rho` directory).
 //! Install and link place packages into the explicit roots above.
 //!
+//! Project-scope plugins activate only in trusted workspaces: without
+//! `RHO_TRUST_PROJECT_PLUGINS=1` they load inventory-only (manifest and
+//! component metadata, no skill or MCP activation), mirroring the
+//! `RHO_TRUST_PROJECT_HOOKS` / `RHO_TRUST_PROJECT_AGENTS` family so a cloned
+//! repository cannot silently execute plugin commands. User-scope plugins are
+//! the user's own files and are not gated.
+//!
 //! Version handling stays isolated behind `$schema` recognition because the
 //! 1.0.0 specification is a Working Draft.
 //!
@@ -46,6 +53,7 @@ use std::path::{Path, PathBuf};
 use crate::skills::{Skill, SkillSource};
 use crate::tools::mcp::config::{InvalidMcpServer, McpConfig, McpServerConfig};
 
+pub(crate) use crate::workspace::{ProjectTrust, TRUST_PROJECT_PLUGINS_ENV};
 pub(crate) use state::{PluginOrigin, PluginScope, PluginStateStore};
 
 pub(crate) const SUPPORTED_COMPONENTS: &str =
@@ -56,8 +64,51 @@ pub(crate) const SUPPORTED_COMPONENTS: &str =
 pub(crate) enum PluginStatus {
     Loaded,
     Disabled,
+    /// Project package whose components stay inactive because the workspace
+    /// is not trusted; inventory (manifest and component metadata) only.
+    Untrusted,
     Rejected,
     Shadowed,
+}
+
+impl PluginStatus {
+    fn for_package(enabled: bool, scope: PluginScope, trust: ProjectTrust) -> Self {
+        if !enabled {
+            // A user disable still occupies the name, even in an untrusted
+            // workspace. Trust is a separate gate and does not unwind that
+            // policy.
+            Self::Disabled
+        } else if scope == PluginScope::Project && !trust.is_trusted() {
+            Self::Untrusted
+        } else {
+            Self::Loaded
+        }
+    }
+
+    /// Whether this package occupies its name for later roots.
+    ///
+    /// Loaded and disabled packages occupy the name. Untrusted project
+    /// packages do not, so a cloned repository cannot evict a same-named
+    /// user plugin.
+    fn occupies_name(self) -> bool {
+        matches!(self, Self::Loaded | Self::Disabled)
+    }
+
+    fn activates(self) -> bool {
+        matches!(self, Self::Loaded)
+    }
+
+    pub(crate) fn policy_notice(self) -> Option<String> {
+        match self {
+            Self::Disabled => Some(
+                "disabled in plugins.toml; components are not active in new sessions".to_string(),
+            ),
+            Self::Untrusted => Some(format!(
+                "project plugin inactive: workspace is not trusted; set {TRUST_PROJECT_PLUGINS_ENV}=1 to activate"
+            )),
+            Self::Loaded | Self::Rejected | Self::Shadowed => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -90,6 +141,7 @@ pub(crate) struct PluginLoadSummary {
     pub(crate) discovered: bool,
     pub(crate) loaded: usize,
     pub(crate) disabled: usize,
+    pub(crate) untrusted: usize,
     pub(crate) rejected: usize,
     pub(crate) problems: usize,
     pub(crate) skills: usize,
@@ -121,28 +173,48 @@ impl ComponentSelection {
 
 /// Plugin-owned skills in precedence order for ordinary skill discovery.
 pub(crate) fn skills_by_precedence(cwd: &Path, home: Option<&Path>) -> Vec<Skill> {
-    discover_components(cwd, home, None, ComponentSelection::SkillsOnly).skills
+    discover_components(
+        cwd,
+        home,
+        None,
+        ComponentSelection::SkillsOnly,
+        ProjectTrust::from_plugins_env(),
+    )
+    .skills
 }
 
 /// Discover and load plugin packages from the explicit roots.
 pub(crate) fn discover(cwd: &Path, home: Option<&Path>) -> PluginDiscovery {
     let rho_home = crate::paths::rho_dir().ok();
-    discover_components(cwd, home, rho_home.as_deref(), ComponentSelection::All)
+    discover_with_trust(
+        cwd,
+        home,
+        rho_home.as_deref(),
+        ProjectTrust::from_plugins_env(),
+    )
 }
 
 /// Discover only plugin MCP configuration for the `rho mcp` inventory path.
 pub(crate) fn discover_mcp(cwd: &Path, home: Option<&Path>) -> PluginDiscovery {
     let rho_home = crate::paths::rho_dir().ok();
-    discover_components(cwd, home, rho_home.as_deref(), ComponentSelection::McpOnly)
+    discover_components(
+        cwd,
+        home,
+        rho_home.as_deref(),
+        ComponentSelection::McpOnly,
+        ProjectTrust::from_plugins_env(),
+    )
 }
 
-/// Discover with an explicit Rho data root (tests and management commands).
-pub(crate) fn discover_with_rho_home(
+/// Discover with an explicit Rho data root and project trust (tests and
+/// management commands).
+pub(crate) fn discover_with_trust(
     cwd: &Path,
     home: Option<&Path>,
     rho_home: Option<&Path>,
+    trust: ProjectTrust,
 ) -> PluginDiscovery {
-    discover_components(cwd, home, rho_home, ComponentSelection::All)
+    discover_components(cwd, home, rho_home, ComponentSelection::All, trust)
 }
 
 fn discover_components(
@@ -150,6 +222,7 @@ fn discover_components(
     home: Option<&Path>,
     rho_home: Option<&Path>,
     components: ComponentSelection,
+    trust: ProjectTrust,
 ) -> PluginDiscovery {
     let mut discovery = PluginDiscovery {
         skills: Vec::new(),
@@ -171,6 +244,7 @@ fn discover_components(
                 root.scope,
                 components,
                 &state,
+                trust,
             );
         }
     }
@@ -238,6 +312,7 @@ fn load_candidate(
     scope: PluginScope,
     components: ComponentSelection,
     state: &PluginStateStore,
+    trust: ProjectTrust,
 ) {
     let directory_name = candidate
         .file_name()
@@ -284,18 +359,24 @@ fn load_candidate(
         Err(error) => return reject(discovery, format!("invalid manifest: {error}")),
     };
 
-    if discovery.report.plugins.iter().any(|entry| {
-        matches!(entry.status, PluginStatus::Loaded | PluginStatus::Disabled)
-            && entry.name == manifest.name
-    }) {
+    let enabled = state.is_enabled(scope, &manifest.name);
+    let origin = state.origin(scope, &manifest.name, candidate);
+    let status = PluginStatus::for_package(enabled, scope, trust);
+
+    if discovery
+        .report
+        .plugins
+        .iter()
+        .any(|entry| entry.status.occupies_name() && entry.name == manifest.name)
+    {
         discovery.report.plugins.push(PluginReportEntry {
             name: manifest.name.clone(),
             version: manifest.version.clone(),
             description: manifest.description.clone(),
             root: crate::paths::display(candidate),
             scope,
-            origin: state.origin(scope, &manifest.name, candidate),
-            enabled: state.is_enabled(scope, &manifest.name),
+            origin,
+            enabled,
             status: PluginStatus::Shadowed,
             problems: vec![format!(
                 "shadowed by a higher-precedence plugin root ({} root skipped)",
@@ -310,11 +391,9 @@ fn load_candidate(
     }
 
     let mut problems: Vec<String> = manifest.warnings.clone();
-    let enabled = state.is_enabled(scope, &manifest.name);
-    let origin = state.origin(scope, &manifest.name, candidate);
 
-    // Always inventory components so list/inspect stay useful while disabled.
-    // Only enabled packages contribute skills and MCP servers to the session.
+    // Always inventory components so list/inspect stay useful while disabled
+    // or untrusted. Only Loaded packages contribute skills and MCP servers.
     let skills = if components.loads_skills() {
         discover_plugin_skills(&manifest.name, &root, &mut problems)
     } else {
@@ -343,7 +422,7 @@ fn load_candidate(
     let skill_count = skills.len();
     let mcp_server_count = mcp_servers.len();
 
-    if enabled {
+    if status.activates() {
         discovery.skills.extend(skills);
         discovery.mcp.servers.extend(
             mcp_servers
@@ -351,11 +430,6 @@ fn load_candidate(
                 .map(|(name, server)| (format!("{}/{name}", manifest.name), server)),
         );
         discovery.mcp.invalid_servers.extend(invalid_mcp_servers);
-    } else {
-        problems.insert(
-            0,
-            "disabled in plugins.toml; components are not active in new sessions".to_string(),
-        );
     }
 
     discovery.report.plugins.push(PluginReportEntry {
@@ -366,11 +440,7 @@ fn load_candidate(
         scope,
         origin,
         enabled,
-        status: if enabled {
-            PluginStatus::Loaded
-        } else {
-            PluginStatus::Disabled
-        },
+        status,
         problems,
         skill_count,
         mcp_server_count,
@@ -544,6 +614,13 @@ pub(crate) fn log(report: &PluginLoadReport) {
                     "Agent Plugin disabled; components inactive for new sessions"
                 );
             }
+            PluginStatus::Untrusted => {
+                tracing::warn!(
+                    plugin = %entry.name,
+                    root = %entry.root,
+                    "project Agent Plugin inactive: workspace not trusted; set {TRUST_PROJECT_PLUGINS_ENV}=1 to activate its components"
+                );
+            }
             PluginStatus::Loaded => {
                 for problem in &entry.problems {
                     tracing::warn!(
@@ -581,8 +658,11 @@ impl PluginLoadReport {
                 }
                 PluginStatus::Disabled => {
                     summary.disabled += 1;
-                    // The leading disable notice is policy, not a package problem.
-                    summary.problems += entry.problems.len().saturating_sub(1);
+                    summary.problems += entry.problems.len();
+                }
+                PluginStatus::Untrusted => {
+                    summary.untrusted += 1;
+                    summary.problems += entry.problems.len();
                 }
                 PluginStatus::Rejected => summary.rejected += 1,
                 PluginStatus::Shadowed => {}
@@ -593,5 +673,20 @@ impl PluginLoadReport {
 
     pub(crate) fn find(&self, name: &str) -> Option<&PluginReportEntry> {
         self.plugins.iter().find(|entry| entry.name == name)
+    }
+
+    /// Prefer the package that is active in the session when several entries
+    /// share a name. Untrusted, disabled, and rejected copies stay reachable
+    /// when nothing is loaded.
+    pub(crate) fn inspect(&self, name: &str) -> Option<&PluginReportEntry> {
+        self.plugins
+            .iter()
+            .find(|entry| entry.name == name && entry.status.activates())
+            .or_else(|| {
+                self.plugins
+                    .iter()
+                    .find(|entry| entry.name == name && entry.status != PluginStatus::Shadowed)
+            })
+            .or_else(|| self.find(name))
     }
 }

@@ -151,7 +151,8 @@ you say the workspace is trusted:
 RHO_TRUST_PROJECT_HOOKS=1 rho
 ```
 
-This is the same family as `RHO_TRUST_PROJECT_AGENTS`. Until then Rho ignores
+This is the same family as `RHO_TRUST_PROJECT_AGENTS` and
+`RHO_TRUST_PROJECT_PLUGINS`. Until then Rho ignores
 `<project>/.rho/hooks.toml` and says so once.
 
 Before you grant trust, read the spawn contract with `/hooks` or

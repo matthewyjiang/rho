@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 use super::{inspect_source, install, remove, set_enabled, InstallMode};
-use crate::plugins::{discover_with_rho_home, state::PluginScope, PluginOrigin, PluginStatus};
+use crate::plugins::{
+    discover_with_trust, state::PluginScope, PluginOrigin, PluginStatus, ProjectTrust,
+};
 
 const SCHEMA: &str = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
 
@@ -72,10 +74,11 @@ fn install_copies_into_user_root_after_validation() {
     // Source remains untouched.
     assert!(source.join("plugin.json").is_file());
 
-    let discovery = discover_with_rho_home(
+    let discovery = discover_with_trust(
         env.project.path(),
         Some(env.home.path()),
         Some(env.rho_home.path()),
+        ProjectTrust::Trusted,
     );
     let entry = discovery.report.find("demo").unwrap();
     assert_eq!(entry.status, PluginStatus::Loaded);
@@ -215,10 +218,11 @@ fn disable_keeps_package_and_drops_session_components() {
         .join(".agents/plugins/demo/plugin.json")
         .is_file());
 
-    let discovery = discover_with_rho_home(
+    let discovery = discover_with_trust(
         env.project.path(),
         Some(env.home.path()),
         Some(env.rho_home.path()),
+        ProjectTrust::Trusted,
     );
     assert!(discovery.skills.is_empty());
     assert!(!discovery.mcp.has_enabled_servers());

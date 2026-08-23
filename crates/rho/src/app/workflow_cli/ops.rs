@@ -312,10 +312,7 @@ fn recheck_frozen_graph(
             ),
             (None, _) => {}
         }
-        if agent.trust_required
-            && std::env::var_os("RHO_TRUST_PROJECT_AGENTS").as_deref()
-                != Some(std::ffi::OsStr::new("1"))
-        {
+        if agent.trust_required && !crate::workspace::ProjectTrust::from_agents_env().is_trusted() {
             anyhow::bail!(
                 "workflow plan requires trusted project agent '{}'; trust is not active",
                 agent.agent_id

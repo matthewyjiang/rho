@@ -10,9 +10,9 @@ use serde::Serialize;
 use crate::{
     cli::{Cli, PluginsCommand, PluginsScope},
     plugins::{
-        discover_with_rho_home,
+        discover_with_trust,
         manage::{self, InstallMode},
-        PluginLoadReport, PluginScope, PluginStatus,
+        PluginLoadReport, PluginScope, PluginStatus, ProjectTrust, TRUST_PROJECT_PLUGINS_ENV,
     },
 };
 
@@ -20,15 +20,16 @@ pub(super) fn run(command: &PluginsCommand, _cli: &Cli) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
     let home = crate::paths::home_dir();
     let rho_home = crate::paths::rho_dir().ok();
+    let trust = ProjectTrust::from_plugins_env();
 
     match command {
         PluginsCommand::List { json } => {
-            let discovery = discover_with_rho_home(&cwd, home.as_deref(), rho_home.as_deref());
+            let discovery = discover_with_trust(&cwd, home.as_deref(), rho_home.as_deref(), trust);
             crate::plugins::log(&discovery.report);
             print_list(&discovery.report, *json)
         }
         PluginsCommand::Inspect { name, json } => {
-            let discovery = discover_with_rho_home(&cwd, home.as_deref(), rho_home.as_deref());
+            let discovery = discover_with_trust(&cwd, home.as_deref(), rho_home.as_deref(), trust);
             crate::plugins::log(&discovery.report);
             print_inspect(&discovery.report, name, *json)
         }
@@ -88,6 +89,11 @@ pub(super) fn run(command: &PluginsCommand, _cli: &Cli) -> anyhow::Result<()> {
                 package.scope.as_str(),
                 crate::paths::display(&package.path)
             );
+            if package.scope == PluginScope::Project && !trust.is_trusted() {
+                println!(
+                    "project plugins stay inactive in untrusted workspaces; set {TRUST_PROJECT_PLUGINS_ENV}=1 to activate"
+                );
+            }
             Ok(())
         }
         PluginsCommand::Disable { name } => {
@@ -212,23 +218,7 @@ fn print_list(report: &PluginLoadReport, json: bool) -> anyhow::Result<()> {
 }
 
 fn print_inspect(report: &PluginLoadReport, name: &str, json: bool) -> anyhow::Result<()> {
-    let Some(plugin) = report
-        .plugins
-        .iter()
-        .find(|entry| entry.name == name && entry.status != PluginStatus::Shadowed)
-        .or_else(|| report.find(name))
-    else {
-        let known = report
-            .plugins
-            .iter()
-            .map(|plugin| plugin.name.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        if known.is_empty() {
-            anyhow::bail!("no plugin named `{name}`");
-        }
-        anyhow::bail!("no plugin named `{name}`; known: {known}");
-    };
+    let plugin = inspect_entry(report, name)?;
 
     if json {
         println!(
@@ -244,6 +234,9 @@ fn print_inspect(report: &PluginLoadReport, name: &str, json: bool) -> anyhow::R
         println!("description: {description}");
     }
     println!("status: {}", status_label(plugin.status));
+    if let Some(notice) = plugin.status.policy_notice() {
+        println!("{notice}");
+    }
     println!("enabled: {}", plugin.enabled);
     println!("scope: {}", plugin.scope.as_str());
     println!("origin: {}", plugin.origin.as_str());
@@ -277,10 +270,30 @@ fn print_inspect(report: &PluginLoadReport, name: &str, json: bool) -> anyhow::R
     Ok(())
 }
 
+fn inspect_entry<'a>(
+    report: &'a PluginLoadReport,
+    name: &str,
+) -> anyhow::Result<&'a crate::plugins::PluginReportEntry> {
+    if let Some(plugin) = report.inspect(name) {
+        return Ok(plugin);
+    }
+    let known = report
+        .plugins
+        .iter()
+        .map(|plugin| plugin.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    if known.is_empty() {
+        anyhow::bail!("no plugin named `{name}`");
+    }
+    anyhow::bail!("no plugin named `{name}`; known: {known}");
+}
+
 fn status_label(status: PluginStatus) -> &'static str {
     match status {
         PluginStatus::Loaded => "loaded",
         PluginStatus::Disabled => "disabled",
+        PluginStatus::Untrusted => "untrusted",
         PluginStatus::Rejected => "rejected",
         PluginStatus::Shadowed => "shadowed",
     }

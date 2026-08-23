@@ -11,6 +11,7 @@ use super::{
     internal::{internal_definitions, is_internal_agent_id},
     parser::parse_definition,
 };
+use crate::workspace::ProjectTrust;
 
 const BUILTINS: &[(&str, &str)] = &[
     ("default", include_str!("../builtin_agents/default.md")),
@@ -18,12 +19,6 @@ const BUILTINS: &[(&str, &str)] = &[
     ("reviewer", include_str!("../builtin_agents/reviewer.md")),
     ("worker", include_str!("../builtin_agents/worker.md")),
 ];
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ProjectTrust {
-    Trusted,
-    Untrusted,
-}
 
 /// Source kind, ordered from lowest to highest discovery precedence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -91,13 +86,7 @@ impl AgentCatalog {
     /// `~/.rho/agents`, `~/.agents/agents`, then built-ins.
     pub fn discover(cwd: &Path) -> Result<Self, AgentCatalogError> {
         let home = crate::paths::home_dir();
-        let trust = if std::env::var_os("RHO_TRUST_PROJECT_AGENTS").as_deref()
-            == Some(std::ffi::OsStr::new("1"))
-        {
-            ProjectTrust::Trusted
-        } else {
-            ProjectTrust::Untrusted
-        };
+        let trust = ProjectTrust::from_agents_env();
         Self::discover_with_home_and_trust(cwd, home.as_deref(), trust)
     }
 
@@ -117,7 +106,7 @@ impl AgentCatalog {
             catalog.load_tier(AgentOrigin::AgentsHome, &[home.join(".agents/agents")])?;
             catalog.load_tier(AgentOrigin::RhoHome, &[home.join(".rho/agents")])?;
         }
-        if project_trust == ProjectTrust::Trusted {
+        if project_trust.is_trusted() {
             let project_roots: Vec<_> = crate::workspace::project_ancestor_dirs(cwd)
                 .into_iter()
                 .map(|path| path.join(".agents/agents"))

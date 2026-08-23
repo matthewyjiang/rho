@@ -461,8 +461,7 @@ impl WorkflowRuntime {
                 Arc::clone(&hosts) as Arc<dyn CommandHostFactory>,
             ));
         let security = RuntimeSecurity {
-            project_trusted: std::env::var_os("RHO_TRUST_PROJECT_AGENTS").as_deref()
-                == Some(std::ffi::OsStr::new("1")),
+            project_trusted: crate::workspace::ProjectTrust::from_agents_env().is_trusted(),
             permission_mode,
         };
         let mut runner = WorkflowRunner::new(
