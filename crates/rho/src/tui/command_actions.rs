@@ -118,6 +118,7 @@ impl App {
     ) -> anyhow::Result<()> {
         self.abort_compact(agent).await;
         self.held_turns.clear();
+        self.clear_mcp_connecting_activity();
         self.start_follow_ups = None;
         agent.reset().await?;
         self.info.session.session_id = None;

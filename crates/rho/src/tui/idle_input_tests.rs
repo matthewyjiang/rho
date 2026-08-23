@@ -1,6 +1,9 @@
 use ratatui::text::Line;
 
-use super::super::{commands, goal, tests::test_app, ChatMedia, ChatTextDocument, TurnPrompt};
+use super::super::{
+    activity::ActivityStatus, app_state::SessionUiPhase, commands, goal, tests::test_app,
+    ActivityPhase, ChatMedia, ChatTextDocument, TurnPrompt,
+};
 use super::HeldTurn;
 
 fn attached_document() -> ChatMedia {
@@ -122,6 +125,37 @@ fn unchanged_and_failed_compact_start_follow_ups_cancel_does_not() {
     assert!(CompactionUiOutcome::unchanged().starts_follow_ups());
     assert!(CompactionUiOutcome::failed("boom").starts_follow_ups());
     assert!(!CompactionUiOutcome::Cancelled.starts_follow_ups());
+}
+
+// Covers: an MCP hold is idle UI with ConnectingMcp activity, not a pending-input item.
+// Owner: idle input hold/release
+#[test]
+fn mcp_hold_uses_connecting_activity_without_joining_pending_input() {
+    let mut app = test_app();
+    app.hold_turn(
+        TurnPrompt::standard("hold-me".into(), "hold-me".into()),
+        Vec::new(),
+        Vec::new(),
+    );
+
+    assert_eq!(app.turn.session_ui(), SessionUiPhase::Idle);
+    assert_eq!(
+        app.activity_status(),
+        Some(ActivityStatus::Parent {
+            phase: ActivityPhase::ConnectingMcp,
+            retry: None,
+        })
+    );
+    let lines = app.pending_input_lines(80);
+    assert_eq!(lines.len(), 1);
+    assert!(line_text(&lines[0]).contains("HOLD"));
+    assert!(line_text(&lines[0]).contains("hold-me"));
+    assert!(!line_text(&lines[0]).contains("pending input"));
+
+    app.take_back_held_turn();
+    assert_eq!(app.input_ui.text(), "hold-me");
+    assert!(app.held_turns.is_empty());
+    assert_eq!(app.activity_status(), None);
 }
 
 // Covers: an MCP hold must not start a turn while a compact job holds the session.

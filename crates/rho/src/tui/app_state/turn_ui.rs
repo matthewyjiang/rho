@@ -40,6 +40,12 @@ impl SessionUiPhase {
         matches!(self, Self::Idle)
     }
 
+    /// Esc on the composer aborts this phase. Compact stays out: that path
+    /// does not use the running-turn Esc handler.
+    pub(in crate::tui) const fn esc_aborts_operation(self) -> bool {
+        matches!(self, Self::ProviderTurn | Self::CancellableWait)
+    }
+
     pub(in crate::tui) const fn busy_status_label(self) -> &'static str {
         if self.is_busy() {
             "running"
@@ -98,10 +104,6 @@ impl TurnUi {
 
     pub(in crate::tui) fn is_compacting(&self) -> bool {
         matches!(self.session_ui, SessionUiPhase::Compacting)
-    }
-
-    pub(in crate::tui) fn is_cancellable_wait(&self) -> bool {
-        matches!(self.session_ui, SessionUiPhase::CancellableWait)
     }
 
     pub(in crate::tui) fn enter_provider_turn(&mut self) {

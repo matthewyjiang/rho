@@ -1,6 +1,6 @@
 //! Expand and collapse truncated tool output in live batches and transcript history.
 
-use ratatui::{backend::Backend, Terminal};
+use ratatui::DefaultTerminal;
 
 use super::{tool_card_render::card_is_toggleable, App, Entry};
 
@@ -29,10 +29,10 @@ pub(super) fn tool_output_toggleable(
 }
 
 impl App {
-    pub(super) fn toggle_latest_tool_output<B: Backend>(
+    pub(super) fn toggle_latest_tool_output(
         &mut self,
-        terminal: &mut Terminal<B>,
-    ) -> Result<(), B::Error> {
+        terminal: &mut DefaultTerminal,
+    ) -> std::io::Result<()> {
         let width = terminal
             .size()
             .map(|size| size.width as usize)

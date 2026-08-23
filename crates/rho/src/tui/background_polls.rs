@@ -22,11 +22,11 @@ impl App {
         }
         self.mcp_report = agent.mcp_report().clone();
         self.mcp_catalog = agent.mcp_catalog().clone();
-        if pending
-            && !agent.mcp_connect_pending()
-            && self.status_source == StatusSource::McpConnecting
-        {
-            self.set_status_quiet("");
+        if pending && !agent.mcp_connect_pending() {
+            if self.status_source == StatusSource::McpConnecting {
+                self.set_status_quiet("");
+            }
+            self.clear_mcp_connecting_activity();
         }
         if matches!(
             self.input_ui.composer(),

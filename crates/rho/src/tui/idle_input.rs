@@ -8,8 +8,8 @@ use super::{
     command_palette::{selected_command, slash_command_args},
     commands, goal_command,
     palette::ActivePalette,
-    skill_actions, App, ChatMedia, ComposerMode, GoalState, HistoryDirection, InputSubmissionMode,
-    InteractiveRuntime, PasteSegment, QueuedPrompt, TurnOutcome, TurnPrompt,
+    skill_actions, ActivityPhase, App, ChatMedia, ComposerMode, GoalState, HistoryDirection,
+    InputSubmissionMode, InteractiveRuntime, PasteSegment, QueuedPrompt, TurnOutcome, TurnPrompt,
 };
 
 /// A turn held until MCP connect settles.
@@ -380,8 +380,6 @@ impl App {
             // Queue rather than replace: someone who submits twice while the
             // servers are still connecting must not lose the first prompt.
             self.hold_turn(turn, media, paste_segments);
-            self.turn.start_loading_if_needed();
-            self.set_mcp_connecting_status();
             return Ok(());
         }
 
@@ -400,6 +398,9 @@ impl App {
             media,
             paste_segments,
         });
+        self.turn.set_activity_phase(ActivityPhase::ConnectingMcp);
+        self.turn.start_loading_if_needed();
+        self.set_mcp_connecting_status();
     }
 
     /// Hand the most recently held turn back to the composer, so `esc` unwinds
@@ -431,6 +432,7 @@ impl App {
             // `poll_startup_hydrates` would never retire the indicator.
             return;
         }
+        self.clear_mcp_connecting_activity();
         // Attachments cannot go back into the composer, so say so rather than
         // let them disappear with the hold.
         if media.is_empty() {
@@ -438,6 +440,23 @@ impl App {
         } else {
             self.notify_status("prompt returned to the composer; attach the files again");
         }
+    }
+
+    pub(super) fn clear_mcp_connecting_activity(&mut self) {
+        if matches!(self.turn.activity_phase(), ActivityPhase::ConnectingMcp) {
+            self.turn.set_activity_phase(ActivityPhase::default());
+            if !self.turn.is_busy() {
+                self.turn.stop_loading();
+            }
+        }
+    }
+
+    pub(super) fn restore_mcp_hold_activity_if_needed(&mut self, mcp_pending: bool) {
+        if self.held_turns.is_empty() || !mcp_pending || self.turn.is_busy() {
+            return;
+        }
+        self.turn.set_activity_phase(ActivityPhase::ConnectingMcp);
+        self.turn.start_loading_if_needed();
     }
 
     fn first_held_turn_is_releasable(&self, mcp_pending: bool, compacting: bool) -> bool {
@@ -467,6 +486,9 @@ impl App {
             return Ok(false);
         };
         self.set_status_quiet("");
+        if self.held_turns.is_empty() {
+            self.clear_mcp_connecting_activity();
+        }
         self.run_turn_sequence_held(turn, media, paste_segments, terminal, agent)
             .await?;
         Ok(true)

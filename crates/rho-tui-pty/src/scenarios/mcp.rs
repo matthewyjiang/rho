@@ -127,7 +127,6 @@ const MCP_HOLD_TAKE_BACK_STEPS: &[Step] = &[
         text: "HOLD",
         timeout: SETTLE,
     },
-    Step::AssertText("esc edit"),
     Step::AssertText("hold-turn-xyz"),
     Step::Phase("take_back_with_esc"),
     Step::Key(Key::Esc),

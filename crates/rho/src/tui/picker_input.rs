@@ -1,5 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::{backend::Backend, layout::Rect, DefaultTerminal, Terminal};
+use ratatui::{layout::Rect, DefaultTerminal};
 
 use super::{
     picker_overlay_layout::{
@@ -57,9 +57,9 @@ fn overlay_nav_row_at(
     picker.nav_item_at_row(row_index).map(|_| row_index)
 }
 
-pub(in crate::tui) fn overlay_scroll_targets<B: Backend>(
+pub(in crate::tui) fn overlay_scroll_targets(
     picker: &UiPicker,
-    terminal: &Terminal<B>,
+    terminal: &DefaultTerminal,
 ) -> Option<OverlayScrollTargets> {
     if !picker.is_overlay() {
         return None;
@@ -481,10 +481,10 @@ impl App {
         }
     }
 
-    pub(super) fn handle_running_picker_key<B: Backend>(
+    pub(super) fn handle_running_picker_key(
         &mut self,
         key: KeyEvent,
-        terminal: &Terminal<B>,
+        terminal: &DefaultTerminal,
     ) -> anyhow::Result<bool> {
         if !matches!(self.input_ui.composer(), super::ComposerMode::Picker(_)) {
             return Ok(false);

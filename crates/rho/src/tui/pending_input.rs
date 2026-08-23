@@ -34,7 +34,6 @@ enum PendingInputRef {
     AcceptedSteering(usize),
     LocalSteering(usize),
     FollowUp(usize),
-    Held(usize),
 }
 
 #[derive(Debug)]
@@ -295,7 +294,6 @@ impl App {
             .map(PendingInputRef::AcceptedSteering)
             .chain((0..self.pending.steering_prompts().len()).map(PendingInputRef::LocalSteering))
             .chain((0..self.pending.queued_prompts().len()).map(PendingInputRef::FollowUp))
-            .chain((0..self.held_turns.len()).map(PendingInputRef::Held))
             .collect()
     }
 
@@ -311,7 +309,6 @@ impl App {
                 .map(|entry| PendingSelectionAnchor::Accepted(entry.id.clone())),
             PendingInputRef::LocalSteering(index) => Some(PendingSelectionAnchor::Local(*index)),
             PendingInputRef::FollowUp(index) => Some(PendingSelectionAnchor::FollowUp(*index)),
-            PendingInputRef::Held(_) => None,
         }
     }
 
@@ -398,7 +395,6 @@ impl App {
                     });
                 }
             }
-            PendingInputRef::Held(_) => return,
         }
         self.pending.input_panel_mut().focused = false;
         self.pending_input_changed();
@@ -430,7 +426,6 @@ impl App {
                 self.pending.remove_follow_up(index);
                 self.notify_status("queued follow-up discarded");
             }
-            PendingInputRef::Held(_) => return,
         }
         self.pending_input_changed();
     }
