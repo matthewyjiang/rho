@@ -83,6 +83,19 @@ pub(crate) fn rho_dir() -> anyhow::Result<PathBuf> {
     rho_dir_from_env(|name| std::env::var_os(name))
 }
 
+/// Global instructions loaded for every session: `~/.rho/AGENTS.md`.
+pub(crate) fn user_agents_md(home: &Path) -> PathBuf {
+    home.join(".rho").join("AGENTS.md")
+}
+
+/// Loose user skill trees: `~/.rho/skills`, then `~/.agents/skills`.
+pub(crate) fn user_skill_dirs(home: &Path) -> [PathBuf; 2] {
+    [
+        home.join(".rho").join("skills"),
+        home.join(".agents").join("skills"),
+    ]
+}
+
 fn rho_dir_from_env(mut var: impl FnMut(&str) -> Option<OsString>) -> anyhow::Result<PathBuf> {
     if let Some(root) = var("RHO_HOME").filter(|value| !value.is_empty()) {
         return Ok(PathBuf::from(root));

@@ -101,8 +101,7 @@ pub(crate) fn discover_with_plugin_skills(
 ) -> Vec<Skill> {
     let mut roots = Vec::new();
     if let Some(home) = home {
-        roots.push(home.join(".rho").join("skills"));
-        roots.push(home.join(".agents").join("skills"));
+        roots.extend(crate::paths::user_skill_dirs(home));
     }
     roots.extend(
         crate::workspace::project_ancestor_dirs(cwd)

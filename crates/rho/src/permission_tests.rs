@@ -254,6 +254,107 @@ fn checked_modes_gate_unrestricted_filesystem_reads() {
     }
 }
 
+// Covers: global AGENTS.md and user skill trees stay readable and editable
+// without opening the rest of ~/.rho (credentials, config).
+// Owner: application permission policy
+#[test]
+fn user_instruction_and_skill_paths_are_workspace_scoped() {
+    let home = TempDir::new().unwrap();
+    let home = home.path();
+    let agents = crate::paths::user_agents_md(home);
+    let [rho_skills, agents_skills] = crate::paths::user_skill_dirs(home);
+    let skill = rho_skills.join("demo").join("SKILL.md");
+    let other_skill = agents_skills.join("demo").join("SKILL.md");
+    let credentials = home.join(".rho").join("credentials").join("secrets.json");
+    let config = home.join(".rho").join("config.toml");
+
+    let allow = PolicyDecision::Allow;
+    let require_approval = PolicyDecision::RequireApproval {
+        reason: String::new(),
+    };
+    let plan_write_deny = PolicyDecision::Deny {
+        reason: "capability is not allowed in plan mode".into(),
+    };
+    let plan_read_deny = PolicyDecision::Deny {
+        reason: "read outside the workspace is not allowed in plan mode".into(),
+    };
+
+    let cases = [
+        (
+            read_request(&agents, PathScope::UnrestrictedFilesystem),
+            allow.clone(),
+            allow.clone(),
+            allow.clone(),
+        ),
+        (
+            read_request(&skill, PathScope::UnrestrictedFilesystem),
+            allow.clone(),
+            allow.clone(),
+            allow.clone(),
+        ),
+        (
+            read_request(&other_skill, PathScope::UnrestrictedFilesystem),
+            allow.clone(),
+            allow.clone(),
+            allow.clone(),
+        ),
+        (
+            write_request(&agents, PathScope::UnrestrictedFilesystem),
+            allow.clone(),
+            require_approval.clone(),
+            plan_write_deny.clone(),
+        ),
+        (
+            write_request(&skill, PathScope::UnrestrictedFilesystem),
+            allow.clone(),
+            require_approval.clone(),
+            plan_write_deny.clone(),
+        ),
+        (
+            read_request(&credentials, PathScope::UnrestrictedFilesystem),
+            require_approval.clone(),
+            require_approval.clone(),
+            plan_read_deny.clone(),
+        ),
+        (
+            read_request(&config, PathScope::UnrestrictedFilesystem),
+            require_approval.clone(),
+            require_approval.clone(),
+            plan_read_deny,
+        ),
+        (
+            write_request(&credentials, PathScope::UnrestrictedFilesystem),
+            require_approval.clone(),
+            require_approval,
+            plan_write_deny,
+        ),
+    ];
+
+    for (request, auto, supervised, plan) in cases {
+        for mode in [PermissionMode::Auto, PermissionMode::AllowEdits] {
+            let policy = super::ModePolicy::for_home(mode, home);
+            assert_eq!(
+                policy.evaluate(&request),
+                auto.clone(),
+                "{mode:?} disagreed for {:?}",
+                request.operation()
+            );
+        }
+        assert_eq!(
+            super::ModePolicy::for_home(PermissionMode::Supervised, home).evaluate(&request),
+            supervised,
+            "supervised disagreed for {:?}",
+            request.operation()
+        );
+        assert_eq!(
+            super::ModePolicy::for_home(PermissionMode::Plan, home).evaluate(&request),
+            plan,
+            "plan disagreed for {:?}",
+            request.operation()
+        );
+    }
+}
+
 // Covers: Allow edits and Auto skip the classifier/prompt for in-workspace
 // writes to git-tracked files, but not for new files, out-of-workspace paths,
 // or process execution.
