@@ -220,7 +220,7 @@ impl App {
         };
         match result {
             Ok(rho_sdk::SteeringRetraction::Retracted) => {
-                self.remove_accepted_steering(&id);
+                let _ = self.take_accepted_steering(std::slice::from_ref(&id));
                 if let Some(prompt) = edit_prompt {
                     self.restore_pending_prompt(prompt);
                     self.notify_status("editing retracted steer");
@@ -233,7 +233,7 @@ impl App {
                 self.notify_status("steer was already applied and can no longer be changed");
             }
             Ok(rho_sdk::SteeringRetraction::NotFound) => {
-                self.remove_accepted_steering(&id);
+                let _ = self.take_accepted_steering(std::slice::from_ref(&id));
                 self.notify_status("steer is no longer pending");
             }
             Err(error) => {
@@ -245,6 +245,7 @@ impl App {
     }
 
     pub(super) fn record_applied_steering(&mut self, ids: &[rho_sdk::SteeringId]) {
+        self.finish_streams();
         for prompt in self.take_accepted_steering(ids) {
             self.insert_entry(&Entry::User(message_history::render_user_entry(
                 &prompt.display_prompt,
@@ -256,20 +257,13 @@ impl App {
     fn take_accepted_steering(&mut self, ids: &[rho_sdk::SteeringId]) -> Vec<QueuedPrompt> {
         let selection = self.pending_selection_anchor();
         let mut prompts = Vec::new();
-        for id in ids {
-            let Some(index) = self
-                .pending
-                .accepted_steering()
-                .iter()
-                .position(|entry| &entry.id == id)
-            else {
-                continue;
-            };
-            let Some(entry) = self.pending.accepted_steering_mut().remove(index) else {
-                continue;
-            };
-            prompts.push(entry.prompt);
-        }
+        self.pending.accepted_steering_mut().retain(|entry| {
+            if !ids.contains(&entry.id) {
+                return true;
+            }
+            prompts.push(entry.prompt.clone());
+            false
+        });
         self.restore_pending_selection(selection);
         self.pending_input_changed();
         prompts
@@ -472,13 +466,6 @@ impl App {
         self.input_ui.set_cursor(self.input_char_len());
         self.reset_input_history_navigation();
         self.input_changed();
-    }
-
-    fn remove_accepted_steering(&mut self, id: &rho_sdk::SteeringId) {
-        self.pending
-            .accepted_steering_mut()
-            .retain(|entry| &entry.id != id);
-        self.pending_input_changed();
     }
 }
 

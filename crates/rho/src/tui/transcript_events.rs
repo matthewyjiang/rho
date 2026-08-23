@@ -39,9 +39,9 @@ fn should_finish_streams_before_recording(event: &ViewModelEvent) -> bool {
         | ViewModelEvent::ToolCallUpdated { .. }
         | ViewModelEvent::ToolCallProposed { .. }
         | ViewModelEvent::ToolStarted { .. }
-        | ViewModelEvent::ToolFinished { .. }
-        | ViewModelEvent::SteeringApplied(_) => true,
+        | ViewModelEvent::ToolFinished { .. } => true,
         ViewModelEvent::RunStarted
+        | ViewModelEvent::SteeringApplied(_)
         | ViewModelEvent::ProviderStreamReset(_)
         | ViewModelEvent::ProviderRetry
         | ViewModelEvent::OutputDelta(_)

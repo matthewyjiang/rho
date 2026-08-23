@@ -1,11 +1,30 @@
 //! Steering acceptance, apply-into-transcript, and retract flows.
 
+use anyhow::Result;
+
 use crate::{
+    harness::PtyHarness,
     keys::Key,
     scenario::{Scenario, Step},
 };
 
-use super::{assert_helpers::assert_applied_steer_is_user_line, DEFAULT_SIZE, STARTUP, STREAM};
+use super::{DEFAULT_SIZE, STARTUP, STREAM};
+
+fn assert_applied_steer_is_user_line(harness: &mut PtyHarness) -> Result<()> {
+    const STEER: &str = "fixture steer detail";
+    let has_standalone_line = harness
+        .screen()
+        .rows_text()
+        .iter()
+        .any(|row| row.trim() == STEER);
+    if !has_standalone_line {
+        anyhow::bail!(
+            "applied steer did not appear as a transcript user line:\n{}",
+            harness.screen().debug_dump()
+        );
+    }
+    Ok(())
+}
 
 pub(super) const STEER_APPEARS_IN_TRANSCRIPT_SCENARIO: Scenario = Scenario::new(
     "steer_appears_in_transcript",

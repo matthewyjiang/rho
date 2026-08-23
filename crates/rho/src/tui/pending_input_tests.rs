@@ -191,7 +191,7 @@ fn applied_event_removes_only_matching_steering() {
     ));
 }
 
-// Covers: AlreadyApplied must still show the steer if SteeringApplied has not landed yet
+// Covers: AlreadyApplied must still show the steer after flushing any held stream
 // Owner: interactive TUI pending-input
 #[test]
 fn already_applied_retraction_inserts_the_user_message() {
@@ -203,6 +203,9 @@ fn already_applied_retraction_inserts_the_user_message() {
             id: id.clone(),
             prompt: prompt("keep me"),
         });
+    app.streams
+        .assistant_stream
+        .push_delta("held assistant tail");
     let request = PendingInputRequest::Retract {
         action: PendingInputAction::DiscardAccepted { id },
         receipt: Box::pin(std::future::pending()),
@@ -214,9 +217,11 @@ fn already_applied_retraction_inserts_the_user_message() {
 
     assert_eq!(failure, None);
     assert!(app.pending.accepted_steering().is_empty());
+    assert!(app.streams.assistant_stream.is_empty());
     assert!(matches!(
         app.history.entries(),
-        [Entry::User(text)] if text == "keep me"
+        [Entry::Assistant(assistant), Entry::User(text)]
+            if assistant == "held assistant tail" && text == "keep me"
     ));
     assert_eq!(
         app.status(),
