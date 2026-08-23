@@ -23,6 +23,23 @@ use super::{
     StreamControl,
 };
 
+/// What Esc does in the live TUI.
+///
+/// Approval deny-and-abort stays first. Visible or focused overlays and
+/// non-input composer modes then own Esc, matching during-turn key routing,
+/// so background pending inline shells and shell mode cannot steal a key
+/// the overlay would handle. Event handling and the empty-composer hint
+/// share this so chrome never advertises abort unless Esc would actually
+/// interrupt through the composer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RunningEscapeAction {
+    DenyApprovalAndAbort,
+    CancelInlineShells,
+    ExitShellMode,
+    Overlay,
+    AbortTurn,
+}
+
 pub(super) enum RunningTerminalError {
     Recoverable(rho_providers::model::ModelError),
     Terminal(anyhow::Error),
@@ -749,29 +766,38 @@ impl App {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
                         self.clear_selections();
                         self.subagent_panel.clear_pointer_state();
-                        if key.code == KeyCode::Esc
-                            && matches!(self.input_ui.composer(), ComposerMode::Approval(_))
-                        {
-                            self.handle_approval_key(key, 1, 1).map_err(|error| {
-                                RunningTerminalError::Recoverable(
-                                    rho_providers::model::ModelError::InvalidResponse(
-                                        error.to_string(),
-                                    ),
-                                )
-                            })?;
-                            self.cancel_inline_shells();
-                            return Ok(self
-                                .request_running_interrupt(interrupt_requested, tool_call_active));
-                        }
-                        if key.code == KeyCode::Esc && self.cancel_inline_shells() {
-                            break 'event;
-                        }
-                        if key.code == KeyCode::Esc && self.exit_shell_mode() {
-                            break 'event;
-                        }
-                        if key.code == KeyCode::Esc && !self.running_escape_has_overlay_target() {
-                            return Ok(self
-                                .request_running_interrupt(interrupt_requested, tool_call_active));
+                        if key.code == KeyCode::Esc {
+                            match self.running_escape_action() {
+                                Some(RunningEscapeAction::DenyApprovalAndAbort) => {
+                                    self.handle_approval_key(key, 1, 1).map_err(|error| {
+                                        RunningTerminalError::Recoverable(
+                                            rho_providers::model::ModelError::InvalidResponse(
+                                                error.to_string(),
+                                            ),
+                                        )
+                                    })?;
+                                    self.cancel_inline_shells();
+                                    return Ok(self.request_running_interrupt(
+                                        interrupt_requested,
+                                        tool_call_active,
+                                    ));
+                                }
+                                Some(RunningEscapeAction::CancelInlineShells) => {
+                                    let _ = self.cancel_inline_shells();
+                                    break 'event;
+                                }
+                                Some(RunningEscapeAction::ExitShellMode) => {
+                                    let _ = self.exit_shell_mode();
+                                    break 'event;
+                                }
+                                Some(RunningEscapeAction::AbortTurn) => {
+                                    return Ok(self.request_running_interrupt(
+                                        interrupt_requested,
+                                        tool_call_active,
+                                    ));
+                                }
+                                Some(RunningEscapeAction::Overlay) | None => {}
+                            }
                         }
                         if self.external_editor_shortcut_matches(key) {
                             self.open_composer_in_editor(terminal)
@@ -837,10 +863,36 @@ impl App {
         }
     }
 
-    pub(super) fn running_escape_has_overlay_target(&mut self) -> bool {
+    pub(super) fn running_escape_action(&mut self) -> Option<RunningEscapeAction> {
+        if matches!(self.input_ui.composer(), ComposerMode::Approval(_)) {
+            Some(RunningEscapeAction::DenyApprovalAndAbort)
+        } else if self.running_escape_has_overlay_target() {
+            Some(RunningEscapeAction::Overlay)
+        } else if !self.pending_inline_shells.is_empty() {
+            Some(RunningEscapeAction::CancelInlineShells)
+        } else if self.input_ui.shell_mode().is_some() {
+            Some(RunningEscapeAction::ExitShellMode)
+        } else if self.turn.session_ui().esc_aborts_operation() {
+            Some(RunningEscapeAction::AbortTurn)
+        } else {
+            None
+        }
+    }
+
+    fn running_escape_has_overlay_target(&mut self) -> bool {
         self.active_palette().is_some()
             || self.pending_input_focused()
             || !matches!(self.input_ui.composer(), ComposerMode::Input)
+    }
+
+    /// Empty-composer abort copy. Overlays, shells, and palettes are already
+    /// excluded: this path only paints when the input is empty.
+    pub(super) fn composer_shows_abort_hint(&self) -> bool {
+        matches!(self.input_ui.composer(), ComposerMode::Input)
+            && self.input_ui.shell_mode().is_none()
+            && !self.pending_input_focused()
+            && self.pending_inline_shells.is_empty()
+            && self.turn.session_ui().esc_aborts_operation()
     }
 
     pub(super) fn request_running_interrupt(
@@ -855,3 +907,7 @@ impl App {
         StreamControl::Interrupt
     }
 }
+
+#[cfg(test)]
+#[path = "during_turn_tests.rs"]
+mod tests;

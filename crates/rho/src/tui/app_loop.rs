@@ -421,6 +421,7 @@ impl App {
         // Fold terminal subagent/advisor costs on every panel refresh path (idle
         // poll, in-turn wait, goal wait). Claiming is idempotent per run/call.
         changed |= self.claim_non_main_costs(agent);
+        self.restore_mcp_hold_activity_if_needed(agent.mcp_connect_pending());
         if self.subagent_panel.is_active() {
             self.turn.start_loading_if_needed();
         }
@@ -454,7 +455,9 @@ impl App {
     }
 
     pub(super) fn loading_active(&self) -> bool {
-        self.is_ui_busy() || self.streams.loading_streams_active()
+        self.is_ui_busy()
+            || self.streams.loading_streams_active()
+            || matches!(self.turn.activity_phase(), ActivityPhase::ConnectingMcp)
     }
 
     pub(super) fn handle_queued_agent_event(

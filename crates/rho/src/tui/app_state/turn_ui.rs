@@ -15,13 +15,16 @@ use crate::tui::{
 ///
 /// `ProviderTurn` should stay aligned with `InteractiveRuntime::is_run_active`
 /// except for brief setup before `start` succeeds. `Compacting` is UI-only busy
-/// work with no active provider run.
+/// work with no active provider run. `CancellableWait` is also UI-only busy
+/// work (goal evaluation, delegated-agent waits, retry delay) whose Esc path
+/// still returns `StreamControl::Interrupt`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(in crate::tui) enum SessionUiPhase {
     #[default]
     Idle,
     ProviderTurn,
     Compacting,
+    CancellableWait,
 }
 
 impl SessionUiPhase {
@@ -35,6 +38,12 @@ impl SessionUiPhase {
 
     pub(in crate::tui) const fn allows_idle_subagent_delivery(self) -> bool {
         matches!(self, Self::Idle)
+    }
+
+    /// Esc on the composer aborts this phase. Compact stays out: that path
+    /// does not use the running-turn Esc handler.
+    pub(in crate::tui) const fn esc_aborts_operation(self) -> bool {
+        matches!(self, Self::ProviderTurn | Self::CancellableWait)
     }
 
     pub(in crate::tui) const fn busy_status_label(self) -> &'static str {
@@ -103,6 +112,10 @@ impl TurnUi {
 
     pub(in crate::tui) fn enter_compact(&mut self) {
         self.session_ui = SessionUiPhase::Compacting;
+    }
+
+    pub(in crate::tui) fn enter_cancellable_wait(&mut self) {
+        self.session_ui = SessionUiPhase::CancellableWait;
     }
 
     pub(in crate::tui) fn end_busy(&mut self) {

@@ -34,6 +34,7 @@ mod subagent_rail;
 mod supervised_approval;
 mod text_selection;
 mod tool_card_hover;
+mod type_during_stream;
 mod workflow;
 mod workspace_rewind;
 
@@ -99,6 +100,7 @@ use subagent_rail::SUBAGENT_RAIL_MOUSE_SCENARIO;
 use supervised_approval::SUPERVISED_APPROVAL_STEPS;
 use text_selection::{SCREEN_TEXT_SELECTION_STEPS, TEXT_SELECTION_DRAG_STEPS};
 use tool_card_hover::TOOL_CARD_HOVER_STEPS;
+use type_during_stream::TYPE_DURING_STREAM_STEPS;
 use workflow::{WORKFLOW_CANCEL_RESUME_ID, WORKFLOW_RUN_ID};
 use workspace_rewind::WORKSPACE_REWIND_SCENARIO;
 
@@ -119,44 +121,6 @@ const DEFAULT_SIZE: PtySize = PtySize {
 pub(super) const STARTUP: WaitTimeout = WaitTimeout::secs(20, "startup");
 pub(super) const STREAM: WaitTimeout = WaitTimeout::secs(20, "stream response");
 pub(super) const SETTLE: WaitTimeout = WaitTimeout::secs(10, "ui settle");
-
-const TYPE_DURING_STREAM_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::Phase("start_flood"),
-    Step::SubmitText("fixture input flood"),
-    Step::WaitText {
-        text: "input flood event 010",
-        timeout: STREAM,
-    },
-    Step::Phase("query_limits"),
-    Step::SubmitText("/limits"),
-    Step::WaitText {
-        text: "Usage limits",
-        timeout: STREAM,
-    },
-    Step::Key(Key::Esc),
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(150),
-        timeout: SETTLE,
-    },
-    Step::Phase("type_draft"),
-    Step::TypeText("draft while streaming"),
-    Step::WaitText {
-        text: "draft while streaming",
-        timeout: WaitTimeout::secs(2, "composer input during stream"),
-    },
-    Step::Key(Key::Esc),
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(250),
-        timeout: SETTLE,
-    },
-    Step::Key(Key::Ctrl('c')),
-    Step::ExitCommand,
-];
 
 const TYPE_DURING_COMPACT_STEPS: &[Step] = &[
     Step::Phase("startup"),
@@ -527,7 +491,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     ),
     Scenario::new(
         "type_during_stream",
-        "Keep composer input responsive during continuous model output",
+        "Keep composer input responsive; overlay Esc must not abort, empty Esc must",
         DEFAULT_SIZE,
         TYPE_DURING_STREAM_STEPS,
         true,

@@ -13,18 +13,22 @@ const MAX_VISIBLE_ITEMS: usize = 3;
 
 impl App {
     pub(in crate::tui) fn pending_input_height(&self) -> usize {
+        let held = self.held_turns.len().min(MAX_VISIBLE_ITEMS);
         let count = self.pending_input_count();
-        if count == 0 {
-            return 0;
-        }
-        1 + count.min(MAX_VISIBLE_ITEMS) + usize::from(self.pending.input_panel().focused)
+        let pending = if count == 0 {
+            0
+        } else {
+            1 + count.min(MAX_VISIBLE_ITEMS) + usize::from(self.pending.input_panel().focused)
+        };
+        held + pending
     }
 
     pub(in crate::tui) fn pending_input_lines(&mut self, width: usize) -> Vec<Line<'static>> {
+        let mut lines = self.held_input_lines(width);
         let items = self.pending_input_refs();
         if items.is_empty() {
             self.pending.input_panel_mut().focused = false;
-            return Vec::new();
+            return lines;
         }
         self.clamp_pending_input_selection(items.len());
         let selected = self.pending.input_panel().selected;
@@ -40,12 +44,12 @@ impl App {
                 self.info.runtime.keybindings.manage_pending_input
             )
         };
-        let mut lines = vec![pending_header_line(
+        lines.push(pending_header_line(
             width,
             steering_count,
             self.pending.queued_prompts().len(),
             &hint,
-        )];
+        ));
         lines.extend(
             items
                 .iter()
@@ -66,6 +70,25 @@ impl App {
             ));
         }
         lines
+    }
+
+    fn held_input_lines(&self, width: usize) -> Vec<Line<'static>> {
+        let start = self.held_turns.len().saturating_sub(MAX_VISIBLE_ITEMS);
+        self.held_turns
+            .iter()
+            .skip(start)
+            .map(|held| {
+                pending_item_line(
+                    width,
+                    "  ",
+                    "HOLD",
+                    "esc edit",
+                    &held.turn.display,
+                    Theme::warning(),
+                    /*selected*/ false,
+                )
+            })
+            .collect()
     }
 
     fn pending_item_line(
@@ -117,13 +140,15 @@ fn pending_header_line(
     follow_up_count: usize,
     hint: &str,
 ) -> Line<'static> {
-    let steering = count_label(steering_count, "steer", "steers");
-    let follow_up = count_label(follow_up_count, "follow-up", "follow-ups");
-    let counts = match (steering_count, follow_up_count) {
-        (0, _) => follow_up,
-        (_, 0) => steering,
-        _ => format!("{steering} · {follow_up}"),
-    };
+    let counts = [
+        (steering_count, "steer", "steers"),
+        (follow_up_count, "follow-up", "follow-ups"),
+    ]
+    .into_iter()
+    .filter(|(count, _, _)| *count > 0)
+    .map(|(count, singular, plural)| count_label(count, singular, plural))
+    .collect::<Vec<_>>()
+    .join(" · ");
     let left = format!("  pending input · {counts}");
     let left_width = display_width(&left);
     let hint_width = display_width(hint);

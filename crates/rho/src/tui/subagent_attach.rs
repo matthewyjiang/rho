@@ -168,7 +168,8 @@ impl App {
             AttachInput::Leave => self.leave_attach_view(),
             AttachInput::Quit => {
                 self.leave_attach_view();
-                self.should_quit = true;
+                self.notify_status("left attach view; press ctrl-c again to quit");
+                self.ctrl_c_streak = 1;
             }
             AttachInput::Ignored | AttachInput::Handled => {}
         }

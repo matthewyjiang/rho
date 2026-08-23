@@ -201,7 +201,16 @@ const ATTACH_VIEW_QUIT_RESTORES_STEPS: &[Step] = &[
         text: "q back",
         timeout: SETTLE,
     },
-    Step::Phase("quit_from_attach_view"),
+    Step::Phase("leave_then_quit_from_attach_view"),
+    Step::Key(Key::Ctrl('c')),
+    Step::WaitTextGone {
+        text: "q back",
+        timeout: SETTLE,
+    },
+    Step::WaitText {
+        text: "left attach view; press ctrl-c again to quit",
+        timeout: SETTLE,
+    },
     Step::Key(Key::Ctrl('c')),
     Step::WaitExit { timeout: SETTLE },
     Step::Phase("assert_restore"),
@@ -235,7 +244,7 @@ pub(super) const ATTACH_VIEW_PARENT_APPROVAL_SCENARIO: Scenario = Scenario::new(
 
 pub(super) const ATTACH_VIEW_QUIT_RESTORES_SCENARIO: Scenario = Scenario::new(
     "attach_view_quit_restores",
-    "Quit from inside the attach view and restore the terminal",
+    "Leave the attach view on Ctrl-C, then quit and restore the terminal",
     DEFAULT_SIZE,
     ATTACH_VIEW_QUIT_RESTORES_STEPS,
     /*smoke*/ false,
