@@ -595,19 +595,6 @@ impl App {
         self.set_status(status);
     }
 
-    /// Keep next-step guidance after a command that opens no other UI.
-    ///
-    /// `set_status` still toasts, but that toast lasts two seconds. The notice
-    /// stays in the transcript so glancing away does not lose the instruction.
-    pub(super) fn report_actionable_gap(
-        &mut self,
-        notice: impl Into<String>,
-        status: impl AsRef<str>,
-    ) {
-        self.insert_entry(&Entry::Notice(notice.into()));
-        self.set_status(status);
-    }
-
     pub(super) fn record_inserted_entry(&mut self, entry: Entry) {
         self.push_transcript_entry(entry);
     }

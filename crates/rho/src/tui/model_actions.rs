@@ -35,24 +35,23 @@ fn refresh_auth_for_provider(
         .id
 }
 
-const NO_CACHED_PROVIDER_MODELS_STATUS: &str = "no cached provider models";
-
 impl App {
     /// `/model` and config model pickers with an empty cache: keep the refresh
     /// path in the transcript after the 2-second toast is gone.
+    ///
+    /// Flush any live stream first so the notice cannot split an in-flight
+    /// assistant row. Refresh is blocked until the current turn ends, so the
+    /// during-turn sentence is chosen from session state rather than the
+    /// caller.
     pub(super) fn report_missing_cached_provider_models(&mut self) {
-        self.report_actionable_gap(
-            "no cached provider models. Open /config > Providers > Refresh model lists.",
-            NO_CACHED_PROVIDER_MODELS_STATUS,
-        );
-    }
-
-    /// Same gap while a turn is running: refresh is blocked until it ends.
-    pub(super) fn report_missing_cached_provider_models_during_turn(&mut self) {
-        self.report_actionable_gap(
-            "no cached provider models. Open /config > Providers > Refresh model lists after the current turn ends.",
-            NO_CACHED_PROVIDER_MODELS_STATUS,
-        );
+        self.finish_streams();
+        let notice = if self.is_provider_turn_ui() {
+            "no cached provider models. Open /config > Providers > Refresh model lists after the current turn ends."
+        } else {
+            "no cached provider models. Open /config > Providers > Refresh model lists."
+        };
+        self.insert_entry(&Entry::Notice(notice.into()));
+        self.set_status(notice);
     }
 
     pub(super) fn resolve_model_selection(

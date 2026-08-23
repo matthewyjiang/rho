@@ -328,7 +328,7 @@ impl App {
             self.refresh_available_auths();
             let picker = self.conversation_model_picker_during_run();
             if picker.items.is_empty() {
-                self.report_missing_cached_provider_models_during_turn();
+                self.report_missing_cached_provider_models();
             } else {
                 self.input_ui.set_composer(ComposerMode::Picker(picker));
                 self.set_status("select model for next turn");
