@@ -170,8 +170,11 @@ impl ResolvedSession {
 ///
 /// `tree` is the last successfully parsed or mutated `SessionTree`, valid for
 /// the recorded [`CacheStamp`]. Writers are serialized on this cursor, so the
-/// cache is the sole in-process view of the file. External writes fail the
-/// stamp check (length, mtime, or tail fingerprint) and force a reload.
+/// cache is the sole in-process view of the file. The stamp is taken after
+/// the append or load completes; a same-size rewrite in that window can be
+/// absorbed into it. The session lease, not the stamp, is what excludes
+/// concurrent external writers. Length, mtime, or tail mismatches after that
+/// still force a reload.
 #[derive(Debug, Default)]
 pub(super) struct AppendCursor {
     pub(super) valid_len: Option<u64>,
