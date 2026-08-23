@@ -117,7 +117,10 @@ fn applied_event_preserves_selection_of_a_later_pending_item() {
     assert_eq!(app.pending.input_panel().selected, 1);
     let lines = app.pending_input_lines(80);
     assert!(line_text(&lines[2]).contains("▸ NEXT"));
-    assert_eq!(app.history.entries(), &[Entry::User("first steer".into())]);
+    assert!(matches!(
+        app.history.entries(),
+        [Entry::User(text)] if text == "first steer"
+    ));
 }
 
 #[test]
@@ -182,7 +185,10 @@ fn applied_event_removes_only_matching_steering() {
 
     assert_eq!(app.pending.accepted_steering().len(), 1);
     assert_eq!(app.pending.accepted_steering()[0].id, pending);
-    assert_eq!(app.history.entries(), &[Entry::User("applied".into())]);
+    assert!(matches!(
+        app.history.entries(),
+        [Entry::User(text)] if text == "applied"
+    ));
 }
 
 // Covers: AlreadyApplied must still show the steer if SteeringApplied has not landed yet
@@ -208,7 +214,10 @@ fn already_applied_retraction_inserts_the_user_message() {
 
     assert_eq!(failure, None);
     assert!(app.pending.accepted_steering().is_empty());
-    assert_eq!(app.history.entries(), &[Entry::User("keep me".into())]);
+    assert!(matches!(
+        app.history.entries(),
+        [Entry::User(text)] if text == "keep me"
+    ));
     assert_eq!(
         app.status(),
         "steer was already applied and can no longer be changed"
