@@ -8,8 +8,8 @@
 mod line_split;
 mod window;
 
-pub(crate) use line_split::LineFingerprint;
-pub(crate) use window::{read_searchable_lines, read_text_window, validate_window, CHUNK_SIZE};
+pub(crate) use line_split::{read_searchable_lines, LineFingerprint};
+pub(crate) use window::{read_text_window, validate_window, CHUNK_SIZE};
 
 #[cfg(test)]
 pub(crate) use window::{format_window_bytes, ScanError};

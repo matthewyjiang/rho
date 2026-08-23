@@ -323,10 +323,10 @@ fn truncate_chars_respects_char_boundaries() {
     assert_eq!(truncate_chars("", 5), "");
 }
 
-// Covers: parallel grep must emit the same path-ordered prefix every run
+// Covers: grep must emit the same path-ordered prefix every run
 // Owner: pure unit (grep determinism)
 #[test]
-fn parallel_grep_is_deterministic_across_runs() {
+fn grep_is_deterministic_across_runs() {
     let dir = TempDir::new().unwrap();
     for i in 0..40 {
         write(&dir, &format!("f{i:02}.txt"), &format!("needle {i}\n"));

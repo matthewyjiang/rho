@@ -115,12 +115,8 @@ impl<S: WorkspaceSearch> Tool for SearchTool<S> {
                         let content = tokio::task::spawn_blocking({
                             let display = display.clone();
                             move || {
-                                search.run(
-                                    &root,
-                                    &display,
-                                    &request,
-                                    &(|| cancellation.is_cancelled()),
-                                )
+                                search
+                                    .run(&root, &display, &request, &|| cancellation.is_cancelled())
                             }
                         })
                         .await

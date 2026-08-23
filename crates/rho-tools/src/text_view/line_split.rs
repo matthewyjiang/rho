@@ -5,6 +5,8 @@
 //! empty file. Content visits match [`super::iter_content_lines`]: a trailing
 //! newline does not invent a blank line, and a trailing `\r` is stripped.
 
+use std::{io::Read, ops::ControlFlow};
+
 /// Optional per-`\n` digest collected while scanning.
 ///
 /// `push_line` sees the same segments as `split('\n')`, including the empty
@@ -116,4 +118,69 @@ impl<F: LineFingerprint> LineSplit<F> {
 pub(super) fn decode_content_line(bytes: &[u8]) -> Result<&str, ()> {
     let line = std::str::from_utf8(bytes).map_err(|_| ())?;
     Ok(line.strip_suffix('\r').unwrap_or(line))
+}
+
+/// Streaming content-line visit matching [`super::iter_content_lines`].
+///
+/// Fingerprints see every `\n` segment, including the empty last segment after
+/// a trailing newline. Content visits omit that phantom. Returns `None` when
+/// `max_bytes` is exceeded, a NUL appears in the first `sniff_bytes`, or the
+/// file is not UTF-8 text. `visit` may stop content visits with
+/// [`ControlFlow::Break`]; hashing still finishes when a fingerprint was
+/// supplied.
+pub(crate) fn read_searchable_lines<F: LineFingerprint>(
+    mut reader: impl Read,
+    fingerprint: Option<F>,
+    max_bytes: u64,
+    sniff_bytes: usize,
+    mut visit: impl FnMut(usize, &str) -> ControlFlow<()>,
+) -> Option<Option<String>> {
+    let need_hash = fingerprint.is_some();
+    let mut split = LineSplit::new(fingerprint);
+    let mut buf = [0_u8; 64 * 1024];
+    let mut sniff_remaining = sniff_bytes;
+    let mut visiting = true;
+    loop {
+        let n = reader.read(&mut buf).ok()?;
+        if n == 0 {
+            break;
+        }
+        let chunk = &buf[..n];
+        if sniff_remaining > 0 {
+            let sniff = &chunk[..sniff_remaining.min(chunk.len())];
+            if sniff.contains(&0) {
+                return None;
+            }
+            sniff_remaining = sniff_remaining.saturating_sub(sniff.len());
+        }
+        if split.bytes.saturating_add(n) as u64 > max_bytes {
+            return None;
+        }
+        split
+            .push(chunk, |line_number, line| {
+                if visiting {
+                    let decoded = decode_content_line(line)?;
+                    if visit(line_number, decoded).is_break() {
+                        visiting = false;
+                    }
+                }
+                Ok::<(), ()>(())
+            })
+            .ok()?;
+        if !visiting && !need_hash {
+            return Some(None);
+        }
+    }
+    let (hasher, _) = split
+        .finish(|line_number, line| {
+            if visiting {
+                let decoded = decode_content_line(line)?;
+                if visit(line_number, decoded).is_break() {
+                    visiting = false;
+                }
+            }
+            Ok::<(), ()>(())
+        })
+        .ok()?;
+    Some(hasher.map(LineFingerprint::finish))
 }

@@ -2,9 +2,7 @@
 //!
 //! This is the canonical workspace walker. The `grep` and `glob` tools and the
 //! TUI file picker all go through [`visit_files`] so ignore rules, symlink
-//! policy, and ordering stay identical everywhere. Callers that overlap
-//! per-file work (grep scans) keep this serial, name-sorted discovery and
-//! parallelize the visitor work themselves.
+//! policy, and ordering stay identical everywhere.
 //!
 //! **Symlink security:** walks never follow symbolic links
 //! (`WalkBuilder::follow_links(false)`). Only regular files are yielded. A

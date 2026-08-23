@@ -115,13 +115,12 @@ pub(crate) trait WorkspaceSearch: Clone + Send + Sync + 'static {
     fn root(request: &Self::Request) -> &str;
 
     /// Runs the search on a blocking thread. `display_root` is the root as it
-    /// should appear in output; `cancelled` is polled between files. Grep
-    /// overlaps per-file scans, so the poll must be `Send + Sync`.
+    /// should appear in output; `cancelled` is polled between files.
     fn run(
         &self,
         root: &Path,
         display_root: &str,
         request: &Self::Request,
-        cancelled: &(dyn Fn() -> bool + Send + Sync),
+        cancelled: &dyn Fn() -> bool,
     ) -> Result<String, ToolError>;
 }
