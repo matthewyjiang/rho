@@ -265,6 +265,9 @@ impl App {
                 return Err(error.into());
             }
         };
+        if agent.take_tool_list_changed() {
+            self.usage.cache_stats.note_tool_list_changed();
+        }
         self.turn.set_current_turn_start(Some(self.history.len()));
         self.reset_streams();
         self.turn.reasoning_phase_mut().begin_step();

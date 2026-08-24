@@ -40,7 +40,7 @@ use crate::{
             apply_conversation_switch, resolve_model_switch_reasoning, ConversationSwitch,
             SwitchNotice,
         },
-        interactive_runtime::startup::prompt_cache_key,
+        interactive_runtime::startup::{prompt_cache_key, session_options_for_id},
         session_assembly::BuiltSession,
     },
     compaction::CompactionConfig,
@@ -143,13 +143,8 @@ impl SessionHost {
         let cwd = validate_session_cwd(&request.cwd)?;
         ignore_host_mcp_servers(&request.mcp_servers);
         let sdk_id = rho_sdk::SessionId::new();
-        let cache_key = prompt_cache_key(sdk_id.as_str());
-        let built = build_session(startup, cwd, |_| {
-            Ok(SessionOptions::new()
-                .id(sdk_id.clone())
-                .prompt_cache_key(cache_key.clone()))
-        })
-        .await?;
+        let built =
+            build_session(startup, cwd, |_| Ok(session_options_for_id(sdk_id.clone()))).await?;
         let stored = match StoredSession::create_with_id(
             cwd,
             built.session.id().as_str(),

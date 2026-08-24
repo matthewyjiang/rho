@@ -78,6 +78,7 @@ impl InteractiveRuntime {
         self.mcp_report = self.tools.mcp_report().clone();
         let prompt_changed = self.refresh_startup_system_prompt()?;
         self.rebind_current_session().await?;
+        self.remember_tool_list();
         if prompt_changed {
             self.replace_history_system_prompt()?;
         } else if !instructions.is_empty() && !self.may_rewrite_startup_prompt {

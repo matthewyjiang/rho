@@ -360,6 +360,35 @@ fn tracker_counts_only_real_misses() {
     }
 }
 
+// Covers: a mid-session tool-list change is named as the miss cause.
+// Owner: tui cache-miss policy
+#[test]
+fn tool_list_change_is_named_as_the_cause() {
+    let t0 = Instant::now();
+    let mut tracker = CacheStatsTracker::default();
+    play(
+        &mut tracker,
+        t0,
+        &[Request::warm(0, SIGNIFICANT_MISS_TOKENS)],
+        None,
+    );
+    tracker.note_tool_list_changed();
+    play(
+        &mut tracker,
+        t0,
+        &[Request::next(2, SIGNIFICANT_MISS_TOKENS, 0)],
+        None,
+    );
+
+    assert_eq!(
+        tracker
+            .take_turn_notices()
+            .last()
+            .map(|notice| notice.cause),
+        Some(CacheMissCause::ToolListChanged)
+    );
+}
+
 // Covers: compaction rewrites the prefix, so the next request cannot be a miss,
 // while session totals survive.
 // Owner: tui cache-miss policy
@@ -436,6 +465,14 @@ fn notice_text_names_cause_and_optional_cost() {
             cause: CacheMissCause::ModelSwitch,
         }),
         "cache miss after model switch: 45.2K tokens re-billed (~$0.320)"
+    );
+    assert_eq!(
+        notice_text(&CacheMissNotice {
+            missed_tokens: 45_200,
+            extra_cost_usd_micros: Some(320_000),
+            cause: CacheMissCause::ToolListChanged,
+        }),
+        "cache miss after tool list change: 45.2K tokens re-billed (~$0.320)"
     );
     assert_eq!(
         notice_text(&CacheMissNotice {

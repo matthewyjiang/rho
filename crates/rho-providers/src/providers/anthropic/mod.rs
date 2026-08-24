@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use crate::{
     model::ModelIdentity,
     protocol::anthropic_messages::{
@@ -31,6 +33,10 @@ pub struct AnthropicProvider {
     /// Test-only thinking snapshot. Production resolves per request so a
     /// catalog hydrate that finishes after construction still applies.
     thinking_override: Option<thinking::ThinkingSource>,
+    /// First live `max_tokens` used to clamp a thinking budget. Later catalog
+    /// hydrates may raise the request `max_tokens`, but the budget stays put so
+    /// a hydrate cannot rewrite thinking params and bust the message cache.
+    thinking_budget_ceiling: OnceLock<u32>,
 }
 
 impl AnthropicProvider {
@@ -48,6 +54,7 @@ impl AnthropicProvider {
             model,
             max_tokens_override: Some(DEFAULT_MAX_TOKENS),
             thinking_override,
+            thinking_budget_ceiling: OnceLock::new(),
         }
     }
 
@@ -55,6 +62,11 @@ impl AnthropicProvider {
     pub(crate) fn with_thinking(mut self, thinking: thinking::ThinkingSource) -> Self {
         self.thinking_override = Some(thinking);
         self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_max_tokens_override(&mut self, tokens: u32) {
+        self.max_tokens_override = Some(tokens);
     }
 
     pub(crate) fn new_with_transport(
@@ -81,6 +93,7 @@ impl AnthropicProvider {
             model,
             max_tokens_override: None,
             thinking_override: None,
+            thinking_budget_ceiling: OnceLock::new(),
         }
     }
 
@@ -106,6 +119,13 @@ impl AnthropicProvider {
             .unwrap_or(DEFAULT_MAX_TOKENS)
     }
 
+    /// Ceiling used to clamp `budget_tokens`. Latched on the first request so a
+    /// later catalog hydrate can still raise `max_tokens` without rewriting the
+    /// thinking params that sit next to the cached message prefix.
+    fn thinking_budget_ceiling(&self, live_max_tokens: u32) -> u32 {
+        *self.thinking_budget_ceiling.get_or_init(|| live_max_tokens)
+    }
+
     fn request_body(
         &self,
         request: ModelRequest<'_>,
@@ -116,7 +136,7 @@ impl AnthropicProvider {
         let (thinking, output_config) = thinking::thinking_config_for(
             &self.thinking_source(),
             request.reasoning_level,
-            max_tokens,
+            self.thinking_budget_ceiling(max_tokens),
         )?;
         let (system, mut messages) = split_system_and_messages(
             request.messages,
@@ -222,16 +242,38 @@ fn provider_context_replay(thinking: Option<&AnthropicThinkingConfig>) -> Provid
 }
 
 fn mark_cache_control_points(messages: &mut [AnthropicMessage]) {
-    // Writes occur only at marked breakpoints. When the last user message has a
-    // trailing per-request suffix, mark the last shared cacheable block, not the
-    // suffix. A single cacheable block is marked as before.
-    for message in messages.iter_mut().rev() {
+    // Writes occur only at marked breakpoints. Anthropic looks ~20 content
+    // blocks upstream of each one, so a fat tool-result user turn can miss the
+    // previous write if only the tail is marked. Mark the last two shared
+    // cacheable user blocks (still 4 breakpoints with tools + system).
+    // A trailing user text block is the per-request suffix and stays unmarked.
+    let mut points = Vec::new();
+    for (message_index, message) in messages.iter().enumerate() {
         if message.role != AnthropicRole::User {
             continue;
         }
-        if mark_last_shared_user_breakpoint(&mut message.content) {
-            return;
+        for (block_index, block) in message.content.iter().enumerate() {
+            if is_cacheable_user_block(block) {
+                points.push((message_index, block_index));
+            }
         }
+    }
+    if let Some(&(message_index, block_index)) = points.last() {
+        let last_message_points = points
+            .iter()
+            .filter(|(index, _)| *index == message_index)
+            .count();
+        if last_message_points > 1
+            && is_user_text_block(&messages[message_index].content[block_index])
+        {
+            points.pop();
+        }
+    }
+    for &(message_index, block_index) in points.iter().rev().take(2) {
+        set_user_breakpoint(&mut messages[message_index].content[block_index]);
+    }
+    if !points.is_empty() {
+        return;
     }
 
     for message in messages.iter_mut().rev() {
@@ -250,33 +292,16 @@ fn mark_cache_control_points(messages: &mut [AnthropicMessage]) {
     }
 }
 
-fn mark_last_shared_user_breakpoint(content: &mut [AnthropicContentBlock]) -> bool {
-    let cacheable = content
-        .iter()
-        .enumerate()
-        .filter(|(_, block)| is_cacheable_user_block(block))
-        .map(|(index, _)| index)
-        .collect::<Vec<_>>();
-    let Some(&last) = cacheable.last() else {
-        return false;
-    };
-    // A trailing user text block is the per-request suffix. Tool-result tails stay
-    // marked so a multi-result user turn still writes the full prefix.
-    let index = if cacheable.len() > 1 && is_user_text_block(&content[last]) {
-        cacheable[cacheable.len() - 2]
-    } else {
-        last
-    };
-    match &mut content[index] {
+fn set_user_breakpoint(block: &mut AnthropicContentBlock) {
+    match block {
         AnthropicContentBlock::Text { cache_control, .. }
         | AnthropicContentBlock::ToolResult { cache_control, .. } => {
             *cache_control = Some(AnthropicCacheControl::ephemeral());
-            true
         }
         AnthropicContentBlock::Thinking { .. }
         | AnthropicContentBlock::RedactedThinking { .. }
         | AnthropicContentBlock::Image { .. }
-        | AnthropicContentBlock::ToolUse { .. } => false,
+        | AnthropicContentBlock::ToolUse { .. } => {}
     }
 }
 

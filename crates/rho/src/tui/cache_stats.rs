@@ -60,6 +60,7 @@ pub(super) struct CacheRebilled {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum CacheMissCause {
     ModelSwitch,
+    ToolListChanged,
     Idle(Duration),
     Unattributed,
 }
@@ -115,6 +116,9 @@ pub(super) struct CacheStatsTracker {
     reported_usage: Option<ModelUsage>,
     rebilled: CacheRebilled,
     turn_notices: Vec<CacheMissNotice>,
+    /// Sticky until the next sampled request. A mid-session tool-list change
+    /// busts the cached prefix even when the system prompt stays put.
+    tool_list_changed: bool,
 }
 
 impl CacheStatsTracker {
@@ -152,6 +156,8 @@ impl CacheStatsTracker {
                 &previous,
                 metadata,
             );
+        } else {
+            self.tool_list_changed = false;
         }
 
         self.previous = Some(CompletedRequest {
@@ -166,6 +172,12 @@ impl CacheStatsTracker {
     pub(super) fn prompt_prefix_reset(&mut self) {
         self.previous = None;
         self.reported_usage = None;
+        self.tool_list_changed = false;
+    }
+
+    /// The advertised tool list changed since the last sampled request.
+    pub(super) fn note_tool_list_changed(&mut self) {
+        self.tool_list_changed = true;
     }
 
     /// Clear everything. Matches `/clear`, tree checkout, and new session.
@@ -190,6 +202,7 @@ impl CacheStatsTracker {
         previous: &CompletedRequest,
         metadata: Option<&ModelMetadata>,
     ) {
+        let tool_list_changed = std::mem::take(&mut self.tool_list_changed);
         let cache_read = usage.cache_read_tokens.unwrap_or(0);
         // A shrunken prompt can only re-bill what it actually sent.
         let missed = previous
@@ -218,7 +231,7 @@ impl CacheStatsTracker {
             self.turn_notices.push(CacheMissNotice {
                 missed_tokens: missed,
                 extra_cost_usd_micros: extra_cost,
-                cause: miss_cause(model, started_at, previous),
+                cause: miss_cause(model, started_at, previous, tool_list_changed),
             });
         }
     }
@@ -238,9 +251,13 @@ fn miss_cause(
     model: &ModelKey,
     started_at: Instant,
     previous: &CompletedRequest,
+    tool_list_changed: bool,
 ) -> CacheMissCause {
     if model != &previous.model {
         return CacheMissCause::ModelSwitch;
+    }
+    if tool_list_changed {
+        return CacheMissCause::ToolListChanged;
     }
     let gap = started_at.saturating_duration_since(previous.completed_at);
     if gap >= PROVIDER_CACHE_TTL_HINT {
@@ -279,6 +296,7 @@ fn is_significant_miss(missed: u64, extra_cost: Option<u64>) -> bool {
 pub(super) fn notice_text(notice: &CacheMissNotice) -> String {
     let mut text = match notice.cause {
         CacheMissCause::ModelSwitch => "cache miss after model switch".to_string(),
+        CacheMissCause::ToolListChanged => "cache miss after tool list change".to_string(),
         CacheMissCause::Idle(gap) => format!(
             "cache miss after {}m idle (cache TTL is about {}m)",
             whole_minutes(gap),

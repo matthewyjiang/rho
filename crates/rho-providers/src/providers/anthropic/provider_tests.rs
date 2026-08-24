@@ -306,6 +306,94 @@ fn two_stage_request_body(
         .unwrap()
 }
 
+// Covers: a catalog hydrate that raises max_tokens must not rewrite the
+// thinking budget that sits next to the cached message prefix.
+// Owner: anthropic request body cache breakpoints
+#[test]
+fn thinking_budget_stays_latched_when_max_tokens_hydrates() {
+    let mut provider =
+        test_provider_with_capabilities("claude-sonnet-4-5", &enabled_capabilities());
+    let first = request_body(&provider, ReasoningLevel::Medium).unwrap();
+    provider.set_max_tokens_override(32_000);
+    let second = request_body(&provider, ReasoningLevel::Medium).unwrap();
+
+    assert_eq!(first.max_tokens, DEFAULT_MAX_TOKENS);
+    assert_eq!(second.max_tokens, 32_000);
+    assert_eq!(first.thinking, second.thinking);
+    assert_eq!(
+        first.thinking,
+        Some(AnthropicThinkingConfig::Enabled {
+            budget_tokens: DEFAULT_MAX_TOKENS - ANTHROPIC_ANSWER_RESERVE_TOKENS,
+        })
+    );
+}
+
+// Covers: two shared user breakpoints survive a fat tool-result turn, and a
+// trailing per-request text suffix stays unmarked.
+// Owner: anthropic request body cache breakpoints
+#[test]
+fn two_user_breakpoints_cover_a_multi_result_turn() {
+    let provider = test_provider_with_capabilities("claude-sonnet-4-5", &json!({}));
+    let marker = Some(AnthropicCacheControl::ephemeral());
+    let messages = [
+        Message::User(vec![ContentBlock::Text("first turn".into())]),
+        Message::Assistant(vec![ContentBlock::Text("ok".into())]),
+        Message::ToolResult(rho_sdk::model::ToolResult {
+            id: "toolu_1".into(),
+            ok: true,
+            content: "one".into(),
+        }),
+        Message::ToolResult(rho_sdk::model::ToolResult {
+            id: "toolu_2".into(),
+            ok: true,
+            content: "two".into(),
+        }),
+        Message::User(vec![ContentBlock::Text("suffix".into())]),
+    ];
+    let body = provider
+        .request_body(
+            ModelRequest {
+                messages: &messages,
+                tools: &[],
+                cancellation: Default::default(),
+                reasoning_level: ReasoningLevel::Off,
+                prompt_cache_key: None,
+            },
+            false,
+        )
+        .unwrap();
+
+    assert_eq!(body.messages.len(), 3);
+    assert_eq!(
+        body.messages[0].content,
+        [AnthropicContentBlock::Text {
+            text: "first turn".into(),
+            cache_control: None,
+        }]
+    );
+    assert_eq!(
+        body.messages[2].content,
+        [
+            AnthropicContentBlock::ToolResult {
+                tool_use_id: "toolu_1".into(),
+                content: "one".into(),
+                is_error: false,
+                cache_control: marker.clone(),
+            },
+            AnthropicContentBlock::ToolResult {
+                tool_use_id: "toolu_2".into(),
+                content: "two".into(),
+                is_error: false,
+                cache_control: marker,
+            },
+            AnthropicContentBlock::Text {
+                text: "suffix".into(),
+                cache_control: None,
+            },
+        ]
+    );
+}
+
 fn user_text_blocks(body: &AnthropicRequest) -> [(&str, Option<&AnthropicCacheControl>); 2] {
     match body.messages[0].content.as_slice() {
         [AnthropicContentBlock::Text {

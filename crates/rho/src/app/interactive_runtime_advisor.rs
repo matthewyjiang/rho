@@ -112,7 +112,10 @@ impl InteractiveRuntime {
                 // After `set_model`, so the enable notice names the model the
                 // tool will actually consult.
                 match self.append_advisor_switch_notice(registered) {
-                    Ok(display) => Ok(Some(display)),
+                    Ok(display) => {
+                        self.remember_tool_list();
+                        Ok(Some(display))
+                    }
                     Err(error) => {
                         // Mirror edit-tool: a notice failure must not leave the
                         // session advertising a tool list the model was never

@@ -40,7 +40,10 @@ impl InteractiveRuntime {
             return Err(error);
         }
         match self.append_edit_tool_switch_notice(previous, edit_tool) {
-            Ok(display) => Ok(Some(EditToolChange { previous, display })),
+            Ok(display) => {
+                self.remember_tool_list();
+                Ok(Some(EditToolChange { previous, display }))
+            }
             Err(error) => {
                 // Restore so a notice failure does not leave the session
                 // advertising a tool the model was never told about. Surface
