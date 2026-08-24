@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use ratatui::{
     layout::{Position, Rect},
     text::Line,
@@ -219,6 +221,7 @@ impl App {
         composer_lines: &[Line<'_>],
         composer_cursor: Position,
         chrome: InteractiveChrome,
+        now: Instant,
     ) -> ScreenLayout {
         let width = area.width as usize;
         let cursor_line = (composer_cursor.y as usize).min(composer_lines.len().saturating_sub(1));
@@ -288,7 +291,9 @@ impl App {
             width
         };
         let activity_width = activity_status
-            .map(|status| activity::activity_width(activity_available, status))
+            .map(|status| {
+                activity::activity_width(activity_available, status, self.turn.elapsed_at(now))
+            })
             .unwrap_or(0) as u16;
         let activity = (activity_width > 0 && history.height > 0)
             .then(|| Rect::new(history.x, activity_y, activity_width, 1));

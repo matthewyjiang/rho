@@ -61,7 +61,7 @@ enum CodeBlockCopyButton {
     Hidden,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct MarkdownCodeBlock {
     pub(super) top_line: usize,
     pub(super) copy_columns: std::ops::Range<usize>,

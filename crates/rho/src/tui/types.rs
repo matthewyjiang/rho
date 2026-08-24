@@ -429,13 +429,52 @@ impl ToolEntry {
 #[derive(Clone, Debug)]
 pub(super) enum Entry {
     User(String),
-    Assistant(String),
+    Assistant(AssistantEntry),
     Reasoning(ReasoningEntry),
     Tool(ToolEntry),
     Notice(String),
     RuntimeInfo(Box<info_command::RuntimeInfo>),
     Changelog(Box<crate::changelog::ChangelogDisplay>),
     Error(String),
+}
+
+/// Streamed assistant text plus optional post-turn duration receipt.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct AssistantEntry {
+    pub(in crate::tui) text: String,
+    pub(in crate::tui) worked_for: Option<Duration>,
+}
+
+impl AssistantEntry {
+    pub(super) fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            worked_for: None,
+        }
+    }
+
+    pub(super) fn summary_only(worked_for: Duration) -> Self {
+        Self {
+            text: String::new(),
+            worked_for: Some(worked_for),
+        }
+    }
+
+    pub(super) fn push_str(&mut self, text: &str) {
+        self.text.push_str(text);
+    }
+}
+
+impl From<&str> for AssistantEntry {
+    fn from(text: &str) -> Self {
+        Self::new(text)
+    }
+}
+
+impl From<String> for AssistantEntry {
+    fn from(text: String) -> Self {
+        Self::new(text)
+    }
 }
 
 /// Streamed reasoning text plus optional post-phase thought duration.
@@ -508,7 +547,7 @@ impl StreamKind {
 
     pub(super) fn entry(self, text: String) -> Entry {
         match self {
-            Self::Assistant => Entry::Assistant(text),
+            Self::Assistant => Entry::Assistant(text.into()),
             Self::Reasoning => Entry::Reasoning(ReasoningEntry::new(text)),
         }
     }

@@ -568,6 +568,8 @@ impl App {
         if let Some(context) = agent.take_context_usage() {
             self.handle_queued_agent_event(ViewModelEvent::ContextUsage(context), terminal)?;
         }
+        // Capture before `stop_loading` clears the turn clock.
+        let turn_elapsed = self.turn.elapsed_at(Instant::now());
         let outcome = match result {
             _ if inline_shell_error.is_some() => {
                 let outcome = self.finalize_failed_turn(
@@ -587,6 +589,9 @@ impl App {
                 self.finish_streams();
                 self.insert_final_answer_suffix(outcome.text());
                 self.insert_assistant_images(outcome.content());
+                if let Some(elapsed) = turn_elapsed {
+                    self.attach_turn_worked(elapsed);
+                }
                 if failed_turn.generate_session_title_after_completion {
                     self.start_session_title_generation(
                         &failed_turn.session_title_user_message(),
@@ -697,6 +702,32 @@ impl App {
         })
         .await?;
         Ok((call_id, request_id, reply_rx))
+    }
+
+    fn attach_turn_worked(&mut self, elapsed: Duration) {
+        let start = self.turn.current_turn_start().unwrap_or(0);
+        if let Some(index) =
+            self.history
+                .entries()
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(index, entry)| match entry {
+                    Entry::Assistant(assistant)
+                        if index >= start && assistant.worked_for.is_none() =>
+                    {
+                        Some(index)
+                    }
+                    _ => None,
+                })
+        {
+            if let Entry::Assistant(assistant) = &mut self.history.entries_mut()[index] {
+                assistant.worked_for = Some(elapsed);
+            }
+            self.history.lines_mut().invalidate_from(index);
+            return;
+        }
+        self.insert_entry(&Entry::Assistant(AssistantEntry::summary_only(elapsed)));
     }
 
     fn finalize_failed_turn(

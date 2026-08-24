@@ -102,7 +102,7 @@ pub(super) fn transcript_entries_from_messages(
             Message::Assistant(blocks) => {
                 let text = text_blocks(blocks);
                 if !text.is_empty() {
-                    entries.push(Entry::Assistant(text));
+                    entries.push(Entry::Assistant(text.into()));
                 }
                 push_generated_image_entries(&mut entries, blocks);
                 pending_tools.extend(blocks.iter().filter_map(|block| match block {
@@ -114,7 +114,7 @@ pub(super) fn transcript_entries_from_messages(
                 let blocks = &message.content;
                 let text = text_blocks(blocks);
                 if !text.is_empty() {
-                    entries.push(Entry::Assistant(text));
+                    entries.push(Entry::Assistant(text.into()));
                 }
                 push_generated_image_entries(&mut entries, blocks);
                 pending_tools.extend(blocks.iter().filter_map(|block| match block {
@@ -125,7 +125,7 @@ pub(super) fn transcript_entries_from_messages(
             Message::AbortedAssistant(message) => {
                 let text = text_blocks(&message.content);
                 if !text.is_empty() {
-                    entries.push(Entry::Assistant(text));
+                    entries.push(Entry::Assistant(text.into()));
                 }
                 push_generated_image_entries(&mut entries, &message.content);
                 if let Some(tool_call) = message.tool_calls.last() {

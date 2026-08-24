@@ -95,7 +95,9 @@ pub(super) fn status_fallback_items(
                 .filter(|text| !text.is_empty())
         });
         if let Some(text) = fallback {
-            items.push(HistoryItem::Ephemeral(Entry::Assistant(text.to_string())));
+            items.push(HistoryItem::Ephemeral(Entry::Assistant(
+                text.to_string().into(),
+            )));
         }
     }
     if let Some(error) = status.and_then(|status| status.error.as_deref()) {

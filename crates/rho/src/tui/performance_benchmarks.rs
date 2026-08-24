@@ -103,11 +103,14 @@ fn run_render_hot_path_benchmarks() {
     let full_rebuild_timing = measure(samples, || {
         app.history.invalidate_from(0);
         let area = ratatui::layout::Rect::new(0, 0, TERMINAL_WIDTH, TERMINAL_HEIGHT);
-        black_box(app.frame_context(area).history_len)
+        black_box(app.frame_context(area, Instant::now()).history_len)
     });
 
-    let assistant_stream =
-        stream_commit_measurements(Entry::Assistant, "assistant", &mut check_failures);
+    let assistant_stream = stream_commit_measurements(
+        |chunk| Entry::Assistant(chunk.into()),
+        "assistant",
+        &mut check_failures,
+    );
     let reasoning_stream = stream_commit_measurements(
         |chunk| Entry::Reasoning(ReasoningEntry::new(chunk)),
         "reasoning",
@@ -172,10 +175,10 @@ fn stream_commit_measurements(
         let started = Instant::now();
         let mut app = test_app();
         let area = ratatui::layout::Rect::new(0, 0, TERMINAL_WIDTH, TERMINAL_HEIGHT);
-        black_box(app.frame_context(area).history_len);
+        black_box(app.frame_context(area, Instant::now()).history_len);
         for index in 0..commit_count {
             app.push_transcript_entry(entry(stream_chunk(index)));
-            black_box(app.frame_context(area).history_len);
+            black_box(app.frame_context(area, Instant::now()).history_len);
         }
         let elapsed = started.elapsed().as_nanos() as u64;
         if let Some((prev_count, prev_elapsed)) = previous {
@@ -216,7 +219,7 @@ fn transcript_fixture(entry_count: usize) -> (App, Terminal<TestBackend>) {
             0 => Entry::User(format!(
                 "user prompt {index}: please look at module {index}"
             )),
-            1 => Entry::Assistant(assistant_markdown(index)),
+            1 => Entry::Assistant(assistant_markdown(index).into()),
             2 => bench_tool_entry(index),
             _ => Entry::Reasoning(ReasoningEntry::new(format!(
                 "considering approach {index} against the alternatives before answering"

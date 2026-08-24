@@ -353,10 +353,10 @@ impl super::App {
                 .enumerate()
                 .skip(dirty_from)
                 .filter_map(|(index, entry)| {
-                    let Entry::Assistant(text) = entry else {
+                    let Entry::Assistant(assistant) = entry else {
                         return None;
                     };
-                    let sources = collect_markdown_image_sources(text);
+                    let sources = collect_markdown_image_sources(&assistant.text);
                     if sources.is_empty() {
                         None
                     } else {

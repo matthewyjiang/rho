@@ -221,13 +221,58 @@ fn failed_turn_keeps_live_partial_assistant_text_before_error() {
     assert_eq!(outcome.kind(), TurnOutcomeKind::Failed);
     assert!(matches!(
         app.history.entries(),
-        [Entry::Assistant(text), Entry::Error(error)]
-            if text == "partial assistant before stream failure"
+        [Entry::Assistant(assistant), Entry::Error(error)]
+            if assistant.text == "partial assistant before stream failure"
                 && error == "provider stream failed"
     ));
     assert!(!app.is_ui_busy());
     assert!(app.streams.assistant_stream.is_empty());
     assert_eq!(app.status(), "error");
+}
+
+// Covers: a completed turn stamps duration on this turn's assistant row, not
+// an earlier reply or a later notice.
+// Owner: pure unit (turn receipt attachment)
+#[test]
+fn attach_turn_worked_stamps_current_turn_assistant() {
+    let mut app = test_app();
+    app.push_transcript_entry(Entry::Assistant("previous".into()));
+    app.push_transcript_entry(Entry::User("prompt".into()));
+    app.turn.set_current_turn_start(Some(app.history.len()));
+    app.push_transcript_entry(Entry::Assistant("answer".into()));
+    app.push_transcript_entry(Entry::Notice("after".into()));
+
+    app.attach_turn_worked(Duration::from_secs(15));
+
+    assert!(matches!(
+        app.history.entries(),
+        [
+            Entry::Assistant(previous),
+            Entry::User(_),
+            Entry::Assistant(answer),
+            Entry::Notice(_)
+        ] if previous.worked_for.is_none()
+            && answer.text == "answer"
+            && answer.worked_for == Some(Duration::from_secs(15))
+    ));
+}
+
+// Covers: a completed tool-only turn still gets a duration receipt.
+// Owner: pure unit (turn receipt attachment)
+#[test]
+fn attach_turn_worked_inserts_summary_when_turn_has_no_assistant() {
+    let mut app = test_app();
+    app.push_transcript_entry(Entry::User("prompt".into()));
+    app.turn.set_current_turn_start(Some(app.history.len()));
+
+    app.attach_turn_worked(Duration::from_millis(1_500));
+
+    assert!(matches!(
+        app.history.entries(),
+        [Entry::User(_), Entry::Assistant(assistant)]
+            if assistant.text.is_empty()
+                && assistant.worked_for == Some(Duration::from_millis(1_500))
+    ));
 }
 
 // Covers: idle completion batches stay restorable only until provider start

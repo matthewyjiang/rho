@@ -178,7 +178,9 @@ impl App {
 
 fn last_assistant_text(entries: &[Entry]) -> Option<&str> {
     entries.iter().rev().find_map(|entry| match entry {
-        Entry::Assistant(text) if !text.trim().is_empty() => Some(text.as_str()),
+        Entry::Assistant(assistant) if !assistant.text.trim().is_empty() => {
+            Some(assistant.text.as_str())
+        }
         _ => None,
     })
 }

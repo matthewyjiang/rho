@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use super::*;
 
 // Covers: stacked rail rows share one column layout for identity / activity / elapsed.
@@ -134,4 +136,46 @@ fn jump_to_bottom_attention_compact_labels_fit_where_neutral_does() {
             "{full:?} compact label {compact:?} is wider than neutral's {neutral_compact:?}"
         );
     }
+}
+
+// Covers: live elapsed trails the widest status label and drops before the
+// status ladder degrades.
+// Owner: pure unit (activity label assembly)
+#[test]
+fn activity_label_trails_elapsed_then_drops_it() {
+    let spinner = LoadingSpinner::FRAMES[0];
+    let parent = ActivityStatus::Parent {
+        phase: ActivityPhase::Responding,
+        retry: None,
+    };
+    let with_agents = ActivityStatus::ParentWithSubagents {
+        phase: ActivityPhase::Responding,
+        retry: None,
+        subagent_count: 2,
+    };
+    let agents_only = ActivityStatus::Subagents(2);
+
+    let parent_timed = format!("{spinner} responding · 15s");
+    let parent_plain = format!("{spinner} responding");
+    let agents_timed = format!("{spinner} responding  ·  2 agents · 15s");
+    let agents_plain = format!("{spinner} responding  ·  2 agents");
+    let only_timed = format!("{spinner} 2 agents working · 15s");
+    let elapsed = Some(Duration::from_secs(15));
+
+    assert_eq!(activity_label(80, parent, elapsed), parent_timed);
+    assert_eq!(
+        activity_label(display_width(&parent_plain), parent, elapsed),
+        parent_plain
+    );
+    assert_eq!(
+        activity_width(80, parent, elapsed),
+        display_width(&parent_timed)
+    );
+    assert_eq!(activity_label(80, with_agents, elapsed), agents_timed);
+    assert_eq!(
+        activity_label(display_width(&agents_plain), with_agents, elapsed),
+        agents_plain
+    );
+    assert_eq!(activity_label(80, agents_only, elapsed), only_timed);
+    assert_eq!(activity_label(80, parent, None), parent_plain);
 }

@@ -11,7 +11,7 @@ use ratatui::text::Line;
 use rho_providers::credentials::{
     save_provider_api_key, CredentialError, CredentialResult, MemoryCredentialStore,
 };
-use std::sync::atomic::AtomicBool;
+use std::{sync::atomic::AtomicBool, time::Instant};
 
 #[path = "tests/activity_phase_tests.rs"]
 mod activity_phase_tests;
@@ -166,7 +166,7 @@ fn minimum_terminal_layout_keeps_composer_visible() {
     let width = area.width as usize;
     let composer = app.composer_frame(width, area.height as usize);
     assert!(!composer.lines.is_empty());
-    let ctx = app.frame_context(area);
+    let ctx = app.frame_context(area, Instant::now());
     let layout = ctx.layout;
     assert!(
         layout.composer.height >= 1,
@@ -392,7 +392,7 @@ fn recovered_session_messages_become_transcript_entries() {
     );
 
     assert!(matches!(entries[0], Entry::User(ref text) if text == "hello\n[image: image/png 3 B]"));
-    assert!(matches!(entries[1], Entry::Assistant(ref text) if text == "hi"));
+    assert!(matches!(entries[1], Entry::Assistant(ref assistant) if assistant.text == "hi"));
     assert!(matches!(
         entries[2],
         Entry::Tool(ToolEntry {
@@ -531,7 +531,7 @@ fn final_answer_mismatch_replaces_transcript_without_duplicating_entry() {
 
     assert!(matches!(
         app.history.entries(),
-        [Entry::Assistant(text)] if text == "final"
+        [Entry::Assistant(assistant)] if assistant.text == "final"
     ));
 }
 
@@ -544,7 +544,7 @@ fn final_answer_mismatch_replaces_transcript_with_empty_answer() {
 
     assert!(matches!(
         app.history.entries(),
-        [Entry::Assistant(text)] if text.is_empty()
+        [Entry::Assistant(assistant)] if assistant.text.is_empty()
     ));
 }
 
@@ -561,7 +561,7 @@ fn final_answer_mismatch_replaces_interleaved_current_turn_assistant_fragments()
 
     assert!(matches!(
         app.history.entries(),
-        [Entry::User(_), Entry::Assistant(text), Entry::Reasoning(_)] if text == "goodbye"
+        [Entry::User(_), Entry::Assistant(assistant), Entry::Reasoning(_)] if assistant.text == "goodbye"
     ));
 }
 

@@ -562,7 +562,7 @@ fn empty_model_picker_during_turn_does_not_split_a_live_stream() {
             matches!(
                 app.history.entries(),
                 [Entry::Assistant(assistant), Entry::Notice(notice)]
-                    if assistant == "held assistant tail" && !notice.is_empty()
+                    if assistant.text == "held assistant tail" && !notice.is_empty()
             ),
             "notice must follow the flushed assistant row, not split it: {:?}",
             app.history.entries()

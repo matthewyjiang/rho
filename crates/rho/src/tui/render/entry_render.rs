@@ -54,8 +54,21 @@ pub(in crate::tui) fn render_entry_with_options(
 ) -> RenderedEntry {
     let inner_width = padded_content_width(width);
     let (mut lines, code_blocks, image_sources, image_rows) = match entry {
-        Entry::Assistant(text) => {
-            let rendered = render_assistant_content(text, width);
+        Entry::Assistant(assistant) => {
+            let mut rendered = if assistant.text.is_empty() {
+                RenderedEntry::default()
+            } else {
+                render_assistant_content(&assistant.text, width)
+            };
+            if let Some(elapsed) = assistant.worked_for {
+                push_wrapped_text(
+                    &mut rendered.lines,
+                    &crate::tui::reasoning_phase::worked_summary(elapsed),
+                    inner_width,
+                    Theme::dim().add_modifier(Modifier::DIM),
+                    LineFill::Natural,
+                );
+            }
             (
                 rendered.lines,
                 rendered.code_blocks,

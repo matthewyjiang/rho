@@ -222,7 +222,7 @@ fn already_applied_retraction_inserts_the_user_message() {
     assert!(matches!(
         app.history.entries(),
         [Entry::Assistant(assistant), Entry::User(text)]
-            if assistant == "held assistant tail" && text == "keep me"
+            if assistant.text == "held assistant tail" && text == "keep me"
     ));
     assert_eq!(
         app.status(),
