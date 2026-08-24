@@ -173,6 +173,7 @@ pub(super) async fn initialize(
         storage.is_none() && !matches!(system_prompt, rho_sdk::SystemPrompt::None);
     let pending_catalog_names = may_rewrite_startup_prompt
         .then(|| tokio::spawn(async { rho_providers::model::ensure_model_catalog_names().await }));
+    let cached_tool_specs = tools.specs();
     Ok(InteractiveRuntime {
         runtime,
         hooks,
@@ -210,6 +211,8 @@ pub(super) async fn initialize(
         pending_persistence_error: None,
         pending_persistence_checkpoint: None,
         live_context_warm: false,
+        cached_tool_specs,
+        tool_list_changed: false,
         completed_runs: 0,
     })
 }
@@ -297,10 +300,7 @@ pub(super) fn resolve_session_options(
         Some(id) => SessionId::from_string(id)?,
         None => SessionId::new(),
     };
-    Ok(SessionOptions::new()
-        .history(history)
-        .id(id.clone())
-        .prompt_cache_key(prompt_cache_key(id.as_str())))
+    Ok(session_options_for_id(id).history(history))
 }
 
 pub(in crate::app) struct ApprovalChannelOptions {
@@ -380,6 +380,16 @@ pub(in crate::app) fn approval_channel_for(
 pub(in crate::app) fn prompt_cache_key(id: &str) -> String {
     rho_providers::providers::openai::prompt_cache_key_from_session_id(id)
         .unwrap_or_else(|| format!("rho:{id}"))
+}
+
+/// New session options with a stable prompt-cache key derived from the id.
+pub(in crate::app) fn session_options_for_id(id: SessionId) -> SessionOptions {
+    let key = prompt_cache_key(id.as_str());
+    SessionOptions::new().id(id).prompt_cache_key(key)
+}
+
+pub(in crate::app) fn fresh_session_options() -> SessionOptions {
+    session_options_for_id(SessionId::new())
 }
 
 pub(super) fn resume_omissions_report(

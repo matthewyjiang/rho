@@ -15,6 +15,8 @@ use {
 
 #[path = "interactive_runtime_advisor.rs"]
 mod advisor;
+#[path = "interactive_runtime_cache.rs"]
+mod cache;
 #[path = "interactive_runtime_compact.rs"]
 mod compact;
 #[path = "interactive_runtime_edit_tool.rs"]
@@ -108,6 +110,11 @@ pub(crate) struct InteractiveRuntime {
     pending_persistence_checkpoint: Option<(StoredSession, rho_sdk::SessionSnapshot)>,
     /// True after the current provider completes a live turn on the current history.
     live_context_warm: bool,
+    /// Advertised tool specs last submitted on a provider request.
+    cached_tool_specs: Vec<rho_sdk::model::ToolSpec>,
+    /// Sticky until the TUI samples it: the tool list now differs from the last
+    /// submitted request. Restoring the previous list clears it.
+    tool_list_changed: bool,
     /// Runs that reached a terminal outcome, reported at the session boundary.
     completed_runs: u64,
 }

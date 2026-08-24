@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use rho_sdk::{SessionOptions, UserInput};
+use rho_sdk::UserInput;
 
 use {
     crate::agent::PERMISSION_CLASSIFIER_AGENT_ID,
@@ -506,7 +506,7 @@ async fn run_session_with_output(
                 receiver: None,
             })
         },
-        session_options: |_| Ok(SessionOptions::default()),
+        session_options: |_| Ok(crate::app::interactive_runtime::startup::fresh_session_options()),
     })
     .await?;
     let session = &built.session;

@@ -306,6 +306,140 @@ fn two_stage_request_body(
         .unwrap()
 }
 
+// Covers: a catalog hydrate that raises max_tokens must not rewrite the
+// thinking budget that sits next to the cached message prefix.
+// Owner: anthropic request body cache breakpoints
+#[test]
+fn thinking_budget_stays_latched_when_max_tokens_hydrates() {
+    let mut provider =
+        test_provider_with_capabilities("claude-sonnet-4-5", &enabled_capabilities());
+    let first = request_body(&provider, ReasoningLevel::Medium).unwrap();
+    provider.set_max_tokens_override(32_000);
+    let second = request_body(&provider, ReasoningLevel::Medium).unwrap();
+
+    assert_eq!(first.max_tokens, DEFAULT_MAX_TOKENS);
+    assert_eq!(second.max_tokens, 32_000);
+    assert_eq!(first.thinking, second.thinking);
+    assert_eq!(
+        first.thinking,
+        Some(AnthropicThinkingConfig::Enabled {
+            budget_tokens: DEFAULT_MAX_TOKENS - ANTHROPIC_ANSWER_RESERVE_TOKENS,
+        })
+    );
+}
+
+// Covers: the prior user write and the new tail are both marked; a trailing
+// per-request text suffix stays unmarked.
+// Owner: anthropic request body cache breakpoints
+#[test]
+fn two_user_breakpoints_cover_a_multi_result_turn() {
+    let body = tool_result_request_body(2);
+    let marker = Some(AnthropicCacheControl::ephemeral());
+
+    assert_eq!(body.messages.len(), 3);
+    assert_eq!(
+        body.messages[0].content,
+        [AnthropicContentBlock::Text {
+            text: "first turn".into(),
+            cache_control: marker.clone(),
+        }]
+    );
+    assert_eq!(
+        body.messages[2].content,
+        [
+            AnthropicContentBlock::ToolResult {
+                tool_use_id: "toolu_1".into(),
+                content: "1".into(),
+                is_error: false,
+                cache_control: None,
+            },
+            AnthropicContentBlock::ToolResult {
+                tool_use_id: "toolu_2".into(),
+                content: "2".into(),
+                is_error: false,
+                cache_control: marker,
+            },
+            AnthropicContentBlock::Text {
+                text: "suffix".into(),
+                cache_control: None,
+            },
+        ]
+    );
+}
+
+// Covers: 20 new tool-result blocks must not leave the prior write outside
+// every lookback window.
+// Owner: anthropic request body cache breakpoints
+#[test]
+fn prior_write_stays_in_lookback_after_twenty_new_blocks() {
+    const NEW_BLOCKS: usize = 20;
+    let body = tool_result_request_body(NEW_BLOCKS);
+    let marker = Some(AnthropicCacheControl::ephemeral());
+    let last = body.messages.last().expect("tool-result user turn");
+
+    assert_eq!(
+        body.messages[0].content,
+        [AnthropicContentBlock::Text {
+            text: "first turn".into(),
+            cache_control: marker.clone(),
+        }]
+    );
+    assert_eq!(last.content.len(), NEW_BLOCKS + 1);
+    assert_eq!(
+        last.content[0],
+        AnthropicContentBlock::ToolResult {
+            tool_use_id: "toolu_1".into(),
+            content: "1".into(),
+            is_error: false,
+            cache_control: None,
+        }
+    );
+    assert_eq!(
+        last.content[NEW_BLOCKS - 1],
+        AnthropicContentBlock::ToolResult {
+            tool_use_id: format!("toolu_{NEW_BLOCKS}"),
+            content: NEW_BLOCKS.to_string(),
+            is_error: false,
+            cache_control: marker,
+        }
+    );
+    assert_eq!(
+        last.content[NEW_BLOCKS],
+        AnthropicContentBlock::Text {
+            text: "suffix".into(),
+            cache_control: None,
+        }
+    );
+}
+
+fn tool_result_request_body(tool_results: usize) -> AnthropicRequest {
+    let provider = test_provider_with_capabilities("claude-sonnet-4-5", &json!({}));
+    let mut messages = vec![
+        Message::User(vec![ContentBlock::Text("first turn".into())]),
+        Message::Assistant(vec![ContentBlock::Text("ok".into())]),
+    ];
+    messages.extend((1..=tool_results).map(|index| {
+        Message::ToolResult(rho_sdk::model::ToolResult {
+            id: format!("toolu_{index}"),
+            ok: true,
+            content: index.to_string(),
+        })
+    }));
+    messages.push(Message::User(vec![ContentBlock::Text("suffix".into())]));
+    provider
+        .request_body(
+            ModelRequest {
+                messages: &messages,
+                tools: &[],
+                cancellation: Default::default(),
+                reasoning_level: ReasoningLevel::Off,
+                prompt_cache_key: None,
+            },
+            false,
+        )
+        .unwrap()
+}
+
 fn user_text_blocks(body: &AnthropicRequest) -> [(&str, Option<&AnthropicCacheControl>); 2] {
     match body.messages[0].content.as_slice() {
         [AnthropicContentBlock::Text {

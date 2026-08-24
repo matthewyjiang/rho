@@ -231,6 +231,26 @@ async fn replace_provider_notice_failure_keeps_previous_provider() {
     assert_eq!(interactive.history(), history_before);
 }
 
+// Covers: a new session seeds a prompt-cache key from its id so OpenAI
+// compatible hosts keep routing affinity across turns.
+// Owner: interactive runtime session options
+#[tokio::test]
+async fn fresh_session_options_seed_a_prompt_cache_key() {
+    let options = super::startup::fresh_session_options();
+    let provider = Arc::new(ScriptedProvider::new(
+        ModelIdentity::new("test", "test", "test"),
+        Vec::new(),
+    ));
+    let runtime = rho_sdk::Rho::builder()
+        .provider_shared(provider)
+        .compactor(PendingCompactor)
+        .build()
+        .unwrap();
+    let snapshot = runtime.session(options).await.unwrap().snapshot();
+    let expected = super::startup::prompt_cache_key(snapshot.session_id().as_str());
+    assert_eq!(snapshot.prompt_cache_key(), Some(expected.as_str()));
+}
+
 async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime {
     let provider = Arc::new(ScriptedProvider::new(
         ModelIdentity::new("test", "test", "test"),
@@ -245,6 +265,7 @@ async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime {
         .build()
         .unwrap();
     let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let cached_tool_specs = tools.specs();
     InteractiveRuntime {
         runtime,
         hooks: None,
@@ -283,6 +304,8 @@ async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime {
         experimental_workspace_rewind: false,
         session_writes: Default::default(),
         live_context_warm: false,
+        cached_tool_specs,
+        tool_list_changed: false,
     }
 }
 
@@ -332,6 +355,7 @@ async fn permission_mode_runtime() -> InteractiveRuntime {
             /*catalog*/ None,
         )),
     );
+    interactive.cached_tool_specs = interactive.tools.specs();
     interactive
 }
 
@@ -921,6 +945,7 @@ async fn advisor_test_runtime() -> InteractiveRuntime {
         ))
         .advisor(crate::tools::advisor::AdvisorSessionStore::new()),
     );
+    interactive.cached_tool_specs = interactive.tools.specs();
     interactive
 }
 
@@ -977,6 +1002,7 @@ async fn advisor_mode_changes_the_tool_list_without_replacing_the_session() {
     assert!(enabled_text.contains("[advisor mode on]"));
     assert!(enabled_text.contains("input_schema:"));
     assert!(enabled_text.contains("`advisor`"));
+    assert!(interactive.take_tool_list_changed());
 
     let disabled = interactive.set_advisor(None).await.unwrap();
     assert_eq!(disabled.as_deref(), Some("advisor mode off"));
@@ -1002,6 +1028,22 @@ async fn advisor_mode_changes_the_tool_list_without_replacing_the_session() {
         .collect::<String>();
     assert!(disabled_text.contains("[advisor mode off]"));
     assert!(disabled_text.contains("no longer available"));
+    assert!(interactive.take_tool_list_changed());
+}
+
+// Covers: enabling then disabling advisor before the next request must not
+// report a tool-list cache miss against the last submitted specs.
+// Owner: interactive runtime tool-list cache tracking
+#[tokio::test]
+async fn restoring_the_tool_list_clears_the_cache_miss_flag() {
+    let mut interactive = advisor_test_runtime().await;
+    interactive
+        .set_advisor(Some(advisor_model()))
+        .await
+        .unwrap();
+    interactive.set_advisor(None).await.unwrap();
+    assert!(!interactive.take_tool_list_changed());
+    interactive.shutdown().await;
 }
 
 // Covers: append-success / snapshot-save-failure after a successful rebuild must
@@ -1104,6 +1146,7 @@ pub(super) async fn edit_tool_runtime(edit_tool: crate::config::EditTool) -> Int
                 .collect(),
         )),
     );
+    interactive.cached_tool_specs = interactive.tools.specs();
     interactive
 }
 
@@ -1161,6 +1204,7 @@ async fn edit_tool_switch_rebuilds_tools_and_appends_schema_notice() {
     assert!(text.contains("`str_replace`"));
     assert!(text.contains("input_schema:"));
     assert!(!text.contains("restart"));
+    assert!(interactive.take_tool_list_changed());
 }
 
 // Covers: the enable notice names the reviewer, and swapping the advisor model
