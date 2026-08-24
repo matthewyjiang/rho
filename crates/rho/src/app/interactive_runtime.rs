@@ -15,6 +15,8 @@ use {
 
 #[path = "interactive_runtime_advisor.rs"]
 mod advisor;
+#[path = "interactive_runtime_cache.rs"]
+mod cache;
 #[path = "interactive_runtime_compact.rs"]
 mod compact;
 #[path = "interactive_runtime_edit_tool.rs"]
