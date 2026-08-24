@@ -222,7 +222,7 @@ fn pack_prefers_model_over_cost_and_context() {
     // Width fits permission + model + cost, but not also context-or-provider noise.
     // cost+perm+model = 6+1+4+3+7 = 21. Force a width where cost and model fight:
     // perm+model = 14, cost+perm = 11, cost+perm+model = 21.
-    // At width 15 only perm+model should survive (cost rank 4 < model rank 6).
+    // At width 15 only perm+model should survive (cost rank 5 < model rank 7).
     assert_eq!(
         packed_keys(&statusline.state, 15),
         vec![FieldKey::Permission, FieldKey::Model]
