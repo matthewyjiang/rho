@@ -39,6 +39,7 @@ pub(super) struct StatusLineState {
     provider: String,
     model: String,
     fast_mode_active: bool,
+    zen_mode: bool,
     reasoning: ReasoningLevel,
     reasoning_configurable: bool,
     permission_mode: PermissionMode,
@@ -84,6 +85,7 @@ impl Default for StatusLineState {
             provider: String::new(),
             model: String::new(),
             fast_mode_active: false,
+            zen_mode: false,
             reasoning: ReasoningLevel::default(),
             reasoning_configurable: true,
             permission_mode: PermissionMode::default(),
@@ -105,6 +107,7 @@ impl StatusLineState {
             provider: info.provider.clone(),
             model: info.model.clone(),
             fast_mode_active: info.fast_mode_active(),
+            zen_mode: info.zen_mode,
             reasoning: info.reasoning,
             reasoning_configurable: reasoning_is_configurable(&info.provider, &info.model),
             permission_mode: info.permission_mode,
@@ -138,6 +141,7 @@ impl StatusLine {
         if self.state.provider != info.provider
             || self.state.model != info.model
             || self.state.fast_mode_active != fast_mode_active
+            || self.state.zen_mode != info.zen_mode
             || self.state.reasoning != info.reasoning
             || self.state.reasoning_configurable != reasoning_configurable
             || self.state.permission_mode != info.permission_mode
@@ -145,6 +149,7 @@ impl StatusLine {
             self.state.provider.clone_from(&info.provider);
             self.state.model.clone_from(&info.model);
             self.state.fast_mode_active = fast_mode_active;
+            self.state.zen_mode = info.zen_mode;
             self.state.reasoning = info.reasoning;
             self.state.reasoning_configurable = reasoning_configurable;
             self.state.permission_mode = info.permission_mode;
@@ -254,14 +259,15 @@ const CONTEXT_CRITICAL_PERCENT: f64 = 90.0;
 // Drop ranks for the bottom row. Lower values drop first when width is scarce.
 const RANK_REASONING: u8 = 1;
 const RANK_RATE: u8 = 2;
-const RANK_PROVIDER: u8 = 3;
-const RANK_COST: u8 = 4;
-const RANK_CONTEXT: u8 = 5;
-const RANK_MODEL: u8 = 6;
-const RANK_LOGIN_HINT: u8 = 6;
-const RANK_PERMISSION: u8 = 7;
+const RANK_ZEN: u8 = 3;
+const RANK_PROVIDER: u8 = 4;
+const RANK_COST: u8 = 5;
+const RANK_CONTEXT: u8 = 6;
+const RANK_MODEL: u8 = 7;
+const RANK_LOGIN_HINT: u8 = 7;
+const RANK_PERMISSION: u8 = 8;
 /// Signed-out copy outranks permission so the row still names the fix.
-const RANK_SIGNED_OUT: u8 = 8;
+const RANK_SIGNED_OUT: u8 = 9;
 
 /// Identity keys used by pack tests and paint order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -270,6 +276,7 @@ enum FieldKey {
     Cost,
     Rate,
     Permission,
+    Zen,
     Provider,
     Model,
     Reasoning,
@@ -372,16 +379,17 @@ fn statusline_lines(
 ///
 /// Sides:
 /// - left metrics: `context · cost · rate`
-/// - right identity: `permission · provider · model · reasoning`
+/// - right identity: `permission · zen · provider · model · reasoning`
 ///
 /// Drop order when width is scarce (first dropped first):
 /// 1. reasoning
 /// 2. generation rate
-/// 3. provider label
-/// 4. session cost
-/// 5. context usage
-/// 6. model id
-/// 7. permission mode (kept last)
+/// 3. zen indicator
+/// 4. provider label
+/// 5. session cost
+/// 6. context usage
+/// 7. model id
+/// 8. permission mode (kept last)
 ///
 /// Severity is independent of drop rank: high context fill and Bypass permission
 /// use warning/error styles so they stay visible while they remain on screen.
@@ -395,7 +403,7 @@ fn pack_bottom_status(
 }
 
 fn bottom_fields(state: &StatusLineState) -> Vec<StatusField> {
-    let mut fields = Vec::with_capacity(8);
+    let mut fields = Vec::with_capacity(9);
 
     if let Some((text, style)) = format_status_context(state) {
         fields.push(field(
@@ -437,6 +445,17 @@ fn bottom_fields(state: &StatusLineState) -> Vec<StatusField> {
         permission_style(state.permission_mode),
     ));
 
+    if state.zen_mode {
+        fields.push(field(
+            FieldKey::Zen,
+            Side::Right,
+            RANK_ZEN,
+            1,
+            "zen",
+            Theme::dim(),
+        ));
+    }
+
     if !state.signed_in {
         // Naming the configured model would promise a turn the session cannot
         // run, so the row points at the fix instead.
@@ -444,7 +463,7 @@ fn bottom_fields(state: &StatusLineState) -> Vec<StatusField> {
             FieldKey::SignedOut,
             Side::Right,
             RANK_SIGNED_OUT,
-            1,
+            2,
             "not signed in",
             Theme::warning(),
         ));
@@ -452,7 +471,7 @@ fn bottom_fields(state: &StatusLineState) -> Vec<StatusField> {
             FieldKey::LoginHint,
             Side::Right,
             RANK_LOGIN_HINT,
-            2,
+            3,
             "/login",
             Theme::dim(),
         ));
@@ -465,7 +484,7 @@ fn bottom_fields(state: &StatusLineState) -> Vec<StatusField> {
             FieldKey::Provider,
             Side::Right,
             RANK_PROVIDER,
-            1,
+            2,
             provider,
             Theme::dim(),
         ));
@@ -481,7 +500,7 @@ fn bottom_fields(state: &StatusLineState) -> Vec<StatusField> {
             FieldKey::Model,
             Side::Right,
             RANK_MODEL,
-            2,
+            3,
             model,
             Theme::dim(),
         ));
@@ -492,7 +511,7 @@ fn bottom_fields(state: &StatusLineState) -> Vec<StatusField> {
             FieldKey::Reasoning,
             Side::Right,
             RANK_REASONING,
-            3,
+            4,
             state.reasoning.to_string(),
             Theme::reasoning_input_border(state.reasoning),
         ));

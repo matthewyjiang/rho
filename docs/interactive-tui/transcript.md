@@ -85,8 +85,9 @@ not bound by the two-minute stream idle rule.
 reasoning blocks, and the `Thinking...` placeholder so the transcript shows
 message text. The live activity rail, subagent rows, and background-process
 rows stay visible. Tools and
-reasoning still run; only their transcript display is suppressed. The setting
-applies immediately, including during the current turn.
+reasoning still run; only their transcript display is suppressed. While enabled,
+the status row displays `zen` so the hidden-card mode remains visible. The
+setting applies immediately, including during the current turn.
 
 Image thumbnails from `read_file` paint in supporting terminals. Details:
 [Documents and images](/tools-workspace/documents-and-images).

@@ -25,6 +25,7 @@ fn fully_populated_statusline() -> StatusLine {
     // Pin hierarchy inputs so pack tests do not depend on models.dev metadata.
     statusline.state.reasoning_configurable = true;
     statusline.state.reasoning = ReasoningLevel::Medium;
+    statusline.state.zen_mode = true;
     statusline.update_usage(
         None,
         Some(&ContextUsage::estimated(1_000, Some(10_000))),
@@ -133,6 +134,7 @@ fn bottom_row_drops_fields_by_global_rank() {
             FieldKey::Cost,
             FieldKey::Rate,
             FieldKey::Permission,
+            FieldKey::Zen,
             FieldKey::Provider,
             FieldKey::Model,
             FieldKey::Reasoning,
@@ -141,7 +143,7 @@ fn bottom_row_drops_fields_by_global_rank() {
     );
 
     // reasoning drops first
-    let after_reasoning = packed_keys(state, 60);
+    let after_reasoning = packed_keys(state, 66);
     assert!(
         !after_reasoning.contains(&FieldKey::Reasoning),
         "reasoning is the first drop: {after_reasoning:?}"
@@ -151,15 +153,26 @@ fn bottom_row_drops_fields_by_global_rank() {
         "rate outranks reasoning: {after_reasoning:?}"
     );
 
-    // rate before provider
-    let after_rate = packed_keys(state, 45);
+    // rate before zen
+    let after_rate = packed_keys(state, 51);
     assert!(
         !after_rate.contains(&FieldKey::Rate) && !after_rate.contains(&FieldKey::Reasoning),
         "rate drops next: {after_rate:?}"
     );
     assert!(
-        after_rate.contains(&FieldKey::Provider),
-        "provider outranks rate: {after_rate:?}"
+        after_rate.contains(&FieldKey::Zen),
+        "zen outranks rate: {after_rate:?}"
+    );
+
+    // zen before provider
+    let after_zen = packed_keys(state, 45);
+    assert!(
+        !after_zen.contains(&FieldKey::Zen),
+        "zen drops before provider: {after_zen:?}"
+    );
+    assert!(
+        after_zen.contains(&FieldKey::Provider),
+        "provider outranks zen: {after_zen:?}"
     );
 
     // provider before cost
@@ -209,7 +222,7 @@ fn pack_prefers_model_over_cost_and_context() {
     // Width fits permission + model + cost, but not also context-or-provider noise.
     // cost+perm+model = 6+1+4+3+7 = 21. Force a width where cost and model fight:
     // perm+model = 14, cost+perm = 11, cost+perm+model = 21.
-    // At width 15 only perm+model should survive (cost rank 4 < model rank 6).
+    // At width 15 only perm+model should survive (cost rank 5 < model rank 7).
     assert_eq!(
         packed_keys(&statusline.state, 15),
         vec![FieldKey::Permission, FieldKey::Model]
