@@ -1,4 +1,3 @@
-use super::goal::duration_summary;
 use std::time::{Duration, Instant};
 
 /// Tracks one reasoning stretch: open window + timer for Thought for … summaries.
@@ -43,16 +42,6 @@ impl ReasoningPhase {
     pub(super) fn is_open(&self) -> bool {
         self.open
     }
-}
-
-/// Formats the post-reasoning summary line.
-pub(super) fn thought_summary(elapsed: Duration) -> String {
-    duration_summary("Thought for", elapsed)
-}
-
-/// Formats the post-turn duration receipt on the assistant entry.
-pub(super) fn worked_summary(elapsed: Duration) -> String {
-    duration_summary("Worked for", elapsed)
 }
 
 #[cfg(test)]
