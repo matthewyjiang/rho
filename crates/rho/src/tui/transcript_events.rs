@@ -11,7 +11,7 @@
 //! retraction path shares the same flush-then-insert order, and only when a
 //! matching accepted steer is still queued.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use ratatui::{backend::Backend, DefaultTerminal, Terminal};
 
@@ -23,7 +23,8 @@ use super::{
     usage_cost::{
         add_optional, merge_usage, usage_difference, usage_with_estimated_cost, CostSource,
     },
-    App, Entry, FinalAnswerDelta, LiveStreamPreview, ReasoningEntry, StreamKind, ToolEntry,
+    App, AssistantEntry, Entry, FinalAnswerDelta, LiveStreamPreview, ReasoningEntry, StreamKind,
+    ToolEntry,
 };
 use rho_providers::model::ContentBlock;
 
@@ -459,6 +460,37 @@ impl App {
                 true
             }
         }
+    }
+
+    /// Stamps this turn's last open assistant row, or inserts a summary-only receipt.
+    ///
+    /// Generated-image tool rows can sit after the answer, so this searches
+    /// backward from the turn tail. Missing `current_turn_start` never scans
+    /// earlier history.
+    pub(super) fn attach_turn_worked(&mut self, elapsed: Duration) {
+        let Some(start) = self.turn.current_turn_start() else {
+            self.insert_entry(&Entry::Assistant(AssistantEntry::summary_only(elapsed)));
+            return;
+        };
+        let start = start.min(self.history.len());
+        if let Some(index) = self.history.entries()[start..]
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(offset, entry)| match entry {
+                Entry::Assistant(assistant) if assistant.worked_for.is_none() => {
+                    Some(start + offset)
+                }
+                _ => None,
+            })
+        {
+            if let Entry::Assistant(assistant) = &mut self.history.entries_mut()[index] {
+                assistant.worked_for = Some(elapsed);
+            }
+            self.history.lines_mut().invalidate_from(index);
+            return;
+        }
+        self.insert_entry(&Entry::Assistant(AssistantEntry::summary_only(elapsed)));
     }
 
     pub(super) fn finish_stream(&mut self, kind: StreamKind) -> bool {

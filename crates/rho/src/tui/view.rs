@@ -107,7 +107,7 @@ impl App {
 
     fn draw_session(&mut self, frame: &mut Frame<'_>, area: Rect, now: Instant) {
         self.settle_turn_finished_attention();
-        let ctx = self.frame_context(area, now);
+        let ctx = self.frame_context(area);
         let (history_start, history_count) = self
             .visible_history_window(ctx.history_len, ctx.layout.history_content.height as usize);
         let surface = DrawSurface {
@@ -234,7 +234,17 @@ impl App {
         if let Some(activity_rail) = layout.activity_rail {
             frame.render_widget(Clear, activity_rail);
             frame.render_widget(
-                Paragraph::new("").style(Theme::activity_rail()),
+                Paragraph::new(
+                    self.turn.loading_spinner().line(
+                        now,
+                        layout
+                            .activity_label_width()
+                            .expect("activity rail implies leftover spinner width"),
+                        self.activity_status()
+                            .expect("activity layout requires active status"),
+                    ),
+                )
+                .style(Theme::activity_rail()),
                 activity_rail,
             );
         }
@@ -243,20 +253,6 @@ impl App {
             .filter(|_| self.should_render_history_scrollbar(now))
         {
             scrollbar.render(frame, self.history.scrollbar_drag().is_some());
-        }
-        if let Some(activity) = layout.activity {
-            frame.render_widget(
-                Paragraph::new(
-                    self.turn.activity_line(
-                        now,
-                        activity.width as usize,
-                        self.activity_status()
-                            .expect("activity layout requires active status"),
-                    ),
-                )
-                .style(Style::default()),
-                activity,
-            );
         }
         if let Some(button) = layout.jump_to_bottom {
             frame.render_widget(
@@ -460,7 +456,7 @@ impl App {
         now: Instant,
     ) -> ActiveFrame {
         let area = Rect::new(0, 0, width as u16, viewport_height as u16);
-        let ctx = self.frame_context(area, now);
+        let ctx = self.frame_context(area);
         let layout = ctx.layout;
         let (history_start, history_count) =
             self.visible_history_window(ctx.history_len, layout.history_content.height as usize);
@@ -474,13 +470,16 @@ impl App {
         let command_lines = ctx.command_lines;
         let composer = ctx.composer;
         lines.resize(layout.history.height as usize, Line::default());
-        if let Some(activity) = layout.activity {
-            lines[activity.y.saturating_sub(layout.history.y) as usize] = self.turn.activity_line(
-                now,
-                activity.width as usize,
-                self.activity_status()
-                    .expect("activity layout requires active status"),
-            );
+        if let Some(activity_rail) = layout.activity_rail {
+            lines[activity_rail.y.saturating_sub(layout.history.y) as usize] =
+                self.turn.loading_spinner().line(
+                    now,
+                    layout
+                        .activity_label_width()
+                        .expect("activity rail implies leftover spinner width"),
+                    self.activity_status()
+                        .expect("activity layout requires active status"),
+                );
         }
         if let Some(button) = layout.jump_to_bottom {
             lines[button.y.saturating_sub(layout.history.y) as usize] =
@@ -702,7 +701,7 @@ impl App {
     #[cfg(test)]
     pub(super) fn history_live_lines(&mut self, width: usize, height: usize) -> Vec<Line<'static>> {
         let area = Rect::new(0, 0, width as u16, height as u16);
-        self.frame_context(area, Instant::now()).live_history.lines
+        self.frame_context(area).live_history.lines
     }
 
     pub(super) fn live_history_layout(

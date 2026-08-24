@@ -704,32 +704,6 @@ impl App {
         Ok((call_id, request_id, reply_rx))
     }
 
-    fn attach_turn_worked(&mut self, elapsed: Duration) {
-        let start = self.turn.current_turn_start().unwrap_or(0);
-        if let Some(index) =
-            self.history
-                .entries()
-                .iter()
-                .enumerate()
-                .rev()
-                .find_map(|(index, entry)| match entry {
-                    Entry::Assistant(assistant)
-                        if index >= start && assistant.worked_for.is_none() =>
-                    {
-                        Some(index)
-                    }
-                    _ => None,
-                })
-        {
-            if let Entry::Assistant(assistant) = &mut self.history.entries_mut()[index] {
-                assistant.worked_for = Some(elapsed);
-            }
-            self.history.lines_mut().invalidate_from(index);
-            return;
-        }
-        self.insert_entry(&Entry::Assistant(AssistantEntry::summary_only(elapsed)));
-    }
-
     fn finalize_failed_turn(
         &mut self,
         message: String,

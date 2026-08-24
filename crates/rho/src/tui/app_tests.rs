@@ -11,7 +11,7 @@ use ratatui::text::Line;
 use rho_providers::credentials::{
     save_provider_api_key, CredentialError, CredentialResult, MemoryCredentialStore,
 };
-use std::{sync::atomic::AtomicBool, time::Instant};
+use std::sync::atomic::AtomicBool;
 
 #[path = "tests/activity_phase_tests.rs"]
 mod activity_phase_tests;
@@ -166,7 +166,7 @@ fn minimum_terminal_layout_keeps_composer_visible() {
     let width = area.width as usize;
     let composer = app.composer_frame(width, area.height as usize);
     assert!(!composer.lines.is_empty());
-    let ctx = app.frame_context(area, Instant::now());
+    let ctx = app.frame_context(area);
     let layout = ctx.layout;
     assert!(
         layout.composer.height >= 1,

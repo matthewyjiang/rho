@@ -155,21 +155,17 @@ fn activity_label_trails_elapsed_then_drops_it() {
     };
     let agents_only = ActivityStatus::Subagents(2);
 
-    let parent_timed = format!("{spinner} responding · 15s");
+    let parent_timed = format!("{spinner} responding · 15.0s");
     let parent_plain = format!("{spinner} responding");
-    let agents_timed = format!("{spinner} responding  ·  2 agents · 15s");
+    let agents_timed = format!("{spinner} responding  ·  2 agents · 15.0s");
     let agents_plain = format!("{spinner} responding  ·  2 agents");
-    let only_timed = format!("{spinner} 2 agents working · 15s");
+    let only_timed = format!("{spinner} 2 agents working · 15.0s");
     let elapsed = Some(Duration::from_secs(15));
 
     assert_eq!(activity_label(80, parent, elapsed), parent_timed);
     assert_eq!(
         activity_label(display_width(&parent_plain), parent, elapsed),
         parent_plain
-    );
-    assert_eq!(
-        activity_width(80, parent, elapsed),
-        display_width(&parent_timed)
     );
     assert_eq!(activity_label(80, with_agents, elapsed), agents_timed);
     assert_eq!(

@@ -149,3 +149,27 @@ fn transcript_tail_is_unicode_safe() {
         "[earlier transcript omitted]\n目bc"
     );
 }
+
+#[test]
+fn duration_summaries_share_tenths_under_a_minute() {
+    assert_eq!(
+        duration_summary("Thought for", Duration::ZERO),
+        "Thought for 0.0s"
+    );
+    assert_eq!(
+        duration_summary("Worked for", Duration::ZERO),
+        "Worked for 0.0s"
+    );
+    assert_eq!(
+        duration_summary("Worked for", Duration::from_millis(1_500)),
+        "Worked for 1.5s"
+    );
+    assert_eq!(
+        duration_summary("Worked for", Duration::from_secs(15)),
+        "Worked for 15.0s"
+    );
+    assert_eq!(
+        duration_summary("Worked for", Duration::from_secs(65)),
+        "Worked for 1m 05s"
+    );
+}

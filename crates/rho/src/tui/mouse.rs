@@ -45,7 +45,7 @@ impl App {
         let size = terminal.size()?;
         let screen = Rect::new(0, 0, size.width, size.height);
         let now = Instant::now();
-        let ctx = self.frame_context(screen, now);
+        let ctx = self.frame_context(screen);
         let width = ctx.width;
         let settings = ctx.settings;
         let live_history = ctx.live_history;

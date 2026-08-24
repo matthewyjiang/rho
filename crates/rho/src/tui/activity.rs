@@ -196,14 +196,6 @@ impl ActivityStatus {
     }
 }
 
-pub(super) fn activity_width(
-    available: usize,
-    status: ActivityStatus,
-    elapsed: Option<Duration>,
-) -> usize {
-    display_width(&activity_label(available, status, elapsed))
-}
-
 fn phase_label(phase: ActivityPhase, retry: Option<ProviderRetryHint>) -> String {
     if matches!(phase, ActivityPhase::RetryingProvider) {
         if let Some(retry) = retry {
@@ -263,7 +255,10 @@ fn activity_label(available: usize, status: ActivityStatus, elapsed: Option<Dura
         candidates.push(format!(
             "{} · {}",
             labels[0],
-            crate::subagent::format_elapsed_secs(elapsed.as_secs())
+            super::goal::format_elapsed_with(
+                elapsed,
+                super::goal::ElapsedPrecision::TenthsUnderMinute
+            )
         ));
     }
     candidates.extend(labels);

@@ -324,7 +324,7 @@ fn nonempty_field(value: String, name: &str) -> anyhow::Result<String> {
 pub(super) enum ElapsedPrecision {
     /// Whole seconds under one minute (`9s`).
     WholeSeconds,
-    /// Tenths under one minute (`9.0s`), used by thought summaries.
+    /// Tenths under one minute (`9.0s`), used by thought and turn receipts.
     TenthsUnderMinute,
 }
 
@@ -343,6 +343,14 @@ pub(super) fn format_elapsed_with(elapsed: Duration, precision: ElapsedPrecision
             }
         }
     }
+}
+
+/// Formats a dim duration receipt (`Thought for 1.5s`, `Worked for 15.0s`).
+pub(super) fn duration_summary(prefix: &str, elapsed: Duration) -> String {
+    format!(
+        "{prefix} {}",
+        format_elapsed_with(elapsed, ElapsedPrecision::TenthsUnderMinute)
+    )
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-use super::goal::{format_elapsed_with, ElapsedPrecision};
+use super::goal::duration_summary;
 use std::time::{Duration, Instant};
 
 /// Tracks one reasoning stretch: open window + timer for Thought for … summaries.
@@ -53,13 +53,6 @@ pub(super) fn thought_summary(elapsed: Duration) -> String {
 /// Formats the post-turn duration receipt on the assistant entry.
 pub(super) fn worked_summary(elapsed: Duration) -> String {
     duration_summary("Worked for", elapsed)
-}
-
-fn duration_summary(prefix: &str, elapsed: Duration) -> String {
-    format!(
-        "{prefix} {}",
-        format_elapsed_with(elapsed, ElapsedPrecision::TenthsUnderMinute)
-    )
 }
 
 #[cfg(test)]

@@ -1,5 +1,3 @@
-use std::time::Instant;
-
 use ratatui::{
     layout::{Position, Rect},
     text::Line,
@@ -199,7 +197,6 @@ pub(super) struct ScreenLayout {
     /// Blank breathing room above the rail while bottom-following with activity.
     pub(super) activity_gap: Option<Rect>,
     pub(super) activity_rail: Option<Rect>,
-    pub(super) activity: Option<Rect>,
     pub(super) jump_to_bottom: Option<Rect>,
     pub(super) pending_input: Rect,
     pub(super) subagents: Rect,
@@ -213,6 +210,16 @@ pub(super) struct ScreenLayout {
     pub(super) history_len: usize,
 }
 
+impl ScreenLayout {
+    /// Leftover rail cells for the live spinner after the jump chip.
+    pub(super) fn activity_label_width(&self) -> Option<usize> {
+        let rail = self.activity_rail?;
+        Some(self.jump_to_bottom.map_or(rail.width as usize, |jump| {
+            (rail.width as usize).saturating_sub(jump.width as usize + 1)
+        }))
+    }
+}
+
 impl App {
     pub(super) fn build_screen_layout(
         &mut self,
@@ -221,7 +228,6 @@ impl App {
         composer_lines: &[Line<'_>],
         composer_cursor: Position,
         chrome: InteractiveChrome,
-        now: Instant,
     ) -> ScreenLayout {
         let width = area.width as usize;
         let cursor_line = (composer_cursor.y as usize).min(composer_lines.len().saturating_sub(1));
@@ -285,19 +291,8 @@ impl App {
                 1,
             )
         });
-        let activity_available = if jump_width > 0 {
-            width.saturating_sub(jump_width as usize + 1)
-        } else {
-            width
-        };
-        let activity_width = activity_status
-            .map(|status| {
-                activity::activity_width(activity_available, status, self.turn.elapsed_at(now))
-            })
-            .unwrap_or(0) as u16;
-        let activity = (activity_width > 0 && history.height > 0)
-            .then(|| Rect::new(history.x, activity_y, activity_width, 1));
-        let activity_rail = activity.map(|_| Rect::new(history.x, activity_y, history.width, 1));
+        let activity_rail = (activity_status.is_some() && history.height > 0)
+            .then(|| Rect::new(history.x, activity_y, history.width, 1));
         let pending_input = Rect::new(area.x, y, area.width, pending_input_height as u16);
         y = y.saturating_add(pending_input.height);
         let subagents = Rect::new(area.x, y, area.width, subagent_height as u16);
@@ -329,7 +324,6 @@ impl App {
             ),
             activity_gap,
             activity_rail,
-            activity,
             jump_to_bottom,
             pending_input,
             subagents,

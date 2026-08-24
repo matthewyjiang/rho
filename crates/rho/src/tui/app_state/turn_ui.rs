@@ -2,12 +2,11 @@
 
 use std::time::{Duration, Instant};
 
-use ratatui::text::Line;
 use rho_sdk::ToolCallId;
 use rho_tools::tool_card::ToolCard;
 
 use crate::tui::{
-    activity::{ActivityPhase, ActivityStatus, LoadingSpinner, ProviderRetryHint},
+    activity::{ActivityPhase, LoadingSpinner, ProviderRetryHint},
     provider_attempt::ProviderAttempt,
     reasoning_phase::ReasoningPhase,
     tool_call_batch::ToolCallBatch,
@@ -148,13 +147,8 @@ impl TurnUi {
         self.loading_spinner.elapsed_at(now)
     }
 
-    pub(in crate::tui) fn activity_line(
-        &self,
-        now: Instant,
-        available: usize,
-        status: ActivityStatus,
-    ) -> Line<'static> {
-        self.loading_spinner.line(now, available, status)
+    pub(in crate::tui) fn loading_spinner(&self) -> &LoadingSpinner {
+        &self.loading_spinner
     }
 
     pub(in crate::tui) fn start_loading(&mut self) {
