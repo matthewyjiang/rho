@@ -263,7 +263,35 @@ fn capture_demo(binary: &Path) -> Result<DemoCapture> {
 /// package version is pinned at capture input via `RHO_TUI_DISPLAY_VERSION`.
 fn stabilize_demo_svg(svg: &str) -> String {
     let mut out = pin_tool_durations(svg);
+    out = pin_duration_receipts(&out);
     out = pin_statusline_usage(&out);
+    out
+}
+
+fn pin_duration_receipts(svg: &str) -> String {
+    let mut out = svg.to_string();
+    for prefix in ["Worked for ", "Thought for "] {
+        out = pin_prefixed_duration(&out, prefix, "0.2s");
+    }
+    out
+}
+
+fn pin_prefixed_duration(svg: &str, prefix: &str, pinned: &str) -> String {
+    let mut out = String::with_capacity(svg.len());
+    let mut rest = svg;
+    while let Some(idx) = rest.find(prefix) {
+        out.push_str(&rest[..idx + prefix.len()]);
+        rest = &rest[idx + prefix.len()..];
+        if let Some(end) = rest.find('s') {
+            let token = &rest[..=end];
+            if is_duration_token(token) {
+                out.push_str(pinned);
+                rest = &rest[end + 1..];
+                continue;
+            }
+        }
+    }
+    out.push_str(rest);
     out
 }
 
