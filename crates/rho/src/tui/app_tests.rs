@@ -392,7 +392,7 @@ fn recovered_session_messages_become_transcript_entries() {
     );
 
     assert!(matches!(entries[0], Entry::User(ref text) if text == "hello\n[image: image/png 3 B]"));
-    assert!(matches!(entries[1], Entry::Assistant(ref text) if text == "hi"));
+    assert!(matches!(entries[1], Entry::Assistant(ref assistant) if assistant.text == "hi"));
     assert!(matches!(
         entries[2],
         Entry::Tool(ToolEntry {
@@ -531,7 +531,7 @@ fn final_answer_mismatch_replaces_transcript_without_duplicating_entry() {
 
     assert!(matches!(
         app.history.entries(),
-        [Entry::Assistant(text)] if text == "final"
+        [Entry::Assistant(assistant)] if assistant.text == "final"
     ));
 }
 
@@ -544,7 +544,7 @@ fn final_answer_mismatch_replaces_transcript_with_empty_answer() {
 
     assert!(matches!(
         app.history.entries(),
-        [Entry::Assistant(text)] if text.is_empty()
+        [Entry::Assistant(assistant)] if assistant.text.is_empty()
     ));
 }
 
@@ -561,7 +561,7 @@ fn final_answer_mismatch_replaces_interleaved_current_turn_assistant_fragments()
 
     assert!(matches!(
         app.history.entries(),
-        [Entry::User(_), Entry::Assistant(text), Entry::Reasoning(_)] if text == "goodbye"
+        [Entry::User(_), Entry::Assistant(assistant), Entry::Reasoning(_)] if assistant.text == "goodbye"
     ));
 }
 

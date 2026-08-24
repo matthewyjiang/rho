@@ -234,7 +234,17 @@ impl App {
         if let Some(activity_rail) = layout.activity_rail {
             frame.render_widget(Clear, activity_rail);
             frame.render_widget(
-                Paragraph::new("").style(Theme::activity_rail()),
+                Paragraph::new(
+                    self.turn.loading_spinner().line(
+                        now,
+                        layout
+                            .activity_label_width()
+                            .expect("activity rail implies leftover spinner width"),
+                        self.activity_status()
+                            .expect("activity layout requires active status"),
+                    ),
+                )
+                .style(Theme::activity_rail()),
                 activity_rail,
             );
         }
@@ -243,20 +253,6 @@ impl App {
             .filter(|_| self.should_render_history_scrollbar(now))
         {
             scrollbar.render(frame, self.history.scrollbar_drag().is_some());
-        }
-        if let Some(activity) = layout.activity {
-            frame.render_widget(
-                Paragraph::new(
-                    self.turn.loading_spinner().line(
-                        now,
-                        activity.width as usize,
-                        self.activity_status()
-                            .expect("activity layout requires active status"),
-                    ),
-                )
-                .style(Style::default()),
-                activity,
-            );
         }
         if let Some(button) = layout.jump_to_bottom {
             frame.render_widget(
@@ -474,11 +470,13 @@ impl App {
         let command_lines = ctx.command_lines;
         let composer = ctx.composer;
         lines.resize(layout.history.height as usize, Line::default());
-        if let Some(activity) = layout.activity {
-            lines[activity.y.saturating_sub(layout.history.y) as usize] =
+        if let Some(activity_rail) = layout.activity_rail {
+            lines[activity_rail.y.saturating_sub(layout.history.y) as usize] =
                 self.turn.loading_spinner().line(
                     now,
-                    activity.width as usize,
+                    layout
+                        .activity_label_width()
+                        .expect("activity rail implies leftover spinner width"),
                     self.activity_status()
                         .expect("activity layout requires active status"),
                 );

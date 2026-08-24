@@ -261,3 +261,69 @@ fn insert_assistant_images_appends_a_card_per_image() {
         .iter()
         .all(|entry| matches!(entry, crate::tui::Entry::Tool(tool) if tool.image.is_none())));
 }
+
+// Covers: a completed turn stamps duration on this turn's assistant row, not
+// an earlier reply or a later notice.
+// Owner: pure unit (turn receipt attachment)
+#[test]
+fn attach_turn_worked_stamps_current_turn_assistant() {
+    let mut app = test_app();
+    app.push_transcript_entry(crate::tui::Entry::Assistant("previous".into()));
+    app.push_transcript_entry(crate::tui::Entry::User("prompt".into()));
+    app.turn.set_current_turn_start(Some(app.history.len()));
+    app.push_transcript_entry(crate::tui::Entry::Assistant("answer".into()));
+    app.push_transcript_entry(crate::tui::Entry::Notice("after".into()));
+
+    app.attach_turn_worked(Duration::from_secs(15));
+
+    assert!(matches!(
+        app.history.entries(),
+        [
+            crate::tui::Entry::Assistant(previous),
+            crate::tui::Entry::User(_),
+            crate::tui::Entry::Assistant(answer),
+            crate::tui::Entry::Notice(_)
+        ] if previous.worked_for.is_none()
+            && answer.text == "answer"
+            && answer.worked_for == Some(Duration::from_secs(15))
+    ));
+}
+
+// Covers: a completed tool-only turn still gets a duration receipt.
+// Owner: pure unit (turn receipt attachment)
+#[test]
+fn attach_turn_worked_inserts_summary_when_turn_has_no_assistant() {
+    let mut app = test_app();
+    app.push_transcript_entry(crate::tui::Entry::User("prompt".into()));
+    app.turn.set_current_turn_start(Some(app.history.len()));
+
+    app.attach_turn_worked(Duration::from_millis(1_500));
+
+    assert!(matches!(
+        app.history.entries(),
+        [crate::tui::Entry::User(_), crate::tui::Entry::Assistant(assistant)]
+            if assistant.text.is_empty()
+                && assistant.worked_for == Some(Duration::from_millis(1_500))
+    ));
+}
+
+// Covers: a missing turn start never stamps earlier history.
+// Owner: pure unit (turn receipt attachment)
+#[test]
+fn attach_turn_worked_without_turn_start_inserts_summary() {
+    let mut app = test_app();
+    app.push_transcript_entry(crate::tui::Entry::Assistant("previous".into()));
+
+    app.attach_turn_worked(Duration::from_secs(4));
+
+    assert!(matches!(
+        app.history.entries(),
+        [
+            crate::tui::Entry::Assistant(previous),
+            crate::tui::Entry::Assistant(summary)
+        ] if previous.text == "previous"
+            && previous.worked_for.is_none()
+            && summary.text.is_empty()
+            && summary.worked_for == Some(Duration::from_secs(4))
+    ));
+}

@@ -5,6 +5,7 @@ use super::{
     markdown_image::MarkdownImageSource,
 };
 
+#[derive(Default)]
 pub(super) struct RenderedEntry {
     pub(super) lines: Vec<Line<'static>>,
     pub(super) code_blocks: Vec<MarkdownCodeBlock>,

@@ -387,7 +387,9 @@ fn resizing_keeps_mermaid_code_block_source_stable() {
     // so theme-switching tests cannot restyle the second pass mid-test.
     let _guard = crate::tui::theme::theme_test_lock();
     let source = crate::tui::markdown::PHASE_CHAIN_FLOWCHART;
-    let entries = vec![Entry::Assistant(format!("```mermaid\n{source}\n```"))];
+    let entries = vec![Entry::Assistant(
+        format!("```mermaid\n{source}\n```").into(),
+    )];
     let mut cache = HistoryLineCache::default();
 
     let mut wide = Vec::new();
@@ -604,7 +606,7 @@ fn resplice_tool_expand_preserves_later_assistant_lines() {
     let mut entries = vec![
         Entry::User("go".into()),
         Entry::Tool(ToolEntry::new(card, false, None, None)),
-        Entry::Assistant("# big\n\n".to_string() + &"paragraph\n\n".repeat(30)),
+        Entry::Assistant(("# big\n\n".to_string() + &"paragraph\n\n".repeat(30)).into()),
     ];
 
     let mut cache = HistoryLineCache::default();

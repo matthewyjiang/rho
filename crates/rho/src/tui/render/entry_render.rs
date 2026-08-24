@@ -53,43 +53,34 @@ pub(in crate::tui) fn render_entry_with_options(
     trailing_blank: TrailingBlank,
 ) -> RenderedEntry {
     let inner_width = padded_content_width(width);
-    let (mut lines, code_blocks, image_sources, image_rows) = match entry {
-        Entry::Assistant(text) => {
-            let rendered = render_assistant_content(text, width);
-            (
-                rendered.lines,
-                rendered.code_blocks,
-                rendered.image_sources,
-                rendered.image_rows,
-            )
-        }
-        Entry::Reasoning(reasoning) => {
-            let mut lines = Vec::new();
-            let mut code_blocks = Vec::new();
-            let mut image_sources = Vec::new();
-            let mut image_rows = Vec::new();
-            if !reasoning.text.is_empty() {
-                let rendered = render_reasoning_content(&reasoning.text, width);
-                lines = rendered.lines;
-                code_blocks = rendered.code_blocks;
-                image_sources = rendered.image_sources;
-                image_rows = rendered.image_rows;
-            }
-            if let Some(elapsed) = reasoning.thought_for {
-                push_wrapped_text(
-                    &mut lines,
-                    &crate::tui::reasoning_phase::thought_summary(elapsed),
-                    inner_width,
-                    Theme::dim().add_modifier(Modifier::DIM),
-                    LineFill::Natural,
-                );
-            }
-            (lines, code_blocks, image_sources, image_rows)
-        }
+    let RenderedEntry {
+        mut lines,
+        code_blocks,
+        image_sources,
+        image_rows,
+        ..
+    } = match entry {
+        Entry::Assistant(assistant) => render_markdown_entry_with_summary(
+            &assistant.text,
+            width,
+            inner_width,
+            render_assistant_content,
+            assistant.worked_for.map(crate::tui::goal::worked_summary),
+        ),
+        Entry::Reasoning(reasoning) => render_markdown_entry_with_summary(
+            &reasoning.text,
+            width,
+            inner_width,
+            render_reasoning_content,
+            reasoning.thought_for.map(crate::tui::goal::thought_summary),
+        ),
         _ => {
             let mut lines = Vec::new();
             render_non_assistant_entry(&mut lines, entry, inner_width, max_tool_output_lines);
-            (lines, Vec::new(), Vec::new(), Vec::new())
+            RenderedEntry {
+                lines,
+                ..RenderedEntry::default()
+            }
         }
     };
 
@@ -124,6 +115,30 @@ pub(in crate::tui) fn render_entry_with_options(
         image_sources,
         image_rows,
     }
+}
+
+fn render_markdown_entry_with_summary(
+    text: &str,
+    width: usize,
+    inner_width: usize,
+    render_content: fn(&str, usize) -> RenderedEntry,
+    summary: Option<String>,
+) -> RenderedEntry {
+    let mut rendered = if text.is_empty() {
+        RenderedEntry::default()
+    } else {
+        render_content(text, width)
+    };
+    if let Some(summary) = summary {
+        push_wrapped_text(
+            &mut rendered.lines,
+            &summary,
+            inner_width,
+            Theme::dim().add_modifier(Modifier::DIM),
+            LineFill::Natural,
+        );
+    }
+    rendered
 }
 
 pub(in crate::tui) fn apply_markdown_images(

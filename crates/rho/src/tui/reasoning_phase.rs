@@ -1,4 +1,3 @@
-use super::goal::{format_elapsed_with, ElapsedPrecision};
 use std::time::{Duration, Instant};
 
 /// Tracks one reasoning stretch: open window + timer for Thought for … summaries.
@@ -43,14 +42,6 @@ impl ReasoningPhase {
     pub(super) fn is_open(&self) -> bool {
         self.open
     }
-}
-
-/// Formats the post-reasoning summary line.
-pub(super) fn thought_summary(elapsed: Duration) -> String {
-    format!(
-        "Thought for {}",
-        format_elapsed_with(elapsed, ElapsedPrecision::TenthsUnderMinute)
-    )
 }
 
 #[cfg(test)]

@@ -11,7 +11,7 @@
 //! retraction path shares the same flush-then-insert order, and only when a
 //! matching accepted steer is still queued.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use ratatui::{backend::Backend, DefaultTerminal, Terminal};
 
@@ -23,7 +23,8 @@ use super::{
     usage_cost::{
         add_optional, merge_usage, usage_difference, usage_with_estimated_cost, CostSource,
     },
-    App, Entry, FinalAnswerDelta, LiveStreamPreview, ReasoningEntry, StreamKind, ToolEntry,
+    App, AssistantEntry, Entry, FinalAnswerDelta, LiveStreamPreview, ReasoningEntry, StreamKind,
+    ToolEntry,
 };
 use rho_providers::model::ContentBlock;
 
@@ -380,20 +381,22 @@ impl App {
 
     pub(super) fn push_transcript_entry(&mut self, entry: Entry) {
         match entry {
-            Entry::Assistant(text) => {
+            Entry::Assistant(assistant) => {
                 let index = if matches!(self.history.last(), Some(Entry::Assistant(_))) {
                     self.history.len().saturating_sub(1)
                 } else {
                     self.history.len()
                 };
                 match self.history.last_mut() {
-                    Some(Entry::Assistant(previous)) => {
-                        previous.push_str(&text);
+                    Some(Entry::Assistant(previous))
+                        if previous.worked_for.is_none() && assistant.worked_for.is_none() =>
+                    {
+                        previous.push_str(&assistant.text);
                         self.history.lines_mut().entry_appended(index);
                     }
                     _ => {
                         self.history.lines_mut().invalidate_from(index);
-                        self.history.push(Entry::Assistant(text));
+                        self.history.push(Entry::Assistant(assistant));
                     }
                 }
                 self.mark_markdown_images_dirty_from(index);
@@ -457,6 +460,37 @@ impl App {
                 true
             }
         }
+    }
+
+    /// Stamps this turn's last open assistant row, or inserts a summary-only receipt.
+    ///
+    /// Generated-image tool rows can sit after the answer, so this searches
+    /// backward from the turn tail. Missing `current_turn_start` never scans
+    /// earlier history.
+    pub(super) fn attach_turn_worked(&mut self, elapsed: Duration) {
+        let Some(start) = self.turn.current_turn_start() else {
+            self.insert_entry(&Entry::Assistant(AssistantEntry::summary_only(elapsed)));
+            return;
+        };
+        let start = start.min(self.history.len());
+        if let Some(index) = self.history.entries()[start..]
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(offset, entry)| match entry {
+                Entry::Assistant(assistant) if assistant.worked_for.is_none() => {
+                    Some(start + offset)
+                }
+                _ => None,
+            })
+        {
+            if let Entry::Assistant(assistant) = &mut self.history.entries_mut()[index] {
+                assistant.worked_for = Some(elapsed);
+            }
+            self.history.lines_mut().invalidate_from(index);
+            return;
+        }
+        self.insert_entry(&Entry::Assistant(AssistantEntry::summary_only(elapsed)));
     }
 
     pub(super) fn finish_stream(&mut self, kind: StreamKind) -> bool {
@@ -523,12 +557,12 @@ impl App {
             .collect::<Vec<_>>();
 
         let Some((first, stale)) = assistant_indices.split_first() else {
-            self.push_transcript_entry(Entry::Assistant(answer.to_string()));
+            self.push_transcript_entry(Entry::Assistant(answer.to_string().into()));
             return;
         };
 
-        if let Entry::Assistant(text) = &mut self.history.entries_mut()[*first] {
-            *text = answer.to_string();
+        if let Entry::Assistant(assistant) = &mut self.history.entries_mut()[*first] {
+            assistant.text = answer.to_string();
         }
         self.history.images_mut().clear();
         self.history.invalidate_from(*first);

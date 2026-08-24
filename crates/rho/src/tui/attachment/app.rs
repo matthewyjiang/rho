@@ -878,7 +878,7 @@ fn append_stream(
         {
             existing.text.push_str(&text)
         }
-        (StreamTarget::Assistant, _) => transcript.push(Entry::Assistant(text)),
+        (StreamTarget::Assistant, _) => transcript.push(Entry::Assistant(text.into())),
         (StreamTarget::Reasoning, _) => {
             transcript.push(Entry::Reasoning(ReasoningEntry::new(text)))
         }

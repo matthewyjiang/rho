@@ -18,15 +18,19 @@ type EntryContentRender = fn(&str, usize) -> RenderedEntry;
 
 /// Streaming text and its renderer when `entry` can extend in place.
 ///
-/// Assistant entries always qualify. Reasoning entries qualify until their
-/// thought duration lands, which appends a summary line and re-renders once.
+/// Assistant entries qualify until their turn duration lands. Reasoning
+/// entries qualify until their thought duration lands. Either summary appends
+/// a suffix line and re-renders once.
 fn incremental_entry_source(entry: &Entry) -> Option<(&str, EntryContentRender)> {
     match entry {
-        Entry::Assistant(text) => Some((text, render_assistant_content)),
+        Entry::Assistant(assistant) if assistant.worked_for.is_none() => {
+            Some((&assistant.text, render_assistant_content))
+        }
         Entry::Reasoning(reasoning) if reasoning.thought_for.is_none() => {
             Some((&reasoning.text, render_reasoning_content))
         }
-        Entry::Reasoning(_)
+        Entry::Assistant(_)
+        | Entry::Reasoning(_)
         | Entry::User(_)
         | Entry::Tool(_)
         | Entry::Notice(_)

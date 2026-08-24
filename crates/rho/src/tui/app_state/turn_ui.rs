@@ -1,5 +1,7 @@
 //! Live-turn UI: provider attempt, activity, spinner, and in-flight tools.
 
+use std::time::{Duration, Instant};
+
 use rho_sdk::ToolCallId;
 use rho_tools::tool_card::ToolCard;
 
@@ -139,6 +141,10 @@ impl TurnUi {
 
     pub(in crate::tui) fn set_provider_retry(&mut self, retry: ProviderRetryHint) {
         self.provider_retry = Some(retry);
+    }
+
+    pub(in crate::tui) fn elapsed_at(&self, now: Instant) -> Option<Duration> {
+        self.loading_spinner.elapsed_at(now)
     }
 
     pub(in crate::tui) fn loading_spinner(&self) -> &LoadingSpinner {

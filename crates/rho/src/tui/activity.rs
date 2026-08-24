@@ -196,17 +196,6 @@ impl ActivityStatus {
     }
 }
 
-pub(super) fn activity_width(available: usize, status: ActivityStatus) -> usize {
-    let first_frame = LoadingSpinner::FRAMES[0];
-    activity_labels(status)
-        .into_iter()
-        .find(|label| display_width(label) <= available)
-        .map_or_else(
-            || available.min(display_width(first_frame)),
-            |label| display_width(&label),
-        )
-}
-
 fn phase_label(phase: ActivityPhase, retry: Option<ProviderRetryHint>) -> String {
     if matches!(phase, ActivityPhase::RetryingProvider) {
         if let Some(retry) = retry {
@@ -216,7 +205,7 @@ fn phase_label(phase: ActivityPhase, retry: Option<ProviderRetryHint>) -> String
     phase.label().to_string()
 }
 
-fn activity_labels(status: ActivityStatus) -> Vec<String> {
+fn activity_status_labels(status: ActivityStatus) -> Vec<String> {
     let spinner = LoadingSpinner::FRAMES[0];
     let subagent_count = match status {
         ActivityStatus::Parent { .. } => 0,
@@ -252,6 +241,31 @@ fn activity_labels(status: ActivityStatus) -> Vec<String> {
             spinner.into(),
         ],
     }
+}
+
+/// Status ladder first, then a trailing timer on the widest label.
+///
+/// Narrow widths drop the timer before degrading the status text, matching
+/// stacked rails that keep elapsed as a trailing column.
+fn activity_label(available: usize, status: ActivityStatus, elapsed: Option<Duration>) -> String {
+    let first_frame = LoadingSpinner::FRAMES[0];
+    let labels = activity_status_labels(status);
+    let mut candidates = Vec::with_capacity(labels.len() + usize::from(elapsed.is_some()));
+    if let Some(elapsed) = elapsed {
+        candidates.push(format!(
+            "{} · {}",
+            labels[0],
+            super::goal::format_elapsed_with(
+                elapsed,
+                super::goal::ElapsedPrecision::TenthsUnderMinute
+            )
+        ));
+    }
+    candidates.extend(labels);
+    candidates
+        .into_iter()
+        .find(|label| display_width(label) <= available)
+        .unwrap_or_else(|| first_frame.chars().take(available).collect())
 }
 
 #[derive(Clone, Debug, Default)]
@@ -294,16 +308,18 @@ impl LoadingSpinner {
         Self::frame_since(started_at, now)
     }
 
+    pub(super) fn elapsed_at(&self, now: Instant) -> Option<Duration> {
+        self.started_at
+            .map(|started_at| now.saturating_duration_since(started_at))
+    }
+
     pub(super) fn line(
         &self,
         now: Instant,
         available: usize,
         status: ActivityStatus,
     ) -> Line<'static> {
-        let label = activity_labels(status)
-            .into_iter()
-            .find(|label| display_width(label) <= available)
-            .unwrap_or_else(|| Self::FRAMES[0].chars().take(available).collect());
+        let label = activity_label(available, status, self.elapsed_at(now));
         let Some(rest) = label.strip_prefix(Self::FRAMES[0]) else {
             return Line::default();
         };
@@ -353,7 +369,8 @@ pub(super) fn jump_to_bottom_text(
     let full = format!("↓ {full_action}  {binding}");
     let compact = format!("↓ {compact_action} {binding}");
     let shortcut = format!("↓ {binding}");
-    // Leave enough room for the compact activity label when both controls share a row.
+    // Compact activity after the timer has already dropped. The live label
+    // degrades elapsed first, so the jump chip only needs this floor.
     let activity_width = usize::from(alongside_activity)
         * (display_width(LoadingSpinner::FRAMES[0]) + display_width(" 0") + 1);
     let available = width.saturating_sub(activity_width);

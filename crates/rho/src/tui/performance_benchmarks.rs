@@ -106,8 +106,11 @@ fn run_render_hot_path_benchmarks() {
         black_box(app.frame_context(area).history_len)
     });
 
-    let assistant_stream =
-        stream_commit_measurements(Entry::Assistant, "assistant", &mut check_failures);
+    let assistant_stream = stream_commit_measurements(
+        |chunk| Entry::Assistant(chunk.into()),
+        "assistant",
+        &mut check_failures,
+    );
     let reasoning_stream = stream_commit_measurements(
         |chunk| Entry::Reasoning(ReasoningEntry::new(chunk)),
         "reasoning",
@@ -216,7 +219,7 @@ fn transcript_fixture(entry_count: usize) -> (App, Terminal<TestBackend>) {
             0 => Entry::User(format!(
                 "user prompt {index}: please look at module {index}"
             )),
-            1 => Entry::Assistant(assistant_markdown(index)),
+            1 => Entry::Assistant(assistant_markdown(index).into()),
             2 => bench_tool_entry(index),
             _ => Entry::Reasoning(ReasoningEntry::new(format!(
                 "considering approach {index} against the alternatives before answering"

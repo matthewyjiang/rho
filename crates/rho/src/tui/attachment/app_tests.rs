@@ -115,7 +115,7 @@ fn provider_retry_replaces_output_but_preserves_presented_events() {
         ] if prompt == "delegated task"
             && notice == "keep notice"
             && tool.card.header_text() == "✓ keep tool"
-            && answer == "keep me"
+            && answer.text == "keep me"
     ));
 }
 
