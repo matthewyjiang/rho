@@ -7,7 +7,7 @@ use crate::protocol::openai_responses::{
     codex_input_items_for_target, codex_reasoning_param, to_responses_tool, ToolStrictness,
 };
 
-use super::auth::{Auth, ResponsesAuth};
+use super::auth::Auth;
 use super::reasoning::OpenAiReasoningProfile;
 
 /// Complete wire policy for one OpenAI Responses endpoint variant.
@@ -22,13 +22,6 @@ impl ResponsesWireContract {
         match auth {
             Auth::ApiKey(_) => Self::OpenAiStandard,
             Auth::Codex { .. } => Self::CodexStandard,
-        }
-    }
-
-    fn for_responses_auth(auth: &ResponsesAuth) -> Self {
-        match auth {
-            ResponsesAuth::Keyless => Self::OpenAiStandard,
-            ResponsesAuth::OpenAi(auth) => Self::for_auth(auth),
         }
     }
 
@@ -85,31 +78,17 @@ impl ResponsesProfile {
         Self::with_identity(contract, contract.provider(), model)
     }
 
-    /// Rebrands identity for a catalog-constructed host (e.g. `opencode-go`)
-    /// while keeping the wire contract implied by the auth.
-    pub(super) fn from_auth_as(
-        auth: &Auth,
-        model: impl Into<String>,
-        identity_provider: &'static str,
-    ) -> Self {
-        Self::with_identity(
-            ResponsesWireContract::for_auth(auth),
-            identity_provider,
-            model,
-        )
-    }
-
     /// Identity for Responses credentials that may be keyless custom hosts.
-    pub(super) fn from_responses_auth(
-        auth: &ResponsesAuth,
+    pub(super) fn from_optional_auth(
+        auth: Option<&Auth>,
         model: impl Into<String>,
         identity_provider: &'static str,
     ) -> Self {
-        Self::with_identity(
-            ResponsesWireContract::for_responses_auth(auth),
-            identity_provider,
-            model,
-        )
+        let contract = match auth {
+            None => ResponsesWireContract::OpenAiStandard,
+            Some(auth) => ResponsesWireContract::for_auth(auth),
+        };
+        Self::with_identity(contract, identity_provider, model)
     }
 
     fn with_identity(

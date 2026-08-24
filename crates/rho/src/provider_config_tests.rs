@@ -510,16 +510,14 @@ fn custom_openai_compatible_loads_and_persists_responses_api() {
     assert_eq!(
         rho_providers::provider::interned_custom_provider("litellm")
             .unwrap()
-            .runtime
-            .catalog_construction(),
-        rho_providers::provider::CatalogConstruction::Responses
+            .openai_compatible_api(),
+        rho_providers::provider::OpenAiCompatibleApi::Responses
     );
     assert_eq!(
         rho_providers::provider::interned_custom_provider("composer")
             .unwrap()
-            .runtime
-            .catalog_construction(),
-        rho_providers::provider::CatalogConstruction::Runtime
+            .openai_compatible_api(),
+        rho_providers::provider::OpenAiCompatibleApi::ChatCompletions
     );
 
     config.write_settings(path.clone()).unwrap();

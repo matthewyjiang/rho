@@ -13,26 +13,6 @@ pub enum Auth {
     },
 }
 
-/// Crate-internal Responses credential, including keyless custom hosts.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-providers): fold ResponsesAuth::Keyless into the public Auth enum.
-///
-/// Public `Auth` is exhaustive in 1.x, so keyless custom Responses cannot be a
-/// third variant until the next major. Match and construct through this type
-/// (and `From<Auth>`) until then.
-pub(crate) enum ResponsesAuth {
-    Keyless,
-    OpenAi(Auth),
-}
-
-impl From<Auth> for ResponsesAuth {
-    fn from(auth: Auth) -> Self {
-        Self::OpenAi(auth)
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CodexAuthSource {
     Env,

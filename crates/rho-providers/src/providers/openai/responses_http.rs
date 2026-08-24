@@ -10,7 +10,7 @@ use crate::{
     provider_backend::cancel::cancel_aware,
 };
 
-use super::auth::{refresh_codex_token_at, Auth, CodexAuthSource, ResponsesAuth};
+use super::auth::{refresh_codex_token_at, Auth, CodexAuthSource};
 
 const DEFAULT_CODEX_REFRESH_URL: &str = "https://auth.openai.com/oauth/token";
 
@@ -107,9 +107,9 @@ impl<'a> ResponsesHttpTransport<'a> {
     /// Resolves the Codex tokens that should be used for the next request.
     pub(super) fn codex_tokens_for_auth(
         &self,
-        auth: &ResponsesAuth,
+        auth: Option<&Auth>,
     ) -> Result<CodexTokens, ModelError> {
-        let ResponsesAuth::OpenAi(Auth::Codex { tokens, source }) = auth else {
+        let Some(Auth::Codex { tokens, source }) = auth else {
             return Err(ModelError::InvalidResponse(
                 "Codex tokens requested for non-Codex auth".into(),
             ));
@@ -126,27 +126,27 @@ impl<'a> ResponsesHttpTransport<'a> {
     /// failure as well as a successful retry response.
     pub(super) async fn post_json(
         &self,
-        auth: &ResponsesAuth,
+        auth: Option<&Auth>,
         endpoint: ResponsesEndpoint,
         body: &Value,
         cancellation: Option<&rho_sdk::CancellationToken>,
     ) -> ResponsesHttpResult {
         match auth {
-            ResponsesAuth::Keyless => {
+            None => {
                 let request = self.build_request(endpoint, body, ResponsesHttpAuth::Keyless);
                 match self.send(request, cancellation).await {
                     Ok(response) => ResponsesHttpResult::ok(response),
                     Err(error) => ResponsesHttpResult::err(error),
                 }
             }
-            ResponsesAuth::OpenAi(Auth::ApiKey(key)) => {
+            Some(Auth::ApiKey(key)) => {
                 let request = self.build_request(endpoint, body, ResponsesHttpAuth::ApiKey { key });
                 match self.send(request, cancellation).await {
                     Ok(response) => ResponsesHttpResult::ok(response),
                     Err(error) => ResponsesHttpResult::err(error),
                 }
             }
-            ResponsesAuth::OpenAi(Auth::Codex { tokens, source }) => {
+            Some(Auth::Codex { tokens, source }) => {
                 let tokens = self.codex_turn_tokens(tokens, *source);
                 let response = match self
                     .send(

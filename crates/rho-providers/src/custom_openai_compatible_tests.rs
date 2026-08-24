@@ -244,7 +244,7 @@ fn custom_host_model_id_lookup_reinterns_the_descriptor() {
 // Covers: config api mode ignored at intern / descriptor not Responses
 // Owner: provider registry
 #[test]
-fn intern_responses_api_sets_catalog_construction() {
+fn intern_responses_api_sets_host_api() {
     let _lock = custom_provider_registry_test_lock();
     restore_empty();
     let _restore = RestoreCustomProviders;
@@ -255,11 +255,12 @@ fn intern_responses_api_sets_catalog_construction() {
     .unwrap();
 
     let host = custom_openai_compatible_provider("responses-host").unwrap();
+    assert_eq!(host.openai_compatible_api(), OpenAiCompatibleApi::Responses);
     assert!(matches!(
         host.runtime,
         ProviderRuntime::OpenAiCompatible {
             dialect: OpenAiCompatibleDialect::Custom,
-            catalog_construction: CatalogConstruction::Responses,
+            catalog_construction: CatalogConstruction::Runtime,
             ..
         }
     ));
@@ -274,13 +275,10 @@ fn custom_host_api_change_reinterns_the_descriptor() {
     let _restore = RestoreCustomProviders;
     install_custom_openai_compatible_providers(["api-flip-host"]).unwrap();
     let chat = custom_openai_compatible_provider("api-flip-host").unwrap();
-    assert!(matches!(
-        chat.runtime,
-        ProviderRuntime::OpenAiCompatible {
-            catalog_construction: CatalogConstruction::Runtime,
-            ..
-        }
-    ));
+    assert_eq!(
+        chat.openai_compatible_api(),
+        OpenAiCompatibleApi::ChatCompletions
+    );
     let chat_ptr = chat as *const _;
 
     install_custom_openai_compatible_providers_with_options([(
@@ -289,13 +287,10 @@ fn custom_host_api_change_reinterns_the_descriptor() {
     )])
     .unwrap();
     let responses = custom_openai_compatible_provider("api-flip-host").unwrap();
-    assert!(matches!(
-        responses.runtime,
-        ProviderRuntime::OpenAiCompatible {
-            catalog_construction: CatalogConstruction::Responses,
-            ..
-        }
-    ));
+    assert_eq!(
+        responses.openai_compatible_api(),
+        OpenAiCompatibleApi::Responses
+    );
     let responses_ptr = responses as *const _;
     assert_ne!(chat_ptr, responses_ptr);
 

@@ -8,7 +8,10 @@ use crate::{
     credentials::{CredentialResult, CredentialStore},
     model::{models_dev::CatalogSdkAdapter, ModelError},
     openai_compatible_dialect::OpenAiCompatibleDialect,
-    provider::{self, CatalogConstruction, OpenAiRuntimeAuth, ProviderAuthKind, ProviderRuntime},
+    provider::{
+        self, CatalogConstruction, OpenAiCompatibleApi, OpenAiRuntimeAuth, ProviderAuthKind,
+        ProviderRuntime,
+    },
     providers::{
         anthropic::AnthropicProvider,
         github_copilot::GitHubCopilotProvider,
@@ -278,6 +281,7 @@ impl ProviderBuilder {
                 };
                 build_openai_compatible_provider(
                     catalog_construction,
+                    descriptor.openai_compatible_api(),
                     provider_name,
                     model,
                     OpenAiCompatibleBuild {
@@ -372,26 +376,31 @@ impl CredentialStore for InertCredentialStore {
 
 fn build_openai_compatible_provider(
     catalog_construction: CatalogConstruction,
+    openai_compatible_api: OpenAiCompatibleApi,
     provider_name: &'static str,
     model: String,
     build: OpenAiCompatibleBuild,
 ) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, ModelError> {
     // Adapter choice only needs the catalog's npm mapping, not fresh reasoning
     // metadata, so a stale or reasoning-incomplete row must still steer it.
-    let adapter = match catalog_construction {
-        CatalogConstruction::Runtime => CatalogSdkAdapter::OpenAiCompatible,
-        CatalogConstruction::PreferModelsDevNpm => CatalogSdkAdapter::from_sdk_package(
-            crate::model::models_dev::cached_model_metadata(provider_name, &model)
-                .as_ref()
-                .and_then(|metadata| metadata.sdk_package.as_deref()),
-        ),
-        CatalogConstruction::Responses => CatalogSdkAdapter::OpenAiResponses,
+    // Declared Responses is a host API, not an npm construction policy.
+    let adapter = match openai_compatible_api {
+        OpenAiCompatibleApi::Responses => CatalogSdkAdapter::OpenAiResponses,
+        OpenAiCompatibleApi::ChatCompletions => match catalog_construction {
+            CatalogConstruction::Runtime => CatalogSdkAdapter::OpenAiCompatible,
+            CatalogConstruction::PreferModelsDevNpm => CatalogSdkAdapter::from_sdk_package(
+                crate::model::models_dev::cached_model_metadata(provider_name, &model)
+                    .as_ref()
+                    .and_then(|metadata| metadata.sdk_package.as_deref()),
+            ),
+        },
     };
-    // Custom Responses hosts do not advertise OpenAI hosted tools. Force this
-    // off before auth matching so both api-key and keyless constructors agree.
-    let hosted_web_search = match catalog_construction {
-        CatalogConstruction::Responses => false,
-        _ => build.hosted_web_search,
+    // Declared Responses hosts do not advertise OpenAI hosted tools. Catalog npm
+    // Responses (opencode-go) still follows the caller flag.
+    let hosted_web_search = if openai_compatible_api == OpenAiCompatibleApi::Responses {
+        false
+    } else {
+        build.hosted_web_search
     };
     match (adapter, build.auth) {
         (CatalogSdkAdapter::OpenAiResponses, CompatibleAuth::ApiKey(key)) => {
@@ -403,7 +412,7 @@ fn build_openai_compatible_provider(
             // CredentialStore to satisfy the Codex refresh dependency.
             Ok(Arc::new(OpenAiProvider::new_with_identity(
                 model,
-                Auth::ApiKey(key),
+                Some(Auth::ApiKey(key)),
                 Arc::new(InertCredentialStore),
                 build.client,
                 Some(build.api_base),
@@ -412,11 +421,13 @@ fn build_openai_compatible_provider(
             )))
         }
         (CatalogSdkAdapter::OpenAiResponses, CompatibleAuth::None) => {
-            Ok(Arc::new(OpenAiProvider::new_keyless_with_identity(
+            Ok(Arc::new(OpenAiProvider::new_with_identity(
                 model,
+                None,
                 Arc::new(InertCredentialStore),
                 build.client,
                 Some(build.api_base),
+                hosted_web_search,
                 provider_name,
             )))
         }

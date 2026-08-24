@@ -406,8 +406,8 @@ pub fn validate_custom_provider_name(name: &str) -> anyhow::Result<()> {
 }
 
 /// Interns one host, reusing the existing descriptor when the catalog slug,
-/// lookup mode, and wire API are unchanged. A config edit that repoints any of
-/// those must not keep serving the previously leaked descriptor.
+/// lookup mode, and [`OpenAiCompatibleApi`] are unchanged. A config edit that
+/// repoints any of those must not keep serving the previously leaked descriptor.
 fn intern(
     spec: CustomProviderSpec<'_>,
     options: CustomProviderOptions,
@@ -416,14 +416,11 @@ fn intern(
     let name = spec.name;
     let metadata_upstream = spec.metadata_upstream();
     let catalog_lookup = options.catalog_lookup;
-    let construction = match options.api {
-        OpenAiCompatibleApi::ChatCompletions => CatalogConstruction::Runtime,
-        OpenAiCompatibleApi::Responses => CatalogConstruction::Responses,
-    };
+    let api = options.api;
     if let Some(existing) = registry.interned.get(name).copied().filter(|existing| {
         existing.metadata_upstream == metadata_upstream
             && existing.catalog_lookup() == catalog_lookup
-            && existing.runtime.catalog_construction() == construction
+            && existing.openai_compatible_api() == api
     }) {
         return existing;
     }
@@ -460,7 +457,7 @@ fn intern(
         runtime: ProviderRuntime::OpenAiCompatible {
             dialect: OpenAiCompatibleDialect::Custom,
             default_api_base: OPENAI_COMPATIBLE_API_BASE,
-            catalog_construction: construction,
+            catalog_construction: CatalogConstruction::Runtime,
         },
         name: leaked_name,
         display_name: leaked_name,
@@ -471,6 +468,7 @@ fn intern(
         // Own name unless `catalog` borrows another models.dev slug.
         metadata_upstream,
         catalog_lookup,
+        openai_compatible_api: api,
         // Same Chat Completions effort field as Ollama. Custom names are not in
         // models.dev, so Unknown must still send the selected level.
         catalog_reasoning: CatalogReasoningPolicy::OffAsNone,

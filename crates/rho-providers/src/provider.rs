@@ -209,15 +209,16 @@ pub enum CatalogReasoningPolicy {
 ///
 /// [`Self::Runtime`] uses [`ProviderRuntime`] only. [`Self::PreferModelsDevNpm`]
 /// may construct Responses or Anthropic adapters when models.dev names a
-/// different AI SDK package for the selected model. [`Self::Responses`] always
-/// constructs the OpenAI Responses HTTP adapter.
+/// different AI SDK package for the selected model.
+///
+/// A custom host's wire API is [`OpenAiCompatibleApi`] on the descriptor, not
+/// a construction policy. [`PreferModelsDevNpm`] is the only path that consults
+/// catalog npm mapping.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CatalogConstruction {
     #[default]
     Runtime,
     PreferModelsDevNpm,
-    /// Always construct the OpenAI Responses HTTP adapter; catalog npm mapping is not consulted.
-    Responses,
 }
 
 /// What to serialize when a Standard-dialect model is missing catalog metadata.
@@ -551,6 +552,10 @@ pub struct ProviderDescriptor {
     /// `pub(crate)` so adding the field stays minor-compatible; external
     /// construction is already blocked by [`Self::model_refresh`].
     pub(crate) catalog_lookup: CatalogLookupMode,
+    /// Wire API a custom OpenAI-compatible host speaks. Built-ins are Chat Completions.
+    ///
+    /// `pub(crate)` for the same 1.x reason as [`Self::catalog_lookup`].
+    pub(crate) openai_compatible_api: OpenAiCompatibleApi,
     pub catalog_reasoning: CatalogReasoningPolicy,
     /// Preferred model when the cache is empty or contains this id.
     pub default_model: Option<&'static str>,
@@ -604,7 +609,7 @@ impl ProviderDescriptor {
             .any(|mode| matches!(mode.auth_kind, ProviderAuthKind::None))
     }
 
-    /// Config-defined Chat Completions hosts are named providers, not a single built-in.
+    /// Config-defined OpenAI-compatible hosts are named providers, not a single built-in.
     pub fn is_custom_openai_compatible(self) -> bool {
         PROVIDERS.iter().all(|builtin| builtin.name != self.name)
     }
@@ -612,6 +617,11 @@ impl ProviderDescriptor {
     /// How this host rematches models.dev rows.
     pub fn catalog_lookup(self) -> CatalogLookupMode {
         self.catalog_lookup
+    }
+
+    /// Wire API this OpenAI-compatible host speaks.
+    pub fn openai_compatible_api(self) -> OpenAiCompatibleApi {
+        self.openai_compatible_api
     }
 
     /// Whether `/doctor` and `/config` can reach this host's `/v1/models`.

@@ -302,6 +302,7 @@ async fn serve_one_responses_sse(listener: tokio::net::TcpListener) -> Vec<u8> {
 
 // Covers: custom host with api=responses and a key must hit Responses, not chat
 // Owner: provider builder
+#[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn custom_responses_api_key_posts_responses_with_bearer() {
     use rho_sdk::model::{Message, ModelIdentity, ModelRequest};
@@ -355,6 +356,7 @@ async fn custom_responses_api_key_posts_responses_with_bearer() {
 
 // Covers: custom host with api=responses and no key must hit Responses without Authorization
 // Owner: provider builder
+#[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn custom_responses_keyless_posts_responses_without_authorization() {
     use rho_sdk::model::{Message, ModelRequest};
@@ -399,6 +401,7 @@ async fn custom_responses_keyless_posts_responses_without_authorization() {
 
 // Covers: a web_search ToolSpec must serialize as type=function, not type=web_search
 // Owner: provider builder
+#[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn custom_responses_does_not_inject_hosted_web_search() {
     use rho_sdk::model::{Message, ModelRequest, ToolSpec};
