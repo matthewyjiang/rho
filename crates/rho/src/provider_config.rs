@@ -115,6 +115,17 @@ impl ProviderConfigs {
             Some(value) => parse_provider_api(&field, &value)?,
             None => rho_providers::provider::OpenAiCompatibleApi::ChatCompletions,
         };
+        self.set_openai_compatible_api(provider, api)
+    }
+
+    /// Writes the wire API after [`Self::set_endpoint`]. `/login` uses this so
+    /// a new host is not stuck on Chat Completions when Responses was chosen.
+    pub(crate) fn set_openai_compatible_api(
+        &mut self,
+        provider: &str,
+        api: rho_providers::provider::OpenAiCompatibleApi,
+    ) -> anyhow::Result<()> {
+        let field = format!("providers.custom.{provider}.api");
         let Some(endpoint) = self.custom.get_mut(provider) else {
             anyhow::bail!("{field} requires a configured base_url");
         };

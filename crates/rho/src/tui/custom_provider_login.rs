@@ -1,52 +1,77 @@
-//! `/login` onboarding for Chat Completions hosts that persist an API base.
+//! `/login` onboarding for OpenAI-compatible hosts that persist an API base.
 //!
-//! Custom hosts collect a name, then a URL, then an optional key. Built-in
-//! hosts that [`provider::ProviderDescriptor::collects_login_endpoint`] start
-//! on the URL step. The first two reuse the shared [`TextInput`] overlay and
+//! Custom hosts pick Chat Completions or Responses, then collect a name, a
+//! URL, and an optional key. Built-in hosts that
+//! [`provider::ProviderDescriptor::collects_login_endpoint`] start on the URL
+//! step. The name and URL steps reuse the shared [`TextInput`] overlay and
 //! carry their own state in [`CustomHostStep`], so that widget stays a plain
 //! line editor.
 
-use rho_providers::{model::catalog, provider};
+use rho_providers::{model::catalog, provider, provider::OpenAiCompatibleApi};
 
 use super::{login::SecretInput, text_input::TextInput, App, ComposerMode, Entry};
 
-/// Picker value for "create a host that does not exist yet".
+/// Picker value for the Custom login group (Chat Completions vs Responses).
 ///
 /// Underscore-prefixed so it cannot collide with a validated host name, which
 /// must start with a lowercase letter.
+pub(super) const NEW_CUSTOM_GROUP_VALUE: &str = "_custom";
+/// Picker value for a new Chat Completions host.
 pub(super) const NEW_CUSTOM_HOST_VALUE: &str = "_custom-chat-completions";
-pub(super) const CUSTOM_PROVIDER_LOGIN_LABEL: &str = "Custom Chat Completions";
+/// Picker value for a new Responses host.
+pub(super) const NEW_CUSTOM_RESPONSES_HOST_VALUE: &str = "_custom-responses";
+pub(super) const CUSTOM_PROVIDER_LOGIN_LABEL: &str = "Custom";
 pub(super) const CUSTOM_PROVIDER_LOGIN_DETAIL: &str =
-    "Name a Chat Completions host, set its URL, and optionally store an API key.";
+    "Name an OpenAI-compatible host, choose Chat Completions or Responses, set its URL, and optionally store an API key.";
 
 const DEFAULT_BASE_URL: &str = "http://127.0.0.1:8000/v1";
 
 /// Which field of the wizard the shared text overlay is currently editing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum CustomHostStep {
-    Name,
+    /// Provider name, carrying the wire API chosen in the nested picker.
+    Name { api: OpenAiCompatibleApi },
     /// Base URL for the host named in the previous step.
     Url {
         name: String,
+        /// Set for custom hosts; omitted for built-ins that only persist a URL.
+        api: Option<OpenAiCompatibleApi>,
     },
 }
 
 impl CustomHostStep {
     pub(super) fn label(&self) -> &'static str {
         match self {
-            Self::Name => "provider name",
+            Self::Name { .. } => "provider name",
             Self::Url { .. } => "base URL",
         }
     }
 }
 
+/// Wire API encoded in a custom-host picker value, if this is one.
+pub(super) fn parse_custom_host_api(value: &str) -> Option<OpenAiCompatibleApi> {
+    match value {
+        NEW_CUSTOM_HOST_VALUE => Some(OpenAiCompatibleApi::ChatCompletions),
+        NEW_CUSTOM_RESPONSES_HOST_VALUE => Some(OpenAiCompatibleApi::Responses),
+        _ => None,
+    }
+}
+
 impl App {
-    pub(super) fn start_custom_provider_onboarding(&mut self) {
+    pub(super) fn start_custom_provider_onboarding(&mut self, api: OpenAiCompatibleApi) {
         self.edit_custom_host_step(
-            CustomHostStep::Name,
+            CustomHostStep::Name { api },
             String::new(),
             "name the custom provider",
         );
+    }
+
+    /// Direct `/login` with the Custom group value: no parent picker to return to.
+    pub(super) fn open_custom_api_picker(&mut self) {
+        self.input_ui.set_composer(ComposerMode::Picker(
+            super::provider_picker::custom_api_picker(),
+        ));
+        self.set_status("select custom host API");
     }
 
     /// Opens the URL step for a built-in that persists its API base from `/login`.
@@ -55,6 +80,7 @@ impl App {
             Ok(prefill) => self.edit_custom_host_step(
                 CustomHostStep::Url {
                     name: provider.to_string(),
+                    api: None,
                 },
                 prefill,
                 "enter the API base URL",
@@ -89,28 +115,40 @@ impl App {
         value: String,
     ) -> anyhow::Result<()> {
         match step {
-            CustomHostStep::Name => self.submit_custom_provider_name(value),
-            CustomHostStep::Url { name } => self.submit_custom_provider_url(name, value),
+            CustomHostStep::Name { api } => self.submit_custom_provider_name(api, value),
+            CustomHostStep::Url { name, api } => self.submit_custom_provider_url(name, api, value),
         }
     }
 
-    fn submit_custom_provider_name(&mut self, value: String) -> anyhow::Result<()> {
+    fn submit_custom_provider_name(
+        &mut self,
+        api: OpenAiCompatibleApi,
+        value: String,
+    ) -> anyhow::Result<()> {
         let name = value.trim().to_ascii_lowercase();
         if let Err(error) = provider::validate_custom_provider_name(&name) {
-            return self.retry_custom_host_step(CustomHostStep::Name, value, error);
+            return self.retry_custom_host_step(CustomHostStep::Name { api }, value, error);
         }
         self.edit_custom_host_step(
-            CustomHostStep::Url { name },
+            CustomHostStep::Url {
+                name,
+                api: Some(api),
+            },
             DEFAULT_BASE_URL.into(),
             "enter the custom provider URL",
         );
         Ok(())
     }
 
-    fn submit_custom_provider_url(&mut self, name: String, value: String) -> anyhow::Result<()> {
+    fn submit_custom_provider_url(
+        &mut self,
+        name: String,
+        api: Option<OpenAiCompatibleApi>,
+        value: String,
+    ) -> anyhow::Result<()> {
         let base_url = value.trim().to_string();
-        if let Err(error) = self.persist_custom_provider(&name, &base_url) {
-            return self.retry_custom_host_step(CustomHostStep::Url { name }, value, error);
+        if let Err(error) = self.persist_custom_provider(&name, &base_url, api) {
+            return self.retry_custom_host_step(CustomHostStep::Url { name, api }, value, error);
         }
         self.insert_entry(&Entry::Notice(saved_endpoint_notice(&name, &base_url)));
         // The host is interned now, so its API-key target comes from the registry.
@@ -144,9 +182,17 @@ impl App {
         self.set_status("login cancelled");
     }
 
-    fn persist_custom_provider(&mut self, name: &str, base_url: &str) -> anyhow::Result<()> {
+    fn persist_custom_provider(
+        &mut self,
+        name: &str,
+        base_url: &str,
+        api: Option<OpenAiCompatibleApi>,
+    ) -> anyhow::Result<()> {
         self.info.services.config_repository.update(|config| {
             config.providers.set_endpoint(name, base_url)?;
+            if let Some(api) = api {
+                config.providers.set_openai_compatible_api(name, api)?;
+            }
             // Nothing overlays the process-wide set, so installing is enough
             // to make the host visible here and in every spawned task.
             config.providers.activate()

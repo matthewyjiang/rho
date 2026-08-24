@@ -37,11 +37,46 @@ pub(super) fn login_group_picker() -> UiPicker {
         detail: Some(super::custom_provider_login::CUSTOM_PROVIDER_LOGIN_DETAIL.into()),
         preview: None,
         badge: None,
-        value: super::custom_provider_login::NEW_CUSTOM_HOST_VALUE.into(),
+        value: super::custom_provider_login::NEW_CUSTOM_GROUP_VALUE.into(),
         selection_verb: None,
     });
     sort_items_by_ascii_label(&mut items);
     UiPicker::new("select provider to login", items, PickerAction::LoginGroup).with_key_hints(
+        super::PickerKeyHints {
+            tab_complete: true,
+            row_delete: false,
+            ..Default::default()
+        },
+    )
+}
+
+/// Nested `/login` picker: Chat Completions vs Responses for a new custom host.
+pub(super) fn custom_api_picker() -> UiPicker {
+    let items = vec![
+        PickerItem {
+            section: None,
+            label: "Chat Completions".into(),
+            detail: Some(
+                "POST {base}/chat/completions. Default for most local servers and proxies.".into(),
+            ),
+            preview: None,
+            badge: None,
+            value: super::custom_provider_login::NEW_CUSTOM_HOST_VALUE.into(),
+            selection_verb: None,
+        },
+        PickerItem {
+            section: None,
+            label: "Responses".into(),
+            detail: Some(
+                "POST {base}/responses. Same HTTP contract as OpenAI's Responses API.".into(),
+            ),
+            preview: None,
+            badge: None,
+            value: super::custom_provider_login::NEW_CUSTOM_RESPONSES_HOST_VALUE.into(),
+            selection_verb: None,
+        },
+    ];
+    UiPicker::new("select custom host API", items, PickerAction::LoginProvider).with_key_hints(
         super::PickerKeyHints {
             tab_complete: true,
             row_delete: false,

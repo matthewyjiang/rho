@@ -10,6 +10,7 @@ use crate::claude_runtime::{
     auth::{self, ClaudeAuthError, ClaudeAuthStatus},
     executable,
 };
+use rho_providers::provider::OpenAiCompatibleApi;
 
 use super::{
     external_editor, App, ComposerMode, Entry, InlineChoice, InlineChoiceModal, InlineChoiceOption,
@@ -56,8 +57,10 @@ pub(super) struct ExternalLoginMethod {
 pub(super) enum SignInTarget {
     /// Claude Code, whose credential the `claude` binary owns.
     ClaudeCode,
+    /// Nested picker for Chat Completions vs Responses.
+    NewCustomGroup,
     /// Onboarding for a host that does not exist yet.
-    NewCustomHost,
+    NewCustomHost { api: OpenAiCompatibleApi },
     /// A Rho provider credential.
     Provider(String),
 }
@@ -67,8 +70,10 @@ impl SignInTarget {
         let value = value.trim();
         if value.eq_ignore_ascii_case(CLAUDE_CODE_TARGET) {
             Self::ClaudeCode
-        } else if value == super::custom_provider_login::NEW_CUSTOM_HOST_VALUE {
-            Self::NewCustomHost
+        } else if value == super::custom_provider_login::NEW_CUSTOM_GROUP_VALUE {
+            Self::NewCustomGroup
+        } else if let Some(api) = super::custom_provider_login::parse_custom_host_api(value) {
+            Self::NewCustomHost { api }
         } else {
             Self::Provider(value.to_string())
         }

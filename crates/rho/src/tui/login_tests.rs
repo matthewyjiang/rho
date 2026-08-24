@@ -12,6 +12,8 @@ use rho_providers::{
 
 use crate::{config::Config, tui::tests::test_app};
 
+use super::super::custom_provider_login::CustomHostStep;
+
 // Covers: blank optional key must keep a reachable key
 // Owner: login policy
 #[test]
@@ -59,6 +61,41 @@ fn login_state_save_persists_reasoning_and_normalizes_auth_profile() {
     assert_eq!(saved.model, "login-k3-test");
     assert_eq!(saved.auth, "kimi-oauth");
     assert_eq!(saved.reasoning, ReasoningLevel::High);
+}
+
+// Covers: choosing Responses in /login must persist api, not default chat
+// Owner: login
+#[test]
+fn custom_onboarding_persists_selected_responses_api() {
+    let _lock = rho_providers::provider::custom_provider_registry_test_lock();
+    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
+
+    let mut app = test_app();
+    let api = rho_providers::provider::OpenAiCompatibleApi::Responses;
+    app.start_custom_provider_onboarding(api);
+    app.submit_custom_host_step(CustomHostStep::Name { api }, "litellm".into())
+        .unwrap();
+    app.submit_custom_host_step(
+        CustomHostStep::Url {
+            name: "litellm".into(),
+            api: Some(api),
+        },
+        "http://127.0.0.1:4000/v1".into(),
+    )
+    .unwrap();
+
+    let saved = app.info.services.config_repository.load().unwrap();
+    pretty_assertions::assert_eq!(
+        saved.providers.custom["litellm"].api,
+        rho_providers::provider::OpenAiCompatibleApi::Responses
+    );
+    pretty_assertions::assert_eq!(
+        rho_providers::provider::interned_custom_provider("litellm")
+            .unwrap()
+            .openai_compatible_api(),
+        rho_providers::provider::OpenAiCompatibleApi::Responses
+    );
+    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
 }
 
 // Covers: /login on an active custom host must persist `{name}-api-key`

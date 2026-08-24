@@ -110,7 +110,7 @@ Ollama's provider-specific API base uses its own section and does not affect oth
 base_url = "http://127.0.0.1:11434/v1"
 ```
 
-Custom OpenAI-compatible hosts use a name you choose. They speak Chat Completions unless you set `api = "responses"`. `catalog` is optional and borrows a [models.dev](https://models.dev/) provider for context, price, and reasoning. `catalog_mode = "model-id"` looks up the unsplit `slug/model` id instead and cannot be combined with `catalog`:
+Custom OpenAI-compatible hosts use a name you choose. They speak Chat Completions unless you pick **Responses** under **Custom** in `/login`, or set `api = "responses"`. `catalog` is optional and borrows a [models.dev](https://models.dev/) provider for context, price, and reasoning. `catalog_mode = "model-id"` looks up the unsplit `slug/model` id instead and cannot be combined with `catalog`:
 
 ```toml
 [providers.custom.composer]
