@@ -1031,6 +1031,21 @@ async fn advisor_mode_changes_the_tool_list_without_replacing_the_session() {
     assert!(interactive.take_tool_list_changed());
 }
 
+// Covers: enabling then disabling advisor before the next request must not
+// report a tool-list cache miss against the last submitted specs.
+// Owner: interactive runtime tool-list cache tracking
+#[tokio::test]
+async fn restoring_the_tool_list_clears_the_cache_miss_flag() {
+    let mut interactive = advisor_test_runtime().await;
+    interactive
+        .set_advisor(Some(advisor_model()))
+        .await
+        .unwrap();
+    interactive.set_advisor(None).await.unwrap();
+    assert!(!interactive.take_tool_list_changed());
+    interactive.shutdown().await;
+}
+
 // Covers: append-success / snapshot-save-failure after a successful rebuild must
 // restore previous advisor registration, model, and model-visible history.
 // Owner: interactive runtime advisor state transition.

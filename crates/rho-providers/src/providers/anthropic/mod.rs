@@ -242,10 +242,11 @@ fn provider_context_replay(thinking: Option<&AnthropicThinkingConfig>) -> Provid
 }
 
 fn mark_cache_control_points(messages: &mut [AnthropicMessage]) {
-    // Writes occur only at marked breakpoints. Anthropic looks ~20 content
+    // Writes occur only at marked breakpoints. Anthropic looks 20 content
     // blocks upstream of each one, so a fat tool-result user turn can miss the
-    // previous write if only the tail is marked. Mark the last two shared
-    // cacheable user blocks (still 4 breakpoints with tools + system).
+    // previous write if only the tail is marked. Mark the last shared block of
+    // the previous user message (the prior write) and the new tail. Tools and
+    // system still use the other two of the four breakpoints.
     // A trailing user text block is the per-request suffix and stays unmarked.
     let mut points = Vec::new();
     for (message_index, message) in messages.iter().enumerate() {
@@ -269,10 +270,15 @@ fn mark_cache_control_points(messages: &mut [AnthropicMessage]) {
             points.pop();
         }
     }
-    for &(message_index, block_index) in points.iter().rev().take(2) {
-        set_user_breakpoint(&mut messages[message_index].content[block_index]);
-    }
-    if !points.is_empty() {
+    if let Some(&(tail_message, tail_block)) = points.last() {
+        set_user_breakpoint(&mut messages[tail_message].content[tail_block]);
+        if let Some(&(prefix_message, prefix_block)) = points
+            .iter()
+            .rev()
+            .find(|(message_index, _)| *message_index < tail_message)
+        {
+            set_user_breakpoint(&mut messages[prefix_message].content[prefix_block]);
+        }
         return;
     }
 

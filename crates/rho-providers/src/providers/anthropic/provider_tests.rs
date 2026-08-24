@@ -328,29 +328,105 @@ fn thinking_budget_stays_latched_when_max_tokens_hydrates() {
     );
 }
 
-// Covers: two shared user breakpoints survive a fat tool-result turn, and a
-// trailing per-request text suffix stays unmarked.
+// Covers: the prior user write and the new tail are both marked; a trailing
+// per-request text suffix stays unmarked.
 // Owner: anthropic request body cache breakpoints
 #[test]
 fn two_user_breakpoints_cover_a_multi_result_turn() {
-    let provider = test_provider_with_capabilities("claude-sonnet-4-5", &json!({}));
+    let body = tool_result_request_body(2);
     let marker = Some(AnthropicCacheControl::ephemeral());
-    let messages = [
+
+    assert_eq!(body.messages.len(), 3);
+    assert_eq!(
+        body.messages[0].content,
+        [AnthropicContentBlock::Text {
+            text: "first turn".into(),
+            cache_control: marker.clone(),
+        }]
+    );
+    assert_eq!(
+        body.messages[2].content,
+        [
+            AnthropicContentBlock::ToolResult {
+                tool_use_id: "toolu_1".into(),
+                content: "1".into(),
+                is_error: false,
+                cache_control: None,
+            },
+            AnthropicContentBlock::ToolResult {
+                tool_use_id: "toolu_2".into(),
+                content: "2".into(),
+                is_error: false,
+                cache_control: marker,
+            },
+            AnthropicContentBlock::Text {
+                text: "suffix".into(),
+                cache_control: None,
+            },
+        ]
+    );
+}
+
+// Covers: 20 new tool-result blocks must not leave the prior write outside
+// every lookback window.
+// Owner: anthropic request body cache breakpoints
+#[test]
+fn prior_write_stays_in_lookback_after_twenty_new_blocks() {
+    const NEW_BLOCKS: usize = 20;
+    let body = tool_result_request_body(NEW_BLOCKS);
+    let marker = Some(AnthropicCacheControl::ephemeral());
+    let last = body.messages.last().expect("tool-result user turn");
+
+    assert_eq!(
+        body.messages[0].content,
+        [AnthropicContentBlock::Text {
+            text: "first turn".into(),
+            cache_control: marker.clone(),
+        }]
+    );
+    assert_eq!(last.content.len(), NEW_BLOCKS + 1);
+    assert_eq!(
+        last.content[0],
+        AnthropicContentBlock::ToolResult {
+            tool_use_id: "toolu_1".into(),
+            content: "1".into(),
+            is_error: false,
+            cache_control: None,
+        }
+    );
+    assert_eq!(
+        last.content[NEW_BLOCKS - 1],
+        AnthropicContentBlock::ToolResult {
+            tool_use_id: format!("toolu_{NEW_BLOCKS}"),
+            content: NEW_BLOCKS.to_string(),
+            is_error: false,
+            cache_control: marker,
+        }
+    );
+    assert_eq!(
+        last.content[NEW_BLOCKS],
+        AnthropicContentBlock::Text {
+            text: "suffix".into(),
+            cache_control: None,
+        }
+    );
+}
+
+fn tool_result_request_body(tool_results: usize) -> AnthropicRequest {
+    let provider = test_provider_with_capabilities("claude-sonnet-4-5", &json!({}));
+    let mut messages = vec![
         Message::User(vec![ContentBlock::Text("first turn".into())]),
         Message::Assistant(vec![ContentBlock::Text("ok".into())]),
-        Message::ToolResult(rho_sdk::model::ToolResult {
-            id: "toolu_1".into(),
-            ok: true,
-            content: "one".into(),
-        }),
-        Message::ToolResult(rho_sdk::model::ToolResult {
-            id: "toolu_2".into(),
-            ok: true,
-            content: "two".into(),
-        }),
-        Message::User(vec![ContentBlock::Text("suffix".into())]),
     ];
-    let body = provider
+    messages.extend((1..=tool_results).map(|index| {
+        Message::ToolResult(rho_sdk::model::ToolResult {
+            id: format!("toolu_{index}"),
+            ok: true,
+            content: index.to_string(),
+        })
+    }));
+    messages.push(Message::User(vec![ContentBlock::Text("suffix".into())]));
+    provider
         .request_body(
             ModelRequest {
                 messages: &messages,
@@ -361,37 +437,7 @@ fn two_user_breakpoints_cover_a_multi_result_turn() {
             },
             false,
         )
-        .unwrap();
-
-    assert_eq!(body.messages.len(), 3);
-    assert_eq!(
-        body.messages[0].content,
-        [AnthropicContentBlock::Text {
-            text: "first turn".into(),
-            cache_control: None,
-        }]
-    );
-    assert_eq!(
-        body.messages[2].content,
-        [
-            AnthropicContentBlock::ToolResult {
-                tool_use_id: "toolu_1".into(),
-                content: "one".into(),
-                is_error: false,
-                cache_control: marker.clone(),
-            },
-            AnthropicContentBlock::ToolResult {
-                tool_use_id: "toolu_2".into(),
-                content: "two".into(),
-                is_error: false,
-                cache_control: marker,
-            },
-            AnthropicContentBlock::Text {
-                text: "suffix".into(),
-                cache_control: None,
-            },
-        ]
-    );
+        .unwrap()
 }
 
 fn user_text_blocks(body: &AnthropicRequest) -> [(&str, Option<&AnthropicCacheControl>); 2] {

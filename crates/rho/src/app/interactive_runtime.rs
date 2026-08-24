@@ -108,9 +108,10 @@ pub(crate) struct InteractiveRuntime {
     pending_persistence_checkpoint: Option<(StoredSession, rho_sdk::SessionSnapshot)>,
     /// True after the current provider completes a live turn on the current history.
     live_context_warm: bool,
-    /// Advertised tool specs last seen by the prompt-cache tracker.
+    /// Advertised tool specs last submitted on a provider request.
     cached_tool_specs: Vec<rho_sdk::model::ToolSpec>,
-    /// Sticky until the TUI samples it: the tool list changed since last check.
+    /// Sticky until the TUI samples it: the tool list now differs from the last
+    /// submitted request. Restoring the previous list clears it.
     tool_list_changed: bool,
     /// Runs that reached a terminal outcome, reported at the session boundary.
     completed_runs: u64,
@@ -281,19 +282,21 @@ impl InteractiveRuntime {
         self.live_context_warm = false;
     }
 
-    /// Records whether the advertised tool list changed. A changed list busts
-    /// the prompt-cache prefix even when the system prompt stays put.
+    /// Records whether the advertised tool list differs from the last submitted
+    /// request. A changed list busts the prompt-cache prefix even when the
+    /// system prompt stays put. Toggling back to the previous list clears it.
     fn remember_tool_list(&mut self) {
-        let specs = self.tools.specs();
-        if self.cached_tool_specs != specs {
-            self.cached_tool_specs = specs;
-            self.tool_list_changed = true;
-        }
+        self.tool_list_changed = self.cached_tool_specs != self.tools.specs();
     }
 
-    /// True when the advertised tool list changed since the last sample.
+    /// True when the advertised tool list differs from the last submitted
+    /// request. Sampling updates the submitted baseline.
     pub(crate) fn take_tool_list_changed(&mut self) -> bool {
-        std::mem::take(&mut self.tool_list_changed)
+        let changed = std::mem::take(&mut self.tool_list_changed);
+        if changed {
+            self.cached_tool_specs = self.tools.specs();
+        }
+        changed
     }
 
     pub(crate) fn take_pending_omission(
