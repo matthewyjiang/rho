@@ -30,7 +30,10 @@ use crate::model::ModelError;
 /// Converts an application [`ModelError`] into a sanitized public [`ProviderError`].
 ///
 /// HTTP response bodies and other transport payloads are omitted so credentials
-/// and provider-private content do not enter the SDK error contract.
+/// and provider-private content do not enter the SDK error contract. Transport
+/// `reqwest` failures keep a public message and never copy the request URL or
+/// source error text. Timeouts, connect failures, and client-builder errors
+/// get a specific message; other transport failures stay generic.
 pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
     match error {
         ModelError::MissingCredentials(_) => ProviderError::new(
@@ -150,17 +153,42 @@ pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
                 error.with_diagnostic(sanitize_diagnostic(&body))
             }
         }
-        ModelError::Request(_) => ProviderError::new(
-            ProviderErrorKind::Unavailable,
-            "provider request failed",
-            Retryability::Retryable,
-        ),
+        ModelError::Request(error) => provider_error_from_transport_request(error),
         ModelError::Io(_) => ProviderError::new(
             ProviderErrorKind::Other,
             "provider I/O failed",
             Retryability::Retryable,
         ),
     }
+}
+
+fn provider_error_from_transport_request(error: reqwest::Error) -> ProviderError {
+    if error.is_timeout() {
+        return ProviderError::new(
+            ProviderErrorKind::Timeout,
+            "provider request timed out",
+            Retryability::Retryable,
+        );
+    }
+    if error.is_builder() {
+        return ProviderError::new(
+            ProviderErrorKind::Other,
+            "provider client configuration failed",
+            Retryability::Permanent,
+        );
+    }
+    if error.is_connect() {
+        return ProviderError::new(
+            ProviderErrorKind::Unavailable,
+            "provider request failed to connect",
+            Retryability::Retryable,
+        );
+    }
+    ProviderError::new(
+        ProviderErrorKind::Unavailable,
+        "provider request failed",
+        Retryability::Retryable,
+    )
 }
 
 fn sanitize_diagnostic(value: &str) -> String {

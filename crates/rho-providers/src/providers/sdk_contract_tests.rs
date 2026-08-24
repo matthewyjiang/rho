@@ -515,6 +515,122 @@ fn http_error_messages_include_status_without_bodies() {
     assert_eq!(converted.diagnostic(), Some("authorization=super-secret"));
 }
 
+// Covers: transport request failures keep a public message and never copy
+// reqwest URL or source text. Timeouts, connect failures, and builder errors
+// get a specific message; other transport failures stay generic.
+// Owner: provider SDK error mapping
+#[tokio::test]
+async fn transport_request_errors_keep_sanitized_public_messages() {
+    const SECRET: &str = "secret-token-should-not-leak";
+
+    let connection = connection_refused_error(SECRET).await;
+    let timeout = request_timeout_error(SECRET).await;
+    let builder = builder_error();
+
+    let cases = [
+        (
+            connection,
+            ProviderErrorKind::Unavailable,
+            true,
+            "provider request failed to connect",
+        ),
+        (
+            timeout,
+            ProviderErrorKind::Timeout,
+            true,
+            "provider request timed out",
+        ),
+        (
+            builder,
+            ProviderErrorKind::Other,
+            false,
+            "provider client configuration failed",
+        ),
+    ];
+
+    for (error, kind, retryable, message) in cases {
+        assert_sanitized_transport_request(error, kind, retryable, message, SECRET);
+    }
+}
+
+fn assert_sanitized_transport_request(
+    error: reqwest::Error,
+    kind: ProviderErrorKind,
+    retryable: bool,
+    message: &'static str,
+    secret: &str,
+) {
+    let converted = provider_error_from_model_error(ModelError::Request(error));
+    assert_eq!(converted.kind(), kind, "{message}");
+    assert_eq!(converted.is_retryable(), retryable, "{message}");
+    assert_eq!(converted.message(), message);
+    assert_eq!(converted.diagnostic(), None, "{message}");
+
+    let display = converted.to_string();
+    let debug = format!("{converted:?}");
+    for leaked in [secret, "127.0.0.1", "://"] {
+        assert!(
+            !converted.message().contains(leaked),
+            "{message} leaked {leaked} in message"
+        );
+        assert!(
+            !display.contains(leaked),
+            "{message} leaked {leaked} in display"
+        );
+        assert!(
+            !debug.contains(leaked),
+            "{message} leaked {leaked} in debug"
+        );
+    }
+}
+
+fn secret_url(address: std::net::SocketAddr, secret: &str) -> String {
+    format!("http://{address}/chat?key={secret}")
+}
+
+async fn bind_local() -> (tokio::net::TcpListener, std::net::SocketAddr) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind local listener");
+    let address = listener.local_addr().expect("listener address");
+    (listener, address)
+}
+
+async fn connection_refused_error(secret: &str) -> reqwest::Error {
+    let (listener, address) = bind_local().await;
+    drop(listener);
+    reqwest::get(secret_url(address, secret))
+        .await
+        .expect_err("closed listener should refuse the connection")
+}
+
+async fn request_timeout_error(secret: &str) -> reqwest::Error {
+    let (listener, address) = bind_local().await;
+    let server = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.expect("accept timeout client");
+        std::future::pending::<()>().await;
+        drop(socket);
+    });
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(10))
+        .build()
+        .expect("timeout client");
+    let error = client
+        .get(secret_url(address, secret))
+        .send()
+        .await
+        .expect_err("held connection should time out");
+    server.abort();
+    error
+}
+
+fn builder_error() -> reqwest::Error {
+    reqwest::Client::new()
+        .get("not-a-url")
+        .build()
+        .expect_err("invalid URL should fail request construction")
+}
+
 #[tokio::test]
 async fn providers_implement_sdk_contract_directly() {
     let provider = FakeProvider::new(ModelResponse::Assistant(vec![ContentBlock::Text(
