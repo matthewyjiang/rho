@@ -210,6 +210,10 @@ pub enum CatalogReasoningPolicy {
 /// [`Self::Runtime`] uses [`ProviderRuntime`] only. [`Self::PreferModelsDevNpm`]
 /// may construct Responses or Anthropic adapters when models.dev names a
 /// different AI SDK package for the selected model.
+///
+/// A custom host's wire API is [`OpenAiCompatibleApi`] on the descriptor, not
+/// a construction policy. [`PreferModelsDevNpm`] is the only path that consults
+/// catalog npm mapping.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CatalogConstruction {
     #[default]
@@ -317,6 +321,49 @@ impl std::fmt::Display for CatalogLookupModeParseError {
 }
 
 impl std::error::Error for CatalogLookupModeParseError {}
+
+/// Wire API a custom OpenAI-compatible host speaks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OpenAiCompatibleApi {
+    /// POST `{base}/chat/completions`.
+    #[default]
+    ChatCompletions,
+    /// POST `{base}/responses`.
+    Responses,
+}
+
+impl OpenAiCompatibleApi {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ChatCompletions => "chat-completions",
+            Self::Responses => "responses",
+        }
+    }
+}
+
+impl std::str::FromStr for OpenAiCompatibleApi {
+    type Err = OpenAiCompatibleApiParseError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim() {
+            "" | "chat-completions" => Ok(Self::ChatCompletions),
+            "responses" => Ok(Self::Responses),
+            _ => Err(OpenAiCompatibleApiParseError),
+        }
+    }
+}
+
+/// Unknown `api` value for a custom OpenAI-compatible host.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OpenAiCompatibleApiParseError;
+
+impl std::fmt::Display for OpenAiCompatibleApiParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("must be \"chat-completions\" or \"responses\"")
+    }
+}
+
+impl std::error::Error for OpenAiCompatibleApiParseError {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProviderAuthKind {
@@ -505,6 +552,10 @@ pub struct ProviderDescriptor {
     /// `pub(crate)` so adding the field stays minor-compatible; external
     /// construction is already blocked by [`Self::model_refresh`].
     pub(crate) catalog_lookup: CatalogLookupMode,
+    /// Wire API a custom OpenAI-compatible host speaks. Built-ins are Chat Completions.
+    ///
+    /// `pub(crate)` for the same 1.x reason as [`Self::catalog_lookup`].
+    pub(crate) openai_compatible_api: OpenAiCompatibleApi,
     pub catalog_reasoning: CatalogReasoningPolicy,
     /// Preferred model when the cache is empty or contains this id.
     pub default_model: Option<&'static str>,
@@ -558,7 +609,7 @@ impl ProviderDescriptor {
             .any(|mode| matches!(mode.auth_kind, ProviderAuthKind::None))
     }
 
-    /// Config-defined Chat Completions hosts are named providers, not a single built-in.
+    /// Config-defined OpenAI-compatible hosts are named providers, not a single built-in.
     pub fn is_custom_openai_compatible(self) -> bool {
         PROVIDERS.iter().all(|builtin| builtin.name != self.name)
     }
@@ -566,6 +617,11 @@ impl ProviderDescriptor {
     /// How this host rematches models.dev rows.
     pub fn catalog_lookup(self) -> CatalogLookupMode {
         self.catalog_lookup
+    }
+
+    /// Wire API this OpenAI-compatible host speaks.
+    pub fn openai_compatible_api(self) -> OpenAiCompatibleApi {
+        self.openai_compatible_api
     }
 
     /// Whether `/doctor` and `/config` can reach this host's `/v1/models`.
@@ -633,11 +689,13 @@ pub use custom_openai_compatible::{
     custom_provider_api_key_auth_id, custom_provider_registry_test_lock,
     install_custom_openai_compatible_providers,
     install_custom_openai_compatible_providers_with_lookup,
+    install_custom_openai_compatible_providers_with_options,
     intern_custom_openai_compatible_providers,
-    intern_custom_openai_compatible_providers_with_lookup, interned_custom_provider,
+    intern_custom_openai_compatible_providers_with_lookup,
+    intern_custom_openai_compatible_providers_with_options, interned_custom_provider,
     is_custom_provider_api_key_auth, reset_custom_openai_compatible_providers_for_tests,
-    scope_custom_openai_compatible_providers, validate_custom_provider_name, CustomProviderSpec,
-    CustomProviderThreadScope,
+    scope_custom_openai_compatible_providers, validate_custom_provider_name, CustomProviderOptions,
+    CustomProviderSpec, CustomProviderThreadScope,
 };
 pub use provider_table::PROVIDERS;
 

@@ -135,7 +135,7 @@ async fn api_key_create_and_compact_send_expected_headers_and_paths() {
 
     let create = http
         .post_json(
-            &Auth::ApiKey("sk-test".into()),
+            Some(&Auth::ApiKey("sk-test".into())),
             ResponsesEndpoint::Create,
             &body,
             None,
@@ -146,7 +146,7 @@ async fn api_key_create_and_compact_send_expected_headers_and_paths() {
 
     let compact = http
         .post_json(
-            &Auth::ApiKey("sk-test".into()),
+            Some(&Auth::ApiKey("sk-test".into())),
             ResponsesEndpoint::Compact,
             &body,
             None,
@@ -166,6 +166,48 @@ async fn api_key_create_and_compact_send_expected_headers_and_paths() {
     assert_eq!(requests[1].path, "/responses/compact");
     let compact_headers = requests[1].headers.to_ascii_lowercase();
     assert!(compact_headers.contains("user-agent: rho"));
+    assert!(!compact_headers.contains("openai-beta"));
+}
+
+// Covers: keyless Responses HTTP must not send Authorization
+// Owner: openai responses transport
+#[tokio::test]
+async fn keyless_create_and_compact_omit_authorization() {
+    let (base, captured) = spawn_sequential_server(vec![
+        Box::new(|_| (200, r#"{"ok":true}"#.into())),
+        Box::new(|_| (200, r#"{"ok":true}"#.into())),
+    ])
+    .await;
+    let client = reqwest::Client::new();
+    let store = MemoryCredentialStore::default();
+    let refreshed = std::sync::Mutex::new(None);
+    let http = transport(&client, &base, &store, &refreshed);
+    let body = json!({"model":"gpt-5.4","store":false});
+
+    let create = http
+        .post_json(None, ResponsesEndpoint::Create, &body, None)
+        .await;
+    assert!(create.failed_attempts.is_empty());
+    assert_eq!(create.response.unwrap().status(), reqwest::StatusCode::OK);
+
+    let compact = http
+        .post_json(None, ResponsesEndpoint::Compact, &body, None)
+        .await;
+    assert!(compact.failed_attempts.is_empty());
+    assert_eq!(compact.response.unwrap().status(), reqwest::StatusCode::OK);
+
+    let requests = captured.lock().await.clone();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].path, "/responses");
+    let create_headers = requests[0].headers.to_ascii_lowercase();
+    assert!(create_headers.contains("user-agent: rho"));
+    assert!(!create_headers.contains("authorization"));
+    assert!(!create_headers.contains("openai-beta"));
+
+    assert_eq!(requests[1].path, "/responses/compact");
+    let compact_headers = requests[1].headers.to_ascii_lowercase();
+    assert!(compact_headers.contains("user-agent: rho"));
+    assert!(!compact_headers.contains("authorization"));
     assert!(!compact_headers.contains("openai-beta"));
 }
 
@@ -192,13 +234,13 @@ async fn codex_create_and_compact_send_expected_headers_and_paths() {
     let body = json!({"model":"gpt-5.4","store":false});
 
     let create = http
-        .post_json(&auth, ResponsesEndpoint::Create, &body, None)
+        .post_json(Some(&auth), ResponsesEndpoint::Create, &body, None)
         .await;
     assert!(create.failed_attempts.is_empty());
     assert!(create.response.is_ok());
 
     let compact = http
-        .post_json(&auth, ResponsesEndpoint::Compact, &body, None)
+        .post_json(Some(&auth), ResponsesEndpoint::Compact, &body, None)
         .await;
     assert!(compact.failed_attempts.is_empty());
     assert!(compact.response.is_ok());
@@ -280,7 +322,7 @@ async fn codex_compact_401_refresh_reports_auth_failed_attempt_and_retries() {
 
     let result = http
         .post_json(
-            &auth,
+            Some(&auth),
             ResponsesEndpoint::Compact,
             &json!({"model":"gpt-5.4","store":false}),
             None,
@@ -337,7 +379,12 @@ async fn cancellation_during_send_returns_interrupted() {
     let cancellation = rho_sdk::CancellationToken::new();
     let cancel = cancellation.clone();
     let body = json!({"model":"gpt-5.4"});
-    let post = http.post_json(&auth, ResponsesEndpoint::Create, &body, Some(&cancellation));
+    let post = http.post_json(
+        Some(&auth),
+        ResponsesEndpoint::Create,
+        &body,
+        Some(&cancellation),
+    );
     let cancel_task = async move {
         accepted.notified().await;
         cancel.cancel();
@@ -394,7 +441,7 @@ async fn cancellation_during_refresh_returns_interrupted() {
     let cancel = cancellation.clone();
     let body = json!({"model":"gpt-5.4"});
     let post = http.post_json(
-        &auth,
+        Some(&auth),
         ResponsesEndpoint::Compact,
         &body,
         Some(&cancellation),
@@ -455,7 +502,7 @@ async fn refresh_failure_retains_authentication_failed_attempt() {
 
     let result = http
         .post_json(
-            &auth,
+            Some(&auth),
             ResponsesEndpoint::Compact,
             &json!({"model":"gpt-5.4"}),
             None,
@@ -527,7 +574,7 @@ async fn retry_send_failure_retains_authentication_failed_attempt() {
 
     let result = http
         .post_json(
-            &auth,
+            Some(&auth),
             ResponsesEndpoint::Compact,
             &json!({"model":"gpt-5.4"}),
             None,

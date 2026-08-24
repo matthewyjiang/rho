@@ -105,8 +105,11 @@ impl<'a> ResponsesHttpTransport<'a> {
     }
 
     /// Resolves the Codex tokens that should be used for the next request.
-    pub(super) fn codex_tokens_for_auth(&self, auth: &Auth) -> Result<CodexTokens, ModelError> {
-        let Auth::Codex { tokens, source } = auth else {
+    pub(super) fn codex_tokens_for_auth(
+        &self,
+        auth: Option<&Auth>,
+    ) -> Result<CodexTokens, ModelError> {
+        let Some(Auth::Codex { tokens, source }) = auth else {
             return Err(ModelError::InvalidResponse(
                 "Codex tokens requested for non-Codex auth".into(),
             ));
@@ -123,20 +126,27 @@ impl<'a> ResponsesHttpTransport<'a> {
     /// failure as well as a successful retry response.
     pub(super) async fn post_json(
         &self,
-        auth: &Auth,
+        auth: Option<&Auth>,
         endpoint: ResponsesEndpoint,
         body: &Value,
         cancellation: Option<&rho_sdk::CancellationToken>,
     ) -> ResponsesHttpResult {
         match auth {
-            Auth::ApiKey(key) => {
+            None => {
+                let request = self.build_request(endpoint, body, ResponsesHttpAuth::Keyless);
+                match self.send(request, cancellation).await {
+                    Ok(response) => ResponsesHttpResult::ok(response),
+                    Err(error) => ResponsesHttpResult::err(error),
+                }
+            }
+            Some(Auth::ApiKey(key)) => {
                 let request = self.build_request(endpoint, body, ResponsesHttpAuth::ApiKey { key });
                 match self.send(request, cancellation).await {
                     Ok(response) => ResponsesHttpResult::ok(response),
                     Err(error) => ResponsesHttpResult::err(error),
                 }
             }
-            Auth::Codex { tokens, source } => {
+            Some(Auth::Codex { tokens, source }) => {
                 let tokens = self.codex_turn_tokens(tokens, *source);
                 let response = match self
                     .send(
@@ -235,6 +245,9 @@ impl<'a> ResponsesHttpTransport<'a> {
         );
         let mut request = self.client.post(url).json(body);
         match auth {
+            ResponsesHttpAuth::Keyless => {
+                request = request.header("User-Agent", "rho");
+            }
             ResponsesHttpAuth::ApiKey { key } => {
                 request = request.bearer_auth(key).header("User-Agent", "rho");
             }
@@ -285,6 +298,7 @@ impl<'a> ResponsesHttpTransport<'a> {
 
 #[derive(Clone, Copy, Debug)]
 enum ResponsesHttpAuth<'a> {
+    Keyless,
     ApiKey {
         key: &'a str,
     },

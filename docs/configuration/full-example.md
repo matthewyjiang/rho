@@ -110,7 +110,7 @@ Ollama's provider-specific API base uses its own section and does not affect oth
 base_url = "http://127.0.0.1:11434/v1"
 ```
 
-Custom Chat Completions hosts use a name you choose. `catalog` is optional and borrows a [models.dev](https://models.dev/) provider for context, price, and reasoning. `catalog_mode = "model-id"` looks up the unsplit `slug/model` id instead and cannot be combined with `catalog`:
+Custom OpenAI-compatible hosts use a name you choose. They speak Chat Completions unless you set `api = "responses"`. `catalog` is optional and borrows a [models.dev](https://models.dev/) provider for context, price, and reasoning. `catalog_mode = "model-id"` looks up the unsplit `slug/model` id instead and cannot be combined with `catalog`:
 
 ```toml
 [providers.custom.composer]
@@ -119,6 +119,10 @@ base_url = "http://127.0.0.1:8787/v1"
 [providers.custom.cliproxyapi]
 base_url = "http://127.0.0.1:8317/v1"
 catalog = "llmgateway"
+
+[providers.custom.litellm]
+base_url = "http://127.0.0.1:4000/v1"
+api = "responses"
 ```
 
 See [Ollama](/providers/ollama) and [Custom OpenAI-compatible hosts](/providers/openai-compatible) for setup, model refresh, and endpoint limits.

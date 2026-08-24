@@ -78,18 +78,17 @@ impl ResponsesProfile {
         Self::with_identity(contract, contract.provider(), model)
     }
 
-    /// Rebrands identity for a catalog-constructed host (e.g. `opencode-go`)
-    /// while keeping the wire contract implied by the auth.
-    pub(super) fn from_auth_as(
-        auth: &Auth,
+    /// Identity for Responses credentials that may be keyless custom hosts.
+    pub(super) fn from_optional_auth(
+        auth: Option<&Auth>,
         model: impl Into<String>,
         identity_provider: &'static str,
     ) -> Self {
-        Self::with_identity(
-            ResponsesWireContract::for_auth(auth),
-            identity_provider,
-            model,
-        )
+        let contract = match auth {
+            None => ResponsesWireContract::OpenAiStandard,
+            Some(auth) => ResponsesWireContract::for_auth(auth),
+        };
+        Self::with_identity(contract, identity_provider, model)
     }
 
     fn with_identity(

@@ -205,7 +205,7 @@ async fn compact_with_http_malformed_retry_response_preserves_failed_attempts() 
         Message::assistant_text("world"),
     ];
     let response = compact_with_http(
-        &auth,
+        Some(&auth),
         &profile,
         &OpenAiReasoningProfile::unknown(),
         &http,

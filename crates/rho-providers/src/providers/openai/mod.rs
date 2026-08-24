@@ -43,7 +43,7 @@ use crate::provider_backend::stream_timeout::provider_client;
 
 pub struct OpenAiProvider {
     client: reqwest::Client,
-    auth: Auth,
+    auth: Option<Auth>,
     api_base: String,
     profile: ResponsesProfile,
     reasoning: OpenAiReasoningProfile,
@@ -81,7 +81,7 @@ impl OpenAiProvider {
         let profile = ResponsesProfile::from_auth(&auth, model);
         Self::from_profile(
             profile,
-            auth,
+            Some(auth),
             credential_store,
             client,
             api_base_override,
@@ -89,17 +89,19 @@ impl OpenAiProvider {
         )
     }
 
-    /// Responses transport branded with a catalog host identity (e.g. `opencode-go`).
+    /// Responses transport branded with a catalog or custom-host identity.
+    ///
+    /// `auth` is `None` for keyless custom Responses hosts (no Authorization).
     pub(crate) fn new_with_identity(
         model: String,
-        auth: Auth,
+        auth: Option<Auth>,
         credential_store: Arc<dyn CredentialStore>,
         client: reqwest::Client,
         api_base_override: Option<String>,
         hosted_web_search: bool,
         identity_provider: &'static str,
     ) -> Self {
-        let profile = ResponsesProfile::from_auth_as(&auth, model, identity_provider);
+        let profile = ResponsesProfile::from_optional_auth(auth.as_ref(), model, identity_provider);
         Self::from_profile(
             profile,
             auth,
@@ -112,7 +114,7 @@ impl OpenAiProvider {
 
     fn from_profile(
         profile: ResponsesProfile,
-        auth: Auth,
+        auth: Option<Auth>,
         credential_store: Arc<dyn CredentialStore>,
         client: reqwest::Client,
         api_base_override: Option<String>,
@@ -228,7 +230,7 @@ impl OpenAiProvider {
         request: ModelRequest<'_>,
     ) -> Result<ModelResponse, ModelError> {
         let body = self.create_body(request, ModelRequestOptions::default())?;
-        let tokens = self.http().codex_tokens_for_auth(&self.auth)?;
+        let tokens = self.http().codex_tokens_for_auth(self.auth.as_ref())?;
         let body = match self
             .codex_ws
             .send_responses_turn_silent(body, &tokens)
@@ -241,7 +243,7 @@ impl OpenAiProvider {
         let http_result = self
             .http()
             .post_json(
-                &self.auth,
+                self.auth.as_ref(),
                 ResponsesEndpoint::Create,
                 &body,
                 /*cancellation*/ None,
@@ -283,7 +285,7 @@ impl OpenAiProvider {
                   + Send),
     ) -> Result<ModelResponse, ModelError> {
         let body = self.create_body(request, options)?;
-        let tokens = self.http().codex_tokens_for_auth(&self.auth)?;
+        let tokens = self.http().codex_tokens_for_auth(self.auth.as_ref())?;
         let body = match self
             .codex_ws
             .send_responses_turn(body, &tokens, &mut on_event)
@@ -318,7 +320,7 @@ impl OpenAiProvider {
         let http_result = self
             .http()
             .post_json(
-                &self.auth,
+                self.auth.as_ref(),
                 ResponsesEndpoint::Create,
                 &body,
                 /*cancellation*/ None,
@@ -402,7 +404,7 @@ impl OpenAiProvider {
         request: ModelRequest<'_>,
     ) -> Result<rho_sdk::provider::NativeCompactionResponse, ModelError> {
         Ok(remote_compaction::compact_with_http(
-            &self.auth,
+            self.auth.as_ref(),
             &self.profile,
             &self.reasoning,
             &self.http(),
@@ -421,7 +423,7 @@ impl OpenAiProvider {
         let http_result = self
             .http()
             .post_json(
-                &self.auth,
+                self.auth.as_ref(),
                 ResponsesEndpoint::Create,
                 &body,
                 Some(&cancellation),
@@ -445,7 +447,7 @@ impl OpenAiProvider {
         let http_result = self
             .http()
             .post_json(
-                &self.auth,
+                self.auth.as_ref(),
                 ResponsesEndpoint::Create,
                 &body,
                 Some(&cancellation),

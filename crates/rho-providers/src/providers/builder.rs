@@ -8,7 +8,10 @@ use crate::{
     credentials::{CredentialResult, CredentialStore},
     model::{models_dev::CatalogSdkAdapter, ModelError},
     openai_compatible_dialect::OpenAiCompatibleDialect,
-    provider::{self, CatalogConstruction, OpenAiRuntimeAuth, ProviderAuthKind, ProviderRuntime},
+    provider::{
+        self, CatalogConstruction, OpenAiCompatibleApi, OpenAiRuntimeAuth, ProviderAuthKind,
+        ProviderRuntime,
+    },
     providers::{
         anthropic::AnthropicProvider,
         github_copilot::GitHubCopilotProvider,
@@ -278,6 +281,7 @@ impl ProviderBuilder {
                 };
                 build_openai_compatible_provider(
                     catalog_construction,
+                    descriptor.openai_compatible_api(),
                     provider_name,
                     model,
                     OpenAiCompatibleBuild {
@@ -372,34 +376,58 @@ impl CredentialStore for InertCredentialStore {
 
 fn build_openai_compatible_provider(
     catalog_construction: CatalogConstruction,
+    openai_compatible_api: OpenAiCompatibleApi,
     provider_name: &'static str,
     model: String,
     build: OpenAiCompatibleBuild,
 ) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, ModelError> {
     // Adapter choice only needs the catalog's npm mapping, not fresh reasoning
     // metadata, so a stale or reasoning-incomplete row must still steer it.
-    let adapter = match catalog_construction {
-        CatalogConstruction::Runtime => CatalogSdkAdapter::OpenAiCompatible,
-        CatalogConstruction::PreferModelsDevNpm => CatalogSdkAdapter::from_sdk_package(
-            crate::model::models_dev::cached_model_metadata(provider_name, &model)
-                .as_ref()
-                .and_then(|metadata| metadata.sdk_package.as_deref()),
-        ),
+    // Declared Responses is a host API, not an npm construction policy.
+    let adapter = match openai_compatible_api {
+        OpenAiCompatibleApi::Responses => CatalogSdkAdapter::OpenAiResponses,
+        OpenAiCompatibleApi::ChatCompletions => match catalog_construction {
+            CatalogConstruction::Runtime => CatalogSdkAdapter::OpenAiCompatible,
+            CatalogConstruction::PreferModelsDevNpm => CatalogSdkAdapter::from_sdk_package(
+                crate::model::models_dev::cached_model_metadata(provider_name, &model)
+                    .as_ref()
+                    .and_then(|metadata| metadata.sdk_package.as_deref()),
+            ),
+        },
+    };
+    // Declared Responses hosts do not advertise OpenAI hosted tools. Catalog npm
+    // Responses (opencode-go) still follows the caller flag.
+    let hosted_web_search = if openai_compatible_api == OpenAiCompatibleApi::Responses {
+        false
+    } else {
+        build.hosted_web_search
     };
     match (adapter, build.auth) {
         (CatalogSdkAdapter::OpenAiResponses, CompatibleAuth::ApiKey(key)) => {
-            // Api-key auth never refreshes tokens, so an inert store satisfies
-            // the Codex refresh dependency without touching real credentials.
-            // NEXT_MAJOR(rho-providers): give Responses construction an
-            // explicit api-key path so it no longer needs a placeholder
+            // Api-key and keyless Responses construction never refresh tokens,
+            // so an inert store satisfies the Codex refresh dependency without
+            // touching real credentials.
+            // NEXT_MAJOR(rho-providers): give Responses construction explicit
+            // api-key and keyless paths so they no longer need a placeholder
             // CredentialStore to satisfy the Codex refresh dependency.
             Ok(Arc::new(OpenAiProvider::new_with_identity(
                 model,
-                Auth::ApiKey(key),
+                Some(Auth::ApiKey(key)),
                 Arc::new(InertCredentialStore),
                 build.client,
                 Some(build.api_base),
-                build.hosted_web_search,
+                hosted_web_search,
+                provider_name,
+            )))
+        }
+        (CatalogSdkAdapter::OpenAiResponses, CompatibleAuth::None) => {
+            Ok(Arc::new(OpenAiProvider::new_with_identity(
+                model,
+                None,
+                Arc::new(InertCredentialStore),
+                build.client,
+                Some(build.api_base),
+                hosted_web_search,
                 provider_name,
             )))
         }
@@ -414,7 +442,9 @@ fn build_openai_compatible_provider(
         }
         // Chat Completions is the descriptor's declared runtime, so it is also
         // the fallback when the catalog has no row yet (cold cache before the
-        // first hydrate) or names an unrecognized package.
+        // first hydrate) or names an unrecognized package. OpenAiResponses
+        // plus Kimi/Ollama device auth also falls through; custom Responses
+        // hosts only construct on ApiKey or None.
         (_, auth) => Ok(Arc::new(OpenAiCompatibleProvider::new(
             build.client,
             provider_name,

@@ -46,7 +46,7 @@ fn native_failed_attempts(
 
 /// Runs native compaction through the shared Responses HTTP transport.
 pub(super) async fn compact_with_http(
-    auth: &Auth,
+    auth: Option<&Auth>,
     profile: &ResponsesProfile,
     reasoning_profile: &OpenAiReasoningProfile,
     http: &ResponsesHttpTransport<'_>,
@@ -91,7 +91,7 @@ pub(super) async fn compact_with_http(
     };
 
     // History shape changed; drop any live previous_response_id baseline.
-    if matches!(auth, Auth::Codex { .. }) {
+    if matches!(auth, Some(Auth::Codex { .. })) {
         codex_ws.reset().await;
     }
 
