@@ -3,7 +3,7 @@ use crate::model::{Message, ToolSpec};
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
-use super::super::auth::Auth;
+use super::super::auth::{Auth, ResponsesAuth};
 use super::super::codex_request::{codex_test_auth, ResponsesProfile};
 
 fn api_key_profile(model: &str) -> ResponsesProfile {
@@ -195,6 +195,7 @@ async fn compact_with_http_malformed_retry_response_preserves_failed_attempts() 
         source: CodexAuthSource::Env,
     };
     let profile = ResponsesProfile::from_auth(&auth, "gpt-5.4");
+    let auth = ResponsesAuth::OpenAi(auth);
     let refresh_url = format!("{base}/oauth/token");
     let http = ResponsesHttpTransport::new(&client, &base, &store, &refreshed)
         .with_codex_refresh_url(&refresh_url);

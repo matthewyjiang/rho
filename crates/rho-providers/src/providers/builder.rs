@@ -385,13 +385,21 @@ fn build_openai_compatible_provider(
                 .as_ref()
                 .and_then(|metadata| metadata.sdk_package.as_deref()),
         ),
+        CatalogConstruction::Responses => CatalogSdkAdapter::OpenAiResponses,
+    };
+    // Custom Responses hosts do not advertise OpenAI hosted tools. Force this
+    // off before auth matching so both api-key and keyless constructors agree.
+    let hosted_web_search = match catalog_construction {
+        CatalogConstruction::Responses => false,
+        _ => build.hosted_web_search,
     };
     match (adapter, build.auth) {
         (CatalogSdkAdapter::OpenAiResponses, CompatibleAuth::ApiKey(key)) => {
-            // Api-key auth never refreshes tokens, so an inert store satisfies
-            // the Codex refresh dependency without touching real credentials.
-            // NEXT_MAJOR(rho-providers): give Responses construction an
-            // explicit api-key path so it no longer needs a placeholder
+            // Api-key and keyless Responses construction never refresh tokens,
+            // so an inert store satisfies the Codex refresh dependency without
+            // touching real credentials.
+            // NEXT_MAJOR(rho-providers): give Responses construction explicit
+            // api-key and keyless paths so they no longer need a placeholder
             // CredentialStore to satisfy the Codex refresh dependency.
             Ok(Arc::new(OpenAiProvider::new_with_identity(
                 model,
@@ -399,7 +407,16 @@ fn build_openai_compatible_provider(
                 Arc::new(InertCredentialStore),
                 build.client,
                 Some(build.api_base),
-                build.hosted_web_search,
+                hosted_web_search,
+                provider_name,
+            )))
+        }
+        (CatalogSdkAdapter::OpenAiResponses, CompatibleAuth::None) => {
+            Ok(Arc::new(OpenAiProvider::new_keyless_with_identity(
+                model,
+                Arc::new(InertCredentialStore),
+                build.client,
+                Some(build.api_base),
                 provider_name,
             )))
         }
@@ -414,7 +431,9 @@ fn build_openai_compatible_provider(
         }
         // Chat Completions is the descriptor's declared runtime, so it is also
         // the fallback when the catalog has no row yet (cold cache before the
-        // first hydrate) or names an unrecognized package.
+        // first hydrate) or names an unrecognized package. OpenAiResponses
+        // plus Kimi/Ollama device auth also falls through; custom Responses
+        // hosts only construct on ApiKey or None.
         (_, auth) => Ok(Arc::new(OpenAiCompatibleProvider::new(
             build.client,
             provider_name,

@@ -209,12 +209,15 @@ pub enum CatalogReasoningPolicy {
 ///
 /// [`Self::Runtime`] uses [`ProviderRuntime`] only. [`Self::PreferModelsDevNpm`]
 /// may construct Responses or Anthropic adapters when models.dev names a
-/// different AI SDK package for the selected model.
+/// different AI SDK package for the selected model. [`Self::Responses`] always
+/// constructs the OpenAI Responses HTTP adapter.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CatalogConstruction {
     #[default]
     Runtime,
     PreferModelsDevNpm,
+    /// Always construct the OpenAI Responses HTTP adapter; catalog npm mapping is not consulted.
+    Responses,
 }
 
 /// What to serialize when a Standard-dialect model is missing catalog metadata.
@@ -317,6 +320,49 @@ impl std::fmt::Display for CatalogLookupModeParseError {
 }
 
 impl std::error::Error for CatalogLookupModeParseError {}
+
+/// Wire API a custom OpenAI-compatible host speaks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OpenAiCompatibleApi {
+    /// POST `{base}/chat/completions`.
+    #[default]
+    ChatCompletions,
+    /// POST `{base}/responses`.
+    Responses,
+}
+
+impl OpenAiCompatibleApi {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ChatCompletions => "chat-completions",
+            Self::Responses => "responses",
+        }
+    }
+}
+
+impl std::str::FromStr for OpenAiCompatibleApi {
+    type Err = OpenAiCompatibleApiParseError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim() {
+            "" | "chat-completions" => Ok(Self::ChatCompletions),
+            "responses" => Ok(Self::Responses),
+            _ => Err(OpenAiCompatibleApiParseError),
+        }
+    }
+}
+
+/// Unknown `api` value for a custom OpenAI-compatible host.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OpenAiCompatibleApiParseError;
+
+impl std::fmt::Display for OpenAiCompatibleApiParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("must be \"chat-completions\" or \"responses\"")
+    }
+}
+
+impl std::error::Error for OpenAiCompatibleApiParseError {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProviderAuthKind {
@@ -633,11 +679,13 @@ pub use custom_openai_compatible::{
     custom_provider_api_key_auth_id, custom_provider_registry_test_lock,
     install_custom_openai_compatible_providers,
     install_custom_openai_compatible_providers_with_lookup,
+    install_custom_openai_compatible_providers_with_options,
     intern_custom_openai_compatible_providers,
-    intern_custom_openai_compatible_providers_with_lookup, interned_custom_provider,
+    intern_custom_openai_compatible_providers_with_lookup,
+    intern_custom_openai_compatible_providers_with_options, interned_custom_provider,
     is_custom_provider_api_key_auth, reset_custom_openai_compatible_providers_for_tests,
-    scope_custom_openai_compatible_providers, validate_custom_provider_name, CustomProviderSpec,
-    CustomProviderThreadScope,
+    scope_custom_openai_compatible_providers, validate_custom_provider_name, CustomProviderOptions,
+    CustomProviderSpec, CustomProviderThreadScope,
 };
 pub use provider_table::PROVIDERS;
 

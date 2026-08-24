@@ -20,6 +20,8 @@ pub(crate) struct ProviderEndpointConfig {
     pub(crate) catalog: Option<String>,
     /// How this host rematches models.dev rows. Default is slug-or-host.
     pub(crate) catalog_lookup: rho_providers::provider::CatalogLookupMode,
+    /// Wire API this host speaks. Ollama is always Chat Completions.
+    pub(crate) api: rho_providers::provider::OpenAiCompatibleApi,
 }
 
 impl ProviderConfigs {
@@ -44,6 +46,7 @@ impl ProviderConfigs {
                 base_url: parsed,
                 catalog: None,
                 catalog_lookup: rho_providers::provider::CatalogLookupMode::Slug,
+                api: rho_providers::provider::OpenAiCompatibleApi::ChatCompletions,
             });
             return Ok(());
         }
@@ -53,12 +56,14 @@ impl ProviderConfigs {
         let catalog_lookup = existing
             .map(|endpoint| endpoint.catalog_lookup)
             .unwrap_or_default();
+        let api = existing.map(|endpoint| endpoint.api).unwrap_or_default();
         self.custom.insert(
             provider.to_string(),
             ProviderEndpointConfig {
                 base_url: parsed,
                 catalog,
                 catalog_lookup,
+                api,
             },
         );
         Ok(())
@@ -104,6 +109,19 @@ impl ProviderConfigs {
         Ok(())
     }
 
+    fn set_api(&mut self, provider: &str, api: Option<String>) -> anyhow::Result<()> {
+        let field = format!("providers.custom.{provider}.api");
+        let api = match api {
+            Some(value) => parse_provider_api(&field, &value)?,
+            None => rho_providers::provider::OpenAiCompatibleApi::ChatCompletions,
+        };
+        let Some(endpoint) = self.custom.get_mut(provider) else {
+            anyhow::bail!("{field} requires a configured base_url");
+        };
+        endpoint.api = api;
+        Ok(())
+    }
+
     pub(super) fn apply(&mut self, partial: PartialProviderConfigs) -> anyhow::Result<()> {
         if let Some(endpoint) = partial.ollama {
             if endpoint.catalog.is_some() {
@@ -111,6 +129,9 @@ impl ProviderConfigs {
             }
             if endpoint.catalog_mode.is_some() {
                 anyhow::bail!("providers.ollama does not accept catalog_mode");
+            }
+            if endpoint.api.is_some() {
+                anyhow::bail!("providers.ollama does not accept api");
             }
             if let Some(base_url) = endpoint.base_url {
                 self.set_endpoint("ollama", &base_url)?;
@@ -125,36 +146,41 @@ impl ProviderConfigs {
                 self.set_endpoint(&name, &base_url)?;
                 self.set_catalog(&name, endpoint.catalog)?;
                 self.set_catalog_mode(&name, endpoint.catalog_mode)?;
+                self.set_api(&name, endpoint.api)?;
             }
         }
         Ok(())
     }
 
-    /// Each config-defined host paired with its models.dev lookup mode.
+    /// Each config-defined host paired with its intern options.
     fn specs(
         &self,
     ) -> impl Iterator<
         Item = (
             rho_providers::provider::CustomProviderSpec<'_>,
-            rho_providers::provider::CatalogLookupMode,
+            rho_providers::provider::CustomProviderOptions,
         ),
     > {
         self.custom.iter().map(|(name, endpoint)| {
             (
                 rho_providers::provider::CustomProviderSpec::new(name, endpoint.catalog.as_deref()),
-                endpoint.catalog_lookup,
+                rho_providers::provider::CustomProviderOptions::new()
+                    .with_catalog_lookup(endpoint.catalog_lookup)
+                    .with_api(endpoint.api),
             )
         })
     }
 
     /// Interns config-defined hosts without changing the process-wide picker set.
     pub(crate) fn intern_names(&self) -> anyhow::Result<std::sync::Arc<[String]>> {
-        rho_providers::provider::intern_custom_openai_compatible_providers_with_lookup(self.specs())
+        rho_providers::provider::intern_custom_openai_compatible_providers_with_options(
+            self.specs(),
+        )
     }
 
     /// Publishes config-defined hosts as the process-wide named provider set.
     pub(crate) fn activate(&self) -> anyhow::Result<()> {
-        rho_providers::provider::install_custom_openai_compatible_providers_with_lookup(
+        rho_providers::provider::install_custom_openai_compatible_providers_with_options(
             self.specs(),
         )
     }
@@ -194,6 +220,14 @@ fn parse_provider_catalog_mode(
 ) -> anyhow::Result<rho_providers::provider::CatalogLookupMode> {
     catalog_mode
         .parse()
+        .map_err(|error| anyhow::anyhow!("{field} {error}"))
+}
+
+fn parse_provider_api(
+    field: &str,
+    api: &str,
+) -> anyhow::Result<rho_providers::provider::OpenAiCompatibleApi> {
+    api.parse()
         .map_err(|error| anyhow::anyhow!("{field} {error}"))
 }
 
@@ -334,6 +368,8 @@ struct PersistedEndpointConfig<'a> {
     catalog: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     catalog_mode: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    api: Option<&'static str>,
 }
 
 impl<'a> From<&'a ProviderConfigs> for PersistedProviderConfigs<'a> {
@@ -346,6 +382,7 @@ impl<'a> From<&'a ProviderConfigs> for PersistedProviderConfigs<'a> {
                     base_url: endpoint.base_url.as_str(),
                     catalog: None,
                     catalog_mode: None,
+                    api: None,
                 }),
             custom: config
                 .custom
@@ -357,6 +394,7 @@ impl<'a> From<&'a ProviderConfigs> for PersistedProviderConfigs<'a> {
                             base_url: endpoint.base_url.as_str(),
                             catalog: endpoint.catalog.as_deref(),
                             catalog_mode: persisted_catalog_mode(endpoint.catalog_lookup),
+                            api: persisted_api(endpoint.api),
                         },
                     )
                 })
@@ -381,12 +419,20 @@ fn persisted_catalog_mode(
     }
 }
 
+fn persisted_api(api: rho_providers::provider::OpenAiCompatibleApi) -> Option<&'static str> {
+    match api {
+        rho_providers::provider::OpenAiCompatibleApi::ChatCompletions => None,
+        rho_providers::provider::OpenAiCompatibleApi::Responses => Some(api.as_str()),
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct PartialEndpointConfig {
     pub(super) base_url: Option<String>,
     pub(super) catalog: Option<String>,
     pub(super) catalog_mode: Option<String>,
+    pub(super) api: Option<String>,
 }
 
 #[cfg(test)]

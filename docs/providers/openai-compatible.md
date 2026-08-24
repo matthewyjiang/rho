@@ -1,8 +1,8 @@
 # Custom OpenAI-compatible hosts
 
-You can point Rho at any local or remote host that speaks OpenAI Chat Completions. Add a name and a base URL in config, or create the host from `/login`. Requests send an `Authorization` header only when you store an API key.
+You can point Rho at any local or remote host that speaks OpenAI Chat Completions or the OpenAI Responses API. Add a name and a base URL in config, or create a Chat Completions host from `/login`. Requests send an `Authorization` header only when you store an API key.
 
-This is not the first-party [OpenAI](/providers/openai) provider.
+This is not the first-party [OpenAI](/providers/openai) provider. First-party OpenAI API-key requests currently use Chat Completions. Custom hosts that set `api = "responses"` use the same `{base}/responses` HTTP contract as OpenAI's Responses API (not Codex WebSocket). If you know Codex's `wire_api` setting, that is a different surface; here the key is `api`.
 
 ## Define a host
 
@@ -27,9 +27,19 @@ catalog = "llmgateway"
 
 If the host already pushes `provider/model` ids (`anthropic/claude-sonnet-4-5`), set `catalog_mode = "model-id"` instead of a borrowed slug. Rho looks the unsplit id up in models.dev (`foo/bar/baz` stays one catalog id). A host cannot set both `catalog` and `catalog_mode = "model-id"`. A bare id with no slash misses catalog metadata and inserts a transcript notice. Per-model `catalog` in `models.toml` still wins. Open `/config`, choose **Providers**, then **Refresh models.dev catalog** to redownload that snapshot on demand.
 
-Keep the `/v1` suffix. Rho appends `/models` for discovery and `/chat/completions` for agent turns. The URL must use `http` or `https` and cannot contain credentials, a query, or a fragment.
+Keep the `/v1` suffix. Rho appends `/models` for discovery. Agent turns append `/chat/completions` by default, or `/responses` when `api = "responses"`. The URL must use `http` or `https` and cannot contain credentials, a query, or a fragment.
 
-Names must be lowercase letters, digits, and hyphens, start with a letter, and must not match a built-in provider. Restart Rho after you edit this table, including an existing `base_url`. Direct edits to `config.toml` do not update a running process. Creating or updating a host through `/login` applies immediately.
+Chat Completions is the default so existing hosts keep working. To speak Responses instead:
+
+```toml
+[providers.custom.litellm]
+base_url = "http://127.0.0.1:4000/v1"
+api = "responses"
+```
+
+`api` accepts `"chat-completions"` (default, omitted on save) or `"responses"`. `/login` still creates Chat Completions hosts; set `api` in config for Responses. Restart Rho after you hand-edit this table, including `api` or `base_url`. Creating or updating a host through `/login` applies immediately and keeps a previously saved `api` value if you only rewrite the URL.
+
+Names must be lowercase letters, digits, and hyphens, start with a letter, and must not match a built-in provider.
 
 ## Authentication
 
@@ -67,7 +77,9 @@ Rho fetches `/v1/models` in the background at startup for every custom host so t
 
 Rho sends `reasoning_effort` on each turn, including `"none"` when reasoning is off. Shift+Tab and `/config` cycle the level. Hosts that do not accept that field may reject the request; pin levels in `~/.rho/models.toml` if you need a smaller set.
 
-When the session has a prompt cache key, Rho also sends `prompt_cache_key` on Chat Completions so compatible hosts and proxies can pin prompt cache across turns. The field is omitted when there is no key.
+When the session has a prompt cache key, Rho also sends `prompt_cache_key` on Chat Completions and Responses so compatible hosts and proxies can pin prompt cache across turns. The field is omitted when there is no key.
+
+Responses hosts reuse OpenAI's Responses request shape, including `reasoning` when catalog metadata supplies it. Borrow a catalog with `catalog` or `catalog_mode` if you want models.dev reasoning lists and windows; unknown models may omit `reasoning.effort`. Rho does not inject OpenAI hosted `web_search` on custom hosts. Native `/responses/compact` is attempted when the session compact path asks for it; hosts that 404 fall back to summary compaction.
 
 ## Automation
 

@@ -23,7 +23,7 @@ pub fn supports_fast_mode(provider: &str, model: &str) -> bool {
 }
 
 use crate::protocol::openai_responses::collect_codex_sse_response;
-use auth::Auth;
+use auth::{Auth, ResponsesAuth};
 #[cfg(test)]
 use codex_request::build_codex_responses_body;
 use codex_request::{build_responses_create_body, ResponsesProfile};
@@ -43,7 +43,7 @@ use crate::provider_backend::stream_timeout::provider_client;
 
 pub struct OpenAiProvider {
     client: reqwest::Client,
-    auth: Auth,
+    auth: ResponsesAuth,
     api_base: String,
     profile: ResponsesProfile,
     reasoning: OpenAiReasoningProfile,
@@ -81,7 +81,7 @@ impl OpenAiProvider {
         let profile = ResponsesProfile::from_auth(&auth, model);
         Self::from_profile(
             profile,
-            auth,
+            auth.into(),
             credential_store,
             client,
             api_base_override,
@@ -102,7 +102,7 @@ impl OpenAiProvider {
         let profile = ResponsesProfile::from_auth_as(&auth, model, identity_provider);
         Self::from_profile(
             profile,
-            auth,
+            auth.into(),
             credential_store,
             client,
             api_base_override,
@@ -110,9 +110,32 @@ impl OpenAiProvider {
         )
     }
 
+    /// Keyless custom Responses host: HTTP without Authorization, no hosted tools.
+    pub(crate) fn new_keyless_with_identity(
+        model: String,
+        credential_store: Arc<dyn CredentialStore>,
+        client: reqwest::Client,
+        api_base_override: Option<String>,
+        identity_provider: &'static str,
+    ) -> Self {
+        let profile = ResponsesProfile::from_responses_auth(
+            &ResponsesAuth::Keyless,
+            model,
+            identity_provider,
+        );
+        Self::from_profile(
+            profile,
+            ResponsesAuth::Keyless,
+            credential_store,
+            client,
+            api_base_override,
+            /*hosted_web_search*/ false,
+        )
+    }
+
     fn from_profile(
         profile: ResponsesProfile,
-        auth: Auth,
+        auth: ResponsesAuth,
         credential_store: Arc<dyn CredentialStore>,
         client: reqwest::Client,
         api_base_override: Option<String>,

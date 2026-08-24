@@ -1,14 +1,15 @@
 use super::super::{
-    CatalogReasoningPolicy, ProviderAuthKind, ProviderModelSource, ProviderRuntime,
-    UnknownEffortPolicy,
+    CatalogConstruction, CatalogReasoningPolicy, OpenAiCompatibleApi, ProviderAuthKind,
+    ProviderModelSource, ProviderRuntime, UnknownEffortPolicy,
 };
 use super::{
     custom_openai_compatible_provider, custom_openai_compatible_providers,
     custom_provider_registry_test_lock, install_custom_openai_compatible_providers,
     install_custom_openai_compatible_providers_with_lookup,
+    install_custom_openai_compatible_providers_with_options,
     intern_custom_openai_compatible_providers, is_custom_provider_api_key_auth,
     reset_custom_openai_compatible_providers_for_tests, validate_custom_provider_name,
-    CustomProviderSpec, CustomProviderThreadScope,
+    CustomProviderOptions, CustomProviderSpec, CustomProviderThreadScope,
 };
 use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
 use crate::protocol::openai_chat::ChatToolCallPolicy;
@@ -238,6 +239,75 @@ fn custom_host_model_id_lookup_reinterns_the_descriptor() {
         crate::provider::CatalogLookupMode::ModelId
     );
     assert_eq!(host.metadata_upstream, "cliproxyapi");
+}
+
+// Covers: config api mode ignored at intern / descriptor not Responses
+// Owner: provider registry
+#[test]
+fn intern_responses_api_sets_catalog_construction() {
+    let _lock = custom_provider_registry_test_lock();
+    restore_empty();
+    let _restore = RestoreCustomProviders;
+    install_custom_openai_compatible_providers_with_options([(
+        CustomProviderSpec::new("responses-host", None),
+        CustomProviderOptions::new().with_api(OpenAiCompatibleApi::Responses),
+    )])
+    .unwrap();
+
+    let host = custom_openai_compatible_provider("responses-host").unwrap();
+    assert!(matches!(
+        host.runtime,
+        ProviderRuntime::OpenAiCompatible {
+            dialect: OpenAiCompatibleDialect::Custom,
+            catalog_construction: CatalogConstruction::Responses,
+            ..
+        }
+    ));
+}
+
+// Covers: stale leaked descriptor after api flip
+// Owner: provider registry
+#[test]
+fn custom_host_api_change_reinterns_the_descriptor() {
+    let _lock = custom_provider_registry_test_lock();
+    restore_empty();
+    let _restore = RestoreCustomProviders;
+    install_custom_openai_compatible_providers(["api-flip-host"]).unwrap();
+    let chat = custom_openai_compatible_provider("api-flip-host").unwrap();
+    assert!(matches!(
+        chat.runtime,
+        ProviderRuntime::OpenAiCompatible {
+            catalog_construction: CatalogConstruction::Runtime,
+            ..
+        }
+    ));
+    let chat_ptr = chat as *const _;
+
+    install_custom_openai_compatible_providers_with_options([(
+        CustomProviderSpec::new("api-flip-host", None),
+        CustomProviderOptions::new().with_api(OpenAiCompatibleApi::Responses),
+    )])
+    .unwrap();
+    let responses = custom_openai_compatible_provider("api-flip-host").unwrap();
+    assert!(matches!(
+        responses.runtime,
+        ProviderRuntime::OpenAiCompatible {
+            catalog_construction: CatalogConstruction::Responses,
+            ..
+        }
+    ));
+    let responses_ptr = responses as *const _;
+    assert_ne!(chat_ptr, responses_ptr);
+
+    install_custom_openai_compatible_providers_with_options([(
+        CustomProviderSpec::new("api-flip-host", None),
+        CustomProviderOptions::new().with_api(OpenAiCompatibleApi::Responses),
+    )])
+    .unwrap();
+    assert_eq!(
+        custom_openai_compatible_provider("api-flip-host").unwrap() as *const _,
+        responses_ptr
+    );
 }
 
 // Covers: a later config replaces the active custom provider set

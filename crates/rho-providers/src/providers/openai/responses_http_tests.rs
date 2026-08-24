@@ -15,7 +15,7 @@ use tokio::{
 };
 
 use super::super::{
-    auth::{Auth, CodexAuthSource},
+    auth::{Auth, CodexAuthSource, ResponsesAuth},
     codex_request::{build_responses_compact_body, build_responses_create_body, ResponsesProfile},
     reasoning::OpenAiReasoningProfile,
 };
@@ -135,7 +135,7 @@ async fn api_key_create_and_compact_send_expected_headers_and_paths() {
 
     let create = http
         .post_json(
-            &Auth::ApiKey("sk-test".into()),
+            &ResponsesAuth::OpenAi(Auth::ApiKey("sk-test".into())),
             ResponsesEndpoint::Create,
             &body,
             None,
@@ -146,7 +146,7 @@ async fn api_key_create_and_compact_send_expected_headers_and_paths() {
 
     let compact = http
         .post_json(
-            &Auth::ApiKey("sk-test".into()),
+            &ResponsesAuth::OpenAi(Auth::ApiKey("sk-test".into())),
             ResponsesEndpoint::Compact,
             &body,
             None,
@@ -169,6 +169,58 @@ async fn api_key_create_and_compact_send_expected_headers_and_paths() {
     assert!(!compact_headers.contains("openai-beta"));
 }
 
+// Covers: keyless Responses HTTP must not send Authorization
+// Owner: openai responses transport
+#[tokio::test]
+async fn keyless_create_and_compact_omit_authorization() {
+    let (base, captured) = spawn_sequential_server(vec![
+        Box::new(|_| (200, r#"{"ok":true}"#.into())),
+        Box::new(|_| (200, r#"{"ok":true}"#.into())),
+    ])
+    .await;
+    let client = reqwest::Client::new();
+    let store = MemoryCredentialStore::default();
+    let refreshed = std::sync::Mutex::new(None);
+    let http = transport(&client, &base, &store, &refreshed);
+    let body = json!({"model":"gpt-5.4","store":false});
+
+    let create = http
+        .post_json(
+            &ResponsesAuth::Keyless,
+            ResponsesEndpoint::Create,
+            &body,
+            None,
+        )
+        .await;
+    assert!(create.failed_attempts.is_empty());
+    assert_eq!(create.response.unwrap().status(), reqwest::StatusCode::OK);
+
+    let compact = http
+        .post_json(
+            &ResponsesAuth::Keyless,
+            ResponsesEndpoint::Compact,
+            &body,
+            None,
+        )
+        .await;
+    assert!(compact.failed_attempts.is_empty());
+    assert_eq!(compact.response.unwrap().status(), reqwest::StatusCode::OK);
+
+    let requests = captured.lock().await.clone();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].path, "/responses");
+    let create_headers = requests[0].headers.to_ascii_lowercase();
+    assert!(create_headers.contains("user-agent: rho"));
+    assert!(!create_headers.contains("authorization"));
+    assert!(!create_headers.contains("openai-beta"));
+
+    assert_eq!(requests[1].path, "/responses/compact");
+    let compact_headers = requests[1].headers.to_ascii_lowercase();
+    assert!(compact_headers.contains("user-agent: rho"));
+    assert!(!compact_headers.contains("authorization"));
+    assert!(!compact_headers.contains("openai-beta"));
+}
+
 #[tokio::test]
 async fn codex_create_and_compact_send_expected_headers_and_paths() {
     let (base, captured) = spawn_sequential_server(vec![
@@ -179,7 +231,7 @@ async fn codex_create_and_compact_send_expected_headers_and_paths() {
     let client = reqwest::Client::new();
     let store = MemoryCredentialStore::default();
     let refreshed = std::sync::Mutex::new(None);
-    let auth = Auth::Codex {
+    let auth = ResponsesAuth::OpenAi(Auth::Codex {
         tokens: CodexTokens {
             access_token: "access".into(),
             refresh_token: Some("refresh".into()),
@@ -187,7 +239,7 @@ async fn codex_create_and_compact_send_expected_headers_and_paths() {
             account_id: Some("acct_1".into()),
         },
         source: CodexAuthSource::Env,
-    };
+    });
     let http = transport(&client, &base, &store, &refreshed);
     let body = json!({"model":"gpt-5.4","store":false});
 
@@ -266,7 +318,7 @@ async fn codex_compact_401_refresh_reports_auth_failed_attempt_and_retries() {
     let client = reqwest::Client::new();
     let store = MemoryCredentialStore::default();
     let refreshed = std::sync::Mutex::new(None);
-    let auth = Auth::Codex {
+    let auth = ResponsesAuth::OpenAi(Auth::Codex {
         tokens: CodexTokens {
             access_token: "access".into(),
             refresh_token: Some("refresh".into()),
@@ -274,7 +326,7 @@ async fn codex_compact_401_refresh_reports_auth_failed_attempt_and_retries() {
             account_id: Some("acct_1".into()),
         },
         source: CodexAuthSource::Env,
-    };
+    });
     let refresh_url = format!("{base}/oauth/token");
     let http = transport(&client, &base, &store, &refreshed).with_codex_refresh_url(&refresh_url);
 
@@ -332,7 +384,7 @@ async fn cancellation_during_send_returns_interrupted() {
     let client = reqwest::Client::new();
     let store = MemoryCredentialStore::default();
     let refreshed = std::sync::Mutex::new(None);
-    let auth = Auth::ApiKey("sk-test".into());
+    let auth = ResponsesAuth::OpenAi(Auth::ApiKey("sk-test".into()));
     let http = transport(&client, &base, &store, &refreshed);
     let cancellation = rho_sdk::CancellationToken::new();
     let cancel = cancellation.clone();
@@ -379,7 +431,7 @@ async fn cancellation_during_refresh_returns_interrupted() {
         .unwrap();
     let store = MemoryCredentialStore::default();
     let refreshed = std::sync::Mutex::new(None);
-    let auth = Auth::Codex {
+    let auth = ResponsesAuth::OpenAi(Auth::Codex {
         tokens: CodexTokens {
             access_token: "access".into(),
             refresh_token: Some("refresh".into()),
@@ -387,7 +439,7 @@ async fn cancellation_during_refresh_returns_interrupted() {
             account_id: None,
         },
         source: CodexAuthSource::Env,
-    };
+    });
     let refresh_url = format!("{base}/oauth/token");
     let http = transport(&client, &base, &store, &refreshed).with_codex_refresh_url(&refresh_url);
     let cancellation = rho_sdk::CancellationToken::new();
@@ -441,7 +493,7 @@ async fn refresh_failure_retains_authentication_failed_attempt() {
     let client = reqwest::Client::new();
     let store = MemoryCredentialStore::default();
     let refreshed = std::sync::Mutex::new(None);
-    let auth = Auth::Codex {
+    let auth = ResponsesAuth::OpenAi(Auth::Codex {
         tokens: CodexTokens {
             access_token: "access".into(),
             refresh_token: Some("refresh".into()),
@@ -449,7 +501,7 @@ async fn refresh_failure_retains_authentication_failed_attempt() {
             account_id: None,
         },
         source: CodexAuthSource::Env,
-    };
+    });
     let refresh_url = format!("{base}/oauth/token");
     let http = transport(&client, &base, &store, &refreshed).with_codex_refresh_url(&refresh_url);
 
@@ -513,7 +565,7 @@ async fn retry_send_failure_retains_authentication_failed_attempt() {
     let client = reqwest::Client::new();
     let store = MemoryCredentialStore::default();
     let refreshed = std::sync::Mutex::new(None);
-    let auth = Auth::Codex {
+    let auth = ResponsesAuth::OpenAi(Auth::Codex {
         tokens: CodexTokens {
             access_token: "access".into(),
             refresh_token: Some("refresh".into()),
@@ -521,7 +573,7 @@ async fn retry_send_failure_retains_authentication_failed_attempt() {
             account_id: None,
         },
         source: CodexAuthSource::Env,
-    };
+    });
     let refresh_url = format!("{base}/oauth/token");
     let http = transport(&client, &base, &store, &refreshed).with_codex_refresh_url(&refresh_url);
 

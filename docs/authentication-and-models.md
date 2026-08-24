@@ -35,7 +35,7 @@ Rho's implemented providers are:
 | `meta` | `meta-api-key` | [Meta Model API](/providers/meta) |
 | `opencode-go` | `opencode-go-api-key` | [OpenCode Go](/providers/opencode-go) |
 
-User-defined Chat Completions hosts use `[providers.custom.<name>]` with `auth = "none"` or `{name}-api-key`. Create one from `/login` by choosing **Custom Chat Completions**, or add the table in config. See [Custom OpenAI-compatible hosts](/providers/openai-compatible).
+User-defined OpenAI-compatible hosts use `[providers.custom.<name>]` with `auth = "none"` or `{name}-api-key`. They speak Chat Completions by default, or Responses when `api = "responses"`. Create a Chat Completions host from `/login` by choosing **Custom Chat Completions**, or add the table in config. See [Custom OpenAI-compatible hosts](/providers/openai-compatible).
 
 OpenAI, Anthropic, Google Gemini, GitHub Copilot, Ollama, Ollama Cloud, Poolside, OpenRouter, Moonshot, Kimi Code, Qwen Token Plan, Meta Model API, OpenCode Go, and user-defined OpenAI-compatible hosts expose refreshable API model lists. Local Ollama is configured through `/login ollama`, which stores the API base and an optional key. Custom hosts can run without a key or store one through `/login`. The other providers refresh after authentication. OpenAI Codex OAuth and xAI OAuth use static allowlists, so their available models are maintained by Rho rather than fetched through **Refresh model lists** in `/config`.
 
@@ -174,7 +174,7 @@ To see the signed-out session state, run `/logout <provider>` for the active pro
 
 ## Model metadata
 
-Rho uses cached model metadata to choose context windows for status display and [auto compaction](/configuration#auto-compaction). The same metadata supplies each model's available [reasoning effort levels](/configuration#reasoning-options), so the TUI can skip unsupported choices without model-name allowlists. Override a window or reasoning list in `~/.rho/models.toml`. A custom Chat Completions host that is not itself in models.dev can set `catalog` to another provider slug and borrow that catalog. See [local model metadata](/configuration#local-model-metadata) and [Custom OpenAI-compatible hosts](/providers/openai-compatible).
+Rho uses cached model metadata to choose context windows for status display and [auto compaction](/configuration#auto-compaction). The same metadata supplies each model's available [reasoning effort levels](/configuration#reasoning-options), so the TUI can skip unsupported choices without model-name allowlists. Override a window or reasoning list in `~/.rho/models.toml`. A custom OpenAI-compatible host that is not itself in models.dev can set `catalog` to another provider slug and borrow that catalog. See [local model metadata](/configuration#local-model-metadata) and [Custom OpenAI-compatible hosts](/providers/openai-compatible).
 
 For subscription auth modes such as Codex OAuth and xAI OAuth, the statusline still estimates an equivalent API cost from [models.dev](https://models.dev/) pricing (including long-context rate tiers when available) and labels it `(sub)`. When a model is seen for the first time, Rho refreshes models.dev so newly added providers are not stuck on a stale local snapshot.
 

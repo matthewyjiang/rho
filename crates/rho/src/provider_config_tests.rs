@@ -478,3 +478,121 @@ fn set_endpoint_preserves_custom_catalog_mode() {
         rho_providers::provider::CatalogLookupMode::ModelId
     );
 }
+
+// Covers: api=responses loads, persists, and interns Responses construction
+// Owner: provider config
+#[test]
+fn custom_openai_compatible_loads_and_persists_responses_api() {
+    let _lock = rho_providers::provider::custom_provider_registry_test_lock();
+    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        "provider = \"litellm\"\nmodel = \"gpt-5.6\"\n[providers.custom.composer]\nbase_url = \"http://127.0.0.1:8787/v1\"\n[providers.custom.litellm]\nbase_url = \"http://127.0.0.1:4000/v1\"\napi = \"responses\"\n",
+    )
+    .unwrap();
+
+    let config = Config::load_with_store(
+        path.clone(),
+        &rho_providers::credentials::MemoryCredentialStore::default(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        config.providers.custom["litellm"].api,
+        rho_providers::provider::OpenAiCompatibleApi::Responses
+    );
+    assert_eq!(
+        config.providers.custom["composer"].api,
+        rho_providers::provider::OpenAiCompatibleApi::ChatCompletions
+    );
+    assert_eq!(
+        rho_providers::provider::interned_custom_provider("litellm")
+            .unwrap()
+            .runtime
+            .catalog_construction(),
+        rho_providers::provider::CatalogConstruction::Responses
+    );
+    assert_eq!(
+        rho_providers::provider::interned_custom_provider("composer")
+            .unwrap()
+            .runtime
+            .catalog_construction(),
+        rho_providers::provider::CatalogConstruction::Runtime
+    );
+
+    config.write_settings(path.clone()).unwrap();
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        saved.contains("api = \"responses\""),
+        "saved config must keep responses api: {saved}"
+    );
+    let composer = saved
+        .split("[providers.custom.litellm]")
+        .next()
+        .expect("composer section precedes litellm");
+    assert!(
+        !composer.contains("api ="),
+        "default chat host must omit api on save: {saved}"
+    );
+    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
+}
+
+// Covers: api rejects unknown values and ollama
+// Owner: provider config
+#[test]
+fn custom_api_rejects_unknown_and_ollama_values() {
+    let dir = tempfile::tempdir().unwrap();
+    let unknown = dir.path().join("unknown.toml");
+    std::fs::write(
+        &unknown,
+        "[providers.custom.litellm]\nbase_url = \"http://127.0.0.1:4000/v1\"\napi = \"websocket\"\n",
+    )
+    .unwrap();
+    let unknown_error = Config::load_with_store(
+        unknown,
+        &rho_providers::credentials::MemoryCredentialStore::default(),
+    )
+    .unwrap_err();
+    assert!(
+        format!("{unknown_error:#}").contains("providers.custom.litellm.api"),
+        "{unknown_error:#}"
+    );
+
+    let ollama = dir.path().join("ollama.toml");
+    std::fs::write(
+        &ollama,
+        "[providers.ollama]\nbase_url = \"http://127.0.0.1:11434/v1\"\napi = \"responses\"\n",
+    )
+    .unwrap();
+    let ollama_error = Config::load_with_store(
+        ollama,
+        &rho_providers::credentials::MemoryCredentialStore::default(),
+    )
+    .unwrap_err();
+    assert!(
+        format!("{ollama_error:#}").contains("providers.ollama does not accept api"),
+        "{ollama_error:#}"
+    );
+}
+
+// Covers: rewriting a custom host URL must not drop api
+// Owner: provider config
+#[test]
+fn set_endpoint_preserves_custom_api() {
+    let mut providers = ProviderConfigs::default();
+    providers
+        .set_endpoint("litellm", "http://127.0.0.1:4000/v1")
+        .unwrap();
+    providers
+        .set_api("litellm", Some("responses".into()))
+        .unwrap();
+    providers
+        .set_endpoint("litellm", "http://127.0.0.1:4001/v1")
+        .unwrap();
+    assert_eq!(
+        providers.custom["litellm"].api,
+        rho_providers::provider::OpenAiCompatibleApi::Responses
+    );
+}

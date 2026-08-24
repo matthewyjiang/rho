@@ -7,7 +7,7 @@ use crate::protocol::openai_responses::{
     codex_input_items_for_target, codex_reasoning_param, to_responses_tool, ToolStrictness,
 };
 
-use super::auth::Auth;
+use super::auth::{Auth, ResponsesAuth};
 use super::reasoning::OpenAiReasoningProfile;
 
 /// Complete wire policy for one OpenAI Responses endpoint variant.
@@ -22,6 +22,13 @@ impl ResponsesWireContract {
         match auth {
             Auth::ApiKey(_) => Self::OpenAiStandard,
             Auth::Codex { .. } => Self::CodexStandard,
+        }
+    }
+
+    fn for_responses_auth(auth: &ResponsesAuth) -> Self {
+        match auth {
+            ResponsesAuth::Keyless => Self::OpenAiStandard,
+            ResponsesAuth::OpenAi(auth) => Self::for_auth(auth),
         }
     }
 
@@ -87,6 +94,19 @@ impl ResponsesProfile {
     ) -> Self {
         Self::with_identity(
             ResponsesWireContract::for_auth(auth),
+            identity_provider,
+            model,
+        )
+    }
+
+    /// Identity for Responses credentials that may be keyless custom hosts.
+    pub(super) fn from_responses_auth(
+        auth: &ResponsesAuth,
+        model: impl Into<String>,
+        identity_provider: &'static str,
+    ) -> Self {
+        Self::with_identity(
+            ResponsesWireContract::for_responses_auth(auth),
             identity_provider,
             model,
         )

@@ -13,7 +13,7 @@ use crate::providers::native_compaction::{
     native_compact_failure, native_compact_from_response_body,
 };
 
-use super::auth::Auth;
+use super::auth::{Auth, ResponsesAuth};
 use super::codex_request::{build_responses_compact_body, ResponsesProfile};
 use super::codex_ws::CodexWsTransport;
 use super::reasoning::OpenAiReasoningProfile;
@@ -46,7 +46,7 @@ fn native_failed_attempts(
 
 /// Runs native compaction through the shared Responses HTTP transport.
 pub(super) async fn compact_with_http(
-    auth: &Auth,
+    auth: &ResponsesAuth,
     profile: &ResponsesProfile,
     reasoning_profile: &OpenAiReasoningProfile,
     http: &ResponsesHttpTransport<'_>,
@@ -91,7 +91,7 @@ pub(super) async fn compact_with_http(
     };
 
     // History shape changed; drop any live previous_response_id baseline.
-    if matches!(auth, Auth::Codex { .. }) {
+    if matches!(auth, ResponsesAuth::OpenAi(Auth::Codex { .. })) {
         codex_ws.reset().await;
     }
 
