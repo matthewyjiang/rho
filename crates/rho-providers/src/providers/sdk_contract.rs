@@ -31,8 +31,9 @@ use crate::model::ModelError;
 ///
 /// HTTP response bodies and other transport payloads are omitted so credentials
 /// and provider-private content do not enter the SDK error contract. Transport
-/// `reqwest` failures keep a generic public message and attach a category
-/// diagnostic instead of the request URL or source error text.
+/// `reqwest` failures keep a public message and never copy the request URL or
+/// source error text. Timeouts, connect failures, and client-builder errors
+/// get a specific message; other transport failures stay generic.
 pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
     match error {
         ModelError::MissingCredentials(_) => ProviderError::new(
@@ -162,67 +163,31 @@ pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
 }
 
 fn provider_error_from_transport_request(error: reqwest::Error) -> ProviderError {
-    let (kind, retryability, diagnostic) = classify_transport_request(&error);
-    ProviderError::new(kind, "provider request failed", retryability).with_diagnostic(diagnostic)
-}
-
-/// Maps a transport failure to a stable category without reqwest's URL or source text.
-fn classify_transport_request(
-    error: &reqwest::Error,
-) -> (ProviderErrorKind, Retryability, &'static str) {
     if error.is_timeout() {
-        return (
+        return ProviderError::new(
             ProviderErrorKind::Timeout,
+            "provider request timed out",
             Retryability::Retryable,
-            "timeout",
-        );
-    }
-    if error.is_connect() {
-        return (
-            ProviderErrorKind::Unavailable,
-            Retryability::Retryable,
-            "connection failure",
-        );
-    }
-    if error.is_redirect() {
-        return (
-            ProviderErrorKind::Unavailable,
-            Retryability::Retryable,
-            "redirect failure",
-        );
-    }
-    if error.is_decode() {
-        return (
-            ProviderErrorKind::Unavailable,
-            Retryability::Retryable,
-            "response-body or stream failure",
-        );
-    }
-    if error.is_body() {
-        return (
-            ProviderErrorKind::Unavailable,
-            Retryability::Retryable,
-            "request or response body failure",
-        );
-    }
-    if error.is_request() {
-        return (
-            ProviderErrorKind::Unavailable,
-            Retryability::Retryable,
-            "request-body failure",
         );
     }
     if error.is_builder() {
-        return (
+        return ProviderError::new(
             ProviderErrorKind::Other,
+            "provider client configuration failed",
             Retryability::Permanent,
-            "client configuration failure",
         );
     }
-    (
+    if error.is_connect() {
+        return ProviderError::new(
+            ProviderErrorKind::Unavailable,
+            "provider request failed to connect",
+            Retryability::Retryable,
+        );
+    }
+    ProviderError::new(
         ProviderErrorKind::Unavailable,
+        "provider request failed",
         Retryability::Retryable,
-        "transport failure",
     )
 }
 
