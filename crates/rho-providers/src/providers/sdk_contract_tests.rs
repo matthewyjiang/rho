@@ -15,6 +15,7 @@ use rho_sdk::{
     provider::{provider_event_channel, ModelProvider as SdkModelProvider},
     CancellationToken, ProviderErrorKind, ReasoningLevel,
 };
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::{callback_event_sink, provider_error_from_model_error, CallbackEventKind};
 use crate::model::{ModelError, ProviderReportedErrorKind};
@@ -513,6 +514,217 @@ fn http_error_messages_include_status_without_bodies() {
     assert!(!converted.message().contains("super-secret"));
     assert!(!converted.to_string().contains("super-secret"));
     assert_eq!(converted.diagnostic(), Some("authorization=super-secret"));
+}
+
+// Covers: transport request failures must keep a generic public message and a
+// category diagnostic, without leaking request URLs or query secrets.
+// Owner: provider SDK error mapping
+#[tokio::test]
+async fn transport_request_errors_expose_sanitized_categories() {
+    const SECRET: &str = "secret-token-should-not-leak";
+
+    let connection = connection_refused_error(SECRET).await;
+    let timeout = request_timeout_error(SECRET).await;
+    let decode = truncated_body_error(SECRET).await;
+    let body = failing_request_body_error(SECRET).await;
+    let redirect = redirect_error(SECRET).await;
+    let builder = builder_error();
+
+    let cases = [
+        (
+            connection,
+            ProviderErrorKind::Unavailable,
+            true,
+            "connection failure",
+        ),
+        (timeout, ProviderErrorKind::Timeout, true, "timeout"),
+        (
+            decode,
+            ProviderErrorKind::Unavailable,
+            true,
+            "response-body or stream failure",
+        ),
+        (
+            body,
+            ProviderErrorKind::Unavailable,
+            true,
+            "request-body failure",
+        ),
+        (
+            redirect,
+            ProviderErrorKind::Unavailable,
+            true,
+            "redirect failure",
+        ),
+        (
+            builder,
+            ProviderErrorKind::Other,
+            false,
+            "client configuration failure",
+        ),
+    ];
+
+    for (error, kind, retryable, diagnostic) in cases {
+        assert_sanitized_transport_request(error, kind, retryable, diagnostic, SECRET);
+    }
+}
+
+fn assert_sanitized_transport_request(
+    error: reqwest::Error,
+    kind: ProviderErrorKind,
+    retryable: bool,
+    diagnostic: &'static str,
+    secret: &str,
+) {
+    let converted = provider_error_from_model_error(ModelError::Request(error));
+    assert_eq!(converted.kind(), kind, "{diagnostic}");
+    assert_eq!(converted.is_retryable(), retryable, "{diagnostic}");
+    assert_eq!(
+        converted.message(),
+        "provider request failed",
+        "{diagnostic}"
+    );
+    assert_eq!(converted.diagnostic(), Some(diagnostic), "{diagnostic}");
+
+    let display = converted.to_string();
+    let debug = format!("{converted:?}");
+    for leaked in [secret, "127.0.0.1", "://"] {
+        assert!(
+            !converted.message().contains(leaked),
+            "{diagnostic} leaked {leaked} in message"
+        );
+        assert!(
+            !display.contains(leaked),
+            "{diagnostic} leaked {leaked} in display"
+        );
+        assert!(
+            !debug.contains(leaked),
+            "{diagnostic} leaked {leaked} in debug"
+        );
+        assert!(
+            !converted.diagnostic().unwrap_or("").contains(leaked),
+            "{diagnostic} leaked {leaked} in diagnostic"
+        );
+    }
+}
+
+fn secret_url(address: std::net::SocketAddr, secret: &str) -> String {
+    format!("http://{address}/chat?key={secret}")
+}
+
+async fn bind_local() -> (tokio::net::TcpListener, std::net::SocketAddr) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind local listener");
+    let address = listener.local_addr().expect("listener address");
+    (listener, address)
+}
+
+async fn connection_refused_error(secret: &str) -> reqwest::Error {
+    let (listener, address) = bind_local().await;
+    drop(listener);
+    reqwest::get(secret_url(address, secret))
+        .await
+        .expect_err("closed listener should refuse the connection")
+}
+
+async fn request_timeout_error(secret: &str) -> reqwest::Error {
+    let (listener, address) = bind_local().await;
+    let server = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.expect("accept timeout client");
+        std::future::pending::<()>().await;
+        drop(socket);
+    });
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(250))
+        .build()
+        .expect("timeout client");
+    let error = client
+        .get(secret_url(address, secret))
+        .send()
+        .await
+        .expect_err("held connection should time out");
+    server.abort();
+    error
+}
+
+async fn serve_once(
+    response: &'static [u8],
+) -> (tokio::task::JoinHandle<()>, std::net::SocketAddr) {
+    let (listener, address) = bind_local().await;
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.expect("accept fixture client");
+        let mut request = [0_u8; 1024];
+        let _ = socket.read(&mut request).await;
+        socket
+            .write_all(response)
+            .await
+            .expect("write fixture response");
+    });
+    (server, address)
+}
+
+async fn truncated_body_error(secret: &str) -> reqwest::Error {
+    let (server, address) =
+        serve_once(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\npartial").await;
+    let mut response = reqwest::get(secret_url(address, secret))
+        .await
+        .expect("headers should succeed");
+    let error = loop {
+        match response.chunk().await {
+            Ok(Some(_)) => {}
+            Ok(None) => panic!("truncated body closed without a transport error"),
+            Err(error) => break error,
+        }
+    };
+    server.await.expect("body fixture server");
+    error
+}
+
+async fn failing_request_body_error(secret: &str) -> reqwest::Error {
+    let (listener, address) = bind_local().await;
+    let server = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.expect("accept upload client");
+        std::future::pending::<()>().await;
+        drop(socket);
+    });
+    let stream = futures_util::stream::iter([
+        Ok::<_, std::io::Error>(b"partial-upload".to_vec()),
+        Err(std::io::Error::other("upload failed")),
+    ]);
+    let error = reqwest::Client::new()
+        .post(secret_url(address, secret))
+        .body(reqwest::Body::wrap_stream(stream))
+        .send()
+        .await
+        .expect_err("failing request body should fail");
+    server.abort();
+    error
+}
+
+async fn redirect_error(secret: &str) -> reqwest::Error {
+    let (server, address) = serve_once(
+        b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1/next\r\nContent-Length: 0\r\n\r\n",
+    )
+    .await;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::limited(0))
+        .build()
+        .expect("redirect client");
+    let error = client
+        .get(secret_url(address, secret))
+        .send()
+        .await
+        .expect_err("disallowed redirect should fail");
+    server.await.expect("redirect fixture server");
+    error
+}
+
+fn builder_error() -> reqwest::Error {
+    reqwest::Client::new()
+        .get("not-a-url")
+        .build()
+        .expect_err("invalid URL should fail request construction")
 }
 
 #[tokio::test]

@@ -30,7 +30,9 @@ use crate::model::ModelError;
 /// Converts an application [`ModelError`] into a sanitized public [`ProviderError`].
 ///
 /// HTTP response bodies and other transport payloads are omitted so credentials
-/// and provider-private content do not enter the SDK error contract.
+/// and provider-private content do not enter the SDK error contract. Transport
+/// `reqwest` failures keep a generic public message and attach a category
+/// diagnostic instead of the request URL or source error text.
 pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
     match error {
         ModelError::MissingCredentials(_) => ProviderError::new(
@@ -150,17 +152,78 @@ pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
                 error.with_diagnostic(sanitize_diagnostic(&body))
             }
         }
-        ModelError::Request(_) => ProviderError::new(
-            ProviderErrorKind::Unavailable,
-            "provider request failed",
-            Retryability::Retryable,
-        ),
+        ModelError::Request(error) => provider_error_from_transport_request(error),
         ModelError::Io(_) => ProviderError::new(
             ProviderErrorKind::Other,
             "provider I/O failed",
             Retryability::Retryable,
         ),
     }
+}
+
+fn provider_error_from_transport_request(error: reqwest::Error) -> ProviderError {
+    let (kind, retryability, diagnostic) = classify_transport_request(&error);
+    ProviderError::new(kind, "provider request failed", retryability).with_diagnostic(diagnostic)
+}
+
+/// Maps a transport failure to a stable category without reqwest's URL or source text.
+fn classify_transport_request(
+    error: &reqwest::Error,
+) -> (ProviderErrorKind, Retryability, &'static str) {
+    if error.is_timeout() {
+        return (
+            ProviderErrorKind::Timeout,
+            Retryability::Retryable,
+            "timeout",
+        );
+    }
+    if error.is_connect() {
+        return (
+            ProviderErrorKind::Unavailable,
+            Retryability::Retryable,
+            "connection failure",
+        );
+    }
+    if error.is_redirect() {
+        return (
+            ProviderErrorKind::Unavailable,
+            Retryability::Retryable,
+            "redirect failure",
+        );
+    }
+    if error.is_decode() {
+        return (
+            ProviderErrorKind::Unavailable,
+            Retryability::Retryable,
+            "response-body or stream failure",
+        );
+    }
+    if error.is_body() {
+        return (
+            ProviderErrorKind::Unavailable,
+            Retryability::Retryable,
+            "request or response body failure",
+        );
+    }
+    if error.is_request() {
+        return (
+            ProviderErrorKind::Unavailable,
+            Retryability::Retryable,
+            "request-body failure",
+        );
+    }
+    if error.is_builder() {
+        return (
+            ProviderErrorKind::Other,
+            Retryability::Permanent,
+            "client configuration failure",
+        );
+    }
+    (
+        ProviderErrorKind::Unavailable,
+        Retryability::Retryable,
+        "transport failure",
+    )
 }
 
 fn sanitize_diagnostic(value: &str) -> String {
