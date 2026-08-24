@@ -262,7 +262,8 @@ fn capture_demo(binary: &Path) -> Result<DemoCapture> {
 /// stabilize by rewriting those fragments rather than whole-row matches. Header
 /// package version is pinned at capture input via `RHO_TUI_DISPLAY_VERSION`.
 fn stabilize_demo_svg(svg: &str) -> String {
-    let mut out = pin_tool_durations(svg);
+    // Styled tool-card runs look like ` · 0.2s`, not contiguous `exit 0 · 0.2s`.
+    let mut out = pin_prefixed_duration(svg, " · ", "0.1s");
     out = pin_duration_receipts(&out);
     out = pin_statusline_usage(&out);
     out
@@ -290,28 +291,6 @@ fn pin_prefixed_duration(svg: &str, prefix: &str, pinned: &str) -> String {
                 continue;
             }
         }
-    }
-    out.push_str(rest);
-    out
-}
-
-fn pin_tool_durations(svg: &str) -> String {
-    // Styled runs look like ` · 0.2s`, not contiguous `exit 0 · 0.2s`.
-    let marker = " · ";
-    let mut out = String::with_capacity(svg.len());
-    let mut rest = svg;
-    while let Some(idx) = rest.find(marker) {
-        out.push_str(&rest[..idx + marker.len()]);
-        rest = &rest[idx + marker.len()..];
-        if let Some(end) = rest.find('s') {
-            let token = &rest[..=end];
-            if is_duration_token(token) {
-                out.push_str("0.1s");
-                rest = &rest[end + 1..];
-                continue;
-            }
-        }
-        // Not a duration; keep scanning past this marker.
     }
     out.push_str(rest);
     out
