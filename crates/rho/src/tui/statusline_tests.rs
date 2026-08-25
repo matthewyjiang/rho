@@ -197,12 +197,49 @@ fn bottom_row_drops_fields_by_global_rank() {
         "context and model remain: {after_cost:?}"
     );
 
-    // context before model (cross-side rank that staged packing inverted)
+    // ambient context before model (cross-side rank that staged packing inverted)
     let after_context = packed_keys(state, 20);
     assert_eq!(
         after_context,
         vec![FieldKey::Permission, FieldKey::Model],
-        "context drops before model: {after_context:?}"
+        "ambient context drops before model: {after_context:?}"
+    );
+
+    // warning/critical fill promotes context above model at the same width
+    let mut at_warning = fully_populated_statusline();
+    at_warning.update_usage(
+        None,
+        Some(&ContextUsage::estimated(7_500, Some(10_000))),
+        12_500,
+    );
+    assert_eq!(
+        packed_keys(&at_warning.state, 20),
+        vec![FieldKey::Context, FieldKey::Permission],
+        "context at warning threshold outranks model at narrow width"
+    );
+
+    let mut below_warning = fully_populated_statusline();
+    below_warning.update_usage(
+        None,
+        Some(&ContextUsage::estimated(7_499, Some(10_000))),
+        12_500,
+    );
+    assert_eq!(
+        packed_keys(&below_warning.state, 20),
+        vec![FieldKey::Permission, FieldKey::Model],
+        "context below warning threshold still drops before model"
+    );
+
+    let mut unknown_after_compaction = fully_populated_statusline();
+    unknown_after_compaction.update_usage(
+        None,
+        Some(&ContextUsage::unknown_after_compaction(Some(10_000))),
+        12_500,
+    );
+    assert_eq!(
+        packed_keys(&unknown_after_compaction.state, 15),
+        vec![FieldKey::Context, FieldKey::Permission],
+        "unknown-after-compaction warning keeps context above model"
     );
 
     // model before permission
