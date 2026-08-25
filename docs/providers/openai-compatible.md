@@ -37,7 +37,7 @@ base_url = "http://127.0.0.1:4000/v1"
 api = "responses"
 ```
 
-`api` accepts `"chat-completions"` (default, omitted on save) or `"responses"`. Restart Rho after you hand-edit this table, including `api` or `base_url`. Creating or updating a host through `/login` applies immediately. Rewriting only the URL keeps a previously saved `api` value.
+`api` accepts `"chat-completions"` (default, omitted on save) or `"responses"`. Restart Rho after you hand-edit this table, including `api` or `base_url`. Creating or re-creating a host through `/login` applies immediately and writes `api` to the **Custom** row you pick. Hand-editing only `base_url` keeps a previously saved `api`.
 
 Names must be lowercase letters, digits, and hyphens, start with a letter, and must not match a built-in provider.
 
