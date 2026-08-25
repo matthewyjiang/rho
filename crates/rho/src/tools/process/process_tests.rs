@@ -11,8 +11,7 @@ const LONG_RUNNING_COMMAND: &str = "Start-Sleep -Seconds 300";
 #[cfg(unix)]
 const STDIN_CLOSED_COMMAND: &str = "read input || printf closed";
 #[cfg(windows)]
-const STDIN_CLOSED_COMMAND: &str =
-    "$input = [Console]::In.ReadToEnd(); if ($input.Length -eq 0) { [Console]::Out.Write('closed') }";
+const STDIN_CLOSED_COMMAND: &str = "$input = [Console]::In.ReadToEnd(); if ($input.Length -eq 0) { [Console]::Out.Write('closed') }";
 #[cfg(unix)]
 const MIXED_OUTPUT_COMMAND: &str = "printf out; printf err >&2";
 #[cfg(windows)]
@@ -33,6 +32,10 @@ const LARGE_OUTPUT_COMMAND: &str = "[Console]::Out.Write('x' * 1000000)";
 const SUCCESS_COMMAND: &str = "true";
 #[cfg(windows)]
 const SUCCESS_COMMAND: &str = "exit 0";
+#[cfg(unix)]
+const OUTPUT_THEN_SLEEP_COMMAND: &str = "printf hello; sleep 300";
+#[cfg(windows)]
+const OUTPUT_THEN_SLEEP_COMMAND: &str = "[Console]::Out.Write('hello'); Start-Sleep -Seconds 300";
 
 async fn eventually(manager: &ProcessManager, id: &str) -> Snapshot {
     let mut cursor = 0;
@@ -742,71 +745,6 @@ async fn aborted_stop_caller_does_not_cancel_request_or_cleanup() {
     );
 }
 
-// Covers: the host rail must see live jobs and drop them once they finish.
-// Owner: process manager
-#[tokio::test]
-async fn live_summaries_lists_running_and_hides_terminal() {
-    let manager = ProcessManager::new(ProcessLimits::default());
-    let started = manager
-        .start(LONG_RUNNING_COMMAND.into(), std::path::Path::new("."), None)
-        .await
-        .unwrap();
-
-    let summaries = manager.live_summaries();
-    assert_eq!(summaries.len(), 1);
-    pretty_assertions::assert_eq!(
-        (
-            summaries[0].process_id.as_str(),
-            summaries[0].command.as_str(),
-            terminal(summaries[0].state)
-        ),
-        (started.process_id.as_str(), LONG_RUNNING_COMMAND, false)
-    );
-
-    manager
-        .stop(&started.process_id, Duration::ZERO)
-        .await
-        .unwrap();
-    eventually(&manager, &started.process_id).await;
-    assert!(manager.live_summaries().is_empty());
-}
-
-// Covers: overflow rows must keep the oldest live process, not the newest.
-// Owner: process manager
-#[tokio::test]
-async fn live_summaries_orders_oldest_first() {
-    let manager = ProcessManager::new(ProcessLimits::default());
-    let first = manager
-        .start(LONG_RUNNING_COMMAND.into(), std::path::Path::new("."), None)
-        .await
-        .unwrap();
-    let second = manager
-        .start(LONG_RUNNING_COMMAND.into(), std::path::Path::new("."), None)
-        .await
-        .unwrap();
-
-    let ids = manager
-        .live_summaries()
-        .into_iter()
-        .map(|summary| summary.process_id)
-        .collect::<Vec<_>>();
-    pretty_assertions::assert_eq!(
-        ids,
-        vec![first.process_id.clone(), second.process_id.clone()]
-    );
-
-    manager
-        .stop(&first.process_id, Duration::ZERO)
-        .await
-        .unwrap();
-    manager
-        .stop(&second.process_id, Duration::ZERO)
-        .await
-        .unwrap();
-    eventually(&manager, &first.process_id).await;
-    eventually(&manager, &second.process_id).await;
-}
-
 async fn wait_for_exit_notification(manager: &ProcessManager) -> Vec<ProcessNotification> {
     loop {
         let notified = manager.notified_owned();
@@ -941,3 +879,6 @@ async fn leader_exit_terminates_surviving_descendants() {
     // Shutdown must not hang on the finalized record.
     manager.shutdown().await;
 }
+
+#[path = "host_rail_tests.rs"]
+mod host_rail;

@@ -29,6 +29,20 @@ use super::{
 #[cfg(test)]
 use super::{ActiveFrame, DEFAULT_TUI_HEIGHT};
 
+fn paint_rail_highlight(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    row: usize,
+    state: super::activity::RailRowState,
+) {
+    let y = area.y.saturating_add(row as u16);
+    if y < area.bottom() {
+        for x in area.x..area.right() {
+            frame.buffer_mut()[(x, y)].set_style(Theme::activity_rail_row(state));
+        }
+    }
+}
+
 /// Live history paint output: lines plus toggleable card spans in that walk.
 pub(super) struct LiveHistory {
     pub(super) lines: Vec<Line<'static>>,
@@ -279,20 +293,35 @@ impl App {
                     layout.subagents.height as usize,
                     super::subagent_attach::ACTION_HINT,
                     /*continues_below*/ layout.processes.height > 0,
+                    now,
                 ))
                 .style(Theme::activity_rail()),
                 layout.subagents,
             );
-            if let Some((row, state)) = self.subagent_panel.highlighted_row() {
-                let y = layout.subagents.y.saturating_add(row as u16);
-                if y < layout.subagents.bottom() {
-                    for x in layout.subagents.x..layout.subagents.right() {
-                        frame.buffer_mut()[(x, y)].set_style(Theme::subagent_row(state));
-                    }
-                }
+            if let Some((row, state)) = self
+                .subagent_panel
+                .highlighted_row(layout.subagents.height as usize, now)
+            {
+                paint_rail_highlight(frame, layout.subagents, row, state);
             }
         }
-        self.render_process_rail(frame, layout.processes, width);
+        if layout.processes.height > 0 {
+            frame.render_widget(
+                Paragraph::new(self.process_panel.lines(
+                    width,
+                    layout.processes.height as usize,
+                    now,
+                ))
+                .style(Theme::activity_rail()),
+                layout.processes,
+            );
+            if let Some((row, state)) = self
+                .process_panel
+                .highlighted_row(layout.processes.height as usize, now)
+            {
+                paint_rail_highlight(frame, layout.processes, row, state);
+            }
+        }
         if layout.top_divider.height > 0 {
             frame.render_widget(
                 Paragraph::new(vec![self.divider_line(width, ComposerDividerSlot::Top)])
@@ -498,11 +527,12 @@ impl App {
                 layout.subagents.height as usize,
                 super::subagent_attach::ACTION_HINT,
                 /*continues_below*/ layout.processes.height > 0,
+                now,
             ));
         }
         lines.extend(
             self.process_panel
-                .lines(width, layout.processes.height as usize),
+                .lines(width, layout.processes.height as usize, now),
         );
         if layout.top_divider.height > 0 {
             lines.push(self.divider_line(width, ComposerDividerSlot::Top));

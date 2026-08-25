@@ -39,7 +39,8 @@ It must differ from `open_editor`. Restart Rho after keybinding changes.
 - **Away from the bottom:** Rho overlays a right-aligned control such as
   `↓ jump to bottom  ctrl+end` on the last transcript row. Only that control's
   cells are covered.
-- **During generation:** the spinner is similarly overlaid on the left.
+- **While the spinner is up:** it is similarly overlaid on the left, including
+  when the parent turn is idle but background agents or jobs remain.
 
 Press the jump binding or click the button to resume following live output.
 

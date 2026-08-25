@@ -4,6 +4,7 @@ use super::{
     types::{terminal, ProcessLimits},
     Chunk, Snapshot, State,
 };
+use crate::tools::RAIL_TERMINAL_RETENTION;
 use rho_sdk::{ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits};
 use std::{
     collections::{HashMap, VecDeque},
@@ -14,6 +15,7 @@ use std::{
 };
 use tokio::sync::{mpsc, Notify};
 use uuid::Uuid;
+
 pub(super) type SharedRecord = Arc<Mutex<Record>>;
 pub(super) struct RetainedChunk {
     pub(super) chunk: Chunk,
@@ -25,6 +27,7 @@ pub(super) struct Record {
     pub(super) state: State,
     pub(super) started: Instant,
     pub(super) completed: Option<Instant>,
+    pub(super) last_output_at: Option<Instant>,
     pub(super) chunks: VecDeque<RetainedChunk>,
     pub(super) bytes: usize,
     pub(super) next: u64,
@@ -34,6 +37,23 @@ pub(super) struct Record {
     pub(super) tree: Option<Arc<ProcessTree>>,
     pub(super) notify: Arc<Notify>,
     pub(super) observed: bool,
+}
+
+impl Record {
+    fn host_timing(&self) -> (u64, Option<u64>) {
+        if terminal(self.state) {
+            let elapsed = self
+                .completed
+                .map(|completed| completed.saturating_duration_since(self.started).as_secs())
+                .unwrap_or_else(|| self.started.elapsed().as_secs());
+            (elapsed, None)
+        } else {
+            (
+                self.started.elapsed().as_secs(),
+                self.last_output_at.map(|at| at.elapsed().as_secs()),
+            )
+        }
+    }
 }
 struct Inner {
     records: HashMap<String, SharedRecord>,
@@ -118,6 +138,7 @@ impl ProcessManager {
             state: State::Starting,
             started: Instant::now(),
             completed: None,
+            last_output_at: None,
             chunks: VecDeque::new(),
             bytes: 0,
             next: 0,
@@ -339,7 +360,8 @@ impl ProcessManager {
         }
     }
 
-    /// Live `Starting`/`Running` records, oldest first.
+    /// Live `Starting`/`Running` records plus recently completed terminal
+    /// records, oldest first.
     ///
     /// Host UI uses this to render the activity rail. It is not a tool action.
     pub(crate) fn live_summaries(&self) -> Vec<super::LiveProcessSummary> {
@@ -351,9 +373,15 @@ impl ProcessManager {
             .into_iter()
             .filter_map(|record| {
                 let record = record.lock().unwrap();
-                if terminal(record.state) {
-                    return None;
+                let is_terminal = terminal(record.state);
+                if is_terminal {
+                    let completed = record.completed?;
+                    if completed.elapsed() >= RAIL_TERMINAL_RETENTION {
+                        return None;
+                    }
                 }
+                let (elapsed_seconds, quiet_seconds) = record.host_timing();
+                let exit_code = is_terminal.then_some(record.exit_code).flatten();
                 Some((
                     record.started,
                     record.id.clone(),
@@ -361,13 +389,31 @@ impl ProcessManager {
                         process_id: record.id.clone(),
                         command: record.command.clone(),
                         state: record.state,
-                        elapsed_seconds: record.started.elapsed().as_secs(),
+                        elapsed_seconds,
+                        quiet_seconds,
+                        exit_code,
                     },
                 ))
             })
             .collect::<Vec<_>>();
         live.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
         live.into_iter().map(|(_, _, summary)| summary).collect()
+    }
+
+    /// Full retained output for the host peek view.
+    ///
+    /// Host UI only. Unlike [`Self::poll_bounded`], this does not wait, mark a
+    /// terminal process observed, or consume an agent-visible cursor.
+    pub(crate) fn host_view(&self, id: &str) -> Result<super::HostProcessView, String> {
+        let rec = self.get(id)?;
+        let snapshot = snapshot(&rec, 0);
+        let record = rec.lock().unwrap();
+        let (elapsed_seconds, quiet_seconds) = record.host_timing();
+        Ok(super::HostProcessView {
+            snapshot,
+            elapsed_seconds,
+            quiet_seconds,
+        })
     }
 
     fn get(&self, id: &str) -> Result<SharedRecord, String> {

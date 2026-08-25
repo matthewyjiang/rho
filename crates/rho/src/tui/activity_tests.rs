@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use pretty_assertions::assert_eq;
+
 use super::*;
 
 // Covers: stacked rail rows share one column layout for identity / activity / elapsed.
@@ -15,7 +17,9 @@ fn rail_row_columns_identity_activity_and_trailing() {
             Span::styled("aaaaaaaa", Theme::dim().patch(row_style)),
         ],
         activity: "running".into(),
+        activity_style: Theme::text(),
         trailing: "4s".into(),
+        trailing_style: Theme::dim(),
         row_style,
     }
     .into_line(80);
@@ -47,7 +51,9 @@ fn rail_row_truncates_when_fixed_width_overflows() {
             Theme::text_strong().patch(row_style),
         )],
         activity: "running".into(),
+        activity_style: Theme::text(),
         trailing: "12s".into(),
+        trailing_style: Theme::dim(),
         row_style,
     }
     .into_line(18);
@@ -138,6 +144,81 @@ fn jump_to_bottom_attention_compact_labels_fit_where_neutral_does() {
     }
 }
 
+fn responding_parent() -> (ActivityPhase, Option<ProviderRetryHint>) {
+    (ActivityPhase::Responding, None)
+}
+
+fn counts(subagent_count: usize, job_count: usize) -> BackgroundCounts {
+    BackgroundCounts {
+        subagent_count,
+        job_count,
+    }
+}
+
+// Covers: idle with no background work must not keep an activity rail;
+// parent vs background vs linger-only choose distinct variants.
+// Owner: pure unit (status construction)
+#[test]
+fn from_parent_and_background_selects_variant() {
+    let parent = Some(responding_parent());
+    let (phase, retry) = responding_parent();
+    assert_eq!(
+        ActivityStatus::from_parent_and_background(None, counts(0, 0), false),
+        None
+    );
+    assert_eq!(
+        ActivityStatus::from_parent_and_background(None, counts(0, 0), true),
+        Some(ActivityStatus::Linger)
+    );
+    let cases = [
+        (
+            parent,
+            counts(0, 0),
+            ActivityStatus::Parent {
+                phase,
+                retry,
+                background: counts(0, 0),
+            },
+        ),
+        (
+            parent,
+            counts(2, 0),
+            ActivityStatus::Parent {
+                phase,
+                retry,
+                background: counts(2, 0),
+            },
+        ),
+        (
+            parent,
+            counts(0, 1),
+            ActivityStatus::Parent {
+                phase,
+                retry,
+                background: counts(0, 1),
+            },
+        ),
+        (
+            parent,
+            counts(2, 1),
+            ActivityStatus::Parent {
+                phase,
+                retry,
+                background: counts(2, 1),
+            },
+        ),
+        (None, counts(1, 0), ActivityStatus::Background(counts(1, 0))),
+        (None, counts(0, 3), ActivityStatus::Background(counts(0, 3))),
+        (None, counts(2, 1), ActivityStatus::Background(counts(2, 1))),
+    ];
+    for (parent, background, expected) in cases {
+        assert_eq!(
+            ActivityStatus::from_parent_and_background(parent, background, false),
+            Some(expected),
+        );
+    }
+}
+
 // Covers: live elapsed trails the widest status label and drops before the
 // status ladder degrades.
 // Owner: pure unit (activity label assembly)
@@ -147,19 +228,22 @@ fn activity_label_trails_elapsed_then_drops_it() {
     let parent = ActivityStatus::Parent {
         phase: ActivityPhase::Responding,
         retry: None,
+        background: counts(0, 0),
     };
-    let with_agents = ActivityStatus::ParentWithSubagents {
+    let with_agents = ActivityStatus::Parent {
         phase: ActivityPhase::Responding,
         retry: None,
-        subagent_count: 2,
+        background: counts(2, 0),
     };
-    let agents_only = ActivityStatus::Subagents(2);
+    let agents_only = ActivityStatus::Background(counts(2, 0));
+    let jobs_only = ActivityStatus::Background(counts(0, 1));
 
     let parent_timed = format!("{spinner} responding · 15.0s");
     let parent_plain = format!("{spinner} responding");
     let agents_timed = format!("{spinner} responding  ·  2 agents · 15.0s");
     let agents_plain = format!("{spinner} responding  ·  2 agents");
     let only_timed = format!("{spinner} 2 agents working · 15.0s");
+    let jobs_timed = format!("{spinner} 1 job running · 15.0s");
     let elapsed = Some(Duration::from_secs(15));
 
     assert_eq!(activity_label(80, parent, elapsed), parent_timed);
@@ -173,5 +257,138 @@ fn activity_label_trails_elapsed_then_drops_it() {
         agents_plain
     );
     assert_eq!(activity_label(80, agents_only, elapsed), only_timed);
+    assert_eq!(activity_label(80, jobs_only, elapsed), jobs_timed);
     assert_eq!(activity_label(80, parent, None), parent_plain);
+}
+
+// Covers: mixed background counts compress agents+jobs before dropping to a
+// bare spinner, with singular/plural nouns on the wide rungs.
+// Owner: pure unit (activity label assembly)
+#[test]
+fn activity_status_labels_compress_background_counts() {
+    let spinner = LoadingSpinner::FRAMES[0];
+    let cases = [
+        (
+            ActivityStatus::Parent {
+                phase: ActivityPhase::RunningTool,
+                retry: None,
+                background: counts(2, 1),
+            },
+            vec![
+                format!("{spinner} running tool  ·  2 agents · 1 job"),
+                format!("{spinner} running tool · 2+1"),
+                format!("{spinner} 2+1"),
+                spinner.into(),
+            ],
+        ),
+        (
+            ActivityStatus::Parent {
+                phase: ActivityPhase::RunningTool,
+                retry: None,
+                background: counts(0, 3),
+            },
+            vec![
+                format!("{spinner} running tool  ·  3 jobs"),
+                format!("{spinner} running tool · 3"),
+                format!("{spinner} 3"),
+                spinner.into(),
+            ],
+        ),
+        (
+            ActivityStatus::Background(counts(1, 0)),
+            vec![
+                format!("{spinner} 1 agent working"),
+                format!("{spinner} 1 agent"),
+                format!("{spinner} 1"),
+                spinner.into(),
+            ],
+        ),
+        (
+            ActivityStatus::Background(counts(0, 1)),
+            vec![
+                format!("{spinner} 1 job running"),
+                format!("{spinner} 1 job"),
+                format!("{spinner} 1"),
+                spinner.into(),
+            ],
+        ),
+        (
+            ActivityStatus::Background(counts(2, 1)),
+            vec![
+                format!("{spinner} 2 agents · 1 job"),
+                format!("{spinner} 2+1"),
+                spinner.into(),
+            ],
+        ),
+    ];
+    for (status, expected) in cases {
+        assert_eq!(activity_status_labels(status), expected);
+    }
+}
+
+// Covers: rail overflow keeps live rows, then lingering failures, in original order.
+// Owner: pure unit (rail row selection)
+#[test]
+fn select_capped_rail_rows_prioritizes_live_then_failures() {
+    #[derive(Debug, PartialEq, Eq)]
+    struct Row {
+        id: &'static str,
+        live: bool,
+        fail: bool,
+    }
+    let rows = [
+        Row {
+            id: "ok-linger",
+            live: false,
+            fail: false,
+        },
+        Row {
+            id: "live-a",
+            live: true,
+            fail: false,
+        },
+        Row {
+            id: "fail-linger",
+            live: false,
+            fail: true,
+        },
+        Row {
+            id: "live-b",
+            live: true,
+            fail: false,
+        },
+    ];
+    let (indices, hidden) = select_capped_rail_rows(&rows, 8, |row| row.live, |row| row.fail);
+    assert_eq!(indices, [1]);
+    assert_eq!(hidden, Some(3));
+    assert_eq!(rows[indices[0]].id, "live-a");
+
+    let lingering = [
+        Row {
+            id: "ok",
+            live: false,
+            fail: false,
+        },
+        Row {
+            id: "fail",
+            live: false,
+            fail: true,
+        },
+        Row {
+            id: "ok-2",
+            live: false,
+            fail: false,
+        },
+    ];
+    let (indices, hidden) = select_capped_rail_rows(&lingering, 8, |row| row.live, |row| row.fail);
+    assert_eq!(indices, [1]);
+    assert_eq!(hidden, Some(2));
+}
+
+// Covers: overflow copy is singular for one hidden row and plural otherwise.
+// Owner: pure unit (overflow copy)
+#[test]
+fn overflow_label_singular_and_plural() {
+    assert_eq!(overflow_label(1, "agent", "agents"), "1 more agent");
+    assert_eq!(overflow_label(2, "job", "jobs"), "2 more jobs");
 }

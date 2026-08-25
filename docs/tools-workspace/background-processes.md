@@ -9,8 +9,12 @@ outlive a single foreground `bash` or `powershell` call.
 
 Rho owns these processes only while that instance is alive. Shutdown cleans
 them up. Records do not survive a restart. The interactive TUI shows live
-`starting` and `running` jobs in the activity rail. That host view is not a
-`process` tool `list` action.
+jobs in the activity rail as command, freshness (`running`, or `quiet …`
+after 60s of silence), and elapsed time. It does not show the short process
+id. Finished jobs linger briefly with an exit verdict, longer on failure.
+Click a live or lingering row to open a read-only peek of captured stdout
+and stderr; it does not stop the job. That host view is not a `process`
+tool `list` action.
 
 ```mermaid
 flowchart TD

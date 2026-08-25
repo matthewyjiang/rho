@@ -86,6 +86,7 @@ mod inline_shell;
 mod keybindings;
 mod keyboard_modes;
 mod limits_command;
+mod linger_rail;
 mod local_commands;
 mod local_diff;
 mod login;
@@ -120,6 +121,7 @@ mod picker_overlay;
 mod picker_overlay_layout;
 mod picker_rows;
 mod process_panel;
+mod process_peek;
 mod prompt_history;
 mod prompt_turn;
 mod provider_actions;
@@ -192,7 +194,7 @@ mod workspace;
 mod types;
 use types::*;
 
-use activity::{ActivityPhase, ActivityStatus, LoadingSpinner};
+use activity::{ActivityPhase, ActivityStatus, BackgroundCounts, LoadingSpinner};
 use app_state::{HistoryUi, InputUi, PendingWorkUi, TurnUi};
 use approval::{approval_lines, ApprovalKeyOutcome};
 use chat_media::{

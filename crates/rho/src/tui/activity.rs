@@ -30,12 +30,39 @@ pub(super) const MAX_VISIBLE_RAIL_ROWS: usize = 2;
 /// Content width clamp shared by stacked activity-rail rows.
 const MAX_RAIL_CONTENT_WIDTH: usize = 52;
 
+/// Agent-row identity prefix (glyph + space).
+pub(super) const AGENT_GLYPH: &str = "◉ ";
+/// Process-row identity prefix (glyph + space).
+pub(super) const PROCESS_GLYPH: &str = "⚙ ";
+
+/// How an activity-rail row is being pointed at.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum RailRowState {
+    #[default]
+    Idle,
+    Hovered,
+    Pressed,
+}
+
+/// Long enough to register the ✓ while reading; short enough not to squat rail
+/// rows.
+pub(super) const LINGER_OK: Duration = Duration::from_secs(2);
+/// A failure verdict is the one thing the rail must not let you miss.
+pub(super) const LINGER_FAIL: Duration = Duration::from_secs(5);
+
+const _: () = assert!(
+    LINGER_FAIL.as_secs() < crate::tools::RAIL_TERMINAL_RETENTION.as_secs(),
+    "UI linger must drop a row before the manager forgets it"
+);
+
 /// One stacked activity-rail row. Identity styling stays at the call site.
 pub(super) struct RailRow {
     pub(super) connector: &'static str,
     pub(super) identity: Vec<Span<'static>>,
     pub(super) activity: String,
+    pub(super) activity_style: Style,
     pub(super) trailing: String,
+    pub(super) trailing_style: Style,
     pub(super) row_style: Style,
 }
 
@@ -58,6 +85,14 @@ impl RailRow {
         let trailing_width = display_width(&self.trailing);
         let fixed_width = identity_width + separator_width + MIN_GAP + trailing_width;
         let row_style = self.row_style;
+
+        if self.activity.is_empty() && self.trailing.is_empty() {
+            let identity = truncate_one_line(&identity_plain, content_width);
+            return Line::from(vec![
+                Span::styled(self.connector, Theme::dim().patch(row_style)),
+                Span::styled(identity, self.identity_style().patch(row_style)),
+            ]);
+        }
 
         if fixed_width >= content_width {
             let detail = truncate_one_line(
@@ -82,11 +117,71 @@ impl RailRow {
         spans.push(Span::styled(self.connector, Theme::dim().patch(row_style)));
         spans.extend(self.identity);
         spans.push(Span::styled(SEPARATOR, Theme::dim().patch(row_style)));
-        spans.push(Span::styled(activity, Theme::text().patch(row_style)));
+        spans.push(Span::styled(activity, row_style.patch(self.activity_style)));
         spans.push(Span::styled(gap, row_style));
-        spans.push(Span::styled(self.trailing, Theme::dim().patch(row_style)));
+        spans.push(Span::styled(
+            self.trailing,
+            row_style.patch(self.trailing_style),
+        ));
         Line::from(spans)
     }
+
+    fn identity_style(&self) -> Style {
+        self.identity
+            .first()
+            .map(|span| span.style)
+            .unwrap_or_else(Theme::dim)
+    }
+}
+
+/// Hidden-row copy for a per-panel overflow summary.
+pub(super) fn overflow_label(hidden: usize, singular: &str, plural: &str) -> String {
+    if hidden == 1 {
+        format!("1 more {singular}")
+    } else {
+        format!("{hidden} more {plural}")
+    }
+}
+
+/// Indices to paint when a panel has more rows than `height` / the shared cap.
+///
+/// Live rows win over lingering rows. Lingering failures win over lingering
+/// successes. Original order is preserved among the rows that remain. When
+/// anything is hidden, the last visible slot is reserved for a summary.
+pub(super) fn select_capped_rail_rows<T>(
+    rows: &[T],
+    height: usize,
+    is_live: impl Fn(&T) -> bool,
+    is_failure: impl Fn(&T) -> bool,
+) -> (Vec<usize>, Option<usize>) {
+    let cap = MAX_VISIBLE_RAIL_ROWS.min(height);
+    if cap == 0 || rows.is_empty() {
+        return (Vec::new(), None);
+    }
+    if rows.len() <= cap {
+        return ((0..rows.len()).collect(), None);
+    }
+    let content_slots = cap.saturating_sub(1);
+    let mut order: Vec<usize> = (0..rows.len()).collect();
+    order.sort_by_key(|&index| {
+        let rank = if is_live(&rows[index]) {
+            0_u8
+        } else if is_failure(&rows[index]) {
+            1
+        } else {
+            2
+        };
+        (rank, index)
+    });
+    order.truncate(content_slots);
+    order.sort_unstable();
+    let hidden = rows.len() - order.len();
+    (order, Some(hidden))
+}
+
+/// Whether a terminal rail row should still occupy a slot.
+pub(super) fn linger_active(first_seen: Instant, now: Instant, linger: Duration) -> bool {
+    now.saturating_duration_since(first_seen) < linger
 }
 
 /// Transcript rows reserved under the history panel while bottom-following with
@@ -164,34 +259,44 @@ impl ProviderRetryHint {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct BackgroundCounts {
+    pub(super) subagent_count: usize,
+    pub(super) job_count: usize,
+}
+
+impl BackgroundCounts {
+    fn is_empty(self) -> bool {
+        self.subagent_count == 0 && self.job_count == 0
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ActivityStatus {
     Parent {
         phase: ActivityPhase,
         retry: Option<ProviderRetryHint>,
+        background: BackgroundCounts,
     },
-    Subagents(usize),
-    ParentWithSubagents {
-        phase: ActivityPhase,
-        retry: Option<ProviderRetryHint>,
-        subagent_count: usize,
-    },
+    Background(BackgroundCounts),
+    Linger,
 }
 
 impl ActivityStatus {
-    pub(super) fn from_parent_and_subagents(
+    pub(super) fn from_parent_and_background(
         parent: Option<(ActivityPhase, Option<ProviderRetryHint>)>,
-        subagent_count: usize,
+        background: BackgroundCounts,
+        rail_occupied: bool,
     ) -> Option<Self> {
-        match (parent, subagent_count) {
-            (Some((phase, retry)), 0) => Some(Self::Parent { phase, retry }),
-            (Some((phase, retry)), count) => Some(Self::ParentWithSubagents {
+        match (parent, background.is_empty(), rail_occupied) {
+            (Some((phase, retry)), _, _) => Some(Self::Parent {
                 phase,
                 retry,
-                subagent_count: count,
+                background,
             }),
-            (None, 0) => None,
-            (None, count) => Some(Self::Subagents(count)),
+            (None, false, _) => Some(Self::Background(background)),
+            (None, true, true) => Some(Self::Linger),
+            (None, true, false) => None,
         }
     }
 }
@@ -205,41 +310,88 @@ fn phase_label(phase: ActivityPhase, retry: Option<ProviderRetryHint>) -> String
     phase.label().to_string()
 }
 
+fn counted_noun(count: usize, singular: &str, plural: &str) -> String {
+    if count == 1 {
+        format!("1 {singular}")
+    } else {
+        format!("{count} {plural}")
+    }
+}
+
 fn activity_status_labels(status: ActivityStatus) -> Vec<String> {
     let spinner = LoadingSpinner::FRAMES[0];
-    let subagent_count = match status {
-        ActivityStatus::Parent { .. } => 0,
-        ActivityStatus::Subagents(count)
-        | ActivityStatus::ParentWithSubagents {
-            subagent_count: count,
-            ..
-        } => count,
-    };
-    let agents = if subagent_count == 1 {
-        "1 agent".into()
-    } else {
-        format!("{subagent_count} agents")
-    };
     match status {
-        ActivityStatus::Parent { phase, retry } => {
-            let label = phase_label(phase, retry);
-            vec![format!("{spinner} {label}"), spinner.into()]
-        }
-        ActivityStatus::ParentWithSubagents { phase, retry, .. } => {
-            let label = phase_label(phase, retry);
-            vec![
-                format!("{spinner} {label}  ·  {agents}"),
-                format!("{spinner} {label} · {subagent_count}"),
-                format!("{spinner} {subagent_count}"),
-                spinner.into(),
-            ]
-        }
-        ActivityStatus::Subagents(_) => vec![
-            format!("{spinner} {agents} working"),
-            format!("{spinner} {subagent_count} agents"),
-            format!("{spinner} {subagent_count}"),
+        ActivityStatus::Parent {
+            phase,
+            retry,
+            background,
+        } => parent_background_rungs(spinner, &phase_label(phase, retry), background),
+        ActivityStatus::Background(background) => background_only_rungs(spinner, background),
+        ActivityStatus::Linger => vec![spinner.into()],
+    }
+}
+
+fn parent_background_rungs(spinner: &str, label: &str, counts: BackgroundCounts) -> Vec<String> {
+    if counts.is_empty() {
+        return vec![format!("{spinner} {label}"), spinner.into()];
+    }
+    let wide = background_wide(counts);
+    if counts.subagent_count > 0 && counts.job_count > 0 {
+        vec![
+            format!("{spinner} {label}  ·  {wide}"),
+            format!(
+                "{spinner} {label} · {}+{}",
+                counts.subagent_count, counts.job_count
+            ),
+            format!("{spinner} {}+{}", counts.subagent_count, counts.job_count),
             spinner.into(),
-        ],
+        ]
+    } else {
+        let n = counts.subagent_count.max(counts.job_count);
+        vec![
+            format!("{spinner} {label}  ·  {wide}"),
+            format!("{spinner} {label} · {n}"),
+            format!("{spinner} {n}"),
+            spinner.into(),
+        ]
+    }
+}
+
+fn background_only_rungs(spinner: &str, counts: BackgroundCounts) -> Vec<String> {
+    let wide = background_wide(counts);
+    if counts.subagent_count > 0 && counts.job_count > 0 {
+        vec![
+            format!("{spinner} {wide}"),
+            format!("{spinner} {}+{}", counts.subagent_count, counts.job_count),
+            spinner.into(),
+        ]
+    } else if counts.subagent_count > 0 {
+        vec![
+            format!("{spinner} {wide} working"),
+            format!("{spinner} {wide}"),
+            format!("{spinner} {}", counts.subagent_count),
+            spinner.into(),
+        ]
+    } else {
+        vec![
+            format!("{spinner} {wide} running"),
+            format!("{spinner} {wide}"),
+            format!("{spinner} {}", counts.job_count),
+            spinner.into(),
+        ]
+    }
+}
+
+fn background_wide(counts: BackgroundCounts) -> String {
+    match (counts.subagent_count > 0, counts.job_count > 0) {
+        (true, true) => format!(
+            "{} · {}",
+            counted_noun(counts.subagent_count, "agent", "agents"),
+            counted_noun(counts.job_count, "job", "jobs")
+        ),
+        (true, false) => counted_noun(counts.subagent_count, "agent", "agents"),
+        (false, true) => counted_noun(counts.job_count, "job", "jobs"),
+        (false, false) => String::new(),
     }
 }
 

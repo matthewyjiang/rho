@@ -189,12 +189,41 @@ While a goal is active, the status line shows an `◎ /goal active` indicator wi
 
 ## Activity rail
 
-While a background `agent` run or a `process` job is live, Rho keeps a short
-activity rail above the composer. Subagent rows show the agent role, generated
-title, current tool or action, and elapsed time, and can be clicked to attach.
-Process rows show the command, a short process id, state, and elapsed time.
-Process rows are display-only: there is no attach or stop action from the rail.
-The rail stays visible in zen mode.
+While a model turn, background `agent` run, or `process` job is live, Rho
+keeps a spinner at the bottom of the transcript and hangs rail rows off it
+as one connected tree (`├` / `└`). The rail stays visible in zen mode.
+
+The spinner aggregates parent work and background counts, for example
+`⠙ running tool · 2 agents · 1 job · 1m 12s`. When the parent turn is idle
+but background work remains, the spinner stays up as `⠙ 1 job running`,
+`⠙ 2 agents working`, or `⠙ 2 agents · 1 job`. On narrow widths the label
+drops elapsed first, then compresses.
+
+The rail shows at most two subagent rows and two process rows.
+
+| Row | Shows | Action |
+| --- | --- | --- |
+| Subagent (`◉`) | Role, generated title, current tool or action, elapsed | Click to attach. Hover shows `⏎ attach · elapsed`; the timer stays visible |
+| Process (`⚙`) | Command, freshness, and elapsed. No process id | Click to peek captured output (read-only, no stop). Hover shows `⏎ peek · elapsed`; the timer stays visible |
+| Overflow | `2 more agents · /attach` or `1 more job` | Replaces the last row when more runs are live than fit. The agent summary points at `/attach` |
+
+A process peek replaces the session with that job's captured stdout and
+stderr. The parent session keeps running underneath. Use Up/Down, Page Up/
+Page Down, and Home/End to scroll. Press `q` or Escape to return. There is
+no stop or kill from this view.
+
+Process freshness is `running` while output is recent, then `quiet 4m 12s` after
+60s of silence. Past five minutes of silence the elapsed column tints as a
+warning.
+
+Finished rows linger briefly with a verdict, then the rail shrinks in one
+repaint. Success verdicts hold a few seconds; failures hold longer so a
+failing background process announces itself instead of vanishing.
+
+| Kind | Verdicts |
+| --- | --- |
+| Agent | `✓ done`, `✗ error`, `✗ stopped` |
+| Process | `✓ exit 0`, `✗ exit 101`, `✗ timed out`, `✗ terminated`, `✗ failed to start` |
 
 ## Watch a subagent
 

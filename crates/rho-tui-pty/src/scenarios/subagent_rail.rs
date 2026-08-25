@@ -16,12 +16,12 @@ fn active_subagent_row(harness: &mut PtyHarness) -> Result<u16> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         harness.poll(Duration::from_millis(20));
-        if let Some(row) = harness
-            .screen()
-            .rows_text()
-            .iter()
-            .position(|line| line.contains("└ worker") || line.contains("├ worker"))
-        {
+        if let Some(row) = harness.screen().rows_text().iter().position(|line| {
+            line.contains("└ ◉ worker")
+                || line.contains("├ ◉ worker")
+                || line.contains("└ worker")
+                || line.contains("├ worker")
+        }) {
             return Ok(row as u16 + 1);
         }
         if Instant::now() >= deadline {

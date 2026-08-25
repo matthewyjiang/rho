@@ -241,6 +241,24 @@ impl SubagentManager {
         session_id: &str,
         total_cost_usd: Option<f64>,
     ) {
+        self.insert_completed_status_for_test(
+            id,
+            session_id,
+            crate::subagent::RunStatus {
+                state: crate::subagent::RunState::Ok,
+                total_cost_usd,
+                ..crate::subagent::RunStatus::default()
+            },
+        );
+    }
+
+    #[cfg(test)]
+    pub(crate) fn insert_completed_status_for_test(
+        &self,
+        id: &str,
+        session_id: &str,
+        status: crate::subagent::RunStatus,
+    ) {
         use crate::app::agent_executor::AgentRunHandle;
         self.inner.lock().expect("delegated registry lock").insert(
             id.to_string(),
@@ -248,11 +266,7 @@ impl SubagentManager {
                 agent_id: "fixture".into(),
                 background: true,
                 started: Instant::now(),
-                handle: AgentRunHandle::completed_for_test(crate::subagent::RunStatus {
-                    state: crate::subagent::RunState::Ok,
-                    total_cost_usd,
-                    ..crate::subagent::RunStatus::default()
-                }),
+                handle: AgentRunHandle::completed_for_test(status),
                 session_id: Some(session_id.into()),
                 observed: false,
                 cost_accounted: false,
@@ -274,6 +288,30 @@ impl SubagentManager {
         let mut snapshots = entries
             .iter()
             .map(|(id, entry)| entry.snapshot(id))
+            .collect::<Vec<_>>();
+        snapshots.sort_by_key(|snapshot| std::cmp::Reverse(snapshot.elapsed));
+        snapshots
+    }
+
+    /// Live runs plus terminals with a recent `finished_at` stamp.
+    ///
+    /// Host UI only. `list()` stays the full agent-facing registry.
+    pub(crate) fn rail_summaries(&self) -> Vec<SubagentSnapshot> {
+        let now = subagent::unix_now_secs();
+        let retention = crate::tools::RAIL_TERMINAL_RETENTION.as_secs();
+        let entries = self.inner.lock().expect("delegated registry lock");
+        let mut snapshots = entries
+            .iter()
+            .filter_map(|(id, entry)| {
+                let snapshot = entry.snapshot(id);
+                if snapshot.done {
+                    let finished_at = snapshot.status.finished_at?;
+                    if now.saturating_sub(finished_at) >= retention {
+                        return None;
+                    }
+                }
+                Some(snapshot)
+            })
             .collect::<Vec<_>>();
         snapshots.sort_by_key(|snapshot| std::cmp::Reverse(snapshot.elapsed));
         snapshots

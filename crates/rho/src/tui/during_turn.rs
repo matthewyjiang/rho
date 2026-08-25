@@ -763,7 +763,7 @@ impl App {
                 Err(first_event) => match first_event {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
                         self.clear_selections();
-                        self.subagent_panel.clear_pointer_state();
+                        self.clear_rail_pointer_state();
                         if key.code == KeyCode::Esc {
                             match self.running_escape_action() {
                                 Some(RunningEscapeAction::DenyApprovalAndAbort) => {
@@ -847,7 +847,7 @@ impl App {
                     Event::FocusLost => {
                         self.input_ui.cancel_pointer_click_sequence();
                         self.input_ui.finalize_selection();
-                        self.subagent_panel.clear_pointer_state();
+                        self.clear_rail_pointer_state();
                     }
                     _ => {}
                 },

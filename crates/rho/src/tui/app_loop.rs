@@ -6,7 +6,8 @@ use ratatui::DefaultTerminal;
 
 use super::{
     media_attach, mouse_capture, paste_burst::normalize_paste, ActivityPhase, ActivityStatus, App,
-    ComposerMode, HerdrState, HerdrUserWait, InteractiveRuntime, TuiResult, ViewModelEvent,
+    BackgroundCounts, ComposerMode, HerdrState, HerdrUserWait, InteractiveRuntime, TuiResult,
+    ViewModelEvent,
 };
 
 pub(super) fn print_exit_summary(summary: Option<&str>) -> std::io::Result<()> {
@@ -162,7 +163,7 @@ impl App {
                 || !self.pending_usage_limits.is_empty()
                 || self.pending_changelog.is_some()
                 || self.mcp_argument_completions.is_pending()
-                || self.exclusive.wants_journal_ticks()
+                || self.exclusive.wants_fast_ticks()
                 || !self.pending_inline_shells.is_empty()
                 || self.history.images().has_pending()
                 || agent.startup_hydrate_pending()
@@ -238,6 +239,7 @@ impl App {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     self.clear_selections();
                     self.subagent_panel.clear_pointer_state();
+                    self.process_panel.clear_pointer_state();
                     self.handle_key(key, terminal, agent).await?;
                 }
                 Event::Paste(text) => {
@@ -265,6 +267,7 @@ impl App {
                     self.input_ui.cancel_pointer_click_sequence();
                     self.input_ui.finalize_selection();
                     self.subagent_panel.clear_pointer_state();
+                    self.process_panel.clear_pointer_state();
                 }
                 Event::Key(_) => {}
             },
@@ -385,9 +388,13 @@ impl App {
             ComposerMode::Approval(_) | ComposerMode::Questionnaire(_) => None,
             _ => self.turn.provider_retry(),
         };
-        ActivityStatus::from_parent_and_subagents(
+        ActivityStatus::from_parent_and_background(
             self.loading_active().then_some((phase, retry)),
-            self.subagent_panel.count(),
+            BackgroundCounts {
+                subagent_count: self.subagent_panel.count(),
+                job_count: self.process_panel.live_count(),
+            },
+            self.subagent_panel.is_active() || self.process_panel.is_active(),
         )
     }
 
@@ -401,6 +408,7 @@ impl App {
         self.clear_selections();
         self.history.set_hovered_code_block_copy(None);
         self.subagent_panel.clear_pointer_state();
+        self.process_panel.clear_pointer_state();
         self.hide_history_scrollbar();
         self.clamp_history_scroll_for_terminal(terminal)
     }
@@ -412,17 +420,18 @@ impl App {
         // Tick the occupant first so a journal read error cannot leave panel
         // costs half-applied.
         let mut changed = self.refresh_exclusive_screen()?;
-        let panel_changed = self.subagent_panel.update(agent.subagents());
+        let now = Instant::now();
+        let panel_changed = self.subagent_panel.update(agent.subagents(), now);
         if panel_changed {
             self.refresh_attach_picker();
         }
         changed |= panel_changed;
-        changed |= self.process_panel.update(agent.processes());
+        changed |= self.process_panel.update(agent.processes(), now);
         // Fold terminal subagent/advisor costs on every panel refresh path (idle
         // poll, in-turn wait, goal wait). Claiming is idempotent per run/call.
         changed |= self.claim_non_main_costs(agent);
         self.restore_mcp_hold_activity_if_needed(agent.mcp_connect_pending());
-        if self.subagent_panel.is_active() {
+        if self.activity_status().is_some() {
             self.turn.start_loading_if_needed();
         }
         Ok(changed)

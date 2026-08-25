@@ -144,6 +144,7 @@ fn mcp_hold_uses_connecting_activity_without_joining_pending_input() {
         Some(ActivityStatus::Parent {
             phase: ActivityPhase::ConnectingMcp,
             retry: None,
+            background: crate::tui::activity::BackgroundCounts::default(),
         })
     );
     let lines = app.pending_input_lines(80);
