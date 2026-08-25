@@ -239,7 +239,7 @@ pub(super) fn paint_card_sections(
     let last_fact_is_end = prefix_groups > 0 && !later_has_tree[prefix_groups - 1] && !has_prompt;
 
     if show_expand_prompt {
-        let prompt = format!("... {hidden_rows} more lines, ctrl+o to expand");
+        let prompt = format!("... {hidden_rows} more lines, Ctrl+O to expand");
         push_wrapped_text(
             &mut body,
             &prompt,
@@ -250,7 +250,7 @@ pub(super) fn paint_card_sections(
     } else if show_collapse_prompt {
         push_wrapped_text(
             &mut body,
-            "ctrl+o to collapse",
+            "Ctrl+O to collapse",
             width,
             Theme::dim(),
             LineFill::PadToWidth,

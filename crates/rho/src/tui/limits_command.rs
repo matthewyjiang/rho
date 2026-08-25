@@ -26,7 +26,7 @@ use crate::usage_limits_cache::{self, UsageLimitsCache};
 const BAR_WIDTH: usize = 10;
 const RELATIVE_RESET_CUTOFF_SECONDS: i64 = 24 * 60 * 60;
 const TITLE: &str = "Usage limits";
-const FOOTER: &str = "esc close";
+const FOOTER: &str = "Enter/Esc close";
 
 /// Display label for Claude Code limits. Presentation only — identity uses
 /// [`LimitsSectionId::ClaudeCode`].

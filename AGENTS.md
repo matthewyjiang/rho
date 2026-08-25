@@ -102,6 +102,14 @@ Short defaults:
 - Avoid mutating process environment; inject environment-derived values instead.
 - Interactive TUI defaults to PTY (`rho-tui-pty-testing`); use Herdr only for exploration (`rho-tui-herdr-testing`).
 
+## UI copy
+
+Interactive TUI strings follow three conventions:
+
+- **Key hints**: capitalize key names (`Enter`, `Esc`, `Tab`, `Space`, `Ctrl+O`, `PgUp`/`PgDn`); verbs stay lowercase (`Enter confirm`, `Esc close`). Bare letter keys (`q`, `d`, `c`, `hjkl`) stay lowercase. When Enter and Esc do the same thing, use `Enter/Esc <verb>`.
+- **Picker and overlay titles**: sentence case (`Loaded skills`, `Resume session`, `Sessions`, `Select provider to login`). Status-bar text may stay lowercase when it mirrors a command name.
+- **Transcript errors**: lowercase `could not <verb> <object>: {detail}`. Success notices stay lowercase with no trailing period.
+
 ## Rho experience tests
 
 When operating as Rho rather than another agent such as Claude or Pi, report problems experienced with the agent harness so the Rho experience can be improved.

@@ -18,16 +18,16 @@ pub(super) fn help_picker(keybindings: &Keybindings) -> UiPicker {
 }
 
 fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
-    let reset = keybindings.reset_conversation.to_string();
-    let editor = keybindings.open_editor.to_string();
-    let jump = keybindings.jump_to_bottom.to_string();
-    let toggle_tools = keybindings.toggle_tool_output.to_string();
-    let newline = keybindings.insert_newline.to_string();
-    let paste_image = keybindings.paste_image.to_string();
-    let edit_pending = keybindings.edit_pending_input.to_string();
-    let manage_pending = keybindings.manage_pending_input.to_string();
-    let cycle_pinned = keybindings.cycle_pinned_model.to_string();
-    let cycle_pinned_back = keybindings.cycle_pinned_model_back.to_string();
+    let reset = keybindings.reset_conversation.chrome_label();
+    let editor = keybindings.open_editor.chrome_label();
+    let jump = keybindings.jump_to_bottom.chrome_label();
+    let toggle_tools = keybindings.toggle_tool_output.chrome_label();
+    let newline = keybindings.insert_newline.chrome_label();
+    let paste_image = keybindings.paste_image.chrome_label();
+    let edit_pending = keybindings.edit_pending_input.chrome_label();
+    let manage_pending = keybindings.manage_pending_input.chrome_label();
+    let cycle_pinned = keybindings.cycle_pinned_model.chrome_label();
+    let cycle_pinned_back = keybindings.cycle_pinned_model_back.chrome_label();
 
     vec![
         entry(
@@ -51,17 +51,17 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
             "Prefix a command with !! to run it locally without adding the output to model context. The composer uses a distinct label for this mode.",
         ),
         entry(
-            "enter",
+            "Enter",
             "Send, run, steer",
             "Send the composer contents. While a model turn is running, enter queues a steering message for after the current assistant turn. In pickers, enter confirms the selection.",
         ),
         entry(
-            "esc",
+            "Esc",
             "Cancel or close",
             "Abort the current model response and restore queued work, cancel a running inline shell command, leave shell mode, or close an open palette or picker.",
         ),
         entry(
-            "shift+tab",
+            "Shift+Tab",
             "Cycle reasoning",
             "Move through the configured reasoning levels for the active model and save the selection.",
         ),
@@ -73,7 +73,7 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
             ),
         ),
         entry(
-            "ctrl+c",
+            "Ctrl+C",
             "Clear composer",
             "Clear the message box on the first press. While idle, press again to quit Rho.",
         ),
@@ -83,12 +83,12 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
             "Insert a newline in the composer without sending. shift+enter also inserts a newline. While idle, alt+enter inserts a newline too.",
         ),
         entry(
-            "shift+enter",
+            "Shift+Enter",
             "New line",
             "Insert a newline in the composer without sending.",
         ),
         entry(
-            "alt+enter",
+            "Alt+Enter",
             "Queue/newline",
             "While idle, insert a newline. While a model turn is running, queue the current composer contents to run after the turn finishes.",
         ),
@@ -130,12 +130,12 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
             "Open the pending-input panel to inspect, reorder, or remove queued prompts.",
         ),
         entry(
-            "up / down",
+            "Up/Down",
             "History or nav",
             "In the composer, re-enter previous prompts. In pickers and palettes, move the selection.",
         ),
         entry(
-            "pgup / pgdn",
+            "PgUp/PgDn",
             "Scroll view",
             "Scroll the transcript viewport. In overlay pickers, page through the focused nav or detail pane.",
         ),

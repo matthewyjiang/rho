@@ -138,10 +138,9 @@ impl KeyBinding {
         self.modifiers == event.modifiers && key_codes_match(self.code, event.code)
     }
 
-    /// Capitalised form for picker footers and row details (`Ctrl+P`).
+    /// Capitalised form for picker footers, row details, and `/help` key labels (`Ctrl+P`).
     ///
-    /// [`Display`] stays lowercase (`ctrl+p`) so config files and `/help` keep
-    /// the parseable spelling.
+    /// [`Display`] stays lowercase (`ctrl+p`) so config files keep the parseable spelling.
     pub fn chrome_label(&self) -> String {
         self.to_string()
             .split('+')

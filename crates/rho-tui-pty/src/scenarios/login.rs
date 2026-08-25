@@ -35,7 +35,7 @@ pub(super) const LOGIN_PROVIDER_GROUPS_STEPS: &[Step] = &[
     },
     Step::SubmitText("/login"),
     Step::WaitText {
-        text: "select provider to login",
+        text: "Select provider to login",
         timeout: SETTLE,
     },
     // Overlay height caps visible rows; assert on-screen labels, then filter
@@ -57,13 +57,13 @@ pub(super) const LOGIN_PROVIDER_GROUPS_STEPS: &[Step] = &[
     Step::Phase("open_openai_methods"),
     Step::SubmitText("/login"),
     Step::WaitText {
-        text: "select provider to login",
+        text: "Select provider to login",
         timeout: SETTLE,
     },
     Step::TypeText("OpenAI"),
     Step::Key(Key::Enter),
     Step::WaitText {
-        text: "select OpenAI login method",
+        text: "Select OpenAI login method",
         timeout: SETTLE,
     },
     Step::AssertText("API Key"),
@@ -71,7 +71,7 @@ pub(super) const LOGIN_PROVIDER_GROUPS_STEPS: &[Step] = &[
     Step::AssertText("Esc back"),
     Step::Key(Key::Esc),
     Step::WaitText {
-        text: "select provider to login",
+        text: "Select provider to login",
         timeout: SETTLE,
     },
     Step::AssertText("Esc cancel"),
@@ -84,13 +84,13 @@ pub(super) const LOGIN_PROVIDER_GROUPS_STEPS: &[Step] = &[
     Step::Phase("open_anthropic_methods"),
     Step::SubmitText("/login"),
     Step::WaitText {
-        text: "select provider to login",
+        text: "Select provider to login",
         timeout: SETTLE,
     },
     Step::TypeText("Anthropic"),
     Step::Key(Key::Enter),
     Step::WaitText {
-        text: "select Anthropic login method",
+        text: "Select Anthropic login method",
         timeout: SETTLE,
     },
     Step::AssertText("API Key"),
@@ -127,7 +127,7 @@ pub(super) const LOGIN_CUSTOM_PROVIDER_STEPS: &[Step] = &[
     },
     Step::SubmitText("/login"),
     Step::WaitText {
-        text: "select provider to login",
+        text: "Select provider to login",
         timeout: SETTLE,
     },
     Step::TypeText("Chat Completions"),

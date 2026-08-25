@@ -46,7 +46,7 @@ pub(super) const FIRST_RUN_SETUP_STEPS: &[Step] = &[
     // The provider menu is the step's whole point, so it must list providers
     // to choose between rather than the one this scenario happens to filter to.
     Step::Phase("provider_menu"),
-    Step::AssertText("select provider to login"),
+    Step::AssertText("Select provider to login"),
     Step::AssertText("Anthropic"),
     Step::AssertText("GitHub Copilot"),
     Step::AssertText("Google Gemini"),
@@ -58,7 +58,7 @@ pub(super) const FIRST_RUN_SETUP_STEPS: &[Step] = &[
     },
     Step::Key(Key::Enter),
     Step::WaitText {
-        text: "select OpenAI login method",
+        text: "Select OpenAI login method",
         timeout: SETTLE,
     },
     Step::Key(Key::Enter),
@@ -136,7 +136,7 @@ pub(super) const SIGNED_OUT_SETUP_STEPS: &[Step] = &[
     Step::Phase("prompt_opens_login_picker"),
     Step::SubmitText("hello"),
     Step::WaitText {
-        text: "select provider to login",
+        text: "Select provider to login",
         timeout: SETTLE,
     },
     Step::AssertText("OpenAI"),
@@ -152,7 +152,7 @@ pub(super) const SIGNED_OUT_SETUP_STEPS: &[Step] = &[
     Step::Phase("template_prompt_survives"),
     Step::SubmitText("/prompt:greet with a trailing note"),
     Step::WaitText {
-        text: "select provider to login",
+        text: "Select provider to login",
         timeout: SETTLE,
     },
     Step::Key(Key::Esc),

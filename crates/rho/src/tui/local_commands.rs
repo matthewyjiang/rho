@@ -29,7 +29,7 @@ impl App {
         let diff = match local_diff::collect(&self.info.runtime.cwd) {
             Ok(diff) => diff,
             Err(error) => {
-                self.insert_entry(&Entry::Error(format!("unable to show Git diff: {error}")));
+                self.insert_entry(&Entry::Error(format!("could not show git diff: {error}")));
                 self.set_status("git diff unavailable");
                 return Ok(());
             }

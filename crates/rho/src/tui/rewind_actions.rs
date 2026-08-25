@@ -151,7 +151,7 @@ impl App {
         .with_overlay_chrome(OverlayChrome {
             nav_label: " CONFIRM".into(),
             detail_label: Some("RESTORE PREVIEW".into()),
-            nav_keys_hint: "esc cancels".into(),
+            nav_keys_hint: "Esc cancel".into(),
         })
         .with_confirm_verb("rewind");
         self.input_ui.set_composer(ComposerMode::Picker(picker));

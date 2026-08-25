@@ -27,7 +27,7 @@ pub(super) const RESUME_PICKER_DELETE_STEPS: &[Step] = &[
     Step::Phase("open_resume_picker"),
     Step::SubmitText("/resume"),
     Step::WaitText {
-        text: "resume session",
+        text: "Resume session",
         timeout: SETTLE,
     },
     Step::WaitText {
@@ -42,7 +42,7 @@ pub(super) const RESUME_PICKER_DELETE_STEPS: &[Step] = &[
     },
     Step::Key(Key::Esc),
     Step::WaitText {
-        text: "resume session",
+        text: "Resume session",
         timeout: SETTLE,
     },
     Step::WaitText {

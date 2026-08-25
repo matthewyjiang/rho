@@ -347,9 +347,9 @@ impl App {
         let short = short_id(plan_id);
         let parsed = PlanId::from_str(plan_id)?;
         let status = match self.workflow_ops()?.delete_workspace_plan(parsed) {
-            Ok(()) => format!("Deleted plan {short}."),
+            Ok(()) => format!("deleted plan {short}"),
             Err(error) => {
-                self.insert_entry(&Entry::Error(format!("Could not delete plan: {error:#}")));
+                self.insert_entry(&Entry::Error(format!("could not delete plan: {error:#}")));
                 "delete failed".into()
             }
         };
@@ -369,9 +369,9 @@ impl App {
         let short = short_id(run_id);
         let parsed = RunId::from_str(run_id)?;
         let status = match self.workflow_ops()?.delete_workspace_run(parsed) {
-            Ok(()) => format!("Deleted run {short}."),
+            Ok(()) => format!("deleted run {short}"),
             Err(error) => {
-                self.insert_entry(&Entry::Error(format!("Could not delete run: {error:#}")));
+                self.insert_entry(&Entry::Error(format!("could not delete run: {error:#}")));
                 "delete failed".into()
             }
         };
@@ -469,7 +469,7 @@ impl App {
             Some(session) => session,
             None => {
                 self.insert_entry(&Entry::Error(
-                    "Terminal session is unavailable for workflow watch.".into(),
+                    "terminal session is unavailable for workflow watch".into(),
                 ));
                 self.set_status("watch failed");
                 return Ok(());
@@ -484,11 +484,11 @@ impl App {
 
         if let Err(resume_error) = suspended.resume_result {
             self.insert_entry(&Entry::Error(format!(
-                "Failed to return to chat after workflow watch: {resume_error:#}"
+                "could not return to chat after workflow watch: {resume_error:#}"
             )));
             if let Err(operation_error) = suspended.operation_result {
                 self.insert_entry(&Entry::Error(format!(
-                    "Watch also failed: {operation_error:#}"
+                    "could not watch workflow: {operation_error:#}"
                 )));
             }
             self.set_status("watch handoff failed");
@@ -498,12 +498,14 @@ impl App {
         match suspended.operation_result {
             Ok(()) => {
                 self.set_status(format!(
-                    "Left watch for run {}.",
+                    "left watch for run {}",
                     short_id(&run_id.to_string())
                 ));
             }
             Err(error) => {
-                self.insert_entry(&Entry::Error(format!("Workflow watch failed: {error:#}")));
+                self.insert_entry(&Entry::Error(format!(
+                    "could not watch workflow: {error:#}"
+                )));
                 self.set_status("watch failed");
             }
         }
@@ -524,7 +526,7 @@ impl App {
             Ok(prepared) => prepared,
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!(
-                    "Could not start {relative_path}: {error:#}"
+                    "could not start {relative_path}: {error:#}"
                 )));
                 self.set_status("start failed");
                 return Ok(());
@@ -533,7 +535,7 @@ impl App {
         let plan = match ops.store_plan(&prepared) {
             Ok(plan) => plan,
             Err(error) => {
-                self.insert_entry(&Entry::Error(format!("Could not save plan: {error:#}")));
+                self.insert_entry(&Entry::Error(format!("could not save plan: {error:#}")));
                 self.set_status("start failed");
                 return Ok(());
             }
@@ -541,7 +543,7 @@ impl App {
         let plan = match ops.prepare_run_id(plan.manifest.plan_id) {
             Ok(plan) => plan,
             Err(error) => {
-                self.insert_entry(&Entry::Error(format!("Could not prepare run: {error:#}")));
+                self.insert_entry(&Entry::Error(format!("could not prepare run: {error:#}")));
                 self.set_status("start failed");
                 return Ok(());
             }
@@ -549,7 +551,7 @@ impl App {
         let run = match ops.create_confirmed_run(&plan) {
             Ok(run) => run,
             Err(error) => {
-                self.insert_entry(&Entry::Error(format!("Could not create run: {error:#}")));
+                self.insert_entry(&Entry::Error(format!("could not create run: {error:#}")));
                 self.set_status("start failed");
                 return Ok(());
             }
@@ -589,7 +591,7 @@ impl App {
         let plan = match ops.prepare_run_id(plan_id) {
             Ok(plan) => plan,
             Err(error) => {
-                self.insert_entry(&Entry::Error(format!("Could not prepare plan: {error:#}")));
+                self.insert_entry(&Entry::Error(format!("could not prepare plan: {error:#}")));
                 self.set_status("run failed");
                 return Ok(());
             }
@@ -597,7 +599,7 @@ impl App {
         let run = match ops.create_confirmed_run(&plan) {
             Ok(run) => run,
             Err(error) => {
-                self.insert_entry(&Entry::Error(format!("Could not create run: {error:#}")));
+                self.insert_entry(&Entry::Error(format!("could not create run: {error:#}")));
                 self.set_status("run failed");
                 return Ok(());
             }
@@ -625,7 +627,7 @@ impl App {
         let run = match ops.load_run_id(run_id) {
             Ok(run) => run,
             Err(error) => {
-                self.insert_entry(&Entry::Error(format!("Could not load run: {error:#}")));
+                self.insert_entry(&Entry::Error(format!("could not load run: {error:#}")));
                 self.set_status("open failed");
                 return Ok(());
             }
@@ -633,7 +635,7 @@ impl App {
         let recovery = match ops.prepare_resume(&run, recover_uncertain) {
             Ok(recovery) => recovery,
             Err(error) => {
-                self.insert_entry(&Entry::Error(format!("Could not open run: {error:#}")));
+                self.insert_entry(&Entry::Error(format!("could not open run: {error:#}")));
                 self.set_status("open failed");
                 return Ok(());
             }
@@ -673,19 +675,19 @@ impl App {
                 );
                 if let Err(error) = agent.append_user_context_with_display(model, display.clone()) {
                     self.insert_entry(&Entry::Error(format!(
-                        "Workflow started, but could not add run id to context: {error:#}"
+                        "workflow started, but could not add run id to context: {error:#}"
                     )));
                 } else {
                     self.insert_entry(&Entry::Notice(display));
                 }
                 self.set_status(format!(
-                    "Workflow run {} is running in the background.",
+                    "workflow run {} is running in the background",
                     short_id(&run_id.to_string())
                 ));
             }
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!(
-                    "Could not start workflow in the background: {error:#}"
+                    "could not start workflow in the background: {error:#}"
                 )));
                 self.set_status("workflow failed");
             }

@@ -33,7 +33,7 @@ pub(super) fn login_group_picker() -> UiPicker {
         .collect::<Vec<_>>();
     items.extend(super::custom_provider_login::login_group_items());
     sort_items_by_ascii_label(&mut items);
-    UiPicker::new("select provider to login", items, PickerAction::LoginGroup).with_key_hints(
+    UiPicker::new("Select provider to login", items, PickerAction::LoginGroup).with_key_hints(
         super::PickerKeyHints {
             tab_complete: true,
             row_delete: false,
@@ -57,7 +57,7 @@ pub(super) fn login_group_next(group: catalog::LoginGroup) -> LoginGroupNext {
 /// Methods for one login group: catalog providers plus any external runtime
 /// offered under the same group.
 pub(super) fn login_method_picker(group: catalog::LoginGroup) -> UiPicker {
-    let title = format!("select {} login method", group.prompt);
+    let title = format!("Select {} login method", group.prompt);
     let group_id = group.id.clone();
     let mut items = group
         .methods
@@ -240,7 +240,7 @@ fn provider_picker_for_targets(
         .collect::<Vec<_>>();
     sort_items_by_ascii_label(&mut items);
 
-    UiPicker::new(format!("select provider to {verb}"), items, action).with_key_hints(
+    UiPicker::new(format!("Select provider to {verb}"), items, action).with_key_hints(
         super::PickerKeyHints {
             tab_complete: true,
             row_delete: false,

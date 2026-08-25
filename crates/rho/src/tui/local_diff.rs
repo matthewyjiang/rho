@@ -81,11 +81,18 @@ fn git(cwd: &Path, args: &[&str]) -> anyhow::Result<String> {
 
 fn command_output(output: Output) -> anyhow::Result<String> {
     if !output.status.success() {
-        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        anyhow::bail!(if message.is_empty() {
+        let message = String::from_utf8_lossy(&output.stderr);
+        let first_line = message
+            .trim()
+            .lines()
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        anyhow::bail!(if first_line.is_empty() {
             "git command failed".to_string()
         } else {
-            message
+            first_line
         });
     }
     Ok(String::from_utf8_lossy(&output.stdout)
@@ -154,6 +161,19 @@ mod tests {
     use rho_tools::tool_card::DiffRowKind;
 
     use super::*;
+
+    #[test]
+    fn command_output_keeps_first_stderr_line_only() {
+        let output = std::process::Command::new("sh")
+            .args([
+                "-c",
+                "printf 'fatal: not a git repository\\nStopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set).\\n' >&2; exit 1",
+            ])
+            .output()
+            .expect("shell stderr fixture");
+        let error = super::command_output(output).unwrap_err();
+        assert_eq!(error.to_string(), "fatal: not a git repository");
+    }
 
     #[test]
     fn rows_classifies_added_removed_and_keeps_headers_as_context() {

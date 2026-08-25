@@ -313,7 +313,7 @@ web_search_provider = "disabled"
     harness.submit_text("/login").unwrap();
     harness
         .wait_for_text(
-            "select provider to login",
+            "Select provider to login",
             WaitTimeout::secs(10, "group picker first"),
         )
         .unwrap();
@@ -339,7 +339,7 @@ web_search_provider = "disabled"
     harness.inject_key(&Key::Enter).unwrap();
     harness
         .wait_for_text(
-            "select OpenAI login method",
+            "Select OpenAI login method",
             WaitTimeout::secs(10, "openai methods"),
         )
         .unwrap();
@@ -406,7 +406,7 @@ web_search_provider = "disabled"
     harness.submit_text("/login").unwrap();
     harness
         .wait_for_text(
-            "select provider to login",
+            "Select provider to login",
             WaitTimeout::secs(10, "no second chooser"),
         )
         .unwrap();

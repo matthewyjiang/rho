@@ -187,7 +187,7 @@ pub(super) const EDIT_USER_AGENT_STEPS: &[Step] = &[
     },
     Step::Key(Key::Esc),
     Step::WaitText {
-        text: "loaded agents",
+        text: "Loaded agents",
         timeout: SETTLE,
     },
     Step::Key(Key::Esc),
@@ -250,7 +250,7 @@ fn scroll_detail_until_marker_visible(harness: &mut PtyHarness) -> Result<()> {
 
 fn assert_narrow_agents_popup(harness: &mut PtyHarness) -> Result<()> {
     let screen = harness.screen().contents();
-    if !screen.contains("loaded agents") {
+    if !screen.contains("Loaded agents") {
         anyhow::bail!("narrow agents popup missing title:\n{screen}");
     }
     if !screen.contains("goal-judge") {

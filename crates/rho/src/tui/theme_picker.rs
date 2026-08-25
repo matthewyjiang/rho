@@ -47,7 +47,7 @@ pub(super) fn theme_picker(current_id: &str) -> UiPicker {
         })
         .collect::<Vec<_>>();
 
-    let mut picker = UiPicker::new("theme", items, PickerAction::SelectTheme)
+    let mut picker = UiPicker::new("Theme", items, PickerAction::SelectTheme)
         .with_layout(PickerLayout::Overlay)
         .with_confirm_verb("apply");
     if let Some(index) = picker.items.iter().position(|item| item.value == current) {
