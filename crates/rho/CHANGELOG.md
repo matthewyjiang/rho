@@ -1,5 +1,34 @@
 # Changelog
 
+## [1.48.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.47.1...rho-coding-agent-v1.48.0) (2026-08-25)
+
+
+### Features
+
+* **attach:** show reasoning level next to model and provider ([#1044](https://github.com/matthewyjiang/rho/issues/1044)) ([2b1f912](https://github.com/matthewyjiang/rho/commit/2b1f912e1233b5769e250a4bf53538661afa9126))
+* **providers:** let custom hosts speak OpenAI Responses ([#1041](https://github.com/matthewyjiang/rho/issues/1041)) ([381383d](https://github.com/matthewyjiang/rho/commit/381383d9f5f5d13746e23518d152075b63e6128d))
+* **tui:** explain hidden tool cards in zen mode ([#1037](https://github.com/matthewyjiang/rho/issues/1037)) ([f523866](https://github.com/matthewyjiang/rho/commit/f523866e8cf9dd459cedde2cfb8858700944f1d0))
+* **tui:** pick Chat Completions or Responses when adding a custom host ([#1042](https://github.com/matthewyjiang/rho/issues/1042)) ([586c995](https://github.com/matthewyjiang/rho/commit/586c9954134f1b241ee6e5d8a31056d22977be8e))
+* **tui:** show how long a turn took ([#1038](https://github.com/matthewyjiang/rho/issues/1038)) ([7b45897](https://github.com/matthewyjiang/rho/commit/7b458979af6250f159e26005acef0988ccb5bd5a))
+
+
+### Bug Fixes
+
+* **permission:** stop silent reads of files outside the workspace ([#1033](https://github.com/matthewyjiang/rho/issues/1033)) ([21e5e20](https://github.com/matthewyjiang/rho/commit/21e5e20d5727b6c72132c819495114d3d9788150))
+* **plugins:** gate project plugins behind workspace trust ([#1030](https://github.com/matthewyjiang/rho/issues/1030)) ([60297fc](https://github.com/matthewyjiang/rho/commit/60297fc5396f53729f78c0b5e034d96748fc9abe))
+* **providers:** keep prompt-cache hits across tool turns ([#1040](https://github.com/matthewyjiang/rho/issues/1040)) ([e139d99](https://github.com/matthewyjiang/rho/commit/e139d99e6abb4e0ee9315305958e357da3afe715))
+* **tui:** applied steers now show up in the transcript ([#1032](https://github.com/matthewyjiang/rho/issues/1032)) ([48ee37f](https://github.com/matthewyjiang/rho/commit/48ee37f4aa21aae896a02c24e4eadaaad1242523))
+* **tui:** keep empty /model guidance in the transcript ([#1034](https://github.com/matthewyjiang/rho/issues/1034)) ([42e7e87](https://github.com/matthewyjiang/rho/commit/42e7e8792786a2f16373181b7a9acd2c8a9e6dfd))
+* **tui:** keep Thinking... on the Thought for row ([#1047](https://github.com/matthewyjiang/rho/issues/1047)) ([9f01d0b](https://github.com/matthewyjiang/rho/commit/9f01d0b560644d8707cc6164e229c9d03defd4c5))
+* **tui:** keep Worked for off the last line of the reply ([#1046](https://github.com/matthewyjiang/rho/issues/1046)) ([eb3099d](https://github.com/matthewyjiang/rho/commit/eb3099d941305268ea3d28194392af6c38a62dd6))
+* **tui:** make active-turn controls visible ([#1028](https://github.com/matthewyjiang/rho/issues/1028)) ([1246e44](https://github.com/matthewyjiang/rho/commit/1246e4458ab842384c21de9de935f2da5ff5697a))
+
+
+### Performance Improvements
+
+* cut hot-path costs in grep, session persistence, and live TUI rendering ([#1027](https://github.com/matthewyjiang/rho/issues/1027)) ([9cf4ad7](https://github.com/matthewyjiang/rho/commit/9cf4ad73149ebcaffbe760481618cac9bb02a061))
+* **tui:** keep long streamed replies from stalling on open fences ([#1043](https://github.com/matthewyjiang/rho/issues/1043)) ([4d5adfa](https://github.com/matthewyjiang/rho/commit/4d5adfab9421f98f987eee7a9f1e0d03de6e53d1))
+
 ## [1.47.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.47.0...rho-coding-agent-v1.47.1) (2026-08-22)
 
 
