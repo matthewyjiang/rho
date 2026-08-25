@@ -347,18 +347,36 @@ fn context_usage_style(percent: f64) -> Style {
     }
 }
 
-fn context_fill_percent_for_state(state: &StatusLineState) -> Option<f64> {
-    let context = state.context_usage.as_ref()?;
-    let window = resolved_context_window(Some(context), state.model_metadata.as_ref())?;
-    let tokens = context.tokens?;
-    Some(context_fill_percent(tokens, window))
-}
-
-fn context_field_rank(state: &StatusLineState) -> u8 {
-    match context_fill_percent_for_state(state) {
+fn context_rank_for_percent(percent: Option<f64>) -> u8 {
+    match percent {
         Some(percent) if percent >= CONTEXT_WARNING_PERCENT => RANK_CONTEXT_URGENT,
         _ => RANK_CONTEXT,
     }
+}
+
+/// Resolve context chrome and drop rank in one pass so style and packing stay aligned.
+fn resolve_context_field(state: &StatusLineState) -> Option<(String, Style, u8)> {
+    let context = state.context_usage.as_ref()?;
+    let window = resolved_context_window(Some(context), state.model_metadata.as_ref());
+    let Some(tokens) = context.tokens else {
+        return match context.source {
+            // Unknown after compaction is a real gap, not ambient chrome.
+            ContextUsageSource::UnknownAfterCompaction => {
+                Some(("?".into(), Theme::warning(), RANK_CONTEXT))
+            }
+            ContextUsageSource::Estimated | ContextUsageSource::ProviderReported => None,
+        };
+    };
+    // Without a known limit there is no fill percent; still show consumption.
+    let Some(window) = window else {
+        return Some((format_token_count(tokens), Theme::dim(), RANK_CONTEXT));
+    };
+    let percent = context_fill_percent(tokens, window);
+    Some((
+        format!("{} ({percent:.1}%)", format_token_count(tokens)),
+        context_usage_style(percent),
+        context_rank_for_percent(Some(percent)),
+    ))
 }
 
 fn statusline_lines(
@@ -405,11 +423,11 @@ fn statusline_lines(
 /// 3. zen indicator
 /// 4. provider label
 /// 5. session cost
-/// 6. context usage (ambient fill only)
+/// 6. context usage (ambient; promotes above model at warning/critical fill, rank 65)
 /// 7. model id
 /// 8. permission mode (kept last)
 ///
-/// Context at warning/critical fill promotes above model (rank 65 vs 60).
+/// Warning and critical fill share the urgent rank; only style differs at 90%.
 /// Bypass permission and signed-out copy keep their rank guarantees.
 fn pack_bottom_status(
     state: &StatusLineState,
@@ -423,15 +441,8 @@ fn pack_bottom_status(
 fn bottom_fields(state: &StatusLineState) -> Vec<StatusField> {
     let mut fields = Vec::with_capacity(9);
 
-    if let Some((text, style)) = format_status_context(state) {
-        fields.push(field(
-            FieldKey::Context,
-            Side::Left,
-            context_field_rank(state),
-            0,
-            text,
-            style,
-        ));
+    if let Some((text, style, rank)) = resolve_context_field(state) {
+        fields.push(field(FieldKey::Context, Side::Left, rank, 0, text, style));
     }
     if let Some(cost) = status_cost(state) {
         fields.push(field(
@@ -634,27 +645,6 @@ fn truncate_fields(fields: &mut [StatusField], width: usize) {
         let next = current.saturating_sub(1).max(1);
         fields[index].text = truncate_one_line(&fields[index].text, next);
     }
-}
-
-fn format_status_context(state: &StatusLineState) -> Option<(String, Style)> {
-    let context = state.context_usage.as_ref()?;
-    let window = resolved_context_window(Some(context), state.model_metadata.as_ref());
-    let Some(tokens) = context.tokens else {
-        return match context.source {
-            // Unknown after compaction is a real gap, not ambient chrome.
-            ContextUsageSource::UnknownAfterCompaction => Some(("?".into(), Theme::warning())),
-            ContextUsageSource::Estimated | ContextUsageSource::ProviderReported => None,
-        };
-    };
-    // Without a known limit there is no fill percent; still show consumption.
-    let Some(window) = window else {
-        return Some((format_token_count(tokens), Theme::dim()));
-    };
-    let percent = context_fill_percent(tokens, window);
-    Some((
-        format!("{} ({percent:.1}%)", format_token_count(tokens)),
-        context_usage_style(percent),
-    ))
 }
 
 fn status_cost(state: &StatusLineState) -> Option<String> {

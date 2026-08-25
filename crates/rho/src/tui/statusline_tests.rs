@@ -206,16 +206,28 @@ fn bottom_row_drops_fields_by_global_rank() {
     );
 
     // warning/critical fill promotes context above model at the same width
-    let mut urgent = fully_populated_statusline();
-    urgent.update_usage(
+    let mut at_warning = fully_populated_statusline();
+    at_warning.update_usage(
         None,
-        Some(&ContextUsage::estimated(9_000, Some(10_000))),
+        Some(&ContextUsage::estimated(7_500, Some(10_000))),
         12_500,
     );
     assert_eq!(
-        packed_keys(&urgent.state, 20),
+        packed_keys(&at_warning.state, 20),
         vec![FieldKey::Context, FieldKey::Permission],
-        "urgent context outranks model at narrow width"
+        "context at warning threshold outranks model at narrow width"
+    );
+
+    let mut below_warning = fully_populated_statusline();
+    below_warning.update_usage(
+        None,
+        Some(&ContextUsage::estimated(7_499, Some(10_000))),
+        12_500,
+    );
+    assert_eq!(
+        packed_keys(&below_warning.state, 20),
+        vec![FieldKey::Permission, FieldKey::Model],
+        "context below warning threshold still drops before model"
     );
 
     // model before permission
