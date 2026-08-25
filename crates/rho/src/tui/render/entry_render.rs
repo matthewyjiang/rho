@@ -1,5 +1,6 @@
 use super::*;
 use crate::tui::Entry;
+use ratatui::text::Span;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::tui) enum TrailingBlank {
@@ -133,14 +134,10 @@ fn render_markdown_entry_with_summary(
         // Keep the dim receipt off the last content row so short replies
         // do not sit flush against `Worked for` / `Thought for`.
         let summary_style = Theme::dim().add_modifier(Modifier::DIM);
-        if rendered.lines.last().is_some_and(line_has_visible_text) {
-            push_wrapped_text(
-                &mut rendered.lines,
-                "",
-                inner_width,
-                summary_style,
-                LineFill::Natural,
-            );
+        if !rendered.lines.is_empty() {
+            rendered
+                .lines
+                .push(Line::from(Span::styled(String::new(), summary_style)));
         }
         push_wrapped_text(
             &mut rendered.lines,
@@ -151,12 +148,6 @@ fn render_markdown_entry_with_summary(
         );
     }
     rendered
-}
-
-fn line_has_visible_text(line: &Line<'_>) -> bool {
-    line.spans
-        .iter()
-        .any(|span| !span.content.chars().all(char::is_whitespace))
 }
 
 pub(in crate::tui) fn apply_markdown_images(
