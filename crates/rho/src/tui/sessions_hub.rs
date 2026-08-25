@@ -553,7 +553,7 @@ impl App {
         let choice = InlineChoice::new(
             "Delete sessions for missing directories?",
             format!(
-                "Permanently removes {} saved for {} that no longer exist, with transcripts and parent-linked subagent runs. Usage history is kept.",
+                "Permanently removes {} saved for {} that no longer exist, with transcripts, cached web content, and their subagent runs. Usage history is kept.",
                 count_label(candidates.len()),
                 if directory_count == 1 {
                     "1 directory".to_string()
