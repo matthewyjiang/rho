@@ -9,4 +9,4 @@ mod sink;
 #[path = "persist_tests.rs"]
 mod tests;
 
-pub(crate) use sink::{ClaudeRunIdentity, StatusSink};
+pub(crate) use sink::StatusSink;

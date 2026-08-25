@@ -87,7 +87,7 @@ pub(super) fn identity_line(
     {
         parts.push(model);
     }
-    if let Some(reasoning) = status.reasoning {
+    if let Some(reasoning) = attach_reasoning(status) {
         parts.push(reasoning.to_string());
     }
     if let Some(runtime) = status.runtime {
@@ -163,6 +163,17 @@ pub(super) fn header_title_line(
 
 fn join_fields(parts: Vec<String>) -> String {
     parts.join(FIELD_SEP)
+}
+
+/// Reasoning the attach header should show. Matches the interactive statusline:
+/// omit a configured level when the bound provider/model cannot use one.
+fn attach_reasoning(status: &RunStatus) -> Option<crate::agent::ReasoningLevel> {
+    let reasoning = status.reasoning?;
+    let provider = status.provider.as_deref()?;
+    let model = status.model.as_deref().unwrap_or("");
+    (rho_providers::model::models_dev::current_reasoning_capabilities(provider, model)
+        != rho_providers::model::ReasoningCapabilities::NotConfigurable)
+        .then_some(reasoning)
 }
 
 fn run_status_usage(status: &RunStatus) -> ModelUsage {

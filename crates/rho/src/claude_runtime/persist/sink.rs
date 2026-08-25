@@ -18,15 +18,6 @@ use super::super::{
     stream::{self, apply_status_patch, StreamEffect, TerminalResult},
 };
 
-/// Identity fields for one Claude CLI delegated run.
-#[derive(Clone, Debug)]
-pub(crate) struct ClaudeRunIdentity {
-    pub(crate) agent_id: String,
-    pub(crate) agent_fingerprint: String,
-    pub(crate) model: Option<String>,
-    pub(crate) reasoning: Option<crate::agent::ReasoningLevel>,
-}
-
 /// Thin Claude-facing handle around [`RunArtifactSink`].
 pub(crate) struct StatusSink {
     inner: RunArtifactSink,
@@ -39,13 +30,12 @@ pub(crate) struct StatusSink {
 impl StatusSink {
     pub(crate) fn new(
         path: PathBuf,
-        identity: &ClaudeRunIdentity,
+        identity: &RunArtifactIdentity,
         prompt: &str,
         status_tx: Option<watch::Sender<RunStatus>>,
         rate_limit_state_path: Option<PathBuf>,
     ) -> anyhow::Result<Self> {
-        let artifact = identity_to_artifact(identity);
-        let mut inner = RunArtifactSink::open(path, &artifact, prompt, status_tx)?;
+        let mut inner = RunArtifactSink::open(path, identity, prompt, status_tx)?;
         inner.status.last_activity = Some("starting claude".into());
         inner.publish();
         Ok(Self {
@@ -223,16 +213,5 @@ fn apply_terminal_metadata(status: &mut RunStatus, terminal: &TerminalResult) {
     }
     if let Some(error) = terminal.error.clone() {
         status.error = Some(error);
-    }
-}
-
-fn identity_to_artifact(identity: &ClaudeRunIdentity) -> RunArtifactIdentity {
-    RunArtifactIdentity {
-        agent_id: identity.agent_id.clone(),
-        agent_fingerprint: identity.agent_fingerprint.clone(),
-        provider: "claude-code".into(),
-        model: identity.model.clone(),
-        runtime: crate::agent::AgentRuntime::ClaudeCli,
-        reasoning: identity.reasoning,
     }
 }

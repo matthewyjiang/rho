@@ -306,8 +306,8 @@ impl ClaudeToolPolicy {
 
 /// Settings that only the Claude CLI runtime understands.
 ///
-/// Built at parse time with validated model/reasoning/tools. Bind derives
-/// Claude `--effort` from reasoning and re-checks hard gates.
+/// Built at parse time with validated model/reasoning/tools. Bind re-checks
+/// hard gates. Spawn maps reasoning onto `--effort`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClaudeAgentConfig {
     pub tools: ClaudeToolPolicy,
@@ -316,17 +316,9 @@ pub struct ClaudeAgentConfig {
     pub inherit_claude_config: bool,
     /// Pass-through `--model` value. `None` omits the flag.
     pub model: Option<String>,
-    /// Original reasoning for fingerprint stability. Effort is derived at
-    /// bind/spawn via [`Self::effort`].
+    /// Bound reasoning for fingerprint stability and spawn. `None` inherits
+    /// Claude's default effort.
     pub reasoning: Option<ReasoningLevel>,
-}
-
-impl ClaudeAgentConfig {
-    /// Claude `--effort` token derived from reasoning. `None` omits the flag.
-    pub fn effort(&self) -> Option<&'static str> {
-        self.reasoning
-            .and_then(crate::claude_runtime::spawn::claude_effort_flag)
-    }
 }
 
 /// The runtime together with the settings only that runtime understands.

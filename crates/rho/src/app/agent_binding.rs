@@ -166,31 +166,27 @@ impl BoundAgent {
         status_tx: Option<tokio::sync::watch::Sender<crate::subagent::RunStatus>>,
         started_status: Option<crate::subagent::RunStatus>,
     ) -> Option<crate::claude_runtime::session::ClaudeSessionRequest> {
+        let identity = match &self.runtime {
+            BoundRuntime::ClaudeCli { .. } => self.artifact_identity(),
+            BoundRuntime::Rho { .. } => return None,
+        };
         let BoundRuntime::ClaudeCli {
-            model,
             tools,
             inherit_claude_config,
             permission_mode,
             max_turns,
-            reasoning,
+            ..
         } = self.runtime
         else {
             return None;
         };
         Some(crate::claude_runtime::session::ClaudeSessionRequest {
             system_prompt: self.definition.prompt.clone(),
-            identity: crate::claude_runtime::session::ClaudeRunIdentity {
-                agent_id: self.definition.id.to_string(),
-                agent_fingerprint: self.fingerprint.to_string(),
-                model: model.clone(),
-                reasoning,
-            },
-            model,
+            identity,
             tools,
             inherit_claude_config,
             permission_mode,
             max_turns,
-            effort: reasoning.and_then(crate::claude_runtime::spawn::claude_effort_flag),
             prompt,
             output_file,
             cwd,
@@ -311,7 +307,8 @@ impl AgentBinder {
                     inherit_claude_config: false,
                     permission_mode,
                     max_turns: frozen.step_limit,
-                    reasoning: require_claude_reasoning(reasoning)?,
+                    reasoning: crate::claude_runtime::spawn::require_claude_reasoning(reasoning)
+                        .map_err(|error| anyhow::anyhow!("agent '{}': {error}", frozen.agent_id))?,
                 }
             }
         };
@@ -656,7 +653,7 @@ set a Claude model name or alias (for example opus), not '{model}'",
             );
         }
     }
-    let reasoning = require_claude_reasoning(config.reasoning)
+    let reasoning = crate::claude_runtime::spawn::require_claude_reasoning(config.reasoning)
         .map_err(|error| anyhow::anyhow!("agent '{}': {error}", definition.id))?;
 
     // Binder snapshots host permission mode and the shared step budget.
@@ -671,21 +668,6 @@ set a Claude model name or alias (for example opus), not '{model}'",
             .expect("run step limit fits in u64"),
         reasoning,
     })
-}
-
-fn require_claude_reasoning(
-    reasoning: Option<crate::agent::ReasoningLevel>,
-) -> anyhow::Result<Option<crate::agent::ReasoningLevel>> {
-    match reasoning {
-        None => Ok(None),
-        Some(level) if crate::claude_runtime::spawn::claude_effort_flag(level).is_some() => {
-            Ok(Some(level))
-        }
-        Some(level) => anyhow::bail!(
-            "reasoning '{level}' is not a Claude Code effort level; \
-expected one of: low, medium, high, xhigh, max (omit to inherit Claude's default)"
-        ),
-    }
 }
 
 #[cfg(test)]

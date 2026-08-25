@@ -2,20 +2,22 @@ use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 use tokio::sync::watch;
 
-use super::{ClaudeRunIdentity, StatusSink};
+use super::StatusSink;
 use crate::claude_runtime::stream::{
     StatusPatch, StreamEffect, TerminalClassification, TerminalResult,
 };
 use crate::{
-    run_artifacts::{AttachmentEvent, AttachmentReader},
+    run_artifacts::{AttachmentEvent, AttachmentReader, RunArtifactIdentity},
     subagent::{self, RunState, RunStatus},
 };
 
-fn identity() -> ClaudeRunIdentity {
-    ClaudeRunIdentity {
+fn identity() -> RunArtifactIdentity {
+    RunArtifactIdentity {
         agent_id: "planner".into(),
         agent_fingerprint: "fp".into(),
+        provider: "claude-code".into(),
         model: Some("opus".into()),
+        runtime: crate::agent::AgentRuntime::ClaudeCli,
         reasoning: None,
     }
 }
@@ -51,6 +53,7 @@ async fn sink_writes_prompt_and_starting_status() {
     assert_eq!(sink.status().state, RunState::Starting);
     assert_eq!(sink.status().provider.as_deref(), Some("claude-code"));
     assert_eq!(sink.status().model.as_deref(), Some("opus"));
+    assert_eq!(sink.status().reasoning, None);
     // Drop settles unfinished runs; inspect the journal prompt written at open.
     drop(sink);
 

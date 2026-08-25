@@ -46,8 +46,8 @@ pub(crate) struct ClaudeOneShotRequest {
     pub(crate) input: String,
     /// Pass-through `--model`. `None` omits the flag.
     pub(crate) model: Option<String>,
-    /// Pass-through `--effort`. `None` omits the flag.
-    pub(crate) effort: Option<&'static str>,
+    /// Bound reasoning. `None` omits `--effort`.
+    pub(crate) reasoning: Option<rho_providers::reasoning::ReasoningLevel>,
     pub(crate) cwd: PathBuf,
     pub(crate) cancellation: CancellationToken,
 }
@@ -147,7 +147,7 @@ fn one_shot_spawn_request(request: &ClaudeOneShotRequest) -> ClaudeSpawnRequest 
         permission_mode: ONE_SHOT_PERMISSION_MODE,
         cwd: request.cwd.clone(),
         max_turns: 1,
-        effort: request.effort,
+        reasoning: request.reasoning,
         session_persistence: SessionPersistence::Discard,
         // One-shot has no parent messaging path; keep plain-text stdin.
         input_format: spawn::ClaudeInputFormat::Text,

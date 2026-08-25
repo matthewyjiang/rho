@@ -593,6 +593,65 @@ fn claude_runtime_maps_supported_reasoning_and_rejects_unmapped() {
     );
 }
 
+// Covers: attach reads bound reasoning from the Starting snapshot; Claude
+// inherit stays absent so the header can omit the field.
+// Owner: agent bind identity
+#[test]
+fn artifact_identity_stamps_bound_reasoning_onto_starting_status() {
+    let host = Config {
+        reasoning: rho_sdk::ReasoningLevel::Low,
+        ..Config::default()
+    };
+    let rho = AgentBinder::bind(
+        definition(ToolPolicy::All),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: capabilities(),
+        },
+        &host,
+    )
+    .unwrap();
+    let rho_identity = rho.artifact_identity();
+    assert_eq!(rho_identity.reasoning, Some(rho_sdk::ReasoningLevel::Low));
+    assert_eq!(
+        rho_identity.starting_status().reasoning,
+        Some(rho_sdk::ReasoningLevel::Low)
+    );
+
+    let inherit = AgentBinder::bind(
+        claude_definition(ModelPolicy::Inherit),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: capabilities(),
+        },
+        &Config::default(),
+    )
+    .unwrap();
+    let inherit_identity = inherit.artifact_identity();
+    assert_eq!(inherit_identity.reasoning, None);
+    assert_eq!(inherit_identity.starting_status().reasoning, None);
+
+    let mut mapped = claude_definition(ModelPolicy::Inherit).as_ref().clone();
+    if let AgentRuntimeSpec::ClaudeCli(config) = &mut mapped.runtime {
+        config.reasoning = Some(rho_sdk::ReasoningLevel::High);
+    }
+    let high = AgentBinder::bind(
+        Arc::new(mapped),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: capabilities(),
+        },
+        &Config::default(),
+    )
+    .unwrap();
+    let high_identity = high.artifact_identity();
+    assert_eq!(high_identity.reasoning, Some(rho_sdk::ReasoningLevel::High));
+    assert_eq!(
+        high_identity.starting_status().reasoning,
+        Some(rho_sdk::ReasoningLevel::High)
+    );
+}
+
 // Covers: pinning provider xai must not force API-key auth over host OAuth
 // Owner: agent binding
 #[test]

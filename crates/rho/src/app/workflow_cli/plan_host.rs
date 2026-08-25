@@ -283,7 +283,7 @@ fn resolve_agent(
                     permission_mode,
                     cwd: host.workspace().to_path_buf(),
                     max_turns: *max_turns,
-                    effort: reasoning.and_then(crate::claude_runtime::spawn::claude_effort_flag),
+                    reasoning: *reasoning,
                     session_persistence: crate::claude_runtime::spawn::SessionPersistence::Keep,
                     input_format: crate::claude_runtime::spawn::ClaudeInputFormat::StreamJson,
                 },
