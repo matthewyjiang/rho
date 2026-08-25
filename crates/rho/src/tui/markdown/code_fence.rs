@@ -15,17 +15,34 @@ pub(super) struct MermaidOpeningFence {
 /// continuation lines (including multi-line strings/comments) correctly.
 #[derive(Clone, Default)]
 pub(in crate::tui) struct CodeFenceState {
-    pub(in crate::tui) active: Option<CodeFence>,
+    pub(super) active: Option<CodeFence>,
     /// Lowercased first info-string token from the opening fence, when present.
-    pub(in crate::tui) language: Option<String>,
+    pub(super) language: Option<String>,
     /// Highlighter advanced through committed body lines of the open fence.
     /// Cloned into live-preview renders; taken/restored by full renders.
-    pub(in crate::tui) highlighter: Option<BlockHighlighter>,
+    pub(super) highlighter: Option<BlockHighlighter>,
 }
 
 impl CodeFenceState {
     pub(in crate::tui) fn is_open(&self) -> bool {
         self.active.is_some()
+    }
+
+    /// Resume an already-open fence in a later render chunk.
+    pub(in crate::tui) fn continue_open(
+        fence: CodeFence,
+        language: Option<String>,
+        highlighter: Option<BlockHighlighter>,
+    ) -> Self {
+        Self {
+            active: Some(fence),
+            language,
+            highlighter,
+        }
+    }
+
+    pub(in crate::tui) fn take_highlighter(&mut self) -> Option<BlockHighlighter> {
+        self.highlighter.take()
     }
 
     pub(super) fn clear_open(&mut self) {

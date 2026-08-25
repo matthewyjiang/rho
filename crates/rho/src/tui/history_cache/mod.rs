@@ -2,10 +2,13 @@ use std::{ops::Range, sync::Arc};
 
 use ratatui::text::Line;
 
+mod incremental;
+
+use incremental::IncrementalEntryCache;
+
 use super::{
     feed_image::{FeedImage, RenderedImagePlacements},
     history_soft_settings::SoftSettingsDelta,
-    markdown::incremental_markdown_tail_start,
     markdown_image::MarkdownImageSource,
     message_render::{render_assistant_content, render_reasoning_content},
     render::{apply_markdown_images, pad_display_line, render_entry_with_options, TrailingBlank},
@@ -46,8 +49,6 @@ pub(in crate::tui) struct CachedCodeBlock {
     pub(super) copy_columns: Range<usize>,
     pub(super) text: Arc<str>,
 }
-
-use incremental::IncrementalEntryCache;
 
 /// One history entry's rendered payload. Code-block lines and image rows are
 /// relative to this entry's first transcript row so surgical resplices never
@@ -514,6 +515,7 @@ impl HistoryLineCache {
             entry,
             index + 1 == entries.len(),
             settings.width,
+            self.open_stream_tail,
         );
         self.measured_from = index;
         Some(cached)
@@ -669,6 +671,7 @@ impl HistoryLineCache {
                 entry,
                 index + 1 == entries.len(),
                 settings.width,
+                self.open_stream_tail,
             );
         }
 
@@ -702,6 +705,7 @@ impl HistoryLineCache {
             entry,
             entry_index + 1 == entries_len,
             settings.width,
+            self.open_stream_tail,
         );
         let line_count = cached.lines.len();
         self.entries.push(cached);
@@ -726,7 +730,7 @@ impl HistoryLineCache {
         } else {
             content_len
         };
-        let (stable_source_len, stable_line_count) = {
+        {
             let Some(cached) = self.entries.get(cache_index) else {
                 return false;
             };
@@ -743,77 +747,26 @@ impl HistoryLineCache {
             }) {
                 return false;
             }
-            (cache.stable_source_len, cache.stable_line_count)
-        };
-        let mutable_source = &text[stable_source_len..];
-        if !super::markdown_image::collect_markdown_image_sources(mutable_source).is_empty() {
-            return false;
+            let mutable_source = &text[cache.stable_source_len..];
+            if !super::markdown_image::collect_markdown_image_sources(mutable_source).is_empty() {
+                return false;
+            }
         }
 
-        let entry = &mut self.entries[cache_index];
-        let is_reasoning = matches!(entries.get(index), Some(Entry::Reasoning(_)));
-        if incremental::extend_open_tail(
-            entry,
+        let reasoning = matches!(entries.get(index), Some(Entry::Reasoning(_)));
+        if incremental::extend_last_entry(
+            &mut self.entries[cache_index],
             text,
             render,
             width,
             has_trailing_blank,
-            is_reasoning,
+            content_end,
+            /*reasoning*/ reasoning,
         ) {
             self.recompute_ranges();
             return true;
         }
-
-        let new_tail_start =
-            stable_source_len.saturating_add(incremental_markdown_tail_start(mutable_source));
-        if new_tail_start > text.len() || range.end <= range.start {
-            return false;
-        }
-
-        // Content starts at range.start; there is no leading spacer.
-        let preserve_end = stable_line_count;
-        if preserve_end >= content_end || preserve_end > entry.lines.len() {
-            return false;
-        }
-
-        let previous_stable_source_len = stable_source_len;
-        // Extend in place: keep the already-rendered stable prefix and replace
-        // only the mutable tail, so an append costs the new lines rather than a
-        // clone of everything rendered so far.
-        let trailing_blank = if has_trailing_blank {
-            let Some(last) = entry.lines.last() else {
-                return false;
-            };
-            Some(last.clone())
-        } else {
-            None
-        };
-        entry.lines.truncate(preserve_end);
-        entry.code_blocks.retain(|block| block.line < preserve_end);
-        append_entry_segment_into(
-            &mut entry.lines,
-            &mut entry.code_blocks,
-            &text[previous_stable_source_len..new_tail_start],
-            width,
-            render,
-        );
-        append_entry_segment_into(
-            &mut entry.lines,
-            &mut entry.code_blocks,
-            &text[new_tail_start..],
-            width,
-            render,
-        );
-        if let Some(trailing_blank) = trailing_blank {
-            entry.lines.push(trailing_blank);
-        }
-        entry.incremental = incremental::incremental_cache_for(
-            entries.get(index).expect("index checked above"),
-            true,
-            width,
-        );
-        self.recompute_ranges();
-        true
+        false
     }
 }
 
@@ -859,15 +812,26 @@ fn cached_entry_from_render(
     entry: &Entry,
     is_last: bool,
     width: usize,
+    open_stream_tail: bool,
 ) -> CachedEntry {
     let Some(rendered) = prepared else {
         return CachedEntry::default();
     };
+    let has_trailing_blank = !(open_stream_tail && is_last);
+    let content_line_count = rendered
+        .lines
+        .len()
+        .saturating_sub(usize::from(has_trailing_blank));
     CachedEntry {
         lines: rendered.lines,
         code_blocks: rendered.code_blocks,
         image_placement: rendered.image_placement,
-        incremental: incremental::incremental_cache_for(entry, is_last, width),
+        incremental: incremental::incremental_cache_for(
+            entry,
+            is_last,
+            width,
+            Some(content_line_count),
+        ),
         depends_on_image_height: rendered.depends_on_image_height,
     }
 }
@@ -935,8 +899,6 @@ fn prepare_cache_entry_render(
         depends_on_image_height,
     })
 }
-
-mod incremental;
 
 #[cfg(test)]
 #[path = "../history_cache_tests.rs"]

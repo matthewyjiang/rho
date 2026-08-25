@@ -211,7 +211,7 @@ fn markdown_table_alignment(cell: &str) -> Option<TableAlignment> {
 
 fn render_markdown_table(table: &MarkdownTable, width: usize) -> Option<Vec<Line<'static>>> {
     let column_widths = column_widths_for(table, width)?;
-    Some(paint_table(table, &column_widths).lines)
+    Some(paint_table(table, &column_widths))
 }
 
 fn column_widths_for(table: &MarkdownTable, width: usize) -> Option<Vec<usize>> {
@@ -257,15 +257,9 @@ fn styled_table_rows(table: &MarkdownTable) -> Vec<Vec<Vec<StyledSegment>>> {
         .collect()
 }
 
-struct PaintedTable {
-    lines: Vec<Line<'static>>,
-    header_visual_len: usize,
-}
-
-fn paint_table(table: &MarkdownTable, column_widths: &[usize]) -> PaintedTable {
+fn paint_table(table: &MarkdownTable, column_widths: &[usize]) -> Vec<Line<'static>> {
     let styled_rows = styled_table_rows(table);
     let mut lines = vec![table_border(column_widths, '┌', '┬', '┐')];
-    let mut header_visual_len = lines.len();
     for (row_index, row) in styled_rows.iter().enumerate() {
         lines.extend(paint_table_row(
             row,
@@ -275,14 +269,10 @@ fn paint_table(table: &MarkdownTable, column_widths: &[usize]) -> PaintedTable {
         ));
         if row_index == 0 {
             lines.push(table_border(column_widths, '├', '┼', '┤'));
-            header_visual_len = lines.len();
         }
     }
     lines.push(table_border(column_widths, '└', '┴', '┘'));
-    PaintedTable {
-        lines,
-        header_visual_len,
-    }
+    lines
 }
 
 fn paint_table_row(
@@ -328,60 +318,62 @@ fn paint_table_row(
     lines
 }
 
-/// Snapshot of a trailing markdown table used to append rows without a reflow.
+/// Frozen column geometry for a trailing table that can still grow.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::tui) struct StreamingTable {
-    pub column_widths: Vec<usize>,
-    pub consumed_source_len: usize,
-    pub data_row_count: usize,
-    pub header_visual_len: usize,
+    column_widths: Vec<usize>,
+    alignments: Vec<TableAlignment>,
+    consumed_source_len: usize,
 }
 
 pub(in crate::tui) fn streaming_table(source: &str, width: usize) -> Option<StreamingTable> {
     let (table, consumed_source_len) = parse_table_from_source(source)?;
     let column_widths = column_widths_for(&table, width)?;
-    let painted = paint_table(&table, &column_widths);
     Some(StreamingTable {
         column_widths,
+        alignments: table.alignments,
         consumed_source_len,
-        data_row_count: table.rows.len().saturating_sub(1),
-        header_visual_len: painted.header_visual_len,
     })
 }
 
-pub(in crate::tui) fn render_streaming_table(
-    source: &str,
-    _width: usize,
-    column_widths: &[usize],
-) -> Option<Vec<Line<'static>>> {
-    let (table, _) = parse_table_from_source(source)?;
-    if table.alignments.len() != column_widths.len() {
-        return None;
+impl StreamingTable {
+    pub(in crate::tui) fn column_widths(&self) -> &[usize] {
+        &self.column_widths
     }
-    Some(paint_table(&table, column_widths).lines)
-}
 
-pub(in crate::tui) fn render_streaming_table_data_row(
-    source: &str,
-    _width: usize,
-    column_widths: &[usize],
-    data_row_index: usize,
-) -> Option<Vec<Line<'static>>> {
-    let (table, _) = parse_table_from_source(source)?;
-    if table.alignments.len() != column_widths.len() {
-        return None;
+    pub(in crate::tui) fn consumed_source_len(&self) -> usize {
+        self.consumed_source_len
     }
-    let row = table.rows.get(data_row_index.saturating_add(1))?;
-    let styled = row
-        .iter()
-        .map(|cell| markdown_inline_segments(cell))
-        .collect::<Vec<_>>();
-    Some(paint_table_row(
-        &styled,
-        column_widths,
-        &table.alignments,
-        false,
-    ))
+
+    /// Paint one data row against the frozen widths.
+    ///
+    /// Returns `None` when `line` is not a table row or a cell is wider than
+    /// its frozen column (the full table would reflow).
+    pub(in crate::tui) fn paint_data_row(&self, line: &str) -> Option<Vec<Line<'static>>> {
+        if !has_markdown_table_delimiter(line) || line.trim().is_empty() {
+            return None;
+        }
+        let mut cells = markdown_table_cells(line);
+        cells.resize(self.alignments.len(), String::new());
+        cells.truncate(self.alignments.len());
+        let styled = cells
+            .iter()
+            .map(|cell| markdown_inline_segments(cell))
+            .collect::<Vec<_>>();
+        if styled
+            .iter()
+            .zip(&self.column_widths)
+            .any(|(cell, width)| styled_segments_width(cell) > *width)
+        {
+            return None;
+        }
+        Some(paint_table_row(
+            &styled,
+            &self.column_widths,
+            &self.alignments,
+            false,
+        ))
+    }
 }
 
 pub(in crate::tui) fn streaming_table_bottom_border(column_widths: &[usize]) -> Line<'static> {

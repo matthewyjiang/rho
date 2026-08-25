@@ -113,3 +113,13 @@ fn partial_separator_row_is_not_a_table() {
 fn lone_pipe_body_row_does_not_panic() {
     super::table::markdown_table_line_count(&["| a | b |", "| - | - |", "|"]);
 }
+
+// Covers: frozen streaming widths reject a later cell that would reflow.
+// Owner: markdown table streaming append
+#[test]
+fn streaming_table_rejects_a_row_that_needs_reflow() {
+    let table = streaming_table("| A | B |\n| --- | --- |\n| x | y |\n", 40).expect("table");
+    assert!(table.paint_data_row("| x | y |").is_some());
+    assert!(table.paint_data_row("| much-longer-cell | z |").is_none());
+    assert!(table.paint_data_row("After the table").is_none());
+}

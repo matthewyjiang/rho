@@ -30,10 +30,7 @@ use panel::ClosedPanel;
 pub(in crate::tui) use heading::HeadingLevel;
 use heading::{heading_stream_state, parse_atx_heading, HeadingStreamState};
 pub(super) use stream::{incremental_markdown_tail_start, markdown_stream_bounds};
-pub(in crate::tui) use table::{
-    render_streaming_table, render_streaming_table_data_row, streaming_table,
-    streaming_table_bottom_border, StreamingTable,
-};
+pub(in crate::tui) use table::{streaming_table, streaming_table_bottom_border, StreamingTable};
 
 #[cfg(test)]
 #[path = "markdown/table_tests.rs"]
