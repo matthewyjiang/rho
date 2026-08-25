@@ -27,7 +27,7 @@ use rho_tui_pty::{
 /// Default terminal size for the docs proof plate.
 /// Tall enough to keep header, tool cards, and the final answer in frame.
 const DEMO_SIZE: PtySize = PtySize {
-    rows: 40,
+    rows: 41,
     cols: 100,
 };
 

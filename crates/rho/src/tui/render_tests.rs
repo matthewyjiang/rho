@@ -553,3 +553,63 @@ fn error_entries_include_text_severity_marker() {
         "same body text must not collide once color is gone"
     );
 }
+
+// Covers: duration receipts stay off the last markdown body row.
+// Owner: entry render layout.
+#[test]
+fn duration_receipt_leaves_a_blank_row_after_body() {
+    let _theme_lock = crate::tui::theme::theme_test_lock();
+    let elapsed = std::time::Duration::from_millis(2_300);
+    let body_only = crate::tui::Entry::Assistant("Hello".into());
+    let with_receipt = crate::tui::Entry::Assistant(crate::tui::AssistantEntry {
+        text: "Hello".into(),
+        worked_for: Some(elapsed),
+    });
+    let summary_only =
+        crate::tui::Entry::Assistant(crate::tui::AssistantEntry::summary_only(elapsed));
+
+    let without = entry_lines(
+        &body_only, 40, /*max_tool_output_lines*/ 0, /*max_image_height*/ 0,
+    );
+    let with = entry_lines(
+        &with_receipt,
+        40,
+        /*max_tool_output_lines*/ 0,
+        /*max_image_height*/ 0,
+    );
+    let summary = entry_lines(
+        &summary_only,
+        40,
+        /*max_tool_output_lines*/ 0,
+        /*max_image_height*/ 0,
+    );
+    let without_text: Vec<String> = without.iter().map(line_text).collect();
+    let with_text: Vec<String> = with.iter().map(line_text).collect();
+    let summary_text: Vec<String> = summary.iter().map(line_text).collect();
+    let body_end = without_text.len() - 1;
+
+    assert_eq!(
+        &with_text[..body_end],
+        &without_text[..body_end],
+        "receipt should leave the body prefix unchanged: {with_text:?}"
+    );
+    assert!(
+        with_text[body_end].trim().is_empty(),
+        "body and receipt need a blank between them: {with_text:?}"
+    );
+    assert!(
+        !with_text[body_end + 1].trim().is_empty(),
+        "receipt should sit above the trailing spacer: {with_text:?}"
+    );
+    assert_eq!(
+        with_text.last(),
+        without_text.last(),
+        "receipt should keep the trailing spacer: {with_text:?}"
+    );
+    assert!(
+        !summary_text
+            .first()
+            .is_some_and(|line| line.trim().is_empty()),
+        "summary-only entries should not lead with a blank: {summary_text:?}"
+    );
+}
