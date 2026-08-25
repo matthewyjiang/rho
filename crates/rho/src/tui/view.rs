@@ -767,7 +767,8 @@ impl App {
                 ReasoningChrome::ThinkingPlaceholder
             )
         {
-            lines.push(Line::raw(""));
+            // Prior entries already own the separator blank. A live leading
+            // blank here sits Thinking... one row below where Thought for lands.
             lines.push(pad_display_line(styled_line(
                 "Thinking...".into(),
                 padded_content_width(width),

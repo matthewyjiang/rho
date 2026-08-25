@@ -19,6 +19,23 @@ fn live_contains_thinking(app: &mut App) -> bool {
         .any(|line| line.contains("Thinking..."))
 }
 
+fn history_text(app: &mut App) -> Vec<String> {
+    let area = ratatui::layout::Rect::new(0, 0, 80, crate::tui::DEFAULT_TUI_HEIGHT);
+    let (settings, history_len, live) = {
+        let ctx = app.frame_context(area);
+        (ctx.settings, ctx.history_len, ctx.live_history.lines)
+    };
+    app.visible_history_lines_with_live(80, settings, 0, history_len, &live)
+        .into_iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect()
+}
+
 // Covers: exclusive reasoning chrome matrix from zen + show_reasoning_output.
 // Owner: RuntimeModelView display policy.
 #[test]
@@ -87,6 +104,47 @@ fn thinking_placeholder_renders_only_for_open_thinking_chrome() {
     assert!(app.turn.reasoning_phase_mut().finalize().is_none());
     assert!(!app.turn.reasoning_phase().is_open());
     assert!(!live_contains_thinking(&mut app));
+}
+
+// Covers: Thinking... uses the previous entry's trailing spacer, so it does not
+// sit one row below the Thought for receipt that replaces it.
+// Owner: history_live_lines spacing
+#[test]
+fn thinking_placeholder_aligns_with_thought_for_receipt() {
+    let mut app = test_app();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+    app.info.runtime.zen_mode = false;
+    app.info.runtime.show_reasoning_output = false;
+    app.insert_entry(&Entry::User("hello".into()));
+    app.turn.reasoning_phase_mut().begin_step();
+    app.handle_agent_event(
+        ViewModelEvent::ReasoningDelta("hidden plan".into()),
+        &mut terminal,
+    )
+    .unwrap();
+
+    let live = live_line_text(&mut app);
+    pretty_assertions::assert_eq!(live.len(), 1, "unexpected live chrome: {live:?}");
+    assert!(
+        live[0].contains("Thinking..."),
+        "live chrome should start on Thinking..., not a spacer: {live:?}"
+    );
+    let thinking_row = history_text(&mut app)
+        .iter()
+        .position(|line| line.contains("Thinking..."))
+        .expect("Thinking... while the stretch is open");
+
+    app.finish_streams();
+    let after = history_text(&mut app);
+    assert!(
+        after.iter().all(|line| !line.contains("Thinking...")),
+        "Thinking... must yield to the thought receipt: {after:?}"
+    );
+    let thought_row = after
+        .iter()
+        .position(|line| line.contains("Thought for"))
+        .expect("Thought for after the stretch closes");
+    pretty_assertions::assert_eq!(thinking_row, thought_row);
 }
 
 // Covers: reasoning deltas keep the stretch open under zen without painting Thinking...
