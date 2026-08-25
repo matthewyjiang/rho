@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.1](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.20.0...rho-agent-tools-v0.20.1) (2026-08-25)
+
+
+### Performance Improvements
+
+* cut hot-path costs in grep, session persistence, and live TUI rendering ([#1027](https://github.com/matthewyjiang/rho/issues/1027)) ([9cf4ad7](https://github.com/matthewyjiang/rho/commit/9cf4ad73149ebcaffbe760481618cac9bb02a061))
+
 ## [0.20.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.19.0...rho-agent-tools-v0.20.0) (2026-08-21)
 
 

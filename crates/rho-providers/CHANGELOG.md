@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.10.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.9.1...rho-providers-v1.10.0) (2026-08-25)
+
+
+### Features
+
+* **attach:** show reasoning level next to model and provider ([#1044](https://github.com/matthewyjiang/rho/issues/1044)) ([2b1f912](https://github.com/matthewyjiang/rho/commit/2b1f912e1233b5769e250a4bf53538661afa9126))
+* **providers:** let custom hosts speak OpenAI Responses ([#1041](https://github.com/matthewyjiang/rho/issues/1041)) ([381383d](https://github.com/matthewyjiang/rho/commit/381383d9f5f5d13746e23518d152075b63e6128d))
+
+
+### Bug Fixes
+
+* **providers:** keep prompt-cache hits across tool turns ([#1040](https://github.com/matthewyjiang/rho/issues/1040)) ([e139d99](https://github.com/matthewyjiang/rho/commit/e139d99e6abb4e0ee9315305958e357da3afe715))
+* **providers:** say why a transport request failed ([#1036](https://github.com/matthewyjiang/rho/issues/1036)) ([79fd9c1](https://github.com/matthewyjiang/rho/commit/79fd9c1d2c72fd76fab03dc5f41ac9342f5b2028))
+
+
+### Performance Improvements
+
+* cut hot-path costs in grep, session persistence, and live TUI rendering ([#1027](https://github.com/matthewyjiang/rho/issues/1027)) ([9cf4ad7](https://github.com/matthewyjiang/rho/commit/9cf4ad73149ebcaffbe760481618cac9bb02a061))
+
 ## [1.9.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.9.0...rho-providers-v1.9.1) (2026-08-21)
 
 
