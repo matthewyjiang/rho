@@ -347,10 +347,11 @@ fn context_usage_style(percent: f64) -> Style {
     }
 }
 
-fn context_rank_for_percent(percent: Option<f64>) -> u8 {
-    match percent {
-        Some(percent) if percent >= CONTEXT_WARNING_PERCENT => RANK_CONTEXT_URGENT,
-        _ => RANK_CONTEXT,
+fn context_rank_for_percent(percent: f64) -> u8 {
+    if percent >= CONTEXT_WARNING_PERCENT {
+        RANK_CONTEXT_URGENT
+    } else {
+        RANK_CONTEXT
     }
 }
 
@@ -375,7 +376,7 @@ fn resolve_context_field(state: &StatusLineState) -> Option<(String, Style, u8)>
     Some((
         format!("{} ({percent:.1}%)", format_token_count(tokens)),
         context_usage_style(percent),
-        context_rank_for_percent(Some(percent)),
+        context_rank_for_percent(percent),
     ))
 }
 
