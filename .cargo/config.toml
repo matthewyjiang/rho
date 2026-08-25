@@ -2,13 +2,9 @@
 # (compiler/rustc_interface/src/util.rs DEFAULT_STACK_SIZE). Type-checking
 # this workspace's dependency graph overflows that stack: SIGSEGV with
 # rustc's own `RUST_MIN_STACK=16777216` hint, or a query ICE
-# (`active query job entry`, DepNodeIndex pack assert). Cargo [env] is
-# applied to rustc. 16 MiB is the value rustc 1.92.0 prints.
+# (`active query job entry`, DepNodeIndex pack assert). Cargo applies
+# [env] to rustc when the variable is unset. 16 MiB is the value rustc
+# 1.92.0 prints. An already-set RUST_MIN_STACK is left alone; validate.py
+# raises values below this floor.
 [env]
 RUST_MIN_STACK = "16777216"
-
-# Cap default parallelism so a 16 GiB / 12-core host (and multi-agent
-# worktrees) do not launch nproc rustc processes. Override with
-# `cargo -j` or `CARGO_BUILD_JOBS`. Matches AGENTS.md and validate.py.
-[build]
-jobs = 8

@@ -263,10 +263,10 @@ rustc 1.92.0's default compilation-thread stack is 8 MiB. Type-checking this
 workspace's dependency graph (and some individual crates such as `hashbrown`,
 `syn`, `toml_edit`, and `num-traits`) overflows that stack. rustc reports it
 as SIGSEGV plus `RUST_MIN_STACK=16777216`, or as a query ICE (`active query
-job entry` / `DepNodeIndex` pack assert). `.cargo/config.toml` sets that 16
-MiB floor for every Cargo-spawned rustc and defaults Cargo to 8 jobs so a
-12-core / 16 GiB host does not launch `nproc` compilers. `validate.py`
-enforces the same floor. Override with `CARGO_BUILD_JOBS` or `cargo -j`.
+job entry` / `DepNodeIndex` pack assert). `.cargo/config.toml` sets
+`RUST_MIN_STACK` to 16 MiB when the variable is unset. `validate.py` raises
+any smaller value to that floor and caps Cargo at 8 jobs. Override the job
+cap with `CARGO_BUILD_JOBS` or `cargo -j`.
 
 When either MSRV changes, update the matching Cargo manifest, this section, and
 CI together. An MSRV increase must not ship as a patch release. On a stable
