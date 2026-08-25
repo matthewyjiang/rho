@@ -197,12 +197,25 @@ fn bottom_row_drops_fields_by_global_rank() {
         "context and model remain: {after_cost:?}"
     );
 
-    // context before model (cross-side rank that staged packing inverted)
+    // ambient context before model (cross-side rank that staged packing inverted)
     let after_context = packed_keys(state, 20);
     assert_eq!(
         after_context,
         vec![FieldKey::Permission, FieldKey::Model],
-        "context drops before model: {after_context:?}"
+        "ambient context drops before model: {after_context:?}"
+    );
+
+    // warning/critical fill promotes context above model at the same width
+    let mut urgent = fully_populated_statusline();
+    urgent.update_usage(
+        None,
+        Some(&ContextUsage::estimated(9_000, Some(10_000))),
+        12_500,
+    );
+    assert_eq!(
+        packed_keys(&urgent.state, 20),
+        vec![FieldKey::Context, FieldKey::Permission],
+        "urgent context outranks model at narrow width"
     );
 
     // model before permission

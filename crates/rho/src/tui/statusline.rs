@@ -257,17 +257,21 @@ const CONTEXT_WARNING_PERCENT: f64 = 75.0;
 const CONTEXT_CRITICAL_PERCENT: f64 = 90.0;
 
 // Drop ranks for the bottom row. Lower values drop first when width is scarce.
-const RANK_REASONING: u8 = 1;
-const RANK_RATE: u8 = 2;
-const RANK_ZEN: u8 = 3;
-const RANK_PROVIDER: u8 = 4;
-const RANK_COST: u8 = 5;
-const RANK_CONTEXT: u8 = 6;
-const RANK_MODEL: u8 = 7;
-const RANK_LOGIN_HINT: u8 = 7;
-const RANK_PERMISSION: u8 = 8;
+// Decade gaps leave room for severity promotion (context urgent at 65).
+const RANK_REASONING: u8 = 10;
+const RANK_RATE: u8 = 20;
+const RANK_ZEN: u8 = 30;
+const RANK_PROVIDER: u8 = 40;
+const RANK_COST: u8 = 50;
+/// Ambient context fill; drops before model until warning/critical promotion.
+const RANK_CONTEXT: u8 = 55;
+const RANK_MODEL: u8 = 60;
+const RANK_LOGIN_HINT: u8 = 60;
+/// Warning/critical context outranks model but stays below permission.
+const RANK_CONTEXT_URGENT: u8 = 65;
+const RANK_PERMISSION: u8 = 70;
 /// Signed-out copy outranks permission so the row still names the fix.
-const RANK_SIGNED_OUT: u8 = 9;
+const RANK_SIGNED_OUT: u8 = 80;
 
 /// Identity keys used by pack tests and paint order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -343,6 +347,20 @@ fn context_usage_style(percent: f64) -> Style {
     }
 }
 
+fn context_fill_percent_for_state(state: &StatusLineState) -> Option<f64> {
+    let context = state.context_usage.as_ref()?;
+    let window = resolved_context_window(Some(context), state.model_metadata.as_ref())?;
+    let tokens = context.tokens?;
+    Some(context_fill_percent(tokens, window))
+}
+
+fn context_field_rank(state: &StatusLineState) -> u8 {
+    match context_fill_percent_for_state(state) {
+        Some(percent) if percent >= CONTEXT_WARNING_PERCENT => RANK_CONTEXT_URGENT,
+        _ => RANK_CONTEXT,
+    }
+}
+
 fn statusline_lines(
     state: &StatusLineState,
     width: usize,
@@ -387,12 +405,12 @@ fn statusline_lines(
 /// 3. zen indicator
 /// 4. provider label
 /// 5. session cost
-/// 6. context usage
+/// 6. context usage (ambient fill only)
 /// 7. model id
 /// 8. permission mode (kept last)
 ///
-/// Severity is independent of drop rank: high context fill and Bypass permission
-/// use warning/error styles so they stay visible while they remain on screen.
+/// Context at warning/critical fill promotes above model (rank 65 vs 60).
+/// Bypass permission and signed-out copy keep their rank guarantees.
 fn pack_bottom_status(
     state: &StatusLineState,
     width: usize,
@@ -409,7 +427,7 @@ fn bottom_fields(state: &StatusLineState) -> Vec<StatusField> {
         fields.push(field(
             FieldKey::Context,
             Side::Left,
-            RANK_CONTEXT,
+            context_field_rank(state),
             0,
             text,
             style,
