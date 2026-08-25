@@ -84,4 +84,10 @@ pub(crate) struct LiveProcessSummary {
     pub(crate) command: String,
     pub(crate) state: State,
     pub(crate) elapsed_seconds: u64,
+    /// Seconds since the most recent output chunk. None when the process has
+    /// produced no output yet, and None for terminal-state rows (the UI shows
+    /// a verdict instead).
+    pub(crate) quiet_seconds: Option<u64>,
+    /// Populated for terminal rows from the process exit code. None for live rows.
+    pub(crate) exit_code: Option<i32>,
 }

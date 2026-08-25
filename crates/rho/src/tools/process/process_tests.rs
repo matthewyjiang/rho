@@ -11,8 +11,7 @@ const LONG_RUNNING_COMMAND: &str = "Start-Sleep -Seconds 300";
 #[cfg(unix)]
 const STDIN_CLOSED_COMMAND: &str = "read input || printf closed";
 #[cfg(windows)]
-const STDIN_CLOSED_COMMAND: &str =
-    "$input = [Console]::In.ReadToEnd(); if ($input.Length -eq 0) { [Console]::Out.Write('closed') }";
+const STDIN_CLOSED_COMMAND: &str = "$input = [Console]::In.ReadToEnd(); if ($input.Length -eq 0) { [Console]::Out.Write('closed') }";
 #[cfg(unix)]
 const MIXED_OUTPUT_COMMAND: &str = "printf out; printf err >&2";
 #[cfg(windows)]
@@ -33,6 +32,10 @@ const LARGE_OUTPUT_COMMAND: &str = "[Console]::Out.Write('x' * 1000000)";
 const SUCCESS_COMMAND: &str = "true";
 #[cfg(windows)]
 const SUCCESS_COMMAND: &str = "exit 0";
+#[cfg(unix)]
+const OUTPUT_THEN_SLEEP_COMMAND: &str = "printf hello; sleep 300";
+#[cfg(windows)]
+const OUTPUT_THEN_SLEEP_COMMAND: &str = "[Console]::Out.Write('hello'); Start-Sleep -Seconds 300";
 
 async fn eventually(manager: &ProcessManager, id: &str) -> Snapshot {
     let mut cursor = 0;
@@ -742,10 +745,10 @@ async fn aborted_stop_caller_does_not_cancel_request_or_cleanup() {
     );
 }
 
-// Covers: the host rail must see live jobs and drop them once they finish.
+// Covers: the host rail must see live jobs.
 // Owner: process manager
 #[tokio::test]
-async fn live_summaries_lists_running_and_hides_terminal() {
+async fn live_summaries_lists_running() {
     let manager = ProcessManager::new(ProcessLimits::default());
     let started = manager
         .start(LONG_RUNNING_COMMAND.into(), std::path::Path::new("."), None)
@@ -758,9 +761,17 @@ async fn live_summaries_lists_running_and_hides_terminal() {
         (
             summaries[0].process_id.as_str(),
             summaries[0].command.as_str(),
-            terminal(summaries[0].state)
+            terminal(summaries[0].state),
+            summaries[0].quiet_seconds,
+            summaries[0].exit_code
         ),
-        (started.process_id.as_str(), LONG_RUNNING_COMMAND, false)
+        (
+            started.process_id.as_str(),
+            LONG_RUNNING_COMMAND,
+            false,
+            None,
+            None
+        )
     );
 
     manager
@@ -768,7 +779,6 @@ async fn live_summaries_lists_running_and_hides_terminal() {
         .await
         .unwrap();
     eventually(&manager, &started.process_id).await;
-    assert!(manager.live_summaries().is_empty());
 }
 
 // Covers: overflow rows must keep the oldest live process, not the newest.
@@ -805,6 +815,111 @@ async fn live_summaries_orders_oldest_first() {
         .unwrap();
     eventually(&manager, &first.process_id).await;
     eventually(&manager, &second.process_id).await;
+}
+
+// Covers: a just-finished process must linger on the rail with a frozen elapsed
+// duration and its exit code, not disappear or keep ticking.
+// Owner: process manager
+#[tokio::test]
+async fn live_summaries_lingers_terminal_rows_with_frozen_elapsed_and_exit_code() {
+    let manager = ProcessManager::new(ProcessLimits::default());
+    let started = manager
+        .start(SUCCESS_COMMAND.into(), std::path::Path::new("."), None)
+        .await
+        .unwrap();
+    eventually(&manager, &started.process_id).await;
+
+    let summaries = manager.live_summaries();
+    assert_eq!(summaries.len(), 1);
+    pretty_assertions::assert_eq!(
+        (
+            summaries[0].process_id.as_str(),
+            summaries[0].command.as_str(),
+            summaries[0].state,
+            summaries[0].quiet_seconds,
+            summaries[0].exit_code
+        ),
+        (
+            started.process_id.as_str(),
+            SUCCESS_COMMAND,
+            State::Exited,
+            None,
+            Some(0)
+        )
+    );
+    // `true` finishes immediately; frozen elapsed is completed-started, not wall
+    // time since start, so it stays at a truncated 0s (or 1s if the spawn
+    // straddled a second).
+    assert!(
+        summaries[0].elapsed_seconds <= 1,
+        "elapsed_seconds={}",
+        summaries[0].elapsed_seconds
+    );
+}
+
+// Covers: the rail reports seconds-since-output for live jobs, and None when
+// nothing has been written yet.
+// Owner: process manager
+#[tokio::test]
+async fn live_summaries_reports_quiet_seconds_only_after_output() {
+    let manager = ProcessManager::new(ProcessLimits::default());
+    let silent = manager
+        .start(LONG_RUNNING_COMMAND.into(), std::path::Path::new("."), None)
+        .await
+        .unwrap();
+    let noisy = manager
+        .start(
+            OUTPUT_THEN_SLEEP_COMMAND.into(),
+            std::path::Path::new("."),
+            None,
+        )
+        .await
+        .unwrap();
+
+    loop {
+        let snapshot = manager
+            .poll(&noisy.process_id, Some(0), Duration::from_secs(2))
+            .await
+            .unwrap();
+        if snapshot
+            .chunks
+            .iter()
+            .any(|chunk| chunk.text.contains("hello"))
+        {
+            break;
+        }
+        assert!(
+            !terminal(snapshot.state),
+            "noisy process exited before producing output"
+        );
+    }
+
+    let summaries = manager.live_summaries();
+    pretty_assertions::assert_eq!(
+        summaries
+            .iter()
+            .map(|summary| summary.process_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![silent.process_id.as_str(), noisy.process_id.as_str()]
+    );
+    pretty_assertions::assert_eq!(summaries[0].quiet_seconds, None);
+    pretty_assertions::assert_eq!(summaries[0].exit_code, None);
+    match summaries[1].quiet_seconds {
+        Some(seconds) => assert!(seconds <= 2, "quiet_seconds={seconds}"),
+        None => panic!("expected quiet_seconds after output"),
+    }
+    pretty_assertions::assert_eq!(summaries[1].exit_code, None);
+
+    manager
+        .stop(&silent.process_id, Duration::ZERO)
+        .await
+        .unwrap();
+    manager
+        .stop(&noisy.process_id, Duration::ZERO)
+        .await
+        .unwrap();
+    eventually(&manager, &silent.process_id).await;
+    eventually(&manager, &noisy.process_id).await;
 }
 
 async fn wait_for_exit_notification(manager: &ProcessManager) -> Vec<ProcessNotification> {

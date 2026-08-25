@@ -9,6 +9,8 @@ fn summary(id: &str, command: &str, elapsed_seconds: u64) -> LiveProcessSummary 
         command: command.to_owned(),
         state: State::Running,
         elapsed_seconds,
+        quiet_seconds: None,
+        exit_code: None,
     }
 }
 

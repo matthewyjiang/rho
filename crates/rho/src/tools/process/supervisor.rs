@@ -121,6 +121,7 @@ fn push(rec: &SharedRecord, stream: Stream, b: Vec<u8>, limits: &ProcessLimits) 
         },
         byte_cost: len,
     });
+    r.last_output_at = Some(Instant::now());
     while r.bytes > limits.max_bytes || r.chunks.len() > limits.max_chunks {
         if let Some(c) = r.chunks.pop_front() {
             r.bytes -= c.byte_cost

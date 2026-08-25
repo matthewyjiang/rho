@@ -14,6 +14,13 @@ use std::{
 };
 use tokio::sync::{mpsc, Notify};
 use uuid::Uuid;
+
+// Ceiling for how long `live_summaries` keeps serving terminal rows to the host UI.
+// Receipt: the activity rail applies shorter per-verdict linger windows on top;
+// this is only the manager-side bound so the rail can fade rows without the
+// manager dropping them first.
+const RAIL_TERMINAL_RETENTION: Duration = Duration::from_secs(10);
+
 pub(super) type SharedRecord = Arc<Mutex<Record>>;
 pub(super) struct RetainedChunk {
     pub(super) chunk: Chunk,
@@ -25,6 +32,7 @@ pub(super) struct Record {
     pub(super) state: State,
     pub(super) started: Instant,
     pub(super) completed: Option<Instant>,
+    pub(super) last_output_at: Option<Instant>,
     pub(super) chunks: VecDeque<RetainedChunk>,
     pub(super) bytes: usize,
     pub(super) next: u64,
@@ -118,6 +126,7 @@ impl ProcessManager {
             state: State::Starting,
             started: Instant::now(),
             completed: None,
+            last_output_at: None,
             chunks: VecDeque::new(),
             bytes: 0,
             next: 0,
@@ -339,7 +348,8 @@ impl ProcessManager {
         }
     }
 
-    /// Live `Starting`/`Running` records, oldest first.
+    /// Live `Starting`/`Running` records plus recently completed terminal
+    /// records, oldest first.
     ///
     /// Host UI uses this to render the activity rail. It is not a tool action.
     pub(crate) fn live_summaries(&self) -> Vec<super::LiveProcessSummary> {
@@ -351,9 +361,26 @@ impl ProcessManager {
             .into_iter()
             .filter_map(|record| {
                 let record = record.lock().unwrap();
-                if terminal(record.state) {
-                    return None;
-                }
+                let is_terminal = terminal(record.state);
+                let (elapsed_seconds, quiet_seconds, exit_code) = if is_terminal {
+                    let completed = record.completed?;
+                    if completed.elapsed() >= RAIL_TERMINAL_RETENTION {
+                        return None;
+                    }
+                    (
+                        completed
+                            .saturating_duration_since(record.started)
+                            .as_secs(),
+                        None,
+                        record.exit_code,
+                    )
+                } else {
+                    (
+                        record.started.elapsed().as_secs(),
+                        record.last_output_at.map(|at| at.elapsed().as_secs()),
+                        None,
+                    )
+                };
                 Some((
                     record.started,
                     record.id.clone(),
@@ -361,7 +388,9 @@ impl ProcessManager {
                         process_id: record.id.clone(),
                         command: record.command.clone(),
                         state: record.state,
-                        elapsed_seconds: record.started.elapsed().as_secs(),
+                        elapsed_seconds,
+                        quiet_seconds,
+                        exit_code,
                     },
                 ))
             })
