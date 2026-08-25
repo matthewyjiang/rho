@@ -12,8 +12,8 @@ from pathlib import Path
 from typing import Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
-# Matches AGENTS.md. 12 equalled nproc on the development host, so the
-# old cap never reduced rustc 1.92 query ICEs.
+# 12 equalled nproc on the development host, so the old cap never
+# reduced rustc 1.92 query ICEs.
 MAX_CARGO_JOBS = 8
 # rustc 1.92.0 default compile-thread stack is 8 MiB; it asks for this
 # exact floor after SIGSEGV / query ICEs on this workspace.
