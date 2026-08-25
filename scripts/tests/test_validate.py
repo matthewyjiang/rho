@@ -71,19 +71,34 @@ class FullPlanTests(unittest.TestCase):
 
 class CargoJobsTests(unittest.TestCase):
     def test_defaults_to_cap(self) -> None:
-        self.assertEqual(validate.capped_cargo_jobs(None), "12")
+        self.assertEqual(validate.capped_cargo_jobs(None), "8")
 
     def test_preserves_lower_setting(self) -> None:
         self.assertEqual(validate.capped_cargo_jobs("6"), "6")
 
     def test_caps_higher_setting(self) -> None:
-        self.assertEqual(validate.capped_cargo_jobs("24"), "12")
+        self.assertEqual(validate.capped_cargo_jobs("24"), "8")
 
     def test_resolves_relative_setting_before_capping(self) -> None:
         self.assertEqual(
             validate.capped_cargo_jobs("-2", cpu_count=8),
             "6",
         )
+
+
+class RustcMinStackTests(unittest.TestCase):
+    def test_defaults_to_rustc_suggested_floor(self) -> None:
+        self.assertEqual(validate.rustc_min_stack(None), "16777216")
+
+    def test_raises_values_below_the_floor(self) -> None:
+        self.assertEqual(validate.rustc_min_stack("8388608"), "16777216")
+
+    def test_keeps_a_larger_explicit_stack(self) -> None:
+        self.assertEqual(validate.rustc_min_stack("33554432"), "33554432")
+
+    def test_rejects_a_non_integer(self) -> None:
+        with self.assertRaises(ValueError):
+            validate.rustc_min_stack("16MB")
 
 
 if __name__ == "__main__":
