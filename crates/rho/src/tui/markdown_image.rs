@@ -43,6 +43,21 @@ pub(super) fn collect_markdown_image_sources(text: &str) -> Vec<MarkdownImageSou
     sources
 }
 
+/// True when appending `added` onto the current assistant text completes or
+/// introduces a standalone markdown image on the affected suffix lines.
+pub(super) fn markdown_image_suffix_may_have_changed(full: &str, added: &str) -> bool {
+    if added.is_empty() {
+        return false;
+    }
+    if added.len() > full.len() || !full.ends_with(added) {
+        return !collect_markdown_image_sources(full).is_empty();
+    }
+    let prefix = &full[..full.len() - added.len()];
+    let scan_from = prefix.rfind('\n').map_or(0, |index| index + 1);
+    collect_markdown_image_sources(&prefix[scan_from..])
+        != collect_markdown_image_sources(&full[scan_from..])
+}
+
 /// Parses a line that consists only of an image reference, optionally padded
 /// with whitespace. Inline images mixed into prose fall back to alt text.
 pub(super) fn standalone_markdown_image(line: &str) -> Option<MarkdownImageSource> {

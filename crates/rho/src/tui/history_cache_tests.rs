@@ -1,7 +1,11 @@
 use pretty_assertions::assert_eq;
 
 use super::*;
-use crate::tui::{feed_image::FeedImage, render::entry_lines};
+use crate::tui::{
+    feed_image::FeedImage,
+    render::entry_lines,
+    syntax::{reset_highlight_line_calls, take_highlight_line_calls, warm_syntax_set},
+};
 
 fn no_images(_: usize, _: &[MarkdownImageSource]) -> Vec<(usize, FeedImage)> {
     Vec::new()
@@ -213,6 +217,7 @@ fn incrementally_extends_assistant_markdown_without_rendering_drift() {
     );
     assert!(cache.entries[0]
         .incremental
+        .as_ref()
         .is_some_and(|cached| cached.stable_source_len > "intro\n\n".len()));
 }
 
@@ -267,6 +272,7 @@ fn incrementally_extends_reasoning_text_without_rendering_drift() {
     );
     assert!(cache.entries[0]
         .incremental
+        .as_ref()
         .is_some_and(|cached| { cached.stable_source_len > "weighing the first option\n".len() }));
 
     // Closing the thought appends the summary line, which the incremental path
@@ -292,6 +298,183 @@ fn incrementally_extends_reasoning_text_without_rendering_drift() {
             10,
             crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT
         )
+    );
+}
+
+// Covers: a growing rust fence must not re-highlight already committed body
+// Owner: history line cache (incremental append)
+#[test]
+fn incrementally_extends_open_fence_without_rehighlighting_committed_lines() {
+    let _guard = crate::tui::theme::theme_test_lock();
+    warm_syntax_set();
+    let mut cache = HistoryLineCache::default();
+    let mut body = String::from("```rust\n");
+    for index in 0..40 {
+        body.push_str(&format!("    let value_{index} = {index};\n"));
+    }
+    let mut entries = vec![Entry::Assistant(body.into())];
+    let mut cached_lines = Vec::new();
+    reset_highlight_line_calls();
+    cache.extend_visible_lines(
+        &entries,
+        settings(80),
+        HistoryLineSlice {
+            start: 0,
+            count: usize::MAX,
+        },
+        &mut cached_lines,
+        &no_images,
+    );
+    let first_highlights = take_highlight_line_calls();
+    assert!(first_highlights >= 40, "{first_highlights}");
+
+    let Entry::Assistant(text) = &mut entries[0] else {
+        unreachable!();
+    };
+    text.push_str("    let extra = 1;\n    let more = 2;\n");
+    cache.entry_appended(0);
+    cached_lines.clear();
+    reset_highlight_line_calls();
+    cache.extend_visible_lines(
+        &entries,
+        settings(80),
+        HistoryLineSlice {
+            start: 0,
+            count: usize::MAX,
+        },
+        &mut cached_lines,
+        &no_images,
+    );
+    let second_highlights = take_highlight_line_calls();
+    assert!(
+        second_highlights < first_highlights / 2,
+        "second={second_highlights} first={first_highlights}"
+    );
+    assert_eq!(
+        cached_lines,
+        entry_lines(
+            &entries[0],
+            80,
+            10,
+            crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT
+        )
+    );
+}
+
+fn paint_cached(
+    cache: &mut HistoryLineCache,
+    entries: &[Entry],
+    width: usize,
+) -> Vec<ratatui::text::Line<'static>> {
+    let mut lines = Vec::new();
+    cache.extend_visible_lines(
+        entries,
+        settings(width),
+        HistoryLineSlice {
+            start: 0,
+            count: usize::MAX,
+        },
+        &mut lines,
+        &no_images,
+    );
+    lines
+}
+
+fn expected_entry_lines(entry: &Entry, width: usize) -> Vec<ratatui::text::Line<'static>> {
+    entry_lines(
+        entry,
+        width,
+        10,
+        crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT,
+    )
+}
+
+// Covers: prose after a closed fence in the same buffer must stay visible.
+// Owner: history line cache (incremental append)
+#[test]
+fn incrementally_keeps_prose_after_a_closed_fence() {
+    let _guard = crate::tui::theme::theme_test_lock();
+    let mut cache = HistoryLineCache::default();
+    let mut entries = vec![Entry::Assistant("```rust\nlet value = 1;\n".into())];
+    let _ = paint_cached(&mut cache, &entries, 80);
+
+    let Entry::Assistant(text) = &mut entries[0] else {
+        unreachable!();
+    };
+    text.push_str("```\nThe function");
+    cache.entry_appended(0);
+    assert_eq!(
+        paint_cached(&mut cache, &entries, 80),
+        expected_entry_lines(&entries[0], 80)
+    );
+}
+
+// Covers: new table rows paint against frozen widths without a full reflow.
+// Owner: history line cache (incremental append)
+#[test]
+fn incrementally_extends_table_rows_without_rendering_drift() {
+    let _guard = crate::tui::theme::theme_test_lock();
+    let mut cache = HistoryLineCache::default();
+    let mut entries = vec![Entry::Assistant(
+        "| Name | Value |\n| --- | --- |\n| rho | 1 |\n".into(),
+    )];
+    assert_eq!(
+        paint_cached(&mut cache, &entries, 40),
+        expected_entry_lines(&entries[0], 40)
+    );
+
+    let Entry::Assistant(text) = &mut entries[0] else {
+        unreachable!();
+    };
+    text.push_str("| agent | 2 |\n");
+    cache.entry_appended(0);
+    assert_eq!(
+        paint_cached(&mut cache, &entries, 40),
+        expected_entry_lines(&entries[0], 40)
+    );
+}
+
+// Covers: a later wider cell must reflow instead of wrapping at frozen widths.
+// Owner: history line cache (incremental append)
+#[test]
+fn incrementally_reflows_a_table_when_a_later_cell_is_wider() {
+    let _guard = crate::tui::theme::theme_test_lock();
+    let mut cache = HistoryLineCache::default();
+    let mut entries = vec![Entry::Assistant(
+        "| A | B |\n| --- | --- |\n| x | y |\n".into(),
+    )];
+    let _ = paint_cached(&mut cache, &entries, 40);
+
+    let Entry::Assistant(text) = &mut entries[0] else {
+        unreachable!();
+    };
+    text.push_str("| much-longer-cell | z |\n");
+    cache.entry_appended(0);
+    assert_eq!(
+        paint_cached(&mut cache, &entries, 40),
+        expected_entry_lines(&entries[0], 40)
+    );
+}
+
+// Covers: leftover prose after a table must not disappear before the newline.
+// Owner: history line cache (incremental append)
+#[test]
+fn incrementally_keeps_prose_after_a_table() {
+    let _guard = crate::tui::theme::theme_test_lock();
+    let mut cache = HistoryLineCache::default();
+    let mut entries = vec![Entry::Assistant(
+        "| Name | Value |\n| --- | --- |\n| rho | 1 |\n".into(),
+    )];
+    let _ = paint_cached(&mut cache, &entries, 40);
+
+    let Entry::Assistant(text) = &mut entries[0] else {
+        unreachable!();
+    };
+    text.push_str("After the table");
+    cache.entry_appended(0);
+    assert_eq!(
+        paint_cached(&mut cache, &entries, 40),
+        expected_entry_lines(&entries[0], 40)
     );
 }
 

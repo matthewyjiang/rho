@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use super::{
-    collect_markdown_image_sources, resolve_markdown_image_path, standalone_markdown_image,
-    MarkdownImageSource,
+    collect_markdown_image_sources, markdown_image_suffix_may_have_changed,
+    resolve_markdown_image_path, standalone_markdown_image, MarkdownImageSource,
 };
 
 fn image(alt: &str, path: &str) -> MarkdownImageSource {
@@ -78,6 +78,28 @@ fn resolves_paths_against_cwd_absolute_and_home() {
             Some(home.join("pic.png"))
         );
     }
+}
+
+// Covers: a streamed `)` can complete `![alt](path)` and must dirty image loads.
+// Owner: markdown image suffix dirty policy
+#[test]
+fn suffix_change_detects_a_completed_image_target() {
+    assert!(markdown_image_suffix_may_have_changed(
+        "![plot](docs/chart.png)",
+        ".png)"
+    ));
+    assert!(markdown_image_suffix_may_have_changed(
+        "see below\n![plot](docs/chart.png)",
+        "(docs/chart.png)"
+    ));
+    assert!(!markdown_image_suffix_may_have_changed(
+        "plain prose continues here",
+        " continues here"
+    ));
+    assert!(!markdown_image_suffix_may_have_changed(
+        "![plot](docs/chart.png)\nmore prose",
+        "\nmore prose"
+    ));
 }
 
 #[cfg(unix)]

@@ -18,6 +18,7 @@ use ratatui::{backend::Backend, DefaultTerminal, Terminal};
 use super::{
     activity::ActivityPhase,
     event_adapter::ViewModelEvent,
+    markdown_image::markdown_image_suffix_may_have_changed,
     render::padded_content_width,
     stream::StreamFragment,
     usage_cost::{
@@ -387,19 +388,27 @@ impl App {
                 } else {
                     self.history.len()
                 };
-                match self.history.last_mut() {
+                let can_append = matches!(
+                    self.history.last(),
                     Some(Entry::Assistant(previous))
-                        if previous.worked_for.is_none() && assistant.worked_for.is_none() =>
-                    {
-                        previous.push_str(&assistant.text);
-                        self.history.lines_mut().entry_appended(index);
+                        if previous.worked_for.is_none() && assistant.worked_for.is_none()
+                );
+                if can_append {
+                    let added = assistant.text;
+                    if let Some(Entry::Assistant(previous)) = self.history.last_mut() {
+                        previous.push_str(&added);
                     }
-                    _ => {
-                        self.history.lines_mut().invalidate_from(index);
-                        self.history.push(Entry::Assistant(assistant));
+                    self.history.lines_mut().entry_appended(index);
+                    if let Some(Entry::Assistant(previous)) = self.history.last() {
+                        if markdown_image_suffix_may_have_changed(&previous.text, &added) {
+                            self.mark_markdown_images_dirty_from(index);
+                        }
                     }
+                } else {
+                    self.history.lines_mut().invalidate_from(index);
+                    self.history.push(Entry::Assistant(assistant));
+                    self.mark_markdown_images_dirty_from(index);
                 }
-                self.mark_markdown_images_dirty_from(index);
             }
             Entry::Reasoning(reasoning) => match self.history.last_mut() {
                 Some(Entry::Reasoning(previous)) if previous.thought_for.is_none() => {

@@ -1,6 +1,6 @@
 use crate::tui::syntax::BlockHighlighter;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::tui) struct CodeFence {
     pub(super) marker: char,
     pub(super) length: usize,
@@ -26,6 +26,23 @@ pub(in crate::tui) struct CodeFenceState {
 impl CodeFenceState {
     pub(in crate::tui) fn is_open(&self) -> bool {
         self.active.is_some()
+    }
+
+    /// Resume an already-open fence in a later render chunk.
+    pub(in crate::tui) fn continue_open(
+        fence: CodeFence,
+        language: Option<String>,
+        highlighter: Option<BlockHighlighter>,
+    ) -> Self {
+        Self {
+            active: Some(fence),
+            language,
+            highlighter,
+        }
+    }
+
+    pub(in crate::tui) fn take_highlighter(&mut self) -> Option<BlockHighlighter> {
+        self.highlighter.take()
     }
 
     pub(super) fn clear_open(&mut self) {

@@ -210,6 +210,11 @@ fn markdown_table_alignment(cell: &str) -> Option<TableAlignment> {
 }
 
 fn render_markdown_table(table: &MarkdownTable, width: usize) -> Option<Vec<Line<'static>>> {
+    let column_widths = column_widths_for(table, width)?;
+    Some(paint_table(table, &column_widths))
+}
+
+fn column_widths_for(table: &MarkdownTable, width: usize) -> Option<Vec<usize>> {
     let column_count = table.alignments.len();
     let border_width = column_count + 1;
     let padding_width = column_count * 2;
@@ -218,15 +223,7 @@ fn render_markdown_table(table: &MarkdownTable, width: usize) -> Option<Vec<Line
         return None;
     }
 
-    let styled_rows = table
-        .rows
-        .iter()
-        .map(|row| {
-            row.iter()
-                .map(|cell| markdown_inline_segments(cell))
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
+    let styled_rows = styled_table_rows(table);
     let mut column_widths = (0..column_count)
         .map(|column| {
             styled_rows
@@ -245,49 +242,152 @@ fn render_markdown_table(table: &MarkdownTable, width: usize) -> Option<Vec<Line
             .max_by_key(|(_, column_width)| **column_width)?;
         column_widths[column] -= 1;
     }
+    Some(column_widths)
+}
 
-    let mut lines = vec![table_border(&column_widths, '┌', '┬', '┐')];
+fn styled_table_rows(table: &MarkdownTable) -> Vec<Vec<Vec<StyledSegment>>> {
+    table
+        .rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|cell| markdown_inline_segments(cell))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+fn paint_table(table: &MarkdownTable, column_widths: &[usize]) -> Vec<Line<'static>> {
+    let styled_rows = styled_table_rows(table);
+    let mut lines = vec![table_border(column_widths, '┌', '┬', '┐')];
     for (row_index, row) in styled_rows.iter().enumerate() {
-        let wrapped_cells = row
-            .iter()
-            .zip(&column_widths)
-            .map(|(cell, column_width)| wrap_styled_segments(cell, *column_width))
-            .collect::<Vec<_>>();
-        let row_height = wrapped_cells.iter().map(Vec::len).max().unwrap_or(1);
-        for visual_line in 0..row_height {
-            let mut spans = vec![Span::styled("│", Theme::dim())];
-            for (column, cell_lines) in wrapped_cells.iter().enumerate() {
-                spans.push(Span::styled(" ", Theme::text()));
-                let cell_spans = cell_lines
-                    .get(visual_line)
-                    .map(|line| line.spans.clone())
-                    .unwrap_or_else(|| vec![Span::raw(String::new())]);
-                let cell_width = spans_display_width(&cell_spans);
-                let remaining = column_widths[column].saturating_sub(cell_width);
-                let (left_padding, right_padding) =
-                    table_cell_padding(table.alignments[column], remaining);
-                spans.push(Span::styled(" ".repeat(left_padding), Theme::text()));
-                spans.extend(cell_spans.into_iter().map(|span| {
-                    if row_index == 0 {
-                        Span::styled(
-                            span.content.into_owned(),
-                            span.style.add_modifier(Modifier::BOLD),
-                        )
-                    } else {
-                        span
-                    }
-                }));
-                spans.push(Span::styled(" ".repeat(right_padding + 1), Theme::text()));
-                spans.push(Span::styled("│", Theme::dim()));
-            }
-            lines.push(Line::from(spans));
-        }
+        lines.extend(paint_table_row(
+            row,
+            column_widths,
+            &table.alignments,
+            row_index == 0,
+        ));
         if row_index == 0 {
-            lines.push(table_border(&column_widths, '├', '┼', '┤'));
+            lines.push(table_border(column_widths, '├', '┼', '┤'));
         }
     }
-    lines.push(table_border(&column_widths, '└', '┴', '┘'));
-    Some(lines)
+    lines.push(table_border(column_widths, '└', '┴', '┘'));
+    lines
+}
+
+fn paint_table_row(
+    row: &[Vec<StyledSegment>],
+    column_widths: &[usize],
+    alignments: &[TableAlignment],
+    bold: bool,
+) -> Vec<Line<'static>> {
+    let wrapped_cells = row
+        .iter()
+        .zip(column_widths)
+        .map(|(cell, column_width)| wrap_styled_segments(cell, *column_width))
+        .collect::<Vec<_>>();
+    let row_height = wrapped_cells.iter().map(Vec::len).max().unwrap_or(1);
+    let mut lines = Vec::with_capacity(row_height);
+    for visual_line in 0..row_height {
+        let mut spans = vec![Span::styled("│", Theme::dim())];
+        for (column, cell_lines) in wrapped_cells.iter().enumerate() {
+            spans.push(Span::styled(" ", Theme::text()));
+            let cell_spans = cell_lines
+                .get(visual_line)
+                .map(|line| line.spans.clone())
+                .unwrap_or_else(|| vec![Span::raw(String::new())]);
+            let cell_width = spans_display_width(&cell_spans);
+            let remaining = column_widths[column].saturating_sub(cell_width);
+            let (left_padding, right_padding) = table_cell_padding(alignments[column], remaining);
+            spans.push(Span::styled(" ".repeat(left_padding), Theme::text()));
+            spans.extend(cell_spans.into_iter().map(|span| {
+                if bold {
+                    Span::styled(
+                        span.content.into_owned(),
+                        span.style.add_modifier(Modifier::BOLD),
+                    )
+                } else {
+                    span
+                }
+            }));
+            spans.push(Span::styled(" ".repeat(right_padding + 1), Theme::text()));
+            spans.push(Span::styled("│", Theme::dim()));
+        }
+        lines.push(Line::from(spans));
+    }
+    lines
+}
+
+/// Frozen column geometry for a trailing table that can still grow.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::tui) struct StreamingTable {
+    column_widths: Vec<usize>,
+    alignments: Vec<TableAlignment>,
+    consumed_source_len: usize,
+}
+
+pub(in crate::tui) fn streaming_table(source: &str, width: usize) -> Option<StreamingTable> {
+    let (table, consumed_source_len) = parse_table_from_source(source)?;
+    let column_widths = column_widths_for(&table, width)?;
+    Some(StreamingTable {
+        column_widths,
+        alignments: table.alignments,
+        consumed_source_len,
+    })
+}
+
+impl StreamingTable {
+    pub(in crate::tui) fn column_widths(&self) -> &[usize] {
+        &self.column_widths
+    }
+
+    pub(in crate::tui) fn consumed_source_len(&self) -> usize {
+        self.consumed_source_len
+    }
+
+    /// Paint one data row against the frozen widths.
+    ///
+    /// Returns `None` when `line` is not a table row or a cell is wider than
+    /// its frozen column (the full table would reflow).
+    pub(in crate::tui) fn paint_data_row(&self, line: &str) -> Option<Vec<Line<'static>>> {
+        if !has_markdown_table_delimiter(line) || line.trim().is_empty() {
+            return None;
+        }
+        let mut cells = markdown_table_cells(line);
+        cells.resize(self.alignments.len(), String::new());
+        let styled = cells
+            .iter()
+            .map(|cell| markdown_inline_segments(cell))
+            .collect::<Vec<_>>();
+        if styled
+            .iter()
+            .zip(&self.column_widths)
+            .any(|(cell, width)| styled_segments_width(cell) > *width)
+        {
+            return None;
+        }
+        Some(paint_table_row(
+            &styled,
+            &self.column_widths,
+            &self.alignments,
+            false,
+        ))
+    }
+}
+
+pub(in crate::tui) fn streaming_table_bottom_border(column_widths: &[usize]) -> Line<'static> {
+    table_border(column_widths, '└', '┴', '┘')
+}
+
+fn parse_table_from_source(source: &str) -> Option<(MarkdownTable, usize)> {
+    let lines = source.lines().collect::<Vec<_>>();
+    let (table, consumed_lines) = parse_markdown_table(&lines)?;
+    let consumed_source_len = source
+        .split_inclusive('\n')
+        .take(consumed_lines)
+        .map(str::len)
+        .sum();
+    Some((table, consumed_source_len))
 }
 
 fn styled_segments_width(segments: &[StyledSegment]) -> usize {
