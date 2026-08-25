@@ -761,7 +761,7 @@ impl HistoryLineCache {
             width,
             has_trailing_blank,
             content_end,
-            /*reasoning*/ reasoning,
+            reasoning,
         ) {
             self.recompute_ranges();
             return true;
@@ -826,12 +826,7 @@ fn cached_entry_from_render(
         lines: rendered.lines,
         code_blocks: rendered.code_blocks,
         image_placement: rendered.image_placement,
-        incremental: incremental::incremental_cache_for(
-            entry,
-            is_last,
-            width,
-            Some(content_line_count),
-        ),
+        incremental: incremental::incremental_cache_for(entry, is_last, width, content_line_count),
         depends_on_image_height: rendered.depends_on_image_height,
     }
 }

@@ -355,7 +355,6 @@ impl StreamingTable {
         }
         let mut cells = markdown_table_cells(line);
         cells.resize(self.alignments.len(), String::new());
-        cells.truncate(self.alignments.len());
         let styled = cells
             .iter()
             .map(|cell| markdown_inline_segments(cell))

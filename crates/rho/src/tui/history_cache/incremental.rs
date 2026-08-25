@@ -71,7 +71,7 @@ pub(super) fn incremental_cache_for(
     entry: &Entry,
     is_last: bool,
     width: usize,
-    content_line_count: Option<usize>,
+    content_line_count: usize,
 ) -> Option<IncrementalEntryCache> {
     // Only the last entry can be appended to, so only its cache is ever read
     // (see `entry_appended`). Building one for every entry would re-render
@@ -105,7 +105,7 @@ fn inspect_incremental(
     text: &str,
     render: EntryContentRender,
     width: usize,
-    content_line_count: Option<usize>,
+    content_line_count: usize,
 ) -> IncrementalEntryCache {
     let stable_source_len = incremental_markdown_tail_start(text);
     let stable_line_count = if stable_source_len == 0 {
@@ -113,18 +113,32 @@ fn inspect_incremental(
     } else {
         render(&text[..stable_source_len], width).lines.len()
     };
-    let tail = inspect_open_tail(
+    inspect_incremental_at(
         text,
-        stable_source_len,
-        stable_line_count,
         width,
         content_line_count,
-        render,
-    );
+        stable_source_len,
+        stable_line_count,
+    )
+}
+
+fn inspect_incremental_at(
+    text: &str,
+    width: usize,
+    content_line_count: usize,
+    stable_source_len: usize,
+    stable_line_count: usize,
+) -> IncrementalEntryCache {
     IncrementalEntryCache {
         stable_source_len,
         stable_line_count,
-        tail,
+        tail: inspect_open_tail(
+            text,
+            stable_source_len,
+            stable_line_count,
+            width,
+            content_line_count,
+        ),
     }
 }
 
@@ -133,8 +147,7 @@ fn inspect_open_tail(
     tail_start: usize,
     stable_line_count: usize,
     width: usize,
-    content_line_count: Option<usize>,
-    render: EntryContentRender,
+    content_line_count: usize,
 ) -> IncrementalTail {
     let tail = &text[tail_start..];
     if tail.is_empty() {
@@ -146,7 +159,6 @@ fn inspect_open_tail(
         stable_line_count,
         width,
         content_line_count,
-        render,
     ) {
         return IncrementalTail::Fence(fence);
     }
@@ -161,8 +173,7 @@ fn open_fence_from_source(
     tail_start: usize,
     stable_line_count: usize,
     width: usize,
-    content_line_count: Option<usize>,
-    render: EntryContentRender,
+    content_line_count: usize,
 ) -> Option<OpenFenceTail> {
     let first = text[tail_start..].lines().next()?;
     let fence = parse_opening_fence(first)?;
@@ -177,19 +188,8 @@ fn open_fence_from_source(
         update_code_block_state(&text[tail_start..committed_end], &mut state);
         highlighter = state.take_highlighter();
     }
-    let committed_line_count = committed_visual_lines(
-        content_line_count,
-        text,
-        committed_end,
-        || {
-            if committed_end > tail_start {
-                stable_line_count
-                    .saturating_add(render(&text[tail_start..committed_end], width).lines.len())
-            } else {
-                stable_line_count
-            }
-        },
-        |incomplete| {
+    let committed_line_count =
+        committed_visual_lines(content_line_count, text, committed_end, |incomplete| {
             fence_preview_line_count(
                 incomplete,
                 fence,
@@ -197,8 +197,7 @@ fn open_fence_from_source(
                 highlighter.clone(),
                 width,
             )
-        },
-    )?;
+        })?;
     Some(OpenFenceTail {
         source_start: tail_start,
         committed_end,
@@ -214,7 +213,7 @@ fn open_table_from_source(
     text: &str,
     tail_start: usize,
     width: usize,
-    content_line_count: Option<usize>,
+    content_line_count: usize,
 ) -> Option<OpenTableTail> {
     let inner = padded_content_width(width);
     let complete_end = last_complete_end(text, tail_start);
@@ -231,29 +230,26 @@ fn open_table_from_source(
     } else {
         table.paint_data_row(incomplete)?.len()
     };
-    let committed_line_count = match content_line_count {
-        Some(content) => content.saturating_sub(preview_lines).saturating_sub(1),
-        None => return None,
-    };
     Some(OpenTableTail {
         source_start: tail_start,
         committed_end: complete_end,
-        committed_line_count,
+        committed_line_count: content_line_count
+            .saturating_sub(preview_lines)
+            .saturating_sub(1),
         table,
     })
 }
 
 fn committed_visual_lines(
-    content_line_count: Option<usize>,
+    content_line_count: usize,
     text: &str,
     committed_end: usize,
-    render_committed: impl FnOnce() -> usize,
     preview_len: impl FnOnce(&str) -> Option<usize>,
 ) -> Option<usize> {
-    match content_line_count {
-        Some(content) if committed_end == text.len() => Some(content),
-        Some(content) => Some(content.saturating_sub(preview_len(&text[committed_end..])?)),
-        None => Some(render_committed()),
+    if committed_end == text.len() {
+        Some(content_line_count)
+    } else {
+        Some(content_line_count.saturating_sub(preview_len(&text[committed_end..])?))
     }
 }
 
@@ -571,6 +567,8 @@ fn promote_stable_tail(
         width,
         render,
     );
+    let stable_source_len = new_tail_start;
+    let stable_line_count = entry.lines.len();
     append_entry_segment_into(
         &mut entry.lines,
         &mut entry.code_blocks,
@@ -585,11 +583,12 @@ fn promote_stable_tail(
         .lines
         .len()
         .saturating_sub(usize::from(has_trailing_blank));
-    entry.incremental = Some(inspect_incremental(
+    entry.incremental = Some(inspect_incremental_at(
         text,
-        render,
         width,
-        Some(content_line_count),
+        content_line_count,
+        stable_source_len,
+        stable_line_count,
     ));
     true
 }
