@@ -22,7 +22,7 @@ pub(crate) use platform::{prepare_child_command, ProcessTree};
 pub use tools::Process;
 pub(super) use tools::ProcessArgs;
 pub use types::{Chunk, ProcessLimits, Snapshot, State};
-pub(crate) use types::{LiveProcessSummary, Stream};
+pub(crate) use types::{HostProcessView, LiveProcessSummary, Stream};
 
 pub(super) struct SdkProcessBundle {
     tools: Vec<Arc<dyn SdkTool>>,

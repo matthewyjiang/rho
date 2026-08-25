@@ -77,6 +77,18 @@ pub(super) fn terminal(s: State) -> bool {
     )
 }
 
+/// Host-UI-only retained output for one process. Not a tool action.
+///
+/// Does not mark the process observed or advance any agent-visible poll cursor.
+#[derive(Clone, Debug)]
+pub(crate) struct HostProcessView {
+    pub(crate) snapshot: Snapshot,
+    pub(crate) elapsed_seconds: u64,
+    /// Seconds since the most recent output chunk. None when the process has
+    /// produced no output yet, and None for terminal-state rows.
+    pub(crate) quiet_seconds: Option<u64>,
+}
+
 /// Host-side view of one live process for UI rails. Not a tool action.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct LiveProcessSummary {

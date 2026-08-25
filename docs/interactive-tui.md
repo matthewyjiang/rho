@@ -204,8 +204,13 @@ The rail shows at most two subagent rows and two process rows.
 | Row | Shows | Action |
 | --- | --- | --- |
 | Subagent (`◉`) | Role, generated title, current tool or action, elapsed | Click to attach. Hover shows `⏎ attach · elapsed`; the timer stays visible |
-| Process (`⚙`) | Command, freshness, and elapsed. No process id | Display-only: no attach or stop from the rail |
+| Process (`⚙`) | Command, freshness, and elapsed. No process id | Click to peek captured output (read-only, no stop). Hover shows `⏎ peek · elapsed`; the timer stays visible |
 | Overflow | `2 more agents · /attach` or `1 more job` | Replaces the last row when more runs are live than fit. The agent summary points at `/attach` |
+
+A process peek replaces the session with that job's captured stdout and
+stderr. The parent session keeps running underneath. Use Up/Down, Page Up/
+Page Down, and Home/End to scroll. Press `q` or Escape to return. There is
+no stop or kill from this view.
 
 Process freshness is `running` while output is recent, then `quiet 4m 12s` after
 60s of silence. Past five minutes of silence the elapsed column tints as a

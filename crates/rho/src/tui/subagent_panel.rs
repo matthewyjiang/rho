@@ -28,13 +28,7 @@ struct RunningSubagent {
 }
 
 /// How a subagent row is being pointed at.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) enum SubagentRowState {
-    #[default]
-    Idle,
-    Hovered,
-    Pressed,
-}
+pub(super) type SubagentRowState = activity::RailRowState;
 
 /// A clickable subagent row resolved from a pointer position.
 #[derive(Clone, Debug, PartialEq, Eq)]

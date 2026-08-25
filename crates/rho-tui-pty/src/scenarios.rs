@@ -87,7 +87,7 @@ use pickers::{
     EDIT_USER_AGENT_STEPS, OPENAI_AND_XAI_KEY_ENV, OPENAI_KEY_ENV, OPEN_AGENTS_PICKER_STEPS,
     OPEN_MODEL_PICKER_STEPS, OPEN_WORKFLOW_HUB_EMPTY_STEPS,
 };
-use process_rail::PROCESS_RAIL_SCENARIO;
+use process_rail::{PROCESS_RAIL_PEEK_SCENARIO, PROCESS_RAIL_SCENARIO};
 use resume_delete::RESUME_PICKER_DELETE_STEPS;
 use resume_scrollback::RESUME_SCROLLBACK_ID;
 use runtime_info::RUNTIME_INFO_STEPS;
@@ -786,6 +786,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     ATTACH_VIEW_PARENT_APPROVAL_SCENARIO,
     ATTACH_VIEW_QUIT_RESTORES_SCENARIO,
     PROCESS_RAIL_SCENARIO,
+    PROCESS_RAIL_PEEK_SCENARIO,
     Scenario::new(
         "tool_card_hover",
         "Lift tool-card text on hover and expand the card on click",

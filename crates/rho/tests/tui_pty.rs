@@ -793,6 +793,13 @@ fn process_rail_stays_visible_after_turn_ends() {
     assert_pass("process_rail");
 }
 
+// Covers: clicking a process rail row opens peek and q returns to the composer.
+// Owner: interactive TUI
+#[test]
+fn process_rail_click_opens_peek_and_q_returns() {
+    assert_pass("process_rail_peek");
+}
+
 #[test]
 fn text_selection_highlight_follows_drag_before_release() {
     assert_pass("text_selection_drag");

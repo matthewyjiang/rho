@@ -12,7 +12,9 @@ them up. Records do not survive a restart. The interactive TUI shows live
 jobs in the activity rail as command, freshness (`running`, or `quiet …`
 after 60s of silence), and elapsed time. It does not show the short process
 id. Finished jobs linger briefly with an exit verdict, longer on failure.
-That host view is not a `process` tool `list` action.
+Click a live or lingering row to open a read-only peek of captured stdout
+and stderr; it does not stop the job. That host view is not a `process`
+tool `list` action.
 
 ```mermaid
 flowchart TD

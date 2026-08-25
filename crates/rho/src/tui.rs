@@ -120,6 +120,7 @@ mod picker_overlay;
 mod picker_overlay_layout;
 mod picker_rows;
 mod process_panel;
+mod process_peek;
 mod prompt_history;
 mod prompt_turn;
 mod provider_actions;
@@ -479,6 +480,8 @@ struct App {
     statusline: StatusLine,
     subagent_panel: SubagentPanel,
     process_panel: ProcessPanel,
+    /// Live handle for host-only process peek. Updated each activity tick.
+    process_manager: Option<crate::tools::process::ProcessManager>,
     subagent_inbox: subagent_inbox::SubagentInbox,
     pending_subagent_questionnaire: Option<PendingSubagentQuestionnaire>,
     input_ui: InputUi,

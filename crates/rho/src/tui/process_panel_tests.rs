@@ -1,11 +1,11 @@
 use std::time::{Duration, Instant};
 
 use pretty_assertions::assert_eq;
-use ratatui::text::Line;
+use ratatui::{layout::Rect, text::Line};
 
 use super::{
-    command_identity, process_activity, process_trailing_style, ProcessPanel, QUIET_LABEL_AFTER,
-    QUIET_WARN_AFTER,
+    command_identity, process_activity, process_trailing_style, ProcessPanel, ProcessPeekTarget,
+    QUIET_LABEL_AFTER, QUIET_WARN_AFTER,
 };
 use crate::{
     tools::process::{LiveProcessSummary, State},
@@ -276,5 +276,67 @@ fn process_verdict_styles_paint_on_wide_rows() {
     assert_eq!(
         activity_span_style(line, "✓ exit 0"),
         Theme::activity_rail().patch(Theme::activity_rail_success())
+    );
+}
+
+// Covers: peek hits live and lingering rows, never the overflow summary or
+// a point outside the rail.
+// Owner: pure unit (process peek hit-test)
+#[test]
+fn peek_target_hits_rows_and_skips_summary_and_outside() {
+    let mut panel = ProcessPanel::default();
+    let now = Instant::now();
+    panel.ingest(
+        vec![
+            summary("live-1", "sleep 1", 3),
+            summary("live-2", "sleep 2", 2),
+            summary("live-3", "sleep 3", 1),
+        ],
+        now,
+    );
+    let area = Rect::new(2, 4, 80, 2);
+    assert_eq!(
+        panel.peek_target_at(area, 3, 4),
+        Some(ProcessPeekTarget {
+            process_id: "live-1".into(),
+        })
+    );
+    assert_eq!(panel.peek_target_at(area, 3, 5), None);
+    assert_eq!(panel.peek_target_at(area, 1, 4), None);
+    assert_eq!(panel.peek_target_at(Rect::new(2, 4, 80, 0), 3, 4), None);
+
+    let mut linger = ProcessPanel::default();
+    linger.ingest(
+        vec![LiveProcessSummary {
+            process_id: "done".into(),
+            command: "true".into(),
+            state: State::Exited,
+            elapsed_seconds: 3,
+            quiet_seconds: None,
+            exit_code: Some(0),
+        }],
+        now,
+    );
+    assert_eq!(
+        linger.peek_target_at(Rect::new(0, 0, 80, 1), 1, 0),
+        Some(ProcessPeekTarget {
+            process_id: "done".into(),
+        })
+    );
+}
+
+// Covers: hover trailing keeps elapsed and names the peek action.
+// Owner: pure layout
+#[test]
+fn hover_trailing_keeps_elapsed() {
+    let mut panel = ProcessPanel::default();
+    let now = Instant::now();
+    panel.ingest(vec![summary("live-1", "sleep 60", 4)], now);
+    panel.set_hovered(Some("live-1"));
+    let text = line_text(&panel.lines(80, 8, now)[0]);
+    assert!(text.contains("⏎ peek · 4s"));
+    assert_eq!(
+        panel.highlighted_row(),
+        Some((0, crate::tui::activity::RailRowState::Hovered))
     );
 }

@@ -35,6 +35,15 @@ pub(super) const AGENT_GLYPH: &str = "◉ ";
 /// Process-row identity prefix (glyph + space).
 pub(super) const PROCESS_GLYPH: &str = "⚙ ";
 
+/// How an activity-rail row is being pointed at.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum RailRowState {
+    #[default]
+    Idle,
+    Hovered,
+    Pressed,
+}
+
 /// Long enough to register the ✓ while reading; short enough not to squat rail
 /// rows. Must stay below process-manager `RAIL_TERMINAL_RETENTION` (10s) so the
 /// UI drops the row before the backend forgets it.

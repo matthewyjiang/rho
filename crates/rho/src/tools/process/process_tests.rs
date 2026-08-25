@@ -745,6 +745,35 @@ async fn aborted_stop_caller_does_not_cancel_request_or_cleanup() {
     );
 }
 
+// Covers: host peek must not mark a terminal process observed.
+// Owner: process manager host view
+#[tokio::test]
+async fn host_view_does_not_mark_terminal_observed() {
+    let manager = ProcessManager::new(ProcessLimits::default());
+    let started = manager
+        .start(SUCCESS_COMMAND.into(), std::path::Path::new("."), None)
+        .await
+        .unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let view = manager.host_view(&started.process_id).unwrap();
+        if terminal(view.snapshot.state) {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "process did not become terminal"
+        );
+        tokio::task::yield_now().await;
+    }
+    assert!(manager.has_pending_notification());
+    let view = manager.host_view(&started.process_id).unwrap();
+    pretty_assertions::assert_eq!(view.snapshot.state, State::Exited);
+    pretty_assertions::assert_eq!(view.snapshot.exit_code, Some(0));
+    pretty_assertions::assert_eq!(view.quiet_seconds, None);
+    assert!(manager.has_pending_notification());
+}
+
 // Covers: the host rail must see live jobs.
 // Owner: process manager
 #[tokio::test]

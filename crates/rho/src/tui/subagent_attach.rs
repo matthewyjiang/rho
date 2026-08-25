@@ -133,7 +133,9 @@ impl App {
             ExclusiveOccupant::Attach {
                 parent_turn_armed, ..
             } => *parent_turn_armed,
-            ExclusiveOccupant::Session | ExclusiveOccupant::Setup(_) => self.is_ui_busy(),
+            ExclusiveOccupant::Session
+            | ExclusiveOccupant::Setup(_)
+            | ExclusiveOccupant::Peek { .. } => self.is_ui_busy(),
         };
         self.exclusive = ExclusiveOccupant::Attach {
             view: Box::new(view),

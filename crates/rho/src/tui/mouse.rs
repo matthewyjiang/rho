@@ -28,7 +28,24 @@ impl App {
         self.screen_selection = None;
         self.input_ui.cancel_pointer_click_sequence();
     }
+}
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SessionRailPointer {
+    Subagent(super::subagent_panel::SubagentPointerTarget),
+    Process(super::process_panel::ProcessPeekTarget),
+}
+
+impl SessionRailPointer {
+    fn pointer_id(&self) -> &str {
+        match self {
+            Self::Subagent(target) => target.pointer_id(),
+            Self::Process(target) => target.process_id.as_str(),
+        }
+    }
+}
+
+impl App {
     fn mouse_history_view(&self, history_content: Rect, history_len: usize) -> (Rect, usize) {
         let (history_start, _) =
             self.visible_history_window(history_len, history_content.height as usize);
@@ -71,7 +88,7 @@ impl App {
                 }
                 self.screen_selection = None;
                 self.history.set_hovered_code_block_copy(None);
-                self.subagent_panel.clear_pointer_state();
+                self.clear_rail_pointer_state();
                 self.reveal_history_scrollbar(now);
                 self.history.set_scrollbar_drag(None);
                 self.scroll_history_lines(
@@ -100,7 +117,7 @@ impl App {
                 }
                 self.screen_selection = None;
                 self.history.set_hovered_code_block_copy(None);
-                self.subagent_panel.clear_pointer_state();
+                self.clear_rail_pointer_state();
                 self.reveal_history_scrollbar(now);
                 self.history.set_scrollbar_drag(None);
                 self.scroll_history_lines(
@@ -138,23 +155,19 @@ impl App {
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
                 self.history
                     .set_hovered_code_block_copy(code_target.as_ref().map(|target| target.line));
-                let subagent_target = matches!(self.input_ui.composer(), ComposerMode::Input)
-                    .then(|| {
-                        self.subagent_panel
-                            .attach_target_at(layout.subagents, column, row)
-                    })
-                    .flatten();
-                if let Some(target) = subagent_target {
+                let rail_target =
+                    self.session_rail_pointer(layout.subagents, layout.processes, column, row);
+                if let Some(target) = rail_target {
                     self.input_ui.clear_selection();
                     self.input_ui.cancel_pointer_click_sequence();
                     self.history.clear_text_selection();
                     self.history.set_scrollbar_drag(None);
-                    self.subagent_panel.set_pressed(Some(target.pointer_id()));
-                    self.subagent_panel.set_hovered(Some(target.pointer_id()));
+                    self.set_rail_pressed(Some(&target));
+                    self.set_rail_hover(Some(&target));
                 } else if let Some(scrollbar) = scrollbar {
                     self.input_ui.clear_selection();
                     self.input_ui.cancel_pointer_click_sequence();
-                    self.subagent_panel.clear_pointer_state();
+                    self.clear_rail_pointer_state();
                     self.history.clear_text_selection();
                     self.history.scroll_chrome_mut().begin_scrollbar_drag(
                         scrollbar,
@@ -168,20 +181,20 @@ impl App {
                 }) {
                     self.input_ui.clear_selection();
                     self.input_ui.cancel_pointer_click_sequence();
-                    self.subagent_panel.clear_pointer_state();
+                    self.clear_rail_pointer_state();
                     self.history.clear_text_selection();
                     self.history.set_scrollbar_drag(None);
                     self.scroll_history_to_bottom();
                 } else if let Some(target) = code_target {
                     self.input_ui.clear_selection();
                     self.input_ui.cancel_pointer_click_sequence();
-                    self.subagent_panel.clear_pointer_state();
+                    self.clear_rail_pointer_state();
                     self.history.clear_text_selection();
                     self.copy_text(&target.text, now);
                 } else if self.pointer_in_composer(&layout, column, row) {
                     // Composer owns the pointer: place the caret / start an
                     // editable selection instead of screen-copy drag.
-                    self.subagent_panel.clear_pointer_state();
+                    self.clear_rail_pointer_state();
                     self.history.clear_text_selection();
                     self.history.set_scrollbar_drag(None);
                     self.reset_input_history_navigation();
@@ -220,13 +233,13 @@ impl App {
                 {
                     self.input_ui.clear_selection();
                     self.input_ui.cancel_pointer_click_sequence();
-                    self.subagent_panel.clear_pointer_state();
+                    self.clear_rail_pointer_state();
                     self.history.set_scrollbar_drag(None);
                     *self.history.text_selection_mut() = Some(TextSelection::new(position));
                 } else {
                     self.input_ui.clear_selection();
                     self.input_ui.cancel_pointer_click_sequence();
-                    self.subagent_panel.clear_pointer_state();
+                    self.clear_rail_pointer_state();
                     self.history.clear_text_selection();
                     self.screen_selection =
                         selection_position_clamped(screen, 0, column, row).map(TextSelection::new);
@@ -244,7 +257,7 @@ impl App {
                     return Ok(());
                 }
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
-                self.subagent_panel.clear_pointer_state();
+                self.clear_rail_pointer_state();
                 if self.history.scrollbar_drag().is_some() {
                     self.history.clear_text_selection();
                     self.history.set_hovered_code_block_copy(None);
@@ -298,22 +311,22 @@ impl App {
                 ) {
                     return Ok(());
                 }
-                let pressed_subagent = self.subagent_panel.pressed_run_id().map(str::to_owned);
+                let pressed_rail_id = self
+                    .subagent_panel
+                    .pressed_run_id()
+                    .or_else(|| self.process_panel.pressed_process_id())
+                    .map(str::to_owned);
                 let was_scrollbar_drag = self.history.scrollbar_drag().is_some();
                 let composer_selecting = self.input_ui.selection_dragging();
                 self.history.set_scrollbar_drag(None);
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
-                let released_subagent = matches!(self.input_ui.composer(), ComposerMode::Input)
-                    .then(|| {
-                        self.subagent_panel
-                            .attach_target_at(layout.subagents, column, row)
-                    })
-                    .flatten();
+                let released_rail =
+                    self.session_rail_pointer(layout.subagents, layout.processes, column, row);
                 self.subagent_panel.set_pressed(None);
-                self.subagent_panel
-                    .set_hovered(released_subagent.as_ref().map(|target| target.pointer_id()));
-                let activate_subagent = released_subagent
-                    .filter(|target| pressed_subagent.as_deref() == Some(target.pointer_id()));
+                self.process_panel.set_pressed(None);
+                self.set_rail_hover(released_rail.as_ref());
+                let activate_rail = released_rail
+                    .filter(|target| pressed_rail_id.as_deref() == Some(target.pointer_id()));
                 let (history, history_start) =
                     self.mouse_history_view(layout.history_content, layout.history_len);
                 let hovered = self
@@ -326,15 +339,22 @@ impl App {
                     )
                     .map(|target| target.line);
                 self.history.set_hovered_code_block_copy(hovered);
-                if let Some(target) = activate_subagent {
+                if let Some(target) = activate_rail {
                     self.input_ui.clear_selection();
                     self.history.clear_text_selection();
                     match target {
-                        super::subagent_panel::SubagentPointerTarget::Run(target) => {
+                        SessionRailPointer::Subagent(
+                            super::subagent_panel::SubagentPointerTarget::Run(target),
+                        ) => {
                             self.activate_subagent_row(&target);
                         }
-                        super::subagent_panel::SubagentPointerTarget::OpenAttachPicker => {
+                        SessionRailPointer::Subagent(
+                            super::subagent_panel::SubagentPointerTarget::OpenAttachPicker,
+                        ) => {
                             let _ = self.execute_attach_command();
+                        }
+                        SessionRailPointer::Process(target) => {
+                            self.activate_process_row(&target);
                         }
                     }
                 } else if was_scrollbar_drag {
@@ -429,14 +449,9 @@ impl App {
                     )
                     .map(|target| target.line);
                 self.history.set_hovered_code_block_copy(hovered);
-                let subagent_hover = matches!(self.input_ui.composer(), ComposerMode::Input)
-                    .then(|| {
-                        self.subagent_panel
-                            .attach_target_at(layout.subagents, column, row)
-                            .map(|target| target.pointer_id().to_owned())
-                    })
-                    .flatten();
-                self.subagent_panel.set_hovered(subagent_hover.as_deref());
+                let rail_hover =
+                    self.session_rail_pointer(layout.subagents, layout.processes, column, row);
+                self.set_rail_hover(rail_hover.as_ref());
             }
             MouseEventKind::Down(MouseButton::Right)
             | MouseEventKind::Down(MouseButton::Middle)
@@ -450,6 +465,65 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    fn session_rail_pointer(
+        &self,
+        subagents: Rect,
+        processes: Rect,
+        column: u16,
+        row: u16,
+    ) -> Option<SessionRailPointer> {
+        if !matches!(self.input_ui.composer(), ComposerMode::Input) {
+            return None;
+        }
+        if let Some(target) = self.subagent_panel.attach_target_at(subagents, column, row) {
+            return Some(SessionRailPointer::Subagent(target));
+        }
+        self.process_panel
+            .peek_target_at(processes, column, row)
+            .map(SessionRailPointer::Process)
+    }
+
+    fn clear_rail_pointer_state(&mut self) {
+        self.subagent_panel.clear_pointer_state();
+        self.process_panel.clear_pointer_state();
+    }
+
+    fn set_rail_hover(&mut self, target: Option<&SessionRailPointer>) {
+        match target {
+            Some(SessionRailPointer::Subagent(target)) => {
+                self.subagent_panel.set_hovered(Some(target.pointer_id()));
+                self.process_panel.set_hovered(None);
+            }
+            Some(SessionRailPointer::Process(target)) => {
+                self.process_panel
+                    .set_hovered(Some(target.process_id.as_str()));
+                self.subagent_panel.set_hovered(None);
+            }
+            None => {
+                self.subagent_panel.set_hovered(None);
+                self.process_panel.set_hovered(None);
+            }
+        }
+    }
+
+    fn set_rail_pressed(&mut self, target: Option<&SessionRailPointer>) {
+        match target {
+            Some(SessionRailPointer::Subagent(target)) => {
+                self.subagent_panel.set_pressed(Some(target.pointer_id()));
+                self.process_panel.set_pressed(None);
+            }
+            Some(SessionRailPointer::Process(target)) => {
+                self.process_panel
+                    .set_pressed(Some(target.process_id.as_str()));
+                self.subagent_panel.set_pressed(None);
+            }
+            None => {
+                self.subagent_panel.set_pressed(None);
+                self.process_panel.set_pressed(None);
+            }
+        }
     }
 
     fn toggle_tool_output_at_history_line<B: Backend>(

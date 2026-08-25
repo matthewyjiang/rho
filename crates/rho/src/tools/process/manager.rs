@@ -399,6 +399,37 @@ impl ProcessManager {
         live.into_iter().map(|(_, _, summary)| summary).collect()
     }
 
+    /// Full retained output for the host peek view.
+    ///
+    /// Host UI only. Unlike [`Self::poll_bounded`], this does not wait, mark a
+    /// terminal process observed, or consume an agent-visible cursor.
+    pub(crate) fn host_view(&self, id: &str) -> Result<super::HostProcessView, String> {
+        let rec = self.get(id)?;
+        let snapshot = snapshot(&rec, 0);
+        let record = rec.lock().unwrap();
+        let (elapsed_seconds, quiet_seconds) = if terminal(record.state) {
+            let elapsed = record
+                .completed
+                .map(|completed| {
+                    completed
+                        .saturating_duration_since(record.started)
+                        .as_secs()
+                })
+                .unwrap_or_else(|| record.started.elapsed().as_secs());
+            (elapsed, None)
+        } else {
+            (
+                record.started.elapsed().as_secs(),
+                record.last_output_at.map(|at| at.elapsed().as_secs()),
+            )
+        };
+        Ok(super::HostProcessView {
+            snapshot,
+            elapsed_seconds,
+            quiet_seconds,
+        })
+    }
+
     fn get(&self, id: &str) -> Result<SharedRecord, String> {
         self.inner
             .lock()

@@ -238,6 +238,7 @@ impl App {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     self.clear_selections();
                     self.subagent_panel.clear_pointer_state();
+                    self.process_panel.clear_pointer_state();
                     self.handle_key(key, terminal, agent).await?;
                 }
                 Event::Paste(text) => {
@@ -265,6 +266,7 @@ impl App {
                     self.input_ui.cancel_pointer_click_sequence();
                     self.input_ui.finalize_selection();
                     self.subagent_panel.clear_pointer_state();
+                    self.process_panel.clear_pointer_state();
                 }
                 Event::Key(_) => {}
             },
@@ -410,6 +412,7 @@ impl App {
         self.clear_selections();
         self.history.set_hovered_code_block_copy(None);
         self.subagent_panel.clear_pointer_state();
+        self.process_panel.clear_pointer_state();
         self.hide_history_scrollbar();
         self.clamp_history_scroll_for_terminal(terminal)
     }
@@ -427,7 +430,9 @@ impl App {
             self.refresh_attach_picker();
         }
         changed |= panel_changed;
+        self.process_manager = agent.processes().cloned();
         changed |= self.process_panel.update(agent.processes(), now);
+        changed |= self.refresh_process_peek(agent.processes());
         // Fold terminal subagent/advisor costs on every panel refresh path (idle
         // poll, in-turn wait, goal wait). Claiming is idempotent per run/call.
         changed |= self.claim_non_main_costs(agent);

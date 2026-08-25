@@ -545,12 +545,12 @@ impl Theme {
         Self::activity_rail().fg(Palette::current().dim)
     }
 
-    pub(super) fn subagent_row(state: super::subagent_panel::SubagentRowState) -> Style {
-        use super::subagent_panel::SubagentRowState;
+    pub(super) fn activity_rail_row(state: super::activity::RailRowState) -> Style {
+        use super::activity::RailRowState;
         match state {
-            SubagentRowState::Idle => Self::activity_rail(),
-            SubagentRowState::Hovered => Self::activity_rail().fg(Palette::current().accent),
-            SubagentRowState::Pressed => {
+            RailRowState::Idle => Self::activity_rail(),
+            RailRowState::Hovered => Self::activity_rail().fg(Palette::current().accent),
+            RailRowState::Pressed => {
                 let accent = Palette::current().accent;
                 Style::default()
                     .fg(Self::contrasting_ink_on(accent))
@@ -558,6 +558,10 @@ impl Theme {
                     .add_modifier(Modifier::BOLD)
             }
         }
+    }
+
+    pub(super) fn subagent_row(state: super::subagent_panel::SubagentRowState) -> Style {
+        Self::activity_rail_row(state)
     }
 
     pub(super) fn success() -> Style {
