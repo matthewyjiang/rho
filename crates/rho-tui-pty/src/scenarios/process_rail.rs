@@ -17,7 +17,7 @@ pub(super) const PROCESS_RAIL_STEPS: &[Step] = &[
     },
     Step::Phase("rail_survives_turn_end"),
     Step::WaitText {
-        text: "└ sleep 60",
+        text: "└ ⚙ sleep 60",
         timeout: STREAM,
     },
     Step::ExitCommand,

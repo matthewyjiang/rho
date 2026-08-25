@@ -519,6 +519,18 @@ impl Theme {
             .bg(background.color)
     }
 
+    pub(super) fn activity_rail_success() -> Style {
+        Self::activity_rail().fg(Palette::current().success)
+    }
+
+    pub(super) fn activity_rail_error() -> Style {
+        Self::activity_rail().fg(Palette::current().error)
+    }
+
+    pub(super) fn activity_rail_warning() -> Style {
+        Self::activity_rail().fg(Palette::current().warning)
+    }
+
     pub(super) fn jump_to_bottom() -> Style {
         Self::activity_rail().fg(Palette::current().accent)
     }

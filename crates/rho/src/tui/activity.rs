@@ -30,12 +30,27 @@ pub(super) const MAX_VISIBLE_RAIL_ROWS: usize = 2;
 /// Content width clamp shared by stacked activity-rail rows.
 const MAX_RAIL_CONTENT_WIDTH: usize = 52;
 
+/// Agent-row identity prefix (glyph + space).
+pub(super) const AGENT_GLYPH: &str = "◉ ";
+/// Process-row identity prefix (glyph + space).
+pub(super) const PROCESS_GLYPH: &str = "⚙ ";
+
+/// Long enough to register the ✓ while reading; short enough not to squat rail
+/// rows. Must stay below process-manager `RAIL_TERMINAL_RETENTION` (10s) so the
+/// UI drops the row before the backend forgets it.
+pub(super) const LINGER_OK: Duration = Duration::from_secs(2);
+/// A failure verdict is the one thing the rail must not let you miss. Must stay
+/// below process-manager `RAIL_TERMINAL_RETENTION` (10s).
+pub(super) const LINGER_FAIL: Duration = Duration::from_secs(5);
+
 /// One stacked activity-rail row. Identity styling stays at the call site.
 pub(super) struct RailRow {
     pub(super) connector: &'static str,
     pub(super) identity: Vec<Span<'static>>,
     pub(super) activity: String,
+    pub(super) activity_style: Style,
     pub(super) trailing: String,
+    pub(super) trailing_style: Style,
     pub(super) row_style: Style,
 }
 
@@ -58,6 +73,14 @@ impl RailRow {
         let trailing_width = display_width(&self.trailing);
         let fixed_width = identity_width + separator_width + MIN_GAP + trailing_width;
         let row_style = self.row_style;
+
+        if self.activity.is_empty() && self.trailing.is_empty() {
+            let identity = truncate_one_line(&identity_plain, content_width);
+            return Line::from(vec![
+                Span::styled(self.connector, Theme::dim().patch(row_style)),
+                Span::styled(identity, self.identity_style().patch(row_style)),
+            ]);
+        }
 
         if fixed_width >= content_width {
             let detail = truncate_one_line(
@@ -82,11 +105,71 @@ impl RailRow {
         spans.push(Span::styled(self.connector, Theme::dim().patch(row_style)));
         spans.extend(self.identity);
         spans.push(Span::styled(SEPARATOR, Theme::dim().patch(row_style)));
-        spans.push(Span::styled(activity, Theme::text().patch(row_style)));
+        spans.push(Span::styled(activity, row_style.patch(self.activity_style)));
         spans.push(Span::styled(gap, row_style));
-        spans.push(Span::styled(self.trailing, Theme::dim().patch(row_style)));
+        spans.push(Span::styled(
+            self.trailing,
+            row_style.patch(self.trailing_style),
+        ));
         Line::from(spans)
     }
+
+    fn identity_style(&self) -> Style {
+        self.identity
+            .first()
+            .map(|span| span.style)
+            .unwrap_or_else(Theme::dim)
+    }
+}
+
+/// Hidden-row copy for a per-panel overflow summary.
+pub(super) fn overflow_label(hidden: usize, singular: &str, plural: &str) -> String {
+    if hidden == 1 {
+        format!("1 more {singular}")
+    } else {
+        format!("{hidden} more {plural}")
+    }
+}
+
+/// Indices to paint when a panel has more rows than `height` / the shared cap.
+///
+/// Live rows win over lingering rows. Lingering failures win over lingering
+/// successes. Original order is preserved among the rows that remain. When
+/// anything is hidden, the last visible slot is reserved for a summary.
+pub(super) fn select_capped_rail_rows<T>(
+    rows: &[T],
+    height: usize,
+    is_live: impl Fn(&T) -> bool,
+    is_failure: impl Fn(&T) -> bool,
+) -> (Vec<usize>, Option<usize>) {
+    let cap = MAX_VISIBLE_RAIL_ROWS.min(height);
+    if cap == 0 || rows.is_empty() {
+        return (Vec::new(), None);
+    }
+    if rows.len() <= cap {
+        return ((0..rows.len()).collect(), None);
+    }
+    let content_slots = cap.saturating_sub(1);
+    let mut order: Vec<usize> = (0..rows.len()).collect();
+    order.sort_by_key(|&index| {
+        let rank = if is_live(&rows[index]) {
+            0_u8
+        } else if is_failure(&rows[index]) {
+            1
+        } else {
+            2
+        };
+        (rank, index)
+    });
+    order.truncate(content_slots);
+    order.sort_unstable();
+    let hidden = rows.len() - order.len();
+    (order, Some(hidden))
+}
+
+/// Whether a terminal rail row should still occupy a slot.
+pub(super) fn linger_active(first_seen: Instant, now: Instant, linger: Duration) -> bool {
+    now.saturating_duration_since(first_seen) < linger
 }
 
 /// Transcript rows reserved under the history panel while bottom-following with
@@ -280,13 +363,15 @@ fn activity_status_labels(status: ActivityStatus) -> Vec<String> {
                     format!("{spinner} {subagent_count}"),
                     spinner.into(),
                 ]
-            } else {
+            } else if job_count > 0 {
                 vec![
                     format!("{spinner} {jobs} running"),
                     format!("{spinner} {jobs}"),
                     format!("{spinner} {job_count}"),
                     spinner.into(),
                 ]
+            } else {
+                vec![spinner.into()]
             }
         }
     }

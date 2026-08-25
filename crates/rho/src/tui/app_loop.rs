@@ -390,6 +390,14 @@ impl App {
             self.subagent_panel.count(),
             self.process_panel.live_count(),
         )
+        .or_else(|| {
+            (self.subagent_panel.is_active() || self.process_panel.is_active()).then_some(
+                ActivityStatus::Background {
+                    subagent_count: 0,
+                    job_count: 0,
+                },
+            )
+        })
     }
 
     pub(super) fn apply_terminal_resize(
@@ -413,12 +421,13 @@ impl App {
         // Tick the occupant first so a journal read error cannot leave panel
         // costs half-applied.
         let mut changed = self.refresh_exclusive_screen()?;
-        let panel_changed = self.subagent_panel.update(agent.subagents());
+        let now = Instant::now();
+        let panel_changed = self.subagent_panel.update(agent.subagents(), now);
         if panel_changed {
             self.refresh_attach_picker();
         }
         changed |= panel_changed;
-        changed |= self.process_panel.update(agent.processes());
+        changed |= self.process_panel.update(agent.processes(), now);
         // Fold terminal subagent/advisor costs on every panel refresh path (idle
         // poll, in-turn wait, goal wait). Claiming is idempotent per run/call.
         changed |= self.claim_non_main_costs(agent);

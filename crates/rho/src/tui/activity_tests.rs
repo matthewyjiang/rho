@@ -17,7 +17,9 @@ fn rail_row_columns_identity_activity_and_trailing() {
             Span::styled("aaaaaaaa", Theme::dim().patch(row_style)),
         ],
         activity: "running".into(),
+        activity_style: Theme::text(),
         trailing: "4s".into(),
+        trailing_style: Theme::dim(),
         row_style,
     }
     .into_line(80);
@@ -49,7 +51,9 @@ fn rail_row_truncates_when_fixed_width_overflows() {
             Theme::text_strong().patch(row_style),
         )],
         activity: "running".into(),
+        activity_style: Theme::text(),
         trailing: "12s".into(),
+        trailing_style: Theme::dim(),
         row_style,
     }
     .into_line(18);
@@ -345,4 +349,71 @@ fn activity_status_labels_compress_background_counts() {
     for (status, expected) in cases {
         assert_eq!(activity_status_labels(status), expected);
     }
+}
+
+// Covers: rail overflow keeps live rows, then lingering failures, in original order.
+// Owner: pure unit (rail row selection)
+#[test]
+fn select_capped_rail_rows_prioritizes_live_then_failures() {
+    #[derive(Debug, PartialEq, Eq)]
+    struct Row {
+        id: &'static str,
+        live: bool,
+        fail: bool,
+    }
+    let rows = [
+        Row {
+            id: "ok-linger",
+            live: false,
+            fail: false,
+        },
+        Row {
+            id: "live-a",
+            live: true,
+            fail: false,
+        },
+        Row {
+            id: "fail-linger",
+            live: false,
+            fail: true,
+        },
+        Row {
+            id: "live-b",
+            live: true,
+            fail: false,
+        },
+    ];
+    let (indices, hidden) = select_capped_rail_rows(&rows, 8, |row| row.live, |row| row.fail);
+    assert_eq!(indices, [1]);
+    assert_eq!(hidden, Some(3));
+    assert_eq!(rows[indices[0]].id, "live-a");
+
+    let lingering = [
+        Row {
+            id: "ok",
+            live: false,
+            fail: false,
+        },
+        Row {
+            id: "fail",
+            live: false,
+            fail: true,
+        },
+        Row {
+            id: "ok-2",
+            live: false,
+            fail: false,
+        },
+    ];
+    let (indices, hidden) = select_capped_rail_rows(&lingering, 8, |row| row.live, |row| row.fail);
+    assert_eq!(indices, [1]);
+    assert_eq!(hidden, Some(2));
+}
+
+// Covers: overflow copy is singular for one hidden row and plural otherwise.
+// Owner: pure unit (overflow copy)
+#[test]
+fn overflow_label_singular_and_plural() {
+    assert_eq!(overflow_label(1, "agent", "agents"), "1 more agent");
+    assert_eq!(overflow_label(2, "job", "jobs"), "2 more jobs");
 }

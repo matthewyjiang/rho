@@ -279,6 +279,7 @@ impl App {
                     layout.subagents.height as usize,
                     super::subagent_attach::ACTION_HINT,
                     /*continues_below*/ layout.processes.height > 0,
+                    now,
                 ))
                 .style(Theme::activity_rail()),
                 layout.subagents,
@@ -292,7 +293,7 @@ impl App {
                 }
             }
         }
-        self.render_process_rail(frame, layout.processes, width);
+        self.render_process_rail(frame, layout.processes, width, now);
         if layout.top_divider.height > 0 {
             frame.render_widget(
                 Paragraph::new(vec![self.divider_line(width, ComposerDividerSlot::Top)])
@@ -498,11 +499,12 @@ impl App {
                 layout.subagents.height as usize,
                 super::subagent_attach::ACTION_HINT,
                 /*continues_below*/ layout.processes.height > 0,
+                now,
             ));
         }
         lines.extend(
             self.process_panel
-                .lines(width, layout.processes.height as usize),
+                .lines(width, layout.processes.height as usize, now),
         );
         if layout.top_divider.height > 0 {
             lines.push(self.divider_line(width, ComposerDividerSlot::Top));

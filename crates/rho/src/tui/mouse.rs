@@ -149,8 +149,8 @@ impl App {
                     self.input_ui.cancel_pointer_click_sequence();
                     self.history.clear_text_selection();
                     self.history.set_scrollbar_drag(None);
-                    self.subagent_panel.set_pressed(Some(&target.run_id));
-                    self.subagent_panel.set_hovered(Some(&target.run_id));
+                    self.subagent_panel.set_pressed(Some(target.pointer_id()));
+                    self.subagent_panel.set_hovered(Some(target.pointer_id()));
                 } else if let Some(scrollbar) = scrollbar {
                     self.input_ui.clear_selection();
                     self.input_ui.cancel_pointer_click_sequence();
@@ -310,13 +310,10 @@ impl App {
                     })
                     .flatten();
                 self.subagent_panel.set_pressed(None);
-                self.subagent_panel.set_hovered(
-                    released_subagent
-                        .as_ref()
-                        .map(|target| target.run_id.as_str()),
-                );
+                self.subagent_panel
+                    .set_hovered(released_subagent.as_ref().map(|target| target.pointer_id()));
                 let activate_subagent = released_subagent
-                    .filter(|target| pressed_subagent.as_deref() == Some(target.run_id.as_str()));
+                    .filter(|target| pressed_subagent.as_deref() == Some(target.pointer_id()));
                 let (history, history_start) =
                     self.mouse_history_view(layout.history_content, layout.history_len);
                 let hovered = self
@@ -332,7 +329,14 @@ impl App {
                 if let Some(target) = activate_subagent {
                     self.input_ui.clear_selection();
                     self.history.clear_text_selection();
-                    self.activate_subagent_row(&target);
+                    match target {
+                        super::subagent_panel::SubagentPointerTarget::Run(target) => {
+                            self.activate_subagent_row(&target);
+                        }
+                        super::subagent_panel::SubagentPointerTarget::OpenAttachPicker => {
+                            let _ = self.execute_attach_command();
+                        }
+                    }
                 } else if was_scrollbar_drag {
                     self.input_ui.clear_selection();
                     self.history.clear_text_selection();
@@ -429,7 +433,7 @@ impl App {
                     .then(|| {
                         self.subagent_panel
                             .attach_target_at(layout.subagents, column, row)
-                            .map(|target| target.run_id)
+                            .map(|target| target.pointer_id().to_owned())
                     })
                     .flatten();
                 self.subagent_panel.set_hovered(subagent_hover.as_deref());
