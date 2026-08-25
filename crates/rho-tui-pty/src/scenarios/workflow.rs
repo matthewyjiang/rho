@@ -81,7 +81,7 @@ fn run_to_completion(
         harness.inject_key(&Key::Char('k'))?;
         harness.wait_for_text("agent reviewer", UPDATE)?;
         // Owner plan gate: footer shows start; header is ready.
-        harness.wait_for_text("enter start", STARTUP)?;
+        harness.wait_for_text("Enter start", STARTUP)?;
         harness.wait_for_text("matrix workflow", STARTUP)?;
         harness.assert_raw_contains(b"\x1b[?1049h")?;
         harness.inject_key(&Key::Enter)?;
@@ -119,7 +119,7 @@ fn cancel_then_resume(
     let run_plan = workflow_plan(runner, home, &["workflow", "run", PLAN_ID]);
     let mut first = spawn(runner, &run_plan, "workflow_cancel")?;
     let first_result = (|| -> Result<()> {
-        first.wait_for_text("enter start", STARTUP)?;
+        first.wait_for_text("Enter start", STARTUP)?;
         first.inject_key(&Key::Enter)?;
         // Confirm puts the run in a live, cancellable state. As in
         // run_to_completion, avoid racing the transient `running · try N`
@@ -141,7 +141,7 @@ fn cancel_then_resume(
     let resume_plan = workflow_plan(runner, home, &["workflow", "resume", RUN_ID]);
     let mut resumed = spawn(runner, &resume_plan, "workflow_resume")?;
     let resume_result = (|| -> Result<()> {
-        resumed.wait_for_text("enter continue", STARTUP)?;
+        resumed.wait_for_text("Enter continue", STARTUP)?;
         // Completed inspect is preserved on the resume matrix path.
         resumed.wait_for_text("Inspect workspace", UPDATE)?;
         resumed.inject_key(&Key::Enter)?;

@@ -469,7 +469,7 @@ impl App {
             Some(session) => session,
             None => {
                 self.insert_entry(&Entry::Error(
-                    "Terminal session is unavailable for workflow watch.".into(),
+                    "terminal session is unavailable for workflow watch".into(),
                 ));
                 self.set_status("watch failed");
                 return Ok(());
@@ -488,7 +488,7 @@ impl App {
             )));
             if let Err(operation_error) = suspended.operation_result {
                 self.insert_entry(&Entry::Error(format!(
-                    "Watch also failed: {operation_error:#}"
+                    "could not watch workflow: {operation_error:#}"
                 )));
             }
             self.set_status("watch handoff failed");
@@ -498,12 +498,14 @@ impl App {
         match suspended.operation_result {
             Ok(()) => {
                 self.set_status(format!(
-                    "Left watch for run {}.",
+                    "left watch for run {}",
                     short_id(&run_id.to_string())
                 ));
             }
             Err(error) => {
-                self.insert_entry(&Entry::Error(format!("Workflow watch failed: {error:#}")));
+                self.insert_entry(&Entry::Error(format!(
+                    "could not watch workflow: {error:#}"
+                )));
                 self.set_status("watch failed");
             }
         }
@@ -673,13 +675,13 @@ impl App {
                 );
                 if let Err(error) = agent.append_user_context_with_display(model, display.clone()) {
                     self.insert_entry(&Entry::Error(format!(
-                        "Workflow started, but could not add run id to context: {error:#}"
+                        "workflow started, but could not add run id to context: {error:#}"
                     )));
                 } else {
                     self.insert_entry(&Entry::Notice(display));
                 }
                 self.set_status(format!(
-                    "Workflow run {} is running in the background.",
+                    "workflow run {} is running in the background",
                     short_id(&run_id.to_string())
                 ));
             }

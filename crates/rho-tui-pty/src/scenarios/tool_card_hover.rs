@@ -66,7 +66,7 @@ fn row_containing(harness: &mut PtyHarness, needle: &str) -> Result<u16> {
 }
 
 fn prompt_row(harness: &mut PtyHarness) -> Result<u16> {
-    row_containing(harness, "more lines, ctrl+o to expand")
+    row_containing(harness, "more lines, Ctrl+O to expand")
 }
 
 // Covers: hovering a collapsed tool card lifts its text ink on pointer entry
@@ -131,7 +131,7 @@ fn assert_hover_lift_and_click_expand(harness: &mut PtyHarness) -> Result<()> {
     harness.poll(Duration::from_millis(100));
     harness.mouse(MouseButton::Left, column, sgr_row, false)?;
     harness.wait_for_text(
-        "ctrl+o to collapse",
+        "Ctrl+O to collapse",
         WaitTimeout::secs(2, "click expanded the tool card"),
     )?;
 
@@ -141,7 +141,7 @@ fn assert_hover_lift_and_click_expand(harness: &mut PtyHarness) -> Result<()> {
     // the lifted look while the pointer still rests on the card, then require
     // the away-move to change it; if the click had dropped the lift, there
     // would be nothing left to change.
-    let prompt_row_after_click = row_containing(harness, "ctrl+o to collapse")?;
+    let prompt_row_after_click = row_containing(harness, "Ctrl+O to collapse")?;
     let lifted = row_look(harness, prompt_row_after_click);
     let lifted_first = lifted
         .first()
@@ -167,7 +167,7 @@ pub(super) const TOOL_CARD_HOVER_STEPS: &[Step] = &[
     Step::Phase("hover_lift_and_click_expand"),
     Step::SubmitText("fixture hover tool"),
     Step::WaitText {
-        text: "more lines, ctrl+o to expand",
+        text: "more lines, Ctrl+O to expand",
         timeout: STREAM,
     },
     Step::WaitText {

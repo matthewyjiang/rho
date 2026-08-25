@@ -18,16 +18,16 @@ pub(super) fn help_picker(keybindings: &Keybindings) -> UiPicker {
 }
 
 fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
-    let reset = keybindings.reset_conversation.to_string();
-    let editor = keybindings.open_editor.to_string();
-    let jump = keybindings.jump_to_bottom.to_string();
-    let toggle_tools = keybindings.toggle_tool_output.to_string();
-    let newline = keybindings.insert_newline.to_string();
-    let paste_image = keybindings.paste_image.to_string();
-    let edit_pending = keybindings.edit_pending_input.to_string();
-    let manage_pending = keybindings.manage_pending_input.to_string();
-    let cycle_pinned = keybindings.cycle_pinned_model.to_string();
-    let cycle_pinned_back = keybindings.cycle_pinned_model_back.to_string();
+    let reset = keybindings.reset_conversation.chrome_label();
+    let editor = keybindings.open_editor.chrome_label();
+    let jump = keybindings.jump_to_bottom.chrome_label();
+    let toggle_tools = keybindings.toggle_tool_output.chrome_label();
+    let newline = keybindings.insert_newline.chrome_label();
+    let paste_image = keybindings.paste_image.chrome_label();
+    let edit_pending = keybindings.edit_pending_input.chrome_label();
+    let manage_pending = keybindings.manage_pending_input.chrome_label();
+    let cycle_pinned = keybindings.cycle_pinned_model.chrome_label();
+    let cycle_pinned_back = keybindings.cycle_pinned_model_back.chrome_label();
 
     vec![
         entry(
