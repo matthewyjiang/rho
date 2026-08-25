@@ -1,6 +1,6 @@
 use crate::tui::syntax::BlockHighlighter;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::tui) struct CodeFence {
     pub(super) marker: char,
     pub(super) length: usize,
@@ -15,12 +15,12 @@ pub(super) struct MermaidOpeningFence {
 /// continuation lines (including multi-line strings/comments) correctly.
 #[derive(Clone, Default)]
 pub(in crate::tui) struct CodeFenceState {
-    pub(super) active: Option<CodeFence>,
+    pub(in crate::tui) active: Option<CodeFence>,
     /// Lowercased first info-string token from the opening fence, when present.
-    pub(super) language: Option<String>,
+    pub(in crate::tui) language: Option<String>,
     /// Highlighter advanced through committed body lines of the open fence.
     /// Cloned into live-preview renders; taken/restored by full renders.
-    pub(super) highlighter: Option<BlockHighlighter>,
+    pub(in crate::tui) highlighter: Option<BlockHighlighter>,
 }
 
 impl CodeFenceState {

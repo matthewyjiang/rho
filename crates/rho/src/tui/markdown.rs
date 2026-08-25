@@ -16,11 +16,11 @@ mod txm;
 #[cfg(test)]
 pub(crate) use mermaid::PHASE_CHAIN_FLOWCHART;
 
+use code_fence::mermaid_opening_fence;
 pub(in crate::tui) use code_fence::{
     is_closing_fence, opening_fence_info_token, parse_opening_fence, update_code_block_state,
-    CodeFenceState,
+    CodeFence, CodeFenceState,
 };
-use code_fence::{mermaid_opening_fence, CodeFence};
 
 use super::markdown_image::standalone_markdown_image;
 use super::syntax::BlockHighlighter;
@@ -30,6 +30,10 @@ use panel::ClosedPanel;
 pub(in crate::tui) use heading::HeadingLevel;
 use heading::{heading_stream_state, parse_atx_heading, HeadingStreamState};
 pub(super) use stream::{incremental_markdown_tail_start, markdown_stream_bounds};
+pub(in crate::tui) use table::{
+    render_streaming_table, render_streaming_table_data_row, streaming_table,
+    streaming_table_bottom_border, StreamingTable,
+};
 
 #[cfg(test)]
 #[path = "markdown/table_tests.rs"]
@@ -432,7 +436,7 @@ fn code_block_copy_label(width: usize) -> Option<&'static str> {
     }
 }
 
-fn code_block_copy_columns(width: usize) -> Option<std::ops::Range<usize>> {
+pub(in crate::tui) fn code_block_copy_columns(width: usize) -> Option<std::ops::Range<usize>> {
     let label_width = display_width(code_block_copy_label(width)?);
     let start = width.saturating_sub(label_width + 1);
     Some(start..start + label_width)

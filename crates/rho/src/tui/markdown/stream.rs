@@ -89,9 +89,12 @@ pub(in crate::tui) fn markdown_stream_bounds(
         return MarkdownStreamBounds { drain, preview_end };
     }
 
-    if let Some(wrapped) =
-        stable_wrap_drain_prefix(stable_line, &rendered_line[..complete.byte_index], complete)
-    {
+    if let Some(wrapped) = stable_wrap_drain_prefix(
+        stable_line,
+        &rendered_line,
+        &rendered_line[..complete.byte_index],
+        complete,
+    ) {
         drain.byte_index = current_line_start + wrapped.byte_index;
         drain.ends_with_wrap = wrapped.ends_with_wrap;
     }
@@ -101,6 +104,61 @@ pub(in crate::tui) fn markdown_stream_bounds(
 
 /// Map a rendered soft-wrap cut back onto the stable source prefix.
 fn stable_wrap_drain_prefix(
+    stable_line: &str,
+    rendered_line: &str,
+    rendered_prefix: &str,
+    complete: CompleteStreamPrefix,
+) -> Option<CompleteStreamPrefix> {
+    if rendered_prefix.is_empty() {
+        return None;
+    }
+    // Literal line: source and render are the same string, so the wrap cut
+    // is already a source index.
+    if stable_line == rendered_line {
+        let byte_index = rendered_prefix.len();
+        if stable_line.is_char_boundary(byte_index)
+            && !starts_with_code_fence_fragment(&stable_line[..byte_index])
+        {
+            return Some(CompleteStreamPrefix {
+                byte_index,
+                ends_with_wrap: complete.ends_with_wrap,
+            });
+        }
+    }
+
+    // Last-match scan: a later fuzzy hit wins over an earlier exact wrap.
+    // The last non-whitespace prefix is that last fuzzy candidate. One
+    // render of it replaces scanning every char on a long marked line.
+    let cut = stable_line.trim_end();
+    if !cut.is_empty() && cut.len() != rendered_line.len() && !starts_with_code_fence_fragment(cut)
+    {
+        let cut_rendered;
+        let cut_rendered = if cut.len() == stable_line.len() {
+            rendered_line
+        } else {
+            cut_rendered = markdown_inline_text(cut);
+            &cut_rendered
+        };
+        if cut.len() != cut_rendered.len() && cut_rendered.starts_with(rendered_prefix) {
+            return Some(CompleteStreamPrefix {
+                byte_index: cut.len(),
+                ends_with_wrap: false,
+            });
+        }
+        if cut_rendered == rendered_prefix {
+            return Some(CompleteStreamPrefix {
+                byte_index: cut.len(),
+                ends_with_wrap: complete.ends_with_wrap,
+            });
+        }
+    }
+
+    scan_stable_wrap_drain_prefix(stable_line, rendered_prefix, complete)
+}
+
+/// Fallback last-match scan. Used when the line ends in whitespace so an
+/// earlier exact wrap (the space that completed a visual row) can still win.
+fn scan_stable_wrap_drain_prefix(
     stable_line: &str,
     rendered_prefix: &str,
     complete: CompleteStreamPrefix,

@@ -36,6 +36,10 @@ pub(super) fn final_answer_delta<'a>(emitted_text: &str, answer: &'a str) -> Fin
     }
 }
 
+fn markdown_image_suffix_may_have_changed(full: &str, added: &str) -> bool {
+    added.contains("![") || (added.contains(']') && full.contains("!["))
+}
+
 fn should_finish_streams_before_recording(event: &ViewModelEvent) -> bool {
     match event {
         ViewModelEvent::StepStarted(_)
@@ -387,19 +391,33 @@ impl App {
                 } else {
                     self.history.len()
                 };
-                match self.history.last_mut() {
+                let appended = matches!(
+                    self.history.last(),
                     Some(Entry::Assistant(previous))
-                        if previous.worked_for.is_none() && assistant.worked_for.is_none() =>
-                    {
-                        previous.push_str(&assistant.text);
-                        self.history.lines_mut().entry_appended(index);
+                        if previous.worked_for.is_none() && assistant.worked_for.is_none()
+                );
+                if appended {
+                    let added = assistant.text.clone();
+                    if let Some(Entry::Assistant(previous)) = self.history.last_mut() {
+                        previous.push_str(&added);
                     }
-                    _ => {
-                        self.history.lines_mut().invalidate_from(index);
-                        self.history.push(Entry::Assistant(assistant));
+                    self.history.lines_mut().entry_appended(index);
+                    let full = self
+                        .history
+                        .last()
+                        .and_then(|entry| match entry {
+                            Entry::Assistant(previous) => Some(previous.text.as_str()),
+                            _ => None,
+                        })
+                        .unwrap_or_default();
+                    if markdown_image_suffix_may_have_changed(full, &added) {
+                        self.mark_markdown_images_dirty_from(index);
                     }
+                } else {
+                    self.history.lines_mut().invalidate_from(index);
+                    self.history.push(Entry::Assistant(assistant));
+                    self.mark_markdown_images_dirty_from(index);
                 }
-                self.mark_markdown_images_dirty_from(index);
             }
             Entry::Reasoning(reasoning) => match self.history.last_mut() {
                 Some(Entry::Reasoning(previous)) if previous.thought_for.is_none() => {
