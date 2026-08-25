@@ -16,6 +16,7 @@ fn identity() -> ClaudeRunIdentity {
         agent_id: "planner".into(),
         agent_fingerprint: "fp".into(),
         model: Some("opus".into()),
+        reasoning: None,
     }
 }
 

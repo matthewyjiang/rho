@@ -10,7 +10,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::agent::AgentRuntime;
+use crate::agent::{AgentRuntime, ReasoningLevel};
 
 mod storage;
 pub(crate) use storage::{
@@ -75,6 +75,10 @@ pub struct RunStatus {
     pub provider: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Reasoning this launch bound. Absent on older result files and on Claude
+    /// runs that inherit Claude's default effort.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<ReasoningLevel>,
     /// Backend that executes this run (`rho` or `claude-cli`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<AgentRuntime>,

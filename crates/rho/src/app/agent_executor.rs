@@ -402,7 +402,6 @@ impl AgentExecutor {
             hook_host_labels,
         } = request;
 
-        let labels = bound.runtime().artifact_labels();
         let capacity_class = bound.runtime().capacity_class();
         let CapacityMessagingPorts {
             messaging,
@@ -410,17 +409,8 @@ impl AgentExecutor {
             claude_parent_rx,
         } = MessagingSupport::for_capacity(capacity_class);
 
-        let initial = RunStatus {
-            state: RunState::Starting,
-            agent_id: Some(bound.id().to_string()),
-            agent_fingerprint: Some(bound.fingerprint().to_string()),
-            provider: Some(labels.provider.clone()),
-            model: labels.model.clone(),
-            runtime: Some(labels.runtime),
-            started_at: Some(subagent::unix_now_secs()),
-            parent_session_id: parent_session_id.as_ref().map(ToString::to_string),
-            ..RunStatus::default()
-        };
+        let mut initial = bound.artifact_identity().starting_status();
+        initial.parent_session_id = parent_session_id.as_ref().map(ToString::to_string);
         // Executor owns the Starting boundary; sinks continue_from it.
         // Write Starting here so the handle can observe status before the task runs.
         subagent::initialize_status(&output_file, &initial)?;

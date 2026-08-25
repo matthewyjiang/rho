@@ -266,7 +266,7 @@ fn resolve_agent(
             inherit_claude_config,
             permission_mode,
             max_turns,
-            effort,
+            reasoning,
         } => {
             let (executable, executable_identity) = host.resolve_executable("claude")?;
             let permission_mode = crate::claude_runtime::spawn::map_permission_mode(
@@ -283,14 +283,14 @@ fn resolve_agent(
                     permission_mode,
                     cwd: host.workspace().to_path_buf(),
                     max_turns: *max_turns,
-                    effort: *effort,
+                    effort: reasoning.and_then(crate::claude_runtime::spawn::claude_effort_flag),
                     session_persistence: crate::claude_runtime::spawn::SessionPersistence::Keep,
                     input_format: crate::claude_runtime::spawn::ClaudeInputFormat::StreamJson,
                 },
             );
             ResolvedAgent {
                 model: model.clone(),
-                reasoning: effort.map(str::to_owned),
+                reasoning: reasoning.map(|level| level.to_string()),
                 step_limit: *max_turns,
                 capabilities: tools.iter().cloned().collect(),
                 executable: Some(crate::paths::display(&executable)),

@@ -72,7 +72,7 @@ pub(super) fn footer_line(chrome: AttachChrome, width: usize) -> Line<'static> {
     Line::styled(truncate_one_line(&text, width), Theme::dim())
 }
 
-/// Middle header row: model, runtime, turn, elapsed, optional Claude session, cost.
+/// Middle header row: model, reasoning, runtime, turn, elapsed, optional Claude session, cost.
 pub(super) fn identity_line(
     status: Option<&RunStatus>,
     run_usage: Option<&ModelUsage>,
@@ -86,6 +86,9 @@ pub(super) fn identity_line(
         crate::model_identity::PromptModel::from_run_status(status).map(|model| model.describe())
     {
         parts.push(model);
+    }
+    if let Some(reasoning) = status.reasoning {
+        parts.push(reasoning.to_string());
     }
     if let Some(runtime) = status.runtime {
         parts.push(runtime.as_str().to_string());

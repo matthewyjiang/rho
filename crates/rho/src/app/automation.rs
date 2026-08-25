@@ -191,13 +191,7 @@ pub(super) async fn run(prompt_text: String, startup: Startup<'_>) -> anyhow::Re
         .map(|path| {
             RunReporter::new(
                 path.clone(),
-                RunArtifactIdentity {
-                    agent_id: startup.agent.id().to_string(),
-                    agent_fingerprint: startup.agent.fingerprint().to_string(),
-                    provider: startup.config.provider.clone(),
-                    model: startup.config.model.clone(),
-                    runtime: crate::agent::AgentRuntime::Rho,
-                },
+                startup.agent.artifact_identity(),
                 startup.cwd.clone(),
                 &prompt_text,
                 /* stream_output */ startup.output == OutputFormat::Text,

@@ -24,6 +24,7 @@ pub(crate) struct ClaudeRunIdentity {
     pub(crate) agent_id: String,
     pub(crate) agent_fingerprint: String,
     pub(crate) model: Option<String>,
+    pub(crate) reasoning: Option<crate::agent::ReasoningLevel>,
 }
 
 /// Thin Claude-facing handle around [`RunArtifactSink`].
@@ -230,10 +231,8 @@ fn identity_to_artifact(identity: &ClaudeRunIdentity) -> RunArtifactIdentity {
         agent_id: identity.agent_id.clone(),
         agent_fingerprint: identity.agent_fingerprint.clone(),
         provider: "claude-code".into(),
-        model: identity
-            .model
-            .clone()
-            .unwrap_or_else(|| "claude-cli".into()),
+        model: identity.model.clone(),
         runtime: crate::agent::AgentRuntime::ClaudeCli,
+        reasoning: identity.reasoning,
     }
 }

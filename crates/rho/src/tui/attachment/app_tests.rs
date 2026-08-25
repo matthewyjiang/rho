@@ -388,7 +388,7 @@ fn sub_threshold_model_calls_hide_generation_rate() {
 }
 
 #[test]
-fn identity_line_includes_provider_model_runtime_elapsed_and_cost() {
+fn identity_line_includes_provider_model_reasoning_runtime_elapsed_and_cost() {
     use rho_providers::model::{
         display_name::ModelDisplayNameCacheGuard,
         models_dev::{
@@ -415,6 +415,7 @@ fn identity_line_includes_provider_model_runtime_elapsed_and_cost() {
                 provider: Some("openai".into()),
                 model: Some("gpt-5.5".into()),
                 runtime: Some(crate::agent::AgentRuntime::Rho),
+                reasoning: Some(rho_sdk::ReasoningLevel::High),
                 started_at: Some(1_000),
                 finished_at: Some(1_065),
                 turns: 3,
@@ -427,7 +428,7 @@ fn identity_line_includes_provider_model_runtime_elapsed_and_cost() {
         );
         assert_eq!(
             line,
-            "openai/gpt-5.5 (GPT-5.5) · rho · turn 3 · 1m 05s · claude sess-1 · $0.039"
+            "openai/gpt-5.5 (GPT-5.5) · high · rho · turn 3 · 1m 05s · claude sess-1 · $0.039"
         );
     });
 }

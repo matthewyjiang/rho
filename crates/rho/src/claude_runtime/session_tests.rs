@@ -34,6 +34,7 @@ async fn cancelled_before_start_writes_stopped_status() {
             agent_id: "claude-planner".into(),
             agent_fingerprint: "fp".into(),
             model: Some("opus".into()),
+            reasoning: None,
         },
         model: Some("opus".into()),
         tools: vec!["Read".into()],

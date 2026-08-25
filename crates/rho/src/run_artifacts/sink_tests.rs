@@ -48,8 +48,9 @@ fn test_identity() -> RunArtifactIdentity {
         agent_id: "alpha".into(),
         agent_fingerprint: "fingerprint".into(),
         provider: "test".into(),
-        model: "test-model".into(),
+        model: Some("test-model".into()),
         runtime: crate::agent::AgentRuntime::Rho,
+        reasoning: None,
     }
 }
 
