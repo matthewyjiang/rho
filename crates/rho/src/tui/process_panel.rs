@@ -37,6 +37,13 @@ impl ProcessPanel {
         !self.processes.is_empty()
     }
 
+    pub(super) fn live_count(&self) -> usize {
+        self.processes
+            .iter()
+            .filter(|process| matches!(process.state, State::Starting | State::Running))
+            .count()
+    }
+
     pub(super) fn desired_height(&self) -> usize {
         self.processes.len().min(activity::MAX_VISIBLE_RAIL_ROWS)
     }

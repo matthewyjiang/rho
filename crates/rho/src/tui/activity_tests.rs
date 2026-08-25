@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use pretty_assertions::assert_eq;
+
 use super::*;
 
 // Covers: stacked rail rows share one column layout for identity / activity / elapsed.
@@ -138,6 +140,89 @@ fn jump_to_bottom_attention_compact_labels_fit_where_neutral_does() {
     }
 }
 
+fn responding_parent() -> (ActivityPhase, Option<ProviderRetryHint>) {
+    (ActivityPhase::Responding, None)
+}
+
+// Covers: idle with no background work must not keep an activity rail;
+// parent vs background vs mixed background choose distinct variants.
+// Owner: pure unit (status construction)
+#[test]
+fn from_parent_and_background_selects_variant() {
+    let parent = Some(responding_parent());
+    let (phase, retry) = responding_parent();
+    assert_eq!(ActivityStatus::from_parent_and_background(None, 0, 0), None);
+    let cases = [
+        (parent, 0, 0, ActivityStatus::Parent { phase, retry }),
+        (
+            parent,
+            2,
+            0,
+            ActivityStatus::ParentWithBackground {
+                phase,
+                retry,
+                subagent_count: 2,
+                job_count: 0,
+            },
+        ),
+        (
+            parent,
+            0,
+            1,
+            ActivityStatus::ParentWithBackground {
+                phase,
+                retry,
+                subagent_count: 0,
+                job_count: 1,
+            },
+        ),
+        (
+            parent,
+            2,
+            1,
+            ActivityStatus::ParentWithBackground {
+                phase,
+                retry,
+                subagent_count: 2,
+                job_count: 1,
+            },
+        ),
+        (
+            None,
+            1,
+            0,
+            ActivityStatus::Background {
+                subagent_count: 1,
+                job_count: 0,
+            },
+        ),
+        (
+            None,
+            0,
+            3,
+            ActivityStatus::Background {
+                subagent_count: 0,
+                job_count: 3,
+            },
+        ),
+        (
+            None,
+            2,
+            1,
+            ActivityStatus::Background {
+                subagent_count: 2,
+                job_count: 1,
+            },
+        ),
+    ];
+    for (parent, subagents, jobs, expected) in cases {
+        assert_eq!(
+            ActivityStatus::from_parent_and_background(parent, subagents, jobs),
+            Some(expected),
+        );
+    }
+}
+
 // Covers: live elapsed trails the widest status label and drops before the
 // status ladder degrades.
 // Owner: pure unit (activity label assembly)
@@ -148,18 +233,27 @@ fn activity_label_trails_elapsed_then_drops_it() {
         phase: ActivityPhase::Responding,
         retry: None,
     };
-    let with_agents = ActivityStatus::ParentWithSubagents {
+    let with_agents = ActivityStatus::ParentWithBackground {
         phase: ActivityPhase::Responding,
         retry: None,
         subagent_count: 2,
+        job_count: 0,
     };
-    let agents_only = ActivityStatus::Subagents(2);
+    let agents_only = ActivityStatus::Background {
+        subagent_count: 2,
+        job_count: 0,
+    };
+    let jobs_only = ActivityStatus::Background {
+        subagent_count: 0,
+        job_count: 1,
+    };
 
     let parent_timed = format!("{spinner} responding · 15.0s");
     let parent_plain = format!("{spinner} responding");
     let agents_timed = format!("{spinner} responding  ·  2 agents · 15.0s");
     let agents_plain = format!("{spinner} responding  ·  2 agents");
     let only_timed = format!("{spinner} 2 agents working · 15.0s");
+    let jobs_timed = format!("{spinner} 1 job running · 15.0s");
     let elapsed = Some(Duration::from_secs(15));
 
     assert_eq!(activity_label(80, parent, elapsed), parent_timed);
@@ -173,5 +267,82 @@ fn activity_label_trails_elapsed_then_drops_it() {
         agents_plain
     );
     assert_eq!(activity_label(80, agents_only, elapsed), only_timed);
+    assert_eq!(activity_label(80, jobs_only, elapsed), jobs_timed);
     assert_eq!(activity_label(80, parent, None), parent_plain);
+}
+
+// Covers: mixed background counts compress agents+jobs before dropping to a
+// bare spinner, with singular/plural nouns on the wide rungs.
+// Owner: pure unit (activity label assembly)
+#[test]
+fn activity_status_labels_compress_background_counts() {
+    let spinner = LoadingSpinner::FRAMES[0];
+    let cases = [
+        (
+            ActivityStatus::ParentWithBackground {
+                phase: ActivityPhase::RunningTool,
+                retry: None,
+                subagent_count: 2,
+                job_count: 1,
+            },
+            vec![
+                format!("{spinner} running tool  ·  2 agents · 1 job"),
+                format!("{spinner} running tool · 2+1"),
+                format!("{spinner} 2+1"),
+                spinner.into(),
+            ],
+        ),
+        (
+            ActivityStatus::ParentWithBackground {
+                phase: ActivityPhase::RunningTool,
+                retry: None,
+                subagent_count: 0,
+                job_count: 3,
+            },
+            vec![
+                format!("{spinner} running tool  ·  3 jobs"),
+                format!("{spinner} running tool · 3"),
+                format!("{spinner} 3"),
+                spinner.into(),
+            ],
+        ),
+        (
+            ActivityStatus::Background {
+                subagent_count: 1,
+                job_count: 0,
+            },
+            vec![
+                format!("{spinner} 1 agent working"),
+                format!("{spinner} 1 agent"),
+                format!("{spinner} 1"),
+                spinner.into(),
+            ],
+        ),
+        (
+            ActivityStatus::Background {
+                subagent_count: 0,
+                job_count: 1,
+            },
+            vec![
+                format!("{spinner} 1 job running"),
+                format!("{spinner} 1 job"),
+                format!("{spinner} 1"),
+                spinner.into(),
+            ],
+        ),
+        (
+            ActivityStatus::Background {
+                subagent_count: 2,
+                job_count: 1,
+            },
+            vec![
+                format!("{spinner} 2 agents · 1 job"),
+                format!("{spinner} 2+1"),
+                spinner.into(),
+            ],
+        ),
+    ];
+    for (status, expected) in cases {
+        assert_eq!(activity_status_labels(status), expected);
+    }
 }

@@ -385,9 +385,10 @@ impl App {
             ComposerMode::Approval(_) | ComposerMode::Questionnaire(_) => None,
             _ => self.turn.provider_retry(),
         };
-        ActivityStatus::from_parent_and_subagents(
+        ActivityStatus::from_parent_and_background(
             self.loading_active().then_some((phase, retry)),
             self.subagent_panel.count(),
+            self.process_panel.live_count(),
         )
     }
 
@@ -422,7 +423,7 @@ impl App {
         // poll, in-turn wait, goal wait). Claiming is idempotent per run/call.
         changed |= self.claim_non_main_costs(agent);
         self.restore_mcp_hold_activity_if_needed(agent.mcp_connect_pending());
-        if self.subagent_panel.is_active() {
+        if self.activity_status().is_some() {
             self.turn.start_loading_if_needed();
         }
         Ok(changed)
