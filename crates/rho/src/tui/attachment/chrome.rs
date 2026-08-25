@@ -4,6 +4,7 @@ use ratatui::text::{Line, Span};
 use rho_sdk::model::{ContextUsage, ModelUsage};
 
 use super::super::{
+    reasoning_is_configurable,
     render::truncate_one_line,
     theme::Theme,
     usage_cost::{
@@ -72,7 +73,7 @@ pub(super) fn footer_line(chrome: AttachChrome, width: usize) -> Line<'static> {
     Line::styled(truncate_one_line(&text, width), Theme::dim())
 }
 
-/// Middle header row: model, runtime, turn, elapsed, optional Claude session, cost.
+/// Middle header row: model, reasoning, runtime, turn, elapsed, optional Claude session, cost.
 pub(super) fn identity_line(
     status: Option<&RunStatus>,
     run_usage: Option<&ModelUsage>,
@@ -86,6 +87,9 @@ pub(super) fn identity_line(
         crate::model_identity::PromptModel::from_run_status(status).map(|model| model.describe())
     {
         parts.push(model);
+    }
+    if let Some(reasoning) = attach_reasoning(status) {
+        parts.push(reasoning.to_string());
     }
     if let Some(runtime) = status.runtime {
         parts.push(runtime.as_str().to_string());
@@ -160,6 +164,12 @@ pub(super) fn header_title_line(
 
 fn join_fields(parts: Vec<String>) -> String {
     parts.join(FIELD_SEP)
+}
+
+fn attach_reasoning(status: &RunStatus) -> Option<crate::agent::ReasoningLevel> {
+    let reasoning = status.reasoning?;
+    let provider = status.provider.as_deref()?;
+    reasoning_is_configurable(provider, status.model.as_deref().unwrap_or("")).then_some(reasoning)
 }
 
 fn run_status_usage(status: &RunStatus) -> ModelUsage {

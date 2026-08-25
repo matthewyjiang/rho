@@ -68,8 +68,8 @@ pub(crate) struct ClaudeSpawnRequest {
     /// Soft turn cap emitted as `--max-turns`. Claude's flag is undocumented
     /// surface; callers should treat rejection of the flag as a hard error.
     pub(crate) max_turns: u64,
-    /// Claude `--effort` value from definition `reasoning:`. `None` omits the flag.
-    pub(crate) effort: Option<&'static str>,
+    /// Bound reasoning. `None` omits `--effort` and inherits Claude's default.
+    pub(crate) reasoning: Option<ReasoningLevel>,
     /// Whether the run leaves a resumable Claude session behind.
     pub(crate) session_persistence: SessionPersistence,
     /// Stdin framing. Delegated sessions use stream-json so parents can send
@@ -316,9 +316,9 @@ fn set_single_flag_value(args: &mut Vec<String>, flag: &str, value: String) {
 /// Map Rho `reasoning:` onto Claude `--effort`.
 ///
 /// Claude accepts `low`, `medium`, `high`, `xhigh`, and `max`. Rho `off` and
-/// `minimal` have no Claude counterpart, so they return `None` and callers
-/// reject them at parse/bind time. Omit the field entirely to inherit Claude's
-/// default effort.
+/// `minimal` have no Claude counterpart, so they return `None`. Bind rejects
+/// those via [`require_claude_reasoning`]. Omit the field entirely to inherit
+/// Claude's default effort.
 pub(crate) fn claude_effort_flag(level: ReasoningLevel) -> Option<&'static str> {
     match level {
         ReasoningLevel::Off | ReasoningLevel::Minimal => None,
@@ -327,6 +327,23 @@ pub(crate) fn claude_effort_flag(level: ReasoningLevel) -> Option<&'static str> 
         ReasoningLevel::High => Some("high"),
         ReasoningLevel::Xhigh => Some("xhigh"),
         ReasoningLevel::Max => Some("max"),
+    }
+}
+
+/// Keep Claude inherit (`None`) or a level that maps to `--effort`.
+///
+/// Parse already rejects `off` / `minimal` on Claude definitions. Bind and
+/// frozen rebuild call this so a constructed config cannot slip past.
+pub(crate) fn require_claude_reasoning(
+    reasoning: Option<ReasoningLevel>,
+) -> anyhow::Result<Option<ReasoningLevel>> {
+    match reasoning {
+        None => Ok(None),
+        Some(level) if claude_effort_flag(level).is_some() => Ok(Some(level)),
+        Some(level) => anyhow::bail!(
+            "reasoning '{level}' is not a Claude Code effort level; \
+expected one of: low, medium, high, xhigh, max (omit to inherit Claude's default)"
+        ),
     }
 }
 
@@ -394,7 +411,7 @@ pub(crate) fn build_spawn_plan(request: &ClaudeSpawnRequest) -> ClaudeSpawnPlan 
         args.push("--model".into());
         args.push(model.clone());
     }
-    if let Some(effort) = request.effort {
+    if let Some(effort) = request.reasoning.and_then(claude_effort_flag) {
         args.push("--effort".into());
         args.push(effort.into());
     }

@@ -361,7 +361,7 @@ async fn consult_advisor_with_claude_cli(
             system_prompt: crate::agent::ADVISOR_PROMPT,
             input: transcript,
             model,
-            effort: crate::claude_runtime::spawn::claude_effort_flag(reasoning),
+            reasoning: Some(reasoning),
             cwd: workspace_path.to_path_buf(),
             cancellation,
         },

@@ -22,6 +22,17 @@ fn logged_in() -> ClaudeAuthStatus {
     }
 }
 
+fn claude_identity() -> RunArtifactIdentity {
+    RunArtifactIdentity {
+        agent_id: "claude-planner".into(),
+        agent_fingerprint: "fp".into(),
+        provider: "claude-code".into(),
+        model: Some("opus".into()),
+        runtime: crate::agent::AgentRuntime::ClaudeCli,
+        reasoning: None,
+    }
+}
+
 #[tokio::test]
 async fn cancelled_before_start_writes_stopped_status() {
     let dir = tempfile::tempdir().unwrap();
@@ -30,16 +41,10 @@ async fn cancelled_before_start_writes_stopped_status() {
     cancellation.cancel();
     run_session(ClaudeSessionRequest {
         system_prompt: system_prompt(),
-        identity: ClaudeRunIdentity {
-            agent_id: "claude-planner".into(),
-            agent_fingerprint: "fp".into(),
-            model: Some("opus".into()),
-        },
-        model: Some("opus".into()),
+        identity: claude_identity(),
         tools: vec!["Read".into()],
         inherit_claude_config: false,
         max_turns: 8,
-        effort: None,
         prompt: "hi".into(),
         output_file: output.clone(),
         cwd: dir.path().to_path_buf(),

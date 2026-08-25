@@ -214,7 +214,6 @@ fn allows_model_and_rejects_provider_on_claude_runtime() {
         AgentRuntimeSpec::ClaudeCli(config) => {
             assert_eq!(config.model.as_deref(), Some("claude-opus-4-6"));
             assert!(config.reasoning.is_none());
-            assert!(config.effort().is_none());
         }
         _ => panic!("expected claude runtime"),
     }
@@ -327,12 +326,7 @@ fn accepts_claude_effort_reasoning_levels() {
                 .as_deref(),
             Some(level)
         );
-        match &definition.runtime {
-            AgentRuntimeSpec::ClaudeCli(config) => {
-                assert_eq!(config.effort(), Some(level));
-            }
-            _ => panic!("expected claude runtime"),
-        }
+        assert!(matches!(definition.runtime, AgentRuntimeSpec::ClaudeCli(_)));
     }
 }
 

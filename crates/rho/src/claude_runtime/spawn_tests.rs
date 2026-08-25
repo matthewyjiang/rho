@@ -13,7 +13,7 @@ fn request(
     max_turns: u64,
     prompt: PromptPolicy,
 ) -> ClaudeSpawnRequest {
-    request_with_effort(
+    request_with_reasoning(
         tools,
         inherit,
         model,
@@ -24,14 +24,14 @@ fn request(
     )
 }
 
-fn request_with_effort(
+fn request_with_reasoning(
     tools: Vec<&str>,
     inherit: bool,
     model: Option<&str>,
     permission_mode: ClaudePermissionMode,
     max_turns: u64,
     prompt: PromptPolicy,
-    effort: Option<&'static str>,
+    reasoning: Option<ReasoningLevel>,
 ) -> ClaudeSpawnRequest {
     ClaudeSpawnRequest {
         system_prompt: prompt,
@@ -41,7 +41,7 @@ fn request_with_effort(
         permission_mode,
         cwd: PathBuf::from("/tmp/project"),
         max_turns,
-        effort,
+        reasoning,
         session_persistence: SessionPersistence::Keep,
         input_format: ClaudeInputFormat::StreamJson,
     }
@@ -644,14 +644,14 @@ fn reasoning_maps_to_claude_effort_flag() {
         (ReasoningLevel::Max, "max"),
     ] {
         assert_eq!(claude_effort_flag(level), Some(expected));
-        let plan = build_spawn_plan(&request_with_effort(
+        let plan = build_spawn_plan(&request_with_reasoning(
             vec!["Read"],
             false,
             None,
             ClaudePermissionMode::BypassPermissions,
             8,
             PromptPolicy::Replace("Plan carefully.".into()),
-            Some(expected),
+            Some(level),
         ));
         assert!(
             plan.args
@@ -662,6 +662,47 @@ fn reasoning_maps_to_claude_effort_flag() {
     }
     assert_eq!(claude_effort_flag(ReasoningLevel::Off), None);
     assert_eq!(claude_effort_flag(ReasoningLevel::Minimal), None);
+    for omitted in [
+        None,
+        Some(ReasoningLevel::Off),
+        Some(ReasoningLevel::Minimal),
+    ] {
+        let plan = build_spawn_plan(&request_with_reasoning(
+            vec!["Read"],
+            false,
+            None,
+            ClaudePermissionMode::BypassPermissions,
+            8,
+            PromptPolicy::Replace("Plan carefully.".into()),
+            omitted,
+        ));
+        assert!(
+            !plan.args.iter().any(|arg| arg == "--effort"),
+            "{omitted:?} must omit --effort: {:?}",
+            plan.args
+        );
+    }
+}
+
+#[test]
+fn require_claude_reasoning_keeps_mapped_levels_and_rejects_unmapped() {
+    assert_eq!(require_claude_reasoning(None).unwrap(), None);
+    assert_eq!(
+        require_claude_reasoning(Some(ReasoningLevel::High)).unwrap(),
+        Some(ReasoningLevel::High)
+    );
+    let off = require_claude_reasoning(Some(ReasoningLevel::Off)).unwrap_err();
+    assert!(
+        off.to_string().contains("not a Claude Code effort level"),
+        "{off:#}"
+    );
+    let minimal = require_claude_reasoning(Some(ReasoningLevel::Minimal)).unwrap_err();
+    assert!(
+        minimal
+            .to_string()
+            .contains("not a Claude Code effort level"),
+        "{minimal:#}"
+    );
 }
 
 #[test]

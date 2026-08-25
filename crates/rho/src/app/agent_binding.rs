@@ -50,9 +50,8 @@ pub(crate) enum BoundRuntime {
         permission_mode: crate::permission::PermissionMode,
         /// Exact Claude `--max-turns` value from the configured step budget.
         max_turns: u64,
-        /// Claude `--effort` from definition `reasoning:` when set.
-        /// `None` means omit the flag (Claude inherit).
-        effort: Option<&'static str>,
+        /// Definition `reasoning:`. `None` inherits Claude's default effort.
+        reasoning: Option<crate::agent::ReasoningLevel>,
     },
 }
 
@@ -63,33 +62,6 @@ impl BoundRuntime {
             Self::ClaudeCli { .. } => CapacityClass::Claude,
         }
     }
-
-    /// Identity fields for the initial status / artifact snapshot.
-    pub(crate) fn artifact_labels(&self) -> ArtifactLabels {
-        match self {
-            Self::ClaudeCli { model, .. } => ArtifactLabels {
-                provider: "claude-code".into(),
-                // `None` means no `--model` pin; Claude Code chooses. Do not
-                // invent a placeholder model id for status readers.
-                model: model.clone(),
-                runtime: crate::agent::AgentRuntime::ClaudeCli,
-            },
-            Self::Rho { config, .. } => ArtifactLabels {
-                provider: config.provider.clone(),
-                model: Some(config.model.clone()),
-                runtime: crate::agent::AgentRuntime::Rho,
-            },
-        }
-    }
-}
-
-/// Named provider/model/runtime labels from a bound runtime.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ArtifactLabels {
-    pub(crate) provider: String,
-    /// Requested model id. `None` for a Claude run that pinned none.
-    pub(crate) model: Option<String>,
-    pub(crate) runtime: crate::agent::AgentRuntime,
 }
 
 #[derive(Clone, Debug)]
@@ -157,6 +129,33 @@ impl BoundAgent {
         &self.definition.prompt
     }
 
+    /// Identity stamped onto `result.json` at the Starting boundary.
+    ///
+    /// Reasoning is what bind settled on. Claude inherit is `None`.
+    pub(crate) fn artifact_identity(&self) -> crate::run_artifacts::RunArtifactIdentity {
+        match self.runtime() {
+            BoundRuntime::ClaudeCli {
+                model, reasoning, ..
+            } => crate::run_artifacts::RunArtifactIdentity {
+                agent_id: self.id().to_string(),
+                agent_fingerprint: self.fingerprint().to_string(),
+                provider: "claude-code".into(),
+                // `None` means no `--model` pin; Claude Code chooses.
+                model: model.clone(),
+                runtime: crate::agent::AgentRuntime::ClaudeCli,
+                reasoning: *reasoning,
+            },
+            BoundRuntime::Rho { config, .. } => crate::run_artifacts::RunArtifactIdentity {
+                agent_id: self.id().to_string(),
+                agent_fingerprint: self.fingerprint().to_string(),
+                provider: config.provider.clone(),
+                model: Some(config.model.clone()),
+                runtime: crate::agent::AgentRuntime::Rho,
+                reasoning: Some(config.reasoning),
+            },
+        }
+    }
+
     /// Build the Claude session request for a bound Claude runtime.
     pub(crate) fn into_claude_session(
         self,
@@ -167,30 +166,24 @@ impl BoundAgent {
         status_tx: Option<tokio::sync::watch::Sender<crate::subagent::RunStatus>>,
         started_status: Option<crate::subagent::RunStatus>,
     ) -> Option<crate::claude_runtime::session::ClaudeSessionRequest> {
+        let identity = self.artifact_identity();
         let BoundRuntime::ClaudeCli {
-            model,
             tools,
             inherit_claude_config,
             permission_mode,
             max_turns,
-            effort,
+            ..
         } = self.runtime
         else {
             return None;
         };
         Some(crate::claude_runtime::session::ClaudeSessionRequest {
             system_prompt: self.definition.prompt.clone(),
-            identity: crate::claude_runtime::session::ClaudeRunIdentity {
-                agent_id: self.definition.id.to_string(),
-                agent_fingerprint: self.fingerprint.to_string(),
-                model: model.clone(),
-            },
-            model,
+            identity,
             tools,
             inherit_claude_config,
             permission_mode,
             max_turns,
-            effort,
             prompt,
             output_file,
             cwd,
@@ -299,20 +292,20 @@ impl AgentBinder {
                 }
             }
             crate::workflow::AgentRuntime::ClaudeCli => {
-                let effort = frozen
+                let reasoning = frozen
                     .reasoning
                     .as_deref()
                     .map(|reasoning| reasoning.parse())
                     .transpose()
-                    .map_err(|_| anyhow::anyhow!("frozen Claude reasoning is invalid"))?
-                    .and_then(crate::claude_runtime::spawn::claude_effort_flag);
+                    .map_err(|_| anyhow::anyhow!("frozen Claude reasoning is invalid"))?;
                 BoundRuntime::ClaudeCli {
                     model: frozen.model.clone(),
                     tools: frozen.capabilities.iter().cloned().collect(),
                     inherit_claude_config: false,
                     permission_mode,
                     max_turns: frozen.step_limit,
-                    effort,
+                    reasoning: crate::claude_runtime::spawn::require_claude_reasoning(reasoning)
+                        .map_err(|error| anyhow::anyhow!("agent '{}': {error}", frozen.agent_id))?,
                 }
             }
         };
@@ -657,17 +650,8 @@ set a Claude model name or alias (for example opus), not '{model}'",
             );
         }
     }
-    let effort = match config.reasoning {
-        None => None,
-        Some(level) => match config.effort() {
-            Some(effort) => Some(effort),
-            None => anyhow::bail!(
-                "agent '{}': reasoning '{level}' is not a Claude Code effort level; \
-expected one of: low, medium, high, xhigh, max (omit to inherit Claude's default)",
-                definition.id
-            ),
-        },
-    };
+    let reasoning = crate::claude_runtime::spawn::require_claude_reasoning(config.reasoning)
+        .map_err(|error| anyhow::anyhow!("agent '{}': {error}", definition.id))?;
 
     // Binder snapshots host permission mode and the shared step budget.
     Ok(BoundRuntime::ClaudeCli {
@@ -679,7 +663,7 @@ expected one of: low, medium, high, xhigh, max (omit to inherit Claude's default
             .get()
             .try_into()
             .expect("run step limit fits in u64"),
-        effort,
+        reasoning,
     })
 }
 

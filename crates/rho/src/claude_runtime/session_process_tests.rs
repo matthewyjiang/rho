@@ -88,16 +88,10 @@ async fn run_with_fake(
     let rate_limit_state_path = rate_limit_dir.path().join("rate-limits.json");
     run_session(ClaudeSessionRequest {
         system_prompt: system_prompt(),
-        identity: ClaudeRunIdentity {
-            agent_id: "claude-planner".into(),
-            agent_fingerprint: "fp".into(),
-            model: Some("opus".into()),
-        },
-        model: Some("opus".into()),
+        identity: claude_identity(),
         tools: vec!["Read".into()],
         inherit_claude_config: false,
         max_turns,
-        effort: None,
         prompt: "hi".into(),
         output_file: output.to_path_buf(),
         cwd: cwd.to_path_buf(),
@@ -132,16 +126,10 @@ async fn run_with_fake_prompt(
     let rate_limit_state_path = rate_limit_dir.path().join("rate-limits.json");
     run_session(ClaudeSessionRequest {
         system_prompt: system_prompt(),
-        identity: ClaudeRunIdentity {
-            agent_id: "claude-planner".into(),
-            agent_fingerprint: "fp".into(),
-            model: Some("opus".into()),
-        },
-        model: Some("opus".into()),
+        identity: claude_identity(),
         tools: vec!["Read".into()],
         inherit_claude_config: false,
         max_turns: 8,
-        effort: None,
         prompt: prompt.into(),
         output_file: output.to_path_buf(),
         cwd: cwd.to_path_buf(),
@@ -230,16 +218,10 @@ async fn frozen_bypass_argv_narrows_to_auto_dont_ask() {
 
     run_session(ClaudeSessionRequest {
         system_prompt: system_prompt(),
-        identity: ClaudeRunIdentity {
-            agent_id: "claude-planner".into(),
-            agent_fingerprint: "fp".into(),
-            model: Some("opus".into()),
-        },
-        model: Some("opus".into()),
+        identity: claude_identity(),
         tools: vec!["Read".into()],
         inherit_claude_config: false,
         max_turns: 8,
-        effort: None,
         prompt: "hi".into(),
         output_file: output.clone(),
         cwd: dir.path().to_path_buf(),

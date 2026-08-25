@@ -15,7 +15,7 @@ fn one_shot_spawn_plan_uses_claude_dont_ask() {
         system_prompt: "rho advisor prompt",
         input: "session transcript".into(),
         model: Some("opus".into()),
-        effort: None,
+        reasoning: None,
         cwd: PathBuf::from("/tmp/project"),
         cancellation: CancellationToken::new(),
     };

@@ -482,7 +482,7 @@ fn claude_binding_is_typed_and_does_not_resolve_aliases_or_mutate_host_config() 
             inherit_claude_config,
             permission_mode,
             max_turns,
-            effort,
+            reasoning,
         } => {
             assert_eq!(model.as_deref(), Some("opus"));
             assert_eq!(
@@ -495,7 +495,7 @@ fn claude_binding_is_typed_and_does_not_resolve_aliases_or_mutate_host_config() 
                 *max_turns,
                 crate::app::sdk_config::run_step_limit().get() as u64
             );
-            assert!(effort.is_none());
+            assert!(reasoning.is_none());
         }
         BoundRuntime::Rho { .. } => panic!("expected Claude bound runtime"),
     }
@@ -568,7 +568,9 @@ fn claude_runtime_maps_supported_reasoning_and_rejects_unmapped() {
     )
     .unwrap();
     match bound.runtime() {
-        BoundRuntime::ClaudeCli { effort, .. } => assert_eq!(*effort, Some("high")),
+        BoundRuntime::ClaudeCli { reasoning, .. } => {
+            assert_eq!(*reasoning, Some(rho_sdk::ReasoningLevel::High));
+        }
         BoundRuntime::Rho { .. } => panic!("expected Claude bound runtime"),
     }
 
@@ -588,6 +590,65 @@ fn claude_runtime_maps_supported_reasoning_and_rejects_unmapped() {
     assert!(
         error.to_string().contains("not a Claude Code effort level"),
         "{error:#}"
+    );
+}
+
+// Covers: attach reads bound reasoning from the Starting snapshot; Claude
+// inherit stays absent so the header can omit the field.
+// Owner: agent bind identity
+#[test]
+fn artifact_identity_stamps_bound_reasoning_onto_starting_status() {
+    let host = Config {
+        reasoning: rho_sdk::ReasoningLevel::Low,
+        ..Config::default()
+    };
+    let rho = AgentBinder::bind(
+        definition(ToolPolicy::All),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: capabilities(),
+        },
+        &host,
+    )
+    .unwrap();
+    let rho_identity = rho.artifact_identity();
+    assert_eq!(rho_identity.reasoning, Some(rho_sdk::ReasoningLevel::Low));
+    assert_eq!(
+        rho_identity.starting_status().reasoning,
+        Some(rho_sdk::ReasoningLevel::Low)
+    );
+
+    let inherit = AgentBinder::bind(
+        claude_definition(ModelPolicy::Inherit),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: capabilities(),
+        },
+        &Config::default(),
+    )
+    .unwrap();
+    let inherit_identity = inherit.artifact_identity();
+    assert_eq!(inherit_identity.reasoning, None);
+    assert_eq!(inherit_identity.starting_status().reasoning, None);
+
+    let mut mapped = claude_definition(ModelPolicy::Inherit).as_ref().clone();
+    if let AgentRuntimeSpec::ClaudeCli(config) = &mut mapped.runtime {
+        config.reasoning = Some(rho_sdk::ReasoningLevel::High);
+    }
+    let high = AgentBinder::bind(
+        Arc::new(mapped),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: capabilities(),
+        },
+        &Config::default(),
+    )
+    .unwrap();
+    let high_identity = high.artifact_identity();
+    assert_eq!(high_identity.reasoning, Some(rho_sdk::ReasoningLevel::High));
+    assert_eq!(
+        high_identity.starting_status().reasoning,
+        Some(rho_sdk::ReasoningLevel::High)
     );
 }
 

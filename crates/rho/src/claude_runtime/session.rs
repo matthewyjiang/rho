@@ -9,7 +9,10 @@ use rho_tools::cancellation::RunCancellation;
 #[cfg(test)]
 use crate::subagent;
 
-use crate::{agent::PromptPolicy, permission::PermissionMode, subagent::RunStatus};
+use crate::{
+    agent::PromptPolicy, permission::PermissionMode, run_artifacts::RunArtifactIdentity,
+    subagent::RunStatus,
+};
 
 use super::{
     auth::{self, ClaudeAuthError, ClaudeAuthStatus},
@@ -22,8 +25,6 @@ use super::{
     terminal::{assess_terminal, TerminalOutcome},
 };
 
-pub(crate) use super::persist::ClaudeRunIdentity;
-
 /// Inputs for one Claude CLI subagent run, including bound runtime values.
 ///
 /// `AgentExecutor` builds this directly after typed binding; tests build the
@@ -31,16 +32,14 @@ pub(crate) use super::persist::ClaudeRunIdentity;
 pub(crate) struct ClaudeSessionRequest {
     /// Agent system prompt policy. The only definition field a spawn needs.
     pub(crate) system_prompt: PromptPolicy,
-    pub(crate) identity: ClaudeRunIdentity,
-    /// Bound Claude `--model`. `None` means omit the flag.
-    pub(crate) model: Option<String>,
+    /// Bound snapshot stamped onto `result.json`. Spawn reads model and
+    /// reasoning from here so they cannot drift from the Starting identity.
+    pub(crate) identity: RunArtifactIdentity,
     pub(crate) tools: Vec<String>,
     pub(crate) inherit_claude_config: bool,
     /// Exact `--max-turns` value. Always set from the configured/definition step
     /// cap at bind/launch time; never recomputed inside the session adapter.
     pub(crate) max_turns: u64,
-    /// Claude `--effort` from definition `reasoning:`. `None` omits the flag.
-    pub(crate) effort: Option<&'static str>,
     pub(crate) prompt: String,
     pub(crate) output_file: std::path::PathBuf,
     pub(crate) cwd: std::path::PathBuf,
@@ -88,9 +87,6 @@ pub(crate) type BeforeSpawn =
 
 /// Run one Claude CLI session to completion, writing the subagent contract.
 pub(crate) async fn run_session(mut request: ClaudeSessionRequest) -> anyhow::Result<()> {
-    if request.identity.model.is_none() {
-        request.identity.model = request.model.clone();
-    }
     let mut sink = match request.started_status.take() {
         Some(status) => StatusSink::continue_from(
             request.output_file.clone(),
@@ -233,13 +229,13 @@ async fn prepare_launch(request: &mut ClaudeSessionRequest) -> Result<Launch, St
     .map_err(|error| error.to_string())?;
     let mut plan = spawn::build_spawn_plan(&ClaudeSpawnRequest {
         system_prompt: request.system_prompt.clone(),
-        model: request.model.clone(),
+        model: request.identity.model.clone(),
         tools: request.tools.clone(),
         inherit_claude_config: request.inherit_claude_config,
         permission_mode,
         cwd: request.cwd.clone(),
         max_turns: request.max_turns,
-        effort: request.effort,
+        reasoning: request.identity.reasoning,
         // Delegated runs publish a resumable Claude session id.
         session_persistence: spawn::SessionPersistence::Keep,
         input_format: spawn::ClaudeInputFormat::StreamJson,

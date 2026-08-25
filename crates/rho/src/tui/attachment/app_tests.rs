@@ -388,7 +388,7 @@ fn sub_threshold_model_calls_hide_generation_rate() {
 }
 
 #[test]
-fn identity_line_includes_provider_model_runtime_elapsed_and_cost() {
+fn identity_line_includes_provider_model_reasoning_runtime_elapsed_and_cost() {
     use rho_providers::model::{
         display_name::ModelDisplayNameCacheGuard,
         models_dev::{
@@ -415,6 +415,7 @@ fn identity_line_includes_provider_model_runtime_elapsed_and_cost() {
                 provider: Some("openai".into()),
                 model: Some("gpt-5.5".into()),
                 runtime: Some(crate::agent::AgentRuntime::Rho),
+                reasoning: Some(rho_sdk::ReasoningLevel::High),
                 started_at: Some(1_000),
                 finished_at: Some(1_065),
                 turns: 3,
@@ -427,7 +428,7 @@ fn identity_line_includes_provider_model_runtime_elapsed_and_cost() {
         );
         assert_eq!(
             line,
-            "openai/gpt-5.5 (GPT-5.5) · rho · turn 3 · 1m 05s · claude sess-1 · $0.039"
+            "openai/gpt-5.5 (GPT-5.5) · high · rho · turn 3 · 1m 05s · claude sess-1 · $0.039"
         );
     });
 }
@@ -462,6 +463,50 @@ fn identity_line_handles_partial_model_fields() {
         "claude-code (no model pinned; Claude Code chooses) · claude-cli · turn 2"
     );
     assert_eq!(identity_line(None, None, 0), "");
+}
+
+// Covers: attach must not advertise a level the bound model ignores; Claude
+// still shows a bound effort because models.dev does not describe that runtime.
+// Owner: attach chrome
+#[test]
+fn identity_line_omits_reasoning_when_the_model_cannot_use_it() {
+    use rho_providers::model::{
+        display_name::ModelDisplayNameCacheGuard, models_dev::with_models_dev_cache_dir_for_tests,
+    };
+
+    let catalog = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir_for_tests(catalog.path().to_path_buf(), || {
+        let _names = ModelDisplayNameCacheGuard::new();
+        assert_eq!(
+            identity_line(
+                Some(&RunStatus {
+                    provider: Some("github-copilot".into()),
+                    model: Some("gpt-4o".into()),
+                    runtime: Some(crate::agent::AgentRuntime::Rho),
+                    reasoning: Some(rho_sdk::ReasoningLevel::High),
+                    turns: 1,
+                    ..RunStatus::default()
+                }),
+                None,
+                /* now_unix_secs */ 0,
+            ),
+            "github-copilot/gpt-4o · rho · turn 1"
+        );
+        assert_eq!(
+            identity_line(
+                Some(&RunStatus {
+                    provider: Some("claude-code".into()),
+                    runtime: Some(crate::agent::AgentRuntime::ClaudeCli),
+                    reasoning: Some(rho_sdk::ReasoningLevel::High),
+                    turns: 2,
+                    ..RunStatus::default()
+                }),
+                None,
+                /* now_unix_secs */ 0,
+            ),
+            "claude-code (no model pinned; Claude Code chooses) · high · claude-cli · turn 2"
+        );
+    });
 }
 
 #[test]

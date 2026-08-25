@@ -234,7 +234,7 @@ impl StatusLine {
     }
 }
 
-fn reasoning_is_configurable(provider: &str, model: &str) -> bool {
+pub(super) fn reasoning_is_configurable(provider: &str, model: &str) -> bool {
     rho_providers::model::models_dev::current_reasoning_capabilities(provider, model)
         != ReasoningCapabilities::NotConfigurable
 }

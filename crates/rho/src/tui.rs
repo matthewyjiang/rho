@@ -156,6 +156,7 @@ mod startup_prompt;
 mod smoke_injection;
 mod status_overlay;
 mod statusline;
+pub(in crate::tui) use statusline::reasoning_is_configurable;
 mod stream;
 mod stream_pace;
 mod stream_preview;

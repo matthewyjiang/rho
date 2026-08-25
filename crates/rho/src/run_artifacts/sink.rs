@@ -54,8 +54,29 @@ pub(crate) struct RunArtifactIdentity {
     pub(crate) agent_id: String,
     pub(crate) agent_fingerprint: String,
     pub(crate) provider: String,
-    pub(crate) model: String,
+    /// Requested model id. `None` for a Claude run that pinned none.
+    pub(crate) model: Option<String>,
     pub(crate) runtime: crate::agent::AgentRuntime,
+    /// Reasoning bind settled on. `None` when a Claude run inherits default effort.
+    pub(crate) reasoning: Option<crate::agent::ReasoningLevel>,
+}
+
+impl RunArtifactIdentity {
+    /// Starting snapshot stamped onto `result.json` at the run boundary.
+    pub(crate) fn starting_status(&self) -> RunStatus {
+        RunStatus {
+            state: RunState::Starting,
+            agent_id: Some(self.agent_id.clone()),
+            agent_fingerprint: Some(self.agent_fingerprint.clone()),
+            provider: Some(self.provider.clone()),
+            model: self.model.clone(),
+            runtime: Some(self.runtime),
+            reasoning: self.reasoning,
+            started_at: Some(subagent::unix_now_secs()),
+            last_activity: Some("starting".into()),
+            ..RunStatus::default()
+        }
+    }
 }
 
 enum WriterCommand {
@@ -89,20 +110,6 @@ pub(crate) struct RunArtifactSink {
     join: Option<JoinHandle<()>>,
 }
 
-fn starting_status(identity: &RunArtifactIdentity) -> RunStatus {
-    RunStatus {
-        state: RunState::Starting,
-        agent_id: Some(identity.agent_id.clone()),
-        agent_fingerprint: Some(identity.agent_fingerprint.clone()),
-        provider: Some(identity.provider.clone()),
-        model: Some(identity.model.clone()),
-        runtime: Some(identity.runtime),
-        started_at: Some(subagent::unix_now_secs()),
-        last_activity: Some("starting".into()),
-        ..RunStatus::default()
-    }
-}
-
 fn merge_title_from_slot(status: &mut RunStatus, live_title: Option<&LiveRunTitle>) {
     if status.title.is_some() {
         return;
@@ -125,7 +132,7 @@ impl RunArtifactSink {
         prompt: &str,
         status_tx: Option<watch::Sender<RunStatus>>,
     ) -> anyhow::Result<Self> {
-        let status = starting_status(identity);
+        let status = identity.starting_status();
         subagent::initialize_status(&path, &status)?;
         Self::from_started(path, status, prompt, status_tx, None)
     }
