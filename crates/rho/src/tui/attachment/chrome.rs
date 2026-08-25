@@ -4,6 +4,7 @@ use ratatui::text::{Line, Span};
 use rho_sdk::model::{ContextUsage, ModelUsage};
 
 use super::super::{
+    reasoning_is_configurable,
     render::truncate_one_line,
     theme::Theme,
     usage_cost::{
@@ -165,15 +166,10 @@ fn join_fields(parts: Vec<String>) -> String {
     parts.join(FIELD_SEP)
 }
 
-/// Reasoning the attach header should show. Matches the interactive statusline:
-/// omit a configured level when the bound provider/model cannot use one.
 fn attach_reasoning(status: &RunStatus) -> Option<crate::agent::ReasoningLevel> {
     let reasoning = status.reasoning?;
     let provider = status.provider.as_deref()?;
-    let model = status.model.as_deref().unwrap_or("");
-    (rho_providers::model::models_dev::current_reasoning_capabilities(provider, model)
-        != rho_providers::model::ReasoningCapabilities::NotConfigurable)
-        .then_some(reasoning)
+    reasoning_is_configurable(provider, status.model.as_deref().unwrap_or("")).then_some(reasoning)
 }
 
 fn run_status_usage(status: &RunStatus) -> ModelUsage {

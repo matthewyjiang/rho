@@ -166,10 +166,7 @@ impl BoundAgent {
         status_tx: Option<tokio::sync::watch::Sender<crate::subagent::RunStatus>>,
         started_status: Option<crate::subagent::RunStatus>,
     ) -> Option<crate::claude_runtime::session::ClaudeSessionRequest> {
-        let identity = match &self.runtime {
-            BoundRuntime::ClaudeCli { .. } => self.artifact_identity(),
-            BoundRuntime::Rho { .. } => return None,
-        };
+        let identity = self.artifact_identity();
         let BoundRuntime::ClaudeCli {
             tools,
             inherit_claude_config,
