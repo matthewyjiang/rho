@@ -130,15 +130,33 @@ fn render_markdown_entry_with_summary(
         render_content(text, width)
     };
     if let Some(summary) = summary {
+        // Keep the dim receipt off the last content row so short replies
+        // do not sit flush against `Worked for` / `Thought for`.
+        let summary_style = Theme::dim().add_modifier(Modifier::DIM);
+        if rendered.lines.last().is_some_and(line_has_visible_text) {
+            push_wrapped_text(
+                &mut rendered.lines,
+                "",
+                inner_width,
+                summary_style,
+                LineFill::Natural,
+            );
+        }
         push_wrapped_text(
             &mut rendered.lines,
             &summary,
             inner_width,
-            Theme::dim().add_modifier(Modifier::DIM),
+            summary_style,
             LineFill::Natural,
         );
     }
     rendered
+}
+
+fn line_has_visible_text(line: &Line<'_>) -> bool {
+    line.spans
+        .iter()
+        .any(|span| !span.content.chars().all(char::is_whitespace))
 }
 
 pub(in crate::tui) fn apply_markdown_images(

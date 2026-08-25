@@ -553,3 +553,58 @@ fn error_entries_include_text_severity_marker() {
         "same body text must not collide once color is gone"
     );
 }
+
+// Covers: duration receipts stay off the last markdown body row.
+// Owner: entry render layout.
+#[test]
+fn duration_receipt_leaves_a_blank_row_after_body() {
+    let _theme_lock = crate::tui::theme::theme_test_lock();
+    let body_only = crate::tui::Entry::Assistant("Hello".into());
+    let mut with_receipt = crate::tui::Entry::Assistant("Hello".into());
+    let mut summary_only = crate::tui::Entry::Assistant("".into());
+    match (&mut with_receipt, &mut summary_only) {
+        (crate::tui::Entry::Assistant(body), crate::tui::Entry::Assistant(empty)) => {
+            body.worked_for = Some(std::time::Duration::from_millis(2_300));
+            empty.worked_for = Some(std::time::Duration::from_millis(2_300));
+        }
+        _ => unreachable!(),
+    }
+
+    let without = entry_lines(
+        &body_only, 40, /*max_tool_output_lines*/ 0, /*max_image_height*/ 0,
+    );
+    let with = entry_lines(
+        &with_receipt,
+        40,
+        /*max_tool_output_lines*/ 0,
+        /*max_image_height*/ 0,
+    );
+    let summary = entry_lines(
+        &summary_only,
+        40,
+        /*max_tool_output_lines*/ 0,
+        /*max_image_height*/ 0,
+    );
+    let with_text: Vec<String> = with.iter().map(line_text).collect();
+    let summary_text: Vec<String> = summary.iter().map(line_text).collect();
+
+    assert_eq!(
+        with.len(),
+        without.len() + 2,
+        "receipt should add a gap row plus the summary: {with_text:?}"
+    );
+    assert!(
+        with_text[with_text.len() - 3].trim().is_empty(),
+        "body and receipt need a blank between them: {with_text:?}"
+    );
+    assert!(
+        !with_text[with_text.len() - 2].trim().is_empty(),
+        "receipt should sit above the trailing spacer: {with_text:?}"
+    );
+    assert!(
+        !summary_text
+            .first()
+            .is_some_and(|line| line.trim().is_empty()),
+        "summary-only entries should not lead with a blank: {summary_text:?}"
+    );
+}
