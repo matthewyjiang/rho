@@ -22,16 +22,14 @@ fn sign_in_target_routes_claude_code_case_insensitively() {
     ));
 }
 
-// Covers: /login picker values must keep Custom as a group and map each API
+// Covers: /login picker values must map each custom host API
 // Owner: login routing
 #[test]
-fn sign_in_target_routes_custom_group_and_api_methods() {
+fn sign_in_target_routes_custom_host_api_methods() {
     assert!(matches!(
-        SignInTarget::parse(super::super::custom_provider_login::NEW_CUSTOM_GROUP_VALUE),
-        SignInTarget::NewCustomGroup
-    ));
-    assert!(matches!(
-        SignInTarget::parse(super::super::custom_provider_login::NEW_CUSTOM_HOST_VALUE),
+        SignInTarget::parse(
+            super::super::custom_provider_login::NEW_CUSTOM_CHAT_COMPLETIONS_HOST_VALUE
+        ),
         SignInTarget::NewCustomHost {
             api: rho_providers::provider::OpenAiCompatibleApi::ChatCompletions
         }

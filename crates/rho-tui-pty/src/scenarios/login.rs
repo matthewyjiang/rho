@@ -130,19 +130,11 @@ pub(super) const LOGIN_CUSTOM_PROVIDER_STEPS: &[Step] = &[
         text: "select provider to login",
         timeout: SETTLE,
     },
-    Step::TypeText("Custom"),
+    Step::TypeText("Chat Completions"),
     Step::WaitText {
-        text: "Custom",
+        text: "Custom · Chat Completions",
         timeout: SETTLE,
     },
-    Step::Key(Key::Enter),
-    Step::WaitText {
-        text: "select custom host API",
-        timeout: SETTLE,
-    },
-    Step::AssertText("Chat Completions"),
-    Step::AssertText("Responses"),
-    Step::AssertText("Esc back"),
     Step::Key(Key::Enter),
     Step::WaitText {
         text: "edit provider name",

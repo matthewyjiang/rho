@@ -76,9 +76,9 @@ fn custom_onboarding_persists_selected_responses_api() {
     app.submit_custom_host_step(CustomHostStep::Name { api }, "litellm".into())
         .unwrap();
     app.submit_custom_host_step(
-        CustomHostStep::Url {
+        CustomHostStep::CustomUrl {
             name: "litellm".into(),
-            api: Some(api),
+            api,
         },
         "http://127.0.0.1:4000/v1".into(),
     )
