@@ -63,7 +63,7 @@ pub(super) const LOGIN_PROVIDER_GROUPS_STEPS: &[Step] = &[
     Step::TypeText("OpenAI"),
     Step::Key(Key::Enter),
     Step::WaitText {
-        text: "select OpenAI login method",
+        text: "Select OpenAI login method",
         timeout: SETTLE,
     },
     Step::AssertText("API Key"),
@@ -90,7 +90,7 @@ pub(super) const LOGIN_PROVIDER_GROUPS_STEPS: &[Step] = &[
     Step::TypeText("Anthropic"),
     Step::Key(Key::Enter),
     Step::WaitText {
-        text: "select Anthropic login method",
+        text: "Select Anthropic login method",
         timeout: SETTLE,
     },
     Step::AssertText("API Key"),

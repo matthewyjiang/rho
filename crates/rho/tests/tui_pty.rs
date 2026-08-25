@@ -339,7 +339,7 @@ web_search_provider = "disabled"
     harness.inject_key(&Key::Enter).unwrap();
     harness
         .wait_for_text(
-            "select OpenAI login method",
+            "Select OpenAI login method",
             WaitTimeout::secs(10, "openai methods"),
         )
         .unwrap();

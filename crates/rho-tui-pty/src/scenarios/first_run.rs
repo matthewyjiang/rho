@@ -58,7 +58,7 @@ pub(super) const FIRST_RUN_SETUP_STEPS: &[Step] = &[
     },
     Step::Key(Key::Enter),
     Step::WaitText {
-        text: "select OpenAI login method",
+        text: "Select OpenAI login method",
         timeout: SETTLE,
     },
     Step::Key(Key::Enter),
