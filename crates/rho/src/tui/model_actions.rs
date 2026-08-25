@@ -166,7 +166,7 @@ impl App {
                 }
                 Err(err) => {
                     self.insert_entry(&Entry::Error(format!(
-                        "failed to refresh {provider} model list: {err}"
+                        "could not refresh {provider} model list: {err}"
                     )));
                 }
             }

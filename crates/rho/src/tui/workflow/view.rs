@@ -252,7 +252,7 @@ fn draw_footer(frame: &mut Frame<'_>, area: Rect, state: &WorkflowUiState) {
     let policy = state.policy();
     let mut keys = vec!["arrows/hjkl move".to_owned()];
     if state.details().is_scrollable() || state.details().has_body() {
-        keys.push("pgup/pgdn scroll".into());
+        keys.push("PgUp/PgDn scroll".into());
     }
     if matches!(
         state.session(),
@@ -261,8 +261,8 @@ fn draw_footer(frame: &mut Frame<'_>, area: Rect, state: &WorkflowUiState) {
         keys.push("watch".into());
     }
     match policy.confirm {
-        Some(ConfirmKind::StartPlan) => keys.push("enter start".into()),
-        Some(ConfirmKind::ContinueResume) => keys.push("enter continue".into()),
+        Some(ConfirmKind::StartPlan) => keys.push("Enter start".into()),
+        Some(ConfirmKind::ContinueResume) => keys.push("Enter continue".into()),
         None => {}
     }
     // Stop hint is cancel capability minus an already-requested cancel.

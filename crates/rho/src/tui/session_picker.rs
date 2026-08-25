@@ -9,7 +9,7 @@ pub(super) fn session_picker(
 ) -> UiPicker {
     let now = now_unix_secs();
     UiPicker::new(
-        "resume session",
+        "Resume session",
         sessions
             .into_iter()
             .filter(|session| current_session_id != Some(session.id.as_str()))

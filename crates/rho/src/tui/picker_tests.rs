@@ -20,7 +20,7 @@ fn item(label: &str) -> PickerItem {
 #[test]
 fn action_footer_parts_include_structured_key_hints() {
     let picker = UiPicker::new(
-        "resume session",
+        "Resume session",
         vec![item("a")],
         PickerAction::ResumeSession,
     )
@@ -75,7 +75,7 @@ fn action_footer_parts_include_structured_key_hints() {
 #[test]
 fn empty_match_message_distinguishes_invalid_regex() {
     let mut picker = UiPicker::new(
-        "resume session",
+        "Resume session",
         vec![item("alpha"), item("beta")],
         PickerAction::ResumeSession,
     );
@@ -243,7 +243,7 @@ fn restore_cursor_keeps_nearby_match_after_removal() {
     let items = (0..10)
         .map(|i| item(&format!("session-{i:02}")))
         .collect::<Vec<_>>();
-    let mut picker = UiPicker::new("sessions", items, PickerAction::ManageSessions);
+    let mut picker = UiPicker::new("Sessions", items, PickerAction::ManageSessions);
     picker.select_by_offset(6);
     assert_eq!(picker.selected_item().unwrap().value, "session-06");
     let cursor = picker.cursor();
@@ -253,7 +253,7 @@ fn restore_cursor_keeps_nearby_match_after_removal() {
         .filter(|i| *i != 6)
         .map(|i| item(&format!("session-{i:02}")))
         .collect::<Vec<_>>();
-    let mut reopened = UiPicker::new("sessions", remaining, PickerAction::ManageSessions);
+    let mut reopened = UiPicker::new("Sessions", remaining, PickerAction::ManageSessions);
     reopened.restore_cursor(&cursor);
     assert_eq!(
         reopened.selected_item().unwrap().value,

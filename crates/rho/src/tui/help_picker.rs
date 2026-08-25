@@ -51,17 +51,17 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
             "Prefix a command with !! to run it locally without adding the output to model context. The composer uses a distinct label for this mode.",
         ),
         entry(
-            "enter",
+            "Enter",
             "Send, run, steer",
             "Send the composer contents. While a model turn is running, enter queues a steering message for after the current assistant turn. In pickers, enter confirms the selection.",
         ),
         entry(
-            "esc",
+            "Esc",
             "Cancel or close",
             "Abort the current model response and restore queued work, cancel a running inline shell command, leave shell mode, or close an open palette or picker.",
         ),
         entry(
-            "shift+tab",
+            "Shift+Tab",
             "Cycle reasoning",
             "Move through the configured reasoning levels for the active model and save the selection.",
         ),
@@ -73,7 +73,7 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
             ),
         ),
         entry(
-            "ctrl+c",
+            "Ctrl+C",
             "Clear composer",
             "Clear the message box on the first press. While idle, press again to quit Rho.",
         ),
@@ -83,12 +83,12 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
             "Insert a newline in the composer without sending. shift+enter also inserts a newline. While idle, alt+enter inserts a newline too.",
         ),
         entry(
-            "shift+enter",
+            "Shift+Enter",
             "New line",
             "Insert a newline in the composer without sending.",
         ),
         entry(
-            "alt+enter",
+            "Alt+Enter",
             "Queue/newline",
             "While idle, insert a newline. While a model turn is running, queue the current composer contents to run after the turn finishes.",
         ),
@@ -130,12 +130,12 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
             "Open the pending-input panel to inspect, reorder, or remove queued prompts.",
         ),
         entry(
-            "up / down",
+            "Up/Down",
             "History or nav",
             "In the composer, re-enter previous prompts. In pickers and palettes, move the selection.",
         ),
         entry(
-            "pgup / pgdn",
+            "PgUp/PgDn",
             "Scroll view",
             "Scroll the transcript viewport. In overlay pickers, page through the focused nav or detail pane.",
         ),

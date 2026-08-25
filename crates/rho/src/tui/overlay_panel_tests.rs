@@ -30,7 +30,7 @@ fn overlay_panel_sizes_to_body_and_clamps_scroll() {
 fn overlay_panel_title_is_drawn_on_the_border() {
     let area = Rect::new(0, 0, 60, 20);
     let body = vec![ratatui::text::Line::raw("row")];
-    let frame = render_overlay_panel("Usage limits", "esc close", &body, 0, area);
+    let frame = render_overlay_panel("Usage limits", "Enter/Esc close", &body, 0, area);
     let title = frame.lines[0]
         .spans
         .iter()
@@ -52,7 +52,7 @@ fn overlay_panel_clips_body_to_inner_width_when_scrollbar_is_shown() {
     let body = (0..20)
         .map(|i| ratatui::text::Line::raw(format!("row-{i:02} {}", "x".repeat(80))))
         .collect::<Vec<_>>();
-    let frame = render_overlay_panel("Title", "esc close", &body, 0, area);
+    let frame = render_overlay_panel("Title", "Enter/Esc close", &body, 0, area);
     let widths: Vec<usize> = frame
         .lines
         .iter()

@@ -303,7 +303,7 @@ pub(super) fn hub_picker(
         }
     }
     SessionsPickerBuild {
-        picker: manage_sessions_picker("sessions", items),
+        picker: manage_sessions_picker("Sessions", items),
         targets,
     }
 }

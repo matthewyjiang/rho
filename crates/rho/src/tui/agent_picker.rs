@@ -93,7 +93,7 @@ pub(super) fn agent_picker(catalog: AgentCatalog, models: AgentModelView<'_>) ->
         .iter_with_internal()
         .map(|entry| agent_item(entry, &models))
         .collect();
-    UiPicker::new("loaded agents", items, PickerAction::ViewAgent)
+    UiPicker::new("Loaded agents", items, PickerAction::ViewAgent)
         .with_layout(PickerLayout::Overlay)
         .with_overlay_chrome(OverlayChrome {
             nav_label: " AGENTS".into(),

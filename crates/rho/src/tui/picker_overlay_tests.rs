@@ -9,7 +9,7 @@ use super::*;
 
 fn sample_picker(detail_a: &str, detail_b: &str) -> UiPicker {
     UiPicker::new(
-        "loaded agents",
+        "Loaded agents",
         vec![
             PickerItem {
                 section: None,

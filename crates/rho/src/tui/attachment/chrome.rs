@@ -39,9 +39,9 @@ pub(crate) enum ParentNotice {
 impl AttachChrome {
     fn footer_hint(self) -> &'static str {
         match self {
-            Self::Standalone => "read-only · scroll · ctrl+o expand · q detach",
+            Self::Standalone => "read-only · scroll · Ctrl+O expand · q detach",
             Self::Embedded { .. } => {
-                "scroll · tab cycle · ctrl+o expand · q back · ctrl+c back/again quit"
+                "scroll · Tab cycle · Ctrl+O expand · q back · Ctrl+C back/again quit"
             }
         }
     }
