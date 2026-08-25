@@ -207,7 +207,7 @@ The rail shows at most two subagent rows and two process rows.
 | Process (`⚙`) | Command, freshness, and elapsed. No process id | Display-only: no attach or stop from the rail |
 | Overflow | `2 more agents · /attach` or `1 more job` | Replaces the last row when more runs are live than fit. The agent summary points at `/attach` |
 
-Process freshness is `running` while output is recent, then `quiet 4m` after
+Process freshness is `running` while output is recent, then `quiet 4m 12s` after
 60s of silence. Past five minutes of silence the elapsed column tints as a
 warning.
 
