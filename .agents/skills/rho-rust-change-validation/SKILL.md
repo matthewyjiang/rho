@@ -65,7 +65,7 @@ For bug fixes, reproduce the issue through the closest practical user path befor
 
 ## 3. Run validation
 
-Use the repository validation wrapper instead of assembling overlapping Cargo commands by hand. It caps Cargo at 12 jobs, keeps the edit loop narrow, and reserves all-target and all-feature checks for the final gate.
+Use the repository validation wrapper instead of assembling overlapping Cargo commands by hand. It caps Cargo at 8 jobs, keeps the edit loop narrow, and reserves all-target and all-feature checks for the final gate.
 
 Capture verbose output in temporary logs and inspect only relevant excerpts.
 

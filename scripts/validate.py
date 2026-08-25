@@ -12,7 +12,12 @@ from pathlib import Path
 from typing import Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
-MAX_CARGO_JOBS = 12
+# 12 equalled nproc on the development host, so the old cap never
+# reduced rustc 1.92 query ICEs.
+MAX_CARGO_JOBS = 8
+# rustc 1.92.0 default compile-thread stack is 8 MiB; it asks for this
+# exact floor after SIGSEGV / query ICEs on this workspace.
+RUSTC_MIN_STACK_BYTES = 16 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -157,11 +162,27 @@ def capped_cargo_jobs(value: str | None, *, cpu_count: int | None = None) -> str
     return str(min(MAX_CARGO_JOBS, requested))
 
 
+def rustc_min_stack(value: str | None) -> str:
+    """Keep rustc's compile-thread stack at or above the 1.92 ICE floor."""
+    if value is None or not value.strip():
+        return str(RUSTC_MIN_STACK_BYTES)
+    try:
+        requested = int(value)
+    except ValueError as error:
+        raise ValueError(f"RUST_MIN_STACK must be an integer, got {value!r}") from error
+    if requested < RUSTC_MIN_STACK_BYTES:
+        return str(RUSTC_MIN_STACK_BYTES)
+    return str(requested)
+
+
 def run_plan(steps: Sequence[Step]) -> None:
     """Run steps in order and stop at the first failure."""
     environment = os.environ.copy()
     environment["CARGO_BUILD_JOBS"] = capped_cargo_jobs(
         environment.get("CARGO_BUILD_JOBS")
+    )
+    environment["RUST_MIN_STACK"] = rustc_min_stack(
+        environment.get("RUST_MIN_STACK")
     )
     print(f"Cargo jobs: {environment['CARGO_BUILD_JOBS']}", flush=True)
 

@@ -47,7 +47,7 @@ Run the full workflow before opening or updating a pull request:
 python3 scripts/validate.py full
 ```
 
-The full mode runs policy and script checks, Clippy for all targets and features, normal workspace tests, documentation tests, SDK feature and downstream checks, and the docs TUI proof-plate PTY check. It stops at the first failure. Both modes cap Cargo at 12 jobs. A lower `CARGO_BUILD_JOBS` value remains in effect.
+The full mode runs policy and script checks, Clippy for all targets and features, normal workspace tests, documentation tests, SDK feature and downstream checks, and the docs TUI proof-plate PTY check. It stops at the first failure. Both modes cap Cargo at 8 jobs. A lower `CARGO_BUILD_JOBS` value remains in effect. They also set `RUST_MIN_STACK` to at least 16 MiB so rustc 1.92 does not overflow its 8 MiB compile-thread stack.
 
 Development and test profiles use reduced debug information to keep artifacts and link times smaller while retaining line-number backtraces. Set `CARGO_PROFILE_DEV_DEBUG=2` or `CARGO_PROFILE_TEST_DEBUG=2` when a debugging session needs full symbols.
 
@@ -258,6 +258,15 @@ The `rho-sdk` minimum supported Rust version (MSRV) is **1.86**. The
 credential, and terminal-native Mermaid rendering dependencies require a newer
 compiler. Both values are declared as `package.rust-version` in Cargo metadata
 and tested in CI.
+
+rustc 1.92.0's default compilation-thread stack is 8 MiB. Type-checking this
+workspace's dependency graph (and some individual crates such as `hashbrown`,
+`syn`, `toml_edit`, and `num-traits`) overflows that stack. rustc reports it
+as SIGSEGV plus `RUST_MIN_STACK=16777216`, or as a query ICE (`active query
+job entry` / `DepNodeIndex` pack assert). `.cargo/config.toml` sets
+`RUST_MIN_STACK` to 16 MiB when the variable is unset. `validate.py` raises
+any smaller value to that floor and caps Cargo at 8 jobs. Override the job
+cap with `CARGO_BUILD_JOBS` or `cargo -j`.
 
 When either MSRV changes, update the matching Cargo manifest, this section, and
 CI together. An MSRV increase must not ship as a patch release. On a stable
