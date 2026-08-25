@@ -65,7 +65,7 @@ impl App {
         let short = session_picker::short_session_id(&target.id);
         let choice = InlineChoice::new(
             format!("Delete session {short}?"),
-            "Removes the transcript, web sidecar, and parent-linked subagent runs. Usage history is kept.",
+            "Removes the transcript, cached web content, and this session's subagent runs. Usage history is kept.",
             vec![
                 InlineChoiceOption::available(
                     "delete",
