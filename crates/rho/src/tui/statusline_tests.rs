@@ -230,6 +230,18 @@ fn bottom_row_drops_fields_by_global_rank() {
         "context below warning threshold still drops before model"
     );
 
+    let mut unknown_after_compaction = fully_populated_statusline();
+    unknown_after_compaction.update_usage(
+        None,
+        Some(&ContextUsage::unknown_after_compaction(Some(10_000))),
+        12_500,
+    );
+    assert_eq!(
+        packed_keys(&unknown_after_compaction.state, 15),
+        vec![FieldKey::Context, FieldKey::Permission],
+        "unknown-after-compaction warning keeps context above model"
+    );
+
     // model before permission
     assert_eq!(
         packed_keys(state, 12),

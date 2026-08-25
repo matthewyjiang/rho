@@ -362,7 +362,7 @@ fn resolve_context_field(state: &StatusLineState) -> Option<(String, Style, u8)>
         return match context.source {
             // Unknown after compaction is a real gap, not ambient chrome.
             ContextUsageSource::UnknownAfterCompaction => {
-                Some(("?".into(), Theme::warning(), RANK_CONTEXT))
+                Some(("?".into(), Theme::warning(), RANK_CONTEXT_URGENT))
             }
             ContextUsageSource::Estimated | ContextUsageSource::ProviderReported => None,
         };
