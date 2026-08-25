@@ -526,6 +526,9 @@ async fn fixture_stream(
                 response.push_str(&chunk);
                 fixture_sleep(&request.cancellation, Duration::from_millis(5)).await?;
             }
+            // The 400 deltas finish in ~2s. type_during_stream still needs a
+            // live turn after typing and clearing a draft so Esc can interrupt.
+            fixture_sleep(&request.cancellation, Duration::from_secs(30)).await?;
             completed(response)
         }
         "fixture scroll checkpoint" => {
