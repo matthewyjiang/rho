@@ -327,8 +327,8 @@ impl App {
                     super::claude_login::SignInTarget::ClaudeCode => {
                         return self.execute_claude_code_login().await
                     }
-                    super::claude_login::SignInTarget::NewCustomHost => {
-                        self.start_custom_provider_onboarding();
+                    super::claude_login::SignInTarget::NewCustomHost { api } => {
+                        self.start_custom_provider_onboarding(api);
                         return Ok(());
                     }
                     super::claude_login::SignInTarget::Provider(provider) => provider,
@@ -355,8 +355,8 @@ impl App {
                 super::claude_login::SignInTarget::ClaudeCode => {
                     self.execute_claude_code_login().await
                 }
-                super::claude_login::SignInTarget::NewCustomHost => {
-                    self.start_custom_provider_onboarding();
+                super::claude_login::SignInTarget::NewCustomHost { api } => {
+                    self.start_custom_provider_onboarding(api);
                     Ok(())
                 }
                 super::claude_login::SignInTarget::Provider(provider) => {
@@ -370,7 +370,7 @@ impl App {
                         self.execute_claude_code_logout().await
                     }
                     // Nothing is stored for a host that was never created.
-                    super::claude_login::SignInTarget::NewCustomHost => Ok(()),
+                    super::claude_login::SignInTarget::NewCustomHost { .. } => Ok(()),
                     super::claude_login::SignInTarget::Provider(provider) => {
                         self.logout_provider(&provider, agent).await
                     }

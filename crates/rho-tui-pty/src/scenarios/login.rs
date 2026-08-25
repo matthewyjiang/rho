@@ -130,9 +130,9 @@ pub(super) const LOGIN_CUSTOM_PROVIDER_STEPS: &[Step] = &[
         text: "select provider to login",
         timeout: SETTLE,
     },
-    Step::TypeText("Custom"),
+    Step::TypeText("Chat Completions"),
     Step::WaitText {
-        text: "Custom Chat Completions",
+        text: "Custom · Chat Completions",
         timeout: SETTLE,
     },
     Step::Key(Key::Enter),

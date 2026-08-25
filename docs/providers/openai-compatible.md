@@ -1,12 +1,12 @@
 # Custom OpenAI-compatible hosts
 
-You can point Rho at any local or remote host that speaks OpenAI Chat Completions or the OpenAI Responses API. Add a name and a base URL in config, or create a Chat Completions host from `/login`. Requests send an `Authorization` header only when you store an API key.
+You can point Rho at any local or remote host that speaks OpenAI Chat Completions or the OpenAI Responses API. Add a name and a base URL in config, or create a host from `/login` with **Custom · Chat Completions** or **Custom · Responses**. Requests send an `Authorization` header only when you store an API key.
 
 This is not the first-party [OpenAI](/providers/openai) provider. First-party OpenAI API-key requests currently use Chat Completions. Custom hosts that set `api = "responses"` use the same `{base}/responses` HTTP contract as OpenAI's Responses API (not Codex WebSocket). If you know Codex's `wire_api` setting, that is a different surface; here the key is `api`.
 
 ## Define a host
 
-The fastest path is `/login` in the [interactive TUI](/interactive-tui). Choose **Custom Chat Completions**, name the provider, enter its base URL, then enter an API key or leave that field blank.
+The fastest path is `/login` in the [interactive TUI](/interactive-tui). Choose **Custom · Chat Completions** or **Custom · Responses**, name the provider, enter its base URL, then enter an API key or leave that field blank.
 
 You can also edit `~/.rho/config.toml`. The table key is the provider name used in `/model`.
 
@@ -29,7 +29,7 @@ If the host already pushes `provider/model` ids (`anthropic/claude-sonnet-4-5`),
 
 Keep the `/v1` suffix. Rho appends `/models` for discovery. Agent turns append `/chat/completions` by default, or `/responses` when `api = "responses"`. The URL must use `http` or `https` and cannot contain credentials, a query, or a fragment.
 
-Chat Completions is the default so existing hosts keep working. To speak Responses instead:
+Chat Completions is the default so existing hosts keep working. To speak Responses instead, pick **Custom · Responses** in `/login`, or set `api` in config:
 
 ```toml
 [providers.custom.litellm]
@@ -37,7 +37,7 @@ base_url = "http://127.0.0.1:4000/v1"
 api = "responses"
 ```
 
-`api` accepts `"chat-completions"` (default, omitted on save) or `"responses"`. `/login` still creates Chat Completions hosts; set `api` in config for Responses. Restart Rho after you hand-edit this table, including `api` or `base_url`. Creating or updating a host through `/login` applies immediately and keeps a previously saved `api` value if you only rewrite the URL.
+`api` accepts `"chat-completions"` (default, omitted on save) or `"responses"`. Restart Rho after you hand-edit this table, including `api` or `base_url`. Creating or re-creating a host through `/login` applies immediately and writes `api` to the **Custom** row you pick. Hand-editing only `base_url` keeps a previously saved `api`.
 
 Names must be lowercase letters, digits, and hyphens, start with a letter, and must not match a built-in provider.
 
