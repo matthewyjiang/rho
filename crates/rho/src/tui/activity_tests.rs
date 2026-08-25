@@ -148,80 +148,72 @@ fn responding_parent() -> (ActivityPhase, Option<ProviderRetryHint>) {
     (ActivityPhase::Responding, None)
 }
 
+fn counts(subagent_count: usize, job_count: usize) -> BackgroundCounts {
+    BackgroundCounts {
+        subagent_count,
+        job_count,
+    }
+}
+
 // Covers: idle with no background work must not keep an activity rail;
-// parent vs background vs mixed background choose distinct variants.
+// parent vs background vs linger-only choose distinct variants.
 // Owner: pure unit (status construction)
 #[test]
 fn from_parent_and_background_selects_variant() {
     let parent = Some(responding_parent());
     let (phase, retry) = responding_parent();
-    assert_eq!(ActivityStatus::from_parent_and_background(None, 0, 0), None);
+    assert_eq!(
+        ActivityStatus::from_parent_and_background(None, counts(0, 0), false),
+        None
+    );
+    assert_eq!(
+        ActivityStatus::from_parent_and_background(None, counts(0, 0), true),
+        Some(ActivityStatus::Linger)
+    );
     let cases = [
-        (parent, 0, 0, ActivityStatus::Parent { phase, retry }),
         (
             parent,
-            2,
-            0,
-            ActivityStatus::ParentWithBackground {
+            counts(0, 0),
+            ActivityStatus::Parent {
                 phase,
                 retry,
-                subagent_count: 2,
-                job_count: 0,
+                background: counts(0, 0),
             },
         ),
         (
             parent,
-            0,
-            1,
-            ActivityStatus::ParentWithBackground {
+            counts(2, 0),
+            ActivityStatus::Parent {
                 phase,
                 retry,
-                subagent_count: 0,
-                job_count: 1,
+                background: counts(2, 0),
             },
         ),
         (
             parent,
-            2,
-            1,
-            ActivityStatus::ParentWithBackground {
+            counts(0, 1),
+            ActivityStatus::Parent {
                 phase,
                 retry,
-                subagent_count: 2,
-                job_count: 1,
+                background: counts(0, 1),
             },
         ),
         (
-            None,
-            1,
-            0,
-            ActivityStatus::Background {
-                subagent_count: 1,
-                job_count: 0,
+            parent,
+            counts(2, 1),
+            ActivityStatus::Parent {
+                phase,
+                retry,
+                background: counts(2, 1),
             },
         ),
-        (
-            None,
-            0,
-            3,
-            ActivityStatus::Background {
-                subagent_count: 0,
-                job_count: 3,
-            },
-        ),
-        (
-            None,
-            2,
-            1,
-            ActivityStatus::Background {
-                subagent_count: 2,
-                job_count: 1,
-            },
-        ),
+        (None, counts(1, 0), ActivityStatus::Background(counts(1, 0))),
+        (None, counts(0, 3), ActivityStatus::Background(counts(0, 3))),
+        (None, counts(2, 1), ActivityStatus::Background(counts(2, 1))),
     ];
-    for (parent, subagents, jobs, expected) in cases {
+    for (parent, background, expected) in cases {
         assert_eq!(
-            ActivityStatus::from_parent_and_background(parent, subagents, jobs),
+            ActivityStatus::from_parent_and_background(parent, background, false),
             Some(expected),
         );
     }
@@ -236,21 +228,15 @@ fn activity_label_trails_elapsed_then_drops_it() {
     let parent = ActivityStatus::Parent {
         phase: ActivityPhase::Responding,
         retry: None,
+        background: counts(0, 0),
     };
-    let with_agents = ActivityStatus::ParentWithBackground {
+    let with_agents = ActivityStatus::Parent {
         phase: ActivityPhase::Responding,
         retry: None,
-        subagent_count: 2,
-        job_count: 0,
+        background: counts(2, 0),
     };
-    let agents_only = ActivityStatus::Background {
-        subagent_count: 2,
-        job_count: 0,
-    };
-    let jobs_only = ActivityStatus::Background {
-        subagent_count: 0,
-        job_count: 1,
-    };
+    let agents_only = ActivityStatus::Background(counts(2, 0));
+    let jobs_only = ActivityStatus::Background(counts(0, 1));
 
     let parent_timed = format!("{spinner} responding · 15.0s");
     let parent_plain = format!("{spinner} responding");
@@ -283,11 +269,10 @@ fn activity_status_labels_compress_background_counts() {
     let spinner = LoadingSpinner::FRAMES[0];
     let cases = [
         (
-            ActivityStatus::ParentWithBackground {
+            ActivityStatus::Parent {
                 phase: ActivityPhase::RunningTool,
                 retry: None,
-                subagent_count: 2,
-                job_count: 1,
+                background: counts(2, 1),
             },
             vec![
                 format!("{spinner} running tool  ·  2 agents · 1 job"),
@@ -297,11 +282,10 @@ fn activity_status_labels_compress_background_counts() {
             ],
         ),
         (
-            ActivityStatus::ParentWithBackground {
+            ActivityStatus::Parent {
                 phase: ActivityPhase::RunningTool,
                 retry: None,
-                subagent_count: 0,
-                job_count: 3,
+                background: counts(0, 3),
             },
             vec![
                 format!("{spinner} running tool  ·  3 jobs"),
@@ -311,10 +295,7 @@ fn activity_status_labels_compress_background_counts() {
             ],
         ),
         (
-            ActivityStatus::Background {
-                subagent_count: 1,
-                job_count: 0,
-            },
+            ActivityStatus::Background(counts(1, 0)),
             vec![
                 format!("{spinner} 1 agent working"),
                 format!("{spinner} 1 agent"),
@@ -323,10 +304,7 @@ fn activity_status_labels_compress_background_counts() {
             ],
         ),
         (
-            ActivityStatus::Background {
-                subagent_count: 0,
-                job_count: 1,
-            },
+            ActivityStatus::Background(counts(0, 1)),
             vec![
                 format!("{spinner} 1 job running"),
                 format!("{spinner} 1 job"),
@@ -335,10 +313,7 @@ fn activity_status_labels_compress_background_counts() {
             ],
         ),
         (
-            ActivityStatus::Background {
-                subagent_count: 2,
-                job_count: 1,
-            },
+            ActivityStatus::Background(counts(2, 1)),
             vec![
                 format!("{spinner} 2 agents · 1 job"),
                 format!("{spinner} 2+1"),

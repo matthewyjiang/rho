@@ -49,6 +49,10 @@ impl RunState {
         matches!(self, Self::Ok | Self::Error | Self::Stopped)
     }
 
+    pub fn is_live(self) -> bool {
+        matches!(self, Self::Starting | Self::Running)
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Starting => "starting",

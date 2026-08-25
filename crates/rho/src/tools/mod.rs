@@ -1,3 +1,11 @@
+use std::time::Duration;
+
+/// How long host rails keep serving a just-finished row.
+///
+/// Process and subagent managers both use this. UI linger windows must stay
+/// below it so a row can fade before the manager forgets it.
+pub(crate) const RAIL_TERMINAL_RETENTION: Duration = Duration::from_secs(10);
+
 pub mod advisor;
 pub mod agent;
 mod agent_output;

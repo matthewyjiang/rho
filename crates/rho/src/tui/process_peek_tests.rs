@@ -45,6 +45,14 @@ fn peek_body_model_marks_eviction_and_stream() {
                 },
             ],
         ),
+        (
+            vec![chunk(Stream::Stdout, "hel"), chunk(Stream::Stdout, "lo\n")],
+            false,
+            vec![PeekBodyLine::Output {
+                stream: Stream::Stdout,
+                text: "hello".into(),
+            }],
+        ),
     ];
     for (chunks, truncated, expected) in cases {
         assert_eq!(peek_body_model(&chunks, truncated), expected);

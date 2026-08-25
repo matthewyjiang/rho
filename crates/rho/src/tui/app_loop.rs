@@ -6,7 +6,8 @@ use ratatui::DefaultTerminal;
 
 use super::{
     media_attach, mouse_capture, paste_burst::normalize_paste, ActivityPhase, ActivityStatus, App,
-    ComposerMode, HerdrState, HerdrUserWait, InteractiveRuntime, TuiResult, ViewModelEvent,
+    BackgroundCounts, ComposerMode, HerdrState, HerdrUserWait, InteractiveRuntime, TuiResult,
+    ViewModelEvent,
 };
 
 pub(super) fn print_exit_summary(summary: Option<&str>) -> std::io::Result<()> {
@@ -162,7 +163,7 @@ impl App {
                 || !self.pending_usage_limits.is_empty()
                 || self.pending_changelog.is_some()
                 || self.mcp_argument_completions.is_pending()
-                || self.exclusive.wants_journal_ticks()
+                || self.exclusive.wants_fast_ticks()
                 || !self.pending_inline_shells.is_empty()
                 || self.history.images().has_pending()
                 || agent.startup_hydrate_pending()
@@ -389,17 +390,12 @@ impl App {
         };
         ActivityStatus::from_parent_and_background(
             self.loading_active().then_some((phase, retry)),
-            self.subagent_panel.count(),
-            self.process_panel.live_count(),
+            BackgroundCounts {
+                subagent_count: self.subagent_panel.count(),
+                job_count: self.process_panel.live_count(),
+            },
+            self.subagent_panel.is_active() || self.process_panel.is_active(),
         )
-        .or_else(|| {
-            (self.subagent_panel.is_active() || self.process_panel.is_active()).then_some(
-                ActivityStatus::Background {
-                    subagent_count: 0,
-                    job_count: 0,
-                },
-            )
-        })
     }
 
     pub(super) fn apply_terminal_resize(
@@ -430,9 +426,7 @@ impl App {
             self.refresh_attach_picker();
         }
         changed |= panel_changed;
-        self.process_manager = agent.processes().cloned();
         changed |= self.process_panel.update(agent.processes(), now);
-        changed |= self.refresh_process_peek(agent.processes());
         // Fold terminal subagent/advisor costs on every panel refresh path (idle
         // poll, in-turn wait, goal wait). Claiming is idempotent per run/call.
         changed |= self.claim_non_main_costs(agent);

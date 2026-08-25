@@ -156,7 +156,7 @@ impl App {
                 self.history
                     .set_hovered_code_block_copy(code_target.as_ref().map(|target| target.line));
                 let rail_target =
-                    self.session_rail_pointer(layout.subagents, layout.processes, column, row);
+                    self.session_rail_pointer(layout.subagents, layout.processes, column, row, now);
                 if let Some(target) = rail_target {
                     self.input_ui.clear_selection();
                     self.input_ui.cancel_pointer_click_sequence();
@@ -257,7 +257,7 @@ impl App {
                     return Ok(());
                 }
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
-                self.clear_rail_pointer_state();
+                self.clear_rail_pressed();
                 if self.history.scrollbar_drag().is_some() {
                     self.history.clear_text_selection();
                     self.history.set_hovered_code_block_copy(None);
@@ -321,7 +321,7 @@ impl App {
                 self.history.set_scrollbar_drag(None);
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
                 let released_rail =
-                    self.session_rail_pointer(layout.subagents, layout.processes, column, row);
+                    self.session_rail_pointer(layout.subagents, layout.processes, column, row, now);
                 self.subagent_panel.set_pressed(None);
                 self.process_panel.set_pressed(None);
                 self.set_rail_hover(released_rail.as_ref());
@@ -450,7 +450,7 @@ impl App {
                     .map(|target| target.line);
                 self.history.set_hovered_code_block_copy(hovered);
                 let rail_hover =
-                    self.session_rail_pointer(layout.subagents, layout.processes, column, row);
+                    self.session_rail_pointer(layout.subagents, layout.processes, column, row, now);
                 self.set_rail_hover(rail_hover.as_ref());
             }
             MouseEventKind::Down(MouseButton::Right)
@@ -473,21 +473,30 @@ impl App {
         processes: Rect,
         column: u16,
         row: u16,
+        now: Instant,
     ) -> Option<SessionRailPointer> {
         if !matches!(self.input_ui.composer(), ComposerMode::Input) {
             return None;
         }
-        if let Some(target) = self.subagent_panel.attach_target_at(subagents, column, row) {
+        if let Some(target) = self
+            .subagent_panel
+            .attach_target_at(subagents, column, row, now)
+        {
             return Some(SessionRailPointer::Subagent(target));
         }
         self.process_panel
-            .peek_target_at(processes, column, row)
+            .peek_target_at(processes, column, row, now)
             .map(SessionRailPointer::Process)
     }
 
-    fn clear_rail_pointer_state(&mut self) {
+    pub(super) fn clear_rail_pointer_state(&mut self) {
         self.subagent_panel.clear_pointer_state();
         self.process_panel.clear_pointer_state();
+    }
+
+    fn clear_rail_pressed(&mut self) {
+        self.subagent_panel.clear_pressed();
+        self.process_panel.clear_pressed();
     }
 
     fn set_rail_hover(&mut self, target: Option<&SessionRailPointer>) {

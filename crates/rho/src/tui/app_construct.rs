@@ -90,7 +90,6 @@ impl App {
             statusline,
             subagent_panel: SubagentPanel::default(),
             process_panel: ProcessPanel::default(),
-            process_manager: None,
             subagent_inbox: crate::tui::subagent_inbox::SubagentInbox::default(),
             pending_subagent_questionnaire: None,
             input_ui: InputUi::default(),

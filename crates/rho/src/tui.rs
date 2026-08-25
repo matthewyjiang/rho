@@ -86,6 +86,7 @@ mod inline_shell;
 mod keybindings;
 mod keyboard_modes;
 mod limits_command;
+mod linger_rail;
 mod local_commands;
 mod local_diff;
 mod login;
@@ -193,7 +194,7 @@ mod workspace;
 mod types;
 use types::*;
 
-use activity::{ActivityPhase, ActivityStatus, LoadingSpinner};
+use activity::{ActivityPhase, ActivityStatus, BackgroundCounts, LoadingSpinner};
 use app_state::{HistoryUi, InputUi, PendingWorkUi, TurnUi};
 use approval::{approval_lines, ApprovalKeyOutcome};
 use chat_media::{
@@ -480,8 +481,6 @@ struct App {
     statusline: StatusLine,
     subagent_panel: SubagentPanel,
     process_panel: ProcessPanel,
-    /// Live handle for host-only process peek. Updated each activity tick.
-    process_manager: Option<crate::tools::process::ProcessManager>,
     subagent_inbox: subagent_inbox::SubagentInbox,
     pending_subagent_questionnaire: Option<PendingSubagentQuestionnaire>,
     input_ui: InputUi,

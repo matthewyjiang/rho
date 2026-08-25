@@ -560,10 +560,6 @@ impl Theme {
         }
     }
 
-    pub(super) fn subagent_row(state: super::subagent_panel::SubagentRowState) -> Style {
-        Self::activity_rail_row(state)
-    }
-
     pub(super) fn success() -> Style {
         Style::default()
             .fg(Palette::current().success)

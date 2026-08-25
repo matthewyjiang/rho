@@ -296,14 +296,17 @@ fn peek_target_hits_rows_and_skips_summary_and_outside() {
     );
     let area = Rect::new(2, 4, 80, 2);
     assert_eq!(
-        panel.peek_target_at(area, 3, 4),
+        panel.peek_target_at(area, 3, 4, now),
         Some(ProcessPeekTarget {
             process_id: "live-1".into(),
         })
     );
-    assert_eq!(panel.peek_target_at(area, 3, 5), None);
-    assert_eq!(panel.peek_target_at(area, 1, 4), None);
-    assert_eq!(panel.peek_target_at(Rect::new(2, 4, 80, 0), 3, 4), None);
+    assert_eq!(panel.peek_target_at(area, 3, 5, now), None);
+    assert_eq!(panel.peek_target_at(area, 1, 4, now), None);
+    assert_eq!(
+        panel.peek_target_at(Rect::new(2, 4, 80, 0), 3, 4, now),
+        None
+    );
 
     let mut linger = ProcessPanel::default();
     linger.ingest(
@@ -318,7 +321,7 @@ fn peek_target_hits_rows_and_skips_summary_and_outside() {
         now,
     );
     assert_eq!(
-        linger.peek_target_at(Rect::new(0, 0, 80, 1), 1, 0),
+        linger.peek_target_at(Rect::new(0, 0, 80, 1), 1, 0, now),
         Some(ProcessPeekTarget {
             process_id: "done".into(),
         })
@@ -336,7 +339,32 @@ fn hover_trailing_keeps_elapsed() {
     let text = line_text(&panel.lines(80, 8, now)[0]);
     assert!(text.contains("⏎ peek · 4s"));
     assert_eq!(
-        panel.highlighted_row(),
+        panel.highlighted_row(now),
         Some((0, crate::tui::activity::RailRowState::Hovered))
+    );
+}
+
+// Covers: linger expiry must agree between paint and hit-test.
+// Owner: pure unit (process peek hit-test clock)
+#[test]
+fn peek_target_uses_injected_now() {
+    let mut panel = ProcessPanel::default();
+    let t0 = Instant::now();
+    panel.ingest(
+        vec![LiveProcessSummary {
+            process_id: "done".into(),
+            command: "true".into(),
+            state: State::Exited,
+            elapsed_seconds: 3,
+            quiet_seconds: None,
+            exit_code: Some(0),
+        }],
+        t0,
+    );
+    let area = Rect::new(0, 0, 80, 1);
+    assert!(panel.peek_target_at(area, 1, 0, t0).is_some());
+    assert_eq!(
+        panel.peek_target_at(area, 1, 0, t0 + activity::LINGER_OK),
+        None
     );
 }

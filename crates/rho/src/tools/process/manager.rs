@@ -4,6 +4,7 @@ use super::{
     types::{terminal, ProcessLimits},
     Chunk, Snapshot, State,
 };
+use crate::tools::RAIL_TERMINAL_RETENTION;
 use rho_sdk::{ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits};
 use std::{
     collections::{HashMap, VecDeque},
@@ -14,12 +15,6 @@ use std::{
 };
 use tokio::sync::{mpsc, Notify};
 use uuid::Uuid;
-
-// Ceiling for how long `live_summaries` keeps serving terminal rows to the host UI.
-// Receipt: the activity rail applies shorter per-verdict linger windows on top;
-// this is only the manager-side bound so the rail can fade rows without the
-// manager dropping them first.
-const RAIL_TERMINAL_RETENTION: Duration = Duration::from_secs(10);
 
 pub(super) type SharedRecord = Arc<Mutex<Record>>;
 pub(super) struct RetainedChunk {
@@ -42,6 +37,23 @@ pub(super) struct Record {
     pub(super) tree: Option<Arc<ProcessTree>>,
     pub(super) notify: Arc<Notify>,
     pub(super) observed: bool,
+}
+
+impl Record {
+    fn host_timing(&self) -> (u64, Option<u64>) {
+        if terminal(self.state) {
+            let elapsed = self
+                .completed
+                .map(|completed| completed.saturating_duration_since(self.started).as_secs())
+                .unwrap_or_else(|| self.started.elapsed().as_secs());
+            (elapsed, None)
+        } else {
+            (
+                self.started.elapsed().as_secs(),
+                self.last_output_at.map(|at| at.elapsed().as_secs()),
+            )
+        }
+    }
 }
 struct Inner {
     records: HashMap<String, SharedRecord>,
@@ -362,25 +374,14 @@ impl ProcessManager {
             .filter_map(|record| {
                 let record = record.lock().unwrap();
                 let is_terminal = terminal(record.state);
-                let (elapsed_seconds, quiet_seconds, exit_code) = if is_terminal {
+                if is_terminal {
                     let completed = record.completed?;
                     if completed.elapsed() >= RAIL_TERMINAL_RETENTION {
                         return None;
                     }
-                    (
-                        completed
-                            .saturating_duration_since(record.started)
-                            .as_secs(),
-                        None,
-                        record.exit_code,
-                    )
-                } else {
-                    (
-                        record.started.elapsed().as_secs(),
-                        record.last_output_at.map(|at| at.elapsed().as_secs()),
-                        None,
-                    )
-                };
+                }
+                let (elapsed_seconds, quiet_seconds) = record.host_timing();
+                let exit_code = is_terminal.then_some(record.exit_code).flatten();
                 Some((
                     record.started,
                     record.id.clone(),
@@ -407,22 +408,7 @@ impl ProcessManager {
         let rec = self.get(id)?;
         let snapshot = snapshot(&rec, 0);
         let record = rec.lock().unwrap();
-        let (elapsed_seconds, quiet_seconds) = if terminal(record.state) {
-            let elapsed = record
-                .completed
-                .map(|completed| {
-                    completed
-                        .saturating_duration_since(record.started)
-                        .as_secs()
-                })
-                .unwrap_or_else(|| record.started.elapsed().as_secs());
-            (elapsed, None)
-        } else {
-            (
-                record.started.elapsed().as_secs(),
-                record.last_output_at.map(|at| at.elapsed().as_secs()),
-            )
-        };
+        let (elapsed_seconds, quiet_seconds) = record.host_timing();
         Ok(super::HostProcessView {
             snapshot,
             elapsed_seconds,

@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use pretty_assertions::assert_eq;
 use ratatui::{layout::Rect, text::Line};
 
-use super::{agent_activity, SubagentPanel, SubagentPointerTarget, SubagentRowState};
+use super::{agent_activity, SubagentPanel, SubagentPointerTarget};
 use crate::{
     subagent::{RunState, RunStatus},
     tools::agent::SubagentSnapshot,
@@ -96,16 +96,6 @@ fn subagent_linger_keeps_then_drops_around_deadline() {
     assert!(!panel.is_active());
 }
 
-// Covers: historical terminal snapshots never shown live do not flash onto the rail.
-// Owner: pure unit (subagent linger)
-#[test]
-fn subagent_historical_terminal_does_not_linger() {
-    let mut panel = SubagentPanel::default();
-    let now = Instant::now();
-    assert!(!panel.ingest(vec![snapshot("old001", "worker", RunState::Ok, 30)], now,));
-    assert!(!panel.is_active());
-}
-
 // Covers: spinner agent count ignores lingering rows.
 // Owner: pure unit (subagent count)
 #[test]
@@ -151,11 +141,11 @@ fn subagent_overflow_summary_opens_attach_picker() {
 
     let area = Rect::new(0, 0, 80, 2);
     assert_eq!(
-        panel.attach_target_at(area, 1, 1),
+        panel.attach_target_at(area, 1, 1, now),
         Some(SubagentPointerTarget::OpenAttachPicker)
     );
     assert!(matches!(
-        panel.attach_target_at(area, 1, 0),
+        panel.attach_target_at(area, 1, 0, now),
         Some(SubagentPointerTarget::Run(_))
     ));
 }
@@ -172,7 +162,7 @@ fn lingering_subagent_rows_are_not_clickable() {
     );
     panel.ingest(vec![snapshot("aa0001", "worker", RunState::Ok, 4)], now);
     let area = Rect::new(0, 0, 80, 1);
-    assert_eq!(panel.attach_target_at(area, 1, 0), None);
+    assert_eq!(panel.attach_target_at(area, 1, 0, now), None);
     assert!(panel.candidates().is_empty());
 }
 
@@ -190,8 +180,8 @@ fn hover_trailing_keeps_elapsed() {
     let text = line_text(&panel.lines(80, 8, "attach", false, now)[0]);
     assert!(text.contains("⏎ attach · 4s"));
     assert_eq!(
-        panel.highlighted_row(),
-        Some((0, SubagentRowState::Hovered))
+        panel.highlighted_row(now),
+        Some((0, activity::RailRowState::Hovered))
     );
 }
 

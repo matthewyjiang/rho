@@ -48,6 +48,7 @@ fn zen_mode_keeps_activity_status_while_turn_is_busy() {
         Some(ActivityStatus::Parent {
             phase: ActivityPhase::Thinking,
             retry: None,
+            background: crate::tui::activity::BackgroundCounts::default(),
         })
     );
 }

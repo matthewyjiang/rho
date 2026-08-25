@@ -21,11 +21,8 @@ use super::{
 };
 use crate::{
     subagent,
-    tools::process::{Chunk, HostProcessView, LiveProcessSummary, ProcessManager, State, Stream},
+    tools::process::{Chunk, HostProcessView, ProcessManager, Stream},
 };
-
-/// Short hover hint shown on the right edge of a process row.
-pub(super) const ACTION_HINT: &str = "peek";
 
 const FOOTER_HINT: &str = "read-only · scroll · q back · ctrl+c back/again quit";
 const EVICTED_NOTICE: &str = "earlier output evicted";
@@ -50,6 +47,7 @@ enum PeekBodyLine {
 pub(super) struct ProcessPeekView {
     process_id: String,
     view: HostProcessView,
+    manager: ProcessManager,
     scroll: HistoryScrollChrome,
     last_drawn_elapsed_secs: Option<u64>,
     viewport_height: usize,
@@ -58,10 +56,11 @@ pub(super) struct ProcessPeekView {
 }
 
 impl ProcessPeekView {
-    fn new(view: HostProcessView) -> Self {
+    fn new(view: HostProcessView, manager: ProcessManager) -> Self {
         Self {
             process_id: view.snapshot.process_id.clone(),
             view,
+            manager,
             scroll: HistoryScrollChrome::default(),
             last_drawn_elapsed_secs: None,
             viewport_height: 0,
@@ -79,14 +78,15 @@ impl ProcessPeekView {
     }
 
     fn live_elapsed_secs(&self) -> Option<u64> {
-        is_live(self.view.snapshot.state).then_some(self.view.elapsed_seconds)
+        self.view
+            .snapshot
+            .state
+            .is_live()
+            .then_some(self.view.elapsed_seconds)
     }
 
-    fn refresh(&mut self, manager: Option<&ProcessManager>) -> bool {
-        let Some(manager) = manager else {
-            return false;
-        };
-        let Ok(next) = manager.host_view(&self.process_id) else {
+    pub(super) fn refresh(&mut self) -> bool {
+        let Ok(next) = self.manager.host_view(&self.process_id) else {
             return false;
         };
         if !view_changed(&self.view, &next) {
@@ -235,16 +235,15 @@ impl App {
     }
 
     pub(super) fn enter_peek_view(&mut self, process_id: &str) -> anyhow::Result<()> {
+        let view = self.process_panel.host_view(process_id)?;
         let manager = self
-            .process_manager
-            .as_ref()
+            .process_panel
+            .manager()
+            .cloned()
             .ok_or_else(|| anyhow::anyhow!("process manager unavailable"))?;
-        let view = manager
-            .host_view(process_id)
-            .map_err(|error| anyhow::anyhow!("{error}"))?;
         let command = process_panel::command_identity(&view.snapshot.command).to_owned();
         self.exclusive = ExclusiveOccupant::Peek {
-            view: Box::new(ProcessPeekView::new(view)),
+            view: Box::new(ProcessPeekView::new(view, manager)),
         };
         self.notify_status(format!("peeking {command}"));
         Ok(())
@@ -272,17 +271,6 @@ impl App {
         }
         resize
     }
-
-    pub(super) fn refresh_process_peek(&mut self, manager: Option<&ProcessManager>) -> bool {
-        let Some(view) = self.exclusive.peek_view_mut() else {
-            return false;
-        };
-        view.refresh(manager) || view.should_redraw(Instant::now())
-    }
-}
-
-fn is_live(state: State) -> bool {
-    matches!(state, State::Starting | State::Running)
 }
 
 fn view_changed(previous: &HostProcessView, next: &HostProcessView) -> bool {
@@ -293,21 +281,18 @@ fn view_changed(previous: &HostProcessView, next: &HostProcessView) -> bool {
         || previous.snapshot.truncated != next.snapshot.truncated
         || previous.snapshot.first_cursor != next.snapshot.first_cursor
         || previous.snapshot.next_cursor != next.snapshot.next_cursor
+        || previous.snapshot.available_cursor != next.snapshot.available_cursor
         || previous.snapshot.command != next.snapshot.command
-        || previous.snapshot.chunks.len() != next.snapshot.chunks.len()
+        || previous.snapshot.chunks != next.snapshot.chunks
 }
 
 fn peek_header_lines(view: &HostProcessView, width: usize) -> Vec<Line<'static>> {
     let command = process_panel::command_identity(&view.snapshot.command);
-    let summary = LiveProcessSummary {
-        process_id: view.snapshot.process_id.clone(),
-        command: view.snapshot.command.clone(),
-        state: view.snapshot.state,
-        elapsed_seconds: view.elapsed_seconds,
-        quiet_seconds: view.quiet_seconds,
-        exit_code: view.snapshot.exit_code,
-    };
-    let (status, status_style) = process_panel::process_activity(&summary);
+    let (status, status_style) = process_panel::process_activity_for(
+        view.snapshot.state,
+        view.quiet_seconds,
+        view.snapshot.exit_code,
+    );
     let mut meta = vec![
         Span::styled(status, status_style),
         Span::styled(
@@ -315,7 +300,10 @@ fn peek_header_lines(view: &HostProcessView, width: usize) -> Vec<Line<'static>>
             Theme::dim(),
         ),
     ];
-    if let Some(quiet) = view.quiet_seconds {
+    if let Some(quiet) = view
+        .quiet_seconds
+        .filter(|quiet| *quiet < process_panel::QUIET_LABEL_AFTER)
+    {
         meta.push(Span::styled(
             format!(" · quiet {}", subagent::format_elapsed_secs(quiet)),
             Theme::dim(),
@@ -323,7 +311,7 @@ fn peek_header_lines(view: &HostProcessView, width: usize) -> Vec<Line<'static>>
     }
     vec![
         Line::from(vec![
-            Span::styled(activity_glyph(), Theme::text_strong()),
+            Span::styled(super::activity::PROCESS_GLYPH, Theme::text_strong()),
             Span::styled(
                 truncate_one_line(command, width.saturating_sub(2)),
                 Theme::text_strong(),
@@ -334,28 +322,40 @@ fn peek_header_lines(view: &HostProcessView, width: usize) -> Vec<Line<'static>>
     ]
 }
 
-fn activity_glyph() -> &'static str {
-    super::activity::PROCESS_GLYPH
-}
-
 fn peek_body_model(chunks: &[Chunk], truncated: bool) -> Vec<PeekBodyLine> {
     let mut lines = Vec::new();
     if truncated {
         lines.push(PeekBodyLine::Evicted);
     }
+    let mut pending: Option<(Stream, String)> = None;
     for chunk in chunks {
-        for raw in chunk.text.split_inclusive('\n') {
-            let text = raw.trim_end_matches(['\n', '\r']).to_owned();
-            if text.is_empty() && !raw.ends_with('\n') && !raw.ends_with('\r') {
-                continue;
+        match pending.as_mut() {
+            Some((stream, text))
+                if *stream == chunk.stream && !text.ends_with('\n') && !text.ends_with('\r') =>
+            {
+                text.push_str(&chunk.text);
             }
-            lines.push(PeekBodyLine::Output {
-                stream: chunk.stream,
-                text,
-            });
+            _ => {
+                flush_pending_chunk(&mut lines, pending.take());
+                pending = Some((chunk.stream, chunk.text.clone()));
+            }
         }
     }
+    flush_pending_chunk(&mut lines, pending);
     lines
+}
+
+fn flush_pending_chunk(lines: &mut Vec<PeekBodyLine>, pending: Option<(Stream, String)>) {
+    let Some((stream, text)) = pending else {
+        return;
+    };
+    for raw in text.split_inclusive('\n') {
+        let line = raw.trim_end_matches(['\n', '\r']).to_owned();
+        if line.is_empty() && !raw.ends_with('\n') && !raw.ends_with('\r') {
+            continue;
+        }
+        lines.push(PeekBodyLine::Output { stream, text: line });
+    }
 }
 
 fn peek_output_lines(chunks: &[Chunk], truncated: bool, width: usize) -> Vec<Line<'static>> {

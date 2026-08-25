@@ -1,14 +1,15 @@
-use std::{
-    collections::{HashMap, HashSet},
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use ratatui::{
-    layout::{Position, Rect},
+    layout::Rect,
     text::{Line, Span},
 };
 
-use super::{activity, theme::Theme};
+use super::{
+    activity,
+    linger_rail::{LingerRail, RailHit, RailItem, RailPointerPolicy},
+    theme::Theme,
+};
 use crate::{
     subagent::{self, RunState},
     title::activity_label,
@@ -26,9 +27,6 @@ struct RunningSubagent {
     last_activity: Option<String>,
     elapsed_seconds: u64,
 }
-
-/// How a subagent row is being pointed at.
-pub(super) type SubagentRowState = activity::RailRowState;
 
 /// A clickable subagent row resolved from a pointer position.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -53,154 +51,89 @@ impl SubagentPointerTarget {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub(super) struct SubagentPanel {
-    agents: Vec<RunningSubagent>,
-    terminal_seen: HashMap<String, Instant>,
-    hovered_run_id: Option<String>,
-    pressed_run_id: Option<String>,
+    rail: LingerRail<RunningSubagent>,
+}
+
+impl Default for SubagentPanel {
+    fn default() -> Self {
+        Self {
+            rail: LingerRail::new(RailPointerPolicy::LiveAndOverflow {
+                overflow_id: OPEN_ATTACH_PICKER_ID,
+            }),
+        }
+    }
 }
 
 impl SubagentPanel {
     pub(super) fn update(&mut self, manager: Option<&SubagentManager>, now: Instant) -> bool {
-        let snapshots = manager.map(SubagentManager::list).unwrap_or_default();
+        let snapshots = manager
+            .map(SubagentManager::rail_summaries)
+            .unwrap_or_default();
         self.ingest(snapshots, now)
     }
 
-    fn ingest(
+    pub(super) fn ingest(
         &mut self,
         snapshots: Vec<crate::tools::agent::SubagentSnapshot>,
         now: Instant,
     ) -> bool {
-        let incoming: HashSet<String> = snapshots
-            .iter()
-            .map(|snapshot| snapshot.id.clone())
-            .collect();
-        self.terminal_seen.retain(|id, _| incoming.contains(id));
-        let previously_shown: HashSet<String> =
-            self.agents.iter().map(|agent| agent.id.clone()).collect();
         let agents = snapshots
             .into_iter()
-            .filter_map(|snapshot| {
-                let agent = RunningSubagent {
-                    id: snapshot.id,
-                    agent_id: snapshot.agent_id,
-                    title: snapshot.title,
-                    state: snapshot.status.state,
-                    last_activity: snapshot.status.last_activity,
-                    elapsed_seconds: snapshot.elapsed.as_secs(),
-                };
-                self.keep_agent(&agent, &previously_shown, now)
-                    .then_some(agent)
+            .map(|snapshot| RunningSubagent {
+                id: snapshot.id,
+                agent_id: snapshot.agent_id,
+                title: snapshot.title,
+                state: snapshot.status.state,
+                last_activity: snapshot.status.last_activity,
+                elapsed_seconds: snapshot.elapsed.as_secs(),
             })
             .collect();
-        self.replace_agents(agents)
-    }
-
-    fn keep_agent(
-        &mut self,
-        agent: &RunningSubagent,
-        previously_shown: &HashSet<String>,
-        now: Instant,
-    ) -> bool {
-        if is_live(agent.state) {
-            self.terminal_seen.remove(&agent.id);
-            return true;
-        }
-        if !agent.state.is_terminal() {
-            return false;
-        }
-        if let Some(&first_seen) = self.terminal_seen.get(&agent.id) {
-            return activity::linger_active(first_seen, now, linger_for_agent(agent.state));
-        }
-        if previously_shown.contains(&agent.id) {
-            self.terminal_seen.insert(agent.id.clone(), now);
-            return true;
-        }
-        false
-    }
-
-    fn replace_agents(&mut self, agents: Vec<RunningSubagent>) -> bool {
-        if self.agents == agents {
-            return false;
-        }
-        self.agents = agents;
-        let overflow_active = self.agents.len() > activity::MAX_VISIBLE_RAIL_ROWS;
-        let run_is_active = |run_id: &str| {
-            (run_id == OPEN_ATTACH_PICKER_ID && overflow_active)
-                || self
-                    .agents
-                    .iter()
-                    .any(|agent| agent.id == run_id && is_live(agent.state))
-        };
-        if !self.hovered_run_id.as_deref().is_some_and(run_is_active) {
-            self.hovered_run_id = None;
-        }
-        if !self.pressed_run_id.as_deref().is_some_and(run_is_active) {
-            self.pressed_run_id = None;
-        }
-        true
+        self.rail.ingest(agents, now)
     }
 
     pub(super) fn count(&self) -> usize {
-        self.running_agents().len()
+        self.rail.live_count()
     }
 
     pub(super) fn is_active(&self) -> bool {
-        !self.agents.is_empty()
+        self.rail.is_active()
     }
 
     pub(super) fn desired_height(&self) -> usize {
-        self.agents.len().min(activity::MAX_VISIBLE_RAIL_ROWS)
+        self.rail.desired_height()
     }
 
     pub(super) fn clear_pointer_state(&mut self) {
-        self.hovered_run_id = None;
-        self.pressed_run_id = None;
+        self.rail.clear_pointer_state();
+    }
+
+    pub(super) fn clear_pressed(&mut self) {
+        self.rail.clear_pressed();
     }
 
     /// Returns whether the hovered run changed.
     pub(super) fn set_hovered(&mut self, run_id: Option<&str>) -> bool {
-        if self.hovered_run_id.as_deref() == run_id {
-            return false;
-        }
-        self.hovered_run_id = run_id.map(str::to_owned);
-        true
+        self.rail.set_hovered(run_id)
     }
 
     /// Returns whether the pressed run changed.
     pub(super) fn set_pressed(&mut self, run_id: Option<&str>) -> bool {
-        if self.pressed_run_id.as_deref() == run_id {
-            return false;
-        }
-        self.pressed_run_id = run_id.map(str::to_owned);
-        true
+        self.rail.set_pressed(run_id)
     }
 
     pub(super) fn pressed_run_id(&self) -> Option<&str> {
-        self.pressed_run_id.as_deref()
+        self.rail.pressed_id()
     }
 
-    pub(super) fn highlighted_row(&self) -> Option<(usize, SubagentRowState)> {
-        let rows = self.visible_rows(activity::MAX_VISIBLE_RAIL_ROWS);
-        let row_for = |run_id: &str| {
-            rows.iter().position(|row| match row {
-                VisibleSubagentRow::Agent(agent) => agent.id == run_id,
-                VisibleSubagentRow::Overflow { .. } => run_id == OPEN_ATTACH_PICKER_ID,
-            })
-        };
-        if let Some(row) = self.pressed_run_id.as_deref().and_then(row_for) {
-            return Some((row, SubagentRowState::Pressed));
-        }
-        self.hovered_run_id
-            .as_deref()
-            .and_then(row_for)
-            .map(|row| (row, SubagentRowState::Hovered))
+    pub(super) fn highlighted_row(&self, now: Instant) -> Option<(usize, activity::RailRowState)> {
+        self.rail.highlighted_row(now)
     }
 
     pub(super) fn candidates(&self) -> Vec<super::attach_picker::AttachCandidate> {
-        self.running_agents()
-            .into_iter()
+        self.rail
+            .live_items()
             .map(|agent| super::attach_picker::AttachCandidate {
                 run_id: agent.id.clone(),
                 agent_id: agent.agent_id.clone(),
@@ -217,20 +150,21 @@ impl SubagentPanel {
         area: Rect,
         column: u16,
         row: u16,
+        now: Instant,
     ) -> Option<SubagentPointerTarget> {
-        if !area.contains(Position { x: column, y: row }) || area.height == 0 {
-            return None;
-        }
-        let index = row.saturating_sub(area.y) as usize;
-        match self.visible_rows(area.height as usize).get(index)? {
-            VisibleSubagentRow::Agent(agent) if is_live(agent.state) => {
-                Some(SubagentPointerTarget::Run(SubagentAttachTarget {
-                    run_id: agent.id.clone(),
-                    agent_id: agent.agent_id.clone(),
-                }))
-            }
-            VisibleSubagentRow::Overflow { .. } => Some(SubagentPointerTarget::OpenAttachPicker),
-            VisibleSubagentRow::Agent(_) => None,
+        match self.rail.hit_at(area, column, row, now)? {
+            RailHit::Overflow => Some(SubagentPointerTarget::OpenAttachPicker),
+            RailHit::Item(run_id) => self
+                .rail
+                .items()
+                .iter()
+                .find(|agent| agent.id == run_id)
+                .map(|agent| {
+                    SubagentPointerTarget::Run(SubagentAttachTarget {
+                        run_id: agent.id.clone(),
+                        agent_id: agent.agent_id.clone(),
+                    })
+                }),
         }
     }
 
@@ -242,110 +176,60 @@ impl SubagentPanel {
         continues_below: bool,
         now: Instant,
     ) -> Vec<Line<'static>> {
-        if self.agents.is_empty() || width == 0 || height == 0 {
+        if !self.rail.is_active() || width == 0 || height == 0 {
             return Vec::new();
         }
 
-        let rows = self.visible_rows_at(height, now);
-        let visible_count = rows.len();
+        let (rows, hidden) = self.rail.visible(height, now);
+        let visible_count = rows.len() + usize::from(hidden.is_some());
         let mut lines = Vec::with_capacity(visible_count);
-        for (index, row) in rows.into_iter().enumerate() {
-            let connector =
-                activity::tree_connector(index + 1 == visible_count && !continues_below);
-            lines.push(match row {
-                VisibleSubagentRow::Agent(agent) => {
-                    let (activity_text, activity_style) = agent_activity(agent);
-                    agent_line(
-                        agent,
-                        activity_text,
-                        activity_style,
-                        connector,
-                        width,
-                        self.row_state(agent),
-                        action_hint,
-                    )
-                }
-                VisibleSubagentRow::Overflow { hidden } => overflow_line(
-                    hidden,
-                    connector,
-                    width,
-                    self.overflow_row_state(),
-                    action_hint,
-                ),
-            });
+        for (index, agent) in rows.into_iter().enumerate() {
+            let last = index + 1 == visible_count && !continues_below;
+            let (activity_text, activity_style) = agent_activity(agent);
+            lines.push(agent_line(
+                agent,
+                activity_text,
+                activity_style,
+                activity::tree_connector(last),
+                width,
+                self.rail.row_state(&agent.id, agent.state.is_live()),
+                action_hint,
+            ));
+        }
+        if let Some(hidden) = hidden {
+            lines.push(overflow_line(
+                hidden,
+                activity::tree_connector(!continues_below),
+                width,
+                self.rail.overflow_row_state(),
+                action_hint,
+            ));
         }
         lines
     }
-
-    fn row_state(&self, agent: &RunningSubagent) -> SubagentRowState {
-        if !is_live(agent.state) {
-            return SubagentRowState::Idle;
-        }
-        if self.pressed_run_id.as_deref() == Some(agent.id.as_str()) {
-            SubagentRowState::Pressed
-        } else if self.hovered_run_id.as_deref() == Some(agent.id.as_str()) {
-            SubagentRowState::Hovered
-        } else {
-            SubagentRowState::Idle
-        }
-    }
-
-    fn overflow_row_state(&self) -> SubagentRowState {
-        if self.pressed_run_id.as_deref() == Some(OPEN_ATTACH_PICKER_ID) {
-            SubagentRowState::Pressed
-        } else if self.hovered_run_id.as_deref() == Some(OPEN_ATTACH_PICKER_ID) {
-            SubagentRowState::Hovered
-        } else {
-            SubagentRowState::Idle
-        }
-    }
-
-    fn running_agents(&self) -> Vec<&RunningSubagent> {
-        self.agents
-            .iter()
-            .filter(|agent| is_live(agent.state))
-            .collect()
-    }
-
-    fn visible_rows(&self, height: usize) -> Vec<VisibleSubagentRow<'_>> {
-        self.visible_rows_at(height, Instant::now())
-    }
-
-    fn visible_rows_at(&self, height: usize, now: Instant) -> Vec<VisibleSubagentRow<'_>> {
-        let agents: Vec<&RunningSubagent> = self
-            .agents
-            .iter()
-            .filter(|agent| self.row_visible(agent, now))
-            .collect();
-        let (indices, hidden) = activity::select_capped_rail_rows(
-            &agents,
-            height,
-            |agent| is_live(agent.state),
-            |agent| agent.state == RunState::Error,
-        );
-        let mut rows: Vec<VisibleSubagentRow<'_>> = indices
-            .into_iter()
-            .map(|index| VisibleSubagentRow::Agent(agents[index]))
-            .collect();
-        if let Some(hidden) = hidden {
-            rows.push(VisibleSubagentRow::Overflow { hidden });
-        }
-        rows
-    }
-
-    fn row_visible(&self, agent: &RunningSubagent, now: Instant) -> bool {
-        if is_live(agent.state) {
-            return true;
-        }
-        self.terminal_seen.get(&agent.id).is_some_and(|first| {
-            activity::linger_active(*first, now, linger_for_agent(agent.state))
-        })
-    }
 }
 
-enum VisibleSubagentRow<'a> {
-    Agent(&'a RunningSubagent),
-    Overflow { hidden: usize },
+impl RailItem for RunningSubagent {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn is_live(&self) -> bool {
+        self.state.is_live()
+    }
+
+    fn is_failure(&self) -> bool {
+        self.state == RunState::Error
+    }
+
+    fn linger(&self) -> Duration {
+        match self.state {
+            RunState::Error => activity::LINGER_FAIL,
+            RunState::Ok | RunState::Stopped | RunState::Starting | RunState::Running => {
+                activity::LINGER_OK
+            }
+        }
+    }
 }
 
 fn agent_line(
@@ -354,17 +238,17 @@ fn agent_line(
     activity_style: ratatui::style::Style,
     connector: &'static str,
     width: usize,
-    row_state: SubagentRowState,
+    row_state: activity::RailRowState,
     action_hint: &str,
 ) -> Line<'static> {
     let elapsed = subagent::format_elapsed_secs(agent.elapsed_seconds);
     let trailing = match row_state {
-        SubagentRowState::Idle => elapsed,
-        SubagentRowState::Hovered | SubagentRowState::Pressed => {
+        activity::RailRowState::Idle => elapsed,
+        activity::RailRowState::Hovered | activity::RailRowState::Pressed => {
             format!("⏎ {action_hint} · {elapsed}")
         }
     };
-    let row_style = Theme::subagent_row(row_state);
+    let row_style = Theme::activity_rail_row(row_state);
     activity::RailRow {
         connector,
         identity: rail_identity(agent, row_style),
@@ -381,14 +265,16 @@ fn overflow_line(
     hidden: usize,
     connector: &'static str,
     width: usize,
-    row_state: SubagentRowState,
+    row_state: activity::RailRowState,
     action_hint: &str,
 ) -> Line<'static> {
     let trailing = match row_state {
-        SubagentRowState::Idle => String::new(),
-        SubagentRowState::Hovered | SubagentRowState::Pressed => format!("⏎ {action_hint}"),
+        activity::RailRowState::Idle => String::new(),
+        activity::RailRowState::Hovered | activity::RailRowState::Pressed => {
+            format!("⏎ {action_hint}")
+        }
     };
-    let row_style = Theme::subagent_row(row_state);
+    let row_style = Theme::activity_rail_row(row_state);
     activity::RailRow {
         connector,
         identity: vec![Span::styled(
@@ -420,19 +306,6 @@ fn rail_identity(agent: &RunningSubagent, row_style: ratatui::style::Style) -> V
         ));
     }
     identity
-}
-
-fn is_live(state: RunState) -> bool {
-    matches!(state, RunState::Starting | RunState::Running)
-}
-
-fn linger_for_agent(state: RunState) -> Duration {
-    match state {
-        RunState::Error => activity::LINGER_FAIL,
-        RunState::Ok | RunState::Stopped | RunState::Starting | RunState::Running => {
-            activity::LINGER_OK
-        }
-    }
 }
 
 fn agent_activity(agent: &RunningSubagent) -> (String, ratatui::style::Style) {

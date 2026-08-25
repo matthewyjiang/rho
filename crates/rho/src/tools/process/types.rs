@@ -32,6 +32,10 @@ pub enum State {
 }
 
 impl State {
+    pub(crate) const fn is_live(self) -> bool {
+        matches!(self, Self::Starting | Self::Running)
+    }
+
     pub(crate) const fn as_wire_str(self) -> &'static str {
         match self {
             Self::Starting => "starting",

@@ -45,12 +45,15 @@ pub(super) enum RailRowState {
 }
 
 /// Long enough to register the ✓ while reading; short enough not to squat rail
-/// rows. Must stay below process-manager `RAIL_TERMINAL_RETENTION` (10s) so the
-/// UI drops the row before the backend forgets it.
+/// rows.
 pub(super) const LINGER_OK: Duration = Duration::from_secs(2);
-/// A failure verdict is the one thing the rail must not let you miss. Must stay
-/// below process-manager `RAIL_TERMINAL_RETENTION` (10s).
+/// A failure verdict is the one thing the rail must not let you miss.
 pub(super) const LINGER_FAIL: Duration = Duration::from_secs(5);
+
+const _: () = assert!(
+    LINGER_FAIL.as_secs() < crate::tools::RAIL_TERMINAL_RETENTION.as_secs(),
+    "UI linger must drop a row before the manager forgets it"
+);
 
 /// One stacked activity-rail row. Identity styling stays at the call site.
 pub(super) struct RailRow {
@@ -256,43 +259,44 @@ impl ProviderRetryHint {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct BackgroundCounts {
+    pub(super) subagent_count: usize,
+    pub(super) job_count: usize,
+}
+
+impl BackgroundCounts {
+    fn is_empty(self) -> bool {
+        self.subagent_count == 0 && self.job_count == 0
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ActivityStatus {
     Parent {
         phase: ActivityPhase,
         retry: Option<ProviderRetryHint>,
+        background: BackgroundCounts,
     },
-    ParentWithBackground {
-        phase: ActivityPhase,
-        retry: Option<ProviderRetryHint>,
-        subagent_count: usize,
-        job_count: usize,
-    },
-    Background {
-        subagent_count: usize,
-        job_count: usize,
-    },
+    Background(BackgroundCounts),
+    Linger,
 }
 
 impl ActivityStatus {
     pub(super) fn from_parent_and_background(
         parent: Option<(ActivityPhase, Option<ProviderRetryHint>)>,
-        subagent_count: usize,
-        job_count: usize,
+        background: BackgroundCounts,
+        rail_occupied: bool,
     ) -> Option<Self> {
-        match (parent, subagent_count, job_count) {
-            (Some((phase, retry)), 0, 0) => Some(Self::Parent { phase, retry }),
-            (Some((phase, retry)), subagent_count, job_count) => Some(Self::ParentWithBackground {
+        match (parent, background.is_empty(), rail_occupied) {
+            (Some((phase, retry)), _, _) => Some(Self::Parent {
                 phase,
                 retry,
-                subagent_count,
-                job_count,
+                background,
             }),
-            (None, 0, 0) => None,
-            (None, subagent_count, job_count) => Some(Self::Background {
-                subagent_count,
-                job_count,
-            }),
+            (None, false, _) => Some(Self::Background(background)),
+            (None, true, true) => Some(Self::Linger),
+            (None, true, false) => None,
         }
     }
 }
@@ -317,72 +321,77 @@ fn counted_noun(count: usize, singular: &str, plural: &str) -> String {
 fn activity_status_labels(status: ActivityStatus) -> Vec<String> {
     let spinner = LoadingSpinner::FRAMES[0];
     match status {
-        ActivityStatus::Parent { phase, retry } => {
-            let label = phase_label(phase, retry);
-            vec![format!("{spinner} {label}"), spinner.into()]
-        }
-        ActivityStatus::ParentWithBackground {
+        ActivityStatus::Parent {
             phase,
             retry,
-            subagent_count,
-            job_count,
-        } => {
-            let label = phase_label(phase, retry);
-            let agents = counted_noun(subagent_count, "agent", "agents");
-            let jobs = counted_noun(job_count, "job", "jobs");
-            if subagent_count > 0 && job_count > 0 {
-                vec![
-                    format!("{spinner} {label}  ·  {agents} · {jobs}"),
-                    format!("{spinner} {label} · {subagent_count}+{job_count}"),
-                    format!("{spinner} {subagent_count}+{job_count}"),
-                    spinner.into(),
-                ]
-            } else if subagent_count > 0 {
-                vec![
-                    format!("{spinner} {label}  ·  {agents}"),
-                    format!("{spinner} {label} · {subagent_count}"),
-                    format!("{spinner} {subagent_count}"),
-                    spinner.into(),
-                ]
-            } else {
-                vec![
-                    format!("{spinner} {label}  ·  {jobs}"),
-                    format!("{spinner} {label} · {job_count}"),
-                    format!("{spinner} {job_count}"),
-                    spinner.into(),
-                ]
-            }
-        }
-        ActivityStatus::Background {
-            subagent_count,
-            job_count,
-        } => {
-            let agents = counted_noun(subagent_count, "agent", "agents");
-            let jobs = counted_noun(job_count, "job", "jobs");
-            if subagent_count > 0 && job_count > 0 {
-                vec![
-                    format!("{spinner} {agents} · {jobs}"),
-                    format!("{spinner} {subagent_count}+{job_count}"),
-                    spinner.into(),
-                ]
-            } else if subagent_count > 0 {
-                vec![
-                    format!("{spinner} {agents} working"),
-                    format!("{spinner} {agents}"),
-                    format!("{spinner} {subagent_count}"),
-                    spinner.into(),
-                ]
-            } else if job_count > 0 {
-                vec![
-                    format!("{spinner} {jobs} running"),
-                    format!("{spinner} {jobs}"),
-                    format!("{spinner} {job_count}"),
-                    spinner.into(),
-                ]
-            } else {
-                vec![spinner.into()]
-            }
-        }
+            background,
+        } => parent_background_rungs(spinner, &phase_label(phase, retry), background),
+        ActivityStatus::Background(background) => background_only_rungs(spinner, background),
+        ActivityStatus::Linger => vec![spinner.into()],
+    }
+}
+
+fn parent_background_rungs(spinner: &str, label: &str, counts: BackgroundCounts) -> Vec<String> {
+    if counts.is_empty() {
+        return vec![format!("{spinner} {label}"), spinner.into()];
+    }
+    let wide = background_wide(counts);
+    if counts.subagent_count > 0 && counts.job_count > 0 {
+        vec![
+            format!("{spinner} {label}  ·  {wide}"),
+            format!(
+                "{spinner} {label} · {}+{}",
+                counts.subagent_count, counts.job_count
+            ),
+            format!("{spinner} {}+{}", counts.subagent_count, counts.job_count),
+            spinner.into(),
+        ]
+    } else {
+        let n = counts.subagent_count.max(counts.job_count);
+        vec![
+            format!("{spinner} {label}  ·  {wide}"),
+            format!("{spinner} {label} · {n}"),
+            format!("{spinner} {n}"),
+            spinner.into(),
+        ]
+    }
+}
+
+fn background_only_rungs(spinner: &str, counts: BackgroundCounts) -> Vec<String> {
+    let wide = background_wide(counts);
+    if counts.subagent_count > 0 && counts.job_count > 0 {
+        vec![
+            format!("{spinner} {wide}"),
+            format!("{spinner} {}+{}", counts.subagent_count, counts.job_count),
+            spinner.into(),
+        ]
+    } else if counts.subagent_count > 0 {
+        vec![
+            format!("{spinner} {wide} working"),
+            format!("{spinner} {wide}"),
+            format!("{spinner} {}", counts.subagent_count),
+            spinner.into(),
+        ]
+    } else {
+        vec![
+            format!("{spinner} {wide} running"),
+            format!("{spinner} {wide}"),
+            format!("{spinner} {}", counts.job_count),
+            spinner.into(),
+        ]
+    }
+}
+
+fn background_wide(counts: BackgroundCounts) -> String {
+    match (counts.subagent_count > 0, counts.job_count > 0) {
+        (true, true) => format!(
+            "{} · {}",
+            counted_noun(counts.subagent_count, "agent", "agents"),
+            counted_noun(counts.job_count, "job", "jobs")
+        ),
+        (true, false) => counted_noun(counts.subagent_count, "agent", "agents"),
+        (false, true) => counted_noun(counts.job_count, "job", "jobs"),
+        (false, false) => String::new(),
     }
 }
 

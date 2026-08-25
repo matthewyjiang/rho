@@ -34,7 +34,9 @@ impl ExclusiveOccupant {
         }
     }
 
-    pub(super) fn wants_journal_ticks(&self) -> bool {
+    /// Attach reads the journal; peek follows live process output. Both need
+    /// the 100ms tick so the exclusive screen keeps moving.
+    pub(super) fn wants_fast_ticks(&self) -> bool {
         matches!(self, Self::Attach { .. } | Self::Peek { .. })
     }
 
@@ -110,7 +112,9 @@ impl App {
                 let changed = view.refresh()?;
                 Ok(changed || view.should_redraw(Instant::now()))
             }
-            ExclusiveOccupant::Peek { view } => Ok(view.should_redraw(Instant::now())),
+            ExclusiveOccupant::Peek { view } => {
+                Ok(view.refresh() || view.should_redraw(Instant::now()))
+            }
             ExclusiveOccupant::Session | ExclusiveOccupant::Setup(_) => Ok(false),
         }
     }
