@@ -168,8 +168,12 @@ impl<T: RailItem> LingerRail<T> {
         self.items.iter().filter(|item| item.is_live())
     }
 
-    pub(super) fn highlighted_row(&self, now: Instant) -> Option<(usize, RailRowState)> {
-        let (rows, hidden) = self.visible(activity::MAX_VISIBLE_RAIL_ROWS, now);
+    pub(super) fn highlighted_row(
+        &self,
+        height: usize,
+        now: Instant,
+    ) -> Option<(usize, RailRowState)> {
+        let (rows, hidden) = self.visible(height, now);
         let row_for = |id: &str| {
             rows.iter()
                 .position(|item| item.id() == id)

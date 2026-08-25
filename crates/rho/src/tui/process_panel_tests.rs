@@ -339,7 +339,26 @@ fn hover_trailing_keeps_elapsed() {
     let text = line_text(&panel.lines(80, 8, now)[0]);
     assert!(text.contains("⏎ peek · 4s"));
     assert_eq!(
-        panel.highlighted_row(now),
+        panel.highlighted_row(8, now),
+        Some((0, crate::tui::activity::RailRowState::Hovered))
+    );
+}
+
+// Covers: highlight index must use the painted height, not the rail cap.
+// Owner: pure unit (linger rail selection)
+#[test]
+fn highlight_uses_painted_height_not_cap() {
+    let mut panel = ProcessPanel::default();
+    let now = Instant::now();
+    panel.ingest(
+        vec![summary("a", "sleep 1", 1), summary("b", "sleep 2", 2)],
+        now,
+    );
+    panel.set_hovered(Some("a"));
+    assert_eq!(panel.lines(80, 1, now).len(), 1);
+    assert_eq!(panel.highlighted_row(1, now), None);
+    assert_eq!(
+        panel.highlighted_row(2, now),
         Some((0, crate::tui::activity::RailRowState::Hovered))
     );
 }

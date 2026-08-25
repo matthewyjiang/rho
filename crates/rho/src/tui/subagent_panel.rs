@@ -127,8 +127,12 @@ impl SubagentPanel {
         self.rail.pressed_id()
     }
 
-    pub(super) fn highlighted_row(&self, now: Instant) -> Option<(usize, activity::RailRowState)> {
-        self.rail.highlighted_row(now)
+    pub(super) fn highlighted_row(
+        &self,
+        height: usize,
+        now: Instant,
+    ) -> Option<(usize, activity::RailRowState)> {
+        self.rail.highlighted_row(height, now)
     }
 
     pub(super) fn candidates(&self) -> Vec<super::attach_picker::AttachCandidate> {

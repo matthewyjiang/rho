@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
+use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::Style,
@@ -31,8 +31,7 @@ const STDERR_TAG: &str = "stderr ";
 /// Result of routing one terminal event through the peek view.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PeekInput {
-    Ignored,
-    Handled,
+    Stay,
     Leave,
     Quit,
 }
@@ -106,19 +105,19 @@ impl ProcessPeekView {
                 KeyCode::Char('q') | KeyCode::Esc => PeekInput::Leave,
                 KeyCode::Up => {
                     self.scroll_lines(now, -1);
-                    PeekInput::Handled
+                    PeekInput::Stay
                 }
                 KeyCode::Down => {
                     self.scroll_lines(now, 1);
-                    PeekInput::Handled
+                    PeekInput::Stay
                 }
                 KeyCode::PageUp => {
                     self.scroll_lines(now, -(self.viewport_height.max(1) as isize));
-                    PeekInput::Handled
+                    PeekInput::Stay
                 }
                 KeyCode::PageDown => {
                     self.scroll_lines(now, self.viewport_height.max(1) as isize);
-                    PeekInput::Handled
+                    PeekInput::Stay
                 }
                 KeyCode::Home => {
                     self.scroll
@@ -126,13 +125,13 @@ impl ProcessPeekView {
                     if !matches!(self.scroll.scroll(), HistoryScroll::Bottom) {
                         self.scroll.reveal(now, HISTORY_SCROLLBAR_REVEAL_DURATION);
                     }
-                    PeekInput::Handled
+                    PeekInput::Stay
                 }
                 KeyCode::End => {
                     self.scroll.scroll_to_bottom();
-                    PeekInput::Handled
+                    PeekInput::Stay
                 }
-                _ => PeekInput::Ignored,
+                _ => PeekInput::Stay,
             },
             Event::Mouse(mouse) => {
                 self.scroll.handle_scrollbar_mouse(
@@ -148,13 +147,10 @@ impl ProcessPeekView {
                         wheel_lines: HISTORY_MOUSE_SCROLL_LINES,
                     },
                 );
-                match mouse.kind {
-                    MouseEventKind::Moved => PeekInput::Ignored,
-                    _ => PeekInput::Handled,
-                }
+                PeekInput::Stay
             }
-            Event::Resize(_, _) => PeekInput::Handled,
-            _ => PeekInput::Ignored,
+            Event::Resize(_, _) => PeekInput::Stay,
+            _ => PeekInput::Stay,
         }
     }
 
@@ -267,7 +263,7 @@ impl App {
                 self.notify_status("left peek view; press ctrl-c again to quit");
                 self.ctrl_c_streak = 1;
             }
-            PeekInput::Ignored | PeekInput::Handled => {}
+            PeekInput::Stay => {}
         }
         resize
     }

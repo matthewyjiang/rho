@@ -298,7 +298,10 @@ impl App {
                 .style(Theme::activity_rail()),
                 layout.subagents,
             );
-            if let Some((row, state)) = self.subagent_panel.highlighted_row(now) {
+            if let Some((row, state)) = self
+                .subagent_panel
+                .highlighted_row(layout.subagents.height as usize, now)
+            {
                 paint_rail_highlight(frame, layout.subagents, row, state);
             }
         }
@@ -312,7 +315,10 @@ impl App {
                 .style(Theme::activity_rail()),
                 layout.processes,
             );
-            if let Some((row, state)) = self.process_panel.highlighted_row(now) {
+            if let Some((row, state)) = self
+                .process_panel
+                .highlighted_row(layout.processes.height as usize, now)
+            {
                 paint_rail_highlight(frame, layout.processes, row, state);
             }
         }

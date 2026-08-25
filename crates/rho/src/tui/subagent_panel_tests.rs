@@ -180,7 +180,7 @@ fn hover_trailing_keeps_elapsed() {
     let text = line_text(&panel.lines(80, 8, "attach", false, now)[0]);
     assert!(text.contains("⏎ attach · 4s"));
     assert_eq!(
-        panel.highlighted_row(now),
+        panel.highlighted_row(8, now),
         Some((0, activity::RailRowState::Hovered))
     );
 }
