@@ -510,7 +510,7 @@ impl App {
         let choice = InlineChoice::new(
             format!("Delete all sessions in {display}?"),
             format!(
-                "Removes {} saved in this directory, with transcripts, web sidecars, and parent-linked subagent runs. The current session is kept. Usage history is kept.",
+                "Removes {} saved in this directory, with transcripts, cached web content, and their subagent runs. The current session is kept. Usage history is kept.",
                 count_label(count)
             ),
             vec![
@@ -518,7 +518,7 @@ impl App {
                     "delete",
                     'd',
                     "Delete all",
-                    "Permanently remove every reviewed session in this directory",
+                    "Permanently remove every saved session in this directory",
                 ),
                 InlineChoiceOption::available(
                     "cancel",
@@ -566,7 +566,7 @@ impl App {
                     "delete",
                     'd',
                     "Delete all",
-                    "Remove every reviewed session whose workspace directory is gone",
+                    "Remove every saved session whose workspace directory no longer exists",
                 ),
                 InlineChoiceOption::available(
                     "cancel",
