@@ -57,7 +57,7 @@ const STREAMING_MARKDOWN_STABILITY_STEPS: &[Step] = &[
     Step::Phase("stream_emphasis"),
     Step::SubmitText("fixture markdown emphasis stream"),
     Step::WaitText {
-        text: "Stable prose",
+        text: ALPHA_MARKER,
         timeout: STREAM,
     },
     Step::Custom(assert_streaming_markdown_keeps_stable_prefix),
