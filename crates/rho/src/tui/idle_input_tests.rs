@@ -192,6 +192,30 @@ fn pasted_create_agent_request_uses_expanded_model_input() {
     assert_ne!(slash_command_args(submission.display()).trim(), pasted);
 }
 
+// Covers: `/agents create` execute path must drop the sub-action token from
+// expanded model input, including a pasted request body.
+// Owner: slash-command submission ownership
+#[test]
+fn pasted_agents_create_request_strips_create_token() {
+    let mut app = test_app();
+    let pasted = collapsible_paste();
+    app.insert_input_text("/agents create ");
+    app.insert_pasted_input_text(&pasted);
+    let expanded = app.expanded_input().trim().to_string();
+    let display = app.input_ui.text().trim().to_string();
+    let invocation = app.parse_input_command().unwrap().unwrap();
+    let name = invocation.name.clone();
+    let submission = app.take_command_submission(
+        invocation,
+        TurnPrompt::standard(expanded.clone(), display.clone()),
+    );
+
+    assert_eq!(
+        commands::create_agent_request(&name, slash_command_args(submission.model())),
+        pasted
+    );
+}
+
 // Covers: Esc must restore TurnPrompt::command display, not the expanded
 // model prompt held for MCP connect.
 // Owner: idle input hold/release

@@ -410,9 +410,7 @@ impl App {
                 Ok(())
             }
             CommandId::CreateAgent => {
-                self.set_status(
-                    "agent creation is unavailable while a model turn is running".into(),
-                );
+                self.set_status("agent creation is unavailable while a model turn is running");
                 Ok(())
             }
             CommandId::Advisor

@@ -96,7 +96,10 @@ impl App {
             CommandId::Agents => self.execute_agents_command(),
             CommandId::CreateAgent => {
                 self.execute_create_agent_command(
-                    slash_command_args(&turn.model).trim(),
+                    crate::commands::create_agent_request(
+                        &invocation.name,
+                        slash_command_args(&turn.model),
+                    ),
                     turn.display,
                     media,
                     paste_segments,

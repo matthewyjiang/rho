@@ -162,6 +162,30 @@ fn persist_project_location_requires_trust() {
     assert!(outcome.created);
 }
 
+// Covers: persist must not fall back to draft.md when frontmatter omits id.
+// Owner: agent persist
+#[test]
+fn persist_rejects_missing_id_without_writing() {
+    let home = tempfile::tempdir().unwrap();
+    let error = persist_definition(
+        AgentSaveLocation::RhoHome,
+        "---\ndescription: persist fixture\nprompt: extend\n---\nYou are a fixture.\n",
+        None,
+        Path::new("."),
+        Some(home.path()),
+        ProjectTrust::Untrusted,
+    )
+    .unwrap_err();
+    match error {
+        PersistDefinitionError::Validation(message) => {
+            assert!(message.contains("id"), "{message}");
+            assert!(message.contains("is required"), "{message}");
+        }
+        other => panic!("expected validation, got {other:?}"),
+    }
+    assert!(!home.path().join(".rho/agents/draft.md").exists());
+}
+
 // Covers: invalid drafts never create files.
 // Owner: agent persist
 #[test]

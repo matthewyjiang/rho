@@ -52,6 +52,20 @@ fn agents_create_request(args: &str) -> Option<&str> {
         .then(|| parts.next().unwrap_or_default().trim())
 }
 
+/// User request for `/agents create` / `/create-agent` after the command token.
+///
+/// `expanded_args` is the text after the first slash token in the expanded
+/// model input, so pasted bodies stay intact. `/agents create` still has to
+/// drop the `create` sub-action; `/create-agent` does not.
+pub(crate) fn create_agent_request<'a>(command_name: &str, expanded_args: &'a str) -> &'a str {
+    let args = expanded_args.trim();
+    if command_name.eq_ignore_ascii_case("agents") {
+        agents_create_request(args).unwrap_or("")
+    } else {
+        args
+    }
+}
+
 impl CommandSpec {
     /// A slash name that only resolves to `target`. No unique id or handler.
     const fn alias(
@@ -639,6 +653,31 @@ mod tests {
             assert_eq!(invocation.id, id, "{input}");
             assert_eq!(invocation.args, args, "{input}");
         }
+    }
+
+    // Covers: the execute path must strip `create` from `/agents create`
+    // while leaving `/create-agent` request text unchanged.
+    // Owner: command parser
+    #[test]
+    fn create_agent_request_matches_both_spellings() {
+        assert_eq!(
+            create_agent_request("agents", "create a read-only reviewer"),
+            "a read-only reviewer"
+        );
+        assert_eq!(create_agent_request("agents", "create"), "");
+        assert_eq!(
+            create_agent_request("agents", "CREATE a read-only reviewer"),
+            "a read-only reviewer"
+        );
+        assert_eq!(
+            create_agent_request("create-agent", "a planner"),
+            "a planner"
+        );
+        assert_eq!(
+            create_agent_request("create-agent", "create a planner"),
+            "create a planner"
+        );
+        assert_eq!(create_agent_request("create-agent", ""), "");
     }
 
     #[test]

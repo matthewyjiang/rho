@@ -40,6 +40,33 @@ async fn prepare_rejects_invalid_definition() {
     assert_eq!(error.kind(), ToolErrorKind::InvalidArguments);
 }
 
+// Covers: prepare must reject a missing id before requesting write of draft.md.
+// Owner: save_agent tool
+#[tokio::test]
+async fn prepare_rejects_missing_id() {
+    let root = TempDir::new().unwrap();
+    let tool = SaveAgentTool {
+        max_output_bytes: 12_000,
+    };
+    let result = tool
+        .prepare(
+            invocation(json!({
+                "location": "rho-home",
+                "contents": "---\ndescription: save_agent fixture\nprompt: extend\n---\nYou are a fixture.\n"
+            })),
+            ToolPreparationContext::new(
+                Some(Workspace::new(root.path()).unwrap()),
+                CancellationToken::new(),
+            ),
+        )
+        .await;
+    let Err(error) = result else {
+        panic!("expected missing id to fail prepare");
+    };
+    assert_eq!(error.kind(), ToolErrorKind::InvalidArguments);
+    assert!(error.to_string().contains("id"), "{error}");
+}
+
 fn valid_draft(id: &str) -> String {
     format!(
         "---\nid: {id}\ndescription: save_agent fixture\nprompt: extend\n---\nYou are a fixture.\n"

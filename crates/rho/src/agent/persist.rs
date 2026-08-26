@@ -14,7 +14,7 @@ use super::{
         acquire_agent_file_lock, canonical_definition_contents, read_current_agent_file,
         write_agent_file,
     },
-    parse_definition, AgentOrigin, SaveDefinitionError,
+    parse_draft_definition, AgentOrigin, SaveDefinitionError,
 };
 use crate::workspace::ProjectTrust;
 
@@ -98,8 +98,7 @@ pub(crate) fn persist_definition(
     home: Option<&Path>,
     project_trust: ProjectTrust,
 ) -> Result<PersistDefinitionOutcome, PersistDefinitionError> {
-    let path = Path::new("<draft>");
-    let draft = parse_definition(path, "draft", contents)
+    let draft = parse_draft_definition(contents)
         .map_err(|error| PersistDefinitionError::Validation(error.to_string()))?;
     let dest = persist_destination_path(location, cwd, home, project_trust, draft.id.as_str())?;
     authorize_agent_destination(location.origin(), &dest, cwd, home)

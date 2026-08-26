@@ -28,12 +28,7 @@ impl App {
         } else {
             format!("Create a new Rho agent through the guided workflow. User request: {request}")
         };
-        match self.skill_command_action(
-            "skill:rho-agent-creator",
-            model_prompt,
-            display,
-            true,
-        )? {
+        match self.skill_command_action("skill:rho-agent-creator", model_prompt, display, true)? {
             SkillCommandAction::Prompt(prompt) => {
                 self.submit_interactive_turn(*prompt, media, paste_segments, terminal, agent)
                     .await?;

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use serde::Deserialize;
 
 use crate::agent::{
-    parse_definition, persist_definition, persist_destination_path, AgentSaveLocation,
+    parse_draft_definition, persist_definition, persist_destination_path, AgentSaveLocation,
     PersistDefinitionError,
 };
 use crate::workspace::ProjectTrust;
@@ -111,10 +111,9 @@ impl SdkTool for SaveAgentTool {
                 .to_path_buf();
             let home = crate::paths::home_dir();
             let location = args.location.save_location();
-            let draft = parse_definition(std::path::Path::new("<draft>"), "draft", &args.contents)
-                .map_err(|error| {
-                    SdkToolError::new(ToolErrorKind::InvalidArguments, error.to_string())
-                })?;
+            let draft = parse_draft_definition(&args.contents).map_err(|error| {
+                SdkToolError::new(ToolErrorKind::InvalidArguments, error.to_string())
+            })?;
             let dest = persist_destination_path(
                 location,
                 &cwd,
