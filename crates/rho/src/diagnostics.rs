@@ -7,6 +7,26 @@ use {
     rho_providers::reasoning::ReasoningLevel,
 };
 
+pub(crate) const ACTIONS: &[&str] = &[
+    "info",
+    "context",
+    "prompt_sources",
+    "tools",
+    "hooks",
+    "config",
+];
+
+pub(crate) fn supports_action(action: &str) -> bool {
+    ACTIONS.contains(&action)
+}
+
+pub(crate) fn unsupported_action_error(action: &str) -> String {
+    format!(
+        "unknown rho diagnostics action '{action}'; expected one of: {}",
+        ACTIONS.join(", ")
+    )
+}
+
 #[cfg(test)]
 pub fn test_diagnostics(provider: &str, model: &str) -> RuntimeDiagnostics {
     let config = Config {
@@ -197,11 +217,7 @@ impl RuntimeDiagnostics {
                     .map(crate::hooks::HookInspector::report)
                     .unwrap_or_else(crate::hooks::HookReport::disabled),
             ),
-            _ => {
-                return Err(format!(
-                    "unknown rho diagnostics action '{action}'; load the rho-diagnostics skill for usage"
-                ));
-            }
+            _ => return Err(unsupported_action_error(action)),
         }
         .map_err(|error| error.to_string())?;
         serde_json::to_string_pretty(&value).map_err(|error| error.to_string())

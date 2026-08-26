@@ -82,7 +82,7 @@ async fn skill_prepares_builtin_and_file_resources() {
 
     let builtin = tool
         .prepare(
-            invocation(json!({"name": "rho-diagnostics"})),
+            invocation(json!({"name": "rho-config"})),
             preparation_context(Some(workspace.clone())),
         )
         .await

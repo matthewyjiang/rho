@@ -43,6 +43,12 @@ impl App {
             expanded_input,
             media,
         } = submission;
+        if let Some(request) = invocation.agent_creation_request().map(str::to_owned) {
+            return self
+                .execute_create_agent_command(&request, expanded_input, media, terminal, agent)
+                .await;
+        }
+
         match invocation.id {
             CommandId::Advisor => self.execute_advisor_command(invocation, agent).await,
             CommandId::Exit => self.execute_exit_command(),

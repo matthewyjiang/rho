@@ -16,6 +16,7 @@ use tracing::Instrument;
 mod activity;
 mod advisor_command;
 mod advisor_status;
+mod agent_creator_command;
 mod agent_editor;
 mod agent_picker;
 mod app_construct;

@@ -387,6 +387,14 @@ impl App {
         invocation: CommandInvocation,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
+        if invocation.agent_creation_request().is_some() {
+            self.set_status(format!(
+                "/{} is unavailable while a model turn is running",
+                invocation.name
+            ));
+            return Ok(());
+        }
+
         match invocation.id {
             CommandId::Exit => self.execute_exit_command(),
             CommandId::Theme => self.open_theme_picker(),

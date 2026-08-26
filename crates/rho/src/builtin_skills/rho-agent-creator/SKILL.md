@@ -1,7 +1,8 @@
 ---
 name: rho-agent-creator
 description: >-
-  Create a new Rho agent through a guided questionnaire. Use when the user wants to define a custom agent, subagent, delegated role, reusable specialist, Claude Code runtime agent, runtime: claude-cli definition, or an agent that spends a Claude Pro/Max subscription through the official claude binary.
+  Create a new Rho agent through a guided questionnaire.
+disable-model-invocation: true
 ---
 
 # Rho agent creator

@@ -43,6 +43,23 @@ pub struct CommandSpec {
     pub argument_choices: &'static [CommandArgumentChoice],
 }
 
+impl CommandInvocation {
+    pub fn agent_creation_request(&self) -> Option<&str> {
+        if self.name == "create-agent" {
+            return Some(self.args.as_str());
+        }
+        if self.id != CommandId::Agents {
+            return None;
+        }
+
+        let mut parts = self.args.splitn(2, char::is_whitespace);
+        let action = parts.next()?;
+        action
+            .eq_ignore_ascii_case("create")
+            .then(|| parts.next().unwrap_or_default().trim())
+    }
+}
+
 impl CommandSpec {
     /// A slash name that only resolves to `target`. No unique id or handler.
     const fn alias(
@@ -95,6 +112,12 @@ const GOAL_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
     },
 ];
 
+const AGENTS_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[CommandArgumentChoice {
+    completion: "/agents create",
+    usage: "/agents create [request]",
+    description: "create an agent through a guided questionnaire",
+}];
+
 const ADVISOR_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
     CommandArgumentChoice {
         completion: "/advisor on",
@@ -139,9 +162,9 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Agents,
         name: "agents",
-        usage: "/agents",
-        description: "reload agents and show runtime, tools, and other details",
-        argument_choices: &[],
+        usage: "/agents [create]",
+        description: "browse agents or create one through a guided questionnaire",
+        argument_choices: AGENTS_ARGUMENT_CHOICES,
     },
     CommandSpec {
         id: CommandId::Attach,
@@ -179,6 +202,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         description: "copy the last assistant message to the clipboard",
         argument_choices: &[],
     },
+    CommandSpec::alias(
+        "create-agent",
+        "/create-agent [request]",
+        "alias for /agents create",
+        CommandId::Agents,
+    ),
     CommandSpec {
         id: CommandId::Diff,
         name: "diff",
@@ -566,6 +595,7 @@ mod tests {
             ("/clear", CommandId::New, "clear"),
             ("/CLEAR", CommandId::New, "clear"),
             ("/usage", CommandId::Limits, "usage"),
+            ("/create-agent", CommandId::Agents, "create-agent"),
         ];
         for (input, id, name) in cases {
             let invocation = parse_command(input).unwrap().unwrap();
@@ -579,6 +609,28 @@ mod tests {
         assert!(matching_commands("us")
             .iter()
             .any(|command| command.name == "usage"));
+    }
+
+    // Covers: both documented spellings must route to agent creation while bare
+    // /agents continues to open the catalog.
+    // Owner: command parser
+    #[test]
+    fn recognizes_agent_creation_requests() {
+        let cases = [
+            ("/agents create", Some("")),
+            (
+                "/agents CREATE a read-only reviewer",
+                Some("a read-only reviewer"),
+            ),
+            ("/create-agent", Some("")),
+            ("/create-agent a planner", Some("a planner")),
+            ("/agents", None),
+        ];
+
+        for (input, expected) in cases {
+            let invocation = parse_command(input).unwrap().unwrap();
+            assert_eq!(invocation.agent_creation_request(), expected, "{input}");
+        }
     }
 
     #[test]

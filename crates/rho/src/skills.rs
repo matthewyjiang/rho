@@ -73,7 +73,6 @@ pub struct Skill {
 
 const BUILTIN_SKILLS: &[&str] = &[
     include_str!("builtin_skills/rho-config/SKILL.md"),
-    include_str!("builtin_skills/rho-diagnostics/SKILL.md"),
     include_str!("builtin_skills/rho-agent-creator/SKILL.md"),
     include_str!("builtin_skills/rho-workflow-authoring/SKILL.md"),
 ];
@@ -350,20 +349,6 @@ mod tests {
     }
 
     #[test]
-    fn discovers_embedded_rho_diagnostics_skill() {
-        let root = TempDir::new().unwrap();
-
-        let skills = discover_with_home(root.path(), None);
-        let skill = skills
-            .iter()
-            .find(|skill| skill.name == "rho-diagnostics")
-            .unwrap();
-
-        assert_eq!(skill.source, SkillSource::BuiltIn);
-        assert!(skill.contents.contains("Available actions:"));
-    }
-
-    #[test]
     fn discovers_embedded_rho_agent_creator_skill() {
         let root = TempDir::new().unwrap();
 
@@ -374,6 +359,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(skill.source, SkillSource::BuiltIn);
+        assert!(skill.disable_model_invocation);
         assert!(skill.contents.contains("questionnaire"));
     }
 
@@ -429,7 +415,6 @@ mod tests {
                 "project-skill",
                 "rho-agent-creator",
                 "rho-config",
-                "rho-diagnostics",
                 "rho-skill",
                 "rho-workflow-authoring",
             ]
