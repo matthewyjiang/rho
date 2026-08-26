@@ -38,14 +38,12 @@ pub(super) const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
     },
     Step::AssertText("Permission mode"),
     Step::Key(Key::Enter),
-    // Short terminals only show two mode rows (Bypass selected plus Auto);
-    // move onto Supervised by its detail text instead of requiring every
-    // label to fit at once.
+    // Short terminals may only show the selected mode row; move onto
+    // Supervised by its detail text instead of requiring every label to fit.
     Step::WaitText {
         text: "No permission checks",
         timeout: SETTLE,
     },
-    Step::AssertText("Auto"),
     Step::Custom(move_down_to_supervised_mode),
     Step::AssertText("Supervised"),
     Step::Key(Key::Enter),
