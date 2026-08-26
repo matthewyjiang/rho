@@ -52,7 +52,8 @@ pub use credentials::{
     CredentialStore, CredentialStoreBackend, CredentialStoreProbe, FileCredentialStore,
     OsCredentialStore,
 };
-pub use model::ModelError;
+pub use http;
+pub use model::{ModelError, TransportError, TransportFailureKind};
 pub use provider::{auth_profiles, credential_env_vars};
 pub use providers::{
     build_automation_provider, build_sdk_provider, build_sdk_provider_with_source,

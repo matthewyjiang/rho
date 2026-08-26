@@ -10,6 +10,7 @@ pub mod models_dev;
 pub mod provider_models;
 mod reasoning_capabilities;
 pub mod registry;
+mod transport;
 
 pub use crate::providers::UnavailableProvider;
 pub use context::{ContextUsage, ContextUsageSource};
@@ -29,9 +30,16 @@ pub use models_dev::{
 pub use reasoning_capabilities::{
     ReasoningCapabilities, ReasoningLevelSet, ReasoningRequestSource, ReasoningResolution,
 };
+pub use transport::{TransportError, TransportFailureKind};
 
 impl From<crate::credentials::CredentialError> for ModelError {
     fn from(error: crate::credentials::CredentialError) -> Self {
         Self::credentials(error)
+    }
+}
+
+impl From<reqwest::Error> for ModelError {
+    fn from(error: reqwest::Error) -> Self {
+        Self::from_reqwest(error)
     }
 }

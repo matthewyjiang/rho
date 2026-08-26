@@ -95,7 +95,7 @@ pub(super) enum McpHttpClient {
     Default,
     /// An OAuth-bearing client that attaches the access token and refreshes it
     /// when it expires.
-    Authorized(Box<AuthClient<mcp_reqwest::Client>>),
+    Authorized(Box<AuthClient<reqwest::Client>>),
 }
 
 /// Names the variant only. The authorized client holds live credentials, and
@@ -260,10 +260,10 @@ fn authorized_client(manager: AuthorizationManager) -> anyhow::Result<McpHttpCli
 /// Match the transport client rmcp builds for itself: no automatic redirects,
 /// so headers and bearer tokens cannot be replayed to a redirect target, and
 /// no idle pooling, which stalls on Linux delayed ACK.
-fn transport_http_client() -> anyhow::Result<mcp_reqwest::Client> {
-    mcp_reqwest::Client::builder()
+fn transport_http_client() -> anyhow::Result<reqwest::Client> {
+    reqwest::Client::builder()
         .pool_max_idle_per_host(0)
-        .redirect(mcp_reqwest::redirect::Policy::none())
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .context("reqwest client with static settings could not build")
 }

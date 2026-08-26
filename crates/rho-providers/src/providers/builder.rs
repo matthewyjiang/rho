@@ -345,7 +345,7 @@ fn provider_http_client(timeout: Option<Duration>) -> Result<reqwest::Client, Mo
     if let Some(timeout) = timeout {
         builder = builder.timeout(timeout);
     }
-    builder.build().map_err(ModelError::Request)
+    builder.build().map_err(ModelError::from)
 }
 
 struct OpenAiCompatibleBuild {

@@ -7,7 +7,7 @@ use tokio::{
 };
 use url::Url;
 
-use crate::credentials::XaiTokens;
+use crate::{credentials::XaiTokens, model::TransportError};
 
 use super::loopback::{
     accept_request, bind_ipv4, callback_url, pkce_challenge, random_token, write_response,
@@ -109,9 +109,15 @@ pub enum XaiOAuthError {
     #[error("timed out waiting for xAI device login")]
     DeviceTimeout,
     #[error("xAI OAuth request failed: {0}")]
-    Request(#[from] reqwest::Error),
+    Request(#[source] TransportError),
     #[error("xAI OAuth token response was missing {0}")]
     MissingToken(&'static str),
+}
+
+impl From<reqwest::Error> for XaiOAuthError {
+    fn from(error: reqwest::Error) -> Self {
+        Self::Request(TransportError::from_reqwest(error))
+    }
 }
 
 #[derive(Deserialize)]
@@ -230,7 +236,7 @@ fn http_client() -> Result<reqwest::Client, XaiOAuthError> {
         .timeout(REQUEST_TIMEOUT)
         .user_agent(crate::rho_user_agent())
         .build()
-        .map_err(XaiOAuthError::Request)
+        .map_err(XaiOAuthError::from)
 }
 
 async fn wait_for_callback(
