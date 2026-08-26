@@ -54,6 +54,16 @@ class ForbiddenPackageDependency:
 
 
 @dataclass(frozen=True)
+class ForbiddenSourcePattern:
+    """Rust sources under ``roots`` may not contain the listed token sequences."""
+
+    roots: tuple[str, ...]
+    sequences: tuple[tuple[str, ...], ...]
+    allow: tuple[str, ...]
+    reason: str
+
+
+@dataclass(frozen=True)
 class ArchitectureConfig:
     """Repository-specific architecture policy loaded from a config file."""
 
@@ -73,6 +83,8 @@ class ArchitectureConfig:
     forbidden_dependencies: tuple[ForbiddenDependency, ...] = ()
     # Cargo package dependencies forbidden across a crate boundary.
     forbidden_package_dependencies: tuple[ForbiddenPackageDependency, ...] = ()
+    # Token sequences forbidden in Rust sources, with an explicit allowlist.
+    forbidden_source_patterns: tuple[ForbiddenSourcePattern, ...] = ()
     test_file_names: tuple[str, ...] = DEFAULT_TEST_FILE_NAMES
     test_file_suffixes: tuple[str, ...] = DEFAULT_TEST_FILE_SUFFIXES
 
@@ -189,6 +201,53 @@ def _forbidden_package_dependencies(raw: object) -> tuple[ForbiddenPackageDepend
     return tuple(entries)
 
 
+def _forbidden_source_patterns(raw: object) -> tuple[ForbiddenSourcePattern, ...]:
+    if raw is None:
+        return ()
+    _require(isinstance(raw, list), "forbidden_source_patterns must be an array")
+    entries: list[ForbiddenSourcePattern] = []
+    for index, item in enumerate(raw):  # type: ignore[union-attr]
+        label = f"forbidden_source_patterns[{index}]"
+        _require(isinstance(item, dict), f"{label} must be an object")
+        roots = item.get("roots")
+        sequences = item.get("sequences")
+        allow = item.get("allow", [])
+        reason = item.get("reason", "")
+        _require(isinstance(roots, list) and roots, f"{label}.roots must be a non-empty array")
+        for root in roots:
+            _require(isinstance(root, str) and root, f"{label}.roots entries must be non-empty strings")
+        _require(
+            isinstance(sequences, list) and sequences,
+            f"{label}.sequences must be a non-empty array",
+        )
+        parsed_sequences: list[tuple[str, ...]] = []
+        for sequence_index, sequence in enumerate(sequences):
+            sequence_label = f"{label}.sequences[{sequence_index}]"
+            _require(
+                isinstance(sequence, list) and sequence,
+                f"{sequence_label} must be a non-empty array",
+            )
+            for token in sequence:
+                _require(
+                    isinstance(token, str) and token,
+                    f"{sequence_label} entries must be non-empty strings",
+                )
+            parsed_sequences.append(tuple(sequence))
+        _require(isinstance(allow, list), f"{label}.allow must be an array")
+        for path in allow:
+            _require(isinstance(path, str) and path, f"{label}.allow entries must be non-empty strings")
+        _require(isinstance(reason, str), f"{label}.reason must be a string")
+        entries.append(
+            ForbiddenSourcePattern(
+                roots=tuple(roots),
+                sequences=tuple(parsed_sequences),
+                allow=tuple(allow),
+                reason=reason,
+            )
+        )
+    return tuple(entries)
+
+
 def parse_config(data: object) -> ArchitectureConfig:
     _require(isinstance(data, dict), "config root must be an object")
     default_budget = data.get("default_production_line_budget", DEFAULT_PRODUCTION_RUST_LINE_BUDGET)
@@ -205,6 +264,7 @@ def parse_config(data: object) -> ArchitectureConfig:
         forbidden_package_dependencies=_forbidden_package_dependencies(
             data.get("forbidden_package_dependencies")
         ),
+        forbidden_source_patterns=_forbidden_source_patterns(data.get("forbidden_source_patterns")),
         test_file_names=_string_tuple(data.get("test_file_names"), "test_file_names", DEFAULT_TEST_FILE_NAMES),
         test_file_suffixes=_string_tuple(
             data.get("test_file_suffixes"), "test_file_suffixes", DEFAULT_TEST_FILE_SUFFIXES
@@ -514,6 +574,52 @@ def check_package_dependency_boundaries(
     return errors
 
 
+def contains_token_sequence(tokens: list[str], sequence: tuple[str, ...]) -> bool:
+    length = len(sequence)
+    if length == 0 or length > len(tokens):
+        return False
+    for index in range(len(tokens) - length + 1):
+        if tuple(tokens[index : index + length]) == sequence:
+            return True
+    return False
+
+
+def format_token_sequence(sequence: tuple[str, ...]) -> str:
+    return "".join(sequence)
+
+
+def check_forbidden_source_patterns(
+    root: Path, patterns: Iterable[ForbiddenSourcePattern]
+) -> list[str]:
+    errors: list[str] = []
+    for pattern in patterns:
+        allow = set(pattern.allow)
+        sources: list[Path] = []
+        for relative_root in pattern.roots:
+            path = root / relative_root
+            if path.is_file():
+                sources.append(path)
+            elif path.is_dir():
+                sources.extend(sorted(path.rglob("*.rs")))
+            else:
+                errors.append(f"source-pattern root does not exist: {relative_root}")
+        for source_path in sources:
+            relative = relative_path(source_path, root)
+            if relative in allow:
+                continue
+            tokens = rust_tokens(source_path.read_text(encoding="utf-8"))
+            for sequence in pattern.sequences:
+                if contains_token_sequence(tokens, sequence):
+                    message = f"{relative}: must not use {format_token_sequence(sequence)}"
+                    if pattern.reason:
+                        message += f"; {pattern.reason}"
+                    errors.append(message)
+        for allowed in sorted(allow):
+            if not (root / allowed).is_file():
+                errors.append(f"source-pattern allowlist entry does not exist: {allowed}")
+    return errors
+
+
 def check_thin_binaries(root: Path, thin_binary_budgets: dict[str, int]) -> list[str]:
     errors: list[str] = []
     for relative, budget in sorted(thin_binary_budgets.items()):
@@ -546,6 +652,7 @@ def run_checks(root: Path, config: ArchitectureConfig) -> int:
     errors.extend(
         check_package_dependency_boundaries(root, config.forbidden_package_dependencies)
     )
+    errors.extend(check_forbidden_source_patterns(root, config.forbidden_source_patterns))
     errors.extend(check_thin_binaries(root, config.thin_binary_budgets))
 
     if errors:
@@ -560,6 +667,7 @@ def run_checks(root: Path, config: ArchitectureConfig) -> int:
     print(f"  legacy file-size budgets: {len(config.legacy_file_budgets)}")
     print(f"  source dependency boundaries: {len(config.forbidden_dependencies)}")
     print(f"  package dependency boundaries: {len(config.forbidden_package_dependencies)}")
+    print(f"  forbidden source patterns: {len(config.forbidden_source_patterns)}")
     print(f"  thin binary budgets: {len(config.thin_binary_budgets)}")
     return 0
 
@@ -655,6 +763,8 @@ class ArchitectureCheckTests(unittest.TestCase):
             parse_config({"forbidden_dependencies": [{"modules": ["model"]}]})
         with self.assertRaises(ConfigError):
             parse_config({"forbidden_package_dependencies": [{"packages": ["app"]}]})
+        with self.assertRaises(ConfigError):
+            parse_config({"forbidden_source_patterns": [{"sequences": [["reqwest"]]}]})
 
     def test_dependency_boundary_message_includes_optional_reason(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -728,6 +838,59 @@ class ArchitectureCheckTests(unittest.TestCase):
                 [
                     "crates/sdk/Cargo.toml: must not depend on package application; one-way",
                     "crates/sdk/Cargo.toml: must not depend on package terminal; one-way",
+                ],
+            )
+
+    def test_forbidden_source_patterns_scan_allowlist_and_ignore_comments(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "src"
+            source.mkdir()
+            (source / "lib.rs").write_text(
+                "fn allowed() { reqwest::Client::new(); }\n",
+                encoding="utf-8",
+            )
+            (source / "bad.rs").write_text(
+                "fn bad() { let _ = reqwest::Client::builder(); }\n",
+                encoding="utf-8",
+            )
+            (source / "comment.rs").write_text(
+                "// reqwest::Client::new()\nfn ok() {}\n",
+                encoding="utf-8",
+            )
+
+            errors = check_forbidden_source_patterns(
+                root,
+                [
+                    ForbiddenSourcePattern(
+                        roots=("src",),
+                        sequences=(("reqwest", "::", "Client", "::", "new"),),
+                        allow=("src/lib.rs",),
+                        reason="install ring first",
+                    )
+                ],
+            )
+
+            self.assertEqual(errors, [])
+
+            errors = check_forbidden_source_patterns(
+                root,
+                [
+                    ForbiddenSourcePattern(
+                        roots=("src",),
+                        sequences=(
+                            ("reqwest", "::", "Client", "::", "new"),
+                            ("reqwest", "::", "Client", "::", "builder"),
+                        ),
+                        allow=("src/lib.rs",),
+                        reason="install ring first",
+                    )
+                ],
+            )
+            self.assertEqual(
+                errors,
+                [
+                    "src/bad.rs: must not use reqwest::Client::builder; install ring first",
                 ],
             )
 
