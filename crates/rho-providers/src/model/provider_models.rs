@@ -335,14 +335,18 @@ pub async fn refresh_provider_models_with_store(
             records_from_models(fetch_github_copilot_models(provider, store).await?)
         }
         Some(ProviderModelRefreshKind::Ollama) => {
-            let api_base = openai_compatible_api_base(descriptor, endpoint)?;
+            let api_base = discovery_api_base(descriptor, endpoint)?;
             records_from_models(ollama::fetch(descriptor, auth_mode, api_base, store).await?)
         }
         Some(ProviderModelRefreshKind::OpenAiCompatible) => {
-            let api_base = openai_compatible_api_base(descriptor, endpoint)?;
+            let api_base = discovery_api_base(descriptor, endpoint)?;
             records_from_models(
                 openai_compatible::fetch(descriptor, auth_mode, api_base, store).await?,
             )
+        }
+        Some(ProviderModelRefreshKind::AnthropicCompatible) => {
+            let api_base = discovery_api_base(descriptor, endpoint)?;
+            anthropic::fetch_compatible(provider, api_base, store).await?
         }
         None => return Err(ModelError::UnsupportedProvider(provider.to_string())),
     };
@@ -353,7 +357,7 @@ pub async fn refresh_provider_models_with_store(
     })
 }
 
-fn openai_compatible_api_base<'a>(
+fn discovery_api_base<'a>(
     descriptor: &provider::ProviderDescriptor,
     endpoint: ProviderModelEndpoint<'a>,
 ) -> Result<&'a Url, ModelError> {

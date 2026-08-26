@@ -38,6 +38,8 @@ The runtime registry includes:
 - `kimi-code`
 - `qwen-token-plan`
 - `meta`
+- `minimax`
+- `opencode-go`
 
 ## Usage
 

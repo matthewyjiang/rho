@@ -731,3 +731,66 @@ fn cached_provider_model_exact_returns_single_model() {
     });
     let _ = fs::remove_dir_all(cache_dir);
 }
+
+// Covers: MiniMax discovery hits Anthropic /models with x-api-key and keeps M-series ids
+// Owner: provider model discovery
+#[tokio::test]
+async fn minimax_refresh_uses_anthropic_models_and_keeps_m_series_ids() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api_base = Url::parse(&format!(
+        "http://{}/anthropic/v1",
+        listener.local_addr().unwrap()
+    ))
+    .unwrap();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let request = read_http_request(&mut stream).await;
+        assert!(
+            request.starts_with("GET /anthropic/v1/models HTTP/1.1"),
+            "{}",
+            request.lines().next().unwrap_or_default()
+        );
+        let headers = request.to_ascii_lowercase();
+        assert!(
+            headers.lines().any(|line| line.starts_with("x-api-key:")),
+            "Anthropic-compatible discovery must send x-api-key"
+        );
+        assert!(
+            !headers.contains("authorization: bearer"),
+            "Anthropic-compatible discovery must not send Bearer"
+        );
+        let body = r#"{"data":[
+            {"id":"MiniMax-M3","display_name":"MiniMax-M3","type":"model"},
+            {"id":"MiniMax-M2.7","display_name":"MiniMax-M2.7","type":"model"}
+        ],"has_more":false}"#;
+        stream
+            .write_all(http_json_response("200 OK", body).as_bytes())
+            .await
+            .unwrap();
+    });
+    let cache = tempfile::tempdir().unwrap();
+    set_provider_models_cache_dir_for_tests(Some(cache.path().to_path_buf()));
+    let _cache_dir_reset = CacheDirReset;
+    let store = MemoryCredentialStore::default();
+    save_provider_api_key(&store, "minimax", "minimax-secret").unwrap();
+
+    let refresh = refresh_provider_models_with_store(
+        "minimax",
+        "minimax-api-key",
+        &store,
+        ProviderModelEndpoint::OpenAiCompatible(&api_base),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(refresh.provider, "minimax");
+    assert_eq!(
+        refresh
+            .models
+            .iter()
+            .map(|model| model.model.as_str())
+            .collect::<Vec<_>>(),
+        ["MiniMax-M2.7", "MiniMax-M3"]
+    );
+    server.await.unwrap();
+}

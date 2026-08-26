@@ -157,6 +157,21 @@ fn meta_resolves_default_endpoint_without_config() {
     );
 }
 
+// Covers: MiniMax uses the built-in Anthropic-compatible API base with no config override
+// Owner: provider config
+#[test]
+fn minimax_resolves_default_endpoint_without_config() {
+    let config = Config::default();
+
+    assert_eq!(
+        config
+            .resolved_provider_endpoint("minimax")
+            .unwrap()
+            .as_str(),
+        rho_providers::provider::MINIMAX_API_BASE
+    );
+}
+
 // Covers: user-defined OpenAI-compatible hosts keep their configured base URL
 // Owner: provider config
 #[test]

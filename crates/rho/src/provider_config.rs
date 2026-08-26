@@ -433,7 +433,8 @@ fn persisted_catalog_mode(
 fn persisted_api(api: rho_providers::provider::OpenAiCompatibleApi) -> Option<&'static str> {
     match api {
         rho_providers::provider::OpenAiCompatibleApi::ChatCompletions => None,
-        rho_providers::provider::OpenAiCompatibleApi::Responses => Some(api.as_str()),
+        rho_providers::provider::OpenAiCompatibleApi::Responses
+        | rho_providers::provider::OpenAiCompatibleApi::AnthropicMessages => Some(api.as_str()),
     }
 }
 

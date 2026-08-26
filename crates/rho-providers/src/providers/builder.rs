@@ -381,11 +381,12 @@ fn build_openai_compatible_provider(
     model: String,
     build: OpenAiCompatibleBuild,
 ) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, ModelError> {
-    // Adapter choice only needs the catalog's npm mapping, not fresh reasoning
-    // metadata, so a stale or reasoning-incomplete row must still steer it.
-    // Declared Responses is a host API, not an npm construction policy.
+    // Declared Responses and Anthropic Messages are host APIs, not npm
+    // construction policy. Adapter choice from catalog npm is only the Chat
+    // Completions fallback for PreferModelsDevNpm gateways.
     let adapter = match openai_compatible_api {
         OpenAiCompatibleApi::Responses => CatalogSdkAdapter::OpenAiResponses,
+        OpenAiCompatibleApi::AnthropicMessages => CatalogSdkAdapter::AnthropicMessages,
         OpenAiCompatibleApi::ChatCompletions => match catalog_construction {
             CatalogConstruction::Runtime => CatalogSdkAdapter::OpenAiCompatible,
             CatalogConstruction::PreferModelsDevNpm => CatalogSdkAdapter::from_sdk_package(
@@ -440,6 +441,9 @@ fn build_openai_compatible_provider(
                 provider_name,
             )))
         }
+        (CatalogSdkAdapter::AnthropicMessages, _) => Err(ModelError::InvalidResponse(format!(
+            "provider '{provider_name}' Anthropic Messages requires an API key"
+        ))),
         // Chat Completions is the descriptor's declared runtime, so it is also
         // the fallback when the catalog has no row yet (cold cache before the
         // first hydrate) or names an unrecognized package. OpenAiResponses

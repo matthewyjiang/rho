@@ -514,6 +514,40 @@ fn opencode_go_has_no_default_model_when_cache_is_empty() {
     });
 }
 
+// Covers: MiniMax default is MiniMax-M3 with an empty cache and when cached
+// Owner: model catalog
+#[test]
+fn minimax_default_is_minimax_m3() {
+    with_empty_provider_models_cache("minimax-default-empty", || {
+        assert_eq!(
+            default_model_for_provider("minimax").as_deref(),
+            Some("MiniMax-M3")
+        );
+        let selection = resolve_model_selection_for_provider(
+            "minimax",
+            "MiniMax-M3",
+            SelectionAuthContext::none(),
+        )
+        .unwrap();
+        assert_eq!(selection.model, "MiniMax-M3");
+        assert_eq!(selection.auth, "minimax-api-key");
+    });
+
+    with_cached_provider_models(
+        "minimax",
+        vec![
+            provider_model("minimax", "MiniMax-M2.7"),
+            provider_model("minimax", "MiniMax-M3"),
+        ],
+        || {
+            assert_eq!(
+                default_model_for_provider("minimax").as_deref(),
+                Some("MiniMax-M3")
+            );
+        },
+    );
+}
+
 // Covers: login groups derive single-provider rows and keep cross-provider merges
 // Owner: model catalog
 #[test]

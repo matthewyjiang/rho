@@ -21,6 +21,7 @@ pub const KIMI_TOKENS_ACCOUNT: &str = "provider:kimi-code:tokens";
 pub const QWEN_TOKEN_PLAN_API_KEY_ACCOUNT: &str = "provider:qwen-token-plan:api-key";
 pub const META_API_KEY_ACCOUNT: &str = "provider:meta:api-key";
 pub const OPENCODE_GO_API_KEY_ACCOUNT: &str = "provider:opencode-go:api-key";
+pub const MINIMAX_API_KEY_ACCOUNT: &str = "provider:minimax:api-key";
 
 /// Auth profile id meaning "this provider needs no credential".
 pub const KEYLESS_AUTH: &str = "none";
@@ -38,6 +39,8 @@ pub const QWEN_TOKEN_PLAN_API_BASE: &str =
 pub const META_API_BASE: &str = "https://api.meta.ai/v1";
 /// OpenCode Go bootstrap base (Chat Completions, Responses, Messages, `/models`).
 pub const OPENCODE_GO_API_BASE: &str = "https://opencode.ai/zen/go/v1";
+/// MiniMax Anthropic-compatible base (`/messages` and `/models`).
+pub const MINIMAX_API_BASE: &str = "https://api.minimax.io/anthropic/v1";
 /// Placeholder only. Config-defined hosts must take their API base from application config.
 pub const OPENAI_COMPATIBLE_API_BASE: &str = "http://127.0.0.1:0/v1";
 
@@ -69,8 +72,9 @@ pub enum ProviderRuntime {
     OpenAiCompatible {
         dialect: crate::openai_compatible_dialect::OpenAiCompatibleDialect,
         default_api_base: &'static str,
-        /// Whether construction may follow the catalog's models.dev `npm`
-        /// mapping instead of the declared Chat Completions runtime.
+        /// Whether Chat Completions construction may follow the catalog's
+        /// models.dev `npm` mapping. Declared Responses and Anthropic Messages
+        /// ignore this and construct as [`OpenAiCompatibleApi`].
         catalog_construction: CatalogConstruction,
     },
     Anthropic,
@@ -162,6 +166,7 @@ pub enum ProviderId {
     QwenTokenPlan,
     Meta,
     OpenCodeGo,
+    MiniMax,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -211,9 +216,9 @@ pub enum CatalogReasoningPolicy {
 /// may construct Responses or Anthropic adapters when models.dev names a
 /// different AI SDK package for the selected model.
 ///
-/// A custom host's wire API is [`OpenAiCompatibleApi`] on the descriptor, not
-/// a construction policy. [`PreferModelsDevNpm`] is the only path that consults
-/// catalog npm mapping.
+/// A host's wire API is [`OpenAiCompatibleApi`] on the descriptor, not a
+/// construction policy. [`PreferModelsDevNpm`] is the only path that consults
+/// catalog npm mapping, and only as a Chat Completions fallback.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CatalogConstruction {
     #[default]
@@ -239,6 +244,11 @@ pub(crate) enum ProviderModelRefreshKind {
     Google,
     GithubCopilot,
     OpenAiCompatible,
+    /// Anthropic `/models` against the descriptor's resolved API base.
+    ///
+    /// Unlike [`Self::Anthropic`], this does not pin `api.anthropic.com` or
+    /// drop non-`claude-` ids.
+    AnthropicCompatible,
     /// Native Ollama `/api/tags` + `/api/show`, falling back to `/v1/models`.
     Ollama,
 }
@@ -322,7 +332,11 @@ impl std::fmt::Display for CatalogLookupModeParseError {
 
 impl std::error::Error for CatalogLookupModeParseError {}
 
-/// Wire API a custom OpenAI-compatible host speaks.
+/// Wire API an OpenAI-compatible table row speaks.
+///
+/// Custom hosts persist Chat Completions or Responses via `api`.
+/// [`Self::AnthropicMessages`] is the declared Messages path for first-party
+/// Anthropic-compatible bases. It is not a custom-host config value.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum OpenAiCompatibleApi {
     /// POST `{base}/chat/completions`.
@@ -330,6 +344,8 @@ pub enum OpenAiCompatibleApi {
     ChatCompletions,
     /// POST `{base}/responses`.
     Responses,
+    /// POST `{base}/messages` with Anthropic `x-api-key` auth.
+    AnthropicMessages,
 }
 
 impl OpenAiCompatibleApi {
@@ -337,6 +353,7 @@ impl OpenAiCompatibleApi {
         match self {
             Self::ChatCompletions => "chat-completions",
             Self::Responses => "responses",
+            Self::AnthropicMessages => "anthropic-messages",
         }
     }
 }
