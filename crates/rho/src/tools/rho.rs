@@ -80,18 +80,12 @@ impl SdkTool for SdkRho {
 fn parse_args(arguments: serde_json::Value) -> Result<Args, SdkToolError> {
     let args: Args = serde_json::from_value(arguments)
         .map_err(|error| SdkToolError::new(ToolErrorKind::InvalidArguments, error.to_string()))?;
-    if matches!(
-        args.action.as_str(),
-        "info" | "context" | "prompt_sources" | "tools" | "config" | "hooks"
-    ) {
+    if crate::diagnostics::supports_action(&args.action) {
         Ok(args)
     } else {
         Err(SdkToolError::new(
             ToolErrorKind::InvalidArguments,
-            format!(
-                "unknown rho diagnostics action '{}'; load the rho-diagnostics skill for usage",
-                args.action
-            ),
+            crate::diagnostics::unsupported_action_error(&args.action),
         ))
     }
 }
@@ -115,14 +109,15 @@ impl Tool for Rho {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "rho".into(),
-            description: "Inspect the running Rho harness. Use info for basic runtime identity."
+            description: "Inspect the running Rho harness. Request only what you need: info returns runtime identity; context returns token usage; prompt_sources returns source paths and byte contributions without contents; tools returns available tool names; hooks returns sanitized hook configuration and activity; config returns sanitized live configuration."
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "description": "Read-only diagnostics action"
+                        "description": "Read-only diagnostics action",
+                        "enum": crate::diagnostics::ACTIONS
                     }
                 },
                 "required": ["action"],

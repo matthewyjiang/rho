@@ -5,12 +5,9 @@
 //! decides how the selected value is interpreted. Save serializes through the agent
 //! crate helpers.
 
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context};
+use anyhow::anyhow;
 
 use super::{
     agent_picker::AgentModelView, picker_overlay::OverlayChrome, render::truncate_one_line,
@@ -197,52 +194,13 @@ fn authorize_editable_path(
     path: &Path,
     cwd: &Path,
 ) -> anyhow::Result<PathBuf> {
-    let roots = match origin {
-        AgentOrigin::RhoHome => crate::paths::home_dir()
-            .map(|home| {
-                let [_, rho_home] = crate::paths::user_agent_dirs(&home);
-                vec![(home, rho_home)]
-            })
-            .unwrap_or_default(),
-        AgentOrigin::Project => crate::workspace::project_ancestor_dirs(cwd)
-            .into_iter()
-            .map(|base| {
-                let root = base.join(".agents/agents");
-                (base, root)
-            })
-            .collect(),
-        _ => Vec::new(),
-    };
-    let (base, root) = roots
-        .into_iter()
-        .find(|(_, root)| path.parent() == Some(root.as_path()))
-        .ok_or_else(|| anyhow!("agent source is outside an editable agent directory"))?;
-    let mut component_path = base;
-    for component in root
-        .strip_prefix(&component_path)
-        .context("editable agent root is outside its source base")?
-        .components()
-    {
-        component_path.push(component);
-        let metadata = fs::symlink_metadata(&component_path)
-            .with_context(|| format!("could not inspect {}", component_path.display()))?;
-        if metadata.file_type().is_symlink() {
-            return Err(anyhow!(
-                "editable agent directory must not contain symlinks"
-            ));
-        }
-    }
-    let root_metadata = fs::symlink_metadata(&root)
-        .with_context(|| format!("could not inspect {}", root.display()))?;
-    let file_metadata = fs::symlink_metadata(path)
-        .with_context(|| format!("could not inspect {}", path.display()))?;
-    if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
-        return Err(anyhow!("editable agent directory must not be a symlink"));
-    }
-    if file_metadata.file_type().is_symlink() || !file_metadata.is_file() {
-        return Err(anyhow!("editable agent source must be a regular file"));
-    }
-    Ok(root)
+    crate::agent::authorize_existing_agent_file(
+        origin,
+        path,
+        cwd,
+        crate::paths::home_dir().as_deref(),
+    )
+    .map_err(|error| anyhow!("{error}"))
 }
 
 fn badge(text: impl Into<String>) -> PickerBadge {

@@ -24,13 +24,14 @@ impl App {
     fn take_command_submission(
         &mut self,
         invocation: super::CommandInvocation,
-        expanded_input: String,
+        turn: TurnPrompt,
     ) -> CommandSubmission {
         let media = self
             .input_ui
             .take_ready_media()
             .expect("pending attachments block submission");
-        let submission = CommandSubmission::new(invocation, expanded_input, media);
+        let paste_segments = self.input_ui.paste_segments().to_vec();
+        let submission = CommandSubmission::new(invocation, turn, media, paste_segments);
         self.clear_submitted_input();
         submission
     }
@@ -316,7 +317,7 @@ impl App {
 
         match self.parse_input_command() {
             Ok(Some(invocation)) => {
-                let submission = self.take_command_submission(invocation, turn.model);
+                let submission = self.take_command_submission(invocation, turn);
                 self.execute_command(submission, terminal, agent).await?;
                 return Ok(());
             }
@@ -382,6 +383,24 @@ impl App {
             return Ok(());
         }
 
+        self.run_turn_sequence_held(turn, media, paste_segments, terminal, agent)
+            .await
+    }
+
+    /// Submit a skill or command-backed model turn through the same MCP hold,
+    /// compaction, goal, and follow-up path as a regular composer prompt.
+    pub(super) async fn submit_interactive_turn(
+        &mut self,
+        turn: TurnPrompt,
+        media: Vec<ChatMedia>,
+        paste_segments: Vec<PasteSegment>,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        if agent.mcp_connect_pending() {
+            self.hold_turn(turn, media, paste_segments);
+            return Ok(());
+        }
         self.run_turn_sequence_held(turn, media, paste_segments, terminal, agent)
             .await
     }

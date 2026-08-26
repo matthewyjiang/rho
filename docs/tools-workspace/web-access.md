@@ -124,7 +124,7 @@ These are not web-access tools, but older notes mixed them into this page:
 | Tool | Where to read |
 | --- | --- |
 | `advisor` | [Advisor mode](/configuration/advisor-mode) |
-| `rho` | Read-only harness diagnostics; action reference lives in the `rho-diagnostics` skill |
+| `rho` | Read-only harness diagnostics; its input schema lists and describes each action |
 | `workflow_command` | Host-only workflow process tool; see [workflow runtime](/workflows/runtime) |
 
 ## Related

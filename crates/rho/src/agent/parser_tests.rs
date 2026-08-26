@@ -2,11 +2,28 @@ use std::path::Path;
 
 use pretty_assertions::assert_eq;
 
-use super::parse_definition;
+use super::{parse_definition, parse_draft_definition};
 use crate::agent::{AgentRuntimeSpec, ModelPolicy, ModelSelection, ToolPolicy};
 
 fn parse(contents: &str) -> Result<crate::agent::AgentDefinition, crate::agent::AgentCatalogError> {
     parse_definition(Path::new("agent.md"), "agent", contents)
+}
+
+// Covers: persist drafts must fail closed when frontmatter omits id, while
+// catalog loading still uses the filename fallback.
+// Owner: agent parser
+#[test]
+fn draft_parse_requires_id_but_catalog_keeps_filename_fallback() {
+    let error = parse_draft_definition("---\ndescription: demo\n---\nbody\n").unwrap_err();
+    assert_eq!(error.field.as_deref(), Some("id"));
+    assert!(error.to_string().contains("is required"));
+
+    let catalog = parse("---\ndescription: demo\n---\nbody\n").unwrap();
+    assert_eq!(catalog.id.as_str(), "agent");
+
+    let draft =
+        parse_draft_definition("---\nid: reviewer\ndescription: demo\n---\nbody\n").unwrap();
+    assert_eq!(draft.id.as_str(), "reviewer");
 }
 
 #[test]

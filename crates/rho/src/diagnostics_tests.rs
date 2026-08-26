@@ -40,13 +40,15 @@ fn context_is_null_until_usage_is_observed() {
 }
 
 #[test]
-fn rejects_unknown_actions_with_skill_guidance() {
+fn rejects_unknown_actions_with_valid_choices() {
     let diagnostics = test_diagnostics("openai", "gpt-test");
 
     let error = diagnostics.response("everything").unwrap_err();
 
-    assert!(error.contains("unknown rho diagnostics action 'everything'"));
-    assert!(error.contains("rho-diagnostics skill"));
+    assert_eq!(
+        error,
+        "unknown rho diagnostics action 'everything'; expected one of: info, context, prompt_sources, tools, hooks, config"
+    );
 }
 
 #[test]

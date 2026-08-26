@@ -59,7 +59,7 @@ flowchart TD
 
    Or open bare `/login`, pick **Anthropic**, then **Claude Code (delegation only)**. Rho asks you to confirm, then hands the terminal to `claude auth login --claudeai` and never sees or stores the token. Details: [Claude Code runtime sign-in](/authentication-and-models#claude-code-runtime-sign-in).
 
-3. **Write a delegated agent definition** (there is no built-in Claude agent). Use the `rho-agent-creator` skill for a guided questionnaire, or write a file such as `~/.rho/agents/claude-planner.md`:
+3. **Write a delegated agent definition** (there is no built-in Claude agent). Run `/agents create` or `/create-agent` for a guided questionnaire, or write a file such as `~/.rho/agents/claude-planner.md`:
 
    ```markdown
    ---

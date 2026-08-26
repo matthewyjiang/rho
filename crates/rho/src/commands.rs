@@ -21,6 +21,7 @@ pub enum CommandId {
     Theme,
     Hooks,
     Agents,
+    CreateAgent,
     Attach,
     Changelog,
     Diff,
@@ -41,6 +42,28 @@ pub struct CommandSpec {
     pub usage: &'static str,
     pub description: &'static str,
     pub argument_choices: &'static [CommandArgumentChoice],
+}
+
+fn agents_create_request(args: &str) -> Option<&str> {
+    let mut parts = args.splitn(2, char::is_whitespace);
+    let action = parts.next()?;
+    action
+        .eq_ignore_ascii_case("create")
+        .then(|| parts.next().unwrap_or_default().trim())
+}
+
+/// User request for `/agents create` / `/create-agent` after the command token.
+///
+/// `expanded_args` is the text after the first slash token in the expanded
+/// model input, so pasted bodies stay intact. `/agents create` still has to
+/// drop the `create` sub-action; `/create-agent` does not.
+pub(crate) fn create_agent_request<'a>(command_name: &str, expanded_args: &'a str) -> &'a str {
+    let args = expanded_args.trim();
+    if command_name.eq_ignore_ascii_case("agents") {
+        agents_create_request(args).unwrap_or("")
+    } else {
+        args
+    }
 }
 
 impl CommandSpec {
@@ -95,6 +118,12 @@ const GOAL_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
     },
 ];
 
+const AGENTS_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[CommandArgumentChoice {
+    completion: "/agents create",
+    usage: "/agents create [request]",
+    description: "create an agent through a guided questionnaire",
+}];
+
 const ADVISOR_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
     CommandArgumentChoice {
         completion: "/advisor on",
@@ -139,9 +168,9 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Agents,
         name: "agents",
-        usage: "/agents",
-        description: "reload agents and show runtime, tools, and other details",
-        argument_choices: &[],
+        usage: "/agents [create]",
+        description: "browse agents or create one through a guided questionnaire",
+        argument_choices: AGENTS_ARGUMENT_CHOICES,
     },
     CommandSpec {
         id: CommandId::Attach,
@@ -179,6 +208,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         description: "copy the last assistant message to the clipboard",
         argument_choices: &[],
     },
+    CommandSpec::alias(
+        "create-agent",
+        "/create-agent [request]",
+        "alias for /agents create",
+        CommandId::CreateAgent,
+    ),
     CommandSpec {
         id: CommandId::Diff,
         name: "diff",
@@ -421,12 +456,22 @@ pub fn parse_command(input: &str) -> Result<Option<CommandInvocation>, CommandPa
         .find(|command| command.name.eq_ignore_ascii_case(name))
         .ok_or_else(|| CommandParseError::Unknown(name.to_string()))?;
 
-    Ok(Some(CommandInvocation {
+    Ok(Some(canonicalize_invocation(CommandInvocation {
         id: spec.id,
         name: spec.name.to_string(),
         raw_args,
         args,
-    }))
+    })))
+}
+
+fn canonicalize_invocation(mut invocation: CommandInvocation) -> CommandInvocation {
+    if invocation.id == CommandId::Agents {
+        if let Some(request) = agents_create_request(&invocation.args) {
+            invocation.id = CommandId::CreateAgent;
+            invocation.args = request.to_string();
+        }
+    }
+    invocation
 }
 
 pub fn complete_command(input: &str, cursor: usize, spec: &CommandSpec) -> (String, usize) {
@@ -566,6 +611,7 @@ mod tests {
             ("/clear", CommandId::New, "clear"),
             ("/CLEAR", CommandId::New, "clear"),
             ("/usage", CommandId::Limits, "usage"),
+            ("/create-agent", CommandId::CreateAgent, "create-agent"),
         ];
         for (input, id, name) in cases {
             let invocation = parse_command(input).unwrap().unwrap();
@@ -579,6 +625,59 @@ mod tests {
         assert!(matching_commands("us")
             .iter()
             .any(|command| command.name == "usage"));
+    }
+
+    // Covers: both documented spellings must canonicalize to CreateAgent while
+    // bare /agents continues to open the catalog.
+    // Owner: command parser
+    #[test]
+    fn canonicalizes_agent_creation_commands() {
+        let cases = [
+            ("/agents create", CommandId::CreateAgent, ""),
+            (
+                "/agents CREATE a read-only reviewer",
+                CommandId::CreateAgent,
+                "a read-only reviewer",
+            ),
+            ("/create-agent", CommandId::CreateAgent, ""),
+            (
+                "/create-agent a planner",
+                CommandId::CreateAgent,
+                "a planner",
+            ),
+            ("/agents", CommandId::Agents, ""),
+        ];
+
+        for (input, id, args) in cases {
+            let invocation = parse_command(input).unwrap().unwrap();
+            assert_eq!(invocation.id, id, "{input}");
+            assert_eq!(invocation.args, args, "{input}");
+        }
+    }
+
+    // Covers: the execute path must strip `create` from `/agents create`
+    // while leaving `/create-agent` request text unchanged.
+    // Owner: command parser
+    #[test]
+    fn create_agent_request_matches_both_spellings() {
+        assert_eq!(
+            create_agent_request("agents", "create a read-only reviewer"),
+            "a read-only reviewer"
+        );
+        assert_eq!(create_agent_request("agents", "create"), "");
+        assert_eq!(
+            create_agent_request("agents", "CREATE a read-only reviewer"),
+            "a read-only reviewer"
+        );
+        assert_eq!(
+            create_agent_request("create-agent", "a planner"),
+            "a planner"
+        );
+        assert_eq!(
+            create_agent_request("create-agent", "create a planner"),
+            "create a planner"
+        );
+        assert_eq!(create_agent_request("create-agent", ""), "");
     }
 
     #[test]

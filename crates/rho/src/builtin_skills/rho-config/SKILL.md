@@ -1,6 +1,6 @@
 ---
 name: rho-config
-description: Help configure rho, including the interactive /config browser, model and provider selection, credential storage, model aliases, permission mode, direct edits to config.toml, the global ~/.rho directory layout, and the user's global ~/.rho/AGENTS.md. Use when the user wants to change rho behavior, set a default model or provider, adjust reasoning, toggle compaction or web search, change permission mode, add global instructions or prompt templates, or understand which settings need a restart.
+description: Configure Rho settings, providers, models, credentials, permissions, tools, global instructions, and ~/.rho/config.toml.
 ---
 
 # Rho configuration

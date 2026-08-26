@@ -5,6 +5,7 @@ use std::time::Duration;
 use anyhow::Result;
 
 use crate::{
+    env::IsolatedHome,
     harness::PtyHarness,
     keys::Key,
     pty::PtySize,
@@ -42,6 +43,50 @@ const HELP_OVERLAY_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+// Covers: /agents create must load the guided creator instead of opening the agents catalog.
+// Owner: interactive TUI
+const CREATE_AGENT_COMMAND_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("create_agent"),
+    Step::SubmitText("/agents create a read-only reviewer"),
+    Step::WaitText {
+        text: "skill(rho-agent-creator)",
+        timeout: STARTUP,
+    },
+    Step::ExitCommand,
+];
+
+pub(super) fn setup_read_only_agent(home: &IsolatedHome) -> Result<()> {
+    let agents = home.home.join(".rho/agents");
+    std::fs::create_dir_all(&agents)?;
+    std::fs::write(
+        agents.join("read-only-fixture.md"),
+        "---\nid: read-only-fixture\ndescription: fixture agent with read-only tools\ntools: [read_file]\n---\nRead files only.\n",
+    )?;
+    Ok(())
+}
+
+// Covers: the creator must fail before starting when the active agent cannot
+// provide the tools required by the guided workflow.
+// Owner: interactive TUI
+const CREATE_AGENT_MISSING_TOOLS_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("/create-agent"),
+    Step::WaitText {
+        text: "active agent is missing required tools",
+        timeout: SETTLE,
+    },
+    Step::ExitCommand,
+];
+
 // Covers: typing / opens the command palette; filtering narrows matches.
 // Owner: interactive TUI
 const SLASH_COMMAND_PALETTE_STEPS: &[Step] = &[
@@ -73,6 +118,24 @@ const SLASH_COMMAND_PALETTE_STEPS: &[Step] = &[
     Step::Key(Key::Ctrl('c')),
     Step::ExitCommand,
 ];
+
+pub(super) const CREATE_AGENT_COMMAND_SCENARIO: Scenario = Scenario::new(
+    "create_agent_command",
+    "Start the guided agent creator without opening the agents catalog",
+    SIZE,
+    CREATE_AGENT_COMMAND_STEPS,
+    /* smoke */ false,
+);
+
+pub(super) const CREATE_AGENT_MISSING_TOOLS_SCENARIO: Scenario = Scenario::new(
+    "create_agent_missing_tools",
+    "Name the tools a focused active agent needs before creation can start",
+    SIZE,
+    CREATE_AGENT_MISSING_TOOLS_STEPS,
+    /* smoke */ false,
+)
+.with_setup(setup_read_only_agent)
+.with_args(&["--agent", "read-only-fixture"]);
 
 pub(super) const HELP_OVERLAY_SCENARIO: Scenario = Scenario::new(
     "help_overlay",

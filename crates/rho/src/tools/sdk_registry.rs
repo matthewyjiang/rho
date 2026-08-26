@@ -206,6 +206,9 @@ impl AppToolSet {
             tool_set.checkpoint_tracker.clone(),
             tool_set.file_view.clone(),
         ));
+        if capabilities.contains(&ToolCapability::WriteFile) {
+            tool_set.add_bundle(super::save_agent::sdk_bundle(config.max_output_bytes));
+        }
         if capabilities.contains(&ToolCapability::Process) {
             let bundle = super::process::sdk_bundle(
                 config.max_output_bytes,

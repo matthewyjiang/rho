@@ -42,12 +42,13 @@ Additional tools:
 | `get_search_content` | Retrieve stored content from a prior web tool call |
 | `workflow` | Validate, freeze, run, inspect, cancel, or resume a durable workflow |
 | `skill` | Load a skill into the session |
+| `save_agent` | Validate, canonicalize, and save a user agent definition |
 | `rho` | Read-only harness diagnostics |
 | `advisor` | Second-model review when [advisor mode](/configuration/advisor-mode) is on |
 
 Prefer `grep` and `glob` over shell search for workspace inspection. Both honor `.gitignore`, skip hidden files by default, never follow symlinks, and request read access only, so workspace-scoped searches work in every permission mode including `plan`. Agent shell commands can use [RTK](/integrations/rtk) for token-efficient output when the binary is installed.
 
-Built-in skills that ship with the binary include `rho-diagnostics`, `rho-config`, `rho-agent-creator`, and `rho-workflow-authoring`. Custom skills live under `~/.rho/skills/<name>/SKILL.md`, `~/.agents/skills/<name>/SKILL.md`, or `<project-root>/.agents/skills/<name>/SKILL.md`. Set `disable-model-invocation: true` in a skill's frontmatter to keep it available only through `/skill:<name>`.
+Built-in skills that ship with the binary include `rho-config`, `rho-agent-creator`, and `rho-workflow-authoring`. The agent creator powers `/agents create` and `/create-agent`; it is hidden from automatic model invocation. The `rho` tool documents its read-only diagnostics actions in its input schema. Custom skills live under `~/.rho/skills/<name>/SKILL.md`, `~/.agents/skills/<name>/SKILL.md`, or `<project-root>/.agents/skills/<name>/SKILL.md`. Set `disable-model-invocation: true` in a skill's frontmatter to keep it available only through `/skill:<name>`.
 
 ## Security and workspace boundaries
 

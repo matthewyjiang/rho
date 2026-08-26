@@ -40,9 +40,29 @@ pub(crate) fn parse_definition(
     fallback_id: &str,
     contents: &str,
 ) -> Result<AgentDefinition, AgentCatalogError> {
+    parse_definition_with_fallback(path, Some(fallback_id), contents)
+}
+
+/// Parse a definition that is not bound to an on-disk filename.
+///
+/// Catalog loading may fall back to the stem; persist must not, or a missing
+/// `id` is written as `draft.md`.
+pub(crate) fn parse_draft_definition(contents: &str) -> Result<AgentDefinition, AgentCatalogError> {
+    parse_definition_with_fallback(Path::new("<draft>"), None, contents)
+}
+
+fn parse_definition_with_fallback(
+    path: &Path,
+    fallback_id: Option<&str>,
+    contents: &str,
+) -> Result<AgentDefinition, AgentCatalogError> {
     let (frontmatter, body) = split_frontmatter(path, contents)?;
     let raw = parse_fields(path, &frontmatter)?;
-    let id_value = raw.id.as_deref().unwrap_or(fallback_id);
+    let id_value = match raw.id.as_deref() {
+        Some(id) => id,
+        None => fallback_id
+            .ok_or_else(|| AgentCatalogError::at_field(path.to_path_buf(), "id", "is required"))?,
+    };
     let id = AgentId::new(id_value).map_err(|error| {
         AgentCatalogError::at_field(path.to_path_buf(), "id", error.to_string())
     })?;
