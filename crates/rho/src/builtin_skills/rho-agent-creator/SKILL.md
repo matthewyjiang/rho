@@ -7,9 +7,9 @@ disable-model-invocation: true
 
 # Rho agent creator
 
-Guide the user through creating one valid agent definition. Do not jump directly to a file. Collect decisions step by step with the `questionnaire` tool, draft the definition, confirm it, write it safely, and verify it.
+Guide the user through creating one valid agent definition. Do not jump directly to a file. Collect decisions step by step with the `questionnaire` tool, draft the definition, confirm it, then persist it with `save_agent`. Do not use `write`, `edit`, or a shell to create the definition or its parent directories.
 
-The authoritative field and value contract is the agent definition schema in the Rho docs (`docs/subagents/definition-schema.md`). Prefer that schema over inventing fields or values.
+The authoritative field and value contract is the agent definition schema in the Rho docs (`docs/subagents/definition-schema.md`) and the `save_agent` parser. Prefer those over inventing fields or values. `save_agent` re-parses and canonicalizes before writing.
 
 Rho ships no built-in `runtime: claude-cli` agent. If the user wants Claude Code or a Claude subscription-backed specialist under Rho, create a user-defined agent with this skill.
 
@@ -156,24 +156,29 @@ You are a planning specialist running under Claude Code for a Rho parent.
 - Do not claim you can open nested Task agents; fan-out stays in Rho.
 ```
 
-`prompt` must be `extend` or `replace`. `runtime` must be `rho` or `claude-cli`. For Rho, `model-policy` must be `inherit`, `prefer`, `require`, or `select`, and `tools` must be `all` or a YAML list of Rho capability names. For Claude, never set `provider`, `tools` must be a YAML list of Claude tool names or patterns, and `reasoning` when set must be one of `low`, `medium`, `high`, `xhigh`, `max`. Present the exact destination path and complete proposed file to the user, then ask for confirmation with a confirm questionnaire. Revise and reconfirm if requested.
+`prompt` must be `extend` or `replace`. `runtime` must be `rho` or `claude-cli`. For Rho, `model-policy` must be `inherit`, `prefer`, `require`, or `select`, and `tools` must be `all` or a YAML list of Rho capability names. For Claude, never set `provider`, `tools` must be a YAML list of Claude tool names or patterns, and `reasoning` when set must be one of `low`, `medium`, `high`, `xhigh`, `max`. Present the exact destination tree and complete proposed file to the user, then ask for confirmation with a confirm questionnaire. Revise and reconfirm if requested.
 
-## 7. Write safely and verify
+## 7. Save and verify
 
-Before writing, inspect the destination. If `<id>.md` already exists, read it and ask for explicit overwrite confirmation. Never overwrite based only on the earlier draft confirmation. Create the destination directory if needed using the available platform shell, then use `write` for the definition.
+Call `save_agent` with:
 
-After writing:
+- `location`: `agents-home` (`~/.agents/agents`), `rho-home` (`~/.rho/agents`), or `project` (`<project-root>/.agents/agents`)
+- `contents`: the confirmed Markdown draft
+- omit `expected_revision` unless replacing a file the user just reviewed
 
-1. Read the file back.
-2. Check that the frontmatter delimiters, ID, description, runtime, policies, tools, and non-empty body are present and match the confirmed draft.
-3. Correct only clear serialization mistakes. For any semantic change, ask first.
-4. Tell the user the final path.
-5. Ask the user to run `/agents`. Opening `/agents` reloads definitions from disk and shows the new agent, including `runtime` and tool vocabulary.
-6. For `runtime: claude-cli`, also tell the user to:
+Never invent an `expected_revision`. `save_agent` validates, canonicalizes, creates parent directories, rejects symlinks, and refuses an existing file until the user confirms replacing that exact revision.
+
+If the tool reports `exists`, show the current file to the user, ask overwrite confirmation, and call `save_agent` again with the returned `revision` as `expected_revision`. If the tool reports a conflict, the file changed after that review: show the new file and confirm again. If validation fails, fix the draft and retry. Do not fall back to `write` or a shell.
+
+After a successful save:
+
+1. Tell the user the final path from the tool result. The returned body is the canonical file.
+2. Ask the user to run `/agents`. Opening `/agents` reloads definitions from disk and shows the new agent, including `runtime` and tool vocabulary.
+3. For `runtime: claude-cli`, also tell the user to:
    - install `claude` if needed
    - run `/login claude-code` if not already signed in
    - launch it from Plan or Bypass (Auto and Allow edits only with proven no-prompt `tools:` for that Rho class and `inherit_claude_config: false`)
    - launch it from a Rho parent via the `agent` tool (not as the interactive root)
    - optionally confirm binary/auth with `/doctor` and inspect later runs with `rho attach <run-id>`
 
-Mention that project-scoped agents need project trust. Do not claim that an already initialized delegation tool schema has changed merely because the file was written. The new agent is guaranteed to be available after starting a new Rho session that loads it.
+Mention that project-scoped agents need project trust (`RHO_TRUST_PROJECT_AGENTS=1`). Do not claim that an already initialized delegation tool schema has changed merely because the file was written. The new agent is guaranteed to be available after starting a new Rho session that loads it.

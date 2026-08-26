@@ -42,6 +42,7 @@ Additional tools:
 | `get_search_content` | Retrieve stored content from a prior web tool call |
 | `workflow` | Validate, freeze, run, inspect, cancel, or resume a durable workflow |
 | `skill` | Load a skill into the session |
+| `save_agent` | Validate, canonicalize, and save a user agent definition |
 | `rho` | Read-only harness diagnostics |
 | `advisor` | Second-model review when [advisor mode](/configuration/advisor-mode) is on |
 

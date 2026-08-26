@@ -2,32 +2,45 @@ use ratatui::DefaultTerminal;
 
 use super::{
     command_palette::slash_command_args, App, ChatMedia, CommandId, CommandInvocation,
-    ComposerMode, Entry, InteractiveRuntime,
+    ComposerMode, Entry, InteractiveRuntime, PasteSegment, TurnPrompt,
 };
 
 /// Fully-owned composer state transferred to a slash command.
 pub(super) struct CommandSubmission {
     invocation: CommandInvocation,
-    expanded_input: String,
+    turn: TurnPrompt,
     media: Vec<ChatMedia>,
+    paste_segments: Vec<PasteSegment>,
 }
 
 impl CommandSubmission {
     pub(super) fn new(
         invocation: CommandInvocation,
-        expanded_input: String,
+        turn: TurnPrompt,
         media: Vec<ChatMedia>,
+        paste_segments: Vec<PasteSegment>,
     ) -> Self {
         Self {
             invocation,
-            expanded_input,
+            turn,
             media,
+            paste_segments,
         }
     }
 
     #[cfg(test)]
     pub(super) fn media_len(&self) -> usize {
         self.media.len()
+    }
+
+    #[cfg(test)]
+    pub(super) fn model(&self) -> &str {
+        &self.turn.model
+    }
+
+    #[cfg(test)]
+    pub(super) fn display(&self) -> &str {
+        &self.turn.display
     }
 }
 
@@ -40,15 +53,10 @@ impl App {
     ) -> anyhow::Result<()> {
         let CommandSubmission {
             mut invocation,
-            expanded_input,
+            turn,
             media,
+            paste_segments,
         } = submission;
-        if let Some(request) = invocation.agent_creation_request().map(str::to_owned) {
-            return self
-                .execute_create_agent_command(&request, expanded_input, media, terminal, agent)
-                .await;
-        }
-
         match invocation.id {
             CommandId::Advisor => self.execute_advisor_command(invocation, agent).await,
             CommandId::Exit => self.execute_exit_command(),
@@ -77,7 +85,7 @@ impl App {
             }
             CommandId::Copy => self.execute_copy_command(),
             CommandId::Goal => {
-                invocation.raw_args = slash_command_args(&expanded_input).to_string();
+                invocation.raw_args = slash_command_args(&turn.model).to_string();
                 invocation.args = invocation.raw_args.trim().to_string();
                 self.execute_goal_command(invocation, media, terminal, agent)
                     .await
@@ -86,6 +94,17 @@ impl App {
             CommandId::Skills => self.execute_skills_command(),
             CommandId::Theme => self.open_theme_picker(),
             CommandId::Agents => self.execute_agents_command(),
+            CommandId::CreateAgent => {
+                self.execute_create_agent_command(
+                    slash_command_args(&turn.model).trim(),
+                    turn.display,
+                    media,
+                    paste_segments,
+                    terminal,
+                    agent,
+                )
+                .await
+            }
             CommandId::Attach => self.execute_attach_command(),
             CommandId::Changelog => self.execute_changelog_command(&invocation, terminal),
             CommandId::Diff => self.execute_diff_command(),

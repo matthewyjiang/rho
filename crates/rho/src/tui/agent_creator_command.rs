@@ -6,19 +6,14 @@ impl App {
         request: &str,
         display: String,
         media: Vec<ChatMedia>,
+        paste_segments: Vec<super::PasteSegment>,
         terminal: &mut ratatui::DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        let mut missing_tools = ["skill", "questionnaire", "read_file", "write"]
+        let missing_tools = ["skill", "questionnaire", "save_agent"]
             .into_iter()
             .filter(|name| !agent.has_tool(name))
             .collect::<Vec<_>>();
-        if !["bash", "powershell", "shell"]
-            .into_iter()
-            .any(|name| agent.has_tool(name))
-        {
-            missing_tools.push("bash, powershell, or shell");
-        }
         if !missing_tools.is_empty() {
             self.insert_entry(&Entry::Error(format!(
                 "could not start agent creator: active agent is missing required tools: {}",
@@ -40,7 +35,7 @@ impl App {
             agent.has_tool("skill"),
         )? {
             SkillCommandAction::Prompt(prompt) => {
-                self.run_prompt_turn(*prompt, media, terminal, agent)
+                self.submit_interactive_turn(*prompt, media, paste_segments, terminal, agent)
                     .await?;
             }
             SkillCommandAction::Rejected => {}

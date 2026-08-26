@@ -4,7 +4,10 @@
 //! runtime-axis invariants. Save serializes, re-parses, and replaces the file
 //! only when the on-disk contents still match the edit session baseline.
 
-use std::path::Path;
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 use super::{
     parse_definition, parse_tools_list_text, serialize_definition, AgentDefinition, AgentRuntime,
@@ -429,54 +432,90 @@ pub(crate) fn save_definition(
     path: &Path,
     original_contents: &str,
 ) -> Result<String, SaveDefinitionError> {
+    let contents = canonical_definition_contents(draft, path)?;
+    let _lock = acquire_agent_file_lock(path)?;
+    let current = read_current_agent_file(path)?.unwrap_or_default();
+    if current != original_contents {
+        return Err(SaveDefinitionError::Conflict);
+    }
+    write_agent_file(path, contents.as_bytes())?;
+    Ok(contents)
+}
+
+pub(super) fn canonical_definition_contents(
+    draft: &AgentDefinition,
+    path: &Path,
+) -> Result<String, SaveDefinitionError> {
     let contents = serialize_definition(draft);
     if let Err(error) = parse_definition(path, draft.id.as_str(), &contents) {
         return Err(SaveDefinitionError::Validation(error.to_string()));
     }
+    Ok(contents)
+}
 
-    let lock_path = path.with_file_name(format!(
+pub(super) fn agent_lock_path(path: &Path) -> PathBuf {
+    path.with_file_name(format!(
         ".{}.rho-edit.lock",
         path.file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("agent")
-    ));
-    let mut lock_options = std::fs::OpenOptions::new();
+    ))
+}
+
+/// Exclusive sidecar lock for one agent file. Drop unlocks; it never unlinks
+/// the lock path, so concurrent openers keep one identity.
+pub(super) fn acquire_agent_file_lock(path: &Path) -> Result<AgentFileLock, SaveDefinitionError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| SaveDefinitionError::Write(error.to_string()))?;
+    }
+    let lock_path = agent_lock_path(path);
+    let mut lock_options = fs::OpenOptions::new();
     lock_options.read(true).write(true).create(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
         lock_options.custom_flags(libc::O_NOFOLLOW);
     }
-    let lock_file = lock_options.open(&lock_path).map_err(|error| {
+    let file = lock_options.open(&lock_path).map_err(|error| {
         SaveDefinitionError::Write(format!("could not open edit lock: {error}"))
     })?;
-    let _lock_guard = FileLockGuard {
-        file: lock_file,
-        path: lock_path,
-    };
-    fs2::FileExt::try_lock_exclusive(&_lock_guard.file).map_err(|error| {
+    fs2::FileExt::try_lock_exclusive(&file).map_err(|error| {
         SaveDefinitionError::Write(format!("could not lock agent file: {error}"))
     })?;
+    Ok(AgentFileLock { file })
+}
 
-    let current_contents = std::fs::read_to_string(path)
-        .map_err(|error| SaveDefinitionError::Write(error.to_string()))?;
-    if current_contents != original_contents {
-        return Err(SaveDefinitionError::Conflict);
+pub(super) fn read_current_agent_file(path: &Path) -> Result<Option<String>, SaveDefinitionError> {
+    match fs::read_to_string(path) {
+        Ok(current) => Ok(Some(current)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(SaveDefinitionError::Write(error.to_string())),
     }
-    crate::config_writer::replace_regular_file_atomically(path, contents.as_bytes())
-        .map_err(|error| SaveDefinitionError::Write(error.to_string()))?;
-    Ok(contents)
 }
 
-struct FileLockGuard {
+pub(super) fn write_agent_file(path: &Path, contents: &[u8]) -> Result<(), SaveDefinitionError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => Err(
+            SaveDefinitionError::Write("destination is not a regular file".into()),
+        ),
+        Ok(_) => crate::config_writer::replace_regular_file_atomically(path, contents)
+            .map_err(|error| SaveDefinitionError::Write(error.to_string())),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            crate::config_writer::write_bytes_atomically(path, contents)
+                .map_err(|error| SaveDefinitionError::Write(error.to_string()))
+        }
+        Err(error) => Err(SaveDefinitionError::Write(error.to_string())),
+    }
+}
+
+pub(super) struct AgentFileLock {
     file: std::fs::File,
-    path: std::path::PathBuf,
 }
 
-impl Drop for FileLockGuard {
+impl Drop for AgentFileLock {
     fn drop(&mut self) {
         let _ = fs2::FileExt::unlock(&self.file);
-        let _ = std::fs::remove_file(&self.path);
     }
 }
 

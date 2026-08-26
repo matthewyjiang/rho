@@ -1,8 +1,9 @@
 use ratatui::text::Line;
 
 use super::super::{
-    activity::ActivityStatus, app_state::SessionUiPhase, commands, goal, tests::test_app,
-    ActivityPhase, ChatMedia, ChatTextDocument, TurnPrompt,
+    activity::ActivityStatus, app_state::SessionUiPhase, command_palette::slash_command_args,
+    commands, goal, paste_burst, tests::test_app, ActivityPhase, ChatMedia, ChatTextDocument,
+    TurnPrompt,
 };
 use super::HeldTurn;
 
@@ -23,7 +24,10 @@ fn assert_goal_command_takes_media(command: &str) {
     app.input_ui.with_text_mut(|text| text.push_str(command));
     let invocation = commands::parse_command(command).unwrap().unwrap();
 
-    let submission = app.take_command_submission(invocation, command.to_owned());
+    let submission = app.take_command_submission(
+        invocation,
+        TurnPrompt::standard(command.to_owned(), command.to_owned()),
+    );
 
     assert_eq!(submission.media_len(), 1);
     assert!(app.input_ui.attachments().is_empty());
@@ -157,6 +161,57 @@ fn mcp_hold_uses_connecting_activity_without_joining_pending_input() {
     assert_eq!(app.input_ui.text(), "hold-me");
     assert!(app.held_turns.is_empty());
     assert_eq!(app.activity_status(), None);
+}
+
+fn collapsible_paste() -> String {
+    (1..=paste_burst::PASTE_COLLAPSE_MIN_LINES)
+        .map(|i| format!("line{i}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+// Covers: pasted /create-agent text must feed the model from expanded input,
+// not the collapsed composer display.
+// Owner: slash-command submission ownership
+#[test]
+fn pasted_create_agent_request_uses_expanded_model_input() {
+    let mut app = test_app();
+    let pasted = collapsible_paste();
+    app.insert_input_text("/create-agent ");
+    app.insert_pasted_input_text(&pasted);
+    let expanded = app.expanded_input().trim().to_string();
+    let display = app.input_ui.text().trim().to_string();
+    let invocation = app.parse_input_command().unwrap().unwrap();
+    let submission = app.take_command_submission(
+        invocation,
+        TurnPrompt::standard(expanded.clone(), display.clone()),
+    );
+
+    assert_eq!(slash_command_args(submission.model()).trim(), pasted);
+    assert_eq!(submission.display(), display);
+    assert_ne!(slash_command_args(submission.display()).trim(), pasted);
+}
+
+// Covers: Esc must restore TurnPrompt::command display, not the expanded
+// model prompt held for MCP connect.
+// Owner: idle input hold/release
+#[test]
+fn esc_restores_held_command_display_exactly() {
+    let mut app = test_app();
+    let display = "/create-agent a read-only reviewer";
+    let model = format!(
+        "Create a new Rho agent through the guided workflow. User request: {}",
+        "a read-only reviewer"
+    );
+    app.hold_turn(
+        TurnPrompt::command(model, display.to_owned()),
+        Vec::new(),
+        Vec::new(),
+    );
+
+    app.take_back_held_turn();
+    assert_eq!(app.input_ui.text(), display);
+    assert!(app.held_turns.is_empty());
 }
 
 // Covers: an MCP hold must not start a turn while a compact job holds the session.

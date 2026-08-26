@@ -122,8 +122,57 @@ fn save_definition_round_trips_and_detects_conflicts() {
         save_definition(&draft, &path, original).unwrap_err(),
         SaveDefinitionError::Conflict
     );
-    // Lock sidecar is cleaned up after save.
-    assert!(!path.with_file_name(".draft.md.rho-edit.lock").exists());
+    assert!(path.with_file_name(".draft.md.rho-edit.lock").exists());
+}
+
+// Covers: unlinking the sidecar on drop would split lock identity; a held
+// writer, a failed contender, and a later writer must share one inode.
+// Owner: agent edit lock
+#[test]
+fn save_lock_survives_drop_and_rejects_a_contender() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("draft.md");
+    let lock_path = agent_lock_path(&path);
+    let held = acquire_agent_file_lock(&path).unwrap();
+    assert!(lock_path.exists());
+    #[cfg(unix)]
+    let inode = {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::metadata(&lock_path).unwrap().ino()
+    };
+
+    let contender = save_definition(&rho_draft(), &path, "");
+    assert!(matches!(contender, Err(SaveDefinitionError::Write(_))));
+    assert!(!path.exists());
+
+    drop(held);
+    assert!(lock_path.exists());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        assert_eq!(std::fs::metadata(&lock_path).unwrap().ino(), inode);
+    }
+
+    let contents = save_definition(&rho_draft(), &path, "").unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), contents);
+    assert!(lock_path.exists());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        assert_eq!(std::fs::metadata(&lock_path).unwrap().ino(), inode);
+    }
+}
+
+// Covers: first save of a new agent creates parent directories.
+// Owner: agent edit
+#[test]
+fn save_definition_creates_missing_parent_dirs() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("nested/agents/draft.md");
+    let contents = save_definition(&rho_draft(), &path, "").unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), contents);
+    let reparsed = parse_definition(&path, "draft", &contents).unwrap();
+    assert_eq!(reparsed, rho_draft());
 }
 
 // Covers: saving through a symlink cannot modify the linked target

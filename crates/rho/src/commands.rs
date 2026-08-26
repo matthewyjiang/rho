@@ -21,6 +21,7 @@ pub enum CommandId {
     Theme,
     Hooks,
     Agents,
+    CreateAgent,
     Attach,
     Changelog,
     Diff,
@@ -43,21 +44,12 @@ pub struct CommandSpec {
     pub argument_choices: &'static [CommandArgumentChoice],
 }
 
-impl CommandInvocation {
-    pub fn agent_creation_request(&self) -> Option<&str> {
-        if self.name == "create-agent" {
-            return Some(self.args.as_str());
-        }
-        if self.id != CommandId::Agents {
-            return None;
-        }
-
-        let mut parts = self.args.splitn(2, char::is_whitespace);
-        let action = parts.next()?;
-        action
-            .eq_ignore_ascii_case("create")
-            .then(|| parts.next().unwrap_or_default().trim())
-    }
+fn agents_create_request(args: &str) -> Option<&str> {
+    let mut parts = args.splitn(2, char::is_whitespace);
+    let action = parts.next()?;
+    action
+        .eq_ignore_ascii_case("create")
+        .then(|| parts.next().unwrap_or_default().trim())
 }
 
 impl CommandSpec {
@@ -206,7 +198,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         "create-agent",
         "/create-agent [request]",
         "alias for /agents create",
-        CommandId::Agents,
+        CommandId::CreateAgent,
     ),
     CommandSpec {
         id: CommandId::Diff,
@@ -450,12 +442,22 @@ pub fn parse_command(input: &str) -> Result<Option<CommandInvocation>, CommandPa
         .find(|command| command.name.eq_ignore_ascii_case(name))
         .ok_or_else(|| CommandParseError::Unknown(name.to_string()))?;
 
-    Ok(Some(CommandInvocation {
+    Ok(Some(canonicalize_invocation(CommandInvocation {
         id: spec.id,
         name: spec.name.to_string(),
         raw_args,
         args,
-    }))
+    })))
+}
+
+fn canonicalize_invocation(mut invocation: CommandInvocation) -> CommandInvocation {
+    if invocation.id == CommandId::Agents {
+        if let Some(request) = agents_create_request(&invocation.args) {
+            invocation.id = CommandId::CreateAgent;
+            invocation.args = request.to_string();
+        }
+    }
+    invocation
 }
 
 pub fn complete_command(input: &str, cursor: usize, spec: &CommandSpec) -> (String, usize) {
@@ -595,7 +597,7 @@ mod tests {
             ("/clear", CommandId::New, "clear"),
             ("/CLEAR", CommandId::New, "clear"),
             ("/usage", CommandId::Limits, "usage"),
-            ("/create-agent", CommandId::Agents, "create-agent"),
+            ("/create-agent", CommandId::CreateAgent, "create-agent"),
         ];
         for (input, id, name) in cases {
             let invocation = parse_command(input).unwrap().unwrap();
@@ -611,25 +613,31 @@ mod tests {
             .any(|command| command.name == "usage"));
     }
 
-    // Covers: both documented spellings must route to agent creation while bare
-    // /agents continues to open the catalog.
+    // Covers: both documented spellings must canonicalize to CreateAgent while
+    // bare /agents continues to open the catalog.
     // Owner: command parser
     #[test]
-    fn recognizes_agent_creation_requests() {
+    fn canonicalizes_agent_creation_commands() {
         let cases = [
-            ("/agents create", Some("")),
+            ("/agents create", CommandId::CreateAgent, ""),
             (
                 "/agents CREATE a read-only reviewer",
-                Some("a read-only reviewer"),
+                CommandId::CreateAgent,
+                "a read-only reviewer",
             ),
-            ("/create-agent", Some("")),
-            ("/create-agent a planner", Some("a planner")),
-            ("/agents", None),
+            ("/create-agent", CommandId::CreateAgent, ""),
+            (
+                "/create-agent a planner",
+                CommandId::CreateAgent,
+                "a planner",
+            ),
+            ("/agents", CommandId::Agents, ""),
         ];
 
-        for (input, expected) in cases {
+        for (input, id, args) in cases {
             let invocation = parse_command(input).unwrap().unwrap();
-            assert_eq!(invocation.agent_creation_request(), expected, "{input}");
+            assert_eq!(invocation.id, id, "{input}");
+            assert_eq!(invocation.args, args, "{input}");
         }
     }
 
