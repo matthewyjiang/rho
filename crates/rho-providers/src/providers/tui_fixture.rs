@@ -216,24 +216,16 @@ async fn fixture_stream(
         // Stable prose must stay drawn while later emphasis markers complete.
         "fixture markdown emphasis stream" => {
             let mut response = String::new();
-            for (index, delta) in [
-                "Stable prose ALPHA remains drawn ",
-                "while **hold",
-                "ing closes** and trailing BETA completes.",
-            ]
-            .into_iter()
-            .enumerate()
-            {
+            // Hold the open-emphasis delta longer so PTY scenarios can sample
+            // ALPHA staying visible before BETA arrives.
+            for (delta, pause_ms) in [
+                ("Stable prose ALPHA remains drawn ", 250),
+                ("while **hold", 500),
+                ("ing closes** and trailing BETA completes.", 250),
+            ] {
                 events.send(ModelEvent::OutputDelta(delta.into())).await?;
                 response.push_str(delta);
-                // Hold the open-emphasis delta longer so PTY scenarios can sample
-                // ALPHA staying visible before BETA arrives.
-                let pause = if index == 1 {
-                    Duration::from_millis(500)
-                } else {
-                    Duration::from_millis(250)
-                };
-                fixture_sleep(&request.cancellation, pause).await?;
+                fixture_sleep(&request.cancellation, Duration::from_millis(pause_ms)).await?;
             }
             completed(response)
         }
