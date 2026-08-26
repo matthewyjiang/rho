@@ -6,8 +6,8 @@ use crate::{
     client::Rho,
     event::{RunOutcome, StopReason},
     model::{
-        AssistantMessage, ContentBlock, GenerationOutputTokens, Message, ModelEvent, ModelRequest,
-        ModelResponse, ModelUsage,
+        AssistantMessage, ContentBlock, Message, ModelEvent, ModelRequest, ModelResponse,
+        ModelUsage,
     },
     provider::{provider_event_channel, ModelRequestOptions, ProviderCancellationMode},
     run::RunCommand,
@@ -181,25 +181,17 @@ async fn execute_turn_loop(
                 .await;
             }
         }
-        match emit(&events, &cancellation, RunEvent::StepStarted { step }).await {
-            Ok(()) => {}
-            Err(Error::Cancelled) => {
-                return commit_terminal_history(core, history, TerminalKind::Cancelled, &events)
-                    .await;
-            }
-            Err(error) => return Err(error),
-        }
         // Emit before the provider call so quiet hosts still show context fill
         // while thinking and tool-call JSON stream (usage often arrives only at
-        // the end of the OpenAI-compatible stream). Kept separate from
-        // StepStarted for 1.x minor compatibility (see ContextEstimated docs).
+        // the end of the OpenAI-compatible stream).
         let estimated_context_tokens =
             crate::model::context::estimate_context_tokens(&history, &tool_specs);
         match emit(
             &events,
             &cancellation,
-            RunEvent::ContextEstimated {
-                tokens: estimated_context_tokens,
+            RunEvent::StepStarted {
+                step,
+                estimated_context_tokens,
             },
         )
         .await
@@ -558,10 +550,10 @@ async fn request_valid_response(
                     control.events,
                     control.cancellation,
                     RunEvent::ProviderStreamReset {
-                        reason: crate::ProviderStreamResetReason::retryable_failure(
-                            failure.error.kind(),
-                            retry_after,
-                        ),
+                        reason: crate::ProviderStreamResetReason::RetryableFailure {
+                            kind: failure.error.kind(),
+                            retry_after: retry_after.filter(|delay| !delay.is_zero()),
+                        },
                         detail,
                     },
                 )
@@ -610,17 +602,6 @@ async fn request_valid_response(
         let detail = format!(
             "retrying malformed provider response after provider attempt {provider_turn_attempts} of {PROVIDER_TURN_ATTEMPTS}"
         );
-        // Preserve the 1.0 activity event while typed reset consumers migrate.
-        #[allow(deprecated)]
-        let _ = emit(
-            control.events,
-            control.cancellation,
-            RunEvent::ProviderActivity {
-                kind: crate::PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY.into(),
-                detail: detail.clone(),
-            },
-        )
-        .await;
         let _ = emit(
             control.events,
             control.cancellation,
@@ -794,23 +775,6 @@ async fn provider_turn(
     }
     match result {
         Ok(response) => {
-            if let Some(tokens) = timer.generation_output_tokens() {
-                let detail = match tokens {
-                    GenerationOutputTokens::Reported(tokens) => tokens.to_string(),
-                    GenerationOutputTokens::Unavailable => "unavailable".into(),
-                };
-                #[allow(deprecated)]
-                let carrier = RunEvent::ProviderActivity {
-                    kind: crate::event::PROVIDER_ACTIVITY_GENERATION_OUTPUT_TOKENS.into(),
-                    detail,
-                };
-                if let Err(error) = emit(control.events, control.cancellation, carrier).await {
-                    return Err(RequestFailure::boxed(
-                        ProviderError::interrupted(error.to_string()),
-                        capture,
-                    ));
-                }
-            }
             let metrics = timer.finish(completed_at, capture.usage().output_tokens);
             if let Err(error) = emit(
                 control.events,
@@ -841,7 +805,7 @@ async fn handle_timed_provider_stream_event(
 ) -> Result<(), ProviderError> {
     match event {
         crate::provider::ProviderStreamEvent::Model(event) => {
-            if let Some(tokens) = event.as_generation_output_tokens() {
+            if let ModelEvent::GenerationOutputTokens(tokens) = event {
                 timer.observe_generation_output_tokens(tokens);
                 return Ok(());
             }
@@ -911,19 +875,7 @@ async fn handle_provider_request_event(
     capture.record_request_attempt_failure(kind, usage);
     emit(events, cancellation, RunEvent::ProviderRequestRetry)
         .await
-        .map_err(|error| ProviderError::interrupted(error.to_string()))?;
-    // Preserve the 1.0 activity event while typed consumers migrate.
-    #[allow(deprecated)]
-    emit(
-        events,
-        cancellation,
-        RunEvent::ProviderActivity {
-            kind: crate::PROVIDER_ACTIVITY_REQUEST_RETRY.into(),
-            detail: "retrying after a failed physical provider request".into(),
-        },
-    )
-    .await
-    .map_err(|error| ProviderError::interrupted(error.to_string()))
+        .map_err(|error| ProviderError::interrupted(error.to_string()))
 }
 
 async fn handle_provider_event(
@@ -934,26 +886,13 @@ async fn handle_provider_event(
     events: &mpsc::Sender<RunEvent>,
     cancellation: &CancellationToken,
 ) -> Result<(), ProviderError> {
-    let run_event = capture_provider_event(event, identity, accumulated_usage, capture);
-    #[allow(deprecated)]
-    let legacy_activity = match &run_event {
-        // Only dual-emit kinds that 1.0 hosts already understood. New hosted
-        // tools use HostedToolActivity alone — do not invent legacy kinds.
-        RunEvent::WebSearch { detail } => Some(RunEvent::ProviderActivity {
-            kind: crate::PROVIDER_ACTIVITY_WEB_SEARCH.into(),
-            detail: detail.clone(),
-        }),
-        _ => None,
+    let Some(run_event) = capture_provider_event(event, identity, accumulated_usage, capture)
+    else {
+        return Ok(());
     };
     emit(events, cancellation, run_event)
         .await
-        .map_err(|error| ProviderError::interrupted(error.to_string()))?;
-    if let Some(legacy) = legacy_activity {
-        emit(events, cancellation, legacy)
-            .await
-            .map_err(|error| ProviderError::interrupted(error.to_string()))?;
-    }
-    Ok(())
+        .map_err(|error| ProviderError::interrupted(error.to_string()))
 }
 
 async fn emit(

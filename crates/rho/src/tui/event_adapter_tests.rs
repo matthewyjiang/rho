@@ -72,6 +72,7 @@ fn translates_streaming_and_usage_events_without_rendering_state() {
                 time_to_first_token: Some(Duration::from_millis(200)),
                 generation_time: Some(Duration::from_secs(1)),
                 total_latency: Duration::from_millis(1_200),
+                generation_output_tokens: None,
             },
         })),
         ViewEvent::Update(ViewModelEvent::ModelCallCompleted {
@@ -82,63 +83,58 @@ fn translates_streaming_and_usage_events_without_rendering_state() {
     ));
 }
 
-// Covers: the 1.x performance carrier must stay separate from aggregate tokens
-// and apply only to the next model call.
+// Covers: reported generation tokens stay separate from aggregate output.
 // Owner: TUI SDK event adapter
 #[test]
-fn generation_output_carrier_enriches_the_next_model_call() {
+fn generation_output_metric_enriches_the_model_call() {
     let mut adapter = SdkEventAdapter::default();
-    #[allow(deprecated)]
-    let carrier = RunEvent::ProviderActivity {
-        kind: "model_call_generation_output_tokens".into(),
-        detail: "30".into(),
-    };
-    assert!(adapter.translate(carrier).is_empty());
     let profile = rho_sdk::ModelCallProfile {
         provider: "xai".into(),
         model: "grok".into(),
         reasoning: rho_sdk::ReasoningLevel::High,
         service_tier: None,
     };
-    let metrics = rho_sdk::ModelCallMetrics {
+    let reported = rho_sdk::ModelCallMetrics {
         output_tokens: Some(100),
         time_to_first_token: Some(Duration::from_secs(1)),
         generation_time: Some(Duration::from_secs(2)),
         total_latency: Duration::from_secs(3),
+        generation_output_tokens: Some(rho_sdk::model::GenerationOutputTokens::Reported(30)),
+    };
+    let fallback = rho_sdk::ModelCallMetrics {
+        generation_output_tokens: None,
+        ..reported
     };
 
     assert!(matches!(
         only_event(adapter.translate(RunEvent::ModelCallCompleted {
             profile: profile.clone(),
-            metrics,
+            metrics: reported,
         })),
         ViewEvent::Update(ViewModelEvent::ModelCallCompleted {
             metrics: translated_metrics,
             generation_output_tokens: GenerationOutputTokens::Reported(30),
             ..
-        }) if translated_metrics == metrics
+        }) if translated_metrics == reported
     ));
     assert!(matches!(
-        only_event(adapter.translate(RunEvent::ModelCallCompleted { profile, metrics })),
+        only_event(adapter.translate(RunEvent::ModelCallCompleted {
+            profile,
+            metrics: fallback,
+        })),
         ViewEvent::Update(ViewModelEvent::ModelCallCompleted {
             metrics: translated_metrics,
             generation_output_tokens: GenerationOutputTokens::AggregateFallback,
             ..
-        }) if translated_metrics == metrics
+        }) if translated_metrics == fallback
     ));
 }
 
 // Covers: an invalid provider breakdown must suppress aggregate throughput fallback.
 // Owner: TUI SDK event adapter
 #[test]
-fn unavailable_generation_output_carrier_is_preserved() {
+fn unavailable_generation_output_metric_is_preserved() {
     let mut adapter = SdkEventAdapter::default();
-    #[allow(deprecated)]
-    let carrier = RunEvent::ProviderActivity {
-        kind: "model_call_generation_output_tokens".into(),
-        detail: "unavailable".into(),
-    };
-    assert!(adapter.translate(carrier).is_empty());
 
     assert!(matches!(
         only_event(adapter.translate(RunEvent::ModelCallCompleted {
@@ -153,41 +149,7 @@ fn unavailable_generation_output_carrier_is_preserved() {
                 time_to_first_token: Some(Duration::from_secs(1)),
                 generation_time: Some(Duration::from_secs(2)),
                 total_latency: Duration::from_secs(3),
-            },
-        })),
-        ViewEvent::Update(ViewModelEvent::ModelCallCompleted {
-            generation_output_tokens: GenerationOutputTokens::Unavailable,
-            ..
-        })
-    ));
-}
-
-// Covers: streamed reasoning without a generation-token count must not use
-// aggregate output as a throughput numerator.
-// Owner: TUI SDK event adapter
-#[test]
-fn streamed_reasoning_without_carrier_is_unavailable() {
-    let mut adapter = SdkEventAdapter::default();
-    assert!(matches!(
-        only_event(adapter.translate(RunEvent::ReasoningDelta {
-            text: "plan".into()
-        })),
-        ViewEvent::Update(ViewModelEvent::ReasoningDelta(text)) if text == "plan"
-    ));
-
-    assert!(matches!(
-        only_event(adapter.translate(RunEvent::ModelCallCompleted {
-            profile: rho_sdk::ModelCallProfile {
-                provider: "openai".into(),
-                model: "gpt".into(),
-                reasoning: rho_sdk::ReasoningLevel::High,
-                service_tier: None,
-            },
-            metrics: rho_sdk::ModelCallMetrics {
-                output_tokens: Some(100),
-                time_to_first_token: Some(Duration::from_secs(1)),
-                generation_time: Some(Duration::from_secs(2)),
-                total_latency: Duration::from_secs(3),
+                generation_output_tokens: Some(rho_sdk::model::GenerationOutputTokens::Unavailable),
             },
         })),
         ViewEvent::Update(ViewModelEvent::ModelCallCompleted {
@@ -203,7 +165,10 @@ fn provider_retry_resets_the_current_provider_stream() {
 
     for reason in [
         ProviderStreamResetReason::InvalidResponse,
-        ProviderStreamResetReason::RetryableFailure(rho_sdk::ProviderErrorKind::Unavailable),
+        ProviderStreamResetReason::RetryableFailure {
+            kind: rho_sdk::ProviderErrorKind::Unavailable,
+            retry_after: None,
+        },
     ] {
         assert!(matches!(
             only_event(adapter.translate(RunEvent::ProviderStreamReset {
@@ -324,18 +289,6 @@ fn hosted_tool_activity_without_detail_uses_only_finished_fact() {
             text: "finished".into(),
         }]
     );
-}
-
-#[test]
-fn legacy_provider_activity_is_ignored_by_tui() {
-    let mut adapter = SdkEventAdapter::default();
-
-    #[allow(deprecated)]
-    let events = adapter.translate(RunEvent::ProviderActivity {
-        kind: rho_sdk::PROVIDER_ACTIVITY_WEB_SEARCH.into(),
-        detail: "rho docs".into(),
-    });
-    assert!(events.is_empty());
 }
 
 #[test]
@@ -607,7 +560,7 @@ fn edit_preview_preserves_multi_file_identity() {
 }
 
 #[test]
-fn write_file_does_not_label_a_mixed_omitted_diff_as_no_changes() {
+fn write_does_not_label_a_mixed_omitted_diff_as_no_changes() {
     let mut adapter = SdkEventAdapter::default();
     let call_id = ToolCallId::from_string("call-omitted-diff").unwrap();
     let _ = only_event(adapter.translate(RunEvent::ToolStarted {
@@ -708,6 +661,7 @@ fn compaction_failure_closes_open_tool_block_before_run_failed() {
     let events = adapter.translate(RunEvent::Failed {
         message: "provider unavailable".into(),
         retryability: rho_sdk::Retryability::Retryable,
+        revision: Revision::INITIAL,
     });
     assert_eq!(events.len(), 2);
     assert!(matches!(
@@ -917,19 +871,19 @@ fn rate_limit_stream_reset_carries_retry_after_into_view_model() {
 
     let mut adapter = SdkEventAdapter::default();
     let event = only_event(adapter.translate(RunEvent::ProviderStreamReset {
-        reason: ProviderStreamResetReason::retryable_failure(
-            rho_sdk::ProviderErrorKind::RateLimit,
-            Some(Duration::from_secs(12)),
-        ),
+        reason: ProviderStreamResetReason::RetryableFailure {
+            kind: rho_sdk::ProviderErrorKind::RateLimit,
+            retry_after: Some(Duration::from_secs(12)),
+        },
         detail: "retrying".into(),
     }));
 
     assert!(matches!(
         event,
         ViewEvent::Update(ViewModelEvent::ProviderStreamReset(ProviderRetryHint {
-            reason: ProviderStreamResetReason::RetryableFailureWithRetryAfter {
+            reason: ProviderStreamResetReason::RetryableFailure {
                 kind: rho_sdk::ProviderErrorKind::RateLimit,
-                retry_after: delay,
+                retry_after: Some(delay),
             },
         })) if delay == Duration::from_secs(12)
     ));

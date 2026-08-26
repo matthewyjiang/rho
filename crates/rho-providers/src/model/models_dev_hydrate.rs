@@ -117,7 +117,7 @@ pub async fn prefetch_model_metadata(targets: impl IntoIterator<Item = (String, 
 pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
     let mut entries = Vec::new();
     let mut touched_providers = HashSet::new();
-    for descriptor in crate::provider::providers() {
+    for descriptor in crate::provider::builtin_providers() {
         for model_id in catalog_model_ids_for_provider(api, descriptor) {
             if let Some(metadata) = extract_complete_upstream_metadata(api, descriptor, &model_id) {
                 touched_providers.insert(descriptor.name.to_string());

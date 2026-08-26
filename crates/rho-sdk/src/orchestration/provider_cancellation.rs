@@ -56,9 +56,7 @@ pub(super) fn drain_cancelled_provider_events(
 }
 
 fn capture_model_event(event: ModelEvent, identity: &ModelIdentity, capture: &mut StreamCapture) {
-    if event.as_generation_output_tokens().is_none() {
-        let _ = capture_provider_event(event, identity, &ModelUsage::default(), capture);
-    }
+    let _ = capture_provider_event(event, identity, &ModelUsage::default(), capture);
 }
 
 #[cfg(test)]

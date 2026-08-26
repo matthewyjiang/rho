@@ -56,7 +56,7 @@ pub use edit_format::EditFormat;
 pub use file_view::{FileViewPolicy, FileViewStyle};
 pub use image_format::{supported_image_mime_type, MAX_IMAGE_FILE_BYTES};
 pub use process_env::apply_process_environment;
-pub use sdk_adapter::{coding_tool, coding_tools, CodingToolKind, CodingToolOptions, EditToolKind};
+pub use sdk_adapter::{coding_tool, coding_tools, CodingToolKind, CodingToolOptions};
 pub use sdk_shell::{shell_invocation, shell_tool, ShellToolOptions};
 pub use tool::{compact_display_path, resolve_path, truncate, Tool, ToolContext, ToolError};
 pub use workspace_mutation::{UntrackedWorkspaceEffect, WorkspaceMutationObserver};

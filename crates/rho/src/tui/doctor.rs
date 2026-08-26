@@ -90,7 +90,7 @@ pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
 }
 
 fn authentication_checks(store: &dyn CredentialStore) -> Vec<DoctorCheck> {
-    provider::visible_providers()
+    provider::providers()
         .iter()
         .flat_map(|descriptor| {
             if descriptor.is_keyless() {
@@ -159,7 +159,7 @@ fn authentication_checks(store: &dyn CredentialStore) -> Vec<DoctorCheck> {
 }
 
 fn cache_checks() -> Vec<DoctorCheck> {
-    provider::visible_providers()
+    provider::providers()
         .iter()
         .filter(|descriptor| descriptor.model_source == ProviderModelSource::CachedProviderModels)
         .map(|descriptor| {
@@ -236,7 +236,7 @@ fn misc_checks(context: &DoctorContext<'_>) -> Vec<DoctorCheck> {
 }
 
 fn model_endpoint_checks(provider_health: &[(String, ProviderModelHealth)]) -> Vec<DoctorCheck> {
-    provider::visible_providers()
+    provider::providers()
         .iter()
         .filter(|descriptor| descriptor.probes_configured_endpoint())
         .map(|descriptor| {

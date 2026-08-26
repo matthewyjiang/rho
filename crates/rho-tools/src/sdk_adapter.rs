@@ -63,16 +63,6 @@ use mutation::{mutation_output, run_observed_mutation};
 mod registry;
 pub use registry::{coding_tool, coding_tools, CodingToolKind, CodingToolOptions};
 
-/// Compatibility name for the canonical [`crate::EditFormat`] type.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-tools): remove the EditToolKind alias and use EditFormat directly.
-///
-/// The alias keeps source compatibility for 1.x hosts. New code should name
-/// [`crate::EditFormat`].
-pub type EditToolKind = crate::EditFormat;
-
 // Tool selection and registry mechanics live in `registry`; adapters below
 // only translate individual filesystem operations to the SDK contract.
 

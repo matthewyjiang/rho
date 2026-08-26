@@ -29,6 +29,7 @@ fn metrics(output_tokens: u64, generation_time: Duration) -> ModelCallMetrics {
         time_to_first_token: Some(time_to_first_token),
         generation_time: Some(generation_time),
         total_latency: time_to_first_token + generation_time,
+        generation_output_tokens: None,
     }
 }
 
@@ -96,6 +97,7 @@ fn falls_back_to_aggregate_output_without_generation_output() {
         time_to_first_token: Some(Duration::from_millis(200)),
         generation_time: Some(Duration::from_secs(2)),
         total_latency: Duration::from_millis(2_200),
+        generation_output_tokens: None,
     };
 
     tracker.record(
@@ -156,6 +158,7 @@ fn ignores_calls_without_generation_time_for_the_average() {
         time_to_first_token: None,
         generation_time: None,
         total_latency: Duration::from_secs(2),
+        generation_output_tokens: None,
     };
 
     tracker.record(

@@ -70,7 +70,7 @@ impl AttemptAwareRunUsage {
 /// chunk. This estimate meters streamed output so statusline cost can advance
 /// during the attempt, then yields as soon as any provider `Usage` arrives.
 /// It must never enter the durable usage ledger, and it must not restate the
-/// prompt as new uncached input: `ContextEstimated` is the full window, so
+/// prompt as new uncached input: `StepStarted.estimated_context_tokens` is the full window, so
 /// billing it on submit double-counts history and ignores cache.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct LiveStreamUsageEstimate {

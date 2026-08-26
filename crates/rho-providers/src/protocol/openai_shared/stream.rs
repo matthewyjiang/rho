@@ -197,7 +197,7 @@ impl ChatStreamAccumulator {
         finalize_chat_assistant(self.text, self.reasoning, self.tool_calls, self.policy)
     }
 
-    /// Finalizes and emits the usage snapshot, throughput carrier, and retained
+    /// Finalizes and emits the usage snapshot, generation-output metric, and retained
     /// reasoning context through `on_event`.
     pub(crate) fn finish(
         self,

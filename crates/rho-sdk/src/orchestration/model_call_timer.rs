@@ -48,7 +48,8 @@ impl ModelCallTimer {
                 ModelEvent::ToolCallDelta { .. } => true,
                 ModelEvent::WebSearch(_)
                 | ModelEvent::ProviderContext { .. }
-                | ModelEvent::Usage(_) => false,
+                | ModelEvent::Usage(_)
+                | ModelEvent::GenerationOutputTokens(_) => false,
             }
         {
             self.first_generated = Some(observed_at);
@@ -57,10 +58,6 @@ impl ModelCallTimer {
 
     pub(super) fn observe_generation_output_tokens(&mut self, tokens: GenerationOutputTokens) {
         self.generation_output_tokens = Some(tokens);
-    }
-
-    pub(super) fn generation_output_tokens(&self) -> Option<GenerationOutputTokens> {
-        self.generation_output_tokens
     }
 
     pub(super) fn finish(
@@ -81,6 +78,7 @@ impl ModelCallTimer {
                 .first_generated
                 .map(|first| stream_completed.duration_since(first)),
             total_latency: stream_completed.duration_since(self.attempt_started),
+            generation_output_tokens: self.generation_output_tokens,
         }
     }
 }

@@ -16,6 +16,7 @@ fn response_rate_divides_tokens_by_total_latency() {
                 time_to_first_token: Some(Duration::from_secs(8)),
                 generation_time: Some(Duration::from_secs(2)),
                 total_latency: Duration::from_secs(10),
+                generation_output_tokens: None,
             },
             Some(10.0),
         ),
@@ -26,6 +27,7 @@ fn response_rate_divides_tokens_by_total_latency() {
                 time_to_first_token: None,
                 generation_time: None,
                 total_latency: Duration::from_secs(5),
+                generation_output_tokens: None,
             },
             Some(10.0),
         ),
@@ -36,6 +38,7 @@ fn response_rate_divides_tokens_by_total_latency() {
                 time_to_first_token: None,
                 generation_time: None,
                 total_latency: Duration::from_secs(5),
+                generation_output_tokens: None,
             },
             None,
         ),
@@ -46,6 +49,7 @@ fn response_rate_divides_tokens_by_total_latency() {
                 time_to_first_token: None,
                 generation_time: None,
                 total_latency: Duration::ZERO,
+                generation_output_tokens: None,
             },
             None,
         ),
@@ -53,14 +57,6 @@ fn response_rate_divides_tokens_by_total_latency() {
 
     for (name, metrics, expected) in cases {
         assert_eq!(metrics.response_tokens_per_second(), expected, "{name}");
-        #[allow(deprecated)]
-        {
-            assert_eq!(
-                metrics.output_tokens_per_second(),
-                metrics.response_tokens_per_second(),
-                "{name}: deprecated alias matches response rate"
-            );
-        }
     }
 }
 
@@ -76,6 +72,7 @@ fn generation_rate_divides_tokens_by_generation_time() {
                 time_to_first_token: Some(Duration::from_secs(8)),
                 generation_time: Some(Duration::from_secs(2)),
                 total_latency: Duration::from_secs(10),
+                generation_output_tokens: None,
             },
             Some(50.0),
         ),
@@ -86,6 +83,7 @@ fn generation_rate_divides_tokens_by_generation_time() {
                 time_to_first_token: None,
                 generation_time: None,
                 total_latency: Duration::from_secs(5),
+                generation_output_tokens: None,
             },
             None,
         ),
@@ -96,6 +94,7 @@ fn generation_rate_divides_tokens_by_generation_time() {
                 time_to_first_token: Some(Duration::from_secs(1)),
                 generation_time: Some(Duration::from_secs(2)),
                 total_latency: Duration::from_secs(3),
+                generation_output_tokens: None,
             },
             None,
         ),
@@ -106,6 +105,7 @@ fn generation_rate_divides_tokens_by_generation_time() {
                 time_to_first_token: Some(Duration::from_secs(1)),
                 generation_time: Some(Duration::ZERO),
                 total_latency: Duration::from_secs(1),
+                generation_output_tokens: None,
             },
             None,
         ),

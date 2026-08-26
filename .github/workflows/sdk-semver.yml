@@ -58,7 +58,9 @@ jobs:
           package: rho-sdk
           baseline-rev: ${{ steps.baseline.outputs.revision }}
           feature-group: all-features
-          release-type: minor
+          # Temporarily major for the next-major debt cutover PR; revert to
+          # minor after the rho-sdk 5.0.0 release tag lands.
+          release-type: major
       # Agents and humans often "fix CI" by reverting the ideal shape. That is a
       # minor-compatible compromise and must leave greppable NEXT_MAJOR debt.
       - name: Next-major debt gate on semver failure

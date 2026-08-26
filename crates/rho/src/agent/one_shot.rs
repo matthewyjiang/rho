@@ -199,7 +199,8 @@ impl OneShotStream {
                 ModelEvent::Usage(_)
                 | ModelEvent::WebSearch(_)
                 | ModelEvent::ToolCallDelta { .. }
-                | ModelEvent::ProviderContext { .. },
+                | ModelEvent::ProviderContext { .. }
+                | ModelEvent::GenerationOutputTokens(_),
             ) => {}
         }
     }

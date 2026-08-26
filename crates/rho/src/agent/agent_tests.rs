@@ -37,49 +37,29 @@ fn semantic_fingerprint_ignores_formatting_and_source() {
 }
 
 #[test]
-fn write_file_capability_alias_matches_write() {
-    let canonical = parse_definition(
-        Path::new("a.md"),
-        "worker",
-        "---\ndescription: work\ntools: [write]\n---\n",
-    )
-    .unwrap();
-    let legacy_name = parse_definition(
-        Path::new("b.md"),
-        "worker",
-        "---\ndescription: work\ntools: [write_file]\n---\n",
-    )
-    .unwrap();
-    assert_eq!(canonical.fingerprint(), legacy_name.fingerprint());
-    assert_eq!(ToolCapability::parse("write_file".into()).as_str(), "write");
-}
-
-#[test]
-fn edit_capability_aliases_match_edit() {
+fn edit_capability_format_names_match_edit() {
     let canonical = parse_definition(
         Path::new("a.md"),
         "worker",
         "---\ndescription: work\ntools: [edit]\n---\n",
     )
     .unwrap();
-    // edit_file is a 1.x alias for str_replace.
-    // NEXT_MAJOR(rho): drop edit_file once agent frontmatter uses str_replace.
-    for alias in ["edit_file", "apply_patch", "hashline", "str_replace"] {
-        let legacy = parse_definition(
+    for name in ["apply_patch", "hashline", "str_replace"] {
+        let format_named = parse_definition(
             Path::new("b.md"),
             "worker",
-            &format!("---\ndescription: work\ntools: [{alias}]\n---\n"),
+            &format!("---\ndescription: work\ntools: [{name}]\n---\n"),
         )
         .unwrap();
         assert_eq!(
             canonical.fingerprint(),
-            legacy.fingerprint(),
-            "alias {alias}"
+            format_named.fingerprint(),
+            "format name {name}"
         );
         assert_eq!(
-            ToolCapability::parse(alias.into()).as_str(),
+            ToolCapability::parse(name.into()).as_str(),
             "edit",
-            "alias {alias}"
+            "format name {name}"
         );
     }
 }

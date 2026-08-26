@@ -101,7 +101,6 @@ impl EventMapper {
             | RunEvent::StepStarted { .. }
             | RunEvent::ToolCallUpdated { .. }
             | RunEvent::UsageUpdated { .. }
-            | RunEvent::ProviderActivity { .. }
             | RunEvent::ProviderContextUpdated { .. }
             | RunEvent::HostInputRequested { .. }
             | RunEvent::CompactionStarted { .. }
@@ -113,8 +112,7 @@ impl EventMapper {
             | RunEvent::ProviderRequestRetry
             | RunEvent::ModelCallCompleted { .. }
             | RunEvent::HostedToolActivity { .. }
-            | RunEvent::ProviderServiceTierFallback { .. }
-            | RunEvent::ContextEstimated { .. } => None,
+            | RunEvent::ProviderServiceTierFallback { .. } => None,
             // RunEvent is non_exhaustive; unknown future variants have no ACP update.
             _ => None,
         }

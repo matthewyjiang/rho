@@ -5,7 +5,7 @@ use url::Url;
 
 use crate::{
     auth::{github_copilot_token::GitHubCopilotAuthManager, xai_token::XaiAuthManager},
-    credentials::{CredentialResult, CredentialStore},
+    credentials::CredentialStore,
     model::{models_dev::CatalogSdkAdapter, ModelError},
     openai_compatible_dialect::OpenAiCompatibleDialect,
     provider::{
@@ -356,24 +356,6 @@ struct OpenAiCompatibleBuild {
     hosted_web_search: bool,
 }
 
-/// Empty store for construction paths that require a `CredentialStore` but
-/// never read or write secrets. `MemoryCredentialStore` is debug/test-only.
-struct InertCredentialStore;
-
-impl CredentialStore for InertCredentialStore {
-    fn get_secret(&self, _account: &str) -> CredentialResult<Option<String>> {
-        Ok(None)
-    }
-
-    fn set_secret(&self, _account: &str, _secret: &str) -> CredentialResult<()> {
-        Ok(())
-    }
-
-    fn delete_secret(&self, _account: &str) -> CredentialResult<bool> {
-        Ok(false)
-    }
-}
-
 fn build_openai_compatible_provider(
     catalog_construction: CatalogConstruction,
     openai_compatible_api: OpenAiCompatibleApi,
@@ -405,16 +387,9 @@ fn build_openai_compatible_provider(
     };
     match (adapter, build.auth) {
         (CatalogSdkAdapter::OpenAiResponses, CompatibleAuth::ApiKey(key)) => {
-            // Api-key and keyless Responses construction never refresh tokens,
-            // so an inert store satisfies the Codex refresh dependency without
-            // touching real credentials.
-            // NEXT_MAJOR(rho-providers): give Responses construction explicit
-            // api-key and keyless paths so they no longer need a placeholder
-            // CredentialStore to satisfy the Codex refresh dependency.
             Ok(Arc::new(OpenAiProvider::new_with_identity(
                 model,
                 Some(Auth::ApiKey(key)),
-                Arc::new(InertCredentialStore),
                 build.client,
                 Some(build.api_base),
                 hosted_web_search,
@@ -425,7 +400,6 @@ fn build_openai_compatible_provider(
             Ok(Arc::new(OpenAiProvider::new_with_identity(
                 model,
                 None,
-                Arc::new(InertCredentialStore),
                 build.client,
                 Some(build.api_base),
                 hosted_web_search,

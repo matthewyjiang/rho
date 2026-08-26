@@ -107,24 +107,6 @@ impl ProviderRuntime {
             | Self::Xai => CatalogConstruction::Runtime,
         }
     }
-
-    /// Whether two descriptors share a runtime family for auth-profile resolution.
-    ///
-    /// # Next major
-    ///
-    /// NEXT_MAJOR(rho-providers): remove ProviderRuntime::same_family.
-    ///
-    /// Kept only for compatibility; runtime equality conflates wire dialect and
-    /// API base with auth family. New code should use
-    /// [`same_provider_family`] with [`ProviderId`] so families are
-    /// data-driven via `AUTH_FAMILY_GROUPS`.
-    #[deprecated(note = "use provider::same_provider_family with ProviderId instead")]
-    pub fn same_family(self, other: Self) -> bool {
-        match (self, other) {
-            (Self::OpenAi { .. }, Self::OpenAi { .. }) => true,
-            (left, right) => left == right,
-        }
-    }
 }
 
 /// Provider families that share one backend for auth-profile switching.
@@ -140,6 +122,11 @@ impl ProviderRuntime {
 /// `catalog::CROSS_PROVIDER_LOGIN_GROUPS` exists.
 const AUTH_FAMILY_GROUPS: &[&[ProviderId]] = &[&[ProviderId::OpenAi, ProviderId::OpenAiCodex]];
 
+/// Whether two built-in provider ids share one backend for auth-profile switching.
+///
+/// Not meaningful for custom hosts: they all share [`ProviderId::OpenAiCompatible`]
+/// but are distinct backends. Callers must exclude descriptors where
+/// [`ProviderDescriptor::is_custom_openai_compatible`] is true before asking.
 pub fn same_provider_family(left: ProviderId, right: ProviderId) -> bool {
     if left == right {
         return true;
@@ -149,14 +136,10 @@ pub fn same_provider_family(left: ProviderId, right: ProviderId) -> bool {
         .any(|group| group.contains(&left) && group.contains(&right))
 }
 
-/// # Next major
+/// Stable provider identity.
 ///
-/// NEXT_MAJOR(rho-providers): add a variant for config-defined OpenAI-compatible
-/// hosts so their identity is not aliased onto a built-in id.
-///
-/// Until then, named custom hosts reuse [`ProviderId::Ollama`] as a wire-family
-/// stand-in. Callers must use [`ProviderDescriptor::name`] and
-/// [`ProviderDescriptor::is_custom_openai_compatible`] for identity.
+/// Config-defined OpenAI-compatible hosts share [`Self::OpenAiCompatible`].
+/// Distinguish those hosts by [`ProviderDescriptor::name`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ProviderId {
     Ollama,
@@ -175,6 +158,7 @@ pub enum ProviderId {
     Meta,
     OpenCodeGo,
     MiniMax,
+    OpenAiCompatible,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -647,7 +631,7 @@ impl ProviderDescriptor {
 
     /// Config-defined OpenAI-compatible hosts are named providers, not a single built-in.
     pub fn is_custom_openai_compatible(self) -> bool {
-        PROVIDERS.iter().all(|builtin| builtin.name != self.name)
+        self.id == ProviderId::OpenAiCompatible
     }
 
     /// How this host rematches models.dev rows.
@@ -679,10 +663,8 @@ impl ProviderDescriptor {
 
     /// `/login` collects and persists this host's API base before the optional key.
     ///
-    /// Built-in Ollama stores `[providers.ollama]`. Named custom hosts reuse
-    /// [`ProviderId::Ollama`] as a wire-family stand-in, so identity is the
-    /// provider name, not the id. Those hosts already collected a URL when
-    /// they were created.
+    /// Built-in Ollama stores `[providers.ollama]`. Named custom hosts already
+    /// collected a URL when they were created.
     pub fn collects_login_endpoint(self) -> bool {
         self.name == "ollama"
     }
@@ -702,10 +684,8 @@ impl ProviderDescriptor {
 
     /// Wire policy for Standard-dialect hosts when models.dev has no row.
     pub fn unknown_effort(self) -> UnknownEffortPolicy {
-        if self.is_custom_openai_compatible() {
-            return UnknownEffortPolicy::SendRequested;
-        }
         match self.id {
+            ProviderId::OpenAiCompatible => UnknownEffortPolicy::SendRequested,
             ProviderId::Ollama | ProviderId::OllamaCloud => {
                 UnknownEffortPolicy::Constrain(OLLAMA_UNKNOWN_REASONING_LEVELS)
             }
@@ -723,30 +703,20 @@ mod custom_openai_compatible;
 pub(crate) use custom_openai_compatible::interned_custom_providers;
 pub use custom_openai_compatible::{
     custom_provider_api_key_auth_id, custom_provider_registry_test_lock,
-    install_custom_openai_compatible_providers,
-    install_custom_openai_compatible_providers_with_lookup,
-    install_custom_openai_compatible_providers_with_options,
-    intern_custom_openai_compatible_providers,
-    intern_custom_openai_compatible_providers_with_lookup,
-    intern_custom_openai_compatible_providers_with_options, interned_custom_provider,
-    is_custom_provider_api_key_auth, reset_custom_openai_compatible_providers_for_tests,
-    scope_custom_openai_compatible_providers, validate_custom_provider_name, CustomProviderOptions,
-    CustomProviderSpec, CustomProviderThreadScope,
+    install_custom_openai_compatible_providers, intern_custom_openai_compatible_providers,
+    interned_custom_provider, is_custom_provider_api_key_auth,
+    reset_custom_openai_compatible_providers_for_tests, scope_custom_openai_compatible_providers,
+    validate_custom_provider_name, CustomProviderSpec, CustomProviderThreadScope,
 };
 pub use provider_table::PROVIDERS;
 
-pub fn providers() -> &'static [ProviderDescriptor] {
+/// Built-in provider table, excluding config-defined hosts.
+pub fn builtin_providers() -> &'static [ProviderDescriptor] {
     PROVIDERS
 }
 
 /// Built-in providers plus the currently visible custom OpenAI-compatible hosts.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-providers): make [`providers`] include config-defined hosts,
-/// or replace both with one iterator, so callers do not choose between the
-/// static table and a visibility snapshot.
-pub fn visible_providers() -> Vec<&'static ProviderDescriptor> {
+pub fn providers() -> Vec<&'static ProviderDescriptor> {
     let mut providers = PROVIDERS.iter().collect::<Vec<_>>();
     providers.extend(custom_openai_compatible::custom_openai_compatible_providers());
     providers
@@ -770,7 +740,7 @@ pub fn credential_env_vars() -> Vec<String> {
 pub(crate) fn credential_env_vars_from(
     env: impl IntoIterator<Item = impl AsRef<str>>,
 ) -> Vec<String> {
-    let mut vars: Vec<String> = providers()
+    let mut vars: Vec<String> = builtin_providers()
         .iter()
         .chain(custom_openai_compatible::interned_custom_providers())
         .flat_map(|descriptor| descriptor.auth_modes())
@@ -842,7 +812,7 @@ pub fn model_reference(provider: &str, model: &str) -> String {
 }
 
 pub fn provider_descriptor_for_auth(auth: &str) -> Option<&'static ProviderDescriptor> {
-    providers()
+    builtin_providers()
         .iter()
         .find(|descriptor| descriptor.auth_mode(auth).is_some())
         .or_else(|| custom_openai_compatible::interned_custom_provider_for_auth(auth))
@@ -962,7 +932,7 @@ pub enum ProfileResolutionError {
 }
 
 pub fn provider_descriptor_by_id(id: ProviderId) -> &'static ProviderDescriptor {
-    providers()
+    builtin_providers()
         .iter()
         .find(|descriptor| descriptor.id == id)
         .expect("every built-in provider ID must have a descriptor")

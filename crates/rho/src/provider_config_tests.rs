@@ -69,7 +69,7 @@ fn default_config_omits_ollama_endpoint_until_login_or_explicit_table() {
     let mut config = Config::default();
     config
         .providers
-        .set_endpoint("ollama", rho_providers::model::registry::OLLAMA_API_BASE)
+        .set_endpoint("ollama", rho_providers::provider::OLLAMA_API_BASE)
         .unwrap();
     config.write_settings(path.clone()).unwrap();
     let saved = std::fs::read_to_string(&path).unwrap();
@@ -80,7 +80,7 @@ fn default_config_omits_ollama_endpoint_until_login_or_explicit_table() {
     assert!(
         saved.contains(&format!(
             "base_url = \"{}\"",
-            rho_providers::model::registry::OLLAMA_API_BASE
+            rho_providers::provider::OLLAMA_API_BASE
         )),
         "saved Ollama endpoint must keep the submitted URL: {saved}"
     );
@@ -141,7 +141,7 @@ fn qwen_token_plan_resolves_default_endpoint_without_config() {
             .resolved_provider_endpoint("qwen-token-plan")
             .unwrap()
             .as_str(),
-        rho_providers::model::registry::QWEN_TOKEN_PLAN_API_BASE
+        rho_providers::provider::QWEN_TOKEN_PLAN_API_BASE
     );
 }
 
@@ -153,7 +153,7 @@ fn meta_resolves_default_endpoint_without_config() {
 
     assert_eq!(
         config.resolved_provider_endpoint("meta").unwrap().as_str(),
-        rho_providers::model::registry::META_API_BASE
+        rho_providers::provider::META_API_BASE
     );
 }
 

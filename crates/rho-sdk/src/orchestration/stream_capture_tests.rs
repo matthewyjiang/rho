@@ -27,6 +27,7 @@ fn capture_tool_delta(
         &ModelUsage::default(),
         capture,
     )
+    .expect("tool-call deltas are host-visible")
 }
 
 #[test]
@@ -46,7 +47,8 @@ fn tool_call_updates_reemit_known_identity_on_later_argument_deltas() {
         &identity,
         &usage,
         &mut capture,
-    );
+    )
+    .expect("tool-call deltas are host-visible");
     assert!(
         matches!(
             first,
@@ -70,7 +72,8 @@ fn tool_call_updates_reemit_known_identity_on_later_argument_deltas() {
         &identity,
         &usage,
         &mut capture,
-    );
+    )
+    .expect("tool-call deltas are host-visible");
     assert!(
         matches!(
             second,
@@ -193,7 +196,8 @@ fn hosted_tool_activity_maps_to_named_run_event() {
         &identity(),
         &ModelUsage::default(),
         &mut capture,
-    );
+    )
+    .expect("hosted tool activity is host-visible");
     assert_eq!(
         event,
         RunEvent::HostedToolActivity {
@@ -211,7 +215,8 @@ fn web_search_activity_keeps_stable_run_event_shape() {
         &identity(),
         &ModelUsage::default(),
         &mut capture,
-    );
+    )
+    .expect("web search is host-visible");
     assert_eq!(
         event,
         RunEvent::WebSearch {
@@ -230,7 +235,8 @@ fn service_tier_fallback_maps_to_typed_run_event() {
         &identity(),
         &ModelUsage::default(),
         &mut capture,
-    );
+    )
+    .expect("service-tier fallback is host-visible");
     assert_eq!(
         event,
         RunEvent::ProviderServiceTierFallback {

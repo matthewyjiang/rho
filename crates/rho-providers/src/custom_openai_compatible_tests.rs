@@ -1,15 +1,13 @@
 use super::super::{
-    CatalogConstruction, CatalogReasoningPolicy, OpenAiCompatibleApi, ProviderAuthKind,
+    CatalogConstruction, CatalogReasoningPolicy, OpenAiCompatibleApi, ProviderAuthKind, ProviderId,
     ProviderModelSource, ProviderRuntime, UnknownEffortPolicy,
 };
 use super::{
     custom_openai_compatible_provider, custom_openai_compatible_providers,
     custom_provider_registry_test_lock, install_custom_openai_compatible_providers,
-    install_custom_openai_compatible_providers_with_lookup,
-    install_custom_openai_compatible_providers_with_options,
     intern_custom_openai_compatible_providers, is_custom_provider_api_key_auth,
     reset_custom_openai_compatible_providers_for_tests, validate_custom_provider_name,
-    CustomProviderOptions, CustomProviderSpec, CustomProviderThreadScope,
+    CustomProviderSpec, CustomProviderThreadScope,
 };
 use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
 use crate::protocol::openai_chat::ChatToolCallPolicy;
@@ -58,6 +56,7 @@ fn install_custom_providers_makes_openai_compatible_hosts() {
     install_custom_openai_compatible_providers(["composer", "vllm"]).unwrap();
 
     let composer = custom_openai_compatible_provider("composer").expect("composer");
+    assert_eq!(composer.id, ProviderId::OpenAiCompatible);
     assert_eq!(composer.name, "composer");
     assert_eq!(composer.display_name, "composer");
     assert_eq!(
@@ -103,7 +102,7 @@ fn install_custom_providers_makes_openai_compatible_hosts() {
             .map(|(descriptor, mode)| (descriptor.name, mode.id)),
         Some(("composer", "composer-api-key"))
     );
-    let listed = crate::provider::visible_providers();
+    let listed = crate::provider::providers();
     assert!(
         listed
             .iter()
@@ -227,10 +226,8 @@ fn custom_host_model_id_lookup_reinterns_the_descriptor() {
         crate::provider::CatalogLookupMode::Slug
     );
 
-    install_custom_openai_compatible_providers_with_lookup([(
-        CustomProviderSpec::new("cliproxyapi", None),
-        crate::provider::CatalogLookupMode::ModelId,
-    )])
+    install_custom_openai_compatible_providers([CustomProviderSpec::new("cliproxyapi", None)
+        .with_catalog_lookup(crate::provider::CatalogLookupMode::ModelId)])
     .unwrap();
 
     let host = custom_openai_compatible_provider("cliproxyapi").unwrap();
@@ -248,10 +245,9 @@ fn intern_responses_api_sets_host_api() {
     let _lock = custom_provider_registry_test_lock();
     restore_empty();
     let _restore = RestoreCustomProviders;
-    install_custom_openai_compatible_providers_with_options([(
-        CustomProviderSpec::new("responses-host", None),
-        CustomProviderOptions::new().with_api(OpenAiCompatibleApi::Responses),
-    )])
+    install_custom_openai_compatible_providers([
+        CustomProviderSpec::new("responses-host", None).with_api(OpenAiCompatibleApi::Responses)
+    ])
     .unwrap();
 
     let host = custom_openai_compatible_provider("responses-host").unwrap();
@@ -281,10 +277,9 @@ fn custom_host_api_change_reinterns_the_descriptor() {
     );
     let chat_ptr = chat as *const _;
 
-    install_custom_openai_compatible_providers_with_options([(
-        CustomProviderSpec::new("api-flip-host", None),
-        CustomProviderOptions::new().with_api(OpenAiCompatibleApi::Responses),
-    )])
+    install_custom_openai_compatible_providers([
+        CustomProviderSpec::new("api-flip-host", None).with_api(OpenAiCompatibleApi::Responses)
+    ])
     .unwrap();
     let responses = custom_openai_compatible_provider("api-flip-host").unwrap();
     assert_eq!(
@@ -294,10 +289,9 @@ fn custom_host_api_change_reinterns_the_descriptor() {
     let responses_ptr = responses as *const _;
     assert_ne!(chat_ptr, responses_ptr);
 
-    install_custom_openai_compatible_providers_with_options([(
-        CustomProviderSpec::new("api-flip-host", None),
-        CustomProviderOptions::new().with_api(OpenAiCompatibleApi::Responses),
-    )])
+    install_custom_openai_compatible_providers([
+        CustomProviderSpec::new("api-flip-host", None).with_api(OpenAiCompatibleApi::Responses)
+    ])
     .unwrap();
     assert_eq!(
         custom_openai_compatible_provider("api-flip-host").unwrap() as *const _,

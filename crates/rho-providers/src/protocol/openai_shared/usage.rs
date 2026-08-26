@@ -13,24 +13,6 @@ use crate::{
     protocol::cost::parse_usd_micros,
 };
 
-// Keep the raw 1.x carrier until rho-providers can raise its minimum rho-sdk
-// version. Package verification must compile against the currently published SDK.
-pub(crate) fn generation_output_tokens_event(tokens: u64) -> ModelEvent {
-    ModelEvent::ProviderContext {
-        kind: "rho_model_call_generation_output_tokens".into(),
-        position: None,
-        data: serde_json::json!({ "tokens": tokens }),
-    }
-}
-
-fn generation_output_tokens_unavailable_event() -> ModelEvent {
-    ModelEvent::ProviderContext {
-        kind: "rho_model_call_generation_output_tokens".into(),
-        position: None,
-        data: serde_json::json!({ "tokens": null }),
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum GenerationOutputTokens {
     Unreported,
@@ -42,8 +24,12 @@ impl GenerationOutputTokens {
     pub(crate) fn into_event(self) -> Option<ModelEvent> {
         match self {
             Self::Unreported => None,
-            Self::Reported(tokens) => Some(generation_output_tokens_event(tokens)),
-            Self::Unavailable => Some(generation_output_tokens_unavailable_event()),
+            Self::Reported(tokens) => Some(ModelEvent::GenerationOutputTokens(
+                rho_sdk::model::GenerationOutputTokens::Reported(tokens),
+            )),
+            Self::Unavailable => Some(ModelEvent::GenerationOutputTokens(
+                rho_sdk::model::GenerationOutputTokens::Unavailable,
+            )),
         }
     }
 }

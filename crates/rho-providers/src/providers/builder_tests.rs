@@ -300,11 +300,10 @@ async fn opencode_go_anthropic_npm_posts_messages_with_x_api_key() {
 
 fn install_custom_composer_responses() -> RestoreCustomProviders {
     crate::provider::reset_custom_openai_compatible_providers_for_tests();
-    crate::provider::install_custom_openai_compatible_providers_with_options([(
-        crate::provider::CustomProviderSpec::new("composer", None),
-        crate::provider::CustomProviderOptions::new()
+    crate::provider::install_custom_openai_compatible_providers([
+        crate::provider::CustomProviderSpec::new("composer", None)
             .with_api(crate::provider::OpenAiCompatibleApi::Responses),
-    )])
+    ])
     .unwrap();
     RestoreCustomProviders
 }

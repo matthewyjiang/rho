@@ -467,7 +467,8 @@ mod tests {
                     | ModelEvent::ProviderContext { .. }
                     | ModelEvent::WebSearch(_)
                     | ModelEvent::Usage(_)
-                    | ModelEvent::ToolCallDelta { .. } => None,
+                    | ModelEvent::ToolCallDelta { .. }
+                    | ModelEvent::GenerationOutputTokens(_) => None,
                 })
                 .collect::<String>(),
             "hello"
@@ -539,7 +540,8 @@ mod tests {
                 | ModelEvent::ReasoningSummaryDelta(_)
                 | ModelEvent::ProviderContext { .. }
                 | ModelEvent::WebSearch(_)
-                | ModelEvent::ToolCallDelta { .. } => None,
+                | ModelEvent::ToolCallDelta { .. }
+                | ModelEvent::GenerationOutputTokens(_) => None,
             })
             .collect::<Vec<_>>();
         assert_eq!(usages.len(), 2);

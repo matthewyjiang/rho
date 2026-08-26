@@ -1,112 +1,23 @@
 use std::time::Duration;
 
 use crate::{
-    model::{ContentBlock, ModelUsage, ToolCall},
+    model::{ContentBlock, GenerationOutputTokens, ModelUsage, ToolCall},
     tool::{ToolErrorKind, ToolMetadata, ToolOutput, ToolProgress},
     Revision, RunId, SteeringId, ToolCallId,
 };
 
-/// Legacy provider activity kind emitted when a malformed response is retried.
-///
-/// Prefer [`RunEvent::ProviderStreamReset`]. Still emitted before the typed reset
-/// for 1.0 hosts.
-///
-/// NEXT_MAJOR(rho-sdk): remove ProviderActivity and PROVIDER_ACTIVITY_* dual-emits.
-#[deprecated(since = "1.11.0", note = "use RunEvent::ProviderStreamReset")]
-pub const PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY: &str = "invalid_response_retry";
-/// Legacy provider activity kind emitted when a physical provider request is retried.
-///
-/// Prefer [`RunEvent::ProviderRequestRetry`]. Still dual-emitted for 1.0 hosts.
-///
-/// NEXT_MAJOR(rho-sdk): remove ProviderActivity and PROVIDER_ACTIVITY_* dual-emits.
-#[deprecated(since = "1.11.0", note = "use RunEvent::ProviderRequestRetry")]
-pub const PROVIDER_ACTIVITY_REQUEST_RETRY: &str = "provider_request_retry";
-/// Legacy provider activity kind emitted for provider-native web searches.
-///
-/// Prefer [`RunEvent::WebSearch`]. Still dual-emitted for 1.0 hosts.
-///
-/// NEXT_MAJOR(rho-sdk): remove ProviderActivity and PROVIDER_ACTIVITY_* dual-emits.
-#[deprecated(since = "1.11.0", note = "use RunEvent::WebSearch")]
-pub const PROVIDER_ACTIVITY_WEB_SEARCH: &str = "web_search";
-/// Internal 1.x carrier emitted immediately before [`RunEvent::ModelCallCompleted`].
-/// Its `detail` is the non-reasoning output count or `unavailable` when a
-/// provider reported an invalid reasoning breakdown.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-sdk): add an explicit generation_output_tokens metric and remove
-/// this ProviderActivity carrier.
-#[doc(hidden)]
-pub const PROVIDER_ACTIVITY_GENERATION_OUTPUT_TOKENS: &str = "model_call_generation_output_tokens";
-
 /// Why the current provider attempt was abandoned before a fresh request.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-sdk): collapse RetryableFailure and RetryableFailureWithRetryAfter
-/// into one shape with optional retry_after (or move retry_after onto
-/// [`RunEvent::ProviderStreamReset`]).
-///
-/// Wait is metadata on a retryable failure, not a distinct reason. The split exists
-/// only so a minor release can carry the wait without adding a field to
-/// [`RunEvent::ProviderStreamReset`]. Prefer matching via
-/// [`Self::provider_error_kind`] / [`Self::retry_after`] until major so both arms
-/// stay covered.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ProviderStreamResetReason {
     /// The provider returned a malformed normalized assistant response.
     InvalidResponse,
-    /// The provider request failed with a retryable error (no wait hint).
-    RetryableFailure(crate::ProviderErrorKind),
-    /// Same as [`Self::RetryableFailure`], with a provider-supplied wait hint.
-    ///
-    /// Exists only so wait metadata can land in a minor release without adding a
-    /// field to [`RunEvent::ProviderStreamReset`]. Prefer
-    /// [`Self::retryable_failure`] when constructing and
-    /// [`Self::provider_error_kind`] / [`Self::retry_after`] when matching.
-    /// See the enum-level next-major note.
-    RetryableFailureWithRetryAfter {
+    /// The provider request failed with a retryable error.
+    RetryableFailure {
         kind: crate::ProviderErrorKind,
-        retry_after: Duration,
-    },
-}
-
-impl ProviderStreamResetReason {
-    /// Builds a retryable-failure reason, attaching a wait when the provider supplied one.
-    ///
-    /// Prefer this over constructing [`Self::RetryableFailure`] /
-    /// [`Self::RetryableFailureWithRetryAfter`] directly.
-    pub fn retryable_failure(
-        kind: crate::ProviderErrorKind,
+        /// Provider-supplied wait before the next attempt may succeed.
         retry_after: Option<Duration>,
-    ) -> Self {
-        match retry_after.filter(|delay| !delay.is_zero()) {
-            Some(retry_after) => Self::RetryableFailureWithRetryAfter { kind, retry_after },
-            None => Self::RetryableFailure(kind),
-        }
-    }
-
-    /// Provider error kind when this reset was caused by a retryable failure.
-    ///
-    /// Covers both [`Self::RetryableFailure`] and
-    /// [`Self::RetryableFailureWithRetryAfter`].
-    pub fn provider_error_kind(self) -> Option<crate::ProviderErrorKind> {
-        match self {
-            Self::InvalidResponse => None,
-            Self::RetryableFailure(kind) | Self::RetryableFailureWithRetryAfter { kind, .. } => {
-                Some(kind)
-            }
-        }
-    }
-
-    /// Provider-supplied wait before the next attempt may succeed.
-    pub fn retry_after(self) -> Option<Duration> {
-        match self {
-            Self::RetryableFailureWithRetryAfter { retry_after, .. } => Some(retry_after),
-            Self::InvalidResponse | Self::RetryableFailure(_) => None,
-        }
-    }
+    },
 }
 
 /// Reason a successful run stopped producing model turns.
@@ -233,6 +144,12 @@ pub struct ModelCallMetrics {
     /// output. Discarded attempts and the retry backoff before them are not
     /// counted, so these numbers describe the model rather than retry policy.
     pub total_latency: Duration,
+    /// Generation-window output tokens when the provider reported a usable
+    /// breakdown. `None` means a host may fall back to aggregate
+    /// [`Self::output_tokens`]. [`GenerationOutputTokens::Unavailable`] means
+    /// the provider produced output that cannot be attributed to the generation
+    /// window.
+    pub generation_output_tokens: Option<GenerationOutputTokens>,
 }
 
 impl ModelCallMetrics {
@@ -267,21 +184,6 @@ impl ModelCallMetrics {
         Self::rate(self.output_tokens, self.total_latency)
     }
 
-    /// End-to-end response rate over total attempt latency.
-    ///
-    /// # Next major
-    ///
-    /// NEXT_MAJOR(rho-sdk): remove ModelCallMetrics::output_tokens_per_second;
-    /// callers should use response_tokens_per_second (e2e) or
-    /// generation_tokens_per_second (decode window).
-    ///
-    /// Kept as a minor-compatible alias after generation throughput became the
-    /// preferred primary rate. Prefer [`Self::response_tokens_per_second`].
-    #[deprecated(since = "1.18.0", note = "use response_tokens_per_second")]
-    pub fn output_tokens_per_second(self) -> Option<f64> {
-        self.response_tokens_per_second()
-    }
-
     fn rate(tokens: Option<u64>, window: Duration) -> Option<f64> {
         let tokens = tokens?;
         let seconds = window.as_secs_f64();
@@ -299,6 +201,10 @@ pub enum RunEvent {
     },
     StepStarted {
         step: usize,
+        /// Provider-neutral estimate of request history and tool schemas.
+        /// Hosts should treat this as a display estimate and replace it with
+        /// [`RunEvent::UsageUpdated`] when the provider reports input usage.
+        estimated_context_tokens: u64,
     },
     AssistantTextDelta {
         text: String,
@@ -334,25 +240,6 @@ pub enum RunEvent {
     UsageUpdated {
         usage: ModelUsage,
     },
-    /// Legacy stringly-typed provider activity.
-    ///
-    /// Prefer the typed events instead. Still dual-emitted alongside
-    /// [`RunEvent::WebSearch`], [`RunEvent::ProviderRequestRetry`], and
-    /// [`RunEvent::ProviderStreamReset`] for 1.0 hosts. It also carries the
-    /// internal [`PROVIDER_ACTIVITY_GENERATION_OUTPUT_TOKENS`] hint immediately
-    /// before [`RunEvent::ModelCallCompleted`]. New activity such as
-    /// [`RunEvent::HostedToolActivity`] is typed-only and does not dual-emit
-    /// here.
-    ///
-    /// NEXT_MAJOR(rho-sdk): remove ProviderActivity and PROVIDER_ACTIVITY_* dual-emits.
-    #[deprecated(
-        since = "1.11.0",
-        note = "use WebSearch, ProviderRequestRetry, or ProviderStreamReset"
-    )]
-    ProviderActivity {
-        kind: String,
-        detail: String,
-    },
     ProviderContextUpdated {
         kind: String,
     },
@@ -373,20 +260,11 @@ pub enum RunEvent {
     Cancelled {
         revision: Revision,
     },
-    /// Terminal run failure.
-    ///
-    /// # Next major
-    ///
-    /// NEXT_MAJOR(rho-sdk): add `revision: Revision` to `RunEvent::Failed` so
-    /// cooperative failure commits match `Cancelled { revision }`.
-    ///
-    /// Failure now commits recoverable candidate history and bumps the session
-    /// revision, but this variant keeps the 1.x field set for minor
-    /// compatibility. Until major, hosts that need the post-commit revision
-    /// should read `Session::revision` after the run ends.
+    /// Terminal run failure after a cooperative history commit.
     Failed {
         message: String,
         retryability: crate::Retryability,
+        revision: Revision,
     },
     /// Accepted steering crossed into conversation history for the next model step.
     SteeringApplied {
@@ -442,26 +320,6 @@ pub enum RunEvent {
     ProviderServiceTierFallback {
         requested: crate::model::ServiceTier,
         used: String,
-    },
-    /// Estimated context tokens for the model request about to start.
-    ///
-    /// Derived from the live run history and tool specs at step start. Hosts
-    /// should treat this as a display estimate and replace it with
-    /// [`RunEvent::UsageUpdated`] when the provider reports input usage.
-    ///
-    /// Kept as its own variant (instead of a field on [`Self::StepStarted`]) so
-    /// 1.x stays minor-compatible. Constructing/matching `StepStarted` must not
-    /// require a new field until the next major.
-    ///
-    /// Appended after existing variants so discriminant values of the 1.x
-    /// surface stay stable under a minor release.
-    ///
-    /// # Next major
-    ///
-    /// NEXT_MAJOR(rho-sdk): fold `estimated_context_tokens` into `StepStarted`
-    /// and delete this variant so step start and context estimate are one event.
-    ContextEstimated {
-        tokens: u64,
     },
 }
 

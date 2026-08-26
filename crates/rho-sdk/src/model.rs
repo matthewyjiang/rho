@@ -501,6 +501,11 @@ pub enum ModelEvent {
         data: Value,
     },
     Usage(ModelUsage),
+    /// Generation-window output tokens for this attempt.
+    ///
+    /// The runtime consumes this into [`crate::ModelCallMetrics`] and never
+    /// lowers it to a [`crate::RunEvent`] or persists it as provider context.
+    GenerationOutputTokens(GenerationOutputTokens),
 }
 
 /// Reserved [`ModelEvent::ProviderContext::kind`] for provider-native hosted
@@ -520,17 +525,17 @@ pub const HOSTED_TOOL_ACTIVITY_KIND: &str = "hosted_tool_activity";
 /// this kind to [`crate::RunEvent::ProviderServiceTierFallback`] and does not
 /// retain it as provider-context replay state.
 pub const SERVICE_TIER_FALLBACK_KIND: &str = "service_tier_fallback";
-/// Reserved [`ModelEvent::ProviderContext::kind`] for provider-reported
-/// non-reasoning output tokens.
-///
-/// Construct with [`ModelEvent::generation_output_tokens`]. The runtime consumes
-/// this performance metadata before provider-context replay.
-#[doc(hidden)]
-pub const GENERATION_OUTPUT_TOKENS_KIND: &str = "rho_model_call_generation_output_tokens";
 
+/// Generation-window output tokens reported by a provider for one attempt.
+///
+/// Distinct from aggregate [`ModelUsage::output_tokens`], which keeps the
+/// provider's full billed output total (including reasoning).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum GenerationOutputTokens {
+pub enum GenerationOutputTokens {
+    /// Non-reasoning output count that matches the generation timing window.
     Reported(u64),
+    /// The provider produced output that cannot be attributed to the generation
+    /// window (for example hidden reasoning without a token split).
     Unavailable,
 }
 
@@ -557,42 +562,6 @@ impl ModelEvent {
                 let name = data.get("name")?.as_str()?;
                 let detail = data.get("detail")?.as_str()?;
                 Some((name, detail))
-            }
-            _ => None,
-        }
-    }
-
-    /// Carries the exact non-reasoning output-token count through a 1.x provider callback.
-    ///
-    /// # Next major
-    ///
-    /// NEXT_MAJOR(rho-sdk): replace the generation-token ProviderContext carrier
-    /// with a dedicated provider metric callback that does not pass through ModelEvent.
-    ///
-    /// This reserved context kind keeps the exhaustive 1.x [`ModelEvent`] enum
-    /// source-compatible. The runtime consumes it as internal performance
-    /// metadata and does not expose or persist it as provider context.
-    #[doc(hidden)]
-    pub fn generation_output_tokens(tokens: u64) -> Self {
-        Self::ProviderContext {
-            kind: GENERATION_OUTPUT_TOKENS_KIND.into(),
-            position: None,
-            data: json!({ "tokens": tokens }),
-        }
-    }
-
-    /// Returns the state carried by the reserved generation-output metadata.
-    pub(crate) fn as_generation_output_tokens(&self) -> Option<GenerationOutputTokens> {
-        match self {
-            Self::ProviderContext { kind, data, .. } if kind == GENERATION_OUTPUT_TOKENS_KIND => {
-                Some(
-                    data.get("tokens")
-                        .and_then(serde_json::Value::as_u64)
-                        .map_or(
-                            GenerationOutputTokens::Unavailable,
-                            GenerationOutputTokens::Reported,
-                        ),
-                )
             }
             _ => None,
         }

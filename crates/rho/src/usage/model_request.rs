@@ -70,7 +70,8 @@ pub(crate) async fn send_recorded_observing(
                     | ModelEvent::ReasoningSummaryDelta(_)
                     | ModelEvent::WebSearch(_)
                     | ModelEvent::ToolCallDelta { .. }
-                    | ModelEvent::ProviderContext { .. },
+                    | ModelEvent::ProviderContext { .. }
+                    | ModelEvent::GenerationOutputTokens(_),
                 ) => {}
                 ProviderStreamEvent::Request(ProviderRequestEvent::RequestAttemptFailed {
                     kind,

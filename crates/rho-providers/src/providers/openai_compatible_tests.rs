@@ -670,11 +670,7 @@ async fn poolside_publishes_only_final_stream_usage_snapshot() {
         vec![
             ModelEvent::OutputDelta("hel".into()),
             ModelEvent::OutputDelta("lo".into()),
-            ModelEvent::ProviderContext {
-                kind: "rho_model_call_generation_output_tokens".into(),
-                position: None,
-                data: json!({ "tokens": null }),
-            },
+            ModelEvent::GenerationOutputTokens(rho_sdk::model::GenerationOutputTokens::Unavailable,),
             ModelEvent::Usage(ModelUsage {
                 input_tokens: None,
                 output_tokens: Some(2),
@@ -733,11 +729,9 @@ async fn poolside_streamed_reasoning_reports_full_output_total() {
         vec![
             ModelEvent::ReasoningDelta("thinking".into()),
             ModelEvent::OutputDelta("hi".into()),
-            ModelEvent::ProviderContext {
-                kind: "rho_model_call_generation_output_tokens".into(),
-                position: None,
-                data: json!({ "tokens": 230 }),
-            },
+            ModelEvent::GenerationOutputTokens(rho_sdk::model::GenerationOutputTokens::Reported(
+                230
+            ),),
             ModelEvent::Usage(ModelUsage {
                 input_tokens: None,
                 output_tokens: Some(230),

@@ -25,10 +25,7 @@ pub(super) enum TerminalKind {
 /// terminal error. Event-consumer interrupts are not routed here and still leave
 /// uncommitted candidate history uninstalled.
 ///
-/// `Cancelled` carries the new revision on the event. `Failed` keeps the 1.x
-/// event shape and relies on `Session::revision` after the run ends.
-/// NEXT_MAJOR(rho-sdk): add `revision: Revision` to `RunEvent::Failed` so
-/// cooperative failure commits match `Cancelled { revision }`.
+/// `Cancelled` and `Failed` both carry the new revision on the event.
 pub(super) async fn commit_terminal(
     core: Arc<SessionCore>,
     mut history: Vec<Message>,
@@ -57,7 +54,7 @@ pub(super) async fn commit_terminal_history(
         }
         TerminalKind::Failed(error) => {
             core.set_state(SessionState::Failed);
-            emit_failure(events, &error).await;
+            emit_failure(events, &error, revision).await;
             Err(error)
         }
     }
@@ -67,7 +64,7 @@ pub(super) async fn send_terminal(events: &mpsc::Sender<RunEvent>, event: RunEve
     let _ = events.send(event).await;
 }
 
-async fn emit_failure(events: &mpsc::Sender<RunEvent>, error: &Error) {
+async fn emit_failure(events: &mpsc::Sender<RunEvent>, error: &Error, revision: crate::Revision) {
     let diagnostic = match error {
         Error::Provider(error) => error.diagnostic(),
         _ => None,
@@ -90,6 +87,7 @@ async fn emit_failure(events: &mpsc::Sender<RunEvent>, error: &Error) {
             } else {
                 Retryability::Permanent
             },
+            revision,
         },
     )
     .await;

@@ -4,8 +4,8 @@ use pretty_assertions::assert_eq;
 
 use crate::{
     model::{
-        AbortedAssistant, ModelEvent, ModelIdentity, ModelResponse, ModelUsage,
-        ProviderContextBlock, GENERATION_OUTPUT_TOKENS_KIND,
+        AbortedAssistant, GenerationOutputTokens, ModelEvent, ModelIdentity, ModelResponse,
+        ModelUsage, ProviderContextBlock,
     },
     provider::{provider_event_channel, ProviderEventReceiver, ProviderFuture},
 };
@@ -21,11 +21,9 @@ fn identity() -> ModelIdentity {
 async fn receiver_with_queued_events() -> ProviderEventReceiver {
     let (events, receiver) = provider_event_channel(NonZeroUsize::new(3).unwrap());
     events
-        .send(ModelEvent::ProviderContext {
-            kind: GENERATION_OUTPUT_TOKENS_KIND.into(),
-            position: None,
-            data: serde_json::json!({ "tokens": null }),
-        })
+        .send(ModelEvent::GenerationOutputTokens(
+            GenerationOutputTokens::Unavailable,
+        ))
         .await
         .unwrap();
     events

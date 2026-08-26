@@ -20,6 +20,7 @@ fn model_call_metrics() -> rho_sdk::ModelCallMetrics {
         time_to_first_token: Some(Duration::from_millis(100)),
         generation_time: Some(Duration::from_millis(1_900)),
         total_latency: Duration::from_secs(2),
+        generation_output_tokens: None,
     }
 }
 
@@ -134,20 +135,20 @@ fn provider_retry_status_includes_rate_limit_reset_hint() {
 
     assert_eq!(
         ProviderRetryHint {
-            reason: ProviderStreamResetReason::retryable_failure(
-                ProviderErrorKind::RateLimit,
-                Some(Duration::from_secs(12)),
-            ),
+            reason: ProviderStreamResetReason::RetryableFailure {
+                kind: ProviderErrorKind::RateLimit,
+                retry_after: Some(Duration::from_secs(12)),
+            },
         }
         .status_label(),
         "rate limited · retry in 12s"
     );
     assert_eq!(
         ProviderRetryHint {
-            reason: ProviderStreamResetReason::retryable_failure(
-                ProviderErrorKind::RateLimit,
-                None
-            ),
+            reason: ProviderStreamResetReason::RetryableFailure {
+                kind: ProviderErrorKind::RateLimit,
+                retry_after: None,
+            },
         }
         .status_label(),
         "rate limited · retrying"

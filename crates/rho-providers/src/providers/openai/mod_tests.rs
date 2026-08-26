@@ -3,7 +3,7 @@ use crate::model::{
     AbortedAssistant, ContentBlock, Message, PartialToolCall, ReasoningCapabilities,
     ReasoningLevelSet, ToolCall, ToolSpec,
 };
-use crate::protocol::openai_chat::{generation_output_tokens_event, ChatStreamAccumulator};
+use crate::protocol::openai_chat::ChatStreamAccumulator;
 use crate::protocol::openai_responses::{
     codex_input_items, codex_reasoning_param, extract_sse_text, handle_codex_sse_line,
     CodexSseState,
@@ -343,7 +343,8 @@ fn completed_tool_call_arguments_are_published_exactly_once() {
             | ModelEvent::ReasoningSummaryDelta(_)
             | ModelEvent::WebSearch(_)
             | ModelEvent::ProviderContext { .. }
-            | ModelEvent::Usage(_) => None,
+            | ModelEvent::Usage(_)
+            | ModelEvent::GenerationOutputTokens(_) => None,
         })
         .collect::<String>();
     assert_eq!(streamed, r#"{"path":"src/main.rs"}"#);
@@ -378,7 +379,8 @@ fn parallel_tool_calls_stream_arguments_per_output_index() {
             | ModelEvent::ReasoningSummaryDelta(_)
             | ModelEvent::WebSearch(_)
             | ModelEvent::ProviderContext { .. }
-            | ModelEvent::Usage(_) => None,
+            | ModelEvent::Usage(_)
+            | ModelEvent::GenerationOutputTokens(_) => None,
         })
         .collect::<Vec<_>>();
     assert_eq!(
@@ -419,7 +421,9 @@ fn chat_stream_usage_normalizes_prompt_cache_tokens() {
         events,
         vec![
             ModelEvent::OutputDelta("ok".into()),
-            generation_output_tokens_event(15),
+            ModelEvent::GenerationOutputTokens(rho_sdk::model::GenerationOutputTokens::Reported(
+                15
+            ),),
             ModelEvent::Usage(crate::model::ModelUsage {
                 input_tokens: Some(100),
                 output_tokens: Some(20),
@@ -452,7 +456,9 @@ fn codex_response_usage_normalizes_input_cache_tokens() {
     assert_eq!(
         events,
         vec![
-            generation_output_tokens_event(18),
+            ModelEvent::GenerationOutputTokens(rho_sdk::model::GenerationOutputTokens::Reported(
+                18
+            ),),
             ModelEvent::Usage(crate::model::ModelUsage {
                 input_tokens: Some(100),
                 output_tokens: Some(25),
@@ -481,6 +487,7 @@ fn codex_sse_line_emits_reasoning_summary_delta() {
                 ModelEvent::WebSearch(_) => {}
                                 ModelEvent::ToolCallDelta { .. } => {}
                 ModelEvent::Usage(_) => {}
+                ModelEvent::GenerationOutputTokens(_) => {}
             }
             Ok(())
         }),
@@ -518,6 +525,7 @@ fn codex_sse_line_emits_web_search_detail() {
                 ModelEvent::ProviderContext { .. } => {}
                 ModelEvent::ToolCallDelta { .. } => {}
                 ModelEvent::Usage(_) => {}
+                ModelEvent::GenerationOutputTokens(_) => {}
             }
             Ok(())
         }),
@@ -547,6 +555,7 @@ fn codex_sse_line_emits_x_search_detail() {
                 ModelEvent::ProviderContext { .. } => {}
                 ModelEvent::ToolCallDelta { .. } => {}
                 ModelEvent::Usage(_) => {}
+                ModelEvent::GenerationOutputTokens(_) => {}
             }
             Ok(())
         }),
@@ -631,6 +640,7 @@ fn codex_sse_line_emits_x_search_from_custom_tool_call() {
                 ModelEvent::ProviderContext { .. } => {}
                 ModelEvent::ToolCallDelta { .. } => {}
                 ModelEvent::Usage(_) => {}
+                ModelEvent::GenerationOutputTokens(_) => {}
             }
             Ok(())
         }),

@@ -94,8 +94,6 @@ fn canonical_tool_names_match_the_unfiltered_registry() {
         tools.set_advisor_registered(true);
         let names = tools.unfiltered_names().collect::<Vec<_>>();
         let selected = edit_tool.resolve(&config.provider).tool_name();
-        // Model-facing names only; legacy `edit_file` is not registered.
-        // NEXT_MAJOR(rho-tools): drop edit_file alias recognition entirely in 2.0.
         for name in ["edit", "apply_patch", "str_replace"] {
             assert_eq!(
                 names.iter().any(|candidate| candidate == name),
@@ -103,7 +101,6 @@ fn canonical_tool_names_match_the_unfiltered_registry() {
                 "edit_tool={edit_tool:?} name={name}"
             );
         }
-        assert!(!names.iter().any(|candidate| candidate == "edit_file"));
         model_names.extend(names);
     }
 
@@ -676,74 +673,4 @@ fn auto_edit_tool_constructs_the_preferred_provider_format() {
     assert!(tools.contains("str_replace"));
     assert!(!tools.contains("edit"));
     assert!(!tools.contains("apply_patch"));
-}
-
-// Covers: legacy edit_file alias names must not be treated as the swappable
-// built-in edit slot. set_edit_tool matches only canonical tool names.
-// Owner: application tool registry.
-#[test]
-fn set_edit_tool_ignores_legacy_edit_file_alias_tools() {
-    use rho_sdk::{
-        model::ToolSpec,
-        tool::{Tool as SdkTool, ToolContext, ToolFuture, ToolInvocation, ToolOutput},
-    };
-
-    struct AliasTool;
-
-    impl SdkTool for AliasTool {
-        fn spec(&self) -> ToolSpec {
-            ToolSpec {
-                name: "edit_file".into(),
-                description: "unrelated alias-named tool".into(),
-                input_schema: json!({"type": "object"}),
-            }
-        }
-
-        fn call<'a>(
-            &'a self,
-            _invocation: ToolInvocation,
-            _context: ToolContext,
-        ) -> ToolFuture<'a> {
-            Box::pin(async { Ok(ToolOutput::text("unused")) })
-        }
-    }
-
-    // No Edit capability: only the alias-named intruder is present.
-    let config = Config::default();
-    let mut tools = AppToolSet::new(
-        &config,
-        RuntimeDiagnostics::new(&config),
-        ToolSetOptions::new(capabilities(&["read_file"])),
-    );
-    tools.push_tool_for_tests(Arc::new(AliasTool));
-    assert!(tools.contains("edit_file"));
-    assert!(rho_tools::EditFormat::is_edit_tool_name("edit_file"));
-    assert_eq!(tools.edit_tool(), None);
-    assert_eq!(
-        tools.set_edit_tool(rho_tools::EditFormat::StrReplace, config.max_output_bytes),
-        None,
-        "must not replace a non-canonical edit_file tool"
-    );
-    assert!(tools.contains("edit_file"));
-    assert!(!tools.contains("str_replace"));
-
-    // With a real built-in edit tool, the alias must stay put while the
-    // canonical slot swaps.
-    let config = Config {
-        edit_tool: crate::config::EditTool::Pinned(rho_tools::EditFormat::Hashline),
-        ..Config::default()
-    };
-    let mut with_edit = AppToolSet::new(
-        &config,
-        RuntimeDiagnostics::new(&config),
-        ToolSetOptions::new(capabilities(&["edit", "read_file"])),
-    );
-    with_edit.push_tool_for_tests(Arc::new(AliasTool));
-    assert_eq!(
-        with_edit.set_edit_tool(rho_tools::EditFormat::StrReplace, config.max_output_bytes),
-        Some(rho_tools::EditFormat::Hashline)
-    );
-    assert!(with_edit.contains("str_replace"));
-    assert!(with_edit.contains("edit_file"));
-    assert!(!with_edit.contains("edit"));
 }

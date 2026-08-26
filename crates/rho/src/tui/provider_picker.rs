@@ -149,7 +149,7 @@ pub(super) fn refresh_model_list_picker(available_auths: &[String]) -> UiPicker 
         value: ALL_REFRESHABLE_PROVIDERS.into(),
         selection_verb: None,
     }];
-    let mut providers = provider::visible_providers()
+    let mut providers = provider::providers()
         .iter()
         .filter(|descriptor| descriptor.supports_model_refresh())
         .filter(|descriptor| {

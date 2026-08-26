@@ -5,7 +5,7 @@
 //! keyless (`none`). An optional `{name}-api-key` mode stores a Bearer token.
 //!
 //! Hosts speak Chat Completions by default, or Responses when interned with
-//! [`CustomProviderOptions::api`].
+//! [`CustomProviderSpec::with_api`].
 //!
 //! A host may borrow another models.dev slug for context, price, and reasoning
 //! metadata via `catalog`; that slug becomes its `metadata_upstream`.
@@ -67,26 +67,18 @@ fn leak_str(value: String) -> &'static str {
     Box::leak(value.into_boxed_str())
 }
 
-/// A config-defined host: its provider name and the models.dev slug it borrows.
+/// A config-defined host: its provider name, optional models.dev slug, lookup
+/// mode, and wire API.
 ///
 /// `catalog` is `None` when the host has no `catalog` override, in which case
-/// it borrows nothing and its own name is the metadata slug.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-providers): fold CustomProviderOptions into CustomProviderSpec
-/// and ProviderDescriptor (catalog lookup and api) so intern does not need a side
-/// table, and collapse the `_with_lookup` / `_with_options` funnels.
-///
-/// Both types are public 1.x API and every `CustomProviderSpec` field is `pub`,
-/// so new fields would break external struct literals. Until then, pass intern
-/// options through [`install_custom_openai_compatible_providers_with_options`] /
-/// [`intern_custom_openai_compatible_providers_with_options`] (lookup-only
-/// callers can keep using the `_with_lookup` wrappers).
+/// it borrows nothing and its own name is the metadata slug. [`Self::new`]
+/// defaults lookup to slug and the wire API to Chat Completions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CustomProviderSpec<'a> {
     pub name: &'a str,
     pub catalog: Option<&'a str>,
+    pub catalog_lookup: CatalogLookupMode,
+    pub api: OpenAiCompatibleApi,
 }
 
 impl<'a> CustomProviderSpec<'a> {
@@ -94,7 +86,19 @@ impl<'a> CustomProviderSpec<'a> {
         Self {
             name,
             catalog: catalog.map(str::trim).filter(|slug| !slug.is_empty()),
+            catalog_lookup: CatalogLookupMode::Slug,
+            api: OpenAiCompatibleApi::ChatCompletions,
         }
+    }
+
+    pub fn with_catalog_lookup(mut self, catalog_lookup: CatalogLookupMode) -> Self {
+        self.catalog_lookup = catalog_lookup;
+        self
+    }
+
+    pub fn with_api(mut self, api: OpenAiCompatibleApi) -> Self {
+        self.api = api;
+        self
     }
 
     /// models.dev slug this host reads metadata rows under.
@@ -110,35 +114,6 @@ impl<'a> CustomProviderSpec<'a> {
 impl<'a> From<&'a str> for CustomProviderSpec<'a> {
     fn from(name: &'a str) -> Self {
         Self::new(name, None)
-    }
-}
-
-/// Per-host intern options that cannot live on [`CustomProviderSpec`] in 1.x.
-///
-/// # Next major
-///
-/// NEXT_MAJOR(rho-providers): fold CustomProviderOptions into CustomProviderSpec
-/// (catalog lookup and api) and collapse the `_with_lookup` / `_with_options` funnels.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct CustomProviderOptions {
-    pub catalog_lookup: CatalogLookupMode,
-    pub api: OpenAiCompatibleApi,
-}
-
-impl CustomProviderOptions {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn with_catalog_lookup(mut self, catalog_lookup: CatalogLookupMode) -> Self {
-        self.catalog_lookup = catalog_lookup;
-        self
-    }
-
-    pub fn with_api(mut self, api: OpenAiCompatibleApi) -> Self {
-        self.api = api;
-        self
     }
 }
 
@@ -191,37 +166,7 @@ where
     I: IntoIterator,
     I::Item: Into<CustomProviderSpec<'a>>,
 {
-    install_custom_openai_compatible_providers_with_lookup(
-        specs
-            .into_iter()
-            .map(|spec| (spec, CatalogLookupMode::Slug)),
-    )
-}
-
-/// Like [`install_custom_openai_compatible_providers`], with an explicit lookup mode.
-pub fn install_custom_openai_compatible_providers_with_lookup<'a, I, S>(
-    specs: I,
-) -> anyhow::Result<()>
-where
-    I: IntoIterator<Item = (S, CatalogLookupMode)>,
-    S: Into<CustomProviderSpec<'a>>,
-{
-    install_custom_openai_compatible_providers_with_options(
-        specs
-            .into_iter()
-            .map(|(spec, mode)| (spec, CustomProviderOptions::new().with_catalog_lookup(mode))),
-    )
-}
-
-/// Like [`install_custom_openai_compatible_providers`], with explicit intern options.
-pub fn install_custom_openai_compatible_providers_with_options<'a, I, S>(
-    specs: I,
-) -> anyhow::Result<()>
-where
-    I: IntoIterator<Item = (S, CustomProviderOptions)>,
-    S: Into<CustomProviderSpec<'a>>,
-{
-    let interned = intern_custom_openai_compatible_providers_with_options(specs)?;
+    let interned = intern_custom_openai_compatible_providers(specs)?;
     let mut registry = lock_write();
     registry.active = interned
         .iter()
@@ -236,42 +181,12 @@ where
     I: IntoIterator,
     I::Item: Into<CustomProviderSpec<'a>>,
 {
-    intern_custom_openai_compatible_providers_with_lookup(
-        specs
-            .into_iter()
-            .map(|spec| (spec, CatalogLookupMode::Slug)),
-    )
-}
-
-/// Like [`intern_custom_openai_compatible_providers`], with an explicit lookup mode.
-pub fn intern_custom_openai_compatible_providers_with_lookup<'a, I, S>(
-    specs: I,
-) -> anyhow::Result<Arc<[String]>>
-where
-    I: IntoIterator<Item = (S, CatalogLookupMode)>,
-    S: Into<CustomProviderSpec<'a>>,
-{
-    intern_custom_openai_compatible_providers_with_options(
-        specs
-            .into_iter()
-            .map(|(spec, mode)| (spec, CustomProviderOptions::new().with_catalog_lookup(mode))),
-    )
-}
-
-/// Like [`intern_custom_openai_compatible_providers`], with explicit intern options.
-pub fn intern_custom_openai_compatible_providers_with_options<'a, I, S>(
-    specs: I,
-) -> anyhow::Result<Arc<[String]>>
-where
-    I: IntoIterator<Item = (S, CustomProviderOptions)>,
-    S: Into<CustomProviderSpec<'a>>,
-{
     let specs = specs
         .into_iter()
-        .map(|(spec, options)| (spec.into(), options))
-        .collect::<Vec<(CustomProviderSpec<'a>, CustomProviderOptions)>>();
+        .map(Into::into)
+        .collect::<Vec<CustomProviderSpec<'a>>>();
     let mut seen = BTreeMap::<&str, ()>::new();
-    for (spec, _) in &specs {
+    for spec in &specs {
         validate_custom_provider_name(spec.name)?;
         if seen.insert(spec.name, ()).is_some() {
             anyhow::bail!("duplicate custom provider '{}'", spec.name);
@@ -280,8 +195,8 @@ where
 
     let mut registry = lock_write();
     let mut interned = Vec::with_capacity(specs.len());
-    for (spec, options) in specs {
-        intern(spec, options, &mut registry);
+    for spec in specs {
+        intern(spec, &mut registry);
         interned.push(spec.name.to_string());
     }
     Ok(interned.into())
@@ -410,13 +325,12 @@ pub fn validate_custom_provider_name(name: &str) -> anyhow::Result<()> {
 /// repoints any of those must not keep serving the previously leaked descriptor.
 fn intern(
     spec: CustomProviderSpec<'_>,
-    options: CustomProviderOptions,
     registry: &mut CustomRegistry,
 ) -> &'static ProviderDescriptor {
     let name = spec.name;
     let metadata_upstream = spec.metadata_upstream();
-    let catalog_lookup = options.catalog_lookup;
-    let api = options.api;
+    let catalog_lookup = spec.catalog_lookup;
+    let api = spec.api;
     if let Some(existing) = registry.interned.get(name).copied().filter(|existing| {
         existing.metadata_upstream == metadata_upstream
             && existing.catalog_lookup() == catalog_lookup
@@ -451,9 +365,7 @@ fn intern(
         },
     ]));
     let descriptor = Box::leak(Box::new(ProviderDescriptor {
-        // NEXT_MAJOR(rho-providers): add ProviderId::OpenAiCompatible so
-        // config-defined hosts are not aliased onto a built-in id.
-        id: ProviderId::Ollama,
+        id: ProviderId::OpenAiCompatible,
         runtime: ProviderRuntime::OpenAiCompatible {
             dialect: OpenAiCompatibleDialect::Custom,
             default_api_base: OPENAI_COMPATIBLE_API_BASE,
