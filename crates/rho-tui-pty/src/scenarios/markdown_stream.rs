@@ -135,19 +135,10 @@ fn assert_streaming_markdown_keeps_stable_prefix(harness: &mut PtyHarness) -> Re
         }
     }
     if !saw_open_window {
-        let screen = harness.screen().contents();
-        // Fast CI can finish the stream before the poll loop observes the open
-        // emphasis window. Accept a fully rendered completion when ALPHA,
-        // the emphasis body, and BETA are already on screen without raw markers.
-        if screen.contains(BETA_MARKER)
-            && screen.contains(OPEN_EMPHASIS_WINDOW)
-            && screen.contains(ALPHA_MARKER)
-            && screen.contains(EMPHASIS_BODY)
-            && !screen.contains("**")
-        {
-            return Ok(());
-        }
-        anyhow::bail!("never observed the open-emphasis window before {BETA_MARKER}\n{screen}");
+        anyhow::bail!(
+            "never observed the open-emphasis window before {BETA_MARKER}\n{}",
+            harness.screen().contents()
+        );
     }
 
     let finish_deadline = Instant::now() + Duration::from_secs(10);
