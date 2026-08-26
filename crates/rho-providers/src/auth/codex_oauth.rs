@@ -104,7 +104,7 @@ pub enum CodexOAuthError {
     #[error("timed out waiting for Codex device login")]
     DeviceTimeout,
     #[error("token exchange failed: {0}")]
-    Request(TransportError),
+    Request(#[source] TransportError),
     #[error("token response was missing {0}")]
     MissingToken(&'static str),
 }

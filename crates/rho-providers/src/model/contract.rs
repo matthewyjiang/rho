@@ -28,7 +28,7 @@ pub enum ModelError {
     Credentials(String),
     /// Transport failed before a usable HTTP status arrived.
     #[error("request failed: {0}")]
-    Request(super::TransportError),
+    Request(#[source] super::TransportError),
     #[error("request failed: HTTP {status}: {body}")]
     HttpStatus {
         status: http::StatusCode,

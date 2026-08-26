@@ -44,7 +44,7 @@ pub enum GitHubCopilotDeviceError {
     #[error("GitHub Copilot device login failed: {0}")]
     OAuthDenied(String),
     #[error("GitHub Copilot device login request failed: {0}")]
-    Request(TransportError),
+    Request(#[source] TransportError),
     #[error("GitHub Copilot device login response was missing {0}")]
     MissingField(&'static str),
     #[error("timed out waiting for GitHub Copilot device login")]

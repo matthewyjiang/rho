@@ -39,10 +39,6 @@ impl TransportError {
         self.kind == TransportFailureKind::Connect
     }
 
-    pub fn is_builder(&self) -> bool {
-        self.kind == TransportFailureKind::Builder
-    }
-
     pub(crate) fn from_reqwest(error: reqwest::Error) -> Self {
         let kind = if error.is_timeout() {
             TransportFailureKind::Timeout

@@ -39,7 +39,7 @@ impl std::fmt::Debug for KimiDeviceLogin {
 #[derive(Debug, thiserror::Error)]
 pub enum KimiOAuthError {
     #[error("Kimi OAuth request failed: {0}")]
-    Request(TransportError),
+    Request(#[source] TransportError),
     #[error("Kimi OAuth credentials were rejected: {0}")]
     Unauthorized(String),
     #[error("Kimi device login failed: {0}")]

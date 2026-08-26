@@ -109,7 +109,7 @@ pub enum XaiOAuthError {
     #[error("timed out waiting for xAI device login")]
     DeviceTimeout,
     #[error("xAI OAuth request failed: {0}")]
-    Request(TransportError),
+    Request(#[source] TransportError),
     #[error("xAI OAuth token response was missing {0}")]
     MissingToken(&'static str),
 }
