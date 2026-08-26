@@ -69,6 +69,14 @@ pub enum ProviderRuntime {
     OpenAi {
         auth_mode: OpenAiRuntimeAuth,
     },
+    /// Hosts that need a default API base, including first-party Anthropic
+    /// Messages hosts such as MiniMax.
+    ///
+    /// `ProviderRuntime::Anthropic` is pinned to `api.anthropic.com` and has
+    /// no `default_api_base`. Until that runtime grows one, Anthropic-compatible
+    /// vendors stay on this variant so they share endpoint resolution with
+    /// other first-party compatible hosts. `dialect` is only read on the Chat
+    /// Completions construction path.
     OpenAiCompatible {
         dialect: crate::openai_compatible_dialect::OpenAiCompatibleDialect,
         default_api_base: &'static str,

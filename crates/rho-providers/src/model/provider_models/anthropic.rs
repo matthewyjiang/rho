@@ -80,10 +80,12 @@ enum ListedModelFilter {
     All,
 }
 
-fn keep_listed_model(id: &str, filter: ListedModelFilter) -> bool {
-    match filter {
-        ListedModelFilter::ClaudeOnly => id.starts_with("claude-"),
-        ListedModelFilter::All => true,
+impl ListedModelFilter {
+    fn keeps(self, id: &str) -> bool {
+        match self {
+            Self::ClaudeOnly => id.starts_with("claude-"),
+            Self::All => true,
+        }
     }
 }
 
@@ -95,7 +97,7 @@ fn records_from_listed_models(
     response
         .data
         .into_iter()
-        .filter(|model| keep_listed_model(&model.id, filter))
+        .filter(|model| filter.keeps(&model.id))
         .map(|model| {
             let raw_json = policy::capabilities_json(model.capabilities);
             // `capabilities_json` always yields a parseable object, including
