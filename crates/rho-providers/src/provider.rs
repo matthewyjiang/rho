@@ -364,6 +364,17 @@ impl OpenAiCompatibleApi {
             Self::AnthropicMessages => "anthropic-messages",
         }
     }
+
+    /// Value written to custom-host `api` config.
+    ///
+    /// First-party [`Self::AnthropicMessages`] is table-declared only, so it is
+    /// omitted the same way as the Chat Completions default.
+    pub fn persisted_custom_host_value(self) -> Option<&'static str> {
+        match self {
+            Self::ChatCompletions | Self::AnthropicMessages => None,
+            Self::Responses => Some(self.as_str()),
+        }
+    }
 }
 
 impl std::str::FromStr for OpenAiCompatibleApi {

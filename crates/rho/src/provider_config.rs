@@ -431,13 +431,7 @@ fn persisted_catalog_mode(
 }
 
 fn persisted_api(api: rho_providers::provider::OpenAiCompatibleApi) -> Option<&'static str> {
-    match api {
-        rho_providers::provider::OpenAiCompatibleApi::ChatCompletions => None,
-        rho_providers::provider::OpenAiCompatibleApi::Responses => Some(api.as_str()),
-        // Custom hosts persist Chat Completions or Responses. First-party
-        // Anthropic Messages is table-declared only and never written here.
-        _ => None,
-    }
+    api.persisted_custom_host_value()
 }
 
 #[derive(Deserialize)]

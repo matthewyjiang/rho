@@ -187,6 +187,26 @@ fn opencode_go_is_openai_compatible_with_catalog_npm_construction() {
     );
 }
 
+// Covers: custom-host persistence omits Chat Completions and Anthropic Messages
+// Owner: provider registry
+#[test]
+fn persisted_custom_host_value_omits_non_custom_apis() {
+    use super::OpenAiCompatibleApi;
+
+    assert_eq!(
+        OpenAiCompatibleApi::ChatCompletions.persisted_custom_host_value(),
+        None
+    );
+    assert_eq!(
+        OpenAiCompatibleApi::Responses.persisted_custom_host_value(),
+        Some("responses")
+    );
+    assert_eq!(
+        OpenAiCompatibleApi::AnthropicMessages.persisted_custom_host_value(),
+        None
+    );
+}
+
 // Covers: MiniMax declares Anthropic Messages on its compatible base
 // Owner: provider registry
 #[test]
