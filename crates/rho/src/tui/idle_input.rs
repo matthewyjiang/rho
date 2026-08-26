@@ -275,8 +275,7 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Esc) => {
-                self.input_ui.set_command_palette_dismissed(true);
-                self.input_ui.set_command_selection(0);
+                self.dismiss_command_palette_on_esc();
                 self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 Ok(true)
