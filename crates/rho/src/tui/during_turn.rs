@@ -409,8 +409,13 @@ impl App {
                 self.start_limits_command();
                 Ok(())
             }
+            CommandId::CreateAgent => {
+                self.set_status(
+                    "agent creation is unavailable while a model turn is running".into(),
+                );
+                Ok(())
+            }
             CommandId::Advisor
-            | CommandId::CreateAgent
             | CommandId::Hooks
             | CommandId::New
             | CommandId::Fast

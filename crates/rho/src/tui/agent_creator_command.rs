@@ -32,7 +32,7 @@ impl App {
             "skill:rho-agent-creator",
             model_prompt,
             display,
-            agent.has_tool("skill"),
+            true,
         )? {
             SkillCommandAction::Prompt(prompt) => {
                 self.submit_interactive_turn(*prompt, media, paste_segments, terminal, agent)
