@@ -29,7 +29,11 @@ async fn captures_and_truncates_error_response_bodies() {
             .unwrap();
     });
 
-    let response = reqwest::get(format!("http://{address}")).await.unwrap();
+    let response = crate::reqwest_client()
+        .get(format!("http://{address}"))
+        .send()
+        .await
+        .unwrap();
     let error = error_for_status(response).await.unwrap_err();
     server.await.unwrap();
 
@@ -60,7 +64,11 @@ async fn preserves_status_when_reading_the_error_body_fails() {
             .unwrap();
     });
 
-    let response = reqwest::get(format!("http://{address}")).await.unwrap();
+    let response = crate::reqwest_client()
+        .get(format!("http://{address}"))
+        .send()
+        .await
+        .unwrap();
     let error = error_for_status(response).await.unwrap_err();
     server.await.unwrap();
 
@@ -108,7 +116,11 @@ async fn captures_retry_after_from_error_responses() {
             .unwrap();
     });
 
-    let response = reqwest::get(format!("http://{address}")).await.unwrap();
+    let response = crate::reqwest_client()
+        .get(format!("http://{address}"))
+        .send()
+        .await
+        .unwrap();
     let error = error_for_status(response).await.unwrap_err();
     server.await.unwrap();
 

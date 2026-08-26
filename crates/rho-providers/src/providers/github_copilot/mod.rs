@@ -334,7 +334,7 @@ mod tests {
         let provider = GitHubCopilotProvider::new_with_client(
             "gpt-4.1".into(),
             GitHubCopilotAuthManager::new(store).unwrap(),
-            reqwest::Client::new(),
+            crate::reqwest_client(),
         );
 
         let response = provider

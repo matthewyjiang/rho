@@ -49,7 +49,7 @@ async fn api_key_responses_stream_accepts_data_without_space_after_colon() {
         Arc::new(MemoryCredentialStore::default()),
     );
     provider.api_base = api_base;
-    provider.client = reqwest::Client::new();
+    provider.client = crate::reqwest_client();
 
     let mut events = Vec::new();
     let response = provider

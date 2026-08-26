@@ -457,7 +457,7 @@ pub(crate) async fn fetch_deprecated_provider_models(provider: &str) -> Option<H
 }
 
 async fn fetch_models_dev_api() -> Option<document::ModelsDevCatalog> {
-    reqwest::Client::builder()
+    crate::reqwest_client_builder()
         .timeout(Duration::from_secs(5))
         .build()
         .ok()?

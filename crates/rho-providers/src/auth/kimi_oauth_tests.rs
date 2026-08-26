@@ -27,7 +27,7 @@ async fn device_authorization_posts_form_client_id_and_parses_response() {
         stream.write_all(response.as_bytes()).await.unwrap();
     });
 
-    let login = start_with_endpoint(&reqwest::Client::new(), &endpoint)
+    let login = start_with_endpoint(&crate::reqwest_client(), &endpoint)
         .await
         .unwrap();
     assert_eq!(login.user_code, "ABCD-EFGH");
@@ -57,7 +57,7 @@ async fn refresh_posts_form_and_returns_rotated_tokens() {
     });
 
     let tokens =
-        refresh_kimi_tokens_with_endpoint(&reqwest::Client::new(), "old-refresh", &endpoint)
+        refresh_kimi_tokens_with_endpoint(&crate::reqwest_client(), "old-refresh", &endpoint)
             .await
             .unwrap();
     assert_eq!(tokens.access_token, "new-access");
@@ -99,7 +99,7 @@ async fn refresh_retries_rate_limits_and_accepts_rotated_tokens() {
     });
 
     let tokens =
-        refresh_kimi_tokens_with_endpoint(&reqwest::Client::new(), "old-refresh", &endpoint)
+        refresh_kimi_tokens_with_endpoint(&crate::reqwest_client(), "old-refresh", &endpoint)
             .await
             .unwrap();
 

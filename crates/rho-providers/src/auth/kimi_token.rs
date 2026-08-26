@@ -33,7 +33,7 @@ impl KimiAuthManager {
         tokens: KimiTokens,
     ) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: crate::reqwest_client(),
             store,
             source,
             tokens: Mutex::new(tokens),
