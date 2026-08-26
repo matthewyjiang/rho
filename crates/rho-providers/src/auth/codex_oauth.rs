@@ -11,7 +11,7 @@ use tokio::{
 };
 use url::Url;
 
-use crate::credentials::CodexTokens;
+use crate::{credentials::CodexTokens, model::TransportError};
 
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const ISSUER_URL: &str = "https://auth.openai.com";
@@ -104,9 +104,15 @@ pub enum CodexOAuthError {
     #[error("timed out waiting for Codex device login")]
     DeviceTimeout,
     #[error("token exchange failed: {0}")]
-    Request(#[from] reqwest::Error),
+    Request(TransportError),
     #[error("token response was missing {0}")]
     MissingToken(&'static str),
+}
+
+impl From<reqwest::Error> for CodexOAuthError {
+    fn from(error: reqwest::Error) -> Self {
+        Self::Request(TransportError::from_reqwest(error))
+    }
 }
 
 #[derive(Deserialize)]
@@ -284,7 +290,7 @@ fn http_client() -> Result<reqwest::Client, CodexOAuthError> {
     reqwest::Client::builder()
         .timeout(REQUEST_TIMEOUT)
         .build()
-        .map_err(CodexOAuthError::Request)
+        .map_err(CodexOAuthError::from)
 }
 
 fn device_user_code_url() -> String {

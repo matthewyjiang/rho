@@ -4558,6 +4558,7 @@ dependencies = [
  "base64 0.22.1",
  "futures-util",
  "gethostname",
+ "http",
  "keyring",
  "libc",
  "memchr",

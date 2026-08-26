@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use tokio::{net::TcpListener, time::timeout};
 use url::Url;
 
+use crate::model::TransportError;
+
 use super::loopback::{
     accept_request, bind_ipv4, callback_url, pkce_challenge, random_token, write_response,
     ResponseBodies, ResponseKind,
@@ -48,13 +50,19 @@ pub enum OpenRouterOAuthError {
     #[error("the OpenRouter OAuth callback was invalid")]
     InvalidCallback,
     #[error("the OpenRouter OAuth key request failed: {0}")]
-    Request(#[source] reqwest::Error),
+    Request(#[source] TransportError),
     #[error("the OpenRouter OAuth key endpoint returned HTTP {0}")]
-    ExchangeStatus(reqwest::StatusCode),
+    ExchangeStatus(http::StatusCode),
     #[error("the OpenRouter OAuth key response was invalid: {0}")]
-    InvalidResponse(#[source] reqwest::Error),
+    InvalidResponse(#[source] TransportError),
     #[error("the OpenRouter OAuth key response did not include a key")]
     MissingKey,
+}
+
+impl From<reqwest::Error> for OpenRouterOAuthError {
+    fn from(error: reqwest::Error) -> Self {
+        Self::Request(TransportError::from_reqwest(error))
+    }
 }
 
 #[derive(Serialize)]
@@ -134,7 +142,7 @@ fn http_client() -> Result<reqwest::Client, OpenRouterOAuthError> {
         .timeout(REQUEST_TIMEOUT)
         .user_agent(crate::rho_user_agent())
         .build()
-        .map_err(OpenRouterOAuthError::Request)
+        .map_err(OpenRouterOAuthError::from)
 }
 
 async fn wait_for_callback(
@@ -244,7 +252,7 @@ async fn exchange_code_with_endpoint(
         })
         .send()
         .await
-        .map_err(OpenRouterOAuthError::Request)?;
+        .map_err(OpenRouterOAuthError::from)?;
     let status = response.status();
     if !status.is_success() {
         return Err(OpenRouterOAuthError::ExchangeStatus(status));
@@ -252,7 +260,9 @@ async fn exchange_code_with_endpoint(
     let response = response
         .json::<KeyExchangeResponse>()
         .await
-        .map_err(OpenRouterOAuthError::InvalidResponse)?;
+        .map_err(|error| {
+            OpenRouterOAuthError::InvalidResponse(TransportError::from_reqwest(error))
+        })?;
     response
         .key
         .filter(|key| !key.trim().is_empty())

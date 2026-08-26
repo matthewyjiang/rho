@@ -4,7 +4,7 @@ use reqwest::{header::ACCEPT, StatusCode};
 use serde::Deserialize;
 use tokio::time::{sleep, Instant};
 
-use crate::credentials::KimiTokens;
+use crate::{credentials::KimiTokens, model::TransportError};
 
 pub(crate) const CLIENT_ID: &str = "17e5f671-d194-4dfb-9706-5516cb48c098";
 pub(crate) const TOKEN_URL: &str = "https://auth.kimi.com/api/oauth/token";
@@ -39,7 +39,7 @@ impl std::fmt::Debug for KimiDeviceLogin {
 #[derive(Debug, thiserror::Error)]
 pub enum KimiOAuthError {
     #[error("Kimi OAuth request failed: {0}")]
-    Request(#[from] reqwest::Error),
+    Request(TransportError),
     #[error("Kimi OAuth credentials were rejected: {0}")]
     Unauthorized(String),
     #[error("Kimi device login failed: {0}")]
@@ -48,6 +48,12 @@ pub enum KimiOAuthError {
     Timeout,
     #[error("Kimi OAuth token response was missing or invalid: {0}")]
     InvalidToken(&'static str),
+}
+
+impl From<reqwest::Error> for KimiOAuthError {
+    fn from(error: reqwest::Error) -> Self {
+        Self::Request(TransportError::from_reqwest(error))
+    }
 }
 
 #[derive(Deserialize)]
@@ -117,7 +123,7 @@ async fn refresh_kimi_tokens_with_endpoint(
             Err(_) if attempt + 1 < MAX_REFRESH_ATTEMPTS => {
                 sleep(refresh_backoff(attempt)).await;
             }
-            Err(error) => return Err(KimiOAuthError::Request(error)),
+            Err(error) => return Err(KimiOAuthError::from(error)),
         }
     }
     unreachable!("refresh loop always returns on its final attempt")

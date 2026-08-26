@@ -3,6 +3,22 @@ members = ["crates/rho", "crates/rho-providers", "crates/rho-sdk", "crates/rho-t
 exclude = ["fixtures/downstream", "fixtures/publish-boundary"]
 resolver = "2"
 
+[workspace.dependencies]
+# 0.13 defaults to rustls + aws-lc. native-tls keeps today's certificate store
+# until #976. native-tls includes ALPN, so the http2 feature can negotiate;
+# that is intentional. query/form are optional in 0.13; charset/http2/
+# system-proxy replace the 0.12 defaults we still want.
+reqwest = { version = "0.13", default-features = false, features = [
+    "charset",
+    "form",
+    "http2",
+    "json",
+    "native-tls",
+    "query",
+    "stream",
+    "system-proxy",
+] }
+
 # Thin LTO + one codegen unit shrink the release binary 90.7 MB -> 56.6 MB and
 # steady TUI RSS ~48.7 MB -> ~44 MB (measured 2026-08-15, linux x86_64) at the
 # cost of link time. Symbols are stripped for size; panic messages still carry

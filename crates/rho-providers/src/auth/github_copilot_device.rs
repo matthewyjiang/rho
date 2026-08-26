@@ -3,7 +3,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde::Deserialize;
 use tokio::time::sleep;
 
-use crate::credentials::GitHubCopilotTokens;
+use crate::{credentials::GitHubCopilotTokens, model::TransportError};
 
 const CLIENT_ID: &str = "Iv1.b507a08c87ecfe98";
 const DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
@@ -44,11 +44,17 @@ pub enum GitHubCopilotDeviceError {
     #[error("GitHub Copilot device login failed: {0}")]
     OAuthDenied(String),
     #[error("GitHub Copilot device login request failed: {0}")]
-    Request(#[from] reqwest::Error),
+    Request(TransportError),
     #[error("GitHub Copilot device login response was missing {0}")]
     MissingField(&'static str),
     #[error("timed out waiting for GitHub Copilot device login")]
     Timeout,
+}
+
+impl From<reqwest::Error> for GitHubCopilotDeviceError {
+    fn from(error: reqwest::Error) -> Self {
+        Self::Request(TransportError::from_reqwest(error))
+    }
 }
 
 #[derive(Deserialize)]
@@ -98,7 +104,7 @@ fn http_client() -> Result<reqwest::Client, GitHubCopilotDeviceError> {
     reqwest::Client::builder()
         .timeout(REQUEST_TIMEOUT)
         .build()
-        .map_err(GitHubCopilotDeviceError::Request)
+        .map_err(GitHubCopilotDeviceError::from)
 }
 
 async fn start_github_copilot_device_login_with_endpoint(

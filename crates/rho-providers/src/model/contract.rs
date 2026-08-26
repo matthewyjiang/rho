@@ -26,11 +26,12 @@ pub enum ModelError {
     MissingCredentials(&'static str),
     #[error("credential store error: {0}")]
     Credentials(String),
+    /// Transport failed before a usable HTTP status arrived.
     #[error("request failed: {0}")]
-    Request(#[from] reqwest::Error),
+    Request(super::TransportError),
     #[error("request failed: HTTP {status}: {body}")]
     HttpStatus {
-        status: reqwest::StatusCode,
+        status: http::StatusCode,
         body: String,
         /// Parsed from the response `Retry-After` header when present.
         retry_after: Option<Duration>,
@@ -72,6 +73,10 @@ impl ModelError {
 
     pub fn missing_credentials(message: &'static str) -> Self {
         Self::MissingCredentials(message)
+    }
+
+    pub(crate) fn from_reqwest(error: reqwest::Error) -> Self {
+        Self::Request(super::TransportError::from_reqwest(error))
     }
 
     /// Empty assistant turns are transient: a later attempt often produces

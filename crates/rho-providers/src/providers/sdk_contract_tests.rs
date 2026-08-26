@@ -560,7 +560,7 @@ fn assert_sanitized_transport_request(
     message: &'static str,
     secret: &str,
 ) {
-    let converted = provider_error_from_model_error(ModelError::Request(error));
+    let converted = provider_error_from_model_error(ModelError::from(error));
     assert_eq!(converted.kind(), kind, "{message}");
     assert_eq!(converted.is_retryable(), retryable, "{message}");
     assert_eq!(converted.message(), message);

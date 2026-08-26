@@ -26,19 +26,7 @@ rho-sdk = { version = "4.2.0", path = "../rho-sdk" }
 rho-providers = { version = "1.11.0", path = "../rho-providers", default-features = false }
 rho-tools = { version = "0.20.1", path = "../rho-tools", package = "rho-agent-tools" }
 tokio = { version = "1", features = ["full"] }
-# 0.13 defaults to rustls + aws-lc. Keep native-tls so certificate behavior
-# stays put until #976. query/form are optional in 0.13; charset/http2/
-# system-proxy replace the 0.12 defaults we still want.
-reqwest = { version = "0.13", default-features = false, features = [
-    "charset",
-    "form",
-    "http2",
-    "json",
-    "native-tls",
-    "query",
-    "stream",
-    "system-proxy",
-] }
+reqwest = { workspace = true }
 native-tls = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
