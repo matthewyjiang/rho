@@ -405,7 +405,7 @@ impl<'a> From<&'a ProviderConfigs> for PersistedProviderConfigs<'a> {
                             base_url: endpoint.base_url.as_str(),
                             catalog: endpoint.catalog.as_deref(),
                             catalog_mode: persisted_catalog_mode(endpoint.catalog_lookup),
-                            api: persisted_api(endpoint.api),
+                            api: endpoint.api.persisted_custom_host_value(),
                         },
                     )
                 })
@@ -428,10 +428,6 @@ fn persisted_catalog_mode(
         rho_providers::provider::CatalogLookupMode::Slug => None,
         rho_providers::provider::CatalogLookupMode::ModelId => Some(lookup.as_str()),
     }
-}
-
-fn persisted_api(api: rho_providers::provider::OpenAiCompatibleApi) -> Option<&'static str> {
-    api.persisted_custom_host_value()
 }
 
 #[derive(Deserialize)]
