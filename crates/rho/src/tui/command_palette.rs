@@ -150,7 +150,10 @@ impl App {
     }
 
     pub(super) fn dismiss_command_palette_on_esc(&mut self) {
-        self.input_ui.clear_if_bare_command_palette_opener();
+        if self.input_ui.text() == "/" {
+            self.input_ui.clear_text();
+            self.input_ui.set_cursor(0);
+        }
         self.input_ui.set_command_palette_dismissed(true);
         self.input_ui.set_command_selection(0);
     }
