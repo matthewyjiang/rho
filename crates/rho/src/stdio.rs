@@ -14,6 +14,8 @@ pub(crate) fn stdin_is_redirected() -> bool {
         // is unreliable on macOS CI, which made piped `rho run` input look like
         // a terminal/null device and skip the `--stdin` guard.
         let fd = std::io::stdin().as_raw_fd();
+        // SAFETY: `libc::stat` is a plain POD out-parameter, and `fstat` only
+        // reads the borrowed stdin descriptor for the duration of the call.
         let mut stat: libc::stat = unsafe { std::mem::zeroed() };
         if unsafe { libc::fstat(fd, &mut stat) } != 0 {
             return false;
