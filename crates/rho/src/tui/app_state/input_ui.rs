@@ -213,6 +213,14 @@ impl InputUi {
         self.composer_view_start = 0;
     }
 
+    /// Clear a lone `/` that only opened the palette so Esc dismiss cannot trap blind retyping into `//cmd`.
+    pub(in crate::tui) fn clear_if_bare_command_palette_opener(&mut self) {
+        if self.text == "/" {
+            self.clear_text();
+            self.set_cursor(0);
+        }
+    }
+
     pub(in crate::tui) fn char_len(&self) -> usize {
         self.text.chars().count()
     }

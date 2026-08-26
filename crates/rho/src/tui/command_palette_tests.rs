@@ -130,3 +130,35 @@ fn recalling_a_command_keeps_the_palette_closed_until_edit() {
     assert_eq!(app.input_ui.text(), "/mode");
     assert!(app.command_palette_visible());
 }
+
+// Covers: Esc on a bare slash must not leave a trap for blind retyping into //cmd.
+// Owner: command palette dismiss policy (idle and during-turn Esc arms)
+#[test]
+fn dismiss_on_esc_clears_bare_slash_composer() {
+    let mut app = test_app();
+    app.input_ui.set_text("/".to_string());
+    app.input_ui.set_cursor(1);
+    assert!(app.command_palette_visible());
+
+    app.dismiss_command_palette_on_esc();
+
+    assert_eq!(app.input_ui.text(), "");
+    assert_eq!(app.input_ui.cursor(), 0);
+    assert!(app.input_ui.command_palette_dismissed());
+}
+
+// Covers: Esc on a partial slash command keeps typed content in the composer.
+// Owner: command palette dismiss policy (idle and during-turn Esc arms)
+#[test]
+fn dismiss_on_esc_preserves_partial_slash_command() {
+    let mut app = test_app();
+    app.input_ui.set_text("/mo".to_string());
+    app.input_ui.set_cursor(3);
+    assert!(app.command_palette_visible());
+
+    app.dismiss_command_palette_on_esc();
+
+    assert_eq!(app.input_ui.text(), "/mo");
+    assert_eq!(app.input_ui.cursor(), 3);
+    assert!(app.input_ui.command_palette_dismissed());
+}

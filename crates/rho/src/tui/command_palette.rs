@@ -149,6 +149,12 @@ impl App {
         selected_command(&matches, self.input_ui.command_selection())
     }
 
+    pub(super) fn dismiss_command_palette_on_esc(&mut self) {
+        self.input_ui.clear_if_bare_command_palette_opener();
+        self.input_ui.set_command_palette_dismissed(true);
+        self.input_ui.set_command_selection(0);
+    }
+
     pub(super) fn complete_command_choice(&mut self, choice: &CommandChoice) {
         let (input, cursor) = match &choice.kind {
             CommandChoiceKind::Builtin(spec) => {
