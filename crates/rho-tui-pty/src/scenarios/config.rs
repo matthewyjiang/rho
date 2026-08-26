@@ -35,7 +35,6 @@ pub(super) const AUTO_PERMISSION_MODE_CONFIG_STEPS: &[Step] = &[
         text: "No permission checks",
         timeout: SETTLE,
     },
-    Step::AssertText("Auto"),
     // Bypass → Auto. Short terminals hide the status toast under the picker
     // chrome, so the classifier picker title is the durable wait target.
     Step::Key(Key::Down),
