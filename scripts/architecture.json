@@ -40,6 +40,8 @@
       "sequences": [
         ["reqwest", "::", "Client", "::", "new"],
         ["reqwest", "::", "Client", "::", "builder"],
+        ["reqwest", "::", "Client", "::", "default"],
+        ["reqwest", "::", "ClientBuilder", "::", "new"],
         ["reqwest", "::", "get"]
       ],
       "allow": [
