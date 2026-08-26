@@ -187,6 +187,65 @@ fn opencode_go_is_openai_compatible_with_catalog_npm_construction() {
     );
 }
 
+// Covers: custom-host persistence omits Chat Completions and Anthropic Messages
+// Owner: provider registry
+#[test]
+fn persisted_custom_host_value_omits_non_custom_apis() {
+    use super::OpenAiCompatibleApi;
+
+    assert_eq!(
+        OpenAiCompatibleApi::ChatCompletions.persisted_custom_host_value(),
+        None
+    );
+    assert_eq!(
+        OpenAiCompatibleApi::Responses.persisted_custom_host_value(),
+        Some("responses")
+    );
+    assert_eq!(
+        OpenAiCompatibleApi::AnthropicMessages.persisted_custom_host_value(),
+        None
+    );
+}
+
+// Covers: MiniMax declares Anthropic Messages on its compatible base
+// Owner: provider registry
+#[test]
+fn minimax_declares_anthropic_messages_on_its_compatible_base() {
+    use super::{
+        CatalogConstruction, CatalogReasoningPolicy, OpenAiCompatibleApi, ProviderId,
+        ProviderModelRefreshKind, ProviderRuntime, MINIMAX_API_BASE,
+    };
+    use crate::model::registry::provider_runtime;
+    use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
+
+    let descriptor = super::provider_descriptor_by_id(ProviderId::MiniMax);
+    assert_eq!(descriptor.name, "minimax");
+    assert_eq!(descriptor.display_name, "MiniMax");
+    assert_eq!(descriptor.metadata_upstream, "minimax");
+    assert_eq!(descriptor.default_model, Some("MiniMax-M3"));
+    assert_eq!(
+        descriptor.catalog_reasoning,
+        CatalogReasoningPolicy::ExactAdvertised
+    );
+    assert!(descriptor.auth_mode("minimax-api-key").is_some());
+    assert_eq!(
+        descriptor.openai_compatible_api(),
+        OpenAiCompatibleApi::AnthropicMessages
+    );
+    assert_eq!(
+        descriptor.model_refresh,
+        Some(ProviderModelRefreshKind::AnthropicCompatible)
+    );
+    assert_eq!(
+        provider_runtime("minimax"),
+        Some(ProviderRuntime::OpenAiCompatible {
+            dialect: OpenAiCompatibleDialect::Standard,
+            default_api_base: MINIMAX_API_BASE,
+            catalog_construction: CatalogConstruction::Runtime,
+        })
+    );
+}
+
 // Covers: openai api-key and codex share a runtime family for auth resolution
 // Owner: provider registry
 #[test]

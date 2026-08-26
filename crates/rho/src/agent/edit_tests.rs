@@ -1,7 +1,5 @@
 //! Draft mutation tests for agent edit/save helpers.
 
-use std::path::Path;
-
 use pretty_assertions::assert_eq;
 
 use super::*;
@@ -287,8 +285,11 @@ fn save_definition_rejects_empty_replace_without_writing() {
 // Owner: agent edit
 #[test]
 fn save_definition_reports_write_error_for_unwritable_path() {
-    let path = Path::new("/dev/null/nonexistent/dir/draft.md");
-    let error = save_definition(&rho_draft(), path, "").unwrap_err();
+    let dir = tempfile::tempdir().unwrap();
+    let blocker = dir.path().join("not-a-directory");
+    std::fs::write(&blocker, b"x").unwrap();
+    let path = blocker.join("draft.md");
+    let error = save_definition(&rho_draft(), &path, "").unwrap_err();
     assert!(matches!(error, SaveDefinitionError::Write(_)));
 }
 

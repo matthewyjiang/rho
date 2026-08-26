@@ -162,6 +162,52 @@ fn opencode_go_catalog_npm_selects_adapter_identity() {
     }
 }
 
+// Covers: MiniMax always constructs Anthropic Messages from the declared API,
+// including a cold cache and a catalog row that names a different SDK package
+// Owner: provider builder
+#[test]
+fn minimax_declared_api_is_anthropic_messages() {
+    use crate::model::models_dev::{
+        with_models_dev_cache_dir_for_tests, write_cached_model_metadata_for_tests, ModelMetadata,
+    };
+    use rho_sdk::model::ModelIdentity;
+
+    let cases = [
+        ("MiniMax-M3", None),
+        ("MiniMax-M3", Some("@ai-sdk/openai-compatible")),
+        ("MiniMax-M2.7", Some("@ai-sdk/anthropic")),
+    ];
+
+    for (model, sdk_package) in cases {
+        let cache = tempfile::tempdir().unwrap();
+        with_models_dev_cache_dir_for_tests(cache.path().to_path_buf(), || {
+            if let Some(sdk_package) = sdk_package {
+                write_cached_model_metadata_for_tests(
+                    "minimax",
+                    model,
+                    &ModelMetadata {
+                        sdk_package: Some(sdk_package.into()),
+                        reasoning_metadata_complete: false,
+                        ..ModelMetadata::default()
+                    },
+                );
+            }
+            let provider = ProviderBuilder::new(
+                ProviderBuildOptions::new("minimax", model, ReasoningLevel::Off).unwrap(),
+                ProviderCredential::OpenAiCompatible(CompatibleAuth::ApiKey(
+                    "minimax-secret".into(),
+                )),
+            )
+            .build()
+            .unwrap();
+            assert_eq!(
+                provider.identity(),
+                ModelIdentity::new("minimax", "anthropic-messages", model)
+            );
+        });
+    }
+}
+
 // Covers: catalog anthropic npm must send x-api-key to /messages, not Bearer chat
 // Owner: provider builder
 #[tokio::test]

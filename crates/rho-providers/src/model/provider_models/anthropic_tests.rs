@@ -6,8 +6,8 @@ use crate::{
 };
 
 use super::{
-    add_page, finalize_models, model_list_truncated, policy, records_from_page,
-    AnthropicModelsResponse, ModelListContinuation,
+    add_listed_page, finalize_models, model_list_truncated, policy, records_from_listed_models,
+    AnthropicModelsResponse, ListedModelFilter, ModelListContinuation,
 };
 
 fn list_page(id: &str, has_more: bool, last_id: Option<&str>) -> AnthropicModelsResponse {
@@ -29,7 +29,13 @@ fn collect_pages(
         if index >= max_pages {
             return Err(model_list_truncated(max_pages));
         }
-        match add_page(&mut models, "anthropic", page, after_id.as_deref()) {
+        match add_listed_page(
+            &mut models,
+            "anthropic",
+            page,
+            after_id.as_deref(),
+            ListedModelFilter::ClaudeOnly,
+        ) {
             ModelListContinuation::Done => return Ok(finalize_models(models)),
             ModelListContinuation::Next {
                 after_id: next_after_id,
@@ -79,7 +85,7 @@ fn list_payload_keeps_or_defaults_capabilities_for_the_request_builder() {
     }))
     .unwrap();
 
-    let records = records_from_page("anthropic", response);
+    let records = records_from_listed_models("anthropic", response, ListedModelFilter::ClaudeOnly);
     assert_eq!(records.len(), 2);
     assert_eq!(records[0].model.model, "claude-opus-5");
     assert_eq!(records[0].model.context_window, Some(1_000_000));
@@ -99,7 +105,30 @@ fn list_payload_keeps_or_defaults_capabilities_for_the_request_builder() {
     );
 }
 
-// Covers: picker levels come from the Models API row through records_from_page,
+// Covers: Anthropic-compatible hosts keep non-claude ids from /models
+// Owner: anthropic model discovery
+#[test]
+fn compatible_list_keeps_non_claude_ids() {
+    let response: AnthropicModelsResponse = serde_json::from_value(json!({
+        "data": [
+            { "id": "MiniMax-M3", "display_name": "MiniMax-M3" },
+            { "id": "MiniMax-M2.7", "display_name": "MiniMax-M2.7" }
+        ],
+        "has_more": false
+    }))
+    .unwrap();
+
+    let records = records_from_listed_models("minimax", response, ListedModelFilter::All);
+    assert_eq!(
+        records
+            .iter()
+            .map(|record| record.model.model.as_str())
+            .collect::<Vec<_>>(),
+        ["MiniMax-M3", "MiniMax-M2.7"]
+    );
+}
+
+// Covers: picker levels come from the Models API row through listed-model parse,
 // so a hardcoded Unknown in that wiring cannot silently pass unit coverage
 // Owner: anthropic model discovery
 #[test]
@@ -181,7 +210,8 @@ fn records_from_page_projects_advertised_reasoning_levels() {
             "has_more": false
         }))
         .unwrap_or_else(|error| panic!("{name}: parse models page: {error}"));
-        let records = records_from_page("anthropic", response);
+        let records =
+            records_from_listed_models("anthropic", response, ListedModelFilter::ClaudeOnly);
         assert_eq!(records.len(), 1, "{name}");
         assert_eq!(records[0].model.reasoning_capabilities, expected, "{name}");
     }

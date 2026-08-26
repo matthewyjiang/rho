@@ -74,14 +74,30 @@ fn model_list_truncated(max_pages: usize) -> ModelError {
     ))
 }
 
-fn records_from_page(
+#[derive(Clone, Copy)]
+enum ListedModelFilter {
+    ClaudeOnly,
+    All,
+}
+
+impl ListedModelFilter {
+    fn keeps(self, id: &str) -> bool {
+        match self {
+            Self::ClaudeOnly => id.starts_with("claude-"),
+            Self::All => true,
+        }
+    }
+}
+
+fn records_from_listed_models(
     provider: &str,
     response: AnthropicModelsResponse,
+    filter: ListedModelFilter,
 ) -> Vec<super::ProviderModelRecord> {
     response
         .data
         .into_iter()
-        .filter(|model| model.id.starts_with("claude-"))
+        .filter(|model| filter.keeps(&model.id))
         .map(|model| {
             let raw_json = policy::capabilities_json(model.capabilities);
             // `capabilities_json` always yields a parseable object, including
@@ -104,15 +120,16 @@ fn records_from_page(
         .collect()
 }
 
-fn add_page(
+fn add_listed_page(
     models: &mut Vec<super::ProviderModelRecord>,
     provider: &str,
     response: AnthropicModelsResponse,
     after_id: Option<&str>,
+    filter: ListedModelFilter,
 ) -> ModelListContinuation {
     let has_more = response.has_more;
     let last_id = response.last_id.clone();
-    models.extend(records_from_page(provider, response));
+    models.extend(records_from_listed_models(provider, response, filter));
     model_list_continuation(has_more, last_id, after_id)
 }
 
@@ -126,13 +143,35 @@ pub(super) async fn fetch(
     provider: &str,
     store: &dyn CredentialStore,
 ) -> Result<Vec<super::ProviderModelRecord>, ModelError> {
+    let base = Url::parse("https://api.anthropic.com/v1/models").map_err(|err| {
+        ModelError::InvalidResponse(format!("invalid Anthropic models URL: {err}"))
+    })?;
+    fetch_models(provider, store, base, ListedModelFilter::ClaudeOnly).await
+}
+
+pub(super) async fn fetch_compatible(
+    provider: &str,
+    api_base: &Url,
+    store: &dyn CredentialStore,
+) -> Result<Vec<super::ProviderModelRecord>, ModelError> {
+    let base = Url::parse(&format!(
+        "{}/models",
+        api_base.as_str().trim_end_matches('/')
+    ))
+    .map_err(|err| ModelError::InvalidResponse(format!("invalid Anthropic models URL: {err}")))?;
+    fetch_models(provider, store, base, ListedModelFilter::All).await
+}
+
+async fn fetch_models(
+    provider: &str,
+    store: &dyn CredentialStore,
+    base: Url,
+    filter: ListedModelFilter,
+) -> Result<Vec<super::ProviderModelRecord>, ModelError> {
     let key = load_api_key_auth(provider, store)?;
     let client = provider_models_client()?;
     let mut models = Vec::new();
     let mut after_id = None::<String>;
-    let base = Url::parse("https://api.anthropic.com/v1/models").map_err(|err| {
-        ModelError::InvalidResponse(format!("invalid Anthropic models URL: {err}"))
-    })?;
     for _ in 0..MAX_MODEL_PAGES {
         let mut url = base.clone();
         if let Some(after_id) = &after_id {
@@ -147,7 +186,7 @@ pub(super) async fn fetch(
             .error_for_status()?
             .json()
             .await?;
-        match add_page(&mut models, provider, response, after_id.as_deref()) {
+        match add_listed_page(&mut models, provider, response, after_id.as_deref(), filter) {
             ModelListContinuation::Done => return Ok(finalize_models(models)),
             ModelListContinuation::Next {
                 after_id: next_after_id,
