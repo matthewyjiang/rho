@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.49.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.48.0...rho-coding-agent-v1.49.0) (2026-08-26)
+
+
+### Features
+
+* **tui:** make the activity rail a trustworthy ambient view of agents and jobs ([#1049](https://github.com/matthewyjiang/rho/issues/1049)) ([d1c2289](https://github.com/matthewyjiang/rho/commit/d1c2289d8fc1d94212d5dbcd46bac97a71513010))
+
+
+### Bug Fixes
+
+* **tui:** clear bare slash when Esc dismisses command palette ([#1054](https://github.com/matthewyjiang/rho/issues/1054)) ([465897d](https://github.com/matthewyjiang/rho/commit/465897de2b9175215cf6f71531f601ffe0c95926))
+* **tui:** keep critical context fill visible in narrow statuslines ([#1052](https://github.com/matthewyjiang/rho/issues/1052)) ([e497dbd](https://github.com/matthewyjiang/rho/commit/e497dbd1dc9103fd1e35cfde4cf8d7f34b37c120))
+* **tui:** unify key hints, picker titles, and transcript errors ([#1053](https://github.com/matthewyjiang/rho/issues/1053)) ([8dbb2a5](https://github.com/matthewyjiang/rho/commit/8dbb2a568263234c6eb4140df34252a04f27e93c))
+* **tui:** use plain language in session delete confirms ([#1051](https://github.com/matthewyjiang/rho/issues/1051)) ([55ccd83](https://github.com/matthewyjiang/rho/commit/55ccd83d3c2b700180c57668a548dcb0e9cc297e))
+
 ## [1.48.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.47.1...rho-coding-agent-v1.48.0) (2026-08-25)
 
 
