@@ -187,11 +187,6 @@ impl App {
                 self.input_ui.set_cursor(self.input_char_len());
                 self.ctrl_c_streak = 0;
             }
-            _ if self.queue_prompt_shortcut_matches(key) => {
-                self.queue_prompt_after_turn()?;
-                self.input_ui.clear_paste_burst();
-                self.ctrl_c_streak = 0;
-            }
             (modifiers, KeyCode::Enter) if modifiers.contains(KeyModifiers::SHIFT) => {
                 self.insert_input_char('\n');
                 self.input_ui.clear_paste_burst();

@@ -42,6 +42,19 @@ impl Default for Keybindings {
     }
 }
 
+impl Keybindings {
+    /// Ctrl+Enter fallback for terminals that steal Alt+Enter (Windows Terminal,
+    /// Windows Alacritty, WezTerm fullscreen). Always accepted in addition to
+    /// the configured `queue_prompt` chord.
+    pub fn queue_prompt_fallback() -> KeyBinding {
+        KeyBinding::control_code(KeyCode::Enter)
+    }
+
+    pub fn queue_prompt_matches(&self, event: KeyEvent) -> bool {
+        self.queue_prompt.matches(event) || Self::queue_prompt_fallback().matches(event)
+    }
+}
+
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct PartialKeybindings {
@@ -275,7 +288,7 @@ impl<'de> Deserialize<'de> for KeyBinding {
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-    use super::KeyBinding;
+    use super::{KeyBinding, Keybindings};
 
     #[test]
     fn key_binding_round_trips() {
@@ -302,5 +315,28 @@ mod tests {
     fn key_binding_rejects_missing_or_multiple_keys() {
         assert!("ctrl".parse::<KeyBinding>().is_err());
         assert!("ctrl+r+g".parse::<KeyBinding>().is_err());
+    }
+
+    #[test]
+    fn queue_prompt_matches_configured_chord_and_ctrl_enter_fallback() {
+        let keys = Keybindings::default();
+        let alt_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT);
+        let ctrl_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL);
+        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+
+        assert!(keys.queue_prompt_matches(alt_enter));
+        assert!(keys.queue_prompt_matches(ctrl_enter));
+        assert!(!keys.queue_prompt_matches(enter));
+        assert_eq!(
+            Keybindings::queue_prompt_fallback().chrome_label(),
+            "Ctrl+Enter"
+        );
+
+        let mut remapped = Keybindings::default();
+        remapped.queue_prompt = "ctrl+k".parse().unwrap();
+        let ctrl_k = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL);
+        assert!(remapped.queue_prompt_matches(ctrl_k));
+        assert!(remapped.queue_prompt_matches(ctrl_enter));
+        assert!(!remapped.queue_prompt_matches(alt_enter));
     }
 }

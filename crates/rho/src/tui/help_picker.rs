@@ -94,7 +94,8 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
             queue_prompt.clone(),
             "Queue/newline",
             format!(
-                "While idle, insert a newline. While a model turn is running, queue the current composer contents to run after the turn finishes. Ctrl+Enter always works too, for terminals that reserve {queue_prompt} (Windows Terminal, Windows Alacritty, WezTerm)."
+                "While idle, insert a newline. While a model turn is running, queue the current composer contents to run after the turn finishes. {} always works too, for terminals that reserve {queue_prompt} (Windows Terminal, Windows Alacritty, WezTerm).",
+                Keybindings::queue_prompt_fallback().chrome_label()
             ),
         ),
         entry(
