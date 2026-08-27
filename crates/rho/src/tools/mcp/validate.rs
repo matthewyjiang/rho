@@ -20,21 +20,63 @@ pub(crate) fn validate_identity(identity: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Transport security for a remote MCP URL.
+///
+/// OAuth discovery endpoints always use [`Self::HttpsOrLoopback`]. A user
+/// config entry may opt a Streamable HTTP server into cleartext HTTP; plugin
+/// manifests cannot.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum McpHttpSecurity {
+    /// HTTPS, or plain HTTP only when the host is loopback.
+    #[default]
+    HttpsOrLoopback,
+    /// User opted this server into cleartext HTTP, including non-loopback
+    /// hosts. Headers and bearer tokens then travel unencrypted.
+    AllowInsecureHttp,
+}
+
+impl McpHttpSecurity {
+    pub(crate) const fn from_allow_insecure_http(allow: bool) -> Self {
+        if allow {
+            Self::AllowInsecureHttp
+        } else {
+            Self::HttpsOrLoopback
+        }
+    }
+}
+
 pub(crate) fn parse_remote_url(value: &str) -> anyhow::Result<url::Url> {
-    parse_transport_secure_url(value, "remote MCP URL").context("invalid Streamable HTTP URL")
+    parse_remote_url_with(value, McpHttpSecurity::HttpsOrLoopback)
+}
+
+pub(crate) fn parse_remote_url_with(
+    value: &str,
+    security: McpHttpSecurity,
+) -> anyhow::Result<url::Url> {
+    parse_transport_secure_url(value, "remote MCP URL", security)
+        .context("invalid Streamable HTTP URL")
 }
 
 /// Apply the `parse_remote_url` transport rule to an OAuth endpoint taken from
 /// a discovery document, so a server cannot downgrade the login to plaintext.
 /// `purpose` names the endpoint in the error, such as `token endpoint`.
 pub(crate) fn parse_oauth_endpoint(value: &str, purpose: &str) -> anyhow::Result<url::Url> {
-    parse_transport_secure_url(value, &format!("OAuth {purpose}"))
-        .with_context(|| format!("invalid OAuth {purpose}"))
+    parse_transport_secure_url(
+        value,
+        &format!("OAuth {purpose}"),
+        McpHttpSecurity::HttpsOrLoopback,
+    )
+    .with_context(|| format!("invalid OAuth {purpose}"))
 }
 
 /// One transport-security rule for every URL Rho talks to: HTTPS, or plain
-/// HTTP only when the host is loopback.
-fn parse_transport_secure_url(value: &str, subject: &str) -> anyhow::Result<url::Url> {
+/// HTTP only when the host is loopback, unless the user opted this server into
+/// cleartext HTTP.
+fn parse_transport_secure_url(
+    value: &str,
+    subject: &str,
+    security: McpHttpSecurity,
+) -> anyhow::Result<url::Url> {
     let url = url::Url::parse(value)?;
     let loopback = match url.host() {
         Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
@@ -42,8 +84,17 @@ fn parse_transport_secure_url(value: &str, subject: &str) -> anyhow::Result<url:
         Some(url::Host::Ipv6(address)) => IpAddr::V6(address).is_loopback(),
         None => bail!("{subject} must have a host"),
     };
-    if url.scheme() != "https" && !(url.scheme() == "http" && loopback) {
-        bail!("{subject} must use HTTPS unless its host is loopback");
+    let cleartext_ok =
+        url.scheme() == "http" && (loopback || security == McpHttpSecurity::AllowInsecureHttp);
+    if url.scheme() != "https" && !cleartext_ok {
+        match security {
+            McpHttpSecurity::HttpsOrLoopback => {
+                bail!("{subject} must use HTTPS unless its host is loopback")
+            }
+            McpHttpSecurity::AllowInsecureHttp => {
+                bail!("{subject} must use HTTP or HTTPS")
+            }
+        }
     }
     Ok(url)
 }

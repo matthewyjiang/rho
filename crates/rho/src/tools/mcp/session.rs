@@ -270,11 +270,15 @@ async fn resolve_http_client(
         headers: literal_headers,
         headers_from_env,
         oauth: oauth_config,
+        allow_insecure_http,
     } = &server.transport
     else {
         return Ok(McpHttpClient::Default);
     };
-    validate::parse_remote_url(url)?;
+    validate::parse_remote_url_with(
+        url,
+        validate::McpHttpSecurity::from_allow_insecure_http(*allow_insecure_http),
+    )?;
     let headers = resolve_headers(literal_headers, headers_from_env)?;
     oauth::prepare_http_client(
         identity,
@@ -322,8 +326,12 @@ async fn establish_session(
             headers: literal_headers,
             headers_from_env,
             oauth: _,
+            allow_insecure_http,
         } => {
-            validate::parse_remote_url(url)?;
+            validate::parse_remote_url_with(
+                url,
+                validate::McpHttpSecurity::from_allow_insecure_http(*allow_insecure_http),
+            )?;
             let headers = resolve_headers(literal_headers, headers_from_env)?;
             // Redirects are disabled on every client used here, so configured
             // headers and bearer tokens never cross origins through a

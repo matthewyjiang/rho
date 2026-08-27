@@ -7,11 +7,12 @@ use super::{
         McpConfig, McpFilesystemPolicy, McpSamplingPolicy, McpServerConfig, McpToolFilter,
         McpTransport,
     },
-    parse_remote_url,
+    parse_remote_url, parse_remote_url_with,
     progress::McpProgressRouter,
     result::ResultExpectation,
     session::prepare_server_filesystem,
     tool::{call_remote_tool, namespaced_tool_name, CallBudget, McpCall, MCP_TOOL_CALL_BUDGET},
+    validate::McpHttpSecurity,
     McpBundle, McpRoots, McpServerStatus, McpSessionOptions, MCP_RUNTIME_CONSTRUCTIONS,
 };
 use crate::tools::sdk_registry::ToolBundle;
@@ -265,6 +266,49 @@ fn remote_and_tool_policy_is_deterministic() {
     );
 }
 
+// Covers: user config may opt one Streamable HTTP server into cleartext
+// non-loopback HTTP; other schemes stay rejected.
+// Owner: MCP pure security policy.
+#[test]
+fn allow_insecure_http_is_an_explicit_user_opt_in() {
+    let url_cases = [
+        ("https://example.com/mcp", true),
+        ("http://localhost:3000/mcp", true),
+        ("http://example.com/mcp", true),
+        ("http://10.0.0.5:3000/mcp", true),
+        ("file:///tmp/mcp", false),
+    ];
+    for (url, expected) in url_cases {
+        assert_eq!(
+            parse_remote_url_with(url, McpHttpSecurity::AllowInsecureHttp).is_ok(),
+            expected,
+            "{url}"
+        );
+    }
+
+    let config: McpConfig = toml::from_str(
+        r#"
+        [servers.lan]
+        transport = "streamable_http"
+        url = "http://10.0.0.5:3000/mcp"
+        allow_insecure_http = true
+        "#,
+    )
+    .unwrap();
+    assert!(config.invalid_servers.is_empty());
+    match &config.servers["lan"].transport {
+        McpTransport::StreamableHttp {
+            url,
+            allow_insecure_http,
+            ..
+        } => {
+            assert_eq!(url, "http://10.0.0.5:3000/mcp");
+            assert!(*allow_insecure_http);
+        }
+        other => panic!("expected streamable http, got {other:?}"),
+    }
+}
+
 // Covers: Streamable HTTP handshake and discovery must register remote tools.
 // Owner: MCP Streamable HTTP transport boundary.
 #[tokio::test]
@@ -370,6 +414,7 @@ async fn streamable_http_discovery() {
                     headers: BTreeMap::new(),
                     headers_from_env: BTreeMap::new(),
                     oauth: None,
+                    allow_insecure_http: false,
                 },
                 filesystem: None,
             },

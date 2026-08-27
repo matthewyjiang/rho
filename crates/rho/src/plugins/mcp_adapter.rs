@@ -309,6 +309,9 @@ fn translate_remote(
         // A plugin manifest declares literal headers only. OAuth is a user
         // decision in Rho's own config, not something a package can request.
         oauth: None,
+        // Cleartext non-loopback HTTP is a user-config opt-in. Packages
+        // cannot weaken transport security.
+        allow_insecure_http: false,
     })
 }
 

@@ -61,6 +61,15 @@ headers = { X-Tenant = "public-tenant" }
 deny = ["delete_account"]
 ```
 
+To reach a cleartext non-loopback host (a LAN IP, an internal hostname), set `allow_insecure_http = true` on that server. Headers and bearer tokens then travel unencrypted. Plugin-provided servers cannot set this flag. OAuth discovery endpoints still require HTTPS or loopback even when the MCP URL is opted in:
+
+```toml
+[mcp.servers.lan]
+transport = "streamable_http"
+url = "http://10.0.0.5:3000/mcp"
+allow_insecure_http = true
+```
+
 `headers_from_env` maps HTTP header names to ambient variable names. Put the complete header value in the environment, such as `Bearer ...`. Rho does not store it in config or diagnostics. Automatic HTTP redirects are disabled, so configured headers cannot be replayed to another origin.
 `headers` supplies literal header values with the configuration. Prefer `headers_from_env` for anything secret. On a name collision, environment-derived headers override literal ones.
 
