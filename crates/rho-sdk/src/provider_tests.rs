@@ -171,7 +171,8 @@ async fn synthesized_event_has_no_provider_observation_timestamp() {
 #[tokio::test]
 async fn public_receiver_preserves_generation_output_token_carrier() {
     let (events, mut receiver) = provider_event_channel(NonZeroUsize::new(2).unwrap());
-    let expected_carrier = ModelEvent::generation_output_tokens(12);
+    let expected_carrier =
+        ModelEvent::GenerationOutputTokens(crate::model::GenerationOutputTokens::Reported(12));
     events.send(expected_carrier.clone()).await.unwrap();
     let expected_output = ModelEvent::OutputDelta("done".into());
     events.send(expected_output.clone()).await.unwrap();

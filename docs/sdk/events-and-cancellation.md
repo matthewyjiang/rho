@@ -26,7 +26,6 @@ sequenceDiagram
     Run-->>Host: Started
     loop Each model step
         Run-->>Host: StepStarted
-        Run-->>Host: ContextEstimated
         Run->>Provider: request
         Provider-->>Run: deltas
         Run-->>Host: provider and usage events
@@ -42,17 +41,16 @@ sequenceDiagram
 ### Ordering rules
 
 1. `Started` is first and includes the starting revision.
-2. Each provider loop emits `StepStarted` before that step's provider activity.
-3. Immediately after `StepStarted`, the runtime emits `ContextEstimated` with a provider-neutral token estimate of the request history and tool schemas. Hosts should treat this as a display estimate and replace it when `UsageUpdated` reports provider input.
-4. Provider deltas, tool-call assembly, usage, activity, and context updates retain source arrival order.
-5. A complete tool call emits `ToolProposed` before execution.
-6. An available tool emits `ToolStarted`, zero or more `ToolUpdated`, then exactly one `ToolFinished`.
-7. An unavailable tool emits `ToolFinished` with `Unavailable` and no `ToolStarted`.
-8. Calls in one model response may overlap. All `ToolProposed` events keep model order, while start, update, host-input, and finish events from different calls may interleave.
-9. Every per-call event and host-input request carries its `ToolCallId`. Within one available call, `ToolStarted` precedes all `ToolUpdated` events and one `ToolFinished` ends the call.
-10. The runtime holds completed results in model-order slots. Provider history and persisted history do not use finish order.
-11. Automatic compaction emits `CompactionStarted` before calling the compactor and `CompactionCompleted` only after committing replacement history.
-12. A run that reaches a normal cooperative terminal path emits one of `Completed`, `Cancelled`, or `Failed`.
+2. Each provider loop emits `StepStarted` before that step's provider activity. `StepStarted.estimated_context_tokens` is a provider-neutral token estimate of the request history and tool schemas. Hosts should treat this as a display estimate and replace it when `UsageUpdated` reports provider input.
+3. Provider deltas, tool-call assembly, usage, activity, and context updates retain source arrival order.
+4. A complete tool call emits `ToolProposed` before execution.
+5. An available tool emits `ToolStarted`, zero or more `ToolUpdated`, then exactly one `ToolFinished`.
+6. An unavailable tool emits `ToolFinished` with `Unavailable` and no `ToolStarted`.
+7. Calls in one model response may overlap. All `ToolProposed` events keep model order, while start, update, host-input, and finish events from different calls may interleave.
+8. Every per-call event and host-input request carries its `ToolCallId`. Within one available call, `ToolStarted` precedes all `ToolUpdated` events and one `ToolFinished` ends the call.
+9. The runtime holds completed results in model-order slots. Provider history and persisted history do not use finish order.
+10. Automatic compaction emits `CompactionStarted` before calling the compactor and `CompactionCompleted` only after committing replacement history.
+11. A run that reaches a normal cooperative terminal path emits one of `Completed`, `Cancelled`, or `Failed`.
 
 ### Terminal authority
 
@@ -65,24 +63,19 @@ The implementation does not guarantee a terminal event for every worker exit; se
 ## Model-call performance metrics
 
 `ModelCallCompleted.metrics.output_tokens` keeps the provider's aggregate output
-total for 1.x compatibility. When the provider reports a reasoning-token
-breakdown, the runtime emits a `ProviderActivity` immediately before
-`ModelCallCompleted`. Its kind is
-`PROVIDER_ACTIVITY_GENERATION_OUTPUT_TOKENS`, and its decimal `detail` is the
-aggregate output total minus reasoning tokens. The built-in TUI uses that value
-as the numerator for generation and response speed. If the provider does not report a breakdown, it uses the aggregate total
-unless reasoning is known to have occurred: the request enabled hidden
-reasoning (for example Poolside thinking on by omission), or reasoning
-tokens streamed without a usage split. In those cases the runtime emits the
-same activity with a null token count so the TUI treats generation
-throughput as unavailable rather than deriving it from aggregate output.
+total. `ModelCallCompleted.metrics.generation_output_tokens` is the
+generation-window numerator when the provider reported a usable breakdown:
+`Reported(n)` is the count that matches generation time, `Unavailable` means
+the host must not fall back to aggregate output (for example hidden reasoning
+without a token split), and `None` means the host may fall back to
+`output_tokens`.
 
 This does not change usage or billing. `UsageUpdated.usage.output_tokens`,
 `ModelCallCompleted.metrics.output_tokens`, and
 `RunOutcome::usage().output_tokens` all keep the provider's full output total,
-including billable reasoning tokens. The activity carrier is a minor-compatible
-bridge. A future major release will replace it with an explicit performance
-metric.
+including billable reasoning tokens. Providers emit
+`ModelEvent::GenerationOutputTokens` on the stream; the runtime consumes that
+event internally and never lowers it to a `RunEvent` or persists it.
 
 
 ## Host input and steering
@@ -102,9 +95,9 @@ The core runtime retries a model turn when either of these conditions occurs:
 
 A model turn makes at most four logical provider requests in total. Malformed responses and retryable provider failures share that bound. Permanent provider failures are returned immediately. Cancellation interrupts both an active request and a retry delay.
 
-Before retrying, the runtime emits `ProviderStreamReset` with a structured reason. When the provider supplies a wait hint, that reason is `RetryableFailureWithRetryAfter` (otherwise `RetryableFailure`). Prefer the `provider_error_kind` / `retry_after` helpers when matching so both arms stay covered. `NEXT_MAJOR(rho-sdk): collapse RetryableFailure and RetryableFailureWithRetryAfter into one shape with optional retry_after` (or move `retry_after` onto the event). For a malformed response, it also emits the legacy `ProviderActivity` kind `invalid_response_retry` immediately before that reset. Any text, reasoning, or tool-call deltas emitted since the preceding model-step boundary belong to the abandoned attempt. Hosts rendering live output must discard that attempt before rendering subsequent deltas. Usage reported by the abandoned attempt remains billable and is recorded as a separate physical request; hosts should retain it when presenting cumulative usage. The terminal `RunOutcome` contains usage from the successful response. The Rho TUI and headless reporter handle the reset. Rate-limit failures include a `/limits` pointer in the sanitized error message so hosts can direct users to usage windows.
+Before retrying, the runtime emits `ProviderStreamReset` with a structured reason. Retryable provider failures use `RetryableFailure { kind, retry_after }`, where `retry_after` is `Some` only when the provider supplied a nonzero wait. Any text, reasoning, or tool-call deltas emitted since the preceding model-step boundary belong to the abandoned attempt. Hosts rendering live output must discard that attempt before rendering subsequent deltas. Usage reported by the abandoned attempt remains billable and is recorded as a separate physical request; hosts should retain it when presenting cumulative usage. The terminal `RunOutcome` contains usage from the successful response. The Rho TUI and headless reporter handle the reset. Rate-limit failures include a `/limits` pointer in the sanitized error message so hosts can direct users to usage windows.
 
-Retryable physical provider request failures emit typed `ProviderRequestRetry` and, for minor-compatible hosts, still dual-emit the legacy `ProviderActivity` kind `provider_request_retry`. Provider-native web search emits typed `WebSearch { detail }` and dual-emits legacy `ProviderActivity` kind `web_search`. Other provider-native hosted tools (for example xAI `x_search` and `image_generation`) are carried on the provider stream via `ModelEvent::hosted_tool_activity` and lowered to typed `RunEvent::HostedToolActivity { name, detail }` only — new activity kinds do not mint legacy `ProviderActivity` dual-emits. New hosts should match the typed run-event variants; the legacy activity kinds and `ProviderActivity` itself are deprecated and will be removed in the next major release.
+Retryable physical provider request failures emit typed `ProviderRequestRetry`. Provider-native web search emits typed `WebSearch { detail }`. Other provider-native hosted tools (for example xAI `x_search` and `image_generation`) emit typed `ModelEvent::HostedToolActivity { name, detail }` and lower to `RunEvent::HostedToolActivity { name, detail }`.
 
 Automatic retries repeat the model request with the same immutable history. They do not rerun tools completed by earlier model turns, but they can repeat provider-side work and incur usage for every attempt. Hosts should use recorded physical-request usage for billing and auditing rather than assuming one provider request per model turn.
 
@@ -131,8 +124,7 @@ Cooperative terminal failures (for example a permanent provider/SSE error after 
 - recoverable candidate history is committed
 - partial provider output may become `AbortedAssistant`
 - the revision increments
-- `Failed { message, retryability }` is emitted when delivery succeeds
-- hosts that need the post-commit revision should read `Session::revision` after the run ends. `NEXT_MAJOR(rho-sdk): add revision to RunEvent::Failed so cooperative failure commits match Cancelled { revision }`
+- `Failed { message, retryability, revision }` is emitted when delivery succeeds
 - `Run::outcome` returns the typed error
 
 Event-consumer interrupts still leave uncommitted candidate history uninstalled; see [Persistence and event-consumer failures](#persistence-and-event-consumer-failures).

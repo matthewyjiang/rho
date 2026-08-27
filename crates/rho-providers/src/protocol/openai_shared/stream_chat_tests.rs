@@ -124,9 +124,7 @@ fn final_snapshot_reasoning_does_not_count_as_streamed_for_throughput() {
     ));
     assert!(events.iter().any(|event| matches!(
         event,
-        ModelEvent::ProviderContext { kind, data, .. }
-            if kind == "rho_model_call_generation_output_tokens"
-                && data["tokens"] == json!(18)
+        ModelEvent::GenerationOutputTokens(rho_sdk::model::GenerationOutputTokens::Reported(18),)
     )));
 }
 

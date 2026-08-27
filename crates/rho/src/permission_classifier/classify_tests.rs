@@ -28,7 +28,7 @@ fn sample_history() -> Vec<Message> {
         Message::User(vec![ContentBlock::Text("please update config.toml".into())]),
         Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
             id: "call-1".into(),
-            name: "write_file".into(),
+            name: "write".into(),
             arguments: serde_json::json!({"path": "config.toml", "content": "x=1"}),
         })]),
     ]
@@ -39,7 +39,7 @@ fn pending_write() -> ApprovalRequest {
         CapabilityRequest::write_path(
             "config.toml",
             rho_sdk::PathScope::PrimaryWorkspace,
-            source("write_file"),
+            source("write"),
         ),
         "agent requested write access",
     )

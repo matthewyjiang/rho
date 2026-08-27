@@ -355,9 +355,10 @@ fn reporter_discards_partial_text_when_provider_attempt_resets() {
         text: "stale partial response".into(),
     });
     reporter.on_event(&rho_sdk::RunEvent::ProviderStreamReset {
-        reason: rho_sdk::ProviderStreamResetReason::RetryableFailure(
-            rho_sdk::ProviderErrorKind::Unavailable,
-        ),
+        reason: rho_sdk::ProviderStreamResetReason::RetryableFailure {
+            kind: rho_sdk::ProviderErrorKind::Unavailable,
+            retry_after: None,
+        },
         detail: "retrying".into(),
     });
 

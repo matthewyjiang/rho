@@ -111,13 +111,16 @@ async fn spawn_sequential_server(
     (base, captured)
 }
 
-fn transport<'a>(
-    client: &'a reqwest::Client,
-    api_base: &'a str,
-    store: &'a MemoryCredentialStore,
-    refreshed: &'a std::sync::Mutex<Option<CodexTokens>>,
-) -> ResponsesHttpTransport<'a> {
-    ResponsesHttpTransport::new(client, api_base, store, refreshed)
+fn transport<'a>(client: &'a reqwest::Client, api_base: &'a str) -> ResponsesHttpTransport<'a> {
+    ResponsesHttpTransport::new(client, api_base)
+}
+
+fn codex_auth(tokens: CodexTokens) -> Auth {
+    Auth::codex(
+        tokens,
+        CodexAuthSource::Env,
+        Arc::new(MemoryCredentialStore::default()),
+    )
 }
 
 #[tokio::test]
@@ -128,9 +131,7 @@ async fn api_key_create_and_compact_send_expected_headers_and_paths() {
     ])
     .await;
     let client = crate::reqwest_client();
-    let store = MemoryCredentialStore::default();
-    let refreshed = std::sync::Mutex::new(None);
-    let http = transport(&client, &base, &store, &refreshed);
+    let http = transport(&client, &base);
     let body = json!({"model":"gpt-5.4","store":false});
 
     let create = http
@@ -179,9 +180,7 @@ async fn keyless_create_and_compact_omit_authorization() {
     ])
     .await;
     let client = crate::reqwest_client();
-    let store = MemoryCredentialStore::default();
-    let refreshed = std::sync::Mutex::new(None);
-    let http = transport(&client, &base, &store, &refreshed);
+    let http = transport(&client, &base);
     let body = json!({"model":"gpt-5.4","store":false});
 
     let create = http
@@ -219,18 +218,13 @@ async fn codex_create_and_compact_send_expected_headers_and_paths() {
     ])
     .await;
     let client = crate::reqwest_client();
-    let store = MemoryCredentialStore::default();
-    let refreshed = std::sync::Mutex::new(None);
-    let auth = Auth::Codex {
-        tokens: CodexTokens {
-            access_token: "access".into(),
-            refresh_token: Some("refresh".into()),
-            id_token: None,
-            account_id: Some("acct_1".into()),
-        },
-        source: CodexAuthSource::Env,
-    };
-    let http = transport(&client, &base, &store, &refreshed);
+    let auth = codex_auth(CodexTokens {
+        access_token: "access".into(),
+        refresh_token: Some("refresh".into()),
+        id_token: None,
+        account_id: Some("acct_1".into()),
+    });
+    let http = transport(&client, &base);
     let body = json!({"model":"gpt-5.4","store":false});
 
     let create = http
@@ -306,19 +300,14 @@ async fn codex_compact_401_refresh_reports_auth_failed_attempt_and_retries() {
     });
 
     let client = crate::reqwest_client();
-    let store = MemoryCredentialStore::default();
-    let refreshed = std::sync::Mutex::new(None);
-    let auth = Auth::Codex {
-        tokens: CodexTokens {
-            access_token: "access".into(),
-            refresh_token: Some("refresh".into()),
-            id_token: None,
-            account_id: Some("acct_1".into()),
-        },
-        source: CodexAuthSource::Env,
-    };
+    let auth = codex_auth(CodexTokens {
+        access_token: "access".into(),
+        refresh_token: Some("refresh".into()),
+        id_token: None,
+        account_id: Some("acct_1".into()),
+    });
     let refresh_url = format!("{base}/oauth/token");
-    let http = transport(&client, &base, &store, &refreshed).with_codex_refresh_url(&refresh_url);
+    let http = transport(&client, &base).with_codex_refresh_url(&refresh_url);
 
     let result = http
         .post_json(
@@ -372,10 +361,8 @@ async fn cancellation_during_send_returns_interrupted() {
     });
 
     let client = crate::reqwest_client();
-    let store = MemoryCredentialStore::default();
-    let refreshed = std::sync::Mutex::new(None);
     let auth = Auth::ApiKey("sk-test".into());
-    let http = transport(&client, &base, &store, &refreshed);
+    let http = transport(&client, &base);
     let cancellation = rho_sdk::CancellationToken::new();
     let cancel = cancellation.clone();
     let body = json!({"model":"gpt-5.4"});
@@ -424,19 +411,14 @@ async fn cancellation_during_refresh_returns_interrupted() {
         .timeout(Duration::from_secs(5))
         .build()
         .unwrap();
-    let store = MemoryCredentialStore::default();
-    let refreshed = std::sync::Mutex::new(None);
-    let auth = Auth::Codex {
-        tokens: CodexTokens {
-            access_token: "access".into(),
-            refresh_token: Some("refresh".into()),
-            id_token: None,
-            account_id: None,
-        },
-        source: CodexAuthSource::Env,
-    };
+    let auth = codex_auth(CodexTokens {
+        access_token: "access".into(),
+        refresh_token: Some("refresh".into()),
+        id_token: None,
+        account_id: None,
+    });
     let refresh_url = format!("{base}/oauth/token");
-    let http = transport(&client, &base, &store, &refreshed).with_codex_refresh_url(&refresh_url);
+    let http = transport(&client, &base).with_codex_refresh_url(&refresh_url);
     let cancellation = rho_sdk::CancellationToken::new();
     let cancel = cancellation.clone();
     let body = json!({"model":"gpt-5.4"});
@@ -486,19 +468,14 @@ async fn refresh_failure_retains_authentication_failed_attempt() {
     });
 
     let client = crate::reqwest_client();
-    let store = MemoryCredentialStore::default();
-    let refreshed = std::sync::Mutex::new(None);
-    let auth = Auth::Codex {
-        tokens: CodexTokens {
-            access_token: "access".into(),
-            refresh_token: Some("refresh".into()),
-            id_token: None,
-            account_id: None,
-        },
-        source: CodexAuthSource::Env,
-    };
+    let auth = codex_auth(CodexTokens {
+        access_token: "access".into(),
+        refresh_token: Some("refresh".into()),
+        id_token: None,
+        account_id: None,
+    });
     let refresh_url = format!("{base}/oauth/token");
-    let http = transport(&client, &base, &store, &refreshed).with_codex_refresh_url(&refresh_url);
+    let http = transport(&client, &base).with_codex_refresh_url(&refresh_url);
 
     let result = http
         .post_json(
@@ -558,19 +535,14 @@ async fn retry_send_failure_retains_authentication_failed_attempt() {
     });
 
     let client = crate::reqwest_client();
-    let store = MemoryCredentialStore::default();
-    let refreshed = std::sync::Mutex::new(None);
-    let auth = Auth::Codex {
-        tokens: CodexTokens {
-            access_token: "access".into(),
-            refresh_token: Some("refresh".into()),
-            id_token: None,
-            account_id: None,
-        },
-        source: CodexAuthSource::Env,
-    };
+    let auth = codex_auth(CodexTokens {
+        access_token: "access".into(),
+        refresh_token: Some("refresh".into()),
+        id_token: None,
+        account_id: None,
+    });
     let refresh_url = format!("{base}/oauth/token");
-    let http = transport(&client, &base, &store, &refreshed).with_codex_refresh_url(&refresh_url);
+    let http = transport(&client, &base).with_codex_refresh_url(&refresh_url);
 
     let result = http
         .post_json(

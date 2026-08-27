@@ -79,8 +79,7 @@ are not SDK exports.
   `InMemorySessionStore`, and the supported schema-version constants
 - Workspace and approvals: `Workspace`, capability and process types, policies,
   approvals, authorization outcomes, and resolved workspace paths
-- Tool results and provider activity kind constants re-exported at the root
-  (`PROVIDER_ACTIVITY_*` are deprecated; prefer typed `RunEvent` variants)
+- Tool results re-exported at the root
 
 ### `rho_sdk::model`
 

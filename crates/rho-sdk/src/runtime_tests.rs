@@ -514,7 +514,9 @@ async fn reasoning_breakdown_separates_usage_from_performance_tokens() {
         [ScriptedTurn::streaming(
             vec![
                 ModelEvent::OutputDelta("done".into()),
-                ModelEvent::generation_output_tokens(30),
+                ModelEvent::GenerationOutputTokens(crate::model::GenerationOutputTokens::Reported(
+                    30,
+                )),
                 ModelEvent::Usage(crate::model::ModelUsage {
                     output_tokens: Some(100),
                     ..crate::model::ModelUsage::default()
@@ -527,22 +529,13 @@ async fn reasoning_breakdown_separates_usage_from_performance_tokens() {
     let session = runtime.session(SessionOptions::default()).await.unwrap();
     let mut run = session.start(UserInput::text("hello")).await.unwrap();
     let mut usage = None;
-    let mut generation_output_tokens = None;
-    let mut carrier_preceded_completion = false;
     let mut metrics = None;
     while let Some(event) = run.next_event().await {
-        #[allow(deprecated)]
         match event {
             RunEvent::UsageUpdated { usage: reported } => usage = Some(reported),
-            RunEvent::ProviderActivity { kind, detail }
-                if kind == crate::PROVIDER_ACTIVITY_GENERATION_OUTPUT_TOKENS =>
-            {
-                generation_output_tokens = detail.parse().ok();
-            }
             RunEvent::ModelCallCompleted {
                 metrics: completed, ..
             } => {
-                carrier_preceded_completion = generation_output_tokens.is_some();
                 metrics = Some(completed);
             }
             _ => {}
@@ -555,9 +548,12 @@ async fn reasoning_breakdown_separates_usage_from_performance_tokens() {
         Some(100)
     );
     assert_eq!(outcome.usage().output_tokens, Some(100));
-    assert_eq!(metrics.and_then(|metrics| metrics.output_tokens), Some(100));
-    assert_eq!(generation_output_tokens, Some(30));
-    assert!(carrier_preceded_completion);
+    let metrics = metrics.expect("model call completed");
+    assert_eq!(metrics.output_tokens, Some(100));
+    assert_eq!(
+        metrics.generation_output_tokens,
+        Some(crate::model::GenerationOutputTokens::Reported(30))
+    );
 }
 
 #[derive(Debug)]
@@ -1372,10 +1368,10 @@ async fn provider_service_tier_fallback_is_emitted_without_marking_a_retry() {
     let provider = ScriptedProvider::new(
         identity(),
         [ScriptedTurn::streaming(
-            vec![ModelEvent::service_tier_fallback(
-                crate::model::ServiceTier::Priority,
-                "default",
-            )],
+            vec![ModelEvent::ServiceTierFallback {
+                requested: crate::model::ServiceTier::Priority,
+                used: "default".into(),
+            }],
             ModelResponse::Assistant(vec![ContentBlock::Text("standard".into())]),
         )],
     );

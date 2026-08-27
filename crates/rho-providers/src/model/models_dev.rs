@@ -321,7 +321,7 @@ fn catalog_source_for(
 /// `openai-codex` is a built-in name whose document is `openai`, so it still
 /// rematches extract rows and is not a collision.
 fn borrowed_slug_collides_with_builtin_extract(slug: &str) -> bool {
-    crate::provider::providers()
+    crate::provider::builtin_providers()
         .iter()
         .any(|descriptor| descriptor.name == slug && descriptor.metadata_upstream == slug)
 }

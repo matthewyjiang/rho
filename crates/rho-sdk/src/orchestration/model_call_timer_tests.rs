@@ -40,7 +40,7 @@ fn generation_output_tokens_stay_separate_from_aggregate_metrics() {
 
     assert_eq!(metrics.output_tokens, Some(100));
     assert_eq!(
-        timer.generation_output_tokens(),
+        metrics.generation_output_tokens,
         Some(GenerationOutputTokens::Reported(30))
     );
 }
@@ -72,7 +72,7 @@ fn failed_attempt_restarts_every_duration_at_the_retry() {
     assert_eq!(metrics.time_to_first_token, Some(Duration::from_secs(1)));
     assert_eq!(metrics.total_latency, Duration::from_secs(1));
     assert_eq!(metrics.output_tokens, Some(4));
-    assert_eq!(timer.generation_output_tokens(), None);
+    assert_eq!(metrics.generation_output_tokens, None);
 }
 
 #[test]

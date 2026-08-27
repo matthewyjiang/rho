@@ -13,7 +13,7 @@ fn priced_metadata() -> ModelMetadata {
 }
 
 // Covers: catalog cost bills recovered prompt size, including mute turns
-// that later merge with a cache-split snapshot; ContextEstimated is not this path
+// that later merge with a cache-split snapshot; step-start estimates are not this path
 // Owner: tui catalog cost estimate
 #[test]
 fn estimated_cost_bills_recovered_prompt_not_split_remainder() {

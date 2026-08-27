@@ -237,14 +237,16 @@ pub(super) struct ProviderRetryHint {
 
 impl ProviderRetryHint {
     pub(super) fn status_label(self) -> String {
-        let rate_limited = matches!(
-            self.reason.provider_error_kind(),
-            Some(ProviderErrorKind::RateLimit)
-        );
-        match (
-            rate_limited,
-            self.reason.retry_after().filter(|delay| !delay.is_zero()),
-        ) {
+        let (kind, retry_after) = match self.reason {
+            ProviderStreamResetReason::RetryableFailure { kind, retry_after } => {
+                (Some(kind), retry_after.filter(|delay| !delay.is_zero()))
+            }
+            ProviderStreamResetReason::InvalidResponse => (None, None),
+            // Required while the SDK enum stays `#[non_exhaustive]`.
+            _ => (None, None),
+        };
+        let rate_limited = kind == Some(ProviderErrorKind::RateLimit);
+        match (rate_limited, retry_after) {
             (true, Some(delay)) => format!(
                 "rate limited · retry in {}",
                 rho_sdk::format_retry_after(delay)

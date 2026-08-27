@@ -8,45 +8,11 @@
 use crate::{
     model::{
         inclusive_prompt::{model_usage_from_inclusive_prompt, InclusivePromptUsage},
-        ModelEvent, ModelUsage,
+        ModelUsage,
     },
     protocol::cost::parse_usd_micros,
 };
-
-// Keep the raw 1.x carrier until rho-providers can raise its minimum rho-sdk
-// version. Package verification must compile against the currently published SDK.
-pub(crate) fn generation_output_tokens_event(tokens: u64) -> ModelEvent {
-    ModelEvent::ProviderContext {
-        kind: "rho_model_call_generation_output_tokens".into(),
-        position: None,
-        data: serde_json::json!({ "tokens": tokens }),
-    }
-}
-
-fn generation_output_tokens_unavailable_event() -> ModelEvent {
-    ModelEvent::ProviderContext {
-        kind: "rho_model_call_generation_output_tokens".into(),
-        position: None,
-        data: serde_json::json!({ "tokens": null }),
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum GenerationOutputTokens {
-    Unreported,
-    Reported(u64),
-    Unavailable,
-}
-
-impl GenerationOutputTokens {
-    pub(crate) fn into_event(self) -> Option<ModelEvent> {
-        match self {
-            Self::Unreported => None,
-            Self::Reported(tokens) => Some(generation_output_tokens_event(tokens)),
-            Self::Unavailable => Some(generation_output_tokens_unavailable_event()),
-        }
-    }
-}
+use rho_sdk::model::GenerationOutputTokens;
 
 /// Whether this call may have produced reasoning tokens the stream never
 /// showed. Decides how to treat a usage payload that reports output tokens
@@ -74,7 +40,7 @@ pub(crate) struct GenerationTokenContext {
 
 pub(crate) struct UsageReport {
     pub(crate) usage: ModelUsage,
-    pub(crate) generation_output_tokens: GenerationOutputTokens,
+    pub(crate) generation_output_tokens: Option<GenerationOutputTokens>,
 }
 
 fn extract_output_usage(usage: &serde_json::Value) -> (Option<u64>, Option<u64>) {
@@ -112,23 +78,19 @@ pub(crate) struct ReportedOutputUsage {
 pub(crate) fn resolve_generation_output_tokens(
     output_usage: Option<ReportedOutputUsage>,
     context: GenerationTokenContext,
-) -> GenerationOutputTokens {
-    let Some(output_usage) = output_usage else {
-        return GenerationOutputTokens::Unreported;
-    };
+) -> Option<GenerationOutputTokens> {
+    let output_usage = output_usage?;
     if context.reasoning_streamed {
-        return GenerationOutputTokens::Reported(output_usage.output_tokens);
+        return Some(GenerationOutputTokens::Reported(output_usage.output_tokens));
     }
     match (output_usage.reasoning_tokens, context.hidden_reasoning_risk) {
         (Some(reasoning_tokens), _) => output_usage
             .output_tokens
             .checked_sub(reasoning_tokens)
-            .map_or(
-                GenerationOutputTokens::Unavailable,
-                GenerationOutputTokens::Reported,
-            ),
-        (None, HiddenReasoningRisk::Unlikely) => GenerationOutputTokens::Unreported,
-        (None, HiddenReasoningRisk::Possible) => GenerationOutputTokens::Unavailable,
+            .map(GenerationOutputTokens::Reported)
+            .or(Some(GenerationOutputTokens::Unavailable)),
+        (None, HiddenReasoningRisk::Unlikely) => None,
+        (None, HiddenReasoningRisk::Possible) => Some(GenerationOutputTokens::Unavailable),
     }
 }
 
@@ -136,10 +98,8 @@ pub(crate) fn resolve_generation_output_tokens(
 pub(crate) fn extract_generation_output_tokens(
     value: &serde_json::Value,
     context: GenerationTokenContext,
-) -> GenerationOutputTokens {
-    let Some(usage) = value.get("usage").filter(|usage| usage.is_object()) else {
-        return GenerationOutputTokens::Unreported;
-    };
+) -> Option<GenerationOutputTokens> {
+    let usage = value.get("usage").filter(|usage| usage.is_object())?;
     let (output_tokens, reasoning_tokens) = extract_output_usage(usage);
     resolve_generation_output_tokens(
         output_tokens.map(|output_tokens| ReportedOutputUsage {

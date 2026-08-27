@@ -7,7 +7,10 @@ use super::{agent_activity, SubagentPanel, SubagentPointerTarget};
 use crate::{
     subagent::{RunState, RunStatus},
     tools::agent::SubagentSnapshot,
-    tui::{activity, theme::Theme},
+    tui::{
+        activity,
+        theme::{self, Theme},
+    },
 };
 
 fn snapshot(id: &str, agent_id: &str, state: RunState, elapsed_seconds: u64) -> SubagentSnapshot {
@@ -44,6 +47,8 @@ fn activity_span_style(line: &Line<'_>, activity: &str) -> ratatui::style::Style
 // Owner: pure unit (subagent rail labels)
 #[test]
 fn subagent_verdict_labels_and_styles_match_state() {
+    let _guard = theme::theme_test_lock();
+    Theme::apply_committed("one-half-dark");
     let starting = super::RunningSubagent {
         id: "a".into(),
         agent_id: "worker".into(),
@@ -63,6 +68,7 @@ fn subagent_verdict_labels_and_styles_match_state() {
         agent.state = state;
         assert_eq!(agent_activity(&agent), (label.to_owned(), style));
     }
+    Theme::apply_committed("terminal");
 }
 
 // Covers: a just-finished agent stays through the linger window, then drops.
@@ -189,6 +195,8 @@ fn hover_trailing_keeps_elapsed() {
 // Owner: pure layout
 #[test]
 fn subagent_verdict_styles_paint_on_wide_rows() {
+    let _guard = theme::theme_test_lock();
+    Theme::apply_committed("one-half-dark");
     let mut panel = SubagentPanel::default();
     let now = Instant::now();
     panel.ingest(
@@ -201,4 +209,5 @@ fn subagent_verdict_styles_paint_on_wide_rows() {
         activity_span_style(line, "✗ error"),
         Theme::activity_rail().patch(Theme::activity_rail_error())
     );
+    Theme::apply_committed("terminal");
 }

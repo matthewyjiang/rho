@@ -1,14 +1,8 @@
 //! Credential-aware HTTP transport for OpenAI Responses create/compact.
 
-use std::sync::Mutex;
-
 use serde_json::Value;
 
-use crate::{
-    credentials::{load_codex_tokens, CodexTokens, CredentialStore},
-    model::ModelError,
-    provider_backend::cancel::cancel_aware,
-};
+use crate::{credentials::CodexTokens, model::ModelError, provider_backend::cancel::cancel_aware};
 
 use super::auth::{refresh_codex_token_at, Auth, CodexAuthSource};
 
@@ -77,23 +71,14 @@ impl ResponsesHttpResult {
 pub(super) struct ResponsesHttpTransport<'a> {
     client: &'a reqwest::Client,
     api_base: &'a str,
-    credential_store: &'a dyn CredentialStore,
-    refreshed_codex_tokens: &'a Mutex<Option<CodexTokens>>,
     codex_refresh_url: &'a str,
 }
 
 impl<'a> ResponsesHttpTransport<'a> {
-    pub(super) fn new(
-        client: &'a reqwest::Client,
-        api_base: &'a str,
-        credential_store: &'a dyn CredentialStore,
-        refreshed_codex_tokens: &'a Mutex<Option<CodexTokens>>,
-    ) -> Self {
+    pub(super) fn new(client: &'a reqwest::Client, api_base: &'a str) -> Self {
         Self {
             client,
             api_base,
-            credential_store,
-            refreshed_codex_tokens,
             codex_refresh_url: DEFAULT_CODEX_REFRESH_URL,
         }
     }
@@ -102,19 +87,6 @@ impl<'a> ResponsesHttpTransport<'a> {
     pub(super) fn with_codex_refresh_url(mut self, url: &'a str) -> Self {
         self.codex_refresh_url = url;
         self
-    }
-
-    /// Resolves the Codex tokens that should be used for the next request.
-    pub(super) fn codex_tokens_for_auth(
-        &self,
-        auth: Option<&Auth>,
-    ) -> Result<CodexTokens, ModelError> {
-        let Some(Auth::Codex { tokens, source }) = auth else {
-            return Err(ModelError::InvalidResponse(
-                "Codex tokens requested for non-Codex auth".into(),
-            ));
-        };
-        Ok(self.codex_turn_tokens(tokens, *source))
     }
 
     /// Posts JSON and, for Codex credentials, refreshes once on `401`.
@@ -146,8 +118,12 @@ impl<'a> ResponsesHttpTransport<'a> {
                     Err(error) => ResponsesHttpResult::err(error),
                 }
             }
-            Some(Auth::Codex { tokens, source }) => {
-                let tokens = self.codex_turn_tokens(tokens, *source);
+            Some(auth @ Auth::Codex { source, .. }) => {
+                let source = *source;
+                let tokens = match auth.codex_tokens_for_request() {
+                    Ok(tokens) => tokens,
+                    Err(error) => return ResponsesHttpResult::err(error),
+                };
                 let response = match self
                     .send(
                         self.build_request(
@@ -179,7 +155,7 @@ impl<'a> ResponsesHttpTransport<'a> {
                     kind: ResponsesFailedAttemptKind::Authentication,
                 }];
                 let refreshed = match self
-                    .refresh_codex_tokens(refresh_token, *source, &tokens, cancellation)
+                    .refresh_codex_tokens(auth, refresh_token, source, &tokens, cancellation)
                     .await
                 {
                     Ok(tokens) => tokens,
@@ -188,7 +164,7 @@ impl<'a> ResponsesHttpTransport<'a> {
                             .with_failed_attempts(failed_attempts);
                     }
                 };
-                self.remember_refreshed_codex_tokens(refreshed.clone());
+                auth.remember_refreshed_codex_tokens(refreshed.clone());
                 match self
                     .send(
                         self.build_request(
@@ -216,14 +192,20 @@ impl<'a> ResponsesHttpTransport<'a> {
 
     async fn refresh_codex_tokens(
         &self,
+        auth: &Auth,
         refresh_token: &str,
         source: CodexAuthSource,
         previous: &CodexTokens,
         cancellation: Option<&rho_sdk::CancellationToken>,
     ) -> Result<CodexTokens, ModelError> {
+        let Auth::Codex { refresh_store, .. } = auth else {
+            return Err(ModelError::InvalidResponse(
+                "Codex tokens requested for non-Codex auth".into(),
+            ));
+        };
         let refresh = refresh_codex_token_at(
             self.client,
-            self.credential_store,
+            refresh_store.as_ref(),
             refresh_token,
             source,
             previous,
@@ -274,25 +256,6 @@ impl<'a> ResponsesHttpTransport<'a> {
         cancellation: Option<&rho_sdk::CancellationToken>,
     ) -> Result<reqwest::Response, ModelError> {
         cancel_aware(cancellation, async { Ok(request.send().await?) }).await
-    }
-
-    fn codex_turn_tokens(&self, initial: &CodexTokens, source: CodexAuthSource) -> CodexTokens {
-        if source == CodexAuthSource::Store {
-            if let Ok(Some(tokens)) = load_codex_tokens(self.credential_store) {
-                return tokens;
-            }
-        }
-        self.refreshed_codex_tokens
-            .lock()
-            .ok()
-            .and_then(|guard| guard.clone())
-            .unwrap_or_else(|| initial.clone())
-    }
-
-    fn remember_refreshed_codex_tokens(&self, tokens: CodexTokens) {
-        if let Ok(mut guard) = self.refreshed_codex_tokens.lock() {
-            *guard = Some(tokens);
-        }
     }
 }
 

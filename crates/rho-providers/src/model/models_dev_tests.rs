@@ -1738,10 +1738,10 @@ fn model_id_host_applies_builtin_overrides_from_split_id() {
 }
 
 fn install_model_id_host() {
-    crate::provider::install_custom_openai_compatible_providers_with_lookup([(
-        crate::provider::CustomProviderSpec::new("cliproxyapi", None),
-        crate::provider::CatalogLookupMode::ModelId,
-    )])
+    crate::provider::install_custom_openai_compatible_providers([
+        crate::provider::CustomProviderSpec::new("cliproxyapi", None)
+            .with_catalog_lookup(crate::provider::CatalogLookupMode::ModelId),
+    ])
     .unwrap();
 }
 
@@ -1800,15 +1800,11 @@ fn second_model_id_host_reuses_shared_full_tree() {
         mark_catalog_snapshot_current_for_tests();
         assert!(hydrate::catalog_snapshot_is_ready());
 
-        crate::provider::install_custom_openai_compatible_providers_with_lookup([
-            (
-                crate::provider::CustomProviderSpec::new("cliproxyapi", None),
-                crate::provider::CatalogLookupMode::ModelId,
-            ),
-            (
-                crate::provider::CustomProviderSpec::new("gateway-two", None),
-                crate::provider::CatalogLookupMode::ModelId,
-            ),
+        crate::provider::install_custom_openai_compatible_providers([
+            crate::provider::CustomProviderSpec::new("cliproxyapi", None)
+                .with_catalog_lookup(crate::provider::CatalogLookupMode::ModelId),
+            crate::provider::CustomProviderSpec::new("gateway-two", None)
+                .with_catalog_lookup(crate::provider::CatalogLookupMode::ModelId),
         ])
         .unwrap();
         assert!(

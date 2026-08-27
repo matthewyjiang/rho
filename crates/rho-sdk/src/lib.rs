@@ -165,12 +165,7 @@ pub use error::{
 };
 pub use event::{
     ModelCallMetrics, ModelCallProfile, ProviderStreamResetReason, RunEvent, RunOutcome,
-    StopReason, ToolCompletion, ToolFailure, PROVIDER_ACTIVITY_GENERATION_OUTPUT_TOKENS,
-};
-#[allow(deprecated)]
-pub use event::{
-    PROVIDER_ACTIVITY_INVALID_RESPONSE_RETRY, PROVIDER_ACTIVITY_REQUEST_RETRY,
-    PROVIDER_ACTIVITY_WEB_SEARCH,
+    StopReason, ToolCompletion, ToolFailure,
 };
 pub use host_input::{
     DefaultSelection, HostChoice, HostInputRequest, HostInputResponse, HostQuestion, SelectionMode,

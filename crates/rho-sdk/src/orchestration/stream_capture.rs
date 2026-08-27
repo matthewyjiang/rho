@@ -192,7 +192,7 @@ pub(super) fn capture_provider_event(
     identity: &crate::model::ModelIdentity,
     accumulated_usage: &ModelUsage,
     capture: &mut StreamCapture,
-) -> RunEvent {
+) -> Option<RunEvent> {
     match event {
         ModelEvent::OutputDelta(text) => {
             if capture.merge_output_text {
@@ -200,7 +200,7 @@ pub(super) fn capture_provider_event(
                     capture.content.push(ContentBlock::Text(text.clone()));
                     capture.merge_output_text = !capture.seal_next_text_part;
                     capture.seal_next_text_part = false;
-                    return RunEvent::AssistantTextDelta { text };
+                    return Some(RunEvent::AssistantTextDelta { text });
                 };
                 existing.push_str(&text);
             } else {
@@ -210,21 +210,28 @@ pub(super) fn capture_provider_event(
                 capture.merge_output_text = !capture.seal_next_text_part;
                 capture.seal_next_text_part = false;
             }
-            RunEvent::AssistantTextDelta { text }
+            Some(RunEvent::AssistantTextDelta { text })
         }
         ModelEvent::ReasoningDelta(text) => {
             capture.merge_output_text = false;
             capture.seal_next_text_part = false;
             capture.reasoning.push_str(&text);
-            RunEvent::ReasoningDelta { text }
+            Some(RunEvent::ReasoningDelta { text })
         }
         ModelEvent::ReasoningSummaryDelta(text) => {
             capture.merge_output_text = false;
             capture.seal_next_text_part = false;
             capture.reasoning_summary.push_str(&text);
-            RunEvent::ReasoningSummaryDelta { text }
+            Some(RunEvent::ReasoningSummaryDelta { text })
         }
-        ModelEvent::WebSearch(detail) => RunEvent::WebSearch { detail },
+        ModelEvent::WebSearch(detail) => Some(RunEvent::WebSearch { detail }),
+        ModelEvent::HostedToolActivity { name, detail } => {
+            Some(RunEvent::HostedToolActivity { name, detail })
+        }
+        ModelEvent::ServiceTierFallback { requested, used } => {
+            Some(RunEvent::ProviderServiceTierFallback { requested, used })
+        }
+        ModelEvent::GenerationOutputTokens(_) => None,
         ModelEvent::ToolCallDelta {
             index,
             id,
@@ -252,44 +259,18 @@ pub(super) fn capture_provider_event(
             let id = id.or_else(|| partial.partial.id.clone());
             let name = name.or_else(|| partial.partial.name.clone());
             upsert_captured_tool_call(capture, index);
-            RunEvent::ToolCallUpdated {
+            Some(RunEvent::ToolCallUpdated {
                 index,
                 id,
                 name,
                 arguments_delta: arguments,
-            }
+            })
         }
         ModelEvent::ProviderContext {
             kind,
             position,
             data,
         } => {
-            // Reserved ProviderContext carriers stay off the replay path.
-            if kind == crate::model::HOSTED_TOOL_ACTIVITY_KIND {
-                let name = data
-                    .get("name")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("unknown")
-                    .to_owned();
-                let detail = data
-                    .get("detail")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or_default()
-                    .to_owned();
-                return RunEvent::HostedToolActivity { name, detail };
-            }
-            if kind == crate::model::SERVICE_TIER_FALLBACK_KIND {
-                let requested = match data.get("requested").and_then(|value| value.as_str()) {
-                    Some("priority") => crate::model::ServiceTier::Priority,
-                    _ => crate::model::ServiceTier::Priority,
-                };
-                let used = data
-                    .get("used")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("unknown")
-                    .to_owned();
-                return RunEvent::ProviderServiceTierFallback { requested, used };
-            }
             // Provider-native boundaries (for example Gemini thought signatures)
             // must not be collapsed into a single cancelled text block.
             capture.merge_output_text = false;
@@ -300,16 +281,16 @@ pub(super) fn capture_provider_event(
                 position,
                 data,
             });
-            RunEvent::ProviderContextUpdated { kind }
+            Some(RunEvent::ProviderContextUpdated { kind })
         }
         ModelEvent::Usage(usage) => {
             // Providers may emit partial usage across multiple stream events
             // (for example Anthropic input/cache at message_start and later
             // output deltas). Merge within the turn instead of overwriting.
             capture.usage = capture.usage.saturating_add(&usage);
-            RunEvent::UsageUpdated {
+            Some(RunEvent::UsageUpdated {
                 usage: accumulated_usage.saturating_add(&capture.usage),
-            }
+            })
         }
     }
 }

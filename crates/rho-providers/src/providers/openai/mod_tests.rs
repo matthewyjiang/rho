@@ -3,7 +3,7 @@ use crate::model::{
     AbortedAssistant, ContentBlock, Message, PartialToolCall, ReasoningCapabilities,
     ReasoningLevelSet, ToolCall, ToolSpec,
 };
-use crate::protocol::openai_chat::{generation_output_tokens_event, ChatStreamAccumulator};
+use crate::protocol::openai_chat::ChatStreamAccumulator;
 use crate::protocol::openai_responses::{
     codex_input_items, codex_reasoning_param, extract_sse_text, handle_codex_sse_line,
     CodexSseState,
@@ -46,10 +46,10 @@ fn reported_service_tier_detects_priority_fallback() {
         if should_report {
             assert_eq!(
                 events,
-                vec![ModelEvent::service_tier_fallback(
-                    rho_sdk::model::ServiceTier::Priority,
-                    "default",
-                )]
+                vec![ModelEvent::ServiceTierFallback {
+                    requested: rho_sdk::model::ServiceTier::Priority,
+                    used: "default".into(),
+                }]
             );
         }
     }
@@ -151,7 +151,6 @@ async fn api_responses_body_uses_each_request_reasoning_level() {
     let provider = OpenAiProvider::new_with_auth(
         "rho-request-reasoning-test".into(),
         Auth::ApiKey("test-key".into()),
-        std::sync::Arc::new(crate::credentials::MemoryCredentialStore::default()),
     );
     let messages = [Message::user_text("hello")];
     let low = provider
@@ -343,7 +342,10 @@ fn completed_tool_call_arguments_are_published_exactly_once() {
             | ModelEvent::ReasoningSummaryDelta(_)
             | ModelEvent::WebSearch(_)
             | ModelEvent::ProviderContext { .. }
-            | ModelEvent::Usage(_) => None,
+            | ModelEvent::Usage(_)
+            | ModelEvent::GenerationOutputTokens(_)
+            | ModelEvent::HostedToolActivity { .. }
+            | ModelEvent::ServiceTierFallback { .. } => None,
         })
         .collect::<String>();
     assert_eq!(streamed, r#"{"path":"src/main.rs"}"#);
@@ -378,7 +380,10 @@ fn parallel_tool_calls_stream_arguments_per_output_index() {
             | ModelEvent::ReasoningSummaryDelta(_)
             | ModelEvent::WebSearch(_)
             | ModelEvent::ProviderContext { .. }
-            | ModelEvent::Usage(_) => None,
+            | ModelEvent::Usage(_)
+            | ModelEvent::GenerationOutputTokens(_)
+            | ModelEvent::HostedToolActivity { .. }
+            | ModelEvent::ServiceTierFallback { .. } => None,
         })
         .collect::<Vec<_>>();
     assert_eq!(
@@ -419,7 +424,9 @@ fn chat_stream_usage_normalizes_prompt_cache_tokens() {
         events,
         vec![
             ModelEvent::OutputDelta("ok".into()),
-            generation_output_tokens_event(15),
+            ModelEvent::GenerationOutputTokens(rho_sdk::model::GenerationOutputTokens::Reported(
+                15
+            ),),
             ModelEvent::Usage(crate::model::ModelUsage {
                 input_tokens: Some(100),
                 output_tokens: Some(20),
@@ -452,7 +459,9 @@ fn codex_response_usage_normalizes_input_cache_tokens() {
     assert_eq!(
         events,
         vec![
-            generation_output_tokens_event(18),
+            ModelEvent::GenerationOutputTokens(rho_sdk::model::GenerationOutputTokens::Reported(
+                18
+            ),),
             ModelEvent::Usage(crate::model::ModelUsage {
                 input_tokens: Some(100),
                 output_tokens: Some(25),
@@ -481,6 +490,9 @@ fn codex_sse_line_emits_reasoning_summary_delta() {
                 ModelEvent::WebSearch(_) => {}
                                 ModelEvent::ToolCallDelta { .. } => {}
                 ModelEvent::Usage(_) => {}
+                ModelEvent::GenerationOutputTokens(_)
+                | ModelEvent::HostedToolActivity { .. }
+                | ModelEvent::ServiceTierFallback { .. } => {}
             }
             Ok(())
         }),
@@ -518,6 +530,9 @@ fn codex_sse_line_emits_web_search_detail() {
                 ModelEvent::ProviderContext { .. } => {}
                 ModelEvent::ToolCallDelta { .. } => {}
                 ModelEvent::Usage(_) => {}
+                ModelEvent::GenerationOutputTokens(_)
+                | ModelEvent::HostedToolActivity { .. }
+                | ModelEvent::ServiceTierFallback { .. } => {}
             }
             Ok(())
         }),
@@ -536,9 +551,8 @@ fn codex_sse_line_emits_x_search_detail() {
         &mut state,
         &mut Some(&mut |event| {
             match event {
-                event if event.as_hosted_tool_activity().is_some() => {
-                    let (name, detail) = event.as_hosted_tool_activity().unwrap();
-                    searches.push((name.to_owned(), detail.to_owned()));
+                ModelEvent::HostedToolActivity { name, detail } => {
+                    searches.push((name, detail));
                 }
                 ModelEvent::WebSearch(_) => {}
                 ModelEvent::OutputDelta(_) => {}
@@ -547,6 +561,7 @@ fn codex_sse_line_emits_x_search_detail() {
                 ModelEvent::ProviderContext { .. } => {}
                 ModelEvent::ToolCallDelta { .. } => {}
                 ModelEvent::Usage(_) => {}
+                ModelEvent::GenerationOutputTokens(_) | ModelEvent::ServiceTierFallback { .. } => {}
             }
             Ok(())
         }),
@@ -569,11 +584,10 @@ fn codex_sse_search_activity_is_not_duplicated_on_completed() {
     let mut collect = |event: ModelEvent| {
         match event {
             ModelEvent::WebSearch(detail) => events.push(("web_search".into(), detail)),
-            ref event => {
-                if let Some((name, detail)) = event.as_hosted_tool_activity() {
-                    events.push((name.to_owned(), detail.to_owned()));
-                }
+            ModelEvent::HostedToolActivity { name, detail } => {
+                events.push((name, detail));
             }
+            _ => {}
         }
         Ok(())
     };
@@ -620,9 +634,8 @@ fn codex_sse_line_emits_x_search_from_custom_tool_call() {
         &mut state,
         &mut Some(&mut |event| {
             match event {
-                event if event.as_hosted_tool_activity().is_some() => {
-                    let (name, detail) = event.as_hosted_tool_activity().unwrap();
-                    searches.push((name.to_owned(), detail.to_owned()));
+                ModelEvent::HostedToolActivity { name, detail } => {
+                    searches.push((name, detail));
                 }
                 ModelEvent::WebSearch(_) => {}
                 ModelEvent::OutputDelta(_) => {}
@@ -631,6 +644,7 @@ fn codex_sse_line_emits_x_search_from_custom_tool_call() {
                 ModelEvent::ProviderContext { .. } => {}
                 ModelEvent::ToolCallDelta { .. } => {}
                 ModelEvent::Usage(_) => {}
+                ModelEvent::GenerationOutputTokens(_) | ModelEvent::ServiceTierFallback { .. } => {}
             }
             Ok(())
         }),
@@ -653,8 +667,8 @@ fn codex_sse_custom_tool_call_without_xs_call_id_is_not_x_search() {
         r#"data: {"type":"response.output_item.done","item":{"call_id":"call_other-1","input":"{\"query\":\"nope\"}","name":"x_keyword_search","type":"custom_tool_call","id":"ctc_1","status":"completed"}}"#,
         &mut state,
         &mut Some(&mut |event| {
-            if let Some((name, detail)) = event.as_hosted_tool_activity() {
-                searches.push((name.to_owned(), detail.to_owned()));
+            if let ModelEvent::HostedToolActivity { name, detail } = event {
+                searches.push((name, detail));
             }
             Ok(())
         }),
@@ -676,11 +690,10 @@ fn codex_sse_completed_emits_search_activity_when_stream_has_text() {
     let mut collect = |event: ModelEvent| {
         match event {
             ModelEvent::WebSearch(detail) => events.push(("web_search".into(), detail)),
-            ref event => {
-                if let Some((name, detail)) = event.as_hosted_tool_activity() {
-                    events.push((name.to_owned(), detail.to_owned()));
-                }
+            ModelEvent::HostedToolActivity { name, detail } => {
+                events.push((name, detail));
             }
+            _ => {}
         }
         Ok(())
     };
@@ -827,8 +840,8 @@ fn codex_sse_search_without_detail_still_emits_activity() {
         r#"data: {"type":"response.output_item.done","item":{"type":"x_search_call","id":"xs_1","status":"completed"}}"#,
         &mut state,
         &mut Some(&mut |event| {
-            if let Some((name, detail)) = event.as_hosted_tool_activity() {
-                searches.push((name.to_owned(), detail.to_owned()));
+            if let ModelEvent::HostedToolActivity { name, detail } = event {
+                searches.push((name, detail));
             }
             Ok(())
         }),
@@ -846,8 +859,8 @@ fn codex_sse_search_query_count_ignores_invalid_entries() {
         r#"data: {"type":"response.output_item.done","item":{"type":"x_search_call","id":"xs_1","arguments":"{\"queries\":[\"a\",\"\",7,\"b\",\"c\",\"d\"]}"}}"#,
         &mut state,
         &mut Some(&mut |event| {
-            if let Some((_, detail)) = event.as_hosted_tool_activity() {
-                details.push(detail.to_owned());
+            if let ModelEvent::HostedToolActivity { detail, .. } = event {
+                details.push(detail);
             }
             Ok(())
         }),
@@ -866,11 +879,8 @@ fn codex_sse_search_action_url_and_pattern_are_bare_detail() {
     let mut collect = |event: ModelEvent| {
         match event {
             ModelEvent::WebSearch(detail) => details.push(detail),
-            ref event => {
-                if let Some((_, detail)) = event.as_hosted_tool_activity() {
-                    details.push(detail.to_owned());
-                }
-            }
+            ModelEvent::HostedToolActivity { detail, .. } => details.push(detail),
+            _ => {}
         }
         Ok(())
     };

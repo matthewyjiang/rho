@@ -99,7 +99,7 @@ impl App {
     ) -> anyhow::Result<()> {
         let providers = if selected_provider == provider_picker::ALL_REFRESHABLE_PROVIDERS {
             self.refresh_available_auths();
-            provider::visible_providers()
+            provider::providers()
                 .iter()
                 .filter(|descriptor| descriptor.supports_model_refresh())
                 .filter(|descriptor| {

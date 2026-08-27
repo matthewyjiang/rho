@@ -728,7 +728,10 @@ async fn a_new_run_resets_the_context_usage_baseline() {
         run_id: RunId::new(),
         revision: Default::default(),
     });
-    interactive.observe_event(&RunEvent::StepStarted { step: 1 });
+    interactive.observe_event(&RunEvent::StepStarted {
+        step: 1,
+        estimated_context_tokens: 0,
+    });
     interactive.observe_event(&RunEvent::UsageUpdated {
         usage: ModelUsage {
             input_tokens: Some(300),
@@ -757,8 +760,10 @@ async fn context_estimated_notes_estimated_context_before_provider_usage() {
         run_id: RunId::new(),
         revision: Default::default(),
     });
-    interactive.observe_event(&RunEvent::StepStarted { step: 1 });
-    interactive.observe_event(&RunEvent::ContextEstimated { tokens: 2_500 });
+    interactive.observe_event(&RunEvent::StepStarted {
+        step: 1,
+        estimated_context_tokens: 2_500,
+    });
 
     assert_eq!(
         interactive.take_context_usage(),

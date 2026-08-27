@@ -293,10 +293,8 @@ async fn malformed_provider_streams_retry_once_then_fail_without_history_growth(
     let session = runtime.session(SessionOptions::default()).await.unwrap();
     let mut run = session.start(UserInput::text("malformed")).await.unwrap();
     let mut fragment_events = 0;
-    let mut legacy_retry_events = 0;
     let mut stream_resets = 0;
     let mut terminal_failures = 0;
-    let mut previous_event = None;
 
     while let Some(event) = tokio::time::timeout(TEST_TIMEOUT, run.next_event())
         .await
@@ -304,35 +302,19 @@ async fn malformed_provider_streams_retry_once_then_fail_without_history_growth(
     {
         match &event {
             RunEvent::ToolCallUpdated { .. } => fragment_events += 1,
-            #[allow(deprecated)]
-            RunEvent::ProviderActivity { kind, .. } if kind == "invalid_response_retry" => {
-                legacy_retry_events += 1;
-            }
             RunEvent::ProviderStreamReset {
                 reason: rho_sdk::ProviderStreamResetReason::InvalidResponse,
                 ..
             } => {
                 stream_resets += 1;
-                #[allow(deprecated)]
-                let adjacent_legacy = matches!(
-                    previous_event.as_ref(),
-                    Some(RunEvent::ProviderActivity { kind, .. })
-                        if kind == "invalid_response_retry"
-                );
-                assert!(
-                    adjacent_legacy,
-                    "ProviderStreamReset(InvalidResponse) must be immediately preceded by legacy invalid_response_retry activity, previous={previous_event:?}"
-                );
             }
             RunEvent::Failed { .. } => terminal_failures += 1,
             _ => {}
         }
-        previous_event = Some(event);
     }
     let error = run.outcome().await.unwrap_err();
     assert!(matches!(error, Error::Provider(_)));
     assert_eq!(fragment_events, EVENTS_PER_ATTEMPT * 2);
-    assert_eq!(legacy_retry_events, 1);
     assert_eq!(stream_resets, 1);
     assert_eq!(terminal_failures, 1);
     assert_eq!(provider.recorded_requests().len(), 2);

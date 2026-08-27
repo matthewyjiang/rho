@@ -1,6 +1,6 @@
 #[test]
 fn provider_ids_have_unique_descriptors_and_lookup_round_trips() {
-    let providers = super::providers();
+    let providers = super::builtin_providers();
 
     for (index, descriptor) in providers.iter().enumerate() {
         assert_eq!(
@@ -250,11 +250,11 @@ fn minimax_declares_anthropic_messages_on_its_compatible_base() {
 // Owner: provider registry
 #[test]
 fn openai_and_codex_share_runtime_family() {
-    use super::{same_provider_family, OpenAiRuntimeAuth, ProviderId, ProviderRuntime};
+    use super::{OpenAiRuntimeAuth, ProviderId, ProviderRuntime};
 
     let openai = super::provider_descriptor_by_id(ProviderId::OpenAi);
     let codex = super::provider_descriptor_by_id(ProviderId::OpenAiCodex);
-    assert!(same_provider_family(openai.id, codex.id));
+    assert!(openai.shares_auth_family(*codex));
     assert_eq!(
         openai.runtime,
         ProviderRuntime::OpenAi {

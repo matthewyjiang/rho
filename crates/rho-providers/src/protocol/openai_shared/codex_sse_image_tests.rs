@@ -20,8 +20,8 @@ fn image_generation_call_emits_activity_and_slim_replay() {
         ),
         &mut state,
         &mut Some(&mut |event| {
-            if let Some((name, detail)) = event.as_hosted_tool_activity() {
-                activities.push((name.to_owned(), detail.to_owned()));
+            if let ModelEvent::HostedToolActivity { name, detail } = &event {
+                activities.push((name.clone(), detail.clone()));
             }
             if let ModelEvent::ProviderContext { kind, data, .. } = &event {
                 if kind == "openai_response_output_item"
@@ -41,8 +41,8 @@ fn image_generation_call_emits_activity_and_slim_replay() {
         ),
         &mut state,
         &mut Some(&mut |event| {
-            if let Some((name, detail)) = event.as_hosted_tool_activity() {
-                activities.push((name.to_owned(), detail.to_owned()));
+            if let ModelEvent::HostedToolActivity { name, detail } = &event {
+                activities.push((name.clone(), detail.clone()));
             }
             Ok(())
         }),

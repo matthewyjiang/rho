@@ -86,6 +86,7 @@ fn play(
                 time_to_first_token: None,
                 generation_time: None,
                 total_latency: Duration::from_secs(request.latency_secs),
+                generation_output_tokens: None,
             },
             metadata,
             t0 + Duration::from_secs(request.at_secs),
@@ -434,6 +435,7 @@ fn a_request_without_reported_usage_is_not_sampled() {
         time_to_first_token: None,
         generation_time: None,
         total_latency: Duration::from_secs(1),
+        generation_output_tokens: None,
     };
 
     tracker.record_request(&profile, metrics, None, t0);

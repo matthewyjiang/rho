@@ -197,7 +197,7 @@ impl ChatStreamAccumulator {
         finalize_chat_assistant(self.text, self.reasoning, self.tool_calls, self.policy)
     }
 
-    /// Finalizes and emits the usage snapshot, throughput carrier, and retained
+    /// Finalizes and emits the usage snapshot, generation-output metric, and retained
     /// reasoning context through `on_event`.
     pub(crate) fn finish(
         self,
@@ -211,8 +211,12 @@ impl ChatStreamAccumulator {
             self.usage_snapshot.and_then(RawUsage::reported_output),
             context,
         );
-        if let Some(event) = generation.into_event() {
-            on_event(event)?;
+        if let Some(tokens) = generation {
+            on_event(ModelEvent::GenerationOutputTokens(tokens))?;
+        } else if self.reasoning_delta_streamed {
+            on_event(ModelEvent::GenerationOutputTokens(
+                rho_sdk::model::GenerationOutputTokens::Unavailable,
+            ))?;
         }
         if let Some(usage) = self.usage_snapshot {
             on_event(ModelEvent::Usage(usage.into_model_usage()))?;

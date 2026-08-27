@@ -304,7 +304,10 @@ async fn cancelled_applied_event_keeps_steering_out_of_history() {
     let cancellation = CancellationToken::new();
     let (events, _receiver) = mpsc::channel(1);
     events
-        .send(RunEvent::StepStarted { step: 1 })
+        .send(RunEvent::StepStarted {
+            step: 1,
+            estimated_context_tokens: 0,
+        })
         .await
         .unwrap();
     let mut steering = SteeringQueue::new();
@@ -343,11 +346,7 @@ async fn cancellation_before_the_first_tool_interrupts_every_unresolved_call() {
     ));
     assert!(matches!(
         next_event(&mut run).await,
-        RunEvent::StepStarted { .. }
-    ));
-    assert!(matches!(
-        next_event(&mut run).await,
-        RunEvent::ContextEstimated { tokens } if tokens > 0
+        RunEvent::StepStarted { estimated_context_tokens, .. } if estimated_context_tokens > 0
     ));
     assert!(matches!(
         next_event(&mut run).await,
@@ -603,7 +602,7 @@ async fn retryable_provider_failures_are_retried() {
     let outcome = loop {
         match next_event_virtual(&mut run).await {
             RunEvent::ProviderStreamReset {
-                reason: crate::ProviderStreamResetReason::RetryableFailure(_),
+                reason: crate::ProviderStreamResetReason::RetryableFailure { .. },
                 ..
             } => {
                 retries += 1;
@@ -682,9 +681,10 @@ async fn retry_after_partial_stream_resets_output_and_reuses_request_history() {
     assert_eq!(outcome.usage(), &recovered_usage);
     assert_eq!(
         resets,
-        [crate::ProviderStreamResetReason::RetryableFailure(
-            ProviderErrorKind::InvalidResponse
-        )]
+        [crate::ProviderStreamResetReason::RetryableFailure {
+            kind: ProviderErrorKind::InvalidResponse,
+            retry_after: None,
+        }]
     );
     assert_eq!(usages, [failed_usage, recovered_usage]);
     let requests = provider.recorded_requests();
@@ -701,7 +701,7 @@ async fn retryable_provider_failures_exhaust_after_bounded_attempts() {
     let retryability = loop {
         match next_event_virtual(&mut run).await {
             RunEvent::ProviderStreamReset {
-                reason: crate::ProviderStreamResetReason::RetryableFailure(_),
+                reason: crate::ProviderStreamResetReason::RetryableFailure { .. },
                 ..
             } => {
                 retries += 1;
@@ -792,7 +792,7 @@ async fn cancellation_during_retry_backoff_stops_the_run() {
     loop {
         match next_event(&mut run).await {
             RunEvent::ProviderStreamReset {
-                reason: crate::ProviderStreamResetReason::RetryableFailure(_),
+                reason: crate::ProviderStreamResetReason::RetryableFailure { .. },
                 ..
             } => break,
             RunEvent::Failed { message, .. } => panic!("run failed: {message}"),
@@ -850,7 +850,7 @@ async fn cancellation_during_retry_backoff_drops_abandoned_partial_stream() {
     loop {
         match next_event(&mut run).await {
             RunEvent::ProviderStreamReset {
-                reason: crate::ProviderStreamResetReason::RetryableFailure(_),
+                reason: crate::ProviderStreamResetReason::RetryableFailure { .. },
                 ..
             } => break,
             RunEvent::Failed { message, .. } => panic!("run failed: {message}"),
@@ -913,11 +913,7 @@ async fn event_delivery_failure_does_not_commit_interrupted_tool_results() {
     ));
     assert!(matches!(
         event_receiver.recv().await,
-        Some(RunEvent::StepStarted { .. })
-    ));
-    assert!(matches!(
-        event_receiver.recv().await,
-        Some(RunEvent::ContextEstimated { tokens }) if tokens > 0
+        Some(RunEvent::StepStarted { estimated_context_tokens, .. }) if estimated_context_tokens > 0
     ));
     assert!(matches!(
         event_receiver.recv().await,
@@ -968,9 +964,9 @@ async fn rate_limit_retry_after_is_carried_on_stream_reset() {
         match next_event_virtual(&mut run).await {
             RunEvent::ProviderStreamReset {
                 reason:
-                    crate::ProviderStreamResetReason::RetryableFailureWithRetryAfter {
+                    crate::ProviderStreamResetReason::RetryableFailure {
                         kind: ProviderErrorKind::RateLimit,
-                        retry_after: delay,
+                        retry_after: Some(delay),
                     },
                 ..
             } => {

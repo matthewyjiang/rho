@@ -48,7 +48,7 @@ async fn completed_terminal_backpressure_keeps_the_run_owner_active() {
     );
     let runtime = Rho::builder()
         .provider(provider)
-        .event_capacity(NonZeroUsize::new(3).unwrap())
+        .event_capacity(NonZeroUsize::new(2).unwrap())
         .build()
         .unwrap();
     let session = runtime.session(SessionOptions::default()).await.unwrap();
@@ -58,8 +58,8 @@ async fn completed_terminal_backpressure_keeps_the_run_owner_active() {
         run.next_event().await,
         Some(RunEvent::Started { .. })
     ));
-    // Leave StepStarted, ContextEstimated, and model metrics in the three event
-    // slots so terminal delivery cannot complete.
+    // Leave StepStarted and model metrics in the two event slots so terminal
+    // delivery cannot complete.
     wait_for_state(&session, SessionState::Completed).await;
 
     assert!(session.is_running());
@@ -69,11 +69,8 @@ async fn completed_terminal_backpressure_keeps_the_run_owner_active() {
     ));
     assert!(matches!(
         run.next_event().await,
-        Some(RunEvent::StepStarted { step: 1 })
-    ));
-    assert!(matches!(
-        run.next_event().await,
-        Some(RunEvent::ContextEstimated { tokens }) if tokens > 0
+        Some(RunEvent::StepStarted { step: 1, estimated_context_tokens })
+            if estimated_context_tokens > 0
     ));
     assert!(matches!(
         run.next_event().await,
@@ -105,7 +102,7 @@ async fn failed_terminal_backpressure_keeps_the_run_owner_active() {
     );
     let runtime = Rho::builder()
         .provider(provider)
-        .event_capacity(NonZeroUsize::new(2).unwrap())
+        .event_capacity(NonZeroUsize::new(1).unwrap())
         .build()
         .unwrap();
     let session = runtime.session(SessionOptions::default()).await.unwrap();
@@ -115,8 +112,8 @@ async fn failed_terminal_backpressure_keeps_the_run_owner_active() {
         run.next_event().await,
         Some(RunEvent::Started { .. })
     ));
-    // Leave StepStarted and ContextEstimated in the event slots so terminal
-    // delivery cannot complete after the provider fails.
+    // Leave StepStarted in the event slot so terminal delivery cannot complete
+    // after the provider fails.
     wait_for_state(&session, SessionState::Failed).await;
 
     assert!(session.is_running());
@@ -126,11 +123,8 @@ async fn failed_terminal_backpressure_keeps_the_run_owner_active() {
     ));
     assert!(matches!(
         run.next_event().await,
-        Some(RunEvent::StepStarted { step: 1 })
-    ));
-    assert!(matches!(
-        run.next_event().await,
-        Some(RunEvent::ContextEstimated { tokens }) if tokens > 0
+        Some(RunEvent::StepStarted { step: 1, estimated_context_tokens })
+            if estimated_context_tokens > 0
     ));
     assert!(matches!(
         run.next_event().await,

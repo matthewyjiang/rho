@@ -65,12 +65,9 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
             ProviderRuntime::OpenAi { auth_mode: mode } => {
                 let openai_auth = match mode {
                     OpenAiRuntimeAuth::ApiKey => load_openai_api_key_auth(self.store.as_ref())?,
-                    OpenAiRuntimeAuth::Codex => load_codex_auth(self.store.as_ref())?,
+                    OpenAiRuntimeAuth::Codex => load_codex_auth(self.store.clone())?,
                 };
-                Ok(ProviderCredential::OpenAi {
-                    auth: openai_auth,
-                    refresh_store: self.store.clone(),
-                })
+                Ok(ProviderCredential::OpenAi { auth: openai_auth })
             }
             ProviderRuntime::Anthropic => Ok(ProviderCredential::AnthropicApiKey(
                 SecretString::new(load_anthropic_api_key(self.store.as_ref())?),
@@ -280,29 +277,27 @@ fn load_openai_api_key_auth(store: &dyn CredentialStore) -> Result<Auth, ModelEr
     Ok(Auth::ApiKey(key))
 }
 
-fn load_codex_auth(store: &dyn CredentialStore) -> Result<Auth, ModelError> {
+fn load_codex_auth(store: Arc<dyn CredentialStore>) -> Result<Auth, ModelError> {
     let env_var = provider::provider_descriptor_by_id(provider::ProviderId::OpenAiCodex)
         .default_auth()
         .auth_kind
         .env_var()
         .expect("Codex OAuth must declare an environment variable");
     if let Ok(access_token) = std::env::var(env_var) {
-        return Ok(Auth::Codex {
-            tokens: CodexTokens {
+        return Ok(Auth::codex(
+            CodexTokens {
                 access_token,
                 refresh_token: None,
                 id_token: None,
                 account_id: std::env::var("CODEX_ACCOUNT_ID").ok(),
             },
-            source: CodexAuthSource::Env,
-        });
+            CodexAuthSource::Env,
+            store,
+        ));
     }
-    let tokens =
-        load_codex_tokens(store)?.ok_or_else(|| missing_credentials_error("openai-codex"))?;
-    Ok(Auth::Codex {
-        tokens,
-        source: CodexAuthSource::Store,
-    })
+    let tokens = load_codex_tokens(store.as_ref())?
+        .ok_or_else(|| missing_credentials_error("openai-codex"))?;
+    Ok(Auth::codex(tokens, CodexAuthSource::Store, store))
 }
 
 fn load_anthropic_api_key(store: &dyn CredentialStore) -> Result<String, ModelError> {

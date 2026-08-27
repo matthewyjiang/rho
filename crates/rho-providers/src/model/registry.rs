@@ -1,13 +1,6 @@
 use crate::{model::ModelError, provider};
 
-#[allow(deprecated)]
-pub use crate::provider::{
-    ProviderRuntime, KIMI_CODE_API_BASE, META_API_BASE, MOONSHOT_API_BASE, OLLAMA_API_BASE,
-    OLLAMA_CLOUD_API_BASE, OPENROUTER_API_BASE, POOLSIDE_API_BASE, QWEN_TOKEN_PLAN_API_BASE,
-};
-
-// NEXT_MAJOR(rho-providers): remove deprecated registry re-exports for API bases that are
-// canonical in provider:: and kept only for provider_config / test compatibility.
+pub use crate::provider::ProviderRuntime;
 
 /// Runtime construction data for a registered provider name.
 ///

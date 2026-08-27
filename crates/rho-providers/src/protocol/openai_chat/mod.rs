@@ -1,7 +1,5 @@
 mod types;
 
-#[cfg(test)]
-pub(crate) use super::openai_shared::usage::generation_output_tokens_event;
 pub(crate) use super::openai_shared::{
     convert::{
         convert_openai_response, response_without_stream_context, to_openai_message_for_target,

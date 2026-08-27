@@ -236,7 +236,10 @@ fn extract_codex_search_activity(item: &serde_json::Value) -> Option<ModelEvent>
     let detail = extract_codex_search_detail(item).unwrap_or_default();
     Some(match kind {
         CodexSearchKind::Web => ModelEvent::WebSearch(detail),
-        CodexSearchKind::X => ModelEvent::hosted_tool_activity("x_search", detail),
+        CodexSearchKind::X => ModelEvent::HostedToolActivity {
+            name: "x_search".into(),
+            detail,
+        },
     })
 }
 
@@ -282,10 +285,8 @@ fn hosted_activity_key(item: &serde_json::Value, event: &ModelEvent) -> String {
         .unwrap_or("search");
     let detail = match event {
         ModelEvent::WebSearch(detail) => detail.as_str(),
-        other => other
-            .as_hosted_tool_activity()
-            .map(|(_, detail)| detail)
-            .unwrap_or(""),
+        ModelEvent::HostedToolActivity { detail, .. } => detail.as_str(),
+        _ => "",
     };
     format!("{kind}:{detail}")
 }
@@ -317,7 +318,10 @@ fn emit_image_generation_activity(
         .unwrap_or_default();
     emit_hosted_activity(
         item,
-        ModelEvent::hosted_tool_activity("image_generation", detail),
+        ModelEvent::HostedToolActivity {
+            name: "image_generation".into(),
+            detail,
+        },
         state,
         on_event,
     )
@@ -731,10 +735,16 @@ pub(crate) fn handle_codex_sse_value(
             .or_else(|| extract_usage_report(value, context));
         if let Some(report) = usage_report {
             if let Some(on_event) = on_event.as_mut() {
-                if let Some(event) = report.generation_output_tokens.into_event() {
-                    on_event(event)?;
+                if let Some(tokens) = report.generation_output_tokens {
+                    on_event(ModelEvent::GenerationOutputTokens(tokens))?;
                 }
                 on_event(ModelEvent::Usage(report.usage))?;
+            }
+        } else if state.reasoning_streamed {
+            if let Some(on_event) = on_event.as_mut() {
+                on_event(ModelEvent::GenerationOutputTokens(
+                    rho_sdk::model::GenerationOutputTokens::Unavailable,
+                ))?;
             }
         }
         // The completed envelope is authoritative, but may restate items already

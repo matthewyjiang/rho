@@ -146,7 +146,7 @@ fn provider_stream_reset_emits_discard_thought() {
     }
 }
 
-// Covers: host-only or deprecated run events must not become session updates
+// Covers: run events ACP has no session update for must not become session updates
 // Owner: acp event mapper
 #[test]
 fn ignored_events_emit_nothing() {
@@ -156,7 +156,10 @@ fn ignored_events_emit_nothing() {
             run_id: RunId::from_string("run-1").unwrap(),
             revision: Revision::INITIAL,
         },
-        RunEvent::StepStarted { step: 1 },
+        RunEvent::StepStarted {
+            step: 1,
+            estimated_context_tokens: 0,
+        },
         RunEvent::ToolCallUpdated {
             index: 0,
             id: Some("call-1".into()),
@@ -180,13 +183,13 @@ fn ignored_events_emit_nothing() {
         RunEvent::Failed {
             message: "boom".into(),
             retryability: rho_sdk::Retryability::Permanent,
+            revision: Revision::INITIAL,
         },
         RunEvent::SteeringApplied { ids: Vec::new() },
         RunEvent::ProviderRequestRetry,
         RunEvent::WebSearch {
             detail: "search".into(),
         },
-        RunEvent::ContextEstimated { tokens: 12 },
         RunEvent::HostedToolActivity {
             name: "x_search".into(),
             detail: "hit".into(),

@@ -109,6 +109,7 @@ fn open_compaction_failure_emits_tool_finish_then_failed() {
         &rho_sdk::RunEvent::Failed {
             message: "provider unavailable".into(),
             retryability: rho_sdk::Retryability::Retryable,
+            revision: rho_sdk::Revision::INITIAL,
         },
     );
     assert_eq!(events.len(), 2);
@@ -197,6 +198,7 @@ fn call_id_less_preview_and_later_update_reuse_the_same_key() {
 fn model_call_completed(
     output_tokens: Option<u64>,
     generation_time: Option<Duration>,
+    generation_output_tokens: Option<rho_sdk::model::GenerationOutputTokens>,
 ) -> rho_sdk::RunEvent {
     rho_sdk::RunEvent::ModelCallCompleted {
         profile: rho_sdk::ModelCallProfile {
@@ -210,12 +212,12 @@ fn model_call_completed(
             time_to_first_token: Some(Duration::from_millis(200)),
             generation_time,
             total_latency: Duration::from_millis(2_200),
+            generation_output_tokens,
         },
     }
 }
 
-// Covers: attach journals resolved generation tokens and time, including the
-// 1.x ProviderActivity carrier path.
+// Covers: attach journals resolved generation tokens and time from metrics.
 // Owner: attach SDK writer
 #[test]
 fn model_call_completed_journals_resolved_tokens_and_time() {
@@ -223,7 +225,7 @@ fn model_call_completed_journals_resolved_tokens_and_time() {
     assert_eq!(
         translate_run_event(
             &mut adapter,
-            &model_call_completed(Some(100), Some(Duration::from_secs(2))),
+            &model_call_completed(Some(100), Some(Duration::from_secs(2)), None),
         ),
         vec![AttachmentEvent::ModelCallCompleted {
             generation_output_tokens: 100,
@@ -231,16 +233,14 @@ fn model_call_completed_journals_resolved_tokens_and_time() {
         }]
     );
 
-    #[allow(deprecated)]
-    let carrier = rho_sdk::RunEvent::ProviderActivity {
-        kind: "model_call_generation_output_tokens".into(),
-        detail: "80".into(),
-    };
-    assert!(translate_run_event(&mut adapter, &carrier).is_empty());
     assert_eq!(
         translate_run_event(
             &mut adapter,
-            &model_call_completed(Some(100), Some(Duration::from_secs(2))),
+            &model_call_completed(
+                Some(100),
+                Some(Duration::from_secs(2)),
+                Some(rho_sdk::model::GenerationOutputTokens::Reported(80)),
+            ),
         ),
         vec![AttachmentEvent::ModelCallCompleted {
             generation_output_tokens: 80,
@@ -254,16 +254,16 @@ fn model_call_completed_journals_resolved_tokens_and_time() {
 #[test]
 fn model_call_completed_without_tokens_or_time_is_not_journaled() {
     let mut adapter = SdkEventAdapter::default();
-    #[allow(deprecated)]
-    let unavailable = rho_sdk::RunEvent::ProviderActivity {
-        kind: "model_call_generation_output_tokens".into(),
-        detail: "unavailable".into(),
-    };
-    assert!(translate_run_event(&mut adapter, &unavailable).is_empty());
     assert!(translate_run_event(
         &mut adapter,
-        &model_call_completed(Some(100), Some(Duration::from_secs(2))),
+        &model_call_completed(
+            Some(100),
+            Some(Duration::from_secs(2)),
+            Some(rho_sdk::model::GenerationOutputTokens::Unavailable),
+        ),
     )
     .is_empty());
-    assert!(translate_run_event(&mut adapter, &model_call_completed(Some(100), None),).is_empty());
+    assert!(
+        translate_run_event(&mut adapter, &model_call_completed(Some(100), None, None),).is_empty()
+    );
 }

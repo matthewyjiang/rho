@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Ensure Release Please and Cargo agree on independently released versions.
 
-Cargo may sit exactly one unpublished patch or minor ahead of the Release Please
-manifest. Publish dry-run path-patches unpublished versions so a new public API
-can land before the next tag. The manifest must stay on the last tagged version;
+Cargo may sit exactly one unpublished patch, minor, or major ahead of the Release
+Please manifest. Publish dry-run path-patches unpublished versions so a new public
+API can land before the next tag. The manifest must stay on the last tagged version;
 if it is pre-bumped without a tag, Release Please loses the baseline and can
 rewrite history as a false major.
 """
@@ -48,7 +48,11 @@ def cargo_agrees_with_release_baseline(cargo_version: str, release_version: str)
     except ValueError:
         return False
     major, minor, patch = released
-    return cargo in {(major, minor, patch + 1), (major, minor + 1, 0)}
+    return cargo in {
+        (major, minor, patch + 1),
+        (major, minor + 1, 0),
+        (major + 1, 0, 0),
+    }
 
 
 def package_versions() -> dict[Path, str]:
@@ -194,8 +198,8 @@ def main() -> None:
             raise RuntimeError(
                 f"{release_path} Cargo version {cargo_version} does not match "
                 f"release-please manifest version {release_version}. "
-                "Cargo may be exactly one unpublished patch or minor ahead of "
-                "the last tagged Release Please version."
+                "Cargo may be exactly one unpublished patch, minor, or major ahead "
+                "of the last tagged Release Please version."
             )
 
     check_internal_dependency_versions()

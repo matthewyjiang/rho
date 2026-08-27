@@ -166,10 +166,7 @@ pub(super) fn apply_overrides(config: &mut Config, cli: &Cli) -> anyhow::Result<
             .expect("cli_auth_profile is only Some when --auth is set");
         let current = provider::provider_descriptor(&config.provider);
         if cli.model.is_none()
-            && current.is_some_and(|descriptor| {
-                !descriptor.is_custom_openai_compatible()
-                    && provider::same_provider_family(descriptor.id, profile.id)
-            })
+            && current.is_some_and(|descriptor| descriptor.shares_auth_family(*profile))
         {
             config.provider = profile.name.into();
             config.auth = auth.into();

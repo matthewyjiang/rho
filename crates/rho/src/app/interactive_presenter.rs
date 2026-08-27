@@ -70,7 +70,7 @@ impl ToolKind {
             "grep" => Self::Grep,
             "glob" => Self::Glob,
             "read_file" => Self::ReadFile,
-            "write" | "write_file" => Self::WriteFile,
+            "write" => Self::WriteFile,
             "skill" => Self::Skill,
             "web_search" => Self::WebSearch,
             "fetch_content" => Self::FetchContent,

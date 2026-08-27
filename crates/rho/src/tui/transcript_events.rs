@@ -299,20 +299,14 @@ impl App {
                 self.usage.current_context = Some(usage);
                 None
             }
-            ViewModelEvent::ModelCallCompleted {
-                profile,
-                metrics,
-                generation_output_tokens,
-            } => {
+            ViewModelEvent::ModelCallCompleted { profile, metrics } => {
                 self.usage.cache_stats.record_request(
                     &profile,
                     metrics,
                     self.model_metadata.as_ref(),
                     Instant::now(),
                 );
-                self.usage
-                    .model_performance
-                    .record(profile, metrics, generation_output_tokens);
+                self.usage.model_performance.record(profile, metrics);
                 None
             }
             ViewModelEvent::Usage(usage) => {
