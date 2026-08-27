@@ -184,7 +184,7 @@ impl App {
                 self.input_ui.set_cursor(self.input_char_len());
                 self.ctrl_c_streak = 0;
             }
-            (KeyModifiers::ALT, KeyCode::Enter) => {
+            _ if self.queue_prompt_shortcut_matches(key) => {
                 if agent.is_compacting() {
                     self.queue_prompt_after_turn()?;
                 } else {

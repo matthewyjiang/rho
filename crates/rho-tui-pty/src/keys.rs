@@ -21,6 +21,11 @@ pub enum Key {
     Ctrl(char),
     Alt(char),
     AltUp,
+    /// ESC CR. Crossterm reports this as Alt+Enter.
+    AltEnter,
+    /// Kitty CSI-u for Ctrl+Enter. Rho's Unix path requests keyboard
+    /// enhancements, so this reaches the TUI as CONTROL+Enter.
+    CtrlEnter,
 }
 
 /// SGR mouse button identifiers used by the harness.
@@ -73,6 +78,8 @@ pub fn encode_key(key: &Key) -> Vec<u8> {
             out
         }
         Key::AltUp => b"\x1b[1;3A".to_vec(),
+        Key::AltEnter => b"\x1b\r".to_vec(),
+        Key::CtrlEnter => b"\x1b[13;5u".to_vec(),
     }
 }
 
@@ -108,6 +115,8 @@ mod tests {
         assert_eq!(encode_key(&Key::Up), b"\x1b[A");
         assert_eq!(encode_key(&Key::PageDown), b"\x1b[6~");
         assert_eq!(encode_key(&Key::AltUp), b"\x1b[1;3A");
+        assert_eq!(encode_key(&Key::AltEnter), b"\x1b\r");
+        assert_eq!(encode_key(&Key::CtrlEnter), b"\x1b[13;5u");
     }
 
     #[test]

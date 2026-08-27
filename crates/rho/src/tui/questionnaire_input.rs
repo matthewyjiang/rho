@@ -116,7 +116,9 @@ impl App {
                 }
                 self.ctrl_c_streak = 0;
             }
-            (KeyModifiers::CONTROL, KeyCode::Char('j')) | (KeyModifiers::ALT, KeyCode::Enter) => {
+            (KeyModifiers::CONTROL, KeyCode::Char('j'))
+            | (KeyModifiers::ALT, KeyCode::Enter)
+            | (KeyModifiers::CONTROL, KeyCode::Enter) => {
                 if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.insert_char('\n');
                 }

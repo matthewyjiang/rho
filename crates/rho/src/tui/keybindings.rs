@@ -4,6 +4,17 @@ use ratatui::DefaultTerminal;
 use super::{App, Entry, InteractiveRuntime};
 
 impl App {
+    /// The configurable queue-prompt chord (Alt+Enter by default), plus an
+    /// always-on Ctrl+Enter fallback for terminals that own Alt+Enter, such
+    /// as Windows Terminal, Windows Alacritty, and WezTerm (fullscreen).
+    pub(super) fn queue_prompt_shortcut_matches(&self, key: KeyEvent) -> bool {
+        self.info.runtime.keybindings.queue_prompt.matches(key)
+            || matches!(
+                (key.modifiers, key.code),
+                (KeyModifiers::CONTROL, KeyCode::Enter)
+            )
+    }
+
     pub(super) fn handle_configurable_running_key(
         &mut self,
         key: KeyEvent,

@@ -23,6 +23,7 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
     let jump = keybindings.jump_to_bottom.chrome_label();
     let toggle_tools = keybindings.toggle_tool_output.chrome_label();
     let newline = keybindings.insert_newline.chrome_label();
+    let queue_prompt = keybindings.queue_prompt.chrome_label();
     let paste_image = keybindings.paste_image.chrome_label();
     let edit_pending = keybindings.edit_pending_input.chrome_label();
     let manage_pending = keybindings.manage_pending_input.chrome_label();
@@ -80,7 +81,9 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
         entry(
             newline,
             "New line",
-            "Insert a newline in the composer without sending. shift+enter also inserts a newline. While idle, alt+enter inserts a newline too.",
+            format!(
+                "Insert a newline in the composer without sending. Shift+Enter also inserts a newline. While idle, {queue_prompt} inserts a newline too."
+            ),
         ),
         entry(
             "Shift+Enter",
@@ -88,9 +91,11 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
             "Insert a newline in the composer without sending.",
         ),
         entry(
-            "Alt+Enter",
+            queue_prompt.clone(),
             "Queue/newline",
-            "While idle, insert a newline. While a model turn is running, queue the current composer contents to run after the turn finishes.",
+            format!(
+                "While idle, insert a newline. While a model turn is running, queue the current composer contents to run after the turn finishes. Ctrl+Enter always works too, for terminals that reserve {queue_prompt} (Windows Terminal, Windows Alacritty, WezTerm)."
+            ),
         ),
         entry(
             paste_image,

@@ -11,6 +11,10 @@ pub struct Keybindings {
     pub jump_to_bottom: KeyBinding,
     pub toggle_tool_output: KeyBinding,
     pub insert_newline: KeyBinding,
+    /// Queues the composer contents as a follow-up while a turn is running.
+    /// Ctrl+Enter is always accepted as a fallback because Windows Terminal,
+    /// Windows Alacritty, and WezTerm bind Alt+Enter to fullscreen by default.
+    pub queue_prompt: KeyBinding,
     pub paste_image: KeyBinding,
     pub edit_pending_input: KeyBinding,
     pub manage_pending_input: KeyBinding,
@@ -28,6 +32,7 @@ impl Default for Keybindings {
             jump_to_bottom: KeyBinding::control_code(KeyCode::End),
             toggle_tool_output: KeyBinding::control('o'),
             insert_newline: KeyBinding::control('j'),
+            queue_prompt: KeyBinding::alt(KeyCode::Enter),
             paste_image: KeyBinding::control('v'),
             edit_pending_input: KeyBinding::alt(KeyCode::Up),
             manage_pending_input: KeyBinding::alt(KeyCode::Char('q')),
@@ -45,6 +50,7 @@ struct PartialKeybindings {
     jump_to_bottom: Option<KeyBinding>,
     toggle_tool_output: Option<KeyBinding>,
     insert_newline: Option<KeyBinding>,
+    queue_prompt: Option<KeyBinding>,
     paste_image: Option<KeyBinding>,
     edit_pending_input: Option<KeyBinding>,
     manage_pending_input: Option<KeyBinding>,
@@ -76,6 +82,7 @@ impl<'de> Deserialize<'de> for Keybindings {
                 .toggle_tool_output
                 .unwrap_or(defaults.toggle_tool_output),
             insert_newline: partial.insert_newline.unwrap_or(defaults.insert_newline),
+            queue_prompt: partial.queue_prompt.unwrap_or(defaults.queue_prompt),
             paste_image: partial.paste_image.unwrap_or(defaults.paste_image),
             edit_pending_input: partial
                 .edit_pending_input

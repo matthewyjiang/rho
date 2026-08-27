@@ -42,6 +42,14 @@ pub(super) const RETRACT_STEERING_DURING_TOOL_SCENARIO: Scenario = Scenario::new
     true,
 );
 
+pub(super) const QUEUE_FOLLOW_UP_DURING_TURN_SCENARIO: Scenario = Scenario::new(
+    "queue_follow_up_during_turn",
+    "Alt+Enter and Ctrl+Enter queue follow-ups during a turn, not steers",
+    DEFAULT_SIZE,
+    QUEUE_FOLLOW_UP_DURING_TURN_STEPS,
+    false,
+);
+
 const STEER_APPEARS_IN_TRANSCRIPT_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
@@ -115,4 +123,43 @@ const RETRACT_STEERING_DURING_TOOL_STEPS: &[Step] = &[
         timeout: STREAM,
     },
     Step::ExitCommand,
+];
+
+const QUEUE_FOLLOW_UP_DURING_TURN_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("start_turn"),
+    Step::SubmitText("fixture delay"),
+    Step::WaitText {
+        text: "partial assistant before cancellation",
+        timeout: STREAM,
+    },
+    Step::Phase("queue_alt_enter"),
+    Step::TypeText("first follow-up"),
+    Step::Key(Key::AltEnter),
+    Step::WaitText {
+        text: "1 follow-up",
+        timeout: STREAM,
+    },
+    Step::Phase("queue_ctrl_enter"),
+    Step::TypeText("second follow-up"),
+    Step::Key(Key::CtrlEnter),
+    Step::WaitText {
+        text: "2 follow-ups",
+        timeout: STREAM,
+    },
+    Step::WaitTextGone {
+        text: "STEER",
+        timeout: STREAM,
+    },
+    Step::Phase("abort"),
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "model interrupted",
+        timeout: STREAM,
+    },
+    Step::CtrlCExit,
 ];
