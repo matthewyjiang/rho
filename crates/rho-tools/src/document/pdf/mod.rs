@@ -11,7 +11,7 @@ pub(super) use byte_scan::{bounded_flate_size, validate_object_nesting};
 use byte_scan::{consume_budget, MAX_PDF_EXPANDED_STREAM_BYTES};
 
 pub(super) fn extract(bytes: &[u8], max_characters: usize) -> Result<ExtractedText, String> {
-    // pdf-inspector only accepts bytes and always loads with its own lopdf 0.41
+    // pdf-inspector only accepts bytes and always loads with its own lopdf 0.42
     // path. Preflight uses that same lopdf version so reject decisions match the
     // extractor stack. A second parse is forced by the crate API; keep it short.
     validate_object_nesting(bytes)?;

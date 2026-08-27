@@ -27,13 +27,13 @@ image = { version = "0.25.6", default-features = false, features = ["png", "jpeg
 ignore = "0.4"
 globset = "0.4"
 regex = "1"
-calamine = { version = "0.35", optional = true }
+calamine = { version = "0.36", optional = true }
 flate2 = { version = "1", optional = true }
 # Same major as pdf-inspector so preflight and extraction share one lopdf build.
-lopdf = { version = "0.41", optional = true }
-pdf-inspector = { version = "0.1.7", optional = true }
-quick-xml = { version = "0.39", optional = true }
-zip = { version = "7.2", default-features = false, features = ["deflate"], optional = true }
+lopdf = { version = "0.42", optional = true }
+pdf-inspector = { version = "0.1.8", optional = true }
+quick-xml = { version = "0.41", optional = true }
+zip = { version = "8", default-features = false, features = ["deflate"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [

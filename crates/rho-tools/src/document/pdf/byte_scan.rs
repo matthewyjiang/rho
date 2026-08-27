@@ -6,9 +6,9 @@ use std::io::Read as _;
 use flate2::read::ZlibDecoder;
 
 pub(in crate::document) const MAX_PDF_EXPANDED_STREAM_BYTES: usize = 64 * 1024 * 1024;
-/// Caps nested PDF arrays/dicts before lopdf 0.41 parses untrusted bytes.
+/// Caps nested PDF arrays/dicts before lopdf 0.42 parses untrusted bytes.
 ///
-/// lopdf 0.41 (pulled by `pdf-inspector`) bounds nested literal strings but not
+/// lopdf 0.42 (pulled by `pdf-inspector`) bounds nested literal strings but not
 /// array/dictionary depth. This byte scan runs before any parser load.
 pub(in crate::document) const MAX_PDF_OBJECT_NESTING_DEPTH: usize = 100;
 
