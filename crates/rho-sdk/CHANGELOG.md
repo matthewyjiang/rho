@@ -1,5 +1,16 @@
 # Changelog
 
+## [5.0.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v4.2.0...rho-sdk-v5.0.0) (2026-08-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* rho-sdk removes RunEvent::ProviderActivity and the PROVIDER_ACTIVITY_* constants, collapses ProviderStreamResetReason retryable variants into RetryableFailure { kind, retry_after }, removes ModelCallMetrics::output_tokens_per_second, adds revision to RunEvent::Failed, folds ContextEstimated into StepStarted, and replaces the stringly generation-output-token carriers with a typed ModelCallMetrics::generation_output_tokens metric and ModelEvent::GenerationOutputTokens variant. rho-providers adds ProviderId::OpenAiCompatible for config-defined hosts, folds CustomProviderOptions into CustomProviderSpec (removing the _with_lookup/ _with_options funnels), makes providers() include custom hosts (removing visible_providers), removes deprecated registry API-base re-exports and ProviderRuntime::same_family, and drops the CredentialStore parameter from OpenAiProvider::new_with_identity. rho-tools removes the edit_file tool-name alias, the write_file frontmatter alias, and the EditToolKind type alias.
+
+### Code Refactoring
+
+* pay down all NEXT_MAJOR debt for the next major, net -986 lines ([#1062](https://github.com/matthewyjiang/rho/issues/1062)) ([0e17bdb](https://github.com/matthewyjiang/rho/commit/0e17bdb5e9fa21440fffbbe00171830ac0d1d3c2))
+
 ## [4.2.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v4.1.1...rho-sdk-v4.2.0) (2026-08-21)
 
 
