@@ -146,7 +146,7 @@ fn provider_stream_reset_emits_discard_thought() {
     }
 }
 
-// Covers: host-only or deprecated run events must not become session updates
+// Covers: run events ACP has no session update for must not become session updates
 // Owner: acp event mapper
 #[test]
 fn ignored_events_emit_nothing() {

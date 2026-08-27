@@ -1368,10 +1368,10 @@ async fn provider_service_tier_fallback_is_emitted_without_marking_a_retry() {
     let provider = ScriptedProvider::new(
         identity(),
         [ScriptedTurn::streaming(
-            vec![ModelEvent::service_tier_fallback(
-                crate::model::ServiceTier::Priority,
-                "default",
-            )],
+            vec![ModelEvent::ServiceTierFallback {
+                requested: crate::model::ServiceTier::Priority,
+                used: "default".into(),
+            }],
             ModelResponse::Assistant(vec![ContentBlock::Text("standard".into())]),
         )],
     );

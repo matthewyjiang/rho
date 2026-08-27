@@ -1,5 +1,3 @@
-use std::sync::{Arc, Mutex};
-
 use serde_json::Value;
 
 pub mod auth;
@@ -33,40 +31,9 @@ use responses_http::{ResponsesEndpoint, ResponsesHttpTransport};
 
 use rho_sdk::provider::ModelRequestOptions;
 
-use crate::{
-    credentials::{CodexTokens, CredentialResult, CredentialStore},
-    model::{ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ModelUsage},
+use crate::model::{
+    ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ModelUsage,
 };
-
-/// Codex token refresh. API-key and keyless Responses never refresh, so they
-/// construct without a [`CredentialStore`].
-enum CodexRefresh {
-    Store(Arc<dyn CredentialStore>),
-    None,
-}
-
-impl CredentialStore for CodexRefresh {
-    fn get_secret(&self, account: &str) -> CredentialResult<Option<String>> {
-        match self {
-            Self::Store(store) => store.get_secret(account),
-            Self::None => Ok(None),
-        }
-    }
-
-    fn set_secret(&self, account: &str, secret: &str) -> CredentialResult<()> {
-        match self {
-            Self::Store(store) => store.set_secret(account, secret),
-            Self::None => Ok(()),
-        }
-    }
-
-    fn delete_secret(&self, account: &str) -> CredentialResult<bool> {
-        match self {
-            Self::Store(store) => store.delete_secret(account),
-            Self::None => Ok(false),
-        }
-    }
-}
 
 #[cfg(test)]
 use crate::provider_backend::stream_timeout::provider_client;
@@ -78,22 +45,15 @@ pub struct OpenAiProvider {
     profile: ResponsesProfile,
     reasoning: OpenAiReasoningProfile,
     codex_ws: CodexWsTransport,
-    codex_refresh: CodexRefresh,
-    refreshed_codex_tokens: Mutex<Option<CodexTokens>>,
     hosted_web_search: bool,
 }
 
 impl OpenAiProvider {
     #[cfg(test)]
-    pub(crate) fn new_with_auth(
-        model: String,
-        auth: Auth,
-        credential_store: Arc<dyn CredentialStore>,
-    ) -> Self {
+    pub(crate) fn new_with_auth(model: String, auth: Auth) -> Self {
         Self::new_with_transport(
             model,
             auth,
-            credential_store,
             provider_client(),
             None,
             /*hosted_web_search*/ true,
@@ -103,7 +63,6 @@ impl OpenAiProvider {
     pub(crate) fn new_with_transport(
         model: String,
         auth: Auth,
-        credential_store: Arc<dyn CredentialStore>,
         client: reqwest::Client,
         api_base_override: Option<String>,
         hosted_web_search: bool,
@@ -112,7 +71,6 @@ impl OpenAiProvider {
         Self::from_profile(
             profile,
             Some(auth),
-            CodexRefresh::Store(credential_store),
             client,
             api_base_override,
             hosted_web_search,
@@ -122,7 +80,7 @@ impl OpenAiProvider {
     /// Responses transport branded with a catalog or custom-host identity.
     ///
     /// `auth` is `None` for keyless custom Responses hosts (no Authorization).
-    /// API-key and keyless paths do not take a [`CredentialStore`].
+    /// API-key and keyless paths are storeless.
     pub(crate) fn new_with_identity(
         model: String,
         auth: Option<Auth>,
@@ -132,20 +90,12 @@ impl OpenAiProvider {
         identity_provider: &'static str,
     ) -> Self {
         let profile = ResponsesProfile::from_optional_auth(auth.as_ref(), model, identity_provider);
-        Self::from_profile(
-            profile,
-            auth,
-            CodexRefresh::None,
-            client,
-            api_base_override,
-            hosted_web_search,
-        )
+        Self::from_profile(profile, auth, client, api_base_override, hosted_web_search)
     }
 
     fn from_profile(
         profile: ResponsesProfile,
         auth: Option<Auth>,
-        codex_refresh: CodexRefresh,
         client: reqwest::Client,
         api_base_override: Option<String>,
         hosted_web_search: bool,
@@ -162,19 +112,12 @@ impl OpenAiProvider {
             profile,
             reasoning,
             codex_ws,
-            codex_refresh,
-            refreshed_codex_tokens: Mutex::new(None),
             hosted_web_search,
         }
     }
 
     fn http(&self) -> ResponsesHttpTransport<'_> {
-        ResponsesHttpTransport::new(
-            &self.client,
-            &self.api_base,
-            &self.codex_refresh,
-            &self.refreshed_codex_tokens,
-        )
+        ResponsesHttpTransport::new(&self.client, &self.api_base)
     }
 
     fn create_body(
@@ -260,7 +203,7 @@ impl OpenAiProvider {
         request: ModelRequest<'_>,
     ) -> Result<ModelResponse, ModelError> {
         let body = self.create_body(request, ModelRequestOptions::default())?;
-        let tokens = self.http().codex_tokens_for_auth(self.auth.as_ref())?;
+        let tokens = Auth::codex_tokens_for_auth(self.auth.as_ref())?;
         let body = match self
             .codex_ws
             .send_responses_turn_silent(body, &tokens)
@@ -315,7 +258,7 @@ impl OpenAiProvider {
                   + Send),
     ) -> Result<ModelResponse, ModelError> {
         let body = self.create_body(request, options)?;
-        let tokens = self.http().codex_tokens_for_auth(self.auth.as_ref())?;
+        let tokens = Auth::codex_tokens_for_auth(self.auth.as_ref())?;
         let body = match self
             .codex_ws
             .send_responses_turn(body, &tokens, &mut on_event)
@@ -508,10 +451,10 @@ fn report_service_tier_fallback(
     let Some(on_event) = on_event.as_mut() else {
         return Ok(());
     };
-    on_event(ModelEvent::service_tier_fallback(
-        rho_sdk::model::ServiceTier::Priority,
-        used,
-    ))
+    on_event(ModelEvent::ServiceTierFallback {
+        requested: rho_sdk::model::ServiceTier::Priority,
+        used: used.to_owned(),
+    })
 }
 
 #[cfg(test)]

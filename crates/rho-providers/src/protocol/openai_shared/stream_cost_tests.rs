@@ -3,10 +3,10 @@ use serde_json::json;
 
 use super::{
     extract_generation_output_tokens, extract_raw_usage, extract_usage,
-    resolve_generation_output_tokens, GenerationOutputTokens, GenerationTokenContext,
-    HiddenReasoningRisk,
+    resolve_generation_output_tokens, GenerationTokenContext, HiddenReasoningRisk,
 };
 use crate::model::ModelUsage;
+use rho_sdk::model::GenerationOutputTokens;
 
 const HIDDEN_UNLIKELY: GenerationTokenContext = GenerationTokenContext {
     reasoning_streamed: false,
@@ -182,7 +182,7 @@ fn generation_output_tokens_match_generation_window_accounting() {
                 "output_tokens_details": {"reasoning_tokens": 12}
             }}),
             HIDDEN_POSSIBLE,
-            GenerationOutputTokens::Reported(18),
+            Some(GenerationOutputTokens::Reported(18)),
             Some(30),
         ),
         (
@@ -192,7 +192,7 @@ fn generation_output_tokens_match_generation_window_accounting() {
                 "completion_tokens_details": {"reasoning_tokens": 8}
             }}),
             HIDDEN_POSSIBLE,
-            GenerationOutputTokens::Reported(13),
+            Some(GenerationOutputTokens::Reported(13)),
             Some(21),
         ),
         (
@@ -202,14 +202,14 @@ fn generation_output_tokens_match_generation_window_accounting() {
                 "completion_tokens_details": {"reasoning_tokens": 100}
             }}),
             REASONING_STREAMED,
-            GenerationOutputTokens::Reported(160),
+            Some(GenerationOutputTokens::Reported(160)),
             Some(160),
         ),
         (
             "streamed reasoning keeps the full total without details",
             json!({"usage": {"completion_tokens": 230}}),
             REASONING_STREAMED,
-            GenerationOutputTokens::Reported(230),
+            Some(GenerationOutputTokens::Reported(230)),
             Some(230),
         ),
         (
@@ -220,14 +220,14 @@ fn generation_output_tokens_match_generation_window_accounting() {
                 "total_tokens": 3441
             }}),
             HIDDEN_POSSIBLE,
-            GenerationOutputTokens::Unavailable,
+            Some(GenerationOutputTokens::Unavailable),
             Some(230),
         ),
         (
             "details absent without reasoning trusts the aggregate",
             json!({"usage": {"output_tokens": 11}}),
             HIDDEN_UNLIKELY,
-            GenerationOutputTokens::Unreported,
+            None,
             Some(11),
         ),
         (
@@ -238,7 +238,7 @@ fn generation_output_tokens_match_generation_window_accounting() {
                 "completion_tokens_details": {"reasoning_tokens": 8}
             }}),
             HIDDEN_UNLIKELY,
-            GenerationOutputTokens::Unreported,
+            None,
             Some(30),
         ),
         (
@@ -250,7 +250,7 @@ fn generation_output_tokens_match_generation_window_accounting() {
                 "completion_tokens_details": {"reasoning_tokens": 4}
             }}),
             HIDDEN_POSSIBLE,
-            GenerationOutputTokens::Reported(15),
+            Some(GenerationOutputTokens::Reported(15)),
             Some(19),
         ),
         (
@@ -260,7 +260,7 @@ fn generation_output_tokens_match_generation_window_accounting() {
                 "output_tokens_details": {"reasoning_tokens": 9}
             }}),
             HIDDEN_UNLIKELY,
-            GenerationOutputTokens::Unavailable,
+            Some(GenerationOutputTokens::Unavailable),
             Some(3),
         ),
         (
@@ -269,14 +269,14 @@ fn generation_output_tokens_match_generation_window_accounting() {
                 "output_tokens_details": {"reasoning_tokens": 2}
             }}),
             HIDDEN_POSSIBLE,
-            GenerationOutputTokens::Unreported,
+            None,
             None,
         ),
         (
             "null usage placeholder chunks report nothing",
             json!({"usage": null}),
             HIDDEN_POSSIBLE,
-            GenerationOutputTokens::Unreported,
+            None,
             None,
         ),
     ];
@@ -310,6 +310,6 @@ fn merge_replaces_output_reasoning_pair_atomically() {
 
     assert_eq!(
         resolve_generation_output_tokens(earlier.merge(later).reported_output(), HIDDEN_POSSIBLE),
-        GenerationOutputTokens::Unavailable
+        Some(GenerationOutputTokens::Unavailable)
     );
 }

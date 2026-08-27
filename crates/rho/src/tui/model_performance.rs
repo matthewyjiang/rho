@@ -5,39 +5,9 @@ use rho_sdk::{ModelCallMetrics, ModelCallProfile};
 const MIN_GENERATION_OUTPUT_TOKENS: u64 = 32;
 const MIN_GENERATION_TIME: Duration = Duration::from_millis(500);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum GenerationOutputTokens {
-    AggregateFallback,
-    Reported(u64),
-    Unavailable,
-}
-
-impl GenerationOutputTokens {
-    fn resolve(self, aggregate_output_tokens: Option<u64>) -> Option<u64> {
-        match self {
-            Self::AggregateFallback => aggregate_output_tokens,
-            Self::Reported(tokens) => Some(tokens),
-            Self::Unavailable => None,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct ModelCallPerformance {
-    pub(super) metrics: ModelCallMetrics,
-    pub(super) generation_output_tokens: GenerationOutputTokens,
-}
-
-impl ModelCallPerformance {
-    pub(super) fn throughput_output_tokens(self) -> Option<u64> {
-        self.generation_output_tokens
-            .resolve(self.metrics.output_tokens)
-    }
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(super) struct ModelPerformanceSummary {
-    pub(super) latest_call: Option<ModelCallPerformance>,
+    pub(super) latest_call: Option<ModelCallMetrics>,
     /// Token-weighted average of generation throughput (`tokens / generation_time`).
     pub(super) average_generation_tokens_per_second: Option<f64>,
     pub(super) eligible_calls: u64,
@@ -58,16 +28,8 @@ pub(super) struct ModelPerformanceTracker {
 }
 
 impl ModelPerformanceTracker {
-    pub(super) fn record(
-        &mut self,
-        profile: ModelCallProfile,
-        metrics: ModelCallMetrics,
-        generation_output_tokens: GenerationOutputTokens,
-    ) {
-        self.profiles
-            .entry(profile)
-            .or_default()
-            .record(metrics, generation_output_tokens);
+    pub(super) fn record(&mut self, profile: ModelCallProfile, metrics: ModelCallMetrics) {
+        self.profiles.entry(profile).or_default().record(metrics);
     }
 
     pub(super) fn summary(&self, profile: &ModelCallProfile) -> ModelPerformanceSummary {
@@ -84,27 +46,18 @@ impl ModelPerformanceTracker {
 
 #[derive(Default)]
 pub(super) struct ModelPerformanceAggregate {
-    latest_call: Option<ModelCallPerformance>,
+    latest_call: Option<ModelCallMetrics>,
     generation_output_tokens: u64,
     generation_time: Duration,
     eligible_calls: u64,
 }
 
 impl ModelPerformanceAggregate {
-    fn record(
-        &mut self,
-        metrics: ModelCallMetrics,
-        generation_output_tokens: GenerationOutputTokens,
-    ) {
-        let latest_call = ModelCallPerformance {
-            metrics,
-            generation_output_tokens,
-        };
-        let Some(generation_output_tokens) = latest_call.throughput_output_tokens() else {
-            self.latest_call = Some(latest_call);
+    fn record(&mut self, metrics: ModelCallMetrics) {
+        self.latest_call = Some(metrics);
+        let Some(generation_output_tokens) = metrics.resolved_generation_tokens() else {
             return;
         };
-        self.latest_call = Some(latest_call);
         let Some(generation_time) = metrics.generation_time else {
             return;
         };

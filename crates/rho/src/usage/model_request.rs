@@ -71,7 +71,9 @@ pub(crate) async fn send_recorded_observing(
                     | ModelEvent::WebSearch(_)
                     | ModelEvent::ToolCallDelta { .. }
                     | ModelEvent::ProviderContext { .. }
-                    | ModelEvent::GenerationOutputTokens(_),
+                    | ModelEvent::GenerationOutputTokens(_)
+                    | ModelEvent::HostedToolActivity { .. }
+                    | ModelEvent::ServiceTierFallback { .. },
                 ) => {}
                 ProviderStreamEvent::Request(ProviderRequestEvent::RequestAttemptFailed {
                     kind,

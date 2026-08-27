@@ -5,7 +5,7 @@
 //! enum representation so existing session history remains readable.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 
 const PORTABLE_FALLBACK_CONTEXT_KIND: &str = "rho.sdk.portable_fallback.v1";
 
@@ -506,25 +506,23 @@ pub enum ModelEvent {
     /// The runtime consumes this into [`crate::ModelCallMetrics`] and never
     /// lowers it to a [`crate::RunEvent`] or persists it as provider context.
     GenerationOutputTokens(GenerationOutputTokens),
+    /// Provider-native hosted tool activity (for example xAI `x_search`).
+    ///
+    /// The runtime maps this to [`crate::RunEvent::HostedToolActivity`] and
+    /// does not retain it as provider-context replay state.
+    HostedToolActivity {
+        name: String,
+        detail: String,
+    },
+    /// The provider completed a request on a different service tier.
+    ///
+    /// The runtime maps this to [`crate::RunEvent::ProviderServiceTierFallback`]
+    /// and does not retain it as provider-context replay state.
+    ServiceTierFallback {
+        requested: ServiceTier,
+        used: String,
+    },
 }
-
-/// Reserved [`ModelEvent::ProviderContext::kind`] for provider-native hosted
-/// tool activity (for example xAI `x_search`).
-///
-/// Construct events with [`ModelEvent::hosted_tool_activity`]. The runtime maps
-/// this kind to [`crate::RunEvent::HostedToolActivity`] and does not retain it
-/// as provider-context replay state. This extension point exists because
-/// [`ModelEvent`] is exhaustive in 1.x; a future major release may promote
-/// hosted activity to a dedicated variant.
-pub const HOSTED_TOOL_ACTIVITY_KIND: &str = "hosted_tool_activity";
-
-/// Reserved [`ModelEvent::ProviderContext::kind`] for a completed turn that ran
-/// on a different service tier than requested.
-///
-/// Construct events with [`ModelEvent::service_tier_fallback`]. The runtime maps
-/// this kind to [`crate::RunEvent::ProviderServiceTierFallback`] and does not
-/// retain it as provider-context replay state.
-pub const SERVICE_TIER_FALLBACK_KIND: &str = "service_tier_fallback";
 
 /// Generation-window output tokens reported by a provider for one attempt.
 ///
@@ -537,69 +535,6 @@ pub enum GenerationOutputTokens {
     /// The provider produced output that cannot be attributed to the generation
     /// window (for example hidden reasoning without a token split).
     Unavailable,
-}
-
-impl ModelEvent {
-    /// Builds provider-native hosted tool activity for the stream.
-    ///
-    /// Carried as a reserved [`ModelEvent::ProviderContext`] kind so 1.x stays
-    /// minor-compatible, then lowered to [`crate::RunEvent::HostedToolActivity`].
-    pub fn hosted_tool_activity(name: impl Into<String>, detail: impl Into<String>) -> Self {
-        Self::ProviderContext {
-            kind: HOSTED_TOOL_ACTIVITY_KIND.into(),
-            position: None,
-            data: json!({
-                "name": name.into(),
-                "detail": detail.into(),
-            }),
-        }
-    }
-
-    /// Returns hosted-tool activity when this event carries that reserved kind.
-    pub fn as_hosted_tool_activity(&self) -> Option<(&str, &str)> {
-        match self {
-            Self::ProviderContext { kind, data, .. } if kind == HOSTED_TOOL_ACTIVITY_KIND => {
-                let name = data.get("name")?.as_str()?;
-                let detail = data.get("detail")?.as_str()?;
-                Some((name, detail))
-            }
-            _ => None,
-        }
-    }
-
-    /// Builds a service-tier fallback observation for the stream.
-    ///
-    /// Carried as a reserved [`ModelEvent::ProviderContext`] kind so 1.x stays
-    /// minor-compatible, then lowered to
-    /// [`crate::RunEvent::ProviderServiceTierFallback`].
-    pub fn service_tier_fallback(requested: ServiceTier, used: impl Into<String>) -> Self {
-        let requested = match requested {
-            ServiceTier::Priority => "priority",
-        };
-        Self::ProviderContext {
-            kind: SERVICE_TIER_FALLBACK_KIND.into(),
-            position: None,
-            data: json!({
-                "requested": requested,
-                "used": used.into(),
-            }),
-        }
-    }
-
-    /// Returns service-tier fallback details when this event carries that kind.
-    pub fn as_service_tier_fallback(&self) -> Option<(ServiceTier, &str)> {
-        match self {
-            Self::ProviderContext { kind, data, .. } if kind == SERVICE_TIER_FALLBACK_KIND => {
-                let requested = match data.get("requested")?.as_str()? {
-                    "priority" => ServiceTier::Priority,
-                    _ => return None,
-                };
-                let used = data.get("used")?.as_str()?;
-                Some((requested, used))
-            }
-            _ => None,
-        }
-    }
 }
 
 /// Source used to calculate the current context consumption.

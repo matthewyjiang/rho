@@ -5,7 +5,6 @@ use url::Url;
 
 use crate::{
     auth::{github_copilot_token::GitHubCopilotAuthManager, xai_token::XaiAuthManager},
-    credentials::CredentialStore,
     model::{models_dev::CatalogSdkAdapter, ModelError},
     openai_compatible_dialect::OpenAiCompatibleDialect,
     provider::{
@@ -153,10 +152,7 @@ impl ProviderBuildOptions {
 /// Formatting reveals only the credential kind. Application login, environment
 /// lookup, and keychain access are intentionally absent from this type.
 pub enum ProviderCredential {
-    OpenAi {
-        auth: Auth,
-        refresh_store: Arc<dyn CredentialStore>,
-    },
+    OpenAi { auth: Auth },
     AnthropicApiKey(SecretString),
     GoogleApiKey(SecretString),
     GitHubCopilot(GitHubCopilotAuthManager),
@@ -211,13 +207,9 @@ impl ProviderBuilder {
         let endpoint = self.options.endpoint.map(|endpoint| endpoint.to_string());
 
         match (runtime, self.credential) {
-            (
-                ProviderRuntime::OpenAi { auth_mode },
-                ProviderCredential::OpenAi {
-                    auth,
-                    refresh_store,
-                },
-            ) if auth_matches_mode(&auth, auth_mode) => {
+            (ProviderRuntime::OpenAi { auth_mode }, ProviderCredential::OpenAi { auth })
+                if auth_matches_mode(&auth, auth_mode) =>
+            {
                 let endpoint = endpoint.or_else(|| {
                     Some(
                         match auth_mode {
@@ -230,7 +222,6 @@ impl ProviderBuilder {
                 Ok(Arc::new(OpenAiProvider::new_with_transport(
                     self.options.model,
                     auth,
-                    refresh_store,
                     client,
                     endpoint,
                     self.options.hosted_web_search,

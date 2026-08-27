@@ -31,7 +31,6 @@ impl EventMapper {
 
     /// Maps one SDK event onto at most one ACP notification. Events that only
     /// move mapper state, or that ACP has no update for, map to `None`.
-    #[allow(deprecated)]
     pub(super) fn map_event(
         &mut self,
         session_id: &SessionId,

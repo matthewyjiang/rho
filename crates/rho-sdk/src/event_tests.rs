@@ -99,6 +99,17 @@ fn generation_rate_divides_tokens_by_generation_time() {
             None,
         ),
         (
+            "unavailable generation tokens suppress the aggregate fallback",
+            ModelCallMetrics {
+                output_tokens: Some(100),
+                time_to_first_token: Some(Duration::from_secs(1)),
+                generation_time: Some(Duration::from_secs(2)),
+                total_latency: Duration::from_secs(3),
+                generation_output_tokens: Some(crate::model::GenerationOutputTokens::Unavailable),
+            },
+            None,
+        ),
+        (
             "a zero-length generation window means no rate",
             ModelCallMetrics {
                 output_tokens: Some(50),

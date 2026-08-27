@@ -11,7 +11,6 @@ use {
 use super::{
     activity::{ActivityPhase, ProviderRetryHint},
     compaction_display::compaction_call_id,
-    model_performance::GenerationOutputTokens,
     questionnaire::{QuestionnaireChoice, QuestionnaireQuestion, QuestionnaireRequest},
 };
 
@@ -35,7 +34,6 @@ pub(super) enum ViewModelEvent {
     ModelCallCompleted {
         profile: ModelCallProfile,
         metrics: ModelCallMetrics,
-        generation_output_tokens: GenerationOutputTokens,
     },
     ToolUpdated {
         call_id: rho_sdk::ToolCallId,
@@ -311,7 +309,6 @@ impl SdkEventAdapter {
             RunEvent::ModelCallCompleted { profile, metrics } => {
                 vec![ViewEvent::Update(ViewModelEvent::ModelCallCompleted {
                     profile,
-                    generation_output_tokens: view_generation_output_tokens(&metrics),
                     metrics,
                 })]
             }
@@ -404,18 +401,6 @@ pub(super) fn compact_started_event() -> ViewModelEvent {
     ViewModelEvent::ToolStarted {
         call_id: compaction_call_id(),
         card: super::compaction_display::running_card(),
-    }
-}
-
-fn view_generation_output_tokens(metrics: &ModelCallMetrics) -> GenerationOutputTokens {
-    match metrics.generation_output_tokens {
-        None => GenerationOutputTokens::AggregateFallback,
-        Some(rho_sdk::model::GenerationOutputTokens::Reported(tokens)) => {
-            GenerationOutputTokens::Reported(tokens)
-        }
-        Some(rho_sdk::model::GenerationOutputTokens::Unavailable) => {
-            GenerationOutputTokens::Unavailable
-        }
     }
 }
 

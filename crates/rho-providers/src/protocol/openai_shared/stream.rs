@@ -211,8 +211,8 @@ impl ChatStreamAccumulator {
             self.usage_snapshot.and_then(RawUsage::reported_output),
             context,
         );
-        if let Some(event) = generation.into_event() {
-            on_event(event)?;
+        if let Some(tokens) = generation {
+            on_event(ModelEvent::GenerationOutputTokens(tokens))?;
         }
         if let Some(usage) = self.usage_snapshot {
             on_event(ModelEvent::Usage(usage.into_model_usage()))?;

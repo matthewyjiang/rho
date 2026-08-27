@@ -244,15 +244,16 @@ pub(super) fn build_responses_compact_body(
 
 #[cfg(test)]
 pub(super) fn codex_test_auth() -> Auth {
-    Auth::Codex {
-        tokens: crate::credentials::CodexTokens {
+    Auth::codex(
+        crate::credentials::CodexTokens {
             access_token: "test".into(),
             refresh_token: None,
             id_token: None,
             account_id: None,
         },
-        source: super::auth::CodexAuthSource::Env,
-    }
+        super::auth::CodexAuthSource::Env,
+        std::sync::Arc::new(crate::credentials::MemoryCredentialStore::default()),
+    )
 }
 
 #[cfg(test)]

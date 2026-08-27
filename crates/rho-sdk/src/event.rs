@@ -145,29 +145,35 @@ pub struct ModelCallMetrics {
     /// counted, so these numbers describe the model rather than retry policy.
     pub total_latency: Duration,
     /// Generation-window output tokens when the provider reported a usable
-    /// breakdown. `None` means a host may fall back to aggregate
-    /// [`Self::output_tokens`]. [`GenerationOutputTokens::Unavailable`] means
-    /// the provider produced output that cannot be attributed to the generation
-    /// window.
+    /// breakdown. `None` falls back to aggregate [`Self::output_tokens`] via
+    /// [`Self::resolved_generation_tokens`]. [`GenerationOutputTokens::Unavailable`]
+    /// means the provider produced output that cannot be attributed to the
+    /// generation window.
     pub generation_output_tokens: Option<GenerationOutputTokens>,
 }
 
 impl ModelCallMetrics {
-    /// Provider-reported output tokens divided by generation time.
+    /// Output tokens that match the generation timing window.
+    ///
+    /// `None` [`Self::generation_output_tokens`] falls back to aggregate
+    /// [`Self::output_tokens`]. [`GenerationOutputTokens::Unavailable`]
+    /// suppresses a count rather than falling back.
+    pub fn resolved_generation_tokens(self) -> Option<u64> {
+        match self.generation_output_tokens {
+            None => self.output_tokens,
+            Some(GenerationOutputTokens::Reported(tokens)) => Some(tokens),
+            Some(GenerationOutputTokens::Unavailable) => None,
+        }
+    }
+
+    /// Generation-window tokens divided by generation time.
     ///
     /// Generation time runs from the first generated event to stream end, so
     /// this matches common throughput definitions that exclude time to first
-    /// token. Returns `None` when the call never streamed generated output.
-    ///
-    /// The numerator is still the provider's full `output_tokens` total. When a
-    /// provider charges hidden pre-stream work (for example reasoning kept off
-    /// the wire until the first visible event) into that total, those tokens
-    /// are counted here even though their wall time sits in
-    /// [`Self::time_to_first_token`]. Prefer
-    /// [`Self::response_tokens_per_second`] when that pre-stream work should
-    /// stay in the denominator.
+    /// token. Returns `None` when the call never streamed generated output or
+    /// when [`Self::resolved_generation_tokens`] is `None`.
     pub fn generation_tokens_per_second(self) -> Option<f64> {
-        Self::rate(self.output_tokens, self.generation_time?)
+        Self::rate(self.resolved_generation_tokens(), self.generation_time?)
     }
 
     /// Provider-reported output tokens divided by total attempt latency.
@@ -287,21 +293,12 @@ pub enum RunEvent {
         request: crate::HostInputRequest,
     },
     /// Provider-native web search activity observed during a model turn.
-    ///
-    /// Appended after existing variants so discriminant values of the 1.0
-    /// surface stay stable under a minor release.
     WebSearch {
         detail: String,
     },
     /// A physical provider request failed and will be retried.
-    ///
-    /// Appended after existing variants so discriminant values of the 1.0
-    /// surface stay stable under a minor release.
     ProviderRequestRetry,
     /// A model call completed with local timing and provider-reported usage.
-    ///
-    /// Appended after existing variants so discriminant values of the 1.0
-    /// surface stay stable under a minor release.
     ModelCallCompleted {
         profile: ModelCallProfile,
         metrics: ModelCallMetrics,
@@ -310,8 +307,7 @@ pub enum RunEvent {
     ///
     /// `name` is the hosted tool id (for example `x_search`). Distinct from
     /// client-executed tools and from the historical [`RunEvent::WebSearch`]
-    /// path. Appended after existing variants so discriminant values of the
-    /// 1.0 surface stay stable under a minor release.
+    /// path.
     HostedToolActivity {
         name: String,
         detail: String,

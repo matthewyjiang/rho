@@ -225,6 +225,12 @@ pub(super) fn capture_provider_event(
             Some(RunEvent::ReasoningSummaryDelta { text })
         }
         ModelEvent::WebSearch(detail) => Some(RunEvent::WebSearch { detail }),
+        ModelEvent::HostedToolActivity { name, detail } => {
+            Some(RunEvent::HostedToolActivity { name, detail })
+        }
+        ModelEvent::ServiceTierFallback { requested, used } => {
+            Some(RunEvent::ProviderServiceTierFallback { requested, used })
+        }
         ModelEvent::GenerationOutputTokens(_) => None,
         ModelEvent::ToolCallDelta {
             index,
@@ -265,32 +271,6 @@ pub(super) fn capture_provider_event(
             position,
             data,
         } => {
-            // Reserved ProviderContext carriers stay off the replay path.
-            if kind == crate::model::HOSTED_TOOL_ACTIVITY_KIND {
-                let name = data
-                    .get("name")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("unknown")
-                    .to_owned();
-                let detail = data
-                    .get("detail")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or_default()
-                    .to_owned();
-                return Some(RunEvent::HostedToolActivity { name, detail });
-            }
-            if kind == crate::model::SERVICE_TIER_FALLBACK_KIND {
-                let requested = match data.get("requested").and_then(|value| value.as_str()) {
-                    Some("priority") => crate::model::ServiceTier::Priority,
-                    _ => crate::model::ServiceTier::Priority,
-                };
-                let used = data
-                    .get("used")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("unknown")
-                    .to_owned();
-                return Some(RunEvent::ProviderServiceTierFallback { requested, used });
-            }
             // Provider-native boundaries (for example Gemini thought signatures)
             // must not be collapsed into a single cancelled text block.
             capture.merge_output_text = false;

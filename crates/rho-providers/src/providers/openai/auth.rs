@@ -1,7 +1,9 @@
+use std::sync::{Arc, Mutex};
+
 use serde::Deserialize;
 
 use crate::{
-    credentials::{save_codex_tokens, CodexTokens, CredentialStore},
+    credentials::{load_codex_tokens, save_codex_tokens, CodexTokens, CredentialStore},
     model::ModelError,
 };
 
@@ -10,7 +12,67 @@ pub enum Auth {
     Codex {
         tokens: CodexTokens,
         source: CodexAuthSource,
+        refresh_store: Arc<dyn CredentialStore>,
+        refreshed_tokens: Mutex<Option<CodexTokens>>,
     },
+}
+
+impl Auth {
+    pub(crate) fn codex(
+        tokens: CodexTokens,
+        source: CodexAuthSource,
+        refresh_store: Arc<dyn CredentialStore>,
+    ) -> Self {
+        Self::Codex {
+            tokens,
+            source,
+            refresh_store,
+            refreshed_tokens: Mutex::new(None),
+        }
+    }
+
+    pub(super) fn codex_tokens_for_auth(auth: Option<&Self>) -> Result<CodexTokens, ModelError> {
+        auth.ok_or_else(|| {
+            ModelError::InvalidResponse("Codex tokens requested for non-Codex auth".into())
+        })?
+        .codex_tokens_for_request()
+    }
+
+    pub(super) fn codex_tokens_for_request(&self) -> Result<CodexTokens, ModelError> {
+        let Self::Codex {
+            tokens,
+            source,
+            refresh_store,
+            refreshed_tokens,
+        } = self
+        else {
+            return Err(ModelError::InvalidResponse(
+                "Codex tokens requested for non-Codex auth".into(),
+            ));
+        };
+        if *source == CodexAuthSource::Store {
+            if let Ok(Some(stored)) = load_codex_tokens(refresh_store.as_ref()) {
+                return Ok(stored);
+            }
+        }
+        Ok(refreshed_tokens
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone())
+            .unwrap_or_else(|| tokens.clone()))
+    }
+
+    pub(super) fn remember_refreshed_codex_tokens(&self, tokens: CodexTokens) {
+        let Self::Codex {
+            refreshed_tokens, ..
+        } = self
+        else {
+            return;
+        };
+        if let Ok(mut guard) = refreshed_tokens.lock() {
+            *guard = Some(tokens);
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

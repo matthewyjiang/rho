@@ -43,11 +43,8 @@ async fn api_key_responses_stream_accepts_data_without_space_after_colon() {
         stream.write_all(response.as_bytes()).await.unwrap();
     });
 
-    let mut provider = OpenAiProvider::new_with_auth(
-        "gpt-4.1".into(),
-        Auth::ApiKey("test-key".into()),
-        Arc::new(MemoryCredentialStore::default()),
-    );
+    let mut provider =
+        OpenAiProvider::new_with_auth("gpt-4.1".into(), Auth::ApiKey("test-key".into()));
     provider.api_base = api_base;
     provider.client = reqwest::Client::new();
 
@@ -129,11 +126,11 @@ async fn cancelling_codex_stream_resets_websocket_before_next_turn() {
     };
     let mut provider = OpenAiProvider::new_with_auth(
         "gpt-5-codex".into(),
-        Auth::Codex {
+        Auth::codex(
             tokens,
-            source: CodexAuthSource::Env,
-        },
-        Arc::new(MemoryCredentialStore::default()),
+            CodexAuthSource::Env,
+            Arc::new(MemoryCredentialStore::default()),
+        ),
     );
     provider.codex_ws = CodexWsTransport::new_with_url(ws_url);
 

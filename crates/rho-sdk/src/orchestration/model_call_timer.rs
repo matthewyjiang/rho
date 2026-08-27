@@ -49,7 +49,9 @@ impl ModelCallTimer {
                 ModelEvent::WebSearch(_)
                 | ModelEvent::ProviderContext { .. }
                 | ModelEvent::Usage(_)
-                | ModelEvent::GenerationOutputTokens(_) => false,
+                | ModelEvent::GenerationOutputTokens(_)
+                | ModelEvent::HostedToolActivity { .. }
+                | ModelEvent::ServiceTierFallback { .. } => false,
             }
         {
             self.first_generated = Some(observed_at);

@@ -91,7 +91,7 @@ async fn compact_with_http_malformed_retry_response_preserves_failed_attempts() 
     use std::{
         sync::{
             atomic::{AtomicUsize, Ordering},
-            Arc, Mutex,
+            Arc,
         },
         time::Duration,
     };
@@ -183,21 +183,19 @@ async fn compact_with_http_malformed_retry_response_preserves_failed_attempts() 
         .timeout(Duration::from_secs(5))
         .build()
         .unwrap();
-    let store = MemoryCredentialStore::default();
-    let refreshed = Mutex::new(None);
-    let auth = Auth::Codex {
-        tokens: CodexTokens {
+    let auth = Auth::codex(
+        CodexTokens {
             access_token: "access".into(),
             refresh_token: Some("refresh".into()),
             id_token: None,
             account_id: None,
         },
-        source: CodexAuthSource::Env,
-    };
+        CodexAuthSource::Env,
+        std::sync::Arc::new(MemoryCredentialStore::default()),
+    );
     let profile = ResponsesProfile::from_auth(&auth, "gpt-5.4");
     let refresh_url = format!("{base}/oauth/token");
-    let http = ResponsesHttpTransport::new(&client, &base, &store, &refreshed)
-        .with_codex_refresh_url(&refresh_url);
+    let http = ResponsesHttpTransport::new(&client, &base).with_codex_refresh_url(&refresh_url);
     let codex_ws = CodexWsTransport::new(&base);
     let messages = [
         Message::System("system".into()),

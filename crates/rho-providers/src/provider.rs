@@ -122,20 +122,6 @@ impl ProviderRuntime {
 /// `catalog::CROSS_PROVIDER_LOGIN_GROUPS` exists.
 const AUTH_FAMILY_GROUPS: &[&[ProviderId]] = &[&[ProviderId::OpenAi, ProviderId::OpenAiCodex]];
 
-/// Whether two built-in provider ids share one backend for auth-profile switching.
-///
-/// Not meaningful for custom hosts: they all share [`ProviderId::OpenAiCompatible`]
-/// but are distinct backends. Callers must exclude descriptors where
-/// [`ProviderDescriptor::is_custom_openai_compatible`] is true before asking.
-pub fn same_provider_family(left: ProviderId, right: ProviderId) -> bool {
-    if left == right {
-        return true;
-    }
-    AUTH_FAMILY_GROUPS
-        .iter()
-        .any(|group| group.contains(&left) && group.contains(&right))
-}
-
 /// Stable provider identity.
 ///
 /// Config-defined OpenAI-compatible hosts share [`Self::OpenAiCompatible`].
@@ -634,6 +620,22 @@ impl ProviderDescriptor {
         self.id == ProviderId::OpenAiCompatible
     }
 
+    /// Whether these descriptors share one backend for auth-profile switching.
+    ///
+    /// Custom OpenAI-compatible hosts all use [`ProviderId::OpenAiCompatible`]
+    /// but are distinct backends, so this is false when either side is custom.
+    pub fn shares_auth_family(self, other: Self) -> bool {
+        if self.is_custom_openai_compatible() || other.is_custom_openai_compatible() {
+            return false;
+        }
+        if self.id == other.id {
+            return true;
+        }
+        AUTH_FAMILY_GROUPS
+            .iter()
+            .any(|group| group.contains(&self.id) && group.contains(&other.id))
+    }
+
     /// How this host rematches models.dev rows.
     pub fn catalog_lookup(self) -> CatalogLookupMode {
         self.catalog_lookup
@@ -689,7 +691,20 @@ impl ProviderDescriptor {
             ProviderId::Ollama | ProviderId::OllamaCloud => {
                 UnknownEffortPolicy::Constrain(OLLAMA_UNKNOWN_REASONING_LEVELS)
             }
-            _ => UnknownEffortPolicy::Omit,
+            ProviderId::OpenAi
+            | ProviderId::OpenAiCodex
+            | ProviderId::Anthropic
+            | ProviderId::Google
+            | ProviderId::GithubCopilot
+            | ProviderId::Xai
+            | ProviderId::Moonshot
+            | ProviderId::Poolside
+            | ProviderId::OpenRouter
+            | ProviderId::KimiCode
+            | ProviderId::QwenTokenPlan
+            | ProviderId::Meta
+            | ProviderId::OpenCodeGo
+            | ProviderId::MiniMax => UnknownEffortPolicy::Omit,
         }
     }
 }
@@ -897,8 +912,7 @@ pub fn resolve_profile_exact(
     }
     let auth_profile = provider_descriptor_for_auth(auth)
         .ok_or_else(|| ProfileResolutionError::UnknownAuth(auth.into()))?;
-    if !provider.is_custom_openai_compatible() && same_provider_family(provider.id, auth_profile.id)
-    {
+    if provider.shares_auth_family(*auth_profile) {
         let mode = auth_profile
             .auth_mode(auth)
             .expect("auth exists on auth_profile");
@@ -931,11 +945,19 @@ pub enum ProfileResolutionError {
     AuthNotValidForProvider { provider: String, auth: String },
 }
 
+/// Table-backed descriptor for `id`.
+///
+/// Custom OpenAI-compatible hosts share [`ProviderId::OpenAiCompatible`] and
+/// have no table row; resolve those by name instead.
+///
+/// # Panics
+///
+/// Panics if `id` is not a table-backed provider.
 pub fn provider_descriptor_by_id(id: ProviderId) -> &'static ProviderDescriptor {
     builtin_providers()
         .iter()
         .find(|descriptor| descriptor.id == id)
-        .expect("every built-in provider ID must have a descriptor")
+        .expect("table-backed provider IDs have a descriptor; custom hosts resolve by name")
 }
 
 #[cfg(test)]

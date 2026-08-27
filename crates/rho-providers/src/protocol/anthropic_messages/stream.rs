@@ -468,7 +468,9 @@ mod tests {
                     | ModelEvent::WebSearch(_)
                     | ModelEvent::Usage(_)
                     | ModelEvent::ToolCallDelta { .. }
-                    | ModelEvent::GenerationOutputTokens(_) => None,
+                    | ModelEvent::GenerationOutputTokens(_)
+                    | ModelEvent::HostedToolActivity { .. }
+                    | ModelEvent::ServiceTierFallback { .. } => None,
                 })
                 .collect::<String>(),
             "hello"
@@ -541,7 +543,9 @@ mod tests {
                 | ModelEvent::ProviderContext { .. }
                 | ModelEvent::WebSearch(_)
                 | ModelEvent::ToolCallDelta { .. }
-                | ModelEvent::GenerationOutputTokens(_) => None,
+                | ModelEvent::GenerationOutputTokens(_)
+                | ModelEvent::HostedToolActivity { .. }
+                | ModelEvent::ServiceTierFallback { .. } => None,
             })
             .collect::<Vec<_>>();
         assert_eq!(usages.len(), 2);

@@ -192,7 +192,10 @@ fn multi_chunk_object_arguments_materialize_on_aborted_capture() {
 fn hosted_tool_activity_maps_to_named_run_event() {
     let mut capture = StreamCapture::default();
     let event = capture_provider_event(
-        ModelEvent::hosted_tool_activity("x_search", "xAI"),
+        ModelEvent::HostedToolActivity {
+            name: "x_search".into(),
+            detail: "xAI".into(),
+        },
         &identity(),
         &ModelUsage::default(),
         &mut capture,
@@ -231,7 +234,10 @@ fn web_search_activity_keeps_stable_run_event_shape() {
 fn service_tier_fallback_maps_to_typed_run_event() {
     let mut capture = StreamCapture::default();
     let event = capture_provider_event(
-        ModelEvent::service_tier_fallback(crate::model::ServiceTier::Priority, "default"),
+        ModelEvent::ServiceTierFallback {
+            requested: crate::model::ServiceTier::Priority,
+            used: "default".into(),
+        },
         &identity(),
         &ModelUsage::default(),
         &mut capture,

@@ -200,7 +200,9 @@ impl OneShotStream {
                 | ModelEvent::WebSearch(_)
                 | ModelEvent::ToolCallDelta { .. }
                 | ModelEvent::ProviderContext { .. }
-                | ModelEvent::GenerationOutputTokens(_),
+                | ModelEvent::GenerationOutputTokens(_)
+                | ModelEvent::HostedToolActivity { .. }
+                | ModelEvent::ServiceTierFallback { .. },
             ) => {}
         }
     }
