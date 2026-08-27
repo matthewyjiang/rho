@@ -1,7 +1,8 @@
 use pretty_assertions::assert_eq;
 
 use super::{
-    parse_gh_pr_view, pr_for_current_branch, GithubPr, GithubPrLookup, GithubPrProbe, GithubPrTone,
+    classify_gh_pr_view, paint_for_current_branch, parse_gh_pr_view, GithubPr, GithubPrLookup,
+    GithubPrPaint, GithubPrProbe, GithubPrTone,
 };
 
 #[test]
@@ -60,8 +61,54 @@ fn parse_gh_pr_view_maps_ready_and_issue_tones() {
 }
 
 #[test]
-fn pr_for_current_branch_ignores_stale_or_unavailable_lookups() {
-    // Covers: another branch, or a failed/no-PR probe, must not paint or clear
+fn classify_gh_pr_view_separates_absence_from_transient_failure() {
+    // Covers: gh stderr "no pull requests found" clears; other failures do not
+    // Owner: github pr probe
+    let ready =
+        r#"{"number":12,"reviewDecision":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[]}"#;
+    let cases = [
+        (
+            true,
+            ready.as_bytes(),
+            b"" as &[u8],
+            GithubPrProbe::Found(GithubPr {
+                number: 12,
+                tone: Some(GithubPrTone::Ready),
+            }),
+        ),
+        (
+            false,
+            b"",
+            b"no pull requests found for branch \"feat\"\n",
+            GithubPrProbe::Absent,
+        ),
+        (
+            false,
+            b"",
+            b"GraphQL: no open pull requests found for branch \"feat\"\n",
+            GithubPrProbe::Absent,
+        ),
+        (
+            false,
+            b"",
+            b"gh: To get started with GitHub CLI, please run: gh auth login\n",
+            GithubPrProbe::Unavailable,
+        ),
+        (true, b"not json", b"", GithubPrProbe::Unavailable),
+    ];
+    for (success, stdout, stderr, expected) in cases {
+        assert_eq!(
+            classify_gh_pr_view(success, stdout, stderr),
+            expected,
+            "success={success} stderr={}",
+            String::from_utf8_lossy(stderr)
+        );
+    }
+}
+
+#[test]
+fn paint_for_current_branch_clears_confirmed_absence_only() {
+    // Covers: found paints; no-PR clears; stale/unavailable keep the chip
     // Owner: github pr probe
     let pr = GithubPr {
         number: 7,
@@ -74,7 +121,7 @@ fn pr_for_current_branch_ignores_stale_or_unavailable_lookups() {
                 branch: Some("main".into()),
                 probe: GithubPrProbe::Found(pr.clone()),
             },
-            Some(pr.clone()),
+            GithubPrPaint::Show(pr.clone()),
         ),
         (
             Some("main"),
@@ -82,7 +129,7 @@ fn pr_for_current_branch_ignores_stale_or_unavailable_lookups() {
                 branch: Some("feature".into()),
                 probe: GithubPrProbe::Found(pr.clone()),
             },
-            None,
+            GithubPrPaint::Keep,
         ),
         (
             Some("main"),
@@ -90,10 +137,26 @@ fn pr_for_current_branch_ignores_stale_or_unavailable_lookups() {
                 branch: Some("main".into()),
                 probe: GithubPrProbe::Unavailable,
             },
-            None,
+            GithubPrPaint::Keep,
+        ),
+        (
+            Some("main"),
+            GithubPrLookup {
+                branch: Some("main".into()),
+                probe: GithubPrProbe::Absent,
+            },
+            GithubPrPaint::Clear,
+        ),
+        (
+            Some("main"),
+            GithubPrLookup {
+                branch: Some("feature".into()),
+                probe: GithubPrProbe::Absent,
+            },
+            GithubPrPaint::Keep,
         ),
     ];
     for (current, lookup, expected) in cases {
-        assert_eq!(pr_for_current_branch(current, lookup), expected);
+        assert_eq!(paint_for_current_branch(current, lookup), expected);
     }
 }

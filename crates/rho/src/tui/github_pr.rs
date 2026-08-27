@@ -1,9 +1,8 @@
 //! Current-branch GitHub pull request for the statusline.
 //!
-//! `gh pr view` runs off the UI thread. Missing `gh`, a failed or timed-out
-//! probe, and matrix fixtures stay silent. `gh pr view` exits non-zero when
-//! there is no PR, so that cannot be distinguished from a crash; a failed
-//! refresh does not clear a chip that already painted.
+//! `gh pr view` runs off the UI thread. Missing `gh`, a timed-out probe, and
+//! matrix fixtures stay silent. A non-zero `gh` that reports no pull request
+//! is confirmed absence and clears a painted chip; other failures leave it.
 
 use std::{path::Path, process::Stdio, time::Duration};
 
@@ -36,11 +35,20 @@ enum GithubPrTone {
     Issues,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 enum GithubPrProbe {
-    /// `gh` missing, timed out, non-zero (including no PR), or unreadable JSON.
+    /// `gh` missing, timed out, crashed, or unreadable JSON.
     Unavailable,
+    /// `gh` reported that this branch has no pull request.
+    Absent,
     Found(GithubPr),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum GithubPrPaint {
+    Keep,
+    Clear,
+    Show(GithubPr),
 }
 
 #[derive(Debug)]
@@ -105,17 +113,35 @@ async fn probe(cwd: &Path) -> GithubPrProbe {
         .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .kill_on_drop(true);
     let child = match command.spawn() {
         Ok(child) => child,
         Err(_) => return GithubPrProbe::Unavailable,
     };
     match tokio::time::timeout(GH_PR_VIEW_BUDGET, child.wait_with_output()).await {
-        Ok(Ok(output)) if output.status.success() => parse_gh_pr_view(&output.stdout)
-            .map_or(GithubPrProbe::Unavailable, GithubPrProbe::Found),
+        Ok(Ok(output)) => {
+            classify_gh_pr_view(output.status.success(), &output.stdout, &output.stderr)
+        }
         _ => GithubPrProbe::Unavailable,
     }
+}
+
+fn classify_gh_pr_view(success: bool, stdout: &[u8], stderr: &[u8]) -> GithubPrProbe {
+    if success {
+        parse_gh_pr_view(stdout).map_or(GithubPrProbe::Unavailable, GithubPrProbe::Found)
+    } else if confirmed_no_pr(stderr) {
+        GithubPrProbe::Absent
+    } else {
+        GithubPrProbe::Unavailable
+    }
+}
+
+fn confirmed_no_pr(stderr: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(stderr).to_ascii_lowercase();
+    text.contains("no pull requests found")
+        || text.contains("no open pull requests found")
+        || text.contains("no closed pull requests found")
 }
 
 fn parse_gh_pr_view(bytes: &[u8]) -> Option<GithubPr> {
@@ -154,15 +180,17 @@ fn check_has_issues(check: &GhCheck) -> bool {
     ) || matches!(state.as_str(), "FAILURE" | "ERROR")
 }
 
-/// Paint only a probe that still matches the statusline branch and found a PR.
-/// Stale and unavailable results leave a painted chip alone.
-fn pr_for_current_branch(current: Option<&str>, lookup: GithubPrLookup) -> Option<GithubPr> {
+/// Paint only a probe that still matches the statusline branch.
+/// Stale and unavailable results leave a painted chip alone; confirmed
+/// absence clears it.
+fn paint_for_current_branch(current: Option<&str>, lookup: GithubPrLookup) -> GithubPrPaint {
     if current != lookup.branch.as_deref() {
-        return None;
+        return GithubPrPaint::Keep;
     }
     match lookup.probe {
-        GithubPrProbe::Found(pr) => Some(pr),
-        GithubPrProbe::Unavailable => None,
+        GithubPrProbe::Found(pr) => GithubPrPaint::Show(pr),
+        GithubPrProbe::Absent => GithubPrPaint::Clear,
+        GithubPrProbe::Unavailable => GithubPrPaint::Keep,
     }
 }
 
@@ -223,8 +251,10 @@ impl App {
         };
         self.pending_github_pr = None;
         if let Ok(lookup) = result {
-            if let Some(pr) = pr_for_current_branch(self.statusline.branch(), lookup) {
-                self.statusline.update_cwd_extra(Some(cwd_extra(&pr)));
+            match paint_for_current_branch(self.statusline.branch(), lookup) {
+                GithubPrPaint::Keep => {}
+                GithubPrPaint::Clear => self.statusline.update_cwd_extra(None),
+                GithubPrPaint::Show(pr) => self.statusline.update_cwd_extra(Some(cwd_extra(&pr))),
             }
         }
     }
