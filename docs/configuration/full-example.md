@@ -90,6 +90,7 @@ open_editor = "ctrl+g"
 jump_to_bottom = "ctrl+end"
 toggle_tool_output = "ctrl+o"
 insert_newline = "ctrl+j"
+queue_prompt = "alt+enter" # ctrl+enter always works as a fallback
 paste_image = "ctrl+v"
 edit_pending_input = "alt+up"
 manage_pending_input = "alt+q"
@@ -99,7 +100,7 @@ cycle_pinned_model_back = "ctrl+shift+p"
 
 Settings are grouped by purpose so the file is easier to scan and edit by hand. Rho still reads the previous flat format and rewrites it into groups the next time it saves config.
 
-Keybindings use `+`-separated modifiers and keys. Supported modifiers are `ctrl`, `alt`, and `shift`; supported named keys include `enter`, `esc`, `tab`, arrow keys, `home`, `end`, `pageup`, `pagedown`, `backspace`, and `delete`. Single-character keys can be used directly. Keybinding changes take effect when Rho starts.
+Keybindings use `+`-separated modifiers and keys. Supported modifiers are `ctrl`, `alt`, and `shift`; supported named keys include `enter`, `esc`, `tab`, arrow keys, `home`, `end`, `pageup`, `pagedown`, `backspace`, and `delete`. Single-character keys can be used directly. `queue_prompt` queues a follow-up during a model turn (default `alt+enter`); `ctrl+enter` is always accepted as a fallback because some terminals bind `alt+enter` to fullscreen. Keybinding changes take effect when Rho starts.
 
 The full saved file can also include model overrides for reserved internal agents. Each entry under `[internal_agents]` selects the provider, model, and auth used by that role. An internal agent with no entry follows the active conversation selection. `[providers.ollama].base_url` and `[providers.custom.<name>].base_url` set OpenAI-compatible endpoints used for those hosts' chat, model refresh, and health checks. First-run setup does not write `[providers.ollama]`; `/login ollama` stores the API base and an optional key. `[providers.custom.<name>].catalog` optionally borrows a models.dev provider for context, price, and reasoning. Rho still reads the old `[title]` and flat `title_provider`, `title_model`, and `title_auth` settings, then migrates them to `[internal_agents.session-title]` when it next saves config. Web search API keys are normally stored in the configured credential store rather than config.
 

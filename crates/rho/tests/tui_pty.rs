@@ -130,6 +130,13 @@ fn applied_steering_appears_as_transcript_user_message() {
     assert_pass("steer_appears_in_transcript");
 }
 
+// Covers: Alt+Enter and Ctrl+Enter must queue follow-ups during a turn, not steers
+// Owner: interactive TUI
+#[test]
+fn queue_follow_up_during_turn() {
+    assert_pass("queue_follow_up_during_turn");
+}
+
 // Covers: /compact must keep the composer usable so typed keys are not dropped.
 // Owner: interactive TUI
 #[test]

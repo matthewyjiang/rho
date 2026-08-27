@@ -116,7 +116,9 @@ impl App {
                 }
                 self.ctrl_c_streak = 0;
             }
-            (KeyModifiers::CONTROL, KeyCode::Char('j')) | (KeyModifiers::ALT, KeyCode::Enter) => {
+            _ if self.info.runtime.keybindings.insert_newline.matches(key)
+                || self.info.runtime.keybindings.queue_prompt_matches(key) =>
+            {
                 if let Some(questionnaire) = self.questionnaire_mut() {
                     questionnaire.insert_char('\n');
                 }

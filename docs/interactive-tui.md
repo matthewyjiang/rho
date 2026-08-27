@@ -65,6 +65,7 @@ Use a multiline prompt when you need to paste or write a longer request. Type `@
 
 - Press `esc` to abort the current response without closing Rho. The provider request and active tool receive the same cancellation signal, partial assistant output remains in the session, and queued prompts are restored to the composer instead of running automatically.
 - Press `enter` while Rho is working to steer the run. Rho finishes every tool call from the current assistant turn, adds their results to context, then inserts the steering message before the next model request. Once applied, that text appears in the transcript as a user message.
+- Press `alt-enter` while Rho is working to queue a follow-up that starts after the current turn ends, instead of steering the live run. `ctrl-enter` does the same thing for terminals that bind `alt-enter` to fullscreen.
 - Press `ctrl-r` to reset the conversation history. The next message starts a new [session](/sessions).
 - Press `ctrl-c` to clear the current input line.
 - Press `ctrl-c` twice to quit.
@@ -83,6 +84,7 @@ Most editing keys work the way they do in a normal terminal input. Run `/help` f
 | `tab` | Complete the selected command or file path |
 | `ctrl-p` | Cycle to the next pinned model. `ctrl-shift-p` cycles backward on terminals that report it. Does nothing when no models are pinned |
 | `enter` | Send a prompt, run a selected slash command, or steer after the current assistant turn while a response is running |
+| `alt-enter` | Queue the composer contents as a follow-up that runs after the current turn ends; while idle, insert a newline. `ctrl-enter` always works as a fallback for terminals that bind `alt-enter` to fullscreen (Windows Terminal, Windows Alacritty, WezTerm). Configurable as `queue_prompt` |
 | `alt-up` | Pull the most recent queued prompt back into the composer for editing |
 | `ctrl-r` | Reset conversation history |
 | `pageup` / `pagedown` | Scroll the transcript viewport |
